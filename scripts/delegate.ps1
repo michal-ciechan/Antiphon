@@ -309,6 +309,9 @@ param(
     [Parameter(ParameterSetName = 'Finding')]
     [string]$ReviewedSourceSha,
 
+    [Parameter(ParameterSetName = 'Finding')]
+    [Nullable[bool]]$ReviewedSourceClean,
+
     # CARD-0272. Which landing-step question this task answers: Rebase, Verify, Cleanup, Review,
     # FollowUp, Deploy. Omitted, the role maps (Review, Test->Verify, Merge->Rebase, Deploy;
     # -OnAgent -> FollowUp). Code and Plan never default. Distinct from -Role (pipeline seat).
@@ -675,7 +678,7 @@ switch ($PSCmdlet.ParameterSetName) {
         Write-Output "Delegate: $($s.status)"
         if ($task.reviewEvidence) {
             $e = $task.reviewEvidence
-            Write-Output "Review evidence: $($e.id); subject $($e.subjectTaskId); reviewed $($e.reviewedSourceSha); ref $($e.reviewedSourceRef); outcome $($e.outcome)"
+            Write-Output "Review evidence: $($e.id); subject $($e.subjectTaskId); reviewed $($e.reviewedSourceSha); clean $($e.reviewedSourceClean); ref $($e.reviewedSourceRef); outcome $($e.outcome)"
         }
         if ($task.sourceLandingOperationId) {
             Write-Output "Verification source: $($task.sourceLandingOperationId); commit $($task.sourceLandingSha)"
@@ -908,6 +911,7 @@ switch ($PSCmdlet.ParameterSetName) {
         }
         if (-not $Clean) { $body['detail'] = $Found }
         if ($ReviewedSourceSha) { $body['reviewedSourceSha'] = $ReviewedSourceSha }
+        if ($PSBoundParameters.ContainsKey('ReviewedSourceClean')) { $body['reviewedSourceClean'] = [bool]$ReviewedSourceClean }
         Invoke-Antiphon -Method POST -Path "/api/agent-tasks/$Finding/finding" -Body $body | Out-Null
         $word = if ($Clean) { 'clean' } else { 'found' }
         Write-Output ("recorded {0} {1} on task {2}" -f $Stage, $word, $Finding)

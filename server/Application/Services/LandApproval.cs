@@ -31,7 +31,9 @@ internal static class LandApproval
         Guid? evidenceId, string? expectedSha, CancellationToken ct)
     {
         var owner = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == ownerId, ct);
-        if (owner is null || !owner.RequiresFinalVerificationReview)
+        if (owner is null)
+            return null;
+        if (!owner.RequiresFinalVerificationReview && evidenceId is null)
             return null;
         if (evidenceId is not Guid id || !GitObjectId.IsFull(expectedSha))
             return FinalReviewRequiredCode;
@@ -70,6 +72,9 @@ internal static class LandApproval
         if (row.Stage != OrchestrationStage.Review || row.Outcome != StageOutcomeKind.Clean
             || string.IsNullOrWhiteSpace(row.ReviewedSourceSha))
             throw new ConflictException("Review evidence is not a usable clean Review approval.", "review_evidence_ineligible");
+        if (row.ReviewedSourceClean != true)
+            throw new ConflictException("Review evidence does not assert a verified clean source.",
+                "review_evidence_source_not_clean");
         // CARD-0544 D-5: an Interim Review is never approval, for any owner. A latched owner needs
         // a Review commissioned Final that completed Full scope.
         if (row.CommissionedRound == VerificationRound.Interim || row.OrdinaryScopeCompleted == VerificationScope.Interim)

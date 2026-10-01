@@ -30,7 +30,8 @@ public sealed record StageOutcomeDto(
     string? ReviewedRepositoryPath = null,
     int? VerificationProfileVersion = null,
     VerificationRound? CommissionedRound = null,
-    VerificationScope? OrdinaryScopeCompleted = null);
+    VerificationScope? OrdinaryScopeCompleted = null,
+    bool? ReviewedSourceClean = null);
 
 /// <summary>
 /// One stage's counts over the filtered (and optionally latest-per-task) rows.
@@ -58,4 +59,5 @@ public sealed record RecordStageFindingRequest(
     string Stage,
     bool Found,
     string? Detail = null,
-    string? ReviewedSourceSha = null);
+    string? ReviewedSourceSha = null,
+    bool? ReviewedSourceClean = null);

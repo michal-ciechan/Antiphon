@@ -2554,7 +2554,7 @@ public sealed class AgentTaskService
         if (facts is null) return null;
         var row = await _db.StageOutcomes.AsNoTracking().SingleAsync(o => o.Id == facts.Id, ct);
         return new ReviewEvidenceDto(row.Id, facts.SubjectTaskId, facts.ReviewedSourceSha,
-            row.ReviewedSourceRef, row.ReviewedRepositoryPath, row.Outcome);
+            row.ReviewedSourceRef, row.ReviewedRepositoryPath, row.Outcome, row.ReviewedSourceClean);
     }
 
     /// <summary>Record the first operator read; repeat opens deliberately preserve that timestamp.</summary>

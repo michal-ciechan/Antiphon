@@ -628,7 +628,8 @@ public sealed record ReviewEvidenceDto(
     string ReviewedSourceSha,
     string? ReviewedSourceRef,
     string? ReviewedRepositoryPath,
-    StageOutcomeKind Outcome);
+    StageOutcomeKind Outcome,
+    bool? ReviewedSourceClean = null);
 
 /// <summary>Manual tier bump. Null takes the next rung up (or the role policy's target).</summary>
 public sealed record EscalateAgentTaskRequest(AgentModelLevel? ModelLevel = null);

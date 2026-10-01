@@ -10,6 +10,7 @@ public sealed class RunState
     public DateTimeOffset? EndedAt { get; set; }
     public int? ExitCode { get; set; }
     public string? Reason { get; set; }
+    public SourceEvidence Source { get; set; } = new();
     public int Nonce { get; set; }
     public string Marker { get; set; } = "";
     public int MaxConcurrentRows { get; set; }
@@ -67,6 +68,7 @@ public sealed class RunState
 
 public sealed class BuildProgress
 {
+    public SourceEvidence Source { get; set; } = new();
     public string Id { get; set; } = "";
     public string State { get; set; } = "pending";
     public double Seconds { get; set; }

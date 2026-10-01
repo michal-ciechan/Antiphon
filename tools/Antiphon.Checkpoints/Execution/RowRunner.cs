@@ -2,6 +2,9 @@ namespace Antiphon.Checkpoints;
 
 public sealed class RowRequest
 {
+    public SourceEvidence Source { get; init; } = new();
+    public Func<bool>? SourceBoundary { get; init; }
+    public string? ExpectedSourceSha { get; init; }
     public string Name { get; init; } = "";
     public string? Project { get; init; }
     public string? OutputPath { get; init; }
@@ -28,6 +31,7 @@ public sealed class RowRequest
 
 public sealed class RowRunResult
 {
+    public SourceEvidence Source { get; set; } = new();
     public string Id { get; set; } = "";
     public int ExitCode { get; init; }
     public string BuildState { get; init; } = "";
@@ -71,6 +75,20 @@ public sealed class RowRunner
         Directory.CreateDirectory(request.ResultsDirectory);
         var fileName = request.DotnetFileName ?? "dotnet";
         var properties = BuildStep.PropertyArguments(request.Properties, _platform.IsWindows);
+        if (request.SourceBoundary?.Invoke() == false)
+            return SourceFailure(request, buffer, combined);
+        CheckpointBuildBinding? binding = null;
+        if (!string.IsNullOrWhiteSpace(request.Project) && !string.IsNullOrWhiteSpace(request.OutputPath))
+        {
+            binding = CheckpointBuildBinding.Expected(request.WorkingDirectory, request.Project,
+                request.OutputPath, properties, request.Source.Start);
+            if (request.NoBuild)
+            {
+                request.Source.BuildSource = binding.Check();
+                if (request.ExpectedSourceSha is not null && request.Source.BuildSource != "verified")
+                    return SourceFailure(request, buffer, combined, "build_source_mismatch");
+            }
+        }
         foreach (var property in properties)
             combined.WriteLine("MSBUILD PROPERTY " + property["--property:".Length..]);
 
@@ -87,6 +105,7 @@ public sealed class RowRunner
                 new DriverRequest(shell, shellArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: request.Environment),
                 request.Deadline,
                 cancellationToken).ConfigureAwait(false);
+            var sourceOk = request.SourceBoundary?.Invoke() != false;
             if (ran.TimedOut)
                 return TimeoutResult(request, "n/a", buffer, combined);
             var commandLine = CheckpointLine.Format(new CheckpointLineModel
@@ -100,9 +119,10 @@ public sealed class RowRunner
                 Slot = request.Slot,
                 SlotReason = request.SlotReason,
                 WaitedSeconds = request.WaitedSeconds,
+                Source = request.Source,
             });
             combined.WriteLine(commandLine);
-            var commandExit = ran.ExitCode == 0 ? ExitCodes.Green : ExitCodes.FailedTests;
+            var commandExit = sourceOk ? ran.ExitCode == 0 ? ExitCodes.Green : ExitCodes.FailedTests : ExitCodes.Invalid;
             combined.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: {commandExit}");
             return Finish(commandExit, "n/a", commandLine, buffer, 0, [], null, null, false,
                 commandExit == 0 ? "green" : "red");
@@ -111,6 +131,7 @@ public sealed class RowRunner
         var buildState = request.BuildStateOverride ?? (request.NoBuild ? "reused" : "ok");
         if (!request.NoBuild)
         {
+            binding?.Invalidate();
             if (request.BeforeLaunch is not null)
                 await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
             var buildArgs = BuildStep.BuildArguments(request.Project!, request.OutputPath!, properties, request.MaxCpuCount);
@@ -119,6 +140,7 @@ public sealed class RowRunner
                 new DriverRequest(fileName, buildArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "build.log"), Environment: request.Environment),
                 request.Deadline,
                 cancellationToken).ConfigureAwait(false);
+            var buildSourceOk = request.SourceBoundary?.Invoke() != false;
             if (built.TimedOut)
                 return TimeoutResult(request, "failed", buffer, combined);
             if (built.ExitCode != 0)
@@ -127,17 +149,23 @@ public sealed class RowRunner
                 combined.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: 2");
                 return Finish(ExitCodes.Invalid, "failed", "", buffer, 0, [], null, null, false, "build-failed");
             }
+            if (!buildSourceOk) return SourceFailure(request, buffer, combined);
+            binding?.Write();
+            request.Source.BuildSource = "verified";
         }
 
         var trxPath = Path.Combine(request.ResultsDirectory, "run.trx");
         if (request.BeforeLaunch is not null)
             await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
+        if (request.SourceBoundary?.Invoke() == false)
+            return SourceFailure(request, buffer, combined);
         var runArgs = BuildStep.RunArguments(request.Project!, request.OutputPath!, properties, request.Filter!, request.ResultsDirectory, "run.trx");
         var run = await RowTimeout.RunWithDeadlineAsync(
             _driver,
             new DriverRequest(fileName, runArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: request.Environment),
             request.Deadline,
             cancellationToken).ConfigureAwait(false);
+        var sourceStable = request.SourceBoundary?.Invoke() != false;
         if (run.TimedOut)
             return TimeoutResult(request, buildState, buffer, combined);
 
@@ -161,7 +189,7 @@ public sealed class RowRunner
         var decision = RerunPolicy.Select(parsed.FailureNames, request.KnownFlaky);
         var unlistedFailures = parsed.FailureNames.Where(name => !decision.Names.Contains(name)).ToList();
         var rerunPassed = false;
-        if (decision.Filters.Count > 0)
+        if (decision.Filters.Count > 0 && sourceStable)
         {
             reruns = 1;
             var passedNames = new HashSet<string>(StringComparer.Ordinal);
@@ -175,11 +203,13 @@ public sealed class RowRunner
                     request.Project!, request.OutputPath!, properties, decision.Filters[index], request.ResultsDirectory, rerunName);
                 if (request.BeforeLaunch is not null)
                     await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
+                if (request.SourceBoundary?.Invoke() == false) { sourceStable = false; break; }
                 var second = await RowTimeout.RunWithDeadlineAsync(
                     _driver,
                     new DriverRequest(fileName, rerunArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: request.Environment),
                     request.Deadline,
                     cancellationToken).ConfigureAwait(false);
+                if (request.SourceBoundary?.Invoke() == false) sourceStable = false;
                 var secondParsed = File.Exists(rerunTrx) ? TrxReport.Parse(rerunTrx) : null;
                 if (second.TimedOut || secondParsed is not { Ok: true })
                     sawOk = false;
@@ -237,6 +267,7 @@ public sealed class RowRunner
             exit = ExitCodes.RosterOrMin;
         else if (misses.Count > 0)
             exit = ExitCodes.RosterOrMin;
+        if (!sourceStable) exit = ExitCodes.Invalid;
 
         var lineModel = CheckpointLine.Format(new CheckpointLineModel
         {
@@ -253,6 +284,7 @@ public sealed class RowRunner
             SlotReason = request.SlotReason,
             WaitedSeconds = request.WaitedSeconds,
             Reruns = reruns,
+            Source = request.Source,
         });
         combined.WriteLine(lineModel);
         foreach (var rerunLine in rerunLines)
@@ -299,6 +331,7 @@ public sealed class RowRunner
             SlotReason = request.SlotReason,
             WaitedSeconds = request.WaitedSeconds,
             Command = request.Command is not null,
+            Source = request.Source,
         });
         output.WriteLine(line);
         output.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: 5");
@@ -329,6 +362,22 @@ public sealed class RowRunner
             TimedOut = timedOut,
             State = state,
         };
+
+    private static RowRunResult SourceFailure(RowRequest request, StringWriter buffer, TextWriter output,
+        string reason = "source_changed")
+    {
+        var line = CheckpointLine.Format(new CheckpointLineModel
+        {
+            Name = request.Name, Commit = request.Commit, Build = request.NoBuild ? "reused" : "failed",
+            Filter = request.Filter ?? request.Command ?? "", Slot = request.Slot,
+            SlotReason = request.SlotReason, WaitedSeconds = request.WaitedSeconds,
+            Command = request.Command is not null, Source = request.Source,
+        });
+        output.WriteLine(line);
+        output.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: 2 reason={reason}");
+        return new RowRunResult { ExitCode = ExitCodes.Invalid, BuildState = request.NoBuild ? "reused" : "failed",
+            Line = line, Output = buffer.ToString(), State = reason, Source = request.Source };
+    }
 
     private sealed class TeeWriter : TextWriter
     {

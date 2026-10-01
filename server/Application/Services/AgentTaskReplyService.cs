@@ -4432,6 +4432,7 @@ public sealed class AgentTaskReplyService
 
         Guid? subjectId = task.FollowUpOfTaskId;
         string? reviewedSha = null;
+        bool? reviewedSourceClean = null;
         string? reviewedRef = null;
         string? reviewedRepo = null;
         // CARD-0544 D-5: a profiled Review records its commissioned round and the scope it declared,
@@ -4465,6 +4466,7 @@ public sealed class AgentTaskReplyService
                     {
                         subjectId = subject.Id;
                         reviewedSha = evidence.ReviewedSourceSha;
+                        reviewedSourceClean = evidence.ReviewedSourceClean;
                         reviewedRef = subject.WorktreeBranch is null ? null
                             : subject.WorktreeBranch.StartsWith("refs/", StringComparison.Ordinal)
                                 ? subject.WorktreeBranch : "refs/heads/" + subject.WorktreeBranch;
@@ -4497,6 +4499,7 @@ public sealed class AgentTaskReplyService
             Detail = AgentTaskLandService.Clip(detail),
             RecordedAt = now,
             ReviewedSourceSha = reviewedSha,
+            ReviewedSourceClean = reviewedSourceClean,
             ReviewedSourceRef = reviewedRef,
             ReviewedRepositoryPath = reviewedRepo,
             VerificationProfileVersion = profiled ? task.VerificationProfileVersion : null,

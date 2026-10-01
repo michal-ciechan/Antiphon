@@ -18,6 +18,7 @@ public static class ReportWriter
         text.AppendLine("--- checkpoint report ---");
         text.AppendLine($"run: {model.RunId}   manifest: {model.ManifestPath}");
         text.AppendLine($"commit: {model.Commit}  branch: {model.Branch}  worktree: {model.Worktree}  host: {model.Host.Os} cores={model.Host.Cores}");
+        text.AppendLine($"source: {SourceEvidence.Token(model.Source.Start)} state={model.Source.State} buildSource={model.Source.BuildSource}");
         foreach (var row in model.Rows)
         {
             if (!string.IsNullOrWhiteSpace(row.Line))

@@ -34,6 +34,7 @@ public static class CheckpointApp
         public Func<string, IExecutorLogSink>? LogSinkFactory { get; init; }
         public Func<string, Task<int>>? Wait { get; init; }
         public TextWriter? Output { get; init; }
+        public Func<string, SourceObservation>? SourceCapture { get; init; }
     }
 
     public static string ToolSource(Runtime? runtime = null) => runtime?.ToolDirectory ?? AppContext.BaseDirectory;
@@ -64,6 +65,7 @@ public static class CheckpointApp
                 Reason = reason,
                 Verdict = "RED",
                 Rows = state.Rows.Select(row => new ReportRow { Id = row.Id, State = row.State, ExitCode = row.ExitCode }).ToList(),
+                Source = state.Source,
                 Evidence = Path.Combine(runDirectory, "report.md"),
             };
             try
@@ -89,6 +91,8 @@ public static class CheckpointApp
             ?? throw new ManifestValidationException("request", "request.json is empty");
         var repo = request.RepoRoot;
         var manifest = ManifestLoader.LoadFile(Path.Combine(runDirectory, "manifest.resolved.yaml"), repo);
+        var source = request.Source;
+        var sourceGuard = new SourceRunGuard(repo, source, runtime.SourceCapture);
         var selected = manifest.Checkpoints.Where(row => request.Rows.Count == 0 || request.Rows.Contains(row.Id)).ToList();
         var log = Path.Combine(runDirectory, "executor.log");
         await using var logWriter = new ExecutorLogWriter(runtime.LogSinkFactory?.Invoke(log) ?? new FileExecutorLogSink(log));
@@ -109,6 +113,7 @@ public static class CheckpointApp
             Phase = "running",
             ExecutorPid = Environment.ProcessId,
             StartedAt = DateTimeOffset.UtcNow,
+            Source = source,
         };
         var statePath = Path.Combine(runDirectory, "state.json");
         void Publish()
@@ -148,7 +153,8 @@ public static class CheckpointApp
         {
         try
         {
-            var admitted = entryAdmitted && await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false);
+            var admitted = entryAdmitted && await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false)
+                && sourceGuard.Observe();
             if (admitted)
             {
                 watcher = owner.WatchAsync(watchCancel.Token);
@@ -171,7 +177,20 @@ public static class CheckpointApp
                 CancellationReason = () => owner.Reason ?? "owner-ended",
                 AdmissionBlock = () => owner.Reason == "owner-unverified" ? owner.Reason : null,
                 OwnerBound = owner.Bound,
+                SourceGuard = sourceGuard,
+                ExpectedSourceSha = request.ExpectedSourceSha,
             }, workCancel.Token).ConfigureAwait(false);
+            }
+            else if (sourceGuard.Reason is not null)
+            {
+                state.Reason = sourceGuard.Reason;
+                state.Rows = selected.Select(row => new RowProgress { Id = row.Id, State = state.Reason, ExitCode = ExitCodes.Invalid }).ToList();
+                result = new SchedulerResult
+                {
+                    ExitCode = ExitCodes.Invalid,
+                    Rows = selected.Select(row => new RowRunResult { Id = row.Id, State = state.Reason, ExitCode = ExitCodes.Invalid, Source = sourceGuard.Copy("unknown") }).ToList(),
+                    State = state,
+                };
             }
             else
             {
@@ -205,6 +224,12 @@ public static class CheckpointApp
             result = new SchedulerResult { ExitCode = ExitCodes.OwnerEnded, Rows = result.Rows, State = state };
         }
 
+        sourceGuard.Observe();
+        if (sourceGuard.Reason is not null && result.ExitCode != ExitCodes.OwnerEnded)
+        {
+            state.Reason = sourceGuard.Reason;
+            result = new SchedulerResult { ExitCode = ExitCodes.Invalid, Rows = result.Rows, State = state };
+        }
         var model = BuildReport(runDirectory, repo, request, manifest, state, result);
         if (!owner.Ended.IsCancellationRequested && !string.IsNullOrWhiteSpace(request.Baseline))
         {
@@ -243,6 +268,8 @@ public static class CheckpointApp
         }
 
         model.Evidence = Path.Combine(runDirectory, "report.md");
+        File.AppendAllText(Path.Combine(runDirectory, "git.txt"),
+            $"\nsource={SourceEvidence.Token(source.Start)} sourceState={source.State} buildSource={source.BuildSource}\n");
         ReportWriter.WriteFiles(runDirectory, model);
         try
         {
@@ -336,8 +363,18 @@ public static class CheckpointApp
             File.WriteAllText(Path.Combine(runDirectory, "manifest.resolved.yaml"), ManifestLoader.ToYaml(manifest));
             request.RepoRoot = repo;
             request.Rows = selected.Select(row => row.Id).ToList();
+            var capture = runtime?.SourceCapture ?? new SourceSnapshot().Capture;
+            request.Source = new SourceEvidence { Start = capture(repo) };
+            if (request.ExpectedSourceSha is not null)
+            {
+                if (!System.Text.RegularExpressions.Regex.IsMatch(request.ExpectedSourceSha, "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"))
+                    throw new ManifestValidationException("expected-source-sha", "expected source SHA must be a normalized full object ID");
+                if (request.Source.Start.CaptureStatus != "known" || request.Source.Start.DirtyFiles != 0 ||
+                    request.Source.Start.Commit != request.ExpectedSourceSha)
+                    throw new ManifestValidationException("source", "source_mismatch or source_dirty");
+            }
             if (string.IsNullOrWhiteSpace(request.Commit))
-                request.Commit = GitSnapshot.Run(repo, "rev-parse", "HEAD");
+                request.Commit = request.Source.Start.Commit ?? GitSnapshot.Run(repo, "rev-parse", "HEAD");
             if (string.IsNullOrWhiteSpace(request.Branch))
                 request.Branch = GitSnapshot.Run(repo, "rev-parse", "--abbrev-ref", "HEAD");
             File.WriteAllText(Path.Combine(runDirectory, "request.json"), JsonSerializer.Serialize(request, Json));
@@ -489,6 +526,7 @@ public static class CheckpointApp
             {
                 Name = row.Id,
                 Commit = request.Commit,
+                Source = row.Source,
                 Build = row.State == "build-failed" ? "failed" : "n/a",
                 Filter = row.Filter ?? row.Command ?? "",
                 Executed = row.State == "slot-refused" ? "0" : "n/a",
@@ -511,6 +549,7 @@ public static class CheckpointApp
             ManifestPath = Path.Combine(runDirectory, "manifest.resolved.yaml"),
             ManifestHash = Hash(File.ReadAllText(Path.Combine(runDirectory, "manifest.resolved.yaml"))),
             Commit = request.Commit,
+            Source = state.Source,
             Branch = request.Branch,
             Worktree = repo,
             Host = new ReportHost
@@ -536,6 +575,7 @@ public static class CheckpointApp
                 Slot = build.Slot,
                 SlotReason = build.SlotReason,
                 WaitedSeconds = build.WaitedSeconds,
+                Source = build.Source,
             }).ToList(),
             Rows = rows,
             Unlisted = [],
@@ -556,6 +596,7 @@ public static class CheckpointApp
             Command = spec?.Command,
             Build = spec?.Build,
             State = row.State,
+            Source = row.Source,
             ExitCode = row.ExitCode,
             Slot = row.Slot.Length == 0 ? null : row.Slot,
             SlotReason = row.SlotReason,

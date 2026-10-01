@@ -35,6 +35,7 @@ param(
     [int]$MinExecuted = 1,
     [string[]]$Expect,
     [string[]]$MsBuildProperty,
+    [string]$ExpectedSourceSha,
     [string]$DotnetShim,
     [double]$SlotWaitMinutes = 45,
     [switch]$NoSlot
@@ -42,9 +43,93 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
+. (Join-Path $PSScriptRoot (Join-Path 'lib' 'checkpoint-source.ps1'))
+$script:sourceStart = $null
+$script:sourceEnd = $null
+$script:buildSource = 'unknown'
+$script:sourceReason = $null
+$script:buildState = 'n/a'
+$script:executed = 0
+$script:passed = 0
+$script:failed = 0
+$script:skipped = 0
+$script:trxPath = 'n/a'
+$script:slotState = 'skipped'
+$script:slotWaited = 0
+$script:resultsDirectory = $null
+
+function Assert-CheckpointBoundary {
+    param([string]$Boundary)
+    $current = Get-CheckpointSource
+    $script:sourceEnd = $current
+    if ($current.captureStatus -cne 'known') { $script:sourceReason = 'source_unknown'; return $false }
+    if ($script:sourceStart.captureStatus -cne 'known') { $script:sourceReason = 'source_unknown'; return $false }
+    if ($current.commit -cne $script:sourceStart.commit -or $current.fingerprint -cne $script:sourceStart.fingerprint -or $current.dirtyFiles -ne $script:sourceStart.dirtyFiles) {
+        $script:sourceReason = 'source_changed'
+        return $false
+    }
+    return $true
+}
+
+function Get-CheckpointBuildStampPath {
+    param([string]$Root, [string]$ProjectPath, [string]$Output)
+    return [System.IO.Path]::Combine($Root, $ProjectPath, $Output, 'checkpoint-build-source.json')
+}
+
+function Get-CheckpointBuildBinding {
+    param([string]$Root, [string]$ProjectPath, [string]$Output, [string[]]$Properties, $Source)
+    $projectFull = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($Root, $ProjectPath))
+    $outputFull = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($projectFull, $Output))
+    return [pscustomobject]@{
+        version = 1
+        repositoryRoot = [System.IO.Path]::GetFullPath($Root)
+        project = $projectFull
+        outputPath = $outputFull
+        properties = @($Properties | Sort-Object -CaseSensitive)
+        commit = $Source.commit
+        fingerprint = $Source.fingerprint
+        sourceState = if ($Source.dirtyFiles -eq 0) { 'clean' } else { 'dirty' }
+    }
+}
+
+function Test-CheckpointBuildBinding {
+    param($Actual, $Expected)
+    if ($null -eq $Actual -or $Actual.version -ne 1) { return $false }
+    $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    foreach ($field in @('repositoryRoot', 'project', 'outputPath')) {
+        if (-not [string]::Equals([string]$Actual.$field, [string]$Expected.$field, $comparison)) { return $false }
+    }
+    foreach ($field in @('commit', 'fingerprint', 'sourceState')) {
+        if ($Actual.$field -cne $Expected.$field) { return $false }
+    }
+    if (@($Actual.properties).Count -ne @($Expected.properties).Count) { return $false }
+    for ($i = 0; $i -lt @($Actual.properties).Count; $i++) {
+        if ([string]$Actual.properties[$i] -cne [string]$Expected.properties[$i]) { return $false }
+    }
+    return $true
+}
 
 function Write-Trailer {
     param([int]$Code)
+    $start = $script:sourceStart
+    if ($null -eq $start) { $start = [pscustomobject]@{ commit = $null; dirtyFiles = $null; fingerprint = $null; observedAtUtc = [DateTimeOffset]::UtcNow.ToString('O'); captureStatus = 'unknown'; errorCode = 'not_observed' } }
+    $state = Get-CheckpointSourceState $start $script:sourceEnd
+    if ($null -ne $script:sourceReason -and $state -eq 'clean') { $state = 'unknown' }
+    $dirty = if ($null -eq $start.dirtyFiles) { 'unknown' } else { [string]$start.dirtyFiles }
+    $commit = if ($start.captureStatus -eq 'known') { [string]$start.commit } else { 'unknown' }
+    $line = ('CHECKPOINT {0} commit={1} build={2} filter={3} executed={4} passed={5} failed={6} skipped={7} trx={8} slot={9} waited={10}s dirty={11} source={12} sourceState={13} buildSource={14}' -f `
+        $Name, $commit, $script:buildState, $Filter, $script:executed, $script:passed, $script:failed, $script:skipped, $script:trxPath, $script:slotState, $script:slotWaited, $dirty, (Get-CheckpointSourceToken $start), $state, $script:buildSource)
+    if ($null -ne $script:sourceReason) { $line += ' reason=' + $script:sourceReason }
+    Write-Host $line
+    if ($null -ne $script:resultsDirectory) {
+        $evidence = [pscustomobject]@{
+            version = 1; name = $Name; start = $start; end = $script:sourceEnd
+            state = $state; buildSource = $script:buildSource; reason = $script:sourceReason
+            receipt = $line; exitCode = $Code; executed = $script:executed
+            passed = $script:passed; failed = $script:failed; skipped = $script:skipped
+        }
+        $evidence | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $script:resultsDirectory 'source.json') -Encoding utf8
+    }
     Write-Host ('CHECKPOINT {0} EXIT CODE: {1}' -f $Name, $Code)
 }
 
@@ -84,6 +169,9 @@ if (-not $onWindows -and -not $namesAppHost) {
     $propertyTokens = @($propertyTokens) + @('UseAppHost=false')
 }
 $propertyArguments = @($propertyTokens | ForEach-Object { '--property:' + $_ })
+if ($ExpectedSourceSha -and $ExpectedSourceSha -cnotmatch '^([0-9a-f]{40}|[0-9a-f]{64})$') {
+    Stop-Invalid 'ExpectedSourceSha must be a normalized full Git object ID'
+}
 
 # (2) Fresh results directory. A reused directory is how a stale TRX gets reported as this run.
 $stamp = $env:C585_STAMP
@@ -97,6 +185,32 @@ if (Test-Path -LiteralPath $resultsDirectory) {
 }
 New-Item -ItemType Directory -Path $resultsDirectory -Force | Out-Null
 $resultsDirectory = (Resolve-Path -LiteralPath $resultsDirectory).Path
+$script:resultsDirectory = $resultsDirectory
+$script:sourceStart = Get-CheckpointSource
+if ($script:sourceStart.captureStatus -cne 'known') {
+    $script:sourceReason = 'source_unknown'
+    Write-Trailer -Code 2
+    exit 2
+}
+if ($ExpectedSourceSha -and ($script:sourceStart.dirtyFiles -ne 0 -or $script:sourceStart.commit -cne $ExpectedSourceSha)) {
+    $script:sourceReason = if ($script:sourceStart.dirtyFiles -ne 0) { 'source_dirty' } else { 'source_mismatch' }
+    Write-Trailer -Code 2
+    exit 2
+}
+$root = ([System.Text.Encoding]::UTF8.GetString((Get-CheckpointGitBytes (Get-Location).Path @('rev-parse', '--show-toplevel')))).Trim()
+$stampPath = Get-CheckpointBuildStampPath $root $Project $OutputPath
+$expectedBinding = Get-CheckpointBuildBinding $root $Project $OutputPath $propertyTokens $script:sourceStart
+if ($NoBuild) {
+    $stampValue = $null
+    try { $stampValue = Get-Content -Raw -LiteralPath $stampPath | ConvertFrom-Json }
+    catch { }
+    $script:buildSource = if (Test-CheckpointBuildBinding $stampValue $expectedBinding) { 'verified' } elseif ($null -eq $stampValue) { 'unknown' } else { 'mismatch' }
+    if ($ExpectedSourceSha -and $script:buildSource -ne 'verified') {
+        $script:sourceReason = 'build_source_mismatch'
+        Write-Trailer -Code 2
+        exit 2
+    }
+}
 
 # (2b) Host build slot (CARD-0589), after every input check so an invalid row never waits.
 . (Join-Path $PSScriptRoot (Join-Path 'lib' 'build-slot.ps1'))
@@ -114,6 +228,13 @@ if ($NoSlot) {
         Write-Trailer -Code 4
         exit 4
     }
+}
+$script:slotState = $slotState
+$script:slotWaited = $slotWaited
+if (-not (Assert-CheckpointBoundary 'post_slot')) {
+    Exit-AntiphonBuildSlot -Lease $slot
+    Write-Trailer -Code 2
+    exit 2
 }
 $cpuArguments = @()
 if ($null -ne $slot -and [int]$slot.MaxCpuCount -gt 0) { $cpuArguments = @('-maxcpucount:' + [int]$slot.MaxCpuCount) }
@@ -176,24 +297,50 @@ function Invoke-Dotnet {
 # (3)-(4) run under the slot; it is released however they end (the runner also reaps it if this
 # process dies).
 $trxPath = Join-Path $resultsDirectory 'run.trx'
+$script:trxPath = $trxPath
+$phaseError = $null
 try {
     # (3) Build, unless this row reuses an earlier row's output. The grant's -maxcpucount applies to
     # the build only: the --no-build run below starts no MSBuild nodes.
     $buildState = 'reused'
+    $script:buildState = $buildState
     $buildExit = 0
     if (-not $NoBuild) {
+        if (Test-Path -LiteralPath $stampPath) { Remove-Item -LiteralPath $stampPath -Force }
         $buildExit = Invoke-Dotnet -Phase 'build' -Arguments (@('build', $Project, ('--property:OutputPath=' + $OutputPath)) + $propertyArguments + $cpuArguments + @('--nologo'))
-        if ($buildExit -eq 0) { $buildState = 'ok' }
+        if ($buildExit -eq 0) { $buildState = 'ok'; $script:buildState = 'ok' }
+        if (-not (Assert-CheckpointBoundary 'post_build')) { $buildExit = 2 }
+        if ($buildExit -eq 0) {
+            $stampDirectory = Split-Path -Parent $stampPath
+            New-Item -ItemType Directory -Path $stampDirectory -Force | Out-Null
+            $temporaryStamp = $stampPath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+            $expectedBinding | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temporaryStamp -Encoding utf8
+            Move-Item -LiteralPath $temporaryStamp -Destination $stampPath -Force
+            $script:buildSource = 'verified'
+        }
     }
 
     # (4) One filter, one fresh TRX.
     if ($buildExit -eq 0) {
+        if (-not (Assert-CheckpointBoundary 'pre_run')) { $buildExit = 2 }
+    }
+    if ($buildExit -eq 0) {
         $runExit = Invoke-Dotnet -Phase 'run' -Arguments (@('run', '--project', $Project, '--no-build', ('--property:OutputPath=' + $OutputPath)) + $propertyArguments + @(
             '--', '--treenode-filter', $Filter, '--report-trx', '--report-trx-filename', 'run.trx',
             '--results-directory', $resultsDirectory))
+        $null = Assert-CheckpointBoundary 'post_run'
     }
+} catch {
+    $phaseError = $_.Exception.GetType().Name
+    $script:sourceEnd = $null
+    $script:sourceReason = 'source_unknown'
 } finally {
     Exit-AntiphonBuildSlot -Lease $slot
+}
+if ($null -ne $phaseError) {
+    Write-Host ('CHECKPOINT {0} driver interruption: {1}' -f $Name, $phaseError)
+    Write-Trailer -Code 2
+    exit 2
 }
 if ($buildExit -ne 0) {
     Write-Host ('CHECKPOINT {0} build=failed project={1} outputPath={2} exit={3} slot={4} waited={5}s' -f $Name, $Project, $OutputPath, $buildExit, $slotState, $slotWaited)
@@ -276,17 +423,12 @@ $total = Get-Counter -Attribute 'total' -Fallback $executed
 $passed = Get-Counter -Attribute 'passed' -Fallback ($executed - $failed)
 $skipped = $total - $executed
 if ($skipped -lt 0) { $skipped = 0 }
-
-$commit = 'unknown'
-try {
-    $rev = (& git rev-parse HEAD 2>$null)
-    if ($LASTEXITCODE -eq 0 -and $rev) { $commit = ([string]$rev).Trim() }
-} catch { }
+$script:executed = $executed
+$script:passed = $passed
+$script:failed = $failed
+$script:skipped = $skipped
 
 # (6) The report line the bundle asks Code to produce, then the roster.
-Write-Host ('CHECKPOINT {0} commit={1} build={2} filter={3} executed={4} passed={5} failed={6} skipped={7} trx={8} slot={9} waited={10}s' -f `
-    $Name, $commit, $buildState, $Filter, $executed, $passed, $failed, $skipped, $trxPath, $slotState, $slotWaited)
-
 foreach ($token in $propertyTokens) { Write-Host ('MSBUILD PROPERTY {0}' -f $token) }
 foreach ($testName in $failedNames) { Write-Host ('FAILED {0}' -f $testName) }
 
@@ -301,6 +443,10 @@ if ($executedNames.Count -gt $shown) {
 }
 
 # (7) Verdict.
+if ($null -ne $script:sourceReason) {
+    Write-Trailer -Code 2
+    exit 2
+}
 $rosterMisses = New-Object 'System.Collections.Generic.List[string]'
 # Split on commas too: `pwsh -File` binds every argument as a string, so -Expect A,B arrives as
 # one element there and as two when the script is dot-sourced or called in-process.

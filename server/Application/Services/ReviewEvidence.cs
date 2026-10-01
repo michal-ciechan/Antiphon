@@ -19,9 +19,11 @@ public static class ReviewEvidence
         string? ReviewedSourceSha,
         string? Warning,
         // CARD-0544 D-5. Missing, empty, malformed or duplicated declarations are Unknown.
-        VerificationScope Scope = VerificationScope.Unknown);
+        VerificationScope Scope = VerificationScope.Unknown,
+        bool? ReviewedSourceClean = null);
 
     public const string ScopeKey = "ordinaryScopeCompleted";
+    public const string SourceCleanKey = "reviewedSourceClean";
     public const string NotStandaloneWarning = "review_evidence_not_standalone";
 
     public static Result TryParse(string? report)
@@ -46,6 +48,7 @@ public static class ReviewEvidence
         string? subject = null;
         string? sha = null;
         var scopeValues = new List<string>();
+        var sourceCleanValues = new List<string>();
         foreach (var rawLine in afterHeading.Split('\n'))
         {
             var trimmed = rawLine.TrimEnd();
@@ -67,14 +70,22 @@ public static class ReviewEvidence
                 sha = value;
             else if (key.Equals(ScopeKey, StringComparison.OrdinalIgnoreCase))
                 scopeValues.Add(value);
+            else if (key.Equals(SourceCleanKey, StringComparison.OrdinalIgnoreCase))
+                sourceCleanValues.Add(value);
         }
 
         var scope = ParseScope(scopeValues);
+        bool? sourceClean = sourceCleanValues.Count == 1 ? sourceCleanValues[0] switch
+        {
+            "true" => true,
+            "false" => false,
+            _ => null,
+        } : null;
         if (string.IsNullOrWhiteSpace(subject) || !Guid.TryParse(subject, out var subjectId) || subjectId == Guid.Empty)
-            return new(true, false, null, null, "review_evidence_subject_invalid", scope);
+            return new(true, false, null, null, "review_evidence_subject_invalid", scope, sourceClean);
         if (!GitObjectId.TryNormalize(sha, out var normalizedSha))
-            return new(true, false, subjectId, null, "review_evidence_sha_invalid", scope);
-        return new(true, true, subjectId, normalizedSha, null, scope);
+            return new(true, false, subjectId, null, "review_evidence_sha_invalid", scope, sourceClean);
+        return new(true, true, subjectId, normalizedSha, null, scope, sourceClean);
     }
 
     /// <summary>

@@ -2,7 +2,8 @@ namespace Antiphon.Checkpoints;
 
 public sealed class ReportModel
 {
-    public int SchemaVersion { get; set; } = 1;
+    public int SchemaVersion { get; set; } = 2;
+    public SourceEvidence Source { get; set; } = new();
     public string RunId { get; set; } = "";
     public string? ManifestPath { get; set; }
     public string ManifestHash { get; set; } = "";
@@ -37,6 +38,7 @@ public sealed class ReportHost
 
 public sealed class ReportBuild
 {
+    public SourceEvidence Source { get; set; } = new();
     public string Id { get; set; } = "";
     public string Project { get; set; } = "";
     public string State { get; set; } = "";
@@ -48,6 +50,7 @@ public sealed class ReportBuild
 
 public sealed class ReportRow
 {
+    public SourceEvidence Source { get; set; } = new();
     public string Id { get; set; } = "";
     public string? Group { get; set; }
     public string? Filter { get; set; }

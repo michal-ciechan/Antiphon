@@ -20,9 +20,17 @@ public static class ReportMerger
             }
         }
 
+        var retained = byId.Values.Select(item => item.Row).ToList();
+        if (latest.SchemaVersion != 2 || !ReportValidator.IsSourceEligible(latest.Source, latest.Commit) ||
+            retained.Any(row => !ReportValidator.IsSourceEligible(row.Source, latest.Commit) ||
+                row.Source.Start.Fingerprint != latest.Source.Start.Fingerprint ||
+                row.Source.BuildSource != latest.Source.BuildSource))
+            throw new InvalidOperationException("cannot merge incompatible or unknown checkpoint source evidence");
+
         var merged = new ReportModel
         {
-            SchemaVersion = 1,
+            SchemaVersion = 2,
+            Source = latest.Source,
             RunId = latest.RunId,
             ManifestPath = latest.ManifestPath,
             ManifestHash = latest.ManifestHash,
@@ -72,6 +80,7 @@ public static class ReportMerger
             RerunLines = row.RerunLines.ToList(),
             SlowClasses = row.SlowClasses,
             Attempt = row.Attempt,
+            Source = row.Source,
         };
         if (earlierAttempts > 0 && copy.Line is not null && !copy.Line.Contains("reruns=", StringComparison.Ordinal))
             copy.Line += " reruns=" + copy.Reruns;

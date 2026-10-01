@@ -120,7 +120,8 @@ public sealed class StageOutcomeService
         o.CostUsd, o.TokensIn, o.TokensOut, o.DurationSeconds, o.ResolutionTaskId,
         o.ResolutionCostUsd, o.Detail, o.Ref, o.SupersedesId, o.RecordedAt,
         o.ReviewedSourceSha, o.ReviewedSourceRef, o.ReviewedRepositoryPath,
-        o.VerificationProfileVersion, o.CommissionedRound, o.OrdinaryScopeCompleted);
+        o.VerificationProfileVersion, o.CommissionedRound, o.OrdinaryScopeCompleted,
+        o.ReviewedSourceClean);
 
     /// <summary>
     /// CARD-0272 S3. An orchestrator override of a stage run. Appends a row with
@@ -138,6 +139,10 @@ public sealed class StageOutcomeService
             ?? throw new NotFoundException(nameof(AgentTask), taskId);
 
         string? reviewedSha = null;
+        if (request.ReviewedSourceClean is not null && string.IsNullOrWhiteSpace(request.ReviewedSourceSha))
+            throw new ValidationException("reviewedSourceClean",
+                "reviewedSourceClean requires an explicit reviewedSourceSha on a Review Clean finding.",
+                "review_evidence_fields_restricted");
         if (!string.IsNullOrWhiteSpace(request.ReviewedSourceSha))
         {
             if (stage != OrchestrationStage.Review || request.Found)
@@ -197,6 +202,7 @@ public sealed class StageOutcomeService
             SupersedesId = existing?.Id,
             RecordedAt = now,
             ReviewedSourceSha = reviewedSha,
+            ReviewedSourceClean = request.ReviewedSourceClean,
             ReviewedSourceRef = reviewedRef,
             ReviewedRepositoryPath = reviewedRepo,
         };

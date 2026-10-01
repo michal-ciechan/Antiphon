@@ -18,6 +18,7 @@ public sealed class CheckpointLineModel
     public int? ExitCode { get; init; }
     public string? Timeout { get; init; }
     public bool Command { get; init; }
+    public SourceEvidence Source { get; init; } = new();
 }
 
 public static class CheckpointLine
@@ -41,6 +42,9 @@ public static class CheckpointLine
             line += " slot-reason=" + model.SlotReason;
         if (model.Reruns > 0)
             line += " reruns=" + model.Reruns;
+        var start = model.Source.Start;
+        line += $" dirty={(start.DirtyFiles is int count ? count.ToString() : "unknown")}" +
+            $" source={SourceEvidence.Token(start)} sourceState={model.Source.State} buildSource={model.Source.BuildSource}";
         return line;
     }
 }

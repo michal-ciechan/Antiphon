@@ -22,7 +22,7 @@ public static class Program
     {
         if (args.Length == 0 || args[0] is "-h" or "--help")
         {
-            Console.WriteLine("antiphon-checkpoints run|start|wait|status|stop|report|import|row|clean|execute|hold|--version");
+            Console.WriteLine("antiphon-checkpoints run|start|wait|status|stop|report|validate|import|row|clean|execute|hold|--version");
             return ExitCodes.Green;
         }
 
@@ -57,6 +57,8 @@ public static class Program
                 return Stop(options, repo, runtime);
             case "report":
                 return Report(options, repo);
+            case "validate":
+                return Validate(options, repo);
             case "clean":
                 return Clean(options, repo);
             case "row":
@@ -279,10 +281,43 @@ public static class Program
         return ExitCodes.Green;
     }
 
+    private static int Validate(ArgSet options, string repo)
+    {
+        var path = Required(options, "evidence");
+        path = Path.IsPathRooted(path) ? path : Path.Combine(repo, path);
+        var expected = Required(options, "expected-source-sha");
+        try
+        {
+            var report = JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(path), ReportWriter.Json);
+            if (report is null) throw new InvalidDataException("report_empty");
+            var rows = (options.Get("rows") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var refusal = ReportValidator.Validate(report, expected, rows);
+            if (refusal is not null) { Console.Error.WriteLine("CHECKPOINT SOURCE INVALID reason=" + refusal); return ExitCodes.Invalid; }
+            Console.WriteLine("CHECKPOINT SOURCE VALID source=" + expected + " rows=" + (rows.Length == 0 ? report.Rows.Count : rows.Length));
+            return ExitCodes.Green;
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or InvalidDataException)
+        {
+            Console.Error.WriteLine("CHECKPOINT SOURCE INVALID reason=" + ex.GetType().Name);
+            return ExitCodes.Invalid;
+        }
+    }
+
     private static async Task<int> Row(ArgSet options, string repo, CheckpointApp.Runtime? runtime)
     {
         var output = runtime?.Output ?? Console.Out;
         var platform = runtime?.Platform ?? new RuntimePlatform();
+        var expectedSha = options.Get("expected-source-sha");
+        var start = (runtime?.SourceCapture ?? new SourceSnapshot().Capture)(repo);
+        var source = new SourceEvidence { Start = start };
+        if (expectedSha is not null && (!System.Text.RegularExpressions.Regex.IsMatch(expectedSha, "^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+            || start.CaptureStatus != "known" || start.DirtyFiles != 0 || start.Commit != expectedSha))
+        {
+            output.WriteLine("CHECKPOINT source_mismatch or source_dirty");
+            return ExitCodes.Invalid;
+        }
+        var guard = new SourceRunGuard(repo, source, runtime?.SourceCapture);
+        if (!guard.Observe()) { output.WriteLine("CHECKPOINT " + guard.Reason); return ExitCodes.Invalid; }
         var slots = new BuildSlotClient(
             runtime?.SlotHandler ?? new HttpClientHandler(),
             BuildSlotClient.DefaultEndpoint(platform.IsWindows),
@@ -299,7 +334,7 @@ public static class Program
         {
             output.WriteLine(CheckpointLine.Format(new CheckpointLineModel
             {
-                Name = name, Commit = GitSnapshot.Run(repo, "rev-parse", "HEAD").Trim(),
+                Name = name, Commit = start.Commit ?? "unknown", Source = source,
                 Build = "failed", Filter = options.Get("filter") ?? "", Slot = lease.State,
                 SlotReason = lease.SlotReason, WaitedSeconds = lease.WaitedSeconds,
             }));
@@ -318,9 +353,7 @@ public static class Program
                 return new KeyValuePair<string, string>(token[..eq], token[(eq + 1)..]);
             })
             .ToList();
-        var commit = GitSnapshot.Run(repo, "rev-parse", "HEAD");
-        if (commit.StartsWith("git-failed", StringComparison.Ordinal))
-            commit = new string('0', 40);
+        var commit = start.Commit ?? "unknown";
         var runner = new RowRunner(runtime?.Driver ?? new ProcessDriver { DotnetShim = options.Get("dotnet") }, platform);
         var result = await runner.RunAsync(new RowRequest
         {
@@ -335,6 +368,9 @@ public static class Program
             Expect = (options.Get("expect") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(token => token.Trim('\'', '"')).Where(token => token.Length > 0).ToList(),
             Properties = properties,
             Commit = commit.Trim(),
+            Source = source,
+            SourceBoundary = guard.Observe,
+            ExpectedSourceSha = expectedSha,
             Slot = lease.State,
             SlotReason = lease.SlotReason,
             WaitedSeconds = lease.WaitedSeconds,
@@ -390,6 +426,7 @@ public static class Program
             Slots = options.Get("slots") ?? "auto",
             KeepOutputs = options.Has("keep-outputs"),
             CleanOnRed = options.Has("clean-on-red"),
+            ExpectedSourceSha = options.Get("expected-source-sha"),
         });
     }
 
