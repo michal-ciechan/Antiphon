@@ -703,3 +703,62 @@ then assesses the committed implementation; post-land Mutation retains the liste
 controls. No runner redeploy or AppHost restart is required to activate a rebuilt
 checkout-local tool. Existing detached shadow copies continue their old binary;
 never claim the fix applied to an already running executor.
+
+## Code result and red/green evidence (2026-10-01)
+
+Implementation and ordinary Linux verification source SHA:
+`f1778b580e83c6e35b3f6f9bb40a07b2ae09cc09`. The committed Roslyn source
+census is 281 Checkpoints methods / 290 expanded cases and 2543 Unit methods /
+3679 expanded cases. Each ordinary row was run directly through
+`scripts/run-checkpoint.ps1`, which obtained its own host build-slot grant;
+CP-1 built `tests/Antiphon.Tests` into `bin-c833/`, and CP-2..CP-6 reused it.
+The filters and class rosters were the exact six-row manifest above.
+
+| Row | Executed | Passed | Failed | Skipped | Slot | Waited |
+|---|---:|---:|---:|---:|---|---:|
+| CP-1 | 10 | 10 | 0 | 0 | granted | 15 s |
+| CP-2 | 8 | 8 | 0 | 0 | granted | 75 s |
+| CP-3 | 51 | 51 | 0 | 0 | granted | 60 s |
+| CP-4 | 13 | 13 | 0 | 0 | granted | 150 s |
+| CP-5 | 3 | 3 | 0 | 0 | granted | 45 s |
+| CP-6 | 3646 | 3646 | 0 | 33 | granted | 75 s |
+
+CP-6's first exact run selected the same 3679 cases and returned 3645 pass,
+one failure, 33 skips: the unrelated
+`ResilienceBudgetTests.Slow_first_attempt_consumes_the_same_budget` observed
+12.5 s virtual time against its `<12 s` assertion. The required once-only
+exact-row rerun passed 3646 / 3646 with 33 named Linux skips. Earlier build
+compilation errors and the original renewal fixture failure were corrected in
+new fast-forward commits; CP-3's initial 50/51 failure repeated before its
+synthetic GET listing was made structurally valid. The new V-7 probe-wait
+assertion also went red twice (expected 15 s, observed 0 s), then passed after
+the `SlotSession` diagnostic elapsed time was carried into the refusal lease.
+
+For independent red proof, a separate local clone of the same branch was used;
+its mutant commits were **not pushed** and do not belong to the deliverable.
+Mutant `00028de0b11beafab45d59585249a766f1121ded` omitted the wire start,
+admitted answered errors and malformed bodies, discarded fallback reason and
+renewal, changed 404 compatibility, and removed diagnostic bounding. Against
+that compiled source, the exact V-1..V-10 class row executed 10/10 and failed
+10/10 at named assertions. Exact method rows V-11, V-12, V-13, V-14, and V-17
+each executed once and failed at, respectively, simultaneous occupancy, renew
+count, build-driver count, refusal exit, and direct driver count. A discarded
+combined method-OR filter returned zero tests and is not red evidence. After
+reverting mutant A in the local clone, mutant
+`f55747e6cc6c500ecfe443daaaf9a67e03440b63` omitted DELETE, treated a
+bound owner with missing token as unbound, and omitted failed-holder child
+reaping. Exact V-15, V-16, and V-18 method rows each executed once and failed
+at broker occupancy, owner admission, and child-exit assertions. Thus all 18
+new methods have observed red and green outcomes; the 48 planned PC variants
+remain pending for method-scoped SourceLanding Mutation as specified.
+
+The production edit footprint overlaps CARD-0835 in `CheckpointApp.cs`,
+`Program.cs`, `RunScheduler.cs`, `RowRunner.cs`, `RunState.cs`,
+`CheckpointLine.cs`, `ReportModel.cs`, and `ReportMerger.cs`; its source-identity
+semantics were not changed. It overlaps CARD-0850 in `CheckpointApp.cs` only;
+output cleanup behavior was not changed. CARD-0823's null renewal compatibility
+remains covered by both existing methods. CARD-0853's owner guard was not edited
+in the deliverable. The only script edit is the plan-recorded namespace census
+change from 272 to 290 in `scripts/lib/checkpoint-usage.ps1`; no checkpoint
+script driver was changed. Windows qualification is pending in a separate task
+against the implementation SHA above.
