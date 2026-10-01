@@ -5,8 +5,8 @@ Stage: TestDesign complete; next: Code. Documentation only; no build or test exe
 Static audit baseline: `1edfc2a72abdd02d5613f5ff6297488dca9bdf02` (includes the
 plan landed at `45321eaf`). CARD-0835 Code recount at `8331a9cf`: the 12-row
 roster is amended to 201 planned executions per OS, including CARD-0833's 21
-slot-path regressions. The 26 positive-control IDs and 35 independently applied
-defect variants are unchanged.
+slot-path regressions. Final Code adds the two hidden-index controls: 28
+positive-control IDs and 37 independently applied defect variants.
 
 ## Problem and ground truth
 
@@ -470,11 +470,11 @@ reason to silently lower a floor. Do not use `--list-tests` as execution evidenc
 ### Guard inventory
 
 Variant IDs are part of the guard/control identity: e.g. G-7A maps only to PC-7A.
-There are **35 guards, 35 mapped variants under 26 PC IDs, missing=0, duplicate
+There are **37 guards, 37 mapped variants under 28 PC IDs, missing=0, duplicate
 maps=0**. Rows group shared validation decisions; input combinations beneath a
 single predicate remain labeled matrix assertions, not extra defect runs.
 The CP-5 CARD-0833 regression expansion adds no V method, guard or PC variant:
-the 35 guard-to-control mappings below remain the complete Mutation inventory.
+the 37 guard-to-control mappings below are the complete Mutation inventory.
 
 | Guard | Decision / assertion protected | Sole control |
 |---|---|---|
@@ -513,6 +513,8 @@ the 35 guard-to-control mappings below remain the complete Mutation inventory.
 | G-24 | D-6 migration never invents historical clean approval | PC-24 |
 | G-25 | D-6 manual replacement binds only its own explicit assertion | PC-25 |
 | G-26 | D-6 CLI sends only explicitly supplied source assertion | PC-26 |
+| G-27A | D-1 tool reader refuses assume-unchanged and skip-worktree index entries | PC-27A |
+| G-27B | D-1 script reader refuses assume-unchanged and skip-worktree index entries | PC-27B |
 
 ### Positive controls
 
@@ -525,11 +527,11 @@ helper** beside `lib/build-slot.ps1`. Do not mutate the driver executing the pha
 
 | Variant | One compiling production defect | Exact V method / named red assertion |
 |---|---|---|
-| PC-1A | Include nontracked ignored files in the tool source inventory. | V-1: `ignored-output-identity` expects zero dirt and unchanged fingerprint after writing ignored outputs. |
-| PC-1B | Filter tracked `bin-*` entries out of that inventory. | V-1: `tracked-output-dirty` expects a force-added output-path edit to count and change identity. |
+| PC-1A | Include nontracked ignored files in the tool source inventory. | V-1: `ignored-output-stability` expects zero dirt and unchanged fingerprint after writing ignored outputs. |
+| PC-1B | Filter tracked `bin-*` entries out of that inventory. | V-1: `tracked-output-must-count` expects a force-added output-path edit to count and change identity. |
 | PC-2 | Omit cached diff bytes from the tool fingerprint. | V-2: `index-only-content-change` expects different fingerprints for two staged contents with identical porcelain records and worktree restored to HEAD. Status alone still says dirty, so asserting only dirty would not kill this mutant. |
-| PC-3 | Omit untracked content digests from the tool fingerprint. | V-3: `untracked-same-path-new-bytes` expects changed hash with identical path/count. |
-| PC-4 | Convert capture failure to known clean/count zero. | V-4: `capture-error-is-unknown` expects unknown/null and ineligibility for a deterministic Git failure. |
+| PC-3 | Omit untracked content digests from the tool fingerprint. | V-3: `untracked-content-digest` expects changed hash with identical path/count. |
+| PC-4 | Convert capture failure to known clean/count zero. | V-4: `failed-git-is-unknown` expects unknown/null and ineligibility for a deterministic Git failure. |
 | PC-5 | Change the PowerShell canonical framing version byte. | V-5: `fixed-vector-parity` expects the independently pinned digest and tool/PowerShell equality on identical fixture bytes. Newline/NUL-path cases remain ordinary assertions; this is one framing defect, not an unspecified alternative mutation. |
 | PC-6 | Hardcode script terminal dirty/source-state tokens to zero/clean. | V-6: `dirty-receipt-agrees-with-source-json` expects parsed nonzero dirty and dirty state matching the actual capture, while retaining the test exit/counts. |
 | PC-7A | Omit the strict script dirty-preflight refusal. | V-7: `dirty-preflight-no-lease` expects exit 2 and zero slot-acquire calls as well as zero dotnet calls. A later guard refusing is still red on the lease assertion. |
@@ -540,8 +542,8 @@ helper** beside `lib/build-slot.ps1`. Do not mutate the driver executing the pha
 | PC-9B | Leave the previous build-source stamp valid when a replacement build fails. | V-8: `failed-rebuild-invalidates-stamp` expects absent/invalid stamp and strict reuse refusal after a failed rebuild of the same clean source. Otherwise the old matching stamp would pass. |
 | PC-10 | On a handled script interruption, substitute start for the unavailable end capture and mark it clean. | V-9: `interruption-has-no-observed-end` expects null/unknown end and validator refusal. Use a reachable catch/finally seam; killing the wrapper before it can write cannot test this defect. |
 | PC-11A | Normalize missing/legacy script source evidence into a complete clean default. | V-10: `legacy-receipt-ineligible` expects validator exit 2 on an otherwise valid legacy receipt. |
-| PC-11B | Bypass the script validator's clean/stable-source eligibility predicate. | V-10: `dirty-receipt-ineligible` expects exit 2 for internally consistent dirty source with a matching dirty build binding and passing tests. |
-| PC-11C | Bypass qualification of the selected receipt's identity/verdict. | V-10: `selected-receipt-ineligible` expects exit 2 for an otherwise clean, matching-source receipt with a failed test; the same matrix separately changes CP identity, SHA, counts and tokens. |
+| PC-11B | Bypass the script validator's clean/stable-source eligibility predicate. | V-10: `dirty-source-clean-receipt-ineligible` expects `reason=source_ineligible` for dirty JSON behind a clean receipt and verified build binding. |
+| PC-11C | Bypass the script validator's failed-run refusal. | V-10: `selected-receipt-ineligible` expects `reason=receipt_failed` for a clean source whose JSON and receipt agree on one failed test. Other matrix cases independently change CP identity, SHA, counts and tokens. |
 | PC-12 | BuildReport constructs clean row evidence from request.Commit instead of propagating actual row source. | V-11: `dirty-row-preserved` expects actual dirty fingerprint/state in persisted JSON, Markdown, line and git evidence for TUnit and command rows. |
 | PC-13 | At executor admission replace the saved CreateRun observation with the current capture instead of comparing them. | V-12: `queued-source-not-readmitted` expects original start identity retained, changed/exit 2 and no driver for A-at-create/B-at-execute. |
 | PC-14A | Make the tool's normal driver-boundary source comparison accept drift. | V-12: `driver-drift-stops-next-row` expects changed state, no next driver and all already-owned drivers awaited; place drift after build/row gates and check each labeled boundary. |
@@ -560,6 +562,12 @@ helper** beside `lib/build-slot.ps1`. Do not mutate the driver executing the pha
 | PC-24 | Change the actual new migration's nullable column default/backfill to true. | V-22: `legacy-source-clean-remains-null` expects null on the upgraded legacy row and no true SQL default. Mutate the executed migration, not just the model snapshot. |
 | PC-25 | Assign new override source cleanliness from the superseded row. | V-22: `override-does-not-inherit-true` expects new null/false and old true unchanged, with a valid explicit SHA to keep authorization checks satisfied. |
 | PC-26 | Always add reviewedSourceClean=true to delegate.ps1 finding JSON. | V-23: `finding-json-preserves-explicitness` expects absent/null when omitted, false when explicit false, and true only when supplied; inspect actual loopback request bodies. |
+| PC-27A | In `SourceSnapshot.cs`, skip the `git ls-files -v -z` hidden-entry refusal while keeping capture otherwise intact. | V-5: `assume-unchanged-tool-hidden` and `skip-worktree-tool-hidden` expect `unknown/indexed_path_hidden` after a hidden edit; both reader controls expect known before setting and after clearing the flag. |
+| PC-27B | In `scripts/lib/checkpoint-source.ps1`, skip the `git ls-files -v -z` hidden-entry refusal while keeping capture otherwise intact. | V-5: `assume-unchanged-script-hidden` and `skip-worktree-script-hidden` expect `unknown/indexed_path_hidden` after a hidden edit; both reader controls expect known before setting and after clearing the flag. |
+
+PC-1A, PC-1B, PC-3 and PC-4 use the implemented assertion names above.
+The earlier names described the same cases but were never present in their test
+failure messages; this correction preserves the one-defect mutation for each.
 
 Each V ID above resolves to one exact `Class.method` in the V table. The literal
 method filter is `/*/*/<Class>/<method>` (no namespace or class sweep); every
@@ -571,8 +579,8 @@ caught only by another guard or fixture error is not successful evidence for its
 named assertion. Keep source capture/guard boundaries observable in structured
 evidence or driver/slot traces so later refusals cannot hide an omitted early gate.
 
-PC-1/7/9/11/14/15/18 expand as **2+3+2+3+2+2+2 = 16** runs; the other 19 IDs each
-have one run: **35 total**. In particular PC-5 and PC-16 choose one concrete defect;
+PC-1/7/9/11/14/15/18 expand as **2+3+2+3+2+2+2 = 16** runs; the other 21 IDs each
+have one run: **37 total**. In particular PC-5 and PC-16 choose one concrete defect;
 PC-9A is one qualification bypass tested against a matrix, and PC-9B separately
 invalidates stale provenance. Never apply two variants in the same red phase.
 
@@ -687,13 +695,13 @@ two implementations, migration, consumer gate and fixtures; first Linux Code
 dispatch estimate 360 minutes plus observed slot wait. Split authoring by slices,
 not by repeatedly rebuilding the same slice.
 
-PC budget: 26 controls expand to **35 defect runs** with the listed variants.
+PC budget: 28 controls expand to **37 defect runs** with the listed variants.
 Budget 6 minutes per method-scoped baseline/red/restored-green cycle on Linux
-(210 minutes), plus 20 minutes setup/discovery/reporting = **230 minutes**; Windows
-9 minutes per cycle plus 25 setup = **340 minutes** if commissioned there. Migration
+(222 minutes), plus 20 minutes setup/discovery/reporting = **242 minutes**; Windows
+9 minutes per cycle plus 25 setup = **358 minutes** if commissioned there. Migration
 and settlement controls may exceed a simple parser cycle; the per-cycle average
 reserves their cost. Numeric combined Linux authoring + ordinary V/R + Mutation
-floor: **590 minutes**; mandatory Windows ordinary qualification adds 92 = **682**.
+floor: **602 minutes**; mandatory Windows ordinary qualification adds 92 = **694**.
 Any additional guard variant requires an explicit cost amendment.
 
 Savings are structural: one isolated build instead of one per class, no launcher
@@ -725,7 +733,7 @@ backslash. All expected failures/skips are zero on both platforms.
 ## Completion and rollout
 
 TestDesign is complete by static inspection: the twelve filters/counts are
-reconciled, resume/override setup is specified, and 35 guard/control variants cover
+reconciled, resume/override setup is specified, and 37 guard/control variants cover
 all 23 proposed methods. No build, test, discovery or mutation was executed in this
 stage. Code implements the named methods and the S1-S4 slices, using the closed
 table and the documented PowerShell fallback for CARD-0823. New behavior outside
@@ -735,7 +743,7 @@ Static validation parsed the Markdown cells (including escaped pipes), matched
 class/method operands against source declarations plus the proposed V roster,
 expanded `[Arguments]`, checked disjoint selections and every Min, summed both
 time columns, and checked the bijection between guard and PC-variant IDs. Result:
-12 rows, 201 planned executions per OS, 60/92 estimated minutes, 35 unique mappings and
+12 rows, 201 planned executions per OS, 60/92 estimated minutes, 37 unique mappings and
 23/23 proposed methods covered. `git diff --check` also passed. These are static
 design checks, not measured TUnit results or evidence that the PCs have gone red.
 

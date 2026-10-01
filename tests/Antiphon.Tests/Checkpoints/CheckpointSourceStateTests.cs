@@ -264,15 +264,19 @@ public sealed class CheckpointSourceStateTests
         void BothReaders(string status, string? code)
         {
             var tool = reader.Capture(repo.Root);
-            tool.CaptureStatus.ShouldBe(status, setFlag + " tool");
-            tool.ErrorCode.ShouldBe(code, setFlag + " tool reason");
+            tool.CaptureStatus.ShouldBe(status, setFlag == "--assume-unchanged"
+                ? "assume-unchanged-tool-hidden" : "skip-worktree-tool-hidden");
+        tool.ErrorCode.ShouldBe(code, setFlag == "--assume-unchanged"
+            ? "assume-unchanged-tool-hidden" : "skip-worktree-tool-hidden");
             var source = Path.Combine(GitFixture.ProjectRoot, "scripts", "lib", "checkpoint-source.ps1");
             var command = ". '" + source.Replace("'", "''") + "'; Get-CheckpointSource -Repository '" +
                 repo.Root.Replace("'", "''") + "' | ConvertTo-Json -Compress";
             using var json = JsonDocument.Parse(GitFixture.Run("pwsh", repo.Root, "-NoProfile", "-Command", command));
             var script = json.RootElement;
-            script.GetProperty("captureStatus").GetString().ShouldBe(status, setFlag + " script");
-            script.GetProperty("errorCode").GetString().ShouldBe(code, setFlag + " script reason");
+            script.GetProperty("captureStatus").GetString().ShouldBe(status, setFlag == "--assume-unchanged"
+                ? "assume-unchanged-script-hidden" : "skip-worktree-script-hidden");
+            script.GetProperty("errorCode").GetString().ShouldBe(code, setFlag == "--assume-unchanged"
+                ? "assume-unchanged-script-hidden" : "skip-worktree-script-hidden");
         }
 
         BothReaders("known", null); // Positive control for each reader.
