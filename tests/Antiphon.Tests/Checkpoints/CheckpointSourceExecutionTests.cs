@@ -40,7 +40,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
                 "<Project Sdk=\"Microsoft.NET.Sdk\" />");
             var built = new CheckpointManifest
             {
-                Builds = [new BuildSpec { Id = "bin-c835", Project = "sample/sample.csproj", OutputPath = "bin-c835/" }],
+                Builds = [new BuildSpec { Id = "bin-c835", Project = "sample", OutputPath = "bin-c835/" }],
                 Checkpoints = [new CheckpointSpec
                 {
                     Id = "CP-1", After = ["all"], Build = "bin-c835",
@@ -121,7 +121,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
             "<Project Sdk=\"Microsoft.NET.Sdk\" />");
         var flaky = new CheckpointManifest
         {
-            Builds = [new BuildSpec { Id = "bin-c835", Project = "sample/sample.csproj", OutputPath = "bin-c835/" }],
+            Builds = [new BuildSpec { Id = "bin-c835", Project = "sample", OutputPath = "bin-c835/" }],
             Checkpoints = [new CheckpointSpec
             {
                 Id = "CP-1", After = ["all"], Build = "bin-c835", Filter = "/*/*/ExampleSurfaceTests/*",
@@ -164,13 +164,13 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
             new RunRequest { Commit = Sha, Branch = "test", ExpectedSourceSha = Sha }, TempDir(),
             new CheckpointApp.Runtime { SourceCapture = _ => Observe(Sha, 1) }));
         var root = TempDir();
-        var expected = CheckpointBuildBinding.Expected(root, "sample/sample.csproj", "bin-c835/",
+        var expected = CheckpointBuildBinding.Expected(root, "sample", "bin-c835/",
             ["--property:UseAppHost=false"], source);
         expected.Write();
         expected.Check().ShouldBe("verified");
-        CheckpointBuildBinding.Expected(root, "sample/sample.csproj", "bin-c835/",
+        CheckpointBuildBinding.Expected(root, "sample", "bin-c835/",
             ["--property:UseAppHost=true"], source).Check().ShouldBe("mismatch", "property-mismatch-no-tests");
-        CheckpointBuildBinding.Expected(root, "sample/sample.csproj", "bin-c835/",
+        CheckpointBuildBinding.Expected(root, "sample", "bin-c835/",
             ["--property:UseAppHost=false"], Observe(OtherSha, 0)).Check().ShouldBe("mismatch");
         File.Delete(expected.PathName);
         expected.Check().ShouldBe("unknown", "missing-stamp-refuses-strict-reuse");
@@ -197,7 +197,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
                 "<Project Sdk=\"Microsoft.NET.Sdk\" />");
             var manifest = new CheckpointManifest
             {
-                Builds = [new BuildSpec { Id = "bin-c835", Project = "sample/sample.csproj", OutputPath = "bin-c835/" }],
+                Builds = [new BuildSpec { Id = "bin-c835", Project = "sample", OutputPath = "bin-c835/" }],
                 Checkpoints = [new CheckpointSpec
                 {
                     Id = "CP-1", After = ["all"], Build = "bin-c835",
