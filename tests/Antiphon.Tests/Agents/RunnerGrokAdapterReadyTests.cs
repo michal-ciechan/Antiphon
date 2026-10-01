@@ -108,8 +108,8 @@ public class RunnerGrokAdapterReadyTests
         var trustCompletion = await trustReady;
         var trustCompletionElapsed = trustStart.Elapsed;
         await trustRelease;
-        trustCompletion.ShouldBeFalse();
         trustCompletionElapsed.ShouldBeLessThan(TimeSpan.FromSeconds(1), "trustCompletionElapsed");
+        trustCompletion.ShouldBeFalse();
     }
 
     [Test]
@@ -146,18 +146,6 @@ public class RunnerGrokAdapterReadyTests
             new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(70),
                 MinimumAgeRemaining = TimeSpan.FromSeconds(2), PollInterval = TimeSpan.FromMilliseconds(10),
                 Settle = TimeSpan.Zero })).ShouldBeFalse();
-        var floorClock = new JumpClock();
-        var floorReads = 0;
-        var floor = await GrokReadyWait.WaitAsync(_ =>
-        {
-            floorReads++;
-            if (floorReads == 3) floorClock.Advance(TimeSpan.FromMilliseconds(80));
-            return Task.FromResult<GrokStartupSnapshot?>(new(
-                floorReads < 3 ? Ready : SignIn, "", floorReads, DateTime.UtcNow));
-        }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(150),
-            MinimumAgeRemaining = TimeSpan.FromMilliseconds(80), Settle = TimeSpan.Zero,
-            PollInterval = TimeSpan.FromMilliseconds(5), TimeProvider = floorClock });
-        floor.ShouldBeFalse("readyWithFloorModal");
         var trustClock = new JumpClock();
         var trustBudgetStarted = trustClock.GetTimestamp();
         var trustReads = 0;
@@ -178,17 +166,41 @@ public class RunnerGrokAdapterReadyTests
         trustBudgetElapsed.ShouldBeLessThan(
             TimeSpan.FromMilliseconds(5500), "trustCompletionElapsed inside originalMax");
         trustBudgetReady.ShouldBeFalse("trustCompletionElapsed must stay inside originalMax");
+    }
+
+    [Test]
+    public async Task Floor_modal_invalidates_stale_positive_at_minimum_age()
+    {
+        var floorClock = new JumpClock();
+        var floorReads = 0;
+        var floor = await GrokReadyWait.WaitAsync(_ =>
+        {
+            floorReads++;
+            if (floorReads == 3) floorClock.Advance(TimeSpan.FromMilliseconds(80));
+            return Task.FromResult<GrokStartupSnapshot?>(new(
+                floorReads < 3 ? Ready : SignIn, "", floorReads, DateTime.UtcNow));
+        }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5),
+            MinimumAgeRemaining = TimeSpan.FromMilliseconds(80), Settle = TimeSpan.Zero,
+            PollInterval = TimeSpan.FromMilliseconds(5), TimeProvider = floorClock });
+        floor.ShouldBeFalse("readyWithFloorModal");
+        floorReads.ShouldBeGreaterThanOrEqualTo(3);
+    }
+
+    [Test]
+    public async Task Utc_jump_does_not_advance_monotonic_settle()
+    {
+        var frame = new GrokStartupSnapshot(Ready, "", 1, DateTime.UtcNow);
         var utcClock = new JumpClock();
         var utcReads = 0;
         var utcStarted = Stopwatch.StartNew();
         var utcReady = await GrokReadyWait.WaitAsync(_ =>
         {
-            if (++utcReads == 2) utcClock.AdvanceUtc(TimeSpan.FromMilliseconds(90));
+            if (++utcReads == 2) utcClock.AdvanceUtc(TimeSpan.FromSeconds(3));
             return Task.FromResult<GrokStartupSnapshot?>(frame);
-        }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(300),
-            Settle = TimeSpan.FromMilliseconds(80), PollInterval = TimeSpan.FromMilliseconds(5),
+        }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5),
+            Settle = TimeSpan.FromSeconds(2), PollInterval = TimeSpan.FromMilliseconds(5),
             TimeProvider = utcClock });
-        (utcReady && utcStarted.Elapsed < TimeSpan.FromMilliseconds(75))
+        (utcReady && utcStarted.Elapsed < TimeSpan.FromMilliseconds(1500))
             .ShouldBeFalse("readyAfterUtcJumpWithoutElapsed");
         utcReady.ShouldBeTrue();
     }
@@ -207,8 +219,9 @@ public class RunnerGrokAdapterReadyTests
             exitReads++;
             if (exitReads == 2) exited = true;
             return Task.FromResult<GrokStartupSnapshot?>(new(Ready, "", exitReads, DateTime.UtcNow));
-        }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(100), Settle = TimeSpan.Zero,
+        }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5), Settle = TimeSpan.Zero,
             PollInterval = TimeSpan.FromMilliseconds(5) }, isExited: () => exited);
+        exitReads.ShouldBe(2);
         exitedReady.ShouldBeFalse("exitedReady");
         using var cancel = new CancellationTokenSource();
         cancel.Cancel();
@@ -312,7 +325,9 @@ public class RunnerGrokAdapterReadyTests
         public Task<SessionRunnerBufferDto> GetBufferAsync(Guid id, CancellationToken ct)
         {
             BufferReads++;
-            return Task.FromResult(new SessionRunnerBufferDto(id, Screen, SnapshotReads));
+            // The legacy quiet gate reads this DTO. Keep its sequence moving even
+            // when the modern adapter correctly reads only coherent snapshots.
+            return Task.FromResult(new SessionRunnerBufferDto(id, Screen, BufferReads));
         }
         public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid id, CancellationToken ct)
         {
