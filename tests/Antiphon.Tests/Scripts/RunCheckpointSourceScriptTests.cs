@@ -209,12 +209,6 @@ public sealed class RunCheckpointSourceScriptTests
         clean.Exit.ShouldBe(0, clean.Output);
         var valid = await fixture.ValidateAsync(clean.Evidence);
         valid.Exit.ShouldBe(0, valid.Output);
-        fixture.Write("tracked.txt", "dirty");
-        var dirty = await fixture.RunAsync();
-        dirty.Exit.ShouldBe(0, dirty.Output);
-        var dirtyVerdict = await fixture.ValidateAsync(dirty.Evidence);
-        dirtyVerdict.Exit.ShouldBe(2, "dirty-receipt-ineligible: " + dirtyVerdict.Output);
-        dirtyVerdict.Output.ShouldContain("reason=source_ineligible", Case.Sensitive, "dirty-receipt-ineligible");
         var tampered = Path.Combine(fixture.External, "tampered.json");
         var json = JsonNode.Parse(await File.ReadAllTextAsync(clean.Evidence))!.AsObject();
         json["receipt"] = clean.Line + " dirty=0";
@@ -234,8 +228,8 @@ public sealed class RunCheckpointSourceScriptTests
             change(copy);
             await File.WriteAllTextAsync(tampered, copy.ToJsonString());
             var checkedReceipt = await fixture.ValidateAsync(tampered);
-            checkedReceipt.Exit.ShouldBe(2, label + ": " + checkedReceipt.Output);
             checkedReceipt.Output.ShouldContain("reason=" + reason, Case.Sensitive, label);
+            checkedReceipt.Exit.ShouldBe(2, label + ": " + checkedReceipt.Output);
         }
         await RefusesAsync("dirty-source-clean-receipt-ineligible", "source_ineligible", value =>
         {
@@ -243,6 +237,12 @@ public sealed class RunCheckpointSourceScriptTests
             value["end"]!["dirtyFiles"] = 1;
             value["state"] = "dirty";
         });
+        fixture.Write("tracked.txt", "dirty");
+        var dirty = await fixture.RunAsync();
+        dirty.Exit.ShouldBe(0, dirty.Output);
+        var dirtyVerdict = await fixture.ValidateAsync(dirty.Evidence);
+        dirtyVerdict.Output.ShouldContain("reason=source_ineligible", Case.Sensitive, "dirty-receipt-ineligible");
+        dirtyVerdict.Exit.ShouldBe(2, "dirty-receipt-ineligible: " + dirtyVerdict.Output);
         await RefusesAsync("changed-source", "source_ineligible", value =>
         {
             value["state"] = "changed";
