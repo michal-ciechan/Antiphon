@@ -138,7 +138,12 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
         if (OperatingSystem.IsLinux())
         {
             var observed = ReadProcStartTicks(marker.OwnerPid);
-            if (observed.HasValue) return observed.Value != marker.OwnerStartTicks;
+            if (observed.HasValue)
+            {
+                if (observed.Value == marker.OwnerStartTicks) return false;
+                // A reused PID with unreadable or different credentials is uncertain.
+                return ReadProcUid(marker.OwnerPid) == marker.OwnerUid;
+            }
             // Unreadable proc data is uncertainty. Only an absent PID confirms death.
             try { using var process = Process.GetProcessById(marker.OwnerPid); return false; }
             catch (ArgumentException) { return true; }
@@ -147,6 +152,17 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
         try { using var process = Process.GetProcessById(marker.OwnerPid); return process.StartTime.ToUniversalTime().Ticks != marker.OwnerStartTicks; }
         catch (ArgumentException) { return true; }
         catch { return false; }
+    }
+
+    private static uint? ReadProcUid(int pid)
+    {
+        try
+        {
+            var line = File.ReadLines($"/proc/{pid}/status").FirstOrDefault(x => x.StartsWith("Uid:", StringComparison.Ordinal));
+            var parts = line?[4..].Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            return parts is { Length: >= 2 } && uint.TryParse(parts[1], out var uid) ? uid : null;
+        }
+        catch { return null; }
     }
 
     private static bool IsLink(string path) => ReclaimLinkOverride?.Invoke(path) ?? new FileInfo(path).LinkTarget is not null;
@@ -324,6 +340,14 @@ internal sealed class FakeHerdrTransport(FakeHerdrEndpoint endpoint) : IAsyncDis
 
     public ValueTask DisposeAsync()
     {
+        try { DisposeCore(); }
+        catch (Exception ex) { System.Diagnostics.Trace.TraceWarning($"Herdr transport cleanup failed: {ex}"); }
+        finally { if (_bound) endpoint.Release(); _bound = false; }
+        return ValueTask.CompletedTask;
+    }
+
+    private void DisposeCore()
+    {
         _pendingPipe?.Dispose();
         string? protectedReplacement = null;
         if (_ownsSocketPath && NativeFileIdentity.TryRead(endpoint.Path, out var beforeClose)
@@ -349,9 +373,6 @@ internal sealed class FakeHerdrTransport(FakeHerdrEndpoint endpoint) : IAsyncDis
             File.Delete(endpoint.Path);
             _ownsSocketPath = false;
         }
-        if (_bound) endpoint.Release();
-        _bound = false;
-        return ValueTask.CompletedTask;
     }
 }
 
