@@ -6,7 +6,7 @@ using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
-using TUnit.Core.Exceptions;
+using SkipTestException = TUnit.Core.Exceptions.SkipTestException;
 
 namespace Antiphon.Tests.Scripts;
 
