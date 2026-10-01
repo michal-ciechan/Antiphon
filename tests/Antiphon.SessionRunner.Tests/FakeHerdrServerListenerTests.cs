@@ -396,10 +396,13 @@ public class FakeHerdrServerListenerTests
         {
             FakeHerdrEndpoint.ReclaimLinkOverride.Value = null;
             FakeHerdrEndpoint.ReclaimIdentityOverride.Value = null;
-            File.Delete(path);
-            File.Delete(sentinel);
-            File.Delete(Path.Combine(directory, "owner"));
-            if (Directory.Exists(directory)) Directory.Delete(directory);
+            if (Directory.Exists(directory))
+            {
+                File.Delete(path);
+                File.Delete(sentinel);
+                File.Delete(Path.Combine(directory, "owner"));
+                Directory.Delete(directory);
+            }
         }
     }
 
@@ -414,7 +417,7 @@ public class FakeHerdrServerListenerTests
             await using var endpoint = new FakeHerdrEndpoint();
             path = endpoint.Path;
             File.WriteAllText(path, "foreign replacement");
-            throw new InvalidOperationException("C801_PRIMARY_FAILURE");
+            1.ShouldBe(2, "C801_PRIMARY_FAILURE");
         }
         catch (Exception ex) { observed = ex; }
         finally
@@ -426,6 +429,6 @@ public class FakeHerdrServerListenerTests
                 Directory.Delete(Path.GetDirectoryName(path)!);
             }
         }
-        observed.ShouldBeOfType<InvalidOperationException>().Message.ShouldBe("C801_PRIMARY_FAILURE");
+        observed.ShouldBeOfType<ShouldAssertException>().Message.ShouldContain("C801_PRIMARY_FAILURE");
     }
 }
