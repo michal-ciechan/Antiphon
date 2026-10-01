@@ -17,7 +17,9 @@ public static class CleanupPath
     {
         var value = Normalize(path);
         if (!IsAbsolute(value) || value.Contains('\0') || value.IndexOfAny(['*', '?', '[', ']']) >= 0) return false;
-        return !value.Split('/').Any(part => part is "." or "..");
+        if (value.StartsWith("//", StringComparison.Ordinal)) return false;
+        var parts = value.Split('/');
+        return !parts.Skip(1).Any(part => part is "" or "." or "..");
     }
 
     public static bool IsSameOrChild(string path, string ancestor)

@@ -55,7 +55,8 @@ public sealed class HostCleanupPolicyTests
     public void Traversal_cannot_escape_configured_root()
     {
         var f = new HostCleanupFixture();
-        foreach (var path in new[] { "/tmp/../etc/passwd", "/tmp/./c723-x", "/tmpx/c723-x" })
+        foreach (var path in new[] { "/tmp/../etc/passwd", "/tmp/./c723-x", "/tmp//c723-x",
+            "//tmp/c723-x", "/tmpx/c723-x" })
         {
             var result = f.Planner().Decide(f.Candidate(path));
             result.Disposition.ShouldNotBe(CleanupDisposition.Eligible,

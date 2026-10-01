@@ -61,9 +61,13 @@ public sealed class HostCleanupOwnershipTests
     public void Dead_parent_with_live_executor_is_kept()
     {
         var f = new HostCleanupFixture();
-        var owner = f.DeadReleasedOwner() with { NestedExecutorLiveness = OwnerLiveness.Alive };
+        var owner = f.DeadReleasedOwner() with
+        { HasNestedExecutor = true, NestedExecutorLiveness = OwnerLiveness.Alive };
         f.Planner().Decide(f.Candidate(owner: owner)).Reason.ShouldBe("executor_live",
             "C826.Dead_parent_with_live_executor_is_kept");
+        f.Planner().Decide(f.Candidate(owner: owner with { NestedExecutorLiveness = null })).Reason
+            .ShouldBe("executor_liveness_unknown",
+                "C826.Dead_parent_with_live_executor_is_kept:unknown");
     }
 
     [Test]
