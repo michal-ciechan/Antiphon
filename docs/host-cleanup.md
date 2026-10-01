@@ -16,10 +16,10 @@ graph does not exist yet.
 
 | Evidence | Result | Limit |
 |---|---|---|
-| CP-1 at `f70183cb258e9d94e017143005db6e216fff2a1b` | 42 executed, 42 passed, 0 failed/skipped | Policy and execution virtual-facts roster; it predates later path/custody changes and must be rerun at final SHA. |
+| CP-1 at `f70183cb258e9d94e017143005db6e216fff2a1b` | 42 executed, 42 passed, 0 failed/skipped | Policy and execution virtual-facts roster; later source changes require a final-SHA rerun, reported by the task. |
 | CP-8 client filter at `5d1bf4d2d973beb5151acbc09bffe436482803f3` | 26 Vitest cases passed | DTO/presentation only; server producer and recipient route are pending. |
 | Partial V-13 diagnostic at `f0be40f58` | 6 executed, 6 passed | Six pure inventory cases; CP-3's 56-case full row is pending. |
-| Scratch red proof | Five CP-1 controls and four CP-8 controls reached their `C826.*` named assertions | The full new-test red roster is pending. The scratch mutations were restored with `git diff` empty. |
+| Scratch red proof | All 60 authored TUnit methods and four new client cases reached distinct `C826.*` named assertion labels | The remaining frozen proposed tests are not authored. Each scratch mutation was restored with `git diff` empty. The per-test label inventory follows. |
 
 The plan's frozen roster, time box, and per-host activation checks remain the acceptance contract.
 No operator should set up or run this partial worker against a live host.
@@ -182,3 +182,74 @@ Review or activation.
 | 924 | TestDesign handoff: **complete; next: code**. Land CARD-0835 first, serialize the generated EF snapshot with any admit | PENDING: assertion absent | No |
 
 There are 145 keyword-bearing plan lines in this conservative inventory. The `No` entries remain required. The reason they are pending is the 150-minute Code time box, which cannot discharge the plan's estimated 16–24 hours of implementation and its remote/Windows qualification.
+
+## Authored new-control red proof
+
+The label below is the first failing named assertion recorded for that test under a scratch fault. Each method/title exactly matches the frozen plan roster. These red logs are diagnostic, not committed-source checkpoint receipts. Restoring each scratch fault left `git diff` empty.
+
+| Planned method or client title | Failing assertion label | Assertion source | Verdict |
+|---|---|---|---|
+| `Unknown_family_is_reported_without_delete` | `C826.Unknown_family_is_reported_without_delete` | `tests/Antiphon.Tests/Infrastructure/HostCleanupPolicyTests.cs:15` | named red; matches plan |
+| `Runtime_deny_overrides_owned_family` | `C826.Runtime_deny_overrides_owned_family:.git` | `tests/Antiphon.Tests/Infrastructure/HostCleanupPolicyTests.cs:29` | named red; matches plan |
+| `Parent_containing_runtime_state_is_kept` | `C826.Parent_containing_runtime_state_is_kept` | `tests/Antiphon.Tests/Infrastructure/HostCleanupPolicyTests.cs:42` | named red; matches plan |
+| `Child_of_protected_root_is_kept` | `C826.Child_of_protected_root_is_kept` | `tests/Antiphon.Tests/Infrastructure/HostCleanupPolicyTests.cs:51` | named red; matches plan |
+| `Traversal_cannot_escape_configured_root` | `C826.Traversal_cannot_escape_configured_root` | `tests/Antiphon.Tests/Infrastructure/HostCleanupPolicyTests.cs:63` | named red; matches plan |
+| `Link_at_any_depth_is_kept` | `C826.Link_at_any_depth_is_kept` | `tests/Antiphon.Tests/Infrastructure/HostCleanupPolicyTests.cs:76` | named red; matches plan |
+| `Foreign_mount_is_kept` | `C826.Foreign_mount_is_kept` | `tests/Antiphon.Tests/Infrastructure/HostCleanupPolicyTests.cs:86` | named red; matches plan |
+| `New_nested_file_keeps_old_directory` | `C826.New_nested_file_keeps_old_directory` | `tests/Antiphon.Tests/Infrastructure/HostCleanupPolicyTests.cs:97` | named red; matches plan |
+| `Exactly_twenty_four_hours_is_kept` | `C826.Exactly_twenty_four_hours_is_kept:equal` | `tests/Antiphon.Tests/Infrastructure/HostCleanupPolicyTests.cs:108` | named red; matches plan |
+| `Future_timestamp_is_kept` | `C826.Future_timestamp_is_kept` | `tests/Antiphon.Tests/Infrastructure/HostCleanupPolicyTests.cs:122` | named red; matches plan |
+| `Empty_root_requires_old_valid_marker` | `C826.Empty_root_requires_old_valid_marker:fresh` | `tests/Antiphon.Tests/Infrastructure/HostCleanupPolicyTests.cs:131` | named red; matches plan |
+| `Unreadable_entry_is_not_empty` | `C826.Unreadable_entry_is_not_empty` | `tests/Antiphon.Tests/Infrastructure/HostCleanupPolicyTests.cs:144` | named red; matches plan |
+| `Traversal_budget_exhaustion_is_unknown` | `C826.Traversal_budget_exhaustion_is_unknown` | `tests/Antiphon.Tests/Infrastructure/HostCleanupPolicyTests.cs:153` | named red; matches plan |
+| `Newest_write_includes_hidden_files_and_marker` | `C826.Newest_write_includes_hidden_files_and_marker` | `tests/Antiphon.Tests/Infrastructure/HostCleanupPolicyTests.cs:165` | named red; matches plan |
+| `Configuration_cannot_relax_hard_guards` | `C826.Configuration_cannot_relax_hard_guards:limits` | `tests/Antiphon.Tests/Infrastructure/HostCleanupPolicyTests.cs:173` | named red; matches plan |
+| `Unregistered_msbuild_testcontainers_and_tmp_are_unknown` | `C826.Unregistered_msbuild_testcontainers_and_tmp_are_unknown` | `tests/Antiphon.Tests/Infrastructure/HostCleanupPolicyTests.cs:187` | named red; matches plan |
+| `Private_cache_requires_exact_package_and_scratch_ownership` | `C826.Private_cache_requires_exact_package_and_scratch_ownership:unowned` | `tests/Antiphon.Tests/Infrastructure/HostCleanupPolicyTests.cs:198` | named red; matches plan |
+| `Retained_evidence_is_never_scratch` | `C826.Retained_evidence_is_never_scratch` | `tests/Antiphon.Tests/Infrastructure/HostCleanupPolicyTests.cs:209` | named red; matches plan |
+| `Per_host_roots_are_explicit_and_nonoverlapping` | `C826.Per_host_roots_are_explicit_and_nonoverlapping` | `tests/Antiphon.Tests/Infrastructure/HostCleanupPolicyTests.cs:218` | named red; matches plan |
+| `All_registered_owned_families_can_be_eligible` | `C826.All_registered_owned_families_can_be_eligible:Checkpoint` | `tests/Antiphon.Tests/Infrastructure/HostCleanupPolicyTests.cs:242` | named red; matches plan |
+| `Older_owned_root_is_eligible` | `C826.Older_owned_root_is_eligible` | `tests/Antiphon.Tests/Infrastructure/HostCleanupPolicyTests.cs:252` | named red; matches plan |
+| `Daily_plan_uses_injected_observations_only` | `C826.Daily_plan_uses_injected_observations_only` | `tests/Antiphon.Tests/Infrastructure/HostCleanupPolicyTests.cs:265` | named red; matches plan |
+| `Dry_run_has_zero_mutating_calls` | `C826.Dry_run_has_zero_mutating_calls` | `tests/Antiphon.Tests/Infrastructure/HostCleanupExecutionTests.cs:27` | named red; matches plan |
+| `Explicit_plan_file_is_the_only_preview_write` | `C826.Explicit_plan_file_is_the_only_preview_write:inside` | `tests/Antiphon.Tests/Infrastructure/HostCleanupExecutionTests.cs:37` | named red; matches plan |
+| `Plan_is_durable_before_first_delete` | `C826.Plan_is_durable_before_first_delete` | `tests/Antiphon.Tests/Infrastructure/HostCleanupExecutionTests.cs:53` | named red; matches plan |
+| `Plan_persist_failure_prevents_delete` | `C826.Plan_persist_failure_prevents_delete:failed-commit` | `tests/Antiphon.Tests/Infrastructure/HostCleanupExecutionTests.cs:64` | named red; matches plan |
+| `Failed_attempt_still_consumes_count_cap` | `C826.Failed_attempt_still_consumes_count_cap:attempts` | `tests/Antiphon.Tests/Infrastructure/HostCleanupExecutionTests.cs:77` | named red; matches plan |
+| `Byte_cap_is_shared_across_families` | `C826.Byte_cap_is_shared_across_families:one-delete` | `tests/Antiphon.Tests/Infrastructure/HostCleanupExecutionTests.cs:90` | named red; matches plan |
+| `Oversized_root_is_not_truncated` | `C826.Oversized_root_is_not_truncated` | `tests/Antiphon.Tests/Infrastructure/HostCleanupExecutionTests.cs:101` | named red; matches plan |
+| `Unknown_or_overflowed_size_is_kept` | `C826.Unknown_or_overflowed_size_is_kept:unknown` | `tests/Antiphon.Tests/Infrastructure/HostCleanupExecutionTests.cs:115` | named red; matches plan |
+| `Hardlinks_reserve_conservatively` | `C826.Hardlinks_reserve_conservatively` | `tests/Antiphon.Tests/Infrastructure/HostCleanupExecutionTests.cs:134` | named red; matches plan |
+| `Changed_file_identity_refuses_execution` | `C826.Changed_file_identity_refuses_execution` | `tests/Antiphon.Tests/Infrastructure/HostCleanupExecutionTests.cs:147` | named red; matches plan |
+| `Revalidation_catches_new_write` | `C826.Revalidation_catches_new_write` | `tests/Antiphon.Tests/Infrastructure/HostCleanupExecutionTests.cs:160` | named red; matches plan |
+| `Revalidation_catches_new_deny_or_hold` | `C826.Revalidation_catches_new_deny_or_hold` | `tests/Antiphon.Tests/Infrastructure/HostCleanupExecutionTests.cs:173` | named red; matches plan |
+| `Revalidation_catches_live_owner_or_revoked_release` | `C826.Revalidation_catches_live_owner_or_revoked_release` | `tests/Antiphon.Tests/Infrastructure/HostCleanupExecutionTests.cs:186` | named red; matches plan |
+| `Active_hold_preserves_owned_scratch` | `C826.Active_hold_preserves_owned_scratch` | `tests/Antiphon.Tests/Infrastructure/HostCleanupExecutionTests.cs:199` | named red; matches plan |
+| `Expired_hold_requires_visible_disposition` | `C826.Expired_hold_requires_visible_disposition:reason` | `tests/Antiphon.Tests/Infrastructure/HostCleanupExecutionTests.cs:213` | named red; matches plan |
+| `Partial_failure_keeps_custody_and_budget` | `C826.Partial_failure_keeps_custody_and_budget:receipt` | `tests/Antiphon.Tests/Infrastructure/HostCleanupExecutionTests.cs:229` | named red; matches plan |
+| `Duplicate_request_returns_same_receipt` | `C826.Duplicate_request_returns_same_receipt` | `tests/Antiphon.Tests/Infrastructure/HostCleanupExecutionTests.cs:245` | named red; matches plan |
+| `Concurrent_parent_removal_is_zero_reclaimed` | `C826.Concurrent_parent_removal_is_zero_reclaimed:outcome` | `tests/Antiphon.Tests/Infrastructure/HostCleanupExecutionTests.cs:257` | named red; matches plan |
+| `Cursor_is_stable_without_starving_old_roots` | `C826.Cursor_is_stable_without_starving_old_roots` | `tests/Antiphon.Tests/Infrastructure/HostCleanupExecutionTests.cs:272` | named red; matches plan |
+| `Eligible_scratch_is_removed_and_measured` | `C826.Eligible_scratch_is_removed_and_measured:measured` | `tests/Antiphon.Tests/Infrastructure/HostCleanupExecutionTests.cs:283` | named red; matches plan |
+| `Unknown_owner_prevents_delete` | `C826.Unknown_owner_prevents_delete` | `tests/Antiphon.Tests/Infrastructure/HostCleanupOwnershipTests.cs:16` | named red; matches plan |
+| `Live_owner_prevents_delete` | `C826.Live_owner_prevents_delete` | `tests/Antiphon.Tests/Infrastructure/HostCleanupOwnershipTests.cs:26` | named red; matches plan |
+| `Reused_pid_prevents_delete` | `C826.Reused_pid_prevents_delete` | `tests/Antiphon.Tests/Infrastructure/HostCleanupOwnershipTests.cs:35` | named red; matches plan |
+| `Unknown_liveness_prevents_delete` | `C826.Unknown_liveness_prevents_delete` | `tests/Antiphon.Tests/Infrastructure/HostCleanupOwnershipTests.cs:44` | named red; matches plan |
+| `Foreign_host_boot_or_namespace_prevents_delete` | `C826.Foreign_host_boot_or_namespace_prevents_delete` | `tests/Antiphon.Tests/Infrastructure/HostCleanupOwnershipTests.cs:57` | named red; matches plan |
+| `Dead_parent_with_live_executor_is_kept` | `C826.Dead_parent_with_live_executor_is_kept` | `tests/Antiphon.Tests/Infrastructure/HostCleanupOwnershipTests.cs:67` | named red; matches plan |
+| `Missing_nested_custody_is_kept` | `C826.Missing_nested_custody_is_kept` | `tests/Antiphon.Tests/Infrastructure/HostCleanupOwnershipTests.cs:79` | named red; matches plan |
+| `Evidence_receipt_is_required_for_release` | `C826.Evidence_receipt_is_required_for_release` | `tests/Antiphon.Tests/Infrastructure/HostCleanupOwnershipTests.cs:88` | named red; matches plan |
+| `Owner_generation_change_refuses_claim` | `C826.Owner_generation_change_refuses_claim` | `tests/Antiphon.Tests/Infrastructure/HostCleanupOwnershipTests.cs:101` | named red; matches plan |
+| `Competing_lifecycle_and_daily_calls_share_claim` | `C826.Competing_lifecycle_and_daily_calls_share_claim:receipt` | `tests/Antiphon.Tests/Infrastructure/HostCleanupOwnershipTests.cs:116` | named red; matches plan |
+| `Slot_binding_blocks_daily_ownership` | `C826.Slot_binding_blocks_daily_ownership:active` | `tests/Antiphon.Tests/Infrastructure/HostCleanupOwnershipTests.cs:129` | named red; matches plan |
+| `Released_dead_owner_allows_scratch` | `C826.Released_dead_owner_allows_scratch` | `tests/Antiphon.Tests/Infrastructure/HostCleanupOwnershipTests.cs:138` | named red; matches plan |
+| `Unpushed_commit_is_never_eligible` | `C826.Unpushed_commit_is_never_eligible:keep` | `tests/Antiphon.Tests/Application/HostCleanupWorktreeInventoryTests.cs:33` | named red; matches plan |
+| `Dirty_or_active_worktree_is_kept` | `C826.Dirty_or_active_worktree_is_kept` | `tests/Antiphon.Tests/Application/HostCleanupWorktreeInventoryTests.cs:50` | named red; matches plan |
+| `Classifier_preserves_guarded_classes_and_release_requirements` | `C826.Classifier_preserves_guarded_classes_and_release_requirements:protected` | `tests/Antiphon.Tests/Application/HostCleanupWorktreeInventoryTests.cs:61` | named red; matches plan |
+| `Registered_and_unregistered_candidates_are_fully_accounted` | `C826.Registered_and_unregistered_candidates_are_fully_accounted:orphan` | `tests/Antiphon.Tests/Application/HostCleanupWorktreeInventoryTests.cs:80` | named red; matches plan |
+| `Unavailable_owner_is_reported_without_retry_or_delete` | `C826.Unavailable_owner_is_reported_without_retry_or_delete:one-read` | `tests/Antiphon.Tests/Application/HostCleanupWorktreeInventoryTests.cs:95` | named red; matches plan |
+| `Refusing_owner_is_reported_without_retry_or_delete` | `C826.Refusing_owner_is_reported_without_retry_or_delete:one-read` | `tests/Antiphon.Tests/Application/HostCleanupWorktreeInventoryTests.cs:106` | named red; matches plan |
+| `links a host cleanup summary to its run` | `C826.links a host cleanup summary to its run` | `client/src/features/attention/attentionVisuals.test.ts:100` | named red; matches plan |
+| `shows cleanup disk pressure at the reported severity` | `C826.shows cleanup disk pressure at the reported severity:warning` | `client/src/features/attention/attentionVisuals.test.ts:108` | named red; matches plan |
+| `keeps an expired cleanup hold visible for review` | `C826.keeps an expired cleanup hold visible for review` | `client/src/features/attention/attentionVisuals.test.ts:116` | named red; matches plan |
+| `shows sustained worktree backlog with its responsible owner` | `C826.shows sustained worktree backlog with its responsible owner` | `client/src/features/attention/attentionVisuals.test.ts:125` | named red; matches plan |
