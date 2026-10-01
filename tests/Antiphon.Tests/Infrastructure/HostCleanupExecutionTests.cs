@@ -37,7 +37,8 @@ public sealed class HostCleanupExecutionTests
         output.Writes.ShouldBe(1, "C826.Explicit_plan_file_is_the_only_preview_write:outside");
         await Should.ThrowAsync<ArgumentException>(async () =>
             await CleanupPreview.WritePlanFileAsync(plan,
-                HostCleanupFixture.CheckpointPath + "/plan.json", output));
+                HostCleanupFixture.CheckpointPath + "/plan.json", output),
+            "C826.Explicit_plan_file_is_the_only_preview_write:inside");
         output.Writes.ShouldBe(1, "C826.Explicit_plan_file_is_the_only_preview_write:inside");
     }
 
@@ -59,7 +60,8 @@ public sealed class HostCleanupExecutionTests
         f.PlanStore.Fail = true;
         var candidate = Register(f);
         var plan = f.Plan(candidate);
-        await Should.ThrowAsync<IOException>(async () => await f.Executor().ExecuteAsync(plan, false));
+        await Should.ThrowAsync<IOException>(async () => await f.Executor().ExecuteAsync(plan, false),
+            "C826.Plan_persist_failure_prevents_delete:failed-commit");
         f.FileSystem.DeleteCalls.ShouldBe(0, "C826.Plan_persist_failure_prevents_delete");
         f.FileSystem.Facts.ShouldContainKey(candidate.Path);
     }
