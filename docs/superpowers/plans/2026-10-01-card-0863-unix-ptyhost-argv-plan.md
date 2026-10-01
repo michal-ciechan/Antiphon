@@ -1,6 +1,6 @@
 # CARD-0863: Unix PtyHost argv fidelity and NUL refusal
 
-Date: 2026-10-01. Stage: Plan complete; TestDesign follows. Baseline: `origin/master` at `fccef27eb03f2522f2a40574dc1c764335d4a490`. The assigned branch `feat/card-task-fede62ef` starts at that same commit. Read-only `git ls-remote origin refs/heads/master refs/heads/feat/card-task-fede62ef` confirmed both refs at that SHA during Plan. No rebase, merge, build, test, provider launch, deployment or live configuration change was performed. This task changes only this plan.
+Date: 2026-10-01. Stage: **TestDesign complete; Code waits for CARD-0778 land**. Plan baseline: `origin/master` at `fccef27eb03f2522f2a40574dc1c764335d4a490`; TestDesign source: `f53a3da88b1e8a794a54c0c3ab9c8b473c746da1`, on `feat/card-task-4b33c4d0`. This branch carries the unlanded Plan from `feat/card-task-fede62ef`. No rebase, merge, build, test, provider launch, deployment or live configuration change was performed in either documentation stage. TestDesign changes only this plan.
 
 ## Outcome and scope
 
@@ -87,7 +87,7 @@ Rejected: an HTTP 500 for invalid argv; phone-home's generic unsupported-target 
 
 Add a small owned Node probe under the Pty tests' already-copied `probes/` directory. It writes `process.argv.slice(2)` as JSON to a fixture-owned capture, atomically completes the capture, emits `ARGV_CAPTURED`, and stays alive until its owner tears it down. Pass the capture path through a dedicated environment value; user test arguments are never interpolated into source or a shell command. Resolve the existing local Node installation; no package download, provider binary or network call. JSON preserves empty arguments, quotes, Unicode and line endings independently of PTY output rendering.
 
-The existing SessionRunner tests continue to use their owned shell child. New application-composition coverage can reuse `HerdrTestProcess.CreateOwnedUnixArgvChild`, already linked into `Antiphon.Tests`; compare complete capture bytes including separators, not `RemoveEmptyEntries`. This avoids changing shared provider fixtures or build staging. Missing Node/host apphost is an explicit fixture prerequisite failure, not a skip counted as success.
+The existing SessionRunner tests and new application-composition coverage use the owned shell-child pattern from `HerdrTestProcess.CreateOwnedUnixArgvChild`, with local helpers in the named test files adding atomic capture completion. Compare complete capture bytes including separators, not `RemoveEmptyEntries`. This avoids changing shared provider fixtures or build staging. Missing Node/host apphost is an explicit prerequisite failure for native-fidelity tests, not a skip counted as success; V-5 deliberately uses an absent host image as a downstream admission tripwire and makes no native-fidelity claim.
 
 Use owned temp roots, assembly-local `ParallelLimiter<ProcessSpawnLimit>`, and `finally` teardown that kills and awaits only the fixture's child/host before cleanup. No test boots real server Program or contacts runner 17204. Native readiness is a completed capture/marker, not a quiet-period heuristic. Bounded wall-clock waits protect the harness only; they are never the intended assertion for a positive control. No production clock seam is required for argument validation. Any test-only delay/retry policy introduced in TestDesign must use an injected `FakeTimeProvider`; real native I/O waits retain cancellation and are not asserted by elapsed milliseconds.
 
@@ -113,14 +113,32 @@ All paths below are the future Code footprint; this dispatch edits only this Mar
 | CARD-0505 | No exact file overlap; different settings/services/application tests. | No functional dependency. Recheck actual active scope before Code; do not rewrite dispatch helpers to accommodate a changed test harness without amending scope. |
 | CARD-0822 | No exact file overlap; its launch-environment and instruction-bundle changes affect inputs to composition tests. | No mandatory wait solely for this held card. Preserve its changes and rerun affected composition evidence if it lands into the tested source. |
 | CARD-0826 | **Exact overlap: `src/Antiphon.SessionRunner/PhoneHomeCommandDispatcher.cs`.** Its plan adds cleanup dispatch; ours adds one typed error mapping. `SessionRunnerRuntime.cs` is not in its supplied exact footprint. Both also occupy the mapped runner area. | Never overlap these Code tasks. Since 0826 is held Code-ready, caller may schedule 0863 first; if 0826 starts first, wait for its land and preserve the new dispatch arms. No dependency on implementing cleanup. |
+| CARD-0881 Plan | Live card scopes the effective-settings read surface and final policy/bundle documentation, outside this card's named files. Its final plan is not in this checkout. | No present production collision established; recheck its frozen footprint before Code. Bundle changes can change V-8's input and R-4's catalog census, so recompute expectations from actual composition. |
+| CARD-0883 Plan | Live card names `AgentTaskLandSourceResolver.cs`, landing request recovery and its application tests, outside the exact argv footprint. Its final plan is not in this checkout. | No native dependency; a future broad Application test scope must be checked before S3. Do not claim an unobserved final scope is disjoint. |
+| CARD-0866 Plan | Live card names disposal preview/redaction and standing-execution locking (`HerdrPaneDisposalEndpointTests` / `HerdrPaneDisposalApplicationTests`), not argv. Its final plan is not in this checkout; a runner-side disposal implementation could share mapped `runner`. | Recheck final scope; if its Code occupies `runner`, defer under the same-area rule even if exact files differ. No repair of its two Linux gates here. |
 
-The collision assessment uses committed plans plus the brief's held/in-flight classification, not a fresh fleet occupancy claim. Immediately before Code the orchestrator reads `/api/agent-tasks/pipeline`, `/api/session-runners`, `/api/runner-defaults` and `/api/hosts`, and compares actual scopes. No host budget change or dispatch is authorized by this Plan.
+TestDesign checked the committed 0778/0835/0788/0505/0822/0826 footprints and `antiphon.areas.json`, plus the live cards for the three still-running Plans. A board-scoped read of `/api/agent-tasks?boardId=8988ca03-7414-47ad-b0b6-51556c701703&status=Queued,Dispatched,Working,Blocked` on 2026-10-01 confirmed 0778 Code `8d5aa4fc` and 0835 Code `9a1c17e8` Dispatched, with 0881/0883/0866 Plans Dispatched. Held 0788/0505/0822/0826 remain the brief's scheduling classification, not newly observed active tasks. Our exact footprint is the 13 paths above, mapping to **pty, runner, docs**, plus the explicitly named Application test. No EF snapshot, AgentTaskService, scripts/delegate.ps1, tools/Antiphon.Checkpoints, GrokStartupReadiness.cs or tests/Antiphon.Tests/Agents file is edited. Immediately before Code the orchestrator reads `/api/agent-tasks/pipeline`, `/api/session-runners`, `/api/runner-defaults` and `/api/hosts`, then each candidate's actual scope; null/omitted scope is not proof of no collision. No host budget change or dispatch is authorized by this document. This TestDesign does not wait for 0778; **Code does**.
 
 ## Verification design
 
-### Inspection and source census
+### Inspection
 
-Recount the source again in TestDesign and after any dependency lands; do not copy a neighboring plan's counts. The census below counts separately reported TUnit results, not assertion loops. Existing classes were read and their `[Test]`/`[Arguments]` attributes counted at the frozen baseline. Proposed methods below do not exist yet: their counts are explicit design targets, to be reconciled with implemented source and fresh TRX before Code claims green.
+Frozen by TestDesign on 2026-10-01 against the source SHA above. `card.ps1 get CARD-0863 -Board Antiphon` confirmed the title **Unix PtyHost passes literal quotes around multiline argv and truncates arguments at NUL**. Read-only card retrieval also covered 0882, 0871, 0865 and every collision-table card. Source census and Markdown manifest checks are static evidence; **no runtime or mutation success is claimed**.
+
+| Bodies / fixtures inspected | Boundary and coverage |
+|---|---|
+| `PtyAgentRunner.StartCoreAsync/LaunchCoreAsync`, `LaunchArgvGuardTests`, `ModernConPtyCommandLineTests`, `LinuxCgroupContainmentTests`, Pty test project content staging | Original vector, containment rewrite, final spawn, consumed tracked attempt and Windows escaping: V-1..V-4, V-9, V-10; R-2/R-3. |
+| `SessionRunnerRuntime.StartAsync/StartCoreAsync`, `RunnerCustodyLedger.PrepareStart`, `RunnerCustodyTests.CustodyFixture`, `LinuxCustodyProbeTests` | Platform guard precedes custody; custody can reserve before backend refusal; registration counter survives failed launches. V-5/V-11 must inspect these effects, not just the final empty session list. |
+| Both `SessionReadLaunchRoutes` handlers, `HostStatsTestHost`, `PhoneHomeCommandDispatcher.LaunchAsync/RejectUnsupportedLaunch`, `PhoneHomeCommandDispatcherTests` | Real route binding and real dispatcher catch ordering: V-6/V-7. Raw executable allowlist avoids a provider identity; phone-home generation watermark precedes runtime admission. |
+| All bodies in the three CARD-0801 CP-6 classes, `HerdrTestProcess.CreateOwnedUnixArgvChild`, `TestSessionTeardown` | R-1's exact platform branches; shell capture currently becomes visible before its write completes. Fix capture completion locally in the two touched classes; do not alter shared fixtures. |
+| `DelegateLaunchArgvIntegrityTests`, `GrokRulesLaunchRefusalTests` including their composition/harness helpers | V-8 calls the real bundle/identity/remote-control composition. The reusable harness resolves PostgreSQL; budget its established fixture startup, dispose the provider, and never invoke named-agent Start. R-4 remains Windows-only. |
+| `GrokRulesAdoptionTests`, CARD-0865/0878 gate conditions and named-seat body in the three `HerdrAlwaysOnChannelParityTests` partials | Excluded adoption, queued-prompt receipt and Windows-policy expectations; no shared native-argv assertion that this fix can certify. |
+
+TestDesign corrects the proposed roster in place: adds the separately detectable pre-containment/consumed-attempt boundary (V-10), final executable NUL (V-4), the second phone-home operation (V-7), and platform/backend precedence (V-11); separates both HTTP catches; replaces vague custody/phone-home setup; freezes capture completion and repeat limits. Production footprint and D-1..D-3 stay as planned. New-result count changes from the proposed 26 to **33**, with the derived checkpoint floors below.
+
+#### Source census
+
+TestDesign recounted `[Test]` and every `[Arguments]` expansion from the eight exact existing files using a Node source census, then inspected OS gates and internal loops. No method/class data source or matrix changes the counts. Recount after any dependency lands. New methods below do not exist yet: their **explicit frozen attributes** are design counts, to be reconciled with implemented source and fresh TRX before Code claims green.
 
 | Existing class | Methods / expanded results | Lane / reason |
 |---|---:|---|
@@ -133,23 +151,122 @@ Recount the source again in TestDesign and after any dependency lands; do not co
 
 Use an attribute census over the exact named files, check for additional `[MethodDataSource]`, `[ClassDataSource]`, `[Matrix]` and skip conditions, and then compare the executable TRX roster. `--list-tests` is not scoped execution evidence on this runner. The actual executed names and per-case outcomes must agree with the census; exit zero and `Min` alone are insufficient.
 
+#### Exact retained method roster
+
+The following names were generated from the inspected source attributes; a line with no argument suffix contributes one result. These methods plus V-1..V-11 are the closed roster; internal loops never multiply it.
+
+```text
+LinuxCgroupContainmentTests
+  Place_prefixes_the_root_owned_shim_with_a_separator
+  Place_keeps_a_flag_shaped_child_argument_on_the_child_side
+  Read_active_reports_the_trees_own_population
+  An_unreadable_tree_throws_rather_than_reporting_zero
+  Terminate_goes_through_the_kill_helper_and_reports_the_outcome
+  An_empty_container_id_is_refused
+  The_helper_paths_are_absolute_and_image_owned
+
+LaunchArgvGuardTests
+  The_corrected_escaping_passes_the_guard
+  The_old_doubling_rule_is_caught_before_the_process_is_created
+  A_truncated_bundle_is_caught_by_LENGTH_not_by_presence
+  An_argument_lost_off_the_end_is_reported_as_missing_rather_than_as_a_mismatch
+  A_correct_launch_with_no_special_characters_passes
+  An_app_path_with_spaces_still_round_trips
+  The_porta_formatter_replica_matches_the_real_porta_assembly
+  The_inbox_backends_pre_escaped_verbatim_line_round_trips
+  Portas_format_does_not_round_trip_the_shape_that_shredded_production
+  ParseArgv_is_the_real_parser
+
+ModernConPtyCommandLineTests
+  An_embedded_quote_survives_as_one_argument
+  A_trailing_backslash_is_not_swallowed_by_the_closing_quote
+  A_backslash_immediately_before_a_quote_is_doubled
+  A_backslash_not_before_a_quote_is_literal
+  Plain_and_whitespace_arguments_round_trip
+  An_argument_with_no_special_characters_is_not_quoted_at_all
+  The_old_doubling_rule_would_have_shredded_the_embedded_quote_case
+
+DelegateLaunchArgvIntegrityTests
+  Every_dispatched_launch_round_trips_through_both_backends
+  Every_codex_launch_fits_both_launcher_hops_at_production_budget
+  Every_dispatched_launch_round_trips_with_role_defaults_alone
+  Every_bundle_in_the_catalog_round_trips_as_a_single_argument
+  The_hostile_seed_round_trips_through_both_backends
+  The_old_porta_composition_still_fails_the_hostile_seed
+  At_least_one_shipped_bundle_still_shreds_under_the_old_porta_rule
+
+GrokRulesLaunchRefusalTests
+  Named_grok_herdr_agent_with_unsafe_raw_rules_is_refused_before_any_session_exists
+  Named_grok_pty_host_agent_with_unsafe_raw_rules_is_refused_before_any_session_exists
+  Cold_grok_delegate_keeps_full_composed_bundles_in_typed_payload
+  Named_grok_agent_with_a_single_line_append_composes_the_rendered_line_byte_identical
+  Over_budget_single_line_composition_still_throws_invalid_operation
+
+GrokRulesFileLaunchTests
+  Unsafe_final_runner_boundary_has_zero_effects_even_without_server_validation ["cr"; "lf"; "crlf"; "nul"; "alias"; "equals"; "missing"; "duplicate_first"; "duplicate_second"; "env"; "braced_env"; "env_flag"]
+  Herdr_receipt_is_durable_before_first_request_and_before_typing
+  Launch_failure_retains_pre_spawn_receipt_in_existing_manifest
+  Invalid_payload_refuses_before_session_registration_or_disk_effects ["nul"; "unresolved_key"; "too_large"; "wrong_kind"; "invalid_unicode"]
+  Explicit_rules_conflict_and_unsafe_source_precedence_have_no_effects
+  Actual_argv_budget_includes_generated_bootstrap_before_materialization
+
+GrokRulesRunnerRefusalTests
+  Herdr_grok_multiline_rules_are_refused_before_herdr_is_contacted
+  Herdr_grok_rules_equals_form_is_refused
+  Herdr_grok_append_system_prompt_alias_is_refused
+  Herdr_env_token_resolving_to_multiline_rules_is_refused
+  Herdr_env_supplied_rules_flag_is_refused
+  Herdr_grok_oversized_rules_are_refused
+  Herdr_grok_wrapper_launch_with_multiline_rules_is_refused_by_kind_not_by_exe_name
+  Pty_host_grok_multiline_rules_are_refused_before_a_session_is_registered
+  Herdr_grok_single_line_rules_proceed_to_herdr_unchanged
+  Herdr_claude_multiline_append_is_not_refused
+  Grok_rules_refusal_maps_to_409_with_its_code
+
+GrokRulesStoreFailureTests
+  Storage_failure_refuses_before_any_child_or_pane_effect [false, "temp_write"; true, "temp_write"; false, "replace"; true, "replace"; false, "metadata"; true, "metadata"]
+
+```
+
+Static validation at TestDesign completion: the six table rows passed schema/escaped-pipe parsing, exact command/filter/output/Min agreement, and trailing-class-wildcard checks. Source recount: 54 existing methods / 74 expanded results. Planned new roster: 11 methods / 33 results; Linux 76, Windows 69, total 145. Guard/control mapping: 16 unique pairs. `git diff --check` passed. No compiled manifest import, build, test or PC was run.
+
+### Delivery inventory
+
+This changes launch argv and synchronous refusal propagation; it adds no async work queue or prompt-delivery/recovery path. Busy-recipient, enqueue-failure and crash replay tests are therefore out of scope. Do not infer UserPrompt delivery from launch success.
+
+| Producer -> recipient | Identity / persistence / receipt | Limit |
+|---|---|---|
+| Dispatcher composition -> real Pty runner -> native echo child (V-1/V-3/V-8/V-9) | Fixture-owned capture path and sentinel; child atomically renames complete JSON or NUL-delimited bytes; parent compares the entire vector. Tracked path additionally records ordered start-intent/PID calls. | Native child receipt proves argv only. Node is the real installed native executable; the owned script is its echo program. No provider or parser-only substitute qualifies. |
+| HTTP launch caller -> real route -> runtime refusal -> HTTP client (V-6) | Fresh session ID; completed response with 409/type/title/detail; registration counter and log-root snapshot. | No accepted session and no prompt receipt; no new persistence/recovery behavior. |
+| Phone-home request frame -> real dispatcher -> real runtime -> response frame (V-7) | Request ID/operation and fixed normalized accepted generation; frame carries matching request ID, 409 and `pty_argv_nul`. | Existing launch-generation watermark is written **before** runtime admission. Assert it is retained; do not promise zero phone-home disk effects or retry the same generation as a new launch. No WebSocket delivery/reconnect change. |
+
+Native capture must have an independent completion condition: write to a sibling temporary file, close, rename to the final capture, then emit the marker. For the existing shell child in R-1 and the new V-8 helper, write a local fixture script using `printf '%s\0' "$@"` and an atomic rename; keep it inside the named test files, with no `eval` or argv interpolation. Reading mere file existence during the old non-atomic write is not deterministic. Compare all bytes including the final separator; never discard empty entries. Start Node with the simple relative probe filename and its directory as cwd, so an argv-quoting mutant cannot corrupt the **probe path** and turn the detector into a missing-script timeout. Capture destination travels in environment, never argv.
+
+Harness deadlines are cancellation/cleanup bounds only (native capture and HTTP: 20 seconds; owned exit: 15 seconds); a deadline failure is a harness failure, never a credited PC red. Do not assert real elapsed time or introduce margins below two seconds. Poll intervals are not correctness margins. Use a fixed `FakeTimeProvider` for the phone-home clock; any new retry/settling logic must use a controlled clock. Keep assembly-local process limiters and serial checkpoint rows. Add the limiter to `GrokRulesRunnerRefusalTests`, whose source currently has only `NotInParallel("HerdrLaunchShape")`, when ungating its native launch. New classes declare `Category("Integration")`. Native fixtures retain the actual owned PID/host identity and kill/await that child in `finally`; a fake containment `Terminate` success alone is not teardown evidence. Use `TestSessionTeardown.KillAndAwaitHostExitAsync` for successful SessionRunner-owned hosts, then await the retained owned host process if its fallback kill was needed (the existing helper does not await after that fallback). Dispose the isolated HTTP app/runtime even after assertion failure.
+
 ### Proves it works now
 
 All native tests own their child, capture and teardown. The planned classes have one OS applicability gate at entry where needed; the opposite OS does not select that class in this manifest. A selected-platform gate, missing prerequisite or unexpected skipped result fails acceptance.
 
-| ID | Named proposed test and exact result roster | Production assertion |
+| ID | Frozen new test and exact result roster | Production assertion |
 |---|---|---|
-| V-1 | `UnixPtyArgvTests.Native_argv_is_verbatim`: nine `[Arguments]` values `plain`, `empty`, `space_tab`, `cr`, `lf`, `crlf`, `quotes_backslashes`, `unicode`, `literal_shell` | Real Node child receives exactly the expected argument array and count. Include surrounding ordinary arguments and a final sentinel in every case. `empty` preserves an interior and final empty argument; `quotes_backslashes` includes intentional edge quotes, a quote after a backslash and a trailing backslash; `literal_shell` includes `$HOME`, `$(...)`, semicolon and `*` as literal data. Compare strings ordinally, never screen text or normalized lines. Capture/marker is completed before comparison. |
-| V-2 | `UnixPtyArgvTests.Nul_is_refused_before_native_spawn`: four values `exe`, `first`, `middle`, `last` | Invoke real `PtyAgentRunner.StartAsync`; catch the outcome without a timeout-based oracle. Require `UnixPtyArgvException`, code `pty_argv_nul`, reason `nul`, exact argv index, `Pid == null`, and no child capture. Vary NUL at the beginning/middle/end of values across these cases. The `exe` case is argv[0]. Assert message excludes a synthetic payload sentinel, executable path, and the non-NUL suffix. Do not accept an arbitrary exception such as missing executable. |
+| V-1 | `UnixPtyArgvTests.Native_argv_is_verbatim`: nine `[Arguments]` values `plain`, `empty`, `space_tab`, `cr`, `lf`, `crlf`, `quotes_backslashes`, `unicode`, `literal_shell` | Real Node child receives exactly the expected argument array and count. Surround each payload with ordinary arguments and a sentinel; `empty` also has a final empty element after that sentinel. Pin payloads: `plain=value`, `space_tab=" a\tb "`, `cr="a\rb"`, `lf="a\nb"`, `crlf="a\r\nb"`, `unicode="é中😀"`; quote/backslash vector includes `"edge"`, `a\\"b`, and a trailing backslash; shell literals include `$HOME`, `$(printf sentinel)`, `;`, `*`. In `cr`, append a separate string containing U+0001..U+001F and U+007F (no NUL), proving other controls are not normalized. Compare ordinal strings, exact count and the unchanged caller vector after Start, only after complete capture. |
+| V-2 | `UnixPtyArgvTests.Nul_is_refused_before_native_spawn`: four values `exe`, `first`, `middle`, `last` | First call the pure validator, then separately invoke real `PtyAgentRunner.StartAsync`; require `UnixPtyArgvException`, code `pty_argv_nul`, reason `nul` and exact index at each boundary. `exe`: valid Node path + NUL + sentinel, index 0; `first`: NUL + sentinel in first argument, index 1; `middle`: duplicate flag vector `[probe, --rules, safe, --rules, sentinel+NUL+tail, end]`, index 5; `last`: `[probe, --, --flag+sentinel+NUL]`, index 3. This covers NUL at beginning/middle/end, duplicate values, flag-shaped data and scanning past `--`. Require runner PID null and no capture. Assert fixed diagnostic metadata, no synthetic sentinel, executable text or suffix. Pure validation comes first so a scan-bypass mutant fails immediately without executing malformed native argv. |
 | V-3 | `UnixPtyArgvTests.Tracked_argv_is_verbatim_after_containment`: one result | A test-owned recording `IPtyCustodyContainment` places the launch onto the owned native probe without sudo or a production cgroup. Drive `StartTrackedAsync`; assert the original vector passed to `Place`, the exact final native vector after the test wrapper's sentinel argument, and journal start-intent before tracked PID. This covers real spawn with a fake containment boundary, not privileged isolation qualification. |
-| V-4 | `UnixPtyArgvTests.Containment_introduced_nul_is_refused_before_start_intent`: one result | Original vector is valid. The recording containment returns a NUL-bearing final argument. Assert `pty_argv_nul`, final-vector index, zero journal start intents/tracked PIDs, no child PID or capture. It must not pass merely because validation of the original vector succeeds. |
-| V-5 | `UnixPtyArgvAdmissionTests.Nul_request_is_refused_before_effects`: four values `plain`, `grok`, `grok_payload`, `tracked` | Call real `SessionRunnerRuntime.StartAsync` with null or explicit PtyHost backend as appropriate. Require named exception metadata and no sentinel in diagnostics. Assert `StartCoreSessionRegistrations` unchanged, empty session list and failed lookup, no newly created log/rules/manifest root, no native capture, and for `tracked` no custody start preparation evidence. Put any owned child fixture outside the initially absent session-log root. The Grok typed payload is valid; the separate raw argument contains NUL, proving refusal precedes materialization. |
+| V-4 | `UnixPtyArgvTests.Containment_introduced_nul_is_refused_before_start_intent`: two `[Arguments]` values `exe`, `arg` | Original vector is valid. Recording containment returns either a NUL-bearing executable (index 0) or final argument (index 3). Its fake journal records then throws a fixture tripwire exception on `RecordStartIntent`; correct code never calls it. Capture outcome, assert start-intent/tracking counts zero **before** checking named exception metadata, PID and capture absence. Removing the final guard therefore fails a zero-count assertion before native spawn, without requiring a successful invalid exec. |
+| V-5 | `UnixPtyArgvAdmissionTests.Nul_request_is_refused_before_effects`: four values `plain`, `grok`, `grok_payload`, `tracked` | `plain`: null backend and NUL executable; `grok`: explicit `SessionBackends.PtyHost` (`pty-host`), Grok format and NUL raw rule; `grok_payload`: case-insensitive `PTY-HOST`, valid typed payload plus an unrelated NUL raw argument (no explicit-rules conflict); `tracked`: valid Linux binding, NUL argument. Real runtime; assert registration counter unchanged **before** exception type, empty list/failed lookup, no new rules/manifest/capture. Untracked cases deliberately use an absent `PtyHostSourceDir` as a downstream tripwire: a guard-bypass mutant reaches registration then fails promptly before host spawn. Tracked setup initializes only runner-store identity and a valid binding, snapshots those setup files, and supplies the existing `CustodyEnvironment` seam reporting an unavailable root; any `PrepareStart` writes a reservation/unsupported record and fails without sudo or native launch. Assert no new reservation, start intent or unsupported record relative to that snapshot. Never assert the precreated custody root is absent. All cases require named NUL metadata and sanitized detail. |
 | V-6 | `UnixPtyArgvAdmissionTests.Nul_refusal_is_named_on_both_launch_routes`: two values `ordinary`, `platform_constrained` | Host `SessionReadLaunchRoutes` on isolated random loopback with a real isolated runtime; do not boot real Program. POST a NUL-bearing JSON argument (escaped on wire). Constrained request names Linux. Assert HTTP 409, ProblemDetails type/title `pty_argv_nul`, sanitized detail, zero registrations and no launch artifacts. Await the server response, not a time budget. |
-| V-7 | `UnixPtyArgvAdmissionTests.Phone_home_nul_refusal_is_named`: one result | Drive real dispatcher with real isolated runtime, existing fake auth/capacity/admission dependencies and an admitted image-owned executable identity. Use a valid accepted generation and invalid argument. Assert 409, `ErrorCode=pty_argv_nul`, sanitized detail and zero registrations. TestDesign must use the existing `PhoneHomeCommandDispatcherTests` harness pattern so earlier auth/ownership refusals cannot satisfy this assertion; no real provider is started. |
+| V-7 | `UnixPtyArgvAdmissionTests.Phone_home_nul_refusal_is_named`: two `[Arguments]` values `launch`, `platform_constrained` | Real `PhoneHomeCommandDispatcher` plus `PhoneHomeRuntimeAdapter` wrapping the isolated runtime. Configure `AllowedCwd` to the fixture root, `RawExeAllowList` to the owned echo executable, capacity 1 with zero sessions, fixture-local capacity/generation paths, memory 0, no Herdr/verification binding/transcript format. Use distinct session/request IDs and a fixed normalized UTC accepted generation; constrained operation sets `RequiredPlatform=linux`. Assert matching response request ID, error-frame kind, status 409, `ErrorCode=pty_argv_nul`, sanitized detail, zero registrations and retained generation watermark. No auth probe runs for the raw executable. A generic admission/auth/capacity error cannot satisfy the named code assertion. |
 | V-8 | `UnixDelegateLaunchArgvTests.Composed_delegate_argv_reaches_native_child`: two values `Investigate`, `Code`, for a ClaudeCode Worker with role-default bundles | Reuse the existing delegate harness in `GrokRulesLaunchRefusalTests` without invoking its named-agent start. Call actual `AgentTaskDispatcher.BuildLaunchSpec`, `AgentSessionService.BuildSessionIdentityArgs` and `ClaudeRemoteControlLaunchArgs.ApplyOff`, as `DelegateLaunchArgvIntegrityTests` does. Substitute only the executable with the owned argv child. Require exact full NUL-delimited UTF-8 bytes, entire appended bundle length/content and session ID at its intended position. Neither a contains-only bundle check nor a hand-copied bundle qualifies. No adapter readiness or real provider is involved. |
 | V-9 | `WindowsPtyArgvNativeTests.Windows_backends_keep_exact_native_argv`: two values `inbox`, `modern` | Launch the owned Node argv probe through the actual `PtyAgentRunner` with each backend override. Assert resolved backend equals requested backend (modern fallback is a prerequisite failure), then exact native argv/count for a single vector containing multiline quoted text, empty arguments, a spaced path with trailing backslash and trailing identity arguments. No Windows NUL behavior is changed or redefined. |
+| V-10 | `UnixPtyArgvTests.Original_nul_is_refused_before_containment_and_consumes_attempt`: one `[Test]` | Invalid original argument; recording containment increments its call count then throws a fixture tripwire. Assert Place count zero **first**, zero journal writes, named NUL exception. Retry valid argv on the same tracked runner and require the existing `InvalidOperationException` consumed-attempt refusal, still zero Place calls. This isolates the original-vector guard from the final-vector guard; the tripwire prevents native execution under either mutant. |
+| V-11 | `UnixPtyArgvAdmissionTests.Platform_and_backend_boundaries_keep_existing_verdicts`: four `[Arguments]` values `platform_mismatch`, `platform_invalid`, `unknown_backend`, `herdr_nul` | All requests contain NUL. Linux mismatch (`windows`) and invalid (`bsd`) require the existing platform exception/code and no runtime effects; unknown backend requires the existing unsupported-backend `ArgumentException`, **not** `UnixPtyArgvException`; Herdr uses the existing Grok FakeHerdr setup with a raw NUL rule and must reach its script-construction assertion with exact input preserved and no native capture. This is fake script evidence only; it must never execute NUL via a real shell. |
 
-Proposed source arithmetic: Unix Pty class `9 + 4 + 1 + 1 = 15`; Unix runner admission class `4 + 2 + 1 = 7`; Unix delegate class `2`; Windows native class `2`. These are twenty-six proposed results, not claims of twenty-six executed tests. All process-spawning classes use their own assembly's existing limiter; do not introduce a shared cross-assembly limiter or run the large test projects concurrently.
+Frozen new-source arithmetic: Unix Pty class has five methods / `9 + 4 + 1 + 2 + 1 = 17` results; Unix admission has four methods / `4 + 2 + 2 + 4 = 12`; Unix delegate one method / 2; Windows native one method / 2. Total **11 methods / 33 planned results**. All argument rows above are literal `[Arguments]`, not hidden data-source expansion. All process-spawning classes use their own assembly's existing limiter; do not introduce a shared cross-assembly limiter or run the large test projects concurrently.
+
+**Red-first order:** S1 commits the probe, V-1/V-2/V-3/V-4/V-10 and the compiling validator/exception seam before the fix, then CP-1 red; implement D-1/D-2, commit/push, CP-1 green. S2 commits V-5/V-6/V-7/V-11 and the eight ungated R-1 rows, then CP-2 red; implement admission/mappings, commit/push, CP-2 green. A test-first route response may be 500 or a different refusal before its catch exists; require its status/code assertion red, never a parser exception from trying to read an empty 500 body. S3 adds V-8 and runs CP-3; no deliberate revert of S1 during Code. CP-4..CP-6 qualify the final Code SHA on Windows. Source-order listing is an authoring order, not a dependency on TUnit execution order.
+
+**Repeat budget:** one normal final run per CP is the default; zero loaded repeats are required. If instability warrants repeats of the new methods, cap them at **three normal and two loaded repeats total per method**, report why and stop once the evidence is resolved. These are ceilings, not five compulsory rounds; do not repeat whole classes/suites for stability. Test-first red/fix runs and later commissioned PC baseline/red/restored-green have their own labeled evidence, not hidden repeat rounds.
 
 ### Guards the regression
 
@@ -160,25 +277,63 @@ Proposed source arithmetic: Unix Pty class `9 + 4 + 1 + 1 = 15`; Unix runner adm
 | R-3 | Windows `LaunchArgvGuardTests` and `ModernConPtyCommandLineTests`, ten plus seven results: the CRT round trip and the old incorrect Porta formatter remain detected. V-9 additionally proves the production runner still uses the correction. |
 | R-4 | Windows `DelegateLaunchArgvIntegrityTests` and `GrokRulesLaunchRefusalTests`, seven plus five results: shipped bundle/identity args and Windows named-agent rules refusal remain unchanged. |
 
-### Positive controls for the later Mutation stage
+### Guard inventory
+
+Each independently bypassable guard in the touched path has its own control. Existing unrelated custody recovery, Grok policy and readiness guards are retained regression scope, not new obligations for this argv repair.
+
+| Guard | Plan invariant | Distinct control |
+|---|---|---|
+| G-1 | D-1 Unix arguments are never CRT pre-escaped | PC-1 |
+| G-2 | D-2 executable NUL scan | PC-2 |
+| G-3 | D-2 complete argument scan, including duplicates/flags/after `--` | PC-3 |
+| G-4 | D-2 original vector checked before containment | PC-4 |
+| G-5 | D-2 final executable/vector checked before journal/spawn | PC-5 |
+| G-6 | D-2 runner admission precedes registration/materialization/custody | PC-6 |
+| G-7 | D-2 diagnostics contain metadata only | PC-7 |
+| G-8 | D-3 ordinary HTTP catch preserves the named refusal | PC-8 |
+| G-9 | D-3 constrained HTTP catch preserves the named refusal | PC-9 |
+| G-10 | D-3 phone-home catch precedes general ArgumentException mapping | PC-10 |
+| G-11 | D-1 Windows inbox retains pre-escape plus verbatim | PC-11 |
+| G-12 | D-1 tracked spawn uses the exact placed vector | PC-12 |
+| G-13 | D-2 rejected tracked attempt remains consumed | PC-13 |
+| G-14 | D-2 platform validation keeps precedence | PC-14 |
+| G-15 | D-2 early guard applies only to native PtyHost backends | PC-15 |
+| G-16 | D-1/D-4 complete composed argument length reaches the child | PC-16 |
+
+Inventory audit: **guards=16, mapped=16, missing=0, duplicate PC maps=0**. Each control below has a compiling mutation and a reachable assertion checked against the source/harness ordering. Executability is a static design assessment; post-land Mutation must still record actual red/restored-green results.
+
+### Positive controls
 
 Ordinary Code records its test-first red rounds and final green checkpoints. After ordinary Review and confirmed land, a separately commissioned Mutation task uses SourceLanding custody and exact-method baseline/red/restored-green runs. Follow `docs/testing-and-build.md`; copy the unchanged checkpoint driver and its required library outside the mutable snapshot before mutation. No mutation is executed in this Plan, and no real provider is needed. Every expected red below is a named assertion failure, never a build error, harness timeout, missing fixture or zero-test run.
 
 | PC | Concrete production mutation | Named detecting test and expected assertion |
 |---|---|---|
-| PC-1 | Remove the new Windows OS condition, restoring CRT pre-escape on Unix. | V-1 `UnixPtyArgvTests.Native_argv_is_verbatim`, method-scoped nine-result roster: `lf`/`crlf` and quote/empty/space inputs differ in captured argv. The child still starts and emits its marker; exact-array equality fails. Existing R-1 native assertions are additional ordinary detection, not substitutes for this named red. |
-| PC-2 | Make `UnixPtyArgvGuard` return without examining executable or arguments. | V-2 `Nul_is_refused_before_native_spawn`, four results: the expected named exception is absent or the exception type/code differs. Inspect that assertion explicitly; teardown always disposes any started child. No wait for an impossible NUL echo. |
-| PC-3 | Remove only SessionRunner's early Unix guard, retaining both low-level checks. | V-5 `Nul_request_is_refused_before_effects`, four results: ordinary/Grok cases fail the unchanged `StartCoreSessionRegistrations` or no-artifacts assertion even if the host later refuses. The tracked case checks absence of custody preparation. Final empty list after cleanup cannot hide transient registration. |
-| PC-4 | Remove only the post-containment validation call. | V-4 `Containment_introduced_nul_is_refused_before_start_intent`: journal count must be zero but is nonzero, or named refusal is absent; valid original input ensures the earlier guard cannot detect this mutation. |
-| PC-5 | Include the offending argument value in `UnixPtyArgvException`'s diagnostic construction. | V-2 `Nul_is_refused_before_native_spawn`: the message's `ShouldNotContain` synthetic sentinel assertion fails with otherwise correct type/reason. Use only fixture sentinels, never real instruction content or secrets. |
-| PC-6 | Remove the Unix exception catch from the ordinary HTTP launch route only. | V-6 `Nul_refusal_is_named_on_both_launch_routes`, two results: ordinary route fails the HTTP 409/type assertion; constrained route stays the positive comparison. Server completes the error response; a hanging request is not the expected red. |
-| PC-7 | Remove phone-home's Unix exception catch so its general `ArgumentException` catch handles the failure. | V-7 `Phone_home_nul_refusal_is_named`: response status/code assertion fails (generic 400/unsupported target instead of the specified 409/`pty_argv_nul`). |
-| PC-8 | Bypass the Windows inbox pre-escape/verbatim block while leaving modern composition intact. | V-9 `Windows_backends_keep_exact_native_argv`, two results: inbox's captured quoted/multiline argument equality fails; modern remains green. This control needs Windows; it cannot be claimed from Linux or from the standalone formatter tests. |
-| PC-9 | Restore Unix pre-escape as in PC-1, now at the real composed-launch boundary. | V-8 `Composed_delegate_argv_reaches_native_child`, two results: complete captured bundle bytes/length or identity-position assertion fails after a successful child capture. No hand-authored replacement prompt and no readiness timeout. |
+| PC-1 | Remove only the new Windows OS condition from the inbox pre-escape branch. | V-1 `UnixPtyArgvTests.Native_argv_is_verbatim` (9): `lf`/`crlf` and quote/empty/space rows reach complete capture and fail exact-array equality. `plain`/`cr`/`unicode` are comparison rows; do not demand every parameter red. Simple relative probe filename survives the mutant. |
+| PC-2 | In `UnixPtyArgvGuard`, bypass only the executable scan. | V-2 `UnixPtyArgvTests.Nul_is_refused_before_native_spawn` (4): `exe` fails the first pure-validator expected-exception assertion before any native call. Other arguments stay guarded. |
+| PC-3 | In that validator, bypass only the argument loop. | Same named V-2 method (4): `first`, `middle`, `last` fail the pure expected-exception assertion, while `exe` remains green. |
+| PC-4 | Remove only the pre-containment validator call in `LaunchCoreAsync`. | V-10 `UnixPtyArgvTests.Original_nul_is_refused_before_containment_and_consumes_attempt` (1): Place increments then trips; the first assertion expects zero Place calls and sees one. The final guard never hides it and no child spawns. |
+| PC-5 | Remove only the final validator call before RecordStartIntent/spawn. | V-4 `UnixPtyArgvTests.Containment_introduced_nul_is_refused_before_start_intent` (2): both valid-original rows reach the journal tripwire; zero-start-intent assertion sees one. Native spawn is never attempted. |
+| PC-6 | Remove only SessionRunner's early guard, keeping both low-level calls. | V-5 `UnixPtyArgvAdmissionTests.Nul_request_is_refused_before_effects` (4): three untracked rows fail the monotonic registration/no-rules-effects assertion before checking the downstream missing-host exception; tracked row fails the no-new-reservation assertion before the downstream unsupported-custody exception. No privileged setup or detached host is needed. |
+| PC-7 | Append the offending value to the validator's fixed diagnostic. | V-2 `UnixPtyArgvTests.Nul_is_refused_before_native_spawn` (4): synthetic-sentinel exclusion fails with the correct exception type/code. Never use real payloads or credentials. |
+| PC-8 | Delete the new Unix exception catch from ordinary HTTP route only. | V-6 `UnixPtyArgvAdmissionTests.Nul_refusal_is_named_on_both_launch_routes` (2): ordinary row gets completed HTTP 500 and fails status==409 **before** JSON parsing; constrained row remains green. |
+| PC-9 | Delete that catch from constrained HTTP route only. | Same V-6 method (2): constrained row fails status==409; ordinary remains green. Removing one catch cannot qualify the other. |
+| PC-10 | Delete the Unix exception catch from `PhoneHomeCommandDispatcher`. | V-7 `UnixPtyArgvAdmissionTests.Phone_home_nul_refusal_is_named` (2): both operations complete as generic status 400/unsupported-target and fail status/code assertions. |
+| PC-11 | Bypass the inbox pre-escape/verbatim block on Windows; keep modern composition. | V-9 `WindowsPtyArgvNativeTests.Windows_backends_keep_exact_native_argv` (2), **Windows only**: inbox capture mismatches quoted/multiline payload, modern stays green. Probe filename is plain and cwd is separate, so the echo program still runs. |
+| PC-12 | In the containment block, assign `options.CommandLine` the original `commandLine` instead of `placed.CommandLine`. | V-3 `UnixPtyArgvTests.Tracked_argv_is_verbatim_after_containment` (1): recording containment keeps Node app/probe filename unchanged and inserts `placed-sentinel` immediately after the filename. Child capture completes but lacks that element; final-vector equality fails. The same test asserts the ordered journal calls, never treats a fabricated PID as real containment qualification. |
+| PC-13 | Set `_trackedLaunchAttempted = false` instead of latching the tracked attempt. | V-10 `UnixPtyArgvTests.Original_nul_is_refused_before_containment_and_consumes_attempt` (1): first refusal is correct; valid retry reaches the Place tripwire and fails the expected consumed-attempt `InvalidOperationException` assertion. Tripwire must be a distinct test exception type. |
+| PC-14 | Move the new runtime guard immediately before `RunnerPlatformLaunchGuard.RefuseBeforeLaunch`. | V-11 `UnixPtyArgvAdmissionTests.Platform_and_backend_boundaries_keep_existing_verdicts` (4): mismatch/invalid rows fail their platform-exception/code assertion because Unix NUL refusal wins. |
+| PC-15 | Remove only the native-backend predicate from the new runtime guard, retaining its non-Windows predicate. | Same V-11 method (4): unknown-backend and Herdr rows fail their existing-verdict assertions; Herdr cannot reach fake script capture. No real shell executes NUL. |
+| PC-16 | Immediately before Unix native spawn, replace each final argument longer than 1024 characters with its first 1024 characters; leave smaller arguments intact. | V-8 `UnixDelegateLaunchArgvTests.Composed_delegate_argv_reaches_native_child` (2): assert composed append exceeds 1024 as setup, then child completes capture and full byte/append-length equality fails. This tests real shipped content, not a hand-copied expected prompt. |
 
 Positive controls use each method's prefix with trailing `*`, for example `/*/Antiphon.Agents.Pty.Tests/UnixPtyArgvTests*/Native_argv_is_verbatim*`. Keep baseline/red/restored-green output and results roots separate. For parameterized methods, select the method prefix and inspect all argument results rather than filtering a literal display suffix. Restore changed source with a refreshed timestamp and rebuild before restored green. Any further source edit invalidates affected checkpoint evidence.
 
-### Known flakes and exclusions
+### Out of scope
+
+No requirement in the corrected roster depends on an untestable timing margin. Native scheduling/OS availability cannot be made deterministic; a missing Node/PtyHost/modern ConPTY prerequisite, deadline, hang, compilation failure or zero selected tests is explicitly **unqualified evidence**, not a red control. Deterministic tripwires above replace the proposed controls that would otherwise rely on a later native NUL failure. Backend cgroup containment itself, macOS qualification, provider readiness, delivery, adoption and standing recovery remain separate work.
+
+The eight removed gate results have OS-specific **real assertions**: Linux's six multiline native rows plus the named multiline method capture exact native argv, while the NUL row refuses before native spawn; Windows executes all eight existing named policy-refusal assertions. Requiring a Windows child to receive the forbidden raw Grok rules would contradict its policy. CP-4 separately proves native Windows argv for admissible vectors with the real Node binary. CP-5 is retained Windows policy qualification, not a claim those refused requests spawned children.
+
+#### Known flakes
 
 Do not run a whole Unit lane, whole `Agents` namespace or whole Herdr parity class for this repair. Their cost and unrelated failures do not improve the named argv evidence. The following known failures were considered and are outside the closed filters; they remain reportable if accidentally selected, never silently ignored:
 
@@ -200,8 +355,8 @@ Closed list of ordinary builds and test filters. Each row owns one isolated proj
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | `tests/Antiphon.Agents.Pty.Tests -> bin-c863-unix-pty/` | unix-native-argv | `/*/Antiphon.Agents.Pty.Tests/(UnixPtyArgvTests*)\|(LinuxCgroupContainmentTests*)/*` | V-1..V-4, R-2 | Linux: 22 executed (15 new + 7 existing), 0 failed/skipped; Windows: not selected | 22 | 5 | true |
-| CP-2 | S1-S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c863-unix-runner/` | unix-runner-argv | `/*/Antiphon.SessionRunner.Tests/(UnixPtyArgvAdmissionTests*)\|(GrokRulesFileLaunchTests*)\|(GrokRulesRunnerRefusalTests*)\|(GrokRulesStoreFailureTests*)/*` | V-5..V-7, R-1 | Linux: 45 executed (7 new + 21 + 11 + 6 existing), 0 failed/skipped; Windows: not selected | 45 | 8 | true |
+| CP-1 | S1 | `tests/Antiphon.Agents.Pty.Tests -> bin-c863-unix-pty/` | unix-native-argv | `/*/Antiphon.Agents.Pty.Tests/(UnixPtyArgvTests*)\|(LinuxCgroupContainmentTests*)/*` | V-1..V-4, V-10, R-2 | Linux: 24 executed (17 new + 7 existing), 0 failed/skipped; Windows: not selected | 24 | 5 | true |
+| CP-2 | S1-S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c863-unix-runner/` | unix-runner-argv | `/*/Antiphon.SessionRunner.Tests/(UnixPtyArgvAdmissionTests*)\|(GrokRulesFileLaunchTests*)\|(GrokRulesRunnerRefusalTests*)\|(GrokRulesStoreFailureTests*)/*` | V-5..V-7, V-11, R-1 | Linux: 50 executed (12 new + 21 + 11 + 6 existing), 0 failed/skipped; Windows: not selected | 50 | 8 | true |
 | CP-3 | S1-S3 | `tests/Antiphon.Tests -> bin-c863-unix-compose/` | unix-composed-argv | `/*/Antiphon.Tests.Application/UnixDelegateLaunchArgvTests*/*` | V-8 | Linux: 2 executed, 0 failed/skipped; Windows: not selected | 2 | 7 | true |
 | CP-4 | S1-S3 | `tests/Antiphon.Agents.Pty.Tests -> bin-c863-win-pty/` | windows-native-argv | `/*/Antiphon.Agents.Pty.Tests/(WindowsPtyArgvNativeTests*)\|(LaunchArgvGuardTests*)\|(ModernConPtyCommandLineTests*)/*` | V-9, R-3 | Windows: 19 executed (2 new + 10 + 7 existing), 0 failed/skipped; Linux: not selected | 19 | 5 | true |
 | CP-5 | S1-S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c863-win-runner/` | windows-rules-argv | `/*/Antiphon.SessionRunner.Tests/(GrokRulesFileLaunchTests*)\|(GrokRulesRunnerRefusalTests*)\|(GrokRulesStoreFailureTests*)/*` | R-1 Windows | Windows: 38 executed (21 + 11 + 6), 0 failed/skipped; Linux: not selected | 38 | 8 | true |
@@ -209,7 +364,7 @@ Closed list of ordinary builds and test filters. Each row owns one isolated proj
 
 ## Execution, activation and rollback
 
-TestDesign freezes the proposed method attributes, fixture readiness/teardown and exact named assertions in this plan, then recounts every row from the implemented or proposed explicit roster. It may clarify the plan, not broaden production scope or run live providers. After the collision gate clears, Code implements S1, S2, S3 test-first as described. Commit and push before each checkpoint invocation (including red rounds); never rebase/amend/reset a pushed commit. Native quoting and NUL failures must be named red assertions against compiling code, not merely the historical card report.
+TestDesign has frozen method attributes, fixture readiness/teardown and exact named assertions in this plan, with a fresh source census. Code must reconcile the implemented attributes and fresh TRX with that roster; it may not broaden production scope or run live providers. After the collision gate clears, Code implements S1, S2, S3 test-first as described. Commit and push before each checkpoint invocation (including red rounds); never rebase/amend/reset a pushed commit. Native quoting and NUL failures must be named red assertions against compiling code, not merely the historical card report.
 
 This brief explicitly requires **`scripts/run-checkpoint.ps1` directly** because CARD-0853's checkpoint-tool owner verification cannot be assumed in this dispatch. It self-leases; do not nest it inside `build-slot.ps1`. The following are future green-round commands, not Plan measurements. Execute each row serially after its required commits. TUnit runs through the driver's `dotnet run --project ... --no-build`, never `dotnet test`. Keep the Linux default `UseAppHost=false`; existing staging supplies the SessionRunner native PtyHost. Do not add a hand-quoted OutputPath or rebuild a project independently.
 
@@ -217,8 +372,8 @@ Markdown table filters escape pipes as `\|`. **Remove that Markdown backslash in
 
 ```sh
 # Linux/server2, sequential; use a new ResultsRoot for each red/fix/rerun round.
-pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-1 -Project tests/Antiphon.Agents.Pty.Tests -OutputPath bin-c863-unix-pty/ -Filter '/*/Antiphon.Agents.Pty.Tests/(UnixPtyArgvTests*)|(LinuxCgroupContainmentTests*)/*' -MinExecuted 22 -Expect 'UnixPtyArgvTests,LinuxCgroupContainmentTests' -ResultsRoot .antiphon/c863-linux-green
-pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-2 -Project tests/Antiphon.SessionRunner.Tests -OutputPath bin-c863-unix-runner/ -Filter '/*/Antiphon.SessionRunner.Tests/(UnixPtyArgvAdmissionTests*)|(GrokRulesFileLaunchTests*)|(GrokRulesRunnerRefusalTests*)|(GrokRulesStoreFailureTests*)/*' -MinExecuted 45 -Expect 'UnixPtyArgvAdmissionTests,GrokRulesFileLaunchTests,GrokRulesRunnerRefusalTests,GrokRulesStoreFailureTests' -ResultsRoot .antiphon/c863-linux-green
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-1 -Project tests/Antiphon.Agents.Pty.Tests -OutputPath bin-c863-unix-pty/ -Filter '/*/Antiphon.Agents.Pty.Tests/(UnixPtyArgvTests*)|(LinuxCgroupContainmentTests*)/*' -MinExecuted 24 -Expect 'UnixPtyArgvTests,LinuxCgroupContainmentTests' -ResultsRoot .antiphon/c863-linux-green
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-2 -Project tests/Antiphon.SessionRunner.Tests -OutputPath bin-c863-unix-runner/ -Filter '/*/Antiphon.SessionRunner.Tests/(UnixPtyArgvAdmissionTests*)|(GrokRulesFileLaunchTests*)|(GrokRulesRunnerRefusalTests*)|(GrokRulesStoreFailureTests*)/*' -MinExecuted 50 -Expect 'UnixPtyArgvAdmissionTests,GrokRulesFileLaunchTests,GrokRulesRunnerRefusalTests,GrokRulesStoreFailureTests' -ResultsRoot .antiphon/c863-linux-green
 pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-3 -Project tests/Antiphon.Tests -OutputPath bin-c863-unix-compose/ -Filter '/*/Antiphon.Tests.Application/UnixDelegateLaunchArgvTests*/*' -MinExecuted 2 -Expect UnixDelegateLaunchArgvTests -ResultsRoot .antiphon/c863-linux-green
 
 # Windows only, final Code SHA, sequential.
@@ -229,7 +384,7 @@ pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-6 -Project tests/Antip
 
 Report each row as `CHECKPOINT CP-n commit=<sha> build=<ok|failed> filter=<exact-filter> executed=N passed=N failed=N skipped=N trx=<path>`, including `reruns=k` and the reason for every additional invocation. Record the test-first red rounds separately from final green. Retain first failures and the fresh roster; a missing row, wrong per-class count, new skip, or zero-test run is not complete. Commit/push each substantial slice and verify its tip with `git ls-remote`. If the slot gate returns exit 4, report the slot timeout; never bypass leasing. If the caller later supplies a verified checkpoint-tool owner and explicitly changes this execution instruction, retain the same closed rows and wait while tool exit is 75, with short polling and liveness updates; do not start a second run.
 
-Selected final arithmetic is Linux `22 + 45 + 2 = 69` and Windows `19 + 38 + 12 = 69` results, **138 OS executions** in total. This includes the same thirty-eight runner results on each OS; it is not 138 distinct source tests. Both platform receipts are required before claiming Windows behavior unchanged. A pending Windows lane is reported pending and handed to a task pinned to that OS, never replaced by Linux parser-model tests.
+Selected final arithmetic is Linux `24 + 50 + 2 = 76` and Windows `19 + 38 + 12 = 69` results, **145 OS executions** in total. The source census has 74 existing plus 33 new = 107 distinct expanded results; the same 38 runner results execute on both OSes (107 + 38 = 145). Both platform receipts are required before claiming Windows behavior unchanged. A pending Windows lane is reported pending and handed to a task pinned to that OS, never replaced by Linux parser-model tests.
 
 Activation is a later, separately authorized operation after Review/land. Publication alone does not update the running runner or its detached host images. Follow the canonical deployment/restart owner, drain/ownership rules and main-checkout restrictions; do not restart from this linked worktree. Record the published SHA, verify the runner build version and the new launch's PtyHost image identity, and perform only an owned local echo-child smoke if commissioned. Existing adopted/live hosts retain their original image and must not be killed merely to activate this fix. No provider readiness or transcript-delivery acceptance is inferred from an argv echo.
 
@@ -237,6 +392,10 @@ Rollback uses a new forward commit reverting this card's production changes toge
 
 ### Cost
 
-Ordinary final checkpoint floor is **40 minutes**, the sum `5 + 8 + 7 + 5 + 8 + 7`. Linux/server2 is 20 minutes; the scoped Windows lane is 20 minutes. These are planning estimates including each row's isolated build, not measured runtimes. The planned CP-1/CP-2 test-first red rounds add an estimated 13 minutes using the same rows, reported as red rounds rather than hidden extra builds. Authoring estimate is 60–90 minutes after TestDesign; budget Code about 113–143 minutes including ordinary/red verification, before slot waits or justified fixes. The later nine-control Mutation work has a separate estimated 60–90 minute budget and does not block ordinary Review merely because it is pending. No full Unit sweep, checkpoint-tool bootstrap, native provider run or deployment is included in these costs.
+Ordinary final checkpoint floor is **40 minutes**, the sum `5 + 8 + 7 + 5 + 8 + 7`: Linux/server2 20, scoped Windows 20. These are estimates including each row's isolated build, not measured runtimes. CP-1/CP-2 test-first red rounds add an estimated **13 minutes** using the same rows. Authoring is estimated at 60–90 minutes; Code budget **113–143 minutes**, before slot waits or justified fixes. No mandatory normal/loaded repeats are added.
 
-Next stage: **TestDesign**. Freeze the proposed native/probe and admission assertions, verify transport harness reachability and the exact source census, and preserve the scoped Windows lane and collision gates before handing S1-S3 to Code.
+Post-land Mutation floor is separately **108 minutes**: 6 minutes external-driver/evidence setup, plus baseline/red/restored-green for each method-scoped control. Eight Unix Pty controls (PC-1/2/3/4/5/7/12/13) cost `8 × 3 × 2 = 48`; six runner controls (PC-6/8/9/10/14/15) cost `6 × 3 × 2 = 36`; Windows PC-11 costs `1 × 3 × 3 = 9`; application PC-16 costs `1 × 3 × 3 = 9`. Each invocation uses the detector's fully named method prefix with trailing `*`, the class prefix with trailing `*`, its corresponding project, and fresh evidence. Estimates assume scoped incremental rebuilds, not full-suite runs. Native prerequisite failure remains unqualified and is not budgeted as a red. Controls sharing a source method are sequential; baseline reuse is allowed only for the same clean source/filter/OS and must be recorded rather than claimed as another execution.
+
+Ordinary plus Mutation verification floors total **148 minutes**; including Code authoring/test-first work yields **221–251 minutes across separate stages**, before queue waits. Pending Mutation does not block ordinary Review. Measured savings here are zero (no runs were profiled); avoiding compulsory repeat rounds preserves the 40-minute ordinary floor instead of multiplying it. No full Unit sweep, tool bootstrap, real provider, deployment or unrelated flake isolation is included.
+
+Next stage: **Code**, after CARD-0778's confirmed land and a fresh source-area collision check. Implement S1-S3 against this frozen roster; preserve the scoped Windows lane. TestDesign ran only static census/manifest checks, with zero builds/tests/mutations on either OS.
