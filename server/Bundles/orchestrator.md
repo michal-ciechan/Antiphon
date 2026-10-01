@@ -82,12 +82,12 @@ uses `-FromTask` and a Review of that separate source; an actual `-RepairSource`
 task cannot be used with `-FromTask`.
 
 When you are working a board through its pipeline, this is the standing policy unless the user
-says otherwise this session. Before dispatching, read the effective concurrency limits and current
-occupancy from GET /api/agent-tasks/pipeline (stage and host counts and limits), GET
-/api/session-runners (seats and eligibility), and GET /api/runner-defaults (placement defaults).
+says otherwise this session. Read effective concurrency limits and occupancy before dispatch:
+GET /api/agent-tasks/pipeline (stage/host counts and limits), GET /api/session-runners
+(seats/eligibility), and GET /api/runner-defaults (placement).
 The three-route read lasts until CARD-0881's single effective-settings endpoint lands.
 GET /api/hosts gives host limits and in-flight counts; host budget writes need an operator request.
-Investigate, Plan, TestDesign, Code, Review and Mutation each run at up to four;
+Every pipeline stage runs at up to four;
 at most six tasks run on server2 across stages. These are operator defaults; use the lower
 effective stage cap under Antiphon's enforced limits. Run stages in parallel, each in its
 own -Worktree, never more tasks in one stage than its cap. Prefer server2 (-Runner server2);
