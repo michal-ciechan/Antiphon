@@ -573,9 +573,11 @@ These complete the V roster without adding methods or argument expansions.
 
 ### Guard inventory
 
-The following control table is also the guard inventory: `G-n -> PC-n` is a
-one-to-one mapping, and its Guard column names the decision and boundary.
-There are **44 active guards and 44 mapped controls, 0 missing and 0 duplicate PC mappings**.
+The following control table is also the guard inventory: `G-n -> PC-n` names
+each guard's control, and its Guard column names the decision and boundary.
+There are **44 active guards and 45 mapped controls, 0 missing and 0 duplicate PC mappings**.
+G-30 has two separate controls, PC-30a for a held read and PC-30b for a pending poll delay;
+every other active guard has one control.
 This expands the Plan's 19 cycles: independently bypassable reset, timing,
 current-frame input and diagnostic guards cannot share one mutation and be
 reported as individually controlled. All 44 use the 22 V methods. R-1/R-2/R-3
@@ -811,15 +813,16 @@ for TestDesign fixture/roster finalization. Missing 1.0.41 or irretrievable logs
 need a separately commissioned reproduction; this estimate cannot promise that
 evidence exists. S2/S3 authoring: **120 minutes**, plus ordinary Code verification
 49 = **169 minutes** before repairs and slot wait. Ordinary Review and landing are
-additional. SourceLanding Mutation: budget **41 unit control cycles** (PC-1..14
-and PC-18..45 except removed PC-36) at **9 minutes** each (baseline/red/green isolated builds), two DB
+additional. SourceLanding Mutation: budget **42 unit control cycles** (PC-1..14
+and PC-18..45 except removed PC-36, with PC-30a and PC-30b counted separately)
+at **9 minutes** each (baseline/red/green isolated builds), two DB
 integration controls (PC-15/16) at **15** each, one Windows native control (PC-17)
 at **20**, plus **15** for restoration/reporting: 378 + 30 + 20 + 15 =
-**434 minutes**. This is 44 cycles / 132 method-scoped phase executions and builds,
+**443 minutes**. This is 45 cycles / 135 method-scoped phase executions and builds,
 not 45 additional ordinary tests. PC-17 requires a Windows SourceLanding task;
 portable PCs can use Linux. No batching discount because controls share production
-files/decisions. Ordinary V/R + Mutation verification floor is **483 minutes**;
-with S1's 75 and S2/S3 authoring's 120, the estimated total is **678 minutes**
+files/decisions. Ordinary V/R + Mutation verification floor is **492 minutes**;
+with S1's 75 and S2/S3 authoring's 120, the estimated total is **687 minutes**
 before ordinary Review/land, repairs, login/access delays and slot wait. This
 replaces Plan's 209-minute Mutation estimate; no measured runtime was obtained.
 Slot contention has no zero-wait guarantee and must be reported separately.
