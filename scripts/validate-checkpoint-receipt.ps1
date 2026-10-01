@@ -49,13 +49,24 @@ try {
         }
         if ($selected.Count -eq 0) { throw 'selected_rows_missing' }
         foreach ($row in $selected) {
-            if ($row.exitCode -ne 0 -or $row.state -cne 'green') { throw 'row_failed' }
-            if ($null -eq $row.source -or $row.source.state -cne 'clean' -or $row.source.buildSource -cne 'verified') { throw 'row_source_ineligible' }
-            if ($row.source.start.commit -cne $data.source.start.commit -or $row.source.start.fingerprint -cne $data.source.start.fingerprint) { throw 'row_heading_disagreement' }
+            $command = -not [string]::IsNullOrWhiteSpace([string]$row.command)
+            if ($row.exitCode -ne 0 -or $row.state -cne 'green' -or
+                (-not $command -and ($row.executed -lt 1 -or $row.passed -ne $row.executed -or $row.failed -ne 0 -or $row.skipped -ne 0))) { throw 'row_failed' }
+            if (-not (Test-CheckpointSourceEvidence $row.source $ExpectedSourceSha -AllowCommand:$command)) { throw 'row_source_ineligible' }
+            if ($row.source.start.commit -cne $data.source.start.commit -or $row.source.start.fingerprint -cne $data.source.start.fingerprint -or
+                ($command -and $row.source.buildSource -cne 'notApplicable') -or
+                (-not $command -and $row.source.buildSource -cne $data.source.buildSource)) { throw 'row_heading_disagreement' }
             $fields = Get-ReceiptFields ([string]$row.line)
-            if ($fields.source -cne $ExpectedSourceSha -or $fields.sourceState -cne 'clean' -or $fields.buildSource -cne 'verified' -or $fields.dirty -cne '0') { throw 'receipt_disagreement' }
+            if ($row.line -cnotmatch ('^CHECKPOINT ' + [regex]::Escape([string]$row.id) + ' ') -or
+                $fields.commit -cne $ExpectedSourceSha -or $fields.source -cne $ExpectedSourceSha -or
+                $fields.sourceState -cne 'clean' -or $fields.buildSource -cne $row.source.buildSource -or $fields.dirty -cne '0') { throw 'receipt_disagreement' }
+            if (-not $command) {
+                foreach ($key in @('executed', 'passed', 'failed', 'skipped')) {
+                    if ($fields[$key] -cne [string]$row.$key) { throw 'receipt_counts' }
+                }
+            }
         }
-        if (-not (Test-CheckpointSourceEvidence $data.source $ExpectedSourceSha)) { throw 'source_ineligible' }
+        if (-not (Test-CheckpointSourceEvidence $data.source $ExpectedSourceSha -AllowCommand)) { throw 'source_ineligible' }
     } else {
         if (-not (Test-CheckpointSourceEvidence $data $ExpectedSourceSha)) { throw 'source_ineligible' }
         if ($data.exitCode -ne 0 -or $data.failed -ne 0 -or $data.executed -lt 1 -or $data.passed -ne $data.executed -or $data.skipped -ne 0) { throw 'receipt_failed' }

@@ -333,7 +333,7 @@ function Test-C585_LineFormat {
     if ($report.Count -gt 0) { $first = [string]$report[0] }
     $last = ''
     if ($r.Lines.Count -gt 0) { $last = [string]$r.Lines[$r.Lines.Count - 1] }
-    Assert-C487 -Cond ($first -match '^CHECKPOINT CP-1 commit=[0-9a-f]{40} build=(ok|reused) filter=.+ executed=\d+ passed=\d+ failed=\d+ skipped=\d+ trx=.+ slot=(granted|unleased|unlimited|skipped) waited=\d+s$' -and [string]$r.Lines[0] -ceq 'BUILD SLOT skipped by -NoSlot') `
+    Assert-C487 -Cond ($first -match '^CHECKPOINT CP-1 commit=[0-9a-f]{40} build=(ok|reused) filter=.+ executed=\d+ passed=\d+ failed=\d+ skipped=\d+ trx=.+ slot=(granted|unleased|unlimited|skipped) waited=\d+s dirty=\d+ source=[0-9a-f]{40}(\+dirty:[0-9a-f]{64})? sourceState=(clean|dirty) buildSource=(verified|unknown|mismatch)$' -and [string]$r.Lines[0] -ceq 'BUILD SLOT skipped by -NoSlot') `
         -Name 'C585 LineFormat first line is the pinned CHECKPOINT report line' -Detail ($r.Lines -join ' | ')
     Assert-C487 -Cond ($last -match '^CHECKPOINT CP-1 EXIT CODE: \d$') -Name 'C585 LineFormat last line is the exit-code trailer' -Detail $last
 }

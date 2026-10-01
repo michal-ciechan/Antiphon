@@ -24,7 +24,8 @@ public static class ReportMerger
         if (latest.SchemaVersion != 2 || !ReportValidator.IsSourceEligible(latest.Source, latest.Commit) ||
             retained.Any(row => !ReportValidator.IsSourceEligible(row.Source, latest.Commit) ||
                 row.Source.Start.Fingerprint != latest.Source.Start.Fingerprint ||
-                row.Source.BuildSource != latest.Source.BuildSource))
+                (row.Command is null ? row.Source.BuildSource != latest.Source.BuildSource
+                    : row.Source.BuildSource != "notApplicable")))
             throw new InvalidOperationException("cannot merge incompatible or unknown checkpoint source evidence");
 
         var merged = new ReportModel

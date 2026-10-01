@@ -8,6 +8,7 @@ Before next-stage, emit one bare block (unfenced, unindented, not quoted):
 --- review evidence ---
 subjectTaskId: <reviewed source task's full GUID: owner unless brief names -FromTask>
 reviewedSourceSha: <full SHA actually reviewed>
+reviewedSourceClean: <true|false; true only after every required selected source.json or schema-2 report passes the receipt validator for reviewedSourceSha>
 ordinaryScopeCompleted: <Full|Interim|None>
 Full only when the whole required selection ran. The caller lands that Code owner with `-ExpectedSourceSha` from this evidence.
 Platform: GET /api/runner-defaults, GET /api/session-runners; embed no fleet location. Omit -Runner unless pinning one host. Omit -Platform unless OS needed; -Platform Any unpins.
