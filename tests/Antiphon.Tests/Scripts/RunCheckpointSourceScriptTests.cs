@@ -362,7 +362,7 @@ public sealed class RunCheckpointSourceScriptTests
                 Path.Combine(ProjectRoot, "scripts", "validate-checkpoint-receipt.ps1"),
                 "-Evidence", evidence, "-ExpectedSourceSha", Head], null);
 
-        public void Dispose() => Directory.Delete(Root, true);
+        public void Dispose() => GitFixtureCleanup.Delete(Root);
 
         private static (int Exit, string Output) Run(string file, string cwd, IReadOnlyList<string> args) =>
             RunAsync(file, cwd, args, null).GetAwaiter().GetResult();
