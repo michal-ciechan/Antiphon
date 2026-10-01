@@ -16,6 +16,23 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class CheckpointSourceStateTests
 {
     [Test]
+    public void git_fixture_cleanup_removes_read_only_contents()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "c835-cleanup-" + Guid.NewGuid().ToString("N"));
+        var nested = Directory.CreateDirectory(Path.Combine(root, "nested")).FullName;
+        var file = Path.Combine(nested, "object");
+        File.WriteAllText(file, "git object");
+        File.SetAttributes(file, File.GetAttributes(file) | FileAttributes.ReadOnly);
+        File.SetAttributes(nested, File.GetAttributes(nested) | FileAttributes.ReadOnly);
+        try
+        {
+            GitFixtureCleanup.Delete(root);
+            Directory.Exists(root).ShouldBeFalse("read-only-git-objects-and-directory-removed");
+        }
+        finally { GitFixtureCleanup.Delete(root); }
+    }
+
+    [Test]
     public void clean_and_ignored_outputs_match_head()
     {
         using var repo = new GitFixture();
@@ -166,7 +183,7 @@ public sealed class CheckpointSourceStateTests
             GitFixture.Run("git", noHead, "init", "-q");
             new SourceSnapshot().Capture(noHead).CaptureStatus.ShouldBe("unknown", "unborn-head");
         }
-        finally { Directory.Delete(noHead, recursive: true); }
+        finally { GitFixtureCleanup.Delete(noHead); }
 
         byte[] UnsupportedSubmodule(string directory, IReadOnlyList<string> args) =>
             args[0] == "status" ? Encoding.UTF8.GetBytes(" m submodule\0")
@@ -276,7 +293,7 @@ public sealed class CheckpointSourceStateTests
             return output;
         }
 
-        public void Dispose() => Directory.Delete(Root, recursive: true);
+        public void Dispose() => GitFixtureCleanup.Delete(Root);
 
         private static string FindProjectRoot()
         {
