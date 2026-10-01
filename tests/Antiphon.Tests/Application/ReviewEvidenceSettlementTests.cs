@@ -242,7 +242,18 @@ public sealed class ReviewEvidenceSettlementTests
     public async Task C807_SourceReviewFeedsAdoption()
     {
         await using var fixture = await AdoptionFixture.CreateAsync();
+        await using (var before = fixture.World.CreateContext())
+        {
+            var source = await before.AgentTasks.SingleAsync(t => t.Id == fixture.SourceId);
+            source.CompletionProgressEvidenceJson = TaskProgressJson.SerializeEvidence(new CompletionProgressEvidence(
+                1, CompletionProgressAssessment.ProgressObserved,
+                RemoteSync: new RemoteSyncEvidence(1, RemoteSettlementSyncState.Synchronized,
+                    fixture.SourceRef, ConfirmedSha: new string('a', 40))));
+            await before.SaveChangesAsync();
+        }
         var review = await SettleAsync(fixture.World, subject: fixture.SourceId, sha: fixture.SourceSha);
+        TaskCompletionNotification.TryReadSnapshot(review.Note!.CompletionSnapshotJson)!.NoteHeader
+            .ShouldContain("review_evidence_subject_tip_mismatch");
         review.Outcome.SubjectTaskId.ShouldBe(fixture.SourceId);
         review.Outcome.ReviewedSourceSha.ShouldBe(fixture.SourceSha);
         review.Outcome.ReviewedSourceRef.ShouldBe(fixture.SourceRef);

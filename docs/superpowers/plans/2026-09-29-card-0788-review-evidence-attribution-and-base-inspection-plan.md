@@ -569,6 +569,12 @@ rows must execute. CP-6/CP-7 floors are 11/7. Check each intended method/argumen
 just totals. If CARD-0807/base adds cases, raise floors before B's commit; never lower them or
 allow unrelated added cases to hide missing required methods.
 
+Code census at the first implementation slice commit (expanded results, including partial
+files): Approval 23, Adoption 15, Resolver 67, Selection 16, Dispatch 87, Runner settlement
+23, Runner progress 8, Continuation 48, Review evidence 16, CARD-0807 settlement 11,
+Consistency 31, Completion delivery 0, Land refusal delivery 0. The frozen CP floors above
+remain the completion gate; the missing Adoption and delivery results are still required.
+
 ### Checkpoints
 
 Commit each complete group before its one tool run. Through scripts/build-slot.ps1 launch

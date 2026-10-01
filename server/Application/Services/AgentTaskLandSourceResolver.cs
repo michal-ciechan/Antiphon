@@ -237,12 +237,14 @@ public sealed class AgentTaskLandSourceResolver(
             return await RefuseAsync(task, request, baseline, "adopt_source_landing", null, null, expected, ct);
         try
         {
-            await LandApproval.LoadRecoveryEvidenceAsync(db, request.ReviewEvidenceId.Value, expected, source, ct);
+            await LandApproval.LoadRecoveryEvidenceAsync(db, request.ReviewEvidenceId.Value, expected, source, ct,
+                request.RecoveryMode == LandRecoveryMode.AdoptReviewedSource
+                    ? LandApproval.EvidenceIdentity.AdoptionSource : LandApproval.EvidenceIdentity.RecoveryOwner);
         }
         catch (Antiphon.Server.Application.Exceptions.ConflictException ex)
         {
             return await RefuseAsync(task, request, baseline, ex.Code ?? "recovery_review_invalid",
-                null, null, expected, ct);
+                null, null, expected, ct, detail: ex.Message);
         }
         if (source.RepoPath is null || !SamePath(await git.CommonDirectoryAsync(source.RepoPath, ct),
                 await git.CommonDirectoryAsync(repository, ct)))
@@ -385,7 +387,8 @@ public sealed class AgentTaskLandSourceResolver(
         {
             var authority = await RecheckRecoveryAuthorityAsync(request, source, sourceObserved, ct);
             if (authority is not null)
-                return await RefuseAsync(task, request, baseline, authority, local, ownerObserved.Sha, expected, ct);
+                return await RefuseAsync(task, request, baseline, authority.Value.Code,
+                    local, ownerObserved.Sha, expected, ct, detail: authority.Value.Detail);
             if (ownerObserved.Sha is not null)
             {
                 var recheck = await git.RecheckSourceRemoteAsync(repository, coordinates.SourceFullRef,
@@ -436,7 +439,8 @@ public sealed class AgentTaskLandSourceResolver(
         {
             var authority = await RecheckRecoveryAuthorityAsync(request, source, sourceObserved, ct);
             if (authority is not null)
-                return await RefuseAsync(task, request, baseline, authority, local, ownerObserved.Sha, expected, ct);
+                return await RefuseAsync(task, request, baseline, authority.Value.Code,
+                    local, ownerObserved.Sha, expected, ct, detail: authority.Value.Detail);
             if (ownerObserved.Sha is not null)
             {
                 var recheck = await git.RecheckSourceRemoteAsync(repository, coordinates.SourceFullRef,
@@ -485,22 +489,24 @@ public sealed class AgentTaskLandSourceResolver(
         return null;
     }
 
-    private async Task<string?> RecheckRecoveryAuthorityAsync(AgentTaskLandRequest request, AgentTask source,
+    private async Task<(string Code, string? Detail)?> RecheckRecoveryAuthorityAsync(AgentTaskLandRequest request, AgentTask source,
         LandingSourceObservation observed, CancellationToken ct)
     {
         try
         {
             await LandApproval.LoadRecoveryEvidenceAsync(db, request.ReviewEvidenceId!.Value,
-                request.ExpectedSourceSha!, source, ct);
+                request.ExpectedSourceSha!, source, ct,
+                request.RecoveryMode == LandRecoveryMode.AdoptReviewedSource
+                    ? LandApproval.EvidenceIdentity.AdoptionSource : LandApproval.EvidenceIdentity.RecoveryOwner);
         }
         catch (Antiphon.Server.Application.Exceptions.ConflictException ex)
         {
-            return ex.Code ?? "recovery_review_invalid";
+            return (ex.Code ?? "recovery_review_invalid", ex.Message);
         }
         var remote = await git.RecheckSourceRemoteAsync(request.RepositoryPathSnapshot!,
             request.RecoverySourceFullRef!, request.ExpectedSourceSha!, observed.Fingerprint!, ct);
         return remote.Accepted && remote.Sha == request.ExpectedSourceSha
-            ? null : remote.Reason ?? "recovery_source_changed";
+            ? null : (remote.Reason ?? "recovery_source_changed", null);
     }
 
     private async Task<LandingSourceGraph> ClassifyAsync(string repository, string local, string remote, CancellationToken ct)

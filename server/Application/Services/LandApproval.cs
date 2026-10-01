@@ -9,6 +9,7 @@ namespace Antiphon.Server.Application.Services;
 
 internal static class LandApproval
 {
+    public enum EvidenceIdentity { Owner, RecoveryOwner, AdoptionSource }
     public const string FinalReviewRequiredCode = "final_verification_review_required";
     public const string ScopeIneligibleCode = "review_verification_scope_ineligible";
 
@@ -28,7 +29,7 @@ internal static class LandApproval
     /// owners also recheck the approval; caller-only unlatched owners keep CARD-0488 behavior.
     /// Returns a refusal code, or null when publication may continue.
     /// </summary>
-    public static async Task<string?> RevalidateFinalVerificationAsync(AppDbContext db, Guid ownerId,
+    public static async Task<(string Code, string? Detail)?> RevalidateFinalVerificationAsync(AppDbContext db, Guid ownerId,
         Guid? evidenceId, string? expectedSha, CancellationToken ct)
     {
         var owner = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == ownerId, ct);
@@ -37,7 +38,7 @@ internal static class LandApproval
         if (!owner.RequiresFinalVerificationReview && evidenceId is null)
             return null;
         if (evidenceId is not Guid id || !GitObjectId.IsFull(expectedSha))
-            return FinalReviewRequiredCode;
+            return (FinalReviewRequiredCode, null);
         try
         {
             await LoadUsableEvidenceAsync(db, id, expectedSha!, owner, ct);
@@ -45,7 +46,7 @@ internal static class LandApproval
         }
         catch (ConflictException ex)
         {
-            return ex.Code ?? ScopeIneligibleCode;
+            return (ex.Code ?? ScopeIneligibleCode, ex.Message);
         }
     }
 
@@ -66,7 +67,7 @@ internal static class LandApproval
     }
 
     public static async Task<StageOutcome> LoadUsableEvidenceAsync(AppDbContext db, Guid evidenceId, string expectedSha,
-        AgentTask subject, CancellationToken ct)
+        AgentTask subject, CancellationToken ct, EvidenceIdentity identity = EvidenceIdentity.Owner)
     {
         var row = await db.StageOutcomes.AsNoTracking().SingleOrDefaultAsync(o => o.Id == evidenceId, ct)
             ?? throw new ConflictException("Review evidence was not found.", "review_evidence_missing");
@@ -85,15 +86,30 @@ internal static class LandApproval
             && (row.CommissionedRound != VerificationRound.Final || row.OrdinaryScopeCompleted != VerificationScope.Full))
             throw new ConflictException("This owner requires a Clean Final Review that completed Full scope.",
                 ScopeIneligibleCode);
-        if (row.SubjectTaskId != subject.Id)
-            throw new ConflictException("Review evidence subject is not this landing owner.", "review_evidence_subject_mismatch");
-        if (!GitObjectId.IsFull(row.ReviewedSourceSha) || row.ReviewedSourceSha != expectedSha)
-            throw new ConflictException("Review evidence SHA does not match expectedSourceSha.", "review_evidence_sha_mismatch");
         var sourceRef = subject.WorktreeBranch is null ? null
             : subject.WorktreeBranch.StartsWith("refs/", StringComparison.Ordinal)
                 ? subject.WorktreeBranch : "refs/heads/" + subject.WorktreeBranch;
+        async Task<string> MismatchAsync(string issue)
+        {
+            var actual = row.SubjectTaskId is Guid actualId
+                ? await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == actualId, ct) : null;
+            var actualName = row.SubjectTaskId is Guid id ? id.ToString("N")[..8] : "none";
+            var requiredName = subject.Id.ToString("N")[..8];
+            var guidance = identity == EvidenceIdentity.AdoptionSource
+                ? $"-FromTask {requiredName} needs evidence whose subjectTaskId is {requiredName}; commission a fresh same-card Review naming {requiredName} at {expectedSha}."
+                : identity == EvidenceIdentity.RecoveryOwner
+                    ? $"Commission a fresh same-card Review naming recovery owner {requiredName} at {expectedSha}, then use -RecoverReviewedSource. A -RepairSource task must be reviewed on its owner's ref."
+                    : actual is { CardId: not null } && actual.CardId == subject.CardId
+                        ? $"Land {actualName} directly, or adopt it with -Land {requiredName} -FromTask {actualName} when its pushed tip is the reviewed SHA."
+                        : $"Commission a fresh same-card Review naming landing owner {requiredName} at {expectedSha}.";
+            return $"Review evidence {evidenceId:D} {issue}. Recorded subjectTaskId={actualName}, ref={row.ReviewedSourceRef ?? "none"}, SHA={row.ReviewedSourceSha}; required {identity} subjectTaskId={requiredName}, ref={sourceRef ?? "none"}, expected SHA={expectedSha}. {guidance}";
+        }
+        if (row.SubjectTaskId != subject.Id)
+            throw new ConflictException(await MismatchAsync("subject differs"), "review_evidence_subject_mismatch");
+        if (!GitObjectId.IsFull(row.ReviewedSourceSha) || row.ReviewedSourceSha != expectedSha)
+            throw new ConflictException(await MismatchAsync("SHA differs"), "review_evidence_sha_mismatch");
         if (!string.Equals(row.ReviewedSourceRef, sourceRef, StringComparison.Ordinal))
-            throw new ConflictException("Review evidence source ref does not match the landing owner.", "review_evidence_ref_mismatch");
+            throw new ConflictException(await MismatchAsync("source ref differs"), "review_evidence_ref_mismatch");
         if (!SameRepository(row.ReviewedRepositoryPath, subject.RepoPath))
             throw new ConflictException("Review evidence repository does not match the landing owner.",
                 "review_evidence_repository_mismatch");
@@ -105,9 +121,10 @@ internal static class LandApproval
     }
 
     public static async Task<StageOutcome> LoadRecoveryEvidenceAsync(AppDbContext db, Guid evidenceId,
-        string expectedSha, AgentTask source, CancellationToken ct)
+        string expectedSha, AgentTask source, CancellationToken ct,
+        EvidenceIdentity identity = EvidenceIdentity.RecoveryOwner)
     {
-        var row = await LoadUsableEvidenceAsync(db, evidenceId, expectedSha, source, ct);
+        var row = await LoadUsableEvidenceAsync(db, evidenceId, expectedSha, source, ct, identity);
         if (row.CommissionedRound != VerificationRound.Final || row.OrdinaryScopeCompleted != VerificationScope.Full)
             throw new ConflictException("Recovery requires a Clean Final Review that completed Full scope.",
                 ScopeIneligibleCode);

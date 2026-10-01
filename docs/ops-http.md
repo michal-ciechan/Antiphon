@@ -479,6 +479,20 @@ produces 422 `worktree_base_source_invalid`. Dispatch resolves again and records
 actual `worktreeBaseTaskId`, `worktreeBaseBranch`, `worktreeBaseSha` and source in task
 detail and the creation event. A pending sibling land continues to hold dispatch.
 
+Same-card base inspection skips Git for non-Succeeded rows unless a row has a pending land
+request or was explicitly selected with `-BaseTask`. It reads branch tips and target-contained
+branches in batches, then checks checkout safety only for tips that can win. The default
+inspection budget is 5 seconds. If dispatch cannot finish an Auto inspection, it blocks a
+Review or a task whose create preview selected a source; the block names the previewed
+source and explicit retry flags. A fresh Code task previewed at the target retains its
+target fallback.
+
+Review-evidence land 409 details name the evidence ID, recorded subject/ref/SHA, required
+owner or adoption source/ref/SHA, and the fitting `-FromTask` or `-RecoverReviewedSource`
+shape. The same detail appears in asynchronous refusal status. A non-Code Worktree task
+that settles without pushed progress succeeds with a caller-visible `progress=none` warning
+that names the reason, ref and last confirmed tip when available.
+
 `GET /api/agent-tasks/{id}`'s `progressEvidence.sources[]` adds `origin: "PrimaryAlternate"` and
 `observedRef` (CARD-0613). That origin means post-dispatch work was proved in the task's own
 registered checkout while it was off its expected ref, detached, or on a branch reset into a
