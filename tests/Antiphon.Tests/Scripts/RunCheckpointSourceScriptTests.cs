@@ -31,7 +31,7 @@ public sealed class RunCheckpointSourceScriptTests
         untracked.Line.ShouldContain("dirty=2 source=" + fixture.Head + "+dirty:");
         var failed = await fixture.RunAsync(trx: "c585-failures.trx");
         failed.Exit.ShouldBe(1, failed.Output);
-        failed.Line.ShouldContain("sourceState=dirty", "dirty-test-failure-is-still-failure");
+        failed.Line.ShouldContain("sourceState=dirty", Case.Sensitive, "dirty-test-failure-is-still-failure");
     }
 
     [Test]
@@ -43,12 +43,12 @@ public sealed class RunCheckpointSourceScriptTests
         var calls = fixture.Calls;
         var wrong = await fixture.RunAsync(expectedSha: new string('f', 40));
         wrong.Exit.ShouldBe(2, wrong.Output);
-        wrong.Line.ShouldContain("reason=source_mismatch", "wrong-sha-no-driver");
+        wrong.Line.ShouldContain("reason=source_mismatch", Case.Sensitive, "wrong-sha-no-driver");
         fixture.Calls.ShouldBe(calls, "wrong-sha-no-driver");
         fixture.Write("tracked.txt", "dirty");
         var dirty = await fixture.RunAsync(expectedSha: fixture.Head);
         dirty.Exit.ShouldBe(2, dirty.Output);
-        dirty.Line.ShouldContain("reason=source_dirty", "dirty-no-driver");
+        dirty.Line.ShouldContain("reason=source_dirty", Case.Sensitive, "dirty-no-driver");
         fixture.Calls.ShouldBe(calls, "dirty-no-driver");
     }
 
@@ -60,21 +60,21 @@ public sealed class RunCheckpointSourceScriptTests
         built.Exit.ShouldBe(0, built.Output);
         var reused = await fixture.RunAsync(expectedSha: fixture.Head, noBuild: true);
         reused.Exit.ShouldBe(0, reused.Output);
-        reused.Line.ShouldContain("build=reused", "matching-stamp-reused");
-        reused.Line.ShouldContain("buildSource=verified", "matching-stamp-verified");
+        reused.Line.ShouldContain("build=reused", Case.Sensitive, "matching-stamp-reused");
+        reused.Line.ShouldContain("buildSource=verified", Case.Sensitive, "matching-stamp-verified");
         File.Exists(fixture.Stamp).ShouldBeTrue("successful-build-stamp");
         File.Delete(fixture.Stamp);
         var calls = fixture.Calls;
         var missing = await fixture.RunAsync(expectedSha: fixture.Head, noBuild: true);
         missing.Exit.ShouldBe(2, missing.Output);
-        missing.Line.ShouldContain("reason=build_source_mismatch", "missing-stamp-no-tests");
+        missing.Line.ShouldContain("reason=build_source_mismatch", Case.Sensitive, "missing-stamp-no-tests");
         fixture.Calls.ShouldBe(calls, "missing-stamp-no-tests");
 
         using var driftFixture = new Fixture();
         var drift = await driftFixture.RunAsync(driftPhase: "run");
         drift.Exit.ShouldBe(2, drift.Output);
         drift.Source.GetProperty("state").GetString().ShouldBe("changed", "driver-drift-is-changed");
-        drift.Line.ShouldContain("executed=3 passed=3", "driver-drift-retains-counts");
+        drift.Line.ShouldContain("executed=3 passed=3", Case.Sensitive, "driver-drift-retains-counts");
     }
 
     [Test]
@@ -83,11 +83,11 @@ public sealed class RunCheckpointSourceScriptTests
         using var fixture = new Fixture();
         var build = await fixture.RunAsync(buildExit: 37);
         build.Exit.ShouldBe(2, build.Output);
-        build.Line.ShouldContain("build=failed", "failed-build-receipt");
+        build.Line.ShouldContain("build=failed", Case.Sensitive, "failed-build-receipt");
         build.Source.GetProperty("end").ValueKind.ShouldBe(JsonValueKind.Object, "failed-build-has-observed-end");
         var missing = await fixture.RunAsync(trx: null);
         missing.Exit.ShouldBe(2, missing.Output);
-        missing.Line.ShouldContain("sourceState=clean", "missing-trx-preserves-source");
+        missing.Line.ShouldContain("sourceState=clean", Case.Sensitive, "missing-trx-preserves-source");
         missing.Source.GetProperty("exitCode").GetInt32().ShouldBe(2);
         var malformed = await fixture.RunAsync(trx: "c585-zero.trx");
         malformed.Exit.ShouldBe(3, malformed.Output);
