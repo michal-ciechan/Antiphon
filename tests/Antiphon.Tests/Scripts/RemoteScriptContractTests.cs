@@ -42,7 +42,7 @@ public sealed class RemoteScriptContractTests
         {
             var mapPath = Path.Combine(scratch, "cases.json");
             var harnessPath = Path.Combine(scratch, "probe.ps1");
-            File.WriteAllText(mapPath, JsonSerializer.Serialize(entries));
+            File.WriteAllText(mapPath, JsonSerializer.Serialize(entries) + "\n");
             File.WriteAllText(harnessPath, """
                 param([string]$Front, [string]$MapPath, [string]$Scratch)
                 $ErrorActionPreference = 'Stop'
@@ -50,6 +50,14 @@ public sealed class RemoteScriptContractTests
                 $sha = (& git -C $repo rev-parse HEAD).Trim()
                 $entries = @(Get-Content -Raw -LiteralPath $MapPath | ConvertFrom-Json)
                 $global:ownedEvidence = @()
+                function global:C849WriteLfFixture([string]$Path, [string]$Value) {
+                    [IO.File]::WriteAllText($Path, $Value + "`n", [Text.Encoding]::ASCII)
+                }
+                function global:C849AssertLfFixture([string]$Path) {
+                    if ([IO.File]::ReadAllBytes($Path) -contains [byte]13) {
+                        throw "FAIL C849 fixture LF-only $([IO.Path]::GetFileName($Path))"
+                    }
+                }
                 function global:pwsh {
                     param([switch]$NoProfile, [string]$File, [string]$Case, [string]$Manifest)
                     $global:seen += $Case
@@ -59,15 +67,17 @@ public sealed class RemoteScriptContractTests
                     if ($global:requested -ne 'Both') { throw 'C849_STUB_STOP' }
                     $caseDir = Join-Path $m.evidenceRoot $Case
                     New-Item -ItemType Directory -Path $caseDir -Force | Out-Null
-                    '{"accepted":true,"exit":0}' | Set-Content -LiteralPath (Join-Path $caseDir 'c590-result.json') -Encoding ascii
-                    (@{ sessions=0; runnerSessions=0; queuedTasks=0; buildVersion=$sha; dispatchEligible=$true; acceptingNewWork=$true; draining=$false } | ConvertTo-Json -Compress) |
-                        Set-Content -LiteralPath (Join-Path $caseDir 'status.json') -Encoding ascii
-                    'uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK' | Set-Content -LiteralPath (Join-Path $caseDir 'smoke-summary.txt') -Encoding ascii
-                    'antiphon-runner-cache-nuget-packages antiphon-runner-cache-nuget-scratch antiphon-runner-cache-npm-content' |
-                        Set-Content -LiteralPath (Join-Path $caseDir 'runner-mounts.txt') -Encoding ascii
+                    C849WriteLfFixture (Join-Path $caseDir 'c590-result.json') '{"accepted":true,"exit":0}'
+                    C849WriteLfFixture (Join-Path $caseDir 'status.json') (
+                        @{ sessions=0; runnerSessions=0; queuedTasks=0; buildVersion=$sha; dispatchEligible=$true; acceptingNewWork=$true; draining=$false } | ConvertTo-Json -Compress)
+                    C849WriteLfFixture (Join-Path $caseDir 'smoke-summary.txt') 'uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK'
                     $private = if ($m.runnerId -eq 'server2') { 'antiphon-runner_runner-tmp' } else { 'antiphon-runner-temp_runner-tmp' }
-                    Add-Content -LiteralPath (Join-Path $caseDir 'runner-mounts.txt') -Value "$private /tmp true" -Encoding ascii
-                    ('a' * 64) | Set-Content -LiteralPath (Join-Path $caseDir 'seed-hash.txt') -Encoding ascii
+                    C849WriteLfFixture (Join-Path $caseDir 'runner-mounts.txt') (
+                        "antiphon-runner-cache-nuget-packages antiphon-runner-cache-nuget-scratch antiphon-runner-cache-npm-content`n$private /tmp true")
+                    C849WriteLfFixture (Join-Path $caseDir 'seed-hash.txt') ('a' * 64)
+                    foreach ($name in @('c590-result.json', 'status.json', 'smoke-summary.txt', 'runner-mounts.txt', 'seed-hash.txt')) {
+                        C849AssertLfFixture (Join-Path $caseDir $name)
+                    }
                 }
                 try {
                     foreach ($entry in $entries) {
@@ -78,7 +88,8 @@ public sealed class RemoteScriptContractTests
                             $previewDir = Join-Path $Scratch 'runner-cache-prune-preview'
                             New-Item -ItemType Directory -Path $previewDir -Force | Out-Null
                             $preview = Join-Path $previewDir 'preview.txt'
-                            "run=c849$('a' * 16)0`nsource-sha=$sha" | Set-Content -LiteralPath $preview -Encoding ascii
+                            C849WriteLfFixture $preview "run=c849$('a' * 16)0`nsource-sha=$sha"
+                            C849AssertLfFixture $preview
                             $arguments.Preview = $preview
                         }
                         try { & $Front @arguments | Out-Null }
@@ -106,8 +117,13 @@ public sealed class RemoteScriptContractTests
                         }
                     }
                     Remove-Item Function:\pwsh -ErrorAction SilentlyContinue
+                    Remove-Item Function:\C849WriteLfFixture -ErrorAction SilentlyContinue
+                    Remove-Item Function:\C849AssertLfFixture -ErrorAction SilentlyContinue
                 }
-                """);
+                """.ReplaceLineEndings("\n") + "\n");
+
+            foreach (var path in new[] { mapPath, harnessPath })
+                File.ReadAllBytes(path).ShouldNotContain((byte)'\r', $"FAIL C849 fixture LF-only {Path.GetFileName(path)}");
 
             var start = new ProcessStartInfo("pwsh")
             {
