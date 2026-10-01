@@ -494,7 +494,7 @@ by the run). It recorded positive-settle readiness in 2,414 ms, one complete
 deviation from D-4: the operator's existing auth was copied/used in place of a
 separate login in the isolated Codex home. The isolated-home S2 task `e51167f8`
 was cancelled. Post-land independent Final Review `a5c4d4a7` of `d07c7e07`
-was clean (evidence `b7750412-d72d-456a-96e5-b1fcdd1829ee`, Interim scope;
+was clean (evidence `b7750412-d72d-456a-96e5-e1fcdd1829ee`, Interim scope;
 follow-ups CARD-0867, CARD-0868 and CARD-0869).
 The S3 production/test slice was pushed on `feat/card-task-5cbbdf8f`. The final
 placement-audit assertion commit is `9a6ed6a37ee4be3ca3957b3e28679b7ea2f57588`; no production source changed after
