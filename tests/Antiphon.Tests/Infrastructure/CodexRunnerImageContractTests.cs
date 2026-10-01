@@ -39,6 +39,29 @@ public sealed class CodexRunnerImageContractTests
         + "trust_level = \"trusted\"\n";
 
     [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void Verifier_cursor_move_preserves_the_next_character()
+    {
+        StripVerifierCapture("x\u001b[8;9Hy").ShouldBe("x y", "CUP must separate positioned words without eating y");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void Verifier_finds_the_0160_trust_prompt_in_raw_cursor_positioned_text()
+    {
+        // The measured 0.160.0 control capture in the CARD-0904 investigation: one CUP per word.
+        const string raw = "\u001b[8;3H\u001b[22mTrust\u001b[8;9Hthis\u001b[8;14Hfolder?\u001b[8;22HCodex";
+        StripVerifierCapture(raw).ShouldContain("Trust this folder", "0.160.0 trust control must be visible to the image row");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void Verifier_still_strips_colour_and_erase_sequences()
+    {
+        StripVerifierCapture("A\u001b[31mB\u001b[0m\u001b[2KC").ShouldBe("ABC", "ordinary CSI must not consume following text");
+    }
+
+    [Test]
     public void Pin_integrity_and_install_are_in_runtime_base()
     {
         var dockerfile = Read("docker/session-runner-grok/Dockerfile");
@@ -425,6 +448,18 @@ public sealed class CodexRunnerImageContractTests
         var a = text.IndexOf(first, StringComparison.Ordinal);
         var b = text.IndexOf(second, StringComparison.Ordinal);
         return a >= 0 && b >= 0 && a < b;
+    }
+
+    private static string StripVerifierCapture(string raw)
+    {
+        var line = Read("docker/session-runner-grok/verify-codex-image.sh").Split('\n')
+            .Single(line => line.TrimStart().StartsWith("sed -e 's/\\x1b", StringComparison.Ordinal));
+        var command = line.Trim();
+        var pipeline = command[..command.IndexOf(" > \"$log.txt\"", StringComparison.Ordinal)]
+            .Replace("\"$log\"", "-", StringComparison.Ordinal);
+        var encoded = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(raw));
+        return RemoteScriptContractTests.LinuxShell("printf '%s' '" + encoded + "' | base64 -d | " + pipeline)
+            .TrimEnd(' ', '\n', '\r');
     }
 
     private static string Read(string relative) => DockerStackDocuments.Read(relative).Replace("\r\n", "\n");
