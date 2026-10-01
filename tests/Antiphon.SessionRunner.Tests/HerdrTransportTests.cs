@@ -141,6 +141,22 @@ public class HerdrTransportTests
             HerdrEndpointResolver.Resolve(settings, null, Get, Folder, false));
     }
 
+    [Test]
+    public void C801_UnixResolutionUsesPosixRulesAcrossHostSeparators()
+    {
+        HerdrEndpointResolver.IsUnixAbsolute("/config/é").ShouldBeTrue();
+        HerdrEndpointResolver.IsUnixAbsolute(@"C:\config\herdr").ShouldBeFalse();
+        HerdrEndpointResolver.UnixJoin("/config/é", "herdr", "sessions", "named", "herdr.sock")
+            .ShouldBe("/config/é/herdr/sessions/named/herdr.sock");
+        HerdrEndpointResolver.UnixJoin("/home/test", ".config", "herdr", "herdr.sock")
+            .ShouldBe("/home/test/.config/herdr/herdr.sock");
+        string? Get(string key) => key == "XDG_CONFIG_HOME" ? @"C:\config\herdr" :
+            key == "HOME" ? "/home/test" : null;
+        HerdrEndpointResolver.Resolve(new HerdrSettings { Session = "named" }, null, Get,
+                _ => @"C:\Users\host\AppData", false)
+            .ShouldBe("/home/test/.config/herdr/sessions/named/herdr.sock");
+    }
+
     [Test, Category("Integration")]
     public async Task C801_ConnectedPeerIdentity()
     {

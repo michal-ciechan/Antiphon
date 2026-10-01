@@ -249,12 +249,14 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         {
             if (StartGate is { } gate) await gate.WaitAsync(ct);
             _transport.Bind();
+        var busyRetries = 0;
         while (!ct.IsCancellationRequested)
         {
             Stream? pipe = null;
             try
             {
                 pipe = await _transport.AcceptAsync(ct, SignalListening);
+                busyRetries = 0;
                 // Next Accept will re-signal; clear so WaitUntilListeningAsync after a call waits for
                 // the subsequent listen rather than the one we just consumed.
                 ResetListening();
@@ -333,6 +335,11 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 break;
+            }
+            catch (IOException ex) when (pipe is null && FakeHerdrTransport.IsPipeInstancesBusy(ex)
+                && busyRetries++ < 4 && !ct.IsCancellationRequested)
+            {
+                await Task.Delay(20, ct);
             }
             catch (Exception ex) when (pipe is not null &&
                 ex is IOException or JsonException or InvalidOperationException or KeyNotFoundException)

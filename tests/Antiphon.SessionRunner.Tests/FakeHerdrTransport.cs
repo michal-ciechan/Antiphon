@@ -262,6 +262,10 @@ internal sealed class FakeHerdrTransport(FakeHerdrEndpoint endpoint) : IAsyncDis
 {
     public Exception? BindFailure { get; set; }
     public Exception? AcceptFailure { get; set; }
+    // A one-shot constructor fault lets the listener's Windows pipe-capacity policy
+    // be tested on Unix without creating a named pipe on this host.
+    public Func<IOException?>? PipeCreationFailure { get; set; }
+    internal static bool IsPipeInstancesBusy(IOException ex) => ex.HResult == unchecked((int)0x800700E7);
     private Socket? _socket;
     private NamedPipeServerStream? _pendingPipe;
     private bool _bound;
@@ -309,6 +313,8 @@ internal sealed class FakeHerdrTransport(FakeHerdrEndpoint endpoint) : IAsyncDis
     public async Task<Stream> AcceptAsync(CancellationToken ct, Action listening)
     {
         if (!_bound) throw new InvalidOperationException("Herdr test listener is not bound.");
+        if (PipeCreationFailure?.Invoke() is { } pipeCreationFailure)
+            throw pipeCreationFailure;
         if (AcceptFailure is { } acceptFailure)
         {
             listening();

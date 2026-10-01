@@ -88,29 +88,36 @@ internal static class HerdrEndpointResolver
             ? Path.Combine(folder(Environment.SpecialFolder.ApplicationData), "herdr", "sessions", session, "herdr.sock")
             : session == "default"
                 ? DefaultPath(environment, folder, windows)
-                : Path.Combine(UnixConfigRoot(environment), "herdr", "sessions", session, "herdr.sock");
+                : UnixJoin(UnixConfigRoot(environment), "herdr", "sessions", session, "herdr.sock");
 
     private static string DefaultPath(Func<string, string?> environment,
         Func<Environment.SpecialFolder, string> folder, bool windows) =>
         windows
             ? Path.Combine(folder(Environment.SpecialFolder.ApplicationData), "herdr", "herdr.sock")
-            : Path.Combine(UnixConfigRoot(environment), "herdr", "herdr.sock");
+            : UnixJoin(UnixConfigRoot(environment), "herdr", "herdr.sock");
+
+    // POSIX path rules must not depend on the OS running a resolver test.
+    internal static bool IsUnixAbsolute(string path) => path.StartsWith('/', StringComparison.Ordinal);
+    internal static string UnixJoin(params string[] parts) =>
+        string.Join("/", parts.Select((part, index) => index == 0 ? part.TrimEnd('/') : part.Trim('/')));
 
     private static string UnixConfigRoot(Func<string, string?> environment)
     {
         var xdg = environment("XDG_CONFIG_HOME");
-        if (!string.IsNullOrWhiteSpace(xdg) && Path.IsPathFullyQualified(xdg)) return xdg;
+        if (!string.IsNullOrWhiteSpace(xdg) && IsUnixAbsolute(xdg)) return xdg;
         var home = environment("HOME");
-        if (!string.IsNullOrWhiteSpace(home) && Path.IsPathFullyQualified(home))
-            return Path.Combine(home, ".config");
-        var temp = Path.GetTempPath();
-        if (Path.IsPathFullyQualified(temp)) return temp;
+        if (!string.IsNullOrWhiteSpace(home) && IsUnixAbsolute(home))
+            return UnixJoin(home, ".config");
+        // Path.GetTempPath is host-specific. On a real Unix host it preserves the
+        // existing temp fallback; a simulated Unix resolution uses POSIX /tmp.
+        var temp = OperatingSystem.IsWindows() ? "/tmp/" : Path.GetTempPath();
+        if (IsUnixAbsolute(temp)) return temp;
         throw new HerdrBackendUnavailableException("Herdr has no absolute Unix configuration directory.");
     }
 
     private static string Validate(string path, bool windows)
     {
-        if (!windows && !Path.IsPathFullyQualified(path))
+        if (!windows && !IsUnixAbsolute(path))
             throw new HerdrBackendUnavailableException($"Herdr Unix socket endpoint must be absolute: '{path}'.");
         return path;
     }
