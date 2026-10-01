@@ -47,14 +47,14 @@ PC-20,idle,5,red,2,snapshotReads must equal completedDecisions,true,375ac064debe
 PC-20,load24,1,red,2,snapshotReads must equal completedDecisions,true,375ac064debefa69794b12f02fe41a7af286e72e
 PC-20,load24,2,red,2,snapshotReads must equal completedDecisions,true,375ac064debefa69794b12f02fe41a7af286e72e
 PC-20,load24,3,red,2,snapshotReads must equal completedDecisions,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-24,idle,1,red,2,trustCompletionElapsed,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-24,idle,2,red,2,trustCompletionElapsed,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-24,idle,3,red,2,trustCompletionElapsed,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-24,idle,4,red,2,trustCompletionElapsed,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-24,idle,5,red,2,trustCompletionElapsed,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-24,load24,1,red,2,trustCompletionElapsed,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-24,load24,2,red,2,trustCompletionElapsed,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-24,load24,3,red,2,trustCompletionElapsed,true,375ac064debefa69794b12f02fe41a7af286e72e
+PC-24,idle,1,red,2,trustCompletionElapsed,true,131744457dc84275a8c79297161159fa25ed4348
+PC-24,idle,2,red,2,trustCompletionElapsed,true,131744457dc84275a8c79297161159fa25ed4348
+PC-24,idle,3,red,2,trustCompletionElapsed,true,131744457dc84275a8c79297161159fa25ed4348
+PC-24,idle,4,red,2,trustCompletionElapsed,true,131744457dc84275a8c79297161159fa25ed4348
+PC-24,idle,5,red,2,trustCompletionElapsed,true,131744457dc84275a8c79297161159fa25ed4348
+PC-24,load24,1,red,2,trustCompletionElapsed,true,131744457dc84275a8c79297161159fa25ed4348
+PC-24,load24,2,red,2,trustCompletionElapsed,true,131744457dc84275a8c79297161159fa25ed4348
+PC-24,load24,3,red,2,trustCompletionElapsed,true,131744457dc84275a8c79297161159fa25ed4348
 PC-25,idle,1,red,2,readyBeforeMinimumAge,true,375ac064debefa69794b12f02fe41a7af286e72e
 PC-25,idle,2,red,2,readyBeforeMinimumAge,true,375ac064debefa69794b12f02fe41a7af286e72e
 PC-25,idle,3,red,2,readyBeforeMinimumAge,true,375ac064debefa69794b12f02fe41a7af286e72e
@@ -71,22 +71,22 @@ PC-26,idle,5,red,2,readyWithFloorModal,true,375ac064debefa69794b12f02fe41a7af286
 PC-26,load24,1,red,2,readyWithFloorModal,true,375ac064debefa69794b12f02fe41a7af286e72e
 PC-26,load24,2,red,2,readyWithFloorModal,true,375ac064debefa69794b12f02fe41a7af286e72e
 PC-26,load24,3,red,2,readyWithFloorModal,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-28,idle,1,red,2,Harness never registered the timer for PC-28 held read,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-28,idle,2,red,2,Harness never registered the timer for PC-28 held read,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-28,idle,3,red,2,Harness never registered the timer for PC-28 held read,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-28,idle,4,red,2,Harness never registered the timer for PC-28 held read,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-28,idle,5,red,2,Harness never registered the timer for PC-28 held read,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-28,load24,1,red,2,Harness never registered the timer for PC-28 held read,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-28,load24,2,red,2,Harness never registered the timer for PC-28 held read,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-28,load24,3,red,2,Harness never registered the timer for PC-28 held read,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-29,idle,1,red,2,trustCompletionElapsed inside originalMax,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-29,idle,2,red,2,trustCompletionElapsed inside originalMax,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-29,idle,3,red,2,trustCompletionElapsed inside originalMax,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-29,idle,4,red,2,trustCompletionElapsed inside originalMax,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-29,idle,5,red,2,trustCompletionElapsed inside originalMax,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-29,load24,1,red,2,trustCompletionElapsed inside originalMax,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-29,load24,2,red,2,trustCompletionElapsed inside originalMax,true,375ac064debefa69794b12f02fe41a7af286e72e
-PC-29,load24,3,red,2,trustCompletionElapsed inside originalMax,true,375ac064debefa69794b12f02fe41a7af286e72e
+PC-28,idle,1,red,2,completionElapsed,true,131744457dc84275a8c79297161159fa25ed4348
+PC-28,idle,2,red,2,completionElapsed,true,131744457dc84275a8c79297161159fa25ed4348
+PC-28,idle,3,red,2,completionElapsed,true,131744457dc84275a8c79297161159fa25ed4348
+PC-28,idle,4,red,2,completionElapsed,true,131744457dc84275a8c79297161159fa25ed4348
+PC-28,idle,5,red,2,completionElapsed,true,131744457dc84275a8c79297161159fa25ed4348
+PC-28,load24,1,red,2,completionElapsed,true,131744457dc84275a8c79297161159fa25ed4348
+PC-28,load24,2,red,2,completionElapsed,true,131744457dc84275a8c79297161159fa25ed4348
+PC-28,load24,3,red,2,completionElapsed,true,131744457dc84275a8c79297161159fa25ed4348
+PC-29,idle,1,red,2,trustCompletionElapsed inside originalMax,true,131744457dc84275a8c79297161159fa25ed4348
+PC-29,idle,2,red,2,trustCompletionElapsed inside originalMax,true,131744457dc84275a8c79297161159fa25ed4348
+PC-29,idle,3,red,2,trustCompletionElapsed inside originalMax,true,131744457dc84275a8c79297161159fa25ed4348
+PC-29,idle,4,red,2,trustCompletionElapsed inside originalMax,true,131744457dc84275a8c79297161159fa25ed4348
+PC-29,idle,5,red,2,trustCompletionElapsed inside originalMax,true,131744457dc84275a8c79297161159fa25ed4348
+PC-29,load24,1,red,2,trustCompletionElapsed inside originalMax,true,131744457dc84275a8c79297161159fa25ed4348
+PC-29,load24,2,red,2,trustCompletionElapsed inside originalMax,true,131744457dc84275a8c79297161159fa25ed4348
+PC-29,load24,3,red,2,trustCompletionElapsed inside originalMax,true,131744457dc84275a8c79297161159fa25ed4348
 PC-30a,idle,1,red,2,OperationCanceledException,true,375ac064debefa69794b12f02fe41a7af286e72e
 PC-30a,idle,2,red,2,OperationCanceledException,true,375ac064debefa69794b12f02fe41a7af286e72e
 PC-30a,idle,3,red,2,OperationCanceledException,true,375ac064debefa69794b12f02fe41a7af286e72e
