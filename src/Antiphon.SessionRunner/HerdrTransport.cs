@@ -97,7 +97,7 @@ internal static class HerdrEndpointResolver
             : UnixJoin(UnixConfigRoot(environment), "herdr", "herdr.sock");
 
     // POSIX path rules must not depend on the OS running a resolver test.
-    internal static bool IsUnixAbsolute(string path) => path.StartsWith('/', StringComparison.Ordinal);
+    internal static bool IsUnixAbsolute(string path) => path.StartsWith("/", StringComparison.Ordinal);
     internal static string UnixJoin(params string[] parts) =>
         string.Join("/", parts.Select((part, index) => index == 0 ? part.TrimEnd('/') : part.Trim('/')));
 
