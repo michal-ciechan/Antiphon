@@ -57,6 +57,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\server\Antiphon.Server.csproj" Aliases="global,server" />
     <ProjectReference Include="..\..\src\Antiphon.Resilience\Antiphon.Resilience.csproj" />
+    <ProjectReference Include="..\..\src\Antiphon.HostCleanup\Antiphon.HostCleanup.csproj" />
     <ProjectReference Include="..\Antiphon.DockerStack.Fixture\Antiphon.DockerStack.Fixture.csproj" />
     <ProjectReference Include="..\Antiphon.CustodyTestChild\Antiphon.CustodyTestChild.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.ChannelOutbound.Probe\Antiphon.ChannelOutbound.Probe.csproj" ReferenceOutputAssembly="false" />
