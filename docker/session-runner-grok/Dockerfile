@@ -61,7 +61,7 @@ WORKDIR /app
 # never a layer of this image.
 USER root
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl ca-certificates bash libcurl3-gnutls libexpat1 zlib1g \
+ && apt-get install -y --no-install-recommends curl ca-certificates bash libcurl3-gnutls libexpat1 zlib1g procps \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir -p /tmp/grok-install \
  && curl -fsSL https://x.ai/cli/install.sh | env HOME=/tmp/grok-install GROK_BIN_DIR=/usr/local/bin bash -s 1.0.40 \

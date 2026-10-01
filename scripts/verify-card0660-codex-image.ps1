@@ -136,7 +136,7 @@ function Invoke-Init([string] $evidenceName) {
 
 function Invoke-Probe([string] $row, [string] $user, [string[]] $extra) {
     $probeArgs = @('run') + $isolation + @('--user', $user,
-        '--tmpfs', '/c660-home:uid=1654,gid=1654,mode=0700',
+        '--tmpfs', '/c660-home:exec,uid=1654,gid=1654,mode=0700',
         '--mount', "type=volume,source=$workVolume,target=/work",
         '--mount', "type=volume,source=$stateVolume,target=/state",
         '--mount', "type=volume,source=$codexVolume,target=/state/codex",
