@@ -309,6 +309,7 @@ try {
         if (Test-Path -LiteralPath $stampPath) { Remove-Item -LiteralPath $stampPath -Force }
         $buildExit = Invoke-Dotnet -Phase 'build' -Arguments (@('build', $Project, ('--property:OutputPath=' + $OutputPath)) + $propertyArguments + $cpuArguments + @('--nologo'))
         if ($buildExit -eq 0) { $buildState = 'ok'; $script:buildState = 'ok' }
+        else { $buildState = 'failed'; $script:buildState = 'failed' }
         if (-not (Assert-CheckpointBoundary 'post_build')) { $buildExit = 2 }
         if ($buildExit -eq 0) {
             $stampDirectory = Split-Path -Parent $stampPath

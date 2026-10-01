@@ -14,7 +14,8 @@ internal static class LandContractSeeds
         string sha,
         StageOutcomeKind outcome = StageOutcomeKind.Clean,
         string? sourceRef = null,
-        string? repository = null)
+        string? repository = null,
+        bool? reviewedSourceClean = true)
     {
         var row = new StageOutcome
         {
@@ -25,6 +26,7 @@ internal static class LandContractSeeds
             SubjectTaskId = subject.Id,
             StageTaskId = Guid.NewGuid(),
             ReviewedSourceSha = sha,
+            ReviewedSourceClean = reviewedSourceClean,
             ReviewedSourceRef = sourceRef ?? FullRef(subject.WorktreeBranch),
             ReviewedRepositoryPath = repository ?? subject.RepoPath,
             RecordedAt = DateTime.UtcNow,
