@@ -17,7 +17,7 @@ No product code was changed. The predicate below is **evidence for review**, not
 | `conpty.dll` / `OpenConsole.exe` (probe output) | `39fba2713e2495117b1591ae8c32a3b904bea7aa66069cf7815e2844c76d75d8` / `b7fd936c2668b87b9ecf7b3366dc6568afc1c6f981874cba3e955a1c35cf8160` |
 | `Antiphon.Agents.Pty.dll` / `Antiphon.SessionRunner.dll` / `Antiphon.FakeLlmApi.dll` (built from the source SHA) | `4bdb5d538516f93118521cb7da9063abdb89c8635529dab2c75dd8bccc7d00d8` / `7c1838254d2c2a1978ce01ec259db9c480ee60c55ce6a4a1c223387fcaedf947` / `70ee902df50cf192410048a5b89056dd0326cdd603a7d21d90581a9081784d46` |
 | Probe source (task-owned, ignored `.antiphon/c778-probe/Program.cs`, not committed) | `e2d9b21d8212dca838cb80145e9784b7c8239eb68751179dd0d0731056c753ef` (last capture build; later edits added read-only verify/diff modes) |
-| `startup-frames.json` S1 committed blob | git blob `2e24da5f63b6cbf5d8731f10e12af9463b9c805e`; LF bytes SHA-256 `0ecef35286943a370b87d21871ec3063c52cafe93585b66f77849ed5caab5674`. S2 adds only the labelled synthetic `syn-other-size-120x29` frame: resulting blob `e6cc9f49714b8594838ad5dc9be9782be0a39b35`, LF SHA-256 `dc3aa919b9717b14057225231cc252d01918ef1e0f9b229e2b6538899caa6dd0`. Captured chunks and checkpoints retain the content digests below; Windows `core.autocrlf` working copies differ byte-wise. |
+| `startup-frames.json` fixture lineage | S1 blob `2e24da5f63b6cbf5d8731f10e12af9463b9c805e`, LF SHA-256 `0ecef35286943a370b87d21871ec3063c52cafe93585b66f77849ed5caab5674`. S2 added synthetic `syn-other-size-120x29`: blob `e6cc9f49714b8594838ad5dc9be9782be0a39b35`. The predicate review then relabelled 16 checkpoints (8 typed startup rows and 8 ghost suggestions) without changing screens or chunks: blob `db5ae8051a946ee616931c192a35d06a50c8a4f4`, LF SHA-256 `0e4650b9011c3919edf36f0a652f2891da6d214bd04853067b7e0bc5a9495e19`. This correction changes only the eight typed-row basis descriptions: blob `051da529fdfbb2ef7bda584f430afede1ab0b23e`, LF SHA-256 `c66364f75e8de077a5f24328a9bd6c1310dce1988f6ac0648af1ef5847fa7209`. Captured content digests below remain valid; Windows `core.autocrlf` working copies differ byte-wise. |
 
 Content digests (SHA-256 of UTF-8; line-ending independent):
 
@@ -139,9 +139,8 @@ candidate, separate from readiness and outside S1's footprint.
   - `Waiting for response…` / `Responding…` with hint `… Ctrl+c:cancel …`;
   - a queued `#n` row with `Ctrl+;:queue`.
 - **Unqualified or nonempty**:
-  - typed text (hint `Enter:send  │  Alt+Enter:newline …`);
-  - a post-turn ghost suggestion (`│ > <suggestion>`, hint `Tab/→:accept suggestion …`), kept
-    fail-closed as Unknown;
+  - typed text (hint `Enter:send  │  Alt+Enter:newline …`): ComposerUnavailable even when the box is complete and `Starting session…` remains on the status row;
+  - a post-turn ghost suggestion (`│ > <suggestion>`, hint `Tab/→:accept suggestion …`): ComposerUnavailable;
   - the welcome card with `Logged in with API key` on row 28.
 - **Sign-in (current screen)**: `Connecting...`, then `A browser window will open for
   authentication.`, the `Paste your token here...` input and `enter submit  ctrl+q quit`. The
@@ -154,6 +153,8 @@ Labels in the fixture (`expectedReason`/`basis`) apply the facts above mechanica
 screens. Ready frames carry a `qualification` naming P-1; post-turn Ready frames are marked "not
 separately receipted". Positive spinner input **was** observed and receipted, so V-1/V-6/V-17 have
 qualified input. The startup (`Starting session…`) state stays negative, now with direct evidence.
+The classifier checks a nonempty input row before the status row, so the eight typed startup
+checkpoints have `ComposerUnavailable` rather than `StartingSession`; both reasons reject readiness.
 
 ## Sanitization
 

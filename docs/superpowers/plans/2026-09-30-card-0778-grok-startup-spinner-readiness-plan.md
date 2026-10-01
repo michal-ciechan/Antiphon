@@ -415,12 +415,12 @@ class argument expansion, matrices, repeats or data-source expansion. No
 | `Application/GrokDelegateEndToEndTests.cs` | 5 | 5 | Five plain methods, Windows guards |
 | **Existing total** | **37** | **67** | Static count, not passing executions |
 
-CP-1 has 26 existing methods / 28 cases, plus 5 classifier, 9 adapter and 2 store
-methods: **42 methods / 44 cases**. CP-2 has 2 existing methods / 30 cases plus 2:
+CP-1 has 26 existing methods / 28 cases, plus 5 classifier, 12 adapter and 2 store
+methods: **45 methods / 47 cases**. CP-2 has 2 existing methods / 30 cases plus 2:
 **4 methods / 32 cases**. CP-3 has 9 existing methods / 9 cases plus 1:
-**10 methods / 10 cases**. Total planned: **56 methods / 86 cases**. At TestDesign time none of the
-four new classes or V-17 existed. The two added V-10 methods bring the new-method count
-to 19 and the CP-1 floor to 44. Fresh execution TRX must later confirm exactly
+**10 methods / 10 cases**. Total planned: **59 methods / 89 cases**. At TestDesign time none of the
+four new classes or V-17 existed. The two added V-10 methods and three V-11 cancellation
+methods bring the new-method count to 22 and the CP-1 floor to 47. Fresh execution TRX must later confirm exactly
 these per-class expansions, zero skips and no unintended suffix-matched class.
 
 ### Delivery inventory
@@ -464,7 +464,7 @@ transport, and only S1 proves the recorded real CLI layout.
 | V-10a | `RunnerGrokAdapterReadyTests.One_deadline_covers_reads_trust_and_minimum_age` | Controlled-clock matrix: zero max, late successful snapshot, hung snapshot, late trust and minimum age beyond max. Deadline never extends; held I/O receives cancellation; no success/input after expiry. |
 | V-10b | `RunnerGrokAdapterReadyTests.Floor_modal_invalidates_stale_positive_at_minimum_age` | A modal observed at the minimum-age boundary rejects a formerly positive composer. |
 | V-10c | `RunnerGrokAdapterReadyTests.Utc_jump_does_not_advance_monotonic_settle` | A UTC wall-clock jump cannot satisfy settlement before monotonic time passes the threshold; later monotonic settlement succeeds. |
-| V-11 | `RunnerGrokAdapterReadyTests.Exit_and_cancellation_stop_without_input` | Exit before/between frames returns false; cancellation during read/delay propagates; no later keys, polls or orphan tasks. |
+| V-11 | `RunnerGrokAdapterReadyTests.Exit_and_cancellation_stop_without_input`, `Cancellation_during_held_read_escapes_without_more_io`, `Cancellation_during_pending_poll_escapes_without_more_io`, `Cancellation_during_held_trust_write_escapes_without_more_io` | Exit before/between frames returns false; caller cancellation before entry and during a held read, pending poll delay or held trust write propagates; no later keys, polls or orphan tasks. |
 | V-12 | `RunnerGrokAdapterReadyTests.Timeout_captures_last_frame_and_io_failure_preserves_failure` | One capture of the actual last observed frame before false, reason/sequence linked to the session; log has metadata/path only. An unwritable destination still returns failure and permits caller cleanup. |
 | V-13 | `GrokStartupCaptureStoreTests.Content_is_bounded_and_sign_in_material_is_suppressed` | Oversized screen/raw are capped before escaping, null frame is explicit, original lengths/truncation recorded; sign-in sentinel never appears in file/log even if it survives in raw history. |
 | V-14 | `GrokStartupCaptureStoreTests.Retention_removes_only_owned_captures` | Keep boundary (including zero/negative/oversized configuration) leaves bounded own files and preserves an unrelated sentinel; actual filesystem results, not a constant comparison. |
@@ -578,7 +578,7 @@ one-to-one mapping, and its Guard column names the decision and boundary.
 There are **44 active guards and 44 mapped controls, 0 missing and 0 duplicate PC mappings**.
 This expands the Plan's 19 cycles: independently bypassable reset, timing,
 current-frame input and diagnostic guards cannot share one mutation and be
-reported as individually controlled. All 44 use the 19 V methods. R-1/R-2/R-3
+reported as individually controlled. All 44 use the 22 V methods. R-1/R-2/R-3
 preserve existing delivery/rules/cleanup/turn behavior; they do not authorize
 mutations of unchanged shared queue, rules or Codex production code on this card.
 S1's evidence/provenance and clean-SHA/platform checks are commissioning/receipt
@@ -627,7 +627,7 @@ serially; do not claim independent batching savings.
 | G-27 -> PC-27 | V-10a | D-3 nonpositive maximum: treat zero/negative max as immediate success. | `nonpositiveMaxReady.ShouldBeFalse()` and zero writes. |
 | G-28 -> PC-28 | V-10a | D-3 bounded snapshot await: directly await the cancellation-ignoring read. | `completionElapsed.ShouldBeLessThanOrEqualTo(max)` after forced I/O release at max+poll. |
 | G-29 -> PC-29 | V-10a | D-3 one budget includes trust: grant a fresh maximum when trust starts. | `trustCompletionElapsed.ShouldBeLessThanOrEqualTo(originalMax)` on late trust. |
-| G-30 -> PC-30 | V-11 | D-3 caller cancellation: swallow OperationCanceledException and return false. | `Should.ThrowAsync<OperationCanceledException>(wait)`; a false return fails it. |
+| G-30 -> PC-30a/30b | V-11 | D-3 caller cancellation: swallow OperationCanceledException during a held read (line 164) or pending poll delay (line 227) and return false. | Each dedicated `Should.ThrowAsync<OperationCanceledException>(wait)` reaches its held operation or pending timer; a false return fails it. The held trust write is a third cancellation case. |
 | G-31 -> PC-31 | V-12 | D-3 snapshot failure: reuse last positive as success on read exception. | `snapshotFailureReady.ShouldBeFalse()`. |
 | G-32 -> PC-32 | V-6 | D-3/D-4 no probe input: write a harmless key before returning true. | `startupWrites.ShouldBeEmpty()`. |
 | G-33 -> PC-33 | V-13 | D-5 screen bound before escaping: omit the screen source cap. | `decodedScreen.Length.ShouldBeLessThanOrEqualTo(8192)`. |
@@ -674,7 +674,7 @@ native capture and CP-3. Linux success alone does not close CARD-0778.
 | Task placement | Commissioned work | Completion receipt |
 |---|---|---|
 | Desktop, `-Platform Windows` | S1 capture/provenance and reviewed D-1/D-2 predicate, **before** S2 product work | Fixture commit, source/CLI/backend identities, complete native nonce plus stub user-turn receipt, actual region bounds and classification; missing evidence keeps S1 open |
-| Linux Code on server2 | After S1 commit is available: S2/S3 edits, then CP-1 and CP-2 serially | Same committed implementation SHA; CP-1 44 and CP-2 32 executed, zero failures/skips; test Postgres for CP-2 |
+| Linux Code on server2 | After S1 commit is available: S2/S3 edits, then CP-1 and CP-2 serially | Same committed implementation SHA; CP-1 47 and CP-2 32 executed, zero failures/skips; test Postgres for CP-2 |
 | Separate desktop task, `-Platform Windows` | After Linux implementation commit is pushed: CP-3, read-only qualification of that **same SHA** | 10 executed, zero failures/skips; test Postgres, staged assets, actual modern backend for V-17 |
 
 The Linux Code task returns its two receipts and explicitly pending CP-3; it must
@@ -701,7 +701,7 @@ For CP-1, create this ignored `.antiphon/c778-cp1.ps1` containing the single com
 (the ampersand is intentional; do not replace it with a child `pwsh`):
 
 ```powershell
-& ./scripts/run-checkpoint.ps1 -Name CP-1 -Project tests/Antiphon.Tests -OutputPath bin-c778-ready/ -Filter '/*/*/(GrokStartupReadinessTests*)|(RunnerGrokAdapterReadyTests*)|(GrokStartupCaptureStoreTests*)|(RunnerGrokAdapterTrustPromptTests*)|(RunnerGrokAdapterSignInPromptTests*)|(GrokAdapterTests*)|(RunnerGrokAdapterTurnCompleteTests*)|(RunnerCodexAdapterReadyTests*)/*' -Expect GrokStartupReadinessTests,RunnerGrokAdapterReadyTests,GrokStartupCaptureStoreTests,RunnerGrokAdapterTrustPromptTests,RunnerGrokAdapterSignInPromptTests,GrokAdapterTests,RunnerGrokAdapterTurnCompleteTests,RunnerCodexAdapterReadyTests -MinExecuted 44 -ResultsRoot .antiphon/c778-cp1
+& ./scripts/run-checkpoint.ps1 -Name CP-1 -Project tests/Antiphon.Tests -OutputPath bin-c778-ready/ -Filter '/*/*/(GrokStartupReadinessTests*)|(RunnerGrokAdapterReadyTests*)|(GrokStartupCaptureStoreTests*)|(RunnerGrokAdapterTrustPromptTests*)|(RunnerGrokAdapterSignInPromptTests*)|(GrokAdapterTests*)|(RunnerGrokAdapterTurnCompleteTests*)|(RunnerCodexAdapterReadyTests*)/*' -Expect GrokStartupReadinessTests,RunnerGrokAdapterReadyTests,GrokStartupCaptureStoreTests,RunnerGrokAdapterTrustPromptTests,RunnerGrokAdapterSignInPromptTests,GrokAdapterTests,RunnerGrokAdapterTurnCompleteTests,RunnerCodexAdapterReadyTests -MinExecuted 47 -ResultsRoot .antiphon/c778-cp1
 ```
 
 Then execute `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c778-cp1 -- ./.antiphon/c778-cp1.ps1`.
@@ -792,7 +792,7 @@ post-land SourceLanding Mutation; this static TestDesign runs none.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | EstimatedMinutesWindows | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---:|---|---|
-| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c778-ready/` | grok-ready-unit | `/*/*/(GrokStartupReadinessTests*)\|(RunnerGrokAdapterReadyTests*)\|(GrokStartupCaptureStoreTests*)\|(RunnerGrokAdapterTrustPromptTests*)\|(RunnerGrokAdapterSignInPromptTests*)\|(GrokAdapterTests*)\|(RunnerGrokAdapterTurnCompleteTests*)\|(RunnerCodexAdapterReadyTests*)/*` | V-1..V-14, R-1 | all 44 executed, 0 failed, 0 skipped; Linux or Windows | 44 | 12 | 15 | true | n/a |
+| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c778-ready/` | grok-ready-unit | `/*/*/(GrokStartupReadinessTests*)\|(RunnerGrokAdapterReadyTests*)\|(GrokStartupCaptureStoreTests*)\|(RunnerGrokAdapterTrustPromptTests*)\|(RunnerGrokAdapterSignInPromptTests*)\|(GrokAdapterTests*)\|(RunnerGrokAdapterTurnCompleteTests*)\|(RunnerCodexAdapterReadyTests*)/*` | V-1..V-14, R-1 | all 47 executed, 0 failed, 0 skipped; Linux or Windows | 47 | 12 | 15 | true | n/a |
 | CP-2 | S1-S3 | `tests/Antiphon.Tests -> bin-c778-ordering/` | grok-ready-ordering | `/*/*/(GrokStartupReadyOrderingTests*)\|(GrokRulesReadyOrderingTests*)\|(GrokRulesQueueBarrierTests*)/*` | V-15, V-16, R-2 | all 32 executed, 0 failed, 0 skipped; Linux or Windows, test Postgres required | 32 | 12 | 15 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-3 | S1-S3 | `tests/Antiphon.Tests -> bin-c778-native/` | grok-ready-native | `/*/*/(SessionMessageQueueGrokPtyIntegrationTests*)\|(GrokDelegateEndToEndTests*)/*` | V-17, R-3 | all 10 executed, 0 failed, 0 skipped; Windows only, modern backend for V-17, test Postgres and staged native assets required | 10 | 25 | 25 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
@@ -840,8 +840,8 @@ Deployment/production restarts are outside this Plan dispatch. Any later activat
 must follow the canonical checkout runbook and directly verify `/api/version`.
 
 TestDesign validation is static only: one Checkpoints heading, three 12-column
-rows, floors 44/32/10 (86 planned executions), nine existing class counts from
-source (37 methods / 67 cases), 19 planned new methods, and 44 active guard/PC
+rows, floors 47/32/10 (89 planned executions), nine existing class counts from
+source (37 methods / 67 cases), 22 planned new methods, and 44 active guard/PC
 mappings. Commands were file reads/searches, a compile-free Node census, Markdown
 manifest/cross-reference checks, PowerShell AST parsing of the three row command
 fences (no invocation), and `git diff --check`; no product build, test

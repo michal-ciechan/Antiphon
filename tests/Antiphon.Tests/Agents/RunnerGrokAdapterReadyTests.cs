@@ -8,6 +8,7 @@ using Antiphon.SessionRunner.Contracts;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -171,9 +172,9 @@ public class RunnerGrokAdapterReadyTests
     [Test]
     public async Task Floor_modal_invalidates_stale_positive_at_minimum_age()
     {
-        var floorClock = new JumpClock();
+        var floorClock = new FakeTimeProvider();
         var floorReads = 0;
-        var floor = await GrokReadyWait.WaitAsync(_ =>
+        var floorWait = GrokReadyWait.WaitAsync(_ =>
         {
             floorReads++;
             if (floorReads == 3) floorClock.Advance(TimeSpan.FromMilliseconds(80));
@@ -181,9 +182,17 @@ public class RunnerGrokAdapterReadyTests
                 floorReads < 3 ? Ready : SignIn, "", floorReads, DateTime.UtcNow));
         }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5),
             MinimumAgeRemaining = TimeSpan.FromMilliseconds(80), Settle = TimeSpan.Zero,
-            PollInterval = TimeSpan.FromMilliseconds(5), TimeProvider = floorClock });
-        floor.ShouldBeFalse("readyWithFloorModal");
+            PollInterval = TimeSpan.FromMilliseconds(1), TimeProvider = floorClock });
+        // The clock is frozen unless this test advances it. Even a loaded host
+        // cannot reach the age floor before the third, modal observation.
+        for (var tick = 0; tick < 60 && floorReads < 3; tick++)
+        {
+            floorClock.Advance(TimeSpan.FromMilliseconds(1));
+            await Task.Yield();
+        }
         floorReads.ShouldBeGreaterThanOrEqualTo(3);
+        var floor = await floorWait.WaitAsync(TimeSpan.FromSeconds(2));
+        floor.ShouldBeFalse("readyWithFloorModal");
     }
 
     [Test]
@@ -227,6 +236,75 @@ public class RunnerGrokAdapterReadyTests
         cancel.Cancel();
         await Should.ThrowAsync<OperationCanceledException>(() => GrokReadyWait.WaitAsync(
             _ => Task.FromResult<GrokStartupSnapshot?>(null), new GrokReadyWaitOptions(), ct: cancel.Token));
+    }
+
+    [Test]
+    public async Task Cancellation_during_held_read_escapes_without_more_io()
+    {
+        using var cancel = new CancellationTokenSource();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        var writes = 0;
+        var wait = GrokReadyWait.WaitAsync(async token =>
+        {
+            reads++;
+            entered.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return new GrokStartupSnapshot(Ready, "", reads, DateTime.UtcNow);
+        }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5) },
+            (_, _) => { writes++; return Task.CompletedTask; }, ct: cancel.Token);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        cancel.Cancel();
+        await Should.ThrowAsync<OperationCanceledException>(() => wait.WaitAsync(TimeSpan.FromSeconds(2)));
+        reads.ShouldBe(1);
+        writes.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Cancellation_during_pending_poll_escapes_without_more_io()
+    {
+        using var cancel = new CancellationTokenSource();
+        var clock = new FakeTimeProvider();
+        var reads = 0;
+        var writes = 0;
+        var wait = GrokReadyWait.WaitAsync(_ =>
+        {
+            reads++;
+            return Task.FromResult<GrokStartupSnapshot?>(new(Ready, "", reads, DateTime.UtcNow));
+        }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5),
+            Settle = TimeSpan.FromSeconds(1), PollInterval = TimeSpan.FromMilliseconds(50),
+            TimeProvider = clock },
+            (_, _) => { writes++; return Task.CompletedTask; }, ct: cancel.Token);
+        reads.ShouldBe(1);
+        cancel.Cancel();
+        await Should.ThrowAsync<OperationCanceledException>(() => wait.WaitAsync(TimeSpan.FromSeconds(2)));
+        reads.ShouldBe(1);
+        writes.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Cancellation_during_held_trust_write_escapes_without_more_io()
+    {
+        using var cancel = new CancellationTokenSource();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        var writes = 0;
+        var wait = GrokReadyWait.WaitAsync(_ =>
+        {
+            reads++;
+            return Task.FromResult<GrokStartupSnapshot?>(new(Trust, Trust, reads, DateTime.UtcNow));
+        }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5) },
+            async (_, token) =>
+            {
+                writes++;
+                entered.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }, ct: cancel.Token);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        cancel.Cancel();
+        await Should.ThrowAsync<OperationCanceledException>(() => wait.WaitAsync(TimeSpan.FromSeconds(2)));
+        reads.ShouldBe(1);
+        writes.ShouldBe(1);
     }
 
     [Test]
