@@ -241,9 +241,11 @@ public class RunnerGrokAdapterReadyTests
             logger.Messages.Count.ShouldBe(2);
             string.Join("\n", logger.Messages).ShouldNotContain(sentinel);
             var lastFrameRoot = Path.Combine(root, "last-frame");
-            var lastFrameClient = new ScriptedClient(["first observed frame", "extra forbidden read"]);
+            var lastFrameClock = new JumpClock();
+            var lastFrameClient = new ScriptedClient(["first observed frame", "extra forbidden read"],
+                onSnapshot: count => { if (count == 1) lastFrameClock.Advance(TimeSpan.FromMilliseconds(40)); });
             await using var lastFrameAdapter = NewAdapter(lastFrameClient, max: 35,
-                captureDirectory: lastFrameRoot);
+                captureDirectory: lastFrameRoot, time: lastFrameClock);
             await lastFrameAdapter.StartAsync(Spec(), CancellationToken.None);
             (await lastFrameAdapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeFalse();
             var lastCapture = File.ReadAllText(Directory.GetFiles(lastFrameRoot,
@@ -264,13 +266,13 @@ public class RunnerGrokAdapterReadyTests
 
     private static RunnerGrokAdapter NewAdapter(ScriptedClient client, int max = 300,
         int settle = 50, int trust = 150, string? captureDirectory = null,
-        ILogger? logger = null) => new(client,
+        ILogger? logger = null, TimeProvider? time = null) => new(client,
         Options.Create(new AgentRegistrySettings
         {
             GrokReadyMaxWaitMs = max, GrokReadyQuietPeriodMs = settle,
             GrokReadyMinTotalWaitMs = 0, GrokTrustPromptSettleMs = trust,
             GrokStartupCaptureDirectory = captureDirectory,
-        }), logger: logger);
+        }), logger: logger, time: time);
 
     internal static async Task<bool> AnimatedAdapterReadyAsync()
     {
@@ -288,7 +290,7 @@ public class RunnerGrokAdapterReadyTests
         new Dictionary<string, string>(), "/tmp", 120, 30, SessionId: Guid.NewGuid());
 
     private sealed class ScriptedClient(IReadOnlyList<string> screens, string? raw = null,
-        bool loop = false) : ISessionRunnerClient
+        bool loop = false, Action<int>? onSnapshot = null) : ISessionRunnerClient
     {
         private int _index;
         public int SnapshotReads { get; private set; }
@@ -311,6 +313,7 @@ public class RunnerGrokAdapterReadyTests
             var screen = Screen;
             _index++;
             SnapshotReads++;
+            onSnapshot?.Invoke(SnapshotReads);
             return Task.FromResult(new SessionRunnerSnapshotDto(id, raw ?? screen, screen,
                 SnapshotReads, DateTime.UtcNow.AddMinutes(-1)));
         }
