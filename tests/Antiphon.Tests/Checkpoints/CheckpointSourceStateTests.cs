@@ -179,6 +179,10 @@ public sealed class CheckpointSourceStateTests
                 ? throw new IOException("injected ls-files failure")
                 : Encoding.UTF8.GetBytes(GitFixture.Run("git", directory, args.ToArray())))
             .Capture(repo.Root).CaptureStatus.ShouldBe("unknown", "failed-index-enumeration");
+        new SourceSnapshot((directory, args) => args[0] == "ls-files"
+                ? Encoding.UTF8.GetBytes("? seed.txt\0")
+                : Encoding.UTF8.GetBytes(GitFixture.Run("git", directory, args.ToArray())))
+            .Capture(repo.Root).ErrorCode.ShouldBe("index_flags_invalid", "unexpected-index-tag");
 
         var noHead = Path.Combine(Path.GetTempPath(), "c835-unborn-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(noHead);

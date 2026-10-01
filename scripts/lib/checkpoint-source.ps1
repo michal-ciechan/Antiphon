@@ -52,6 +52,7 @@ function Get-CheckpointSourceOnce {
         if ($flagEnd -lt $flagIndex + 3 -or $indexFlags[$flagIndex + 1] -ne 32) { throw 'index_flags_invalid' }
         $flag = [char]$indexFlags[$flagIndex]
         if ($flag -ceq 'S' -or [char]::IsLower($flag)) { throw 'indexed_path_hidden' }
+        if ($flag -cnotmatch '^[A-Z]$') { throw 'index_flags_invalid' }
         $flagIndex = $flagEnd + 1
     }
     $untracked = [System.Collections.Generic.List[byte[]]]::new()
