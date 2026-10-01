@@ -1,0 +1,79 @@
+# CARD-0801 D6: live Linux resolver parity
+
+Both probes called public `HerdrClient.ResolveSocketPath()` on Linux. The first built source `5d2284ec9` in an isolated worktree; the second built source `305c1ed3c`. Each row set the process environment before constructing a fresh client. `∅` means unset. The socket columns show settings and environment overrides respectively.
+
+| # | XDG_CONFIG_HOME | HOME | Settings.Session | HERDR_SESSION | Settings.SocketPath | HERDR_SOCKET_PATH | 5d2284ec | Fixed |
+|---:|---|---|---|---|---|---|---|---|
+| 1 | `/config` | `/home/test` | ∅ | ∅ | ∅ | ∅ | `/config/herdr/herdr.sock` | `/config/herdr/herdr.sock` |
+| 2 | `/config` | `/home/test` | `default` | ∅ | ∅ | ∅ | `/config/herdr/herdr.sock` | `/config/herdr/herdr.sock` |
+| 3 | `/config` | `/home/test` | `named` | ∅ | ∅ | ∅ | `/config/herdr/sessions/named/herdr.sock` | `/config/herdr/sessions/named/herdr.sock` |
+| 4 | `/config` | `/home/test` | `/abs` | ∅ | ∅ | ∅ | `/abs/herdr.sock` | `/abs/herdr.sock` |
+| 5 | `/config` | `/home/test` | `named//` | ∅ | ∅ | ∅ | `/config/herdr/sessions/named//herdr.sock` | `/config/herdr/sessions/named//herdr.sock` |
+| 6 | `/config` | `/x/home//` | ∅ | ∅ | ∅ | ∅ | `/config/herdr/herdr.sock` | `/config/herdr/herdr.sock` |
+| 7 | `/config` | `/x/home//` | `default` | ∅ | ∅ | ∅ | `/config/herdr/herdr.sock` | `/config/herdr/herdr.sock` |
+| 8 | `/config` | `/x/home//` | `named` | ∅ | ∅ | ∅ | `/config/herdr/sessions/named/herdr.sock` | `/config/herdr/sessions/named/herdr.sock` |
+| 9 | `/config` | `/x/home//` | `/abs` | ∅ | ∅ | ∅ | `/abs/herdr.sock` | `/abs/herdr.sock` |
+| 10 | `/config` | `/x/home//` | `named//` | ∅ | ∅ | ∅ | `/config/herdr/sessions/named//herdr.sock` | `/config/herdr/sessions/named//herdr.sock` |
+| 11 | `/config` | ∅ | ∅ | ∅ | ∅ | ∅ | `/config/herdr/herdr.sock` | `/config/herdr/herdr.sock` |
+| 12 | `/config` | ∅ | `default` | ∅ | ∅ | ∅ | `/config/herdr/herdr.sock` | `/config/herdr/herdr.sock` |
+| 13 | `/config` | ∅ | `named` | ∅ | ∅ | ∅ | `/config/herdr/sessions/named/herdr.sock` | `/config/herdr/sessions/named/herdr.sock` |
+| 14 | `/config` | ∅ | `/abs` | ∅ | ∅ | ∅ | `/abs/herdr.sock` | `/abs/herdr.sock` |
+| 15 | `/config` | ∅ | `named//` | ∅ | ∅ | ∅ | `/config/herdr/sessions/named//herdr.sock` | `/config/herdr/sessions/named//herdr.sock` |
+| 16 | `/config` | `relative` | ∅ | ∅ | ∅ | ∅ | `/config/herdr/herdr.sock` | `/config/herdr/herdr.sock` |
+| 17 | `/config` | `relative` | `default` | ∅ | ∅ | ∅ | `/config/herdr/herdr.sock` | `/config/herdr/herdr.sock` |
+| 18 | `/config` | `relative` | `named` | ∅ | ∅ | ∅ | `/config/herdr/sessions/named/herdr.sock` | `/config/herdr/sessions/named/herdr.sock` |
+| 19 | `/config` | `relative` | `/abs` | ∅ | ∅ | ∅ | `/abs/herdr.sock` | `/abs/herdr.sock` |
+| 20 | `/config` | `relative` | `named//` | ∅ | ∅ | ∅ | `/config/herdr/sessions/named//herdr.sock` | `/config/herdr/sessions/named//herdr.sock` |
+| 21 | `/config` | `/` | ∅ | ∅ | ∅ | ∅ | `/config/herdr/herdr.sock` | `/config/herdr/herdr.sock` |
+| 22 | `/config` | `/` | `default` | ∅ | ∅ | ∅ | `/config/herdr/herdr.sock` | `/config/herdr/herdr.sock` |
+| 23 | `/config` | `/` | `named` | ∅ | ∅ | ∅ | `/config/herdr/sessions/named/herdr.sock` | `/config/herdr/sessions/named/herdr.sock` |
+| 24 | `/config` | `/` | `/abs` | ∅ | ∅ | ∅ | `/abs/herdr.sock` | `/abs/herdr.sock` |
+| 25 | `/config` | `/` | `named//` | ∅ | ∅ | ∅ | `/config/herdr/sessions/named//herdr.sock` | `/config/herdr/sessions/named//herdr.sock` |
+| 26 | `/x/cfg//` | `/home/test` | ∅ | ∅ | ∅ | ∅ | `/x/cfg//herdr/herdr.sock` | `/x/cfg//herdr/herdr.sock` |
+| 27 | `/x/cfg//` | `/home/test` | `default` | ∅ | ∅ | ∅ | `/x/cfg//herdr/herdr.sock` | `/x/cfg//herdr/herdr.sock` |
+| 28 | `/x/cfg//` | `/home/test` | `named` | ∅ | ∅ | ∅ | `/x/cfg//herdr/sessions/named/herdr.sock` | `/x/cfg//herdr/sessions/named/herdr.sock` |
+| 29 | `/x/cfg//` | `/home/test` | `/abs` | ∅ | ∅ | ∅ | `/abs/herdr.sock` | `/abs/herdr.sock` |
+| 30 | `/x/cfg//` | `/home/test` | `named//` | ∅ | ∅ | ∅ | `/x/cfg//herdr/sessions/named//herdr.sock` | `/x/cfg//herdr/sessions/named//herdr.sock` |
+| 31 | `/x/cfg//` | `/x/home//` | ∅ | ∅ | ∅ | ∅ | `/x/cfg//herdr/herdr.sock` | `/x/cfg//herdr/herdr.sock` |
+| 32 | `/x/cfg//` | `/x/home//` | `default` | ∅ | ∅ | ∅ | `/x/cfg//herdr/herdr.sock` | `/x/cfg//herdr/herdr.sock` |
+| 33 | `/x/cfg//` | `/x/home//` | `named` | ∅ | ∅ | ∅ | `/x/cfg//herdr/sessions/named/herdr.sock` | `/x/cfg//herdr/sessions/named/herdr.sock` |
+| 34 | `/x/cfg//` | `/x/home//` | `/abs` | ∅ | ∅ | ∅ | `/abs/herdr.sock` | `/abs/herdr.sock` |
+| 35 | `/x/cfg//` | `/x/home//` | `named//` | ∅ | ∅ | ∅ | `/x/cfg//herdr/sessions/named//herdr.sock` | `/x/cfg//herdr/sessions/named//herdr.sock` |
+| 36 | `/x/cfg//` | ∅ | ∅ | ∅ | ∅ | ∅ | `/x/cfg//herdr/herdr.sock` | `/x/cfg//herdr/herdr.sock` |
+| 37 | `/x/cfg//` | ∅ | `default` | ∅ | ∅ | ∅ | `/x/cfg//herdr/herdr.sock` | `/x/cfg//herdr/herdr.sock` |
+| 38 | `/x/cfg//` | ∅ | `named` | ∅ | ∅ | ∅ | `/x/cfg//herdr/sessions/named/herdr.sock` | `/x/cfg//herdr/sessions/named/herdr.sock` |
+| 39 | `/x/cfg//` | ∅ | `/abs` | ∅ | ∅ | ∅ | `/abs/herdr.sock` | `/abs/herdr.sock` |
+| 40 | `/x/cfg//` | ∅ | `named//` | ∅ | ∅ | ∅ | `/x/cfg//herdr/sessions/named//herdr.sock` | `/x/cfg//herdr/sessions/named//herdr.sock` |
+| 41 | `/x/cfg//` | `relative` | ∅ | ∅ | ∅ | ∅ | `/x/cfg//herdr/herdr.sock` | `/x/cfg//herdr/herdr.sock` |
+| 42 | `/x/cfg//` | `relative` | `default` | ∅ | ∅ | ∅ | `/x/cfg//herdr/herdr.sock` | `/x/cfg//herdr/herdr.sock` |
+| 43 | `/x/cfg//` | `relative` | `named` | ∅ | ∅ | ∅ | `/x/cfg//herdr/sessions/named/herdr.sock` | `/x/cfg//herdr/sessions/named/herdr.sock` |
+| 44 | `/x/cfg//` | `relative` | `/abs` | ∅ | ∅ | ∅ | `/abs/herdr.sock` | `/abs/herdr.sock` |
+| 45 | `/x/cfg//` | `relative` | `named//` | ∅ | ∅ | ∅ | `/x/cfg//herdr/sessions/named//herdr.sock` | `/x/cfg//herdr/sessions/named//herdr.sock` |
+| 46 | `/x/cfg//` | `/` | ∅ | ∅ | ∅ | ∅ | `/x/cfg//herdr/herdr.sock` | `/x/cfg//herdr/herdr.sock` |
+| 47 | `/x/cfg//` | `/` | `default` | ∅ | ∅ | ∅ | `/x/cfg//herdr/herdr.sock` | `/x/cfg//herdr/herdr.sock` |
+| 48 | `/x/cfg//` | `/` | `named` | ∅ | ∅ | ∅ | `/x/cfg//herdr/sessions/named/herdr.sock` | `/x/cfg//herdr/sessions/named/herdr.sock` |
+| 49 | `/x/cfg//` | `/` | `/abs` | ∅ | ∅ | ∅ | `/abs/herdr.sock` | `/abs/herdr.sock` |
+| 50 | `/x/cfg//` | `/` | `named//` | ∅ | ∅ | ∅ | `/x/cfg//herdr/sessions/named//herdr.sock` | `/x/cfg//herdr/sessions/named//herdr.sock` |
+| 51 | ∅ | `/home/test` | ∅ | ∅ | ∅ | ∅ | `/home/test/.config/herdr/herdr.sock` | `/home/test/.config/herdr/herdr.sock` |
+| 52 | ∅ | `/home/test` | `default` | ∅ | ∅ | ∅ | `/home/test/.config/herdr/herdr.sock` | `/home/test/.config/herdr/herdr.sock` |
+| 53 | ∅ | `/home/test` | `named` | ∅ | ∅ | ∅ | `/home/test/.config/herdr/sessions/named/herdr.sock` | `/home/test/.config/herdr/sessions/named/herdr.sock` |
+| 54 | ∅ | `/home/test` | `/abs` | ∅ | ∅ | ∅ | `/abs/herdr.sock` | `/abs/herdr.sock` |
+| 55 | ∅ | `/home/test` | `named//` | ∅ | ∅ | ∅ | `/home/test/.config/herdr/sessions/named//herdr.sock` | `/home/test/.config/herdr/sessions/named//herdr.sock` |
+| 56 | ∅ | `/x/home//` | ∅ | ∅ | ∅ | ∅ | `/x/home//.config/herdr/herdr.sock` | `/x/home//.config/herdr/herdr.sock` |
+| 57 | ∅ | `/x/home//` | `default` | ∅ | ∅ | ∅ | `/x/home//.config/herdr/herdr.sock` | `/x/home//.config/herdr/herdr.sock` |
+| 58 | ∅ | `/x/home//` | `named` | ∅ | ∅ | ∅ | `/x/home//.config/herdr/sessions/named/herdr.sock` | `/x/home//.config/herdr/sessions/named/herdr.sock` |
+| 59 | ∅ | `/x/home//` | `/abs` | ∅ | ∅ | ∅ | `/abs/herdr.sock` | `/abs/herdr.sock` |
+| 60 | ∅ | `/x/home//` | `named//` | ∅ | ∅ | ∅ | `/x/home//.config/herdr/sessions/named//herdr.sock` | `/x/home//.config/herdr/sessions/named//herdr.sock` |
+| 61 | ∅ | ∅ | ∅ | ∅ | ∅ | ∅ | `/tmp/herdr/herdr.sock` | `/tmp/herdr/herdr.sock` |
+| 62 | ∅ | ∅ | `default` | ∅ | ∅ | ∅ | `/tmp/herdr/herdr.sock` | `/tmp/herdr/herdr.sock` |
+| 63 | ∅ | ∅ | `named` | ∅ | ∅ | ∅ | `/tmp/herdr/sessions/named/herdr.sock` | `/tmp/herdr/sessions/named/herdr.sock` |
+| 64 | ∅ | ∅ | `/abs` | ∅ | ∅ | ∅ | `/abs/herdr.sock` | `/abs/herdr.sock` |
+| 65 | ∅ | ∅ | `named//` | ∅ | ∅ | ∅ | `/tmp/herdr/sessions/named//herdr.sock` | `/tmp/herdr/sessions/named//herdr.sock` |
+| 66 | `/config//` | `/home/test` | ∅ | `named//` | ∅ | ∅ | `/config//herdr/sessions/named//herdr.sock` | `/config//herdr/sessions/named//herdr.sock` |
+| 67 | `/config` | `/home/test` | ∅ | `/abs` | ∅ | ∅ | `/abs/herdr.sock` | `/abs/herdr.sock` |
+| 68 | `/config` | `/home/test` | `named` | ∅ | `/override//herdr.sock` | ∅ | `/override//herdr.sock` | `/override//herdr.sock` |
+| 69 | `/config` | `/home/test` | `named` | ∅ | ∅ | `/env//herdr.sock` | `/config/herdr/sessions/named/herdr.sock` | `/config/herdr/sessions/named/herdr.sock` |
+| 70 | `/config` | `/home/test` | ∅ | `named` | ∅ | `/env//herdr.sock` | `/env//herdr.sock` | `/env//herdr.sock` |
+| 71 | `/config` | `/home/test` | `default` | `/abs` | ∅ | ∅ | `/config/herdr/herdr.sock` | `/config/herdr/herdr.sock` |
+
+**Result:** 71 inputs; 0 output differences. The live Linux resolver preserves the pre-change output across this census.
