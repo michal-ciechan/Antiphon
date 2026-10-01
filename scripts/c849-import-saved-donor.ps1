@@ -47,7 +47,7 @@ function Check-Entry([string]$Name, [bool]$Directory, [long]$Length) {
 }
 
 function Check-Space {
-    $free = ([System.IO.DriveInfo]::new('/')).AvailableFreeSpace
+    $free = ([System.IO.DriveInfo]::new($Stage)).AvailableFreeSpace
     if ($free -lt (20GB + $sizes.packages + $sizes.npm)) { throw 'CacheDiskLow' }
 }
 
