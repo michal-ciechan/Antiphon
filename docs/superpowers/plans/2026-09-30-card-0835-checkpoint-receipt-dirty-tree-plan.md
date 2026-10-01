@@ -320,6 +320,7 @@ do not add true to every historical `StageOutcome` or change parser defaults:
 | `TwoOwnerLandingWorld`, `AgentTaskLandingStateTests`, `AgentTaskLandRecoveryTests`, `AgentTaskLandApprovalRecoveryTests` operation SHA assignments | These are landing-operation identities, not Review `StageOutcome` approval seeds. Do not invent a source-clean field or retrofit historical approval. CP-12 preserves the two caller-SHA controls. |
 | `CheckpointLineTests`, `ReportWriterTests`, `ReportMergerTests`, `CheckpointAppTests`, `RowRunnerTests`, `RunSchedulerTests` | Use explicit known source/build bindings for normal fixtures and explicit unknown for legacy fixtures; plain non-Git temp directories must not silently stand for clean. CP-5 covers all six classes. |
 | `CheckpointTaskOwnershipTests`, `CheckpointExecutorLogTests` | Their legacy `TempDir` roots are not Git repositories. The supplemental Final Unit lane exposed their stale success fixtures; inject explicit stable source observations at both create and execute boundaries. Keep production unknown-source refusal. |
+| `TaskPlatformGuidanceTests` and bundle classification guards | The source-clean Review field must fit the existing 2,480-character stage-bundle margin. Preserve the pinned checkpoint, Review, and delivery phrases; rebaseline only the equivalent shortened Review invariant/audit lines, and mark the new slow classes in the registry. |
 
 The seed-only sites outside the roster above are compatibility edits, not added
 behavioral scope. Their common changed boundary is exercised by CP-7/8/9. If Code
