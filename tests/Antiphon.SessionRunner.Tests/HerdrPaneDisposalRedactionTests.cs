@@ -109,6 +109,7 @@ public sealed class HerdrPaneDisposalRedactionTests
                 p.TabLabel.ShouldBe(Mask, $"display-field-masked {caseKey} tab");
                 p.PaneLabel.ShouldBe(Mask, $"display-field-masked {caseKey} pane");
                 p.BackendVersion.ShouldBe(Mask, $"display-field-masked {caseKey} backend");
+                p.Claims.Count.ShouldBe(1, $"v1-{surface}-claims-count-{caseKey}");
                 p.Claims[0].Source.ShouldBe(Mask, $"display-field-masked {caseKey} source");
                 p.Claims[0].Origin.ShouldBe(Mask, $"display-field-masked {caseKey} origin");
                 p.Claims[0].AgentKind.ShouldBe(Mask, $"display-field-masked {caseKey} kind");
@@ -442,6 +443,7 @@ public sealed class HerdrPaneDisposalRedactionTests
             var postJson = await response.Content.ReadAsStringAsync();
             var post = JsonSerializer.Deserialize<HerdrPaneDisposalPreview>(postJson, Json)!;
             post.PreviewId.ShouldNotBe(Guid.Empty, "post-preview-id");
+            post.PaneId.ShouldBe(Fixture.PaneId, "post-pane-id");
             using var stored = await _http.GetAsync($"/herdr/pane-disposals/previews/{post.PreviewId}");
             stored.EnsureSuccessStatusCode(); var getJson = await stored.Content.ReadAsStringAsync();
             var get = JsonSerializer.Deserialize<HerdrPaneDisposalPreview>(getJson, Json)!;
