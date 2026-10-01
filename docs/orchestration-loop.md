@@ -334,31 +334,39 @@ Inspect that history and decide whether it needs integration; the warning alone 
 Lowest `rank` first — the formula already prefers a card that **changes how everything else gets done** over one more feature.
 Prefer a card whose plan already exists — but check properly, see below.
 
-### Standing pipeline policy: Code and Review at two, Code fed to two (CARD-0533)
+### Standing pipeline policy: four per stage, six on server2, read limits first (CARD-0533)
 
 **This is the orchestrator's default for working the Antiphon board.** It was the operator's
-standing instruction on every overnight run from 2026-09-13/14 through 2026-09-18/19 and is
-recorded here so a fresh seat starts from it instead of being told again. The user's words in a
+standing instruction on every overnight run from 2026-09-13/14 through 2026-09-18/19, updated by
+the operator's 2026-10-01 ruling, and is recorded here so a fresh seat starts from it. The user's words in a
 session override it for that session; nothing below needs restating to apply. The delivered copy
 is the `orchestrator` bundle; this section carries the reasons.
 
-1. **Code and Review at two; every other stage at one.** Run at most two Code tasks and two
-   Review tasks, and at most one task in each other stage role (Investigate, Plan, TestDesign,
-   Mutation) at a time, and let different stages run concurrently — each in its own `-Worktree`,
-   so they never serialise on the shared checkout. Never two tasks in the same stage at once
-   when that role's create-time cap is one. Before dispatching a stage, read that stage's
-   in-flight row on `GET /api/agent-tasks/pipeline` (or `/orchestrator?tab=pipeline`), not your
-   memory of what you dispatched.
+1. **Each pipeline stage at up to four; at most six tasks on server2 across all stages.** These
+   are the operator's defaults. Before dispatching, read the effective concurrency limits and
+   current occupancy from `GET /api/agent-tasks/pipeline` (each stage's limit and occupancy and
+   per-host in-flight count and limit), `GET /api/session-runners` (capacity, occupied seats and
+   dispatch eligibility), and `GET /api/runner-defaults` (default runner and per-kind defaults;
+   there is no platform default). Antiphon's enforced limits are the ceiling: use the lower of four
+   and the effective stage limit when it exists. Run Investigate, Plan, TestDesign, Code, Review
+   and Mutation in parallel, each task in its own `-Worktree`, never more tasks in one stage than
+   its cap. Prefer server2 (`-Runner server2`) while it is eligible; shield the desktop/Windows
+   machine by using it only when work absolutely requires it (a Windows-only test row, native
+   ConPTY or desktop-only behaviour), scoped to that piece, as in CARD-0778 CP-3 and CARD-0801
+   W-1. The server2 host budget (`GET/PUT /api/hosts/server2/budget`, with
+   `{ "maxInFlight": 6 }`) can hold new dispatch; the orchestrator still keeps its six-task
+   server2 default when no lower host budget is enforced.
 2. **On every completion, dispatch the named next stage.** Read `next=` and `handoff:` off the
    completion header (§1, CARD-0146). `next=unmarked` goes back to the same delegate for the
    missing block (§0's ladder); it is never guessed from the diff.
 3. **Land promptly.** Once a stage's work is confirmed — a Plan or investigation artifact, a
    reviewed Code branch — run `-Land` then (§5), not at the end of the night. Unlanded work is
    how the 9-hour strandings under "Is there a solid plan?" happened.
-4. **Keep the Code stage at a depth of two.** Count Code rows that are in flight, queued or
-   `ready` (a settled Plan or TestDesign whose `next:` is code) on the pipeline snapshot. Fewer
-   than two: pull the next unstarted Backlog card — lowest `rank` first, as under Picking — and
-   start it through Investigate/Plan toward Code. Already two: start no new Plan toward Code;
+4. **Keep the Code stage at its depth cap.** The depth cap is four unless Antiphon enforces a
+   lower stage limit. Count Code rows that are in flight, queued or `ready` (a settled Plan or
+   TestDesign whose `next:` is code) on the pipeline snapshot. Below the cap, pull the next
+   unstarted Backlog card — lowest `rank` first, as under Picking — and start it through
+   Investigate/Plan toward Code. At the cap, start no new Plan toward Code;
    Investigate, Plan and TestDesign for cards already in the pipe still run. This is CARD-0146
    D7's "planning should only stop if more than 1 card waiting to execute", with its pull side
    stated as well.
@@ -597,20 +605,31 @@ Code's ordinary V/R, mandatory pre-land `Review`, and post-land Mutation's delib
 axes (`AgentTask.Stage` vs `AgentTask.NextStage`); neither is renamed to disambiguate, so read the
 column, not the word.
 
-**WIP defaults (documented rule, CARD-0146 D7, restated by CARD-0533 — dates are the operator
-instructions that fixed these, 2026-09-01/02 and 2026-09-13/14).** `RecommendedInFlight = 2` for
-Code and Review, and `RecommendedInFlight = 1` for every other stage role. That is the per-stage
-rule: two Code, two Review, one Investigate, one Plan, one TestDesign and one Mutation may all be
-in flight together; never two tasks in the same stage for a role still at one. The 2026-09-01
-reading that the plan-side stages share one slot is superseded — they run concurrently, each in
-its own worktree. Code is fed to a depth of two (in flight + queued + ready) and Review's
-create-time cap is two; Plan toward Code holds at that depth ("planning should only stop if more
-than 1 card waiting to execute") and resumes below it. Alternate one complex/UI card with one
-medium/simple card, and prefer GitHub-linked cards. The feed depth and the alternation are
-advisory. CARD-0147's create-time concurrency gate is the hard stop (`MaxOpenTasks` default 6;
-Code and Review 2; other named roles 1). The desktop delegated-task cap
-`MaxConcurrentTasks` defaults to 2 and does not count phone-home seats. The full rule set is
-§1's standing pipeline policy.
+**WIP defaults (CARD-0146 D7, CARD-0533, operator ruling 2026-10-01).** Four per pipeline stage
+and six tasks on server2 across all stages are orchestrator defaults, not server configuration.
+The 2026-09-01 reading that plan-side stages share one slot is superseded: they run concurrently,
+each in its own worktree. Code is fed to its depth cap (in flight + queued + ready); Plan toward
+Code holds at that cap and resumes below it. Alternate one complex/UI card with one medium/simple
+card, and prefer GitHub-linked cards. Feed depth and alternation are advisory. CARD-0147's
+create-time gate is the hard stop: `MaxOpenTasks` defaults to 6 per project scope across all
+runners, counting Queued, Dispatched and Working non-specialist tasks but not Blocked ones. Its
+live value is exposed only in a 409 `concurrency_limit` response, `axis: absolute`. The role gate
+uses `Delegation:RolePolicy:<role>:RecommendedInFlight`, also reported as `axis: role` on 409.
+The code defaults in `DelegationSettings.cs` are Code 2, Review 2 and other named roles 1; the
+2026-10-01 live server overrides them to Code 5, Review 5, Plan 3, Investigate 3 and the other
+pipeline stages 1. These role settings load at startup and have no runtime settings API. Read
+their effective values and occupancy from `GET /api/agent-tasks/pipeline` before dispatching;
+the lower of that role limit and the operator's four-task default applies. The route's host block
+also reports per-host count and limit. `GET /api/session-runners` reports capacity, occupied seats
+and eligibility (server2 declared 10 seats, desktop 2 on 2026-10-01); `GET /api/runner-defaults`
+reports the global and per-kind runner defaults, with no platform default. No single effective
+settings route exists today; if CARD-0505 or a successor adds one, replace this three-route read.
+There is no enforced server2 six-task cap beyond its seats unless a host budget is set; use
+`GET/PUT /api/hosts/server2/budget` with `{ "maxInFlight": 6 }` to hold excess new dispatch
+(`hostBudget`). The desktop delegated-task cap `MaxConcurrentTasks` defaults to 2 and does not
+count phone-home seats. Antiphon's role and absolute 409 limits and dispatcher limits are the
+hard ceiling. On 409 defer; `-IgnoreConcurrencyLimit` is allowed only for the existing absolute-axis
+case with no same-stage occupant. The full rule set is §1's standing pipeline policy.
 
 **A `Test` agent runs and reports. It does not repair.** The boundary, stated so it is not a matter
 of taste:
