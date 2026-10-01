@@ -58,7 +58,7 @@ const controls = {
   'PC-26': r(pty, `${readyClass}/${methods.floor}`, 'readyWithFloorModal', s =>
     once(s, `                if (tracker.Observe(observation, elapsed)\n                    && elapsed >= options.MinimumAgeRemaining)\n                {`,
       `                if (tracker.Observe(observation, elapsed))\n                {\n                    if (elapsed < options.MinimumAgeRemaining)\n                    {\n                        await Task.Delay(options.MinimumAgeRemaining - elapsed, time, ct);\n                        return true;\n                    }`)),
-  'PC-28': r(pty, `${readyClass}/${methods.deadline}`, 'Harness never registered the timer for PC-28 held read', s =>
+  'PC-28': r(pty, `${readyClass}/${methods.deadline}`, 'completionElapsed', s =>
     once(s, `                frame = await Bounded(snapshotAsync, remaining, time, ct);`,
       `                frame = await snapshotAsync(ct);`)),
   'PC-29': r(pty, `${readyClass}/${methods.deadline}`, 'trustCompletionElapsed inside originalMax', s =>
@@ -93,6 +93,7 @@ function once(s, from, to) {
 const selected = process.argv[2];
 if (!controls[selected]) throw Error('Choose one of: ' + Object.keys(controls).join(', '));
 const control = controls[selected];
+const elapsedControls = new Set(['PC-24', 'PC-28', 'PC-29']);
 const source = path.join(root, control.file);
 const original = fs.readFileSync(source);
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), `c778-${selected.toLowerCase()}-`));
@@ -184,8 +185,13 @@ async function runs(label, loaded, count) {
       const filter = `/*/*/${control.method.split('/')[0]}*/${control.method.split('/')[1]}`;
       const result = await command(['dotnet','exec','tests/Antiphon.Tests/bin-c778-control/Antiphon.Tests.dll',
         '--treenode-filter',filter],`${label}-${i}.log`);
-      const named = result.text.includes(control.assertion);
-      const status = result.code===2 && result.text.includes('failed: 1') && named ? 'red' :
+      const additionalInfo = [...result.text.matchAll(/^\s*Additional Info:\s*\r?\n\s+([^\r\n]+)/gm)]
+        .map(match => match[1].trim());
+      const named = elapsedControls.has(selected)
+        ? additionalInfo.includes(control.assertion)
+        : result.text.includes(control.assertion);
+      const harnessFailure = result.text.includes('Harness never registered');
+      const status = result.code===2 && result.text.includes('failed: 1') && named && !harnessFailure ? 'red' :
         result.code===0 ? 'green' : 'invalid';
       rows.push([selected,label,i,status,result.code,control.assertion,named,`${scratch}/${label}-${i}.log`]);
       console.log(`${selected} ${label} ${i}/${count} ${status} exit=${result.code} named=${named}`);
