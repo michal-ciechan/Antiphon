@@ -630,7 +630,7 @@ serially; do not claim independent batching savings.
 | G-28 -> PC-28 | V-10a | D-3 bounded snapshot await: directly await the cancellation-ignoring read. | `completionElapsed.ShouldBeLessThanOrEqualTo(max)` after forced I/O release at max+poll. |
 | G-29 -> PC-29 | V-10a | D-3 one budget includes trust: grant a fresh maximum when trust starts. | `trustCompletionElapsed.ShouldBeLessThanOrEqualTo(originalMax)` on late trust. |
 | G-30 -> PC-30a/30b | V-11 | D-3 caller cancellation: swallow OperationCanceledException during a held read (line 164) or pending poll delay (line 227) and return false. | Each dedicated `Should.ThrowAsync<OperationCanceledException>(wait)` reaches its held operation or pending timer; a false return fails it. The held trust write is a third cancellation case. |
-| G-31 -> PC-31 | V-12 | D-3 snapshot failure: reuse last positive as success on read exception. | `snapshotFailureReady.ShouldBeFalse()`. |
+| G-31 -> PC-31 | V-12 | D-3 snapshot failure: reuse last positive as success on read exception. | `failureReads.ShouldBe(2)` and `failureOutcome.ShouldBe(SnapshotFailure)` on a controlled clock, then `snapshotFailureReady.ShouldBeFalse()`. |
 | G-32 -> PC-32 | V-6 | D-3/D-4 no probe input: write a harmless key before returning true. | `startupWrites.ShouldBeEmpty()`. |
 | G-33 -> PC-33 | V-13 | D-5 screen bound before escaping: omit the screen source cap. | `decodedScreen.Length.ShouldBeLessThanOrEqualTo(8192)`. |
 | G-34 -> PC-34 | V-13 | D-5 raw-tail bound before escaping: omit the raw source cap. | `decodedRaw.Length.ShouldBeLessThanOrEqualTo(8192)` and expected last-tail content. |
