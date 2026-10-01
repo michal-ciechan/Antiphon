@@ -34,7 +34,7 @@ public sealed class CheckpointSourceApprovalTests
             await using (var fresh = world.CreateContext())
             {
                 var saved = await fresh.StageOutcomes.AsNoTracking().SingleAsync(o => o.Id == settled.Id);
-                saved.ReviewedSourceClean.ShouldBe(assertion, $"fresh-context-{assertion}");
+                saved.ReviewedSourceClean.ShouldBe(assertion, $"settled-source-assertion-roundtrip fresh-context-{assertion}");
             }
             var task = await world.TaskAsync(settled.StageTaskId!.Value);
             task.AgentSessionId.ShouldNotBeNull();
@@ -69,7 +69,7 @@ public sealed class CheckpointSourceApprovalTests
             {
                 var error = await Should.ThrowAsync<ConflictException>(() =>
                     land.RequestAsync(world.Owner.Id, request, CancellationToken.None));
-                error.Code.ShouldBe("review_evidence_source_not_clean", $"assertion-{assertion}");
+                error.Code.ShouldBe("review_evidence_source_not_clean", $"unclean-evidence-no-request assertion-{assertion}");
                 (await db.AgentTaskLandRequests.CountAsync(r => r.TaskId == world.Owner.Id)).ShouldBe(0);
                 queue.TryDequeue(out _).ShouldBeFalse();
             }
@@ -133,7 +133,8 @@ public sealed class CheckpointSourceApprovalTests
                 if (op is not null)
                 {
                     new AgentTaskLandingState().HasPublication(op).ShouldBeFalse(label);
-                    op.LastReason.ShouldBe("review_evidence_source_not_clean", label);
+                    op.LastReason.ShouldBe("review_evidence_source_not_clean",
+                        !latched && assertion == false ? "unlatched-resume-refuses-unclean " + label : label);
                 }
                 await using var db = h.CreateContext();
                 var stored = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
@@ -142,7 +143,8 @@ public sealed class CheckpointSourceApprovalTests
                 stored.IsPending.ShouldBeFalse(label);
                 (await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == h.Git.TaskId &&
                     e.Type == AgentTaskEventType.LandRefused).SingleAsync()).Detail
-                    .ShouldContain("review_evidence_source_not_clean", Case.Sensitive, label);
+                    .ShouldContain("review_evidence_source_not_clean", Case.Sensitive,
+                        !latched && assertion == false ? "unlatched-resume-refuses-unclean " + label : label);
             }
         }
 

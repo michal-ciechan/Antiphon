@@ -101,7 +101,7 @@ public sealed class DelegateScriptLandApprovalTests
             using var body = JsonDocument.Parse(call.Body);
             body.RootElement.GetProperty("reviewedSourceSha").GetString().ShouldBe(sha, label);
             var present = body.RootElement.TryGetProperty("reviewedSourceClean", out var clean);
-            present.ShouldBe(expected.HasValue, label + "-explicitness");
+            present.ShouldBe(expected.HasValue, "finding-json-preserves-explicitness " + label);
             if (expected.HasValue) clean.GetBoolean().ShouldBe(expected.Value, label + "-value");
         }
 

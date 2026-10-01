@@ -31,7 +31,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
             exit.ShouldBe(0, "diagnostic-command-run");
             var report = Read(run);
             report.Source.State.ShouldBe(dirty ? "dirty" : "clean");
-            report.Rows.Single().Source.State.ShouldBe(dirty ? "dirty" : "clean");
+            report.Rows.Single().Source.State.ShouldBe(dirty ? "dirty" : "clean", "dirty-row-preserved");
             report.Rows.Single().Line.ShouldContain("source=" + SourceEvidence.Token(source));
             File.ReadAllText(Path.Combine(run, "report.md")).ShouldContain("source=" + SourceEvidence.Token(source));
             File.ReadAllText(Path.Combine(run, "git.txt")).ShouldContain("source=" + SourceEvidence.Token(source));
@@ -371,11 +371,62 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
             ExitCode = 0, Executed = "1", Passed = "1", Source = valid.Rows.Single().Source,
         });
         valid.Rows.Single().ExitCode = ExitCodes.FailedTests;
-        ReportValidator.Validate(valid, Sha).ShouldBe("row_failed");
-        await CheckScriptAsync(2, "script-tool-failed-verdict-parity");
+        ReportValidator.Validate(valid, Sha).ShouldBe("row_failed", "tool-row-failed");
+        var failedScript = await ValidateWithScriptAsync(valid);
+        failedScript.Exit.ShouldBe(2, "script-tool-failed-verdict-parity: " + failedScript.Output);
+        failedScript.Output.ShouldContain("reason=row_failed", "script-tool-failed-verdict-parity");
+
+        async Task RefusesAsync(string label, string toolReason, string scriptReason,
+            Action<ReportModel> change)
+        {
+            var report = ValidReport();
+            change(report);
+            ReportValidator.Validate(report, Sha).ShouldBe(toolReason, label + " tool");
+            var script = await ValidateWithScriptAsync(report);
+            script.Exit.ShouldBe(2, label + " script: " + script.Output);
+            script.Output.ShouldContain("reason=" + scriptReason, label + " script reason");
+        }
+        await RefusesAsync("report-heading-source", "report_source_ineligible", "source_ineligible",
+            report => report.Source.State = "dirty");
+        var wrongReportCommit = ValidReport();
+        wrongReportCommit.Commit = OtherSha;
+        ReportValidator.Validate(wrongReportCommit, Sha).ShouldBe("report_source_ineligible", "tool-report-commit");
+        await RefusesAsync("row-source-ineligible", "row_source_disagreement", "row_source_ineligible",
+            report => report.Rows.Single().Source.State = "dirty");
+        await RefusesAsync("row-receipt-missing", "row_receipt_missing", "receipt_disagreement",
+            report => report.Rows.Single().Line = null);
+        await RefusesAsync("row-receipt-source", "receipt_source_disagreement", "receipt_disagreement",
+            report => report.Rows.Single().Line = report.Rows.Single().Line!
+                .Replace("source=" + Sha, "source=" + OtherSha, StringComparison.Ordinal));
+
+        var missing = ValidReport();
+        ReportValidator.Validate(missing, Sha, ["CP-2"]).ShouldBe("selected_rows_missing", "tool-selected-rows-missing");
+        var missingScript = await ValidateWithScriptAsync(missing, "CP-2");
+        missingScript.Exit.ShouldBe(2, "script-selected-rows-missing: " + missingScript.Output);
+        missingScript.Output.ShouldContain("reason=selected_rows_missing", "script-selected-rows-missing");
+
+        var counts = ValidReport();
+        counts.Rows.Single().Command = null;
+        counts.Rows.Single().Executed = 1;
+        counts.Rows.Single().Passed = 1;
+        counts.Rows.Single().Failed = 0;
+        counts.Rows.Single().Skipped = 0;
+        counts.Source.BuildSource = "verified";
+        counts.Rows.Single().Source.BuildSource = "verified";
+        counts.Rows.Single().Line = CheckpointLine.Format(new CheckpointLineModel
+        {
+            Name = "CP-1", Commit = Sha, Build = "built", Filter = "true", Command = false,
+            ExitCode = 0, Executed = "1", Passed = "1", Source = counts.Rows.Single().Source,
+        });
+        ReportValidator.Validate(counts, Sha).ShouldBeNull("tool-count-control");
+        counts.Rows.Single().Line = counts.Rows.Single().Line!.Replace("executed=1", "executed=2", StringComparison.Ordinal);
+        ReportValidator.Validate(counts, Sha).ShouldBe("receipt_count_disagreement", "tool-receipt-count-disagreement");
+        var countScript = await ValidateWithScriptAsync(counts);
+        countScript.Exit.ShouldBe(2, "script-receipt-count-disagreement: " + countScript.Output);
+        countScript.Output.ShouldContain("reason=receipt_counts", "script-receipt-count-disagreement");
     }
 
-    private async Task<(int Exit, string Output)> ValidateWithScriptAsync(ReportModel report)
+    private async Task<(int Exit, string Output)> ValidateWithScriptAsync(ReportModel report, string? rows = null)
     {
         var evidence = Path.Combine(TempDir(), "report.json");
         File.WriteAllText(evidence, ReportWriter.JsonText(report));
@@ -389,6 +440,11 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
             Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "validate-checkpoint-receipt.ps1"),
             "-Evidence", evidence, "-ExpectedSourceSha", Sha })
             process.StartInfo.ArgumentList.Add(token);
+        if (rows is not null)
+        {
+            process.StartInfo.ArgumentList.Add("-Rows");
+            process.StartInfo.ArgumentList.Add(rows);
+        }
         process.Start();
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();

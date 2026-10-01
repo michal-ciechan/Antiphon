@@ -28,7 +28,8 @@ public sealed class RunCheckpointSourceScriptTests
         var tracked = await fixture.RunAsync();
         tracked.Exit.ShouldBe(0, tracked.Output);
         tracked.Source.GetProperty("state").GetString().ShouldBe("dirty", "tracked-diagnostic");
-        tracked.Line.ShouldContain("dirty=1 source=" + fixture.Head + "+dirty:");
+        tracked.Line.ShouldContain("dirty=1 source=" + fixture.Head + "+dirty:", Case.Sensitive,
+            "dirty-receipt-agrees-with-source-json");
         File.ReadAllText(Path.Combine(Path.GetDirectoryName(tracked.Evidence)!, "git.txt"))
             .ShouldContain("source=" + fixture.Head + "+dirty:");
         fixture.Write("new.txt", "new bytes");
@@ -115,7 +116,7 @@ public sealed class RunCheckpointSourceScriptTests
             var before = tampered.Calls;
             var mismatch = await tampered.RunAsync(expectedSha: tampered.Head, noBuild: true);
             mismatch.Exit.ShouldBe(2, mismatch.Output);
-            mismatch.Line.ShouldContain("reason=build_source_mismatch", Case.Sensitive, "fingerprint-mismatch-no-tests");
+            mismatch.Line.ShouldContain("reason=build_source_mismatch", Case.Sensitive, "invalid-stamp-no-tests");
             tampered.Calls.ShouldBe(before);
             stamp["fingerprint"] = mismatch.Source.GetProperty("start").GetProperty("fingerprint").GetString();
             stamp["sourceState"] = "dirty";
@@ -211,45 +212,92 @@ public sealed class RunCheckpointSourceScriptTests
         fixture.Write("tracked.txt", "dirty");
         var dirty = await fixture.RunAsync();
         dirty.Exit.ShouldBe(0, dirty.Output);
-        (await fixture.ValidateAsync(dirty.Evidence)).Exit.ShouldBe(2, "dirty-receipt-ineligible");
+        var dirtyVerdict = await fixture.ValidateAsync(dirty.Evidence);
+        dirtyVerdict.Exit.ShouldBe(2, "dirty-receipt-ineligible: " + dirtyVerdict.Output);
+        dirtyVerdict.Output.ShouldContain("reason=source_ineligible", Case.Sensitive, "dirty-receipt-ineligible");
         var tampered = Path.Combine(fixture.External, "tampered.json");
         var json = JsonNode.Parse(await File.ReadAllTextAsync(clean.Evidence))!.AsObject();
         json["receipt"] = clean.Line + " dirty=0";
         await File.WriteAllTextAsync(tampered, json.ToJsonString());
-        (await fixture.ValidateAsync(tampered)).Exit.ShouldBe(2, "duplicate-receipt-token");
+        var duplicate = await fixture.ValidateAsync(tampered);
+        duplicate.Exit.ShouldBe(2, "duplicate-receipt-token: " + duplicate.Output);
+        duplicate.Output.ShouldContain("reason=duplicate_receipt_token", Case.Sensitive, "duplicate-receipt-token");
         json.Remove("start");
         await File.WriteAllTextAsync(tampered, json.ToJsonString());
-        (await fixture.ValidateAsync(tampered)).Exit.ShouldBe(2, "legacy-receipt-ineligible");
+        var legacy = await fixture.ValidateAsync(tampered);
+        legacy.Exit.ShouldBe(2, "legacy-receipt-ineligible: " + legacy.Output);
+        legacy.Output.ShouldContain("reason=source_ineligible", Case.Sensitive, "legacy-receipt-ineligible");
 
-        async Task RefusesAsync(string label, Action<JsonObject> change)
+        async Task RefusesAsync(string label, string reason, Action<JsonObject> change)
         {
             var copy = JsonNode.Parse(await File.ReadAllTextAsync(clean.Evidence))!.AsObject();
             change(copy);
             await File.WriteAllTextAsync(tampered, copy.ToJsonString());
             var checkedReceipt = await fixture.ValidateAsync(tampered);
             checkedReceipt.Exit.ShouldBe(2, label + ": " + checkedReceipt.Output);
+            checkedReceipt.Output.ShouldContain("reason=" + reason, Case.Sensitive, label);
         }
-        await RefusesAsync("changed-source", value =>
+        await RefusesAsync("dirty-source-clean-receipt-ineligible", "source_ineligible", value =>
+        {
+            value["start"]!["dirtyFiles"] = 1;
+            value["end"]!["dirtyFiles"] = 1;
+            value["state"] = "dirty";
+        });
+        await RefusesAsync("changed-source", "source_ineligible", value =>
         {
             value["state"] = "changed";
             value["end"]!["fingerprint"] = new string('f', 64);
         });
-        await RefusesAsync("unknown-source", value =>
+        await RefusesAsync("unknown-source", "source_ineligible", value =>
         {
             value["state"] = "unknown";
             value["end"] = null;
         });
-        await RefusesAsync("wrong-sha", value => value["start"]!["commit"] = new string('f', 40));
-        await RefusesAsync("build-source-mismatch", value => value["buildSource"] = "mismatch");
-        await RefusesAsync("failed-test", value =>
+        await RefusesAsync("wrong-sha", "source_ineligible", value => value["start"]!["commit"] = new string('f', 40));
+        await RefusesAsync("build-source-mismatch", "source_ineligible", value => value["buildSource"] = "mismatch");
+        await RefusesAsync("selected-receipt-ineligible", "receipt_failed", value =>
         {
             value["exitCode"] = 1;
             value["failed"] = 1;
+            var passed = (int)value["executed"]! - 1;
+            value["passed"] = passed;
+            value["receipt"] = clean.Line
+                .Replace("passed=" + clean.Source.GetProperty("passed").GetInt32(), "passed=" + passed, StringComparison.Ordinal)
+                .Replace("failed=0", "failed=1", StringComparison.Ordinal);
         });
-        await RefusesAsync("malformed-counts", value => value["passed"] = 1);
-        await RefusesAsync("receipt-sha-disagreement", value =>
+        await RefusesAsync("malformed-counts", "receipt_failed", value => value["passed"] = 1);
+        await RefusesAsync("receipt-sha-disagreement", "receipt_disagreement", value =>
             value["receipt"] = clean.Line.Replace("source=" + fixture.Head,
                 "source=" + new string('f', 40), StringComparison.Ordinal));
+        await RefusesAsync("receipt-name", "receipt_name", value =>
+            value["receipt"] = clean.Line.Replace("CHECKPOINT CP-2 ", "CHECKPOINT CP-3 ", StringComparison.Ordinal));
+        await RefusesAsync("receipt-counts", "receipt_counts", value =>
+            value["receipt"] = clean.Line.Replace("passed=" + clean.Source.GetProperty("passed").GetInt32(),
+                "passed=0", StringComparison.Ordinal));
+        await RefusesAsync("schema-version", "source_ineligible", value => value["version"] = 0);
+        await RefusesAsync("missing-end", "source_ineligible", value => value["end"] = null);
+        await RefusesAsync("start-capture-unknown", "source_ineligible", value =>
+            value["start"]!["captureStatus"] = "unknown");
+        await RefusesAsync("end-capture-unknown", "source_ineligible", value =>
+            value["end"]!["captureStatus"] = "unknown");
+        await RefusesAsync("end-sha", "source_ineligible", value =>
+            value["end"]!["commit"] = new string('f', 40));
+        await RefusesAsync("end-dirty", "source_ineligible", value => value["end"]!["dirtyFiles"] = 1);
+        await RefusesAsync("state-dirty", "source_ineligible", value => value["state"] = "dirty");
+        await RefusesAsync("fingerprint-shape", "source_ineligible", value =>
+            value["start"]!["fingerprint"] = "bad");
+        await RefusesAsync("fingerprint-disagreement", "source_ineligible", value =>
+            value["end"]!["fingerprint"] = new string('f', 64));
+        var compact = JsonNode.Parse(await File.ReadAllTextAsync(clean.Evidence))!.ToJsonString();
+        var duplicateProperty = compact.Replace("\"version\":1", "\"version\":1,\"version\":1", StringComparison.Ordinal);
+        duplicateProperty.ShouldNotBe(compact, "duplicate-json-fixture");
+        await File.WriteAllTextAsync(tampered, duplicateProperty);
+        var duplicateJson = await fixture.ValidateAsync(tampered);
+        duplicateJson.Exit.ShouldBe(2, "duplicate-json-property: " + duplicateJson.Output);
+        duplicateJson.Output.ShouldContain("reason=duplicate_json_property", Case.Sensitive, "duplicate-json-property");
+        var badSha = await fixture.ValidateAsync(clean.Evidence, "bad");
+        badSha.Exit.ShouldBe(2, "expected-sha-invalid: " + badSha.Output);
+        badSha.Output.ShouldContain("reason=expected_sha_invalid", Case.Sensitive, "expected-sha-invalid");
     }
 
     private sealed class Fixture : IDisposable
@@ -357,10 +405,10 @@ public sealed class RunCheckpointSourceScriptTests
             return new Result(result.Exit, result.Output, line, evidence, json.RootElement.Clone());
         }
 
-        public Task<(int Exit, string Output)> ValidateAsync(string evidence) =>
+        public Task<(int Exit, string Output)> ValidateAsync(string evidence, string? expectedSha = null) =>
             RunAsync("pwsh", Repo, ["-NoProfile", "-NonInteractive", "-File",
                 Path.Combine(ProjectRoot, "scripts", "validate-checkpoint-receipt.ps1"),
-                "-Evidence", evidence, "-ExpectedSourceSha", Head], null);
+                "-Evidence", evidence, "-ExpectedSourceSha", expectedSha ?? Head], null);
 
         public void Dispose() => GitFixtureCleanup.Delete(Root);
 
