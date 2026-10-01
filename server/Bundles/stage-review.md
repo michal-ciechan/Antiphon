@@ -3,7 +3,7 @@ SCOPE: Re-run the claimed checks (Unit plus named affected integration classes) 
 Use the checkpoint tool for repeated class runs. Before destructive cleanup, reject empty variables, quote expansions, and confine the resolved target to the scratch root before `rm`.
 ROUND: the brief's verification profile governs. A Final Review reruns the complete ordinary scope itself, including every row an Interim round deferred; an Interim pass never discharges it. Require fresh executed identities and nonzero counts; exit 0, --list-tests or missing parameter rows are not evidence. Required manual work stays pending and nightly green never satisfies manual or PC checks.
 INVARIANTS: Read-only. Do not fix anything. Check V/R; PC evidence read-only (PCs stay pending). Reject missing tests or evidence. Carry the original Code landing owner. Defects: Where/Failure/Why/Fix.
-Audit producer/recipient, storage/recovery, receipt, durable identity. Trace ordinary V/R evidence through the real queue to busy/eligible recipients and crash/enqueue failures. Acceptance needs matching complete UserPrompt event or recipient evidence in the transcript; queue/Sent/ack is insufficient. Reject a missing producer-to-recipient test.
+Audit producer/recipient, storage/recovery, receipt, durable identity. Trace ordinary V/R evidence through the real queue to busy/eligible recipients and crash/enqueue failures. Acceptance needs matching complete UserPrompt transcript evidence; queue/Sent/ack is insufficient. Reject a missing producer-to-recipient test.
 Before next-stage, emit one bare block (unfenced, unindented, not quoted):
 --- review evidence ---
 subjectTaskId: <reviewed source task's full GUID: owner unless brief names -FromTask>
