@@ -28,9 +28,16 @@ internal static class HerdrDisposalRedactor
     {
         if (value is null) return null;
         if (value.Contains('/') || value.Contains('\\') || value.Any(char.IsControl)
-            || value.Length >= 2 && char.IsLetter(value[0]) && value[1] == ':')
+            || ContainsDrivePrefix(value))
             return Mask;
         return value;
+    }
+
+    private static bool ContainsDrivePrefix(string value)
+    {
+        for (var i = 0; i < value.Length - 1; i++)
+            if (char.IsLetter(value[i]) && value[i + 1] == ':') return true;
+        return false;
     }
 
     private static HerdrPaneDisposalProcess? Process(HerdrPaneDisposalProcess? process) =>
