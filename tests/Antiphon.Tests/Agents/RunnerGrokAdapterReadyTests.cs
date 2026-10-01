@@ -161,16 +161,21 @@ public class RunnerGrokAdapterReadyTests
         var trustClock = new JumpClock();
         var trustBudgetStarted = trustClock.GetTimestamp();
         var trustReads = 0;
-        var trustBudgetReady = await GrokReadyWait.WaitAsync(async _ =>
+        var trustLateRead = new TaskCompletionSource<GrokStartupSnapshot?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var trustLateRelease = Task.Delay(2000).ContinueWith(_ => trustLateRead.TrySetResult(frame));
+        var trustBudgetReady = await GrokReadyWait.WaitAsync(_ =>
         {
-            if (++trustReads == 2) await Task.Delay(2000);
-            return new GrokStartupSnapshot(trustReads == 1 ? Trust : Ready,
-                "", trustReads, DateTime.UtcNow);
+            return ++trustReads == 1
+                ? Task.FromResult<GrokStartupSnapshot?>(new(Trust, "", 1, DateTime.UtcNow))
+                : trustLateRead.Task;
         }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5),
             Settle = TimeSpan.Zero, TrustSettle = TimeSpan.Zero,
             PollInterval = TimeSpan.FromMilliseconds(5), TimeProvider = trustClock },
             (_, _) => { trustClock.Advance(TimeSpan.FromSeconds(4)); return Task.CompletedTask; });
-        trustClock.GetElapsedTime(trustBudgetStarted).ShouldBeLessThan(
+        var trustBudgetElapsed = trustClock.GetElapsedTime(trustBudgetStarted);
+        await trustLateRelease;
+        trustBudgetElapsed.ShouldBeLessThan(
             TimeSpan.FromMilliseconds(5500), "trustCompletionElapsed inside originalMax");
         trustBudgetReady.ShouldBeFalse("trustCompletionElapsed must stay inside originalMax");
         var utcClock = new JumpClock();
@@ -219,7 +224,8 @@ public class RunnerGrokAdapterReadyTests
         {
             const string sentinel = "C778_PRIVATE_SCREEN_SENTINEL";
             var logger = new TestLogger();
-            var client = new ScriptedClient(["", "Starting session… " + sentinel]);
+            var client = new ScriptedClient(["Starting session… " + sentinel,
+                "Second startup frame " + sentinel]);
             await using var adapter = NewAdapter(client, max: 100, captureDirectory: root,
                 logger: logger);
             await adapter.StartAsync(Spec(), CancellationToken.None);
@@ -250,8 +256,8 @@ public class RunnerGrokAdapterReadyTests
             (await lastFrameAdapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeFalse();
             var lastCapture = File.ReadAllText(Directory.GetFiles(lastFrameRoot,
                 "grok-startup-*.txt").Single());
-            lastCapture.ShouldContain("frameSequence: 1");
             lastFrameClient.SnapshotReads.ShouldBe(1, "readsAfterFailureDecision");
+            lastCapture.ShouldContain("frameSequence: 1");
             var failureReads = 0;
             var snapshotFailureReady = await GrokReadyWait.WaitAsync(_ =>
             {
