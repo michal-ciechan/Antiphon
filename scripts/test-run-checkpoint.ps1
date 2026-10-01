@@ -185,7 +185,7 @@ function Test-C585_Green {
     $line = [string]($r.Checkpoint | Select-Object -First 1)
     Assert-C487 -Cond ($line -match 'build=ok ' -and $line -match 'executed=3 passed=3 failed=0 skipped=0') `
         -Name 'C585 Green line reports build=ok and executed=3 passed=3 failed=0 skipped=0' -Detail $line
-    Assert-C487 -Cond ($line -match 'trx=.+run\.trx slot=skipped waited=0s$') -Name 'C585 Green line names the fresh TRX it parsed' -Detail $line
+    Assert-C487 -Cond ($line -match 'trx=.+run\.trx slot=skipped waited=0s dirty=') -Name 'C585 Green line names the fresh TRX it parsed' -Detail $line
     $executed = @($r.Lines | Where-Object { $_ -match '^EXECUTED ' })
     Assert-C487 -Cond ($executed.Count -eq 3 -and ($executed -join ' ') -match 'C585SampleTests\.alpha_is_green') `
         -Name 'C585 Green prints the executed Class.Method roster' -Detail ($executed -join ' | ')
@@ -328,7 +328,7 @@ function Test-C585_LineFormat {
     $r = Invoke-C585Runner -Fx $fx -Trx $script:GreenTrx
     # CARD-0589: the BUILD SLOT lines (here 'skipped by -NoSlot') come first, before any dotnet call;
     # the report line is the first line after them and now ends with the slot outcome.
-    $report = @($r.Lines | Where-Object { $_ -notmatch '^BUILD SLOT ' })
+    $report = @($r.Lines | Where-Object { $_ -match '^CHECKPOINT CP-1 commit=' })
     $first = ''
     if ($report.Count -gt 0) { $first = [string]$report[0] }
     $last = ''
@@ -470,7 +470,7 @@ function Test-C589_SlotGranted {
         -Name 'C589 SlotGranted releases the lease after the run' -Detail ($r.Calls -join ' | ')
     Assert-C487 -Cond (@($r.Calls | Where-Object { $_ -clike ('SLOT POST label=' + $script:C589Label + ' pid=*') }).Count -eq 1) `
         -Name 'C589 SlotGranted asks under the row label' -Detail ($r.Calls -join ' | ')
-    Assert-C487 -Cond ($line -match ' slot=granted waited=\d+s$' -and @($r.Lines | Where-Object { $_ -cmatch ('^BUILD SLOT released lease=' + $script:C589Lease + ' held=\d+s$') }).Count -eq 1) `
+    Assert-C487 -Cond ($line -match ' slot=granted waited=\d+s dirty=' -and @($r.Lines | Where-Object { $_ -cmatch ('^BUILD SLOT released lease=' + $script:C589Lease + ' held=\d+s$') }).Count -eq 1) `
         -Name 'C589 SlotGranted CHECKPOINT line reports slot=granted' -Detail $r.Text
 }
 
@@ -485,7 +485,7 @@ function Test-C589_SlotWaitsThenGranted {
         -Name 'C589 SlotWaitsThenGranted names the memory floor while below it' -Detail $r.Text
     Assert-C487 -Cond ((Get-C589Order -Result $r) -ceq 'POST,POST,POST,build,run,DELETE') `
         -Name 'C589 SlotWaitsThenGranted builds only after the grant' -Detail ($r.Calls -join ' | ')
-    Assert-C487 -Cond (@($r.Lines | Where-Object { $_ -cmatch '^BUILD SLOT granted lease=\S+ waited=\d+s maxcpucount=3$' }).Count -eq 1 -and $line -match ' slot=granted waited=\d+s$') `
+    Assert-C487 -Cond (@($r.Lines | Where-Object { $_ -cmatch '^BUILD SLOT granted lease=\S+ waited=\d+s maxcpucount=3$' }).Count -eq 1 -and $line -match ' slot=granted waited=\d+s dirty=') `
         -Name 'C589 SlotWaitsThenGranted reports waited= on the grant and the CHECKPOINT line' -Detail $r.Text
 }
 
@@ -511,7 +511,7 @@ function Test-C589_SlotUnreachable {
         $line = [string]($r.Checkpoint | Select-Object -First 1)
         Assert-C487 -Cond (@($r.Lines | Where-Object { $_ -cmatch '^BUILD SLOT unleased reason=runner_unreachable maxcpucount=4 last=' }).Count -eq 1) `
             -Name ('C589 SlotUnreachable {0} prints the unleased line' -f $case.Tag) -Detail $r.Text
-        Assert-C487 -Cond ($build -ceq ($script:C671Build + ' -maxcpucount 4 --nologo') -and $r.Exit -eq 0 -and $line -match ' slot=unleased waited=\d+s$') `
+        Assert-C487 -Cond ($build -ceq ($script:C671Build + ' -maxcpucount 4 --nologo') -and $r.Exit -eq 0 -and $line -match ' slot=unleased waited=\d+s dirty=') `
             -Name ('C589 SlotUnreachable {0} still builds with the fallback -maxcpucount 4' -f $case.Tag) -Detail ('exit={0} build={1} {2}' -f $r.Exit, $build, $r.Text)
         Assert-C487 -Cond (@($r.Calls | Where-Object { $_ -like 'SLOT DELETE *' }).Count -eq 0) `
             -Name ('C589 SlotUnreachable {0} releases nothing' -f $case.Tag) -Detail ($r.Calls -join ' | ')
@@ -527,7 +527,7 @@ function Test-C589_NoBuildStillLeases {
     $line = [string]($r.Checkpoint | Select-Object -First 1)
     Assert-C487 -Cond ((Get-C589Order -Result $r) -ceq 'POST,run,DELETE') `
         -Name 'C589 NoBuildStillLeases a -NoBuild row acquires and releases around its run' -Detail ($r.Calls -join ' | ')
-    Assert-C487 -Cond ($r.Exit -eq 0 -and $line -match 'build=reused ' -and $line -match ' slot=granted waited=\d+s$') `
+    Assert-C487 -Cond ($r.Exit -eq 0 -and $line -match 'build=reused ' -and $line -match ' slot=granted waited=\d+s dirty=') `
         -Name 'C589 NoBuildStillLeases line reports build=reused and slot=granted' -Detail $r.Text
 }
 
@@ -537,7 +537,7 @@ function Test-C589_NoSlotSkips {
     $build = Get-C671Call (Get-C585BuildCalls -Result $r)
     Assert-C487 -Cond ([string]$r.Lines[0] -ceq 'BUILD SLOT skipped by -NoSlot' -and @($r.Calls | Where-Object { $_ -like 'SLOT *' }).Count -eq 0) `
         -Name 'C589 NoSlotSkips -NoSlot asks the broker nothing and says so' -Detail ($r.Lines -join ' | ')
-    Assert-C487 -Cond ($r.Exit -eq 0 -and $build -ceq ($script:C671Build + ' --nologo') -and ([string]($r.Checkpoint | Select-Object -First 1)) -match ' slot=skipped waited=0s$') `
+    Assert-C487 -Cond ($r.Exit -eq 0 -and $build -ceq ($script:C671Build + ' --nologo') -and ([string]($r.Checkpoint | Select-Object -First 1)) -match ' slot=skipped waited=0s dirty=') `
         -Name 'C589 NoSlotSkips builds with no -maxcpucount and reports slot=skipped' -Detail ('exit={0} build={1} {2}' -f $r.Exit, $build, $r.Text)
 }
 
@@ -638,6 +638,19 @@ function Read-C578Log {
     finally { $reader.Dispose() }
 }
 
+function Wait-C578RunOutput {
+    param($Run, $Fx)
+    $path = Join-Path $Fx.PhaseDir 'run.log'
+    $deadline = (Get-Date).AddSeconds(5)
+    while ((Get-Date) -lt $deadline) {
+        $log = Read-C578Log $path
+        if ($log.Contains("C578_RUN_STARTED_$($Fx.Nonce)") -and $log.Contains("C578_RUN_ERROR_$($Fx.Nonce)")) { return $log }
+        if ($Run.Process.HasExited) { break }
+        Start-Sleep -Milliseconds 25
+    }
+    return Read-C578Log $path
+}
+
 function Wait-C578Ready {
     param($Run, $Fx, [string]$Phase)
     $deadline = (Get-Date).AddSeconds(10)
@@ -711,7 +724,7 @@ function Test-C578_BuildLogVisibleBeforeExit {
         $buildDone = Read-C578Log (Join-Path $fx.PhaseDir 'build.log')
         Assert-C487 -Cond ($runReady.Ready -and $buildDone.Split('DOTNET build EXIT CODE: 0').Count -eq 2) `
             -Name 'C578 Streaming build completion records exit 0' -Detail $buildDone
-        $runLog = Read-C578Log (Join-Path $fx.PhaseDir 'run.log')
+        $runLog = Wait-C578RunOutput $run $fx
         $observation += "runReady=$($runReady.Ready) premature=$($runReady.Premature) pid=$($runReady.Child.Pid)`n"
         Assert-C487 -Cond ($runReady.Ready -and $runReady.Child.LogAtEntry) -Name 'C578 Streaming run log exists before child start' -Detail $observation
         Assert-C487 -Cond ($runReady.Ready -and -not $runReady.Child.Process.HasExited -and -not $run.Process.HasExited -and
