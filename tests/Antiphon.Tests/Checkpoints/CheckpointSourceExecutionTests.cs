@@ -276,15 +276,20 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
     public async Task validation_requires_complete_consistent_source()
     {
         var valid = ValidReport();
+        async Task CheckScriptAsync(int expected, string label)
+        {
+            var result = await ValidateWithScriptAsync(valid);
+            result.Exit.ShouldBe(expected, label + ": " + result.Output);
+        }
         ReportValidator.Validate(valid, Sha).ShouldBeNull();
-        (await ValidateWithScriptAsync(valid)).ShouldBe(0, "script-tool-valid-parity");
+        await CheckScriptAsync(0, "script-tool-valid-parity");
         valid.SchemaVersion = 1;
         ReportValidator.Validate(valid, Sha).ShouldBe("report_source_ineligible", "legacy-report-ineligible");
-        (await ValidateWithScriptAsync(valid)).ShouldBe(2, "script-tool-legacy-parity");
+        await CheckScriptAsync(2, "script-tool-legacy-parity");
         valid.SchemaVersion = 2;
         valid.Rows.Single().Source = Evidence(Observe(OtherSha, 0), "clean", "notApplicable");
         ReportValidator.Validate(valid, Sha).ShouldBe("row_source_disagreement", "row-heading-disagreement");
-        (await ValidateWithScriptAsync(valid)).ShouldBe(2, "script-tool-row-heading-parity");
+        await CheckScriptAsync(2, "script-tool-row-heading-parity");
         valid.Rows.Single().Source = Evidence(Observe(Sha, 0), "clean", "notApplicable");
         valid.Rows.Single().Line += " dirty=0";
         ReportValidator.Validate(valid, Sha).ShouldBe("duplicate_receipt_token");
@@ -295,10 +300,10 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         });
         valid.Rows.Single().ExitCode = ExitCodes.FailedTests;
         ReportValidator.Validate(valid, Sha).ShouldBe("row_failed");
-        (await ValidateWithScriptAsync(valid)).ShouldBe(2, "script-tool-failed-verdict-parity");
+        await CheckScriptAsync(2, "script-tool-failed-verdict-parity");
     }
 
-    private async Task<int> ValidateWithScriptAsync(ReportModel report)
+    private async Task<(int Exit, string Output)> ValidateWithScriptAsync(ReportModel report)
     {
         var evidence = Path.Combine(TempDir(), "report.json");
         File.WriteAllText(evidence, ReportWriter.JsonText(report));
@@ -317,8 +322,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         var stderr = process.StandardError.ReadToEndAsync();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await process.WaitForExitAsync(timeout.Token);
-        _ = await stdout + await stderr;
-        return process.ExitCode;
+        return (process.ExitCode, await stdout + await stderr);
     }
 
     private string NewRun(CheckpointManifest manifest, SourceObservation source) =>
