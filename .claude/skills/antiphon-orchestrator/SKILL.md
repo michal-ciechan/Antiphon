@@ -20,19 +20,22 @@ Review task, not a Code task requiring new attributed progress (CARD-0779).
 The owner is `docs/orchestration-loop.md` §1, "Standing pipeline policy" (CARD-0533); this is the
 short form.
 
-- **Code and Review at two; every other stage at one**, in parallel across stages. Never two tasks in the same stage at
-  once when that role's cap is one. Before dispatching a stage, check that role's in-flight row on
-  `GET /api/agent-tasks/pipeline` (or a known task by `GET /api/agent-tasks/{id}`, see §5), not
-  your memory.
+- **Each pipeline stage at up to four; at most six tasks on server2 across all stages.** These are
+  operator defaults. Before dispatching, read the effective concurrency limits and current occupancy
+  from `GET /api/agent-tasks/pipeline` (stage and host limits/counts), `GET /api/session-runners`
+  (seats and eligibility), and `GET /api/runner-defaults` (placement defaults). Antiphon's enforced
+  limits are the ceiling; use the lower effective stage cap. Run stages in parallel, never more tasks
+  in one stage than its cap. Prefer server2 (`-Runner server2`); use desktop/Windows only when work
+  absolutely requires it, scoped to that piece.
 - **`-Worktree` by default on every dispatch.** Shared checkout only when explicitly told to
   default to Shared (globally/per-project/per-invocation), or when a task must continue on a
   branch that's already checked out elsewhere (see §4).
 - **One stage transition per completion.** Read `next=`/`handoff:` off the header and dispatch
   that stage (§1). Parallelism comes from different cards sitting at different stages, not from
   fanning out several dispatches at once.
-- **Code stage at a depth of two** (in flight + queued + ready). Review's create-time cap is two. Below two, pull the next unstarted
-  Backlog card, lowest rank first, and start it through Plan toward Code; at two, start no new Plan
-  toward Code.
+- **Code stage at its depth cap** (four unless Antiphon enforces less; in flight + queued + ready,
+  read from `GET /api/agent-tasks/pipeline`). Below the cap, pull the next unstarted Backlog card,
+  lowest rank first, and start it through Plan toward Code; at the cap, start no new Plan toward Code.
 - **Same source area as an in-flight Code task: defer that card's Code**, even with a free slot —
   a worktree scope overlap only warns (CARD-0063), and the conflict lands on you at merge
   (CARD-0535/CARD-0537, 2026-09-19).

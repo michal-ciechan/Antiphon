@@ -82,14 +82,19 @@ uses `-FromTask` and a Review of that separate source; an actual `-RepairSource`
 task cannot be used with `-FromTask`.
 
 When you are working a board through its pipeline, this is the standing policy unless the user
-says otherwise this session. Code and Review at two, and one task in each other pipeline stage
-(Investigate, Plan, TestDesign, Mutation), stages running in parallel with each other, each in
-its own -Worktree, never two tasks in the same stage when that stage's cap is one. On every
-completion dispatch the named next stage. Land a stage's work as soon as it is confirmed. Keep
-the Code stage at a depth of two (in flight, queued and ready together, read from GET
-/api/agent-tasks/pipeline): below two, pull the next unstarted Backlog card, lowest rank first,
-and start it through Plan toward Code; at two, start no new Plan toward Code. Review's
-create-time cap is two. A card whose Code work touches the same source area as a Code task already in flight
+says otherwise this session. Before dispatching, read the effective concurrency limits and current
+occupancy from GET /api/agent-tasks/pipeline (stage and host counts and limits), GET
+/api/session-runners (seats and eligibility), and GET /api/runner-defaults (placement defaults).
+Each pipeline stage (Investigate, Plan, TestDesign, Code, Review, Mutation) runs at up to four
+concurrent tasks and at most six tasks run on server2 across all stages. These are operator defaults;
+Antiphon's enforced limits are the ceiling, so use the lower effective stage cap. Run stages in
+parallel, each task in its own -Worktree, never more tasks in one stage than its cap. Prefer server2
+(-Runner server2) and use the desktop/Windows machine only when work absolutely requires it, scoped
+to that piece. On every completion dispatch the named next stage. Land a stage's work as soon as
+it is confirmed. Keep the Code stage at its depth cap (four unless Antiphon enforces less; in flight,
+queued and ready together, read from GET /api/agent-tasks/pipeline): below the cap, pull the next
+unstarted Backlog card, lowest rank first, and start it through Plan toward Code; at the cap, start
+no new Plan toward Code. A card whose Code work touches the same source area as a Code task already in flight
 waits for that task to land, even with a free Code slot. File a Backlog card the moment
 Investigate or Review finds a structural defect; never batch them. A defect a Clean Review approved that is found only in the running system after land
 gets the post-land retrospective companion (`Post-land retrospective: <identifier>`,
@@ -162,4 +167,4 @@ policy must allow it, it names -VerificationSubject (original owner), -Verificat
 silently as a different round. A clean Interim Review routes to a fresh Final Review of the
 unchanged candidate, never to land; a latched owner lands only with a Clean Final/Full Review.
 
-Platform: read GET /api/runner-defaults and GET /api/session-runners before commissioning a stage. Do not embed a fleet location. Normally omit -Runner; the runtime default places the task. Omit -Platform: a follow-up inherits its predecessor's platform and a stage inherits the card's platform, else the task is unpinned (Any) and the runtime default places it. To unpin a stage on a pinned card pass -Platform Any explicitly. Pass a specific platform only when that piece of work requires it: a test, tool, behaviour, API, path or line-ending rule, file lock, process or terminal behaviour, OS-only probe, or evidence meaningful only there. Habit, a stage name, "Review always on X", or preference for the current host are not requirements. If one part is OS-specific, scope a platform-pinned task to just the OS-specific part with its own filter and budget; leave the rest unpinned. A pipeline tick does not write defaults. A user-requested settings change is GET then PUT /api/runner-defaults with a reason and Human provenance.
+Platform: read GET /api/runner-defaults and GET /api/session-runners before commissioning a stage. Do not embed a fleet location. Normally omit -Runner; the runtime default places the task. The operator's server2 preference can be pinned with -Runner server2 when eligible; GET /api/runner-defaults reports the runtime default, which this policy does not change. Omit -Platform: a follow-up inherits its predecessor's platform and a stage inherits the card's platform, else the task is unpinned (Any) and the runtime default places it. To unpin a stage on a pinned card pass -Platform Any explicitly. Pass a specific platform only when that piece of work requires it: a test, tool, behaviour, API, path or line-ending rule, file lock, process or terminal behaviour, OS-only probe, or evidence meaningful only there. Habit, a stage name, "Review always on X", or preference for the current host are not requirements. If one part is OS-specific, scope a platform-pinned task to just the OS-specific part with its own filter and budget; leave the rest unpinned. A pipeline tick does not write defaults. A user-requested settings change is GET then PUT /api/runner-defaults with a reason and Human provenance.

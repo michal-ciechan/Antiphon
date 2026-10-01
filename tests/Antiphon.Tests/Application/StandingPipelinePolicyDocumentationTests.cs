@@ -17,8 +17,10 @@ public sealed class StandingPipelinePolicyDocumentationTests
 
     private static readonly string[] Phrases =
     [
-        "never two tasks in the same stage",
-        "depth of two",
+        "never more tasks in one stage than its cap",
+        "depth cap",
+        "effective concurrency limits",
+        "server2",
         "-IgnoreConcurrencyLimit",
         "axis",
     ];
