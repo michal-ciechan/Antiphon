@@ -78,7 +78,8 @@ result to CP-1/CP-2, outside the 497. The two new focused classes add 24, also o
 
 ### Antiphon.Tests: eight classes, 69 methods, 110 results
 
-All files are under `tests/Antiphon.Tests/`. Counts apply on both Linux and Windows; zero skips.
+All files are under `tests/Antiphon.Tests/`. Discovery counts apply on both platforms;
+Linux executes 95 and skips 15 named CARD-0865/0866 cases, while Windows executes all 110.
 
 | Class | Files | Results | Role of fake |
 |---|---|---:|---|
@@ -99,7 +100,8 @@ outside this closure. Keep all 24 parity results, including the nine not depende
 
 The old estimate of roughly 170 was **170 methods in 16 direct-consumer classes**, which expand
 to 195 results here. Following `HerdrPaneDisposalFixture` and `HerdrLabelFollowFixture` adds eight
-classes and 302 results. All 497 results are in this card's acceptance, including mixed classes.
+classes and 302 results. All 497 existing results remain in this card's selected rows,
+including mixed classes; Linux has 32 named skips across those rows after CARD-0871.
 The actual subjects are production client/runtime services; the fake is their wire peer. No
 existing suite is a dedicated fake-listener lifecycle test; S2 supplies that missing coverage.
 
