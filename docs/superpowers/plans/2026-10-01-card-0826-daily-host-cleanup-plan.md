@@ -922,3 +922,7 @@ Static validation: source-derived checkpoint compatibility census is 15 + 9 + 16
 `git diff --check` and the static manifest/roster cross-check passed: eleven columns per checkpoint, required header order, seven unique isolated outputs, exact class unions and Min totals, all 198 proposed TUnit methods accounted for (three extra argument expansions), all thirteen V IDs and five R IDs covered, every PC method in its row, and one-to-one guard IDs. This is static validation against the inspected importer schema, not a claim of running the .NET checkpoint tool. Only this plan is modified.
 
 TestDesign handoff: **complete; next: code**. Land CARD-0835 first, serialize the generated EF snapshot with any admitted CARD-0788/0505/0822 work, and retain the fixed no-repository-lease/inventory-only worktree boundary. Author the virtual fixtures and caller compatibility tests before extraction, commit before row runs, and use the exact closed roster. Native kernel and live per-host activation claims remain operational acceptance; this plan does not silently count them as covered by fake syscalls. Only this plan changed.
+
+### Code byte recensus
+
+After S5's ASCII normalization edit, `dev-aspire.ps1` contains 0 bytes above ASCII, down from the 351-byte frozen-source census. PowerShell parsing reports 0 errors. Only comments and display glyphs changed in that script; startup behavior was not run in Code.

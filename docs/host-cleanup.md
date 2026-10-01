@@ -7,7 +7,7 @@ adapters throw before observation or deletion. Existing worktree cleanup owners 
 were not changed. No live host cleanup or provider launch was performed.
 
 The branch currently contains a virtual-facts policy/executor seam, a read-only worktree
-classifier, and attention DTO/client presentation. Worktree inventory rows never confer deletion
+classifier, attention DTO/client presentation, and ASCII-only `dev-aspire.ps1`. Worktree inventory rows never confer deletion
 authority. The classifier has no repository mutation lease, Git mutation, or retirement dependency.
 These facts do **not** establish the plan's full transitive no-lease invariant; the scheduled call
 graph does not exist yet.
