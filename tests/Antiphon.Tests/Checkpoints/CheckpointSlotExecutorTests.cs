@@ -298,7 +298,8 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         (await CheckpointApp.ExecuteAsync(run, CancellationToken.None, runtime)).ShouldBe(7);
         File.Exists(Path.Combine(run, "host.txt")).ShouldBeFalse();
         File.ReadAllText(Path.Combine(run, "git.txt"))
-            .ShouldContain("source=" + new string('a', 40), "terminal-source-evidence-is-retained");
+            .ShouldContain("source=" + new string('a', 40), Case.Sensitive,
+                "terminal-source-evidence-is-retained");
         recorder.Calls.ShouldBeEmpty();
         driver.Calls.ShouldBeEmpty();
     }
