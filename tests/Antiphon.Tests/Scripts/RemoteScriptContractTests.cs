@@ -73,13 +73,13 @@ public sealed class RemoteScriptContractTests
                     foreach ($entry in $entries) {
                         $script:requested = $entry.Name
                         $script:seen = @()
-                        $arguments = @('-Case', $entry.Name, '-Sha', $sha)
+                        $arguments = @{ Case = $entry.Name; Sha = $sha }
                         if ($entry.Name -eq 'Prune') {
                             $previewDir = Join-Path $Scratch 'runner-cache-prune-preview'
                             New-Item -ItemType Directory -Path $previewDir -Force | Out-Null
                             $preview = Join-Path $previewDir 'preview.txt'
                             "run=c849$('a' * 16)0`nsource-sha=$sha" | Set-Content -LiteralPath $preview -Encoding ascii
-                            $arguments += @('-Preview', $preview)
+                            $arguments.Preview = $preview
                         }
                         try { & $Front @arguments | Out-Null }
                         catch {
