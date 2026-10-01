@@ -79,6 +79,8 @@ public sealed class HerdrPaneDisposalRedactionTests
     public async Task Preview_projects_process_basenames_without_changing_identity(string style)
     {
         await using var w = new Wire();
+        var started = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var nativeId = Guid.Parse("86600000-0000-4000-8000-000000000001");
         var prefix = style switch
         {
             "windows" => @"C:\",
@@ -93,7 +95,7 @@ public sealed class HerdrPaneDisposalRedactionTests
         {
             var shell = o.Shell! with { ExecutableName = PathName("shell-path-secret", "pwsh.exe") };
             var foreground = new HerdrPaneDisposalProcess(4243, PathName("foreground-path-secret", "grok.exe"),
-                shell.StartedAtUtc, shell.Pid);
+                shell.StartedAtUtc, shell.Pid, [nativeId]);
             var worker = new HerdrPaneDisposalProcess(4244, PathName("affected-path-secret", "worker.exe"),
                 shell.StartedAtUtc, foreground.Pid);
             return o with { Shell = shell, Foreground = [foreground], Affected = [shell, foreground, worker] };
@@ -114,6 +116,21 @@ public sealed class HerdrPaneDisposalRedactionTests
             p.AffectedProcesses[1].ExecutableName.ShouldBe("grok.exe", "affected-1-path-excluded");
             p.Shell.Pid.ShouldBe(4242); p.Foreground[0].Pid.ShouldBe(4243);
             p.AffectedProcesses[2].Pid.ShouldBe(4244);
+            p.Shell.ParentPid.ShouldBeNull("process-facts-preserved shell parent");
+            p.Foreground[0].ParentPid.ShouldBe(4242, "process-facts-preserved foreground parent");
+            p.AffectedProcesses[0].ParentPid.ShouldBeNull("process-facts-preserved affected shell parent");
+            p.AffectedProcesses[1].ParentPid.ShouldBe(4242, "process-facts-preserved affected foreground parent");
+            p.AffectedProcesses[2].ParentPid.ShouldBe(4243, "process-facts-preserved worker parent");
+            p.Shell.StartedAtUtc.ShouldBe(started, "process-facts-preserved shell start");
+            p.Foreground[0].StartedAtUtc.ShouldBe(started, "process-facts-preserved foreground start");
+            p.AffectedProcesses[0].StartedAtUtc.ShouldBe(started, "process-facts-preserved affected shell start");
+            p.AffectedProcesses[1].StartedAtUtc.ShouldBe(started, "process-facts-preserved affected foreground start");
+            p.AffectedProcesses[2].StartedAtUtc.ShouldBe(started, "process-facts-preserved worker start");
+            p.Shell.NativeSessionIds.ShouldBeNull("process-facts-preserved shell native IDs");
+            p.Foreground[0].NativeSessionIds.ShouldBe([nativeId], "process-facts-preserved foreground native IDs");
+            p.AffectedProcesses[0].NativeSessionIds.ShouldBeNull("process-facts-preserved affected shell native IDs");
+            p.AffectedProcesses[1].NativeSessionIds.ShouldBe([nativeId], "process-facts-preserved affected foreground native IDs");
+            p.AffectedProcesses[2].NativeSessionIds.ShouldBeNull("process-facts-preserved worker native IDs");
             p.Eligible.ShouldBeFalse("raw-identity-still-refused");
             p.PlannedTerminationPids.ShouldBeEmpty();
         }
