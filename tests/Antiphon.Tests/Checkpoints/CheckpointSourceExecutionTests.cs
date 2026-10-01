@@ -456,7 +456,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
             ReportValidator.IsSourceEligible(evidence, Sha).ShouldBeFalse(label);
         }
         ReportValidator.IsSourceEligible(null, Sha).ShouldBeFalse("tool-null-source");
-        ReportValidator.IsSourceEligible(Evidence(Observe(Sha, 0), "clean", "verified"), "bad")
+        ReportValidator.IsSourceEligible(Evidence(Observe("bad", 0), "clean", "verified"), "bad")
             .ShouldBeFalse("tool-invalid-expected-sha");
         SourceRefuses("tool-source-version", source => source.Version = 0);
         SourceRefuses("tool-source-end-missing", source => source.End = null);

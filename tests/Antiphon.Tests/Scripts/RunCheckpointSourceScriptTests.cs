@@ -298,6 +298,12 @@ public sealed class RunCheckpointSourceScriptTests
         var badSha = await fixture.ValidateAsync(clean.Evidence, "bad");
         badSha.Exit.ShouldBe(2, "expected-sha-invalid: " + badSha.Output);
         badSha.Output.ShouldContain("reason=expected_sha_invalid", Case.Sensitive, "expected-sha-invalid");
+        var helperShape = JsonNode.Parse(await File.ReadAllTextAsync(clean.Evidence))!.AsObject();
+        helperShape["start"]!["commit"] = "bad";
+        helperShape["end"]!["commit"] = "bad";
+        await File.WriteAllTextAsync(tampered, helperShape.ToJsonString());
+        var helperVerdict = await fixture.CheckSourceHelperAsync(tampered, "bad");
+        helperVerdict.Exit.ShouldBe(1, "source-helper-expected-sha-shape: " + helperVerdict.Output);
     }
 
     private sealed class Fixture : IDisposable
@@ -409,6 +415,16 @@ public sealed class RunCheckpointSourceScriptTests
             RunAsync("pwsh", Repo, ["-NoProfile", "-NonInteractive", "-File",
                 Path.Combine(ProjectRoot, "scripts", "validate-checkpoint-receipt.ps1"),
                 "-Evidence", evidence, "-ExpectedSourceSha", expectedSha ?? Head], null);
+
+        public Task<(int Exit, string Output)> CheckSourceHelperAsync(string evidence, string expectedSha)
+        {
+            static string Quote(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
+            var helper = Path.Combine(ProjectRoot, "scripts", "lib", "checkpoint-source.ps1");
+            var command = ". " + Quote(helper) + "; $e = Get-Content -LiteralPath " + Quote(evidence) +
+                " -Raw | ConvertFrom-Json; if (Test-CheckpointSourceEvidence $e " + Quote(expectedSha) +
+                ") { exit 0 } else { exit 1 }";
+            return RunAsync("pwsh", Repo, ["-NoProfile", "-NonInteractive", "-Command", command], null);
+        }
 
         public void Dispose() => GitFixtureCleanup.Delete(Root);
 
