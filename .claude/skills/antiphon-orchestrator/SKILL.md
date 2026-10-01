@@ -31,8 +31,8 @@ short form.
   default to Shared (globally/per-project/per-invocation), or when a task must continue on a
   branch that's already checked out elsewhere (see §4).
 - **One stage transition per completion.** Read `next=`/`handoff:` off the header and dispatch
-  that stage (§1). Parallelism comes from different cards sitting at different stages, not from
-  fanning out several dispatches at once.
+  that stage (§1). Different cards may run in the same or different stages in parallel up to the
+  effective caps; dispatch each transition from its own completion.
 - **Code stage at its depth cap** (four unless Antiphon enforces less; in flight + queued + ready,
   read from `GET /api/agent-tasks/pipeline`). Below the cap, pull the next unstarted Backlog card,
   lowest rank first, and start it through Plan toward Code; at the cap, start no new Plan toward Code.
