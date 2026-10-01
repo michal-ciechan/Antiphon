@@ -98,6 +98,48 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         rowExit.ShouldBe(ExitCodes.Invalid, "driver-boundary-drift");
         Read(rowRun).Source.State.ShouldBe("changed");
 
+        var sameCountAfter = new SourceObservation(Sha, 0, new string('3', 64),
+            DateTimeOffset.UtcNow, "known");
+        var sameCountObservations = 0;
+        var sameCountRun = NewRun(CommandManifest(), before);
+        (await CheckpointApp.ExecuteAsync(sameCountRun, CancellationToken.None,
+            Runtime(new FakeDriver(), _ => ++sameCountObservations <= 2 ? before : sameCountAfter)))
+            .ShouldBe(ExitCodes.Invalid, "driver-same-count-fingerprint-drift");
+        var sameCountReport = Read(sameCountRun);
+        sameCountReport.Source.Start.Commit.ShouldBe(sameCountReport.Source.End!.Commit);
+        sameCountReport.Source.Start.DirtyFiles.ShouldBe(sameCountReport.Source.End.DirtyFiles);
+        sameCountReport.Source.Start.Fingerprint.ShouldNotBe(sameCountReport.Source.End.Fingerprint);
+        sameCountReport.Source.State.ShouldBe("changed");
+
+        var slotRepo = TempDir();
+        Directory.CreateDirectory(Path.Combine(slotRepo, "sample"));
+        File.WriteAllText(Path.Combine(slotRepo, "sample", "sample.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+        var slotManifest = new CheckpointManifest
+        {
+            Builds = [new BuildSpec { Id = "bin-c835", Project = "sample", OutputPath = "bin-c835/" }],
+            Checkpoints = [new CheckpointSpec
+            {
+                Id = "CP-1", After = ["all"], Build = "bin-c835",
+                Filter = "/*/*/ExampleSurfaceTests/*", MinExecuted = 1, EstimatedMinutes = 1,
+            }],
+        };
+        var slotRun = CheckpointApp.CreateRun(slotManifest, new RunRequest
+        {
+            Commit = Sha, Branch = "fixture", KeepOutputs = true, Slots = "off",
+        }, slotRepo, new CheckpointApp.Runtime { SourceCapture = _ => before });
+        var slotSource = before;
+        var slotDriver = new FakeDriver();
+        var slotClient = new DriftingSlotClient(() => slotSource = sameCountAfter);
+        (await CheckpointApp.ExecuteAsync(slotRun, CancellationToken.None,
+            new CheckpointApp.Runtime
+            {
+                Driver = slotDriver, Slots = slotClient, SourceCapture = _ => slotSource,
+            })).ShouldBe(ExitCodes.Invalid, "slot-wait-fingerprint-drift");
+        slotClient.Acquires.ShouldBe(1, "slot-wait-acquired-once");
+        slotDriver.Calls.ShouldBeEmpty("slot-wait-no-driver");
+        Read(slotRun).Source.State.ShouldBe("changed");
+
         var queuedManifest = CommandManifest();
         queuedManifest.Checkpoints[0].Serial = true;
         queuedManifest.Checkpoints.Add(new CheckpointSpec
@@ -352,6 +394,20 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
     {
         Start = observation, End = observation, State = state, BuildSource = binding,
     };
+
+    private sealed class DriftingSlotClient(Action onAcquire) : IBuildSlotClient
+    {
+        public int Acquires { get; private set; }
+        public Task<SlotSession> ProbeAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new SlotSession("off", 4));
+        public Task<SlotLease> AcquireAsync(SlotSession session, string label,
+            CancellationToken cancellationToken)
+        {
+            Acquires++;
+            onAcquire();
+            return Task.FromResult(new SlotLease { State = "skipped", MaxCpuCount = 4 });
+        }
+    }
 
     private static ReportModel ValidReport()
     {

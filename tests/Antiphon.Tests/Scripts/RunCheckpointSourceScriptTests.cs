@@ -141,6 +141,17 @@ public sealed class RunCheckpointSourceScriptTests
         drift.Exit.ShouldBe(2, drift.Output);
         drift.Source.GetProperty("state").GetString().ShouldBe("changed", "driver-drift-is-changed");
         drift.Line.ShouldContain("executed=3 passed=3", Case.Sensitive, "driver-drift-retains-counts");
+        using var sameCountFixture = new Fixture();
+        sameCountFixture.Write("tracked.txt", "first dirty value");
+        var sameCount = await sameCountFixture.RunAsync(driftPhase: "same-count-run");
+        sameCount.Exit.ShouldBe(2, sameCount.Output);
+        sameCount.Source.GetProperty("start").GetProperty("dirtyFiles").GetInt32().ShouldBe(1);
+        sameCount.Source.GetProperty("end").GetProperty("dirtyFiles").GetInt32().ShouldBe(1);
+        sameCount.Source.GetProperty("start").GetProperty("fingerprint").GetString()
+            .ShouldNotBe(sameCount.Source.GetProperty("end").GetProperty("fingerprint").GetString(),
+                "same-count-content-change-has-new-fingerprint");
+        sameCount.Source.GetProperty("state").GetString().ShouldBe("changed",
+            "same-count-driver-drift-is-changed");
         using var buildDriftFixture = new Fixture();
         var buildDrift = await buildDriftFixture.RunAsync(driftPhase: "build");
         buildDrift.Exit.ShouldBe(2, buildDrift.Output);
@@ -282,6 +293,9 @@ public sealed class RunCheckpointSourceScriptTests
                 }
                 if ($env:C835_DRIFT -eq ('restore-' + $phase)) {
                     git -C $env:C835_REPO restore -- tracked.txt
+                }
+                if ($env:C835_DRIFT -eq ('same-count-' + $phase)) {
+                    Set-Content -LiteralPath (Join-Path $env:C835_REPO 'tracked.txt') -Value 'second dirty value'
                 }
                 if ($phase -eq 'build') { exit [int]$env:C835_BUILD_EXIT }
                 $result = ''
