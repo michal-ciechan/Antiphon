@@ -291,13 +291,15 @@ public class AgentTaskLandApprovalRequestTests
         branch is null ? "refs/heads/missing" : branch.StartsWith("refs/", StringComparison.Ordinal) ? branch : "refs/heads/" + branch;
 
     private static async Task<StageOutcome> SeedReviewAsync(AppDbContext db, AgentTask subject, string sha,
-        StageOutcomeKind outcome = StageOutcomeKind.Clean, string? sourceRef = null, string? repository = null)
+        StageOutcomeKind outcome = StageOutcomeKind.Clean, string? sourceRef = null, string? repository = null,
+        bool? reviewedSourceClean = true)
     {
         var row = new StageOutcome
         {
             Id = Guid.NewGuid(), Stage = OrchestrationStage.Review, Outcome = outcome,
             Source = StageOutcomeSource.Delegate, SubjectTaskId = subject.Id, StageTaskId = Guid.NewGuid(),
-            ReviewedSourceSha = sha, ReviewedSourceRef = sourceRef ?? FullRef(subject.WorktreeBranch),
+            ReviewedSourceSha = sha, ReviewedSourceClean = reviewedSourceClean,
+            ReviewedSourceRef = sourceRef ?? FullRef(subject.WorktreeBranch),
             ReviewedRepositoryPath = repository ?? subject.RepoPath, RecordedAt = DateTime.UtcNow,
         };
         db.StageOutcomes.Add(row);

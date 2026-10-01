@@ -344,18 +344,20 @@ internal sealed class C544World : IAsyncDisposable
     /// seed the report turn, settle with the reply service. Returns the settled StageOutcome.
     /// </summary>
     public async Task<StageOutcome> SettleReviewAsync(CreateAgentTaskRequest? request = null, string scope = "Full",
-        bool found = false, string? reviewedSha = null, Guid? subject = null, string next = "land")
+        bool found = false, string? reviewedSha = null, Guid? subject = null, string next = "land",
+        bool? reviewedSourceClean = true)
     {
         var created = await CreateTaskAsync(request ?? FinalReview());
-        return await SettleExistingReviewAsync(created.Id, scope, found, reviewedSha, subject, next);
+        return await SettleExistingReviewAsync(created.Id, scope, found, reviewedSha, subject, next, reviewedSourceClean);
     }
 
     /// <summary>Settle an already-created Review task through the real reply boundary.</summary>
     public async Task<StageOutcome> SettleExistingReviewAsync(Guid taskId, string scope = "Full", bool found = false,
-        string? reviewedSha = null, Guid? subject = null, string next = "land")
+        string? reviewedSha = null, Guid? subject = null, string next = "land", bool? reviewedSourceClean = true)
     {
         var sessionId = await DispatchAsync(taskId);
-        var report = ReviewReport(taskId, subject ?? Owner.Id, reviewedSha ?? OwnerSha, scope, found, next);
+        var report = ReviewReport(taskId, subject ?? Owner.Id, reviewedSha ?? OwnerSha, scope, found, next,
+            reviewedSourceClean: reviewedSourceClean);
         await SeedTurnAsync(sessionId, taskId, report);
         await Services.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(sessionId, CancellationToken.None);
         await using var db = CreateContext();
@@ -363,14 +365,14 @@ internal sealed class C544World : IAsyncDisposable
     }
 
     public static string ReviewReport(Guid taskId, Guid subject, string sha, string? scope, bool found, string next = "land",
-        string? extraEvidenceLines = null) =>
+        string? extraEvidenceLines = null, bool? reviewedSourceClean = null) =>
         $"""
         Reviewed the owner.
 
         --- review evidence ---
         subjectTaskId: {subject:D}
         reviewedSourceSha: {sha}
-        {(scope is null ? "" : "ordinaryScopeCompleted: " + scope)}{(extraEvidenceLines is null ? "" : "\n" + extraEvidenceLines)}
+        {(scope is null ? "" : "ordinaryScopeCompleted: " + scope)}{(reviewedSourceClean is null ? "" : "\nreviewedSourceClean: " + (reviewedSourceClean.Value ? "true" : "false"))}{(extraEvidenceLines is null ? "" : "\n" + extraEvidenceLines)}
 
         {DelegationReportFormatter.FindingToken(taskId, found ? "found" : "clean")} {(found ? "a regression" : "")}
         --- next stage ---

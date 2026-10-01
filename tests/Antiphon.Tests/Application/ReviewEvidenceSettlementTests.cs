@@ -41,7 +41,7 @@ public sealed class ReviewEvidenceSettlementTests
     private static async Task<(Guid Id, Guid Session, StageOutcome Outcome, AgentTask Task, AgentTaskLandNotification? Note)> SettleAsync(
         C544World world, string? presentation = null, bool found = false, bool follow = false,
         CreateAgentTaskRequest? request = null, Guid? subject = null, string? sha = null, string scope = "Full",
-        string next = "land", Func<Guid, string, string>? reportEdit = null)
+        string next = "land", Func<Guid, string, string>? reportEdit = null, bool? reviewedSourceClean = true)
     {
         var spec = request ?? world.FinalReview();
         if (follow)
@@ -49,7 +49,7 @@ public sealed class ReviewEvidenceSettlementTests
         var created = await world.CreateTaskAsync(spec);
         var session = await world.DispatchAsync(created.Id);
         var report = C544World.ReviewReport(created.Id, subject ?? world.Owner.Id, sha ?? world.OwnerSha,
-            scope, found, next);
+            scope, found, next, reviewedSourceClean: reviewedSourceClean);
         if (presentation is not null) report = Presented(report, presentation);
         if (reportEdit is not null) report = reportEdit(created.Id, report);
         await world.SeedTurnAsync(session, created.Id, report);
