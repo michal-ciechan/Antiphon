@@ -94,6 +94,16 @@ public sealed class CheckpointSourceStateTests
         var second = reader.Capture(repo.Root);
         second.DirtyFiles.ShouldBe(first.DirtyFiles);
         second.Fingerprint.ShouldNotBe(first.Fingerprint, "same-count-content-change");
+
+        repo.Git("restore", "--staged", "--worktree", "seed.txt");
+        File.Delete(Path.Combine(repo.Root, "seed.txt"));
+        reader.Capture(repo.Root).DirtyFiles.ShouldBeGreaterThan(0, "tracked-deletion");
+        repo.Git("restore", "--worktree", "seed.txt");
+        File.Move(Path.Combine(repo.Root, "seed.txt"), Path.Combine(repo.Root, "renamed.txt"));
+        reader.Capture(repo.Root).DirtyFiles.ShouldBeGreaterThan(0, "rename-or-delete-plus-untracked");
+        File.Move(Path.Combine(repo.Root, "renamed.txt"), Path.Combine(repo.Root, "seed.txt"));
+        File.WriteAllBytes(Path.Combine(repo.Root, "seed.txt"), [0, 255, 0, 1]);
+        reader.Capture(repo.Root).DirtyFiles.ShouldBe(1, "binary-worktree-change");
     }
 
     [Test]
@@ -147,6 +157,22 @@ public sealed class CheckpointSourceStateTests
         unstable.DirtyFiles.ShouldBeNull();
         new SourceSnapshot((_, _) => throw new IOException("injected"))
             .Capture(repo.Root).ErrorCode.ShouldBe("file_io", "injected-read-failure");
+
+        var noHead = Path.Combine(Path.GetTempPath(), "c835-unborn-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(noHead);
+        try
+        {
+            GitFixture.Run("git", noHead, "init", "-q");
+            new SourceSnapshot().Capture(noHead).CaptureStatus.ShouldBe("unknown", "unborn-head");
+        }
+        finally { Directory.Delete(noHead, recursive: true); }
+
+        byte[] UnsupportedSubmodule(string directory, IReadOnlyList<string> args) =>
+            args[0] == "status" ? Encoding.UTF8.GetBytes(" m submodule\0")
+            : args.Count > 1 && args[1] == "--show-toplevel" ? Encoding.UTF8.GetBytes(repo.Root + "\n")
+            : args[0] == "rev-parse" ? Encoding.UTF8.GetBytes(repo.Git("rev-parse", "HEAD")) : [];
+        new SourceSnapshot(UnsupportedSubmodule).Capture(repo.Root)
+            .ErrorCode.ShouldBe("submodule_unsupported", "unsupported-submodule-is-unknown");
     }
 
     [Test]
@@ -172,6 +198,30 @@ public sealed class CheckpointSourceStateTests
             script.GetProperty("commit").GetString().ShouldBe(tool.Commit, kind);
             script.GetProperty("dirtyFiles").GetInt32().ShouldBe(tool.DirtyFiles!.Value, kind);
             script.GetProperty("fingerprint").GetString().ShouldBe(tool.Fingerprint, kind);
+        }
+
+        repo.Git("restore", "--staged", "--worktree", "seed.txt");
+        File.Delete(Path.Combine(repo.Root, "new-\u00e9.txt"));
+        var linked = Path.Combine(Path.GetTempPath(), "c835-linked-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            repo.Git("worktree", "add", "--detach", linked);
+            File.Exists(Path.Combine(linked, ".git")).ShouldBeTrue("linked-worktree-git-file");
+            var linkedNested = Path.Combine(linked, "nested folder");
+            Directory.CreateDirectory(linkedNested);
+            var tool = reader.Capture(linkedNested);
+            var root = reader.Capture(repo.Root);
+            tool.Fingerprint.ShouldBe(root.Fingerprint, "linked-root-equality");
+            var source = System.IO.Path.Combine(GitFixture.ProjectRoot, "scripts", "lib", "checkpoint-source.ps1");
+            var command = ". '" + source.Replace("'", "''") + "'; Get-CheckpointSource -Repository '" +
+                linkedNested.Replace("'", "''") + "' | ConvertTo-Json -Compress";
+            using var script = JsonDocument.Parse(GitFixture.Run("pwsh", linked, "-NoProfile", "-Command", command));
+            script.RootElement.GetProperty("fingerprint").GetString().ShouldBe(tool.Fingerprint,
+                "linked-script-tool-parity");
+        }
+        finally
+        {
+            repo.Git("worktree", "remove", "--force", linked);
         }
     }
 
