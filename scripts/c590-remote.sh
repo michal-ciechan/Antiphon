@@ -1604,6 +1604,7 @@ c849_validate_seed_tree() {
 # materialize ordinary files/directories; tarfile.extractall would also create links.
 c849_saved_copy() {
     local source="$1" stage="$2" image="$3" diagnosis
+    source="${source%/}"
     [ -n "$source" ] && [ "${source#/}" != "$source" ] && [ ! -L "$source" ] \
         && [ "$(realpath -e -- "$source" 2>/dev/null)" = "$source" ] \
         && { [ -f "$source" ] || [ -d "$source" ]; } \
