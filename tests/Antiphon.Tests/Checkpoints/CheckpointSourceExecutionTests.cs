@@ -347,13 +347,13 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         fingerprintScript.Output.ShouldContain("reason=row_heading_disagreement", Case.Sensitive,
             "script-fingerprint-row-heading-parity");
         fingerprintScript.Exit.ShouldBe(2, "script-fingerprint-row-heading-parity");
-        valid.Rows.Single().Source = Evidence(Observe(Sha, 0), "clean", "notApplicable");
+        valid.Rows.Single().Source = Evidence(Observe(Sha, 0), "clean", "verified");
         valid.Rows.Single().Command = null;
         valid.Rows.Single().Executed = 1;
         valid.Rows.Single().Passed = 1;
         valid.Rows.Single().Failed = 0;
         valid.Rows.Single().Skipped = 0;
-        valid.Source = Evidence(Observe(Sha, 0), "clean", "verified");
+        valid.Source = Evidence(Observe(Sha, 0), "clean", "notApplicable");
         valid.Rows.Single().Line = CheckpointLine.Format(new CheckpointLineModel
         {
             Name = "CP-1", Commit = Sha, Build = "built", Filter = "true", Command = false,
@@ -365,7 +365,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         bindingScript.Output.ShouldContain("reason=row_heading_disagreement", Case.Sensitive,
             "script-build-row-heading-parity");
         bindingScript.Exit.ShouldBe(2, "script-build-row-heading-parity");
-        valid.Rows.Single().Source.BuildSource = "verified";
+        valid.Source.BuildSource = "verified";
         valid.Rows.Single().Line = CheckpointLine.Format(new CheckpointLineModel
         {
             Name = "CP-1", Commit = Sha, Build = "built", Filter = "true", Command = false,
