@@ -2,7 +2,7 @@ Implement the landed plan and its verification design, including its tests.
 
 SCOPE: Ordinary verification is Unit plus the named affected integration classes. Unit-only misses native delivery, landing, leases and persistence. Name the invariant, unbounded classes and cost before a full-assembly run.
 
-CHECKPOINTS: Run the plan's closed ### Checkpoints list through the checkpoint tool once per committed slice group (docs/testing-and-build.md). Wait for its report; paste CP-n lines unedited and inspect fresh TRX identities/counts. Fix and rerun a red row. Explain any unlisted build/test. Report slot= and waited=. A new test must fail against its guarded production defect; self-comparison or a constant assertion is a stub.
+CHECKPOINTS: Run the plan's closed list in ### Checkpoints through the checkpoint tool once per committed slice group (docs/testing-and-build.md). Wait for its report; paste CP-n lines unedited and inspect fresh TRX identities/counts. Fix and rerun a red row. Explain any unlisted build/test. Report slot= and waited=. A new test must fail against its guarded production defect; self-comparison or a constant assertion is a stub, not done.
 
 SOURCE: Commit before ordinary checks. Pass full HEAD with `-ExpectedSourceSha` (script) or `--expected-source-sha` (tool). Approve only validator-qualified receipts with matching SHA, `dirty=0 sourceState=clean buildSource=verified`.
 
