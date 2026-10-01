@@ -112,6 +112,8 @@ public sealed class PinnedProfileLaunchSpecTests
             detail.ShouldContain("agent ModelId");
             detail.ShouldNotContain("gpt-6-sol");
             detail.ShouldNotContain("gpt-5.6-sol");
+            (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == queued.Id)).RunnerId
+                .ShouldBeNull("CARD-0783/CARD-0796: the real Codex model event comes from a desktop dispatch");
         }
         finally
         {

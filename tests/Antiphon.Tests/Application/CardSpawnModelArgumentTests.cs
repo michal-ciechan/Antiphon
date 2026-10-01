@@ -208,6 +208,10 @@ public sealed class CardSpawnModelArgumentTests
             adapter.StartedArgs.ShouldContain(CodexLaunchArgs.ReasoningEffortOverride(AgentModelLevel.High));
             adapter.StartedArgs.ShouldContain(CodexLaunchArgs.DisablePasteBurst);
             adapter.StartedArgs.ShouldContain(CodexLaunchArgs.DisableUpdateCheck);
+            var args = adapter.StartedArgs.ToList();
+            args.Count(a => a == "check_for_update_on_startup=false").ShouldBe(1);
+            args[args.IndexOf("check_for_update_on_startup=false") - 1].ShouldBe("-c");
+            args.ShouldNotContain("check_for_update_on_startup=true");
         }
         finally
         {

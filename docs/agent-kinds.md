@@ -17,6 +17,10 @@ See [testing-and-build.md](testing-and-build.md) (CARD-0490).
 CARD-0710 adds a task `requiredPlatform` (`Any`, `Windows`, `Linux`) and runtime runner defaults.
 A supported worker (Grok, Claude Code, or Codex) with no explicit runner follows the per-kind
 default, then the global default, then the built-in fallback. Codex workers are included.
+CARD-0796 restored desktop Codex task admission after the [accepted Windows qualification](investigations/2026-09-30-card-0796-desktop-codex-qualification.md):
+explicit local tasks, desktop defaults, Windows fallback, legacy queued tasks, and later
+kind reroutes can run Codex on the canonical desktop host. The remote runner kind rules and
+required-platform checks still apply.
 Named Codex agents, Codex orchestrators, specialists, and Codex SourceLanding stay refused.
 `Delegation:DefaultRunnerId` is import-only after the first runtime revision. Windows evidence
 is commissioned with `-Platform Windows`; it is not inferred from the runner's name.
@@ -447,7 +451,8 @@ the next byte (CARD-0133 S0-P4/S4 remain deferred). Automatic queue delivery adm
 `SessionStatus.Running`; `SendNow` / Mode.Now refuse a non-Running session with "still starting".
 The launch disables Codex's startup update check (CARD-0777). If an update picker still appears,
 the readiness wait sends Escape once to skip it, then requires a fresh settled ready screen
-within the original deadline. This does not lift CARD-0772's desktop Codex refusal.
+within the original deadline. The accepted CARD-0796 desktop run qualified task admission;
+the original 60-second readiness gate remains in force.
 
 Tier → reasoning effort: `Frontier`→`xhigh`, `High`→`high`, `Medium`→`medium`, `Low`→`low`.
 

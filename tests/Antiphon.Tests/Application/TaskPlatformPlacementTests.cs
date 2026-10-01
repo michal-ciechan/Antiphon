@@ -22,7 +22,7 @@ namespace Antiphon.Tests.Application;
 public sealed class TaskPlatformPlacementTests
 {
     [Test]
-    public async Task C772_Explicit_desktop_codex_is_refused()
+    public async Task C796_Explicit_desktop_codex_is_admitted()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var kit = DefaultRunnerKit.Create(schema.ConnectionString, defaultRunnerId: "server2", allowedRunnerId: "server2");
@@ -33,21 +33,24 @@ public sealed class TaskPlatformPlacementTests
         {
             var before = await kit.TaskCountAsync();
             await using var db = kit.Context();
-            var refused = await Should.ThrowAsync<ConflictException>(() => kit.Service(db).CreateAsync(
+            var created = await kit.Service(db).CreateAsync(
                 new CreateAgentTaskRequest("c772 desktop codex", Role: AgentTaskRole.Code,
                     AgentKind: AgentKind.Codex, Workspace: workspace, RunnerId: runner,
                     RequiredPlatform: required),
-                kit.Caller, CancellationToken.None));
-            refused.Code.ShouldBe("codex_desktop_unqualified");
-            refused.Message.ShouldContain("Windows Codex startup not qualified");
-            refused.Message.ShouldContain("observed exits before task input");
-            refused.Message.ShouldContain("ClaudeCode/Grok for desktop Windows work");
-            (await kit.TaskCountAsync()).ShouldBe(before);
+                kit.Caller, CancellationToken.None);
+            (await kit.TaskCountAsync()).ShouldBe(before + 1);
+            var saved = await kit.ReadAsync(created.Id);
+            saved.Task.Status.ShouldBe(AgentTaskStatus.Queued);
+            saved.Task.AgentKind.ShouldBe(AgentKind.Codex);
+            saved.Task.RunnerId.ShouldBeNull();
+            saved.Task.RequiredPlatform.ShouldBe(required);
+            saved.Task.Workspace.ShouldBe(workspace);
+            DefaultRunnerKit.Occurrences(saved.Created, "runner source=").ShouldBe(1);
         }
     }
 
     [Test]
-    public async Task C772_Defaulted_desktop_codex_is_refused()
+    public async Task C796_Defaulted_desktop_codex_is_admitted()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         foreach (var configured in new string?[] { null, "desktop", "local" })
@@ -56,12 +59,15 @@ public sealed class TaskPlatformPlacementTests
             kit.RealDirectory = Matrix();
             var before = await kit.TaskCountAsync();
             await using var db = kit.Context();
-            var refused = await Should.ThrowAsync<ConflictException>(() => kit.Service(db).CreateAsync(
+            var created = await kit.Service(db).CreateAsync(
                 new CreateAgentTaskRequest("c772 default desktop", Role: AgentTaskRole.Code,
                     AgentKind: AgentKind.Codex, Workspace: WorkspaceMode.Worktree),
-                kit.Caller, CancellationToken.None));
-            refused.Code.ShouldBe("codex_desktop_unqualified", configured ?? "unset");
-            (await kit.TaskCountAsync()).ShouldBe(before);
+                kit.Caller, CancellationToken.None);
+            (await kit.TaskCountAsync()).ShouldBe(before + 1);
+            var saved = await kit.ReadAsync(created.Id);
+            saved.Task.Status.ShouldBe(AgentTaskStatus.Queued);
+            saved.Task.AgentKind.ShouldBe(AgentKind.Codex);
+            saved.Task.RunnerId.ShouldBeNull();
         }
 
         var runtimeKit = DefaultRunnerKit.Create(schema.ConnectionString, "server2", allowedRunnerId: "server2");
@@ -74,56 +80,62 @@ public sealed class TaskPlatformPlacementTests
         await defaults.PutAsync(new PutRunnerDefaultsRequest(snapshot.Revision, "server2",
             [new PutRunnerKindDefault(AgentKind.Codex, "desktop")], "Codex desktop preference", "Human"),
             null, CancellationToken.None);
-        await AssertDefaultRefusalAsync(runtimeKit, defaults);
+        await AssertDefaultAdmissionAsync(runtimeKit, defaults);
 
         snapshot = await defaults.GetAsync(CancellationToken.None);
         await defaults.PutAsync(new PutRunnerDefaultsRequest(snapshot.Revision, "desktop", [],
             "Desktop global preference", "Human"), null, CancellationToken.None);
-        await AssertDefaultRefusalAsync(runtimeKit, defaults);
+        await AssertDefaultAdmissionAsync(runtimeKit, defaults);
 
         snapshot = await defaults.GetAsync(CancellationToken.None);
         await defaults.PutAsync(new PutRunnerDefaultsRequest(snapshot.Revision, null, [],
             "No preference", "Human"), null, CancellationToken.None);
-        await AssertDefaultRefusalAsync(runtimeKit, defaults);
+        await AssertDefaultAdmissionAsync(runtimeKit, defaults);
 
         directory.Rows["server2"] = Describe("server2", "linux", eligible: false);
         snapshot = await defaults.GetAsync(CancellationToken.None);
         await defaults.PutAsync(new PutRunnerDefaultsRequest(snapshot.Revision, "server2", [],
             "Unavailable remote falls back locally", "Human"), null, CancellationToken.None);
-        await AssertDefaultRefusalAsync(runtimeKit, defaults);
+        await AssertDefaultAdmissionAsync(runtimeKit, defaults);
     }
 
-    private static async Task AssertDefaultRefusalAsync(DefaultRunnerKit kit, RunnerDefaultSettingsService defaults)
+    private static async Task AssertDefaultAdmissionAsync(DefaultRunnerKit kit, RunnerDefaultSettingsService defaults)
     {
         var before = await kit.TaskCountAsync();
         await using var db = kit.Context();
-        var refused = await Should.ThrowAsync<ConflictException>(() => kit.Service(db, defaults).CreateAsync(
+        var created = await kit.Service(db, defaults).CreateAsync(
             new CreateAgentTaskRequest("c772 runtime default", Role: AgentTaskRole.Code,
                 AgentKind: AgentKind.Codex, Workspace: WorkspaceMode.Worktree),
-            kit.Caller, CancellationToken.None));
-        refused.Code.ShouldBe("codex_desktop_unqualified");
-        (await kit.TaskCountAsync()).ShouldBe(before);
+            kit.Caller, CancellationToken.None);
+        (await kit.TaskCountAsync()).ShouldBe(before + 1);
+        var saved = await kit.ReadAsync(created.Id);
+        saved.Task.Status.ShouldBe(AgentTaskStatus.Queued);
+        saved.Task.AgentKind.ShouldBe(AgentKind.Codex);
+        saved.Task.RunnerId.ShouldBeNull();
     }
 
     [Test]
-    public async Task C772_Windows_fallback_refuses_without_linux_reroute()
+    public async Task C796_Windows_fallback_selects_desktop_without_linux_reroute()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var kit = DefaultRunnerKit.Create(schema.ConnectionString, "server2", allowedRunnerId: "server2");
         kit.RealDirectory = Matrix();
         var before = await kit.TaskCountAsync();
         await using var db = kit.Context();
-        var refused = await Should.ThrowAsync<ConflictException>(() => kit.Service(db).CreateAsync(
+        var created = await kit.Service(db).CreateAsync(
             new CreateAgentTaskRequest("c772 Windows needs Windows", Role: AgentTaskRole.Code,
                 AgentKind: AgentKind.Codex, Workspace: WorkspaceMode.Worktree,
-                RequiredPlatform: RequiredPlatform.Windows), kit.Caller, CancellationToken.None));
-        refused.Code.ShouldBe("codex_desktop_unqualified");
-        refused.Message.ShouldContain("qualified non-desktop runner satisfying the required platform");
-        (await kit.TaskCountAsync()).ShouldBe(before);
+                RequiredPlatform: RequiredPlatform.Windows), kit.Caller, CancellationToken.None);
+        (await kit.TaskCountAsync()).ShouldBe(before + 1);
+        var saved = await kit.ReadAsync(created.Id);
+        saved.Task.Status.ShouldBe(AgentTaskStatus.Queued);
+        saved.Task.AgentKind.ShouldBe(AgentKind.Codex);
+        saved.Task.RunnerId.ShouldBeNull();
+        saved.Task.RequiredPlatform.ShouldBe(RequiredPlatform.Windows);
     }
 
     [Test]
-    public async Task C772_Resolved_codex_kind_is_refused()
+    public async Task C796_Resolved_codex_kind_is_admitted()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var kit = DefaultRunnerKit.Create(schema.ConnectionString, null, allowedRunnerId: "server2");
@@ -142,12 +154,15 @@ public sealed class TaskPlatformPlacementTests
         }
         await using var db = kit.Context();
         var before = await kit.TaskCountAsync();
-        var refused = await Should.ThrowAsync<ConflictException>(() => kit.Service(db, withRouting: true).CreateAsync(
+        var created = await kit.Service(db, withRouting: true).CreateAsync(
             new CreateAgentTaskRequest("c772 resolved kind", Role: AgentTaskRole.Code,
                 Workspace: WorkspaceMode.Worktree),
-            kit.Caller, CancellationToken.None));
-        refused.Code.ShouldBe("codex_desktop_unqualified");
-        (await kit.TaskCountAsync()).ShouldBe(before);
+            kit.Caller, CancellationToken.None);
+        (await kit.TaskCountAsync()).ShouldBe(before + 1);
+        var saved = await kit.ReadAsync(created.Id);
+        saved.Task.Status.ShouldBe(AgentTaskStatus.Queued);
+        saved.Task.AgentKind.ShouldBe(AgentKind.Codex);
+        saved.Task.RunnerId.ShouldBeNull();
 
         var sessionId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
@@ -171,12 +186,15 @@ public sealed class TaskPlatformPlacementTests
             await seed.SaveChangesAsync();
         }
         await using var retainedDb = kit.Context();
-        var retainedRefusal = await Should.ThrowAsync<ConflictException>(() =>
-            kit.Service(retainedDb, withRouting: true).CreateAsync(
+        var retained = await kit.Service(retainedDb, withRouting: true).CreateAsync(
                 new CreateAgentTaskRequest("c772 retained codex", Role: AgentTaskRole.Code,
-                    AgentId: agentId, Workspace: WorkspaceMode.Shared), kit.Caller, CancellationToken.None));
-        retainedRefusal.Code.ShouldBe("codex_desktop_unqualified");
-        (await kit.TaskCountAsync()).ShouldBe(before);
+                    AgentId: agentId, Workspace: WorkspaceMode.Shared), kit.Caller, CancellationToken.None);
+        (await kit.TaskCountAsync()).ShouldBe(before + 2);
+        var retainedSaved = await kit.ReadAsync(retained.Id);
+        retainedSaved.Task.Status.ShouldBe(AgentTaskStatus.Queued);
+        retainedSaved.Task.AgentKind.ShouldBe(AgentKind.Codex);
+        retainedSaved.Task.RunnerId.ShouldBeNull();
+        retainedSaved.Task.AgentId.ShouldBe(agentId);
         await using var verify = kit.Context();
         (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Running);
         (await verify.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Idle);
@@ -366,11 +384,14 @@ public sealed class TaskPlatformPlacementTests
 
         await using var codexDb = kit.Context();
         var beforeCodex = await kit.TaskCountAsync();
-        var refusedCodex = await Should.ThrowAsync<ConflictException>(() => kit.Service(codexDb, defaults).CreateAsync(
+        var codex = await kit.Service(codexDb, defaults).CreateAsync(
             new CreateAgentTaskRequest("c710 any codex desktop override", Role: AgentTaskRole.Code, AgentKind: AgentKind.Codex, Workspace: WorkspaceMode.Worktree),
-            kit.Caller, CancellationToken.None));
-        refusedCodex.Code.ShouldBe("codex_desktop_unqualified");
-        (await kit.TaskCountAsync()).ShouldBe(beforeCodex);
+            kit.Caller, CancellationToken.None);
+        (await kit.TaskCountAsync()).ShouldBe(beforeCodex + 1);
+        var codexSaved = await kit.ReadAsync(codex.Id);
+        codexSaved.Task.Status.ShouldBe(AgentTaskStatus.Queued);
+        codexSaved.Task.RunnerId.ShouldBeNull();
+        codexSaved.Task.RunnerSelectionSource.ShouldBe(RunnerSelectionSource.KindDefault);
 
         await using var clearDb = kit.Context();
         var cleared = await defaults.GetAsync(CancellationToken.None);

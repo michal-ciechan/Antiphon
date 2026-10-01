@@ -390,18 +390,27 @@ if implementation adds cases, revise the roster/counts before execution and expl
 | ID | Oracle / classes | Planned executed count |
 |---|---|---:|
 | V-1 | Desktop create/default/platform/retained-kind acceptance, platform refusals and placement audit: `TaskPlatformPlacementTests` + `DefaultRunnerCreateTests` | 15 + 7 = 22 |
-| V-2 | Cold/warm desktop dispatch and platform revalidation, no remote fallback: `TaskPlatformDispatchTests` | 10 |
+| V-2 | Cold/warm desktop dispatch and platform revalidation, no remote fallback: `TaskPlatformDispatchTests` | 11 |
 | V-3 | Explicit, queued, recovery and wall transitions; real remaining refusals; parent queue/transaction/restart receipts: `DefaultRunnerRerouteTests` | 16 |
 | V-4 | All six known failures plus model/argv/kind/pool invariants: `CodexDelegateDispatchTests` + `PinnedAgentKindTests` + `PinnedProfileLaunchSpecTests` | 21 + 4 + 4 = 29 |
 | R-1 | Remote Codex admission and still-rejected shapes, named/card launch composition and literal update flag: `CodexPhoneHomeCreateTests` + `CardSpawnModelArgumentTests` | 6 + 15 = 21 |
 | R-2 | Adapter readiness, one Escape, capture and no logging of frame contents: `RunnerCodexAdapterReadyTests` | 12 |
-| R-3 | Positive settle, both modal fixtures, no repeated Escape, unknown/blocked/deadline frames: `CodexReadyWaitTests` + `CodexStartupReadinessTests` + `CodexReadyTrackerTests` | 19 + 27 + 4 = 50 |
+| R-3 | Positive settle, both modal fixtures, no repeated Escape, unknown/blocked/deadline frames: `CodexReadyWaitTests` + `CodexStartupReadinessTests` + `CodexReadyTrackerTests` | 19 + 31 + 4 = 54 |
 | R-4 | Server Unit lane: cross-cutting policy/contract/classification checks required by the repository Code recipe | all discovered Unit cases; floor 1, exact total from fresh TRX |
 | LIVE-1 | Operator S2 ready/Running/native-thread/full-UserPrompt/rollback receipt on Windows | one session / one queued prompt; not TUnit |
 
-The seven bounded class groups total **160 executions**; the Unit lane also contains some
+The seven bounded class groups total **165 executions**; the Unit lane also contains some
 of those tests and is reported separately, never summed as unique coverage. R-4's dynamic
-assembly-wide count is intentionally not fabricated from source-method counts. Zero failed
+assembly-wide count is intentionally not fabricated from source-method counts.
+
+Count correction (2026-10-01, before S3 checkpoints): the current source has 11
+`TaskPlatformDispatchTests` methods, one more than the plan's original V-2/CP-2 count.
+The landed CARD-0796 diagnostic work added four parameterized readiness executions to
+`CodexStartupReadinessTests` (31 now, rather than 27), raising R-3/CP-8 from 50 to 54.
+All other named-class source counts still match the original plan. The bounded sum is
+therefore 165 rather than 160.
+
+Zero failed
 and zero skipped are required for every named group; Unit failures/skips must be individually
 dispositioned, never silently credited as green or deferred to the unrelated stale-test cards.
 Database fixtures use the established isolated test schema/Testcontainers support. No test
@@ -466,10 +475,10 @@ the real lane differs; do not convert minutes or internal assertions into execut
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S3 | `tests/Antiphon.Tests -> bin-c796-server/` | create-placement | `/*/Antiphon.Tests.Application/(TaskPlatformPlacementTests*)\|(DefaultRunnerCreateTests*)/*` | V-1 | all 22 listed executions, 0 failed/skipped | 22 | 8 | true |
-| CP-2 | S3 | CP-1 | desktop-dispatch | `/*/*/TaskPlatformDispatchTests/*` | V-2 | all 10 listed executions, 0 failed/skipped | 10 | 5 | true |
+| CP-2 | S3 | CP-1 | desktop-dispatch | `/*/*/TaskPlatformDispatchTests/*` | V-2 | all 11 listed executions, 0 failed/skipped | 11 | 5 | true |
 | CP-3 | S3 | CP-1 | reroute-receipts | `/*/*/DefaultRunnerRerouteTests/*` | V-3 | all 16 listed executions, 0 failed/skipped | 16 | 8 | true |
 | CP-4 | S3 | CP-1 | stale-codex-regressions | `/*/Antiphon.Tests.Application/(CodexDelegateDispatchTests*)\|(PinnedAgentKindTests*)\|(PinnedProfileLaunchSpecTests*)/*` | V-4 | all 29 listed executions including all six known failures, 0 failed/skipped | 29 | 5 | true |
 | CP-5 | S3 | CP-1 | remote-and-composition | `/*/Antiphon.Tests.Application/(CodexPhoneHomeCreateTests*)\|(CardSpawnModelArgumentTests*)/*` | R-1 | all 21 listed executions, 0 failed/skipped | 21 | 5 | true |
 | CP-6 | S3 | CP-1 | adapter-readiness | `/*/*/RunnerCodexAdapterReadyTests/*` | R-2 | all 12 listed executions, 0 failed/skipped | 12 | 2 | true |
 | CP-7 | S3 | CP-1 | server-unit | `/*/*/*/*[Category=Unit]` | R-4 | all discovered Unit executions, >= 1 executed, 0 failed; report every skip | 1 | 7 | true |
-| CP-8 | S3 | `tests/Antiphon.Agents.Pty.Tests -> bin-c796-pty/` | modal-and-ready | `/*/Antiphon.Agents.Pty.Tests/(CodexReadyWaitTests*)\|(CodexStartupReadinessTests*)\|(CodexReadyTrackerTests*)/*` | R-3 | all 50 listed executions, 0 failed/skipped | 50 | 5 | true |
+| CP-8 | S3 | `tests/Antiphon.Agents.Pty.Tests -> bin-c796-pty/` | modal-and-ready | `/*/Antiphon.Agents.Pty.Tests/(CodexReadyWaitTests*)\|(CodexStartupReadinessTests*)\|(CodexReadyTrackerTests*)/*` | R-3 | all 54 listed executions, 0 failed/skipped | 54 | 5 | true |

@@ -155,15 +155,14 @@ public sealed class TaskPlatformDispatchTests
     }
 
     [Test]
-    public async Task C772_Legacy_desktop_codex_blocks_before_claim()
+    public async Task C796_Legacy_desktop_codex_dispatches()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        using var workspace = new TempWorkspace();
-        var rows = new List<(Guid Id, string? Host, RequiredPlatform Platform, AgentModelLevel Level)>();
         foreach (var host in new string?[] { null, "local", "desktop", " Local ", "DESKTOP" })
         foreach (var platform in new[] { RequiredPlatform.Any, RequiredPlatform.Windows })
         foreach (var level in Enum.GetValues<AgentModelLevel>())
         {
+            await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            using var workspace = new TempWorkspace();
             var taskId = await SeedAsync(schema, workspace.Path, host ?? "desktop", platform);
             await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
             var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
@@ -171,26 +170,26 @@ public sealed class TaskPlatformDispatchTests
             task.AgentKind = AgentKind.Codex;
             task.ModelLevel = level;
             await db.SaveChangesAsync();
-            rows.Add((taskId, host, platform, level));
-        }
-        var (dispatcher, sink) = CreateDispatcher(schema, new HoldingDirectory());
-        await dispatcher.TickAsync(CancellationToken.None);
-        await using var read = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
-        foreach (var row in rows)
-        {
-            var stored = await read.AgentTasks.SingleAsync(t => t.Id == row.Id);
-            stored.Status.ShouldBe(AgentTaskStatus.Blocked, row.ToString());
-            stored.FailureReason.ShouldContain("codex_desktop_unqualified");
+            var world = CreateDispatcher(schema, new StableDesktopDirectory());
+            try
+            {
+                var result = await world.Dispatcher.TickAsync(CancellationToken.None);
+                result.Dispatched.ShouldBe(1);
+                await using var read = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+                var stored = await read.AgentTasks.SingleAsync(t => t.Id == taskId);
+                stored.Status.ShouldBe(AgentTaskStatus.Dispatched, stored.FailureReason);
             stored.AgentKind.ShouldBe(AgentKind.Codex);
-            stored.RunnerId.ShouldBe(row.Host);
-            stored.RequiredPlatform.ShouldBe(row.Platform);
-            stored.ModelLevel.ShouldBe(row.Level);
-            stored.AgentSessionId.ShouldBeNull();
-            (await read.AgentTaskEvents.CountAsync(e => e.AgentTaskId == row.Id && e.Type == AgentTaskEventType.Dispatched)).ShouldBe(0);
+                stored.RunnerId.ShouldBe(host);
+                stored.RequiredPlatform.ShouldBe(platform);
+                stored.ModelLevel.ShouldBe(level);
+                stored.AgentSessionId.ShouldNotBeNull();
+                (await read.AgentSessions.SingleAsync(s => s.Id == stored.AgentSessionId)).AgentKind.ShouldBe(AgentKind.Codex);
+                (await read.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Dispatched)).ShouldBe(1);
+                (await read.SessionQueuedMessages.CountAsync(m => m.ExecutionTaskId == taskId)).ShouldBe(1);
+                world.Sink.Specs.ShouldHaveSingleItem().RequiredPlatform.ShouldBe(platform == RequiredPlatform.Windows ? "windows" : null);
+            }
+            finally { await world.Provider.DisposeAsync(); }
         }
-        sink.Inputs.ShouldBeEmpty();
-        (await read.AgentSessions.CountAsync()).ShouldBe(0);
-        (await read.SessionQueuedMessages.CountAsync()).ShouldBe(0);
     }
 
     [Test]
@@ -280,7 +279,7 @@ public sealed class TaskPlatformDispatchTests
     }
 
     [Test]
-    public async Task C772_Desktop_codex_existing_session_receives_no_brief()
+    public async Task C796_Desktop_codex_existing_session_receives_one_brief()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         using var workspace = new TempWorkspace();
@@ -309,15 +308,19 @@ public sealed class TaskPlatformDispatchTests
             task.Workspace = WorkspaceMode.Shared;
             await db.SaveChangesAsync();
         }
-        var world = CreateDispatcher(schema, new HoldingDirectory());
+        var world = CreateDispatcher(schema, new StableDesktopDirectory());
         try
         {
             await world.Dispatcher.TickAsync(CancellationToken.None);
             await using var read = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
-            (await read.AgentTasks.SingleAsync(t => t.Id == taskId)).Status.ShouldBe(AgentTaskStatus.Blocked);
+            var stored = await read.AgentTasks.SingleAsync(t => t.Id == taskId);
+            stored.Status.ShouldBe(AgentTaskStatus.Dispatched, stored.FailureReason);
+            stored.AgentSessionId.ShouldBe(sessionId);
             (await read.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Running);
-            (await read.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Idle);
-            (await read.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == sessionId)).ShouldBe(0);
+            (await read.Agents.SingleAsync(a => a.Id == agentId)).Kind.ShouldBe(AgentKind.Codex);
+            var brief = await read.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == sessionId);
+            brief.Body.ShouldContain(DelegationReportFormatter.TaskMarker(taskId));
+            brief.Body.ShouldNotContain("/compact");
             world.Sink.Specs.ShouldBeEmpty();
         }
         finally { await world.Provider.DisposeAsync(); }

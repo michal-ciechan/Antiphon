@@ -132,34 +132,24 @@ public sealed class DefaultRunnerRoutingPolicy
     public const string ReasonRunnerDraining = "runner_draining";
     public const string ReasonRunnerRetired = "runner_retired";
     public const string ReasonRunnerKindUnsupported = "runner_kind_unsupported";
-    public const string ReasonCodexDesktopUnqualified = "codex_desktop_unqualified";
-
-    public const string CodexDesktopRefusal = ReasonCodexDesktopUnqualified
-        + " - desktop Windows Codex startup not qualified: observed exits before task input. "
-        + "Choose ClaudeCode/Grok for desktop Windows work, or explicitly select a qualified "
-        + "non-desktop runner satisfying the required platform.";
-
-    public static bool IsDesktopCodex(string? runnerId, AgentKind kind) =>
-        kind == AgentKind.Codex && RunnerRequestIntent.CanonicalRunnerId(runnerId) is null;
 
     /// <summary>
     /// CARD-0659 D-5. The one host/kind rule every post-create kind change shares: a task bound to
     /// a runner may only run a kind that runner admits, whatever the model walk prefers.
-    /// CARD-0772: desktop Codex is refused until its Windows startup and input are qualified.
     /// The host itself never changes after create.
     /// </summary>
     public static bool IsHostKindCompatible(string? runnerId, AgentKind kind) =>
         RunnerRequestIntent.CanonicalRunnerId(runnerId) is null
-            ? !IsDesktopCodex(runnerId, kind)
+            ? true
             : PhoneHomeLaunchPolicy.IsWorkerAdmittedKind(kind);
 
     /// <summary>
-    /// The pre-claim fence on a task's persisted kind: legacy desktop Codex and unsupported
-    /// remote kinds are Blocked before any claim, preparation, launch or input.
+    /// The pre-claim fence on a task's persisted kind: unsupported remote kinds are Blocked
+    /// before any claim, preparation, launch or input.
     /// </summary>
     public static bool IsHostKindAdmitted(string? runnerId, AgentKind kind) =>
         RunnerRequestIntent.CanonicalRunnerId(runnerId) is null
-            ? !IsDesktopCodex(runnerId, kind)
+            ? true
             : PhoneHomeLaunchPolicy.IsExplicitRunnerTaskKind(kind);
 
     /// <summary>
@@ -168,9 +158,7 @@ public sealed class DefaultRunnerRoutingPolicy
     /// it on, and it names the candidate that was refused, not the kind the task keeps.
     /// </summary>
     public static string RunnerKindBlockedReason(string? runnerId, AgentKind candidateKind, string candidateAlias) =>
-        IsDesktopCodex(runnerId, candidateKind)
-            ? ComplexityRoutingService.RoutingExhaustedPrefix + CodexDesktopRefusal
-            : ComplexityRoutingService.RoutingExhaustedPrefix
+        ComplexityRoutingService.RoutingExhaustedPrefix
         + $"{ReasonRunnerKindUnsupported} - the walk chose {candidateKind} {candidateAlias}, which runner '{runnerId}' "
         + "cannot run (Grok, Claude Code or Codex only). The task keeps its runner, kind and pins. "
         + "A human must choose; reroute to a runner-compatible kind.";

@@ -44,6 +44,8 @@ public class PinnedAgentKindTests
         var row = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
         row.AgentKind.ShouldBe(AgentKind.Codex);
         row.AgentId.ShouldBe(agentId);
+        row.RunnerId.ShouldBeNull("CARD-0843/CARD-0796: a standing Codex pin is admitted on the desktop");
+        row.Status.ShouldBe(AgentTaskStatus.Queued);
         (await CreateService(verify).GetSummaryAsync(row, [row])).AgentKind.ShouldBe(AgentKind.Codex);
     }
 
@@ -78,8 +80,10 @@ public class PinnedAgentKindTests
             ManualCaller(workspace.Path),
             CancellationToken.None);
         created.AgentKind.ShouldBe(AgentKind.Codex);
-        (await CreateContext().AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id))
-            .AgentId.ShouldBe(agentId);
+        var agreed = await CreateContext().AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
+        agreed.AgentId.ShouldBe(agentId);
+        agreed.RunnerId.ShouldBeNull("CARD-0843/CARD-0796: the agreeing pin remains on the desktop");
+        agreed.Status.ShouldBe(AgentTaskStatus.Queued);
     }
 
     [Test]

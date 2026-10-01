@@ -58,6 +58,9 @@ public class CodexDelegateDispatchTests
         ConfigValue(args, "model_reasoning_effort").ShouldBe("high");
         ConfigValue(args, "disable_paste_burst").ShouldBe("true");
         ConfigValue(args, "check_for_update_on_startup").ShouldBe("false", "CARD-0777: the update modal blocks the readiness gate");
+        args.Count(a => a == "check_for_update_on_startup=false").ShouldBe(1, "CARD-0796: one literal update suppression override");
+        args[args.IndexOf("check_for_update_on_startup=false") - 1].ShouldBe("-c");
+        args.ShouldNotContain("check_for_update_on_startup=true");
         ConfigValue(args, "developer_instructions").ShouldNotBeNullOrWhiteSpace();
     }
 
@@ -303,6 +306,7 @@ public class CodexDelegateDispatchTests
         await using var verify = CreateContext();
         var dispatched = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
         dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        dispatched.RunnerId.ShouldBeNull("CARD-0796: the cold Codex pool dispatch stays on the desktop");
 
         var session = await verify.AgentSessions.AsNoTracking()
             .SingleAsync(s => s.Id == dispatched.AgentSessionId!.Value);
@@ -330,6 +334,7 @@ public class CodexDelegateDispatchTests
         var dispatched = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
         dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
         dispatched.AgentSessionId.ShouldBe(sessionId);
+        dispatched.RunnerId.ShouldBeNull("CARD-0783/CARD-0796: warm unrelated work reuses the desktop session");
 
         var messages = await verify.SessionQueuedMessages
             .Where(m => m.AgentSessionId == sessionId)
@@ -366,6 +371,10 @@ public class CodexDelegateDispatchTests
         var detail = await LatestDispatchDetailAsync(task.Id);
         detail.ShouldContain("gpt-5.6-terra");
         detail.ShouldNotContain("sonnet");
+        await using var verify = CreateContext();
+        var dispatched = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        dispatched.RunnerId.ShouldBeNull("CARD-0796: the model event describes an admitted desktop dispatch");
     }
 
     // ---- helpers -------------------------------------------------------------------------------

@@ -127,16 +127,20 @@ public sealed class DefaultRunnerCreateTests
             kit.Directory.ResolveCalls.ShouldBeEmpty(row + ": an explicit desktop request never asks the runner");
         }
 
-        // A Shared Codex desktop request reaches the final placement refusal too.
+        // A Shared Codex desktop request keeps explicit local placement.
         var sharedKit = DefaultRunnerKit.Create(schema.ConnectionString, defaultRunnerId: "server2");
         await using var sharedDb = sharedKit.Context();
         var beforeShared = await sharedKit.TaskCountAsync();
-        var refusedShared = await Should.ThrowAsync<ConflictException>(() => sharedKit.Service(sharedDb).CreateAsync(
+        var shared = await sharedKit.Service(sharedDb).CreateAsync(
             new CreateAgentTaskRequest("c659 local shared codex", Role: AgentTaskRole.Code, AgentKind: AgentKind.Codex,
                 Workspace: WorkspaceMode.Shared, RunnerId: "local"),
-            sharedKit.Caller, CancellationToken.None));
-        refusedShared.Code.ShouldBe("codex_desktop_unqualified");
-        (await sharedKit.TaskCountAsync()).ShouldBe(beforeShared);
+            sharedKit.Caller, CancellationToken.None);
+        (await sharedKit.TaskCountAsync()).ShouldBe(beforeShared + 1);
+        var sharedSaved = await sharedKit.ReadAsync(shared.Id);
+        sharedSaved.Task.Status.ShouldBe(AgentTaskStatus.Queued);
+        sharedSaved.Task.AgentKind.ShouldBe(AgentKind.Codex);
+        sharedSaved.Task.RunnerId.ShouldBeNull();
+        sharedSaved.Task.Workspace.ShouldBe(WorkspaceMode.Shared);
     }
 
     [Test]

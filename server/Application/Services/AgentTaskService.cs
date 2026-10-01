@@ -1292,12 +1292,6 @@ public sealed class AgentTaskService
             observedPlatform = RunnerPlatformWire.Normalize((await DescribePlacementAsync(remoteRunnerId, ct))?.Platform);
         }
 
-        // CARD-0772: all platform and retained-process decisions have finished. Refuse the final
-        // desktop/Codex pair before any task row or workspace reservation is admitted.
-        if (DefaultRunnerRoutingPolicy.IsDesktopCodex(remoteRunnerId, agentKind))
-            throw new ConflictException(DefaultRunnerRoutingPolicy.CodexDesktopRefusal,
-                DefaultRunnerRoutingPolicy.ReasonCodexDesktopUnqualified);
-
         // CARD-0666. Last of the refusals, and before the row exists: a start SHA only origin has is
         // fetched HERE (bounded, journaled), never in the dispatch claim under the repository lease.
         if (startRef is not null && _startRefs is not null && resolved.RepoPath is not null)
@@ -2707,9 +2701,6 @@ public sealed class AgentTaskService
         // kinds its runner admits, never onto one it cannot run, and never to the desktop.
         if (!DefaultRunnerRoutingPolicy.IsHostKindCompatible(task.RunnerId, agentKind))
         {
-            if (DefaultRunnerRoutingPolicy.IsDesktopCodex(task.RunnerId, agentKind))
-                throw new ConflictException(DefaultRunnerRoutingPolicy.CodexDesktopRefusal,
-                    DefaultRunnerRoutingPolicy.ReasonCodexDesktopUnqualified);
             throw new ConflictException(
                 $"Task {DelegationReportFormatter.Short(id)} runs on runner '{task.RunnerId}', which cannot run "
                 + $"{agentKind}. Reroute to Grok, ClaudeCode or Codex.",
