@@ -93,7 +93,7 @@ public sealed class DelegateScriptLandApprovalTests
         {
             var args = new List<string> { "-Finding", task.ToString("D"), "-Stage", "Review", "-Clean",
                 "-ReviewedSourceSha", sha };
-            if (option is not null) args.AddRange(["-ReviewedSourceClean", option]);
+            if (option is not null) args.Add("-ReviewedSourceClean:$" + option.ToLowerInvariant());
             var result = await DelegateScriptRunner.RunAsync(server.Url, args.ToArray());
             result.ExitCode.ShouldBe(0, label + ": " + result.Output);
             var call = server.Requests.Last(request => request.Path.EndsWith("/finding", StringComparison.Ordinal));
