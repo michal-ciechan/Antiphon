@@ -399,7 +399,8 @@ public class RunnerGrokAdapterReadyTests
             var file = Directory.GetFiles(root, "grok-startup-*.txt").Single();
             var content = File.ReadAllText(file);
             content.ShouldContain("outcome: Deadline");
-            content.ShouldContain($"frameSequence: {client.SnapshotReads}");
+            content.ShouldContain("frameSequence: 2");
+            client.SnapshotReads.ShouldBe(2, "readsAfterFailureDecision");
             client.BufferReads.ShouldBe(0);
             logger.Messages.ShouldHaveSingleItem();
             string.Join("\n", logger.Messages).ShouldNotContain(sentinel,
