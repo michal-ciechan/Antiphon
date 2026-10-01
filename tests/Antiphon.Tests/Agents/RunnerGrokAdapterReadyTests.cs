@@ -143,10 +143,12 @@ public class RunnerGrokAdapterReadyTests
         completionElapsed.ShouldBeLessThan(TimeSpan.FromSeconds(1), "completionElapsed");
         (await GrokReadyWait.WaitAsync(_ => Task.FromResult<GrokStartupSnapshot?>(frame),
             new GrokReadyWaitOptions { MaxWait = TimeSpan.Zero })).ShouldBeFalse();
-        (await GrokReadyWait.WaitAsync(_ => Task.FromResult<GrokStartupSnapshot?>(frame),
+        var readyBeforeMinimumAge = await GrokReadyWait.WaitAsync(
+            _ => Task.FromResult<GrokStartupSnapshot?>(frame),
             new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(70),
                 MinimumAgeRemaining = TimeSpan.FromSeconds(2), PollInterval = TimeSpan.FromMilliseconds(10),
-                Settle = TimeSpan.Zero })).ShouldBeFalse();
+                Settle = TimeSpan.Zero });
+        readyBeforeMinimumAge.ShouldBeFalse("readyBeforeMinimumAge");
         var trustClock = new JumpClock();
         var trustBudgetStarted = trustClock.GetTimestamp();
         var trustReads = 0;
