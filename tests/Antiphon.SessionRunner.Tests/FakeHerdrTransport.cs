@@ -31,7 +31,7 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
             return;
         }
 
-        lock (ReclaimGate) ReclaimDeadLeases();
+        ReclaimDeadLeases();
         _leaseId = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
         var directory = $"/tmp/ah-{_leaseId}";
         var path = System.IO.Path.Combine(directory, "s");
@@ -42,9 +42,12 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
             throw new IOException($"Herdr test endpoint directory could not be reserved: {directory}");
         _directory = directory;
         _marker = System.IO.Path.Combine(directory, "owner");
-        WriteMarker(new LeaseMarker(1, "c801", _leaseId, path, Environment.ProcessId,
-            Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks, NamespaceIdentity(), 0, 0, 0, 0, 0));
-        File.SetUnixFileMode(_marker, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        lock (ReclaimGate)
+        {
+            WriteMarker(new LeaseMarker(1, "c801", _leaseId, path, Environment.ProcessId,
+                Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks, NamespaceIdentity(), 0, 0, 0, 0, 0));
+            File.SetUnixFileMode(_marker, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
         Path = path;
     }
 
@@ -59,9 +62,10 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
     public void RecordBoundSocket(NativeFileIdentity.Identity identity)
     {
         if (_marker is null || _leaseId is null) return;
-        WriteMarker(new LeaseMarker(1, "c801", _leaseId, Path, Environment.ProcessId,
-            Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks, NamespaceIdentity(),
-            identity.Device, identity.Inode, identity.Mode, identity.ChangeSeconds, identity.ChangeNanoseconds));
+        lock (ReclaimGate)
+            WriteMarker(new LeaseMarker(1, "c801", _leaseId, Path, Environment.ProcessId,
+                Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks, NamespaceIdentity(),
+                identity.Device, identity.Inode, identity.Mode, identity.ChangeSeconds, identity.ChangeNanoseconds));
     }
 
     private void WriteMarker(LeaseMarker marker)
@@ -104,6 +108,11 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
     public static void ReclaimDeadLeases()
     {
         if (OperatingSystem.IsWindows()) return;
+        lock (ReclaimGate) ReclaimDeadLeasesCore();
+    }
+
+    private static void ReclaimDeadLeasesCore()
+    {
         var candidates = Directory.EnumerateDirectories("/tmp", "ah-*").Take(64);
         var inspected = 0;
         foreach (var directory in candidates)
