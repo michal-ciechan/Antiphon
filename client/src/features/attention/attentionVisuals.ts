@@ -430,7 +430,14 @@ export const SEVERITY_COLOR: Record<AlertSeverity, string> = {
  * view lives on the Orchestrator page at all.
  */
 export function targetOf(item: AttentionItemDto): string | null {
-  if (item.hostCleanupRunId) return `/attention?hostCleanupRun=${encodeURIComponent(item.hostCleanupRunId)}`
+  if (item.hostCleanupRunId) {
+    const params = new URLSearchParams({ hostCleanupRun: item.hostCleanupRunId })
+    if (item.kind === 'WorktreeCleanupBacklog') {
+      if (item.hostCleanupOwner) params.set('owner', item.hostCleanupOwner)
+      if (item.hostCleanupRefusal) params.set('refusal', item.hostCleanupRefusal)
+    }
+    return `/attention?${params.toString()}`
+  }
   if (item.cardId && item.boardId) return `/boards/${item.boardId}?card=${item.cardId}`
   if (item.taskId) return `/orchestrator?tab=delegations&task=${item.taskId}`
   // `?agent=` is how AgentsPage takes a selection — the incident drawer opens on the agent it names.
