@@ -55,6 +55,40 @@ public class FakeHerdrServerListenerTests
     }
 
     [Test]
+    public async Task C801_AllPipeInstancesBusyRetriesWithinBound()
+    {
+        var attempts = 0;
+        await using (var fake = new FakeHerdrServer(transportFactory: endpoint =>
+            new FakeHerdrTransport(endpoint)
+            {
+                PipeCreationFailure = () => Interlocked.Increment(ref attempts) <= 2
+                    ? new IOException("All pipe instances are busy", unchecked((int)0x800700E7)) : null
+            }))
+        {
+            fake.Start();
+            await fake.WaitUntilListeningAsync().WaitAsync(TimeSpan.FromSeconds(2));
+            attempts.ShouldBe(3, "C801_PIPE_BUSY_RETRIED");
+            (await Client(fake).ConnectAndValidateAsync(CancellationToken.None)).Protocol.ShouldBe(20);
+            fake.ListenerFault.ShouldBeNull("C801_PIPE_BUSY_NOT_FATAL");
+        }
+
+        attempts = 0;
+        await using var exhausted = new FakeHerdrServer(transportFactory: endpoint =>
+            new FakeHerdrTransport(endpoint)
+            {
+                PipeCreationFailure = () =>
+                {
+                    Interlocked.Increment(ref attempts);
+                    return new IOException("All pipe instances are busy", unchecked((int)0x800700E7));
+                }
+            });
+        exhausted.Start();
+        (await ErrorWithinAsync(exhausted.LoopCompletion, "C801_PIPE_BUSY_BOUNDED"))
+            .ShouldBeOfType<IOException>();
+        attempts.ShouldBe(5, "C801_PIPE_BUSY_BOUNDED");
+    }
+
+    [Test]
     public async Task C801_UnawaitedFailureIsObserved()
     {
         var original = new IOException("terminal bind");

@@ -102,11 +102,13 @@ complete every readiness waiter; disposal settles pre-start waits. The exact exe
 the eight server classes (110 results) and 24 SessionRunner classes (497 results) in
 [`2026-09-30-card-0801-cross-platform-fake-herdr-plan.md`](superpowers/plans/2026-09-30-card-0801-cross-platform-fake-herdr-plan.md).
 Run that plan's literal class filters on both Linux and Windows. The CARD-0801 split decision
-gates only 46 named Linux results: CP-6 skips 8 for CARD-0863, CP-9 skips 23 for CARD-0864,
-CP-10 skips 13 for CARD-0865, and CP-11 skips 2 for CARD-0866. The other 586 CP-2–CP-13
-results execute on Linux with zero failures; Windows retains all 632 results with zero skips.
-`AgentAttachHerdrTests` belongs in the Linux filter. CP-1/CP-2 also cover the 24 focused listener
-and transport results and the linked classification guard. Use the plan's separate Windows W-1
+gates 48 named Linux results: CP-6 skips 8 for CARD-0863, CP-7 skips 1 for CARD-0871,
+CP-9 skips 23 for CARD-0864, CP-10 skips 14 (13 for CARD-0865 and one for CARD-0878),
+and CP-11 skips 2 for CARD-0866. The other 593 CP-2–CP-13
+results execute on Linux with zero failures; Windows retains all 641 results with zero skips.
+`AgentAttachHerdrTests` belongs in the Linux filter. CP-1 covers the original 24 focused cases;
+CP-2 covers 33 focused listener and transport results plus the linked classification guard.
+Use the plan's separate Windows W-1
 at the final Linux-tested SHA; a Linux pass does not prove the Windows named-pipe branch.
 
 ## Fast lane (CARD-0110 / CARD-0475 S5)

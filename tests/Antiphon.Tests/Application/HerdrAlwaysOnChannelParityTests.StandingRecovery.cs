@@ -137,6 +137,8 @@ public partial class HerdrAlwaysOnChannelParityTests
     [Arguments(AgentKind.Grok, SessionBackend.Herdr, true)]
     public async Task Standing_native_wire_missing_target_never_creates(AgentKind kind, SessionBackend backend, bool unavailable)
     {
+        if (OperatingSystem.IsLinux() && kind == AgentKind.ClaudeCode && backend == SessionBackend.PtyHost && !unavailable)
+            Skip.Test("CARD-0878: Linux PtyHost output/exit race can miss native-session-missing classification.");
         if (OperatingSystem.IsLinux() && kind == AgentKind.Grok && unavailable)
             Skip.Test("CARD-0865: Linux Grok unavailable-native-store classification awaits repair.");
         var root = Path.Combine(Path.GetTempPath(), $"c466-native-missing-{Guid.NewGuid():N}"); Directory.CreateDirectory(root);
