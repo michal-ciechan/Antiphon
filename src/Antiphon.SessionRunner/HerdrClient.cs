@@ -37,7 +37,7 @@ public sealed class HerdrClient : IHerdrLabelReader
     /// <summary>Resolves the native Herdr endpoint for this runner instance.</summary>
     public string ResolveSocketPath() => HerdrEndpointResolver.Resolve(
         _settings, _socketOverride, Environment.GetEnvironmentVariable,
-        Environment.GetFolderPath, OperatingSystem.IsWindows());
+        Environment.GetFolderPath, OperatingSystem.IsWindows(), Path.GetTempPath);
 
     /// <summary>
     /// Connects and proves that the operator-run backend answers the expected protocol. A missing,

@@ -155,6 +155,12 @@ public class HerdrTransportTests
         HerdrEndpointResolver.Resolve(new HerdrSettings { Session = "named" }, null, Get,
                 _ => @"C:\Users\host\AppData", false)
             .ShouldBe("/home/test/.config/herdr/sessions/named/herdr.sock");
+        HerdrEndpointResolver.Resolve(new HerdrSettings(), null, _ => null,
+                _ => @"C:\Users\host\AppData", false)
+            .ShouldBe("/tmp/herdr/herdr.sock");
+        HerdrEndpointResolver.Resolve(new HerdrSettings(), null, _ => null,
+                _ => @"C:\Users\host\AppData", false, () => "/custom/tmp/")
+            .ShouldBe("/custom/tmp/herdr/herdr.sock");
     }
 
     [Test, Category("Integration")]
