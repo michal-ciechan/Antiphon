@@ -6,6 +6,7 @@ using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Scripts;
 
@@ -15,6 +16,57 @@ namespace Antiphon.Tests.Scripts;
 [Category("Unit")]
 public sealed class RemoteScriptContractTests
 {
+    private const string NoLinuxPwshReason = "CARD-0905: pwsh is not on the Linux shell PATH (WSL has no pwsh); install pwsh in WSL to run C849 script-block tests.";
+    private const string ForceNoLinuxPwsh = "ANTIPHON_TEST_FORCE_NO_PWSH";
+    private static readonly Lazy<bool> LinuxPwshAvailable = new(() =>
+        LinuxShell("command -v pwsh >/dev/null 2>&1 && printf 'C849_PWSH_AVAILABLE\\n'\n")
+            .Contains("C849_PWSH_AVAILABLE", StringComparison.Ordinal));
+
+    private static void RequireLinuxPwsh()
+    {
+        if (Environment.GetEnvironmentVariable(ForceNoLinuxPwsh) == "1" || !LinuxPwshAvailable.Value)
+            throw new SkipTestException(NoLinuxPwshReason);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C905_Missing_linux_pwsh_skips_all_five_cases_before_a_script_block()
+    {
+        var previous = Environment.GetEnvironmentVariable(ForceNoLinuxPwsh);
+        Environment.SetEnvironmentVariable(ForceNoLinuxPwsh, "1");
+        try
+        {
+            var cases = new Action[]
+            {
+                C849_Cache_cases_use_only_the_validated_host_lane,
+                C849_Saved_donor_archive_is_checked_and_imported_without_a_container,
+                C849_Saved_donor_rejects_unsafe_archives_missing_pack_and_busy_counters,
+                C849_Saved_donor_rejects_declared_size_bomb_before_writing,
+                C849_Seed_publishes_complete_payloads_before_its_marker
+            };
+            foreach (var run in cases)
+            {
+                SkipTestException? skip = null;
+                try { run(); }
+                catch (SkipTestException exception) { skip = exception; }
+                skip.ShouldNotBeNull($"{run.Method.Name} must skip before running a Linux script block");
+                skip.Message.ShouldBe(NoLinuxPwshReason);
+            }
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ForceNoLinuxPwsh, previous);
+        }
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C905_Linux_shell_finds_pwsh_when_installed()
+    {
+        if (OperatingSystem.IsWindows()) return; // Linux is the positive probe lane.
+        LinuxPwshAvailable.Value.ShouldBeTrue("the real shell probe must find pwsh on this Linux host");
+    }
+
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C849_front_door_passes_every_full_case_name_to_the_invoker()
@@ -1100,6 +1152,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C849_Cache_cases_use_only_the_validated_host_lane()
     {
+        RequireLinuxPwsh();
         var remote = Remote();
         var bridge = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-real.ps1"));
         var front = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/verify-card0849-caches.ps1"));
@@ -1283,6 +1336,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C849_Seed_publishes_complete_payloads_before_its_marker()
     {
+        RequireLinuxPwsh();
         var output = LinuxShell(CacheSeedTreeHarness() + """
             before="$(sha256sum "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" | cut -d' ' -f1)"
             mkdir -p "$tree/packages/unrelated/1.0.0"
@@ -1480,6 +1534,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C849_Saved_donor_archive_is_checked_and_imported_without_a_container()
     {
+        RequireLinuxPwsh();
         var remote = Remote();
         var output = LinuxShell("repo='" + DelegateScriptRunner.RepoRoot.Replace("'", "'\\''") + "'\n" +
             CacheSeedTreeHarness() + "\n" + Block(remote, "c849_saved_copy") + "\n" +
@@ -1599,6 +1654,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C849_Saved_donor_rejects_unsafe_archives_missing_pack_and_busy_counters()
     {
+        RequireLinuxPwsh();
         var remote = Remote();
         var output = LinuxShell("repo='" + DelegateScriptRunner.RepoRoot.Replace("'", "'\\''") + "'\n" +
             CacheSeedTreeHarness() + "\n" + Block(remote, "c849_saved_copy") + "\n" +
@@ -1697,6 +1753,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C849_Saved_donor_rejects_declared_size_bomb_before_writing()
     {
+        RequireLinuxPwsh();
         var output = LinuxShell("repo='" + DelegateScriptRunner.RepoRoot.Replace("'", "'\\''") + "'\n" + """
             root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
             mkdir -p "$root/stage/packages" "$root/stage/npm"
@@ -2196,6 +2253,8 @@ public sealed class RemoteScriptContractTests
     // Git Bash can neither create a symlink without privilege nor keep a 0600 mode.
     internal static string LinuxShell(string script)
     {
+        if (Environment.GetEnvironmentVariable(ForceNoLinuxPwsh) == "1")
+            throw new InvalidOperationException("A Linux script block ran before the CARD-0905 pwsh skip.");
         ProcessStartInfo start;
         if (OperatingSystem.IsWindows())
         {
