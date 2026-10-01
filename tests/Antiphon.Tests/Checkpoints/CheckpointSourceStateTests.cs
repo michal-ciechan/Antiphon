@@ -97,10 +97,10 @@ public sealed class CheckpointSourceStateTests
 
         repo.Git("restore", "--staged", "--worktree", "seed.txt");
         File.Delete(Path.Combine(repo.Root, "seed.txt"));
-        reader.Capture(repo.Root).DirtyFiles.ShouldBeGreaterThan(0, "tracked-deletion");
+        reader.Capture(repo.Root).DirtyFiles!.Value.ShouldBeGreaterThan(0, "tracked-deletion");
         repo.Git("restore", "--worktree", "seed.txt");
         File.Move(Path.Combine(repo.Root, "seed.txt"), Path.Combine(repo.Root, "renamed.txt"));
-        reader.Capture(repo.Root).DirtyFiles.ShouldBeGreaterThan(0, "rename-or-delete-plus-untracked");
+        reader.Capture(repo.Root).DirtyFiles!.Value.ShouldBeGreaterThan(0, "rename-or-delete-plus-untracked");
         File.Move(Path.Combine(repo.Root, "renamed.txt"), Path.Combine(repo.Root, "seed.txt"));
         File.WriteAllBytes(Path.Combine(repo.Root, "seed.txt"), [0, 255, 0, 1]);
         reader.Capture(repo.Root).DirtyFiles.ShouldBe(1, "binary-worktree-change");
