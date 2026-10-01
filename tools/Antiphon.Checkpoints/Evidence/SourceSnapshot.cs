@@ -59,8 +59,13 @@ public sealed class SourceSnapshot
     {
         try
         {
-            var first = CaptureOnce(repository);
-            var second = CaptureOnce(repository);
+            // Resolve a nested caller to the worktree root before hashing untracked paths.
+            // Git's status paths are relative to that root, including for linked worktrees.
+            var root = StrictUtf8.GetString(_git(repository, ["rev-parse", "--show-toplevel"])).Trim();
+            if (string.IsNullOrWhiteSpace(root) || !Path.IsPathRooted(root))
+                throw new SourceCaptureException("root_invalid");
+            var first = CaptureOnce(root);
+            var second = CaptureOnce(root);
             if (first.Commit != second.Commit || first.DirtyFiles != second.DirtyFiles ||
                 first.Fingerprint != second.Fingerprint)
                 return SourceObservation.Unknown("capture_changed");
