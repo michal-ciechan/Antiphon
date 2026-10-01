@@ -402,7 +402,8 @@ public class RunnerGrokAdapterReadyTests
             content.ShouldContain($"frameSequence: {client.SnapshotReads}");
             client.BufferReads.ShouldBe(0);
             logger.Messages.ShouldHaveSingleItem();
-            string.Join("\n", logger.Messages).ShouldNotContain(sentinel);
+            string.Join("\n", logger.Messages).ShouldNotContain(sentinel,
+                customMessage: "logSecretSentinel");
             var blockedPath = Path.Combine(root, "not-a-directory-" + sentinel);
             File.WriteAllText(blockedPath, "sentinel");
             var badClock = new PollGateClock();
@@ -413,7 +414,8 @@ public class RunnerGrokAdapterReadyTests
             await second.StartAsync(Spec(), CancellationToken.None);
             (await second.WaitForReadyAsync(CancellationToken.None)).ShouldBeFalse();
             logger.Messages.Count.ShouldBe(2);
-            string.Join("\n", logger.Messages).ShouldNotContain(sentinel);
+            string.Join("\n", logger.Messages).ShouldNotContain(sentinel,
+                customMessage: "logSecretSentinel");
             var lastFrameRoot = Path.Combine(root, "last-frame");
             var lastFrameClock = new JumpClock();
             var lastFrameClient = new ScriptedClient(["first observed frame", "extra forbidden read"],
