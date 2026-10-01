@@ -142,6 +142,110 @@ These are source-area decisions, not a claim that a particular Code task is curr
 
 ## Verification design
 
+### TestDesign freeze and inspection (2026-10-01)
+
+TestDesign is complete against **`43514d074d55246940b9bf60824b96c532f1f6fa`**, the supplied Plan tip, on `feat/card-task-28eaa3bf`. CARD-0886 was read through `card.ps1 get -Board Antiphon`: its title is **Speed up CARD-0835's two heaviest tests (table-driven landing harness, shared script fixtures)**, platform Any. The historical 36/about-ten counts in the card are superseded by the source census below, not by deleting landed cases. This section freezes implementation verification; the earlier evidence and design decisions remain Plan-stage provenance.
+
+Bodies inspected: both target methods and their seed/runner helpers; `LandingProtocolHarness`, `LandingSafetyHarness`, `LandingGitFixture`, `TestDbFixture`/its lifecycle; the C835 source-state, execution, parser and delegate methods; the three R-2 methods; `AppDbContext`/its migration snapshot and seed migration; checkpoint script/source/slot helpers; tool CLI/owner guard; and the inherited guard-coverage document. Owners read: project-context, orchestration stage rules, testing/build checkpoint/filter/slot/clock/custody rules. No delegate was dispatched and no build, test host, benchmark, database or mutation was launched. **Actual executions here: Linux 0, Windows 0.** The counts below are static execution cardinalities, not passing results.
+
+An independent Node recount read these files with `git show 43514d0:<path>`, parsed public `[Test]` declarations and `[Arguments]`, and bounded the two target bodies before the next method. It found 8+5+6+4+2+1 = **26** C835 results; R-2 is **4+1+1 = 6**. No selected method has argument expansion other than R-2's `source-ref`, `source-path`, `target`, `repository`; no selected result is OS-skipped. V-3 has a Linux-only newline-filename assertion *inside* its single result. F-1..F-8 do not exist at this ref: their **8** planned results must be recounted from implemented source and TRX by Code. Baseline CP-3 would select zero, so it runs only after S1 introduces its methods. The six manifest floors are 26/26/8/6/26/26 on either OS.
+
+**Collision order:** finish/land the already active land-path changes first (CARD-0826's `AgentTaskLandService.cs`/EF integration, and CARD-0788/CARD-0883 recovery changes, in the caller's existing order); then freeze a single landed CARD-0885 script/tool revision; then take 0886 S0 measurements and run 0886 S1-S3 without a sibling change between samples. CARD-0885 was InProgress and CARD-0788/0883 Review when read here; card status is not live task occupancy. The caller must refresh occupancy before dispatch. Overlap files are `server/Application/Services/{AgentTaskLandService,AgentTaskLandSourceResolver,LandApproval}.cs`, `server/Infrastructure/Data/AppDbContext.cs`, `server/Migrations/AppDbContextModelSnapshot.cs`, the two landing harnesses/native fixture, `scripts/run-checkpoint.ps1`, `scripts/lib/checkpoint-source.ps1`, and `tools/Antiphon.Checkpoints/{Program,CheckpointApp}.cs` plus execution/report code. These are collision dependencies, not permission for 0886 to edit production. Recount and qualify the closure after those lands; do not rebase this TestDesign branch.
+
+### Reset ownership and database closure
+
+The family owns exactly one `IsolatedTestSchema` object and its database identity, a native fixture/image where applicable, and external evidence/image storage. A case borrows those resources and owns its provider, scopes/contexts, queue, verifier, fault/retirement interceptors, clock, event bus and callbacks. Dispose/join the old case **before** reset; observe reset **before** constructing or seeding the next case. `RestartServicesAsync` inside a scenario replaces services/queue only and must retain the request, operation, evidence, verifier and armed-cut history that the original scenario observes. Never apply the family reset to a resume boundary.
+
+The native family's owner task ID, source ref and absolute paths are stable image coordinates. Its owner task row is deleted/reseeded; request, operation, evidence, adoption-task and reservation IDs are fresh. Ordinary cases get fresh `ControlledLandingGit` instances. F-1 compares object identities and independently queries durable data, not a digest returned by the resetter. Check `Fault.Triggered == false` **before** the broader object-identity assertion, so PC-886-2 fails `family-fault-unarmed`. Also inspect null matchers/callbacks, false AfterSave/AfterCommit/AwaitingCommit, empty queue/claims, zero verifier calls and empty invocation history. Use a new `FakeTimeProvider` at `2026-10-01T00:00:00Z`; borrowed seed helpers use its UTC instant. Existing standalone constructors keep their behavior.
+
+At the start ref the snapshot has **104 application tables**. SHA-256 of their distinct names sorted ordinally, joined with LF and one final LF, is `d397707fd56db2d90c69d6c16e89cd4c528e6b48a7bd0d8d4048e434a83527d1`. Check actual PostgreSQL `public` base-table/column/FK metadata against EF metadata and this pinned inventory before reset; exclude only `__EFMigrationsHistory` from the application count and preserve its complete ordered contents separately. A changed schema, unexpected seed, external FK or unexpected application table stops qualification before destructive SQL. A sibling migration requires an explicit revised inventory in this plan, not silently accepting a new digest.
+
+The twelve behavior-written roots are `AgentTasks`, `StageOutcomes`, `Projects`, `Boards`, `BoardColumns`, `Cards`, `AgentTaskEvents`, `AgentTaskLandings`, `AgentTaskLandRequests`, `AgentTaskLandNotifications`, `WorktreeCleanupAttempts`, `WorkspaceUseReservations`. PostgreSQL TRUNCATE requires their complete incoming-FK closure even when a dependent table is empty. The snapshot-derived closure is exactly these **67** tables:
+
+```text
+AgentBundleAttachments, AgentIncidents, AgentPinOperations, AgentPinProjections,
+AgentPinReconciliations, AgentPinnedInstructionStates, AgentPinnedInstructions,
+AgentReviewCheckpoints, AgentSessions, AgentSupervisionStates,
+AgentTaskDecisionQuestions, AgentTaskDispatchWarningIntents, AgentTaskEvents,
+AgentTaskLandNotifications, AgentTaskLandRequests, AgentTaskLandings, AgentTasks,
+Agents, ApiErrorRecoveries, ApiKeys, ArtifactSectionReviews, AuditRecords,
+BoardColumns, BoardWorkflowDefinitions, Boards, CardComments, CardRevisions,
+CardWorkflowRuns, CardWorkflowStages, Cards, ChannelOutboundDeliveries,
+ChatChannels, CheckCompactionRecoveries, CostLedgerEntries, DelegationCapabilities,
+DelegationCapabilityEvents, Diagnoses, ExpectationNudges, ExternalIssueRefs,
+FileReviewStates, FileSectionReviews, GateDecisions, LegacyCheckNotePublications,
+OutputDistillations, Projects, RemoteControlModalEpisodes, RetrySchedules,
+ReviewComments, ReviewThreads, RoutingPins, RunAttempts, ScheduleFires, Schedules,
+SessionQueuedMessages, StageExecutions, StageOutcomes, Stages,
+TaskWorktreeRetirementAttempts, TaskWorktreeRetirements, TokenUsages,
+TranscriptEntries, VerificationExecutions, Workflows, WorkspaceUseReservations,
+WorktreeCleanupAttempts, WorktreeHealthFindings, Worktrees
+```
+
+Freeze the baseline algorithm, rather than a generic database copier: before any owner seed, capture each table's ordered user-column rows and migration history through independent SQL. At this ref every closure table is empty; the only application seed is `Users` ID `a0000000-0000-0000-0000-000000000001`, UserName `admin`, Email `admin@antiphon.local`, IsAdmin true, CreatedAt `2026-01-01T00:00:00Z` (`AddWorkflowTemplates` migration). Assert that literal seed and empty other application tables. No hosted application seeder runs in this fixture. This is a runtime precondition to prove, not a database observation made in TestDesign.
+
+Reset uses one transaction and one explicit, quoted `TRUNCATE TABLE <the 67 names> CONTINUE IDENTITY RESTRICT`, with **no CASCADE** and no constraint suppression. The complete FK cycles (including AgentTasks/AgentTaskLandings and Cards/worktrees/sessions) are inside this single statement. Preserve all 37 outside tables, including Users, in place; seed restoration is preservation plus full row equality, never truncating Users and synthesizing a replacement. No reset table has a sequence-backed identity in this snapshot; reject a newly introduced sequence until its reset semantics are designed. Validate closure emptiness, outside-table row equality and unchanged migration history inside the transaction, commit, then verify through an independent fresh connection before reseeding. Compare user values/keys, not PostgreSQL `xmin` or physical row addresses. F-1 additionally dirties a non-root closure dependent (a valid `AgentTaskDispatchWarningIntent`) so resetting only the twelve roots cannot qualify. On failure roll back and stop the family with retained evidence.
+
+Bind every reset/drop to the exact allocated object and captured connection host/port/database, and verify `current_database()` agrees. A `test_` prefix alone is insufficient. F-4 exercises shared/template/foreign-connection rejection through recording destructive adapters (zero calls), never connects to or deletes a real foreign store. Observe database existence through the fixture maintenance connection immediately after borrowed disposal and before opening the next case. Family disposal owns the one final drop; default standalone harnesses still own theirs. This rejects PC-886-4 with a named assertion rather than a connection error.
+
+F-2 snapshots at the same absolute root after native initialization and before case seed, including remote, canonical, source administrative entry, observer and home. Poison the remote master ref, a source registration/pin, working/index bytes and ignored residue; then perform the original successful cleanup that removes the source. After restore independently inspect `rev-parse --verify`, `show-ref`, `worktree list --porcelain -z`, `status --porcelain=v1 -z`, `ls-files --stage`, and literal sentinel bytes. Assert Git exit/status tuples with `family-native-image-restored` before calling `RequiredAsync`; a missing remote ref must not become a setup exception. The next `FixtureGit` recorder has empty Trace/Commands/RegistrationDrops and null callbacks; BuildServices then installs its fresh observer callback. Reject links/reparse points before walking or deleting; exercise Windows attributes and Unix modes in the same F-2/F-4 methods on their respective OS. Preserve failed evidence outside the restored subtree and never erase unresolved child custody.
+
+### Preserved assertion ledger
+
+These labels are additive and include the original label/output plus the full case key. `L01` means literal failure label `C886-L01`; `S01` means `C886-S01`. Assign them in baseline lexical order at each Shouldly site; split chained sites into local values if needed without changing evaluation or expectation. The destination is the corresponding extracted ordinary/recovery/cleanup or script scenario body called by the **same public method**. All 37 landing and 35 script sites below must survive the Code diff; new reset/receipt assertions do not substitute for them.
+
+| Landing labels | Branch | Original expectations, in label order |
+|---|---|---|
+| L01 | ordinary/all | request status `queued` |
+| L02, L03, L04 | ordinary/non-null cut | injected save exception; operation non-null; saved phase equals the selected cut |
+| L05, L06 | ordinary/true | operation non-null; HasPublication true |
+| L07, L08, L09 | ordinary/false or null | target unchanged; remote unchanged; verifier calls unchanged |
+| L10 | ordinary/false or null | no `push`, `update-ref`, `--ff-only`, `rebase` in trace |
+| L11, L12 | ordinary/false or null with operation | HasPublication false; LastReason `review_evidence_source_not_clean` |
+| L13, L14, L15, L16 | ordinary/false or null | saved ReviewEvidenceId exact; ExpectedSourceSha exact; IsPending false; exactly one LandRefused event with source-not-clean Detail |
+| L17, L18, L19, L20 | recovery/admission false or null | ConflictException; exact source-not-clean code; zero requests; trace suffix contains no `update-ref`, `reset`, `rebase`, `merge`, `push` |
+| L21 | recovery/accepted request | status `queued` |
+| L22, L23 | recovery/true | operation non-null; HasPublication true |
+| L24, L25, L26 | recovery/resume false or null | remote source unchanged; remote target unchanged; no `update-ref`, `reset`, `rebase`, `merge`, `push` |
+| L27, L28, L29 | recovery/resume false or null | saved ReviewEvidenceId exact; IsPending false; zero landings |
+| L30, L31, L32 | published cleanup/before retry | operation non-null; HasPublication true; Cleanup Refused |
+| L33, L34, L35, L36, L37 | published cleanup/after retry | operation non-null; same operation ID; Cleanup Complete; same verifier calls; no `rebase`, `merge`, `push` |
+
+The L16 original `SingleAsync` implies cardinality one: make cardinality an explicit named assertion **before** indexing the result, and retain the case-sensitive Detail check. Preserve `unlatched-resume-refuses-unclean` on L07..L16 for false/unlatched cases so an earlier ref/trace failure cannot mask PC-23. Run ordinary cases in the existing false-latch, queued/Prepared/Verified/PushStarted, false/null/true order, then self/adoption admission/resume, then ordinary/self/adoption published cleanup false/null: **24+12+6 = 42**. For PC-23's four cuts to be independently visible in a single TUnit result, accumulate per-case assertion failures, dispose/reset, and continue to the next case only after reset qualifies. Aggregate them at method end with their full keys; a reset failure aborts immediately. Never swallow a case failure or manufacture the missing refusal event.
+
+| Script labels | Scenario / invocation numbers | Original expectations, in label order |
+|---|---|---|
+| S01..S05 | build/reuse, 1-2 | build exit 0; reuse exit 0; `build=reused`; `buildSource=verified`; stamp exists |
+| S06..S08 | missing stamp, 3 | exit 2; `reason=build_source_mismatch`; unchanged calls |
+| S09..S12 | tamper, 4-5 | initial build exit 0; mismatch exit 2; `reason=build_source_mismatch`; unchanged calls |
+| S13, S14 | dirty stamp, 6 | exit 2; unchanged calls |
+| S15..S19 | failed replacement, 7-9 | initial build exit 0; failed build exit 2; stamp absent; reuse exit 2; unchanged calls |
+| S20..S22 | run drift, 10 | exit 2; state changed; receipt retains `executed=3 passed=3` |
+| S23..S27 | same-count drift, 11 | exit 2; start dirty 1; end dirty 1; start/end fingerprints differ; state changed |
+| S28, S29 | build drift, 12 | exit 2; state changed |
+| S30, S31 | HEAD drift, 13 | exit 2; state changed |
+| S32..S35 | dirty-to-clean, 14 | exit 2; start dirty 1; end dirty 0; state changed |
+
+Scenario call counts are **3,3,3,1,1,1,1,1**, totaling 14 across eight reset boundaries; the first three real successful builds remain S01/S09/S15. Add `invalid-stamp-no-tests` as an alias on S06..S08 and S10..S14; retain `missing-stamp-no-tests` and `dirty-stamp-no-tests`. Add `driver-drift-is-changed` to S20 as well as S21. Every original label in V-8 remains, including `matching-stamp-reused`, `matching-stamp-verified`, `successful-build-stamp`, `failed-rebuild-invalidates-stamp`, `failed-rebuild-cannot-reuse-stale-output`, `driver-drift-retains-counts`, `same-count-content-change-has-new-fingerprint`, `same-count-driver-drift-is-changed`, `build-drift`, `head-movement`, `dirty-to-clean-is-source-drift`.
+
+### PowerShell parity, request isolation and delivery inventory
+
+F-5 compares process mode with worker mode using the **same restored absolute Git seed root**, fixed child Git author/committer dates and fresh results directories. Reset between modes as well as the eight scenario boundaries; compare all fourteen exits and each source/receipt/TRX/call observation. Add three internal requests per mode: `c585-failures.trx` -> 1, `c585-zero.trx` -> 3, and an always-busy offline slot shim with `C589_SLOT_WAIT_SECONDS=3` -> 4 and zero dotnet calls. A fourth internal request uses an invalid typed script parameter to prove terminating invocation failure (process exit 1, worker nonzero terminating-error result, no fabricated receipt). Thus parity has **18 requests per mode / 36 real script invocations**, still one F-5 result, separate from V-8's fourteen and its timing denominator. Only the fourteen valid-script scenarios require the original real `source.json`, `git.txt`, trailer and applicable TRX; terminal/error requests assert the exact artifact presence/absence produced by process mode.
+
+Compare return code, termination kind, structured source version/start/end/state/reason/buildSource, counts, stamp binding, receipt tokens, expected artifact set, checkpoint/trailer occurrence counts and ordered per-stream diagnostics. Normalize generated request IDs, owned output paths, observation timestamps and elapsed slot-wait diagnostics only. Validate elapsed/timestamp field shape in each run; never normalize a SHA/fingerprint, status, reason, count, missing artifact or extra stream record. `Write-Host` information records and PSHost UI callbacks must produce one logical output line, not duplicates; original process mode concatenates stdout then stderr, so keep separate streams before constructing that compatible Output. Assert one worker PID/start identity and eighteen distinct runspace identities. Typed parameters retain switch/missing/null/array semantics and preserve `$PSScriptRoot` by invoking the unmodified file with `AddCommand`, not injecting its text.
+
+F-6 must not let the next request's environment overlay hide PC-886-6. Start the worker with known test-only baseline values; after a failing request's finally and **before any subsequent overlay**, use an idle protocol probe to read actual environment/process CWD. Compare present, empty and absent values to the original baseline under `script-environment-reset`. Then issue the clean request and inspect fresh runspace globals/functions/aliases/preferences/PowerShell location/LASTEXITCODE under `script-scope-reset` and `script-next-exit-independent`. Exercise both normal script refusal and terminating invocation error; runspace completion alone is never success.
+
+The explicit environment inventory is `C835_CALLS`, `C835_REPO`, `C835_BUILD_EXIT`, `C835_TRX`, `C835_DRIFT`, `C835_SLOT_CALLS`, `C835_SLOT_DRIFT`, `C585_STAMP`, `C589_SLOT_SHIM`, `C589_SLOT_WAIT_SECONDS`, `C589_SLOT_RETRY_MS`, `C589_SLOT_GRACE_SECONDS`, `C671_PLATFORM`, `ANTIPHON_BUILD_SLOTS_URL`, and the two fixed Git dates. Include test-only probe keys. Capture the pre-request presence/value state and restore it in finally; absent does not mean empty. The worker can inherit task/session identity for custody but never logs credentials or edits the TUnit host environment. Shims remain private and offline. Restore both `Environment.CurrentDirectory` and PowerShell location independently. F-7 inspects zero call/slot files **before** any next script and verifies monotonic IDs/retained prior evidence outside the mutable image.
+
+| Producer -> destination | Identity / boundary | Recovery and recipient evidence |
+|---|---|---|
+| C# fixture -> private pwsh worker -> new runspace | family ID + monotonic request ID + worker PID/start identity; request channel is serial; no durable replay queue is introduced | F-5/F-6 await the corresponding terminal response with actual file/exit observations. A queued second request waits while the first is held at an explicit barrier, then runs in its own runspace; an idle worker accepts the same next-request path. No request is reported successful from an enqueue ack. |
+| Runspace -> original script -> native Git/shim children -> response | request ID, exact result directory, owned child PID/start identity and redirected stream tasks | F-8 covers cancellation with child alive and worker failure before response. Response-loss is failure/unknown, never retry-and-reuse of old receipts. Both cases preserve the primary error and join children/streams before root disposal. |
+| Family reset -> next case | family/database/root identity and incrementing case ID | F-1/F-2/F-4/F-7 independently observe resource state before next seed. F-3 compares reused-family observations with fresh-family oracles. Failure preserves evidence and stops unknown-state reuse. |
+
+F-8 uses a cooperative private child and a recording filesystem-disposal boundary. A task-completion barrier records that disposal is requested while child/stream acknowledgement is deliberately pending; inspect `script-owned-children-joined` at that attempt, before any actual deletion. Mutation PC-886-8 releases that boundary early. In both green and red paths finally releases/cancels the child and awaits every owned task; an unrelated fixture-owned sentinel process remains alive until its own cleanup. Do not use a timeout to decide the red, and do not block the test thread behind the held disposal. The outer diagnostic deadline is at least 90 seconds. No new user/session delivery path exists: `ReplyTo=None` and mock event buses prove neither messaging nor UserPrompt receipt, and no production notification-delivery claim is made.
+
 ### Existing roster and preserved scenario inventory
 
 The original CARD-0835 V IDs remain stable. These are exact public method names; each contributes one TUnit result, with no argument expansion or OS skip in this selection.
