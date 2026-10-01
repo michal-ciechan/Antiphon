@@ -476,6 +476,7 @@ New `HerdrTransportTests` has **13 unparameterized results**, all OSes:
 `C801_ConnectDeadline`, `C801_MissingEndpoint`, `C801_MalformedResponse`,
 `C801_PathOverridePrecedence`, `C801_NamedAndDefaultResolution`,
 `C801_UnixResolutionUsesPosixRulesAcrossHostSeparators`,
+`C801_UnixResolutionPreservesPosixCombineSemantics` (six POSIX path rows),
 `C801_ConnectedPeerIdentity`, `C801_DifferentPeerIdentityAfterRestart`,
 `C801_UnavailableIdentityRefusesDisposal`, `C801_RepeatedConnectDisposeReleasesHandles`.
 For different-peer identity, use distinct owned child processes, not two listeners in the same
@@ -883,7 +884,7 @@ counts match the source census; all 14 manifest IDs are unique; all three isolat
 exist as project directories and satisfy the output-name rule; build reuse stays within its
 slice group; every OR operand has its own parentheses and trailing wildcard; no filter contains
 a Markdown escape. CP-2..CP-13 cover 35 distinct classes and sum to 647 planned Windows results, including
-the 33 new focused cases and one linked classification guard. The PowerShell extraction recipe
+the 39 focused results and one linked classification guard. The PowerShell extraction recipe
 was executed as a data-only check and reproduced the embedded manifest exactly on Linux.
 Time sums are 84 minutes Linux / 98 Windows including CP-1, and 76 / 88 for final CP-2..CP-14.
 `git diff --check` passed. No build, TUnit discovery/execution, native listener, mutation or Windows
