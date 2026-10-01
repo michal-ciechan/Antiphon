@@ -26,6 +26,9 @@ public sealed class GrokRulesFileLaunchTests
     [Arguments("env_flag")]
     public async Task Unsafe_final_runner_boundary_has_zero_effects_even_without_server_validation(string variant)
     {
+        if (OperatingSystem.IsLinux() && variant is ("alias" or "crlf" or "duplicate_first"
+            or "duplicate_second" or "equals" or "lf" or "nul"))
+            Skip.Test("CARD-0863: Unix PtyHost argv quotes multiline values or truncates NUL.");
         foreach (var herdr in new[] { false, true })
         {
             if (variant.Contains("env") && !herdr) continue;

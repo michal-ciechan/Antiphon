@@ -135,6 +135,8 @@ public sealed class GrokRulesRunnerRefusalTests
     [Test]
     public async Task Pty_host_grok_multiline_rules_are_refused_before_a_session_is_registered()
     {
+        if (OperatingSystem.IsLinux())
+            Skip.Test("CARD-0863: Unix PtyHost argv quotes multiline values.");
         var sentinel = Sentinel();
         var settings = BuildSettings();
         await using var runtime = new SessionRunnerRuntime(

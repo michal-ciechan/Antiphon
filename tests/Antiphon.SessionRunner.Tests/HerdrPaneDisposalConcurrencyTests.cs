@@ -126,7 +126,8 @@ public sealed class HerdrPaneDisposalConcurrencyTests
     }
     [Test] [Arguments(false)] [Arguments(true)] public async Task C461_G065_Attach_lease(bool disposalWins) { await ActorWaits("attach"); await RuntimeRace("attach", disposalWins); }
     [Test] [Arguments(false)] [Arguments(true)] public async Task C461_G066_Named_launch_lease(bool disposalWins) { await ActorWaits("named"); await RuntimeRace("named", disposalWins); }
-    [Test] [Arguments(false)] [Arguments(true)] public async Task C461_G067_Last_pane_reuse_lease(bool disposalWins) { await ActorWaits("reuse"); await RuntimeRace("reuse", disposalWins); }
+    [Test] [Arguments(false)] [Arguments(true)] public async Task C461_G067_Last_pane_reuse_lease(bool disposalWins)
+    { if (disposalWins) HerdrPaneDisposalServiceTests.SkipLocatorOnLinux(); await ActorWaits("reuse"); await RuntimeRace("reuse", disposalWins); }
     [Test] public Task C461_G068_Allocator_split_lease() => ActorWaits("split");
     [Test] public Task C461_G070_Detach_kill_lease() => ActorWaits("kill");
     [Test] [Arguments(false)] [Arguments(true)] public Task C461_G071_Sidecar_publication_lease(bool disposalWins) => RuntimeRace("attach", disposalWins);

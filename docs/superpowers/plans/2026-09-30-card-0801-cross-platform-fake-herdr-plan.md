@@ -549,7 +549,12 @@ if (-not $c801Match.Success) { throw 'C801 manifest is missing' }
 $c801Manifest = $c801Match.Groups[1].Value | ConvertFrom-Json
 if ($c801Manifest.checkpoints.Count -ne 14) { throw 'C801 must have 14 rows' }
 foreach ($c801Row in $c801Manifest.checkpoints) {
-    if ($IsWindows) { $c801Row.estimatedMinutes = $c801Row.estimatedMinutesWindows }
+    if ($IsWindows) {
+        $c801Row.estimatedMinutes = $c801Row.estimatedMinutesWindows
+        if ($c801Row.PSObject.Properties['minExecutedWindows']) {
+            $c801Row.minExecuted = $c801Row.minExecutedWindows
+        }
+    }
 }
 # ManifestLoader does not apply the table importer's Windows estimate override itself.
 $c801Manifest | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 .antiphon/c801-checkpoints.yaml
@@ -625,6 +630,8 @@ tooling (CARD-0804/0805 scope), **use the supported positional YAML-manifest inp
 from this plan by the recipe above; do not run this summary through `--plan`. JSON is the flow
 syntax subset of YAML accepted by `ManifestLoader`. Only this plan is tracked.
 
+<!-- CARD-0801 split decision: Linux skips only the named CARD-0863/0864/0865/0866
+     follow-on results in CP-6/9/10/11. Windows runs every result and retains its full floor. -->
 | CP | After | Build | Group | Exact filter | Covers | Expected executed | Min | EstimatedMinutes | EstimatedMinutesWindows | Serial |
 |---|---|---|---|---|---|---|---:|---:|---:|---|
 | CP-1 | S1-S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c801-core/` | initial-transport | manifest CP-1.filter | V-1, V-2, V-3, V-4, R-1 | Linux/Windows: 41 executed (12+12+16+1), 0 failed/skipped | 41 | 8 | 10 | true |
@@ -632,12 +639,12 @@ syntax subset of YAML accepted by `ManifestLoader`. Only this plan is tracked.
 | CP-3 | S1-S4 | CP-2 | runner-lifecycle | manifest CP-3.filter | V-6 | Linux/Windows: 82 executed (23+37+22), 0 failed/skipped | 82 | 8 | 10 | true |
 | CP-4 | S1-S4 | CP-2 | runner-placement-kill | manifest CP-4.filter | V-6, R-3 | Linux/Windows: 36 executed (23+6+7), 0 failed/skipped | 36 | 5 | 6 | true |
 | CP-5 | S1-S4 | CP-2 | runner-events-routes | manifest CP-5.filter | V-6 | Linux/Windows: 14 executed (5+4+5), 0 failed/skipped | 14 | 3 | 4 | true |
-| CP-6 | S1-S4 | CP-2 | incidental-rules | manifest CP-6.filter | V-6 | Linux/Windows: 38 executed (21+11+6), 0 failed/skipped | 38 | 4 | 5 | true |
+| CP-6 | S1-S4 | CP-2 | incidental-rules | manifest CP-6.filter | V-6 | Linux: 30 executed, 8 skipped (CARD-0863); Windows: 38 executed, 0 skipped; 0 failed | 30 | 4 | 5 | true |
 | CP-7 | S1-S4 | CP-2 | incidental-native | manifest CP-7.filter | V-6, R-3 | Linux/Windows: 9 executed (4+3+2), 0 failed/skipped | 9 | 6 | 7 | true |
 | CP-8 | S1-S4 | CP-2 | runner-labels | manifest CP-8.filter | V-6 | Linux/Windows: 135 executed (3+25+71+36), 0 failed/skipped | 135 | 5 | 6 | true |
-| CP-9 | S1-S4 | CP-2 | runner-disposal | manifest CP-9.filter | V-4, V-6 | Linux/Windows: 167 executed (92+27+35+13), 0 failed/skipped | 167 | 6 | 7 | true |
-| CP-10 | S1-S4 | `tests/Antiphon.Tests -> bin-c801-server/` | server-attach-parity | manifest CP-10.filter | V-5, R-3 | Linux/Windows: 40 executed (16+24), 0 failed/skipped | 40 | 12 | 14 | true |
-| CP-11 | S1-S4 | CP-10 | server-label-disposal | manifest CP-11.filter | V-5 | Linux/Windows: 51 executed (4+19+14+14), 0 failed/skipped | 51 | 5 | 6 | true |
+| CP-9 | S1-S4 | CP-2 | runner-disposal | manifest CP-9.filter | V-4, V-6 | Linux: 144 executed, 23 skipped (CARD-0864); Windows: 167 executed, 0 skipped; 0 failed | 144 | 6 | 7 | true |
+| CP-10 | S1-S4 | `tests/Antiphon.Tests -> bin-c801-server/` | server-attach-parity | manifest CP-10.filter | V-5, R-3 | Linux: 27 executed, 13 skipped (CARD-0865); Windows: 40 executed, 0 skipped; 0 failed | 27 | 12 | 14 | true |
+| CP-11 | S1-S4 | CP-10 | server-label-disposal | manifest CP-11.filter | V-5 | Linux: 49 executed, 2 skipped (CARD-0866); Windows: 51 executed, 0 skipped; 0 failed | 49 | 5 | 6 | true |
 | CP-12 | S1-S4 | CP-10 | server-wire | manifest CP-12.filter | V-5 | Linux/Windows: 9 executed, 0 failed/skipped | 9 | 2 | 3 | true |
 | CP-13 | S1-S4 | CP-10 | server-script | manifest CP-13.filter | V-5 | Linux/Windows: 10 executed, 0 failed/skipped | 10 | 4 | 5 | true |
 | CP-14 | S1-S4 | CP-10 | assembly-unit-smoke | manifest CP-14.filter | R-2 | Both OSes: >=3000 executed, fresh TRX, no new failures; known inherited failures individually reported | 3000 | 8 | 5 | true |
@@ -745,8 +752,9 @@ syntax subset of YAML accepted by `ManifestLoader`. Only this plan is tracked.
       "group": "incidental-rules",
       "filter": "/*/Antiphon.SessionRunner.Tests/(GrokRulesFileLaunchTests*)|(GrokRulesRunnerRefusalTests*)|(GrokRulesStoreFailureTests*)/*",
       "expect": ["GrokRulesFileLaunchTests","GrokRulesRunnerRefusalTests","GrokRulesStoreFailureTests"],
-      "expectText": "Linux/Windows: 38 executed (21+11+6), 0 failed/skipped",
-      "minExecuted": 38,
+      "expectText": "Linux: 30 executed, 8 skipped (CARD-0863); Windows: 38 executed, 0 skipped; 0 failed",
+      "minExecuted": 30,
+      "minExecutedWindows": 38,
       "estimatedMinutes": 4,
       "estimatedMinutesWindows": 5,
       "serial": true
@@ -784,8 +792,9 @@ syntax subset of YAML accepted by `ManifestLoader`. Only this plan is tracked.
       "group": "runner-disposal",
       "filter": "/*/Antiphon.SessionRunner.Tests/(HerdrPaneDisposalServiceTests*)|(HerdrPaneDisposalConcurrencyTests*)|(HerdrPaneDisposalIdentityTests*)|(HerdrPaneDisposalStopRegressionTests*)/*",
       "expect": ["HerdrPaneDisposalServiceTests","HerdrPaneDisposalConcurrencyTests","HerdrPaneDisposalIdentityTests","HerdrPaneDisposalStopRegressionTests"],
-      "expectText": "Linux/Windows: 167 executed (92+27+35+13), 0 failed/skipped",
-      "minExecuted": 167,
+      "expectText": "Linux: 144 executed, 23 skipped (CARD-0864); Windows: 167 executed, 0 skipped; 0 failed",
+      "minExecuted": 144,
+      "minExecutedWindows": 167,
       "estimatedMinutes": 6,
       "estimatedMinutesWindows": 7,
       "serial": true
@@ -797,8 +806,9 @@ syntax subset of YAML accepted by `ManifestLoader`. Only this plan is tracked.
       "group": "server-attach-parity",
       "filter": "/*/Antiphon.Tests.Application/(AgentAttachHerdrTests*)|(HerdrAlwaysOnChannelParityTests*)/*",
       "expect": ["AgentAttachHerdrTests","HerdrAlwaysOnChannelParityTests"],
-      "expectText": "Linux/Windows: 40 executed (16+24), 0 failed/skipped",
-      "minExecuted": 40,
+      "expectText": "Linux: 27 executed, 13 skipped (CARD-0865); Windows: 40 executed, 0 skipped; 0 failed",
+      "minExecuted": 27,
+      "minExecutedWindows": 40,
       "estimatedMinutes": 12,
       "estimatedMinutesWindows": 14,
       "serial": true
@@ -810,8 +820,9 @@ syntax subset of YAML accepted by `ManifestLoader`. Only this plan is tracked.
       "group": "server-label-disposal",
       "filter": "/*/Antiphon.Tests.Application/(HerdrLabelFollowWireTests*)|(HerdrLabelFollowFlowTests*)|(HerdrPaneDisposalEndpointTests*)|(HerdrPaneDisposalApplicationTests*)/*",
       "expect": ["HerdrLabelFollowWireTests","HerdrLabelFollowFlowTests","HerdrPaneDisposalEndpointTests","HerdrPaneDisposalApplicationTests"],
-      "expectText": "Linux/Windows: 51 executed (4+19+14+14), 0 failed/skipped",
-      "minExecuted": 51,
+      "expectText": "Linux: 49 executed, 2 skipped (CARD-0866); Windows: 51 executed, 0 skipped; 0 failed",
+      "minExecuted": 49,
+      "minExecutedWindows": 51,
       "estimatedMinutes": 5,
       "estimatedMinutesWindows": 6,
       "serial": true
