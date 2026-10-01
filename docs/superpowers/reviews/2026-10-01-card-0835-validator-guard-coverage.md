@@ -42,7 +42,7 @@ The two required single-line mutations were run separately against V-10 and rest
 
 ## Programmatic plan-name coverage
 
-The check extracts V-matrix class/method names, backtick-quoted PC witness labels after each `V-n:` clause, and checkpoint filter class or method operands, then searches the selected test roots for each literal. Duplicated names are kept by plan row. It found 76 names and zero absent names. Locations below identify the matching declaration or literal.
+The check extracts V-matrix class/method names, backtick-quoted PC witness labels after each `V-n:` clause, and checkpoint filter class or method operands, then searches the selected test roots for each literal. Duplicated names are kept by plan row. It found 86 names and zero absent names. Locations below identify the matching declaration or literal.
 
 | Plan entry | Name | Test file:line | Found |
 |---|---|---|---|
@@ -114,11 +114,21 @@ The check extracts V-matrix class/method names, backtick-quoted PC witness label
 | CP-3 | `RunCheckpointScriptTests` | `tests/Antiphon.Tests/Scripts/RunCheckpointScriptTests.cs:14` | yes |
 | CP-4 | `CheckpointSourceExecutionTests` | `tests/Antiphon.Tests/Checkpoints/CheckpointSourceExecutionTests.cs:14` | yes |
 | CP-5 | `CheckpointLineTests` | `tests/Antiphon.Tests/Checkpoints/CheckpointLineTests.cs:9` | yes |
+| CP-5 | `ReportWriterTests` | `tests/Antiphon.Tests/Checkpoints/ReportWriterTests.cs:9` | yes |
+| CP-5 | `ReportMergerTests` | `tests/Antiphon.Tests/Checkpoints/ReportMergerTests.cs:8` | yes |
+| CP-5 | `CheckpointAppTests` | `tests/Antiphon.Tests/Checkpoints/CheckpointAppTests.cs:8` | yes |
+| CP-5 | `RowRunnerTests` | `tests/Antiphon.Tests/Checkpoints/RowRunnerTests.cs:8` | yes |
+| CP-5 | `RunSchedulerTests` | `tests/Antiphon.Tests/Checkpoints/RunSchedulerTests.cs:8` | yes |
+| CP-5 | `CheckpointSlotExecutorTests` | `tests/Antiphon.Tests/Checkpoints/CheckpointSlotExecutorTests.cs:15` | yes |
+| CP-5 | `CheckpointSlotContractTests` | `tests/Antiphon.Tests/Checkpoints/CheckpointSlotContractTests.cs:11` | yes |
 | CP-6 | `ReviewEvidenceParserTests` | `tests/Antiphon.Tests/Application/ReviewEvidenceParserTests.cs:9` | yes |
 | CP-7 | `CheckpointSourceApprovalTests` | `tests/Antiphon.Tests/Application/CheckpointSourceApprovalTests.cs:22` | yes |
 | CP-8 | `AgentTaskReviewEvidenceTests` | `tests/Antiphon.Tests/Application/AgentTaskReviewEvidenceTests.cs:16` | yes |
+| CP-8 | `ReviewEvidenceSettlementTests` | `tests/Antiphon.Tests/Application/ReviewEvidenceSettlementTests.cs:19` | yes |
 | CP-9 | `AgentTaskLandApprovalRequestTests` | `tests/Antiphon.Tests/Application/AgentTaskLandApprovalRequestTests.cs:20` | yes |
 | CP-10 | `AgentTaskLandApprovalPersistenceTests` | `tests/Antiphon.Tests/Application/AgentTaskLandApprovalPersistenceTests.cs:21` | yes |
 | CP-11 | `DelegateScriptLandApprovalTests` | `tests/Antiphon.Tests/Application/DelegateScriptLandApprovalTests.cs:10` | yes |
+| CP-11 | `CheckpointManifestDocumentationTests` | `tests/Antiphon.Tests/Application/CheckpointManifestDocumentationTests.cs:16` | yes |
 | CP-12 | `AgentTaskLandApprovalRecoveryTests` | `tests/Antiphon.Tests/Application/AgentTaskLandApprovalRecoveryTests.cs:17` | yes |
 | CP-12 | `C488_OriginalApprovalNeverAdoptsHead` | `tests/Antiphon.Tests/Application/AgentTaskLandApprovalRecoveryTests.cs:238` | yes |
+| CP-12 | `C488_ChangedSourceNeedsNewApproval` | `tests/Antiphon.Tests/Application/AgentTaskLandApprovalRecoveryTests.cs:415` | yes |
