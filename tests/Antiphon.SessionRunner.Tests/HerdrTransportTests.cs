@@ -180,7 +180,9 @@ public class HerdrTransportTests
     {
         await using var fixture = new HerdrPaneDisposalFixture();
         await fixture.StartAsync();
-        HerdrPeerIdentity.NativePidOverride.Value = _ => null;
+        var lookupCalls = 0;
+        if (OperatingSystem.IsWindows()) HerdrPeerIdentity.ForceUnavailable.Value = true;
+        else HerdrPeerIdentity.NativePidOverride.Value = _ => { Interlocked.Increment(ref lookupCalls); return null; };
         try
         {
             var refusal = await Should.ThrowAsync<HerdrLaunchException>(() =>
@@ -189,8 +191,14 @@ public class HerdrTransportTests
                 "C801_IDENTITY_UNAVAILABLE_REFUSES");
             fixture.Methods.Count(m => m == "pane.close").ShouldBe(0,
                 "C801_UNVERIFIED_PANE_NOT_CLOSED");
+            if (!OperatingSystem.IsWindows())
+                lookupCalls.ShouldBeGreaterThan(0, "C801_NATIVE_IDENTITY_LOOKUP_ATTEMPTED");
         }
-        finally { HerdrPeerIdentity.NativePidOverride.Value = null; }
+        finally
+        {
+            HerdrPeerIdentity.NativePidOverride.Value = null;
+            HerdrPeerIdentity.ForceUnavailable.Value = false;
+        }
     }
 
     [Test]
