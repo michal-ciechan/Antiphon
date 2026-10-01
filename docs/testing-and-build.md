@@ -104,10 +104,10 @@ the eight server classes (110 results) and 24 SessionRunner classes (497 results
 Run that plan's literal class filters on both Linux and Windows. The CARD-0801 split decision
 gates 48 named Linux results: CP-6 skips 8 for CARD-0863, CP-7 skips 1 for CARD-0871,
 CP-9 skips 23 for CARD-0864, CP-10 skips 14 (13 for CARD-0865 and one for CARD-0878),
-and CP-11 skips 2 for CARD-0866. The other 593 CP-2–CP-13
-results execute on Linux with zero failures; Windows retains all 641 results with zero skips.
+and CP-11 skips 2 for CARD-0866. The other 599 CP-2–CP-13
+results execute on Linux with zero failures; Windows retains all 647 results with zero skips.
 `AgentAttachHerdrTests` belongs in the Linux filter. CP-1 covers the original 24 focused cases;
-CP-2 covers 33 focused listener and transport results plus the linked classification guard.
+CP-2 covers 39 focused listener and transport results plus the linked classification guard.
 Use the plan's separate Windows W-1
 at the final Linux-tested SHA; a Linux pass does not prove the Windows named-pipe branch.
 
