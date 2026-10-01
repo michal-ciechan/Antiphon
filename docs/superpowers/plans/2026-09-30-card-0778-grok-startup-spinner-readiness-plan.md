@@ -415,12 +415,12 @@ class argument expansion, matrices, repeats or data-source expansion. No
 | `Application/GrokDelegateEndToEndTests.cs` | 5 | 5 | Five plain methods, Windows guards |
 | **Existing total** | **37** | **67** | Static count, not passing executions |
 
-CP-1 has 26 existing methods / 28 cases, plus 5 classifier, 7 adapter and 2 store
-methods: **40 methods / 42 cases**. CP-2 has 2 existing methods / 30 cases plus 2:
+CP-1 has 26 existing methods / 28 cases, plus 5 classifier, 9 adapter and 2 store
+methods: **42 methods / 44 cases**. CP-2 has 2 existing methods / 30 cases plus 2:
 **4 methods / 32 cases**. CP-3 has 9 existing methods / 9 cases plus 1:
-**10 methods / 10 cases**. Total planned: **54 methods / 84 cases**. None of the
-four new classes or V-17 exists yet. Internal subcases below do not increase the
-17 new methods or these floors. Fresh execution TRX must later confirm exactly
+**10 methods / 10 cases**. Total planned: **56 methods / 86 cases**. At TestDesign time none of the
+four new classes or V-17 existed. The two added V-10 methods bring the new-method count
+to 19 and the CP-1 floor to 44. Fresh execution TRX must later confirm exactly
 these per-class expansions, zero skips and no unintended suffix-matched class.
 
 ### Delivery inventory
@@ -461,7 +461,9 @@ transport, and only S1 proves the recorded real CLI layout.
 | V-7 | `RunnerGrokAdapterReadyTests.Animated_sign_in_blocks_without_input_and_sets_launch_block` | Changing sign-in frame (also containing trust text) fails promptly, zero writes, correct provider block/remedy; no quiet wait first. |
 | V-8 | `RunnerGrokAdapterReadyTests.Current_trust_is_answered_once_before_positive_ready` | Current trust sends exactly `y`, once despite repeated frames; stale raw trust sends nothing; only a subsequent settled qualified composer returns true. |
 | V-9 | `RunnerGrokAdapterReadyTests.Post_trust_blank_or_sign_in_is_not_ready` | Trust disappearance into blank remains pending/fails; disappearance into sign-in sets the block and sends no further input; include zero trust sub-budget. |
-| V-10 | `RunnerGrokAdapterReadyTests.One_deadline_covers_reads_trust_and_minimum_age` | Controlled-clock matrix: zero max, late successful snapshot, hung snapshot, late trust, minimum age beyond max and blocker during minimum age. Deadline never extends; held I/O receives cancellation; no success/input after expiry. |
+| V-10a | `RunnerGrokAdapterReadyTests.One_deadline_covers_reads_trust_and_minimum_age` | Controlled-clock matrix: zero max, late successful snapshot, hung snapshot, late trust and minimum age beyond max. Deadline never extends; held I/O receives cancellation; no success/input after expiry. |
+| V-10b | `RunnerGrokAdapterReadyTests.Floor_modal_invalidates_stale_positive_at_minimum_age` | A modal observed at the minimum-age boundary rejects a formerly positive composer. |
+| V-10c | `RunnerGrokAdapterReadyTests.Utc_jump_does_not_advance_monotonic_settle` | A UTC wall-clock jump cannot satisfy settlement before monotonic time passes the threshold; later monotonic settlement succeeds. |
 | V-11 | `RunnerGrokAdapterReadyTests.Exit_and_cancellation_stop_without_input` | Exit before/between frames returns false; cancellation during read/delay propagates; no later keys, polls or orphan tasks. |
 | V-12 | `RunnerGrokAdapterReadyTests.Timeout_captures_last_frame_and_io_failure_preserves_failure` | One capture of the actual last observed frame before false, reason/sequence linked to the session; log has metadata/path only. An unwritable destination still returns failure and permits caller cleanup. |
 | V-13 | `GrokStartupCaptureStoreTests.Content_is_bounded_and_sign_in_material_is_suppressed` | Oversized screen/raw are capped before escaping, null frame is explicit, original lengths/truncation recorded; sign-in sentinel never appears in file/log even if it survives in raw history. |
@@ -519,11 +521,11 @@ These complete the V roster without adding methods or argument expansions.
   each valid trust wait writes precisely `y`, never Enter or a prompt. V-9
   covers trust-clear into blank/sign-in/positive, zero/negative trust sub-budget,
   and a trust frame still present at its positive sub-budget boundary.
-- V-10 covers max -1/0, settle longer than max, minimum age longer than max,
-  already-old process, UTC jumps with monotonic time unchanged, a completed
-  snapshot arriving at/after max, a snapshot ignoring cancellation, and trust
-  first seen just before max. A modal arriving during minimum age must invalidate
-  prior positive frames. For a held I/O operation, schedule its forced completion
+- V-10a covers max -1/0, settle longer than max, minimum age longer than max,
+  already-old process, a completed snapshot arriving at/after max, a snapshot
+  ignoring cancellation, and trust first seen just before max. V-10b checks that
+  a modal during minimum age invalidates prior positive frames. V-10c checks UTC
+  jumps with monotonic time unchanged. For a held I/O operation, schedule its forced completion
   at max + one poll as cleanup; compare the wait's captured completion timestamp
   to max. A missing bound thus fails an elapsed-time **assertion after completion**,
   not an outer timeout. A late completed read must be released so the post-await
@@ -576,7 +578,7 @@ one-to-one mapping, and its Guard column names the decision and boundary.
 There are **44 active guards and 44 mapped controls, 0 missing and 0 duplicate PC mappings**.
 This expands the Plan's 19 cycles: independently bypassable reset, timing,
 current-frame input and diagnostic guards cannot share one mutation and be
-reported as individually controlled. All 44 use the same 17 V methods. R-1/R-2/R-3
+reported as individually controlled. All 44 use the 19 V methods. R-1/R-2/R-3
 preserve existing delivery/rules/cleanup/turn behavior; they do not authorize
 mutations of unchanged shared queue, rules or Codex production code on this card.
 S1's evidence/provenance and clean-SHA/platform checks are commissioning/receipt
@@ -605,7 +607,7 @@ serially; do not claim independent batching savings.
 | G-7 -> PC-7 | V-7 | D-4 prompt sign-in block: defer sign-in classification until positive readiness. | `launchBlock.ShouldNotBeNull()` and Kind equals ProviderSignInRequired after the bounded wait returns. |
 | G-8 -> PC-8 | V-8 | D-4 trust once: remove the trust-written latch. | `trustWrites.Count.ShouldBe(1)` on repeated current trust. |
 | G-9 -> PC-9 | V-9 | D-4 post-trust positive gate: return true on trust disappearance. | `blankTransitionReady.ShouldBeFalse()`. |
-| G-10 -> PC-10 | V-10 | D-3 post-read expiry: admit a completed positive read after max. | `lateReadReady.ShouldBeFalse()` with the late read explicitly released. |
+| G-10 -> PC-10 | V-10a | D-3 post-read expiry: admit a completed positive read after max. | `lateReadReady.ShouldBeFalse()` with the late read explicitly released. |
 | G-11 -> PC-11 | V-11 | D-3 process exit: omit exit rejection between observations. | `exitedReady.ShouldBeFalse()`. |
 | G-12 -> PC-12 | V-12 | D-5 failure callback: remove adapter wiring only. | `captureCount.ShouldBe(1)` before readiness returns false. |
 | G-13 -> PC-13 | V-13 | D-5 sign-in suppression: persist screen/raw after sign-in seen. | `persistedText.ShouldNotContain(secretSentinel)`. |
@@ -620,11 +622,11 @@ serially; do not claim independent batching savings.
 | G-22 -> PC-22 | V-8 | D-4 affirmative choice required: authorize trust from question alone. | `questionOnlyWrites.ShouldBeEmpty()`. |
 | G-23 -> PC-23 | V-8 | D-4 current trust only: authorize `y` from raw-history trust. | `staleTrustWrites.ShouldBeEmpty()`. |
 | G-24 -> PC-24 | V-9 | D-4 trust sub-budget: ignore its positive expiry while overall time remains. | `trustCompletionElapsed.ShouldBeLessThanOrEqualTo(trustBudget)` after the scripted later release. |
-| G-25 -> PC-25 | V-10 | D-3 minimum process age: ignore remaining minimum age. | `readyBeforeMinimumAge.ShouldBeFalse()`. |
-| G-26 -> PC-26 | V-10 | D-3 observe during minimum age: sleep to floor and accept stale positive state. | `readyWithFloorModal.ShouldBeFalse()`. |
-| G-27 -> PC-27 | V-10 | D-3 nonpositive maximum: treat zero/negative max as immediate success. | `nonpositiveMaxReady.ShouldBeFalse()` and zero writes. |
-| G-28 -> PC-28 | V-10 | D-3 bounded snapshot await: directly await the cancellation-ignoring read. | `completionElapsed.ShouldBeLessThanOrEqualTo(max)` after forced I/O release at max+poll. |
-| G-29 -> PC-29 | V-10 | D-3 one budget includes trust: grant a fresh maximum when trust starts. | `trustCompletionElapsed.ShouldBeLessThanOrEqualTo(originalMax)` on late trust. |
+| G-25 -> PC-25 | V-10a | D-3 minimum process age: ignore remaining minimum age. | `readyBeforeMinimumAge.ShouldBeFalse()`. |
+| G-26 -> PC-26 | V-10b | D-3 observe during minimum age: sleep to floor and accept stale positive state. | `readyWithFloorModal.ShouldBeFalse()`. |
+| G-27 -> PC-27 | V-10a | D-3 nonpositive maximum: treat zero/negative max as immediate success. | `nonpositiveMaxReady.ShouldBeFalse()` and zero writes. |
+| G-28 -> PC-28 | V-10a | D-3 bounded snapshot await: directly await the cancellation-ignoring read. | `completionElapsed.ShouldBeLessThanOrEqualTo(max)` after forced I/O release at max+poll. |
+| G-29 -> PC-29 | V-10a | D-3 one budget includes trust: grant a fresh maximum when trust starts. | `trustCompletionElapsed.ShouldBeLessThanOrEqualTo(originalMax)` on late trust. |
 | G-30 -> PC-30 | V-11 | D-3 caller cancellation: swallow OperationCanceledException and return false. | `Should.ThrowAsync<OperationCanceledException>(wait)`; a false return fails it. |
 | G-31 -> PC-31 | V-12 | D-3 snapshot failure: reuse last positive as success on read exception. | `snapshotFailureReady.ShouldBeFalse()`. |
 | G-32 -> PC-32 | V-6 | D-3/D-4 no probe input: write a harmless key before returning true. | `startupWrites.ShouldBeEmpty()`. |
@@ -636,7 +638,7 @@ serially; do not claim independent batching savings.
 | G-39 -> PC-39 | V-14 | D-5 maximum keep: permit configured 101. | `ownedCompletedFiles.Count.ShouldBe(100)` after 101 captures. |
 | G-40 -> PC-40 | V-12 | D-5 diagnostic failure preserves failure: return true on capture I/O failure. | `unwritableCaptureReady.ShouldBeFalse()`. |
 | G-41 -> PC-41 | V-12 | D-5 log allowlist: append raw screen/home/exception text to the failure log. | `log.ShouldNotContain(secretOrPathSentinel)` on every failure arm. |
-| G-42 -> PC-42 | V-10 | D-3 monotonic elapsed time: use UtcNow subtraction for deadline/settle. | `readyAfterUtcJumpWithoutElapsed.ShouldBeFalse()`; later monotonic threshold still succeeds. |
+| G-42 -> PC-42 | V-10c | D-3 monotonic elapsed time: use UtcNow subtraction for deadline/settle. | `readyAfterUtcJumpWithoutElapsed.ShouldBeFalse()`; later monotonic threshold still succeeds. |
 | G-43 -> PC-43 | V-12 | D-5 actual last-frame identity: capture the first frame instead of the last. | `capture.Sequence.ShouldBe(lastObservedSequence)` and its session/reason/time match. |
 | G-44 -> PC-44 | V-12 | D-5 no post-failure runner read: fetch another frame for the capture. | `readsAfterFailureDecision.ShouldBe(0)`; the extra fake read completes with distinct data. |
 | G-45 -> PC-45 | V-2 | D-2 preserve meaningful startup/MCP text: strip the whole spinner/status row before classification. | `blockedStatusFrame.IsReady.ShouldBeFalse()` despite intact composer chrome. |
@@ -672,7 +674,7 @@ native capture and CP-3. Linux success alone does not close CARD-0778.
 | Task placement | Commissioned work | Completion receipt |
 |---|---|---|
 | Desktop, `-Platform Windows` | S1 capture/provenance and reviewed D-1/D-2 predicate, **before** S2 product work | Fixture commit, source/CLI/backend identities, complete native nonce plus stub user-turn receipt, actual region bounds and classification; missing evidence keeps S1 open |
-| Linux Code on server2 | After S1 commit is available: S2/S3 edits, then CP-1 and CP-2 serially | Same committed implementation SHA; CP-1 42 and CP-2 32 executed, zero failures/skips; test Postgres for CP-2 |
+| Linux Code on server2 | After S1 commit is available: S2/S3 edits, then CP-1 and CP-2 serially | Same committed implementation SHA; CP-1 44 and CP-2 32 executed, zero failures/skips; test Postgres for CP-2 |
 | Separate desktop task, `-Platform Windows` | After Linux implementation commit is pushed: CP-3, read-only qualification of that **same SHA** | 10 executed, zero failures/skips; test Postgres, staged assets, actual modern backend for V-17 |
 
 The Linux Code task returns its two receipts and explicitly pending CP-3; it must
@@ -699,7 +701,7 @@ For CP-1, create this ignored `.antiphon/c778-cp1.ps1` containing the single com
 (the ampersand is intentional; do not replace it with a child `pwsh`):
 
 ```powershell
-& ./scripts/run-checkpoint.ps1 -Name CP-1 -Project tests/Antiphon.Tests -OutputPath bin-c778-ready/ -Filter '/*/*/(GrokStartupReadinessTests*)|(RunnerGrokAdapterReadyTests*)|(GrokStartupCaptureStoreTests*)|(RunnerGrokAdapterTrustPromptTests*)|(RunnerGrokAdapterSignInPromptTests*)|(GrokAdapterTests*)|(RunnerGrokAdapterTurnCompleteTests*)|(RunnerCodexAdapterReadyTests*)/*' -Expect GrokStartupReadinessTests,RunnerGrokAdapterReadyTests,GrokStartupCaptureStoreTests,RunnerGrokAdapterTrustPromptTests,RunnerGrokAdapterSignInPromptTests,GrokAdapterTests,RunnerGrokAdapterTurnCompleteTests,RunnerCodexAdapterReadyTests -MinExecuted 42 -ResultsRoot .antiphon/c778-cp1
+& ./scripts/run-checkpoint.ps1 -Name CP-1 -Project tests/Antiphon.Tests -OutputPath bin-c778-ready/ -Filter '/*/*/(GrokStartupReadinessTests*)|(RunnerGrokAdapterReadyTests*)|(GrokStartupCaptureStoreTests*)|(RunnerGrokAdapterTrustPromptTests*)|(RunnerGrokAdapterSignInPromptTests*)|(GrokAdapterTests*)|(RunnerGrokAdapterTurnCompleteTests*)|(RunnerCodexAdapterReadyTests*)/*' -Expect GrokStartupReadinessTests,RunnerGrokAdapterReadyTests,GrokStartupCaptureStoreTests,RunnerGrokAdapterTrustPromptTests,RunnerGrokAdapterSignInPromptTests,GrokAdapterTests,RunnerGrokAdapterTurnCompleteTests,RunnerCodexAdapterReadyTests -MinExecuted 44 -ResultsRoot .antiphon/c778-cp1
 ```
 
 Then execute `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c778-cp1 -- ./.antiphon/c778-cp1.ps1`.
@@ -790,7 +792,7 @@ post-land SourceLanding Mutation; this static TestDesign runs none.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | EstimatedMinutesWindows | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---:|---|---|
-| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c778-ready/` | grok-ready-unit | `/*/*/(GrokStartupReadinessTests*)\|(RunnerGrokAdapterReadyTests*)\|(GrokStartupCaptureStoreTests*)\|(RunnerGrokAdapterTrustPromptTests*)\|(RunnerGrokAdapterSignInPromptTests*)\|(GrokAdapterTests*)\|(RunnerGrokAdapterTurnCompleteTests*)\|(RunnerCodexAdapterReadyTests*)/*` | V-1..V-14, R-1 | all 42 executed, 0 failed, 0 skipped; Linux or Windows | 42 | 12 | 15 | true | n/a |
+| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c778-ready/` | grok-ready-unit | `/*/*/(GrokStartupReadinessTests*)\|(RunnerGrokAdapterReadyTests*)\|(GrokStartupCaptureStoreTests*)\|(RunnerGrokAdapterTrustPromptTests*)\|(RunnerGrokAdapterSignInPromptTests*)\|(GrokAdapterTests*)\|(RunnerGrokAdapterTurnCompleteTests*)\|(RunnerCodexAdapterReadyTests*)/*` | V-1..V-14, R-1 | all 44 executed, 0 failed, 0 skipped; Linux or Windows | 44 | 12 | 15 | true | n/a |
 | CP-2 | S1-S3 | `tests/Antiphon.Tests -> bin-c778-ordering/` | grok-ready-ordering | `/*/*/(GrokStartupReadyOrderingTests*)\|(GrokRulesReadyOrderingTests*)\|(GrokRulesQueueBarrierTests*)/*` | V-15, V-16, R-2 | all 32 executed, 0 failed, 0 skipped; Linux or Windows, test Postgres required | 32 | 12 | 15 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-3 | S1-S3 | `tests/Antiphon.Tests -> bin-c778-native/` | grok-ready-native | `/*/*/(SessionMessageQueueGrokPtyIntegrationTests*)\|(GrokDelegateEndToEndTests*)/*` | V-17, R-3 | all 10 executed, 0 failed, 0 skipped; Windows only, modern backend for V-17, test Postgres and staged native assets required | 10 | 25 | 25 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
@@ -838,8 +840,8 @@ Deployment/production restarts are outside this Plan dispatch. Any later activat
 must follow the canonical checkout runbook and directly verify `/api/version`.
 
 TestDesign validation is static only: one Checkpoints heading, three 12-column
-rows, floors 42/32/10 (84 planned executions), nine existing class counts from
-source (37 methods / 67 cases), 17 planned new methods, and 44 active guard/PC
+rows, floors 44/32/10 (86 planned executions), nine existing class counts from
+source (37 methods / 67 cases), 19 planned new methods, and 44 active guard/PC
 mappings. Commands were file reads/searches, a compile-free Node census, Markdown
 manifest/cross-reference checks, PowerShell AST parsing of the three row command
 fences (no invocation), and `git diff --check`; no product build, test
