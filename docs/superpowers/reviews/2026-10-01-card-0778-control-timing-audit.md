@@ -24,4 +24,6 @@ At the D-1 review, the worst observed first read was 78.7 ms. A real five-second
 
 The [matrix](2026-10-01-card-0778-control-matrix.csv) has 136 mutant runs: 17 controls, five idle and three under 24 CPU burners each. Every cell failed on its named outcome assertion; every mutation build compiled; the runner checked an empty tracked diff after each restoration. TUnit uses exit code 2 for one failed test here. The matrix records the implementation SHA used by each run. The final V-12 assertion change was followed by fresh PC-31, PC-41 and PC-44 matrices at `eac2dab80a39a47d47e48dcb75ece49a18982402`.
 
+The [unmutated repetition matrix](2026-10-01-card-0778-baseline-repeat.csv) ran both audited classes serially ten times idle and five times under 24 CPU burners at `0d68961ebd368be3fe604a546ef440ab09751551`. All 15 runs passed 17/17 tests, for 255/255 test executions. This includes V-12 and every changed method in both files.
+
 The first PC-44 matrix exposed an earlier, circular assertion: it compared the captured sequence to the runner's read count after the mutant's forbidden extra read. That assertion was repaired to check the known last observed sequence (`2`), then the read count is asserted separately at `readsAfterFailureDecision`. The repaired PC-44 matrix is 8/8 named red.
