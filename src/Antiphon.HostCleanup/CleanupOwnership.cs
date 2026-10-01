@@ -14,6 +14,8 @@ public static class CleanupOwnership
         if (owner.Pid <= 0 || owner.ProcessStart == default)
             return "owner_identity_unknown";
         if (!owner.NestedCustodyComplete) return "nested_custody_missing";
+        if (owner.HasNestedExecutor && owner.NestedExecutorLiveness is null)
+            return "executor_liveness_unknown";
         if (owner.NestedExecutorLiveness == OwnerLiveness.Alive) return "executor_live";
         if (owner.NestedExecutorLiveness is OwnerLiveness.Unknown or OwnerLiveness.Reused)
             return "executor_liveness_unknown";

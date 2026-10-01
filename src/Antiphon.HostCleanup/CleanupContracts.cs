@@ -24,7 +24,8 @@ public sealed record CleanupOwner(
     bool EvidencePreserved,
     bool SlotBound,
     bool NestedCustodyComplete,
-    OwnerLiveness? NestedExecutorLiveness = null);
+    OwnerLiveness? NestedExecutorLiveness = null,
+    bool HasNestedExecutor = false);
 
 public sealed record CleanupEntry(
     string Path,
