@@ -235,7 +235,7 @@ public sealed class CheckpointSlotContractTests
         const string reflected = "C833-REFLECTED-TOKEN";
         var secret = SlotDiagnostic.Answer("acquire", 400, "build_slot_invalid",
             "reflected " + reflected + " at https://user:password@example.test/path?q=secret", 1, reflected);
-        secret.Line("safe").ShouldNotContain(reflected, "token-absent");
+        secret.Line("safe").Contains(reflected, StringComparison.Ordinal).ShouldBeFalse("token-absent");
         secret.Line("safe").ShouldNotContain("password");
         secret.Line("safe").ShouldNotContain("q=secret");
         var reflectedHandler = new ScriptedHttpHandler();
@@ -245,7 +245,8 @@ public sealed class CheckpointSlotContractTests
         var reflectedClient = new BuildSlotClient(reflectedHandler, "http://slots.test/build-slots",
             pid: 100, processStartUtc: Start, sensitiveToken: reflected, log: captured.Add);
         var refused = await reflectedClient.AcquireAsync(Enabled, "label", CancellationToken.None);
-        refused.Diagnostic!.Detail.ShouldNotContain(reflected, "token-absent: acquisition diagnostic");
+        refused.Diagnostic!.Detail!.Contains(reflected, StringComparison.Ordinal)
+            .ShouldBeFalse("token-absent: acquisition diagnostic");
         captured.ShouldAllBe(line => !line.Contains(reflected, StringComparison.Ordinal));
         var log = new System.Collections.Concurrent.ConcurrentQueue<string>();
         var client = new BuildSlotClient(new SplitRefusalHandler(), "http://slots.test/build-slots",
