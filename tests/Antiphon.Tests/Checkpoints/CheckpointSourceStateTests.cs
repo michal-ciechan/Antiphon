@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Buffers.Binary;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Antiphon.Checkpoints;
@@ -21,6 +23,24 @@ public sealed class CheckpointSourceStateTests
         clean.CaptureStatus.ShouldBe("known");
         clean.DirtyFiles.ShouldBe(0);
         clean.Commit.ShouldBe(repo.Git("rev-parse", "HEAD").Trim());
+        // Independent framing vector for a clean tree: version byte, HEAD bytes,
+        // then three empty records (porcelain, HEAD diff, cached diff).
+        using (var framed = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
+        {
+            static void Frame(IncrementalHash hash, byte[] bytes)
+            {
+                Span<byte> length = stackalloc byte[8];
+                BinaryPrimitives.WriteInt64BigEndian(length, bytes.Length);
+                hash.AppendData(length);
+                hash.AppendData(bytes);
+            }
+            Frame(framed, [1]);
+            Frame(framed, Encoding.UTF8.GetBytes(clean.Commit!));
+            Frame(framed, []);
+            Frame(framed, []);
+            Frame(framed, []);
+            clean.Fingerprint.ShouldBe(Convert.ToHexStringLower(framed.GetHashAndReset()), "fixed-vector-parity");
+        }
 
         repo.Write("bin-c835/generated.txt", "ignored");
         repo.Write("obj/generated.txt", "ignored");
@@ -50,6 +70,22 @@ public sealed class CheckpointSourceStateTests
         var restoredWorktree = reader.Capture(repo.Root);
         restoredWorktree.DirtyFiles.ShouldBe(1, "staged-with-worktree-restored");
         restoredWorktree.Fingerprint.ShouldNotBe(clean.Fingerprint);
+
+        // Keep porcelain bytes and the HEAD-to-worktree diff identical while the
+        // index-only content changes. This fails if cached diff bytes are omitted.
+        repo.Git("restore", "--staged", "--worktree", "seed.txt");
+        repo.Write("seed.txt", "index first\n");
+        repo.Git("add", "seed.txt");
+        repo.Write("seed.txt", "seed\n");
+        var firstIndex = reader.Capture(repo.Root);
+        var firstStatus = repo.Git("status", "--porcelain=v1", "--", "seed.txt");
+        repo.Write("seed.txt", "index second\n");
+        repo.Git("add", "seed.txt");
+        repo.Write("seed.txt", "seed\n");
+        var secondIndex = reader.Capture(repo.Root);
+        repo.Git("status", "--porcelain=v1", "--", "seed.txt").ShouldBe(firstStatus);
+        secondIndex.DirtyFiles.ShouldBe(firstIndex.DirtyFiles);
+        secondIndex.Fingerprint.ShouldNotBe(firstIndex.Fingerprint, "index-only-content-change");
 
         repo.Git("restore", "--staged", "--worktree", "seed.txt");
         repo.Write("seed.txt", "first edit");

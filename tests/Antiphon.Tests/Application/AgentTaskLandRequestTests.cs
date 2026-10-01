@@ -117,6 +117,7 @@ public class AgentTaskLandRequestTests
             Id = Guid.NewGuid(), Stage = OrchestrationStage.Review, Outcome = StageOutcomeKind.Clean,
             Source = StageOutcomeSource.Delegate, SubjectTaskId = task.Id, StageTaskId = Guid.NewGuid(),
             ReviewedSourceSha = caseName == "wrong-sha" ? new string('b', 40) : sha,
+            ReviewedSourceClean = true,
             ReviewedSourceRef = caseName == "wrong-ref" ? "refs/heads/other" : "refs/heads/" + task.WorktreeBranch,
             ReviewedRepositoryPath = task.RepoPath,
             CommissionedRound = caseName == "interim" ? VerificationRound.Interim : VerificationRound.Final,
@@ -163,7 +164,8 @@ public class AgentTaskLandRequestTests
         {
             Id = Guid.NewGuid(), Stage = OrchestrationStage.Review, Outcome = StageOutcomeKind.Clean,
             Source = StageOutcomeSource.Delegate, SubjectTaskId = task.Id, StageTaskId = Guid.NewGuid(),
-            ReviewedSourceSha = sha, ReviewedSourceRef = "refs/heads/" + task.WorktreeBranch,
+            ReviewedSourceSha = sha, ReviewedSourceClean = true,
+            ReviewedSourceRef = "refs/heads/" + task.WorktreeBranch,
             ReviewedRepositoryPath = task.RepoPath, CommissionedRound = VerificationRound.Final,
             OrdinaryScopeCompleted = VerificationScope.Full, RecordedAt = DateTime.UtcNow,
         };
@@ -216,7 +218,8 @@ public class AgentTaskLandRequestTests
         {
             Id = Guid.NewGuid(), Stage = OrchestrationStage.Review, Outcome = StageOutcomeKind.Clean,
             Source = StageOutcomeSource.Delegate, SubjectTaskId = task.Id, StageTaskId = Guid.NewGuid(),
-            ReviewedSourceSha = sha, ReviewedSourceRef = "refs/heads/" + task.WorktreeBranch,
+            ReviewedSourceSha = sha, ReviewedSourceClean = true,
+            ReviewedSourceRef = "refs/heads/" + task.WorktreeBranch,
             ReviewedRepositoryPath = task.RepoPath, CommissionedRound = VerificationRound.Final,
             OrdinaryScopeCompleted = VerificationScope.Full, RecordedAt = DateTime.UtcNow,
         };

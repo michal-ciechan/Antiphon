@@ -412,6 +412,36 @@ public sealed class CheckpointSourceApprovalTests
             (await fresh.StageOutcomes.AsNoTracking().SingleAsync(o => o.Id == finding.Id))
                 .ReviewedSourceClean.ShouldBe(assertion, "new-row-roundtrip");
         }
+
+        await using (var world = await C544World.CreateAsync())
+        {
+            var old = await world.SettleReviewAsync(reviewedSourceClean: true);
+            await using var db = world.CreateContext();
+            var service = new StageOutcomeService(db);
+            var originalCount = await db.StageOutcomes.CountAsync();
+            foreach (var body in new[]
+            {
+                new RecordStageFindingRequest("Review", Found: false, ReviewedSourceClean: true),
+                new RecordStageFindingRequest("Verify", Found: false, ReviewedSourceSha: world.OwnerSha,
+                    ReviewedSourceClean: true),
+                new RecordStageFindingRequest("Review", Found: true, ReviewedSourceSha: world.OwnerSha,
+                    ReviewedSourceClean: true),
+            })
+            {
+                var error = await Should.ThrowAsync<ValidationException>(() =>
+                    service.RecordFindingAsync(old.StageTaskId!.Value, body, CancellationToken.None));
+                error.Code.ShouldBe("review_evidence_fields_restricted");
+            }
+            (await db.StageOutcomes.CountAsync()).ShouldBe(originalCount, "invalid-override-adds-no-row");
+
+            var unrelated = await world.CreateTaskAsync(world.FinalReview("Unrelated review."));
+            var denied = await Should.ThrowAsync<ConflictException>(() =>
+                service.RecordFindingAsync(unrelated.Id,
+                    new RecordStageFindingRequest("Review", Found: false,
+                        ReviewedSourceSha: world.OwnerSha, ReviewedSourceClean: true), CancellationToken.None));
+            denied.Code.ShouldBe("review_evidence_subject_unauthorized");
+            (await db.StageOutcomes.CountAsync()).ShouldBe(originalCount, "unauthorized-override-adds-no-row");
+        }
     }
 
     private static async Task SetLatchAsync(LandingProtocolHarness h, bool latched)

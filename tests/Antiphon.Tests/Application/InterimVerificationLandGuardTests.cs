@@ -351,7 +351,8 @@ public sealed class InterimVerificationLandGuardTests
         {
             Id = Guid.NewGuid(), Stage = OrchestrationStage.Review, Outcome = StageOutcomeKind.Clean,
             Source = StageOutcomeSource.Delegate, SubjectTaskId = h.Git.TaskId, StageTaskId = Guid.NewGuid(),
-            ReviewedSourceSha = sha, ReviewedSourceRef = h.Git.SourceRef, ReviewedRepositoryPath = h.Git.Repository,
+            ReviewedSourceSha = sha, ReviewedSourceClean = true,
+            ReviewedSourceRef = h.Git.SourceRef, ReviewedRepositoryPath = h.Git.Repository,
             VerificationProfileVersion = 1, CommissionedRound = VerificationRound.Final,
             OrdinaryScopeCompleted = VerificationScope.Full, Detail = "c544 final full review", RecordedAt = DateTime.UtcNow,
         };
