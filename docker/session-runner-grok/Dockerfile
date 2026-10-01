@@ -84,7 +84,7 @@ RUN apt-get update \
 # in its package root, so a binary-only copy is not an install. Root-owned, not writable by 1654.
 # No CODEX_HOME, credential file or credential name is ever a layer: the runner's home lives on
 # the runner-state volume (docker/stack/init-state.sh), signed in there by the operator.
-ARG CODEX_VERSION=0.160.0
+ARG CODEX_VERSION=0.156.1
 ARG CODEX_SHA512=288ffbdcea86ac7991d7cb3bc9aec4d4da95eab4f4cb7971af4b3c4b5a91da6eb353a41117f1e5479dbd8c02cb879be37549ec453e00868c6dd1ac5be2463df6
 RUN mkdir -p /opt/codex-download "/opt/codex/${CODEX_VERSION}" /opt/codex-probe/home \
  && curl -fsSL -o /opt/codex-download/codex.tgz "https://registry.npmjs.org/@openai/codex/-/codex-${CODEX_VERSION}-linux-x64.tgz" \
