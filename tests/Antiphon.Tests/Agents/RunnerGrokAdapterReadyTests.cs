@@ -251,22 +251,18 @@ public class RunnerGrokAdapterReadyTests
             TimeProvider = utcClock });
         await utcClock.FirstPollInstalled.WaitAsync(TimeSpan.FromSeconds(5));
         utcClock.AdvanceUtc(TimeSpan.FromSeconds(3));
-        for (var tick = 0; tick < 100 && utcReads < 3 && !wait.IsCompleted; tick++)
-        {
-            utcClock.Advance(TimeSpan.FromMilliseconds(5));
-            await Task.Delay(1);
-        }
+        var nextPoll = utcClock.NextPollInstalled();
+        utcClock.Advance(TimeSpan.FromMilliseconds(5));
+        await Task.WhenAny(wait, nextPoll).WaitAsync(TimeSpan.FromSeconds(5));
         utcReads.ShouldBeGreaterThanOrEqualTo(2);
-        // Let a completed read settle its continuation without moving the fake
-        // monotonic clock. A UTC-based mutant must finish at this point.
-        await Task.WhenAny(wait, Task.Delay(5000));
         wait.IsCompleted.ShouldBeFalse("readyAfterUtcJumpWithoutElapsed");
-        for (var tick = 0; tick < 60 && !wait.IsCompleted; tick++)
+        for (var tick = 0; tick < 400 && !wait.IsCompleted; tick++)
         {
-            utcClock.Advance(TimeSpan.FromMilliseconds(50));
-            await Task.Delay(1);
+            nextPoll = utcClock.NextPollInstalled();
+            utcClock.Advance(TimeSpan.FromMilliseconds(5));
+            await Task.WhenAny(wait, nextPoll).WaitAsync(TimeSpan.FromSeconds(5));
         }
-        (await wait.WaitAsync(TimeSpan.FromSeconds(10))).ShouldBeTrue();
+        (await wait.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeTrue();
     }
 
     [Test]
@@ -519,6 +515,7 @@ public class RunnerGrokAdapterReadyTests
     private sealed class UtcJumpClock : TimeProvider
     {
         private readonly FakeTimeProvider _timer = new();
+        private readonly Queue<TaskCompletionSource> _nextPolls = new();
         private readonly TaskCompletionSource _firstPoll =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private TimeSpan _utcOffset;
@@ -530,8 +527,20 @@ public class RunnerGrokAdapterReadyTests
             TimeSpan dueTime, TimeSpan period)
         {
             var timer = _timer.CreateTimer(callback, state, dueTime, period);
-            if (dueTime == TimeSpan.FromMilliseconds(5)) _firstPoll.TrySetResult();
+            if (dueTime == TimeSpan.FromMilliseconds(5))
+            {
+                _firstPoll.TrySetResult();
+                TaskCompletionSource? next;
+                lock (_nextPolls) next = _nextPolls.Count > 0 ? _nextPolls.Dequeue() : null;
+                next?.TrySetResult();
+            }
             return timer;
+        }
+        public Task NextPollInstalled()
+        {
+            var next = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            lock (_nextPolls) _nextPolls.Enqueue(next);
+            return next.Task;
         }
         public void Advance(TimeSpan amount) => _timer.Advance(amount);
         public void AdvanceUtc(TimeSpan amount) => _utcOffset += amount;
