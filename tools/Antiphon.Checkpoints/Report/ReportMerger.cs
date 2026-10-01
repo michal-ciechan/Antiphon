@@ -8,6 +8,16 @@ public static class ReportMerger
             throw new InvalidOperationException("no runs to merge");
         var ordered = runs.OrderBy(run => run.EndedAt).ToList();
         var latest = ordered[^1];
+        // Every attempt contributes to the merged run's provenance, including a row later
+        // replaced by the same checkpoint ID. Validate before replacement can hide it.
+        if (ordered.Any(run => run.SchemaVersion != 2 || run.Commit != latest.Commit ||
+            !ReportValidator.IsSourceEligible(run.Source, latest.Commit) ||
+            run.Source.Start.Fingerprint != latest.Source.Start.Fingerprint ||
+            run.Rows.Any(row => !ReportValidator.IsSourceEligible(row.Source, latest.Commit) ||
+                row.Source.Start.Fingerprint != latest.Source.Start.Fingerprint ||
+                (row.Command is null ? row.Source.BuildSource != latest.Source.BuildSource
+                    : row.Source.BuildSource != "notApplicable"))))
+            throw new InvalidOperationException("cannot merge incompatible or unknown checkpoint source evidence");
         var byId = new Dictionary<string, (ReportRow Row, int Earlier)>(StringComparer.Ordinal);
         foreach (var run in ordered)
         {
@@ -19,14 +29,6 @@ public static class ReportMerger
                     byId[row.Id] = (Clone(row, 0), 0);
             }
         }
-
-        var retained = byId.Values.Select(item => item.Row).ToList();
-        if (latest.SchemaVersion != 2 || !ReportValidator.IsSourceEligible(latest.Source, latest.Commit) ||
-            retained.Any(row => !ReportValidator.IsSourceEligible(row.Source, latest.Commit) ||
-                row.Source.Start.Fingerprint != latest.Source.Start.Fingerprint ||
-                (row.Command is null ? row.Source.BuildSource != latest.Source.BuildSource
-                    : row.Source.BuildSource != "notApplicable")))
-            throw new InvalidOperationException("cannot merge incompatible or unknown checkpoint source evidence");
 
         var merged = new ReportModel
         {
