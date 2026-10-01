@@ -51,12 +51,13 @@ public sealed class HerdrPaneDisposalService
         var refusal = _identity.Refusal(request, o);
         var now = _time.GetUtcNow();
         var p = o.Pane;
-        var preview = new HerdrPaneDisposalPreview(Guid.NewGuid(), now.AddMinutes(2), p.PaneId,
+        var rawPreview = new HerdrPaneDisposalPreview(Guid.NewGuid(), now.AddMinutes(2), p.PaneId,
             request.ExpectedSessionId, request.ExpectedNativeSessionId, p.WorkspaceId, p.TabId, p.TerminalId,
             o.WorkspaceLabel, o.TabLabel, p.Label, o.Backend.Version, o.Backend.Protocol,
             o.Shell?.Pid, o.Foreground, o.Claims, o.EmptyTab, refusal is null, true, o.Complete,
             refusal is null ? [] : [refusal], o.Backend.InstanceId, o.Shell, o.Affected,
             PlannedTerminationPids: refusal is null ? o.Affected.Select(f => f.Pid).ToArray() : []);
+        var preview = HerdrDisposalRedactor.Project(rawPreview);
         lock (_previewGate)
         {
             foreach (var id in _previews.Where(p => p.Value.Preview.ExpiresAtUtc <= now).Select(p => p.Key).ToArray()) _previews.Remove(id);

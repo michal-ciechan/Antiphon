@@ -236,6 +236,15 @@ incomplete inventories refuse. A current standing target requires persisted Stop
 and no active/queued launch. Server ownership refusals return an empty preview ID;
 Stop must be followed by a fresh inspection. Raw argv, environment, cwd/provider
 home and transcript contents are never returned or persisted in disposal evidence.
+Preview and newly persisted reviewed evidence mask a whole workspace, tab, pane,
+claim description or backend-version value as `[redacted]` when it contains a path
+separator, drive prefix or control character. Process executable display names use
+only their final leaf on either OS; unsafe or empty leaves become null. Plain safe
+labels and typed identity fields remain intact. Classification, exact process
+stamps and claim matching use the raw observation before this display projection.
+This text policy applies on Windows and Unix, including refused previews; it does
+not make native Unix process census or locator deletion operational (CARD-0864).
+Records persisted before this policy was activated are not rewritten.
 
 The guard is **best effort**, `guardMode: antiphon-best-effort`, `atomicClose: false`.
 While holding Antiphon's pane lease, execution persists intent and freshly checks
