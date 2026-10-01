@@ -18,46 +18,47 @@ public sealed class HerdrPaneDisposalRedactionTests
     private static readonly DateTimeOffset FixedNow = new(2026, 10, 1, 0, 0, 0, TimeSpan.Zero);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    private static void AssertV1Facts(HerdrPaneDisposalPreview p, Guid sessionId, string? instanceId, bool complete)
+    private static void AssertV1Facts(HerdrPaneDisposalPreview p, Guid sessionId, string? instanceId, bool complete, string surface, string caseKey)
     {
-        p.PreviewId.ShouldNotBe(Guid.Empty, "v1-preview-id");
-        p.ExpiresAtUtc.ShouldBe(FixedNow.AddMinutes(2), "v1-expiry");
-        p.PaneId.ShouldBe("w1:p2", "v1-pane-id");
-        p.ExpectedSessionId.ShouldBe(sessionId, "v1-expected-session-id");
-        p.ExpectedNativeSessionId.ShouldBeNull("v1-expected-native-id");
-        p.WorkspaceId.ShouldBe("w1", "v1-workspace-id");
-        p.TabId.ShouldBe("w1:t2", "v1-tab-id");
-        p.TerminalId.ShouldBe("term_000000000002", "v1-terminal-id");
-        p.BackendProtocol.ShouldBe(20, "v1-backend-protocol");
-        p.BackendInstanceId.ShouldBe(instanceId, "v1-backend-instance-id");
-        p.ShellPid.ShouldBe(4242, "v1-shell-pid");
-        p.Shell.ShouldNotBeNull("v1-shell-present");
-        p.Shell!.Pid.ShouldBe(4242, "v1-shell-record-pid");
-        p.Shell.ExecutableName.ShouldBe("pwsh.exe", "v1-shell-name");
-        p.Shell.StartedAtUtc.ShouldBe(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), "v1-shell-start");
-        p.Shell.ParentPid.ShouldBeNull("v1-shell-parent");
-        p.Shell.NativeSessionIds.ShouldBeNull("v1-shell-native-ids");
-        p.Foreground.ShouldBeEmpty("v1-foreground-empty");
-        p.AffectedProcesses.ShouldNotBeNull("v1-affected-present");
-        p.AffectedProcesses!.Count.ShouldBe(1, "v1-affected-count");
-        p.AffectedProcesses[0].Pid.ShouldBe(4242, "v1-affected-pid");
-        p.AffectedProcesses[0].ExecutableName.ShouldBe("pwsh.exe", "v1-affected-name");
-        p.AffectedProcesses[0].StartedAtUtc.ShouldBe(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), "v1-affected-start");
-        p.AffectedProcesses[0].ParentPid.ShouldBeNull("v1-affected-parent");
-        p.AffectedProcesses[0].NativeSessionIds.ShouldBeNull("v1-affected-native-ids");
-        p.Claims.Count.ShouldBe(1, "v1-claims-count");
-        p.Claims[0].SessionId.ShouldBe(sessionId, "v1-claim-session-id");
-        p.Claims[0].Live.ShouldBeFalse("v1-claim-live");
-        p.Claims[0].ChildPid.ShouldBeNull("v1-claim-child-pid");
-        p.Claims[0].ChildStartedAtUtc.ShouldBeNull("v1-claim-child-start");
-        p.WouldLeaveTabEmpty.ShouldBe(false, "v1-would-leave-tab-empty");
-        p.Eligible.ShouldBe(complete, "v1-eligible");
-        p.GuardAvailable.ShouldBeTrue("v1-guard-available");
-        p.ProcessInventoryComplete.ShouldBe(complete, "v1-inventory-complete");
-        p.Blockers.ShouldBe(complete ? Array.Empty<string>() : [HerdrPaneDisposalCodes.IdentityUnproven], "v1-blockers");
-        p.GuardMode.ShouldBe("antiphon-best-effort", "v1-guard-mode");
-        p.AtomicClose.ShouldBeFalse("v1-atomic-close");
-        p.PlannedTerminationPids.ShouldBe(complete ? [4242] : Array.Empty<int>(), "v1-planned-pids");
+        string Label(string field) => $"v1-{surface}-{field}-{caseKey}";
+        p.PreviewId.ShouldNotBe(Guid.Empty, Label("preview-id"));
+        p.ExpiresAtUtc.ShouldBe(FixedNow.AddMinutes(2), Label("expiry"));
+        p.PaneId.ShouldBe("w1:p2", Label("pane-id"));
+        p.ExpectedSessionId.ShouldBe(sessionId, Label("expected-session-id"));
+        p.ExpectedNativeSessionId.ShouldBeNull(Label("expected-native-id"));
+        p.WorkspaceId.ShouldBe("w1", Label("workspace-id"));
+        p.TabId.ShouldBe("w1:t2", Label("tab-id"));
+        p.TerminalId.ShouldBe("term_000000000002", Label("terminal-id"));
+        p.BackendProtocol.ShouldBe(20, Label("backend-protocol"));
+        p.BackendInstanceId.ShouldBe(instanceId, Label("backend-instance-id"));
+        p.ShellPid.ShouldBe(4242, Label("shell-pid"));
+        p.Shell.ShouldNotBeNull(Label("shell-present"));
+        p.Shell!.Pid.ShouldBe(4242, Label("shell-record-pid"));
+        p.Shell.ExecutableName.ShouldBe("pwsh.exe", Label("shell-name"));
+        p.Shell.StartedAtUtc.ShouldBe(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), Label("shell-start"));
+        p.Shell.ParentPid.ShouldBeNull(Label("shell-parent"));
+        p.Shell.NativeSessionIds.ShouldBeNull(Label("shell-native-ids"));
+        p.Foreground.ShouldBeEmpty(Label("foreground-empty"));
+        p.AffectedProcesses.ShouldNotBeNull(Label("affected-present"));
+        p.AffectedProcesses!.Count.ShouldBe(1, Label("affected-count"));
+        p.AffectedProcesses[0].Pid.ShouldBe(4242, Label("affected-pid"));
+        p.AffectedProcesses[0].ExecutableName.ShouldBe("pwsh.exe", Label("affected-name"));
+        p.AffectedProcesses[0].StartedAtUtc.ShouldBe(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), Label("affected-start"));
+        p.AffectedProcesses[0].ParentPid.ShouldBeNull(Label("affected-parent"));
+        p.AffectedProcesses[0].NativeSessionIds.ShouldBeNull(Label("affected-native-ids"));
+        p.Claims.Count.ShouldBe(1, Label("claims-count"));
+        p.Claims[0].SessionId.ShouldBe(sessionId, Label("claim-session-id"));
+        p.Claims[0].Live.ShouldBeFalse(Label("claim-live"));
+        p.Claims[0].ChildPid.ShouldBeNull(Label("claim-child-pid"));
+        p.Claims[0].ChildStartedAtUtc.ShouldBeNull(Label("claim-child-start"));
+        p.WouldLeaveTabEmpty.ShouldBe(false, Label("would-leave-tab-empty"));
+        p.Eligible.ShouldBe(complete, Label("eligible"));
+        p.GuardAvailable.ShouldBeTrue(Label("guard-available"));
+        p.ProcessInventoryComplete.ShouldBe(complete, Label("inventory-complete"));
+        p.Blockers.ShouldBe(complete ? Array.Empty<string>() : [HerdrPaneDisposalCodes.IdentityUnproven], Label("blockers"));
+        p.GuardMode.ShouldBe("antiphon-best-effort", Label("guard-mode"));
+        p.AtomicClose.ShouldBeFalse(Label("atomic-close"));
+        p.PlannedTerminationPids.ShouldBe(complete ? [4242] : Array.Empty<int>(), Label("planned-pids"));
     }
 
     [Test]
@@ -102,7 +103,7 @@ public sealed class HerdrPaneDisposalRedactionTests
             get.PreviewId.ShouldBe(post.PreviewId, "v1-get-preview-id");
             disk.PreviewId.ShouldBe(post.PreviewId, "v1-disk-preview-id");
             if (value.Contains("c866-user", StringComparison.Ordinal)) w.AssertCanaryAbsent("c866-user");
-            foreach (var p in new[] { post, get, disk })
+            foreach (var (p, surface) in new[] { (post, "post"), (get, "get"), (disk, "disk") })
             {
                 p.WorkspaceLabel.ShouldBe(Mask, $"display-field-masked {caseKey} workspace");
                 p.TabLabel.ShouldBe(Mask, $"display-field-masked {caseKey} tab");
@@ -111,7 +112,7 @@ public sealed class HerdrPaneDisposalRedactionTests
                 p.Claims[0].Source.ShouldBe(Mask, $"display-field-masked {caseKey} source");
                 p.Claims[0].Origin.ShouldBe(Mask, $"display-field-masked {caseKey} origin");
                 p.Claims[0].AgentKind.ShouldBe(Mask, $"display-field-masked {caseKey} kind");
-                AssertV1Facts(p, w.Fixture.SessionId, instanceId, complete);
+                AssertV1Facts(p, w.Fixture.SessionId, instanceId, complete, surface, caseKey);
             }
             receipt.Outcome.ShouldBe(complete ? "Closed" : "Refused");
             receipt.Code.ShouldBe(complete ? "herdr_pane_closed" : HerdrPaneDisposalCodes.IdentityUnproven,
@@ -440,6 +441,7 @@ public sealed class HerdrPaneDisposalRedactionTests
             response.EnsureSuccessStatusCode();
             var postJson = await response.Content.ReadAsStringAsync();
             var post = JsonSerializer.Deserialize<HerdrPaneDisposalPreview>(postJson, Json)!;
+            post.PreviewId.ShouldNotBe(Guid.Empty, "post-preview-id");
             using var stored = await _http.GetAsync($"/herdr/pane-disposals/previews/{post.PreviewId}");
             stored.EnsureSuccessStatusCode(); var getJson = await stored.Content.ReadAsStringAsync();
             var get = JsonSerializer.Deserialize<HerdrPaneDisposalPreview>(getJson, Json)!;
