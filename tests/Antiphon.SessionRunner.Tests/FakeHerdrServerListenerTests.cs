@@ -280,6 +280,35 @@ public class FakeHerdrServerListenerTests
     }
 
     [Test]
+    public async Task C801_BadJsonDoesNotEndListener()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start(); await fake.WaitUntilListeningAsync();
+        Stream stream;
+        if (OperatingSystem.IsWindows())
+        {
+            var pipe = new System.IO.Pipes.NamedPipeClientStream(".", fake.EndpointPath,
+                System.IO.Pipes.PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous);
+            await pipe.ConnectAsync(500);
+            stream = pipe;
+        }
+        else
+        {
+            var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+            await socket.ConnectAsync(new UnixDomainSocketEndPoint(fake.EndpointPath));
+            stream = new NetworkStream(socket, ownsSocket: true);
+        }
+        await using (stream)
+        {
+            var bytes = Encoding.UTF8.GetBytes("not-json\n");
+            await stream.WriteAsync(bytes);
+        }
+        (await Client(fake).ConnectAndValidateAsync(CancellationToken.None)).Protocol.ShouldBe(20,
+            "C801_BAD_JSON_IS_PER_CONNECTION");
+        fake.ConnectionFaults.ShouldContain(ex => ex is System.Text.Json.JsonException);
+    }
+
+    [Test]
     public async Task C801_FatalFaultClosesListener()
     {
         await using var fake = new FakeHerdrServer();
@@ -301,7 +330,7 @@ public class FakeHerdrServerListenerTests
         try
         {
             Should.Throw<IOException>(() => new FakeHerdrEndpoint())
-                .Message.ShouldContain("sun_path", "C801_PATH_LIMIT_ENFORCED");
+                .Message.ShouldContain("sun_path", customMessage: "C801_PATH_LIMIT_ENFORCED");
         }
         finally { FakeHerdrEndpoint.SocketPathLimitOverride.Value = null; }
     }
@@ -335,5 +364,31 @@ public class FakeHerdrServerListenerTests
             File.Delete(Path.Combine(directory, "owner"));
             Directory.Delete(directory);
         }
+    }
+
+    [Test]
+    public async Task C801_CleanupCannotReplacePrimaryFailure()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        string? path = null;
+        Exception? observed = null;
+        try
+        {
+            await using var endpoint = new FakeHerdrEndpoint();
+            path = endpoint.Path;
+            File.WriteAllText(path, "foreign replacement");
+            throw new InvalidOperationException("C801_PRIMARY_FAILURE");
+        }
+        catch (Exception ex) { observed = ex; }
+        finally
+        {
+            if (path is not null)
+            {
+                File.Delete(path);
+                File.Delete(Path.Combine(Path.GetDirectoryName(path)!, "owner"));
+                Directory.Delete(Path.GetDirectoryName(path)!);
+            }
+        }
+        observed.ShouldBeOfType<InvalidOperationException>().Message.ShouldBe("C801_PRIMARY_FAILURE");
     }
 }

@@ -319,7 +319,7 @@ cancel requests and join owned tasks in finally even when an assertion fails.
 
 ### D5. Preserve execution by fixing fixture prerequisites, not skipping mixed classes
 
-All 110 + 497 existing results must execute on Linux and Windows. There are independent Windows
+All 110 + 497 existing results remain selected on Windows. Linux accepts only the named CARD-0863/0864/0865/0866 skips and the one CARD-0871 PtyHost adoption skip. There are independent Windows
 assumptions exposed by the transport fix:
 
 - Parity resolves `fakeclaude.exe`/`fakegrok.exe` and skips when missing. Use the existing
@@ -441,13 +441,13 @@ branch. No rebase/amend/reset of this assigned branch; landing owns target integ
 | V-2 | Tokenless readiness faults promptly on bind/accept failure; loop observed; default deadline and disposal settle waits |
 | V-3 | Unique short endpoints, restrictive Unix permissions, collision refusal, parallel fake isolation, owned cleanup/rebind |
 | V-4 | Peer PID/start identity from the connected server; failed identity lookup keeps disposal unavailable |
-| V-5 | All eight Antiphon.Tests classes: exactly 110 executed, 0 skipped, per-class counts above |
-| V-6 | All 24 runner classes: exactly 497 executed, 0 skipped, per-class counts above |
+| V-5 | All eight Antiphon.Tests classes: Linux 95 executed, 15 skipped (CARD-0865/0866); Windows 110 executed, 0 skipped; no failures |
+| V-6 | All 24 existing runner classes plus two transport classes and the classification guard: Linux 497 executed, 32 skipped (CARD-0863/0864/0871); Windows 529 executed, 0 skipped; no failures |
 | R-1 | Existing 16 client tests, including raw protocol errors and subscription replay, remain green on Windows and Linux |
 | R-2 | Assembly-wide Unit-category smoke completes with fresh TRX; classification metadata remains valid |
 | R-3 | Real runner startup barrier and native PtyHost mixed rows retain physical process/output assertions on both OSes |
 
-New `FakeHerdrServerListenerTests` has **12 unparameterized results**, all OSes:
+`FakeHerdrServerListenerTests` now has **19 unparameterized results**, all OSes: the original 12 below plus seven review regressions for cross-process lease preservation, empty and malformed connections, fatal listener shutdown, path length, changed/symlink socket preservation and cleanup that retains the primary failure.
 `C801_StartupFailureFaultsAllWaiters`, `C801_AcceptFailureFaultsLaterWaiters`,
 `C801_UnawaitedFailureIsObserved`, `C801_DefaultReadinessDeadline`,
 `C801_CallerCancellationDoesNotStopListener`, `C801_DisposeBeforeReadySettlesWait`,
@@ -578,7 +578,7 @@ and DB evidence bounded and avoid cross-assembly resource contention. No unliste
 
 | Commission | Platform / SHA | Exact selection and receipt | Estimate |
 |---|---|---|---:|
-| W-1 (separate task, not a fifteenth checkpoint) | `-Platform Windows`, pinned to final Linux-tested Code SHA | Extract the same manifest with Windows estimates; run `--rows CP-2,CP-3,CP-4,CP-5,CP-6,CP-7,CP-8,CP-9,CP-10,CP-11,CP-12,CP-13,CP-14`. Fresh named-pipe, peer PID/start-time, listener/crash, native process, HTTP/script and Unit TRX. CP-2..CP-13 total 632 results (497 existing runner + 24 new + 1 classification + 110 server), zero failed/skipped. CP-14 has its separate Unit floor. | 88 min |
+| W-1 (separate task, not a fifteenth checkpoint) | `-Platform Windows`, pinned to final Linux-tested Code SHA | Extract the same manifest with Windows estimates; run `--rows CP-2,CP-3,CP-4,CP-5,CP-6,CP-7,CP-8,CP-9,CP-10,CP-11,CP-12,CP-13,CP-14`. Fresh named-pipe, peer PID/start-time, listener/crash, native process, HTTP/script and Unit TRX. CP-2..CP-13 total 639 Windows results (497 existing runner + 31 new + 1 classification + 110 server), zero failed/skipped. CP-14 has its separate Unit floor. | 88 min |
 
 CP-1 is the intermediate Linux slice check; W-1 repeats those assertions through CP-2 at the
 final SHA, not another intermediate build. A Windows Code task that implements S1-S2 itself
@@ -603,7 +603,7 @@ would also re-spend hours on known unrelated Linux failures. The explicit target
 that every discovered fake consumer can start, execute and dispose without a listener hang;
 the source closure bounds it. Whole-assembly assurance remains the nightly and CARD-0856 lane work.
 
-Each targeted row requires its exact per-class count, **0 skipped and 0 failed**, on both OSes.
+Each targeted row requires its exact per-class count and **0 failed** on both OSes. Linux skip counts are CP-6=8, CP-7=1, CP-9=23, CP-10=13 and CP-11=2; every other row has zero skips. Windows has zero skips throughout.
 A smaller count is not accepted merely because the manifest Min floor passed. CP-14 is the only
 broad row: record any known inherited Unit failures by exact name; an unexplained/new failure is
 red. Do not run the old fake-dependent baseline blindly with `--baseline`: it can reproduce the
@@ -634,13 +634,13 @@ syntax subset of YAML accepted by `ManifestLoader`. Only this plan is tracked.
      follow-on results in CP-6/9/10/11. Windows runs every result and retains its full floor. -->
 | CP | After | Build | Group | Exact filter | Covers | Expected executed | Min | EstimatedMinutes | EstimatedMinutesWindows | Serial |
 |---|---|---|---|---|---|---|---:|---:|---:|---|
-| CP-1 | S1-S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c801-core/` | initial-transport | manifest CP-1.filter | V-1, V-2, V-3, V-4, R-1 | Linux/Windows: 41 executed (12+12+16+1), 0 failed/skipped | 41 | 8 | 10 | true |
+| CP-1 | S1-S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c801-core/` | initial-transport | manifest CP-1.filter | V-1, V-2, V-3, V-4, R-1 | Linux/Windows: 48 executed (19+12+16+1), 0 failed/skipped | 48 | 8 | 10 | true |
 | CP-2 | S1-S4 | `tests/Antiphon.SessionRunner.Tests -> bin-c801-runner/` | final-transport | manifest CP-2.filter | V-1, V-2, V-3, V-4, V-6, R-1 | Linux/Windows: 41 executed (12+12+16+1), 0 failed/skipped | 41 | 8 | 10 | true |
 | CP-3 | S1-S4 | CP-2 | runner-lifecycle | manifest CP-3.filter | V-6 | Linux/Windows: 82 executed (23+37+22), 0 failed/skipped | 82 | 8 | 10 | true |
 | CP-4 | S1-S4 | CP-2 | runner-placement-kill | manifest CP-4.filter | V-6, R-3 | Linux/Windows: 36 executed (23+6+7), 0 failed/skipped | 36 | 5 | 6 | true |
 | CP-5 | S1-S4 | CP-2 | runner-events-routes | manifest CP-5.filter | V-6 | Linux/Windows: 14 executed (5+4+5), 0 failed/skipped | 14 | 3 | 4 | true |
 | CP-6 | S1-S4 | CP-2 | incidental-rules | manifest CP-6.filter | V-6 | Linux: 30 executed, 8 skipped (CARD-0863); Windows: 38 executed, 0 skipped; 0 failed | 30 | 4 | 5 | true |
-| CP-7 | S1-S4 | CP-2 | incidental-native | manifest CP-7.filter | V-6, R-3 | Linux/Windows: 9 executed (4+3+2), 0 failed/skipped | 9 | 6 | 7 | true |
+| CP-7 | S1-S4 | CP-2 | incidental-native | manifest CP-7.filter | V-6, R-3 | Linux: 8 executed, 1 skipped (CARD-0871); Windows: 9 executed, 0 skipped; 0 failed | 8 | 6 | 7 | true |
 | CP-8 | S1-S4 | CP-2 | runner-labels | manifest CP-8.filter | V-6 | Linux/Windows: 135 executed (3+25+71+36), 0 failed/skipped | 135 | 5 | 6 | true |
 | CP-9 | S1-S4 | CP-2 | runner-disposal | manifest CP-9.filter | V-4, V-6 | Linux: 144 executed, 23 skipped (CARD-0864); Windows: 167 executed, 0 skipped; 0 failed | 144 | 6 | 7 | true |
 | CP-10 | S1-S4 | `tests/Antiphon.Tests -> bin-c801-server/` | server-attach-parity | manifest CP-10.filter | V-5, R-3 | Linux: 27 executed, 13 skipped (CARD-0865); Windows: 40 executed, 0 skipped; 0 failed | 27 | 12 | 14 | true |
@@ -700,8 +700,8 @@ syntax subset of YAML accepted by `ManifestLoader`. Only this plan is tracked.
       "group": "final-transport",
       "filter": "/*/*/(FakeHerdrServerListenerTests*)|(HerdrTransportTests*)|(HerdrClientTests*)|(TestClassificationGuardTests*)/*",
       "expect": ["FakeHerdrServerListenerTests","HerdrTransportTests","HerdrClientTests","TestClassificationGuardTests"],
-      "expectText": "Linux/Windows: 41 executed (12+12+16+1), 0 failed/skipped",
-      "minExecuted": 41,
+      "expectText": "Linux/Windows: 48 executed (19+12+16+1), 0 failed/skipped",
+      "minExecuted": 48,
       "estimatedMinutes": 8,
       "estimatedMinutesWindows": 10,
       "serial": true
@@ -766,8 +766,9 @@ syntax subset of YAML accepted by `ManifestLoader`. Only this plan is tracked.
       "group": "incidental-native",
       "filter": "/*/Antiphon.SessionRunner.Tests/(GrokRulesAdoptionTests*)|(CodexLaunchRefusalTests*)|(RunnerStartupReadinessTests*)/*",
       "expect": ["GrokRulesAdoptionTests","CodexLaunchRefusalTests","RunnerStartupReadinessTests"],
-      "expectText": "Linux/Windows: 9 executed (4+3+2), 0 failed/skipped",
-      "minExecuted": 9,
+      "expectText": "Linux: 8 executed, 1 skipped (CARD-0871); Windows: 9 executed, 0 skipped; 0 failed",
+      "minExecuted": 8,
+      "minExecutedWindows": 9,
       "estimatedMinutes": 6,
       "estimatedMinutesWindows": 7,
       "serial": true
@@ -877,7 +878,7 @@ Static checks completed at the stated source baseline: all eight server and 24 r
 counts match the source census; all 14 manifest IDs are unique; all three isolated build paths
 exist as project directories and satisfy the output-name rule; build reuse stays within its
 slice group; every OR operand has its own parentheses and trailing wildcard; no filter contains
-a Markdown escape. CP-2..CP-13 cover 35 distinct classes and sum to 632 planned results, including
+a Markdown escape. CP-2..CP-13 cover 35 distinct classes and sum to 639 planned Windows results, including
 the 24 new focused cases and one linked classification guard. The PowerShell extraction recipe
 was executed as a data-only check and reproduced the embedded manifest exactly on Linux.
 Time sums are 84 minutes Linux / 98 Windows including CP-1, and 76 / 88 for final CP-2..CP-14.
@@ -899,6 +900,6 @@ the operator; it is not pre-approved by this plan.
 Publish this TestDesign task through the normal caller-owned landing front door after settlement,
 then dispatch Code pinned to this plan's full published SHA. A practical split is S1-S2 plus CP-1,
 then S3-S4 plus CP-2..CP-14, with a final separate W-1 task at the identical Code SHA. The second
-slice must preserve all 607 existing results; no skip stage is commissioned. The source branch
+slice must preserve all 607 existing results in discovery; only the named Linux skips are commissioned. The source branch
 is fast-forward-only; do not rebase/amend/reset pushed commits. The caller resolves land conflicts
 through the landing service, not manual merges in this worktree.
