@@ -1558,8 +1558,28 @@ public sealed class RemoteScriptContractTests
         var output = LinuxShell("repo='" + DelegateScriptRunner.RepoRoot.Replace("'", "'\\''") + "'\n" + """
             root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
             mkdir -p "$root/stage/packages" "$root/stage/npm"
-            truncate -s 12G "$root/bomb"
-            tar --sparse -cf "$root/bomb.tar" -C "$root" --transform='s|^bomb$|packages/bomb|' bomb
+            export C849_BOMB_TAR="$root/bomb.tar"
+            pwsh -NoProfile -Command - <<'PS'
+            $header = [byte[]]::new(512)
+            function Put([int]$offset, [string]$value) {
+                $bytes = [Text.Encoding]::ASCII.GetBytes($value)
+                [Array]::Copy($bytes, 0, $header, $offset, $bytes.Length)
+            }
+            Put 0 'packages/bomb'
+            Put 100 "0000644`0"
+            Put 108 "0000000`0"
+            Put 116 "0000000`0"
+            Put 124 ([Convert]::ToString(12GB, 8).PadLeft(11, '0') + "`0")
+            Put 136 "00000000000`0"
+            for ($i = 148; $i -lt 156; $i++) { $header[$i] = 32 }
+            Put 156 '0'
+            Put 257 "ustar`0"
+            Put 263 '00'
+            $sum = 0
+            foreach ($byte in $header) { $sum += $byte }
+            Put 148 ([Convert]::ToString($sum, 8).PadLeft(6, '0') + "`0 ")
+            [IO.File]::WriteAllBytes($env:C849_BOMB_TAR, $header)
+            PS
             diagnosis="$(pwsh -NoProfile -File "$repo/scripts/c849-import-saved-donor.ps1" -Source "$root/bomb.tar" -Stage "$root/stage")"; code=$?
             printf 'size-bomb code=%s diagnosis=%s\n' "$code" "$diagnosis"
             test ! -e "$root/stage/packages/bomb" && echo size-bomb-not-written
