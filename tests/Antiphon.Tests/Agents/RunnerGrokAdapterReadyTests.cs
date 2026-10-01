@@ -373,13 +373,23 @@ public class RunnerGrokAdapterReadyTests
                 "grok-startup-*.txt").Single());
             lastFrameClient.SnapshotReads.ShouldBe(1, "readsAfterFailureDecision");
             lastCapture.ShouldContain("frameSequence: 1");
+            var readyFrame = Ready; // Load the fixture before entering the timed wait.
+            var failureClock = new PollGateClock();
             var failureReads = 0;
-            var snapshotFailureReady = await GrokReadyWait.WaitAsync(_ =>
+            GrokStartupReason? failureOutcome = null;
+            var snapshotFailureWait = GrokReadyWait.WaitAsync(_ =>
             {
                 if (++failureReads == 2) throw new IOException("snapshot failure sentinel");
-                return Task.FromResult<GrokStartupSnapshot?>(new(Ready, "", failureReads, DateTime.UtcNow));
-            }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(100),
-                Settle = TimeSpan.Zero, PollInterval = TimeSpan.FromMilliseconds(5) });
+                return Task.FromResult<GrokStartupSnapshot?>(new(readyFrame, "", failureReads, DateTime.UtcNow));
+            }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5),
+                Settle = TimeSpan.Zero, PollInterval = TimeSpan.FromMilliseconds(1),
+                TimeProvider = failureClock,
+                OnFailure = (outcome, _, _, _, _, _, _) => failureOutcome = outcome });
+            await failureClock.PollInstalled(1).WaitAsync(TimeSpan.FromSeconds(2));
+            failureClock.Advance(TimeSpan.FromMilliseconds(1));
+            var snapshotFailureReady = await snapshotFailureWait.WaitAsync(TimeSpan.FromSeconds(2));
+            failureReads.ShouldBe(2, "snapshotFailureReads");
+            failureOutcome.ShouldBe(GrokStartupReason.SnapshotFailure, "snapshotFailureOutcome");
             snapshotFailureReady.ShouldBeFalse("snapshotFailureReady");
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
