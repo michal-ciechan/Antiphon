@@ -172,7 +172,7 @@ public class RunnerGrokAdapterReadyTests
     [Test]
     public async Task Floor_modal_invalidates_stale_positive_at_minimum_age()
     {
-        var floorClock = new FakeTimeProvider();
+        var floorClock = new PollGateClock();
         var floorReads = 0;
         var floorWait = GrokReadyWait.WaitAsync(_ =>
         {
@@ -183,16 +183,20 @@ public class RunnerGrokAdapterReadyTests
         }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5),
             MinimumAgeRemaining = TimeSpan.FromMilliseconds(80), Settle = TimeSpan.Zero,
             PollInterval = TimeSpan.FromMilliseconds(1), TimeProvider = floorClock });
-        // The clock is frozen unless this test advances it. Even a loaded host
-        // cannot reach the age floor before the third, modal observation.
-        for (var tick = 0; tick < 60 && floorReads < 3; tick++)
+        // Advance only after each poll timer exists. The clock cannot reach
+        // the age floor before the third, modal observation, even under load.
+        await floorClock.PollInstalled(1).WaitAsync(TimeSpan.FromSeconds(2));
+        floorClock.Advance(TimeSpan.FromMilliseconds(1));
+        var secondPoll = floorClock.PollInstalled(2);
+        if (await Task.WhenAny(floorWait, secondPoll).WaitAsync(TimeSpan.FromSeconds(2)) == floorWait)
         {
-            floorClock.Advance(TimeSpan.FromMilliseconds(1));
-            await Task.Yield();
+            (await floorWait).ShouldBeFalse("readyWithFloorModal");
+            return;
         }
-        floorReads.ShouldBeGreaterThanOrEqualTo(3);
+        floorClock.Advance(TimeSpan.FromMilliseconds(1));
         var floor = await floorWait.WaitAsync(TimeSpan.FromSeconds(2));
         floor.ShouldBeFalse("readyWithFloorModal");
+        floorReads.ShouldBeGreaterThanOrEqualTo(3);
     }
 
     [Test]
@@ -462,6 +466,33 @@ public class RunnerGrokAdapterReadyTests
             TimeSpan dueTime, TimeSpan period) => _timer.CreateTimer(callback, state, dueTime, period);
         public void Advance(TimeSpan amount) => _timer.Advance(amount);
         public void AdvanceUtc(TimeSpan amount) => _utcOffset += amount;
+    }
+
+    private sealed class PollGateClock : TimeProvider
+    {
+        private readonly FakeTimeProvider _timer = new();
+        private readonly TaskCompletionSource[] _polls =
+        [
+            new(TaskCreationOptions.RunContinuationsAsynchronously),
+            new(TaskCreationOptions.RunContinuationsAsynchronously)
+        ];
+        private int _pollCount;
+        public override DateTimeOffset GetUtcNow() => _timer.GetUtcNow();
+        public override long GetTimestamp() => _timer.GetTimestamp();
+        public override long TimestampFrequency => _timer.TimestampFrequency;
+        public override ITimer CreateTimer(TimerCallback callback, object? state,
+            TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = _timer.CreateTimer(callback, state, dueTime, period);
+            if (dueTime == TimeSpan.FromMilliseconds(1))
+            {
+                var index = Interlocked.Increment(ref _pollCount) - 1;
+                if (index < _polls.Length) _polls[index].TrySetResult();
+            }
+            return timer;
+        }
+        public Task PollInstalled(int ordinal) => _polls[ordinal - 1].Task;
+        public void Advance(TimeSpan amount) => _timer.Advance(amount);
     }
 
     private sealed class TestLogger : ILogger
