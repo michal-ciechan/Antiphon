@@ -1393,6 +1393,10 @@ public sealed class RemoteScriptContractTests
             test -s "$root/volumes/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" && echo payload-imported
             test -d "$SERVER2_ROOT/cache/recovery-$RUN" && echo recovery-retained
             printf 'idle-count=%s smoke-count=%s\n' "$(grep -c '^idle$' "$root/trace")" "$(grep -c '^smoke$' "$root/trace")"
+            mkdir -p "$root/directory-stage/packages" "$root/directory-stage/npm"
+            C590_SAVED_DONOR="$tree"
+            c849_saved_copy "$tree/" "$root/directory-stage" image
+            test -s "$root/directory-stage/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" && echo directory-imported
             SERVER2_ENV="$root/main.env"; printf 'ready\n' > "$SERVER2_ENV"
             mkdir -p "$root/state/grok"
             SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; HOST_PROJECT=main
@@ -1417,7 +1421,7 @@ public sealed class RemoteScriptContractTests
             done
             """);
         foreach (var expected in new[] { "success=0 seed-result=true:", "marker-written", "saved-identity",
-            "payload-imported", "recovery-retained", "idle-count=3 smoke-count=1",
+            "payload-imported", "recovery-retained", "idle-count=3 smoke-count=1", "directory-imported",
             "deploy-parent=seed-result=false:PastSeedGate", "deploy-temp=seed-result=false:PastSeedGate" })
             output.ShouldContain(expected);
     }
