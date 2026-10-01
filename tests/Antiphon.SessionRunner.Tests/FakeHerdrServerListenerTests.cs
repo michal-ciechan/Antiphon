@@ -340,12 +340,17 @@ public class FakeHerdrServerListenerTests
     {
         if (OperatingSystem.IsWindows()) return;
         FakeHerdrEndpoint.SocketPathLimitOverride.Value = 1;
+        FakeHerdrEndpoint? allocated = null;
         try
         {
-            Should.Throw<IOException>(() => new FakeHerdrEndpoint())
+            Should.Throw<IOException>(() => allocated = new FakeHerdrEndpoint())
                 .Message.ShouldContain("sun_path", customMessage: "C801_PATH_LIMIT_ENFORCED");
         }
-        finally { FakeHerdrEndpoint.SocketPathLimitOverride.Value = null; }
+        finally
+        {
+            if (allocated is not null) allocated.DisposeAsync().GetAwaiter().GetResult();
+            FakeHerdrEndpoint.SocketPathLimitOverride.Value = null;
+        }
     }
 
     [Test, Category("Integration")]
@@ -386,7 +391,7 @@ public class FakeHerdrServerListenerTests
             File.Delete(path);
             File.Delete(sentinel);
             File.Delete(Path.Combine(directory, "owner"));
-            Directory.Delete(directory);
+            if (Directory.Exists(directory)) Directory.Delete(directory);
         }
     }
 
