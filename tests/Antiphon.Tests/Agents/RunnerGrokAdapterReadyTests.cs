@@ -208,7 +208,9 @@ public class RunnerGrokAdapterReadyTests
         }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5),
             Settle = TimeSpan.FromSeconds(2), PollInterval = TimeSpan.FromMilliseconds(5),
             TimeProvider = utcClock });
+#pragma warning disable EXTEXP0004 // Test-only wall-clock jump; timers and monotonic time stay frozen.
         utcClock.AdjustTime(utcClock.GetUtcNow() + TimeSpan.FromSeconds(3));
+#pragma warning restore EXTEXP0004
         for (var tick = 0; tick < 100 && utcReads < 3 && !wait.IsCompleted; tick++)
         {
             utcClock.Advance(TimeSpan.FromMilliseconds(5));
