@@ -17,10 +17,12 @@ See [testing-and-build.md](testing-and-build.md) (CARD-0490).
 CARD-0710 adds a task `requiredPlatform` (`Any`, `Windows`, `Linux`) and runtime runner defaults.
 A supported worker (Grok, Claude Code, or Codex) with no explicit runner follows the per-kind
 default, then the global default, then the built-in fallback. Codex workers are included.
-CARD-0796 restored desktop Codex task admission after the [accepted Windows qualification](investigations/2026-09-30-card-0796-desktop-codex-qualification.md):
+CARD-0796 restored desktop Codex task admission after the [accepted Windows qualification and dated operator decision](superpowers/plans/2026-09-30-card-0796-qualify-desktop-codex-plan.md#s3-execution-outcome-2026-10-01):
 explicit local tasks, desktop defaults, Windows fallback, legacy queued tasks, and later
 kind reroutes can run Codex on the canonical desktop host. The remote runner kind rules and
 required-platform checks still apply.
+The operator accepted live run #4 as S2 evidence for published `d07c7e07`, with a D-4
+deviation: the operator's existing auth was copied/used in place of a separate login in the isolated Codex home.
 Named Codex agents, Codex orchestrators, specialists, and Codex SourceLanding stay refused.
 `Delegation:DefaultRunnerId` is import-only after the first runtime revision. Windows evidence
 is commissioned with `-Platform Windows`; it is not inferred from the runner's name.

@@ -485,7 +485,17 @@ the real lane differs; do not convert minutes or internal assertions into execut
 
 ## S3 execution outcome (2026-10-01)
 
-The accepted S2 live desktop receipt remains [the qualification record](../../investigations/2026-09-30-card-0796-desktop-codex-qualification.md).
+Operator decision (2026-10-01): accept live run #4 in [the qualification
+record](../../investigations/2026-09-30-card-0796-desktop-codex-qualification.md),
+Antiphon session `159bce66-bbea-4136-bee0-4f10ef1c65b5`, as S2 evidence for
+the clean published source SHA `d07c7e07` (the commit of the patched tree used
+by the run). It recorded positive-settle readiness in 2,414 ms, one complete
+`UserPrompt`, the exact answer and `TurnEnd`. This is an operator-accepted
+deviation from D-4: the operator's existing auth was copied/used in place of a
+separate login in the isolated Codex home. The isolated-home S2 task `e51167f8`
+was cancelled. Post-land independent Final Review `a5c4d4a7` of `d07c7e07`
+was clean (evidence `b7750412-d72d-456a-96e5-b1fcdd1829ee`, Interim scope;
+follow-ups CARD-0867, CARD-0868 and CARD-0869).
 The S3 production/test slice was pushed on `feat/card-task-5cbbdf8f`. The final
 placement-audit assertion commit is `9a6ed6a37ee4be3ca3957b3e28679b7ea2f57588`; no production source changed after
 `22ca8d59ebd3a9d2c6e04c7d9026f003e5377087`. Checkpoint rows used the Linux
