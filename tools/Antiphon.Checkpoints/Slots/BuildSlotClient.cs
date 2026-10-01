@@ -118,7 +118,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
             await DelayGrace(started, cancellationToken).ConfigureAwait(false);
         }
         if (answered is not null)
-            return RefusedSession(answered);
+            return RefusedSession(answered with { ElapsedSeconds = Seconds(started) });
         var fallback = last ?? new SlotDiagnostic("probe", null, "runner_unreachable", null, null, Seconds(started));
         _log?.Invoke(fallback.Line() + " fallback=unleased");
         return new SlotSession("unleased", 4, SlotReason: "runner_unreachable", Diagnostic: fallback);
