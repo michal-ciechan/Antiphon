@@ -22,9 +22,12 @@ public sealed class RemoteScriptContractTests
         LinuxShell("command -v pwsh >/dev/null 2>&1 && printf 'C849_PWSH_AVAILABLE\\n'\n")
             .Contains("C849_PWSH_AVAILABLE", StringComparison.Ordinal));
 
+    private static bool HasLinuxPwsh() =>
+        Environment.GetEnvironmentVariable(ForceNoLinuxPwsh) != "1" && LinuxPwshAvailable.Value;
+
     private static void RequireLinuxPwsh()
     {
-        if (Environment.GetEnvironmentVariable(ForceNoLinuxPwsh) == "1" || !LinuxPwshAvailable.Value)
+        if (!HasLinuxPwsh())
             throw new SkipTestException(NoLinuxPwshReason);
     }
 
@@ -64,7 +67,7 @@ public sealed class RemoteScriptContractTests
     public void C905_Linux_shell_finds_pwsh_when_installed()
     {
         if (OperatingSystem.IsWindows()) return; // Linux is the positive probe lane.
-        LinuxPwshAvailable.Value.ShouldBeTrue("the real shell probe must find pwsh on this Linux host");
+        HasLinuxPwsh().ShouldBeTrue("the real shell probe must find pwsh on this Linux host");
     }
 
     [Test]
