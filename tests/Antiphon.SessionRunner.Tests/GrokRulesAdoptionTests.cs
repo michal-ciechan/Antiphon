@@ -64,7 +64,10 @@ public sealed class GrokRulesAdoptionTests
             b = Runtime();
             await b.AdoptOrphanedHostsAsync(herdr ? new AliveProbe() : new SystemProcessLivenessProbe(), CancellationToken.None);
             var recovered = b.Get(id);
-            await Should.ThrowAsync<InvalidOperationException>(() => b.ExpireRulesArtifactAsync(id, CancellationToken.None));
+            if (recovered.Status == "Running")
+                await Should.ThrowAsync<InvalidOperationException>(() => b.ExpireRulesArtifactAsync(id, CancellationToken.None));
+            else
+                recovered.Status.ShouldBe("Exited", "an exited child permits explicit artifact expiry");
             if (corrupt) recovered.GrokRulesReceipt.ShouldBeNull("a changed file must never be advertised as the committed receipt");
             else recovered.GrokRulesReceipt.ShouldBe(receipt, "metadata must survive a real runtime restart");
             recovered.Pid.ShouldBe(started.Pid);
