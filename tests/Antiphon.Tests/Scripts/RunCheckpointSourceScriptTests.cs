@@ -9,6 +9,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 [Category("Integration")]
+[Category("C835")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RunCheckpointSourceScriptTests
 {

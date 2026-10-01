@@ -223,6 +223,7 @@ public class ReviewEvidenceParserTests
     }
 
     [Test]
+    [Category("C835")]
     public void C835_SourceCleanGrammar()
     {
         var good = ReviewEvidence.TryParse(Report(Block(Subject, Sha40) +
@@ -244,6 +245,7 @@ public class ReviewEvidenceParserTests
     }
 
     [Test]
+    [Category("C835")]
     public void C835_SourceStateCannotBeInferred()
     {
         ReviewEvidence.TryParse(Report(Block(Subject, Sha40) + "\nordinaryScopeCompleted: Full"))

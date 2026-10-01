@@ -72,6 +72,7 @@ public sealed class DelegateScriptLandApprovalTests
     public async Task C488_StatusApprovalIsNotVerifiedSha() => await C488_StatusShowsDistinctSourceFacts();
 
     [Test]
+    [Category("C835")]
     public async Task C835_FindingSourceCleanIsExplicit()
     {
         var task = Guid.NewGuid();

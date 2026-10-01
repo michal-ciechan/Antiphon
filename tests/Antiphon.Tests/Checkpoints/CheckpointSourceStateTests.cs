@@ -11,6 +11,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Integration")]
+[Category("C835")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CheckpointSourceStateTests
 {
