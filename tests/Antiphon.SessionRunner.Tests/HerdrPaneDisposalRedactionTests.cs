@@ -133,10 +133,18 @@ public sealed class HerdrPaneDisposalRedactionTests
             var raw = await File.ReadAllTextAsync(file);
             raw.ShouldNotContain("secret-home", Case.Sensitive, "durable-review-path-excluded");
             raw.ShouldNotContain("reason-secret");
+            using var before = JsonDocument.Parse(raw);
+            var fingerprint = before.RootElement.GetProperty("fingerprint").GetString();
+            fingerprint.ShouldNotBeNullOrWhiteSpace();
             var closes = w.Fixture.Backend.Closes;
             w.Fixture.RecreateService();
             var again = await w.Fixture.Service.GetAsync(receipt.OperationId, default);
             again!.Outcome.ShouldBe(outcome);
+            var retry = await w.Fixture.Service.ExecuteAsync(
+                new(receipt.OperationId, post.PreviewId, "reason-secret", "antiphon-best-effort"), default);
+            retry.ShouldBe(again);
+            using var after = JsonDocument.Parse(await File.ReadAllTextAsync(file));
+            after.RootElement.GetProperty("fingerprint").GetString().ShouldBe(fingerprint);
             w.Fixture.Backend.Closes.ShouldBe(0);
             closes.ShouldBe(outcome == "Refused" ? 0 : 1);
         }
@@ -329,9 +337,13 @@ public sealed class HerdrPaneDisposalRedactionTests
             var op = Guid.NewGuid();
             using var execution = await _http.PostAsJsonAsync("/herdr/pane-disposals",
                 new HerdrPaneDisposalRequest(op, post.PreviewId, reason, "antiphon-best-effort"));
+            var executionJson = await execution.Content.ReadAsStringAsync();
+            AssertNoPath(executionJson, "execution-response-path-excluded");
+            executionJson.ShouldNotContain(reason == "reason-secret" ? "reason-secret" : "unused-canary");
             using var status = await _http.GetAsync($"/herdr/pane-disposals/{op}");
             status.EnsureSuccessStatusCode();
             var statusJson = await status.Content.ReadAsStringAsync(); AssertNoPath(statusJson, "receipt-path-excluded");
+            statusJson.ShouldNotContain(reason == "reason-secret" ? "reason-secret" : "unused-canary");
             var receipt = JsonSerializer.Deserialize<HerdrPaneDisposalReceipt>(statusJson, Json)!;
             var file = System.IO.Path.Combine(Fixture.Settings.SessionLogPath, "herdr", "disposals", $"{op:N}.json");
             var diskJson = await File.ReadAllTextAsync(file); AssertNoPath(diskJson, "durable-review-path-excluded");
