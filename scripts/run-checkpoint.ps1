@@ -129,6 +129,9 @@ function Write-Trailer {
             passed = $script:passed; failed = $script:failed; skipped = $script:skipped
         }
         $evidence | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $script:resultsDirectory 'source.json') -Encoding utf8
+        ('commit={0} source={1} sourceState={2} buildSource={3}' -f $commit,
+            (Get-CheckpointSourceToken $start), $state, $script:buildSource) |
+            Set-Content -LiteralPath (Join-Path $script:resultsDirectory 'git.txt') -Encoding utf8
     }
     Write-Host ('CHECKPOINT {0} EXIT CODE: {1}' -f $Name, $Code)
 }

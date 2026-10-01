@@ -20,15 +20,21 @@ public sealed class RunCheckpointSourceScriptTests
         clean.Exit.ShouldBe(0, clean.Output);
         clean.Source.GetProperty("state").GetString().ShouldBe("clean", "clean-receipt");
         clean.Line.ShouldContain("dirty=0 source=" + fixture.Head + " sourceState=clean buildSource=verified");
+        File.ReadAllText(Path.Combine(Path.GetDirectoryName(clean.Evidence)!, "git.txt"))
+            .ShouldContain("source=" + fixture.Head + " sourceState=clean buildSource=verified");
+        clean.Source.GetProperty("start").GetProperty("commit").GetString().ShouldBe(fixture.Head);
         fixture.Write("tracked.txt", "edited");
         var tracked = await fixture.RunAsync();
         tracked.Exit.ShouldBe(0, tracked.Output);
         tracked.Source.GetProperty("state").GetString().ShouldBe("dirty", "tracked-diagnostic");
         tracked.Line.ShouldContain("dirty=1 source=" + fixture.Head + "+dirty:");
+        File.ReadAllText(Path.Combine(Path.GetDirectoryName(tracked.Evidence)!, "git.txt"))
+            .ShouldContain("source=" + fixture.Head + "+dirty:");
         fixture.Write("new.txt", "new bytes");
         var untracked = await fixture.RunAsync();
         untracked.Exit.ShouldBe(0, untracked.Output);
         untracked.Line.ShouldContain("dirty=2 source=" + fixture.Head + "+dirty:");
+        untracked.Source.GetProperty("start").GetProperty("dirtyFiles").GetInt32().ShouldBe(2);
         var failed = await fixture.RunAsync(trx: "c585-failures.trx");
         failed.Exit.ShouldBe(1, failed.Output);
         failed.Line.ShouldContain("sourceState=dirty", Case.Sensitive, "dirty-test-failure-is-still-failure");
@@ -45,11 +51,28 @@ public sealed class RunCheckpointSourceScriptTests
         wrong.Exit.ShouldBe(2, wrong.Output);
         wrong.Line.ShouldContain("reason=source_mismatch", Case.Sensitive, "wrong-sha-no-driver");
         fixture.Calls.ShouldBe(calls, "wrong-sha-no-driver");
+        var sha256 = await fixture.RunAsync(expectedSha: new string('a', 64));
+        sha256.Exit.ShouldBe(2, sha256.Output);
+        sha256.Line.ShouldContain("reason=source_mismatch", Case.Sensitive,
+            "64-character-sha-is-valid-shape-but-not-the-head");
+        fixture.Calls.ShouldBe(calls, "64-character-mismatch-no-driver");
         fixture.Write("tracked.txt", "dirty");
         var dirty = await fixture.RunAsync(expectedSha: fixture.Head);
         dirty.Exit.ShouldBe(2, dirty.Output);
         dirty.Line.ShouldContain("reason=source_dirty", Case.Sensitive, "dirty-no-driver");
         fixture.Calls.ShouldBe(calls, "dirty-no-driver");
+        var git = Path.Combine(fixture.Repo, ".git");
+        var displaced = Path.Combine(fixture.External, "displaced-git");
+        Directory.Move(git, displaced);
+        try
+        {
+            var unknown = await fixture.RunAsync(expectedSha: fixture.Head);
+            unknown.Exit.ShouldBe(2, unknown.Output);
+            unknown.Source.GetProperty("state").GetString().ShouldBe("unknown");
+            unknown.Line.ShouldContain("reason=source_unknown", Case.Sensitive, "unknown-no-driver");
+            fixture.Calls.ShouldBe(calls, "unknown-no-driver");
+        }
+        finally { Directory.Move(displaced, git); }
     }
 
     [Test]
@@ -70,11 +93,49 @@ public sealed class RunCheckpointSourceScriptTests
         missing.Line.ShouldContain("reason=build_source_mismatch", Case.Sensitive, "missing-stamp-no-tests");
         fixture.Calls.ShouldBe(calls, "missing-stamp-no-tests");
 
+        using (var tampered = new Fixture())
+        {
+            (await tampered.RunAsync(expectedSha: tampered.Head)).Exit.ShouldBe(0);
+            var stamp = JsonNode.Parse(await File.ReadAllTextAsync(tampered.Stamp))!.AsObject();
+            stamp["fingerprint"] = new string('f', 64);
+            await File.WriteAllTextAsync(tampered.Stamp, stamp.ToJsonString());
+            var before = tampered.Calls;
+            var mismatch = await tampered.RunAsync(expectedSha: tampered.Head, noBuild: true);
+            mismatch.Exit.ShouldBe(2, mismatch.Output);
+            mismatch.Line.ShouldContain("reason=build_source_mismatch", Case.Sensitive, "fingerprint-mismatch-no-tests");
+            tampered.Calls.ShouldBe(before);
+            stamp["fingerprint"] = mismatch.Source.GetProperty("start").GetProperty("fingerprint").GetString();
+            stamp["sourceState"] = "dirty";
+            await File.WriteAllTextAsync(tampered.Stamp, stamp.ToJsonString());
+            (await tampered.RunAsync(expectedSha: tampered.Head, noBuild: true)).Exit.ShouldBe(2,
+                "dirty-stamp-no-tests");
+            tampered.Calls.ShouldBe(before);
+        }
+
+        using (var failedRebuild = new Fixture())
+        {
+            (await failedRebuild.RunAsync(expectedSha: failedRebuild.Head)).Exit.ShouldBe(0);
+            var failure = await failedRebuild.RunAsync(expectedSha: failedRebuild.Head, buildExit: 37);
+            failure.Exit.ShouldBe(2);
+            File.Exists(failedRebuild.Stamp).ShouldBeFalse("failed-rebuild-invalidates-stamp");
+            var before = failedRebuild.Calls;
+            (await failedRebuild.RunAsync(expectedSha: failedRebuild.Head, noBuild: true)).Exit.ShouldBe(2);
+            failedRebuild.Calls.ShouldBe(before, "failed-rebuild-cannot-reuse-stale-output");
+        }
+
         using var driftFixture = new Fixture();
         var drift = await driftFixture.RunAsync(driftPhase: "run");
         drift.Exit.ShouldBe(2, drift.Output);
         drift.Source.GetProperty("state").GetString().ShouldBe("changed", "driver-drift-is-changed");
         drift.Line.ShouldContain("executed=3 passed=3", Case.Sensitive, "driver-drift-retains-counts");
+        using var buildDriftFixture = new Fixture();
+        var buildDrift = await buildDriftFixture.RunAsync(driftPhase: "build");
+        buildDrift.Exit.ShouldBe(2, buildDrift.Output);
+        buildDrift.Source.GetProperty("state").GetString().ShouldBe("changed", "build-drift");
+        using var headDriftFixture = new Fixture();
+        var headDrift = await headDriftFixture.RunAsync(driftPhase: "head-run");
+        headDrift.Exit.ShouldBe(2, headDrift.Output);
+        headDrift.Source.GetProperty("state").GetString().ShouldBe("changed", "head-movement");
     }
 
     [Test]
@@ -114,6 +175,36 @@ public sealed class RunCheckpointSourceScriptTests
         json.Remove("start");
         await File.WriteAllTextAsync(tampered, json.ToJsonString());
         (await fixture.ValidateAsync(tampered)).Exit.ShouldBe(2, "legacy-receipt-ineligible");
+
+        async Task RefusesAsync(string label, Action<JsonObject> change)
+        {
+            var copy = JsonNode.Parse(await File.ReadAllTextAsync(clean.Evidence))!.AsObject();
+            change(copy);
+            await File.WriteAllTextAsync(tampered, copy.ToJsonString());
+            var checkedReceipt = await fixture.ValidateAsync(tampered);
+            checkedReceipt.Exit.ShouldBe(2, label + ": " + checkedReceipt.Output);
+        }
+        await RefusesAsync("changed-source", value =>
+        {
+            value["state"] = "changed";
+            value["end"]!["fingerprint"] = new string('f', 64);
+        });
+        await RefusesAsync("unknown-source", value =>
+        {
+            value["state"] = "unknown";
+            value["end"] = null;
+        });
+        await RefusesAsync("wrong-sha", value => value["start"]!["commit"] = new string('f', 40));
+        await RefusesAsync("build-source-mismatch", value => value["buildSource"] = "mismatch");
+        await RefusesAsync("failed-test", value =>
+        {
+            value["exitCode"] = 1;
+            value["failed"] = 1;
+        });
+        await RefusesAsync("malformed-counts", value => value["passed"] = 1);
+        await RefusesAsync("receipt-sha-disagreement", value =>
+            value["receipt"] = clean.Line.Replace("source=" + fixture.Head,
+                "source=" + new string('f', 40), StringComparison.Ordinal));
     }
 
     private sealed class Fixture : IDisposable
@@ -149,6 +240,9 @@ public sealed class RunCheckpointSourceScriptTests
                 $phase = [string]$items[0]
                 if ($env:C835_DRIFT -eq $phase) {
                     Set-Content -LiteralPath (Join-Path $env:C835_REPO 'tracked.txt') -Value 'changed during driver'
+                }
+                if ($env:C835_DRIFT -eq ('head-' + $phase)) {
+                    git -C $env:C835_REPO commit --allow-empty -qm 'move head during driver'
                 }
                 if ($phase -eq 'build') { exit [int]$env:C835_BUILD_EXIT }
                 $result = ''

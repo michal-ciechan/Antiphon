@@ -33,6 +33,42 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
             File.ReadAllText(Path.Combine(run, "report.md")).ShouldContain("source=" + SourceEvidence.Token(source));
             File.ReadAllText(Path.Combine(run, "git.txt")).ShouldContain("source=" + SourceEvidence.Token(source));
             ReportValidator.Validate(report, Sha).ShouldBe(dirty ? "report_source_ineligible" : null);
+
+            var repo = TempDir();
+            Directory.CreateDirectory(Path.Combine(repo, "sample"));
+            File.WriteAllText(Path.Combine(repo, "sample", "sample.csproj"),
+                "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+            var built = new CheckpointManifest
+            {
+                Builds = [new BuildSpec { Id = "bin-c835", Project = "sample/sample.csproj", OutputPath = "bin-c835/" }],
+                Checkpoints = [new CheckpointSpec
+                {
+                    Id = "CP-1", After = ["all"], Build = "bin-c835",
+                    Filter = "/*/*/ExampleSurfaceTests/*", MinExecuted = 1,
+                    Expect = ["ExampleSurfaceTests"], EstimatedMinutes = 1,
+                }],
+            };
+            var builtRun = CheckpointApp.CreateRun(built, new RunRequest
+            {
+                Commit = Sha, Branch = "fixture", KeepOutputs = true, Slots = "off",
+            }, repo, new CheckpointApp.Runtime { SourceCapture = _ => source });
+            var builtDriver = new FakeDriver();
+            builtDriver.When(CheckpointFixtures.IsRun, (request, _) =>
+            {
+                CheckpointFixtures.WriteResults(CheckpointFixtures.TrxFile(request),
+                    ("Antiphon.Tests.ExampleSurfaceTests.case", "Passed"));
+                return Task.FromResult(new DriverResult(0, "", ""));
+            });
+            (await CheckpointApp.ExecuteAsync(builtRun, CancellationToken.None,
+                Runtime(builtDriver, _ => source))).ShouldBe(0, "diagnostic-tunit-run");
+            var builtReport = Read(builtRun);
+            builtReport.Source.BuildSource.ShouldBe("verified");
+            builtReport.Rows.Single().Source.State.ShouldBe(dirty ? "dirty" : "clean");
+            builtReport.Rows.Single().Source.Start.Fingerprint.ShouldBe(source.Fingerprint);
+            builtReport.Rows.Single().Line.ShouldContain("source=" + SourceEvidence.Token(source));
+            File.ReadAllText(Path.Combine(builtRun, "git.txt"))
+                .ShouldContain("source=" + SourceEvidence.Token(source));
+            ReportValidator.Validate(builtReport, Sha).ShouldBe(dirty ? "report_source_ineligible" : null);
         }
     }
 
@@ -59,6 +95,61 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
             Runtime(during, _ => ++observations <= 2 ? before : after));
         rowExit.ShouldBe(ExitCodes.Invalid, "driver-boundary-drift");
         Read(rowRun).Source.State.ShouldBe("changed");
+
+        var queuedManifest = CommandManifest();
+        queuedManifest.Checkpoints[0].Serial = true;
+        queuedManifest.Checkpoints.Add(new CheckpointSpec
+        {
+            Id = "CP-2", After = ["all"], Command = "true", Serial = true, EstimatedMinutes = 1,
+        });
+        var queuedSource = before;
+        var queuedDriver = new FakeDriver();
+        queuedDriver.When(_ => true, (_, _) =>
+        {
+            queuedSource = after;
+            return Task.FromResult(new DriverResult(0, "", ""));
+        });
+        var queuedRun = NewRun(queuedManifest, before);
+        (await CheckpointApp.ExecuteAsync(queuedRun, CancellationToken.None,
+            Runtime(queuedDriver, _ => queuedSource))).ShouldBe(ExitCodes.Invalid);
+        queuedDriver.Calls.Count.ShouldBe(1, "driver-drift-stops-next-row");
+        Read(queuedRun).Source.Start.Commit.ShouldBe(Sha);
+
+        var repo = TempDir();
+        Directory.CreateDirectory(Path.Combine(repo, "sample"));
+        File.WriteAllText(Path.Combine(repo, "sample", "sample.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+        var flaky = new CheckpointManifest
+        {
+            Builds = [new BuildSpec { Id = "bin-c835", Project = "sample/sample.csproj", OutputPath = "bin-c835/" }],
+            Checkpoints = [new CheckpointSpec
+            {
+                Id = "CP-1", After = ["all"], Build = "bin-c835", Filter = "/*/*/ExampleSurfaceTests/*",
+                MinExecuted = 1, EstimatedMinutes = 1,
+            }],
+        };
+        var rerun = CheckpointApp.CreateRun(flaky, new RunRequest
+        {
+            Commit = Sha, Branch = "fixture", KeepOutputs = true, Slots = "off",
+            KnownFlaky = ["Antiphon.Tests.ExampleSurfaceTests.case"],
+        }, repo, new CheckpointApp.Runtime { SourceCapture = _ => before });
+        var rerunSource = before;
+        var runCount = 0;
+        var flakyDriver = new FakeDriver();
+        flakyDriver.When(CheckpointFixtures.IsRun, (request, _) =>
+        {
+            runCount++;
+            CheckpointFixtures.WriteResults(CheckpointFixtures.TrxFile(request),
+                ("Antiphon.Tests.ExampleSurfaceTests.case", runCount == 1 ? "Failed" : "Passed"));
+            if (runCount == 2) rerunSource = after;
+            return Task.FromResult(new DriverResult(0, "", ""));
+        });
+        (await CheckpointApp.ExecuteAsync(rerun, CancellationToken.None,
+            Runtime(flakyDriver, _ => rerunSource))).ShouldBe(ExitCodes.Invalid,
+            "rerun-cannot-certify-drift");
+        runCount.ShouldBe(2, "known-flaky-rerun-reached");
+        Read(rerun).Source.Start.Commit.ShouldBe(Sha, "rerun-retains-original-source");
+        Read(rerun).Source.State.ShouldBe("changed");
     }
 
     [Test]
@@ -97,6 +188,37 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         report.Source.End.ShouldBeNull("executor-error-has-no-observed-end");
         ReportValidator.Validate(report, Sha).ShouldBe("report_source_ineligible");
         report.ExitCode.ShouldBe(ExitCodes.ExecutorCrashed);
+
+        foreach (var terminal in new[] { "build-failed", "missing-trx" })
+        {
+            var repo = TempDir();
+            Directory.CreateDirectory(Path.Combine(repo, "sample"));
+            File.WriteAllText(Path.Combine(repo, "sample", "sample.csproj"),
+                "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+            var manifest = new CheckpointManifest
+            {
+                Builds = [new BuildSpec { Id = "bin-c835", Project = "sample/sample.csproj", OutputPath = "bin-c835/" }],
+                Checkpoints = [new CheckpointSpec
+                {
+                    Id = "CP-1", After = ["all"], Build = "bin-c835",
+                    Filter = "/*/*/ExampleSurfaceTests/*", MinExecuted = 1, EstimatedMinutes = 1,
+                }],
+            };
+            var terminalRun = CheckpointApp.CreateRun(manifest, new RunRequest
+            {
+                Commit = Sha, Branch = "fixture", KeepOutputs = true, Slots = "off",
+            }, repo, new CheckpointApp.Runtime { SourceCapture = _ => source });
+            var driver = new FakeDriver();
+            if (terminal == "build-failed")
+                driver.When(CheckpointFixtures.IsBuild, (_, _) => Task.FromResult(new DriverResult(37, "", "")));
+            (await CheckpointApp.ExecuteAsync(terminalRun, CancellationToken.None,
+                Runtime(driver, _ => source))).ShouldBe(ExitCodes.Invalid, terminal);
+            var terminalReport = Read(terminalRun);
+            terminalReport.Source.State.ShouldBe("clean", terminal + "-source-remains-observed");
+            terminalReport.Source.End.ShouldNotBeNull(terminal);
+            terminalReport.ExitCode.ShouldBe(ExitCodes.Invalid);
+            ReportValidator.Validate(terminalReport, Sha).ShouldNotBeNull(terminal);
+        }
     }
 
     [Test]
@@ -111,6 +233,14 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
             "old-dirty-row-not-relabeled");
         earlier.Rows.Single().Source = Evidence(Observe(OtherSha, 0), "clean", "notApplicable");
         Should.Throw<InvalidOperationException>(() => ReportMerger.Merge([earlier, clean]), "different-sha");
+        earlier.Rows.Single().Source = Evidence(
+            new SourceObservation(Sha, 0, new string('f', 64), DateTimeOffset.UtcNow, "known"),
+            "clean", "notApplicable");
+        Should.Throw<InvalidOperationException>(() => ReportMerger.Merge([earlier, clean]),
+            "different-clean-fingerprint");
+        earlier.Rows.Single().Source = Evidence(Observe(Sha, 0), "clean", "unknown");
+        Should.Throw<InvalidOperationException>(() => ReportMerger.Merge([earlier, clean]),
+            "incompatible-build-binding");
         earlier.Rows.Single().Source = new SourceEvidence();
         Should.Throw<InvalidOperationException>(() => ReportMerger.Merge([earlier, clean]), "legacy-row");
     }
