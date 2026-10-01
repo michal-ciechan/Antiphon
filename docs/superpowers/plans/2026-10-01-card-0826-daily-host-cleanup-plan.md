@@ -187,6 +187,14 @@ The Plan dispatch scope is just `docs/superpowers/plans/2026-10-01-card-0826-dai
 
 ## Verification design
 
+### Inspection
+
+TestDesign source baseline: `1dacda5e36f52a288c3b9b91f379b0e274c49038`; CARD-0826 title verified through `card.ps1 get CARD-0826 -Board Antiphon`: **Daily per-host cleanup of worktrees, work volume and temp older than 24 hours**. No build, test, deletion or schedule registration is evidence from this stage.
+
+Bodies inspected: `CheckpointTempRootSweep`, `CheckpointTestScope`, all methods of `CheckpointTempRootSweepTests`, `CheckpointTempScopeTests`, `CheckpointToolCopyCleanupTests`; `ProcessIdentity`, `RunOwnership`, `TestRootGuard`, `ToolCopyCleanup` (including `ExecutorOwnershipStore` and `ContainedCleanup`); `EvidenceFolder`, `OutputCleanup`, `WaitCommand`, and the cleanup/start/stop call sites in `CheckpointApp` and `Program`. Also inspected `IRepositoryMutationLease` and both acquisition overloads/`landing.lock` creation in `RepositoryMutationLease`, `WorktreeIgnoredContentClassifier`, weekly build-junk and legacy installer scripts, the lifecycle-host project links, dispatcher construction/admission, and the nearest attention, registration, script and database fixtures. The extraction and roster below must cover these actual consumers before moving implementation.
+
+Confirmed gaps in the Plan roster: `ToolCopyCleanup` calls `EvidenceFolder.IsExecutorImage`, so moving only four files would create a reverse dependency; the sweep refers to the test-only `CheckpointTestScope.MarkerName`; existing checkpoint tests directly delete real files and their assembly startup hook can sweep host temp. Native destructive tests cannot meet the brief's zero-real-deletion contract. Freeze replacement virtual compatibility coverage and syscall recording adapters before Code; do not run those old classes unchanged as this card's acceptance rows. The weekly script has no reusable safe policy: its folder-mtime/robocopy deletion must become a wrapper around the shared worker, never an extracted authority.
+
 This is a Plan roster, not claimed execution evidence. TestDesign must freeze the new method roster against D-2's confirmed entirely lock-free decision. Counts below are intended separately executed TUnit cases, not assertions; use individual `[Test]` methods rather than hidden loops to meet them. Existing CP-2 census is source-derived: 15 `CheckpointTempRootSweepTests`, nine `CheckpointTempScopeTests`, and 16 expanded `CheckpointToolCopyCleanupTests` (13 methods, one with four arguments). None of those three classes contains an OS skip at this baseline. Their nested children do not inflate the parent TRX count. New counts must be checked against fresh TRX, not `--list-tests`.
 
 ### Ordinary coverage and exact roster obligations
