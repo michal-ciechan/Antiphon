@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -17,13 +18,13 @@ namespace Antiphon.Tests.Scripts;
 public sealed class RemoteScriptContractTests
 {
     private const string NoLinuxPwshReason = "CARD-0905: pwsh is not on the Linux shell PATH (WSL has no pwsh); install pwsh in WSL to run C849 script-block tests.";
-    private const string ForceNoLinuxPwsh = "ANTIPHON_TEST_FORCE_NO_PWSH";
+    private static readonly AsyncLocal<bool> ForceNoLinuxPwsh = new();
     private static readonly Lazy<bool> LinuxPwshAvailable = new(() =>
         LinuxShell("command -v pwsh >/dev/null 2>&1 && printf 'C849_PWSH_AVAILABLE\\n'\n")
             .Contains("C849_PWSH_AVAILABLE", StringComparison.Ordinal));
 
     private static bool HasLinuxPwsh() =>
-        Environment.GetEnvironmentVariable(ForceNoLinuxPwsh) != "1" && LinuxPwshAvailable.Value;
+        !ForceNoLinuxPwsh.Value && LinuxPwshAvailable.Value;
 
     private static void RequireLinuxPwsh()
     {
@@ -35,8 +36,8 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C905_Missing_linux_pwsh_skips_all_five_cases_before_a_script_block()
     {
-        var previous = Environment.GetEnvironmentVariable(ForceNoLinuxPwsh);
-        Environment.SetEnvironmentVariable(ForceNoLinuxPwsh, "1");
+        var previous = ForceNoLinuxPwsh.Value;
+        ForceNoLinuxPwsh.Value = true;
         try
         {
             var cases = new Action[]
@@ -58,7 +59,7 @@ public sealed class RemoteScriptContractTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable(ForceNoLinuxPwsh, previous);
+            ForceNoLinuxPwsh.Value = previous;
         }
     }
 
@@ -2256,7 +2257,7 @@ public sealed class RemoteScriptContractTests
     // Git Bash can neither create a symlink without privilege nor keep a 0600 mode.
     internal static string LinuxShell(string script)
     {
-        if (Environment.GetEnvironmentVariable(ForceNoLinuxPwsh) == "1")
+        if (ForceNoLinuxPwsh.Value)
             throw new InvalidOperationException("A Linux script block ran before the CARD-0905 pwsh skip.");
         ProcessStartInfo start;
         if (OperatingSystem.IsWindows())
