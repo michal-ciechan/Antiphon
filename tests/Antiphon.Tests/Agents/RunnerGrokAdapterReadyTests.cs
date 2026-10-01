@@ -219,6 +219,9 @@ public class RunnerGrokAdapterReadyTests
             await Task.Delay(1);
         }
         utcReads.ShouldBeGreaterThanOrEqualTo(2);
+        // Let a completed read settle its continuation without moving the fake
+        // monotonic clock. A UTC-based mutant must finish at this point.
+        await Task.WhenAny(wait, Task.Delay(100));
         wait.IsCompleted.ShouldBeFalse("readyAfterUtcJumpWithoutElapsed");
         for (var tick = 0; tick < 60 && !wait.IsCompleted; tick++)
         {
