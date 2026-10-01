@@ -267,6 +267,9 @@ Three things worth knowing about that table:
   rather than update Terra. Whether to replace Terra with `gpt-6-luna` remains open pending an
   explicit operator decision. A live `codex exec --ephemeral -m gpt-6-sol` probe succeeded on
   this Linux host with codex-cli 0.156.1 on 2026-09-27.
+  The server2 runner image now pins codex-cli 0.160.0 by version and SHA-512.
+  `gpt-6.1-sol` requires codex-cli 0.159.1+; selecting that model also depends on
+  the separate CARD-0903 tier and catalogue change.
 
 `ModelLevelAliases.For(kind, level)` is what every *human-facing* string goes through — task
 events, escalation notes, the check digest, completion-note headers. Launch arguments deliberately

@@ -77,15 +77,15 @@ RUN apt-get update \
  && env HOME=/tmp/claude-install CLAUDE_CONFIG_DIR=/tmp/claude-install/cfg DISABLE_AUTOUPDATER=1 /usr/local/bin/claude --version | grep -F "${CLAUDE_CODE_VERSION}" \
  && rm -rf /tmp/claude-install
 # CARD-0660 D-1/D-2: codex-cli's native linux-x64 platform package, pinned by version AND npm's
-# published SHA-512 (dist.integrity sha512-2ePo0wgOcnONKsuzp8vBjOmNY+IdsKaouaDDIdiKq9HOWNuV/GI22OeXft2A/1GaoL71ictO0/pLAsCEnQ6wew==
+# published SHA-512 (dist.integrity sha512-KI/73OqGrHmR18s7ya7E1NqV6rT0y3lxr0s8S1qR2m6zU6QRF/HlR529jALLh5vjdUnsRT4Ahoxt0axb4kY99g==
 # in hex). The archive is hashed before tar runs; a re-published tarball fails the build and the
 # remedy is a new reviewed pair, never a refreshed digest. The WHOLE package is kept: the binary
 # finds codex-code-mode-host, codex-path/rg and codex-resources/bwrap through codex-package.json
 # in its package root, so a binary-only copy is not an install. Root-owned, not writable by 1654.
 # No CODEX_HOME, credential file or credential name is ever a layer: the runner's home lives on
 # the runner-state volume (docker/stack/init-state.sh), signed in there by the operator.
-ARG CODEX_VERSION=0.156.1
-ARG CODEX_SHA512=d9e3e8d3080e72738d2acbb3a7cbc18ce98d63e21db0a6a8b9a0c321d88aabd1ce58db95fc6236d8e7977edd80ff519aa0bef589cb4ed3fa4b02c0849d0eb07b
+ARG CODEX_VERSION=0.160.0
+ARG CODEX_SHA512=288ffbdcea86ac7991d7cb3bc9aec4d4da95eab4f4cb7971af4b3c4b5a91da6eb353a41117f1e5479dbd8c02cb879be37549ec453e00868c6dd1ac5be2463df6
 RUN mkdir -p /opt/codex-download "/opt/codex/${CODEX_VERSION}" /opt/codex-probe/home \
  && curl -fsSL -o /opt/codex-download/codex.tgz "https://registry.npmjs.org/@openai/codex/-/codex-${CODEX_VERSION}-linux-x64.tgz" \
  && echo "${CODEX_SHA512}  /opt/codex-download/codex.tgz" | sha512sum -c - \
