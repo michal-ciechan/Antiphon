@@ -21,11 +21,11 @@ namespace Antiphon.Tests.Infrastructure;
 [Category("Unit")]
 public sealed class CodexRunnerImageContractTests
 {
-    private const string Version = "0.156.1";
+    private const string Version = "0.160.0";
 
-    // npm's dist.integrity for @openai/codex@0.156.1-linux-x64, read from the registry during Plan.
+    // npm's dist.integrity for @openai/codex@0.160.0-linux-x64, verified against the tarball for CARD-0904.
     private const string NpmIntegrity =
-        "sha512-2ePo0wgOcnONKsuzp8vBjOmNY+IdsKaouaDDIdiKq9HOWNuV/GI22OeXft2A/1GaoL71ictO0/pLAsCEnQ6wew==";
+        "sha512-KI/73OqGrHmR18s7ya7E1NqV6rT0y3lxr0s8S1qR2m6zU6QRF/HlR529jALLh5vjdUnsRT4Ahoxt0axb4kY99g==";
 
     private const string PackageRoot = "/opt/codex/${CODEX_VERSION}/package";
     private const string NativeBinary = PackageRoot + "/vendor/x86_64-unknown-linux-musl/bin/codex";

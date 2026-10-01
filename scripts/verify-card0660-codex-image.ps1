@@ -1,5 +1,6 @@
 # CARD-0660 V-9 image qualification (Q-1 runtime, Q-2 session-testing; CP-10/11). Evidence
-# tooling, not product. Builds ONE image target in the foreground, then grades eight rows by
+# tooling, not product. Builds ONE image target in the foreground (or checks a separately built
+# CARD-0904 image with -SkipBuild), then grades eight rows by
 # running docker/session-runner-grok/verify-codex-image.sh inside throwaway containers of that
 # image: phone-home disabled, --network none, no published port, no Docker socket, not
 # privileged, and only this run's own volumes. session-testing's DinD entrypoint is overridden
@@ -12,12 +13,13 @@
 # Rows: (1) version (2) layout (3) install-readonly (4) no-baked-auth (5) fresh-home (6) trust
 # (7) preserve (8) config-accepted.
 # Exit codes: 0 all 8 rows ok, 1 one or more rows not ok, 2 setup failed (dirty or mismatched
-# source, reused tag, non-fresh results root, no Docker, failed build).
+# source, reused tag, non-fresh results root, no Docker, failed build or image revision mismatch).
 param(
     [Parameter(Mandatory = $true)][ValidateSet('runtime', 'session-testing')][string] $Target,
     [Parameter(Mandatory = $true)][string] $Image,
     [Parameter(Mandatory = $true)][string] $SourceRevision,
-    [Parameter(Mandatory = $true)][string] $ResultsRoot
+    [Parameter(Mandatory = $true)][string] $ResultsRoot,
+    [switch] $SkipBuild
 )
 
 Set-StrictMode -Version Latest
@@ -90,14 +92,23 @@ if ($dirty) { Exit-Qualification 2 'Tracked changes are uncommitted; the build c
 if ((Invoke-Docker @('version', '--format', '{{.Server.Version}}') 'docker-version.txt').ExitCode -ne 0) {
     Exit-Qualification 2 'Docker daemon is not reachable.'
 }
-if ((Invoke-Docker @('image', 'inspect', '--format', '{{.Id}}', $Image) $null).ExitCode -eq 0) {
-    Exit-Qualification 2 "Image tag $Image already exists; qualification needs a unique tag."
+$existingImage = Invoke-Docker @('image', 'inspect', '--format', '{{.Id}}', $Image) $null
+if ($SkipBuild) {
+    if ($existingImage.ExitCode -ne 0) { Exit-Qualification 2 "Image tag $Image does not exist for -SkipBuild." }
+    $revision = (Invoke-Docker @('image', 'inspect', '--format',
+        '{{index .Config.Labels "org.opencontainers.image.revision"}}', $Image) 'image-revision.txt').Output.Trim()
+    if ($revision -ne $SourceRevision) {
+        Exit-Qualification 2 "Image revision $revision does not match SourceRevision $SourceRevision."
+    }
+} else {
+    if ($existingImage.ExitCode -eq 0) {
+        Exit-Qualification 2 "Image tag $Image already exists; qualification needs a unique tag."
+    }
+    # --- build (foreground, the one build this run owns) -------------------------------------
+    $build = Invoke-Docker @('build', '--file', (Join-Path $repoRoot 'docker/session-runner-grok/Dockerfile'),
+        '--target', $Target, '--build-arg', "SOURCE_REVISION=$SourceRevision", '--tag', $Image, $repoRoot) 'build.log'
+    if ($build.ExitCode -ne 0) { Exit-Qualification 2 'docker build failed; see build.log.' }
 }
-
-# --- build (foreground, the one build this run owns) -----------------------------------------
-$build = Invoke-Docker @('build', '--file', (Join-Path $repoRoot 'docker/session-runner-grok/Dockerfile'),
-    '--target', $Target, '--build-arg', "SOURCE_REVISION=$SourceRevision", '--tag', $Image, $repoRoot) 'build.log'
-if ($build.ExitCode -ne 0) { Exit-Qualification 2 'docker build failed; see build.log.' }
 $imageId = (Invoke-Docker @('image', 'inspect', '--format', '{{.Id}}', $Image) 'image-id.txt').Output.Trim()
 
 # --- throwaway volumes and probes -------------------------------------------------------------
