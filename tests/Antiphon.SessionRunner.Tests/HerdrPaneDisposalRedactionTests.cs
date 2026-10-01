@@ -99,20 +99,25 @@ public sealed class HerdrPaneDisposalRedactionTests
             return o with { Shell = shell, Foreground = [foreground], Affected = [shell, foreground, worker] };
         };
         await w.StartAsync();
-        var (post, get, disk, receipt) = await w.RoundTripAsync(skipProcessPathSweep: true);
+        var (post, get, disk, receipt) = await w.RoundTripAsync(deferPreviewPathSweep: true);
         foreach (var p in new[] { post, get, disk })
         {
             p.Shell!.ExecutableName.ShouldNotContain("shell-path-secret", Case.Sensitive, "shell-path-excluded");
             p.Foreground![0].ExecutableName.ShouldNotContain("foreground-path-secret", Case.Sensitive, "foreground-path-excluded");
             p.AffectedProcesses![2].ExecutableName.ShouldNotContain("affected-path-secret", Case.Sensitive, "affected-path-excluded");
+            p.AffectedProcesses[0].ExecutableName.ShouldNotContain("shell-path-secret", Case.Sensitive, "affected-0-path-excluded");
+            p.AffectedProcesses[1].ExecutableName.ShouldNotContain("foreground-path-secret", Case.Sensitive, "affected-1-path-excluded");
             p.Shell!.ExecutableName.ShouldBe("pwsh.exe", "shell-path-excluded");
             p.Foreground![0].ExecutableName.ShouldBe("grok.exe", "foreground-path-excluded");
             p.AffectedProcesses![2].ExecutableName.ShouldBe("worker.exe", "affected-path-excluded");
+            p.AffectedProcesses[0].ExecutableName.ShouldBe("pwsh.exe", "affected-0-path-excluded");
+            p.AffectedProcesses[1].ExecutableName.ShouldBe("grok.exe", "affected-1-path-excluded");
             p.Shell.Pid.ShouldBe(4242); p.Foreground[0].Pid.ShouldBe(4243);
             p.AffectedProcesses[2].Pid.ShouldBe(4244);
             p.Eligible.ShouldBeFalse("raw-identity-still-refused");
             p.PlannedTerminationPids.ShouldBeEmpty();
         }
+        w.AssertPreviewPaths();
         receipt.Outcome.ShouldBe("Refused"); w.Fixture.Backend.Closes.ShouldBe(0);
     }
 
@@ -306,6 +311,9 @@ public sealed class HerdrPaneDisposalRedactionTests
         public HerdrPaneDisposalService? ServiceOverride { get; set; }
         private WebApplication? _app;
         private HttpClient? _http;
+        private string? _postJson;
+        private string? _getJson;
+        private string? _diskJson;
         public void SetLabels(string? label)
         {
             var ws = Fixture.Fake.Workspaces[0]; ws.Label = label!;
@@ -326,7 +334,7 @@ public sealed class HerdrPaneDisposalRedactionTests
         }
         public async Task<(HerdrPaneDisposalPreview Post, HerdrPaneDisposalPreview Get,
             HerdrPaneDisposalPreview Disk, HerdrPaneDisposalReceipt Receipt)> RoundTripAsync(
-                string reason = "reviewed", bool skipProcessPathSweep = false)
+                string reason = "reviewed", bool deferPreviewPathSweep = false)
         {
             using var response = await _http!.PostAsJsonAsync("/herdr/pane-disposals/preview",
                 new HerdrPaneDisposalPreviewRequest(Fixture.PaneId, Fixture.SessionId));
@@ -350,20 +358,23 @@ public sealed class HerdrPaneDisposalRedactionTests
             var diskJson = await File.ReadAllTextAsync(file);
             using var doc = JsonDocument.Parse(diskJson);
             var disk = doc.RootElement.GetProperty("reviewed").Deserialize<HerdrPaneDisposalPreview>(Json)!;
-            AssertNoPath(postJson, "path-label-excluded post", skipProcessPathSweep);
-            AssertNoPath(getJson, "stored-preview-path-excluded", skipProcessPathSweep);
-            AssertNoPath(executionJson, "execution-response-path-excluded", skipProcessPathSweep);
-            AssertNoPath(statusJson, "receipt-path-excluded", skipProcessPathSweep);
-            AssertNoPath(diskJson, "durable-review-path-excluded", skipProcessPathSweep);
+            _postJson = postJson; _getJson = getJson; _diskJson = diskJson;
+            if (!deferPreviewPathSweep) AssertPreviewPaths();
+            AssertNoPath(executionJson, "execution-response-path-excluded");
+            AssertNoPath(statusJson, "receipt-path-excluded");
             return (post, get, disk, receipt);
         }
-        private static void AssertNoPath(string json, string witness, bool skipProcessPathSweep)
+        public void AssertPreviewPaths()
+        {
+            AssertNoPath(_postJson!, "path-label-excluded post");
+            AssertNoPath(_getJson!, "stored-preview-path-excluded");
+            AssertNoPath(_diskJson!, "durable-review-path-excluded");
+        }
+        private static void AssertNoPath(string json, string witness)
         {
             foreach (var canary in new[] { "secret-home", "c866-host", "private-share",
                 "control-secret", "shell-path-secret", "foreground-path-secret", "affected-path-secret", "identity-secret", "stamp-a", "stamp-b" })
             {
-                if (skipProcessPathSweep && canary is "shell-path-secret" or "foreground-path-secret" or "affected-path-secret")
-                    continue;
                 json.ShouldNotContain(canary, Case.Sensitive, witness);
             }
         }
