@@ -42,7 +42,7 @@ try {
     if ($null -ne $data.rows) {
         if ($data.schemaVersion -ne 2 -or $null -eq $data.source) { throw 'legacy_report' }
         $selected = @($data.rows)
-        if (@($Rows).Count -gt 0) {
+        if ($null -ne $Rows -and @($Rows).Count -gt 0) {
             $ids = @(@($Rows) | ForEach-Object { ([string]$_).Split(',') } | Where-Object { $_ })
             $selected = @($selected | Where-Object { $_.id -cin $ids })
             if ($selected.Count -ne $ids.Count) { throw 'selected_rows_missing' }
