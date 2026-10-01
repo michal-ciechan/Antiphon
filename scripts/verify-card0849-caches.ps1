@@ -52,7 +52,7 @@ $map = @{
     PrunePreview = 'runner-cache-prune-preview'
     Prune = 'runner-cache-prune'
 }
-$cases = if ($Case -eq 'Both') { @('verify-runner-caches', 'verify-runner-caches') } else { @($map[$Case]) }
+$cases = @(if ($Case -eq 'Both') { @('verify-runner-caches', 'verify-runner-caches') } else { @($map[$Case]) })
 $runners = if ($Case -eq 'Both') { @('server2', 'server2-temp') } else { @('') }
 function Read-C849Receipt {
     param([int]$Index, [string]$Name)
