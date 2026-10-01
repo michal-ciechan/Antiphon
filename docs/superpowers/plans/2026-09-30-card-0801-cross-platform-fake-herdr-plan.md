@@ -471,7 +471,7 @@ The crash child must create its lease through the compiled fixture helper (load 
 in the owned PowerShell process if needed); fabricating a dead-owner marker in the parent does
 not prove crash cleanup. Parent-held restart leases remain parent-owned and are a separate case.
 
-New `HerdrTransportTests` has **13 unparameterized results**, all OSes:
+New `HerdrTransportTests` has **19 results (13 unparameterized plus six Arguments rows of `C801_UnixResolutionPreservesPosixCombineSemantics`)**, all OSes:
 `C801_NativePing`, `C801_RequestAndSubscriptionCoexist`, `C801_ConnectCancellation`,
 `C801_ConnectDeadline`, `C801_MissingEndpoint`, `C801_MalformedResponse`,
 `C801_PathOverridePrecedence`, `C801_NamedAndDefaultResolution`,
