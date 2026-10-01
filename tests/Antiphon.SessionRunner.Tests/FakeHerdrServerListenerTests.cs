@@ -1,4 +1,5 @@
 using System.Net.Sockets;
+using System.Diagnostics;
 using System.Text;
 using Antiphon.SessionRunner;
 using Microsoft.Extensions.Time.Testing;
@@ -233,5 +234,106 @@ public class FakeHerdrServerListenerTests
                 NativeFileIdentity.TryRead(path, out _).ShouldBeTrue("C801_FOREIGN_LEASE_PRESERVED");
         }
         finally { File.Delete(sentinel); Directory.Delete(scratch); }
+    }
+
+    [Test, Category("Integration")]
+    public async Task C801_OtherProcessCannotReclaimLiveLease()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        await using var owner = new FakeHerdrServer();
+        owner.Start(); await owner.WaitUntilListeningAsync();
+        var assembly = typeof(FakeHerdrEndpoint).Assembly.Location;
+        var script = "$a=[Reflection.Assembly]::LoadFrom($args[0]);$a.GetType('Antiphon.SessionRunner.Tests.FakeHerdrEndpoint',$true).GetMethod('ReclaimDeadLeases').Invoke($null,@())";
+        var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, RedirectStandardError = true };
+        start.ArgumentList.Add("-NoProfile");
+        start.ArgumentList.Add("-NonInteractive");
+        start.ArgumentList.Add("-Command");
+        start.ArgumentList.Add(script);
+        start.ArgumentList.Add(assembly);
+        using var child = Process.Start(start)!;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await child.WaitForExitAsync(deadline.Token);
+        child.ExitCode.ShouldBe(0, await child.StandardError.ReadToEndAsync());
+        NativeFileIdentity.TryRead(owner.EndpointPath, out _).ShouldBeTrue("C801_OTHER_PROCESS_LIVE_LEASE_PRESERVED");
+        (await Client(owner).ConnectAndValidateAsync(CancellationToken.None)).Protocol.ShouldBe(20);
+    }
+
+    [Test]
+    public async Task C801_EmptyClientDoesNotEndListener()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start(); await fake.WaitUntilListeningAsync();
+        if (OperatingSystem.IsWindows())
+        {
+            using var pipe = new System.IO.Pipes.NamedPipeClientStream(".", fake.EndpointPath,
+                System.IO.Pipes.PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous);
+            await pipe.ConnectAsync(500);
+        }
+        else
+        {
+            using var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+            await socket.ConnectAsync(new UnixDomainSocketEndPoint(fake.EndpointPath));
+        }
+        (await Client(fake).ConnectAndValidateAsync(CancellationToken.None)).Protocol.ShouldBe(20,
+            "C801_EMPTY_CLIENT_IS_PER_CONNECTION");
+        fake.ConnectionFaults.ShouldContain(ex => ex is EndOfStreamException);
+    }
+
+    [Test]
+    public async Task C801_FatalFaultClosesListener()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.BeforeRequest = _ => throw new ApplicationException("fatal fixture fault");
+        fake.Start(); await fake.WaitUntilListeningAsync();
+        await ErrorWithinAsync(Client(fake).ConnectAndValidateAsync(CancellationToken.None), "fatal request");
+        (await ErrorWithinAsync(fake.LoopCompletion, "C801_FATAL_LOOP_SETTLED"))
+            .ShouldBeOfType<ApplicationException>();
+        var second = Client(fake).ConnectAndValidateAsync(CancellationToken.None);
+        var error = await ErrorWithinAsync(second, "C801_FATAL_CONNECT_FAILS_FAST");
+        error.ShouldBeOfType<HerdrBackendUnavailableException>("C801_FATAL_CONNECT_FAILS_FAST");
+    }
+
+    [Test]
+    public void C801_PathLimitRejectsAllocation()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        FakeHerdrEndpoint.SocketPathLimitOverride.Value = 1;
+        try
+        {
+            Should.Throw<IOException>(() => new FakeHerdrEndpoint())
+                .Message.ShouldContain("sun_path", "C801_PATH_LIMIT_ENFORCED");
+        }
+        finally { FakeHerdrEndpoint.SocketPathLimitOverride.Value = null; }
+    }
+
+    [Test, Category("Integration")]
+    public async Task C801_ChangedAndSymlinkSocketsAreNotReclaimed()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var assembly = typeof(FakeHerdrServer).Assembly.Location;
+        var first = await HerdrTestProcess.StartOwnedFixtureAsync(assembly);
+        var path = first.EndpointPath!;
+        var directory = Path.GetDirectoryName(path)!;
+        await first.DisposeAsync();
+        var sentinel = Path.Combine(directory, "sentinel");
+        try
+        {
+            File.Delete(path);
+            File.WriteAllText(path, "replacement");
+            FakeHerdrEndpoint.ReclaimDeadLeases();
+            File.ReadAllText(path).ShouldBe("replacement", "C801_CHANGED_SOCKET_PRESERVED");
+            File.Move(path, sentinel);
+            File.CreateSymbolicLink(path, sentinel);
+            FakeHerdrEndpoint.ReclaimDeadLeases();
+            new FileInfo(path).LinkTarget.ShouldNotBeNull("C801_SYMLINK_SOCKET_PRESERVED");
+            File.ReadAllText(sentinel).ShouldBe("replacement");
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(sentinel);
+            File.Delete(Path.Combine(directory, "owner"));
+            Directory.Delete(directory);
+        }
     }
 }

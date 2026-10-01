@@ -29,6 +29,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
     private readonly object _eventGate = new();
     private TaskCompletionSource _listening = NewListeningTcs();
     private Exception? _listenerFault;
+    private readonly ConcurrentQueue<Exception> _connectionFaults = new();
     private bool _disposed;
     private readonly TimeProvider _timeProvider;
     internal Task? StartGate { get; set; }
@@ -97,6 +98,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
     public string PipeName => _endpoint.Path;
     public string EndpointPath => _endpoint.Path;
     public Exception? ListenerFault => _listenerFault;
+    internal IReadOnlyList<Exception> ConnectionFaults => _connectionFaults.ToArray();
     public Task LoopCompletion => _loop ?? Task.CompletedTask;
 
     public IReadOnlyList<JsonElement> Requests => _requests.ToArray();
@@ -262,8 +264,8 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
                 { AutoFlush = true };
 
                 var line = await reader.ReadLineAsync(ct);
-                line.ShouldNotBeNull();
-                using var doc = JsonDocument.Parse(line!);
+                if (line is null) throw new EndOfStreamException("Herdr test client disconnected before a request.");
+                using var doc = JsonDocument.Parse(line);
                 var request = doc.RootElement.Clone();
                 _requests.Enqueue(request);
 
@@ -332,7 +334,11 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
             {
                 break;
             }
-            catch (IOException) when (pipe is not null) { /* client disconnected */ }
+            catch (Exception ex) when (pipe is not null &&
+                ex is IOException or JsonException or InvalidOperationException or KeyNotFoundException)
+            {
+                _connectionFaults.Enqueue(ex);
+            }
             finally
             {
                 if (pipe is not null)
@@ -345,6 +351,8 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         catch (Exception ex)
         {
             FaultListening(ex);
+            try { await _transport.DisposeAsync(); }
+            catch (Exception cleanup) { System.Diagnostics.Trace.TraceWarning($"Herdr listener cleanup failed: {cleanup}"); }
             throw;
         }
     }
