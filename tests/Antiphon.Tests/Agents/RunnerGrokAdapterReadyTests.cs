@@ -212,6 +212,7 @@ public class RunnerGrokAdapterReadyTests
         }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5),
             Settle = TimeSpan.FromSeconds(2), PollInterval = TimeSpan.FromMilliseconds(5),
             TimeProvider = utcClock });
+        await utcClock.FirstPollInstalled.WaitAsync(TimeSpan.FromSeconds(2));
         utcClock.AdvanceUtc(TimeSpan.FromSeconds(3));
         for (var tick = 0; tick < 100 && utcReads < 3 && !wait.IsCompleted; tick++)
         {
@@ -461,12 +462,20 @@ public class RunnerGrokAdapterReadyTests
     private sealed class UtcJumpClock : TimeProvider
     {
         private readonly FakeTimeProvider _timer = new();
+        private readonly TaskCompletionSource _firstPoll =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         private TimeSpan _utcOffset;
+        public Task FirstPollInstalled => _firstPoll.Task;
         public override DateTimeOffset GetUtcNow() => _timer.GetUtcNow() + _utcOffset;
         public override long GetTimestamp() => _timer.GetTimestamp();
         public override long TimestampFrequency => _timer.TimestampFrequency;
         public override ITimer CreateTimer(TimerCallback callback, object? state,
-            TimeSpan dueTime, TimeSpan period) => _timer.CreateTimer(callback, state, dueTime, period);
+            TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = _timer.CreateTimer(callback, state, dueTime, period);
+            if (dueTime == TimeSpan.FromMilliseconds(5)) _firstPoll.TrySetResult();
+            return timer;
+        }
         public void Advance(TimeSpan amount) => _timer.Advance(amount);
         public void AdvanceUtc(TimeSpan amount) => _utcOffset += amount;
     }
