@@ -154,6 +154,12 @@ internal sealed class LandApiStub : IAsyncDisposable
             return;
         }
 
+        if (method == "POST" && path.EndsWith("/finding", StringComparison.Ordinal))
+        {
+            await WriteAsync(context, 200, "{}", json: true);
+            return;
+        }
+
         await WriteAsync(context, 404, """{"title":"Not Found"}""", json: true);
     }
 

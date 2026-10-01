@@ -17,7 +17,8 @@ public static class ReportValidator
             && start.CaptureStatus == "known" && end.CaptureStatus == "known"
             && start.Commit == expectedSha && end.Commit == expectedSha
             && start.DirtyFiles == 0 && end.DirtyFiles == 0
-            && start.Fingerprint is { Length: 64 } && start.Fingerprint == end.Fingerprint;
+            && start.Fingerprint is not null && Regex.IsMatch(start.Fingerprint, "^[0-9a-f]{64}$")
+            && start.Fingerprint == end.Fingerprint;
     }
 
     public static string? Validate(ReportModel report, string expectedSha, IReadOnlyList<string>? selectedIds = null)
@@ -31,10 +32,12 @@ public static class ReportValidator
             return "selected_rows_missing";
         foreach (var row in rows)
         {
-            if (row.ExitCode != 0 || row.State != "green" || row.Failed != 0 || row.Skipped != 0)
+            if (row.ExitCode != 0 || row.State != "green" ||
+                (row.Command is null && (row.Executed is not > 0 || row.Passed != row.Executed || row.Failed != 0 || row.Skipped != 0)))
                 return "row_failed";
             if (!IsSourceEligible(row.Source, expectedSha) || row.Source.Start.Fingerprint != report.Source.Start.Fingerprint ||
-                row.Source.BuildSource != report.Source.BuildSource)
+                (row.Command is null ? row.Source.BuildSource != report.Source.BuildSource
+                    : row.Source.BuildSource != "notApplicable"))
                 return "row_source_disagreement";
             if (row.Line is null || !row.Line.StartsWith("CHECKPOINT " + row.Id + " ", StringComparison.Ordinal))
                 return "row_receipt_missing";

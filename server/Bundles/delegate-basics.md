@@ -36,6 +36,12 @@ work itself: each one is here because ignoring it has already cost a real task.
   Avoid tight loops polling the same log with an identical command. Space out status checks and
   use the wait to read/investigate the next planned fix, without editing source under the run.
 
+- CHECKPOINT SOURCE IDENTITY: a passing test count alone does not certify HEAD. Ordinary Code and
+  Review pass the full committed SHA as the expected source, verify `dirty=0`, `sourceState=clean`
+  and `buildSource=verified`, and run the receipt validator on the selected evidence. Stable dirty
+  runs remain diagnostics for Mutation. Review declares `reviewedSourceClean: true` only after
+  the complete required selection qualifies; old approvals without that assertion need fresh Review.
+
 - MUTATION RUNNER ONLY: KEEP POSITIVE-CONTROL (PC) CYCLES METHOD-SCOPED. For each red-then-green cycle use a precise
   `--treenode-filter "/*/*/ClassName/ExactTestMethod"`, never a whole class or suite. Batch
   genuinely independent mutations only when they touch different files and methods: run just

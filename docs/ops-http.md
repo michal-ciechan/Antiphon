@@ -503,6 +503,11 @@ Review for the exact SHA (409 `final_verification_review_required` /
 approves a land. `GET /api/agent-tasks/{id}` exposes `verification` (version, round, subject,
 baseline and reviewed SHA, selection, final-review pending, owner latch, hold reason, readiness time);
 stage outcomes expose `verificationProfileVersion`, `commissionedRound` and `ordinaryScopeCompleted`.
+Review evidence and stage-outcome reads also expose nullable `reviewedSourceClean`. A clean
+Review finding may supply it explicitly with `delegate.ps1 -ReviewedSourceClean`; omission
+stays null. Evidence-backed land refuses false/null with `review_evidence_source_not_clean`,
+including unpublished resume. Check checkpoint `source.json` or schema-2 `report.json` with
+`scripts/validate-checkpoint-receipt.ps1` before Review declares true.
 
 `POST /api/agent-tasks` accepts optional `sourceLandingOperationId` (full GUID), exposed by
 `delegate.ps1 -SourceLanding`. Only fresh Worker/Mutation/Worktree with a distinct same-board

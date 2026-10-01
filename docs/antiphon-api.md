@@ -395,10 +395,14 @@ POST   /api/agent-tasks/{id}/finding         CARD-0272: orchestrator override of
                                              `reviewedSourceSha` (Review Clean only; 422
                                              otherwise). Writes a `Source=Orchestrator`
                                              `StageOutcome` row that supersedes the latest
-                                             for that (task, stage). Does not copy a prior
-                                             approved SHA. `delegate.ps1 -Finding <id>
+                                             for that (task, stage). Optional nullable
+                                             `reviewedSourceClean` requires an explicit
+                                             `reviewedSourceSha` and never copies a prior
+                                             assertion. `delegate.ps1 -Finding <id>
                                              -Stage … -Found "…"` / `-Clean`
-                                             [`-ReviewedSourceSha`].
+                                             [`-ReviewedSourceSha`]
+                                             [`-ReviewedSourceClean <bool>`]. Status and
+                                             stage-outcome DTOs expose the nullable field.
 POST   /api/agent-tasks/{id}/land            queue an explicit land of a Succeeded Worktree task
 POST   /api/agent-tasks/{id}/land/v2         same handler as `/land` (CARD-0495). New CLI
                                              callers POST only `/land/v2` after `GET /api/version`
@@ -411,7 +415,9 @@ POST   /api/agent-tasks/{id}/land/v2         same handler as `/land` (CARD-0495)
                                              the owner's own reviewed branch. Fresh work requires a full
                                              40/64-hex SHA (422 without it). Optional
                                              review evidence must match subject/SHA/ref/repo
-                                             (409). Pending identity is immutable. 202
+                                             and assert `reviewedSourceClean=true` (409
+                                             `review_evidence_source_not_clean` otherwise).
+                                             Pending identity is immutable. 202
                                              `{ status: "queued" | "requeued" }`; git
                                              runs in the background after remote-source
                                              freshness. Outcomes: `Landed`

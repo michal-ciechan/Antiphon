@@ -139,12 +139,12 @@ function Get-CheckpointSourceToken {
 }
 
 function Test-CheckpointSourceEvidence {
-    param($Evidence, [string]$ExpectedSourceSha)
+    param($Evidence, [string]$ExpectedSourceSha, [switch]$AllowCommand)
     if ($ExpectedSourceSha -cnotmatch '^([0-9a-f]{40}|[0-9a-f]{64})$') { return $false }
     if ($null -eq $Evidence -or $Evidence.version -ne 1 -or $null -eq $Evidence.start -or $null -eq $Evidence.end) { return $false }
     if ($Evidence.start.captureStatus -cne 'known' -or $Evidence.end.captureStatus -cne 'known') { return $false }
     if ($Evidence.start.commit -cne $ExpectedSourceSha -or $Evidence.end.commit -cne $ExpectedSourceSha) { return $false }
     if ($Evidence.start.dirtyFiles -ne 0 -or $Evidence.end.dirtyFiles -ne 0 -or $Evidence.state -cne 'clean') { return $false }
     if ($Evidence.start.fingerprint -cnotmatch '^[0-9a-f]{64}$' -or $Evidence.start.fingerprint -cne $Evidence.end.fingerprint) { return $false }
-    return $Evidence.buildSource -ceq 'verified'
+    return $Evidence.buildSource -ceq 'verified' -or ($AllowCommand -and $Evidence.buildSource -ceq 'notApplicable')
 }

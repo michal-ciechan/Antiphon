@@ -3,8 +3,10 @@
 Date: 2026-09-30. Plan baseline: `d7456a2352d15391f37eca8781c16db499a3759d`.
 Stage: TestDesign complete; next: Code. Documentation only; no build or test execution.
 Static audit baseline: `1edfc2a72abdd02d5613f5ff6297488dca9bdf02` (includes the
-plan landed at `45321eaf`). The 12-row roster remains closed: 177 executions per
-OS, 26 positive-control IDs and 35 independently applied defect variants.
+plan landed at `45321eaf`). CARD-0835 Code recount at `8331a9cf`: the 12-row
+roster is amended to 198 planned executions per OS, including CARD-0833's 21
+slot-path regressions. The 26 positive-control IDs and 35 independently applied
+defect variants are unchanged.
 
 ## Problem and ground truth
 
@@ -424,7 +426,7 @@ entire other test methods as test setup.
 | ID | Existing selection | Purpose |
 |---|---|---|
 | R-1 | `RunCheckpointScriptTests` (24 executions) | Literal arguments, fresh TRX, counters, exit codes, properties, source-bearing line grammar and build-slot release. |
-| R-2 | `CheckpointLineTests` (3), `ReportWriterTests` (6), `ReportMergerTests` (1), `CheckpointAppTests` (3), `RowRunnerTests` (13), `RunSchedulerTests` (14) | Report compatibility and scheduling/build/row behavior with explicit fixture source states. |
+| R-2 | `CheckpointLineTests` (3), `ReportWriterTests` (6), `ReportMergerTests` (1), `CheckpointAppTests` (3), `RowRunnerTests` (13), `RunSchedulerTests` (14), `CheckpointSlotExecutorTests` (10), `CheckpointSlotContractTests` (11) | Report compatibility and scheduling/build/row behavior with explicit fixture source states; the added 21 CARD-0833 cases guard the same executor/slot path touched by S2. |
 | R-3 | `ReviewEvidenceParserTests` (19 existing + 2 new = 21), `AgentTaskReviewEvidenceTests` (16), `ReviewEvidenceSettlementTests` (11) | Report authority, scope, authorization, immutable persisted approval and settlement. |
 | R-4 | `AgentTaskLandApprovalRequestTests` (21), `AgentTaskLandApprovalPersistenceTests` (10); two exact recovery methods in CP-12 | Current admission, schema invariants and preservation of original approval on resume. New V-21 exercises the new gate through the real boundary. |
 | R-5 | `DelegateScriptLandApprovalTests` (4 existing + 1 new = 5), `CheckpointManifestDocumentationTests` (7) | CLI contract and owner-doc pins. |
@@ -443,7 +445,7 @@ executions; internal alias calls do not add executions.
 | CP-2 | `RunCheckpointSourceScriptTests`: 5 new | `RunCheckpointSourceScriptTests` |
 | CP-3 | `RunCheckpointScriptTests`: 24 | `RunCheckpointScriptTests` |
 | CP-4 | `CheckpointSourceExecutionTests`: 6 new | `CheckpointSourceExecutionTests` |
-| CP-5 | `CheckpointLineTests`: 3; `ReportWriterTests`: 6; `ReportMergerTests`: 1; `CheckpointAppTests`: 3; `RowRunnerTests`: 13; `RunSchedulerTests`: 14 = 40 | `CheckpointLineTests,ReportWriterTests,ReportMergerTests,CheckpointAppTests,RowRunnerTests,RunSchedulerTests` |
+| CP-5 | `CheckpointLineTests`: 3; `ReportWriterTests`: 6; `ReportMergerTests`: 1; `CheckpointAppTests`: 3; `RowRunnerTests`: 13; `RunSchedulerTests`: 14; `CheckpointSlotExecutorTests`: 10; `CheckpointSlotContractTests`: 11 = 61 | `CheckpointLineTests,ReportWriterTests,ReportMergerTests,CheckpointAppTests,RowRunnerTests,RunSchedulerTests,CheckpointSlotExecutorTests,CheckpointSlotContractTests` |
 | CP-6 | `ReviewEvidenceParserTests`: 19 + 2 new = 21 | `ReviewEvidenceParserTests` |
 | CP-7 | `CheckpointSourceApprovalTests`: 4 new | `CheckpointSourceApprovalTests` |
 | CP-8 | `AgentTaskReviewEvidenceTests`: 16; `ReviewEvidenceSettlementTests`: 11 = 27 | `AgentTaskReviewEvidenceTests,ReviewEvidenceSettlementTests` |
@@ -452,7 +454,10 @@ executions; internal alias calls do not add executions.
 | CP-11 | `DelegateScriptLandApprovalTests`: 4 + 1 new; `CheckpointManifestDocumentationTests`: 7 = 12 | `DelegateScriptLandApprovalTests,CheckpointManifestDocumentationTests` |
 | CP-12 | `AgentTaskLandApprovalRecoveryTests.C488_OriginalApprovalNeverAdoptsHead` and `.C488_ChangedSourceNeedsNewApproval`: 1 each = 2 | `AgentTaskLandApprovalRecoveryTests.C488_OriginalApprovalNeverAdoptsHead,AgentTaskLandApprovalRecoveryTests.C488_ChangedSourceNeedsNewApproval` |
 
-Total: **154 existing + 23 new = 177 per OS**, 354 for the two qualifications.
+Total: **175 existing + 23 new = 198 per OS**, 396 for the two qualifications.
+The base source recount agrees with every other planned class count: 24, 3, 6,
+1, 3, 13, 14, 19 expanded parser cases, 16, 11, 21 expanded request cases,
+10, 4 and 7 in roster order; CP-12 still selects its two exact methods.
 Each row requires exactly its stated count, all passed, zero failed/skipped, and
 no other executed classes/methods; `MinExecuted` alone enforces only the lower
 bound. Inspect TRX class/method identities as well as counts, especially the six
@@ -466,6 +471,8 @@ Variant IDs are part of the guard/control identity: e.g. G-7A maps only to PC-7A
 There are **35 guards, 35 mapped variants under 26 PC IDs, missing=0, duplicate
 maps=0**. Rows group shared validation decisions; input combinations beneath a
 single predicate remain labeled matrix assertions, not extra defect runs.
+The CP-5 CARD-0833 regression expansion adds no V method, guard or PC variant:
+the 35 guard-to-control mappings below remain the complete Mutation inventory.
 
 | Guard | Decision / assertion protected | Sole control |
 |---|---|---|
@@ -663,16 +670,16 @@ launch another test. No product build/test is required for this TestDesign commi
 
 ### Cost
 
-Estimates, not measured results: ordinary V/R floor **59 minutes Linux**, **91
+Estimates, not measured results: ordinary V/R floor **60 minutes Linux**, **92
 minutes Windows**, excluding slot queueing and first-time dependency downloads.
 One isolated test-project build includes the tool via its existing project reference.
 CP-1 includes that build (12/18 minutes); CP-7/8/10 are the slow DB/settlement rows
 (12/20, 6/10, 9/14 minutes). CP-7's allowance increased from 7/12 to 12/20 after
 auditing its 42 resume/recovery/cleanup cases and real migration fixture; counts
 remain four TUnit executions. A separate Windows qualification is mandatory, so
-total ordinary host time is 150 minutes. Authoring estimate: 300 minutes, including the
+total ordinary host time is 152 minutes. Authoring estimate: 300 minutes, including the
 two implementations, migration, consumer gate and fixtures; first Linux Code
-dispatch estimate 359 minutes plus observed slot wait. Split authoring by slices,
+dispatch estimate 360 minutes plus observed slot wait. Split authoring by slices,
 not by repeatedly rebuilding the same slice.
 
 PC budget: 26 controls expand to **35 defect runs** with the listed variants.
@@ -681,7 +688,7 @@ Budget 6 minutes per method-scoped baseline/red/restored-green cycle on Linux
 9 minutes per cycle plus 25 setup = **340 minutes** if commissioned there. Migration
 and settlement controls may exceed a simple parser cycle; the per-cycle average
 reserves their cost. Numeric combined Linux authoring + ordinary V/R + Mutation
-floor: **589 minutes**; mandatory Windows ordinary qualification adds 91 = **680**.
+floor: **590 minutes**; mandatory Windows ordinary qualification adds 92 = **682**.
 Any additional guard variant requires an explicit cost amendment.
 
 Savings are structural: one isolated build instead of one per class, no launcher
@@ -701,7 +708,7 @@ backslash. All expected failures/skips are zero on both platforms.
 | CP-2 | all | CP-1 | script-source | `/*/*/RunCheckpointSourceScriptTests/*` | V-6-V-10 | all 5 executed, 0 failed/skipped | 5 | 4 | 6 | true | n/a |
 | CP-3 | all | CP-1 | script-regression | `/*/*/RunCheckpointScriptTests/*` | R-1 | all 24 executed, 0 failed/skipped | 24 | 4 | 6 | true | n/a |
 | CP-4 | all | CP-1 | tool-source | `/*/*/CheckpointSourceExecutionTests/*` | V-11-V-16 | all 6 executed, 0 failed/skipped | 6 | 2 | 3 | true | n/a |
-| CP-5 | all | CP-1 | tool-regression | `/*/*/(CheckpointLineTests*)\|(ReportWriterTests*)\|(ReportMergerTests*)\|(CheckpointAppTests*)\|(RowRunnerTests*)\|(RunSchedulerTests*)/*` | R-2 | exactly 40 executed across the six named classes, 0 failed/skipped | 40 | 2 | 3 | true | n/a |
+| CP-5 | all | CP-1 | tool-regression | `/*/*/(CheckpointLineTests*)\|(ReportWriterTests*)\|(ReportMergerTests*)\|(CheckpointAppTests*)\|(RowRunnerTests*)\|(RunSchedulerTests*)\|(CheckpointSlotExecutorTests*)\|(CheckpointSlotContractTests*)/*` | R-2 | exactly 61 executed across the eight named classes, 0 failed/skipped | 61 | 3 | 4 | true | n/a |
 | CP-6 | all | CP-1 | review-grammar | `/*/*/ReviewEvidenceParserTests/*` | V-17,V-18,R-3 | all 21 expanded executions, 0 failed/skipped | 21 | 1 | 1 | true | n/a |
 | CP-7 | all | CP-1 | source-approval | `/*/*/CheckpointSourceApprovalTests/*` | V-19-V-22 | exactly 4 executed with all internal admission/recovery/migration variants, 0 failed/skipped | 4 | 12 | 20 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-8 | all | CP-1 | review-settlement | `/*/*/(AgentTaskReviewEvidenceTests*)\|(ReviewEvidenceSettlementTests*)/*` | R-3 | exactly 27 executed (16+11), 0 failed/skipped | 27 | 6 | 10 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
@@ -723,7 +730,7 @@ Static validation parsed the Markdown cells (including escaped pipes), matched
 class/method operands against source declarations plus the proposed V roster,
 expanded `[Arguments]`, checked disjoint selections and every Min, summed both
 time columns, and checked the bijection between guard and PC-variant IDs. Result:
-12 rows, 177 executions per OS, 59/91 estimated minutes, 35 unique mappings and
+12 rows, 198 planned executions per OS, 60/92 estimated minutes, 35 unique mappings and
 23/23 proposed methods covered. `git diff --check` also passed. These are static
 design checks, not measured TUnit results or evidence that the PCs have gone red.
 

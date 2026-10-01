@@ -230,6 +230,12 @@ public static class CheckpointApp
             state.Reason = sourceGuard.Reason;
             result = new SchedulerResult { ExitCode = ExitCodes.Invalid, Rows = result.Rows, State = state };
         }
+        // The report heading describes the build binding shared by its rows. Command rows
+        // have no build; test rows must all carry a verified binding to certify this run.
+        var testRows = result.Rows.Where(row =>
+            manifest.Checkpoints.FirstOrDefault(spec => spec.Id == row.Id)?.IsCommand != true).ToList();
+        source.BuildSource = testRows.Count == 0 ? "notApplicable"
+            : testRows.All(row => row.Source.BuildSource == "verified") ? "verified" : "unknown";
         var model = BuildReport(runDirectory, repo, request, manifest, state, result);
         if (!owner.Ended.IsCancellationRequested && !string.IsNullOrWhiteSpace(request.Baseline))
         {

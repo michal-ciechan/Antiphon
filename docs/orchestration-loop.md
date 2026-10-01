@@ -1641,6 +1641,15 @@ Completion notes of profile-v1 tasks are durable obligations (see
 [session-runtime-invariants.md](session-runtime-invariants.md)); dispatch from the header's
 `next=`, never re-read the body.
 
+CARD-0835 adds an explicit `reviewedSourceClean: true|false` line to the bare Review evidence
+block. Review may report true only after its complete required checkpoint selection passes
+`validate-checkpoint-receipt.ps1` (or the tool's equivalent) for `reviewedSourceSha`, with
+`dirty=0`, stable clean source and verified build binding. Settlement stores the nullable
+assertion on the Review outcome. Evidence-backed land admission and every unpublished resume
+require true; missing or false returns `review_evidence_source_not_clean`. Old outcomes remain
+null and need a fresh Review. An authorized explicit caller SHA without a Review evidence ID
+retains its separate approval path; a rejected evidence ID never falls back to that path.
+
 ## Expectation watchdog (CARD-0650)
 
 An enabled, explicit board directive can run a minute Hangfire observation sweep independently
