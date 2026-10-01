@@ -762,3 +762,29 @@ in the deliverable. The only script edit is the plan-recorded namespace census
 change from 272 to 290 in `scripts/lib/checkpoint-usage.ps1`; no checkpoint
 script driver was changed. Windows qualification is pending in a separate task
 against the implementation SHA above.
+
+### Final Code requalification after custody assertion review
+
+The last source commit is `03e7ae692ccb0fb908398fde449d4089c50088cc`.
+It strengthens V-11's wire PID/start equality and sibling-survival checks,
+V-12's normal holder-exit check, and V-15's canceled holder-exit check; the
+production implementation remains at `f1778b580e83c6e35b3f6f9bb40a07b2ae09cc09`.
+The six closed rows were run again directly through `scripts/run-checkpoint.ps1`
+at that clean source commit, with one isolated build and five reuse runs. All
+six obtained host build-slot grants. Fresh TRX files are under
+`.antiphon/card0833-final2/` in this worktree.
+
+| Row | Executed | Passed | Failed | Skipped | Slot | Waited |
+|---|---:|---:|---:|---:|---|---:|
+| CP-1 | 10 | 10 | 0 | 0 | granted | 0 s |
+| CP-2 | 8 | 8 | 0 | 0 | granted | 45 s |
+| CP-3 | 51 | 51 | 0 | 0 | granted | 15 s |
+| CP-4 | 13 | 13 | 0 | 0 | granted | 15 s |
+| CP-5 | 3 | 3 | 0 | 0 | granted | 15 s |
+| CP-6 | 3646 | 3646 | 0 | 33 | granted | 15 s |
+
+There were no failures in this final six-row run. The 48 method-scoped PC
+variants remain pending Mutation; these green rows and the earlier red proofs
+do not discharge them. Windows qualification should use source commit
+`03e7ae692ccb0fb908398fde449d4089c50088cc` (the production code is
+unchanged from the implementation SHA above).
