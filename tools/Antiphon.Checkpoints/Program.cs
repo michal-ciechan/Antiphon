@@ -281,6 +281,7 @@ public static class Program
 
     private static async Task<int> Row(ArgSet options, string repo, CheckpointApp.Runtime? runtime)
     {
+        var output = runtime?.Output ?? Console.Out;
         var platform = runtime?.Platform ?? new RuntimePlatform();
         var slots = new BuildSlotClient(
             runtime?.SlotHandler ?? new HttpClientHandler(),
@@ -296,13 +297,13 @@ public static class Program
         await using var lease = await slots.AcquireAsync(session, name, CancellationToken.None).ConfigureAwait(false);
         if (lease.ExitCode != 0)
         {
-            Console.WriteLine(CheckpointLine.Format(new CheckpointLineModel
+            output.WriteLine(CheckpointLine.Format(new CheckpointLineModel
             {
                 Name = name, Commit = GitSnapshot.Run(repo, "rev-parse", "HEAD").Trim(),
                 Build = "failed", Filter = options.Get("filter") ?? "", Slot = lease.State,
                 SlotReason = lease.SlotReason, WaitedSeconds = lease.WaitedSeconds,
             }));
-            Console.WriteLine($"CHECKPOINT {name} EXIT CODE: {lease.ExitCode}");
+            output.WriteLine($"CHECKPOINT {name} EXIT CODE: {lease.ExitCode}");
             return lease.ExitCode;
         }
 
@@ -338,7 +339,7 @@ public static class Program
             SlotReason = lease.SlotReason,
             WaitedSeconds = lease.WaitedSeconds,
             MaxCpuCount = lease.MaxCpuCount > 0 ? lease.MaxCpuCount : 4,
-        }, Console.Out, CancellationToken.None).ConfigureAwait(false);
+        }, output, CancellationToken.None).ConfigureAwait(false);
         return result.ExitCode;
     }
 
