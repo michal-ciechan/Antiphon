@@ -191,6 +191,8 @@ The Plan and TestDesign dispatch scope is just `docs/superpowers/plans/2026-10-0
 
 TestDesign frozen at source `1dacda5e36f52a288c3b9b91f379b0e274c49038`. `pwsh -NoProfile -File scripts/card.ps1 get CARD-0826 -Board Antiphon` confirmed **Daily per-host cleanup of worktrees, work volume and temp older than 24 hours**. This stage changes only this plan. Linux/Windows builds and tests executed: **0/0**; all counts below are source census or explicitly proposed executions, never runtime results.
 
+Code recensus at `4cdd8809b85ed479a8a2b3d43f80e3cd7577bf6e` (2026-10-01): `CheckpointTempRootSweepTests` has 15 `[Test]` methods and zero argument rows; `CheckpointTempScopeTests` has 9 and zero; `CheckpointToolCopyCleanupTests` has 13 and four argument rows on one method, yielding 16 executions, so the frozen 40-execution compatibility roster is unchanged. `attentionVisuals.test.ts` has 16 plain `it(` calls and one `it.each` with six rows, so the existing client count remains 22. `dev-aspire.ps1` still contains 351 bytes above ASCII. These are source counts, not green test claims.
+
 | Bodies read | Boundary and coverage |
 |---|---|
 | All 37 methods in `CheckpointTempRootSweepTests`, `CheckpointTempScopeTests`, `CheckpointToolCopyCleanupTests`; `CheckpointTestScope`, `CheckpointTempRootSweep`, `CheckpointTestSupport` helpers; lifecycle-host csproj links | S2 extraction, real callers, original lifecycle ownership and budgets -> V-4, R-1 and 40 virtual compatibility executions below. |
