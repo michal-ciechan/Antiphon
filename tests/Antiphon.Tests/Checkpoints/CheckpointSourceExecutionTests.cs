@@ -346,6 +346,8 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         valid.Rows.Single().Command = null;
         valid.Rows.Single().Executed = 1;
         valid.Rows.Single().Passed = 1;
+        valid.Rows.Single().Failed = 0;
+        valid.Rows.Single().Skipped = 0;
         valid.Source = Evidence(Observe(Sha, 0), "clean", "verified");
         valid.Rows.Single().Line = CheckpointLine.Format(new CheckpointLineModel
         {
