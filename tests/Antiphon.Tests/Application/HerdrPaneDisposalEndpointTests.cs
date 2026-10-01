@@ -62,6 +62,9 @@ public sealed class HerdrPaneDisposalEndpointTests
         using var execution = await h.Http.PostAsJsonAsync("/api/herdr/pane-disposals", h.Runner.Request(p));
         execution.StatusCode.ShouldBe(HttpStatusCode.OK);
         var receipt = (await execution.Content.ReadFromJsonAsync<HerdrPaneDisposalReceipt>())!;
+        using var status = await h.Http.GetAsync($"/api/herdr/pane-disposals/{receipt.OperationId}");
+        status.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await status.Content.ReadAsStringAsync()).ShouldNotContain("secret-home");
         var durable = await File.ReadAllTextAsync(Path.Combine(h.Runner.Settings.SessionLogPath, "herdr", "disposals", $"{receipt.OperationId:N}.json"));
         durable.ShouldNotContain("secret-home");
     }
