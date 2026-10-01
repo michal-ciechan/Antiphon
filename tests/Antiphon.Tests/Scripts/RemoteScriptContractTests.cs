@@ -1341,6 +1341,7 @@ public sealed class RemoteScriptContractTests
         var remote = Remote();
         var output = LinuxShell("repo='" + DelegateScriptRunner.RepoRoot.Replace("'", "'\\''") + "'\n" +
             CacheSeedTreeHarness() + "\n" + Block(remote, "c849_saved_copy") + "\n" +
+            Block(remote, "c849_no_cache_attachments") + "\n" +
             Block(remote, "c849_seed_failure") + "\n" + Block(remote, "c849_seed") + "\n" +
             Block(remote, "case_deploy_parent") + "\n" + Block(remote, "case_deploy_temp_runner") + "\n" + """
             SERVER2_ROOT="$root/server2"; CASE_DIR="$root/case"
@@ -1362,6 +1363,7 @@ public sealed class RemoteScriptContractTests
                 case "$1:$2" in
                     image:inspect) printf 'sha256:%064d\n' 0; return 0 ;;
                     volume:inspect) echo "$root/state"; return 0 ;;
+                    ps:*) return 0 ;;
                     run:*)
                         if [[ "$*" == *'--entrypoint pwsh'* ]]; then
                             pwsh -NoProfile -File "$repo/scripts/c849-import-saved-donor.ps1" -Source "$C590_SAVED_DONOR" -Stage "$stage"
@@ -1433,7 +1435,8 @@ public sealed class RemoteScriptContractTests
         var remote = Remote();
         var output = LinuxShell("repo='" + DelegateScriptRunner.RepoRoot.Replace("'", "'\\''") + "'\n" +
             CacheSeedTreeHarness() + "\n" + Block(remote, "c849_saved_copy") + "\n" +
-            Block(remote, "c849_prune_idle") + "\n" + """
+            Block(remote, "c849_prune_idle") + "\n" +
+            Block(remote, "c849_no_cache_attachments") + "\n" + """
             SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/cache"
             CASE_DIR="$root/case"; mkdir -p "$CASE_DIR"
             RUN=red; CASE=runner-cache-seed; HOST_PROJECT=main; TEMP_PROJECT=temp
@@ -1458,6 +1461,7 @@ public sealed class RemoteScriptContractTests
                 fi
                 if [ "$1" = ps ]; then
                     [ "$PS_ERROR" = yes ] && return 1
+                    if [[ "$*" == *volume=* ]] && [ "$IN_USE" = yes ]; then echo consumer; return 0; fi
                     [[ "$*" == *'project=main'* ]] && echo main
                     return 0
                 fi
@@ -1492,6 +1496,12 @@ public sealed class RemoteScriptContractTests
             STATUS=main-zero; PS_ERROR=no
             ( c849_prune_idle ) > "$root/verdict" 2>&1
             printf 'retired code=%s verdict=%s\n' "$?" "$(cat "$root/verdict")"
+            IN_USE=yes
+            ( c849_no_cache_attachments ) > "$root/verdict" 2>&1
+            printf 'attached code=%s verdict=%s\n' "$?" "$(cat "$root/verdict")"
+            IN_USE=no; PS_ERROR=yes
+            ( c849_no_cache_attachments ) > "$root/verdict" 2>&1
+            printf 'attachment-unknown code=%s verdict=%s\n' "$?" "$(cat "$root/verdict")"
             """);
         output.ShouldContain("traversal code=2 diagnosis=CacheDonorUnsafePath");
         output.ShouldContain("symlink code=2 diagnosis=CacheDonorUnsafeEntry");
@@ -1500,6 +1510,8 @@ public sealed class RemoteScriptContractTests
         output.ShouldContain("main-unknown code=2 verdict=refusal=CacheConsumersBusy");
         output.ShouldContain("ps-error code=2 verdict=refusal=CacheConsumerUnknown");
         output.ShouldContain("retired code=0 verdict=");
+        output.ShouldContain("attached code=2 verdict=refusal=CacheConsumersBusy");
+        output.ShouldContain("attachment-unknown code=2 verdict=refusal=CacheConsumerUnknown");
     }
 
     [Test]
