@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -13,6 +15,130 @@ namespace Antiphon.Tests.Scripts;
 [Category("Unit")]
 public sealed class RemoteScriptContractTests
 {
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_front_door_passes_every_full_case_name_to_the_invoker()
+    {
+        var repo = DelegateScriptRunner.RepoRoot;
+        var front = Path.Combine(repo, "scripts/verify-card0849-caches.ps1");
+        var source = File.ReadAllText(front);
+        var mapBody = Regex.Match(source, @"(?s)\$map\s*=\s*@\{(?<body>.*?)\r?\n\}")
+            .Groups["body"].Value;
+        var entries = Regex.Matches(mapBody, @"(?m)^\s*(?<name>\w+)\s*=\s*'(?<remote>[^']+)'\s*$")
+            .Select(match => new { Name = match.Groups["name"].Value, Remote = match.Groups["remote"].Value })
+            .ToArray();
+        entries.Length.ShouldBeGreaterThan(0, "the front door case map is found");
+        var accepted = Regex.Matches(Regex.Match(source, @"\[ValidateSet\((?<values>[^)]*)\)\]")
+                .Groups["values"].Value, @"'([^']+)'")
+            .Select(match => match.Groups[1].Value)
+            .OrderBy(value => value, StringComparer.Ordinal).ToArray();
+        accepted.ShouldBe(entries.Select(entry => entry.Name).Append("Both")
+            .OrderBy(value => value, StringComparer.Ordinal).ToArray(),
+            "every accepted case has an invoker assertion");
+
+        var scratch = Path.Combine(repo, ".antiphon", "c849-front-door-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(scratch);
+        try
+        {
+            var mapPath = Path.Combine(scratch, "cases.json");
+            var harnessPath = Path.Combine(scratch, "probe.ps1");
+            File.WriteAllText(mapPath, JsonSerializer.Serialize(entries));
+            File.WriteAllText(harnessPath, """
+                param([string]$Front, [string]$MapPath, [string]$Scratch)
+                $ErrorActionPreference = 'Stop'
+                $repo = Split-Path -Parent (Split-Path -Parent $Front)
+                $sha = (& git -C $repo rev-parse HEAD).Trim()
+                $entries = @(Get-Content -Raw -LiteralPath $MapPath | ConvertFrom-Json)
+                $script:ownedEvidence = @()
+                function global:pwsh {
+                    param([switch]$NoProfile, [string]$File, [string]$Case, [string]$Manifest)
+                    $script:seen += $Case
+                    $m = Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json
+                    $evidence = Split-Path -Parent $m.evidenceRoot
+                    $script:ownedEvidence += $evidence
+                    if ($script:requested -ne 'Both') { throw 'C849_STUB_STOP' }
+                    $caseDir = Join-Path $m.evidenceRoot $Case
+                    New-Item -ItemType Directory -Path $caseDir -Force | Out-Null
+                    '{"accepted":true,"exit":0}' | Set-Content -LiteralPath (Join-Path $caseDir 'c590-result.json') -Encoding ascii
+                    (@{ sessions=0; runnerSessions=0; queuedTasks=0; buildVersion=$sha; dispatchEligible=$true; acceptingNewWork=$true; draining=$false } | ConvertTo-Json -Compress) |
+                        Set-Content -LiteralPath (Join-Path $caseDir 'status.json') -Encoding ascii
+                    'uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK' | Set-Content -LiteralPath (Join-Path $caseDir 'smoke-summary.txt') -Encoding ascii
+                    'antiphon-runner-cache-nuget-packages antiphon-runner-cache-nuget-scratch antiphon-runner-cache-npm-content' |
+                        Set-Content -LiteralPath (Join-Path $caseDir 'runner-mounts.txt') -Encoding ascii
+                    $private = if ($m.runnerId -eq 'server2') { 'antiphon-runner_runner-tmp' } else { 'antiphon-runner-temp_runner-tmp' }
+                    Add-Content -LiteralPath (Join-Path $caseDir 'runner-mounts.txt') -Value "$private /tmp true" -Encoding ascii
+                    ('a' * 64) | Set-Content -LiteralPath (Join-Path $caseDir 'seed-hash.txt') -Encoding ascii
+                }
+                try {
+                    foreach ($entry in $entries) {
+                        $script:requested = $entry.Name
+                        $script:seen = @()
+                        $arguments = @('-Case', $entry.Name, '-Sha', $sha)
+                        if ($entry.Name -eq 'Prune') {
+                            $previewDir = Join-Path $Scratch 'runner-cache-prune-preview'
+                            New-Item -ItemType Directory -Path $previewDir -Force | Out-Null
+                            $preview = Join-Path $previewDir 'preview.txt'
+                            "run=c849$('a' * 16)0`nsource-sha=$sha" | Set-Content -LiteralPath $preview -Encoding ascii
+                            $arguments += @('-Preview', $preview)
+                        }
+                        try { & $Front @arguments | Out-Null }
+                        catch {
+                            if ($_.Exception.Message -ne 'C849_STUB_STOP') { throw }
+                        }
+                        if ($script:seen.Count -ne 1 -or $script:seen[0] -cne $entry.Remote) {
+                            throw "FAIL $($entry.Name) full remote case: expected $($entry.Remote), got $($script:seen -join ',')"
+                        }
+                        Write-Output "PASS $($entry.Name) full remote case"
+                    }
+                    $script:requested = 'Both'
+                    $script:seen = @()
+                    & $Front -Case Both -Sha $sha | Out-Null
+                    if (($script:seen -join ',') -cne 'verify-runner-caches,verify-runner-caches') {
+                        throw "FAIL Both ordered remote cases: got $($script:seen -join ',')"
+                    }
+                    Write-Output 'PASS Both ordered remote cases'
+                }
+                finally {
+                    foreach ($path in ($script:ownedEvidence | Select-Object -Unique)) {
+                        if ((Split-Path -Leaf $path) -match '^c849-c849[0-9a-f]{16}$' -and
+                            (Split-Path -Parent $path) -eq (Join-Path $repo '.antiphon')) {
+                            Remove-Item -LiteralPath $path -Recurse -Force
+                        }
+                    }
+                    Remove-Item Function:\pwsh -ErrorAction SilentlyContinue
+                }
+                """);
+
+            var start = new ProcessStartInfo("pwsh")
+            {
+                WorkingDirectory = repo,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            };
+            foreach (var arg in new[] { "-NoProfile", "-File", harnessPath, "-Front", front,
+                         "-MapPath", mapPath, "-Scratch", scratch })
+                start.ArgumentList.Add(arg);
+            using var process = Process.Start(start)!;
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(60_000))
+            {
+                process.Kill(entireProcessTree: true);
+                throw new TimeoutException("C849 front door probe timed out");
+            }
+            var output = stdout.Result + stderr.Result;
+            process.ExitCode.ShouldBe(0, output);
+            foreach (var entry in entries)
+                output.ShouldContain("PASS " + entry.Name + " full remote case");
+            output.ShouldContain("PASS Both ordered remote cases");
+        }
+        finally
+        {
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+
     [Test]
     public void Nested_lane_never_uses_sudo_or_python()
     {
