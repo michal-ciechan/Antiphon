@@ -20,6 +20,8 @@ public sealed class SchedulerRequest
     public Func<string>? CancellationReason { get; init; }
     public Func<string?>? AdmissionBlock { get; init; }
     public bool OwnerBound { get; init; }
+    public SourceRunGuard? SourceGuard { get; init; }
+    public string? ExpectedSourceSha { get; init; }
 }
 
 public sealed class SchedulerResult
@@ -93,13 +95,19 @@ public sealed class RunScheduler
             }
 
             var admissionBlock = request.AdmissionBlock?.Invoke();
+            if (admissionBlock is null && request.SourceGuard?.Reason is not null)
+                admissionBlock = request.SourceGuard.Reason;
             if (admissionBlock is not null)
             {
+                var admissionCode = admissionBlock.StartsWith("source_", StringComparison.Ordinal)
+                    ? ExitCodes.Invalid : ExitCodes.OwnerEnded;
                 foreach (var row in pending.ToList())
                 {
                     pending.Remove(row);
-                    Mark(request, row.Id, admissionBlock, ExitCodes.OwnerEnded);
-                    finished.Add(Placeholder(row, admissionBlock, ExitCodes.OwnerEnded));
+                    Mark(request, row.Id, admissionBlock, admissionCode);
+                    var refused = Placeholder(row, admissionBlock, admissionCode);
+                    refused.Source = request.SourceGuard?.Copy("unknown") ?? new SourceEvidence();
+                    finished.Add(refused);
                 }
                 SkipPendingBuilds(request, buildStates);
                 Publish(request);
@@ -111,7 +119,8 @@ public sealed class RunScheduler
                     pending.Remove(row);
                     var build = buildStates[row.Build!];
                     var admission = build.AdmissionExitCode != 0;
-                    var state = admission ? build.Slot == "timeout" ? "slot-timeout" : "slot-refused" : "build-failed";
+                    var state = admission ? build.SlotReason is "source_changed" or "source_unknown" ? build.SlotReason
+                        : build.Slot == "timeout" ? "slot-timeout" : "slot-refused" : "build-failed";
                     var code = admission ? build.AdmissionExitCode : ExitCodes.Invalid;
                     var receipt = Placeholder(row, state, code);
                     if (admission)
@@ -133,6 +142,7 @@ public sealed class RunScheduler
                     rowProgress.WaitedSeconds = receipt.WaitedSeconds;
                     rowProgress.Line = receipt.Line;
                     finished.Add(receipt);
+                    receipt.Source = build.Source;
                 }
 
                 var exclusiveRunning = running.Any(item => IsExclusive(item.Spec, request));
@@ -318,6 +328,17 @@ public sealed class RunScheduler
             }
 
             var properties = BuildStep.PropertyArguments(request.Manifest.Build.Properties, _platform.IsWindows);
+            var binding = CheckpointBuildBinding.Expected(request.WorkingDirectory, build.Project, build.OutputPath,
+                properties, request.State.Source.Start);
+            if (request.SourceGuard?.Observe() == false)
+            {
+                progress.AdmissionExitCode = ExitCodes.Invalid;
+                progress.SlotReason = request.SourceGuard.Reason;
+                progress.State = "failed";
+                progress.Source = request.SourceGuard.Copy("unknown");
+                return;
+            }
+            binding.Invalidate();
             var cpu = lease.MaxCpuCount > 0 ? lease.MaxCpuCount : 4;
             var args = BuildStep.BuildArguments(build.Project, build.OutputPath, properties, cpu);
             var log = Path.Combine(request.RunDirectory, "builds", build.Id, "build.log");
@@ -329,8 +350,12 @@ public sealed class RunScheduler
                 new DriverRequest("dotnet", args, request.WorkingDirectory, log),
                 TimeSpan.FromMinutes(Math.Max(15, request.Manifest.Timeouts.RowMinutes)),
                 cancellationToken).ConfigureAwait(false);
+            var sourceOk = request.SourceGuard?.Observe() != false;
             progress.Seconds = (DateTimeOffset.UtcNow - started).TotalSeconds;
-            progress.State = result.ExitCode == 0 && !result.TimedOut ? "ok" : "failed";
+            progress.State = result.ExitCode == 0 && !result.TimedOut && sourceOk ? "ok" : "failed";
+            if (progress.State == "ok") binding.Write();
+            else if (!sourceOk) { progress.AdmissionExitCode = ExitCodes.Invalid; progress.SlotReason = request.SourceGuard?.Reason; }
+            progress.Source = request.SourceGuard?.Copy(progress.State == "ok" ? "verified" : "unknown") ?? new SourceEvidence();
         }
         catch (OperationCanceledException)
         {
@@ -376,6 +401,18 @@ public sealed class RunScheduler
         }
 
         var build = spec.IsCommand ? null : request.Manifest.Builds.First(item => item.Id == spec.Build);
+        var rowSource = request.SourceGuard?.Copy(spec.IsCommand ? "notApplicable" : "unknown") ?? new SourceEvidence();
+        bool Boundary()
+        {
+            var ok = request.SourceGuard?.Observe() != false;
+            if (request.SourceGuard is not null)
+            {
+                var latest = request.SourceGuard.Copy(rowSource.BuildSource);
+                rowSource.End = latest.End;
+                rowSource.State = latest.State;
+            }
+            return ok;
+        }
         var minutes = spec.TimeoutMinutes ?? RowTimeout.DeriveRowMinutes(spec.EstimatedMinutes, null, request.Manifest.Timeouts.RowMinutes);
         if (request.RowTimeoutOverride is TimeSpan over)
             minutes = Math.Max(1, (int)Math.Ceiling(over.TotalMinutes));
@@ -395,6 +432,9 @@ public sealed class RunScheduler
             Properties = request.Manifest.Build.Properties.ToList(),
             KnownFlaky = request.KnownFlaky,
             Commit = request.Commit,
+            Source = rowSource,
+            SourceBoundary = Boundary,
+            ExpectedSourceSha = request.ExpectedSourceSha,
             Slot = lease.State,
             SlotReason = lease.SlotReason,
             WaitedSeconds = lease.WaitedSeconds,
@@ -409,6 +449,7 @@ public sealed class RunScheduler
         result.SlotReason = lease.SlotReason;
         result.WaitedSeconds = lease.WaitedSeconds;
         result.Seconds = (DateTimeOffset.UtcNow - started).TotalSeconds;
+        result.Source = rowSource;
         return result;
     }
 

@@ -15,6 +15,8 @@ public sealed class RunRequest
     public string RepoRoot { get; set; } = "";
     public string Commit { get; set; } = "";
     public string Branch { get; set; } = "";
+    public string? ExpectedSourceSha { get; set; }
+    public SourceEvidence Source { get; set; } = new();
     public string? OwnerTaskId { get; set; }
     public string? OwnerSessionId { get; set; }
 }

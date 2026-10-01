@@ -47,6 +47,9 @@ public class StageOutcome
     /// <summary>Exact reviewed commit. Null unless this row is usable Review approval evidence.</summary>
     public string? ReviewedSourceSha { get; set; }
 
+    /// <summary>Review's explicit assertion that the selected source receipts were clean and bound.</summary>
+    public bool? ReviewedSourceClean { get; set; }
+
     /// <summary>Source full ref snapshotted from the named subject at settlement.</summary>
     public string? ReviewedSourceRef { get; set; }
 

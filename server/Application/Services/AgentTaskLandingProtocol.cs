@@ -579,7 +579,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     private async Task RecheckApprovalAsync(AgentTaskLanding op, AgentTaskLandRequest? request, CancellationToken ct,
         bool skipRecoverySourceFreshness = false)
     {
-        if (op.RecoveryMode == LandRecoveryMode.None)
+        if (op.RecoveryMode == LandRecoveryMode.None && !_state.HasPublication(op))
             await RecheckFinalVerificationAsync(op.TaskId, request?.ReviewEvidenceId ?? op.ReviewEvidenceId,
                 op.OriginalSourceSha, ct);
         else if (!_state.HasPublication(op))

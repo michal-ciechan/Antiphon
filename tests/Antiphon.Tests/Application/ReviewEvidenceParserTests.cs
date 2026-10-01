@@ -222,6 +222,38 @@ public class ReviewEvidenceParserTests
         duplicated.Scope.ShouldBe(Antiphon.Server.Domain.Enums.VerificationScope.Unknown, "duplicate-blocks");
     }
 
+    [Test]
+    public void C835_SourceCleanGrammar()
+    {
+        var good = ReviewEvidence.TryParse(Report(Block(Subject, Sha40) +
+            "\nordinaryScopeCompleted: Full\nreviewedSourceClean: true"));
+        good.Usable.ShouldBeTrue();
+        good.ReviewedSourceClean.ShouldBe(true, "explicit-true");
+        ReviewEvidence.TryParse(Report(Block(Subject, Sha40) + "\nreviewedSourceClean: false"))
+            .ReviewedSourceClean.ShouldBe(false, "explicit-false");
+        foreach (var value in new[] { "", "True", "yes", "1", "\"true\"" })
+            ReviewEvidence.TryParse(Report(Block(Subject, Sha40) + "\nreviewedSourceClean: " + value))
+                .ReviewedSourceClean.ShouldBeNull("malformed-clean");
+        foreach (var lines in new[]
+        {
+            "reviewedSourceClean: false\nreviewedSourceClean: true",
+            "reviewedSourceClean: true\nreviewedSourceClean: false",
+        })
+            ReviewEvidence.TryParse(Report(Block(Subject, Sha40) + "\n" + lines))
+                .ReviewedSourceClean.ShouldBeNull("duplicate-clean-is-unknown");
+    }
+
+    [Test]
+    public void C835_SourceStateCannotBeInferred()
+    {
+        ReviewEvidence.TryParse(Report(Block(Subject, Sha40) + "\nordinaryScopeCompleted: Full"))
+            .ReviewedSourceClean.ShouldBeNull("full-scope-is-not-source-clean");
+        ReviewEvidence.TryParse(Report(Block(Subject, Sha40))).ReviewedSourceClean
+            .ShouldBeNull("bare-sha-is-not-source-clean");
+        ReviewEvidence.TryParse(Report(Block(Subject, Sha40 + "+dirty:" + new string('a', 64)) +
+            "\nreviewedSourceClean: true")).Usable.ShouldBeFalse("dirty-suffix-is-not-oid");
+    }
+
     private static string Block(Guid subject, string sha) =>
         $"--- review evidence ---\nsubjectTaskId: {subject:D}\nreviewedSourceSha: {sha}";
 
