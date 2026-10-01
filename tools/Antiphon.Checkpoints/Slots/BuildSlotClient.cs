@@ -41,12 +41,14 @@ public sealed class BuildSlotClient : IBuildSlotClient
     private readonly int _pid;
     private readonly string? _processStartUtc;
     private readonly ILeaseHolderSource? _holders;
+    private readonly string? _sensitiveToken;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _held = new(StringComparer.Ordinal);
 
     public BuildSlotClient(HttpMessageHandler handler, string endpoint, TimeSpan? grace = null,
         TimeSpan? wait = null, Func<DateTimeOffset>? clock = null,
         Func<TimeSpan, CancellationToken, Task>? delay = null, Action<string>? log = null,
-        int? pid = null, string? processStartUtc = null, ILeaseHolderSource? holders = null)
+        int? pid = null, string? processStartUtc = null, ILeaseHolderSource? holders = null,
+        string? sensitiveToken = null)
     {
         _http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
         _endpoint = endpoint.TrimEnd('/');
@@ -58,6 +60,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
         _pid = pid ?? Environment.ProcessId;
         _processStartUtc = processStartUtc;
         _holders = holders;
+        _sensitiveToken = sensitiveToken;
     }
 
     public static string DefaultEndpoint(bool isWindows)
@@ -83,7 +86,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
                 var elapsed = Seconds(started);
                 if (response.StatusCode == HttpStatusCode.NotFound)
                 {
-                    var notFound = SlotDiagnostic.Answer("probe", 404, "broker_not_found", body, elapsed);
+                    var notFound = SlotDiagnostic.Answer("probe", 404, "broker_not_found", body, elapsed, _sensitiveToken);
                     Note(notFound);
                     return new SlotSession("unavailable", 4, SlotReason: notFound.Reason, Diagnostic: notFound);
                 }
@@ -107,7 +110,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
             {
-                last = SlotDiagnostic.Failure("probe", "runner_unreachable", ex, Seconds(started));
+                last = SlotDiagnostic.Failure("probe", "runner_unreachable", ex, Seconds(started), _sensitiveToken);
                 Note(last);
             }
             if (SecondsSince(started) >= _grace)
@@ -125,7 +128,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
     {
         if (session.ExitCode != 0 || session.Mode == "refused")
             return RefusedLease(session.Diagnostic ?? new SlotDiagnostic("probe", null,
-                session.SlotReason ?? "probe_refused", null, null, 0), 0, label);
+                session.SlotReason ?? "probe_refused", null, null, 0), session.Diagnostic?.ElapsedSeconds ?? 0, label);
         if (session.Mode is "unavailable" or "unleased" or "unlimited" or "off")
             return new SlotLease
             {
@@ -150,7 +153,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                return RefusedLease(SlotDiagnostic.Failure("acquire", "holder_identity_unavailable", ex, Seconds(started)), Seconds(started), label);
+                return RefusedLease(SlotDiagnostic.Failure("acquire", "holder_identity_unavailable", ex, Seconds(started), _sensitiveToken), Seconds(started), label);
             }
             var pid = holder?.Pid ?? _pid;
             var processStart = holder?.ProcessStartUtc ?? _processStartUtc;
@@ -185,7 +188,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
                         }
                         if (unlimited)
                         {
-                            _log?.Invoke($"BUILD SLOT label={SlotDiagnostic.Excerpt(label)} operation=acquire status=200 reason=unlimited maxcpucount={cpu} elapsed={elapsed}s");
+                            _log?.Invoke($"BUILD SLOT label={SlotDiagnostic.Excerpt(label, _sensitiveToken)} operation=acquire status=200 reason=unlimited maxcpucount={cpu} elapsed={elapsed}s");
                             return new SlotLease { State = "unlimited", MaxCpuCount = cpu, WaitedSeconds = elapsed };
                         }
                         if (!_held.TryAdd(leaseId!, 0))
@@ -197,7 +200,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
                             try { holder = _holders.Open(); }
                             catch (Exception ex) when (ex is not OperationCanceledException)
                             {
-                                return RefusedLease(SlotDiagnostic.Failure("acquire", "holder_identity_unavailable", ex, Seconds(started)), Seconds(started), label);
+                                return RefusedLease(SlotDiagnostic.Failure("acquire", "holder_identity_unavailable", ex, Seconds(started), _sensitiveToken), Seconds(started), label);
                             }
                             pid = holder.Pid;
                             processStart = holder.ProcessStartUtc;
@@ -208,7 +211,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
                         }
                         try
                         {
-                            _log?.Invoke($"BUILD SLOT granted lease={leaseId} label={SlotDiagnostic.Excerpt(label)} waited={elapsed}s maxcpucount={cpu}");
+                            _log?.Invoke($"BUILD SLOT granted lease={leaseId} label={SlotDiagnostic.Excerpt(label, _sensitiveToken)} waited={elapsed}s maxcpucount={cpu}");
                         }
                         catch
                         {
@@ -252,13 +255,13 @@ public sealed class BuildSlotClient : IBuildSlotClient
                     {
                         if (SecondsSince(started) >= _wait)
                         {
-                            _log?.Invoke($"BUILD SLOT timeout label={SlotDiagnostic.Excerpt(label)} after {(int)_wait.TotalSeconds}s reason={reason}");
+                            _log?.Invoke($"BUILD SLOT timeout label={SlotDiagnostic.Excerpt(label, _sensitiveToken)} after {(int)_wait.TotalSeconds}s reason={reason}");
                             return new SlotLease { State = "timeout", ExitCode = ExitCodes.SlotTimeout,
                                 WaitedSeconds = elapsed, MaxCpuCount = 0, SlotReason = reason, Diagnostic = last };
                         }
                         if (_clock() - lastPrinted >= TimeSpan.FromMinutes(1))
                         {
-                            _log?.Invoke($"BUILD SLOT waiting label={SlotDiagnostic.Excerpt(label)} reason={reason} elapsed={(int)(_clock() - started).TotalMinutes}m");
+                            _log?.Invoke($"BUILD SLOT waiting label={SlotDiagnostic.Excerpt(label, _sensitiveToken)} reason={reason} elapsed={(int)(_clock() - started).TotalMinutes}m");
                             lastPrinted = _clock();
                         }
                         var retryMs = ReadInt(body, "retryAfterMs", 5000);
@@ -275,7 +278,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
                 }
                 catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
                 {
-                    last = SlotDiagnostic.Failure("acquire", "runner_unreachable", ex, Seconds(started));
+                    last = SlotDiagnostic.Failure("acquire", "runner_unreachable", ex, Seconds(started), _sensitiveToken);
                     Note(last, label);
                 }
                 if (SecondsSince(started) >= _grace)
@@ -285,7 +288,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
             if (answered is not null)
                 return RefusedLease(answered, Seconds(started), label);
             var fallback = last ?? new SlotDiagnostic("acquire", null, "runner_unreachable", null, null, Seconds(started));
-            _log?.Invoke(fallback.Line(label) + " fallback=unleased");
+            _log?.Invoke(fallback.Line(label, _sensitiveToken) + " fallback=unleased");
             return new SlotLease { State = "unleased", MaxCpuCount = 4,
                 WaitedSeconds = Seconds(started), SlotReason = "runner_unreachable", Diagnostic = fallback };
         }
@@ -316,7 +319,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
             {
-                Note(SlotDiagnostic.Failure("renew", "runner_unreachable", ex, 0), label);
+                Note(SlotDiagnostic.Failure("renew", "runner_unreachable", ex, 0, _sensitiveToken), label);
             }
         }
     }
@@ -327,7 +330,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
         {
             using var response = await _http.DeleteAsync(_endpoint + "/" + leaseId, cancellationToken).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.NoContent)
-                _log?.Invoke($"BUILD SLOT released lease={leaseId} label={SlotDiagnostic.Excerpt(label)}");
+                _log?.Invoke($"BUILD SLOT released lease={leaseId} label={SlotDiagnostic.Excerpt(label, _sensitiveToken)}");
             else
             {
                 var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
@@ -337,7 +340,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
         {
-            Note(SlotDiagnostic.Failure("release", "runner_unreachable", ex, 0), label);
+            Note(SlotDiagnostic.Failure("release", "runner_unreachable", ex, 0, _sensitiveToken), label);
         }
     }
 
@@ -349,19 +352,19 @@ public sealed class BuildSlotClient : IBuildSlotClient
 
     private SlotLease RefusedLease(SlotDiagnostic diagnostic, int waited, string label)
     {
-        _log?.Invoke(diagnostic.Line(label) + " final=refused");
+        _log?.Invoke(diagnostic.Line(label, _sensitiveToken) + " final=refused");
         return new SlotLease { State = "refused", ExitCode = ExitCodes.Invalid,
             MaxCpuCount = 0, WaitedSeconds = waited, SlotReason = diagnostic.Reason, Diagnostic = diagnostic };
     }
 
     private SlotDiagnostic Observe(string operation, int status, string reason, string body, int elapsed, string? label = null)
     {
-        var diagnostic = SlotDiagnostic.Answer(operation, status, reason, body, elapsed);
+        var diagnostic = SlotDiagnostic.Answer(operation, status, reason, body, elapsed, _sensitiveToken);
         Note(diagnostic, label);
         return diagnostic;
     }
 
-    private void Note(SlotDiagnostic diagnostic, string? label = null) => _log?.Invoke(diagnostic.Line(label));
+    private void Note(SlotDiagnostic diagnostic, string? label = null) => _log?.Invoke(diagnostic.Line(label, _sensitiveToken));
     private int Seconds(DateTimeOffset started) => Math.Max(0, (int)(_clock() - started).TotalSeconds);
     private TimeSpan SecondsSince(DateTimeOffset started) => _clock() - started;
 
@@ -439,7 +442,8 @@ public sealed class BuildSlotClient : IBuildSlotClient
         try
         {
             using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String)
+            if (doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String)
                 return value.GetString();
         }
         catch (JsonException) { }

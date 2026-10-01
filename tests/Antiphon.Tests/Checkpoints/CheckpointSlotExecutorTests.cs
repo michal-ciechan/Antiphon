@@ -94,6 +94,13 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         var merged = ReportMerger.Merge([report]);
         merged.Rows.ShouldAllBe(row => row.SlotReason == "build_slot_invalid");
         File.ReadAllText(Path.Combine(run, "report.md")).ShouldContain("slot-reason=build_slot_invalid");
+        var probe = new ScriptedHttpHandler();
+        probe.Enqueue(HttpStatusCode.BadRequest, """{"type":"probe_denied","detail":"no listing"}""");
+        var probeRun = NewRun(BuiltManifest(twoRows: false));
+        (await CheckpointApp.ExecuteAsync(probeRun, CancellationToken.None, Runtime(probe, new FakeDriver()))).ShouldBe(2);
+        var dependent = ReadReport(probeRun).Rows.Single();
+        dependent.SlotReason.ShouldBe("probe_denied", "dependent-admission: probe refusal must reach dependent row");
+        dependent.Executed.ShouldBe(0);
     }
 
     [Test]
@@ -114,6 +121,13 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
             [], CancellationToken.None);
         driver.Calls.ShouldBeEmpty("baseline-driver-count: refused fetch must stop before git");
         comparer.ToolRuns.ShouldContain(line => line.Contains("slot-reason=build_slot_invalid"));
+        var builtRecorder = (BuildSlotBrokerFixture.Recorder)host.Recording(omitStartAfter: 1);
+        var builtDriver = new FakeDriver();
+        var builtRun = NewRun(BuiltManifest(twoRows: false));
+        (await CheckpointApp.ExecuteAsync(builtRun, CancellationToken.None, Runtime(builtRecorder, builtDriver))).ShouldBe(2);
+        builtDriver.Calls.Count(CheckpointFixtures.IsBuild).ShouldBe(1);
+        builtDriver.Calls.Count(CheckpointFixtures.IsRun).ShouldBe(0, "refused-row-driver-count: TUnit row must not launch");
+        ReadReport(builtRun).Rows.Single().SlotReason.ShouldBe("build_slot_invalid");
     }
 
     [Test]

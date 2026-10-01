@@ -120,7 +120,9 @@ public static class CheckpointApp
         IBuildSlotClient slots = runtime.Slots ?? (request.Slots == "off"
             ? new FixedSlotClient("off")
             : new BuildSlotClient(runtime.SlotHandler ?? new HttpClientHandler(), BuildSlotClient.DefaultEndpoint(OperatingSystem.IsWindows()),
-                clock: runtime.SlotClock, delay: runtime.SlotDelay, log: Note, holders: new ProcessLeaseHolderSource(runtime.SlotStartTimeReader)));
+                clock: runtime.SlotClock, delay: runtime.SlotDelay, log: Note,
+                holders: new ProcessLeaseHolderSource(runtime.SlotStartTimeReader),
+                sensitiveToken: runtime.EnvironmentLookup("ANTIPHON_TASK_TOKEN")));
         var platform = runtime.Platform ?? new RuntimePlatform();
         var width = request.Parallel is > 0 ? request.Parallel.Value : manifest.EffectiveMaxRows(platform.IsWindows);
         if (request.Serial)

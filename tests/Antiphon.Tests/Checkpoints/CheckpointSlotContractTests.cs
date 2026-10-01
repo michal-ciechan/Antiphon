@@ -36,6 +36,17 @@ public sealed class CheckpointSlotContractTests
         p1.RootElement.GetProperty("processStartUtc").GetString().ShouldBe(Start);
         p2.RootElement.GetProperty("pid").GetInt32().ShouldBe(101);
         host.Broker.List().Occupied.ShouldBe(1);
+
+        var duplicate = new DuplicateGrantHandler();
+        var holders = new Holders(100, 101, 102);
+        var retrying = new BuildSlotClient(duplicate, "http://slots.test/build-slots", holders: holders);
+        var firstLease = await retrying.AcquireAsync(Enabled, "first", CancellationToken.None);
+        var secondLease = await retrying.AcquireAsync(Enabled, "second", CancellationToken.None);
+        secondLease.State.ShouldBe("granted", "replacement-pair: the second driver must receive a new grant");
+        duplicate.Pids.ShouldBe([100, 101, 102]);
+        holders.Disposed.ShouldContain(101, "replacement-pair: duplicate holder must be disposed");
+        await firstLease.DisposeAsync();
+        await secondLease.DisposeAsync();
     }
 
     [Test]
@@ -60,6 +71,19 @@ public sealed class CheckpointSlotContractTests
         lease.Diagnostic!.Detail.ShouldContain("holder pid 100");
         recorder.Calls.Count(call => call.Method == "POST").ShouldBe(1);
         delays.ShouldBe(0);
+        foreach (var status in new[] { HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden,
+                     HttpStatusCode.NotFound, HttpStatusCode.Conflict })
+        {
+            var scripted = new ScriptedHttpHandler();
+            scripted.Enqueue(status, """{"type":"other_refusal","detail":"denied"}""");
+            var attempts = 0;
+            var denied = await Client(scripted, delay: (_, _) => { attempts++; return Task.CompletedTask; })
+                .AcquireAsync(Enabled, "denied", CancellationToken.None);
+            denied.ExitCode.ShouldBe(2, $"acquire-refused-exit status={(int)status}");
+            denied.SlotReason.ShouldBe("other_refusal");
+            scripted.Calls.Count.ShouldBe(1, "acquire-delay-count: one POST on definitive refusal");
+            attempts.ShouldBe(0);
+        }
     }
 
     [Test]
@@ -77,6 +101,15 @@ public sealed class CheckpointSlotContractTests
         lease.ExitCode.ShouldBe(2);
         handler.Calls.Count.ShouldBe(1);
         delays.ShouldBe(0);
+        foreach (var status in new[] { HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden,
+                     HttpStatusCode.UnprocessableEntity })
+        {
+            var scripted = new ScriptedHttpHandler();
+            scripted.Enqueue(status, """{"type":"probe_denied"}""");
+            var denied = await Client(scripted).ProbeAsync(CancellationToken.None);
+            denied.ExitCode.ShouldBe(2, $"probe-refused-exit status={(int)status}");
+            scripted.Calls.Count.ShouldBe(1);
+        }
     }
 
     [Test]
@@ -96,7 +129,7 @@ public sealed class CheckpointSlotContractTests
     [Test]
     public async Task malformed_grant_is_refused()
     {
-        foreach (var body in new[] { "{", "{}", """{"maxCpuCount":6}""", """{"leaseId":"L","maxCpuCount":0}""", """{"leaseId":"L","maxCpuCount":"six"}""" })
+        foreach (var body in new[] { "{", "[]", "{}", """{"maxCpuCount":6}""", """{"leaseId":"L","maxCpuCount":0}""", """{"leaseId":"L","maxCpuCount":"six"}""" })
         {
             var handler = new ScriptedHttpHandler();
             handler.Enqueue(HttpStatusCode.OK, body);
@@ -105,6 +138,23 @@ public sealed class CheckpointSlotContractTests
             lease.MaxCpuCount.ShouldBe(0);
             lease.State.ShouldBe("refused");
         }
+        var invalid = new ScriptedHttpHandler();
+        invalid.Enqueue(HttpStatusCode.OK, """{"leaseId":"L-cleanup","maxCpuCount":0}""");
+        invalid.Enqueue(HttpStatusCode.NoContent, "");
+        var refused = await Client(invalid).AcquireAsync(Enabled, "cleanup", CancellationToken.None);
+        refused.ExitCode.ShouldBe(2);
+        invalid.Calls.Count(call => call.Method == "DELETE" && call.Uri.EndsWith("/L-cleanup", StringComparison.Ordinal))
+            .ShouldBe(1, "invalid-grant-released: an identifiable invalid grant must be released");
+        await using var host = await BuildSlotBrokerFixture.StartAsync();
+        var recorder = (BuildSlotBrokerFixture.Recorder)host.Recording(invalidateGrantAfter: 1);
+        var client = new BuildSlotClient(recorder, "http://slots.test/build-slots", holders: new Holders(100, 101));
+        var first = await client.AcquireAsync(Enabled, "sibling", CancellationToken.None);
+        first.State.ShouldBe("granted");
+        var second = await client.AcquireAsync(Enabled, "invalid-second", CancellationToken.None);
+        second.ExitCode.ShouldBe(2);
+        host.Broker.List().Occupied.ShouldBe(1, "invalid-grant-released: only the invalid second grant is removed");
+        await first.DisposeAsync();
+        host.Broker.List().Occupied.ShouldBe(0);
     }
 
     [Test]
@@ -124,6 +174,10 @@ public sealed class CheckpointSlotContractTests
         var lease = await postClient.AcquireAsync(Enabled, "transport", CancellationToken.None);
         lease.State.ShouldBe("unleased");
         lease.SlotReason.ShouldBe("runner_unreachable");
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        await Should.ThrowAsync<OperationCanceledException>(() =>
+            postClient.AcquireAsync(Enabled, "cancel", canceled.Token));
     }
 
     [Test]
@@ -135,6 +189,8 @@ public sealed class CheckpointSlotContractTests
         var session = await getClient.ProbeAsync(CancellationToken.None);
         session.ExitCode.ShouldBe(2);
         session.Diagnostic!.Status.ShouldBe(503);
+        (await getClient.AcquireAsync(session, "answered", CancellationToken.None)).WaitedSeconds
+            .ShouldBe(15, "answered-error-refused: probe wait must reach the refusal receipt");
         var post = new ScriptedHttpHandler();
         post.Enqueue(HttpStatusCode.ServiceUnavailable, """{"type":"overloaded","detail":"later"}""");
         var (postClient, _) = Virtual(post);
@@ -157,10 +213,17 @@ public sealed class CheckpointSlotContractTests
         await lease.DisposeAsync();
         log.ShouldContain(line => line.Contains("operation=renew status=404") && line.Contains("renew gone"));
         log.ShouldContain(line => line.Contains("operation=release status=404") && line.Contains("release gone"));
+        var gated = new GatedRenewHandler();
+        var gatedLease = await Client(gated).AcquireAsync(Enabled, "drain", CancellationToken.None);
+        await gated.RenewEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var disposal = gatedLease.DisposeAsync().AsTask();
+        await disposal.WaitAsync(TimeSpan.FromSeconds(3));
+        gated.Events.ShouldBe(["renew-entered", "renew-drained", "delete"],
+            "renewal-drained-before-delete: cancellation must finish before DELETE");
     }
 
     [Test]
-    public void diagnostics_are_bounded_and_escape_body_controls()
+    public async Task diagnostics_are_bounded_and_escape_body_controls()
     {
         var original = "line\r\n" + new string('a', 3000) + "\0";
         var diagnostic = SlotDiagnostic.Answer("acquire", 400, "build_slot_invalid", original, 1);
@@ -169,6 +232,29 @@ public sealed class CheckpointSlotContractTests
         diagnostic.Line("label").ShouldNotContain('\n');
         diagnostic.Line("label").ShouldNotContain('\r');
         diagnostic.Line("label").ShouldNotContain('\0');
+        const string reflected = "C833-REFLECTED-TOKEN";
+        var secret = SlotDiagnostic.Answer("acquire", 400, "build_slot_invalid",
+            "reflected " + reflected + " at https://user:password@example.test/path?q=secret", 1, reflected);
+        secret.Line("safe").ShouldNotContain(reflected, "token-absent");
+        secret.Line("safe").ShouldNotContain("password");
+        secret.Line("safe").ShouldNotContain("q=secret");
+        var reflectedHandler = new ScriptedHttpHandler();
+        reflectedHandler.Enqueue(HttpStatusCode.BadRequest,
+            "{\"type\":\"build_slot_invalid\",\"detail\":\"reflected " + reflected + "\"}");
+        var captured = new List<string>();
+        var reflectedClient = new BuildSlotClient(reflectedHandler, "http://slots.test/build-slots",
+            pid: 100, processStartUtc: Start, sensitiveToken: reflected, log: captured.Add);
+        var refused = await reflectedClient.AcquireAsync(Enabled, "label", CancellationToken.None);
+        refused.Diagnostic!.Detail.ShouldNotContain(reflected, "token-absent: acquisition diagnostic");
+        captured.ShouldAllBe(line => !line.Contains(reflected, StringComparison.Ordinal));
+        var log = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var client = new BuildSlotClient(new SplitRefusalHandler(), "http://slots.test/build-slots",
+            holders: new Holders(201, 202), log: log.Enqueue);
+        var outcomes = await Task.WhenAll(client.AcquireAsync(Enabled, "alpha", CancellationToken.None),
+            client.AcquireAsync(Enabled, "beta", CancellationToken.None));
+        outcomes.Select(item => item.SlotReason).OrderBy(item => item).ShouldBe(["alpha_refusal", "beta_refusal"]);
+        log.ShouldContain(line => line.Contains("label=\"alpha\"") && line.Contains("reason=alpha_refusal"));
+        log.ShouldContain(line => line.Contains("label=\"beta\"") && line.Contains("reason=beta_refusal"));
     }
 
     [Test]
@@ -210,12 +296,69 @@ public sealed class CheckpointSlotContractTests
     private sealed class Holders(params int[] pids) : ILeaseHolderSource
     {
         private readonly Queue<int> _pids = new(pids);
-        public ILeaseHolder Open() => new Holder(_pids.Dequeue());
-        private sealed class Holder(int pid) : ILeaseHolder
+        public List<int> Disposed { get; } = [];
+        public ILeaseHolder Open() => new Holder(_pids.Dequeue(), Disposed);
+        private sealed class Holder(int pid, List<int> disposed) : ILeaseHolder
         {
             public int Pid => pid;
             public string? ProcessStartUtc => Start;
-            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+            public ValueTask DisposeAsync() { disposed.Add(pid); return ValueTask.CompletedTask; }
+        }
+    }
+
+    private sealed class DuplicateGrantHandler : HttpMessageHandler
+    {
+        public List<int> Pids { get; } = [];
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+        {
+            if (request.Method == HttpMethod.Delete)
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
+            using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(token));
+            var pid = body.RootElement.GetProperty("pid").GetInt32();
+            Pids.Add(pid);
+            var id = pid == 102 ? "L2" : "L1";
+            return new HttpResponseMessage(HttpStatusCode.OK)
+                { Content = new StringContent("{\"leaseId\":\"" + id + "\",\"maxCpuCount\":6}") };
+        }
+    }
+
+    private sealed class SplitRefusalHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+        {
+            using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(token));
+            var label = body.RootElement.GetProperty("label").GetString();
+            return new HttpResponseMessage(HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent("{\"type\":\"" + label + "_refusal\",\"detail\":\"" + label + " only\"}"),
+            };
+        }
+    }
+
+    private sealed class GatedRenewHandler : HttpMessageHandler
+    {
+        public TaskCompletionSource RenewEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public List<string> Events { get; } = [];
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/renew", StringComparison.Ordinal))
+            {
+                Events.Add("renew-entered");
+                RenewEntered.TrySetResult();
+                try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+                Events.Add("renew-drained");
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
+            }
+            if (request.Method == HttpMethod.Delete)
+            {
+                Events.Add("delete");
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"leaseId":"L-drain","maxCpuCount":6,"renewEverySeconds":1}"""),
+            };
         }
     }
 }

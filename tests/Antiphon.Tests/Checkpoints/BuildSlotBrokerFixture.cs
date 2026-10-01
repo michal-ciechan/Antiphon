@@ -54,7 +54,9 @@ internal sealed class BuildSlotBrokerFixture : IAsyncDisposable
         return new BuildSlotBrokerFixture(app);
     }
 
-    public HttpMessageHandler Recording(bool omitStart = false) => new Recorder(_app.GetTestServer().CreateHandler(), omitStart);
+    public HttpMessageHandler Recording(bool omitStart = false, int omitStartAfter = 0,
+        int invalidateGrantAfter = 0) =>
+        new Recorder(_app.GetTestServer().CreateHandler(), omitStart, omitStartAfter, invalidateGrantAfter);
 
     public async ValueTask DisposeAsync()
     {
@@ -64,14 +66,18 @@ internal sealed class BuildSlotBrokerFixture : IAsyncDisposable
         await _app.DisposeAsync();
     }
 
-    public sealed class Recorder(HttpMessageHandler inner, bool omitStart) : DelegatingHandler(inner)
+    public sealed class Recorder(HttpMessageHandler inner, bool omitStart, int omitStartAfter,
+        int invalidateGrantAfter) : DelegatingHandler(inner)
     {
         public List<(string Method, string Path, string Body)> Calls { get; } = [];
+        private int _acquisitions;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken);
             lock (Calls) Calls.Add((request.Method.Method, request.RequestUri!.AbsolutePath, body));
-            if (omitStart && request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath == "/build-slots")
+            var acquire = request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath == "/build-slots";
+            var index = acquire ? Interlocked.Increment(ref _acquisitions) : 0;
+            if (acquire && (omitStart || omitStartAfter > 0 && index > omitStartAfter))
             {
                 using var doc = JsonDocument.Parse(body);
                 var data = doc.RootElement.EnumerateObject()
@@ -79,7 +85,19 @@ internal sealed class BuildSlotBrokerFixture : IAsyncDisposable
                     .ToDictionary(item => item.Name, item => item.Value.Clone());
                 request.Content = new StringContent(JsonSerializer.Serialize(data), Encoding.UTF8, "application/json");
             }
-            return await base.SendAsync(request, cancellationToken);
+            var response = await base.SendAsync(request, cancellationToken);
+            if (acquire && invalidateGrantAfter > 0 && index > invalidateGrantAfter
+                && response.StatusCode == HttpStatusCode.OK)
+            {
+                var original = await response.Content.ReadAsStringAsync(cancellationToken);
+                using var doc = JsonDocument.Parse(original);
+                var data = doc.RootElement.EnumerateObject()
+                    .ToDictionary(item => item.Name, item => item.Value.Clone());
+                data["maxCpuCount"] = JsonSerializer.SerializeToElement(0);
+                response.Content.Dispose();
+                response.Content = new StringContent(JsonSerializer.Serialize(data), Encoding.UTF8, "application/json");
+            }
+            return response;
         }
     }
 
