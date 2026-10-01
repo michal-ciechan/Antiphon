@@ -169,6 +169,8 @@ public sealed class SourceSnapshot
             var flag = bytes[index];
             if (flag == (byte)'S' || flag is >= (byte)'a' and <= (byte)'z')
                 throw new SourceCaptureException("indexed_path_hidden");
+            if (flag is < (byte)'A' or > (byte)'Z')
+                throw new SourceCaptureException("index_flags_invalid");
             index = end + 1;
         }
     }
