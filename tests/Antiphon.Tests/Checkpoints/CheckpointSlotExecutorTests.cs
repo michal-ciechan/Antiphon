@@ -143,8 +143,9 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         report.Rows.Count.ShouldBe(2);
         report.Rows.ShouldAllBe(row => row.State == "slot-refused" && row.ExitCode == 2
             && row.Executed == 0 && row.SlotReason == "build_slot_invalid");
-        var merged = ReportMerger.Merge([report]);
-        merged.Rows.ShouldAllBe(row => row.SlotReason == "build_slot_invalid");
+        Should.Throw<InvalidOperationException>(() => ReportMerger.Merge([report]),
+            "unbuilt-row-source-cannot-be-merged-as-qualified");
+        report.Rows.ShouldAllBe(row => row.SlotReason == "build_slot_invalid");
         File.ReadAllText(Path.Combine(run, "report.md")).ShouldContain("slot-reason=build_slot_invalid");
         var probe = new ScriptedHttpHandler();
         probe.Enqueue(HttpStatusCode.BadRequest, """{"type":"probe_denied","detail":"no listing"}""");
@@ -185,10 +186,9 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         var markdown = File.ReadAllText(Path.Combine(run, "report.md"));
         markdown.Split("\n").Count(line => line.Contains("waited=7s", StringComparison.Ordinal)).ShouldBe(2,
             "busy-rejection-report-markdown-wait");
-        var merged = ReportMerger.Merge([report]);
-        merged.Rows.ShouldAllBe(row => row.WaitedSeconds == 7, "busy-rejection-merged-wait");
-        ReportWriter.Markdown(merged).Contains("waited=7s", StringComparison.Ordinal)
-            .ShouldBeTrue("busy-rejection-merged-markdown-wait");
+        Should.Throw<InvalidOperationException>(() => ReportMerger.Merge([report]),
+            "unbuilt-row-source-cannot-be-merged-as-qualified");
+        report.Rows.ShouldAllBe(row => row.WaitedSeconds == 7, "busy-rejection-report-wait");
     }
 
     [Test]
@@ -297,7 +297,8 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         var runtime = Runtime(recorder, driver, missingToken: true);
         (await CheckpointApp.ExecuteAsync(run, CancellationToken.None, runtime)).ShouldBe(7);
         File.Exists(Path.Combine(run, "host.txt")).ShouldBeFalse();
-        File.Exists(Path.Combine(run, "git.txt")).ShouldBeFalse();
+        File.ReadAllText(Path.Combine(run, "git.txt"))
+            .ShouldContain("source=" + new string('a', 40), "terminal-source-evidence-is-retained");
         recorder.Calls.ShouldBeEmpty();
         driver.Calls.ShouldBeEmpty();
     }
