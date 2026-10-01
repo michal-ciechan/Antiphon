@@ -183,17 +183,21 @@ public class RunnerGrokAdapterReadyTests
         }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5),
             MinimumAgeRemaining = TimeSpan.FromMilliseconds(80), Settle = TimeSpan.Zero,
             PollInterval = TimeSpan.FromMilliseconds(1), TimeProvider = floorClock });
-        // Advance only after each poll timer exists. The clock cannot reach
-        // the age floor before the third, modal observation, even under load.
+        // Advance only after each poll timer exists. If readiness instead
+        // sleeps to the floor after the second positive observation, release
+        // that timer so the stale-positive result reaches the named assertion.
         await floorClock.PollInstalled(1).WaitAsync(TimeSpan.FromSeconds(2));
         floorClock.Advance(TimeSpan.FromMilliseconds(1));
         var secondPoll = floorClock.PollInstalled(2);
-        if (await Task.WhenAny(floorWait, secondPoll).WaitAsync(TimeSpan.FromSeconds(2)) == floorWait)
+        var next = await Task.WhenAny(floorWait, secondPoll, floorClock.FloorSleepInstalled)
+            .WaitAsync(TimeSpan.FromSeconds(2));
+        if (next == floorWait)
         {
             (await floorWait).ShouldBeFalse("readyWithFloorModal");
             return;
         }
-        floorClock.Advance(TimeSpan.FromMilliseconds(1));
+        floorClock.Advance(next == secondPoll
+            ? TimeSpan.FromMilliseconds(1) : TimeSpan.FromMilliseconds(80));
         var floor = await floorWait.WaitAsync(TimeSpan.FromSeconds(2));
         floor.ShouldBeFalse("readyWithFloorModal");
         floorReads.ShouldBeGreaterThanOrEqualTo(3);
@@ -488,7 +492,10 @@ public class RunnerGrokAdapterReadyTests
             new(TaskCreationOptions.RunContinuationsAsynchronously),
             new(TaskCreationOptions.RunContinuationsAsynchronously)
         ];
+        private readonly TaskCompletionSource _floorSleep =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _pollCount;
+        public Task FloorSleepInstalled => _floorSleep.Task;
         public override DateTimeOffset GetUtcNow() => _timer.GetUtcNow();
         public override long GetTimestamp() => _timer.GetTimestamp();
         public override long TimestampFrequency => _timer.TimestampFrequency;
@@ -501,6 +508,9 @@ public class RunnerGrokAdapterReadyTests
                 var index = Interlocked.Increment(ref _pollCount) - 1;
                 if (index < _polls.Length) _polls[index].TrySetResult();
             }
+            else if (dueTime > TimeSpan.FromMilliseconds(1)
+                && dueTime <= TimeSpan.FromMilliseconds(80))
+                _floorSleep.TrySetResult();
             return timer;
         }
         public Task PollInstalled(int ordinal) => _polls[ordinal - 1].Task;
