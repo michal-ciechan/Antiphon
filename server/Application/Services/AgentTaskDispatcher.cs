@@ -562,6 +562,12 @@ public sealed class AgentTaskDispatcher
         {
             ct.ThrowIfCancellationRequested();
 
+            // Old rows can retain the public desktop aliases. Use the canonical null binding
+            // before capacity, platform and preparation checks; the normal dispatch save
+            // persists it when this queued task is claimed.
+            if (RunnerRequestIntent.IsDesktopAlias(task.RunnerId))
+                task.RunnerId = null;
+
             var runnerBound = !string.IsNullOrEmpty(task.RunnerId);
             if (!runnerBound
                 && !AgentTaskRoles.IsSpecialist(task.Role)
