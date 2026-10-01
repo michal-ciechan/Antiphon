@@ -26,19 +26,37 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         var entered = 0;
         var both = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var observedOccupancy = 0;
+        var siblingSurvivedFirstRelease = false;
+        var holderStarts = new System.Collections.Concurrent.ConcurrentDictionary<int, DateTime>();
         driver.When(CheckpointFixtures.IsRun, async (request, _) =>
         {
             observedOccupancy = Math.Max(observedOccupancy, host.Broker.List().Occupied);
-            if (Interlocked.Increment(ref entered) == 2) both.TrySetResult();
+            var index = Interlocked.Increment(ref entered);
+            if (index == 2) both.TrySetResult();
             await Task.WhenAny(both.Task, Task.Delay(3000));
+            if (index == 2)
+            {
+                for (var attempt = 0; attempt < 100 && !siblingSurvivedFirstRelease; attempt++)
+                {
+                    siblingSurvivedFirstRelease = host.Broker.List().Occupied == 1;
+                    if (!siblingSurvivedFirstRelease) await Task.Delay(10);
+                }
+            }
             CheckpointFixtures.WriteResults(CheckpointFixtures.TrxFile(request), ("ExampleSurfaceTests.case", "Passed"));
             return new DriverResult(0, "", "");
         });
         var manifest = BuiltManifest(twoRows: true);
         var run = NewRun(manifest);
-        (await CheckpointApp.ExecuteAsync(run, CancellationToken.None, Runtime(recorder, driver))).ShouldBe(0);
+        (await CheckpointApp.ExecuteAsync(run, CancellationToken.None, Runtime(recorder, driver,
+            startTimeReader: process =>
+            {
+                var started = process.StartTime.ToUniversalTime();
+                holderStarts[process.Id] = started;
+                return started;
+            }))).ShouldBe(0);
         entered.ShouldBe(2, "actual driver roster: both row drivers must run");
         observedOccupancy.ShouldBe(2, "simultaneous-holder-roster: rows must have distinct held leases");
+        siblingSurvivedFirstRelease.ShouldBeTrue("simultaneous-holder-roster: sibling survives first release");
         driver.Calls.Count(CheckpointFixtures.IsBuild).ShouldBe(1);
         driver.Calls.Single(CheckpointFixtures.IsBuild).Arguments.ShouldContain("-maxcpucount:6");
         var report = ReadReport(run);
@@ -46,10 +64,17 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         report.Rows.ShouldAllBe(row => row.Slot == "granted" && row.Line!.Contains("slot=granted"));
         report.Builds.Single().Slot.ShouldBe("granted");
         host.Broker.List().Occupied.ShouldBe(0);
-        var starts = recorder.Calls.Where(call => call.Method == "POST" && call.Path == "/build-slots")
-            .Select(call => JsonDocument.Parse(call.Body).RootElement.GetProperty("processStartUtc").GetDateTime()).ToList();
-        starts.Count.ShouldBeGreaterThanOrEqualTo(3);
-        starts.ShouldAllBe(start => start.Kind == DateTimeKind.Utc);
+        var posts = recorder.Calls.Where(call => call.Method == "POST" && call.Path == "/build-slots").ToList();
+        posts.Count.ShouldBeGreaterThanOrEqualTo(3);
+        holderStarts.Count.ShouldBe(3, "simultaneous-holder-roster: build and rows need distinct children");
+        foreach (var post in posts)
+        {
+            using var body = JsonDocument.Parse(post.Body);
+            var pid = body.RootElement.GetProperty("pid").GetInt32();
+            holderStarts.TryGetValue(pid, out var expected).ShouldBeTrue("outbound-start-equals-holder: actual child PID");
+            body.RootElement.GetProperty("processStartUtc").GetDateTime().ShouldBe(expected,
+                TimeSpan.FromMilliseconds(1), "outbound-start-equals-holder: actual child start");
+        }
         await using var holder = ProcessLeaseHolder.Start(Environment.ProcessId);
         var first = holder.ProcessStartUtc;
         await Task.Delay(10);
@@ -145,14 +170,33 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         });
         var run = NewRun(CommandManifest());
         using var cancel = new CancellationTokenSource();
-        var execute = CheckpointApp.ExecuteAsync(run, cancel.Token, Runtime(recorder, driver));
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        host.Broker.List().Occupied.ShouldBe(1);
-        cancel.Cancel();
-        try { await execute.WaitAsync(TimeSpan.FromSeconds(5)); }
-        catch (OperationCanceledException) { }
-        host.Broker.List().Occupied.ShouldBe(0);
-        recorder.Calls.Count(call => call.Method == "DELETE").ShouldBe(1);
+        Process? child = null;
+        try
+        {
+            var execute = CheckpointApp.ExecuteAsync(run, cancel.Token, Runtime(recorder, driver,
+                startTimeReader: process =>
+                {
+                    child = Process.GetProcessById(process.Id);
+                    return process.StartTime;
+                }));
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            host.Broker.List().Occupied.ShouldBe(1);
+            cancel.Cancel();
+            try { await execute.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (OperationCanceledException) { }
+            host.Broker.List().Occupied.ShouldBe(0);
+            recorder.Calls.Count(call => call.Method == "DELETE").ShouldBe(1, "released-lease: exact DELETE");
+            child.ShouldNotBeNull();
+            child.HasExited.ShouldBeTrue("owned-holder-exited: child exits before fixture cleanup");
+        }
+        finally
+        {
+            if (child is not null)
+            {
+                if (!child.HasExited) child.Kill(entireProcessTree: true);
+                child.Dispose();
+            }
+        }
     }
 
     [Test]
