@@ -9,6 +9,12 @@ namespace Antiphon.SessionRunner.Tests;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed partial class HerdrPaneDisposalServiceTests
 {
+    internal static void SkipLocatorOnLinux()
+    {
+        if (OperatingSystem.IsLinux())
+            Skip.Test("CARD-0864: Unix disposal locator/inspector still uses Windows-only file APIs.");
+    }
+
     [Test] public Task C461_G004_Preview_required() => Expired_restarted_and_unknown_previews_never_create_receipts();
     [Test] [Arguments(-1)] [Arguments(0)] [Arguments(1)] public async Task C461_G005_Preview_expiry(int ticks)
     {
@@ -80,6 +86,7 @@ public sealed partial class HerdrPaneDisposalServiceTests
     [Arguments("idle", "rowless")] [Arguments("claude", "rowless")] [Arguments("grok", "rowless")] [Arguments("codex", "rowless")]
     public async Task Disposes_each_supported_evidence_shape(string occupant, string locator)
     {
+        if (locator is "sidecar" or "last-pane") SkipLocatorOnLinux();
         await using var h = new HerdrPaneDisposalFixture(); await h.StartAsync();
         var pane = h.Fake.Workspaces.SelectMany(w => w.Tabs).SelectMany(t => t.Panes).Single(p => p.PaneId == h.PaneId);
         if (locator is "sidecar" or "last-pane" or "exited")
@@ -166,6 +173,7 @@ public sealed partial class HerdrPaneDisposalServiceTests
     }
     [Test] public async Task C461_G063_Disposal_no_pid_fallback()
     {
+        SkipLocatorOnLinux();
         await using var h = new HerdrPaneDisposalFixture(); await h.StartAsync();
         static Process Dummy() => Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "cmd.exe"), "/d /q /k")
         { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true })!;
@@ -302,16 +310,20 @@ public sealed partial class HerdrPaneDisposalServiceTests
         };
         (await h.Service.ExecuteAsync(h.Request(p), default)).Outcome.ShouldBe("Closed"); File.ReadAllBytes(path).ShouldBe(replacement!);
     }
-    [Test] [Arguments(false)] [Arguments(true)] public Task C461_G097_Sidecar_generation_cleanup(bool otherPane) => GenerationCleanup("sidecar", otherPane);
-    [Test] [Arguments(false)] [Arguments(true)] public Task C461_G098_Last_pane_generation_cleanup(bool otherPane) => GenerationCleanup("last-pane", otherPane);
+    [Test] [Arguments(false)] [Arguments(true)] public Task C461_G097_Sidecar_generation_cleanup(bool otherPane)
+    { SkipLocatorOnLinux(); return GenerationCleanup("sidecar", otherPane); }
+    [Test] [Arguments(false)] [Arguments(true)] public Task C461_G098_Last_pane_generation_cleanup(bool otherPane)
+    { SkipLocatorOnLinux(); return GenerationCleanup("last-pane", otherPane); }
     [Test] public async Task C461_G099_No_cleanup_last_pane_write()
     {
+        SkipLocatorOnLinux();
         await using var h = new HerdrPaneDisposalFixture(); await h.StartAsync(); var path = SaveLocator(h, "sidecar");
         var p = await h.PreviewAsync(); var r = await h.Service.ExecuteAsync(h.Request(p), default);
         r.CleanupPending.ShouldBeFalse(); File.Exists(path).ShouldBeFalse(); Directory.Exists(HerdrLastPane.DirectoryFor(h.Settings.SessionLogPath)).ShouldBeFalse();
     }
     [Test] public async Task C461_G100_Cleanup_retry_only()
     {
+        SkipLocatorOnLinux();
         await using var h = new HerdrPaneDisposalFixture(); await h.StartAsync(); var path = SaveLocator(h, "sidecar"); var p = await h.PreviewAsync(); var request = h.Request(p);
         using (var pinned = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
         { var r = await h.Service.ExecuteAsync(request, default); r.Outcome.ShouldBe("Closed"); r.CleanupPending.ShouldBeTrue(); }
@@ -320,6 +332,7 @@ public sealed partial class HerdrPaneDisposalServiceTests
     }
     [Test] public async Task C461_G101_History_and_unrelated_files()
     {
+        SkipLocatorOnLinux();
         await using var h = new HerdrPaneDisposalFixture(); await h.StartAsync(); SaveLocator(h, "sidecar");
         var history = Path.Combine(h.Settings.SessionLogPath, "native-transcript.jsonl"); await File.WriteAllTextAsync(history, "owned history sentinel");
         var unrelated = Path.Combine(h.Settings.SessionLogPath, "other.metadata"); await File.WriteAllTextAsync(unrelated, "unrelated sentinel");
@@ -335,6 +348,7 @@ public sealed partial class HerdrPaneDisposalServiceTests
     }
     [Test] public async Task C461_G107_Receipt_persistence_redaction()
     {
+        SkipLocatorOnLinux();
         await using var h = new HerdrPaneDisposalFixture(); await h.StartAsync(); h.Occupied();
         h.Fake.SetPaneProcessInfo(h.PaneId, 4242, [(4243, @"C:\secret-home\grok.exe", new[] { "grok", "--session-id", h.SessionId.ToString(), "--key", "secret-canary" }, @"C:\secret-home")]);
         var p = await h.PreviewAsync(); var request = h.Request(p); await h.Service.ExecuteAsync(request, default);

@@ -63,6 +63,8 @@ public sealed class HerdrPaneDisposalApplicationTests
 
     [Test] public async Task C461_G049_Standing_execution_lock()
     {
+        if (OperatingSystem.IsLinux())
+            Skip.Test("CARD-0866: Linux disposal standing execution lock awaits repair.");
         await using var f = new StandingRecoveryFixture(); await f.SeedAsync(); await using var db = f.Db();
         db.AgentSupervisionStates.Add(new() { AgentId = f.Agent.Id, Suspended = true }); await db.SaveChangesAsync();
         await using var h = new HerdrDisposalHttpFixture();

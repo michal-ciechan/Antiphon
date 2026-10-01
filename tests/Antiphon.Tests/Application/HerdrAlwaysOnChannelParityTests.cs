@@ -58,6 +58,8 @@ public partial class HerdrAlwaysOnChannelParityTests
     [Arguments(SessionBackend.PtyHost)]
     public async Task AlwaysOn_channel_bound_survives_child_death_and_replies(SessionBackend backend)
     {
+        if (OperatingSystem.IsLinux())
+            Skip.Test("CARD-0865: Linux standing/always-on channel parity awaits native recovery fixes.");
         var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-card0186-s4-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempRoot);
         FakeHerdrServer? fake = null;

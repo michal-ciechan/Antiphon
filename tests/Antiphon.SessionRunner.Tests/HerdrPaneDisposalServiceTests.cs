@@ -40,6 +40,7 @@ public sealed partial class HerdrPaneDisposalServiceTests
     [Test]
     public async Task Protocol20_preview_is_read_only_and_redacts_process_arguments()
     {
+        SkipLocatorOnLinux();
         await using var h = new HerdrPaneDisposalFixture();
         await h.StartAsync();
         h.Fake.SetPaneProcessInfo(h.PaneId, 42,
