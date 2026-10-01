@@ -122,9 +122,9 @@ describe('attentionVisuals', () => {
     const row = item({ kind: 'WorktreeCleanupBacklog', severity: 'Warning',
       hostCleanupRunId: 'run-backlog', hostCleanupOwner: 'CARD-0692',
       hostCleanupRefusal: 'owner_unavailable' })
-    expect(targetOf(row)).toContain('run-backlog')
     expect(targetOf(row), 'C826.shows sustained worktree backlog with its responsible owner')
       .toContain('owner=CARD-0692')
+    expect(targetOf(row)).toContain('run-backlog')
     expect(targetOf(row)).toContain('refusal=owner_unavailable')
     expect(row.hostCleanupRefusal).toBe('owner_unavailable')
     expect(ATTENTION_VISUALS[row.kind].label.toLowerCase()).toContain('backlog')
