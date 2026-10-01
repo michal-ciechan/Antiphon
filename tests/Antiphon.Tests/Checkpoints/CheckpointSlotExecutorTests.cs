@@ -91,12 +91,31 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         var driver = new FakeDriver();
         driver.When(_ => true, async (_, token) => { await Task.Delay(2400, token); return new DriverResult(0, "", ""); });
         var run = NewRun(CommandManifest());
-        (await CheckpointApp.ExecuteAsync(run, CancellationToken.None, Runtime(recorder, driver))).ShouldBe(0);
-        var calls = recorder.Calls.ToArray();
-        calls.Count(call => call.Path.EndsWith("/renew", StringComparison.Ordinal)).ShouldBeGreaterThanOrEqualTo(2);
-        calls.Last(call => call.Method == "DELETE").Path.ShouldNotBeNullOrWhiteSpace();
-        calls.Last().Method.ShouldBe("DELETE", "renew-before-release: no renew after disposal");
-        host.Broker.List().Occupied.ShouldBe(0);
+        Process? child = null;
+        try
+        {
+            (await CheckpointApp.ExecuteAsync(run, CancellationToken.None, Runtime(recorder, driver,
+                startTimeReader: process =>
+                {
+                    child = Process.GetProcessById(process.Id);
+                    return process.StartTime;
+                }))).ShouldBe(0);
+            var calls = recorder.Calls.ToArray();
+            calls.Count(call => call.Path.EndsWith("/renew", StringComparison.Ordinal)).ShouldBeGreaterThanOrEqualTo(2);
+            calls.Last(call => call.Method == "DELETE").Path.ShouldNotBeNullOrWhiteSpace();
+            calls.Last().Method.ShouldBe("DELETE", "renew-before-release: no renew after disposal");
+            host.Broker.List().Occupied.ShouldBe(0);
+            child.ShouldNotBeNull();
+            child.HasExited.ShouldBeTrue("renew-before-release: holder exits after driver completion");
+        }
+        finally
+        {
+            if (child is not null)
+            {
+                if (!child.HasExited) child.Kill(entireProcessTree: true);
+                child.Dispose();
+            }
+        }
     }
 
     [Test]
