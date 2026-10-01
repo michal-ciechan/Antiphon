@@ -636,7 +636,12 @@ public partial class AgentTaskDispatchBaseGuardTests
             result.Status.ShouldBe(AgentTaskStatus.Blocked);
             result.WorktreePath.ShouldBeNull();
             result.AgentSessionId.ShouldBeNull();
-            result.FailureReason.ShouldContain(scenario == "deadline" ? "inspection_timeout" : scenario);
+            result.FailureReason.ShouldContain(scenario switch
+            {
+                "deadline" => "inspection_timeout",
+                "candidate_cap" => "candidate_limit",
+                _ => scenario,
+            });
         }
         else
         {
@@ -716,11 +721,11 @@ public partial class AgentTaskDispatchBaseGuardTests
             created.WorktreeBase!.Decision.ShouldBe(CardWorktreeBaseDecision.Target);
             await SeedKeptSiblingAsync(db, repo, card.Id, "A", startRef: "master");
             await db.SaveChangesAsync(ct);
-            var git = new TargetMissingOnceGit();
+            var git = new TargetMissingTwiceGit();
             await using (var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, git: git))
             await using (var scope = provider.CreateAsyncScope())
                 await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
-            git.Fired.ShouldBeTrue();
+            git.Hits.ShouldBe(2);
             db.ChangeTracker.Clear();
             var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
             task.Status.ShouldBe(AgentTaskStatus.Dispatched);
@@ -729,15 +734,15 @@ public partial class AgentTaskDispatchBaseGuardTests
         }
     }
 
-    private sealed class TargetMissingOnceGit : LandingGit
+    private sealed class TargetMissingTwiceGit : LandingGit
     {
-        public bool Fired { get; private set; }
+        public int Hits { get; private set; }
         public override Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> args,
             CancellationToken ct)
         {
-            if (!Fired && args is ["rev-parse", "--verify", "--quiet", "master^{commit}"])
+            if (Hits < 2 && args is ["rev-parse", "--verify", "--quiet", "master^{commit}"])
             {
-                Fired = true;
+                Hits++;
                 return Task.FromResult(new LandingGitResult(1, "", ""));
             }
             return base.RunAsync(repository, args, ct);
