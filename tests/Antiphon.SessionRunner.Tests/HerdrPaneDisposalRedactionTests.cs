@@ -99,23 +99,24 @@ public sealed class HerdrPaneDisposalRedactionTests
             };
             await w.StartAsync();
             var instanceId = (await w.Fixture.Client.ConnectAndValidateAsync(default)).InstanceId;
-            var (post, get, disk, receipt) = await w.RoundTripAsync();
+            var (post, get, disk, receipt) = await w.RoundTripAsync(deferPreviewPathSweep: true);
+            w.AssertPreviewPaths(caseKey);
             get.PreviewId.ShouldBe(post.PreviewId, "v1-get-preview-id");
             disk.PreviewId.ShouldBe(post.PreviewId, "v1-disk-preview-id");
-            if (value.Contains("c866-user", StringComparison.Ordinal)) w.AssertCanaryAbsent("c866-user");
+            if (value.Contains("c866-user", StringComparison.Ordinal)) w.AssertCanaryAbsent("c866-user", caseKey);
             foreach (var (p, surface) in new[] { (post, "post"), (get, "get"), (disk, "disk") })
             {
-                p.WorkspaceLabel.ShouldBe(Mask, $"display-field-masked {caseKey} workspace");
-                p.TabLabel.ShouldBe(Mask, $"display-field-masked {caseKey} tab");
-                p.PaneLabel.ShouldBe(Mask, $"display-field-masked {caseKey} pane");
-                p.BackendVersion.ShouldBe(Mask, $"display-field-masked {caseKey} backend");
+                p.WorkspaceLabel.ShouldBe(Mask, $"display-field-masked {surface} {caseKey} workspace");
+                p.TabLabel.ShouldBe(Mask, $"display-field-masked {surface} {caseKey} tab");
+                p.PaneLabel.ShouldBe(Mask, $"display-field-masked {surface} {caseKey} pane");
+                p.BackendVersion.ShouldBe(Mask, $"display-field-masked {surface} {caseKey} backend");
                 p.Claims.Count.ShouldBe(1, $"v1-{surface}-claims-count-{caseKey}");
-                p.Claims[0].Source.ShouldBe(Mask, $"display-field-masked {caseKey} source");
-                p.Claims[0].Origin.ShouldBe(Mask, $"display-field-masked {caseKey} origin");
-                p.Claims[0].AgentKind.ShouldBe(Mask, $"display-field-masked {caseKey} kind");
+                p.Claims[0].Source.ShouldBe(Mask, $"display-field-masked {surface} {caseKey} source");
+                p.Claims[0].Origin.ShouldBe(Mask, $"display-field-masked {surface} {caseKey} origin");
+                p.Claims[0].AgentKind.ShouldBe(Mask, $"display-field-masked {surface} {caseKey} kind");
                 AssertV1Facts(p, w.Fixture.SessionId, instanceId, complete, surface, caseKey);
             }
-            receipt.Outcome.ShouldBe(complete ? "Closed" : "Refused");
+            receipt.Outcome.ShouldBe(complete ? "Closed" : "Refused", "v1-receipt-outcome");
             receipt.Code.ShouldBe(complete ? "herdr_pane_closed" : HerdrPaneDisposalCodes.IdentityUnproven,
                 "v1-receipt-code");
             receipt.PreviewId.ShouldBe(post.PreviewId, "v1-receipt-preview-id");
@@ -159,40 +160,44 @@ public sealed class HerdrPaneDisposalRedactionTests
         };
         await w.StartAsync();
         var (post, get, disk, receipt) = await w.RoundTripAsync(deferPreviewPathSweep: true);
-        foreach (var p in new[] { post, get, disk })
+        foreach (var (p, surface) in new[] { (post, "post"), (get, "get"), (disk, "disk") })
         {
-            p.Shell!.ExecutableName.ShouldNotContain("shell-path-secret", Case.Sensitive, "shell-path-excluded");
-            p.Foreground![0].ExecutableName.ShouldNotContain("foreground-path-secret", Case.Sensitive, "foreground-path-excluded");
-            p.AffectedProcesses![2].ExecutableName.ShouldNotContain("affected-path-secret", Case.Sensitive, "affected-path-excluded");
-            p.AffectedProcesses[0].ExecutableName.ShouldNotContain("shell-path-secret", Case.Sensitive, "affected-0-path-excluded");
-            p.AffectedProcesses[1].ExecutableName.ShouldNotContain("foreground-path-secret", Case.Sensitive, "affected-1-path-excluded");
-            p.Shell!.ExecutableName.ShouldBe("pwsh.exe", "shell-path-excluded");
-            p.Foreground![0].ExecutableName.ShouldBe("grok.exe", "foreground-path-excluded");
-            p.AffectedProcesses![2].ExecutableName.ShouldBe("worker.exe", "affected-path-excluded");
-            p.AffectedProcesses[0].ExecutableName.ShouldBe("pwsh.exe", "affected-0-path-excluded");
-            p.AffectedProcesses[1].ExecutableName.ShouldBe("grok.exe", "affected-1-path-excluded");
-            p.Shell.Pid.ShouldBe(4242); p.Foreground[0].Pid.ShouldBe(4243);
-            p.AffectedProcesses[2].Pid.ShouldBe(4244);
-            p.Shell.ParentPid.ShouldBeNull("process-facts-preserved shell parent");
-            p.Foreground[0].ParentPid.ShouldBe(4242, "process-facts-preserved foreground parent");
-            p.AffectedProcesses[0].ParentPid.ShouldBeNull("process-facts-preserved affected shell parent");
-            p.AffectedProcesses[1].ParentPid.ShouldBe(4242, "process-facts-preserved affected foreground parent");
-            p.AffectedProcesses[2].ParentPid.ShouldBe(4243, "process-facts-preserved worker parent");
-            p.Shell.StartedAtUtc.ShouldBe(started, "process-facts-preserved shell start");
-            p.Foreground[0].StartedAtUtc.ShouldBe(started, "process-facts-preserved foreground start");
-            p.AffectedProcesses[0].StartedAtUtc.ShouldBe(started, "process-facts-preserved affected shell start");
-            p.AffectedProcesses[1].StartedAtUtc.ShouldBe(started, "process-facts-preserved affected foreground start");
-            p.AffectedProcesses[2].StartedAtUtc.ShouldBe(started, "process-facts-preserved worker start");
-            p.Shell.NativeSessionIds.ShouldBeNull("process-facts-preserved shell native IDs");
-            p.Foreground[0].NativeSessionIds.ShouldBe([nativeId], "process-facts-preserved foreground native IDs");
-            p.AffectedProcesses[0].NativeSessionIds.ShouldBeNull("process-facts-preserved affected shell native IDs");
-            p.AffectedProcesses[1].NativeSessionIds.ShouldBe([nativeId], "process-facts-preserved affected foreground native IDs");
-            p.AffectedProcesses[2].NativeSessionIds.ShouldBeNull("process-facts-preserved worker native IDs");
-            p.Eligible.ShouldBeFalse("raw-identity-still-refused");
-            p.PlannedTerminationPids.ShouldBeEmpty();
+            string Label(string field) => $"{surface}-{style}-{field}";
+            p.Shell!.ExecutableName.ShouldNotContain("shell-path-secret", Case.Sensitive, Label("shell-path-excluded"));
+            p.Foreground![0].ExecutableName.ShouldNotContain("foreground-path-secret", Case.Sensitive, Label("foreground-path-excluded"));
+            p.AffectedProcesses![2].ExecutableName.ShouldNotContain("affected-path-secret", Case.Sensitive, Label("affected-path-excluded"));
+            p.AffectedProcesses[0].ExecutableName.ShouldNotContain("shell-path-secret", Case.Sensitive, Label("affected-0-path-excluded"));
+            p.AffectedProcesses[1].ExecutableName.ShouldNotContain("foreground-path-secret", Case.Sensitive, Label("affected-1-path-excluded"));
+            p.Shell!.ExecutableName.ShouldBe("pwsh.exe", Label("shell-path-excluded"));
+            p.Foreground![0].ExecutableName.ShouldBe("grok.exe", Label("foreground-path-excluded"));
+            p.AffectedProcesses![2].ExecutableName.ShouldBe("worker.exe", Label("affected-path-excluded"));
+            p.AffectedProcesses[0].ExecutableName.ShouldBe("pwsh.exe", Label("affected-0-path-excluded"));
+            p.AffectedProcesses[1].ExecutableName.ShouldBe("grok.exe", Label("affected-1-path-excluded"));
+            p.Shell.Pid.ShouldBe(4242, Label("process-facts-preserved shell pid"));
+            p.Foreground[0].Pid.ShouldBe(4243, Label("process-facts-preserved foreground pid"));
+            p.AffectedProcesses![0].Pid.ShouldBe(4242, Label("process-facts-preserved affected shell pid"));
+            p.AffectedProcesses[1].Pid.ShouldBe(4243, Label("process-facts-preserved affected foreground pid"));
+            p.AffectedProcesses[2].Pid.ShouldBe(4244, Label("process-facts-preserved worker pid"));
+            p.Shell.ParentPid.ShouldBeNull(Label("process-facts-preserved shell parent"));
+            p.Foreground[0].ParentPid.ShouldBe(4242, Label("process-facts-preserved foreground parent"));
+            p.AffectedProcesses[0].ParentPid.ShouldBeNull(Label("process-facts-preserved affected shell parent"));
+            p.AffectedProcesses[1].ParentPid.ShouldBe(4242, Label("process-facts-preserved affected foreground parent"));
+            p.AffectedProcesses[2].ParentPid.ShouldBe(4243, Label("process-facts-preserved worker parent"));
+            p.Shell.StartedAtUtc.ShouldBe(started, Label("process-facts-preserved shell start"));
+            p.Foreground[0].StartedAtUtc.ShouldBe(started, Label("process-facts-preserved foreground start"));
+            p.AffectedProcesses[0].StartedAtUtc.ShouldBe(started, Label("process-facts-preserved affected shell start"));
+            p.AffectedProcesses[1].StartedAtUtc.ShouldBe(started, Label("process-facts-preserved affected foreground start"));
+            p.AffectedProcesses[2].StartedAtUtc.ShouldBe(started, Label("process-facts-preserved worker start"));
+            p.Shell.NativeSessionIds.ShouldBeNull(Label("process-facts-preserved shell native IDs"));
+            p.Foreground[0].NativeSessionIds.ShouldBe([nativeId], Label("process-facts-preserved foreground native IDs"));
+            p.AffectedProcesses[0].NativeSessionIds.ShouldBeNull(Label("process-facts-preserved affected shell native IDs"));
+            p.AffectedProcesses[1].NativeSessionIds.ShouldBe([nativeId], Label("process-facts-preserved affected foreground native IDs"));
+            p.AffectedProcesses[2].NativeSessionIds.ShouldBeNull(Label("process-facts-preserved worker native IDs"));
+            p.Eligible.ShouldBeFalse(Label("raw-identity-still-refused"));
+            p.PlannedTerminationPids.ShouldBeEmpty(Label("v2-planned-pids-empty"));
         }
         w.AssertPreviewPaths();
-        receipt.Outcome.ShouldBe("Refused"); w.Fixture.Backend.Closes.ShouldBe(0);
+        receipt.Outcome.ShouldBe("Refused", "v2-receipt-refused"); w.Fixture.Backend.Closes.ShouldBe(0, "v2-zero-closes");
     }
 
     [Test]
@@ -223,12 +228,21 @@ public sealed class HerdrPaneDisposalRedactionTests
             raw.ShouldNotContain("secret-home", Case.Sensitive, "durable-review-path-excluded");
             raw.ShouldNotContain("reason-secret");
             using var before = JsonDocument.Parse(raw);
+            var storedReceipt = before.RootElement.GetProperty("receipt").Deserialize<HerdrPaneDisposalReceipt>(Json)!;
+            storedReceipt.OperationId.ShouldBe(receipt.OperationId, "v3-disk-operation-id");
+            storedReceipt.PreviewId.ShouldBe(post.PreviewId, "v3-disk-receipt-preview-id");
             var fingerprint = before.RootElement.GetProperty("fingerprint").GetString();
             fingerprint.ShouldNotBeNullOrWhiteSpace();
             var closes = w.Fixture.Backend.Closes;
             w.Fixture.RecreateService();
             var again = await w.Fixture.Service.GetAsync(receipt.OperationId, default);
             again!.Outcome.ShouldBe(outcome);
+            again.Code.ShouldBe(outcome switch
+            {
+                "Closed" => "herdr_pane_closed",
+                "Refused" => HerdrPaneDisposalCodes.IdentityUnproven,
+                _ => HerdrPaneDisposalCodes.Unknown
+            }, "v3-recreated-code");
             var retry = await w.Fixture.Service.ExecuteAsync(
                 new(receipt.OperationId, post.PreviewId, "reason-secret", "antiphon-best-effort"), default);
             retry.ShouldBe(again);
@@ -249,11 +263,18 @@ public sealed class HerdrPaneDisposalRedactionTests
             foreach (var p in new[] { post, get, disk })
             {
                 p.WorkspaceLabel.ShouldBe(label, "safe-evidence-preserved");
-                p.TabLabel.ShouldBe(label); p.PaneLabel.ShouldBe(label);
-                p.Shell!.ExecutableName.ShouldBe("pwsh.exe");
-                p.PlannedTerminationPids.ShouldBe([4242]);
+                p.TabLabel.ShouldBe(label, "safe-evidence-preserved tab");
+                p.PaneLabel.ShouldBe(label, "safe-evidence-preserved pane");
+                p.WorkspaceId.ShouldBe("w1", "safe-evidence-preserved workspace-id");
+                p.TabId.ShouldBe("w1:t2", "safe-evidence-preserved tab-id");
+                p.TerminalId.ShouldBe("term_000000000002", "safe-evidence-preserved terminal-id");
+                p.ExpectedSessionId.ShouldBe(w.Fixture.SessionId, "safe-evidence-preserved session-id");
+                p.Eligible.ShouldBeTrue("safe-evidence-preserved eligible");
+                p.Shell!.ExecutableName.ShouldBe("pwsh.exe", "safe-evidence-preserved shell-name");
+                p.PlannedTerminationPids.ShouldBe([4242], "safe-evidence-preserved planned-pids");
             }
             receipt.Outcome.ShouldBe("Closed");
+            w.Fixture.Backend.Closes.ShouldBe(1, "safe-evidence-preserved close-count");
         }
         await using (var occupied = new Wire())
         {
@@ -269,7 +290,11 @@ public sealed class HerdrPaneDisposalRedactionTests
             {
                 p.Eligible.ShouldBeTrue("safe-evidence-preserved");
                 p.BackendVersion.ShouldBe("0.8.2");
-                p.Claims[0].Source.ShouldBe("antiphon-session-token");
+                p.Claims[0].Source.ShouldBe("antiphon-session-token", "safe-evidence-preserved claim source");
+                p.Claims[0].SessionId.ShouldBe(occupied.Fixture.SessionId, "safe-evidence-preserved claim session");
+                p.Claims[0].Live.ShouldBeFalse("safe-evidence-preserved claim live");
+                p.Claims[0].ChildPid.ShouldBe(4243, "safe-evidence-preserved claim child pid");
+                p.Claims[0].ChildStartedAtUtc.ShouldBe(occupied.Fixture.Processes.Started.AddSeconds(1), "safe-evidence-preserved claim child start");
                 p.Claims[0].Origin.ShouldBe("attached"); p.Claims[0].AgentKind.ShouldBe("grok");
                 p.Foreground![0].ExecutableName.ShouldBe("grok.exe");
                 p.PlannedTerminationPids.ShouldBe([4242, 4243]);
@@ -277,7 +302,8 @@ public sealed class HerdrPaneDisposalRedactionTests
             receipt.Outcome.ShouldBe("Closed"); occupied.Fixture.Backend.Closes.ShouldBe(1);
         }
         await using var nullable = new Wire();
-        nullable.Fixture.Fake.Workspaces[0].Tabs[0].Panes[0].Label = null;
+        nullable.Fixture.Fake.Workspaces[0].Tabs.Single(t => t.Panes.Any(p => p.PaneId == nullable.Fixture.PaneId))
+            .Panes.Single(p => p.PaneId == nullable.Fixture.PaneId).Label = null;
         nullable.Fixture.Backend.Transform = o => o with
         {
             Claims = [new(nullable.Fixture.SessionId, "antiphon-session-token", null, false, null)],
@@ -289,8 +315,10 @@ public sealed class HerdrPaneDisposalRedactionTests
         var (nPost, nGet, nDisk, _) = await nullable.RoundTripAsync();
         foreach (var p in new[] { nPost, nGet, nDisk })
         {
-            p.PaneLabel.ShouldBeNull(); p.Claims[0].Origin.ShouldBeNull(); p.Claims[0].AgentKind.ShouldBeNull();
-            p.Foreground.ShouldBeNull();
+            p.PaneLabel.ShouldBeNull("v4-null-pane-label");
+            p.Claims[0].Origin.ShouldBeNull("v4-null-claim-origin");
+            p.Claims[0].AgentKind.ShouldBeNull("v4-null-claim-kind");
+            p.Foreground.ShouldBeNull("v4-null-foreground");
             p.Shell!.ExecutableName.ShouldBeNull("v4-null-process-name");
             p.AffectedProcesses![0].ExecutableName.ShouldBeNull("v4-null-affected-name");
         }
@@ -304,7 +332,7 @@ public sealed class HerdrPaneDisposalRedactionTests
             receipt.Code.ShouldBe(HerdrPaneDisposalCodes.IdentityUnproven, "v4-empty-foreground-code");
             empty.Fixture.Backend.Closes.ShouldBe(0, "v4-empty-foreground-zero-closes");
         }
-        foreach (var unsafeLeaf in new[] { "", "C:", @"C:\secret-home\", "/secret-home/", "bad\0.exe" })
+        foreach (var unsafeLeaf in new string?[] { null, "", "C:", @"C:\secret-home\", "/secret-home/", "bad\0.exe" })
         {
             await using var w = new Wire();
             w.Fixture.Backend.Transform = o =>
@@ -331,7 +359,11 @@ public sealed class HerdrPaneDisposalRedactionTests
     {
         await using (var w = new Wire())
         {
-            w.Fixture.Backend.Transform = o => o with { Shell = o.Shell! with { ExecutableName = @"C:\identity-secret\pwsh.exe" } };
+            w.Fixture.Backend.Transform = o =>
+            {
+                var shell = o.Shell! with { ExecutableName = @"C:\identity-secret\pwsh.exe" };
+                return o with { Shell = shell, Affected = o.Affected.Select(p => p.Pid == shell.Pid ? shell : p).ToArray() };
+            };
             await w.StartAsync(); var (post, _, _, receipt) = await w.RoundTripAsync();
             post.Shell!.ExecutableName.ShouldBe("pwsh.exe");
             post.Eligible.ShouldBeFalse("raw-identity-still-refused");
@@ -379,9 +411,14 @@ public sealed class HerdrPaneDisposalRedactionTests
     [Test]
     public async Task Structured_logs_omit_display_paths_and_reason()
     {
-        foreach (var phase in new[] { "closed", "inspect-error", "close-error" })
+        foreach (var phase in new[] { "closed", "inspect-error", "close-error", "raw-payload" })
         {
             await using var w = new Wire(); w.SetLabels(@"C:\secret-home\repo");
+            w.Fixture.Fake.Workspaces[0].Tabs.Single(t => t.Panes.Any(p => p.PaneId == w.Fixture.PaneId))
+                .Panes.Single(p => p.PaneId == w.Fixture.PaneId).Cwd = @"C:\cwd-secret\repo";
+            if (phase == "raw-payload") w.Fixture.Fake.SetPaneProcessInfo(w.Fixture.PaneId, 4242,
+                new (int Pid, string Name, string[] Argv, string? Cwd)[]
+                { (4243, "grok.exe", new[] { "grok", "argv-secret" }, @"C:\cwd-secret") });
             var logger = new CaptureLogger();
             // The service's internal injection seam records formatted, structured and exception data.
             w.ServiceOverride = new HerdrPaneDisposalService(w.Fixture.Runtime, w.Fixture.Settings.SessionLogPath,
@@ -392,15 +429,16 @@ public sealed class HerdrPaneDisposalRedactionTests
                 Task.FromException(new IOException("exception-path-secret"));
             await w.StartAsync();
             var (_, _, _, receipt) = await w.RoundTripAsync("reason-secret");
-            receipt.Outcome.ShouldBe(phase switch { "closed" => "Closed", "inspect-error" => "Refused", _ => "Unknown" });
+            receipt.Outcome.ShouldBe(phase switch { "closed" => "Closed", "inspect-error" or "raw-payload" => "Refused", _ => "Unknown" });
             receipt.Code.ShouldBe(phase switch
             {
                 "closed" => "herdr_pane_closed",
                 "inspect-error" => HerdrProblemTypes.Unreachable,
+                "raw-payload" => HerdrProblemTypes.PaneForeign,
                 _ => HerdrPaneDisposalCodes.Unknown
             });
             var log = string.Join("\n", logger.Values);
-            foreach (var canary in new[] { "secret-home", "reason-secret", "exception-path-secret" })
+            foreach (var canary in new[] { "secret-home", "reason-secret", "exception-path-secret", "cwd-secret", "argv-secret" })
                 log.ShouldNotContain(canary, Case.Sensitive, "disposal-log-payload-excluded");
             log.ShouldContain(receipt.OperationId.ToString(), Case.Insensitive);
         }
@@ -447,37 +485,53 @@ public sealed class HerdrPaneDisposalRedactionTests
             using var stored = await _http.GetAsync($"/herdr/pane-disposals/previews/{post.PreviewId}");
             stored.EnsureSuccessStatusCode(); var getJson = await stored.Content.ReadAsStringAsync();
             var get = JsonSerializer.Deserialize<HerdrPaneDisposalPreview>(getJson, Json)!;
+            var previewReceiptDir = System.IO.Path.Combine(Fixture.Settings.SessionLogPath, "herdr", "disposals");
+            Directory.Exists(previewReceiptDir).ShouldBeFalse("preview-does-not-persist");
             var op = Guid.NewGuid();
             using var execution = await _http.PostAsJsonAsync("/herdr/pane-disposals",
                 new HerdrPaneDisposalRequest(op, post.PreviewId, reason, "antiphon-best-effort"));
             var executionJson = await execution.Content.ReadAsStringAsync();
+            using var executionDoc = JsonDocument.Parse(executionJson);
+            var executionReceipt = (execution.IsSuccessStatusCode ? executionDoc.RootElement
+                : executionDoc.RootElement.GetProperty("receipt")).Deserialize<HerdrPaneDisposalReceipt>(Json)!;
+            executionReceipt.OperationId.ShouldBe(op, "execution-operation-id");
+            executionReceipt.PreviewId.ShouldBe(post.PreviewId, "execution-preview-id");
             executionJson.ShouldNotContain(reason == "reason-secret" ? "reason-secret" : "unused-canary");
             using var status = await _http.GetAsync($"/herdr/pane-disposals/{op}");
             status.EnsureSuccessStatusCode();
             var statusJson = await status.Content.ReadAsStringAsync();
             statusJson.ShouldNotContain(reason == "reason-secret" ? "reason-secret" : "unused-canary");
             var receipt = JsonSerializer.Deserialize<HerdrPaneDisposalReceipt>(statusJson, Json)!;
+            receipt.OperationId.ShouldBe(op, "receipt-operation-id");
+            if (executionReceipt.Outcome != "Unknown") receipt.ShouldBe(executionReceipt, "execution-status-receipt-equality");
+            else
+            {
+                receipt.Outcome.ShouldBe("Unknown", "execution-status-unknown-outcome");
+                receipt.Code.ShouldBe(HerdrPaneDisposalCodes.Unknown, "execution-status-unknown-code");
+            }
             var file = System.IO.Path.Combine(Fixture.Settings.SessionLogPath, "herdr", "disposals", $"{op:N}.json");
             var diskJson = await File.ReadAllTextAsync(file);
             using var doc = JsonDocument.Parse(diskJson);
             var disk = doc.RootElement.GetProperty("reviewed").Deserialize<HerdrPaneDisposalPreview>(Json)!;
+            var diskReceipt = doc.RootElement.GetProperty("receipt").Deserialize<HerdrPaneDisposalReceipt>(Json)!;
+            diskReceipt.ShouldBe(receipt, "durable-receipt-equality");
             _postJson = postJson; _getJson = getJson; _diskJson = diskJson;
             if (!deferPreviewPathSweep) AssertPreviewPaths();
             AssertNoPath(executionJson, "execution-response-path-excluded");
             AssertNoPath(statusJson, "receipt-path-excluded");
             return (post, get, disk, receipt);
         }
-        public void AssertPreviewPaths()
+        public void AssertPreviewPaths(string? caseKey = null)
         {
-            AssertNoPath(_postJson!, "path-label-excluded post");
-            AssertNoPath(_getJson!, "stored-preview-path-excluded");
-            AssertNoPath(_diskJson!, "durable-review-path-excluded");
+            AssertNoPath(_postJson!, $"path-label-excluded post {caseKey}");
+            AssertNoPath(_getJson!, $"stored-preview-path-excluded {caseKey}");
+            AssertNoPath(_diskJson!, $"durable-review-path-excluded {caseKey}");
         }
-        public void AssertCanaryAbsent(string canary)
+        public void AssertCanaryAbsent(string canary, string caseKey)
         {
-            AssertCanary(_postJson!, canary, "v1-post-canary-excluded");
-            AssertCanary(_getJson!, canary, "v1-get-canary-excluded");
-            AssertCanary(_diskJson!, canary, "v1-disk-canary-excluded");
+            AssertCanary(_postJson!, canary, $"v1-post-canary-excluded-{caseKey}");
+            AssertCanary(_getJson!, canary, $"v1-get-canary-excluded-{caseKey}");
+            AssertCanary(_diskJson!, canary, $"v1-disk-canary-excluded-{caseKey}");
         }
         private static void AssertCanary(string json, string canary, string label) =>
             json.ShouldNotContain(canary, Case.Sensitive, label);
