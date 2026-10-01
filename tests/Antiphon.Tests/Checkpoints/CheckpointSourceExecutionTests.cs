@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.Checkpoints;
 using Antiphon.Tests.TestHelpers;
@@ -153,7 +154,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
     }
 
     [Test]
-    public void strict_cli_and_reuse_require_clean_binding()
+    public async Task strict_cli_and_reuse_require_clean_binding()
     {
         var source = Observe(Sha, 0);
         var manifest = CommandManifest();
@@ -174,6 +175,32 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
             ["--property:UseAppHost=false"], Observe(OtherSha, 0)).Check().ShouldBe("mismatch");
         File.Delete(expected.PathName);
         expected.Check().ShouldBe("unknown", "missing-stamp-refuses-strict-reuse");
+
+        var cliRepo = TempDir();
+        var yaml = Path.Combine(cliRepo, "manifest.yaml");
+        File.WriteAllText(yaml, ManifestLoader.ToYaml(CommandManifest()));
+        var launched = 0;
+        var driver = new FakeDriver();
+        using var output = new StringWriter();
+        var runtime = new CheckpointApp.Runtime
+        {
+            SourceCapture = _ => source, EnvironmentLookup = _ => null, Driver = driver,
+            LaunchWithOutcome = _ => { launched++; return new LaunchOutcome(LaunchKind.NotStarted); },
+            Output = output,
+        };
+        foreach (var verb in new[] { "run", "start" })
+        {
+            await Should.ThrowAsync<ManifestValidationException>(() =>
+                Antiphon.Checkpoints.Program.RunAsync([verb, "--repo-root", cliRepo, yaml,
+                    "--expected-source-sha", OtherSha], runtime), verb + "-strict-cli-refuses-wrong-sha");
+        }
+        launched.ShouldBe(0, "run-and-start-refuse-before-launch");
+        var rowExit = await Antiphon.Checkpoints.Program.RunAsync(["row", "--repo-root", cliRepo,
+            "--name", "CP-1", "--project", "sample", "--output-path", "bin-c835/",
+            "--filter", "/*/*/ExampleSurfaceTests/*", "--expected-source-sha", OtherSha], runtime);
+        rowExit.ShouldBe(ExitCodes.Invalid, "row-strict-cli-refuses-wrong-sha");
+        driver.Calls.ShouldBeEmpty("wrong-sha-no-driver-for-all-verbs");
+        output.ToString().ShouldContain("source_mismatch", Case.Sensitive);
     }
 
     [Test]
@@ -246,15 +273,18 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
     }
 
     [Test]
-    public void validation_requires_complete_consistent_source()
+    public async Task validation_requires_complete_consistent_source()
     {
         var valid = ValidReport();
         ReportValidator.Validate(valid, Sha).ShouldBeNull();
+        (await ValidateWithScriptAsync(valid)).ShouldBe(0, "script-tool-valid-parity");
         valid.SchemaVersion = 1;
         ReportValidator.Validate(valid, Sha).ShouldBe("report_source_ineligible", "legacy-report-ineligible");
+        (await ValidateWithScriptAsync(valid)).ShouldBe(2, "script-tool-legacy-parity");
         valid.SchemaVersion = 2;
         valid.Rows.Single().Source = Evidence(Observe(OtherSha, 0), "clean", "notApplicable");
         ReportValidator.Validate(valid, Sha).ShouldBe("row_source_disagreement", "row-heading-disagreement");
+        (await ValidateWithScriptAsync(valid)).ShouldBe(2, "script-tool-row-heading-parity");
         valid.Rows.Single().Source = Evidence(Observe(Sha, 0), "clean", "notApplicable");
         valid.Rows.Single().Line += " dirty=0";
         ReportValidator.Validate(valid, Sha).ShouldBe("duplicate_receipt_token");
@@ -265,6 +295,30 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         });
         valid.Rows.Single().ExitCode = ExitCodes.FailedTests;
         ReportValidator.Validate(valid, Sha).ShouldBe("row_failed");
+        (await ValidateWithScriptAsync(valid)).ShouldBe(2, "script-tool-failed-verdict-parity");
+    }
+
+    private async Task<int> ValidateWithScriptAsync(ReportModel report)
+    {
+        var evidence = Path.Combine(TempDir(), "report.json");
+        File.WriteAllText(evidence, ReportWriter.JsonText(report));
+        using var process = new Process();
+        process.StartInfo = new ProcessStartInfo("pwsh")
+        {
+            WorkingDirectory = CheckpointFixtures.RepoRoot,
+            RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
+        };
+        foreach (var token in new[] { "-NoProfile", "-NonInteractive", "-File",
+            Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "validate-checkpoint-receipt.ps1"),
+            "-Evidence", evidence, "-ExpectedSourceSha", Sha })
+            process.StartInfo.ArgumentList.Add(token);
+        process.Start();
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await process.WaitForExitAsync(timeout.Token);
+        _ = await stdout + await stderr;
+        return process.ExitCode;
     }
 
     private string NewRun(CheckpointManifest manifest, SourceObservation source) =>
