@@ -24,8 +24,9 @@ internal static class LandApproval
 
     /// <summary>
     /// CARD-0544 D-5 recovery gate. A pending or resumed land for a latched owner re-reads the
-    /// latch and its persisted approval before any further mutation. Returns a refusal code, or
-    /// null when publication may continue. Unlatched owners keep the CARD-0488 behavior.
+    /// latch and its persisted approval before any further mutation. Evidence-backed unlatched
+    /// owners also recheck the approval; caller-only unlatched owners keep CARD-0488 behavior.
+    /// Returns a refusal code, or null when publication may continue.
     /// </summary>
     public static async Task<string?> RevalidateFinalVerificationAsync(AppDbContext db, Guid ownerId,
         Guid? evidenceId, string? expectedSha, CancellationToken ct)
