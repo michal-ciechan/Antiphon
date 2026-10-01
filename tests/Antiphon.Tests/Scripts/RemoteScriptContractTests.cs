@@ -1558,28 +1558,22 @@ public sealed class RemoteScriptContractTests
         var output = LinuxShell("repo='" + DelegateScriptRunner.RepoRoot.Replace("'", "'\\''") + "'\n" + """
             root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
             mkdir -p "$root/stage/packages" "$root/stage/npm"
-            export C849_BOMB_TAR="$root/bomb.tar"
-            pwsh -NoProfile -Command - <<'PS'
-            $header = [byte[]]::new(512)
-            function Put([int]$offset, [string]$value) {
-                $bytes = [Text.Encoding]::ASCII.GetBytes($value)
-                [Array]::Copy($bytes, 0, $header, $offset, $bytes.Length)
-            }
-            Put 0 'packages/bomb'
-            Put 100 "0000644`0"
-            Put 108 "0000000`0"
-            Put 116 "0000000`0"
-            Put 124 ([Convert]::ToString(12GB, 8).PadLeft(11, '0') + "`0")
-            Put 136 "00000000000`0"
-            for ($i = 148; $i -lt 156; $i++) { $header[$i] = 32 }
-            Put 156 '0'
-            Put 257 "ustar`0"
-            Put 263 '00'
-            $sum = 0
-            foreach ($byte in $header) { $sum += $byte }
-            Put 148 ([Convert]::ToString($sum, 8).PadLeft(6, '0') + "`0 ")
-            [IO.File]::WriteAllBytes($env:C849_BOMB_TAR, $header)
-            PS
+            perl -e '
+                my $h = "\0" x 512;
+                substr($h, 0, 13) = "packages/bomb";
+                substr($h, 100, 8) = "0000644\0";
+                substr($h, 108, 8) = "0000000\0";
+                substr($h, 116, 8) = "0000000\0";
+                substr($h, 124, 12) = sprintf("%011o\0", 12 * 1024**3);
+                substr($h, 136, 12) = "00000000000\0";
+                substr($h, 148, 8) = " " x 8;
+                substr($h, 156, 1) = "0";
+                substr($h, 257, 6) = "ustar\0";
+                substr($h, 263, 2) = "00";
+                substr($h, 148, 8) = sprintf("%06o\0 ", unpack("%32C*", $h));
+                open my $out, ">", $ARGV[0] or die $!;
+                print $out $h;
+            ' "$root/bomb.tar"
             diagnosis="$(pwsh -NoProfile -File "$repo/scripts/c849-import-saved-donor.ps1" -Source "$root/bomb.tar" -Stage "$root/stage")"; code=$?
             printf 'size-bomb code=%s diagnosis=%s\n' "$code" "$diagnosis"
             test ! -e "$root/stage/packages/bomb" && echo size-bomb-not-written
