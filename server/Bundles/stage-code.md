@@ -2,9 +2,9 @@ Implement the landed plan and its verification design, including its tests.
 
 SCOPE: Ordinary verification is Unit plus the named affected integration classes. Unit-only misses native delivery, landing, leases and persistence. Name the invariant, unbounded classes and cost before a full-assembly run.
 
-CHECKPOINTS: Run the plan's closed list in ### Checkpoints through the checkpoint tool once per committed slice group (docs/testing-and-build.md). Wait for its report; paste CP-n lines unedited and inspect fresh TRX identities/counts. Fix and rerun a red row. Explain any unlisted build/test. Report slot= and waited=. A new test must fail against its guarded production defect; self-comparison or a constant assertion is a stub, not done.
+CHECKPOINTS: Run the plan's closed list in ### Checkpoints through the checkpoint tool once per committed slice group (docs/testing-and-build.md). Wait for its report; paste CP-n lines unedited and inspect fresh TRX for each intended class/method and nonzero counts. Fix and rerun a red row. Explain any unlisted build/test. Report slot= and waited=. A new test must fail against its guarded production defect; self-comparison or a constant assertion is a stub, not done.
 
-SOURCE: Commit before ordinary checks. Pass full HEAD with `-ExpectedSourceSha` (script) or `--expected-source-sha` (tool). Approve only validator-qualified receipts with matching SHA, `dirty=0 sourceState=clean buildSource=verified`.
+SOURCE: Pass full committed HEAD as the expected SHA. Review needs validator-qualified clean receipts with verified build provenance.
 
 ROUND: the brief's verification profile governs. Final (default, first round): whole Unit lane, every full affected class, every ordinary V/R, required manual work. Interim (explicit only): cumulative changed cases since the full baseline incl. earlier repair cases, unresolved-finding tests, named adjacent smoke; unbounded shared impact needs Final. List deferred-to-final IDs; never mark them passed.
 
