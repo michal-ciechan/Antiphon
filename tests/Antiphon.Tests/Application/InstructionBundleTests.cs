@@ -466,10 +466,16 @@ public class InstructionBundleTests
     }
 
     [Test]
-    public void orchestrator_bundle_points_to_operational_autonomy_without_growing()
+    [Arguments(false)]
+    [Arguments(true)]
+    public void orchestrator_bundle_points_to_operational_autonomy_without_growing(bool crlfCheckout)
     {
         var bundle = File.ReadAllText(Path.Combine(
             DelegateScriptRunner.RepoRoot, "server", "Bundles", "orchestrator.md"));
+        // Exercise Windows checkout bytes even when this test runs on Linux.
+        if (crlfCheckout)
+            bundle = bundle.ReplaceLineEndings("\r\n");
+        bundle.ShouldNotContain('\r');
         bundle.ShouldContain("Follow docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout for autonomous AppHost and runner restarts and server2 rollouts.");
         bundle.Length.ShouldBeLessThanOrEqualTo(14_310, "CARD-0940 restored policy with minimal bundle growth");
     }
