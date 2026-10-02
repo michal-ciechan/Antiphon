@@ -21,6 +21,190 @@ namespace Antiphon.Tests.Application;
 public class AgentTaskWorktreeBaseResolverTests
 {
     [Test]
+    [Arguments(AgentTaskStatus.Failed)]
+    [Arguments(AgentTaskStatus.Canceled)]
+    [Arguments(AgentTaskStatus.Blocked)]
+    [Arguments(AgentTaskStatus.Queued)]
+    [Arguments(AgentTaskStatus.Dispatched)]
+    [Arguments(AgentTaskStatus.Working)]
+    public async Task C788_PrunedRowsCostNoGitCommandsAndKeepWarnings(AgentTaskStatus status)
+    {
+        using var repo = new ScratchGitRepo("c788-prune");
+        await repo.CommitFileAsync("seed.txt", "M\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = Context(schema);
+        var card = await CardAsync(db);
+        var source = await SourceAsync(db, repo, card.Id, "source", "master");
+        await db.SaveChangesAsync();
+        var trace = new TraceGit();
+        var baseline = await ResolveAsync(db, NewRequest(repo, card.Id), trace);
+        var baselineCommands = trace.Commands.ToArray();
+        trace.Commands.Clear();
+        var pruned = await SourceAsync(db, repo, card.Id, "pruned", "master", commit: false);
+        pruned.Status = status;
+        await db.SaveChangesAsync();
+        var actual = await ResolveAsync(db, NewRequest(repo, card.Id), trace);
+        actual.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
+        actual.SourceTaskId.ShouldBe(source.Id);
+        actual.GitCommands.ShouldBe(baseline.GitCommands);
+        trace.Commands.SequenceEqual(baselineCommands).ShouldBeTrue();
+        trace.Commands.ShouldNotContain(c => c.Contains(pruned.WorktreeBranch!, StringComparison.Ordinal));
+        actual.CandidateWarnings.ShouldContain(w => w.Contains(pruned.WorktreeBranch!, StringComparison.Ordinal)
+            && w.Contains(status.ToString(), StringComparison.Ordinal) && !w.Contains("@", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public async Task C788_ContainedSiblingBranchesAreClassifiedInOneQuery()
+    {
+        using var repo = new ScratchGitRepo("c788-contained");
+        await repo.CommitFileAsync("seed.txt", "M\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = Context(schema);
+        var card = await CardAsync(db);
+        for (var i = 0; i < 12; i++)
+        {
+            var review = await SourceAsync(db, repo, card.Id, "review" + i, "master", commit: false);
+            review.Role = AgentTaskRole.Review;
+        }
+        var code = await SourceAsync(db, repo, card.Id, "code", "master");
+        await db.SaveChangesAsync();
+        var trace = new TraceGit();
+        var selected = await ResolveAsync(db, NewRequest(repo, card.Id), trace);
+        selected.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
+        selected.SourceTaskId.ShouldBe(code.Id);
+        selected.GitCommands.ShouldBeLessThanOrEqualTo(11);
+        trace.Commands.Count(c => c.Contains("for-each-ref", StringComparison.Ordinal)).ShouldBe(2);
+        trace.Commands.ShouldNotContain(c => c.Contains("refs/heads/" + code.WorktreeBranch + "^{commit}", StringComparison.Ordinal));
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C788_CheckoutSafetyProbesOnlyMaximalTips(bool dirtyAncestor)
+    {
+        using var repo = new ScratchGitRepo("c788-safety");
+        await repo.CommitFileAsync("seed.txt", "M\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = Context(schema);
+        var card = await CardAsync(db);
+        var a = await SourceAsync(db, repo, card.Id, "A", "master");
+        var b = await SourceAsync(db, repo, card.Id, "B", a.WorktreeBranch!);
+        var aCheckout = await CheckoutAsync(repo, a);
+        var bCheckout = await CheckoutAsync(repo, b);
+        if (dirtyAncestor) File.WriteAllText(Path.Combine(aCheckout, "dirty.txt"), "uncommitted");
+        await db.SaveChangesAsync();
+        var trace = new TraceGit();
+        var selected = await ResolveAsync(db, NewRequest(repo, card.Id), trace);
+        selected.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
+        selected.SourceTaskId.ShouldBe(b.Id);
+        var safety = trace.Commands.Where(c => c.Contains(" worktree list ", StringComparison.Ordinal)
+            || c.Contains(" status --porcelain", StringComparison.Ordinal)
+            || c.Contains(" rev-parse --git-path", StringComparison.Ordinal)).ToArray();
+        safety.Length.ShouldBe(5);
+        var normalizedSafety = safety.Select(c => c.Replace('\\', '/')).ToArray();
+        normalizedSafety.ShouldContain(c => c.StartsWith(bCheckout.Replace('\\', '/') + " status ", StringComparison.Ordinal));
+        normalizedSafety.ShouldNotContain(c => c.StartsWith(aCheckout.Replace('\\', '/') + " status ", StringComparison.Ordinal));
+    }
+
+    [Test]
+    [Arguments("dirty-descendant")]
+    [Arguments("dirty-divergent")]
+    [Arguments("dirty-equal-alias")]
+    public async Task C788_UnsafeMaximalRecomputesCandidates(string shape)
+    {
+        using var repo = new ScratchGitRepo("c788-recompute");
+        await repo.CommitFileAsync("seed.txt", "M\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = Context(schema);
+        var card = await CardAsync(db);
+        var a = await SourceAsync(db, repo, card.Id, "A", "master");
+        var b = shape switch
+        {
+            "dirty-descendant" => await SourceAsync(db, repo, card.Id, "B", a.WorktreeBranch!),
+            "dirty-divergent" => await SourceAsync(db, repo, card.Id, "B", "master"),
+            _ => await SourceAsync(db, repo, card.Id, "alias", a.WorktreeBranch!, commit: false),
+        };
+        b.CompletedAt = a.CompletedAt!.Value.AddMinutes(1);
+        await CheckoutAsync(repo, a);
+        var bCheckout = await CheckoutAsync(repo, b);
+        File.WriteAllText(Path.Combine(bCheckout, "dirty.txt"), "uncommitted");
+        await db.SaveChangesAsync();
+        var selected = await ResolveAsync(db, NewRequest(repo, card.Id));
+        selected.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
+        selected.SourceTaskId.ShouldBe(a.Id);
+        selected.CandidateWarnings.ShouldContain(w => w.Contains(b.WorktreeBranch!, StringComparison.Ordinal)
+            && w.Contains("dirty or in-progress", StringComparison.Ordinal));
+    }
+
+    [Test]
+    [Arguments(AgentTaskStatus.Blocked)]
+    [Arguments(AgentTaskStatus.Failed)]
+    [Arguments(AgentTaskStatus.Canceled)]
+    [Arguments(AgentTaskStatus.Queued)]
+    [Arguments(AgentTaskStatus.Dispatched)]
+    [Arguments(AgentTaskStatus.Working)]
+    public async Task C788_RequestedNonSucceededRowStillValidated(AgentTaskStatus status)
+    {
+        using var repo = new ScratchGitRepo("c788-explicit");
+        await repo.CommitFileAsync("seed.txt", "M\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = Context(schema);
+        var card = await CardAsync(db);
+        var source = await SourceAsync(db, repo, card.Id, "source", "master");
+        await CheckoutAsync(repo, source);
+        source.Status = status;
+        await db.SaveChangesAsync();
+        var request = NewRequest(repo, card.Id);
+        request.RequestedWorktreeBaseMode = RequestedWorktreeBaseMode.Task;
+        request.RequestedWorktreeBaseTaskId = source.Id;
+        var selection = await ResolveAsync(db, request);
+        selection.InspectedCandidates.ShouldBe(1);
+        if (status is AgentTaskStatus.Blocked or AgentTaskStatus.Failed or AgentTaskStatus.Canceled)
+        {
+            selection.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
+            selection.SourceTaskId.ShouldBe(source.Id);
+        }
+        else
+        {
+            selection.Decision.ShouldBe(CardWorktreeBaseDecision.Unknown);
+            selection.Reason.ShouldBe("requested_source_invalid");
+        }
+    }
+
+    [Test]
+    [Arguments(LandRequestState.Queued)]
+    [Arguments(LandRequestState.Held)]
+    [Arguments(LandRequestState.Running)]
+    public async Task C788_PendingLandRowStillHoldsWithoutInspection(LandRequestState state)
+    {
+        using var repo = new ScratchGitRepo("c788-pending");
+        await repo.CommitFileAsync("seed.txt", "M\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = Context(schema);
+        var card = await CardAsync(db);
+        var pending = await SourceAsync(db, repo, card.Id, "pending", "master");
+        pending.Status = AgentTaskStatus.Blocked;
+        pending.LandRequestedAt = DateTime.UtcNow;
+        var request = new AgentTaskLandRequest
+        {
+            Id = Guid.NewGuid(), TaskId = pending.Id, RequestedAt = pending.LandRequestedAt.Value,
+            LastEvaluatedAt = pending.LandRequestedAt.Value, LastProgressAt = pending.LandRequestedAt.Value,
+            State = state, IsPending = true,
+            ExpectedSourceSha = (await repo.GitReadAsync("rev-parse", pending.WorktreeBranch!)).Trim(),
+        };
+        db.AgentTaskLandRequests.Add(request);
+        pending.CurrentLandRequestId = request.Id;
+        await SourceAsync(db, repo, card.Id, "other", "master");
+        await db.SaveChangesAsync();
+        var selected = await new AgentTaskWorktreeBaseResolver(db, new LandingGit(),
+            Options.Create(new GitSettings { DefaultBranch = "master", WorktreeBaseMaxCandidates = 1 }))
+            .ResolveAsync(NewRequest(repo, card.Id), CancellationToken.None);
+        selected.Decision.ShouldBe(CardWorktreeBaseDecision.WaitForLand);
+        selected.Reason.ShouldBe("pending_land_uninspected");
+        selected.GitCommands.ShouldBe(0);
+    }
+
+    [Test]
     [Arguments("disjoint_linked_worktree")]
     [Arguments("nested_repository")]
     [Arguments("same_origin_clone")]
@@ -137,8 +321,9 @@ public class AgentTaskWorktreeBaseResolverTests
         }
         await db.SaveChangesAsync();
         var fault = scenario is "landed_event" or "landed_with_residue_event"
-            ? new RefLookupFailureGit(source.WorktreeBranch!) : null;
+            ? new RefLookupFailureGit(source.RepoPath!) : null;
         var auto = await ResolveAsync(db, NewRequest(repo, card.Id), fault);
+        if (fault is not null) fault.Calls.ShouldBe(0, "landed rows must not reach the Git fault hook");
         switch (scenario)
         {
             case "merge_plus_one_tip":
@@ -416,12 +601,18 @@ public class AgentTaskWorktreeBaseResolverTests
             await repo.GitAsync("branch", "-D", source.WorktreeBranch!);
         }
         await db.SaveChangesAsync();
-        ILandingGit? fault = scenario == "git_error" ? new RefLookupFailureGit(source.WorktreeBranch!) : null;
+        if (scenario == "git_error")
+        {
+            source.RepoPath = await CheckoutAsync(repo, source);
+            await db.SaveChangesAsync();
+        }
+        RefLookupFailureGit? fault = scenario == "git_error" ? new RefLookupFailureGit(source.RepoPath!) : null;
         var auto = await ResolveAsync(db, NewRequest(repo, card.Id), fault);
         var explicitRequest = NewRequest(repo, card.Id);
         explicitRequest.RequestedWorktreeBaseMode = RequestedWorktreeBaseMode.Task;
         explicitRequest.RequestedWorktreeBaseTaskId = source.Id;
         var explicitSelection = await ResolveAsync(db, explicitRequest, fault);
+        if (scenario == "git_error") fault!.Calls.ShouldBeGreaterThan(0, "the common-directory fault must be reached");
         if (scenario is "unregistered_local_branch" or "missing_original_directory")
         {
             auto.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
@@ -515,6 +706,7 @@ public class AgentTaskWorktreeBaseResolverTests
     [Arguments("caller_canceled")]
     public async Task T0442_V29_inspection_budget_never_selects_a_partial_inventory(string scenario)
     {
+        new GitSettings().WorktreeBaseInspectionTimeoutSeconds.ShouldBe(5);
         using var repo = new ScratchGitRepo("c442-v29");
         await repo.CommitFileAsync("seed.txt", "M\n");
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -535,12 +727,13 @@ public class AgentTaskWorktreeBaseResolverTests
             DefaultBranch = "master",
             WorktreeBaseMaxCandidates = 16,
             WorktreeBaseMaxGitCommands = scenario == "git_call_cap" ? 2 : 128,
-            WorktreeBaseInspectionTimeoutSeconds = 2,
+            WorktreeBaseInspectionTimeoutSeconds = 5,
         };
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var gate = new GitProcessGate(1);
+        var deadlineGit = new DeadlineGit(clock);
         ILandingGit git = scenario is "deadline" or "explicit_deadline"
-            ? new DeadlineGit(clock) : new LandingGit();
+            ? deadlineGit : new LandingGit();
         var request = NewRequest(repo, card.Id);
         if (scenario == "explicit_deadline")
         {
@@ -569,12 +762,14 @@ public class AgentTaskWorktreeBaseResolverTests
                 barrierTimeout.Token.ThrowIfCancellationRequested();
                 await Task.Yield();
             }
-            clock.Advance(TimeSpan.FromSeconds(2));
+            clock.Advance(TimeSpan.FromSeconds(5));
             selection = await pending;
             gate.Started.ShouldBe(1); // only the fixture's lease entered the gate.
         }
         else
             selection = await resolver.ResolveAsync(request, CancellationToken.None);
+        if (scenario is "deadline" or "explicit_deadline")
+            deadlineGit.Calls.ShouldBeGreaterThan(0, "the deadline injection must be reached");
 
         if (scenario == "six_kept")
         {
@@ -688,22 +883,41 @@ public class AgentTaskWorktreeBaseResolverTests
         return checkout;
     }
 
-    private sealed class RefLookupFailureGit(string branch) : LandingGit
+    private sealed class RefLookupFailureGit(string repositoryPath) : LandingGit
     {
+        public int Calls { get; private set; }
         public override Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> args,
-            CancellationToken ct) =>
-            args is ["rev-parse", "--verify", "--quiet", var reference]
-                && reference == $"refs/heads/{branch}^{{commit}}"
-                    ? Task.FromResult(new LandingGitResult(128, "", "injected commit lookup error"))
-                    : base.RunAsync(repository, args, ct);
+            CancellationToken ct)
+        {
+            if (args is ["rev-parse", "--path-format=absolute", "--git-common-dir"]
+                && repository == repositoryPath)
+            {
+                Calls++;
+                return Task.FromResult(new LandingGitResult(128, "", "injected common directory error"));
+            }
+            return base.RunAsync(repository, args, ct);
+        }
+    }
+
+    private sealed class TraceGit : LandingGit
+    {
+        public List<string> Commands { get; } = [];
+        public override async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> args,
+            CancellationToken ct)
+        {
+            Commands.Add(repository + " " + string.Join(' ', args));
+            return await base.RunAsync(repository, args, ct);
+        }
     }
 
     private sealed class DeadlineGit(FakeTimeProvider clock) : LandingGit
     {
+        public int Calls { get; private set; }
         public override Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> args,
             CancellationToken ct)
         {
-            clock.Advance(TimeSpan.FromSeconds(2));
+            Calls++;
+            clock.Advance(TimeSpan.FromSeconds(5));
             return Task.FromResult(new LandingGitResult(0, repository, ""));
         }
     }

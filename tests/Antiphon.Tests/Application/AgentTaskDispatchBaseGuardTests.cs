@@ -468,9 +468,11 @@ public partial class AgentTaskDispatchBaseGuardTests
     [Test]
     [Arguments("deadline")]
     [Arguments("candidate_cap")]
+    [Arguments("git_command_limit")]
+    [Arguments("git_inspection_error")]
     [Arguments("pending_land_budget")]
     [Timeout(120_000)]
-    public async Task T0442_V30_incomplete_dispatch_inspection_keeps_safe_base_and_land_hold(
+    public async Task T0442_V30_incomplete_dispatch_inspection_blocks_previewed_source_and_keeps_land_hold(
         string scenario, CancellationToken ct)
     {
         using var repo = new ScratchGitRepo("c442-v30");
@@ -500,10 +502,12 @@ public partial class AgentTaskDispatchBaseGuardTests
         await db.SaveChangesAsync(ct);
 
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        ILandingGit? git = scenario == "deadline" ? new CandidateDeadlineGit(clock, a.WorktreeBranch!) : null;
+        var deadlineGit = scenario == "deadline" ? new CandidateDeadlineGit(clock, a.WorktreeBranch!) : null;
+        ILandingGit? git = scenario == "git_inspection_error" ? new CandidateBatchFailureGit() : deadlineGit;
         await using (var launchProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot,
             git: git, clock: scenario == "deadline" ? clock : null,
-            maxCandidates: scenario == "deadline" ? null : 1))
+            maxCandidates: scenario is "candidate_cap" or "pending_land_budget" ? 1 : null,
+            maxGitCommands: scenario == "git_command_limit" ? 2 : null))
         await using (var scope = launchProvider.CreateAsyncScope())
             await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
         db.ChangeTracker.Clear();
@@ -532,27 +536,216 @@ public partial class AgentTaskDispatchBaseGuardTests
             return;
         }
 
-        result.Status.ShouldBe(AgentTaskStatus.Dispatched);
-        result.WorktreeBaseTaskId.ShouldBeNull();
-        result.WorktreeBaseSha.ShouldBe((await repo.GitReadAsync("rev-parse", "master")).Trim());
+        result.Status.ShouldBe(AgentTaskStatus.Blocked);
+        result.WorktreePath.ShouldBeNull();
+        result.WorktreeBranch.ShouldBeNull();
+        result.AgentSessionId.ShouldBeNull();
         result.WorktreeBasePreviewJson.ShouldContain(a.Id.ToString("D"));
-        var warnings = await db.AgentTaskDispatchWarningIntents.AsNoTracking()
-            .Where(i => i.TaskId == created.Id && i.WarningKey == "worktree-base-preview-changed")
-            .ToListAsync(ct);
-        warnings.Count.ShouldBe(1);
-        warnings[0].Detail.ShouldContain(scenario == "deadline" ? "inspection_timeout" : "candidate_limit");
-        result.FailureReason.ShouldBeNull();
+        result.FailureReason.ShouldContain(scenario switch
+        {
+            "deadline" => "inspection_timeout",
+            "git_command_limit" => "git_command_limit",
+            "git_inspection_error" => "git_inspection_error",
+            _ => "candidate_limit",
+        });
+        result.FailureReason.ShouldContain(DelegationReportFormatter.Short(a.Id));
+        result.FailureReason.ShouldContain("-BaseTask");
+        result.FailureReason.ShouldContain("-StartRef");
+        if (deadlineGit is not null) deadlineGit.Fired.ShouldBeTrue();
     }
 
     private sealed class CandidateDeadlineGit(FakeTimeProvider clock, string branch) : LandingGit
     {
+        public bool Fired { get; private set; }
         public override async Task<LandingGitResult> RunAsync(string repository,
             IReadOnlyList<string> args, CancellationToken ct)
         {
-            if (args is ["rev-parse", "--verify", "--quiet", var reference]
-                && reference == $"refs/heads/{branch}^{{commit}}")
-                clock.Advance(TimeSpan.FromSeconds(2));
+            if (args.Count > 2 && args[0] == "for-each-ref"
+                && args.Any(a => a == $"refs/heads/{branch}"))
+            {
+                Fired = true;
+                clock.Advance(TimeSpan.FromSeconds(5));
+            }
             return await base.RunAsync(repository, args, ct);
+        }
+    }
+
+    private sealed class CandidateBatchFailureGit : LandingGit
+    {
+        public override Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> args,
+            CancellationToken ct) => args.Count > 0 && args[0] == "for-each-ref"
+            ? Task.FromResult(new LandingGitResult(128, "", "injected batch failure"))
+            : base.RunAsync(repository, args, ct);
+    }
+
+    [Test]
+    [Arguments("deadline")]
+    [Arguments("candidate_cap")]
+    [Arguments("git_command_limit")]
+    [Arguments("git_inspection_error")]
+    [Timeout(120_000)]
+    public Task C788_ReviewWithIncompleteInspectionBlocks(string scenario, CancellationToken ct) =>
+        IncompleteTargetPreviewAsync(AgentTaskRole.Review, scenario, blocked: true, ct);
+
+    [Test]
+    [Arguments("deadline")]
+    [Arguments("candidate_cap")]
+    [Arguments("git_command_limit")]
+    [Arguments("git_inspection_error")]
+    [Timeout(120_000)]
+    public Task C788_FreshCodeWithTargetPreviewKeepsSafeBase(string scenario, CancellationToken ct) =>
+        IncompleteTargetPreviewAsync(AgentTaskRole.Code, scenario, blocked: false, ct);
+
+    private static async Task IncompleteTargetPreviewAsync(AgentTaskRole role, string scenario,
+        bool blocked, CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c788-target-preview");
+        await repo.CommitFileAsync("seed.txt", "M\n");
+        var targetSha = (await repo.GitReadAsync("rev-parse", "master")).Trim();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-0788");
+        AgentTaskCreatedDto created;
+        await using (var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
+        await using (var scope = provider.CreateAsyncScope())
+            created = await scope.ServiceProvider.GetRequiredService<AgentTaskService>()
+                .CreateAsync(new CreateAgentTaskRequest("Check base", Title: "CARD-0788 base",
+                    Role: role, Workspace: WorkspaceMode.Worktree, Card: card.Id.ToString("D")),
+                    new AgentTaskService.Caller(null, null, repo.Path), ct);
+        created.WorktreeBase!.Decision.ShouldBe(CardWorktreeBaseDecision.Target);
+        var a = await SeedKeptSiblingAsync(db, repo, card.Id, "A", startRef: "master");
+        await SeedKeptSiblingAsync(db, repo, card.Id, "B", startRef: "master");
+        await db.SaveChangesAsync(ct);
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        ILandingGit? git = scenario switch
+        {
+            "deadline" => new CandidateDeadlineGit(clock, a.WorktreeBranch!),
+            "git_inspection_error" => new CandidateBatchFailureGit(),
+            _ => null,
+        };
+        await using (var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot,
+            git: git, clock: scenario == "deadline" ? clock : null,
+            maxCandidates: scenario == "candidate_cap" ? 1 : null,
+            maxGitCommands: scenario == "git_command_limit" ? 2 : null))
+        await using (var scope = provider.CreateAsyncScope())
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        db.ChangeTracker.Clear();
+        var result = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
+        if (blocked)
+        {
+            result.Status.ShouldBe(AgentTaskStatus.Blocked);
+            result.WorktreePath.ShouldBeNull();
+            result.AgentSessionId.ShouldBeNull();
+            result.FailureReason.ShouldContain(scenario switch
+            {
+                "deadline" => "inspection_timeout",
+                "candidate_cap" => "candidate_limit",
+                _ => scenario,
+            });
+        }
+        else
+        {
+            result.Status.ShouldBe(AgentTaskStatus.Dispatched);
+            result.WorktreeBaseSha.ShouldBe(targetSha);
+            result.WorktreeBaseTaskId.ShouldBeNull();
+            result.WorktreePath.ShouldNotBeNull();
+            var warnings = await db.AgentTaskDispatchWarningIntents.AsNoTracking()
+                .Where(i => i.TaskId == created.Id && i.WarningKey.StartsWith("worktree-base-inspection-"))
+                .ToListAsync(ct);
+            warnings.ShouldNotBeEmpty();
+        }
+    }
+
+    [Test]
+    [Arguments("fresh")]
+    [Arguments("start-ref")]
+    [Timeout(120_000)]
+    public async Task C788_ExplicitBaseOverridesIncompleteAutoGuard(string shape, CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c788-explicit-dispatch");
+        await repo.CommitFileAsync("seed.txt", "M\n");
+        await repo.AddBareOriginAsync();
+        var targetSha = (await repo.GitReadAsync("rev-parse", "master")).Trim();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-0788");
+        AgentTaskCreatedDto created;
+        await using (var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
+        await using (var scope = provider.CreateAsyncScope())
+            created = await scope.ServiceProvider.GetRequiredService<AgentTaskService>()
+                .CreateAsync(new CreateAgentTaskRequest("Explicit base", Title: "CARD-0788 Review",
+                    Role: AgentTaskRole.Review, Workspace: WorkspaceMode.Worktree,
+                    Card: card.Id.ToString("D"), FreshWorktree: shape == "fresh",
+                    WorktreeBaseRequestedRef: shape == "start-ref" ? targetSha : null),
+                    new AgentTaskService.Caller(null, null, repo.Path), ct);
+        var sibling = await SeedKeptSiblingAsync(db, repo, card.Id, "A", startRef: "master");
+        await SeedKeptSiblingAsync(db, repo, card.Id, "B", startRef: "master");
+        await db.SaveChangesAsync(ct);
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using (var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot,
+            git: new CandidateDeadlineGit(clock, sibling.WorktreeBranch!), clock: clock,
+            maxCandidates: shape == "fresh" ? 1 : null))
+        await using (var scope = provider.CreateAsyncScope())
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        db.ChangeTracker.Clear();
+        var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
+        task.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        task.WorktreeBaseSha.ShouldBe(targetSha);
+        task.WorktreeBaseTaskId.ShouldBeNull();
+        task.WorktreePath.ShouldNotBeNull();
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task C788_NonIncompleteUnknownKeepsExistingBehavior(CancellationToken ct)
+    {
+        new CardWorktreeBaseSelection(CardWorktreeBaseDecision.Unknown, "master", Reason: "target_missing")
+            .Incomplete.ShouldBeFalse();
+        new CardWorktreeBaseSelection(CardWorktreeBaseDecision.Unknown, "master", Reason: "requested_source_invalid")
+            .Incomplete.ShouldBeFalse();
+        foreach (var role in new[] { AgentTaskRole.Code, AgentTaskRole.Review })
+        {
+            using var repo = new ScratchGitRepo("c788-nonincomplete");
+            await repo.CommitFileAsync("seed.txt", "M\n");
+            var targetSha = (await repo.GitReadAsync("rev-parse", "master")).Trim();
+            await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            await using var db = CreateContext(schema);
+            var card = await SeedCardAsync(db, "CARD-0788");
+            AgentTaskCreatedDto created;
+            await using (var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
+            await using (var scope = provider.CreateAsyncScope())
+                created = await scope.ServiceProvider.GetRequiredService<AgentTaskService>()
+                    .CreateAsync(new CreateAgentTaskRequest("Base", Title: "CARD-0788 task", Role: role,
+                        Workspace: WorkspaceMode.Worktree, Card: card.Id.ToString("D"),
+                        MergeTargetRef: "master"), new AgentTaskService.Caller(null, null, repo.Path), ct);
+            created.WorktreeBase!.Decision.ShouldBe(CardWorktreeBaseDecision.Target);
+            await SeedKeptSiblingAsync(db, repo, card.Id, "A", startRef: "master");
+            await db.SaveChangesAsync(ct);
+            var git = new TargetMissingTwiceGit();
+            await using (var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, git: git))
+            await using (var scope = provider.CreateAsyncScope())
+                await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+            git.Hits.ShouldBe(2);
+            db.ChangeTracker.Clear();
+            var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
+            task.Status.ShouldBe(AgentTaskStatus.Dispatched);
+            task.WorktreeBaseSha.ShouldBe(targetSha);
+            task.WorktreeBaseTaskId.ShouldBeNull();
+        }
+    }
+
+    private sealed class TargetMissingTwiceGit : LandingGit
+    {
+        public int Hits { get; private set; }
+        public override Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> args,
+            CancellationToken ct)
+        {
+            if (Hits < 2 && args is ["rev-parse", "--verify", "--quiet", "master^{commit}"])
+            {
+                Hits++;
+                return Task.FromResult(new LandingGitResult(1, "", ""));
+            }
+            return base.RunAsync(repository, args, ct);
         }
     }
 
@@ -1555,7 +1748,8 @@ public partial class AgentTaskDispatchBaseGuardTests
         LandDeliveryBoundary? boundary = null,
         ILandingGit? git = null,
         TimeProvider? clock = null,
-        int? maxCandidates = null)
+        int? maxCandidates = null,
+        int? maxGitCommands = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -1596,6 +1790,7 @@ public partial class AgentTaskDispatchBaseGuardTests
             WorktreeAddTimeoutSeconds = 180,
             DefaultBranch = defaultBranch,
             WorktreeBaseMaxCandidates = maxCandidates ?? 16,
+            WorktreeBaseMaxGitCommands = maxGitCommands ?? 128,
         });
         services.AddSingleton<CompletionNoteFlushQueue>();
         services.AddSingleton<LandDeliveryBoundary>(boundary ?? new LandDeliveryBoundary());

@@ -4636,13 +4636,21 @@ public sealed class AgentTaskDispatcher
                     await transaction.RollbackAsync(ct);
                     return DispatchOneResult.NotClaimed;
                 }
+                var previewedSource = PreviewedCardSource(claimed.WorktreeBasePreviewJson);
                 if (selected.Decision == CardWorktreeBaseDecision.Ambiguous
                     || selected.Decision == CardWorktreeBaseDecision.Unknown
-                        && claimed.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Task)
+                        && (claimed.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Task
+                            || claimed.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Auto
+                                && selected.Incomplete
+                                && (claimed.Role == AgentTaskRole.Review || previewedSource is not null)))
                 {
                     await BlockAsync(claimed,
                         $"{selected.Reason}: {string.Join(" ", selected.CandidateWarnings)} "
-                        + "Resolve histories then retry, or cancel and recreate with -BaseTask / -FreshWorktree.", ct);
+                        + (previewedSource is { } source
+                            ? $"Previewed source {DelegationReportFormatter.Short(source.Id)} @ {source.Sha}. "
+                            : "")
+                        + "Resolve histories then retry, or cancel and recreate with -BaseTask <previewed task> "
+                        + "/ -StartRef <previewed sha> / -FreshWorktree.", ct);
                     await transaction.CommitAsync(ct);
                     await ReleaseTaskConsumersAsync(claimed);
                     return DispatchOneResult.NotClaimed;
@@ -5063,6 +5071,23 @@ public sealed class AgentTaskDispatcher
                 + $"{actual.Decision} {actual.SourceSha ?? actual.FallbackRef} ({actual.Reason ?? "Git/card state changed"}).";
         }
         catch (JsonException) { return "Worktree base preview could not be compared with launch; inspect task provenance."; }
+    }
+
+    private static (Guid Id, string Sha)? PreviewedCardSource(string? previewJson)
+    {
+        if (previewJson is null) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(previewJson);
+            var decision = document.RootElement.GetProperty("decision");
+            if ((CardWorktreeBaseDecision)decision.GetProperty("Decision").GetInt32()
+                != CardWorktreeBaseDecision.Continue) return null;
+            var id = decision.GetProperty("SourceTaskId").GetGuid();
+            var sha = decision.GetProperty("SourceSha").GetString();
+            return sha is null ? null : (id, sha);
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or KeyNotFoundException)
+        { return null; }
     }
 
     private static List<DispatchWarningDraft> BuildDispatchWarningDrafts(

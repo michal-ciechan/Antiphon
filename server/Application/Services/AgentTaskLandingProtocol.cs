@@ -141,11 +141,13 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     try
                     {
                         await LandApproval.LoadRecoveryEvidenceAsync(db, approval.ReviewEvidenceId!.Value,
-                            approval.ExpectedSourceSha!, recoverySource!, ct);
+                            approval.ExpectedSourceSha!, recoverySource!, ct,
+                            approval.RecoveryMode == LandRecoveryMode.AdoptReviewedSource
+                                ? LandApproval.EvidenceIdentity.AdoptionSource : LandApproval.EvidenceIdentity.RecoveryOwner);
                     }
                     catch (Antiphon.Server.Application.Exceptions.ConflictException ex)
                     {
-                        throw new LandingRefusal(ex.Code ?? "recovery_review_invalid");
+                        throw new LandingRefusal(ex.Code ?? "recovery_review_invalid", ex.Message);
                     }
                 }
                 Require(approval.SourceResolutionState == LandSourceResolutionState.Resolved
@@ -572,7 +574,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     private async Task RecheckFinalVerificationAsync(Guid ownerId, Guid? evidenceId, string? expectedSha, CancellationToken ct)
     {
         var refusal = await LandApproval.RevalidateFinalVerificationAsync(db, ownerId, evidenceId, expectedSha, ct);
-        Require(refusal is null, refusal ?? "");
+        if (refusal is { } value) throw new LandingRefusal(value.Code, value.Detail);
     }
 
     /// <summary>CARD-0642 D-6 / CARD-0688 D-8: the DB half (latch, request identity, filter), at every boundary.</summary>
@@ -600,11 +602,13 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             try
             {
                 await LandApproval.LoadRecoveryEvidenceAsync(db, op.ReviewEvidenceId!.Value,
-                    op.OriginalSourceSha, source!, ct);
+                    op.OriginalSourceSha, source!, ct,
+                    op.RecoveryMode == LandRecoveryMode.AdoptReviewedSource
+                        ? LandApproval.EvidenceIdentity.AdoptionSource : LandApproval.EvidenceIdentity.RecoveryOwner);
             }
             catch (Antiphon.Server.Application.Exceptions.ConflictException ex)
             {
-                throw new LandingRefusal(ex.Code ?? "recovery_review_invalid");
+                throw new LandingRefusal(ex.Code ?? "recovery_review_invalid", ex.Message);
             }
             Require(op.SourceRemoteFingerprint is { Length: 64 }
                 && op.RecoverySourceFullRef is not null, "recovery_source_unbound");

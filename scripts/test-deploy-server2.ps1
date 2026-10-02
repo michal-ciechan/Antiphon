@@ -232,17 +232,21 @@ try {
     Assert-C727 ($t.Exit -eq 0) 'T-17 saved phase succeeds'
     Assert-C727 ($seedCase.Count -eq 1 -and $seedCase[0].savedDonor -ceq $saved) 'T-17 explicit source transported'
     Assert-C727 (Has-Case $t 'deploy-temp-runner') 'T-17 deployment follows seed'
-    $t = Run-C727 -Scenario 'retired-no-source' -Phase deploy-temp -Set $retired
+    $t = Run-C727 -Scenario 'retired-no-source' -Phase deploy-temp -Set ($retired + @{
+        faultRunner = 'server2'; faultField = 'sessions'; faultKind = 'value'; faultValue = 1; oldDraining = $false
+    })
     $seedCase = @(Cases $t | Where-Object name -eq 'runner-cache-seed')
     Assert-C727 ($t.Exit -eq 0 -and $seedCase.Count -eq 1 -and -not $seedCase[0].savedDonor) 'T-17 source never guessed'
     Assert-C727 (Has-Case $t 'deploy-temp-runner') 'T-17 marker reuse remains possible'
+    Assert-C727 ((Posts $t | Where-Object runnerId -eq 'server2').Count -eq 0 -and
+        -not (Has-Case $t 'deploy-parent')) 'T-17 cold marker reuse leaves busy main untouched'
     Complete-Group 17 'saved donor transport'
 
-    if ($script:groups -ne 17 -or $script:invocations -ne 48 -or $script:assertions -ne 154) {
+    if ($script:groups -ne 17 -or $script:invocations -ne 48 -or $script:assertions -ne 155) {
         throw "Frozen roster mismatch groups=$script:groups invocations=$script:invocations assertions=$script:assertions"
     }
-    Write-Output 'C849_ROLLING groups=17 invocations=48 assertions=154 failures=0'
-    Write-Output 'V-32 assertions=154 failures=0'
+    Write-Output 'C849_ROLLING groups=17 invocations=48 assertions=155 failures=0'
+    Write-Output 'V-32 assertions=155 failures=0'
     exit 0
 }
 catch {

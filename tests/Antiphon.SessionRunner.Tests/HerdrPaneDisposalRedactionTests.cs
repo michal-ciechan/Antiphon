@@ -355,6 +355,77 @@ public sealed class HerdrPaneDisposalRedactionTests
     }
 
     [Test]
+    [Arguments("Review: notes")][Arguments("agent:claude")][Arguments("fix: retry")]
+    [Arguments("build:1")][Arguments("CARD-0866 12:30")]
+    [Arguments("Å:notes")][Arguments("Review： notes")]
+    [Arguments("Review＼ notes")][Arguments("Review∕ notes")][Arguments("Review\u202e notes")]
+    // A letter immediately before the candidate drive letter is indistinguishable from word-final text.
+    [Arguments("xC:secret-home")]
+    public async Task Redaction_preserves_non_drive_display_text(string value)
+    {
+        await AssertDisplayValueAsync(value, value, "preserved");
+    }
+
+    [Test]
+    [Arguments(@"C:\secret-home\repo")][Arguments("C:/Users/c866-user/x")]
+    [Arguments("C:secret-home")][Arguments(@" D:\x")][Arguments("\"E:\\x\"")]
+    [Arguments(@"log at C:\secret-home")]
+    [Arguments(" D:secret-home")][Arguments("\"E:secret-home\"")]
+    [Arguments("log at C:secret-home")]
+    [Arguments("=C:secret-home")][Arguments("(C:secret-home")]
+    [Arguments("[C:secret-home")][Arguments("{C:secret-home")]
+    [Arguments(",C:secret-home")][Arguments(";C:secret-home")]
+    [Arguments("|C:secret-home")][Arguments(":C:secret-home")]
+    [Arguments("<C:secret-home")][Arguments(">C:secret-home")]
+    [Arguments("@C:secret-home")][Arguments("#C:secret-home")]
+    [Arguments("-C:secret-home")][Arguments("_C:secret-home")]
+    [Arguments(".C:secret-home")][Arguments("+C:secret-home")]
+    [Arguments("*C:secret-home")][Arguments("!C:secret-home")]
+    [Arguments("?C:secret-home")][Arguments("~C:secret-home")]
+    [Arguments("`C:secret-home")][Arguments("&C:secret-home")]
+    [Arguments("%C:secret-home")][Arguments("$C:secret-home")]
+    [Arguments("^C:secret-home")][Arguments("éC:secret-home")]
+    [Arguments("\u200bC:secret-home")][Arguments("（C:secret-home")]
+    [Arguments("「C:secret-home")][Arguments("“C:secret-home")]
+    [Arguments("‘C:secret-home")][Arguments("«C:secret-home")]
+    [Arguments("x(C:secret-home)")][Arguments("x=C:secret-home")]
+    [Arguments("path=C:secret-home")][Arguments("name:C:secret-home")]
+    [Arguments("cwd=D:secret")][Arguments("--dir=C:secret-home")]
+    [Arguments("work (C:secret-home) selected")][Arguments("\"(C:secret-home)\"")]
+    [Arguments("file:C:secret")]
+    // Separator-bearing variants remain whole-value masked regardless of the drive boundary.
+    [Arguments(@"=C:\Users\secret-home")][Arguments("foo/C:/Users/secret-home")]
+    [Arguments(@"name:C:\Users\secret-home")][Arguments(@"a,C:\secret-home")]
+    public async Task Redaction_masks_drive_prefix_at_boundary(string value)
+    {
+        await AssertDisplayValueAsync(value, Mask, "drive-boundary");
+    }
+
+    private static async Task AssertDisplayValueAsync(string value, string expected, string rule)
+    {
+        await using var w = new Wire();
+        w.SetLabels(value);
+        w.Fixture.Backend.Transform = o => o with
+        {
+            Claims = [new(w.Fixture.SessionId, value, value, false, value)],
+            Backend = o.Backend with { Version = value }
+        };
+        await w.StartAsync();
+        var (post, get, disk, _) = await w.RoundTripAsync(deferPreviewPathSweep: true);
+        foreach (var (preview, surface) in new[] { (post, "post"), (get, "get"), (disk, "disk") })
+        {
+            string Label(string field) => $"card-0892-{rule}-{surface}-{field}-{value}";
+            preview.WorkspaceLabel.ShouldBe(expected, Label("workspace"));
+            preview.TabLabel.ShouldBe(expected, Label("tab"));
+            preview.PaneLabel.ShouldBe(expected, Label("pane"));
+            preview.BackendVersion.ShouldBe(expected, Label("backend-version"));
+            preview.Claims[0].Source.ShouldBe(expected, Label("claim-source"));
+            preview.Claims[0].Origin.ShouldBe(expected, Label("claim-origin"));
+            preview.Claims[0].AgentKind.ShouldBe(expected, Label("claim-agent-kind"));
+        }
+    }
+
+    [Test]
     public async Task Redaction_does_not_promote_unproven_process_identity()
     {
         await using (var w = new Wire())

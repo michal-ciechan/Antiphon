@@ -6,6 +6,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
@@ -131,6 +132,7 @@ public sealed class RunnerTaskSettlementTests
             world.Task.FailureReason!.ShouldContain(RemoteSettlementSyncReasons.MirrorUnavailable);
             (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
             (await world.EventsAsync()).ShouldNotContain(e => e.Type == AgentTaskEventType.Merged);
+            (await world.EventsAsync()).ShouldNotContain(e => e.Detail.Contains("progress=none"));
         }
 
         // The exact branch never reached origin at all.
@@ -140,6 +142,7 @@ public sealed class RunnerTaskSettlementTests
             AssertNoPush(world, RemoteSettlementSyncReasons.BranchNotPushed, "Done.");
             (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
             (await world.EventsAsync()).ShouldNotContain(e => e.Type == AgentTaskEventType.Merged);
+            (await world.EventsAsync()).ShouldNotContain(e => e.Detail.Contains("progress=none"));
         }
 
         // The report claims C, but only an earlier S reached origin.
@@ -158,6 +161,93 @@ public sealed class RunnerTaskSettlementTests
             world.Evidence()!.RemoteSync!.ConfirmedSha.ShouldBe(s);
             (await world.Git.HasObjectAsync(c)).ShouldBeFalse();
         }
+    }
+
+    [Test]
+    public async Task No_push_on_a_plan_role_settles_succeeded_with_a_visible_warning()
+    {
+        await using var world = await RunnerSettlementWorld.CreateAsync(AgentTaskRole.Plan);
+        await world.SettleAsync(RunnerSettlementWorld.Report("Plan complete.", next: "code"));
+        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world));
+        world.Evidence()!.Assessment.ShouldBe(CompletionProgressAssessment.NoAttributedProgress);
+        var warnings = (await world.EventsAsync()).Where(e => e.Type == AgentTaskEventType.Warning
+            && e.Detail.Contains("progress=none", StringComparison.Ordinal)).ToArray();
+        warnings.Length.ShouldBe(1);
+        warnings[0].Detail.ShouldContain(RemoteSettlementSyncReasons.NoPushedProgress);
+        warnings[0].Detail.ShouldContain(world.Git.FullRef);
+        warnings[0].Detail.ShouldContain(world.Git.Baseline);
+        var note = (await world.NoteAsync())!.Body;
+        note.ShouldContain(warnings[0].Detail);
+        note.IndexOf("progress=none", StringComparison.Ordinal).ShouldBeLessThan(
+            note.IndexOf("Plan complete.", StringComparison.Ordinal));
+        (await world.NoProgressIncidentsAsync()).ShouldBe(0);
+    }
+
+    [Test]
+    [Arguments(AgentTaskRole.Investigate)]
+    [Arguments(AgentTaskRole.TestDesign)]
+    [Arguments(AgentTaskRole.Review)]
+    [Arguments(AgentTaskRole.Custom)]
+    public async Task C788_NonCodeNoPushRoleMatrix(AgentTaskRole role)
+    {
+        await using var world = await RunnerSettlementWorld.CreateAsync(role);
+        await world.SettleAsync(RunnerSettlementWorld.Report("No branch change."));
+        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world));
+        world.Evidence()!.Assessment.ShouldBe(CompletionProgressAssessment.NoAttributedProgress);
+        var warning = (await world.EventsAsync()).Where(e => e.Type == AgentTaskEventType.Warning
+            && e.Detail.Contains("progress=none", StringComparison.Ordinal)).ToArray();
+        warning.Length.ShouldBe(1);
+        warning[0].Detail.ShouldContain(world.Git.FullRef);
+        (await world.NoteAsync())!.Body.ShouldContain(warning[0].Detail);
+        (await world.NoProgressIncidentsAsync()).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C788_ClaimWarningDoesNotDuplicateNoPush()
+    {
+        await using var world = await RunnerSettlementWorld.CreateAsync(AgentTaskRole.Plan);
+        await world.SettleAsync(RunnerSettlementWorld.Report("No push.\n[antiphon-progress:foreign deadbee]"));
+        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world));
+        world.Evidence()!.ClaimWarning.ShouldNotBeNull();
+        var warnings = (await world.EventsAsync()).Where(e => e.Type == AgentTaskEventType.Warning).ToArray();
+        warnings.ShouldContain(e => e.Detail.Contains("progress=unavailable", StringComparison.Ordinal));
+        warnings.ShouldNotContain(e => e.Detail.Contains("progress=none", StringComparison.Ordinal));
+        (await world.NoteAsync())!.Body.ShouldNotContain("progress=none");
+    }
+
+    [Test]
+    [Arguments(WorkspaceMode.ReadOnly)]
+    [Arguments(WorkspaceMode.Shared)]
+    public async Task C788_NonWorktreeDoesNotGetNoPushWarning(WorkspaceMode workspace)
+    {
+        await using var world = await C544World.CreateAsync();
+        var created = await world.CreateTaskAsync(new CreateAgentTaskRequest(
+            "Write a plan.", Title: "CARD-0788 local plan", Role: AgentTaskRole.Plan,
+            Workspace: workspace, WorkingDirectory: world.RepositoryPath,
+            Card: world.Card.Id.ToString("D")));
+        var session = await world.DispatchAsync(created.Id);
+        await using (var seed = world.CreateContext())
+        {
+            var task = await seed.AgentTasks.SingleAsync(t => t.Id == created.Id);
+            task.CompletionProgressEvidenceJson = TaskProgressJson.SerializeEvidence(new(
+                1, CompletionProgressAssessment.NoAttributedProgress, Reason: "no_movement"));
+            await seed.SaveChangesAsync();
+        }
+        await world.SeedTurnAsync(session, created.Id,
+            "Plan complete.\n\n--- next stage ---\nnext: code\nhandoff: Implement the plan.\n"
+            + DelegationReportFormatter.ReportToken(created.Id, "done"));
+        await world.Services.GetRequiredService<AgentTaskReplyService>()
+            .OnTurnEndAsync(session, CancellationToken.None);
+        await using var db = world.CreateContext();
+        var settled = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        (await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == created.Id)
+            .ToArrayAsync()).ShouldNotContain(e => e.Detail.Contains("progress=none", StringComparison.Ordinal));
+        var note = await db.AgentTaskLandNotifications.AsNoTracking().SingleOrDefaultAsync(n => n.TaskId == created.Id
+            && n.Kind == LandNotificationKind.TaskCompletion);
+        if (note is not null)
+            TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson)!.NoteHeader
+                .ShouldNotContain("progress=none");
     }
 
     [Test]
@@ -180,6 +270,8 @@ public sealed class RunnerTaskSettlementTests
             world.Evidence()!.ClaimedSha.ShouldBe(c);
             world.Evidence()!.RemoteSync!.ConfirmedSha.ShouldBe(s);
             (await world.EventsAsync()).ShouldNotContain(e => e.Type == AgentTaskEventType.Completed);
+            (await world.EventsAsync()).ShouldNotContain(e => e.Detail.Contains("progress=none"));
+            (await world.NoteAsync())!.Body.ShouldNotContain("progress=none");
         }
 
         // (b) An unmarked report after nothing new was pushed: the branch is still at B.
@@ -193,6 +285,8 @@ public sealed class RunnerTaskSettlementTests
             world.Task.ReportEvidence.ShouldBe(AgentTaskReportEvidence.UnmarkedAfterNudge);
             (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
             (await world.EventsAsync()).ShouldNotContain(e => e.Type == AgentTaskEventType.Completed);
+            (await world.EventsAsync()).ShouldNotContain(e => e.Detail.Contains("progress=none"));
+            (await world.NoteAsync())!.Body.ShouldNotContain("progress=none");
         }
 
         // (c) The same fallback publishes an unpushed runner tip before judging progress.

@@ -317,6 +317,18 @@ public sealed class TaskCompletionProgressService
         return null;
     }
 
+    public static string? NoPushedProgressWarning(CompletionProgressEvidence evidence, string? fullRef = null)
+    {
+        if (evidence.Assessment != CompletionProgressAssessment.NoAttributedProgress
+            || evidence.ClaimWarning is not null)
+            return null;
+        var reference = evidence.RemoteSync?.FullRef ?? fullRef ?? "unknown";
+        var confirmed = evidence.RemoteSync?.ConfirmedSha;
+        if (!GitObjectId.IsFull(confirmed))
+            confirmed = evidence.Sources?.FirstOrDefault(s => s.Origin == ProgressOrigin.Primary)?.VerifiedSha;
+        return $"progress=none; reason={evidence.Reason ?? "unknown"}; ref={reference} still at {confirmed ?? "unknown"}";
+    }
+
     public static bool AllowsAutomaticWorkspaceMutation(CompletionProgressEvidence? evidence)
     {
         if (evidence is null) return true;

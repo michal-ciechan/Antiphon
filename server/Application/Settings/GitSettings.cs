@@ -40,7 +40,7 @@ public class GitSettings
     public int IndexLockStaleAfterSeconds { get; set; } = 300;
 
     /// <summary>Shared monotonic inspection budget for one card-bound worktree base decision.</summary>
-    public int WorktreeBaseInspectionTimeoutSeconds { get; set; } = 2;
+    public int WorktreeBaseInspectionTimeoutSeconds { get; set; } = 5;
     public int WorktreeBaseMaxCandidates { get; set; } = 16;
     public int WorktreeBaseMaxGitCommands { get; set; } = 128;
 }
