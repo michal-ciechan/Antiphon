@@ -1,6 +1,8 @@
+using System.Diagnostics;
+
 namespace Antiphon.Agents.Pty;
 
-/// <param name="PreSubmitPause">The discrete body-to-Enter gap, measured after composer evidence.</param>
+/// <param name="PreSubmitPause">The minimum discrete body-to-Enter gap, measured after composer evidence.</param>
 /// <param name="EvidenceTimeout">The bound before a non-echoing child falls back to the old submit behaviour.</param>
 /// <param name="PollInterval">The rendered-screen polling cadence while waiting for body-consumed evidence.</param>
 public sealed record SendLineGateOptions(
@@ -73,7 +75,13 @@ public static class EchoGatedLineSender
             }
         }
 
+        var pauseStarted = Stopwatch.GetTimestamp();
         await Task.Delay(options.PreSubmitPause, ct);
+        // Timer resolution (including truncation of fractional milliseconds) can complete
+        // Task.Delay early. Preserve the elapsed floor before the one submitting CR.
+        while (options.PreSubmitPause - Stopwatch.GetElapsedTime(pauseStarted) is var remaining
+            && remaining > TimeSpan.Zero)
+            await Task.Delay(TimeSpan.FromMilliseconds(Math.Ceiling(remaining.TotalMilliseconds)), ct);
         await write("\r", ct);
         return outcome;
     }

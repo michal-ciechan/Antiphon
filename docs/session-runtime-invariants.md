@@ -1,5 +1,13 @@
 # Session runtime invariants
 
+- **Echo-gated SendLine keeps a minimum post-evidence pause (CARD-0977).**
+  `EchoGatedLineSender` waits for composer evidence (or its bounded fallback), then
+  waits at least `PreSubmitPause` on a monotonic clock before its one separate CR.
+  Timer-resolution undershoot is topped up; the pause is an elapsed floor rather
+  than an approximate delay. This does not grant submission confirmation or retry
+  authority: the transcript and provider-specific post-Enter evidence still own
+  those decisions.
+
 - **Task input spills follow the bound session (CARD-0888).** An oversized refinement or
   blocked-task reply for a runner-bound session is staged as an immutable, queue-owned
   `.antiphon/inbox/<message-id>.md` body and written by that runner before its pointer is

@@ -3,6 +3,7 @@ using System.Text.Json;
 using Antiphon.Agents.Pty;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Agents.Pty.Tests;
 
@@ -16,7 +17,8 @@ public sealed class WindowsPtyArgvNativeTests
     [Arguments("modern")]
     public async Task Windows_backends_keep_exact_native_argv(string backend)
     {
-        if (!OperatingSystem.IsWindows()) throw new InvalidOperationException("Windows checkpoint selected on Unix");
+        if (!OperatingSystem.IsWindows())
+            throw new SkipTestException("Native Windows backend argv requires Windows ConPTY and node.exe");
         var node = ResolveNode();
         // A pwsh-hosted test can have a different AppContext.BaseDirectory. Use the test
         // assembly's output for both the probe and its staged modern ConPTY pair.
