@@ -142,7 +142,6 @@ internal static class ResilienceTestHost
             throw new InvalidOperationException("Expected timer was not registered at the requested boundary.");
         time.AdvanceTo(boundary);
         await phase.WaitAsync(TimeSpan.FromSeconds(5));
-        time.Advance(TimeSpan.FromTicks(1)); // S2 test-first witness: old advance-on-unfinished rule.
     }
 
     public static HttpResponseMessage Status(HttpStatusCode status, string body = "") =>
