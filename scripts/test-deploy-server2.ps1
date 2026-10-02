@@ -1,5 +1,5 @@
 # CARD-0849 frozen offline rolling roster. No network or live runner access.
-param([ValidateSet('all', 'retired-start', 'cleared-offline-start')][string]$Only = 'all', [switch]$AlreadyAtSha)
+param([ValidateSet('all', 'retired-start', 'cleared-offline-start', 'host-race', 'host-absence', 'host-recovery', 'host-saved')][string]$Only = 'all', [switch]$AlreadyAtSha)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $driver = Join-Path $PSScriptRoot 'deploy-server2.ps1'
@@ -60,7 +60,7 @@ function Run-C727 {
     if ($TokenPresent) { Set-Content -LiteralPath $tokenPath -Value $sentinel -NoNewline }
     $state = [ordered]@{
         scenario = $Scenario; sha = $sha; tempDeployed = $false; oldDeployed = $false
-        oldDraining = $false; tempDraining = $false; tempRetiredAt = $null; tempContainer = $true; tempOffline = $false
+        oldDraining = $false; tempDraining = $false; tempRetiredAt = $null; tempContainer = $false; tempOffline = $false
         tempRedirectTo = 'server2'; tempRetireWhenIdle = $true
         faultRunner = ''; faultField = ''; faultKind = ''; faultValue = $null; failVerify = ''
     }
@@ -72,6 +72,7 @@ function Run-C727 {
         $state['seedImageAvailable'] = $true
     }
     foreach ($key in $Set.Keys) { $state[$key] = $Set[$key] }
+    if ($state.tempDeployed -and -not $Set.ContainsKey('tempContainer')) { $state.tempContainer = $true }
     $state | ConvertTo-Json -Compress | Set-Content -LiteralPath $statePath
     $psi = [System.Diagnostics.ProcessStartInfo]::new('pwsh')
     $psi.UseShellExecute = $false
@@ -161,7 +162,54 @@ function Assert-ClearedOfflineStart {
         -not $final.draining -and -not $final.retiredAt) 'T-19 cleared final status and SHA'
 }
 
+function Assert-HostRace {
+    $t = Run-C727 -Scenario retire-race -Phase deploy-temp -Set @{ tempDraining = $true; tempRetireWhenIdle = $true }
+    Assert-C727 ($t.Exit -eq 2 -and $t.Out.Contains('TempRunnerRetiredDuringHold')) 'T-21 retirement stamp refuses before seed'
+    Assert-C727 ((Cases $t).Count -eq 0 -and $t.State.tempRetiredAt) 'T-21 race no build or seed'
+    Assert-C727 ($t.State.tempDraining -and -not $t.State.tempRetireWhenIdle) 'T-21 race holds admission'
+    $retired = @{ tempDraining = $true; tempRetiredAt = '2026-09-27T10:00:00Z'; tempContainer = $false }
+    $t = Run-C727 -Scenario old-invalid -Phase deploy-temp -Set ($retired + @{ oldDraining = $true })
+    Assert-C727 ($t.Exit -eq 2 -and $t.Out.Contains('OldRunnerRedirectNotEligible')) 'T-21 invalid redirect refuses'
+    Assert-C727 ((Posts $t).Count -eq 0 -and $t.State.tempRetiredAt) 'T-21 no retirement clear'
+    Assert-C727 ((Cases $t).Count -eq 0) 'T-21 invalid redirect no host mutation'
+    $t = Run-C727 -Scenario hold-post-fails -Phase deploy-temp -Set $retired
+    Assert-C727 ($t.Exit -eq 2 -and $t.Out.Contains('RunnerApiFailed')) 'T-21 fallible hold refuses'
+    Assert-C727 (-not $t.State.tempContainer -and (Cases $t).Count -eq 0) 'T-21 clear gap no container to register'
+    Assert-C727 (@($t.Trace | Where-Object kind -eq 'census').Count -eq 1) 'T-21 absence checked before clear'
+    Complete-Group 21 'retirement race and clear gap'
+}
+function Assert-HostAbsence {
+    foreach ($variant in @('existing', 'census-failed')) {
+        $t = Run-C727 -Scenario $variant -Phase deploy-temp -Set @{ tempDraining = $true; tempRetiredAt = '2026-09-27T10:00:00Z'; tempContainer = ($variant -eq 'existing'); tempOffline = $true }
+        $diagnosis = if ($variant -eq 'existing') { 'TempContainersRemain' } else { 'TempContainerCensusUnavailable' }
+        Assert-C727 ($t.Exit -eq 2 -and $t.Out.Contains($diagnosis)) "T-22 $variant named refusal"
+        Assert-C727 ((Posts $t).Count -eq 0 -and $t.State.tempRetiredAt) "T-22 $variant keeps retirement"
+        Assert-C727 ((Cases $t).Count -eq 0) "T-22 $variant no seed or replacement"
+    }
+    Complete-Group 22 'host absence preflight'
+}
+function Assert-HostRecovery {
+    $t = Run-C727 -Scenario recovering -Phase deploy-temp -Set @{ tempDeployed = $true; tempContainer = $true }
+    Assert-C727 ($t.Exit -eq 0) 'T-23 same SHA recovery waits successfully'
+    Assert-C727 ((Cases $t).Count -eq 1 -and (Cases $t)[0].name -eq 'verify-runner-caches') 'T-23 no reseed or replacement'
+    Assert-C727 ((Posts $t).Count -eq 0) 'T-23 no admission mutation during recovery'
+    Complete-Group 23 'same SHA online recovery'
+}
+function Assert-HostSaved {
+    $t = Run-C727 -Scenario saved-prerequisite -Phase deploy-temp -SavedDonor '/fixture/saved.tar'
+    Assert-C727 ($t.Exit -eq 2 -and $t.Out.Contains('TempSavedDonorRequiresMaintenance')) 'T-24 saved donor explicit maintenance prerequisite'
+    Assert-C727 ((Cases $t).Count -eq 0) 'T-24 no seed'
+    Assert-C727 ((Posts $t).Count -eq 0) 'T-24 no state mutation'
+    Complete-Group 24 'saved donor rollout prerequisite'
+}
+
 try {
+    switch ($Only) {
+        host-race { Assert-HostRace; exit 0 }
+        host-absence { Assert-HostAbsence; exit 0 }
+        host-recovery { Assert-HostRecovery; exit 0 }
+        host-saved { Assert-HostSaved; exit 0 }
+    }
     if ($Only -eq 'retired-start') { Assert-RetiredStart -AlreadyAtSha $AlreadyAtSha; Write-Output 'PASS T-18 retired start'; exit 0 }
     if ($Only -eq 'cleared-offline-start') { Assert-ClearedOfflineStart -Draining $true -RetireWhenIdle $true -AlreadyAtSha $AlreadyAtSha; Write-Output 'PASS T-19 cleared offline start'; exit 0 }
     if ($hasJq) {
@@ -252,10 +300,9 @@ try {
     Assert-C727 ([array]::IndexOf($t.Trace, $p[2]) -gt [array]::IndexOf($t.Trace, $c[2])) 'T-9 clear after verify'
     Assert-C727 (@($p | Where-Object runnerId -eq 'server2').Count -eq 0) 'T-9 main untouched'
     $t = Run-C727 -Scenario retired-container-present -Phase deploy-temp -Set @{ tempDraining = $true; tempRetiredAt = '2026-09-27T10:00:00Z'; tempContainer = $true; tempOffline = $true }
-    Assert-C727 ($t.Exit -eq 2 -and $t.Out.Contains('HostCaseFailed runner-cache-seed')) 'T-9 leftover container refused'
-    Assert-C727 ((@((Cases $t) | ForEach-Object name) -join ',') -eq 'runner-cache-seed') 'T-9 no replacement after host refusal'
-    Assert-C727 ((Posts $t).Count -eq 2 -and (Posts $t)[0].suffix -eq '/drain/clear' -and
-        (Posts $t)[1].suffix -eq '/drain' -and (Posts $t)[1].body.retireWhenIdle -eq $false) 'T-9 safe hold after host refusal'
+    Assert-C727 ($t.Exit -eq 2 -and $t.Out.Contains('TempContainersRemain')) 'T-9 leftover container refused'
+    Assert-C727 ((Cases $t).Count -eq 0) 'T-9 no replacement after host refusal'
+    Assert-C727 ((Posts $t).Count -eq 0 -and $t.State.tempRetiredAt) 'T-9 retirement held after host refusal'
     Complete-Group 9 'retired temp reactivation'
 
     foreach ($variant in @('main', 'temp')) {
@@ -285,7 +332,8 @@ try {
         $base = if ($phase -eq 'redeploy-old') { @{ oldDraining = $true } } elseif ($phase -eq 'retire-temp') { @{ tempDraining = $true; tempRetiredAt = '2026-09-27T10:00:00Z' } } else { @{} }
         foreach ($field in @('sessions', 'runnerSessions', 'queuedTasks')) {
             foreach ($kind in @('omitted', 'null')) {
-                $set = $base.Clone(); $set.faultRunner = $runner; $set.faultField = $field; $set.faultKind = $kind; $set.faultValue = $null
+                $set = $base.Clone(); $set.faultRunner = $runner; $set.faultField = $field; $set.faultKind = $kind;
+                if ($phase -eq 'deploy-temp') { $set.tempContainer = $true } $set.faultValue = $null
                 $t = Run-C727 -Scenario "unknown-$phase-$field-$kind" -Phase $phase -Set $set
                 Assert-C727 ($t.Exit -eq 2 -and $t.Out.Contains('RunnerCounterUnknown')) "T-12 $phase $field $kind verdict"
                 Assert-C727 (@(Cases $t | Where-Object { $_.name -in @('runner-cache-seed', 'deploy-temp-runner', 'deploy-parent', 'retire-temp-runner') }).Count -eq 0) "T-12 $phase $field $kind no destructive host"
@@ -345,9 +393,9 @@ try {
     $saved = '/home/mc/runner-cache-donor/temp-runner-cache.tar'
     $t = Run-C727 -Scenario 'retired-saved' -Phase deploy-temp -Set $retired -SavedDonor $saved
     $seedCase = @(Cases $t | Where-Object name -eq 'runner-cache-seed')
-    Assert-C727 ($t.Exit -eq 0) 'T-17 saved phase succeeds'
-    Assert-C727 ($seedCase.Count -eq 1 -and $seedCase[0].savedDonor -ceq $saved) 'T-17 explicit source transported'
-    Assert-C727 (Has-Case $t 'deploy-temp-runner') 'T-17 deployment follows seed'
+    Assert-C727 ($t.Exit -eq 2 -and $t.Out.Contains('TempSavedDonorRequiresMaintenance')) 'T-17 saved phase names prerequisite'
+    Assert-C727 ($seedCase.Count -eq 0) 'T-17 no seed before maintenance'
+    Assert-C727 ((Posts $t).Count -eq 0 -and -not (Has-Case $t 'deploy-temp-runner')) 'T-17 no deployment or clear'
     $t = Run-C727 -Scenario 'retired-no-source' -Phase deploy-temp -Set ($retired + @{
         faultRunner = 'server2'; faultField = 'sessions'; faultKind = 'value'; faultValue = 1; oldDraining = $false
     })
@@ -370,9 +418,14 @@ try {
     Assert-ClearedOfflineStart -Draining $true -RetireWhenIdle $true -AlreadyAtSha $true
     Complete-Group 19 'cleared offline start variants'
 
-    $expectedGroups = if ($hasJq) { 20 } else { 19 }
-    $expectedInvocations = if ($hasJq) { 59 } else { 55 }
-    $expectedAssertions = if ($hasJq) { 206 } else { 197 }
+    Assert-HostRace
+    Assert-HostAbsence
+    Assert-HostRecovery
+    Assert-HostSaved
+
+    $expectedGroups = if ($hasJq) { 24 } else { 23 }
+    $expectedInvocations = if ($hasJq) { 66 } else { 62 }
+    $expectedAssertions = if ($hasJq) { 227 } else { 218 }
     if ($script:groups -ne $expectedGroups -or $script:invocations -ne $expectedInvocations -or $script:assertions -ne $expectedAssertions) {
         throw "Frozen roster mismatch groups=$script:groups invocations=$script:invocations assertions=$script:assertions"
     }

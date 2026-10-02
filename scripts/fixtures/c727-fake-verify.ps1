@@ -6,6 +6,12 @@ $request = Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json
 if ($request.sourceSha -cne $state.sha -or $request.runId -notmatch '^c727[0-9a-f]{12}$') { exit 2 }
 if ($Case -eq 'verify-runner-caches' -and $request.runnerId -notin @('server2', 'server2-temp')) { exit 2 }
 $savedDonor = if ($request.PSObject.Properties.Name -contains 'savedDonor') { [string]$request.savedDonor } else { '' }
+if ($Case -eq 'temp-project-absent') {
+    Add-Content -LiteralPath $env:C727_TEST_TRACE -Value '{"kind":"census","name":"temp-project-absent"}'
+    if ($state.scenario -eq 'census-failed') { exit 2 }
+    if ($state.tempContainer) { Write-Output 'fixture-temp-container' }
+    exit 0
+}
 $entry = [ordered]@{ kind = 'case'; name = $Case; runnerId = $request.runnerId; sourceSha = $request.sourceSha; savedDonor = $savedDonor }
 Add-Content -LiteralPath $env:C727_TEST_TRACE -Value ($entry | ConvertTo-Json -Compress)
 if ($Case -eq 'verify-runner-caches' -and $state.failVerify -eq $request.runnerId) { exit 1 }
