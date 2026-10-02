@@ -41,6 +41,27 @@ public sealed class CodexRunnerImageContractTests
         + "trust_level = \"trusted\"\n";
 
     [Test]
+    public void Document_extractors_use_lf_on_every_platform()
+    {
+        var stage = DockerStackDocuments.Stages("FROM base AS sample\r\nRUN echo ready\r\n")
+            .Single().Body;
+        var service = DockerStackDocuments.Service("services:\r\n  sample:\r\n    image: sample\r\n", "sample");
+        stage.ShouldBe("RUN echo ready\n\n");
+        service.ShouldBe("    image: sample\n\n");
+        stage.ShouldNotContain('\r');
+        service.ShouldNotContain('\r');
+
+        // AppendLine emits LF on Linux but CRLF on Windows; pin the cross-platform rule here.
+        var helper = DockerStackDocuments.Read("tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs");
+        var stagesSource = helper[helper.IndexOf("public static IReadOnlyList<DockerStage> Stages(", StringComparison.Ordinal)..
+            helper.IndexOf("public static string Closure(", StringComparison.Ordinal)];
+        var serviceSource = helper[helper.IndexOf("public static string Service(", StringComparison.Ordinal)..
+            helper.IndexOf("public static string Env(", StringComparison.Ordinal)];
+        stagesSource.ShouldNotContain(".AppendLine(");
+        serviceSource.ShouldNotContain(".AppendLine(");
+    }
+
+    [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void Verifier_cursor_move_preserves_the_next_character()
     {
