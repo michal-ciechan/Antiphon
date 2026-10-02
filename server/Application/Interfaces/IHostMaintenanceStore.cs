@@ -11,7 +11,11 @@ public sealed record HostMaintenanceWorkerIdentity(string StoreId, string BootId
 public sealed record HostMaintenanceState(string StorageId, string HostId, long Epoch, Guid Revision,
     bool CustodyReconciled, Guid? IntentId, string? Kind, DateTime? RequestedAt,
     Guid? OperationId, HostMaintenanceWorkerIdentity? Worker, DateTime UpdatedAt);
-public sealed record HostMaintenanceDecision(bool Accepted, string Reason, HostMaintenanceState State);
+/// <summary>Request Accepted means intent published, not permission to start maintenance.</summary>
+public sealed record HostMaintenanceDecision(bool Accepted, string Reason, HostMaintenanceState State)
+{
+    public bool Drained => State.IntentId is not null && State.OperationId is null && State.CustodyReconciled;
+}
 public enum HostMaintenanceCustody { Unknown, Live, Stopped }
 
 /// <summary>
