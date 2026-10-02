@@ -170,6 +170,8 @@ public sealed class RemoteScriptContractTests
             {
                 var image = Block(original, "c849_image");
                 mutant = original.Replace(image, image.Replace("return 10", "write_result false CacheHelperImageMissing 2", StringComparison.Ordinal), StringComparison.Ordinal);
+                var prepare = Block(mutant, "c849_prepare");
+                mutant = mutant.Replace(prepare, Regex.Replace(prepare, @"image=""\$\(c849_image\)"" \|\| \{.*?\n    \}", "image=\"$(c849_image)\"", RegexOptions.Singleline), StringComparison.Ordinal);
             }
             mutant.ShouldNotBe(original, "control must change scratch source");
             File.WriteAllText(path, mutant);
@@ -1642,7 +1644,8 @@ public sealed class RemoteScriptContractTests
             done
             """);
         wrapper.ShouldContain("retired-container=false exit=0 cases=runner-cache-seed,deploy-temp-runner,verify-runner-caches");
-        wrapper.ShouldContain("retired-container=true exit=2 cases=runner-cache-seed");
+        wrapper.ShouldContain("retired-container=true exit=2 cases=\n");
+        wrapper.ShouldNotContain("retired-container=true exit=2 cases=runner-cache-seed");
         var noContainer = LinuxShell(CacheStatusHarness() + "\n" + Block(Remote(), "c849_no_temp_containers") + "\n" + seed + "\n" + """
             SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/cache"
             CASE_DIR="$root/case"; mkdir -p "$CASE_DIR"
@@ -1859,6 +1862,7 @@ public sealed class RemoteScriptContractTests
             RUNNER_GIT_USER_NAME=test; RUNNER_GIT_USER_EMAIL=test@example.invalid
             ensure_checkout() { :; }; ensure_runner_boot_files() { :; }
             retire_c590_leftovers() { :; }; broker_sha12() { echo aaaaaaaaaaaa; }
+            c849_no_temp_containers() { :; }
             build_server2_images() { :; }
             c849_require_ready() { test -s "$C849_READY" || write_result false CacheSeedRequired 2; }
             c849_budget_gate() { write_result false PastSeedGate 2; }
@@ -2040,7 +2044,7 @@ public sealed class RemoteScriptContractTests
             SERVER2_ENV="$root/main.env"; printf 'ready\n' > "$SERVER2_ENV"
             SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; RUN=red; LANE=host
             require_lane() { :; }; ensure_checkout() { :; }; ensure_runner_boot_files() { :; }
-            build_server2_images() { :; }; c849_prepare() { :; }
+            c849_no_temp_containers() { :; }; build_server2_images() { :; }; c849_prepare() { :; }
             write_result() { printf 'deploy=%s\n' "$2"; exit "$3"; }
             docker() { [ "$1:$2" = volume:inspect ] && echo "$root/state"; }
             sudo() {
@@ -2241,7 +2245,7 @@ public sealed class RemoteScriptContractTests
                 esac
             }
             ensure_checkout() { :; }; ensure_runner_boot_files() { :; }
-            build_server2_images() { :; }; c849_prepare() { :; }; c849_require_ready() { :; }
+            c849_no_temp_containers() { :; }; build_server2_images() { :; }; c849_prepare() { :; }; c849_require_ready() { :; }
             ensure_build_slots_broker() { echo DEPLOY_REACHED_BROKER; exit 0; }
             """ + "\n" + Block(remote, "c849_observe_volume") + "\n" +
             Block(remote, "c849_budget_gate") + "\n" + Block(remote, "c849_prune_validate_tree") + "\n" +

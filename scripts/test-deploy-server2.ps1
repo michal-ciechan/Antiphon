@@ -74,7 +74,7 @@ function Run-C727 {
         $state['seedImageAvailable'] = $true
     }
     foreach ($key in $Set.Keys) { $state[$key] = $Set[$key] }
-    if ($state.tempDeployed -and -not $Set.ContainsKey('tempContainer')) { $state.tempContainer = $true }
+    if (($state.tempDeployed -or $Phase -eq 'retire-temp') -and -not $Set.ContainsKey('tempContainer')) { $state.tempContainer = $true }
     $state | ConvertTo-Json -Compress | Set-Content -LiteralPath $statePath
     $psi = [System.Diagnostics.ProcessStartInfo]::new('pwsh')
     $psi.UseShellExecute = $false
