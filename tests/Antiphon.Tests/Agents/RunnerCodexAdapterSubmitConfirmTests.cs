@@ -75,8 +75,10 @@ public class RunnerCodexAdapterSubmitConfirmTests
         try
         {
             direct.IsCompleted.ShouldBeFalse("submit-poll-uses-clock");
-            directClock.Events.ShouldContain(e => e.DueTime == TimeSpan.FromMilliseconds(250)
-                && e.Deadline == directClock.GetUtcNow() + TimeSpan.FromMilliseconds(250),
+            var pollInterval = TimeSpan.FromMilliseconds(250);
+            var pollDeadline = directClock.GetUtcNow() + pollInterval;
+            directClock.Events.ShouldContain(e => e.DueTime == pollInterval
+                && e.Deadline == pollDeadline,
                 "submit-poll-uses-clock");
         }
         finally
@@ -220,8 +222,9 @@ public class RunnerCodexAdapterSubmitConfirmTests
         try
         {
             direct.IsCompleted.ShouldBeFalse("blind-settle-uses-clock");
+            var settleDeadline = directClock.GetUtcNow() + CodexMcpBoot.AbsentSettle;
             directClock.Events.ShouldContain(e => e.DueTime == CodexMcpBoot.AbsentSettle
-                && e.Deadline == directClock.GetUtcNow() + CodexMcpBoot.AbsentSettle,
+                && e.Deadline == settleDeadline,
                 "blind-settle-uses-clock");
         }
         finally
