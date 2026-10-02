@@ -29,6 +29,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     public Action<IServiceCollection>? ConfigureServices { get; set; }
     public SessionMessageQueueService? Messages { get; set; }
     public LandDeliveryBoundary? Boundary { get; set; }
+    public SaveChangesInterceptor? LandCutInterceptor { get; set; }
     /// <summary>CARD-0672: the land service's delegation settings (the yield budget among them).</summary>
     public DelegationSettings LandSettings { get; set; } = new();
     public Microsoft.Extensions.Logging.ILogger<AgentTaskLandService> Logger { get; set; } = NullLogger<AgentTaskLandService>.Instance;
@@ -220,9 +221,14 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         throw new InvalidOperationException("Crash boundary was not reached: " + cut);
     }
 
-    public AppDbContext CreateContext() => new(new DbContextOptionsBuilder<AppDbContext>(
-        TestDbFixture.CreateDbContextOptions(Schema.ConnectionString)).AddInterceptors(
-            Fault, new TransactionFault(Fault), RetirementCut, new RetirementTransactionPause(RetirementCut)).Options);
+    public AppDbContext CreateContext()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>(
+            TestDbFixture.CreateDbContextOptions(Schema.ConnectionString)).AddInterceptors(
+            Fault, new TransactionFault(Fault), RetirementCut, new RetirementTransactionPause(RetirementCut));
+        if (LandCutInterceptor is not null) options.AddInterceptors(LandCutInterceptor);
+        return new(options.Options);
+    }
 
     public Task<LandRunResult> RunAsync() => RunAsync(CancellationToken.None);
 

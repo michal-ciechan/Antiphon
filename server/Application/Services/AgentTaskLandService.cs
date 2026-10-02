@@ -578,7 +578,7 @@ public sealed class AgentTaskLandService
             try
             {
                 var resolved = await new AgentTaskLandSourceResolver(_db, _landingGit, _leases, _clock,
-                    _gitSettings is null ? null : Options.Create(_gitSettings), _protocol.LandWorkspace)
+                    _gitSettings is null ? null : Options.Create(_gitSettings), _protocol.LandWorkspace, _boundary)
                     .ResolveAsync(task, request, lease, ct);
                 if (resolved.StaleRequest) return LandRunResult.Complete;
                 if (resolved.Reason is not null)

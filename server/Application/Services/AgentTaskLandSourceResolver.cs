@@ -14,7 +14,8 @@ namespace Antiphon.Server.Application.Services;
 /// schema-3 operation. Nothing here reads, fast-forwards or otherwise touches the task worktree.</summary>
 public sealed class AgentTaskLandSourceResolver(
     AppDbContext db, ILandingGit git, IRepositoryMutationLease leases, TimeProvider clock,
-    IOptions<GitSettings>? gitSettings = null, ILandWorkspace? landWorkspace = null)
+    IOptions<GitSettings>? gitSettings = null, ILandWorkspace? landWorkspace = null,
+    LandDeliveryBoundary? boundary = null)
 {
     public sealed record Result(AgentTaskLanding? Operation, string? Reason, bool CreatedOperation,
         bool StaleRequest = false, LandInspectionDiagnostic? Diagnostic = null, string? Detail = null)
@@ -25,6 +26,7 @@ public sealed class AgentTaskLandSourceResolver(
     }
 
     private readonly AgentTaskLandRequestWriter _writer = new(db, clock);
+    private readonly LandDeliveryBoundary _boundary = boundary ?? new LandDeliveryBoundary();
 
     public async Task<Result> ResolveAsync(AgentTask task, AgentTaskLandRequest request, RepositoryLease lease,
         CancellationToken ct)
@@ -408,6 +410,7 @@ public sealed class AgentTaskLandSourceResolver(
                     local, ownerObserved.Sha, expected, ct);
             request.SourceAdvanceChildProcessId = null;
             request.SourceAdvanceChildStartTicks = null;
+            await _boundary.ReachedAsync("source-adopt-ref-moved-before-reset", task.Id, request.Id, ct);
             request.ConcurrencyToken = Guid.NewGuid();
             await db.SaveChangesAsync(ct);
             var reset = await git.RunOwnedAsync(coordinates.WorktreePath,
