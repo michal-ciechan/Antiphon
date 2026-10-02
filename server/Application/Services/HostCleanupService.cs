@@ -21,6 +21,11 @@ public sealed class HostCleanupService(AppDbContext db, IEventBus events,
 
     public async Task<Guid?> IngestAsync(HostCleanupReceiptDto receipt, CancellationToken cancellationToken)
     {
+        // IReadOnlyList may wrap a caller-owned mutable List. Hash, validation and persistence
+        // must use one snapshot even when a database await lets that caller change its list.
+        if (receipt.Candidates is null || receipt.Candidates.Count > _settings.MaxCandidates)
+            throw new ValidationException("candidates", "Invalid cleanup receipt metadata.");
+        receipt = receipt with { Candidates = receipt.Candidates.ToArray() };
         Validate(receipt);
         var digest = Convert.ToHexStringLower(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(receipt)));
         var existing = await db.HostCleanupRuns.AsNoTracking()
