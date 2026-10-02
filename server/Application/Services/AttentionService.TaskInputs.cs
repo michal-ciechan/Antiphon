@@ -87,7 +87,7 @@ public sealed partial class AttentionService
             if (firstPromptSequence is not long floor)
                 continue;
             transcripts[sessionId] = await _db.TranscriptEntries.AsNoTracking()
-                .Where(t => t.AgentSessionId == sessionId && t.Sequence >= floor
+                .Where(t => t.AgentSessionId == sessionId
                     && (t.Kind == TranscriptKinds.UserPrompt || t.Kind == TranscriptKinds.AssistantText))
                 .OrderBy(t => t.Sequence)
                 .Select(t => new TaskInputTranscript(t.Sequence, t.Kind, t.Text, t.Timestamp ?? t.CreatedAt))
