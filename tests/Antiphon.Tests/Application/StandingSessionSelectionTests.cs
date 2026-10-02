@@ -18,6 +18,29 @@ namespace Antiphon.Tests.Application;
 [NotInParallel]
 public partial class StandingSessionSelectionTests
 {
+    // The fake adapter captures launches without starting this executable, but configuration
+    // preflight still requires a real shell on the test host.
+    private static string FixtureExecutable => OperatingSystem.IsWindows()
+        ? Path.Combine(Environment.SystemDirectory, "cmd.exe")
+        : "/bin/sh";
+
+    private static StandingRecoveryFixture CreateFixture(params FakeAgentProtocolAdapter[] adapters)
+        => CreateFixture(null, false, adapters);
+
+    private static StandingRecoveryFixture CreateFixture(bool profiles, params FakeAgentProtocolAdapter[] adapters)
+        => CreateFixture(null, profiles, adapters);
+
+    private static StandingRecoveryFixture CreateFixture(Action<IServiceCollection> configureServices, params FakeAgentProtocolAdapter[] adapters)
+        => CreateFixture(configureServices, false, adapters);
+
+    private static StandingRecoveryFixture CreateFixture(Action<IServiceCollection>? configureServices, bool profiles, params FakeAgentProtocolAdapter[] adapters)
+    {
+        var fixture = new StandingRecoveryFixture(configureServices, profiles, adapters);
+        fixture.Harness.Provider.GetRequiredService<IOptionsMonitor<AgentRegistrySettings>>()
+            .CurrentValue.Definitions["fake"].Exe = FixtureExecutable;
+        return fixture;
+    }
+
     [Test]
     [Arguments("Created")] [Arguments("Starting")] [Arguments("Running")] [Arguments("Stopping")]
     [Arguments("kind")] [Arguments("cwd")] [Arguments("pool")]
@@ -27,7 +50,7 @@ public partial class StandingSessionSelectionTests
     public async Task Invalid_target_matrix_preserves_pointer_generation_hold_and_queue(string shape)
     {
         var adapter = new FakeAgentProtocolAdapter();
-        await using var f = new StandingRecoveryFixture(adapter); await f.SeedAsync(held: true);
+        await using var f = CreateFixture(adapter); await f.SeedAsync(held: true);
         var expected = "standing_resume_target_active";
         await using (var db = f.Db())
         {
@@ -91,7 +114,7 @@ public partial class StandingSessionSelectionTests
     [Test]
     public async Task Equivalent_canonical_cwd_is_accepted_without_reusing_historical_arguments()
     {
-        var adapter = new FakeAgentProtocolAdapter(); await using var f = new StandingRecoveryFixture(adapter); await f.SeedAsync();
+        var adapter = new FakeAgentProtocolAdapter(); await using var f = CreateFixture(adapter); await f.SeedAsync();
         await using (var db = f.Db())
         {
             (await db.AgentSessions.FindAsync(f.A.Id))!.Cwd = f.Root + Path.DirectorySeparatorChar;
@@ -106,7 +129,7 @@ public partial class StandingSessionSelectionTests
     [Arguments(false)] [Arguments(true)]
     public async Task Unsupported_native_kind_keeps_ordinary_compatibility_but_requires_fresh_after_supported_history(bool priorSupported)
     {
-        var adapter = new FakeAgentProtocolAdapter(); await using var f = new StandingRecoveryFixture(adapter); await f.SeedAsync();
+        var adapter = new FakeAgentProtocolAdapter(); await using var f = CreateFixture(adapter); await f.SeedAsync();
         f.Harness.Provider.GetRequiredService<IOptionsMonitor<AgentRegistrySettings>>().CurrentValue.Definitions["fake"].Kind = "Raw";
         await using (var db = f.Db())
         {
@@ -130,7 +153,7 @@ public partial class StandingSessionSelectionTests
     [Arguments(false, false)] [Arguments(false, true)] [Arguments(true, false)] [Arguments(true, true)]
     public async Task Lost_pointer_preserves_supported_history_but_keeps_raw_only_compatibility(bool priorSupported, bool malformed)
     {
-        var adapter = new FakeAgentProtocolAdapter(); await using var f = new StandingRecoveryFixture(adapter); await f.SeedAsync();
+        var adapter = new FakeAgentProtocolAdapter(); await using var f = CreateFixture(adapter); await f.SeedAsync();
         f.Harness.Provider.GetRequiredService<IOptionsMonitor<AgentRegistrySettings>>().CurrentValue.Definitions["fake"].Kind = "Raw";
         await using (var db = f.Db())
         {
@@ -158,7 +181,7 @@ public partial class StandingSessionSelectionTests
     public async Task Legacy_historical_owner_can_resume_after_pointer_moved(bool executionOnly)
     {
         var adapter = new FakeAgentProtocolAdapter();
-        await using var f = new StandingRecoveryFixture(adapter);
+        await using var f = CreateFixture(adapter);
         await f.SeedAsync(legacy: true);
         if (executionOnly)
         {
@@ -192,7 +215,7 @@ public partial class StandingSessionSelectionTests
         foreach (var shape in new[] { "foreign", "conflicting", "unproven" })
         {
             var adapter = new FakeAgentProtocolAdapter();
-            await using var f = new StandingRecoveryFixture(adapter);
+            await using var f = CreateFixture(adapter);
             await f.SeedAsync(legacy: true, held: true);
             await using (var db = f.Db())
             {
@@ -224,7 +247,7 @@ public partial class StandingSessionSelectionTests
         {
             var adapter = new FakeAgentProtocolAdapter();
             var modelHoldId = Guid.NewGuid();
-            await using var f = new StandingRecoveryFixture(s =>
+            await using var f = CreateFixture(s =>
             {
                 s.AddScoped<ModelAvailability>(); s.AddScoped<SubscriptionUsageReader>(); s.AddScoped<SubscriptionQuotaGate>();
                 s.AddSingleton(Options.Create(new SubscriptionQuotaGateSettings()));
@@ -289,7 +312,7 @@ public partial class StandingSessionSelectionTests
         foreach (var capacity in new[] { false, true })
         foreach (var decision in new[] { "retry", "selection", "fresh" })
         {
-            await using var f = new StandingRecoveryFixture(new FakeAgentProtocolAdapter()); await f.SeedAsync(held: true);
+            await using var f = CreateFixture(new FakeAgentProtocolAdapter()); await f.SeedAsync(held: true);
             var request = new StartAgentRequest(Fresh: decision == "fresh", ResumeSessionId: decision == "selection" ? f.A.Id : null,
                 RetryContinuity: decision == "retry", CapacityRecovery: capacity);
             await using var scope = f.Harness.Provider.CreateAsyncScope();
@@ -303,7 +326,7 @@ public partial class StandingSessionSelectionTests
     [Test]
     public async Task Invalid_or_busy_targets_refuse_before_reservation()
     {
-        await using var f = new StandingRecoveryFixture(new FakeAgentProtocolAdapter());
+        await using var f = CreateFixture(new FakeAgentProtocolAdapter());
         await f.SeedAsync();
         await Should.ThrowAsync<ValidationException>(() => f.StartAsync(new(Fresh: true, ResumeSessionId: f.A.Id)));
         await Should.ThrowAsync<ValidationException>(() => f.StartAsync(new(Fresh: true, RetryContinuity: true)));

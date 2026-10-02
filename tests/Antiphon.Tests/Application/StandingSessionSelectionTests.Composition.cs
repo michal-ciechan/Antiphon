@@ -22,7 +22,7 @@ public partial class StandingSessionSelectionTests
     public async Task Missing_managed_credential_refuses_recovery_without_clearing_intent(string decision, bool alwaysOn)
     {
         var adapter = new FakeAgentProtocolAdapter();
-        await using var f = new StandingRecoveryFixture(true, adapter); await f.SeedAsync(held: true);
+        await using var f = CreateFixture(true, adapter); await f.SeedAsync(held: true);
         await using (var db = f.Db())
         {
             var profile = await AddRecoveryProfile(db, AgentKind.ClaudeCode, "old");
@@ -53,7 +53,7 @@ public partial class StandingSessionSelectionTests
     public async Task Owned_history_uses_current_composition_and_native_resume_identity(AgentKind kind, bool alwaysOn)
     {
         var old = new FakeAgentProtocolAdapter(); var fresh = new FakeAgentProtocolAdapter(); var resumed = new FakeAgentProtocolAdapter();
-        await using var f = new StandingRecoveryFixture(s =>
+        await using var f = CreateFixture(s =>
         {
             s.AddSingleton(Options.Create(new GrokRulesSettings())); s.AddSingleton<GrokRulesRefreshService>();
         }, true, old, fresh, resumed); await f.SeedAsync();
@@ -145,7 +145,7 @@ public partial class StandingSessionSelectionTests
             IsEnabled = true, Source = AgentTuiProfileSource.Operator, CreatedAt = now, UpdatedAt = now };
         db.AgentTuiProfiles.Add(profile); await db.SaveChangesAsync();
         var revision = new AgentTuiProfileRevision { Id = Guid.NewGuid(), ProfileId = profile.Id, RevisionNumber = 1,
-            Executable = Path.Combine(Environment.SystemDirectory, "cmd.exe"), ArgumentsJson = JsonSerializer.Serialize(new[] { $"--profile-{label}" }),
+            Executable = FixtureExecutable, ArgumentsJson = JsonSerializer.Serialize(new[] { $"--profile-{label}" }),
             AuthenticationMode = AgentTuiAuthenticationMode.WrapperManaged, NonSecretEnvironmentJson = JsonSerializer.Serialize(new { C466_PROFILE = label }),
             ModelArgumentName = "--model", CreatedAt = now };
         db.AgentTuiProfileRevisions.Add(revision);
