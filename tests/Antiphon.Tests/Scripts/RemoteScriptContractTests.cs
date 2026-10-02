@@ -18,13 +18,27 @@ namespace Antiphon.Tests.Scripts;
 public sealed class RemoteScriptContractTests
 {
     private const string NoLinuxPwshReason = "CARD-0905: pwsh is not on the Linux shell PATH (WSL has no pwsh); install pwsh in WSL to run C849 script-block tests.";
+    private const string NoLinuxJqReason = "CARD-0912: jq is not on the Linux shell PATH; install jq in the runner or WSL to run C912 cold-seed tests.";
     private static readonly AsyncLocal<bool> ForceNoLinuxPwsh = new();
+    private static readonly AsyncLocal<bool?> ForceLinuxJqAvailability = new();
     private static readonly Lazy<bool> LinuxPwshAvailable = new(() =>
         LinuxShell("command -v pwsh >/dev/null 2>&1 && printf 'C849_PWSH_AVAILABLE\\n'\n")
             .Contains("C849_PWSH_AVAILABLE", StringComparison.Ordinal));
 
     private static bool HasLinuxPwsh() =>
         !ForceNoLinuxPwsh.Value && LinuxPwshAvailable.Value;
+
+    private static readonly Lazy<bool> LinuxJqAvailable = new(() =>
+        LinuxShell("command -v jq >/dev/null 2>&1 && printf 'C912_JQ_AVAILABLE\\n'\n")
+            .Contains("C912_JQ_AVAILABLE", StringComparison.Ordinal));
+
+    private static bool HasLinuxJq() => ForceLinuxJqAvailability.Value ?? LinuxJqAvailable.Value;
+
+    private static void RequireLinuxJq()
+    {
+        if (!HasLinuxJq())
+            throw new SkipTestException(NoLinuxJqReason);
+    }
 
     private static void RequireLinuxPwsh()
     {
@@ -2188,6 +2202,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C912_Cold_volumes_seed_accepts_busy_main_without_packages()
     {
+        RequireLinuxJq();
         for (var mask = 0; mask < 8; mask++)
         {
             var existing = new[] { "$C849_PACKAGES", "$C849_SCRATCH", "$C849_NPM" };
@@ -2221,6 +2236,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C912_Cold_volumes_seed_refuses_unknown_mounted_or_populated_targets()
     {
+        RequireLinuxJq();
         var output = LinuxShell(ColdSeedHarness() + """
             mkdir -p "$SERVER2_ROOT/cache"
             FAULT=census-error
@@ -2264,6 +2280,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C912_Cold_volumes_seed_rechecks_initialization_and_probe_boundaries()
     {
+        RequireLinuxJq();
         var output = LinuxShell(ColdSeedHarness() + """
             mkdir -p "$SERVER2_ROOT/cache"
             (c849_cold_seed)
@@ -2290,6 +2307,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C912_Cold_cache_probe_requires_uid_writes_cleanup_and_bounded_exit()
     {
+        RequireLinuxJq();
         var output = LinuxShell(ColdSeedHarness() + """
             mkdir -p "$SERVER2_ROOT/cache"
             (c849_cold_seed)
@@ -2328,6 +2346,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C912_Cold_marker_has_distinct_validation_and_full_context_refusal()
     {
+        RequireLinuxJq();
         var source = Remote();
         var output = LinuxShell(ColdSeedHarness() + "\n" + Block(source, "c849_require_ready") + "\n" + """
             mkdir -p "$SERVER2_ROOT/cache"
@@ -2491,6 +2510,33 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C912_Cold_exception_never_weakens_maintenance_or_donor_gates()
     {
+        var previousJq = ForceLinuxJqAvailability.Value;
+        try
+        {
+            ForceLinuxJqAvailability.Value = false;
+            var jqCases = new Action[]
+            {
+                C912_Cold_volumes_seed_accepts_busy_main_without_packages,
+                C912_Cold_volumes_seed_refuses_unknown_mounted_or_populated_targets,
+                C912_Cold_volumes_seed_rechecks_initialization_and_probe_boundaries,
+                C912_Cold_cache_probe_requires_uid_writes_cleanup_and_bounded_exit,
+                C912_Cold_marker_has_distinct_validation_and_full_context_refusal
+            };
+            foreach (var run in jqCases)
+            {
+                SkipTestException? skip = null;
+                try { run(); }
+                catch (SkipTestException exception) { skip = exception; }
+                skip.ShouldNotBeNull($"{run.Method.Name} must skip before running a jq-dependent Linux shell block");
+                skip.Message.ShouldBe(NoLinuxJqReason);
+            }
+            ForceLinuxJqAvailability.Value = true;
+            HasLinuxJq().ShouldBeTrue("CARD-0912 forced jq-present guard path");
+        }
+        finally
+        {
+            ForceLinuxJqAvailability.Value = previousJq;
+        }
         var remote = Remote();
         var reset = Block(remote, "c849_reset");
         reset.Contains("c849_require_ready").ShouldBeTrue("full-gate-refused-reset");
