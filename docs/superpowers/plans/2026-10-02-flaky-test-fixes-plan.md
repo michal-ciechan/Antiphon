@@ -214,6 +214,21 @@ At handler entry register a cancellation callback that records (phase, virtual i
 
 Retain existing watchdog values; do not replace the old 6/8/12-second hang limits with a 60-second wait. Their expiration is infrastructure failure, never timer evidence. The 10/30/3/10 virtual boundaries, single-attempt cancellation and no-overlap assertions are independent of host scheduling.
 
+#### S3 frozen controls
+
+Roster rechecked: 5 launch methods/5 results, 26 policy methods/26 results. CP-3 Linux=3, CP-4 Windows=5, CP-5 each OS=26. CP-15 selects the two Windows-only named launch cases: N=3 yields Linux 6 explicit skips, Windows 6 passes. Put Skip.Test at the beginning of AssertNamedGrokRefused, before database/workspace setup. No broad class skip. The non-Windows policy case keeps its existing ShouldBeNull assertion; its named site is the fully qualified method plus ShouldBeNull, so no policy-file edit is needed.
+
+Capture launch outcome once, then check code, session census and bounded diagnostics at independent labelled sites. For a control targeting a later site, preserve every preceding assertion's expected input; do not use wholesale refusal suppression that would fail early at a generic Should.Throw. The fake protocol adapter receives no real provider launch.
+
+| Guard / PC | Detecting method and distinct label | One compiling defect; finite red witness |
+|---|---|---|
+| G-11 / PC-11 | Named_grok_herdr_agent_with_unsafe_raw_rules_is_refused_before_any_session_exists / `windows-unsafe-code` | Keep the refusal but replace its problem code with conflict; captured outcome reaches code assertion. |
+| G-12 / PC-12 | Named_grok_pty_host_agent_with_unsafe_raw_rules_is_refused_before_any_session_exists / `windows-no-session` | In the fixture insert one session for this workspace while retaining the correct refusal; earlier code/privacy checks stay green, census fails. |
+| G-13 / PC-13 | Named_grok_herdr_agent_with_unsafe_raw_rules_is_refused_before_any_session_exists / `windows-private-diagnostic` | Append only the synthetic sentinel to an otherwise correct refusal; keep required code/name/flag/reason and assert no sentinel. |
+| G-14 / PC-14 | GrokRulesArgvPolicyTests.Any_payload_is_allowed_when_not_windows / existing ShouldBeNull | Change that explicit isWindows:false input to true; multiline payload returns a violation and this existing assertion goes red. |
+
+Windows executes both named launch cases with all existing code/privacy/no-session/idle assertions, regardless of which method carries a particular isolated PC. Linux baseline code mismatches and final policy skips are diagnostic outcomes, never passing execution certificates.
+
 ### Stress recipes: fixed workload, honest red/green evidence
 
 CP-13..19 are the **closed diagnostic stress selections** below. For each, take a clean committed pre-fix source and a clean committed post-fix source; retain source SHA, OS, driver SHA, filter, repetition count, 24 owned burner PIDs/start times, actual failures/skips and named first failure. No baseline worktree is created by fetching/rebasing this branch. The caller may commission a fresh source-pinned worktree for baseline; raw old receipts are retained, never overwritten by a successful rerun.
