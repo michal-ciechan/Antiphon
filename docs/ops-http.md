@@ -288,6 +288,14 @@ Invoke-RestMethod "$api/api/agents/$agentId/start" -Method Post -Headers $h `
 
 ## Typed input goes through the queue
 
+`GET /api/agent-tasks/{id:guid}/inputs/{eventId:guid}` returns the full LF-normalized
+refinement or blocked-reply body as `text/plain; charset=utf-8` with `Cache-Control: no-store`.
+It requires `X-Antiphon-Task-Token` for that exact task and recipient session. A missing,
+stale or unrelated task credential is refused; an absent, mismatched, non-input or legacy
+event is 404. The ordinary task/event DTO does not include this body. A runner pointer
+uses its `ANTIPHON_API` base and `ANTIPHON_TASK_TOKEN` header at execution time; it never
+embeds the token in the prompt or URL. Confirm runner API reachability during activation.
+
 For a wedged head, inspect `GET /api/sessions/{id}/queue`: `deliveryAttempts` reaches the cap and
 `parked: true` means automatic delivery skips that row (CARD-0501).
 To clear a reviewed row, use `DELETE /api/sessions/{id}/queue/{messageId}`; the row id comes from
