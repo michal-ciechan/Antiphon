@@ -198,6 +198,20 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             return result;
         }
 
+        protected override async Task<(int ExitCode, byte[] Output)> RunGitInputBytesAsync(
+            string repository, IReadOnlyList<string> arguments, byte[] input, CancellationToken ct)
+        {
+            Trace.Add(arguments.ToArray());
+            Commands.Add((repository, arguments.ToArray()));
+            if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected)
+                return (injected.ExitCode, System.Text.Encoding.UTF8.GetBytes(injected.Output));
+            var result = await base.RunGitInputBytesAsync(repository, arguments, input, ct);
+            if (AfterCommand is not null)
+                await AfterCommand(repository, arguments,
+                    new LandingGitResult(result.ExitCode, "", result.ExitCode == 0 ? "" : $"git_exit_{result.ExitCode}"));
+            return result;
+        }
+
         /// <summary>
         /// Production drops the registration with plain file I/O (CARD-0665 review 0c0b9a4e); it is
         /// traced and hookable under this vector so fault cuts at registration removal keep their place.

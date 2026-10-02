@@ -435,27 +435,47 @@ public class LandingGit : ILandingGit
                 || changedAttributes.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries)
                     .Any(x => x == ".gitattributes" || x.EndsWith("/.gitattributes", StringComparison.Ordinal)))
                 return LandRecoveryCheckoutInspection.Refused();
-            foreach (var sha in new[] { oldSha, expectedSha })
+            var trees = new Dictionary<string, string>(StringComparer.Ordinal);
+            var paths = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var sha in new[] { oldSha, expectedSha }.Distinct(StringComparer.Ordinal))
             {
                 var listed = await RunAsync(path, ["ls-tree", "-r", "-z", sha], ct);
                 if (!listed.Succeeded || listed.Output.Contains('\uFFFD'))
                     return LandRecoveryCheckoutInspection.Refused();
+                trees.Add(sha, listed.Output);
                 foreach (var row in listed.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries))
                 {
                     var tab = row.IndexOf('\t');
                     if (tab < 0) return LandRecoveryCheckoutInspection.Refused();
                     var relative = row[(tab + 1)..];
-                    var attrsResult = await RunAsync(path, ["check-attr", "--all", "-z", "--", relative], ct);
-                    if (!attrsResult.Succeeded || attrsResult.Output.Contains('\uFFFD'))
+                    if (relative.Length == 0 || relative.Contains('\uFFFD'))
                         return LandRecoveryCheckoutInspection.Refused();
-                    var attrs = attrsResult.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
-                    if (attrs.Length % 3 != 0) return LandRecoveryCheckoutInspection.Refused();
-                    for (var i = 0; i < attrs.Length; i += 3)
-                        if (attrs[i] != relative || attrs[i + 1] is not ("text" or "eol")
-                            || attrs[i + 1] == "eol" && attrs[i + 2] is not ("lf" or "crlf")
-                            || attrs[i + 1] == "text" && attrs[i + 2] is not ("set" or "unset" or "auto"))
-                            return LandRecoveryCheckoutInspection.Refused();
+                    paths.Add(relative);
                 }
+            }
+            var attrInput = Encoding.UTF8.GetBytes(string.Join('\0', paths) + '\0');
+            var attrResult = paths.Count == 0 ? (ExitCode: 0, Output: Array.Empty<byte>())
+                : await RunGitInputBytesAsync(path,
+                    ["check-attr", "--all", "-z", "--stdin"], attrInput, ct);
+            if (attrResult.ExitCode != 0) return LandRecoveryCheckoutInspection.Refused();
+            var attrOutput = Encoding.UTF8.GetString(attrResult.Output);
+            if (attrOutput.Contains('\uFFFD')) return LandRecoveryCheckoutInspection.Refused();
+            var attrFields = attrOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+            if (attrFields.Length % 3 != 0) return LandRecoveryCheckoutInspection.Refused();
+            var attrsByPath = new Dictionary<string, (string? Text, string? Eol)>(StringComparer.Ordinal);
+            for (var i = 0; i < attrFields.Length; i += 3)
+            {
+                var relative = attrFields[i];
+                var name = attrFields[i + 1];
+                var value = attrFields[i + 2];
+                if (!paths.Contains(relative) || name is not ("text" or "eol")
+                    || name == "eol" && value is not ("lf" or "crlf")
+                    || name == "text" && value is not ("set" or "unset" or "auto"))
+                    return LandRecoveryCheckoutInspection.Refused();
+                attrsByPath.TryGetValue(relative, out var found);
+                if (name == "eol" && found.Eol is not null || name == "text" && found.Text is not null)
+                    return LandRecoveryCheckoutInspection.Refused();
+                attrsByPath[relative] = name == "eol" ? (found.Text, value) : (value, found.Eol);
             }
             async Task<bool> CleanDiff(params string[] args) =>
                 (await RunAsync(path, args, ct)).ExitCode == 0;
@@ -492,8 +512,7 @@ public class LandingGit : ILandingGit
                 if (fields.Length != 3 || fields[2] != "0" || !indexModes.TryAdd(row[(tab + 1)..], fields[0]))
                     return LandRecoveryCheckoutInspection.Refused();
             }
-            var tree = await RunAsync(path, ["ls-tree", "-r", "-z", oldSha], ct);
-            if (!tree.Succeeded || tree.Output.Contains('\uFFFD')) return LandRecoveryCheckoutInspection.Refused();
+            var tree = trees[oldSha];
             var auto = await RunAsync(path, ["config", "--get", "core.autocrlf"], ct);
             if (auto.ExitCode is not (0 or 1)) return LandRecoveryCheckoutInspection.Refused();
             var autoCrlf = auto.Output.Trim() == "true";
@@ -501,7 +520,39 @@ public class LandingGit : ILandingGit
                 return LandRecoveryCheckoutInspection.Refused();
             var filemode = await RunAsync(path, ["config", "--bool", "core.filemode"], ct);
             if (filemode.ExitCode is not (0 or 1)) return LandRecoveryCheckoutInspection.Refused();
-            foreach (var row in tree.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+            var oids = new List<string>();
+            foreach (var row in tree.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var tab = row.IndexOf('\t');
+                if (tab < 0) return LandRecoveryCheckoutInspection.Refused();
+                var metadata = row[..tab].Split(' ');
+                if (metadata.Length != 3 || !GitObjectId.IsFull(metadata[2]))
+                    return LandRecoveryCheckoutInspection.Refused();
+                oids.Add(metadata[2]);
+            }
+            var distinctOids = oids.Distinct(StringComparer.Ordinal).ToArray();
+            var batch = distinctOids.Length == 0 ? (ExitCode: 0, Output: Array.Empty<byte>())
+                : await RunGitInputBytesAsync(path, ["cat-file", "--batch"],
+                    Encoding.ASCII.GetBytes(string.Join('\n', distinctOids) + '\n'), ct);
+            if (batch.ExitCode != 0) return LandRecoveryCheckoutInspection.Refused();
+            var blobs = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            var offset = 0;
+            foreach (var oid in distinctOids)
+            {
+                var end = Array.IndexOf(batch.Output, (byte)'\n', offset);
+                if (end < 0 || end - offset > 128) return LandRecoveryCheckoutInspection.Refused();
+                var header = Encoding.ASCII.GetString(batch.Output, offset, end - offset).Split(' ');
+                if (header.Length != 3 || header[0] != oid || header[1] != "blob"
+                    || !int.TryParse(header[2], out var size) || size < 0
+                    || size > batch.Output.Length - end - 2)
+                    return LandRecoveryCheckoutInspection.Refused();
+                offset = end + 1;
+                blobs.Add(oid, batch.Output.AsSpan(offset, size).ToArray());
+                offset += size;
+                if (batch.Output[offset++] != (byte)'\n') return LandRecoveryCheckoutInspection.Refused();
+            }
+            if (offset != batch.Output.Length) return LandRecoveryCheckoutInspection.Refused();
+            foreach (var row in tree.Split('\0', StringSplitOptions.RemoveEmptyEntries))
             {
                 var tab = row.IndexOf('\t');
                 if (tab < 0) return LandRecoveryCheckoutInspection.Refused();
@@ -515,23 +566,10 @@ public class LandingGit : ILandingGit
                 if (relative.Length == 0 || Path.IsPathRooted(relative)
                     || relative.Split('/').Any(x => x is "" or "." or ".."))
                     return LandRecoveryCheckoutInspection.Refused();
-                var attributes = await RunAsync(path, ["check-attr", "--all", "-z", "--", relative], ct);
-                if (!attributes.Succeeded || attributes.Output.Contains('\uFFFD'))
-                    return LandRecoveryCheckoutInspection.Refused();
-                var attrs = attributes.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
-                if (attrs.Length % 3 != 0) return LandRecoveryCheckoutInspection.Refused();
-                string? eol = null;
-                bool binary = false;
-                for (var i = 0; i < attrs.Length; i += 3)
-                {
-                    if (attrs[i] != relative) return LandRecoveryCheckoutInspection.Refused();
-                    if (attrs[i + 1] == "eol" && attrs[i + 2] is "lf" or "crlf") eol = attrs[i + 2];
-                    else if (attrs[i + 1] == "text" && attrs[i + 2] is "set" or "auto") { }
-                    else if (attrs[i + 1] == "text" && attrs[i + 2] == "unset") binary = true;
-                    else return LandRecoveryCheckoutInspection.Refused();
-                }
-                var blob = await ReadGitBlobAsync(path, metadata[2], ct);
-                if (blob is null) return LandRecoveryCheckoutInspection.Refused();
+                attrsByPath.TryGetValue(relative, out var attrs);
+                var eol = attrs.Eol;
+                var binary = attrs.Text == "unset";
+                var blob = blobs[metadata[2]];
                 var full = Path.Combine(path, relative.Replace('/', Path.DirectorySeparatorChar));
                 var parent = Path.GetDirectoryName(full);
                 while (parent is not null && !PathsEqual(parent, path))
@@ -595,25 +633,34 @@ public class LandingGit : ILandingGit
         return output.ToArray();
     }
 
-    private async Task<byte[]?> ReadGitBlobAsync(string path, string oid, CancellationToken ct)
+    // Read-only, byte-safe Git batch input. The output can contain arbitrary blob bytes;
+    // never decode it until a caller has established that it is textual metadata.
+    protected virtual async Task<(int ExitCode, byte[] Output)> RunGitInputBytesAsync(
+        string path, IReadOnlyList<string> arguments, byte[] input, CancellationToken ct)
     {
-        if (!GitObjectId.IsFull(oid)) return null;
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
         budget.CancelAfter(TimeSpan.FromMinutes(5));
         var start = new ProcessStartInfo("git") { WorkingDirectory = path, UseShellExecute = false,
-            RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
+            CreateNoWindow = true };
         start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         ConfigureProcess(start);
-        start.ArgumentList.Add("cat-file"); start.ArgumentList.Add("blob"); start.ArgumentList.Add(oid);
+        foreach (var argument in arguments) start.ArgumentList.Add(argument);
         using var child = StartProcess(start);
-        if (child is null) return null;
+        if (child is null) throw new IOException("git_start_failed");
         using var output = new MemoryStream();
+        var write = Task.Run(async () =>
+        {
+            await child.StandardInput.BaseStream.WriteAsync(input, budget.Token);
+            await child.StandardInput.BaseStream.FlushAsync(budget.Token);
+            child.StandardInput.Close();
+        }, budget.Token);
         var copy = child.StandardOutput.BaseStream.CopyToAsync(output, budget.Token);
         var error = child.StandardError.ReadToEndAsync(budget.Token);
         try
         {
-            await Task.WhenAll(copy, error);
+            await Task.WhenAll(write, copy, error);
             await child.WaitForExitAsync(budget.Token);
         }
         catch
@@ -622,7 +669,7 @@ public class LandingGit : ILandingGit
             await child.WaitForExitAsync(CancellationToken.None);
             throw;
         }
-        return child.ExitCode == 0 ? output.ToArray() : null;
+        return (child.ExitCode, output.ToArray());
     }
 
     private async Task<LandSourceInspection> IdentityAsync(LandSourceCoordinates coordinates, CancellationToken ct)
