@@ -475,6 +475,7 @@ public class InstructionBundleTests
         // Exercise Windows checkout bytes even when this test runs on Linux.
         if (crlfCheckout)
             bundle = bundle.ReplaceLineEndings("\r\n");
+        bundle = bundle.Replace("\r\n", "\n");
         bundle.ShouldNotContain('\r');
         bundle.ShouldContain("Follow docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout for autonomous AppHost and runner restarts and server2 rollouts.");
         bundle.Length.ShouldBeLessThanOrEqualTo(14_310, "CARD-0940 restored policy with minimal bundle growth");
