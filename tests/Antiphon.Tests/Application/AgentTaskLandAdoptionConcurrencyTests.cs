@@ -32,6 +32,11 @@ public sealed class AgentTaskLandAdoptionConcurrencyTests
         (await h.Fixture.RequiredAsync(h.Fixture.Source, "write-tree")).Trim()
             .ShouldBe((await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", local + "^{tree}")).Trim(),
                 "C883: index remains L");
+        (await h.Fixture.Git.RunAsync(h.Fixture.Source,
+            ["diff", "--quiet", "--no-ext-diff", "--no-textconv", local, "--"], CancellationToken.None))
+            .Succeeded.ShouldBeTrue("C883: worktree remains L");
+        h.Fixture.Git.Commands.ShouldNotContain(x => x.Directory == h.Fixture.Source
+            && x.Arguments.Length > 0 && x.Arguments[0] == "reset", "C883: no reset after historical cut");
         await using (var db = h.CreateContext())
         {
             var old = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == first.RequestId);
@@ -83,6 +88,84 @@ public sealed class AgentTaskLandAdoptionConcurrencyTests
         var op = await h.OperationAsync();
         (op is not null && new AgentTaskLandingState().HasPublication(op))
             .ShouldBeTrue("V2.PublicationSurvivesMonitorWrite");
+    }
+
+    [Test]
+    public async Task C883_PreIntentConflictLeavesCheckoutUnmoved()
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (local, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
+        var first = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        fixture.Interceptor.RequestId = first.RequestId;
+        fixture.Interceptor.OperationFilter = "source-adopt-reset";
+        fixture.Interceptor.Armed = true;
+        var conflict = await Should.ThrowAsync<DbUpdateConcurrencyException>(() => h.RunQueuedAsync());
+        fixture.Interceptor.Fired.ShouldBe(1, "V2.PreIntentSaveFaultFired");
+        fixture.Boundary.Reached.ShouldBe(0, "V2.RefMoveBoundaryNotReached");
+        await h.FailAsync(conflict);
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim()
+            .ShouldBe(local, "V2.PreIntentHeadUnmoved");
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "write-tree")).Trim()
+            .ShouldBe((await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", local + "^{tree}")).Trim(),
+                "V2.PreIntentIndexUnmoved");
+        h.Fixture.Git.Commands.ShouldNotContain(x => x.Arguments.Count(a => a == "--no-deref") > 0
+            && x.Arguments.Contains(h.Fixture.SourceRef), "V2.NoSourceCASAfterPreIntentFault");
+        h.Fixture.Git.Commands.ShouldNotContain(x => x.Directory == h.Fixture.Source
+            && x.Arguments.Length > 0 && x.Arguments[0] == "reset", "V2.NoOwnerResetAfterPreIntentFault");
+        var second = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        second.RequestId.ShouldNotBe(first.RequestId, "V2.PreIntentRecoveryFreshId");
+        await h.RunQueuedAsync();
+        var op = await h.OperationAsync();
+        (op is not null && new AgentTaskLandingState().HasPublication(op))
+            .ShouldBeTrue("V2.PreIntentRetryPublished");
+    }
+
+    [Test]
+    public async Task C883_PostResetSaveConflictFreshRequestCompletes()
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (_, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
+        var first = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        fixture.Interceptor.RequestId = first.RequestId;
+        fixture.Boundary.ThrowConflict = false;
+        h.Fixture.Git.AfterCommand = (directory, args, result) =>
+        {
+            if (result.Succeeded && directory == h.Fixture.Source && args.Count > 0 && args[0] == "reset")
+                fixture.Interceptor.Armed = true;
+            return Task.CompletedTask;
+        };
+        var conflict = await Should.ThrowAsync<DbUpdateConcurrencyException>(() => h.RunQueuedAsync());
+        fixture.Boundary.Reached.ShouldBe(1, "V2.PostResetHistoricalCutReached");
+        fixture.Interceptor.Fired.ShouldBe(1, "V2.PostResetSaveFaultFired");
+        await h.FailAsync(conflict);
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim()
+            .ShouldBe(reviewed, "V2.PostResetHeadAligned");
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "write-tree")).Trim()
+            .ShouldBe((await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", reviewed + "^{tree}")).Trim(),
+                "V2.PostResetIndexAligned");
+        await using (var db = h.CreateContext())
+        {
+            var old = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == first.RequestId);
+            old.TerminalFailureCode.ShouldBe("landing_concurrency_conflict", "V2.PostResetFailureClassified");
+            old.SourceAdvanceChildOperation.ShouldBe("source-adopt-reset", "V2.PostResetIntentRetained");
+        }
+        var resetCount = h.Fixture.Git.Commands.Count(x => x.Directory == h.Fixture.Source
+            && x.Arguments.Length > 0 && x.Arguments[0] == "reset");
+        var second = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        await h.RunQueuedAsync();
+        second.RequestId.ShouldNotBe(first.RequestId, "V2.PostResetFreshId");
+        h.Fixture.Git.Commands.Count(x => x.Directory == h.Fixture.Source
+            && x.Arguments.Length > 0 && x.Arguments[0] == "reset")
+            .ShouldBe(resetCount, "V2.NoResetReplayAfterAlignment");
+        var op = await h.OperationAsync();
+        (op is not null && new AgentTaskLandingState().HasPublication(op))
+            .ShouldBeTrue("V2.PostResetFreshPublication");
     }
 
     [Test]

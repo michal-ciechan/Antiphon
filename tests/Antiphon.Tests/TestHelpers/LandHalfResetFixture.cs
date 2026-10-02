@@ -79,6 +79,7 @@ internal sealed class LandHalfResetFixture : IAsyncDisposable
     {
         public Guid RequestId { get; set; }
         public bool Armed { get; set; }
+        public string? OperationFilter { get; set; }
         public int Fired { get; private set; }
         public void FiredAtBoundary() => Fired++;
 
@@ -89,7 +90,8 @@ internal sealed class LandHalfResetFixture : IAsyncDisposable
             {
                 var entry = db.ChangeTracker.Entries<AgentTaskLandRequest>()
                     .FirstOrDefault(e => e.Entity.Id == RequestId && e.State == EntityState.Modified);
-                if (entry is not null)
+                if (entry is not null && (OperationFilter is null
+                    || entry.Entity.SourceAdvanceChildOperation == OperationFilter))
                 {
                     Armed = false;
                     Fired++;
