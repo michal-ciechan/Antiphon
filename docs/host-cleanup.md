@@ -1,18 +1,47 @@
 # CARD-0826 host cleanup: implementation status
 
 This code slice is **not operational**. No daily schedule, runner command, host SSH job, native
-deletion adapter, persistent claim store, maintenance gate, API report ingestion, or per-host
+deletion adapter, persistent scratch claim store, participating maintenance gate, authenticated API receipt ingestion, or per-host
 qualification is installed. `HostCleanup:Execute` is not configured. The new native filesystem
 adapters throw before observation or deletion. Existing worktree cleanup owners and their settings
 were not changed. No live host cleanup or provider launch was performed.
 
-The branch currently contains a virtual-facts policy/executor seam, a read-only worktree
-classifier, attention DTO/client presentation, and ASCII-only `dev-aspire.ps1`. Worktree inventory rows never confer deletion
+The branch contains a virtual-facts policy/executor seam, a read-only worktree
+classifier, attention DTO/client presentation, ASCII-only `dev-aspire.ps1`, and the additive
+`20261002145938_AddHostCleanup` migration. Standalone services persist metadata-only receipts,
+reject changed replays, retain pending invalidation after event failure, page board-scoped reports,
+and project backlog, pressure and expired holds. These services are not registered in the HTTP,
+scheduler or runner graph. Worktree inventory rows never confer deletion
 authority. The classifier has no repository mutation lease, Git mutation, or retirement dependency.
 These facts do **not** establish the plan's full transitive no-lease invariant; the scheduled call
 graph does not exist yet.
 
-## Verification to date
+## Replay and continuation (task 863ee584)
+
+Baseline: `808677658cc418dc439d906de4526aaea32e231a`. All ten prior branch commits were
+cherry-picked in order. CARD-0888's client tests and `TaskInputUnreadable = 52` were preserved;
+cleanup kinds use 53, 54, 55 and 56. The full enum distinctness test and all three wire-name
+tests pass. Client roster is 29 (the frozen 26 plus CARD-0888's three tests).
+
+CP-1 passed 42/42 at `a9cc771591e7c8cfbb776cdcc9503043d05d9ea9`. The S3 subset passed 23/23
+at `4ecee171fc0c6c76af089a6a5cd850756c011768`; CP-3 exited 3 because its unchanged Min is 56.
+Schema tests first failed at named assertions on the baseline. Fifteen report tests then failed
+against neutral compiling services before implementation. The generated Designer model body is
+identical to the snapshot; upgrading from `AddAgentTaskEventInputBody` preserves existing task
+and event/InputBody rows. This is not acceptance of missing CP-3 cases or operational delivery.
+
+S2's 40 virtual compatibility ports and pre-move run are still pending; no shared checkpoint
+files have moved. CARD-0885's repeat tool changes remain intact. S4 transport/store/packaging,
+S5 worker/helper/script/cutover integration, native adapter qualification, HTTP authorization,
+daily scheduling/catch-up, historical hold resolution and per-host activation remain pending.
+Receipt persistence does not prove durable plan-before-delete, shared scratch claims, caller
+maintenance participation, local outbox recovery or receipt-to-HTTP-attention delivery. Report
+retention and recurring invalidation recovery are not scheduled. Do not activate cleanup.
+
+Replaying prior-branch work onto a newer master is done by cherry-pick in a NEW task;
+never rebase or merge master into a fast-forward-only task branch.
+
+## Historical verification from task 3a378666
 
 | Evidence | Result | Limit |
 |---|---|---|
