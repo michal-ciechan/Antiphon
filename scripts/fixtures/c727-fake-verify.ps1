@@ -17,7 +17,18 @@ if ($state.PSObject.Properties.Name -contains 'markerPath' -and $Case -in @('dep
     $repo = Split-Path -Parent $PSScriptRoot
     $seedAvailable = if ($state.seedImageAvailable) { '1' } else { '0' }
     $variant = [string]$state.markerVariant
-    $result = & bash (Join-Path $PSScriptRoot 'c973-marker-reader.sh') (Join-Path $repo 'c590-remote.sh') $reader $state.markerPath $seedAvailable '1' $variant
+    $paths = @((Join-Path $PSScriptRoot 'c973-marker-reader.sh'), (Join-Path $repo 'c590-remote.sh'), [string]$state.markerPath)
+    if ($IsWindows) {
+        # The production reader is Linux-only. Use the same WSL lane as its TUnit fixtures.
+        $linuxPaths = foreach ($path in $paths) {
+            $converted = & wsl -e wslpath -u $path
+            if ($LASTEXITCODE -ne 0) { throw 'C973 WSL fixture path conversion failed' }
+            ([string]$converted).Trim()
+        }
+        $result = & wsl -e bash $linuxPaths[0] $linuxPaths[1] $reader $linuxPaths[2] $seedAvailable '1' $variant
+    } else {
+        $result = & bash $paths[0] $paths[1] $reader $paths[2] $seedAvailable '1' $variant
+    }
     $code = $LASTEXITCODE
     Add-Content -LiteralPath $env:C727_TEST_TRACE -Value (@{
         kind='marker'; name=$Case; seedImageAvailable=[bool]$state.seedImageAvailable; markerKind='cold'; exit=$code

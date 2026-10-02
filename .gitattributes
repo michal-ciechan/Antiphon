@@ -16,6 +16,8 @@ tests/Antiphon.Agents.Pty.Tests/golden/card-0449/*.ansi -text
 # CARD-0604: files the Linux runner parses byte-for-byte. A CRLF working copy on Windows reaches
 # server2 through scp/COPY and puts a stray \r in every shell token, ssh keyword and git value.
 scripts/*.sh text eol=lf
+scripts/fixtures/c973-marker-reader.sh text eol=lf
+scripts/fixtures/c973-cold-seed-accepted.txt text eol=lf
 docker/session-runner-grok/dind-entrypoint.sh text eol=lf
 docker/session-runner-grok/daemon.json text eol=lf
 docker/session-runner-grok/ssh_config text eol=lf
