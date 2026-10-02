@@ -18,7 +18,8 @@ function Test-C973Jq {
     # Probe the shell that actually executes the marker reader, once per run.
     # The offline regression driver may stub only the missing-probe result.
     if ($env:C973_TEST_JQ_PROBE -eq 'missing') { return $false }
-    if ($IsWindows) { $null = & wsl -e bash -c 'command -v jq' 2>$null }
+    if ($env:C973_JQ_PROBE_SHELL) { $null = & $env:C973_JQ_PROBE_SHELL -c 'command -v jq' 2>$null }
+    elseif ($IsWindows) { $null = & wsl -e bash -c 'command -v jq' 2>$null }
     else { $null = & bash -c 'command -v jq' 2>$null }
     return $LASTEXITCODE -eq 0
 }

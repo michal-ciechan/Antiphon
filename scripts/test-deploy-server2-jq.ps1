@@ -1,9 +1,9 @@
 # CARD-0973 jq precondition regression. Run through build-slot.ps1.
-param([Parameter(Mandatory)][ValidateSet('absent', 'present')][string]$Case)
+param([Parameter(Mandatory)][ValidateSet('absent', 'present', 'missing-shell', 'failing-shell')][string]$Case)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $evidenceRoot = Join-Path $root ('.antiphon/c973-jq-' + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $evidenceRoot | Out-Null
+$evidenceDirectory = New-Item -ItemType Directory -Path $evidenceRoot
 $psi = [System.Diagnostics.ProcessStartInfo]::new('pwsh')
 $psi.UseShellExecute = $false
 $psi.RedirectStandardOutput = $true
@@ -12,8 +12,15 @@ foreach ($arg in @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'test-deploy-
     [void]$psi.ArgumentList.Add($arg)
 }
 $psi.Environment['C973_TEST_ROOT'] = $evidenceRoot
+[void]$psi.Environment.Remove('C973_JQ_PROBE_SHELL')
 if ($Case -eq 'absent') { $psi.Environment['C973_TEST_JQ_PROBE'] = 'missing' }
 else { [void]$psi.Environment.Remove('C973_TEST_JQ_PROBE') }
+if ($Case -eq 'missing-shell') {
+    $psi.Environment['C973_JQ_PROBE_SHELL'] = Join-Path $evidenceRoot 'nonexistent-shell'
+} elseif ($Case -eq 'failing-shell') {
+    # A real application on both platforms: git -c 'command -v jq' exits nonzero.
+    $psi.Environment['C973_JQ_PROBE_SHELL'] = (Get-Command git -CommandType Application -ErrorAction Stop).Source
+}
 $proc = [System.Diagnostics.Process]::Start($psi)
 $stdout = $proc.StandardOutput.ReadToEndAsync()
 $stderr = $proc.StandardError.ReadToEndAsync()
@@ -30,19 +37,24 @@ function Assert-Jq {
 try {
     Assert-Jq ($proc.ExitCode -eq 0) "harness exit=$($proc.ExitCode)"
     Assert-Jq ([regex]::Matches($output, '(?m)^C973_JQ_PROBE ').Count -eq 1) 'one jq probe'
+    $jqAvailable = $output.Contains('C973_JQ_PROBE available=True')
+    $expectPresent = $Case -eq 'present' -and $jqAvailable
+    if ($Case -eq 'present' -and -not $jqAvailable) {
+        Write-Output 'C973_JQ_SKIPPED present jq-missing: real probe unavailable; present proof needs jq'
+    }
     foreach ($number in 1..19) {
         Assert-Jq ([regex]::Matches($output, "(?m)^PASS T-$number ").Count -eq 1) "T-$number passed"
     }
     $states = @(Get-ChildItem -LiteralPath $evidenceRoot -Filter state.json -Recurse | ForEach-Object {
         Get-Content -Raw -LiteralPath $_.FullName | ConvertFrom-Json
     })
-    Assert-Jq ($states.Count -eq $(if ($Case -eq 'absent') { 55 } else { 59 })) 'invocation evidence count'
+    Assert-Jq ($states.Count -eq $(if ($expectPresent) { 59 } else { 55 })) 'invocation evidence count'
     $markerStates = @($states | Where-Object { $_.PSObject.Properties.Name -contains 'markerPath' })
     $ordinaryStates = @($states | Where-Object { $_.scenario -notlike 'cold-*' })
     Assert-Jq ($ordinaryStates.Count -eq 55 -and @($ordinaryStates | Where-Object {
         $_.PSObject.Properties.Name -contains 'markerPath'
     }).Count -eq 0) 'T-1..T-19 never receive a marker'
-    if ($Case -eq 'absent') {
+    if (-not $expectPresent) {
         Assert-Jq ($output.Contains('C973_SKIPPED jq-missing: T-20 marker-reader groups need jq (CARD-0927)')) 'named skip notice'
         Assert-Jq (-not $output.Contains('PASS T-20 ')) 'T-20 skipped'
         Assert-Jq ($output.Contains('C849_ROLLING groups=19 invocations=55 assertions=197 failures=0')) 'base roster preserved'
@@ -55,7 +67,10 @@ try {
             $_.scenario -notlike 'cold-*'
         }).Count -eq 0) 'only T-20 receives a marker'
     }
-    Write-Output "C973_JQ case=$Case assertions=$assertions failures=0 evidence=$evidenceRoot"
+    # Delete only the DirectoryInfo returned when this driver created its own root.
+    # No environment-supplied or reconstructed path is used for deletion.
+    $evidenceDirectory.Delete($true)
+    Write-Output "C973_JQ case=$Case assertions=$assertions failures=0 evidence=removed"
     exit 0
 }
 catch {
