@@ -169,7 +169,8 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 note.LastErrorCode = "queue_parked_unconfirmed";
             // CARD-0544 D-9: a Completion may legitimately be rendered (distilled, shrunk, batched,
             // spilled); its receipt compares the committed wire rendering instead of the raw Body.
-            // Every other kind keeps the immutable-Body rule.
+            // Other kinds keep the immutable body, including when the queue typed its owned
+            // spill pointer: the pointer is receipt only while its file still has those bytes.
             var expected = note.Body;
             TaskCompletionNotification.Delivery? rendering = null;
             if (TaskCompletionNotification.IsProfiled(note))
@@ -195,7 +196,35 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 else
                     expected = rendering.WireText;
             }
-            else if (row.Body != note.Body) note.LastErrorCode = "queue_payload_changed_unconfirmed";
+            else if (row.Body != note.Body)
+            {
+                var ownedPointer = row.Body.Contains(TypedBodySpill.PointerHeadline, StringComparison.Ordinal)
+                    && row.Body.Contains(TypedBodySpill.InboxRelativePath(row.Id.ToString("D")),
+                        StringComparison.Ordinal);
+                if (ownedPointer)
+                {
+                    var saved = row.RemoteSpillBody;
+                    if (saved is null)
+                    {
+                        var cwd = await db.AgentSessions.AsNoTracking().Where(s => s.Id == session)
+                            .Select(s => s.Cwd).SingleAsync(ct);
+                        if (!string.IsNullOrWhiteSpace(cwd))
+                        {
+                            var path = TypedBodySpill.InboxAbsolutePath(cwd, row.Id.ToString("D"));
+                            if (File.Exists(path)) saved = await File.ReadAllTextAsync(path, ct);
+                        }
+                    }
+                    if (saved != note.Body)
+                    {
+                        note.LastErrorCode = "queue_pointer_content_mismatch";
+                        note.LastErrorAt = now;
+                        await db.SaveChangesAsync(ct);
+                        return;
+                    }
+                    expected = row.Body;
+                }
+                else note.LastErrorCode = "queue_payload_changed_unconfirmed";
+            }
             if (row.DeliveryAttempts > 0)
             {
                 await runtime.CatchUpTranscriptAsync(session, ct);
