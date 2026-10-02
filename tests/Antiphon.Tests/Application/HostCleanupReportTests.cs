@@ -179,4 +179,87 @@ public sealed class HostCleanupReportTests
         second.ShouldNotBeNull(); second.NextOffset.ShouldBeNull();
         (await service.ReadAsync(Guid.NewGuid(), receipt.RunId, 0, 1, default)).ShouldBeNull();
     }
+
+    [Test]
+    public async Task Partial_receipt_is_not_complete_success()
+    {
+        await using var f = await HostCleanupServerFixture.CreateAsync();
+        var receipt = f.Receipt() with { Candidates = [f.Candidate(4096) with
+        { Family = "task-scratch", Worktree = false, Disposition = "eligible", ReservedBytes = 4096,
+            Outcome = "partial", ReclaimedBytes = 100 }], Attempts = 1, ReservedBytes = 4096 };
+        await f.IngestAsync(receipt);
+        await using var db = f.Db();
+        var page = await new HostCleanupService(db, f.Events).ReadAsync(f.BoardId, receipt.RunId, 0, 50, default);
+        page.ShouldNotBeNull("C826.partial-receipt-persisted");
+        page.Complete.ShouldBeFalse("C826.partial-not-complete");
+        page.Candidates.Single().Outcome.ShouldBe("partial");
+        (await db.HostCleanupRuns.SingleAsync(r => r.Id == receipt.RunId)).ReservedBytes.ShouldBe(4096);
+    }
+
+    [Test]
+    public async Task Null_sample_never_becomes_zero_usage()
+    {
+        await using var f = await HostCleanupServerFixture.CreateAsync();
+        var receipt = f.Receipt() with { SampleComplete = false, NamespaceAllocatedBytes = null,
+            DiskCapacityBytes = null, FreeBytesBefore = null, FreeBytesAfter = null };
+        await f.IngestAsync(receipt);
+        await using var db = f.Db();
+        var page = await new HostCleanupService(db, f.Events).ReadAsync(f.BoardId, receipt.RunId, 0, 50, default);
+        page.ShouldNotBeNull("C826.unknown-sample-persisted");
+        page.Sample.NamespaceAllocatedBytes.ShouldBeNull("C826.unknown-not-zero");
+        page.Sample.FreeBytesAfter.ShouldBeNull();
+        page.Sample.SampledAt.ShouldBe(receipt.SampledAt); page.Sample.Complete.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Budget_pressure_has_one_episode_and_fresh_recovery()
+    {
+        await using var f = await HostCleanupServerFixture.CreateAsync();
+        HostCleanupReceiptDto Sample(long bytes, DateTime sampled) => f.Receipt(daily: false) with
+        { PlannedAt = f.Clock.UtcNow.UtcDateTime.AddMinutes(-1), FinishedAt = f.Clock.UtcNow.UtcDateTime,
+            SampledAt = sampled, NamespaceAllocatedBytes = bytes };
+        await f.IngestAsync(Sample(60 * GiB, f.Clock.UtcNow.UtcDateTime));
+        var first = (await f.AttentionAsync()).SingleOrDefault(i => i.Kind == AttentionKind.HostCleanupDiskPressure);
+        first.ShouldNotBeNull("C826.warning-pressure-episode");
+        first.Severity.ShouldBe(AlertSeverity.Warning);
+        f.Clock.UtcNow = f.Clock.UtcNow.AddMinutes(1);
+        await f.IngestAsync(Sample(90 * GiB, f.Clock.UtcNow.UtcDateTime));
+        var critical = (await f.AttentionAsync()).Single(i => i.Kind == AttentionKind.HostCleanupDiskPressure);
+        critical.ConditionKey.ShouldBe(first.ConditionKey, "C826.one-pressure-identity");
+        critical.Severity.ShouldBe(AlertSeverity.Critical);
+        f.Clock.UtcNow = f.Clock.UtcNow.AddMinutes(1);
+        await f.IngestAsync(Sample(1 * GiB, f.Clock.UtcNow.UtcDateTime.AddHours(-2)));
+        (await f.AttentionAsync()).Single(i => i.Kind == AttentionKind.HostCleanupDiskPressure)
+            .Severity.ShouldBe(AlertSeverity.Critical, "C826.stale-good-does-not-clear");
+        f.Clock.UtcNow = f.Clock.UtcNow.AddMinutes(1);
+        await f.IngestAsync(Sample(1 * GiB, f.Clock.UtcNow.UtcDateTime));
+        (await f.AttentionAsync()).ShouldNotContain(i => i.Kind == AttentionKind.HostCleanupDiskPressure,
+            "C826.fresh-good-clears-pressure");
+    }
+
+    [Test]
+    public async Task Missed_host_and_expired_hold_stay_visible()
+    {
+        await using var f = await HostCleanupServerFixture.CreateAsync();
+        var receipt = f.Receipt(); await f.IngestAsync(receipt);
+        var holdId = Guid.NewGuid();
+        await using (var db = f.Db())
+        {
+            db.HostCleanupHolds.Add(new HostCleanupHold
+            { Id = holdId, BoardId = f.BoardId, HostId = "host-a", StorageId = "storage-a",
+                UnresolvedTaskPrefix = "19e7f181", Reason = "SECRET-SENTINEL", Creator = "operator",
+                CreatedAt = f.Clock.UtcNow.UtcDateTime.AddDays(-2), ExpiresAt = f.Clock.UtcNow.UtcDateTime.AddDays(-1),
+                Revision = Guid.NewGuid() });
+            await db.SaveChangesAsync();
+        }
+        f.Clock.UtcNow = f.Clock.UtcNow.AddDays(2);
+        var items = await f.AttentionAsync();
+        items.ShouldContain(i => i.Kind == AttentionKind.HostCleanupHoldExpired &&
+            i.HostCleanupHoldExpiryUtc == f.Clock.UtcNow.UtcDateTime.AddDays(-3), "C826.expired-hold-visible");
+        items.ShouldContain(i => i.Kind == AttentionKind.HostCleanupSummary &&
+            i.Evidence.Contains("report_stale"), "C826.missed-report-visible");
+        items.ShouldAllBe(i => !i.Evidence.Contains("SECRET-SENTINEL"));
+        await using var verify = f.Db();
+        (await verify.HostCleanupHolds.SingleAsync(h => h.Id == holdId)).DisposedAt.ShouldBeNull();
+    }
 }
