@@ -125,7 +125,7 @@ internal sealed class LandHalfResetFixture : IAsyncDisposable
         public bool InAdoptionPair { get; private set; }
         public int DurableIntents { get; private set; }
         private bool AdoptionCommand(string directory, IReadOnlyList<string> args) =>
-            args[0] == "update-ref" && args.Contains("--no-deref") && args.Contains(h.Fixture.SourceRef)
+            args.Count == 5 && args[0] == "update-ref" && args[1] == "--no-deref" && args[2] == h.Fixture.SourceRef
             || args[0] == "reset" && directory == h.Fixture.Source;
 
         protected override System.Diagnostics.Process? StartProcess(System.Diagnostics.ProcessStartInfo start)

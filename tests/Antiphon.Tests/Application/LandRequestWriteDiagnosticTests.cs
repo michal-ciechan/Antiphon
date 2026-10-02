@@ -30,6 +30,7 @@ public sealed class LandRequestWriteDiagnosticTests
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
         await h.AddSourceAsync();
+        var beforeWrites = h.Clock.GetUtcNow().UtcDateTime;
         var writes = new WriterTransactionCut(h);
         h.TransactionInterceptor = writes;
         var accepted = await h.RequestAsync();
@@ -66,6 +67,8 @@ public sealed class LandRequestWriteDiagnosticTests
         {
             row.LastWriterToken.ShouldBe(row.ConcurrencyToken, $"D.{row.LastWriterOperation}.CommitTokenLinked");
             row.LastWriterAt.ShouldNotBeNull();
+            row.LastWriterAt.Value.ShouldBeGreaterThanOrEqualTo(beforeWrites);
+            row.LastWriterAt.Value.ShouldBeLessThanOrEqualTo(h.Clock.GetUtcNow().UtcDateTime);
             row.LastWriterOperation.ShouldNotBeNullOrWhiteSpace();
         }
     }
