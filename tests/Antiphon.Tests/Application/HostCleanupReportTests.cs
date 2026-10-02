@@ -106,7 +106,7 @@ public sealed class HostCleanupReportTests
         receipt = receipt with { Candidates = [.. receipt.Candidates, scratch], Attempts = 1, ReservedBytes = 4096 };
         await f.IngestAsync(receipt);
         await using var db = f.Db();
-        var page = await new HostCleanupService(db, f.Events).ReadAsync(f.BoardId, receipt.RunId, 0, 50, default);
+        var page = await new HostCleanupService(db, f.Events, f.Clock).ReadAsync(f.BoardId, receipt.RunId, 0, 50, default);
         page.ShouldNotBeNull("C826.persisted-reclamation");
         page.ReclaimedBytes.ShouldBe(2048, "C826.scratch-only-reclamation");
         page.EligibleWorktreeBytes.ShouldBe(20 * GiB, "C826.separate-worktree-bytes");
@@ -152,7 +152,7 @@ public sealed class HostCleanupReportTests
         }
         f.Events.Fail = false;
         await using (var db = f.Db())
-            (await new HostCleanupService(db, f.Events).PublishPendingAsync(default))
+            (await new HostCleanupService(db, f.Events, f.Clock).PublishPendingAsync(default))
                 .ShouldBe(1, "C826.invalidation-recovered");
         f.Events.Names.ShouldContain("ScheduleChanged", "C826.mapped-invalidation-event");
         (await f.AttentionAsync()).ShouldContain(item => item.HostCleanupRunId == receipt.RunId,
@@ -171,7 +171,7 @@ public sealed class HostCleanupReportTests
         attention.ShouldAllBe(item => item.BoardId == f.BoardId);
         attention.ShouldAllBe(item => !item.Evidence.Contains("SECRET-SENTINEL"));
         (await f.AttentionAsync(Guid.NewGuid())).ShouldBeEmpty("C826.foreign-board-hidden");
-        await using var db = f.Db(); var service = new HostCleanupService(db, f.Events);
+        await using var db = f.Db(); var service = new HostCleanupService(db, f.Events, f.Clock);
         var first = await service.ReadAsync(f.BoardId, receipt.RunId, 0, 1, default);
         first.ShouldNotBeNull("C826.first-report-page");
         first.Candidates.Count.ShouldBe(1); first.NextOffset.ShouldBe(1);
@@ -189,7 +189,7 @@ public sealed class HostCleanupReportTests
             Outcome = "partial", ReclaimedBytes = 100 }], Attempts = 1, ReservedBytes = 4096 };
         await f.IngestAsync(receipt);
         await using var db = f.Db();
-        var page = await new HostCleanupService(db, f.Events).ReadAsync(f.BoardId, receipt.RunId, 0, 50, default);
+        var page = await new HostCleanupService(db, f.Events, f.Clock).ReadAsync(f.BoardId, receipt.RunId, 0, 50, default);
         page.ShouldNotBeNull("C826.partial-receipt-persisted");
         page.Complete.ShouldBeFalse("C826.partial-not-complete");
         page.Candidates.Single().Outcome.ShouldBe("partial");
@@ -204,7 +204,7 @@ public sealed class HostCleanupReportTests
             DiskCapacityBytes = null, FreeBytesBefore = null, FreeBytesAfter = null };
         await f.IngestAsync(receipt);
         await using var db = f.Db();
-        var page = await new HostCleanupService(db, f.Events).ReadAsync(f.BoardId, receipt.RunId, 0, 50, default);
+        var page = await new HostCleanupService(db, f.Events, f.Clock).ReadAsync(f.BoardId, receipt.RunId, 0, 50, default);
         page.ShouldNotBeNull("C826.unknown-sample-persisted");
         page.Sample.NamespaceAllocatedBytes.ShouldBeNull("C826.unknown-not-zero");
         page.Sample.FreeBytesAfter.ShouldBeNull();
