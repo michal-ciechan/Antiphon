@@ -55,7 +55,7 @@ public class AttentionKindWireTests
                 .ShouldBe(1, "cleanup-distinct-wire-value");
             var json = JsonSerializer.Serialize(kind, ServerJson);
             json.ShouldBe($"\"{kind}\"", "cleanup-json-name");
-            JsonSerializer.Deserialize<AttentionKind>(json).ShouldBe(kind, "cleanup-json-round-trip");
+            JsonSerializer.Deserialize<AttentionKind>(json, ServerJson).ShouldBe(kind, "cleanup-json-round-trip");
         }
     }
 
