@@ -3,6 +3,7 @@ using System.Text;
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Tests;
 using Shouldly;
 using TUnit.Core;
 
