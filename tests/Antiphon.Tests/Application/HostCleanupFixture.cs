@@ -6,6 +6,8 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.Infrastructure;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.Options;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace Antiphon.Tests.Application;
 
@@ -17,6 +19,8 @@ internal sealed class HostCleanupServerFixture(IsolatedTestSchema schema) : IAsy
     public HostCleanupSettings Settings { get; } = new();
     public HostCleanupRecordingEvents Events { get; } = new();
     public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+    public AppDbContext Db(IInterceptor interceptor) => new(new DbContextOptionsBuilder<AppDbContext>(
+        TestDbFixture.CreateDbContextOptions(schema.ConnectionString)).AddInterceptors(interceptor).Options);
     public static async Task<HostCleanupServerFixture> CreateAsync() =>
         new(await TestDbFixture.CreateIsolatedSchemaAsync());
 
