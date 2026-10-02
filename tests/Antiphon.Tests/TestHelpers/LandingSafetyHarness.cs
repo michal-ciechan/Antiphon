@@ -67,6 +67,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         services.AddScoped(_ => CreateContext());
         services.AddDelegationWorktreeGraph(new GitSettings { WorktreeBasePath = Path.Combine(Fixture.Root, "trees") });
         services.AddScoped<AgentTaskLandingProtocol>();
+        services.AddScoped(sp => CreateLand(sp.GetRequiredService<AppDbContext>(), sp));
         ConfigureServices?.Invoke(services);
         Services = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
     }
@@ -346,6 +347,14 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
                 .RunRequestAsync(request.TaskId, request.RequestId, request.VerifyFilter, CancellationToken.None);
         }
         finally { Queue.Release(request.TaskId); }
+    }
+
+    public async Task<LandRunResult> RunRequestAsync(Guid requestId, CancellationToken ct = default)
+    {
+        await using var scope = Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var request = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == requestId, ct);
+        return await CreateLand(db, scope.ServiceProvider).RunRequestAsync(Fixture.TaskId, requestId, request.VerifyFilter, ct);
     }
 
     public async Task RepostAsync()

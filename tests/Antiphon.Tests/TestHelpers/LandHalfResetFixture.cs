@@ -122,6 +122,13 @@ internal sealed class LandHalfResetFixture : IAsyncDisposable
 
     internal sealed class SaveCut : SaveChangesInterceptor
     {
+        public Func<DbContext, Task>? AfterSave { get; set; }
+        public override async ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData data, int result, CancellationToken ct = default)
+        {
+            if (AfterSave is not null && data.Context is not null) await AfterSave(data.Context);
+            return result;
+        }
+
         public Guid RequestId { get; set; }
         public bool Armed { get; set; }
         public string? OperationFilter { get; set; }
