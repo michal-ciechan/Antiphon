@@ -46,3 +46,13 @@ This supplements the [S1–S5 handoff](2026-10-02-card-0788-code-handoff.md). Ea
 | 568–569 | CP-1..CP-7 exact filters and fixed floors in plan lines 594–602; receipts report actual roster | Yes (receipt in final report) |
 
 The `No` rows are preserved as pending by the Final profile: every PC requires method-scoped SourceLanding Mutation, and the version/live checks require later activation. No EF model, DbContext, snapshot, migration or Review bundle changed.
+
+## Final Windows and clock-skew corrections
+
+| Item | Test label / assertion | Resolution |
+|---|---|---|
+| 3: future dispatch | `AgentTaskReplyIntegrationTests.C788_NoChangeFutureDispatchCleansUp` (`no-change-future-dispatch`, plus ordinary no-change and committed controls): unchanged worktree is removed and committed work reaches `feat/parent` | The plan has no retention rule for a negative elapsed interval. The new S5 local probe is skipped until dispatch time is reached; the pre-S5 merge-back cleanup applies. Future case was red at e9d56b50. CP-8 covers the 3 results. |
+| 1: Windows checkout paths | `AgentTaskWorktreeBaseResolverTests.C788_CheckoutSafetyProbesOnlyMaximalTips` (2 results): maximal checkout's status command is present and ancestor's absent after slash normalization | Expected and observed paths are compared in one separator form. CP-3 covers both results. |
+| 2: Windows review reports | `ReviewEvidenceSettlementTests.C807_IgnoredEvidenceSettlesWithoutApproval`, `C807_RepeatedSettlementIsIdempotent`, `C807_WarningPreservesOtherWarnings`: `Presented()` finds the evidence block's blank-line delimiter | `C544World.ReviewReport` returns LF on every OS. Its consumers were inspected for CRLF dependence; none requires it. CP-5 covers these labels. |
+
+The Windows CP-3, CP-5, and CP-1 Unit rows remain a separate desktop task. All 23 PCs remain pending the paused Mutation stage.

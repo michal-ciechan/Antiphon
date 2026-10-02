@@ -378,7 +378,7 @@ internal sealed class C544World : IAsyncDisposable
         --- next stage ---
         next: {next}
         handoff: C544 fixture handoff.
-        """;
+        """.ReplaceLineEndings("\n");
 
     /// <summary>Mark a queued task Dispatched on a fresh running delegate session, as the dispatcher would.</summary>
     public async Task<Guid> DispatchAsync(Guid taskId)
