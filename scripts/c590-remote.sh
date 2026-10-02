@@ -1656,8 +1656,8 @@ c849_cold_volume_facts() {
         || write_result false CacheFirstSeedPreconditionUnknown 2
     [ "$path" = "$C849_COLD_DOCKER_ROOT/volumes/$name/_data" ] \
         || write_result false CacheRootInvalid 2
-    [ -d "$path" ] && [ ! -L "$path" ] \
-        && [ "$(realpath -e -- "$path" 2>/dev/null)" = "$path" ] \
+    sudo -n test -d "$path" && ! sudo -n test -L "$path" \
+        && [ "$(sudo -n realpath -e -- "$path" 2>/dev/null)" = "$path" ] \
         || write_result false CacheRootInvalid 2
     mode="$(sudo -n stat -c '%u:%g:%a' -- "$path")" \
         || write_result false CacheRootInvalid 2
@@ -1676,10 +1676,10 @@ c849_cold_proof() {
     command -v jq >/dev/null || write_result false CacheFirstSeedPreconditionUnknown 2
     C849_COLD_DOCKER_ROOT="$(docker info -f '{{.DockerRootDir}}')" \
         || write_result false CacheFirstSeedPreconditionUnknown 2
-    [ -n "$C849_COLD_DOCKER_ROOT" ] && [ ! -L "$C849_COLD_DOCKER_ROOT" ] \
-        && [ "$(realpath -e -- "$C849_COLD_DOCKER_ROOT")" = "$C849_COLD_DOCKER_ROOT" ] \
+    [ -n "$C849_COLD_DOCKER_ROOT" ] && ! sudo -n test -L "$C849_COLD_DOCKER_ROOT" \
+        && [ "$(sudo -n realpath -e -- "$C849_COLD_DOCKER_ROOT")" = "$C849_COLD_DOCKER_ROOT" ] \
         || write_result false CacheFirstSeedPreconditionUnknown 2
-    main_list="$(docker ps -q --filter "label=com.docker.compose.project=$HOST_PROJECT" \
+    main_list="$(docker ps -q --no-trunc --filter "label=com.docker.compose.project=$HOST_PROJECT" \
         --filter 'label=com.docker.compose.service=session-runner')" \
         || write_result false CacheFirstSeedPreconditionUnknown 2
     [ "$(printf '%s\n' "$main_list" | sed '/^$/d' | wc -l)" -eq 1 ] \
@@ -1748,15 +1748,15 @@ c849_cold_proof() {
     c849_cold_volume_facts "$C849_PACKAGES" nuget-packages "$require_empty" "$allow_uninitialized"
     c849_cold_volume_facts "$C849_SCRATCH" nuget-scratch "$require_empty" "$allow_uninitialized"
     c849_cold_volume_facts "$C849_NPM" npm-content "$require_empty" "$allow_uninitialized"
-    containers="$(docker ps -aq)" || write_result false CacheFirstSeedPreconditionUnknown 2
+    containers="$(docker ps -aq --no-trunc)" || write_result false CacheFirstSeedPreconditionUnknown 2
     while IFS= read -r container; do
         [ -n "$container" ] || continue
         facts="$(docker inspect "$container")" || write_result false CacheFirstSeedPreconditionUnknown 2
         printf '%s' "$facts" | jq -e --arg root "$C849_COLD_DOCKER_ROOT" \
           --arg a "$C849_PACKAGES" --arg b "$C849_SCRATCH" --arg c "$C849_NPM" \
-          --arg helper "$allowed_helper" '
+          --arg helper "$allowed_helper" --arg requested "$container" '
           def overlaps($s;$p): $s == $p or ($s | startswith($p+"/")) or ($p | startswith($s+"/"));
-          length == 1 and (.[0].Id | type == "string") and
+          length == 1 and (.[0].Id | type == "string") and .[0].Id == $requested and
           ((.[0].Id == $helper and $helper != "") or
            ([.[0].Mounts[] | select(
              (.Type == "volume" and (.Name == $a or .Name == $b or .Name == $c)) or
@@ -1765,7 +1765,7 @@ c849_cold_proof() {
             || write_result false CacheFirstSeedVolumeInUse 2
         while IFS=$'\t' read -r source destination; do
             [ -n "$source" ] || continue
-            canonical="$(realpath -m -- "$source")" \
+            canonical="$(sudo -n realpath -m -- "$source")" \
                 || write_result false CacheFirstSeedPreconditionUnknown 2
             for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
                 target="$C849_COLD_DOCKER_ROOT/volumes/$name/_data"
@@ -1796,11 +1796,12 @@ c849_cold_probe() {
     c849_cold_volume_facts "$name" "$role" no
     path="$C849_COLD_DOCKER_ROOT/volumes/$name/_data"
     canary="$path/.c849-cold-$RUN"
-    if [ -e "$canary" ] || [ -L "$canary" ] || [ -e "$canary.moved" ] || [ -L "$canary.moved" ]; then
+    if sudo -n test -e "$canary" || sudo -n test -L "$canary" \
+        || sudo -n test -e "$canary.moved" || sudo -n test -L "$canary.moved"; then
         sudo -n rm -f -- "$canary" "$canary.moved" \
             || write_result false CacheSeedProbeCleanupFailed 2
-        [ ! -e "$canary" ] && [ ! -L "$canary" ] \
-            && [ ! -e "$canary.moved" ] && [ ! -L "$canary.moved" ] \
+        ! sudo -n test -e "$canary" && ! sudo -n test -L "$canary" \
+            && ! sudo -n test -e "$canary.moved" && ! sudo -n test -L "$canary.moved" \
             || write_result false CacheSeedProbeCleanupFailed 2
         code=1
     fi
@@ -1813,13 +1814,19 @@ c849_cold_probe() {
 
 c849_cold_seed() {
     local name role
+    require_lane host
     c849_lock
     [ ! -e "$C849_READY" ] && [ ! -L "$C849_READY" ] \
         || write_result false CacheSeedMarkerInvalid 2
     c849_cold_proof P0 yes
     for item in "$C849_PACKAGES:nuget-packages" "$C849_SCRATCH:nuget-scratch" "$C849_NPM:npm-content"; do
         name="${item%%:*}"; role="${item#*:}"
-        if ! docker volume ls -q | grep -Fxq "$name"; then
+        local names
+        names="$(docker volume ls -q)" || write_result false CacheFirstSeedPreconditionUnknown 2
+        if ! printf '%s\n' "$names" | grep -Fxq "$name"; then
+            if docker volume inspect "$name" >/dev/null 2>&1; then
+                write_result false CacheFirstSeedPreconditionUnknown 2
+            fi
             docker volume create --driver local --label io.antiphon.owner=server2-runner \
                 --label io.antiphon.cache-schema=1 --label "io.antiphon.cache-role=$role" "$name" >/dev/null \
                 || write_result false CacheVolumeCreateFailed 2
@@ -1838,11 +1845,11 @@ c849_cold_seed() {
     c849_cold_proof P5 yes
     sudo -n install -d -o mc -g mc -m 0700 "$SERVER2_ROOT/cache"
     [ ! -e "$C849_READY" ] && [ ! -L "$C849_READY" ] || write_result false CacheSeedMarkerInvalid 2
-    c849_cold_proof P6 yes
     printf 'schema=2\nkind=cold\ncold=true\nsource-sha=%s\nimage=%s\npackages=%s\nscratch=%s\nnpm=%s\n' \
         "$SHA" "$C849_COLD_MAIN_IMAGE" "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM" \
         > "$C849_READY.tmp-$RUN"
     chmod 0600 "$C849_READY.tmp-$RUN"
+    c849_cold_proof P6 yes
     mv -T -- "$C849_READY.tmp-$RUN" "$C849_READY" || write_result false CacheSeedMarkerInvalid 2
     printf 'ready=true kind=cold writable=3\n' > "$CASE_DIR/seed.txt"
     write_result true '' 0
@@ -2022,6 +2029,9 @@ c849_require_ready() {
             || write_result false CacheSeedMarkerInvalid 2
         [ "$context" = allow-cold ] || write_result false CacheFullSeedRequired 2
         C849_COLD_DOCKER_ROOT="$(docker info -f '{{.DockerRootDir}}')" \
+            || write_result false CacheSeedMarkerInvalid 2
+        [ -n "$C849_COLD_DOCKER_ROOT" ] && ! sudo -n test -L "$C849_COLD_DOCKER_ROOT" \
+            && [ "$(sudo -n realpath -e -- "$C849_COLD_DOCKER_ROOT" 2>/dev/null)" = "$C849_COLD_DOCKER_ROOT" ] \
             || write_result false CacheSeedMarkerInvalid 2
         for item in "$C849_PACKAGES:nuget-packages" "$C849_SCRATCH:nuget-scratch" "$C849_NPM:npm-content"; do
             name="${item%%:*}"; role="${item#*:}"
@@ -2259,7 +2269,9 @@ c849_reset() {
     require_lane host
     c849_lock
     if [ -e "$C849_READY" ] || [ -L "$C849_READY" ]; then
-        if [ -f "$C849_READY" ] && grep -Fxq kind=cold "$C849_READY"; then c849_require_ready; fi
+        if [ -L "$C849_READY" ] || { [ -f "$C849_READY" ] && grep -Eq '^(schema|kind|cold)=' "$C849_READY"; }; then
+            c849_require_ready
+        fi
         write_result false CacheSeedAlreadyReady 2
     fi
     # A reset is only for an interrupted, unmarked seed. The common idle check
