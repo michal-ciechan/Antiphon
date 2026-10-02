@@ -22,6 +22,8 @@ public sealed class AgentTaskInputSpillTests
     public async Task Runner_codex_refinement_writes_complete_body_before_pointer()
     {
         await using var f = await TaskInputSpillFixture.CreateAsync();
+        f.RunnerParent.ShouldNotContain("\\", customMessage: "runner-parent-forward-slashes");
+        f.RunnerRoot.ShouldNotContain("\\", customMessage: "runner-root-forward-slashes");
         var message = "apply this change " + new string('x', 5000) + " tail-888";
         await f.Replies.RefineAsync(f.TaskId, message, CancellationToken.None);
         await using var db = f.Db();
@@ -289,8 +291,9 @@ public sealed class AgentTaskInputSpillTests
 
     private static async Task WriteOnRunnerAsync(TaskInputSpillFixture f, SessionQueuedMessage row)
     {
-        var writer = new RunnerWorkspaceService(Path.Combine(f.RunnerParent, "repo"), f.RunnerParent);
-        await writer.WriteSpillAsync(f.RunnerRoot,
+        var writer = new RunnerWorkspaceService(
+            Path.Combine(f.RunnerParent, "repo").Replace('\\', '/'), f.RunnerParent);
+        await writer.WriteSpillAsync(f.RunnerRoot.Replace('\\', '/'),
             new PhoneHomeInputSpill(row.RemoteSpillRelativePath!, row.RemoteSpillBody!, row.Id),
             CancellationToken.None);
     }
