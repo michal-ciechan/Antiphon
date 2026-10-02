@@ -9,6 +9,27 @@ namespace Antiphon.Agents.Pty.Tests;
 public class EchoGatedLineSenderTests
 {
     [Test]
+    public async Task Fractional_pre_submit_pause_is_not_truncated_to_zero()
+    {
+        const string body = "instant evidence for a fractional pause";
+        var terminal = new ScriptedTerminal();
+        var evidenceAt = TimeSpan.Zero;
+        var options = new SendLineGateOptions(
+            PreSubmitPause: TimeSpan.FromMilliseconds(0.9),
+            EvidenceTimeout: TimeSpan.FromSeconds(1),
+            PollInterval: TimeSpan.FromMilliseconds(10));
+
+        await EchoGatedLineSender.SendAsync(body, _ =>
+        {
+            if (terminal.BodyWasWritten) evidenceAt = terminal.Elapsed;
+            return Task.FromResult(terminal.BodyWasWritten ? body : string.Empty);
+        }, terminal.WriteAsync, options, CancellationToken.None);
+
+        terminal.Writes.Select(w => w.Text).ShouldBe([body, "\r"]);
+        (terminal.Writes[^1].At - evidenceAt).ShouldBeGreaterThanOrEqualTo(options.PreSubmitPause);
+    }
+
+    [Test]
     public async Task Evidence_delays_the_one_CR_until_after_the_pre_submit_pause()
     {
         const string body = "body whose TAIL is visible";
