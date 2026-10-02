@@ -32,6 +32,16 @@ public sealed class AgentTaskLandHalfResetTests
         await File.WriteAllTextAsync(obj, "private build output\n");
         var exclude = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "--git-path", "info/exclude")).Trim();
         await File.AppendAllTextAsync(Path.GetFullPath(exclude, h.Fixture.Source), "\n.antiphon/\nobj/\n");
+        string? alignedHead = null;
+        string? preservedBrief = null;
+        string? preservedObj = null;
+        h.Fixture.Git.AfterCommand = async (directory, args, result) =>
+        {
+            if (!result.Succeeded || directory != h.Fixture.Source || args.Count == 0 || args[0] != "reset") return;
+            alignedHead = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim();
+            preservedBrief = await File.ReadAllTextAsync(brief);
+            preservedObj = await File.ReadAllTextAsync(obj);
+        };
         if (freshRequest) await h.FailAsync(new IOException("interrupted adoption"));
         else await h.SweepAsync();
         var requestId = freshRequest
@@ -42,10 +52,9 @@ public sealed class AgentTaskLandHalfResetTests
         await using var db = h.CreateContext();
         var row = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == requestId);
         row.SourceRefusalReason.ShouldBeNull(freshRequest ? "H.FreshIgnoredResidueAccepted" : "H.SameRequestIgnoredResidueAccepted");
-        (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim()
-            .ShouldBe(reviewed, "H.IgnoredResidueHeadAligned");
-        (await File.ReadAllTextAsync(brief)).ShouldBe("private brief\n", "H.IgnoredBriefPreserved");
-        (await File.ReadAllTextAsync(obj)).ShouldBe("private build output\n", "H.IgnoredObjPreserved");
+        alignedHead.ShouldBe(reviewed, "H.IgnoredResidueHeadAligned");
+        preservedBrief.ShouldBe("private brief\n", "H.IgnoredBriefPreserved");
+        preservedObj.ShouldBe("private build output\n", "H.IgnoredObjPreserved");
         var op = await h.OperationAsync();
         (op is not null && new AgentTaskLandingState().HasPublication(op))
             .ShouldBeTrue(freshRequest ? "H.FreshIgnoredResiduePublishes" : "H.SameRequestIgnoredResiduePublishes");
