@@ -12,7 +12,11 @@ public sealed record CodexSubmitOptions(
     TimeSpan ReEnterInterval,
     int ExtraEnterAttempts,
     TimeSpan ConfirmTimeout,
-    TimeSpan PollInterval);
+    TimeSpan PollInterval,
+    TimeProvider? TimeProvider = null)
+{
+    public TimeProvider Clock => TimeProvider ?? global::System.TimeProvider.System;
+}
 
 /// <summary>
 /// CARD-0108 S1 — the Codex submit contract, shared by both Codex adapters so they cannot fork.
@@ -88,23 +92,24 @@ internal static class CodexSubmitConfirmation
             return;
         }
 
-        var deadline = DateTime.UtcNow + options.ConfirmTimeout;
+        var clock = options.Clock;
+        var deadline = clock.GetUtcNow() + options.ConfirmTimeout;
         var extraEnters = Math.Max(0, options.ExtraEnterAttempts);
         var anyRowEverSeen = false;
 
         for (var attempt = 0; ; attempt++)
         {
             var window = attempt >= extraEnters
-                ? deadline - DateTime.UtcNow
-                : Min(options.ReEnterInterval, deadline - DateTime.UtcNow);
+                ? deadline - clock.GetUtcNow()
+                : Min(options.ReEnterInterval, deadline - clock.GetUtcNow());
 
             var (confirmed, sawRows) = await PollForConfirmationAsync(
-                body, baselineSequence, readTranscript, window, options.PollInterval, ct);
+                body, baselineSequence, readTranscript, window, options.PollInterval, clock, ct);
             anyRowEverSeen |= sawRows;
             if (confirmed)
                 return;
 
-            if (attempt >= extraEnters || DateTime.UtcNow >= deadline)
+            if (attempt >= extraEnters || clock.GetUtcNow() >= deadline)
                 break;
 
             log?.Invoke(
@@ -158,7 +163,7 @@ internal static class CodexSubmitConfirmation
             return;
         }
 
-        await Task.Delay(CodexMcpBoot.AbsentSettle, ct);
+        await Task.Delay(CodexMcpBoot.AbsentSettle, options.Clock, ct);
 
         var second = await SafeScreenAsync(snapshotScreen, ct);
         if (CodexWorkingIndicator.IsVisible(second))
@@ -198,9 +203,10 @@ internal static class CodexSubmitConfirmation
         Func<CancellationToken, Task<IReadOnlyList<SessionRunnerTranscriptEvent>?>> readTranscript,
         TimeSpan window,
         TimeSpan pollInterval,
+        TimeProvider clock,
         CancellationToken ct)
     {
-        var deadline = DateTime.UtcNow + window;
+        var deadline = clock.GetUtcNow() + window;
         var sawRows = false;
 
         while (true)
@@ -217,10 +223,10 @@ internal static class CodexSubmitConfirmation
                 }
             }
 
-            if (DateTime.UtcNow >= deadline)
+            if (clock.GetUtcNow() >= deadline)
                 return (false, sawRows);
 
-            try { await Task.Delay(pollInterval, ct); }
+            try { await Task.Delay(pollInterval, clock, ct); }
             catch (OperationCanceledException) { return (false, sawRows); }
         }
     }

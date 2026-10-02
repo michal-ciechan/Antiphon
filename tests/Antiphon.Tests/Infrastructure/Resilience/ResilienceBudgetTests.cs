@@ -1,6 +1,7 @@
 using System.Net;
 using Antiphon.Resilience;
 using Microsoft.Extensions.Time.Testing;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
@@ -56,7 +57,7 @@ public class ResilienceBudgetTests
     [Test]
     public async Task Slow_first_attempt_consumes_the_same_budget()
     {
-        var time = Clock();
+        var time = new ControlledTimeProvider();
         var settings = new ResilienceSettings
         {
             TotalTimeoutSeconds = 30,
@@ -67,14 +68,26 @@ public class ResilienceBudgetTests
         settings.CircuitBreaker.MinimumThroughput = 1000;
         var step = 0;
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = new TaskCompletionSource<(int Phase, DateTimeOffset At, bool TokenCancelled)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var firstCancellation = new RetainedCancellationRegistration();
+        CancellationToken firstToken = default;
         var handler = new ScriptHandler(async (_, ct) =>
         {
             if (Interlocked.Increment(ref step) == 1)
             {
+                firstToken = ct;
+                firstCancellation.Register(ct, () => cancelled.TrySetResult(
+                    (1, time.GetUtcNow(), ct.IsCancellationRequested)));
                 entered.TrySetResult();
-                await Task.Delay(Timeout.Infinite, ct);
+                try { await Task.Delay(Timeout.Infinite, ct); }
+                catch (OperationCanceledException) { }
+                await releaseFirst.Task;
+                ct.ThrowIfCancellationRequested();
             }
-
+            secondEntered.TrySetResult();
             return ResilienceTestHost.Status(HttpStatusCode.ServiceUnavailable);
         });
         await using var provider = ResilienceTestHost.Build(handler, ResilienceClientNames.RunnerRead, settings, time, new FixedResilienceJitter(1));
@@ -84,25 +97,49 @@ public class ResilienceBudgetTests
         using var first = new HttpRequestMessage(HttpMethod.Get, "sessions/1");
         ResilienceTestHost.Stamp(first, ResilienceOperations.RunnerGet, budget);
         var firstSend = client.SendAsync(first);
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await Should.ThrowAsync<TaskCanceledException>(() =>
-            ResilienceTestHost.Pump(time, firstSend, TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(8)));
-        var afterAttempt = time.GetUtcNow() - started;
-        afterAttempt.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(10));
-        afterAttempt.ShouldBeLessThan(TimeSpan.FromSeconds(12));
-        handler.Sends.ShouldBe(1);
-        using var second = new HttpRequestMessage(HttpMethod.Get, "sessions/1");
-        ResilienceTestHost.Stamp(second, ResilienceOperations.RunnerGet, budget);
-        var secondSend = client.SendAsync(second);
-        var sawSecond = DateTime.UtcNow.AddSeconds(5);
-        while (handler.Sends < 2 && DateTime.UtcNow < sawSecond)
-            await Task.Delay(10);
-        handler.Sends.ShouldBeGreaterThan(1);
-        await Should.ThrowAsync<TaskCanceledException>(() =>
-            ResilienceTestHost.Pump(time, secondSend, TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(12)));
-        var elapsed = time.GetUtcNow() - started;
-        elapsed.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(30));
-        elapsed.ShouldBeLessThanOrEqualTo(TimeSpan.FromSeconds(32));
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var attemptTimer = time.Events
+                .Where(e => e.DueTime > TimeSpan.Zero && e.Deadline < started + TimeSpan.FromSeconds(30))
+                .OrderBy(e => e.Deadline).FirstOrDefault();
+            (attemptTimer?.Deadline == started + TimeSpan.FromSeconds(10))
+                .ShouldBeTrue("attempt-cancel-at-10");
+            time.AdvanceTo(started + TimeSpan.FromSeconds(10) - TimeSpan.FromTicks(1));
+            firstToken.IsCancellationRequested.ShouldBeFalse("attempt-cancel-at-10");
+            await ResilienceTestHost.AdvanceAfterAsync(time, attemptTimer!, cancelled.Task,
+                started + TimeSpan.FromSeconds(10), firstToken);
+            var firstCancel = await cancelled.Task;
+            firstCancel.Phase.ShouldBe(1, "attempt-cancel-at-10");
+            firstCancel.At.ShouldBe(started + TimeSpan.FromSeconds(10), "attempt-cancel-at-10");
+            firstCancel.TokenCancelled.ShouldBeTrue("attempt-cancel-at-10");
+            time.GetUtcNow().ShouldBe(started + TimeSpan.FromSeconds(10),
+                "held-completion-keeps-time-at-10");
+            handler.Sends.ShouldBe(1, "cancelled-attempt-is-terminal");
+            releaseFirst.TrySetResult();
+            await Should.ThrowAsync<TaskCanceledException>(() => firstSend.WaitAsync(TimeSpan.FromSeconds(5)));
+            handler.Sends.ShouldBe(1, "cancelled-attempt-is-terminal");
+
+            using var second = new HttpRequestMessage(HttpMethod.Get, "sessions/1");
+            ResilienceTestHost.Stamp(second, ResilienceOperations.RunnerGet, budget);
+            var beforeSecond = time.Events.Count;
+            var secondSend = client.SendAsync(second);
+            await secondEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var secondTotal = time.Events
+                .Where(e => e.Sequence > beforeSecond && e.DueTime > TimeSpan.Zero)
+                .OrderByDescending(e => e.Deadline).FirstOrDefault();
+            (secondTotal?.Deadline == started + TimeSpan.FromSeconds(30))
+                .ShouldBeTrue("second-request-original-total-deadline");
+            time.AdvanceTo(started + TimeSpan.FromSeconds(30) - TimeSpan.FromTicks(1));
+            secondSend.IsCompleted.ShouldBeFalse("second-request-original-total-deadline");
+            time.AdvanceTo(started + TimeSpan.FromSeconds(30));
+            await Should.ThrowAsync<TaskCanceledException>(() => secondSend.WaitAsync(TimeSpan.FromSeconds(5)));
+            (time.GetUtcNow() - started).ShouldBe(TimeSpan.FromSeconds(30));
+        }
+        finally
+        {
+            releaseFirst.TrySetResult();
+        }
     }
 
     [Test]
