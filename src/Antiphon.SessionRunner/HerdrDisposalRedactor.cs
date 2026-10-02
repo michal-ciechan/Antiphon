@@ -36,7 +36,13 @@ internal static class HerdrDisposalRedactor
     private static bool ContainsDrivePrefix(string value)
     {
         for (var i = 0; i < value.Length - 1; i++)
-            if (char.IsLetter(value[i]) && value[i + 1] == ':') return true;
+        {
+            var c = value[i];
+            if (((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
+                && value[i + 1] == ':'
+                && (i == 0 || char.IsWhiteSpace(value[i - 1]) || value[i - 1] is '"' or '\''))
+                return true;
+        }
         return false;
     }
 
