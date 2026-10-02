@@ -40,7 +40,7 @@ internal sealed class HostCleanupServerFixture(IsolatedTestSchema schema) : IAsy
     public async Task<Guid?> IngestAsync(HostCleanupReceiptDto receipt)
     {
         await using var db = Db();
-        return await new HostCleanupService(db, Events).IngestAsync(receipt, default);
+        return await new HostCleanupService(db, Events, Clock).IngestAsync(receipt, default);
     }
 
     public async Task<IReadOnlyList<AttentionItemDto>> AttentionAsync(Guid? boardId = null)
