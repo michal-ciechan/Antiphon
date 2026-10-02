@@ -1,0 +1,8 @@
+schema=2
+kind=cold
+cold=true
+source-sha=1f43624d1353ea59338a9c4294912cb83e47fc2e
+image=sha256:09fe5601ba1d88a8658e7d78d1818a16b15c1cf1d39cc859601fcdaedc364bc1
+packages=antiphon-runner-cache-nuget-packages
+scratch=antiphon-runner-cache-nuget-scratch
+npm=antiphon-runner-cache-npm-content

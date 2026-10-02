@@ -2562,7 +2562,7 @@ public sealed class RemoteScriptContractTests
             for context in deploy-temp verify retire; do
                 (c849_require_ready allow-cold) && echo "cross-sha-$context-accepted"
             done
-            for context in reset prune saved-donor redeploy-old; do
+            for context in reset prune saved-donor; do
                 refusal="$( (c849_require_ready) )"
                 [ "$refusal" = 'RESULT accepted=false diagnosis=CacheFullSeedRequired' ] && echo "cross-sha-$context-full-required"
             done
@@ -2581,7 +2581,7 @@ public sealed class RemoteScriptContractTests
         output.Contains("marker-reuse-no-probe-or-restore").ShouldBeTrue("marker-reuse-no-probe-or-restore");
         foreach (var context in new[] { "deploy-temp", "verify", "retire" })
             output.Contains($"cross-sha-{context}-accepted").ShouldBeTrue($"cross-sha-{context}-accepted");
-        foreach (var context in new[] { "reset", "prune", "saved-donor", "redeploy-old" })
+        foreach (var context in new[] { "reset", "prune", "saved-donor" })
             output.Contains($"cross-sha-{context}-full-required").ShouldBeTrue($"cross-sha-{context}-full-required");
         output.Contains("RESULT accepted=false diagnosis=CacheFullSeedRequired").ShouldBeTrue("full-context-refused");
         output.Contains("RESULT accepted=false diagnosis=CacheSeedMarkerInvalid").ShouldBeTrue("malformed-marker-refused");
@@ -2755,6 +2755,90 @@ public sealed class RemoteScriptContractTests
         seed.Contains("CacheDonorConsumerBusy").ShouldBeTrue("full-gate-refused-donor-process");
         var rolling = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "deploy-server2.ps1"));
         rolling.Contains("OldRunnerStillBusy").ShouldBeTrue("redeploy-old still checks zero");
+    }
+
+    [Test]
+    [Arguments("c849_seed")]
+    [Arguments("case_deploy_parent")]
+    [Arguments("case_deploy_temp_runner")]
+    [Arguments("case_retire_temp_runner")]
+    [Arguments("case_verify_runner_caches")]
+    [Arguments("case_verify_runner_caches_retired")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(string reader)
+    {
+        RequireLinuxJq();
+        var output = LinuxShell(C973ReaderHarness() + $"\nreader='{reader}'\n" + """
+            result="$(run_reader "$reader" 0 1 valid)"; code=$?
+            printf '%s\n' "$result"
+            [ "$code" = 0 ] && printf '%s' "$result" | grep -Fq '"accepted":true' && echo pruned-seed-image-accepted
+            for variant in missing malformed duplicate foreign-marker malformed-image malformed-source symlink foreign-volume unwritable; do
+                result="$(run_reader "$reader" 0 1 "$variant")"; code=$?
+                [ "$code" = 2 ] && printf '%s' "$result" | grep -Fq '"accepted":false' && echo "invalid-marker-refused-$variant"
+            done
+            """);
+        output.ShouldContain("pruned-seed-image-accepted", $"pruned-seed-image-accepted {reader}: {output}");
+        foreach (var variant in new[] { "missing", "malformed", "duplicate", "foreign-marker", "malformed-image",
+                     "malformed-source", "symlink", "foreign-volume", "unwritable" })
+            output.ShouldContain("invalid-marker-refused-" + variant, $"{reader} refuses {variant}");
+        if (reader == "case_verify_runner_caches_retired")
+            output.ShouldContain("rollback-image=sha256:" + new string('1', 64), "cold rollback receipt names an available helper, not pruned seed provenance");
+    }
+
+    [Test]
+    [Arguments("runner-cache-seed")]
+    [Arguments("runner-cache-inventory")]
+    [Arguments("runner-cache-fixture")]
+    [Arguments("runner-cache-prune-preview")]
+    [Arguments("runner-cache-reset")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune(string context)
+    {
+        RequireLinuxJq();
+        var output = LinuxShell(C973ReaderHarness() + $"\nreader='c849_image:{context}'\n" + """
+            result="$(run_reader "$reader" 0 0 valid)"; code=$?
+            printf '%s\n' "$result"
+            [ "$code" = 0 ] && printf '%s' "$result" | grep -Fq 'HELPER=sha256:1111111111111111111111111111111111111111111111111111111111111111' && echo available-main-helper
+            for variant in malformed-image foreign-main no-main no-image; do
+                result="$(run_reader "$reader" 0 0 "$variant")"; code=$?
+                [ "$code" = 2 ] && printf '%s' "$result" | grep -Fq 'DIAGNOSIS=CacheHelperImageMissing' && echo "helper-refused-$variant"
+            done
+            """);
+        output.ShouldContain("available-main-helper", $"available-main-helper {context}: {output}");
+        foreach (var variant in new[] { "malformed-image", "foreign-main", "no-main", "no-image" })
+            output.ShouldContain("helper-refused-" + variant, $"{context} refuses {variant}");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C973_Prune_and_saved_donor_still_require_full_after_seed_image_prune()
+    {
+        RequireLinuxJq();
+        var output = LinuxShell(C973ReaderHarness() + """
+            for reader in c849_seed full-required; do
+                result="$(run_reader "$reader" 0 1 saved)"; code=$?
+                [ "$code" = 2 ] && printf '%s' "$result" | grep -Fq 'DIAGNOSIS=CacheFullSeedRequired' && echo "full-context-refused-$reader"
+            done
+            result="$(run_reader full-required 0 1 full)"; code=$?
+            [ "$code" = 0 ] && echo full-marker-unchanged
+            """);
+        output.ShouldContain("full-context-refused-c849_seed");
+        output.ShouldContain("full-context-refused-full-required");
+        output.ShouldContain("full-marker-unchanged");
+    }
+
+    private static string C973ReaderHarness()
+    {
+        var fixtures = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "fixtures");
+        // Materialize source bytes under Linux too, so Windows/WSL path mapping cannot hide a guard.
+        return """
+            fixture_root="$(mktemp -d /tmp/c973-readers-XXXXXXXX)"
+            printf 'C973_READER_ROOT=%s\n' "$fixture_root"
+            trap '[[ "$fixture_root" == /tmp/c973-readers-???????? && -d "$fixture_root" ]] && rm -rf -- "$fixture_root"' EXIT
+            """ + "\ncat > \"$fixture_root/remote.sh\" <<'C973_REMOTE_BYTES'\n" + Remote() + "\nC973_REMOTE_BYTES\n" +
+            "cat > \"$fixture_root/reader.sh\" <<'C973_READER_BYTES'\n" + File.ReadAllText(Path.Combine(fixtures, "c973-marker-reader.sh")) + "\nC973_READER_BYTES\n" +
+            "cat > \"$fixture_root/marker\" <<'C973_MARKER_BYTES'\n" + File.ReadAllText(Path.Combine(fixtures, "c973-cold-seed-accepted.txt")) + "C973_MARKER_BYTES\n" +
+            "run_reader() { bash \"$fixture_root/reader.sh\" \"$fixture_root/remote.sh\" \"$1\" \"$fixture_root/marker\" \"$2\" \"$3\" \"$4\"; }\n";
     }
 
     private static string CacheSeedTreeHarness()
