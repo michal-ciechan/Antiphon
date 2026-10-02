@@ -1,14 +1,18 @@
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Migrations;
 using Antiphon.Tests.TestHelpers;
 using Antiphon.Tests.Agents;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -29,13 +33,17 @@ public class StandingSessionOwnershipTests
     public async Task Deleting_and_recreating_the_same_name_does_not_adopt_historical_ownership()
     {
         await using var f = new StandingRecoveryFixture(new FakeAgentProtocolAdapter());
+        // The adapter never spawns this executable, but Start validates it before ownership.
+        f.Harness.Provider.GetRequiredService<IOptionsMonitor<AgentRegistrySettings>>()
+            .CurrentValue.Definitions["fake"].Exe = Environment.ProcessPath!;
         await f.SeedAsync();
         await f.Harness.AgentService.DeleteAsync(f.Agent.Id, default);
         var replacement = await f.Harness.AgentService.CreateAsync(new CreateAgentRequest(f.Agent.Name, f.Root), default);
         replacement.Id.ShouldNotBe(f.Agent.Id);
         (await f.Harness.Control.GetSessionsAsync(replacement.Id, 25, null, default)).Items.ShouldBeEmpty();
-        (await Should.ThrowAsync<ConflictException>(() => f.Harness.Control.StartAsync(replacement.Id,
-            new StartAgentRequest(ResumeSessionId: f.A.Id), default))).Code.ShouldBe("standing_resume_not_owned");
+        var refusal = await Should.ThrowAsync<ConflictException>(() => f.Harness.Control.StartAsync(replacement.Id,
+            new StartAgentRequest(ResumeSessionId: f.A.Id), default));
+        refusal.Code.ShouldBe("standing_resume_not_owned", refusal.ToString());
         await using var verify = f.Db();
         (await verify.AgentSessions.FindAsync(f.A.Id))!.StandingAgentId.ShouldBe(f.Agent.Id);
         (await verify.AgentSessions.FindAsync(f.B.Id))!.StandingAgentId.ShouldBe(f.Agent.Id);
@@ -94,7 +102,13 @@ public class StandingSessionOwnershipTests
             HerdrConsecutiveFailures = 3, LastEscalationTier = 2, UpdatedAt = now });
         await db.SaveChangesAsync(); db.ChangeTracker.Clear();
         await migrator.MigrateAsync(migrations[target]);
-        var state = (await currentDb.AgentSupervisionStates.FindAsync(agent.Id))!;
+        // Only the continuity migration is applied; later entity columns do not exist yet.
+        var state = await currentDb.AgentSupervisionStates.Where(s => s.AgentId == agent.Id).Select(s => new
+        {
+            s.ConsecutiveFailures, s.RestartBackoffFailures, s.Suspended, s.LastEscalationTier,
+            s.HerdrConsecutiveFailures, s.ContinuityHeldAt, s.NextRestartAt, s.LivenessLatchedAt,
+            s.HerdrFailureHeldAt, s.CapacityRecoveryActionKey, s.CapacityNextDueAt
+        }).SingleAsync();
         state.ConsecutiveFailures.ShouldBe(0); state.RestartBackoffFailures.ShouldBe(oldCount);
         state.Suspended.ShouldBeTrue(); state.LastEscalationTier.ShouldBe(2);
         state.HerdrConsecutiveFailures.ShouldBe(3); state.ContinuityHeldAt.ShouldBeNull();
@@ -104,9 +118,9 @@ public class StandingSessionOwnershipTests
         state.CapacityRecoveryActionKey.ShouldBe("synthetic-wait");
         state.CapacityNextDueAt!.Value.ShouldBe(now.AddDays(2), TimeSpan.FromMilliseconds(1));
         foreach (var owned in new[] { old.Id, current.Id, taskOnly.Id })
-            (await currentDb.AgentSessions.FindAsync(owned))!.StandingAgentId.ShouldBe(agent.Id);
+            (await currentDb.AgentSessions.Where(s => s.Id == owned).Select(s => s.StandingAgentId).SingleAsync()).ShouldBe(agent.Id);
         foreach (var unknown in new[] { conflict.Id, unproven.Id, poolOnly.Id, unrelated.Id, noEvidence.Id, cardSession.Id, treeSession.Id })
-            (await currentDb.AgentSessions.FindAsync(unknown))!.StandingAgentId.ShouldBeNull();
+            (await currentDb.AgentSessions.Where(s => s.Id == unknown).Select(s => s.StandingAgentId).SingleAsync()).ShouldBeNull();
         currentDb.Database.HasPendingModelChanges().ShouldBeFalse();
         currentDb.Model.FindEntityType(typeof(AgentSession))!.GetForeignKeys()
             .Any(f => f.Properties.Any(p => p.Name == nameof(AgentSession.StandingAgentId))).ShouldBeFalse();
@@ -120,19 +134,33 @@ public class StandingSessionOwnershipTests
         (await currentDb.AgentSessions.AnyAsync(s => s.InteractiveLaunchCompletedAt != null || s.RestartFailureKind != null)).ShouldBeFalse();
     }
 
-    // Seed through the predecessor model while the added columns demonstrably do not exist.
+    // Keep the seeded entities at the frozen predecessor, including columns added after continuity.
     private sealed class PreContinuityDbContext(DbContextOptions<AppDbContext> options) : AppDbContext(options)
     {
         protected override void OnModelCreating(ModelBuilder builder)
         {
             base.OnModelCreating(builder);
-            var sessions = builder.Entity<AgentSession>();
-            foreach (var index in sessions.Metadata.GetIndexes().Where(i => i.Properties.Any(p => p.Name == "StandingAgentId")).ToArray())
-                sessions.Metadata.RemoveIndex(index);
-            foreach (var name in new[] { "StandingAgentId", "RestartFailureKind", "InteractiveLaunchCompletedAt" }) sessions.Ignore(name);
-            foreach (var name in new[] { "RestartBackoffFailures", "LastObservedRestartSessionId", "LastObservedRestartStartedAt",
-                "ContinuityHeldAt", "ContinuitySessionId", "ContinuityReason", "ContinuityEvidence", "ContinuityResumeFailures" })
-                builder.Entity<AgentSupervisionState>().Ignore(name);
+            var predecessor = new OrderSpecialistHealthRequests().TargetModel;
+            foreach (var type in new[] { typeof(Agent), typeof(AgentSession), typeof(AgentTask), typeof(AgentIncident),
+                typeof(AgentSupervisionState), typeof(Project), typeof(Board), typeof(BoardColumn), typeof(Card), typeof(Worktree) })
+            {
+                var entity = builder.Entity(type);
+                var legacy = predecessor.FindEntityType(type.FullName!)!;
+                foreach (var property in entity.Metadata.GetProperties().Where(p => legacy.FindProperty(p.Name) is null).ToArray())
+                {
+                    foreach (var foreignKey in property.GetContainingForeignKeys().ToArray())
+                    {
+                        if (foreignKey.DependentToPrincipal is { } dependent)
+                            builder.Entity(dependent.DeclaringEntityType.ClrType).Ignore(dependent.Name);
+                        if (foreignKey.PrincipalToDependent is { } principal)
+                            builder.Entity(principal.DeclaringEntityType.ClrType).Ignore(principal.Name);
+                        entity.Metadata.RemoveForeignKey(foreignKey);
+                    }
+                    foreach (var index in property.GetContainingIndexes().ToArray())
+                        entity.Metadata.RemoveIndex(index);
+                    entity.Ignore(property.Name);
+                }
+            }
         }
     }
 }
