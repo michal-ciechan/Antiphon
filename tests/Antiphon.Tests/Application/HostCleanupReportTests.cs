@@ -4,6 +4,8 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using System.Data.Common;
 using Shouldly;
 using TUnit.Core;
 using static Antiphon.Tests.Application.HostCleanupServerFixture;
@@ -13,6 +15,47 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public sealed class HostCleanupReportTests
 {
+    [Test]
+    public async Task Receipt_candidates_are_snapshotted_before_database_await()
+    {
+        await using var f = await HostCleanupServerFixture.CreateAsync();
+        var candidates = new List<HostCleanupReportedCandidate> { f.Candidate(path: "/virtual/original") };
+        var receipt = f.Receipt() with { Candidates = candidates };
+        var original = receipt with { Candidates = candidates.ToArray() };
+        var barrier = new ReceiptReadBarrier();
+        await using var db = f.Db(barrier);
+        var upload = new HostCleanupService(db, f.Events, f.Clock).IngestAsync(receipt, default);
+        try
+        {
+            await barrier.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            candidates[0] = candidates[0] with { CanonicalPath = "/virtual/changed-after-validation" };
+        }
+        finally { barrier.Release.TrySetResult(); }
+        await upload;
+        await using var verify = f.Db();
+        (await verify.HostCleanupCandidates.SingleAsync(c => c.RunId == receipt.RunId)).CanonicalPath
+            .ShouldBe("/virtual/original", "C826.immutable-receipt-across-await");
+        (await f.IngestAsync(original)).ShouldBe(receipt.RunId, "C826.digest-matches-persisted-snapshot");
+    }
+
+    private sealed class ReceiptReadBarrier : DbCommandInterceptor
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _entered;
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("HostCleanupRuns") && Interlocked.Exchange(ref _entered, 1) == 0)
+            {
+                Entered.TrySetResult();
+                await Release.Task.WaitAsync(cancellationToken);
+            }
+            return result;
+        }
+    }
+
     private static bool Backlog(IReadOnlyList<AttentionItemDto> items) =>
         items.Any(item => item.Kind == AttentionKind.WorktreeCleanupBacklog);
 
