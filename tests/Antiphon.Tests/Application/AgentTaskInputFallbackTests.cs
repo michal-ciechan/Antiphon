@@ -132,8 +132,8 @@ public sealed class AgentTaskInputFallbackTests
         var caller = new AgentTaskService.Caller(task, f.SessionId, f.RunnerRoot);
         (await reader.ReadAsync(f.TaskId, Guid.NewGuid(), caller, CancellationToken.None))
             .ShouldBeNull("wrong-event-404");
-        (await reader.ReadAsync(Guid.NewGuid(), input.Id, caller, CancellationToken.None))
-            .ShouldBeNull("wrong-task-404");
+        await Should.ThrowAsync<ForbiddenException>(() =>
+            reader.ReadAsync(Guid.NewGuid(), input.Id, caller, CancellationToken.None));
         task.AgentSessionId = Guid.NewGuid();
         await Should.ThrowAsync<ForbiddenException>(() =>
             reader.ReadAsync(f.TaskId, input.Id, caller, CancellationToken.None));

@@ -1,5 +1,16 @@
 # Session runtime invariants
 
+- **Task input spills follow the bound session (CARD-0888).** An oversized refinement or
+  blocked-task reply for a runner-bound session is staged as an immutable, queue-owned
+  `.antiphon/inbox/<message-id>.md` body and written by that runner before its pointer is
+  typed. A runner binding without RunnerCwd uses the exact authenticated input API pointer;
+  it does not write to the desktop task directory. The input event retains the full logical
+  body after queue spill bytes are released on complete UserPrompt evidence. Only the
+  runner's explicit `spill_write_failed_before_input` result on the initial write can
+  replace that queued row with the API pointer and a Warning in one transaction. Generic
+  transport errors retain uncertain delivery evidence. A matching assistant complaint
+  about an unreadable pointer projects Attention; silence is insufficient.
+
 - **Grok startup readiness is a current-screen input gate (CARD-0778).** At the
   captured 120x30 Grok Build 1.0.41 layout, the empty boxed composer, enabled
   hint and blank status row must settle for one second despite decorative

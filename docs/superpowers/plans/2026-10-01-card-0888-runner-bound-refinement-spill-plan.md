@@ -381,3 +381,14 @@ Estimates, not measurements: final ordinary floor **40 minutes** (10+10+8+2+10),
 Mutation is separately commissioned after Review/land under SourceLanding custody. The frozen inventory has **36 distinct variants: 34 TUnit and two client**, for **102 TUnit phase invocations and six Vitest phase invocations** (baseline/red/restored-green). At three minutes per isolated TUnit build/phase, one minute per client phase and fifteen minutes for custody/restoration, the Mutation floor is **327 minutes** (306+6+15), estimated, not measured. Ordinary final V/R plus Mutation is **367 minutes**; with S1 red rounds, **397 minutes**, before authoring/setup/slot waits. Splitting method-scoped commissioned Mutation slices is permitted; dropping independent guards is not. The original 192-minute estimate understated the distinct guards. No repeated whole-suite green runs are commissioned.
 
 TestDesign freezes the queue fallback call sites, strict endpoint authorization, additive migration/DTO privacy boundary, old-runner behavior, deterministic fixture seams, 32-new/34-existing TUnit census, 36 controls and five-row manifest. Code first refreshes prerequisite publication and the unpublished flaky-plan footprint, then starts from the integrated source after the CARD-0788 collision clears. No operator design decision is needed for these defaults; Windows execution and later activation remain separately scheduled work.
+
+### Code prerequisite refresh (2026-10-02)
+
+The assigned Code baseline is `ec7ba6e97cad30157f6892b93ee6fc19609fe25f`.
+CARD-0788 and CARD-0883 are integrated in that baseline, including
+`20261002061449_AddLandRequestWriterProvenance`; CARD-0888's CLI-generated
+`AddAgentTaskEventInputBody` migration follows it. The CARD-0742 flaky-plan
+footprint is also integrated. The historical in-flight descriptions above record
+TestDesign observations and do not describe the assigned Code source. The Code
+brief commissions direct `scripts/run-checkpoint.ps1` rows because the checkpoint
+tool refuses this owner-unverified run; it also commissions one final Unit lane.
