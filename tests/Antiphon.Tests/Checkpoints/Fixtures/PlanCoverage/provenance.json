@@ -1,0 +1,185 @@
+{
+  "blobs": [
+    {
+      "fixture": "c866-plan.md.txt",
+      "revision": "1400463a48fc355eba8be3c51236cc809c1c119f",
+      "path": "docs/superpowers/plans/2026-10-01-card-0866-disposal-preview-redaction-plan.md",
+      "lines": [
+        1,
+        359
+      ],
+      "bytes": [
+        0,
+        69779
+      ],
+      "sha256": "c4f1382cbe489a0cb67fd08806a30211ffd5d215b2a1a0681b70b3647354d5e9",
+      "wrapperOffset": 0
+    },
+    {
+      "fixture": "c866-tests.cs.txt",
+      "revision": "1400463a48fc355eba8be3c51236cc809c1c119f",
+      "path": "tests/Antiphon.SessionRunner.Tests/HerdrPaneDisposalRedactionTests.cs",
+      "lines": [
+        1,
+        423
+      ],
+      "bytes": [
+        0,
+        24121
+      ],
+      "sha256": "592110809696d50eb7d445303fb6cf09a4fef5d37ec008ea1b648823af85b8f0",
+      "wrapperOffset": 0
+    },
+    {
+      "fixture": "c866-fixed-tests.cs.txt",
+      "revision": "1485abaabf614b5d5e21d81314df31c879f39b0c",
+      "path": "tests/Antiphon.SessionRunner.Tests/HerdrPaneDisposalRedactionTests.cs",
+      "lines": [
+        1,
+        571
+      ],
+      "bytes": [
+        0,
+        35935
+      ],
+      "sha256": "f3f651547b707027da6c7f0149e8298a87efccb807a30a20f3939ca0a2e6822a",
+      "wrapperOffset": 0
+    },
+    {
+      "fixture": "c835-plan.md.txt",
+      "revision": "1d994aac952bed0a65506db0bb84742b7e9183e4",
+      "path": "docs/superpowers/plans/2026-09-30-card-0835-checkpoint-receipt-dirty-tree-plan.md",
+      "lines": [
+        1,
+        757
+      ],
+      "bytes": [
+        0,
+        71301
+      ],
+      "sha256": "eb888f2036444c4f1584b8a127d761b10fed4bf62530981a25bb41353d2c03fc",
+      "wrapperOffset": 0
+    },
+    {
+      "fixture": "c835-state.cs.txt",
+      "revision": "1d994aac952bed0a65506db0bb84742b7e9183e4",
+      "path": "tests/Antiphon.Tests/Checkpoints/CheckpointSourceStateTests.cs",
+      "lines": [
+        1,
+        352
+      ],
+      "bytes": [
+        0,
+        17760
+      ],
+      "sha256": "1a026b8521a362973e41a358292b8e19c3c5e7920264224decb17ba5ca7e3693",
+      "wrapperOffset": 0
+    },
+    {
+      "fixture": "c835-script.cs.txt",
+      "revision": "1d994aac952bed0a65506db0bb84742b7e9183e4",
+      "path": "tests/Antiphon.Tests/Scripts/RunCheckpointSourceScriptTests.cs",
+      "lines": [
+        1,
+        453
+      ],
+      "bytes": [
+        0,
+        27004
+      ],
+      "sha256": "cf8109841f2b705d3379be906a0671a6347f6b81ff0e1d03ee9c3225b202f112",
+      "wrapperOffset": 0
+    },
+    {
+      "fixture": "c835-approval.cs.txt",
+      "revision": "1d994aac952bed0a65506db0bb84742b7e9183e4",
+      "path": "tests/Antiphon.Tests/Application/CheckpointSourceApprovalTests.cs",
+      "lines": [
+        1,
+        475
+      ],
+      "bytes": [
+        0,
+        26442
+      ],
+      "sha256": "63d442f3f242944c24a82e40c4a5a93a978ad3c25cb8e2bc3ab0d2d2bae18dd7",
+      "wrapperOffset": 0
+    }
+  ],
+  "c866Projection": [
+    [
+      128,
+      128
+    ],
+    [
+      188,
+      206
+    ],
+    [
+      210,
+      210
+    ],
+    [
+      214,
+      218
+    ],
+    [
+      221,
+      222
+    ],
+    [
+      227,
+      231
+    ],
+    [
+      313,
+      322
+    ]
+  ],
+  "c835Projection": [
+    [
+      248,
+      248
+    ],
+    [
+      388,
+      394
+    ],
+    [
+      399,
+      399
+    ],
+    [
+      401,
+      402
+    ],
+    [
+      413,
+      415
+    ],
+    [
+      519,
+      529
+    ],
+    [
+      535,
+      535
+    ],
+    [
+      537,
+      538
+    ],
+    [
+      540,
+      541
+    ],
+    [
+      559,
+      561
+    ],
+    [
+      711,
+      731
+    ]
+  ]
+}
