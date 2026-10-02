@@ -272,6 +272,7 @@ public sealed class AgentTaskLandHalfResetTests
         await using var db = h.CreateContext();
         var newest = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == nextId);
         newest.SourceRefusalReason.ShouldBe("source_dirty", "H.StagedEditRefused");
+        await AssertOrdinaryStagedEditAsync(sameRequest);
     }
 
     [Test]
@@ -369,10 +370,12 @@ public sealed class AgentTaskLandHalfResetTests
     [Arguments("index")]
     [Arguments("tracked")]
     [Arguments("untracked")]
+    [Arguments("ignored")]
     [Arguments("local-pin")]
     [Arguments("source-pin")]
     public async Task C883_ContentChangesBeforeResetRefuse(string variant)
     {
+        if (variant == "ignored") { await AssertIgnoredContentChangeAsync(); return; }
         await using var fixture = new LandHalfResetFixture();
         var h = fixture.Harness;
         var (local, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
@@ -580,6 +583,17 @@ public sealed class AgentTaskLandHalfResetTests
             .ShouldBe((await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", local + "^{tree}")).Trim(), "H.WitnessRefusalPreservesIndex");
         (await File.ReadAllBytesAsync(Path.Combine(h.Fixture.Source, "feature.txt"))).ShouldBe(bytes, "H.WitnessRefusalPreservesBytes");
         AssertNoResetOrPublication(h);
+        if (variant == "ambiguous")
+        {
+            await using var repair = h.CreateContext();
+            var equivalent = await repair.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Fixture.TaskId && r.Id != oldId && r.Id != next.RequestId);
+            equivalent.RecoveryLocalBeforeSha = local;
+            await repair.SaveChangesAsync();
+            await h.Fixture.RequiredAsync(h.Fixture.Repository, "update-ref", $"refs/antiphon/land/{h.Fixture.TaskId:N}/{equivalent.Id:N}/adopt/local-before", local);
+            await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence, recoverReviewedSource: true);
+            await h.RunQueuedAsync();
+            new AgentTaskLandingState().HasPublication((await h.OperationAsync()).ShouldNotBeNull()).ShouldBeTrue("H.EquivalentDuplicateWitnessAccepted");
+        }
     }
 
     [Test]
@@ -742,7 +756,55 @@ public sealed class AgentTaskLandHalfResetTests
         var op = (await ordinary.OperationAsync()).ShouldNotBeNull();
         new AgentTaskLandingState().HasPublication(op).ShouldBeTrue("H.OrdinaryDirtyCheckoutPublishes");
         op.Cleanup.ShouldNotBe(LandCleanupStatus.Complete, "H.OrdinaryDirtyCheckoutRetained");
+        await ordinary.RequestCleanupRetryAsync(op.Id);
+        await ordinary.RunQueuedAsync();
+        probes.ShouldBe(0, "H.CleanupOnlySkipsRecoveryProof");
         (await File.ReadAllTextAsync(Path.Combine(ordinary.Fixture.Source, "feature.txt"))).ShouldBe("ordinary real edit\n");
+    }
+
+    private static async Task AssertIgnoredContentChangeAsync()
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (_, reviewed, evidence, _) = await InterruptedAsync(fixture, bulk: true);
+        var sentinel = Path.Combine(h.Fixture.Source, "added-00.txt");
+        var exclude = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "--git-path", "info/exclude")).Trim();
+        await File.AppendAllTextAsync(Path.GetFullPath(exclude, h.Fixture.Source), "\nadded-00.txt\n");
+        var cuts = 0;
+        var attributeProbes = 0;
+        h.Fixture.Git.AfterCommand = async (_, args, result) =>
+        {
+            if (args[0] == "check-attr") attributeProbes++;
+            if (args[0] != "cat-file" || !result.Succeeded || cuts != 0) return;
+            cuts++;
+            await File.WriteAllTextAsync(sentinel, "late ignored obstruction\n");
+        };
+        var next = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence, recoverReviewedSource: true);
+        await h.RunQueuedAsync();
+        cuts.ShouldBe(1, "H.IgnoredContentChangedAfterFirstListing");
+        attributeProbes.ShouldBe(2, "H.FinalProofResampledIgnoredContent");
+        await using var db = h.CreateContext();
+        (await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == next.RequestId)).SourceRefusalReason.ShouldBe("source_dirty", "H.LateIgnoredObstructionRefused");
+        (await File.ReadAllTextAsync(sentinel)).ShouldBe("late ignored obstruction\n");
+        AssertNoResetOrPublication(h);
+    }
+
+    private static async Task AssertOrdinaryStagedEditAsync(bool sameRequest)
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (_, reviewed, evidence, oldId) = await InterruptedAsync(fixture, sameRequest: sameRequest);
+        var feature = Path.Combine(h.Fixture.Source, "feature.txt");
+        await File.WriteAllTextAsync(feature, "ordinary staged edit\n");
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "add", "feature.txt");
+        var blob = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", ":feature.txt")).Trim();
+        var id = sameRequest ? oldId : (await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence, recoverReviewedSource: true)).RequestId;
+        await h.RunQueuedAsync();
+        await using var db = h.CreateContext();
+        (await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == id)).SourceRefusalReason.ShouldBe("source_dirty");
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", ":feature.txt")).Trim().ShouldBe(blob);
+        (await File.ReadAllTextAsync(feature)).ShouldBe("ordinary staged edit\n");
+        AssertNoResetOrPublication(h);
     }
 
     private static void AssertNoResetOrPublication(LandingSafetyHarness h)
