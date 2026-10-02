@@ -9,12 +9,13 @@ namespace Antiphon.Tests.TestHelpers;
 
 internal sealed class LandHalfResetFixture : IAsyncDisposable
 {
-    public LandingSafetyHarness Harness { get; } = new();
+    public LandingSafetyHarness Harness { get; }
     public SaveCut Interceptor { get; } = new();
     public RefMovedBoundary Boundary { get; }
 
-    public LandHalfResetFixture()
+    public LandHalfResetFixture(string? root = null)
     {
+        Harness = new LandingSafetyHarness(root);
         Boundary = new RefMovedBoundary(Interceptor, Harness);
         Harness.Boundary = Boundary;
         Harness.LandCutInterceptor = Interceptor;

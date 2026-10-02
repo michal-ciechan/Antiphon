@@ -600,7 +600,12 @@ public class LandingGit : ILandingGit
                 // The index mode is the authoritative checkout mode on Windows and in
                 // repositories that opt out of executable-bit tracking.
                 var expected = blob;
-                if (!binary && !blob.Contains((byte)0) && (eol == "crlf" || eol is null && autoCrlf))
+                var autoText = attrs.Text == "auto" || attrs.Text is null && autoCrlf;
+                var expand = eol == "crlf" || eol is null && autoCrlf;
+                // Git's auto conversion retains a blob that already contains CR bytes.
+                // Expanding only its LF bytes would invent a checkout Git did not make.
+                if (!binary && !blob.Contains((byte)0) && expand
+                    && !(autoText && blob.Contains((byte)'\r')))
                     expected = ExpandLf(blob);
                 var actual = await File.ReadAllBytesAsync(full, ct);
                 if (!actual.AsSpan().SequenceEqual(expected))

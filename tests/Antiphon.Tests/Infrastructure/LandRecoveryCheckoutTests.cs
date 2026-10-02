@@ -10,6 +10,38 @@ namespace Antiphon.Tests.Infrastructure;
 public sealed class LandRecoveryCheckoutTests
 {
     [Test]
+    [Arguments("auto")]
+    [Arguments("explicit")]
+    public async Task C883_CrLfCheckoutUsesBuiltInConversionAndPreservesRawEdits(string attributes)
+    {
+        await using var f = new LandingGitFixture();
+        await f.InitializeAsync();
+        await File.WriteAllTextAsync(Path.Combine(f.Source, ".gitattributes"),
+            attributes == "auto" ? "* text=auto\n" : "* text=auto\nfeature.txt text eol=crlf\n");
+        var feature = Path.Combine(f.Source, "feature.txt");
+        await File.WriteAllTextAsync(feature, "first\nsecond\n");
+        await f.RequiredAsync(f.Source, "add", ".");
+        await f.RequiredAsync(f.Source, "commit", "-m", "old text tip");
+        var local = (await f.RequiredAsync(f.Source, "rev-parse", "HEAD")).Trim();
+        await f.RequiredAsync(f.Source, "config", "core.autocrlf", "true");
+        await File.WriteAllTextAsync(feature, "first\r\nsecond\r\n");
+        var reviewedTree = Path.Combine(f.Root, "trees", "reviewed");
+        await f.RequiredAsync(f.Repository, "worktree", "add", "--detach", reviewedTree, local);
+        await File.WriteAllTextAsync(Path.Combine(reviewedTree, "feature.txt"), "reviewed\n");
+        await f.RequiredAsync(reviewedTree, "add", ".");
+        await f.RequiredAsync(reviewedTree, "commit", "-m", "reviewed text tip");
+        var reviewed = (await f.RequiredAsync(reviewedTree, "rev-parse", "HEAD")).Trim();
+        await f.RequiredAsync(f.Repository, "update-ref", "--no-deref", f.SourceRef, reviewed, local);
+        var clean = await f.Git.InspectRecoveryCheckoutAsync(f.Coordinates, local, reviewed, CancellationToken.None);
+        clean.Accepted.ShouldBeTrue($"G.{attributes}.CrLfCheckoutAccepted");
+        await File.WriteAllTextAsync(feature, "first\r\nsecond\n");
+        var edited = await f.Git.InspectRecoveryCheckoutAsync(f.Coordinates, local, reviewed, CancellationToken.None);
+        edited.Accepted.ShouldBeFalse($"G.{attributes}.RawMixedEolEditRefused");
+        (await File.ReadAllTextAsync(feature)).ShouldBe("first\r\nsecond\n",
+            $"G.{attributes}.RawMixedEolEditPreserved");
+    }
+
+    [Test]
     public async Task C883_EqualIndexAndWorktreeAccepted()
     {
         await using var f = new LandingGitFixture();
