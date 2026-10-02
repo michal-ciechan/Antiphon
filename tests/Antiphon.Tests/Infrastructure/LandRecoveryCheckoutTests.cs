@@ -92,7 +92,6 @@ public sealed class LandRecoveryCheckoutTests
 
     [Test]
     [Arguments(false)]
-    [Arguments(true)]
     public async Task C883_UntrackedAndIgnoredRefused(bool ignored)
     {
         await using var f = new LandingGitFixture();
@@ -108,6 +107,39 @@ public sealed class LandRecoveryCheckoutTests
         proof.Accepted.ShouldBeFalse(ignored ? "G.IgnoredRefused" : "G.UntrackedRefused");
         (await File.ReadAllTextAsync(file)).ShouldBe("owned sentinel\n",
             ignored ? "G.IgnoredBytesPreserved" : "G.UntrackedBytesPreserved");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C954_IgnoredReviewedPathObstructsReset(bool directory)
+    {
+        await using var f = new LandingGitFixture();
+        await f.InitializeAsync();
+        await File.WriteAllTextAsync(Path.Combine(f.Source, "feature.txt"), "old\n");
+        await f.RequiredAsync(f.Source, "add", ".");
+        await f.RequiredAsync(f.Source, "commit", "-m", "old tip");
+        var local = (await f.RequiredAsync(f.Source, "rev-parse", "HEAD")).Trim();
+        var reviewedTree = Path.Combine(f.Root, "trees", "reviewed");
+        await f.RequiredAsync(f.Repository, "worktree", "add", "--detach", reviewedTree, local);
+        var tracked = directory ? Path.Combine("obstruction", "tracked.txt") : "obstruction";
+        var reviewedPath = Path.Combine(reviewedTree, tracked);
+        Directory.CreateDirectory(Path.GetDirectoryName(reviewedPath)!);
+        await File.WriteAllTextAsync(reviewedPath, "reviewed\n");
+        await f.RequiredAsync(reviewedTree, "add", ".");
+        await f.RequiredAsync(reviewedTree, "commit", "-m", "reviewed tip");
+        var reviewed = (await f.RequiredAsync(reviewedTree, "rev-parse", "HEAD")).Trim();
+        await f.RequiredAsync(f.Repository, "update-ref", "--no-deref", f.SourceRef, reviewed, local);
+        var excluded = (await f.RequiredAsync(f.Source, "rev-parse", "--git-path", "info/exclude")).Trim();
+        await File.AppendAllTextAsync(Path.GetFullPath(excluded, f.Source), "\nobstruction\n");
+        var obstructingPath = directory ? Path.Combine(f.Source, "obstruction", "tracked.txt")
+            : Path.Combine(f.Source, "obstruction");
+        Directory.CreateDirectory(Path.GetDirectoryName(obstructingPath)!);
+        await File.WriteAllTextAsync(obstructingPath, "owner bytes\n");
+        var proof = await f.Git.InspectRecoveryCheckoutAsync(f.Coordinates, local, reviewed, CancellationToken.None);
+        proof.Accepted.ShouldBeFalse(directory ? "G.IgnoredDirectoryRefused" : "G.IgnoredTrackedPathRefused");
+        proof.Reason.ShouldBe("source_dirty", "G.IgnoredObstructionIsSourceDirty");
+        (await File.ReadAllTextAsync(obstructingPath)).ShouldBe("owner bytes\n", "G.IgnoredObstructionBytesPreserved");
     }
 
     [Test]

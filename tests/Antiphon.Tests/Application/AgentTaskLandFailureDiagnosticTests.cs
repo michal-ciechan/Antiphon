@@ -19,6 +19,46 @@ public sealed class AgentTaskLandFailureDiagnosticTests
     private const string Marker = "synthetic-secret-marker://user:pw@host/?q=1\n\u001b[31m" + "xxxxx";
 
     [Test]
+    public async Task C955_RedactedFramesKeepDiagnosticAndExcludeExceptionContent()
+    {
+        const string windowsPath = "C:\\private\\source.cs";
+        const string linuxPath = "/private/source.cs";
+        const string secret = "secret_token_12345";
+        const string sql = "@password=secret_sql_parameter";
+        var entries = new List<RecordingLogEntry>();
+        await using var h = new LandingProtocolHarness();
+        h.Logger = new RecordingLogger<AgentTaskLandService>(entries);
+        h.AddHostedLandService();
+        await h.InitializeAsync();
+        await h.RequestAsync(expectedSourceSha: h.Git.SourceHead);
+        Exception failure;
+        try { ThrowSensitiveLandFailure(); throw new InvalidOperationException("unreachable"); }
+        catch (InvalidOperationException ex) { failure = ex; }
+        await h.FailAsync(failure);
+        await using var db = h.CreateContext();
+        var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Git.TaskId);
+        var log = entries.Single(e => e.State.ContainsKey("DiagnosticId"));
+        log.State["DiagnosticId"].ShouldBe(request.FailureDiagnosticId, "D.FramesShareDiagnosticId");
+        var frames = log.State["Frames"]?.ToString();
+        frames.ShouldNotBeNullOrWhiteSpace("D.FramesEmitted");
+        frames.ShouldContain(nameof(ThrowSensitiveLandFailure), customMessage: "D.FrameHasMethodName");
+        foreach (var value in new[] { windowsPath, linuxPath, secret, sql })
+            foreach (var entry in entries)
+            {
+                entry.Message.ShouldNotContain(value, "D.MessageRedacted");
+                foreach (var field in entry.State.Values)
+                    field?.ToString()?.ShouldNotContain(value, "D.StateRedacted");
+            }
+
+        static void ThrowSensitiveLandFailure()
+        {
+            try { throw new IOException("inner C:\\private\\source.cs /private/source.cs secret_token_12345 @password=secret_sql_parameter"); }
+            catch (IOException inner)
+            { throw new InvalidOperationException("outer C:\\private\\source.cs /private/source.cs secret_token_12345 @password=secret_sql_parameter", inner); }
+        }
+    }
+
+    [Test]
     [Arguments("before-operation", "io")]
     [Arguments("before-operation", "timeout")]
     [Arguments("before-operation", "unauthorized")]
