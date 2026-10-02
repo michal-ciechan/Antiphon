@@ -52,6 +52,10 @@ Assign Atlas (or any agent) to that profile. Leave model empty to omit `--model`
 
 ## Local Grok Build TUI profile
 
+The Linux runner image pins Grok 1.0.41 (CARD-0986), matching the startup
+classifier's captured 120x30 dashboard. Other versions or terminal geometries
+require separate qualification.
+
 Grok is a first-class runner kind (`AgentKind.Grok`), not only an OpenCode model id. Create **Grok** as wrapper-managed:
 
 | Field | Value |
