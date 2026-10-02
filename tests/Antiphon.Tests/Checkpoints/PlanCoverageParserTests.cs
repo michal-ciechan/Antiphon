@@ -10,8 +10,8 @@ public sealed class PlanCoverageParserTests : CheckpointTestBase
     {
         var plan = PlanCoverageFixture.Plan("| V-1 | `Demo.Check()` | label `first-label`; check canary `secret` absent |");
         var report = new PlanCoverageReader().Read("plan.md", plan);
-        report.Obligations.Select(o => $"{o.Kind}:{o.Name}:{o.PlanLine}").ShouldBe(["method:Demo.Check:5", "label:first-label:5", "canary:secret:5"], "coverage-parser-items");
-        new PlanCoverageReader().Read("plan.md", plan.Replace("\n", "\r\n")).Obligations.ShouldBe(report.Obligations, "coverage-parser-crlf");
+        report.Obligations.Select(o => $"{o.Kind}:{o.Name}:{o.PlanLine}:{o.PlanColumn}").ShouldBe(["method:Demo.Check:5:10", "label:first-label:5:33", "canary:secret:5:61"], "coverage-parser-items");
+        new PlanCoverageReader().Read("plan.md", plan.Replace("\n", "\r\n")).Obligations.Select(o => (o.Kind, o.Name, o.PlanLine, o.PlanColumn)).ShouldBe(report.Obligations.Select(o => (o.Kind, o.Name, o.PlanLine, o.PlanColumn)), "coverage-parser-crlf");
         new PlanCoverageReader().Read("plan.md", PlanCoverageFixture.Plan("| V-1 | `Demo.Check` | label `broken |" )).Invalid.ShouldBeTrue("coverage-parser-unclosed");
     }
     [Test]
