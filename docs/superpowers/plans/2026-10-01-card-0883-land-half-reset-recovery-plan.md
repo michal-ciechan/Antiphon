@@ -407,10 +407,36 @@ The **closed list** follows. S1-red is deliberately minimal and precedes repair/
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1-red | `tests/Antiphon.Tests -> bin-c883-red/` | historical-save-red | `/*/*/AgentTaskLandAdoptionConcurrencyTests*/C883_Save409FaultThenFreshRequestCompletes*` | V-2 baseline | Linux or Windows: 1 executed, 0 passed, exactly 1 fresh-publication assertion failed, 0 skipped; exit 1 intentional | 1 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-2 | S1-S4 | `tests/Antiphon.Tests -> bin-c883-recovery/` | recovery-and-ordering | `/*/*/(AgentTaskLandHalfResetTests*)\|(AgentTaskLandAdoptionConcurrencyTests*)\|(AgentTaskLandAdoptionTests*)/*` | V-1,V-2,R-1 | Linux 75 / Windows 75 = 47+7+21; all listed, 0 failed/skipped | 75 | 18 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-3 | S1-S4 | `tests/Antiphon.Tests -> bin-c883-git/` | checkout-proof | `/*/*/(LandRecoveryCheckoutTests*)\|(LandingGitTests*)/*` | V-3,R-5 | Linux 85 / Windows 85 = 30+55; all listed, 0 failed/skipped | 85 | 12 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-4 | S1-S4 | `tests/Antiphon.Tests -> bin-c883-diagnostics/` | writer-and-persistence | `/*/*/(LandRequestWriteDiagnosticTests*)\|(AgentTaskLandSourcePersistenceTests*)\|(AgentTaskLandFailureDiagnosticTests*)\|(AgentTaskLandMonitoringTests*)/*` | V-4,R-2,R-3,R-4 | Linux 108 / Windows 108 = 23+35+25+25; all listed, 0 failed/skipped | 108 | 18 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-2 | S1-S4 | `tests/Antiphon.Tests -> bin-c883-recovery/` | recovery-and-ordering | `/*/*/(AgentTaskLandHalfResetTests*)\|(AgentTaskLandAdoptionConcurrencyTests*)\|(AgentTaskLandAdoptionTests*)/*` | V-1,V-2,R-1 | Linux 83 = 55+7+21; Windows source census 83 (not executed); all listed, 0 failed/skipped | 83 | 18 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-3 | S1-S4 | CP-2 (-NoBuild) | checkout-proof | `/*/*/(LandRecoveryCheckoutTests*)\|(LandingGitTests*)/*` | V-3,R-5 | Linux 89 = 34+55; Windows source census 89 (not executed); ancestry probe PENDING; all listed, 0 failed/skipped | 89 | 12 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-4 | S1-S4 | CP-2 (-NoBuild) | writer-and-persistence | `/*/*/(LandRequestWriteDiagnosticTests*)\|(AgentTaskLandSourcePersistenceTests*)\|(AgentTaskLandFailureDiagnosticTests*)\|(AgentTaskLandMonitoringTests*)/*` | V-4,R-2,R-3,R-4 | Linux 102 = 16+35+26+25; Windows source census 102 (not executed); merge/delivery PENDING; all listed, 0 failed/skipped | 102 | 18 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-5 | S1-S4 | `tests/Antiphon.Tests -> bin-c883-windows/` | windows-checkout | `/*/*/AgentTaskLandHalfResetWindowsTests*/*` | V-5 | Windows 4, all listed, 0 failed/skipped; Linux not commissioned | 4 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+
+### CARD-0939 census and scoped execution (2026-10-02)
+
+The frozen V roster above remains the requirement trace. This test-only follow-up runs CP-2,
+CP-3 and CP-4 at one committed SHA, with one isolated build at CP-2 and that same output
+reused for later rows; the explicitly commissioned whole Unit lane runs once after them.
+CP-1's historical pre-fix red and CP-5's native Windows row are not commissioned here.
+All 81 SourceLanding PCs remain pending for the separate Mutation task.
+
+Measured start SHA `4453dab63e5005414b2ded095b674f7b0ef1919e`: CP-2 **53/53**
+(HalfReset 27, AdoptionConcurrency 5, Adoption 21), CP-3 **72/72** (Checkout 17,
+LandingGit 55). Both used one build, granted slots, strict clean source receipts, no skips.
+Source census after the CARD-0939 test slices: HalfReset 55, AdoptionConcurrency 7,
+Adoption 21, Checkout 34, LandingGit 55, Diagnostics 16, SourcePersistence 35,
+FailureDiagnostic 26, Monitoring 25. Runtime counts will be reconciled with fresh TRX.
+
+PENDING: V-3 ProbeErrorsRefuse(ancestry), because the production checkout inspector
+has no ancestry probe (the fresh-request resolver owns it); V-4 writer merge and all
+six DiagnosticReachesCaller arguments, because they require reply/BridgeQueueHarness/
+notifier fixtures owned by CARD-0888 outside this commission. The direct deleted-row
+argument records unknown provenance without a terminal row, as the row is actually gone.
+CARD-0954 supersedes the frozen blanket ignored-residue refusal: the new ignored cases
+obstruct reviewed paths, while the existing C954 tests retain harmless residue acceptance.
+
+The full method/argument trace, scratch sensitivity evidence, checkpoint lines and
+remaining limitations are delivered in `.antiphon/task-a5cebf5d.md` by this task.
 
 ## Execution, activation and rollback
 
