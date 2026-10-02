@@ -1,3 +1,4 @@
+using System.CodeDom.Compiler;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
@@ -63,6 +64,9 @@ public sealed class ConPtyEnvironmentIsolationGuardTests
             // Generated bodies are reached through call/delegate/state-machine edges below.
             // Scheduling always belongs to the outer user method, never a lambda or MoveNext.
             if (type.IsDefined(typeof(CompilerGeneratedAttribute), inherit: false)) continue;
+            // TUnit's generated launchers invoke tests under the original test's metadata;
+            // their __Invoke/.cctor methods are not separate scheduling owners.
+            if (type.GetCustomAttribute<GeneratedCodeAttribute>()?.Tool == "TUnit") continue;
             foreach (var method in type.GetMethods(flags).Cast<MethodBase>().Concat(type.GetConstructors(flags)))
             {
                 if (MutatesConPtyDirectory(method, opCodes)) mutators.Add(method);
