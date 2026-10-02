@@ -101,8 +101,9 @@ public class AgentTaskWorktreeBaseResolverTests
             || c.Contains(" status --porcelain", StringComparison.Ordinal)
             || c.Contains(" rev-parse --git-path", StringComparison.Ordinal)).ToArray();
         safety.Length.ShouldBe(5);
-        safety.ShouldContain(c => c.StartsWith(bCheckout + " status ", StringComparison.Ordinal));
-        safety.ShouldNotContain(c => c.StartsWith(aCheckout + " status ", StringComparison.Ordinal));
+        var normalizedSafety = safety.Select(c => c.Replace('\\', '/')).ToArray();
+        normalizedSafety.ShouldContain(c => c.StartsWith(bCheckout.Replace('\\', '/') + " status ", StringComparison.Ordinal));
+        normalizedSafety.ShouldNotContain(c => c.StartsWith(aCheckout.Replace('\\', '/') + " status ", StringComparison.Ordinal));
     }
 
     [Test]
