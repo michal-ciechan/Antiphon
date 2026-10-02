@@ -207,5 +207,7 @@ Antiphon.Tests.Checkpoints.CheckpointSourceExecutionTests
 Antiphon.Tests.Application.CheckpointSourceApprovalTests
 # CARD-0788: real reply settlement with isolated database and scratch Git repository.
 Antiphon.Tests.Application.ReviewEvidenceConsistencyTests
+# CARD-0788: real completion outbox, busy caller, and recovery-cut delivery matrix.
 Antiphon.Tests.Application.CompletionWarningDeliveryTests
+# CARD-0788: real land refusal outbox, busy caller, and recovery-cut delivery matrix.
 Antiphon.Tests.Application.LandEvidenceWarningDeliveryTests
