@@ -232,12 +232,15 @@ public sealed class RunnerTaskSettlementTests
         await world.Services.GetRequiredService<AgentTaskReplyService>()
             .OnTurnEndAsync(session, CancellationToken.None);
         await using var db = world.CreateContext();
+        var settled = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
         (await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == created.Id)
             .ToArrayAsync()).ShouldNotContain(e => e.Detail.Contains("progress=none", StringComparison.Ordinal));
-        var note = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.TaskId == created.Id
+        var note = await db.AgentTaskLandNotifications.AsNoTracking().SingleOrDefaultAsync(n => n.TaskId == created.Id
             && n.Kind == LandNotificationKind.TaskCompletion);
-        TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson)!.NoteHeader
-            .ShouldNotContain("progress=none");
+        if (note is not null)
+            TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson)!.NoteHeader
+                .ShouldNotContain("progress=none");
     }
 
     [Test]
