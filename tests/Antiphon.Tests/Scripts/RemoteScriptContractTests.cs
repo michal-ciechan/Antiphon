@@ -250,6 +250,7 @@ public sealed class RemoteScriptContractTests
         var cacheColdFacts = Block(text, "c849_cold_volume_facts");
         var cacheColdProof = Block(text, "c849_cold_proof");
         var cacheColdProbe = Block(text, "c849_cold_probe");
+        var cacheReady = Block(text, "c849_require_ready");
         cacheColdSeed.ShouldContain("require_lane host");
         var cacheObserve = Block(text, "c849_observe_volume");
         var cachePreview = Block(text, "c849_preview");
@@ -271,6 +272,7 @@ public sealed class RemoteScriptContractTests
                 || cacheColdFacts.Contains(line, StringComparison.Ordinal)
                 || cacheColdProof.Contains(line, StringComparison.Ordinal)
                 || cacheColdProbe.Contains(line, StringComparison.Ordinal)
+                || cacheReady.Contains(line, StringComparison.Ordinal)
                 || cacheObserve.Contains(line, StringComparison.Ordinal)
                 || cachePreview.Contains(line, StringComparison.Ordinal)
                 || cachePruneTree.Contains(line, StringComparison.Ordinal)
