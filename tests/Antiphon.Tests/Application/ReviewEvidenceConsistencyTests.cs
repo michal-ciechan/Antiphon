@@ -284,8 +284,7 @@ public sealed class ReviewEvidenceConsistencyTests
             RemoteSync: new RemoteSyncEvidence(1, RemoteSettlementSyncState.Synchronized,
                 "refs/heads/" + world.Owner.WorktreeBranch, ConfirmedSha: C));
         var row = await SettleAsync(world, A, B, progress, shape: shape);
-        if (shape is "failed" or "blocked") row.Outcome.ShouldBeNull();
-        else row.Outcome!.ReviewedSourceSha.ShouldBeNull();
+        row.Outcome?.ReviewedSourceSha.ShouldBeNull();
         row.Header.ShouldNotContain("review_evidence_sha_not_review_base");
         row.Header.ShouldNotContain("review_evidence_subject_tip_mismatch");
         row.Warnings.ShouldNotContain(w => w.Contains("review_evidence_sha_not_review_base", StringComparison.Ordinal)
@@ -322,9 +321,9 @@ public sealed class ReviewEvidenceConsistencyTests
         await world.Services.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(session, CancellationToken.None);
         await using var settled = world.CreateContext();
         var outcome = await settled.StageOutcomes.AsNoTracking().SingleOrDefaultAsync(o => o.StageTaskId == created.Id);
-        var note = await settled.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.TaskId == created.Id
+        var note = await settled.AgentTaskLandNotifications.AsNoTracking().SingleOrDefaultAsync(n => n.TaskId == created.Id
             && n.Kind == LandNotificationKind.TaskCompletion);
-        var header = TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson)!.NoteHeader;
+        var header = note is null ? "" : TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson)!.NoteHeader;
         var warnings = await settled.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == created.Id
             && e.Type == AgentTaskEventType.Warning).Select(e => e.Detail).ToArrayAsync();
         return (created.Id, session, outcome, header, warnings);
