@@ -173,7 +173,7 @@ public sealed class TaskInputReadFailureTests
     private static async Task<IReadOnlyList<AttentionItemDto>> ReadItemsAsync(TaskInputSpillFixture f)
     {
         await using var db = f.Db();
-        var service = new AttentionService(db, new EmptyRunnerClient(),
+        var service = new AttentionService(db, new BridgeQueueHarness.EmptyRunnerClient(),
             Options.Create(new SupervisionSettings()), Options.Create(new DelegationSettings()),
             TimeProvider.System, NullLogger<AttentionService>.Instance);
         return (await service.GetAsync(CancellationToken.None, includeProgressProbe: false)).Items;
