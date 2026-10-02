@@ -1,5 +1,59 @@
 # Self-contained Docker stack (CARD-0590)
 
+## Staged server2 rolling rollout (CARD-0934)
+
+Run from the reviewed, landed **canonical desktop checkout**, with `<sha>` its full lowercase
+`HEAD`. Use one `scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase <name>` call per gate;
+never use the default `-Phase all`. The phase list in that script is the authority. Keep the
+standing `server2` container accepting until `server2-temp` has passed its canary. Do not drain
+both runners or drain the only accepting runner. A refusal means stop, record its exact code and
+receipt under `.antiphon/rolling-server2/`, and report it; do not force a phase or improvise a
+Docker replacement. The only timed stop exception is step 5 below.
+
+Before starting, verify no land is pending, the checkout has no half-reset worktree, and the
+running server's `/health` and `GET /api/version` SHA match the canonical source-root `HEAD`
+(see [the autonomy policy](orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout)).
+Run `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Fixture -Sha <sha>` and
+`-Case Inventory -Sha <sha>` and retain their receipts. For empty cache volumes use
+`pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -Cold -Sha <sha>`;
+otherwise use the [documented Seed source](#legacy-full-seed-and-maintenance). Stop if Seed or
+the inventory refuses; `Reset` is not an automatic recovery.
+
+For status checks below, run `pwsh -NoProfile -File scripts/runner-drain.ps1 status -RunnerId
+server2` (or `server2-temp`). A healthy deployment needs `buildVersion=<sha>`,
+`dispatchEligible=true`, and `acceptingNewWork=true`; a drained runner needs fresh non-null zero
+`sessions`, `runnerSessions`, and `queuedTasks`. A 404, null counter, stale observation or wrong
+SHA is a stop-and-report condition. Read `GET /api/runner-defaults` to record the configured
+global and per-kind preferences; these phases do not change that setting or a routing pin.
+
+| Gate | Exact phase / verification command | Stop and rollback |
+|---|---|---|
+| 1. Deploy beside old | Before and after, `ssh mc@server2 'docker inspect -f "{{.Id}} {{.State.StartedAt}}" antiphon-runner-session-runner-1'`; the ID and start time must be identical. Run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase deploy-temp`. Check both runner statuses. | If temp fails or old changes, stop; leave old accepting and temp for diagnosis. Never touch the standing container to fix temp. |
+| 2. Smoke temp | Run the command block below for `server2-temp`, then dispatch a sanctioned `Plan` canary pinned with `-Runner server2-temp`; inspect its task until it starts, runs, and reports. | A version/tool/canary failure blocks handoff. Keep old accepting; do not run `drain-old`. |
+| 3. Mark temp primary | There is **no independent promotion phase today**. Verify `server2-temp` is accepting and the canary succeeded; record the runner-defaults read. The next phase, `drain-old`, atomically writes `server2.draining=true` and `redirectTo=server2-temp`; `DefaultRunnerRoutingPolicy` then redirects automatic placement from a `server2` default to temp. It does not PUT `/api/runner-defaults`. | If the redirect cannot be made with a healthy accepting temp, stop with old accepting. CARD-0935 tracks a separate promotion gate. Explicit pins and already running sessions need separate inspection; do not assume they moved. |
+| 4. Drain old | Run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase drain-old -WaitIdleMinutes 240`; check `server2` status shows `draining=true`, `redirectTo=server2-temp`, and temp still accepts new work. A new unpinned canary should resolve to temp. | If the phase refuses before drain, keep old accepting. If it refuses after drain, stop and report the code. To roll back while old is healthy, `pwsh -NoProfile -File scripts/runner-drain.ps1 clear -RunnerId server2 -Reason 'rolling rollback'`, then verify it accepts; only then consider draining temp. |
+| 5. Wait up to four hours | `drain-old -WaitIdleMinutes 240` performs this wait. Check `pwsh -NoProfile -File scripts/runner-slots.ps1 list -RunnerId server2` and old status at the deadline. Proceed to `redeploy-old` only when all three counters are zero. | `OldRunnerStillBusy` at 240 minutes is a reportable cap, not permission to redeploy a busy runner. The operator explicitly authorizes stopping the remaining **server2** sessions at this cap: prefer a resumable owner/session stop; for each exact remaining seat, use `pwsh -NoProfile -File scripts/runner-slots.ps1 release -RunnerId server2 -SessionId <guid> -Reason 'CARD-0934 four-hour drain cap'`. Record the IDs and effects, recheck all counters, and rerun `drain-old`; if anything remains or a stop refuses, stop and report. Do not kill sessions on other runners. |
+| 6. Upgrade old | Run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase redeploy-old` only after step 5's zero gate. The phase runs `deploy-parent`, verifies mounts/cache and `buildVersion`, then clears old's drain. | If it refuses, keep temp accepting and old drained; use the retained rollback image and the [rollback procedure](#shared-server2-runner-caches-card-0849) only through a reviewed recovery. Do not clear an unverified old runner. |
+| 7. Smoke upgraded old | Run the command block below for `server2`, a sanctioned `Plan` canary pinned with `-Runner server2`, and `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Both -Sha <sha>`. | `redeploy-old` already clears old's drain after its own host checks, before this separate canary. If this gate fails, immediately drain old toward accepting temp with `pwsh -NoProfile -File scripts/runner-drain.ps1 drain -RunnerId server2 -RedirectTo server2-temp -Reason 'post-upgrade smoke failed'`; stop and report. CARD-0935 tracks a separate canary-before-promotion gate. |
+| 8. Return scheduling and drain temp | Once old passes step 7 and accepts work, run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase drain-temp -WaitIdleMinutes 240`. This sets temp `redirectTo=server2` and `retireWhenIdle=true`; automatic placement uses old again. Verify old accepting and temp drained/retired. | If the phase refuses, leave old accepting and temp in its observed state; report the code. If a rollback is needed before temp retires, clear temp's drain only after verifying old remains accepting; do not start two drains. |
+| 9. Retire temp | `retire-temp` is a separate one-way phase. Do not invoke it without fresh human confirmation; keep the temp container and evidence for rollback. | A retirement refusal or cleanup request goes to the human. |
+
+For either smoke gate, run the following from the desktop, replacing `<runner>` with `server2-temp`
+or `server2` and using the matching Compose project name (`antiphon-runner-temp` or
+`antiphon-runner`). The status command proves the registered full SHA; the Docker commands prove
+Codex, PowerShell, and .NET actually execute inside that runner:
+
+```powershell
+pwsh -NoProfile -File scripts/runner-drain.ps1 status -RunnerId <runner>
+ssh mc@server2 'c=$(docker ps -q --filter label=com.docker.compose.project=<project> --filter label=com.docker.compose.service=session-runner); test -n "$c" && docker exec "$c" codex --version && docker exec "$c" pwsh --version && docker exec "$c" dotnet --version'
+```
+
+Use `scripts/delegate.ps1 -Role Plan -Worktree -Runner <runner> -Card <sanctioned-canary-card>
+-Goal <bounded-canary-goal>` for the canary, then `scripts/delegate.ps1 -Status <task-id>` to
+confirm it started, ran, and produced a report on the intended runner. If a canary cannot be
+sanctioned, stop before the next handoff. `runner-defaults` may still name `server2` throughout;
+the drain redirect, rather than a settings write, is the current scheduling switch.
+
 ## Shared server2 runner caches (CARD-0849)
 
 The `session-testing` image now carries the .NET 9.0.20 `Microsoft.NETCore.App.Ref`,
@@ -212,8 +266,8 @@ tags before the rollout. Drain before replacing either container and verify the 
 SHA, mounts, private `/tmp` mode and apphost before clearing its drain. Keep shared
 packages and shared scratch together when a prior image can use them. If the mount design
 is suspect, drain every consumer and use a private package/scratch pair seeded from the
-saved recovery copy. Retain external caches for diagnosis; never force-stop a live task
-to meet a rollout estimate.
+saved recovery copy. Retain external caches for diagnosis. The explicit four-hour cap in the
+staged rollout above is the only authorization here to stop exact remaining server2 sessions.
 
 **No application service ever mounts a Docker socket.** Superseded 2026-09-22 by CARD-0604: the sibling-socket lane is retired, and with it `docker-compose.session-testing.yml` and `DOCKER_SOCKET_GID`. The netns split it caused (a mapped port lands in the HOST's namespace while the test process reads its own `localhost`) is why Testcontainers never worked on that shape.
 

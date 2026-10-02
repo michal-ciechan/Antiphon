@@ -18,9 +18,9 @@ An orchestrator MAY restart or upgrade the AppHost, restart session runners, and
 server2 rollouts without asking a human. This includes pulling the canonical checkout with
 `git pull --rebase`, running `scripts/restart-apphost.ps1`, restarting the desktop runner even
 while detached PtyHosts are active (they are re-adopted), the cold first Seed, and the
-`deploy-server2.ps1 -Rolling` phases `deploy-temp`, `drain-old`, and `redeploy-old`. Restart the
+`deploy-server2.ps1 -Rolling` phases `deploy-temp`, `drain-old`, `redeploy-old`, and `drain-temp`. Restart the
 standing server2 runner only through those rolling phases. Follow the
-[AppHost restart](apphost-runbook.md) and [server2 rollout](docker-stack.md) runbooks.
+[AppHost restart](apphost-runbook.md) and [staged server2 rollout](docker-stack.md#staged-server2-rolling-rollout-card-0934) runbooks.
 
 Before and after the operation, verify that queued lands have finished, no worktree is half-reset,
 the canonical source-root `HEAD` matches `GET /api/version` SHA, and `/health` succeeds. Wait for
@@ -33,7 +33,9 @@ Still requires a human: destructive or irreversible steps (`Reset`, `Prune`, `re
 any other one-way step), deleting data or donor tars; killing other sessions or alwaysOn agents;
 changing budgets, routing pins, or settings; spend beyond a sanctioned canary; handling secrets;
 touching the user's untracked files; or touching the standing server2 runner container outside
-the rolling phases. Pause for explicit human authorization before any such step.
+the rolling phases. Pause for explicit human authorization before any such step, except the
+operator's CARD-0934 authorization to stop remaining server2 sessions after the staged rollout's
+four-hour drain cap, under [that procedure](docker-stack.md#staged-server2-rolling-rollout-card-0934).
 
 ---
 

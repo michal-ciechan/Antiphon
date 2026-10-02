@@ -102,7 +102,7 @@ public sealed class StandingPipelinePolicyDocumentationTests
             "git pull --rebase", "queued lands have finished", "no worktree is half-reset",
             "GET /api/version", "/health", "child journal", "-AllowWorktree",
             "never pull while a land runs", "user's untracked files",
-            "cold first Seed", "deploy-server2.ps1 -Rolling", "deploy-temp", "drain-old", "redeploy-old",
+            "cold first Seed", "deploy-server2.ps1 -Rolling", "deploy-temp", "drain-old", "redeploy-old", "drain-temp",
             "Still requires a human", "Reset", "Prune", "retire-temp",
             "donor tars", "other sessions or alwaysOn agents", "budgets, routing pins, or settings",
             "spend beyond a sanctioned canary", "secrets", "standing server2 runner container outside",
@@ -125,6 +125,7 @@ public sealed class StandingPipelinePolicyDocumentationTests
             ".claude/skills/antiphon-orchestrator/SKILL.md",
             "docs/apphost-runbook.md", "docs/bootstrap.md",
         })
-            ReadRepoFile(path).ShouldContain(anchor, path);
+            ReadRepoFile(path).ShouldContain(anchor);
+        ReadRepoFile("AGENTS.md").ShouldContain("docs/docker-stack.md#staged-server2-rolling-rollout-card-0934");
     }
 }
