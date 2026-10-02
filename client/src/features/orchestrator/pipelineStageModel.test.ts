@@ -351,11 +351,11 @@ describe('rightCell against a pinned now', () => {
 
 describe('compactAlias', () => {
   it('strips only the gpt-5.6- prefix', () => {
-    // CARD-0611: High is gpt-6-sol now, so it renders whole exactly as Frontier's gpt-6-astra
+    // CARD-0903: High and Medium are gpt-6.1-sol, rendered whole like Frontier's gpt-6-astra
     // does — both are inside the ~14-character cell budget the stripping exists to protect.
-    expect(compactAlias('High', 'Codex')).toBe('gpt-6-sol')
+    expect(compactAlias('High', 'Codex')).toBe('gpt-6.1-sol')
     expect(compactAlias('Frontier', 'Codex')).toBe('gpt-6-astra')
-    expect(compactAlias('Medium', 'Codex')).toBe('terra')
+    expect(compactAlias('Medium', 'Codex')).toBe('gpt-6.1-sol')
     expect(compactAlias('Low', 'Codex')).toBe('luna')
     expect(compactAlias('Frontier', 'Grok')).toBe('grok-4.7')
     expect(compactAlias('Frontier', 'ClaudeCode')).toBe('fable')

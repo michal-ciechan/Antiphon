@@ -45,6 +45,26 @@ public class ModelAvailabilityTests
     }
 
     [Test]
+    public async Task Historical_codex_sol_hold_keeps_its_exact_model_meaning()
+    {
+        var id = Guid.NewGuid();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        try
+        {
+            await ReplaceHoldAsync(db, Hold(id, ModelAlias.Gpt6Sol, DateTime.UtcNow.AddHours(1)));
+            var availability = Service(db);
+            (await availability.IsHeldAsync(AgentKind.Codex, ModelAlias.Gpt6Sol, CancellationToken.None)).ShouldBeTrue();
+            (await availability.IsHeldAsync(AgentKind.Codex, ModelAlias.Gpt61Sol, CancellationToken.None)).ShouldBeFalse();
+            (await availability.ListAvailableAsync(CancellationToken.None)).ShouldContain(ModelAlias.Gpt61Sol);
+        }
+        finally
+        {
+            await db.ModelAvailabilityHolds.Where(h => h.Id == id).ExecuteDeleteAsync();
+        }
+    }
+
+    [Test]
     public async Task Kind_wide_star_holds_every_alias_of_that_kind()
     {
         var id = Guid.NewGuid();
@@ -259,7 +279,7 @@ public class ModelAvailabilityTests
             available.ShouldContain("haiku");
             available.ShouldContain("grok-4.7");
             available.ShouldContain("gpt-6-astra");
-            available.ShouldContain("gpt-6-sol");
+            available.ShouldContain("gpt-6.1-sol");
             available.ShouldNotContain("gpt-5.6-sol");
         }
         finally

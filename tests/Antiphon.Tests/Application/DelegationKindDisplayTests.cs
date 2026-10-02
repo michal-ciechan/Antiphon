@@ -57,14 +57,12 @@ public class ModelLevelAliasDisplayTests
 
     [Test]
     [Arguments(AgentModelLevel.Frontier, "gpt-6-astra")]
-    [Arguments(AgentModelLevel.High, "gpt-6-sol")]
-    [Arguments(AgentModelLevel.Medium, "gpt-5.6-terra")]
+    [Arguments(AgentModelLevel.High, "gpt-6.1-sol")]
+    [Arguments(AgentModelLevel.Medium, "gpt-6.1-sol")]
     [Arguments(AgentModelLevel.Low, "gpt-5.6-luna")]
     public void the_codex_ladder_answers_for_the_codex_kind(AgentModelLevel level, string expected)
     {
-        // CARD-0099 S3 / CARD-0396. Astra > Sol > Terra > Luna is the CAPABILITY order (catalog
-        // priority 1/6/7/8). Dispatch follows that order: Frontier=Astra, High=Sol, Medium=Terra,
-        // Low=Luna. All four rungs are distinct models.
+        // CARD-0903: High and Medium share Sol 6.1; effort keeps their tiers distinct.
         ModelLevelAliases.For(AgentKind.Codex, level).ShouldBe(expected);
         ModelLevelAliases.For(AgentKind.Codex, level).ShouldBe(ModelLevelAliases.ForCodex(level));
     }
@@ -74,9 +72,9 @@ public class ModelLevelAliasDisplayTests
     {
         // routing-pin.ps1 -Candidates sends Kind/Level tokens; the server alias is ModelLevelAliases.For.
         RoutingPinService.FormatHead(new RoutingCandidate(AgentKind.Codex, AgentModelLevel.High))
-            .ShouldBe("Codex/High (gpt-6-sol)");
+            .ShouldBe("Codex/High (gpt-6.1-sol)");
         RoutingPinService.FormatHead(new RoutingCandidate(AgentKind.Codex, AgentModelLevel.Medium))
-            .ShouldBe("Codex/Medium (gpt-5.6-terra)");
+            .ShouldBe("Codex/Medium (gpt-6.1-sol)");
         RoutingPinService.FormatHead(new RoutingCandidate(AgentKind.Codex, AgentModelLevel.Frontier))
             .ShouldBe("Codex/Frontier (gpt-6-astra)");
         RoutingPinService.FormatHead(new RoutingCandidate(AgentKind.Codex, AgentModelLevel.Low))
@@ -140,7 +138,7 @@ public class ModelLevelAliasDisplayTests
 
         var handoff = DelegationReportFormatter.BuildHandoff(task).ShouldNotBeNull();
 
-        handoff.ShouldContain("at gpt-5.6-terra, escalated to gpt-6-sol");
+        handoff.ShouldContain("at gpt-6.1-sol, escalated to gpt-6.1-sol");
         handoff.ShouldNotContain("sonnet");
         handoff.ShouldNotContain("opus");
     }

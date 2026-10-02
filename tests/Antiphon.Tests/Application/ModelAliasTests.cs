@@ -122,7 +122,6 @@ public class ModelAliasTests
     [Arguments("HAIKU", "haiku")]
     [Arguments("grok-4.7", "grok-4.7")]
     [Arguments("gpt-6-astra", "gpt-6-astra")]
-    [Arguments("gpt-6-sol", "gpt-6-sol")]
     [Arguments("gpt-6.1-sol", "gpt-6.1-sol")]
     [Arguments("*", "*")]
     public void CanonicalHoldAlias_accepts_known_aliases_and_star(string raw, string expected)
@@ -136,6 +135,8 @@ public class ModelAliasTests
     [Arguments("astra")]
     [Arguments("grok-4.6")]
     [Arguments("gpt-5.6-sol")]
+    [Arguments("gpt-6-sol")]
+    [Arguments("gpt-5.6-terra")]
     [Arguments("bogus")]
     [Arguments("")]
     [Arguments(null)]
@@ -145,26 +146,31 @@ public class ModelAliasTests
     }
 
     /// <summary>
-    /// CARD-0611: the Codex High rung moved from <c>gpt-5.6-sol</c> to <c>gpt-6-sol</c>, so the
-    /// bare TUI word "Sol" has to land on the model a High dispatch actually launches — the same
-    /// move CARD-0169's bump made for bare "grok". <c>gpt-5.6-sol</c> is still a live catalog
-    /// model (priority 4) and still normalizes, so an existing hold row keeps its meaning; it is
-    /// only gone from the delegatable ladder, which is what makes it un-holdable above.
+    /// CARD-0903: the bare Sol word keeps its historical gpt-6-sol meaning for hold text;
+    /// the 6.1 model has an explicit versioned arm. Retired rung ids still normalize, but
+    /// only current rung ids appear in the delegatable hold vocabulary.
     /// </summary>
     [Test]
-    public void The_bare_sol_word_follows_the_codex_high_rung()
+    public void Bare_sol_and_retired_slugs_keep_their_historical_aliases()
     {
         ModelAlias.Normalize(AgentKind.Codex, "Sol").ShouldBe(ModelAlias.Gpt6Sol);
         ModelAlias.Normalize(AgentKind.Codex, "GPT-6-Sol").ShouldBe(ModelAlias.Gpt6Sol);
         ModelAlias.Normalize(AgentKind.Codex, "gpt 6 sol").ShouldBe(ModelAlias.Gpt6Sol);
 
-        // The retired 5.6 slug keeps its own identity rather than folding into the new pin.
+        ModelAlias.Normalize(AgentKind.Codex, "gpt-6.1-sol").ShouldBe(ModelAlias.Gpt61Sol);
+        ModelAlias.Normalize(AgentKind.Codex, "GPT-6.1-Sol").ShouldBe(ModelAlias.Gpt61Sol);
+
+        // Retired rung slugs keep their own identities rather than folding into the new pin.
         ModelAlias.Normalize(AgentKind.Codex, "gpt-5.6-sol").ShouldBe(ModelAlias.Gpt56Sol);
         ModelAlias.Normalize(AgentKind.Codex, "GPT-5.6-Sol").ShouldBe(ModelAlias.Gpt56Sol);
+        ModelAlias.Normalize(AgentKind.Codex, "gpt-5.6-terra").ShouldBe(ModelAlias.Gpt56Terra);
 
         // And the ladder the hold vocabulary is derived from names the new pin, not the old one.
         ModelLevelAliases.ForCodex(AgentModelLevel.High).ShouldBe("gpt-6.1-sol");
         ModelLevelAliases.ForCodex(AgentModelLevel.Medium).ShouldBe("gpt-6.1-sol");
+        ModelLevelAliases.ForCodex((AgentModelLevel)999).ShouldBe("gpt-6.1-sol");
+        ModelLevelAliases.ForCodex(AgentModelLevel.Frontier).ShouldBe(ModelAlias.Gpt6Astra);
+        ModelLevelAliases.ForCodex(AgentModelLevel.Low).ShouldBe(ModelAlias.Gpt56Luna);
         ModelAlias.DelegatableAliases
             .Where(entry => entry.Kind == AgentKind.Codex)
             .Select(entry => entry.Alias)
