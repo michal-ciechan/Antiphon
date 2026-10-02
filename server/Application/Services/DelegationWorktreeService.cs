@@ -571,7 +571,14 @@ public sealed class DelegationWorktreeService
     /// Land the task's work on its merge target. Commit-all → rebase onto the target → fast-forward
     /// the target — and remove the worktree only when the target actually moved.
     /// </summary>
-    public async Task<MergeOutcome> TryMergeBackAsync(AgentTask task, CancellationToken ct)
+    public Task<MergeOutcome> TryMergeBackAsync(AgentTask task, CancellationToken ct) =>
+        TryMergeBackCoreAsync(task, cleanupOnly: false, ct);
+
+    /// <summary>Remove an unchanged task worktree without publishing unattributed work.</summary>
+    public Task<MergeOutcome> TryCleanupNoChangeAsync(AgentTask task, CancellationToken ct) =>
+        TryMergeBackCoreAsync(task, cleanupOnly: true, ct);
+
+    private async Task<MergeOutcome> TryMergeBackCoreAsync(AgentTask task, bool cleanupOnly, CancellationToken ct)
     {
         if (task.Role == Domain.Enums.AgentTaskRole.Mutation || task.SourceLandingOperationId is not null)
             return new MergeOutcome(MergeResult.LeftForHuman, [], "Verification snapshot retained; no autosave or publication.");
@@ -681,6 +688,10 @@ public sealed class DelegationWorktreeService
             return new MergeOutcome(MergeResult.NothingToMerge, [], WithReceipt(cleanup.IsClean
                 ? "No changes beyond target; cleanup complete." : $"No changes beyond target; cleanup retained: {cleanup.Residue}"));
         }
+
+        if (cleanupOnly)
+            return new MergeOutcome(MergeResult.LeftForHuman, [], WithReceipt(
+                $"Branch {branch} kept — progress assessment permits no-change cleanup only."));
 
         // Rebase, never merge commits (repo convention). A conflict aborts cleanly: the worktree is
         // left exactly as the delegate finished it, which is what the Merge task needs to see.
