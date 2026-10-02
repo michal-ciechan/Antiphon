@@ -91,7 +91,7 @@ packs come from Microsoft's SDK 9.0.318 Linux x64 archive, pinned to the SHA-512
 the [official .NET 9 release record](https://builds.dotnet.microsoft.com/dotnet/release-metadata/9.0/releases.json)
 and checked before extraction. Only those three packs are copied into the final image;
 the .NET 9 SDK is not installed alongside SDK 10. `scripts/verify-card0660-codex-image.ps1`
-checks the eight Codex rows plus a `grok-version` row requiring Grok 1.0.41 stable
+checks the eight Codex rows plus a `grok-version` row requiring Grok 1.0.41 (the channel tag is optional)
 and, for `session-testing`, a tenth `net9-offline` row:
 uid 1654 restores, builds, and runs a `net9.0` native apphost with `--network none`,
 an empty NuGet package directory, and an empty NuGet home. This covers framework
@@ -100,6 +100,12 @@ online restore or the best-effort shared cache. The Seed cache-only assertions b
 still describe the existing CARD-0849 scripts; CARD-0912 owns their cold-first-Seed
 update. Deploy the rebuilt image to server2-temp first within the CARD-0849 rolling
 window, with a cold cache.
+
+The Grok row requires `grok 1.0.41 (<12 lowercase hex>)`, optionally followed by
+` [stable]`, with no other tokens, exit 0, and empty stderr. The image install
+removes the installer's home, so its binary prints no channel tag. CARD-0986 Review
+observed `grok 1.0.41 (4220f3b224a6)`; that hash records the observed build and is
+not a pin. Qualification follows the 1.0.41 dashboard at 120x30.
 
 `docker-compose.server2-runner.yml` declares three external local Docker volumes shared by
 the `antiphon-runner` and `antiphon-runner-temp` Compose projects:
