@@ -28,6 +28,8 @@ permitted to register tasks; do not improvise a tool-session launch.
 
 For the usual case, where AppHost may already be running:
 
+Orchestrators may perform this restart without human confirmation under [the operational autonomy policy](orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout).
+
 ```powershell
 pwsh -NoProfile -File scripts/restart-apphost.ps1
 pwsh -NoProfile -File scripts/restart-apphost.ps1 -ExpectedServerSha <full-intended-head>

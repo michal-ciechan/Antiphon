@@ -451,6 +451,15 @@ public class InstructionBundleTests
     }
 
     [Test]
+    public void orchestrator_bundle_points_to_operational_autonomy_without_growing()
+    {
+        var bundle = File.ReadAllText(Path.Combine(
+            DelegateScriptRunner.RepoRoot, "server", "Bundles", "orchestrator.md"));
+        bundle.ShouldContain("Follow docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout for autonomous AppHost and runner restarts and server2 rollouts.");
+        bundle.Length.ShouldBeLessThanOrEqualTo(14_147, "CARD-0934 must leave bundle size headroom");
+    }
+
+    [Test]
     public void delegate_basics_carries_the_standing_rules_and_none_of_the_days_state()
     {
         var text = InstructionBundles.TextOf(InstructionBundles.DelegateBasics);

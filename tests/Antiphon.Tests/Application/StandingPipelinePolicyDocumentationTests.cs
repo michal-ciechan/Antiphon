@@ -85,4 +85,46 @@ public sealed class StandingPipelinePolicyDocumentationTests
     {
         Collapse(ReadRepoFile("AGENTS.md")).ShouldContain("§1 (CARD-0533)", Case.Insensitive);
     }
+
+    [Test]
+    public void operational_autonomy_owner_pins_authority_checks_and_human_only_steps()
+    {
+        const string policySentence = "An orchestrator MAY restart or upgrade the AppHost, restart session runners, and run docker-based server2 rollouts without asking a human.";
+        var document = ReadRepoFile("docs", "orchestration-loop.md");
+        var start = document.IndexOf("## Orchestrator operational autonomy (restart, rollout)", StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0);
+        var end = document.IndexOf("\n---", start, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(start);
+        var loop = Collapse(document[start..end]);
+        loop.ShouldContain(policySentence);
+        foreach (var phrase in new[]
+        {
+            "git pull --rebase", "queued lands have finished", "no worktree is half-reset",
+            "GET /api/version", "/health", "child journal", "-AllowWorktree",
+            "never pull while a land runs", "user's untracked files",
+            "cold first Seed", "deploy-server2.ps1 -Rolling", "deploy-temp", "drain-old", "redeploy-old",
+            "Still requires a human", "Reset", "Prune", "retire-temp",
+            "donor tars", "other sessions or alwaysOn agents", "budgets, routing pins, or settings",
+            "spend beyond a sanctioned canary", "secrets", "standing server2 runner container outside",
+        })
+            loop.ShouldContain(phrase, Case.Insensitive);
+
+        // Remove the authorization sentence in a scratch copy: the same pin must go red.
+        var scratch = loop.Replace(policySentence, "", StringComparison.Ordinal);
+        Should.Throw<ShouldAssertException>(() => scratch.ShouldContain(policySentence));
+        loop.ShouldContain(policySentence); // The original copy was never changed.
+    }
+
+    [Test]
+    public void operational_autonomy_pointers_reach_the_owner()
+    {
+        const string anchor = "orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout";
+        foreach (var path in new[]
+        {
+            "AGENTS.md", "server/Bundles/orchestrator.md",
+            ".claude/skills/antiphon-orchestrator/SKILL.md",
+            "docs/apphost-runbook.md", "docs/bootstrap.md",
+        })
+            ReadRepoFile(path).ShouldContain(anchor, path);
+    }
 }

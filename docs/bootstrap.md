@@ -5,6 +5,7 @@ The self-contained server2 stack (CARD-0590) is documented in [docker-stack.md](
 Server2's shared runner download caches, stopped-donor seed and drain-gated rollout are
 in [docker-stack.md](docker-stack.md#shared-server2-runner-caches-card-0849). A container
 recreated before the external caches are seeded loses the packages in its writable layer.
+Orchestrator rollout authority and human-only steps are in [the operational autonomy policy](orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout).
 For an interrupted unmarked Seed, use the guarded Reset command in that section after
 draining both runners and detaching all cache consumers.
 

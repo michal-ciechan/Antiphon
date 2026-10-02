@@ -12,6 +12,29 @@ An **external** orchestrator (ChatGPT / Codex outside an Antiphon TUI) uses a na
 Capability, not `Delegation:AllowedRoots` and not Codex remote control. The operator procedure and
 the `delegate.ps1 -Capability` UX live in [ops-http.md](ops-http.md).
 
+## Orchestrator operational autonomy (restart, rollout)
+
+An orchestrator MAY restart or upgrade the AppHost, restart session runners, and run docker-based
+server2 rollouts without asking a human. This includes pulling the canonical checkout with
+`git pull --rebase`, running `scripts/restart-apphost.ps1`, restarting the desktop runner even
+while detached PtyHosts are active (they are re-adopted), the cold first Seed, and the
+`deploy-server2.ps1 -Rolling` phases `deploy-temp`, `drain-old`, and `redeploy-old`. Restart the
+standing server2 runner only through those rolling phases. Follow the
+[AppHost restart](apphost-runbook.md) and [server2 rollout](docker-stack.md) runbooks.
+
+Before and after the operation, verify that queued lands have finished, no worktree is half-reset,
+the canonical source-root `HEAD` matches `GET /api/version` SHA, and `/health` succeeds. Wait for
+any land in progress before pulling; never pull while a land runs. After a restart, inspect the
+registered child journal. Never use `-AllowWorktree` or touch the user's untracked files in the
+canonical checkout. If an intended upgrade makes the before-version differ from the new `HEAD`,
+record the old matching SHA before pulling and require the new matching SHA after restarting.
+
+Still requires a human: destructive or irreversible steps (`Reset`, `Prune`, `retire-temp`, or
+any other one-way step), deleting data or donor tars; killing other sessions or alwaysOn agents;
+changing budgets, routing pins, or settings; spend beyond a sanctioned canary; handling secrets;
+touching the user's untracked files; or touching the standing server2 runner container outside
+the rolling phases. Pause for explicit human authorization before any such step.
+
 ---
 
 ## 0. What the orchestrator may read, and what it must send out
