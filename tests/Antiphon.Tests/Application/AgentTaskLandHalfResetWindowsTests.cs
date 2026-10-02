@@ -67,8 +67,9 @@ public sealed class AgentTaskLandHalfResetWindowsTests
         var (local, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
         await h.Fixture.RequiredAsync(h.Fixture.Source, "config", "core.autocrlf", "true");
         var file = Path.Combine(h.Fixture.Source, "feature.txt");
-        var lf = (await File.ReadAllTextAsync(file)).Replace("\r\n", "\n", StringComparison.Ordinal);
-        await File.WriteAllTextAsync(file, lf.Replace("\n", "\r\n", StringComparison.Ordinal));
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "reset", "--hard", local);
+        (await File.ReadAllTextAsync(file)).Contains("\r\n", StringComparison.Ordinal)
+            .ShouldBeTrue("W.NativeFixtureCheckedOutCrLf");
         (await h.Fixture.Git.RunAsync(h.Fixture.Source,
             ["diff", "--quiet", local, "--"], CancellationToken.None)).ExitCode
             .ShouldBe(0, "W.CrLfIsGitCleanAtOldTip");
@@ -86,11 +87,11 @@ public sealed class AgentTaskLandHalfResetWindowsTests
 
         await using var editedFixture = new LandHalfResetFixture();
         var e = editedFixture.Harness;
-        var (_, editedReviewed, editedEvidence) = await editedFixture.SeedReviewedDescendantAsync();
+        var (editedLocal, editedReviewed, editedEvidence) = await editedFixture.SeedReviewedDescendantAsync();
         await e.Fixture.RequiredAsync(e.Fixture.Source, "config", "core.autocrlf", "true");
         var editedFile = Path.Combine(e.Fixture.Source, "feature.txt");
+        await e.Fixture.RequiredAsync(e.Fixture.Source, "reset", "--hard", editedLocal);
         var before = (await File.ReadAllTextAsync(editedFile)).Replace("\r\n", "\n", StringComparison.Ordinal);
-        await File.WriteAllTextAsync(editedFile, before.Replace("\n", "\r\n", StringComparison.Ordinal));
         var interrupted = await e.RequestAsync(expectedSourceSha: editedReviewed,
             reviewEvidenceId: editedEvidence, recoverReviewedSource: true);
         editedFixture.Interceptor.RequestId = interrupted.RequestId;
