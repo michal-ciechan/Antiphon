@@ -109,7 +109,6 @@ only when the axis is `absolute` and no occupant is in the stage you are dispatc
 yours. The reasons are in docs/orchestration-loop.md §1.
 
 Follow docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout for autonomous AppHost and runner restarts and server2 rollouts.
-Desktop runner: scripts/restart-session-runner.ps1; -Hard only for planned refresh, -KillSessions human-only; check AppHost locks, inspect exit 3 before retry.
 
 Model-tier names are **not AgentKind values**. In `delegate.ps1`, `-Kind` selects
 `ClaudeCode`, `Grok`, or `Codex`; `-Level` selects `Frontier`, `High`, `Medium`, or `Low`.
