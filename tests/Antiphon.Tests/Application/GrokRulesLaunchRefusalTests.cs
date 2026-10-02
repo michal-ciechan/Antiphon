@@ -132,7 +132,7 @@ public sealed class GrokRulesLaunchRefusalTests
             ex.Message.ShouldContain(agent.Name);
             ex.Message.ShouldContain("--rules");
             ex.Message.ShouldContain(GrokRulesArgvPolicy.ReasonLineBreak);
-            ex.Message.ShouldNotContain(sentinel, "windows-private-diagnostic");
+            ex.Message.ShouldNotContain(sentinel, customMessage: "windows-private-diagnostic");
             ex.Message.ShouldNotContain("[bundle:orchestrator");
             ex.Message.ShouldNotContain("override");
             var exe = Path.Combine(Environment.SystemDirectory, "cmd.exe");
