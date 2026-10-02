@@ -3,6 +3,7 @@ using System.Text.Json;
 using Antiphon.Agents.Pty;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Agents.Pty.Tests;
 
@@ -151,7 +152,7 @@ public sealed class UnixPtyArgvTests
 
     private static void RequireUnix()
     {
-        if (OperatingSystem.IsWindows()) throw new InvalidOperationException("Unix checkpoint selected on Windows");
+        if (OperatingSystem.IsWindows()) throw new SkipTestException("Unix PTY argv contract requires a Unix PTY and node");
     }
 
     private static string ResolveNode()
