@@ -50,6 +50,10 @@ public sealed class AgentTaskLandRequest
     public Guid? SupersedesRequestId { get; set; }
     public string? RecoveryStartBaseSha { get; set; }
     public string? RecoveryLocalBeforeSha { get; set; }
+    public Guid? RecoveryWitnessRequestId { get; set; }
+    public string? LastWriterOperation { get; set; }
+    public Guid? LastWriterToken { get; set; }
+    public DateTime? LastWriterAt { get; set; }
     public string? RecoveryOwnerRemoteBeforeSha { get; set; }
     public string? RecoveryOwnerRemoteAfterSha { get; set; }
     public string? RecoveryRelationship { get; set; }

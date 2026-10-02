@@ -23,7 +23,7 @@ public sealed class AgentTaskLandAdoptionConcurrencyTests
         fixture.Interceptor.RequestId = first.RequestId;
         var failure = await Should.ThrowAsync<DbUpdateConcurrencyException>(() => h.RunQueuedAsync());
         fixture.Boundary.Reached.ShouldBe(1, "C883: historical cut reached once");
-        fixture.Interceptor.Fired.ShouldBe(1, "C883: typed request save conflict fired");
+        fixture.Boundary.Fired.ShouldBe(1, "C883: typed request fault fired at historical cut");
         await h.FailAsync(failure);
         (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim()
             .ShouldBe(reviewed, "C883: HEAD moved to S");

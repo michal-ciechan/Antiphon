@@ -6,6 +6,7 @@ using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain;
 
 namespace Antiphon.Server.Infrastructure.Git;
 
@@ -415,6 +416,191 @@ public class LandingGit : ILandingGit
             return new(null, "identity_io_error", LandFailureDiagnostic.FromIo(ex));
         }
         catch (ArgumentException) { return new(null, "invalid_identity"); }
+    }
+
+    public async Task<LandRecoveryCheckoutInspection> InspectRecoveryCheckoutAsync(
+        LandSourceCoordinates coordinates, string oldSha, string expectedSha, CancellationToken ct)
+    {
+        const string unproven = "recovery_checkout_unproven";
+        try
+        {
+            if (!GitObjectId.IsFull(oldSha) || !GitObjectId.IsFull(expectedSha))
+                return LandRecoveryCheckoutInspection.Refused(unproven);
+            var identity = await InspectAsync(coordinates, LandInspectionScope.IdentityOnly, ct);
+            if (!identity.Accepted || identity.Snapshot!.HeadSha != expectedSha)
+                return LandRecoveryCheckoutInspection.Refused("adopt_local_changed");
+            var checkout = identity.Snapshot.RegisteredPath;
+            var cached = await RunAsync(checkout,
+                ["diff", "--cached", "--quiet", "--no-ext-diff", "--no-textconv", oldSha, "--"], ct);
+            if (cached.ExitCode == 1) return LandRecoveryCheckoutInspection.Refused("source_dirty");
+            if (cached.ExitCode != 0) return LandRecoveryCheckoutInspection.Refused(unproven);
+            var worktree = await RunAsync(checkout,
+                ["diff", "--quiet", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", oldSha, "--"], ct);
+            if (worktree.ExitCode == 1) return LandRecoveryCheckoutInspection.Refused("source_dirty");
+            if (worktree.ExitCode != 0) return LandRecoveryCheckoutInspection.Refused(unproven);
+            foreach (var args in new[]
+            {
+                new[] { "ls-files", "--unmerged", "-z" },
+                new[] { "ls-files", "--others", "--exclude-standard", "-z" },
+                new[] { "ls-files", "--others", "--ignored", "--exclude-standard", "-z" },
+            })
+            {
+                var listed = await RunAsync(checkout, args, ct);
+                if (!listed.Succeeded) return LandRecoveryCheckoutInspection.Refused(unproven);
+                if (listed.Output.Length != 0) return LandRecoveryCheckoutInspection.Refused("source_dirty");
+            }
+            var sparse = await RunAsync(checkout, ["config", "--bool", "--get", "core.sparseCheckout"], ct);
+            if (sparse.ExitCode is not (0 or 1) || sparse.Output.Trim() == "true")
+                return LandRecoveryCheckoutInspection.Refused(unproven);
+            var flags = await RunAsync(checkout, ["ls-files", "-v", "-z"], ct);
+            if (!flags.Succeeded || flags.Output.Contains('\uFFFD'))
+                return LandRecoveryCheckoutInspection.Refused(unproven);
+            foreach (var entry in flags.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+                if (entry.Length < 3 || entry[1] != ' ' || entry[0] != 'H')
+                    return LandRecoveryCheckoutInspection.Refused(unproven);
+
+            var tree = await RunAsync(checkout, ["ls-tree", "-r", "-z", "--full-tree", oldSha], ct);
+            var index = await RunAsync(checkout, ["ls-files", "-s", "-z"], ct);
+            if (!tree.Succeeded || !index.Succeeded || tree.Output.Contains('\uFFFD') || index.Output.Contains('\uFFFD'))
+                return LandRecoveryCheckoutInspection.Refused(unproven);
+            var entries = ParseRecoveryEntries(tree.Output, index.Output);
+            if (entries is null) return LandRecoveryCheckoutInspection.Refused(unproven);
+            var autocrlf = await RunAsync(checkout, ["config", "--get", "core.autocrlf"], ct);
+            if (autocrlf.ExitCode is not (0 or 1)) return LandRecoveryCheckoutInspection.Refused(unproven);
+            var autocrlfValue = autocrlf.Output.Trim().ToLowerInvariant();
+            if (autocrlfValue is not ("" or "false" or "true" or "input"))
+                return LandRecoveryCheckoutInspection.Refused(unproven);
+
+            long totalBytes = 0;
+            foreach (var (mode, oid, relative) in entries)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (mode is not ("100644" or "100755" or "120000"))
+                    return LandRecoveryCheckoutInspection.Refused(unproven);
+                var path = Path.GetFullPath(Path.Combine(checkout, relative.Replace('/', Path.DirectorySeparatorChar)));
+                var relativeCheck = Path.GetRelativePath(checkout, path);
+                if (Path.IsPathRooted(relativeCheck) || relativeCheck == ".."
+                    || relativeCheck.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                    return LandRecoveryCheckoutInspection.Refused(unproven);
+                var parent = Path.GetDirectoryName(path)!;
+                while (!PathsEqual(parent, checkout))
+                {
+                    if ((File.GetAttributes(parent) & FileAttributes.ReparsePoint) != 0)
+                        return LandRecoveryCheckoutInspection.Refused(unproven);
+                    parent = Path.GetDirectoryName(parent)!;
+                }
+                var attributes = File.GetAttributes(path);
+                var isLink = (attributes & FileAttributes.ReparsePoint) != 0;
+                if (isLink != (mode == "120000")) return LandRecoveryCheckoutInspection.Refused(unproven);
+                byte[] raw;
+                if (isLink)
+                    raw = Encoding.UTF8.GetBytes(new FileInfo(path).LinkTarget ?? throw new IOException("link_unreadable"));
+                else
+                {
+                    if ((attributes & FileAttributes.Directory) != 0) return LandRecoveryCheckoutInspection.Refused(unproven);
+                    var info = new FileInfo(path);
+                    if (info.Length > 32 * 1024 * 1024 || totalBytes + info.Length > 128 * 1024 * 1024)
+                        return LandRecoveryCheckoutInspection.Refused(unproven);
+                    raw = await File.ReadAllBytesAsync(path, ct);
+                    totalBytes += raw.Length;
+                    if (OperatingSystem.IsWindows() && mode == "100755")
+                        return LandRecoveryCheckoutInspection.Refused(unproven);
+                    if (!OperatingSystem.IsWindows())
+                    {
+                        var executable = (File.GetUnixFileMode(path) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
+                        if (executable != (mode == "100755")) return LandRecoveryCheckoutInspection.Refused(unproven);
+                    }
+                }
+                var blob = await ReadRecoveryBlobAsync(checkout, oid, ct);
+                if (blob is null) return LandRecoveryCheckoutInspection.Refused(unproven);
+                if (!isLink)
+                {
+                    var conversion = await RecoveryCheckoutBytesAsync(checkout, relative, blob, autocrlfValue, ct);
+                    if (conversion is null) return LandRecoveryCheckoutInspection.Refused(unproven);
+                    blob = conversion;
+                }
+                if (!raw.AsSpan().SequenceEqual(blob)) return LandRecoveryCheckoutInspection.Refused("source_dirty");
+            }
+            var final = await InspectAsync(coordinates, LandInspectionScope.IdentityOnly, ct);
+            return final.Accepted && final.Snapshot!.HeadSha == expectedSha
+                ? LandRecoveryCheckoutInspection.Proven
+                : LandRecoveryCheckoutInspection.Refused("adopt_local_changed");
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception) { return LandRecoveryCheckoutInspection.Refused(unproven); }
+    }
+
+    private static List<(string Mode, string Oid, string Path)>? ParseRecoveryEntries(string tree, string index)
+    {
+        var rows = new List<(string Mode, string Oid, string Path)>();
+        var old = tree.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        var current = index.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        if (old.Length != current.Length || old.Length > 10000) return null;
+        for (var i = 0; i < old.Length; i++)
+        {
+            var treeTab = old[i].IndexOf('\t');
+            var indexTab = current[i].IndexOf('\t');
+            if (treeTab < 0 || indexTab < 0) return null;
+            var treeFields = old[i][..treeTab].Split(' ');
+            var indexFields = current[i][..indexTab].Split(' ');
+            if (treeFields.Length != 3 || treeFields[1] != "blob" || indexFields.Length != 3
+                || indexFields[2] != "0" || treeFields[0] != indexFields[0]
+                || treeFields[2] != indexFields[1] || old[i][(treeTab + 1)..] != current[i][(indexTab + 1)..])
+                return null;
+            rows.Add((treeFields[0], treeFields[2], old[i][(treeTab + 1)..]));
+        }
+        return rows;
+    }
+
+    private async Task<byte[]?> RecoveryCheckoutBytesAsync(string checkout, string relative, byte[] blob,
+        string autocrlf, CancellationToken ct)
+    {
+        var result = await RunAsync(checkout,
+            ["check-attr", "--cached", "-z", "text", "eol", "filter", "working-tree-encoding", "ident", "--", relative], ct);
+        if (!result.Succeeded || result.Output.Contains('\uFFFD')) return null;
+        var parts = result.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 15 || parts.Where((_, i) => i % 3 == 0).Any(p => p != relative)) return null;
+        var values = new Dictionary<string, string>(StringComparer.Ordinal);
+        for (var i = 0; i < parts.Length; i += 3) values[parts[i + 1]] = parts[i + 2];
+        if (values["filter"] != "unspecified" || values["working-tree-encoding"] != "unspecified"
+            || values["ident"] != "unspecified" || values["text"] is not ("unspecified" or "set" or "auto" or "unset")
+            || values["eol"] is not ("unspecified" or "lf" or "crlf")) return null;
+        var crlf = values["eol"] == "crlf" || values["eol"] == "unspecified"
+            && values["text"] != "unset" && autocrlf == "true";
+        if (!crlf) return blob;
+        // Git's built-in text conversion is accepted only for unambiguous, already-normalized text.
+        if (blob.Contains((byte)0) || blob.Contains((byte)'\r')) return null;
+        using var output = new MemoryStream();
+        foreach (var b in blob)
+        {
+            if (b == '\n') output.WriteByte((byte)'\r');
+            output.WriteByte(b);
+        }
+        return output.ToArray();
+    }
+
+    private async Task<byte[]?> ReadRecoveryBlobAsync(string checkout, string oid, CancellationToken ct)
+    {
+        if (!GitObjectId.IsFull(oid)) return null;
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = checkout, UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        start.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
+        ConfigureProcess(start);
+        start.ArgumentList.Add("cat-file");
+        start.ArgumentList.Add("blob");
+        start.ArgumentList.Add(oid);
+        using var process = StartProcess(start) ?? throw new IOException("git_start_failed");
+        using var output = new MemoryStream();
+        var error = process.StandardError.ReadToEndAsync(ct);
+        await process.StandardOutput.BaseStream.CopyToAsync(output, ct);
+        await process.WaitForExitAsync(ct);
+        await error;
+        if (process.ExitCode != 0 || output.Length > 32 * 1024 * 1024) return null;
+        return output.ToArray();
     }
 
     private async Task<LandSourceInspection> IdentityAsync(LandSourceCoordinates coordinates, CancellationToken ct)
