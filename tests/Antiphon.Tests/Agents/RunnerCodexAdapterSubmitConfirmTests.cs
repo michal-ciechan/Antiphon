@@ -209,7 +209,6 @@ public class RunnerCodexAdapterSubmitConfirmTests
         client.OnEnter = count => enters[count - priorEnters].TrySetResult();
         var cancel = new CancellationTokenSource();
         var send = adapter.SendPromptAsync(Body, cancel.Token);
-        _ = send.ContinueWith(_ => cancel.Dispose(), TaskScheduler.Default);
         try
         {
         await enters[1].Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -242,12 +241,14 @@ public class RunnerCodexAdapterSubmitConfirmTests
                 time.AdvanceTo((await settleTask).Deadline);
             }
         }
+        _ = send.ContinueWith(_ => cancel.Dispose(), TaskScheduler.Default);
         return send;
         }
         catch
         {
             cancel.Cancel();
             try { await send; } catch (Exception) { }
+            cancel.Dispose();
             throw;
         }
     }
