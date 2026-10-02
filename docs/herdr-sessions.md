@@ -242,6 +242,11 @@ separator, drive prefix or control character. Process executable display names u
 only their final leaf on either OS; unsafe or empty leaves become null. Plain safe
 labels and typed identity fields remain intact. Classification, exact process
 stamps and claim matching use the raw observation before this display projection.
+The drive-prefix rule masks an ASCII `[A-Za-z]:` at the start of a value or
+immediately after whitespace or an opening quote, including drive-relative paths
+such as `C:secret-home`. A `letter:` sequence inside a word stays visible.
+Unicode look-alike separators U+FF3C and U+2215 and bidi format character U+202E
+are kept because they are not path syntax on any OS.
 This text policy applies on Windows and Unix, including refused previews; it does
 not make native Unix process census or locator deletion operational (CARD-0864).
 Records persisted before this policy was activated are not rewritten.
