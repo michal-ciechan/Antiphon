@@ -231,7 +231,7 @@ public class FakeGrokContractTests
         var intact = await runner.WaitForOutputAsync(
             s =>
             {
-                var flat = s.Replace("\r", "").Replace("\n", "");
+                var flat = FlattenLfSubmitEcho(s);
                 return System.Text.RegularExpressions.Regex.IsMatch(
                     flat, @"SUBMITTED:(?:(?!FAKE response).)*HEAD first line(?:(?!FAKE response).)*TAIL last line");
             },
@@ -244,6 +244,9 @@ public class FakeGrokContractTests
 
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
+
+    internal static string FlattenLfSubmitEcho(string output) =>
+        output.Replace("\r", "").Replace("\n", "");
 
     [Test]
     public async Task Enter_on_an_empty_composer_submits_nothing()
