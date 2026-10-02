@@ -1,6 +1,6 @@
 # CARD-0891 / CARD-0901: static plan-to-test coverage check
 
-Date: 2026-10-01. Stage: Plan complete; TestDesign follows. Baseline: local `origin/master` at **`2b4d7313324b6eaeadf6e45fb15808bacfad6263`**. Assigned branch `feat/card-task-d8aebb25` starts at `14661919c77b81819bf07a6380f58687225b4dfc`; it is not rebased. A later read-only remote observation returned master `321c7826b656371f788fcc99950a5635e4c8b270`; that is not the source baseline used here. Reconcile prerequisites at Code admission. This stage changes only this file.
+Date: 2026-10-01; TestDesign freeze: 2026-10-02. Original Plan baseline: `2b4d7313324b6eaeadf6e45fb15808bacfad6263`. TestDesign branch `feat/card-task-fc39aaef` starts at `d15c81541ed00a0ccc11fd28209cf64862f798be`, also the observed remote master at this freeze. No rebase was performed. The evidence reconciliation below supersedes admission assumptions, not D-1..D-6. This stage changes only this file. **Code admission remains conditional on CARD-0826 landing and the post-land reread below.**
 
 ## Outcome and scope
 
@@ -68,7 +68,7 @@ Rejected: every backtick string is a required assertion; hard-coding CARD number
 
 ### D-3: syntax evidence at assertions, not lexical presence in setup
 
-Use a pinned net9-compatible `Microsoft.CodeAnalysis.CSharp` package for syntax parsing only; TestDesign pins the exact version before Code. Do not load a test assembly, create an MSBuild workspace or restore target projects. Small concrete classes under `Coverage/` own parsing, binding, analysis and output. Invalid C# syntax is invalid input, not an empty assertion index.
+Use `Microsoft.CodeAnalysis.CSharp` **5.9.0** for syntax parsing only; the TestDesign package receipt below pins compatibility and the per-project PackageReference convention. Do not load a test assembly, create an MSBuild workspace or restore target projects. Small concrete classes under `Coverage/` own parsing, binding, analysis and output. Invalid C# syntax is invalid input, not an empty assertion index.
 
 Initially recognize the repository's Shouldly assertion forms: receiver `.Should*` calls and `Should.Throw` / `Should.ThrowAsync`, including awaited/generic/chained forms. Keep an explicit tested signature table for actual/expected/custom-message positions, including Case arguments. A random `.ShouldSomething()` call does not establish coverage. Unrecognized assertion-looking calls are unmapped. Do not treat the `expected` string in `ShouldBe("text")` as a custom message. Comments, disabled text and declarations cannot satisfy assertions.
 
@@ -246,6 +246,68 @@ Normal post-land Mutation: six variants, three phases each, one result per phase
 
 No live server/runner activation or migration is needed for this opt-in developer tool. Use the built tool from the intended source; old detached checkpoint executors keep their own versions. Rollback is a forward commit removing the new verb/analyzer/package/docs while preserving existing commands and archived evidence. No reset, force-push, cleanup sweep, provider state change or deployment is part of this task.
 
-TestDesign's handoff must freeze the syntax-package version, exact historical-to-checklist mappings and fixture source offsets, confirm the 20+26 roster and six intended failure labels, and leave dynamic reachability deferred. Code must wait for 0826 and 0885, preserve the small footprint, commit/push each slice, and return ordinary evidence for separate Review before land.
+The TestDesign freeze below supplies the package, mappings, fixture coordinates and exact roster. Dynamic reachability remains deferred. Code must satisfy the post-0826 admission condition below, preserve the small footprint, commit/push each slice, and return ordinary evidence for separate Review before land.
 
 Plan validation used a read-only Node table scan: all checkpoint header/data rows have 11 cells, the filter has seven intended class operands with trailing wildcards, Min is 46, the new-method count is 20, six PC rows are present, and all 13 requested hazard IDs are included. Whitespace validation found no errors. This was document validation, not execution of the C# importer, TUnit, or any positive control.
+
+## TestDesign freeze evidence (2026-10-02)
+
+CARD-0891 and CARD-0901 were read in full with `scripts/card.ps1 get <card> -Board Antiphon`. Repository observations use `git show`, `git log`, `git diff`, `git ls-remote`, `rg` and a source-attribute census, not test discovery. Repository builds/tests: **0**; positive-control executions: **0**. The only compiled program was the commissioned disposable package probe below. No analyzer or tests were implemented by TestDesign.
+
+### Package receipt
+
+Pin `<PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />` in `tools/Antiphon.Checkpoints/Antiphon.Checkpoints.csproj`. On 2026-10-02 the [NuGet flat-container feed](https://api.nuget.org/v3-flatcontainer/microsoft.codeanalysis.csharp/index.json) returned **5.9.0** as its greatest stable version (exclude versions containing `-`); the preceding stable versions were 5.6.0 and 5.3.0. The [package framework/dependency metadata](https://www.nuget.org/packages/Microsoft.CodeAnalysis.CSharp/5.9.0) includes netstandard2.0, which the actual net9.0 restore selected. This is a syntax API dependency, not a workspace/compiler-execution feature.
+
+Checked at `d15c81541ed00a0ccc11fd28209cf64862f798be`: the tool explicitly targets `net9.0`, already pins YamlDotNet 16.3.0 in its own project, and there is no tracked `Directory.Packages.props` or `ManagePackageVersionsCentrally` setting. `Directory.Build.props` does not supply a target-framework/package-version override. Follow the existing per-project convention; do not introduce central package management for this change.
+
+Probe custody: `mktemp -d /tmp/c891-roslyn-XXXXXX` printed **`/tmp/c891-roslyn-5CuLvX`**. Only that outside-repository directory held Parse.csproj, Program.cs, packages, obj and bin. The project targeted net9.0 with the exact PackageReference above; SDK was 10.0.401. Commands were wrapped individually by `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c891-scratch-<restore|build|parse> -- ...`; all three acquired host slots immediately (maxCpuCount 6).
+
+- Restore: `dotnet restore /tmp/c891-roslyn-5CuLvX/Parse.csproj --packages /tmp/c891-roslyn-5CuLvX/packages --source https://api.nuget.org/v3/index.json --nologo`. The resulting assets target was net9.0, with compile/runtime asset `lib/netstandard2.0/Microsoft.CodeAnalysis.CSharp.dll` at 5.9.0 and an empty restore-diagnostic list.
+- Build: `dotnet build /tmp/c891-roslyn-5CuLvX/Parse.csproj --no-restore --nologo -nodeReuse:false --property:UseSharedCompilation=false`; exit 0, **0 warnings, 0 errors**, 8.07 seconds reported by MSBuild.
+- The one source file called `CSharpSyntaxTree.ParseText` on `class Example { void Check() { actual.ShouldBe(42, "coverage-parse"); } }`, counted error diagnostics and InvocationExpressionSyntax nodes, and returned nonzero unless they were 0 and 1 respectively. `dotnet /tmp/c891-roslyn-5CuLvX/bin/Debug/net9.0/Parse.dll` returned 0 and printed `syntax errors=0 invocation count=1`. No semantic compilation of that input occurred: the deliberately unresolved actual/Shouldly symbols demonstrate syntax-only use.
+- After all probe processes exited, `rm -r /tmp/c891-roslyn-5CuLvX` removed that literal owned path. No repository project/output was touched. This is one package compatibility probe, not a CP-1 or TUnit receipt.
+
+### Post-0885 baseline and remaining admission condition
+
+CARD-0885 is contained at **`808677658cc418dc439d906de4526aaea32e231a`**. Remote master was **`d15c81541ed00a0ccc11fd28209cf64862f798be`**; the checkout is that commit even though the local origin/master ref still pointed to 80867765. `git diff 80867765 d15c8154 -- tools/Antiphon.Checkpoints tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs tests/Antiphon.Tests/Checkpoints/CheckpointManifestTests.cs docs/testing-and-build.md` was empty. Thus the current-master census below also describes the landed 0885 tool; no fetch/rebase of this task branch is needed.
+
+The public verbs at this source are run, start, wait, status, stop, report, validate, import, row, clean and execute; help/version switches and the existing hold/smoke-detach plumbing are also present. Coverage is absent. Program's named options are after, baseline, clean-on-red, dotnet, dry-run, evidence, expect, expected-repeat, expected-source-sha, filter, heartbeat, json, keep-outputs, known-flaky, manifest, max-wait, merge, min-executed, msbuild-property, name, no-build, older-than, out, output-path, parallel, plan, project, repeat, repo-root, results-root, row-timeout, rows, run, serial, slots and total-timeout; hold separately reads parent. `ArgSet.GetAll` retains repeated values. Preserve these paths and their repeat/source-receipt behavior. In particular run/start selection and row accept repeat, validate accepts expected-repeat, and imported manifests now carry repeat through the existing Manifest/Execution/Report/State/Trx implementation. The new verb's format/checklist/tests options do not replace these options.
+
+The exact existing class census is still **CheckpointImportTests 20 + CheckpointManifestTests 6**, each single-result Test with no Arguments. New roster remains **4+5+4+3+4=20**. **Delta: 0 existing results, 0 new results, 0 checkpoint rows, 0 estimated minutes.** Keep CP-1 Min/Expect 46 and all Cost numbers (8 final, 8 preparatory, 6 bootstrap, 22 ordinary; 64 Mutation; 72/86 combined) unchanged. Repeat support adds no repeat battery to this task.
+
+**Code start condition:** first confirm CARD-0826's complete required cleanup extraction/caller wiring has landed on the integration target (the brief identifies replacement Code task `863ee584`, replaying slice 1; a running task or an S1 commit is not land evidence). Start Code from a target containing both that land and 80867765, carrying this frozen plan forward through the normal task/landing flow. Re-read the actual landed tool before editing it; do not rebase this pushed TestDesign branch. Until that condition holds, Code is deferred, not authorized to reconstruct the future dependency graph from this plan.
+
+That reread must cover tool Program/project, CheckpointApp, Commands/WaitCommand, Evidence/EvidenceFolder, State/RunStateStore, current Manifest classes, the testing owner and the landed temp helpers. CARD-0826 S2 moves Cleanup/{ProcessIdentity,RunOwnership,TestRootGuard,ToolCopyCleanup}.cs to **src/Antiphon.HostCleanup/Checkpoints/**, adds its project reference and threads cleanup dependencies through those callers (its plan lines 165, 197, 208 and 842). Do not re-add old Cleanup files or edit the new library. Our only existing Code edit files remain **Program.cs, Antiphon.Checkpoints.csproj and docs/testing-and-build.md**, on top of both predecessors; CheckpointApp/Manifest/cleanup wiring stays read-only.
+
+At admission recount: the exact Import/Manifest method lists below, their Test/Arguments/data-source/skip attributes and any additional classes matched by the seven trailing-wildcard operands; confirm the 20 planned methods still contribute one each. Recheck Program verbs/options/repeat behavior, importer API and table columns, runtime/driver seam, package convention/target framework, tool project references, owned-temp helper and orphan-sweep environment. Record any roster delta in Expect/Min and any evidenced cost delta before running Code checkpoints. **Only these integration-dependent observations remain conditional on CARD-0826.** The NuGet pin/probe, immutable historical fixture bytes/mappings, new 20-method design, six PC labels and D-6 deferral do not depend on that land.
+
+### Immutable raw fixture coordinates
+
+Full revisions: historical c866 **1400463a48fc355eba8be3c51236cc809c1c119f**; corrected c866 landed **1485abaabf614b5d5e21d81314df31c879f39b0c**; historical c835 **1d994aac952bed0a65506db0bb84742b7e9183e4**. `git log --all -- <test-path>` and `git show <sha>:<path>` confirm the revisions. Copy Git blob bytes, not a platform-normalized checkout or line-numbered command output. Line ranges below are 1-based inclusive; byte ranges are zero-based half-open. All full blobs include the final LF; synthetic wrapper offset is **0**.
+
+| Fixture | Revision / original path | Lines / bytes | SHA-256 of raw blob |
+|---|---|---|---|
+| c866-plan.md.txt | historical c866; docs/superpowers/plans/2026-10-01-card-0866-disposal-preview-redaction-plan.md | 1–359 / [0,69779) | c4f1382cbe489a0cb67fd08806a30211ffd5d215b2a1a0681b70b3647354d5e9 |
+| c866-tests.cs.txt | historical c866; tests/Antiphon.SessionRunner.Tests/HerdrPaneDisposalRedactionTests.cs | 1–423 / [0,24121) | 592110809696d50eb7d445303fb6cf09a4fef5d37ec008ea1b648823af85b8f0 |
+| c866-fixed-tests.cs.txt | corrected c866; same test path | 1–571 / [0,35935) | f3f651547b707027da6c7f0149e8298a87efccb807a30a20f3939ca0a2e6822a |
+| c835-plan.md.txt | historical c835; docs/superpowers/plans/2026-09-30-card-0835-checkpoint-receipt-dirty-tree-plan.md | 1–757 / [0,71301) | eb888f2036444c4f1584b8a127d761b10fed4bf62530981a25bb41353d2c03fc |
+| c835-state.cs.txt | historical c835; tests/Antiphon.Tests/Checkpoints/CheckpointSourceStateTests.cs | 1–352 / [0,17760) | 1a026b8521a362973e41a358292b8e19c3c5e7920264224decb17ba5ca7e3693 |
+| c835-script.cs.txt | historical c835; tests/Antiphon.Tests/Scripts/RunCheckpointSourceScriptTests.cs | 1–453 / [0,27004) | cf8109841f2b705d3379be906a0671a6347f6b81ff0e1d03ee9c3225b202f112 |
+| c835-approval.cs.txt | historical c835; tests/Antiphon.Tests/Application/CheckpointSourceApprovalTests.cs | 1–475 / [0,26442) | 63d442f3f242944c24a82e40c4a5a93a978ad3c25cb8e2bc3ab0d2d2bae18dd7 |
+
+Keep whole raw plan fixtures. For the pure analyzer's **explicitly scoped** c866 V-1/V-4/V-5 golden input, retain original lines 128 (Verification heading), 188–206 (V-1 paragraph/matrix), 210 (V-4 paragraph), 214–218 (V table heading/header/V-1), 221–222 (V-4/V-5 rows), 227–231 (V-5 scenarios), and 313–322 (checkpoint context). Replace other lines with their newline only in the in-memory projection, retaining original line numbers and recording these ranges in provenance.json. Both historical/fixed analyses receive identical projected plan bytes and identical checklist bytes; importer-contract tests may separately use the full raw plan. This scope is fixture construction under the existing in-memory seam, not a production option to suppress obligations. Never call a projected result a clean report for the entire historical plan.
+
+Historical c866 assertion regions: V-1 21–76; V-4 178–249; V-5 251–293; Wire 325–402, including RoundTrip 352–383, AssertPreviewPaths 384–389 and the exclusion array/assertion 390–397. Corrected regions: AssertV1Facts 21–62, V-1 64–134, V-4 256–355, V-5 357–409, Wire 447–550, AssertPreviewPaths 524–529, AssertCanaryAbsent/AssertCanary 530–537, AssertNoPath 538–545. These are navigation offsets, not permission to drop helpers from the full inert sources.
+
+For c835 retain in-memory original lines 248, 388–394, 399, 401–402, 413–415, 519–529, 535, 537–538, 540–541, 559–561 and 711–731; blank other lines as above. This binds exactly the eight commissioned PCs using the original V/method rows and all necessary checkpoint context. Full-legacy analysis can report other prose, but its findings cannot replace these eight golden identities.
+
+| c835 PC / plan line | Bound class.method | Raw detecting location and required static observation |
+|---|---|---|
+| PC-5 / 535 | CheckpointSourceStateTests.script_and_tool_snapshots_agree | Method begins 205; fixed-vector-parity is at 60 in clean_and_ignored_outputs_match_head (begins 36). PC_LABEL_NOT_IN_METHOD; missing-target. |
+| PC-7A / 537 | RunCheckpointSourceScriptTests.C835_StrictAdmission | Target 67; predecessors 50, 53 and 64 use runtime Output, with other stable labels at 54–56/65–66. unlabeled-predecessor. |
+| PC-7B / 538 | RunCheckpointSourceScriptTests.C835_StrictAdmission | Target 56; runtime-message predecessors 50/53 and different label 54/55. unlabeled-predecessor. |
+| PC-8 / 540 | RunCheckpointSourceScriptTests.C835_DriftAndReuse | Target 143; predecessors include 97/99/106/118/142 with runtime messages and unlabeled 112. unlabeled-predecessor. |
+| PC-9A / 541 | RunCheckpointSourceScriptTests.C835_DriftAndReuse | Target 119; predecessors include 97/99/106/112/118. unlabeled-predecessor. |
+| PC-21 / 559 | CheckpointSourceApprovalTests.settlement_persists_source_assertion | Target 37; unlabeled 31/32 and earlier settlement label at 33. unlabeled-predecessor. |
+| PC-22 / 560 | CheckpointSourceApprovalTests.land_admission_requires_clean_review_source | Target 72; Should.ThrowAsync at 70–71 has no message (also lexical assertions at 64–66). unlabeled-predecessor. |
+| PC-23 / 561 | CheckpointSourceApprovalTests.recovery_and_resume_recheck_source_assertion | Targets 136–137 and 144–147; earlier stable ordinary-case label begins 93 and is used at 100/105/108/128–135. Include PC_EARLIER_OTHER_LABEL, earlier locations and reachability=unproven; conditional target alternatives remain explicit. Do not call the static evidence a proven dynamic failure. |
