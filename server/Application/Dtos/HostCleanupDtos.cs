@@ -52,7 +52,9 @@ public sealed record HostCleanupReportedCandidate(
     string Family, bool Worktree, string Disposition, string ReasonCode,
     string ContentClass, string ExistingOwner, string? OwnerRefusalCode,
     DateTime? NewestWriteAt, bool ScanComplete, long? LogicalBytes, long? AllocatedBytes,
-    long? ReservedBytes, string Outcome, long ReclaimedBytes);
+    long? ReservedBytes, string Outcome, long ReclaimedBytes,
+    Guid? TaskId = null, Guid? SessionId = null, string? Branch = null,
+    string? SourceSha = null, string? PushedSha = null, string? TargetSha = null);
 
 /// <summary>Metadata-only completed receipt. No file contents, environment or raw stderr.</summary>
 public sealed record HostCleanupReceiptDto(
@@ -69,4 +71,7 @@ public sealed record HostCleanupReportPage(
     Guid RunId, Guid BoardId, string HostId, string StorageId, string ReceiptDigest,
     bool Complete, long ReclaimedBytes, long EligibleWorktreeBytes,
     int TotalCandidates, IReadOnlyList<HostCleanupReportedCandidate> Candidates,
-    int? NextOffset);
+    int? NextOffset, HostCleanupStorageSample Sample);
+
+public sealed record HostCleanupStorageSample(DateTime? SampledAt, bool Complete,
+    long? NamespaceAllocatedBytes, long? DiskCapacityBytes, long? FreeBytesBefore, long? FreeBytesAfter);
