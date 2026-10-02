@@ -41,7 +41,11 @@ public sealed class AgentTaskLandAdoptionConcurrencyTests
         second.RequestId.ShouldNotBe(first.RequestId, "C883: fresh request identity");
         await h.RunQueuedAsync();
         var op = await h.OperationAsync();
+        await using var finalDb = h.CreateContext();
+        var finalRequest = await finalDb.AgentTaskLandRequests.AsNoTracking()
+            .SingleAsync(r => r.Id == second.RequestId);
         (op is not null && new AgentTaskLandingState().HasPublication(op))
-            .ShouldBeTrue("C883: fresh request publication confirmed");
+            .ShouldBeTrue($"C883: fresh request publication confirmed; refusal={finalRequest.SourceRefusalReason}; "
+                + $"failure={finalRequest.TerminalFailureCode}; operation={op?.LastReason}");
     }
 }

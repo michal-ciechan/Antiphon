@@ -35,8 +35,12 @@ internal sealed class LandRecoveryWitness(AppDbContext db, ILandingGit git)
                 || row.SourceFullRefSnapshot != current.SourceFullRefSnapshot
                 || !SamePath(row.RepositoryPathSnapshot, current.RepositoryPathSnapshot)
                 || !SamePath(row.WorktreePathSnapshot, current.WorktreePathSnapshot)
-                || !SamePath(row.SourceCommonDirectory, common)
-                || !SamePath(row.SourceWorktreePath, current.WorktreePathSnapshot))
+                || row.SourceCommonDirectory is not null && !SamePath(row.SourceCommonDirectory, common)
+                || row.SourceWorktreePath is not null
+                    && !SamePath(row.SourceWorktreePath, current.WorktreePathSnapshot))
+                continue;
+            if (!SamePath(await git.CommonDirectoryAsync(row.RepositoryPathSnapshot!, ct), common)
+                || !SamePath(await git.CommonDirectoryAsync(row.WorktreePathSnapshot!, ct), common))
                 continue;
             if (row.SourceAdvanceChildProcessId is int pid && row.SourceAdvanceChildStartTicks is long ticks)
             {
