@@ -69,23 +69,24 @@ public class ParkedMessageSweepServiceTests
     [Test]
     public async Task A_parked_task_input_refinement_with_no_open_task_is_canceled_and_leaves_attention()
     {
-        await TaskInputWithoutOpenTaskClearsAsync("refinement");
+        await TaskInputWithoutOpenTaskClearsAsync(AgentTaskEventType.Refined);
     }
 
     [Test]
     public async Task A_parked_task_input_reply_with_no_open_task_is_canceled_and_leaves_attention()
     {
-        await TaskInputWithoutOpenTaskClearsAsync("reply");
+        await TaskInputWithoutOpenTaskClearsAsync(AgentTaskEventType.Replied);
     }
 
-    private static async Task TaskInputWithoutOpenTaskClearsAsync(string kind)
+    private static async Task TaskInputWithoutOpenTaskClearsAsync(AgentTaskEventType kind)
     {
         await using var world = await World.CreateAsync();
         var session = await world.SeedSessionAsync(SessionStatus.Failed);
         var task = await world.SeedTaskAsync(session, AgentTaskStatus.Succeeded);
+        var input = await world.SeedTaskInputAsync(task, session, kind);
         var message = await world.SeedMessageAsync(session, QueuedMessageOrigin.Delegation,
             body: $"parked {kind}",
-            conversationKey: AgentTaskInputService.ConversationKey(task, Guid.NewGuid()));
+            conversationKey: AgentTaskInputService.ConversationKey(task, input));
 
         (await world.HasParkedAttentionAsync(message)).ShouldBeTrue($"{kind}-alert-before-sweep");
         (await world.ScanAsync()).ShouldBe(1, $"{kind}-task-input-sweep-count");
@@ -99,8 +100,9 @@ public class ParkedMessageSweepServiceTests
         await using var world = await World.CreateAsync();
         var session = await world.SeedSessionAsync(SessionStatus.Running);
         var task = await world.SeedTaskAsync(session, AgentTaskStatus.Working);
+        var input = await world.SeedTaskInputAsync(task, session, AgentTaskEventType.Replied);
         var message = await world.SeedMessageAsync(session, QueuedMessageOrigin.Delegation,
-            conversationKey: AgentTaskInputService.ConversationKey(task, Guid.NewGuid()));
+            conversationKey: AgentTaskInputService.ConversationKey(task, input));
 
         (await world.ScanAsync()).ShouldBe(0, "open-task-input-sweep-count");
         (await world.ReadMessageAsync(message)).Status.ShouldBe(QueuedMessageStatus.Pending);
@@ -302,6 +304,24 @@ public class ParkedMessageSweepServiceTests
             task.Status = status;
             task.CompletedAt = Now;
             await db.SaveChangesAsync();
+        }
+
+        public async Task<Guid> SeedTaskInputAsync(Guid taskId, Guid sessionId, AgentTaskEventType type)
+        {
+            var id = Guid.NewGuid();
+            await using var db = CreateContext();
+            db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = id,
+                AgentTaskId = taskId,
+                AgentSessionId = sessionId,
+                Type = type,
+                Detail = "parked task input",
+                InputBody = "exact task input",
+                At = Now.AddMinutes(-12),
+            });
+            await db.SaveChangesAsync();
+            return id;
         }
 
         public async Task<Guid> SeedMessageAsync(

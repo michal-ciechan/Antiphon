@@ -317,7 +317,7 @@ public enum AttentionKind
     CardClosedWhileWorking = 48,
 
     /// <summary>A delegate explicitly reported it cannot read its delivered task input.</summary>
-    TaskInputUnreadable = 49,
+    TaskInputUnreadable = 52,
 
     /// <summary>A phone-home runner remains ineligible past the outage grace. Error.</summary>
     RunnerUnavailable = 49,
