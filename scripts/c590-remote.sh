@@ -1672,7 +1672,7 @@ c849_cold_volume_facts() {
 }
 
 c849_cold_proof() {
-    local phase="$1" require_empty="$2" allowed_helper="${3:-}" allow_uninitialized="${4:-}" main_list main facts status temp containers id mounts source destination canonical target
+    local phase="$1" require_empty="$2" allowed_helper="${3:-}" allow_uninitialized="${4:-}" main_list main facts status temp containers container id mounts source destination canonical name target
     command -v jq >/dev/null || write_result false CacheFirstSeedPreconditionUnknown 2
     C849_COLD_DOCKER_ROOT="$(docker info -f '{{.DockerRootDir}}')" \
         || write_result false CacheFirstSeedPreconditionUnknown 2
@@ -1813,7 +1813,7 @@ c849_cold_probe() {
 }
 
 c849_cold_seed() {
-    local name role
+    local item name role names
     require_lane host
     c849_lock
     [ ! -e "$C849_READY" ] && [ ! -L "$C849_READY" ] \
@@ -1821,7 +1821,6 @@ c849_cold_seed() {
     c849_cold_proof P0 yes
     for item in "$C849_PACKAGES:nuget-packages" "$C849_SCRATCH:nuget-scratch" "$C849_NPM:npm-content"; do
         name="${item%%:*}"; role="${item#*:}"
-        local names
         names="$(docker volume ls -q)" || write_result false CacheFirstSeedPreconditionUnknown 2
         if ! printf '%s\n' "$names" | grep -Fxq "$name"; then
             if docker volume inspect "$name" >/dev/null 2>&1; then
@@ -1831,6 +1830,9 @@ c849_cold_seed() {
                 --label io.antiphon.cache-schema=1 --label "io.antiphon.cache-role=$role" "$name" >/dev/null \
                 || write_result false CacheVolumeCreateFailed 2
             c849_cold_proof "before-init-$role" yes '' "$name"
+            # Do not give docker run an absent source: Docker would create it without labels.
+            c849_cold_volume_facts "$name" "$role" yes "$name"
+            [ "$C849_COLD_PRESENT" = 1 ] || write_result false CacheFirstSeedPreconditionUnknown 2
             docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
                 --mount "type=volume,source=$name,target=/cache,volume-nocopy" "$C849_COLD_MAIN_IMAGE" \
                 -c 'chown 1654:1654 /cache && chmod 0700 /cache' >/dev/null \

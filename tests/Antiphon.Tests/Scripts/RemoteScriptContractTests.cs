@@ -2072,7 +2072,8 @@ public sealed class RemoteScriptContractTests
         var source = Remote();
         return "set -u\n" + """
             root="$(mktemp -d /tmp/c912-cold-XXXXXXXX)"
-            trap 'rm -rf -- "$root"' EXIT
+            printf 'C912_TEST_ROOT=%s\n' "$root"
+            trap '[[ "$root" == /tmp/c912-cold-???????? && -d "$root" ]] && rm -rf -- "$root"' EXIT
             mkdir -p "$root/volumes" "$root/case" "$root/server2"
             CASE_DIR="$root/case"; SERVER2_ROOT="$root/server2"
             C849_READY="$SERVER2_ROOT/cache/seed-accepted"
@@ -2084,7 +2085,7 @@ public sealed class RemoteScriptContractTests
             HOST_PROJECT=antiphon-runner; TEMP_PROJECT=antiphon-runner-temp
             MAIN_ID=1111111111111111111111111111111111111111111111111111111111111111
             IMAGE_ID=sha256:0000000000000000000000000000000000000000000000000000000000000000
-            FAULT=''; PHASE=''; C849_COLD_MAIN_ID=''
+            FAULT=''; PHASE=''; C849_COLD_MAIN_ID=''; UNRELATED_BIND=0
             : > "$root/effects"
             write_result() { printf 'RESULT accepted=%s diagnosis=%s\n' "$1" "$2"; exit "$3"; }
             require_lane() { [ "$1" = host ]; }
@@ -2092,10 +2093,21 @@ public sealed class RemoteScriptContractTests
             sudo() {
                 [ "$1" = -n ] && shift
                 if [ "$1" = stat ]; then
-                    [ "$FAULT" = wrong-mode ] && printf '1654:1654:755\n' || printf '1654:1654:700\n'
+                    local stat_path="${@: -1}" volume_name
+                    volume_name="$(basename "$(dirname "$stat_path")")"
+                    if [ "$FAULT" = wrong-mode ] || [ -f "$root/uninitialized/$volume_name" ]; then
+                        printf '0:0:755\n'
+                    else
+                        printf '1654:1654:700\n'
+                    fi
                     return 0
                 fi
                 if [ "$1" = install ]; then mkdir -p "${@: -1}"; return 0; fi
+                if [ "$1" = find ] && [ "$FAULT" = vanish-before-init ] && [ "$2" = "$root/volumes/$C849_PACKAGES/_data" ]; then
+                    find "${@:2}" || return 2
+                    rmdir "$root/volumes/$C849_PACKAGES/_data" "$root/volumes/$C849_PACKAGES" || return 2
+                    return 0
+                fi
                 "$@"
             }
             c849_status_body() {
@@ -2125,7 +2137,7 @@ public sealed class RemoteScriptContractTests
                             *'com.docker.compose.project=antiphon-runner-temp'*) return 0 ;;
                         esac
                         printf '%s\n' "$MAIN_ID"
-                        if [ "$sub" = -aq ] && { [ "$FAULT" = other-mount ] || [ "$FAULT" = stopped-mount ]; }; then
+                        if [ "$sub" = -aq ] && { [ "$FAULT" = other-mount ] || [ "$FAULT" = stopped-mount ] || [ "$UNRELATED_BIND" = 1 ]; }; then
                             printf '%064d\n' 2
                         fi
                         return 0 ;;
@@ -2136,6 +2148,10 @@ public sealed class RemoteScriptContractTests
                             return 0
                         fi
                         if [ "$2" = "$(printf '%064d' 2)" ]; then
+                            if [ "$UNRELATED_BIND" = 1 ]; then
+                                printf '[{"Id":"%064d","Image":"%s","State":{"Running":false},"Config":{"Labels":{}},"Mounts":[{"Type":"bind","Source":"%s/unrelated-bind","Destination":"/unrelated","RW":true}]}]\n' 2 "$IMAGE_ID" "$root"
+                                return 0
+                            fi
                             printf '[{"Id":"%064d","Image":"%s","State":{"Running":false},"Config":{"Labels":{}},"Mounts":[{"Type":"volume","Name":"%s","Source":"%s/volumes/%s/_data","Destination":"/cache","RW":true}]}]\n' 2 "$IMAGE_ID" "$C849_PACKAGES" "$root" "$C849_PACKAGES"
                             return 0
                         fi
@@ -2151,7 +2167,11 @@ public sealed class RemoteScriptContractTests
                     volume:create)
                         name="${@: -1}"; printf 'create %s\n' "$name" >> "$root/effects"
                         [ "$FAULT" = create-error ] && return 2
-                        mkdir -p "$root/volumes/$name/_data"; printf '%s\n' "$name"; return 0 ;;
+                        [[ "$*" == *'--label io.antiphon.owner=server2-runner'* && "$*" == *'--label io.antiphon.cache-schema=1'* && "$*" == *'--label io.antiphon.cache-role='* ]] || return 2
+                        mkdir -p "$root/volumes/$name/_data" "$root/volume-labels" "$root/uninitialized"
+                        printf '%s\n' "$*" > "$root/volume-labels/$name"
+                        : > "$root/uninitialized/$name"
+                        printf '%s\n' "$name"; return 0 ;;
                     volume:inspect)
                         name="${@: -1}"; [ -d "$root/volumes/$name" ] || return 1
                         role=nuget-packages
@@ -2168,9 +2188,15 @@ public sealed class RemoteScriptContractTests
                             [ "$arg" = -c ] && { i=$((i+1)); code="${!i}"; }
                         done
                         name="${mount#*source=}"; name="${name%%,*}"
+                        if [ ! -d "$root/volumes/$name" ]; then
+                            mkdir -p "$root/volumes/$name/_data" "$root/unlabelled-volume" "$root/uninitialized"
+                            : > "$root/unlabelled-volume/$name"
+                            : > "$root/uninitialized/$name"
+                        fi
                         path="$root/volumes/$name/_data"
                         if [[ "$code" == *chown* ]]; then
                             printf 'init %s\n' "$name" >> "$root/effects"
+                            rm -f "$root/uninitialized/$name"
                             [ "$FAULT" = change-after-init ] && PHASE=changed
                             [ "$FAULT" = init-error ] && return 2
                             return 0
@@ -2196,6 +2222,57 @@ public sealed class RemoteScriptContractTests
             Block(source, "c849_cold_proof") + "\n" +
             Block(source, "c849_cold_probe") + "\n" +
             Block(source, "c849_cold_seed") + "\n";
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C912_Cold_seed_with_unrelated_bind_initializes_only_three_labelled_roots()
+    {
+        RequireLinuxJq();
+        var output = LinuxShell(ColdSeedHarness() + """
+            mkdir -p "$SERVER2_ROOT/cache"
+            UNRELATED_BIND=1
+            (c849_cold_seed)
+            [ -f "$C849_READY" ] && echo cold-seed-accepted
+            expected="$(printf 'init %s\ninit %s\ninit %s' "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM")"
+            [ "$(grep '^init ' "$root/effects")" = "$expected" ] && echo init-targets-packages-scratch-npm-in-order
+            [ "$(find "$root/volumes" -mindepth 1 -maxdepth 1 -type d | wc -l)" = 3 ] &&
+                [ ! -d "$root/unlabelled-volume" ] && echo no-unlabelled-volume
+            for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+                role=nuget-packages
+                [ "$name" = "$C849_SCRATCH" ] && role=nuget-scratch
+                [ "$name" = "$C849_NPM" ] && role=npm-content
+                [ -f "$root/volume-labels/$name" ] &&
+                    grep -Fq -- '--label io.antiphon.owner=server2-runner' "$root/volume-labels/$name" &&
+                    grep -Fq -- '--label io.antiphon.cache-schema=1' "$root/volume-labels/$name" &&
+                    grep -Fq -- "--label io.antiphon.cache-role=$role" "$root/volume-labels/$name" &&
+                    [ "$(sudo -n stat -c '%u:%g:%a' -- "$root/volumes/$name/_data")" = 1654:1654:700 ] || exit 2
+            done
+            echo all-three-labelled-owned-0700
+            """);
+        output.Contains("cold-seed-accepted").ShouldBeTrue("cold seed with unrelated bind must be accepted: " + output);
+        output.Contains("init-targets-packages-scratch-npm-in-order").ShouldBeTrue("init helper must target packages, scratch, npm in order: " + output);
+        output.Contains("no-unlabelled-volume").ShouldBeTrue("docker run must not auto-create an unlabelled volume: " + output);
+        output.Contains("all-three-labelled-owned-0700").ShouldBeTrue("all three volumes require three labels and uid 1654 mode 0700: " + output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C912_Cold_seed_refuses_when_created_volume_disappears_before_init()
+    {
+        RequireLinuxJq();
+        var output = LinuxShell(ColdSeedHarness() + """
+            mkdir -p "$SERVER2_ROOT/cache"
+            FAULT=vanish-before-init
+            (c849_cold_seed)
+            [ ! -e "$C849_READY" ] && echo no-accepted-marker
+            [ ! -d "$root/unlabelled-volume" ] && echo no-unlabelled-auto-created-volume
+            ! grep -q '^init ' "$root/effects" && echo no-init-against-absent-volume
+            """);
+        output.Contains("RESULT accepted=false diagnosis=CacheFirstSeedPreconditionUnknown").ShouldBeTrue("absent volume must refuse before init: " + output);
+        output.Contains("no-accepted-marker").ShouldBeTrue("absent volume must not write a marker: " + output);
+        output.Contains("no-unlabelled-auto-created-volume").ShouldBeTrue("init must not auto-create an unlabelled volume: " + output);
+        output.Contains("no-init-against-absent-volume").ShouldBeTrue("init must not target an absent volume: " + output);
     }
 
     [Test]
