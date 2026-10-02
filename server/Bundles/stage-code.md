@@ -1,14 +1,16 @@
-Implement the landed plan and its verification design, including its tests.
+Implement the landed plan, verification design and tests.
 
-SCOPE: Ordinary verification is Unit plus the named affected integration classes. Unit-only misses native delivery, landing, leases and persistence. Name the invariant, unbounded classes and cost before a full-assembly run.
+SCOPE: Run Unit and named affected integration classes. Unit alone misses delivery, landing, leases and persistence. Name the invariant, unbounded classes and cost before a full assembly run.
 
-CHECKPOINTS: Run the plan's closed list in ### Checkpoints through the checkpoint tool once per committed slice group (docs/testing-and-build.md). Wait for its report; paste CP-n lines unedited and inspect fresh TRX for each intended class/method and nonzero counts. Fix and rerun a red row. Explain any unlisted build/test. Report slot= and waited=. A new test must fail against its guarded production defect; self-comparison or a constant assertion is a stub, not done.
+CHECKPOINTS: Run only ### Checkpoints via the checkpoint tool once per committed slice group (docs/testing-and-build.md). Wait for the report; paste CP-n lines unedited and inspect fresh TRX names and nonzero counts. Fix and rerun red rows. Explain unlisted builds/tests; report slot= and waited=. New tests must fail on their guarded production defect; a constant or self-comparison is a stub.
+
+repeat-proof: at most 3 normal + 2 loaded repetitions per unchanged proof selection; none required after green. Exceed only for a flake already demonstrated by Review; cite that Review, filter, reason and revised budget.
 
 SOURCE: Pass full committed HEAD as the expected SHA. Review needs validator-qualified clean receipts with verified build provenance.
 
-ROUND: the brief's verification profile governs. Final (default, first round): whole Unit lane, every full affected class, every ordinary V/R, required manual work. Interim (explicit only): cumulative changed cases since the full baseline incl. earlier repair cases, unresolved-finding tests, named adjacent smoke; unbounded shared impact needs Final. List deferred-to-final IDs; never mark them passed.
+ROUND: Follow the brief's profile. Final (default): whole Unit lane, full affected classes, ordinary V/R and required manual work. Interim (explicit): cumulative changed cases since full baseline, earlier repairs, unresolved findings and named adjacent smoke. Shared unbounded impact needs Final. List deferred IDs; never mark them passed.
 
-INVARIANTS: Run each V-n and R-n the round requires; report every ID and actual outcome. Commit and push each slice and the final ordinary-tested state. Report full commit SHA, branch and exact worktree, original Code task ID (landing owner), plan artifact and evidence paths.
+INVARIANTS: Run and report each required V-n/R-n. Commit and push each slice and final tested state. Report full SHA, branch, exact worktree, original Code task ID (landing owner), plan and evidence paths.
 
 Report every PC-n/variant pending for Mutation. Mutation owns deliberate mutants, red/restore/green and missing-control discovery, incl. zero-PC plans. Never widen a timeout or loosen an assertion.
 
