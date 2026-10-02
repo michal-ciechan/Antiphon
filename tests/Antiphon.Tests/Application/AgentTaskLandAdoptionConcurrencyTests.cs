@@ -66,7 +66,8 @@ public sealed class AgentTaskLandAdoptionConcurrencyTests
         var committedIntents = 0;
         fixture.Interceptor.BeforeSave = context =>
         {
-            if (git.InAdoptionPair && ReferenceEquals(context, h.CurrentLandContext)) requestSavesInPair++;
+            if (git.InAdoptionPair && ReferenceEquals(context, h.CurrentLandContext)
+                && context.ChangeTracker.Entries<AgentTaskLandRequest>().Any(e => e.State == EntityState.Modified)) requestSavesInPair++;
         };
         var request = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
             recoverReviewedSource: true);
@@ -77,7 +78,7 @@ public sealed class AgentTaskLandAdoptionConcurrencyTests
         DateTime evaluated = default;
         git.BeforeCommand = async (directory, args) =>
         {
-            if (args[0] != "reset" && !(args[0] == "update-ref" && args.Contains("--no-deref") && args.Contains(h.Fixture.SourceRef))) return null;
+            if (args[0] != "reset" && !(args.Count == 5 && args[0] == "update-ref" && args[1] == "--no-deref" && args[2] == h.Fixture.SourceRef)) return null;
             h.CurrentLandContext!.Database.CurrentTransaction.ShouldBeNull("V2.NoTransactionAcrossAdoptionGit");
             await using var observer = h.CreateContext();
             var intent = await observer.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
@@ -148,7 +149,7 @@ public sealed class AgentTaskLandAdoptionConcurrencyTests
             recoverReviewedSource: true);
         second.RequestId.ShouldNotBe(first.RequestId, "V2.PreIntentRecoveryFreshId");
         await h.RunQueuedAsync();
-        var cas = h.Fixture.Git.Commands.Single(x => x.Arguments[0] == "update-ref" && x.Arguments.Contains("--no-deref") && x.Arguments.Contains(h.Fixture.SourceRef));
+        var cas = h.Fixture.Git.Commands.Single(x => x.Arguments.Length == 5 && x.Arguments[0] == "update-ref" && x.Arguments[1] == "--no-deref" && x.Arguments[2] == h.Fixture.SourceRef);
         cas.Arguments.ShouldBe(new[] { "update-ref", "--no-deref", h.Fixture.SourceRef, reviewed, local }, "V2.ExactExpectedOldCASOperand");
         var op = await h.OperationAsync();
         (op is not null && new AgentTaskLandingState().HasPublication(op))
