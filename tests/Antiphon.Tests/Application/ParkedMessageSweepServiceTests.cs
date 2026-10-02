@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -63,6 +64,47 @@ public class ParkedMessageSweepServiceTests
         await world.SetTaskStatusAsync(sibling, AgentTaskStatus.Succeeded);
         (await world.ScanAsync()).ShouldBe(1);
         (await world.ReadMessageAsync(message)).Status.ShouldBe(QueuedMessageStatus.Canceled);
+    }
+
+    [Test]
+    public async Task A_parked_task_input_refinement_with_no_open_task_is_canceled_and_leaves_attention()
+    {
+        await TaskInputWithoutOpenTaskClearsAsync("refinement");
+    }
+
+    [Test]
+    public async Task A_parked_task_input_reply_with_no_open_task_is_canceled_and_leaves_attention()
+    {
+        await TaskInputWithoutOpenTaskClearsAsync("reply");
+    }
+
+    private static async Task TaskInputWithoutOpenTaskClearsAsync(string kind)
+    {
+        await using var world = await World.CreateAsync();
+        var session = await world.SeedSessionAsync(SessionStatus.Failed);
+        var task = await world.SeedTaskAsync(session, AgentTaskStatus.Succeeded);
+        var message = await world.SeedMessageAsync(session, QueuedMessageOrigin.Delegation,
+            body: $"parked {kind}",
+            conversationKey: AgentTaskInputService.ConversationKey(task, Guid.NewGuid()));
+
+        (await world.HasParkedAttentionAsync(message)).ShouldBeTrue($"{kind}-alert-before-sweep");
+        (await world.ScanAsync()).ShouldBe(1, $"{kind}-task-input-sweep-count");
+        (await world.ReadMessageAsync(message)).Status.ShouldBe(QueuedMessageStatus.Canceled);
+        (await world.HasParkedAttentionAsync(message)).ShouldBeFalse($"{kind}-alert-cleared");
+    }
+
+    [Test]
+    public async Task A_parked_task_input_on_an_open_task_is_not_swept()
+    {
+        await using var world = await World.CreateAsync();
+        var session = await world.SeedSessionAsync(SessionStatus.Running);
+        var task = await world.SeedTaskAsync(session, AgentTaskStatus.Working);
+        var message = await world.SeedMessageAsync(session, QueuedMessageOrigin.Delegation,
+            conversationKey: AgentTaskInputService.ConversationKey(task, Guid.NewGuid()));
+
+        (await world.ScanAsync()).ShouldBe(0, "open-task-input-sweep-count");
+        (await world.ReadMessageAsync(message)).Status.ShouldBe(QueuedMessageStatus.Pending);
+        (await world.HasParkedAttentionAsync(message)).ShouldBeTrue("open-task-input-alert-remains");
     }
 
     [Test]
@@ -305,6 +347,15 @@ public class ParkedMessageSweepServiceTests
         {
             await using var db = CreateContext();
             return await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == id);
+        }
+
+        public async Task<bool> HasParkedAttentionAsync(Guid messageId)
+        {
+            await using var db = CreateContext();
+            var attention = await AttentionServiceTests.BuildService(
+                new AttentionServiceTests.FakeRunnerClient(), db: db).GetAsync(CancellationToken.None);
+            return attention.Items.Any(item => item.MessageId == messageId
+                && item.Kind == AttentionKind.ParkedMessage);
         }
 
         private AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions(_schema.ConnectionString));
