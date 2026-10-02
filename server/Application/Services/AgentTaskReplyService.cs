@@ -3231,6 +3231,28 @@ public sealed class AgentTaskReplyService
             // CARD-0657 D-4: a non-Code runner task stores its sync facts without Code's
             // requirement to author a commit; the assessment never changes its status here.
             await RecordRemoteEvidenceAsync(services, task, body, prepared, ct);
+            if (task.Role != AgentTaskRole.Code && task.Workspace == WorkspaceMode.Worktree
+                && prepared is null && task.DispatchedAt is not null
+                && !string.IsNullOrWhiteSpace(task.WorktreePath))
+            {
+                // A local Plan/Review worktree also needs a persisted observation. Without it,
+                // an unchanged checkout has no fact for the caller-visible progress warning.
+                try
+                {
+                    var probe = services.GetService<TaskCompletionProgressService>();
+                    if (probe is not null)
+                    {
+                        var observed = await probe.EvaluateAsync(task, body, null, ct);
+                        task.CompletionProgressEvidenceJson = TaskProgressJson.SerializeEvidence(observed.Evidence);
+                    }
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Local worktree progress probe failed for task {ShortId}",
+                        DelegationReportFormatter.Short(task.Id));
+                }
+            }
             return null;
         }
 
