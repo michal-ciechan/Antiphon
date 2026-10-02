@@ -211,5 +211,10 @@ Antiphon.Tests.Application.ReviewEvidenceConsistencyTests
 Antiphon.Tests.Application.CompletionWarningDeliveryTests
 # CARD-0788: real land refusal outbox, busy caller, and recovery-cut delivery matrix.
 Antiphon.Tests.Application.LandEvidenceWarningDeliveryTests
+<<<<<<< HEAD
 # CARD-0953: isolated PostgreSQL schema plus two real runner registration/retirement cycles.
 Antiphon.Tests.Application.PhoneHomeRunnerRetirementCycleTests
+=======
+# CARD-0974: isolated migrated databases, 2,000-row transcript costs and behavior oracle matrix.
+Antiphon.Tests.Application.TaskInputAttentionCostTests
+>>>>>>> f6f3b4344 (perf(attention): bound task-input transcript reads to delivered inputs)
