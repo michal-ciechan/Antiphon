@@ -34,8 +34,6 @@ namespace Antiphon.Tests.Application;
 [NotInParallel]
 public class AgentSupervisionTests
 {
-    private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
-
     [Test]
     public async Task AlwaysOn_agent_with_no_session_is_scheduled_then_started()
     {
@@ -625,7 +623,7 @@ public class AgentSupervisionTests
             new OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
             {
                 DefaultDefinition = "fake",
-                Definitions = { ["fake"] = new AgentDefinition { Kind = definitionKind, Exe = Cmd } }
+                Definitions = { ["fake"] = new AgentDefinition { Kind = definitionKind, Exe = AgentControlServiceIntegrationTests.FixtureExecutable } }
             }));
         services.AddSingleton<AgentRegistry>();
         services.AddSingleton<IWorktreeManager>(new NoWorktreeManager());

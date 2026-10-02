@@ -18,11 +18,7 @@ namespace Antiphon.Tests.Application;
 [NotInParallel]
 public partial class StandingSessionSelectionTests
 {
-    // The fake adapter captures launches without starting this executable, but configuration
-    // preflight still requires a real shell on the test host.
-    private static string FixtureExecutable => OperatingSystem.IsWindows()
-        ? Path.Combine(Environment.SystemDirectory, "cmd.exe")
-        : "/bin/sh";
+    private static string FixtureExecutable => AgentControlServiceIntegrationTests.FixtureExecutable;
 
     private static StandingRecoveryFixture CreateFixture(params FakeAgentProtocolAdapter[] adapters)
         => CreateFixture(null, false, adapters);

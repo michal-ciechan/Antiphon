@@ -35,7 +35,7 @@ public class StandingSessionOwnershipTests
         await using var f = new StandingRecoveryFixture(new FakeAgentProtocolAdapter());
         // The adapter never spawns this executable, but Start validates it before ownership.
         f.Harness.Provider.GetRequiredService<IOptionsMonitor<AgentRegistrySettings>>()
-            .CurrentValue.Definitions["fake"].Exe = Environment.ProcessPath!;
+            .CurrentValue.Definitions["fake"].Exe = AgentControlServiceIntegrationTests.FixtureExecutable;
         await f.SeedAsync();
         await f.Harness.AgentService.DeleteAsync(f.Agent.Id, default);
         var replacement = await f.Harness.AgentService.CreateAsync(new CreateAgentRequest(f.Agent.Name, f.Root), default);

@@ -26,6 +26,12 @@ namespace Antiphon.Tests.Application;
 [NotInParallel("AgentControl")]
 public class AgentControlServiceIntegrationTests
 {
+    // Fake adapters never execute this path, but launch preflight requires an existing file.
+    // Keep the original Windows shell coverage and use the running host elsewhere.
+    internal static string FixtureExecutable => OperatingSystem.IsWindows()
+        ? Path.Combine(Environment.SystemDirectory, "cmd.exe")
+        : Environment.ProcessPath!;
+
     [Test]
     public async Task Legacy_only_provider_starts_unprofiled_agent_through_configured_registry()
     {
@@ -1759,7 +1765,7 @@ public class AgentControlServiceIntegrationTests
         services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
         {
             DefaultDefinition = "fake",
-            Definitions = { ["fake"] = new AgentDefinition { Kind = defaultKind, Exe = Path.Combine(Environment.SystemDirectory, "cmd.exe") } }
+            Definitions = { ["fake"] = new AgentDefinition { Kind = defaultKind, Exe = FixtureExecutable } }
         }));
         services.AddSingleton<AgentRegistry>();
         if (includeLaunchResolver)
@@ -1846,7 +1852,7 @@ public class AgentControlServiceIntegrationTests
             Id = Guid.NewGuid(),
             ProfileId = profile.Id,
             RevisionNumber = 1,
-            Executable = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+            Executable = FixtureExecutable,
             ArgumentsJson = JsonSerializer.Serialize(new[] { "--always-approve" }),
             DiscoveryArgumentsJson = "[]",
             VersionArgumentsJson = "[]",

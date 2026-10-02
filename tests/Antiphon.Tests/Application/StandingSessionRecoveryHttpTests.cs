@@ -118,7 +118,7 @@ public sealed class StandingRecoveryWebAppFactory : AntiphonWebAppFactory
         {
             ["Agents:DefaultDefinition"] = "http-claude",
             ["Agents:Definitions:http-claude:Kind"] = "ClaudeCode",
-            ["Agents:Definitions:http-claude:Exe"] = Path.Combine(Environment.SystemDirectory, "cmd.exe")
+            ["Agents:Definitions:http-claude:Exe"] = AgentControlServiceIntegrationTests.FixtureExecutable
         }));
     }
     protected override void ApplyTestOverrides(IServiceCollection services)
