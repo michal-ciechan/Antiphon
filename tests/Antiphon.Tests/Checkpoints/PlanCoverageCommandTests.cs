@@ -47,7 +47,7 @@ public sealed class PlanCoverageCommandTests : CheckpointTestBase
         var driver = new FakeDriver(); driver.When(_ => true, (_, _) => throw new InvalidOperationException("coverage launched driver"));
         var runtime = new CheckpointApp.Runtime { Driver = driver, Output = new StringWriter() };
         var exit = await Antiphon.Checkpoints.Program.RunAsync(["coverage", "--repo-root", root, "--plan", world.Plan], runtime);
-        Directory.GetFileSystemEntries(root, "*", SearchOption.AllDirectories).Order().ShouldBe(before, customMessage: "coverage-no-side-effects");
+        Directory.GetFileSystemEntries(root, "*", SearchOption.AllDirectories).Order().SequenceEqual(before).ShouldBeTrue("coverage-no-side-effects");
         driver.Count(_ => true).ShouldBe(0, "coverage-driver-zero");
         exit.ShouldBe(0, "coverage-public-cli");
     }
