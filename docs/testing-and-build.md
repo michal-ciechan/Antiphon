@@ -259,6 +259,21 @@ kinds are `method`, `label`, `canary`, `member`, `empty`, `null`, `value`.
 `test` is class-qualified; mappings supplement extraction and cannot remove a label
 or canary. The empty string is a valid expected `value`, but never a label.
 
+Declared V/R census promises are checked against distinct successfully bound method
+obligations for the same ID, including continuation rows and additive checklist items.
+In the class cell, `<class>` in a code span followed by `(N results)` counts results;
+`(N existing)` counts methods. The literal sentence `All N class-qualified methods
+in the checklist are required` declares the ID's total method count. Class counts
+use the resolved declaring class; qualified/unqualified aliases count once. A deficit
+or surplus emits `CHECKLIST_COUNT_MISMATCH` at the declaration and exits 1. Result
+counts support single-result methods and method-level `Arguments` attributes. Dynamic
+data sources, Matrix/Repeat or class/parameter expansion emit
+`CHECKLIST_COUNT_UNMAPPED` (exit 1); syntax cannot invent their execution census.
+This checks the declared promise set. It does not infer that every current method
+selected by a class filter belongs in an older frozen checklist; that stronger rule
+needs an explicit plan contract. No declarations are added to the JSON report schema,
+and a matching census adds no output records.
+
 Roslyn parses syntax only. Supported Shouldly signatures distinguish the actual,
 expected, Case and custom-message arguments. Setup/comments/another method cannot
 satisfy an assertion. Literal aliases, interpolated literal segments, literal-array

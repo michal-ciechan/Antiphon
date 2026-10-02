@@ -40,6 +40,7 @@ public sealed class PlanCoverageReader
             {
                 current = idMatch.Groups["id"].Value;
                 var cells = trim.StartsWith('|') ? PlanTableImporter.SplitRow(line) : [line];
+                if (!current.StartsWith("PC-", StringComparison.Ordinal)) ReadCounts(report, current, cells, line, i + 1);
                 // A PC mutation cell is deliberately not interpreted as a promise.
                 var body = current.StartsWith("PC-", StringComparison.Ordinal) && cells.Count > 2 ? cells[^1] : line;
                 var spans = CodeSpans(body, i + 1, report);
@@ -134,6 +135,29 @@ public sealed class PlanCoverageReader
     {
         var name = Regex.Replace(value, @"\([^)]*\)$", "");
         return Regex.IsMatch(name, @"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$") ? name : null;
+    }
+
+    private static void ReadCounts(PlanCoverageReport report, string id, IReadOnlyList<string> cells, string text, int line)
+    {
+        if (cells.Count > 1)
+        {
+            var cell = cells[1];
+            foreach (var span in CodeSpans(cell, line, report))
+            {
+                var count = Regex.Match(cell[span.End..], @"^\s*\((?<count>[0-9]+)\s+(?<unit>results|existing)\)");
+                if (count.Success && NormalizeMethod(span.Value) is not null)
+                    Add(count.Groups["count"].Value, span.Value, count.Groups["unit"].Value == "results" ? "results" : "methods",
+                        text.IndexOf(cell, StringComparison.Ordinal) + span.Column);
+            }
+        }
+        var total = Regex.Match(text, @"\bAll (?<count>[0-9]+) class-qualified methods in the checklist are required\b");
+        if (total.Success) Add(total.Groups["count"].Value, "", "methods", total.Index + 1);
+
+        void Add(string value, string @class, string unit, int column)
+        {
+            if (!int.TryParse(value, out var count)) Invalid(report, "PLAN_PARSE", line, "declared count out of range", column);
+            else report.CountPromises.Add(new(id, @class, count, unit, line, column));
+        }
     }
 
     private static List<Span> CodeSpans(string text, int line, PlanCoverageReport report)
