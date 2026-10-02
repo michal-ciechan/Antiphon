@@ -128,11 +128,11 @@ public sealed class GrokRulesLaunchRefusalTests
             var ex = await Should.ThrowAsync<ConflictException>(() =>
                 harness.Control.StartAsync(
                     agent.Id, new StartAgentRequest(Fresh: true), CancellationToken.None));
-            ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
+            ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode, "windows-unsafe-code");
             ex.Message.ShouldContain(agent.Name);
             ex.Message.ShouldContain("--rules");
             ex.Message.ShouldContain(GrokRulesArgvPolicy.ReasonLineBreak);
-            ex.Message.ShouldNotContain(sentinel);
+            ex.Message.ShouldNotContain(sentinel, "windows-private-diagnostic");
             ex.Message.ShouldNotContain("[bundle:orchestrator");
             ex.Message.ShouldNotContain("override");
             var exe = Path.Combine(Environment.SystemDirectory, "cmd.exe");
@@ -142,7 +142,7 @@ public sealed class GrokRulesLaunchRefusalTests
             adapter.Prompts.ShouldBeEmpty();
 
             await using var verify = CreateContext();
-            (await verify.AgentSessions.CountAsync(s => s.Cwd == workspace)).ShouldBe(0);
+            (await verify.AgentSessions.CountAsync(s => s.Cwd == workspace)).ShouldBe(0, "windows-no-session");
             (await verify.Agents.SingleAsync(a => a.Id == agent.Id)).Status.ShouldBe(AgentStatus.Idle);
         }
         finally
