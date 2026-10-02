@@ -1,0 +1,20 @@
+<Project>
+  <!-- The exact selected csproj alone receives native TUnit expansion. A referenced project
+       sees the global properties but never receives the generated attributes. -->
+  <Target Name="AntiphonGenerateCheckpointRepeat" BeforeTargets="CoreCompile"
+          Condition="'$(AntiphonCheckpointRepeat)' != '' and '$(AntiphonCheckpointRepeat)' != '1' and '$(AntiphonCheckpointRepeatProject)' == '$(MSBuildProjectFullPath)'">
+    <Error Condition="'@(PackageReference->WithMetadataValue('Identity', 'TUnit'))' == ''"
+           Text="AntiphonCheckpointRepeat requires the selected project to reference TUnit" />
+    <PropertyGroup>
+      <_AntiphonRepeatAdditional>$([MSBuild]::Subtract($(AntiphonCheckpointRepeat), 1))</_AntiphonRepeatAdditional>
+      <_AntiphonRepeatFile>$(IntermediateOutputPath)CheckpointRepeat.g.cs</_AntiphonRepeatFile>
+    </PropertyGroup>
+    <ItemGroup>
+      <_AntiphonRepeatLine Include="[assembly: TUnit.Core.Repeat($(_AntiphonRepeatAdditional))]" />
+      <_AntiphonRepeatLine Include="[assembly: Antiphon.Checkpoints.RepeatEvidenceAttribute($(AntiphonCheckpointRepeat))]" />
+      <Compile Include="$(_AntiphonRepeatFile)" />
+      <Compile Include="$(MSBuildThisFileDirectory)CheckpointRepeatEvidenceAttribute.cs" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(_AntiphonRepeatFile)" Lines="@(_AntiphonRepeatLine)" Overwrite="true" />
+  </Target>
+</Project>

@@ -18,6 +18,7 @@ public sealed class RowRequest
     public List<string> Expect { get; init; } = [];
     public List<KeyValuePair<string, string>> Properties { get; init; } = [];
     public IReadOnlyList<string> KnownFlaky { get; init; } = [];
+    public int Repeat { get; init; } = 1;
     public string Commit { get; init; } = new string('0', 40);
     public string Slot { get; init; } = "unavailable";
     public string? SlotReason { get; init; }
@@ -47,6 +48,7 @@ public sealed class RowRunResult
     public string? SlotReason { get; set; }
     public int WaitedSeconds { get; set; }
     public double Seconds { get; set; }
+    public RepeatEvidence? Repeat { get; set; }
 }
 
 public sealed class RowRunner
@@ -74,7 +76,8 @@ public sealed class RowRunner
 
         Directory.CreateDirectory(request.ResultsDirectory);
         var fileName = request.DotnetFileName ?? "dotnet";
-        var properties = BuildStep.PropertyArguments(request.Properties, _platform.IsWindows);
+        var properties = BuildStep.PropertyArguments(request.Properties, _platform.IsWindows, request.Repeat,
+            request.Repeat > 1 ? RepeatRequest.CanonicalProject(request.WorkingDirectory, request.Project!) : null);
         if (request.SourceBoundary?.Invoke() == false)
             return SourceFailure(request, buffer, combined);
         CheckpointBuildBinding? binding = null;
@@ -85,7 +88,7 @@ public sealed class RowRunner
             if (request.NoBuild)
             {
                 request.Source.BuildSource = binding.Check();
-                if (request.ExpectedSourceSha is not null && request.Source.BuildSource != "verified")
+                if ((request.ExpectedSourceSha is not null || request.Repeat > 1) && request.Source.BuildSource != "verified")
                     return SourceFailure(request, buffer, combined, "build_source_mismatch");
             }
         }
@@ -160,9 +163,15 @@ public sealed class RowRunner
         if (request.SourceBoundary?.Invoke() == false)
             return SourceFailure(request, buffer, combined);
         var runArgs = BuildStep.RunArguments(request.Project!, request.OutputPath!, properties, request.Filter!, request.ResultsDirectory, "run.trx");
+        var nonce = request.Repeat > 1 ? Guid.NewGuid().ToString("N") : null;
+        var runEnvironment = request.Repeat > 1
+            ? request.Environment.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase)
+            : null;
+        if (runEnvironment is not null)
+            runEnvironment["ANTIPHON_CHECKPOINT_NONCE"] = nonce!;
         var run = await RowTimeout.RunWithDeadlineAsync(
             _driver,
-            new DriverRequest(fileName, runArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: request.Environment),
+            new DriverRequest(fileName, runArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: runEnvironment ?? request.Environment),
             request.Deadline,
             cancellationToken).ConfigureAwait(false);
         var sourceStable = request.SourceBoundary?.Invoke() != false;
@@ -184,9 +193,15 @@ public sealed class RowRunner
             return Finish(ExitCodes.Invalid, buildState, "", buffer, 0, [], trxPath, parsed, false, "malformed");
         }
 
+        var repeatCheck = request.Repeat > 1
+            ? RepeatEvidenceValidator.Validate(parsed, request.Repeat, nonce!, request.MinExecuted, request.Expect)
+            : null;
+
         var reruns = 0;
         var rerunLines = new List<string>();
-        var decision = RerunPolicy.Select(parsed.FailureNames, request.KnownFlaky);
+        var decision = request.Repeat > 1
+            ? RerunPolicy.Select([], [])
+            : RerunPolicy.Select(parsed.FailureNames, request.KnownFlaky);
         var unlistedFailures = parsed.FailureNames.Where(name => !decision.Names.Contains(name)).ToList();
         var rerunPassed = false;
         if (decision.Filters.Count > 0 && sourceStable)
@@ -267,6 +282,8 @@ public sealed class RowRunner
             exit = ExitCodes.RosterOrMin;
         else if (misses.Count > 0)
             exit = ExitCodes.RosterOrMin;
+        if (repeatCheck is { Ok: false } && exit != ExitCodes.FailedTests)
+            exit = repeatCheck.ExitCode;
         if (!sourceStable) exit = ExitCodes.Invalid;
 
         var lineModel = CheckpointLine.Format(new CheckpointLineModel
@@ -284,9 +301,14 @@ public sealed class RowRunner
             SlotReason = request.SlotReason,
             WaitedSeconds = request.WaitedSeconds,
             Reruns = reruns,
+            Repeat = repeatCheck?.Evidence,
             Source = request.Source,
         });
         combined.WriteLine(lineModel);
+        if (repeatCheck?.Error is string repeatError)
+            combined.WriteLine("REPEAT INVALID " + repeatError);
+        if (request.Repeat > 1 && request.KnownFlaky.Count > 0)
+            combined.WriteLine("REPEAT known-flaky subprocess rerun disabled");
         foreach (var rerunLine in rerunLines)
             combined.WriteLine(rerunLine);
         foreach (var name in parsed.FailureNames)
@@ -314,7 +336,9 @@ public sealed class RowRunner
             ExitCodes.RosterOrMin => "roster-miss",
             _ => "red",
         };
-        return Finish(exit, buildState, lineModel, buffer, reruns, rerunLines, Path.GetFullPath(trxPath), parsed, false, state);
+        var completed = Finish(exit, buildState, lineModel, buffer, reruns, rerunLines, Path.GetFullPath(trxPath), parsed, false, state);
+        completed.Repeat = repeatCheck?.Evidence;
+        return completed;
     }
 
     private RowRunResult TimeoutResult(RowRequest request, string buildState, StringWriter buffer, TextWriter output)

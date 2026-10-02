@@ -3,6 +3,7 @@ namespace Antiphon.Checkpoints;
 public sealed class RunRequest
 {
     public List<string> Rows { get; set; } = [];
+    public int? Repeat { get; set; }
     public string? Baseline { get; set; }
     public List<string> KnownFlaky { get; set; } = [];
     public int? RowTimeoutMinutes { get; set; }

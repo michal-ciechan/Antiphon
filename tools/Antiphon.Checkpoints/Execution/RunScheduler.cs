@@ -327,7 +327,9 @@ public sealed class RunScheduler
                 return;
             }
 
-            var properties = BuildStep.PropertyArguments(request.Manifest.Build.Properties, _platform.IsWindows);
+            var repeat = request.Rows.First(row => row.Build == build.Id).Repeat;
+            var properties = BuildStep.PropertyArguments(request.Manifest.Build.Properties, _platform.IsWindows, repeat,
+                repeat > 1 ? RepeatRequest.CanonicalProject(request.WorkingDirectory, build.Project) : null);
             var binding = CheckpointBuildBinding.Expected(request.WorkingDirectory, build.Project, build.OutputPath,
                 properties, request.State.Source.Start);
             if (request.SourceGuard?.Observe() == false)
@@ -428,9 +430,10 @@ public sealed class RunScheduler
             NoBuild = true,
             BuildStateOverride = buildState,
             MinExecuted = spec.MinExecuted ?? 1,
+            Repeat = spec.Repeat,
             Expect = spec.Expect,
             Properties = request.Manifest.Build.Properties.ToList(),
-            KnownFlaky = request.KnownFlaky,
+            KnownFlaky = spec.Repeat > 1 ? [] : request.KnownFlaky,
             Commit = request.Commit,
             Source = rowSource,
             SourceBoundary = Boundary,

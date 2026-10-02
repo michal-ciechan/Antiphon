@@ -40,6 +40,7 @@ public static class ManifestValidator
 
         var cpIds = new HashSet<string>(StringComparer.Ordinal);
         var firstAfter = new Dictionary<string, string>(StringComparer.Ordinal);
+        var firstRepeat = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var row in manifest.Checkpoints)
         {
             if (string.IsNullOrWhiteSpace(row.Id))
@@ -48,6 +49,10 @@ public static class ManifestValidator
                 throw new ManifestValidationException("id", $"duplicate checkpoint id '{row.Id}'");
             if (row.After.Count == 0)
                 throw new ManifestValidationException("after", $"{row.Id} has no after");
+            if (row.Repeat < 1 || row.MinExecuted is int floor && (floor < 0 || (long)floor * row.Repeat > int.MaxValue))
+                throw new ManifestValidationException("repeat", $"{row.Id}: repeat must be positive and Repeat x Min must fit an integer");
+            if (row.IsCommand && row.Repeat != 1)
+                throw new ManifestValidationException("repeat", $"{row.Id}: command rows cannot repeat");
             if (row.EstimatedMinutes is int estimate && (estimate <= 0 || 3L * estimate > int.MaxValue))
                 throw new ManifestValidationException("estimatedMinutes", $"{row.Id}: EstimatedMinutes must be positive with safe deadlines");
             if (row.EstimatedMinutesWindows is int windows && (windows <= 0 || 3L * windows > int.MaxValue))
@@ -69,6 +74,9 @@ public static class ManifestValidator
                     throw new ManifestValidationException("after",
                         $"{row.Id} reuses build '{row.Build}' across a different after (CARD-0585 reuse rule)");
                 firstAfter.TryAdd(row.Build!, afterKey);
+                if (firstRepeat.TryGetValue(row.Build!, out var repeat) && repeat != row.Repeat)
+                    throw new ManifestValidationException("repeat", $"{row.Id}: reused build '{row.Build}' has a different repeat; use a distinct isolated output");
+                firstRepeat.TryAdd(row.Build!, row.Repeat);
             }
             ValidateEnvironment(row);
         }

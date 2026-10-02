@@ -33,6 +33,18 @@ public sealed class TrxParseResult
     public List<string> FailureNames { get; init; } = [];
     public List<TrxFailure> Failures { get; init; } = [];
     public List<SlowClass> SlowClasses { get; init; } = [];
+    public List<TrxCaseResult> Results { get; init; } = [];
+}
+
+public sealed class TrxCaseResult
+{
+    public string ExecutionId { get; init; } = "";
+    public string TestId { get; init; } = "";
+    public string Name { get; init; } = "";
+    public string Outcome { get; init; } = "";
+    public string StdOut { get; init; } = "";
+    public DateTimeOffset? StartedAt { get; init; }
+    public DateTimeOffset? EndedAt { get; init; }
 }
 
 public static class TrxReport
@@ -76,6 +88,7 @@ public static class TrxReport
         var failureNames = new List<string>();
         var failures = new List<TrxFailure>();
         var classSeconds = new Dictionary<string, (double Seconds, int Tests)>(StringComparer.Ordinal);
+        var cases = new List<TrxCaseResult>();
 
         foreach (var result in doc.Descendants(ns + "UnitTestResult"))
         {
@@ -94,6 +107,17 @@ public static class TrxReport
                 className = "";
             }
 
+            var output = result.Element(ns + "Output");
+            cases.Add(new TrxCaseResult
+            {
+                ExecutionId = (string?)result.Attribute("executionId") ?? "",
+                TestId = id ?? "",
+                Name = name,
+                Outcome = outcome,
+                StdOut = output?.Element(ns + "StdOut")?.Value ?? "",
+                StartedAt = DateTimeOffset.TryParse((string?)result.Attribute("startTime"), out var start) ? start : null,
+                EndedAt = DateTimeOffset.TryParse((string?)result.Attribute("endTime"), out var end) ? end : null,
+            });
             if (outcome.Equals("NotExecuted", StringComparison.Ordinal))
             {
                 if (name.Length > 0)
@@ -113,7 +137,6 @@ public static class TrxReport
                 continue;
 
             failureNames.Add(name);
-            var output = result.Element(ns + "Output");
             var error = output?.Element(ns + "ErrorInfo");
             failures.Add(new TrxFailure
             {
@@ -147,6 +170,7 @@ public static class TrxReport
             SkippedNames = skippedNames,
             FailureNames = failureNames,
             Failures = failures,
+            Results = cases,
             SlowClasses = classSeconds
                 .Select(pair => new SlowClass { ClassName = pair.Key, Seconds = pair.Value.Seconds, Tests = pair.Value.Tests })
                 .OrderByDescending(c => c.Seconds)

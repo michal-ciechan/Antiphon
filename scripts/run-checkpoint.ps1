@@ -32,6 +32,7 @@ param(
     [Parameter(Mandatory = $true)] [string]$Filter,
     [string]$ResultsRoot = '.antiphon/checkpoints',
     [switch]$NoBuild,
+    [int]$Repeat = 1,
     [int]$MinExecuted = 1,
     [string[]]$Expect,
     [string[]]$MsBuildProperty,
@@ -148,6 +149,9 @@ function Stop-Invalid {
 if ($OutputPath -cnotmatch '^bin-[A-Za-z0-9._-]+/$') {
     Stop-Invalid ("OutputPath '$OutputPath' must be bin-<name>/ with a forward slash and no trailing space (CARD-0448 argv hazard: a trailing backslash creates a directory whose name ends in a space)")
 }
+if ($Repeat -lt 1 -or ([long]$Repeat * [long]$MinExecuted) -gt [int]::MaxValue) {
+    Stop-Invalid 'Repeat must be a positive integer and Repeat x MinExecuted must fit an integer'
+}
 
 # (1b) MSBuild properties (CARD-0671). Split on commas as -Expect is: `pwsh -File` binds every
 # argument as a string, so -MsBuildProperty A=1,B=2 arrives there as one element. A value that
@@ -160,6 +164,24 @@ foreach ($token in $propertyTokens) {
     if ($token -match '(^|;)\s*(OutputPath|OutDir|BaseOutputPath)\s*=') {
         Stop-Invalid ("MsBuildProperty '$token' may not set the output path; use -OutputPath")
     }
+    if ($token -match '(^|;)\s*AntiphonCheckpointRepeat(Project)?\s*=') {
+        Stop-Invalid ("MsBuildProperty '$token' may not set reserved repeat properties")
+    }
+}
+if ($Repeat -gt 1) {
+    $repeatProject = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine((Get-Location).Path, $Project))
+    if ([System.IO.Directory]::Exists($repeatProject)) {
+        $matches = @([System.IO.Directory]::GetFiles($repeatProject, '*.csproj', [System.IO.SearchOption]::TopDirectoryOnly))
+        if ($matches.Count -ne 1) { Stop-Invalid 'Repeat project directory must contain exactly one csproj' }
+        $repeatProject = $matches[0]
+    }
+    if (-not [System.IO.File]::Exists($repeatProject) -or -not $repeatProject.EndsWith('.csproj', [StringComparison]::OrdinalIgnoreCase)) {
+        Stop-Invalid 'Repeat project must resolve to exactly one csproj'
+    }
+    [xml]$repeatProjectXml = [System.IO.File]::ReadAllText($repeatProject)
+    $tunit = @($repeatProjectXml.SelectNodes('//*[local-name()="PackageReference"]') | Where-Object { $_.GetAttribute('Include') -eq 'TUnit' })
+    if ($tunit.Count -ne 1) { Stop-Invalid 'Repeat project must reference TUnit directly' }
+    $propertyTokens = @($propertyTokens) + @('AntiphonCheckpointRepeat=' + $Repeat, 'AntiphonCheckpointRepeatProject=' + $repeatProject)
 }
 # Off Windows the extensionless fakeclaude apphost and the fakeclaude/ directory Antiphon.Tests
 # stages beside it are the same path, so the build fails; with no apphost `dotnet run` falls back
@@ -208,7 +230,7 @@ if ($NoBuild) {
     try { $stampValue = Get-Content -Raw -LiteralPath $stampPath | ConvertFrom-Json }
     catch { }
     $script:buildSource = if (Test-CheckpointBuildBinding $stampValue $expectedBinding) { 'verified' } elseif ($null -eq $stampValue) { 'unknown' } else { 'mismatch' }
-    if ($ExpectedSourceSha -and $script:buildSource -ne 'verified') {
+    if (($ExpectedSourceSha -or $Repeat -gt 1) -and $script:buildSource -ne 'verified') {
         $script:sourceReason = 'build_source_mismatch'
         Write-Trailer -Code 2
         exit 2
@@ -243,7 +265,7 @@ $cpuArguments = @()
 if ($null -ne $slot -and [int]$slot.MaxCpuCount -gt 0) { $cpuArguments = @('-maxcpucount:' + [int]$slot.MaxCpuCount) }
 
 function Invoke-Dotnet {
-    param([string[]]$Arguments, [string]$Phase)
+    param([string[]]$Arguments, [string]$Phase, [string]$Nonce)
     # ProcessStartInfo.ArgumentList passes each token literally. The call operator
     # wildcard-scans a treenode filter (/*/*/Class/*) across /proc and /tmp before
     # the child starts: tens of seconds on a busy host, long enough for the script
@@ -262,6 +284,7 @@ function Invoke-Dotnet {
         $tokens = @($Arguments)
     }
     foreach ($token in $tokens) { [void]$psi.ArgumentList.Add([string]$token) }
+    if ($Nonce) { $psi.Environment['ANTIPHON_CHECKPOINT_NONCE'] = $Nonce }
     $logPath = Join-Path $resultsDirectory ($Phase + '.log')
     $stream = [System.IO.FileStream]::new($logPath, [System.IO.FileMode]::CreateNew,
         [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
@@ -329,7 +352,8 @@ try {
         if (-not (Assert-CheckpointBoundary 'pre_run')) { $buildExit = 2 }
     }
     if ($buildExit -eq 0) {
-        $runExit = Invoke-Dotnet -Phase 'run' -Arguments (@('run', '--project', $Project, '--no-build', ('--property:OutputPath=' + $OutputPath)) + $propertyArguments + @(
+        $repeatNonce = if ($Repeat -gt 1) { [guid]::NewGuid().ToString('N') } else { $null }
+        $runExit = Invoke-Dotnet -Phase 'run' -Nonce $repeatNonce -Arguments (@('run', '--project', $Project, '--no-build', ('--property:OutputPath=' + $OutputPath)) + $propertyArguments + @(
             '--', '--treenode-filter', $Filter, '--report-trx', '--report-trx-filename', 'run.trx',
             '--results-directory', $resultsDirectory))
         $null = Assert-CheckpointBoundary 'post_run'

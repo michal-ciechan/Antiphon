@@ -62,7 +62,7 @@ public static class PlanTableImporter
         if (header.Count < 9 || !header.Take(9).SequenceEqual(Header))
             return Fail("checkpoint table header must be CP, After, Build, Group, Filter, Covers, Expect, Min, EstimatedMinutes");
 
-        var optional = new HashSet<string>(["EstimatedMinutesWindows", "Serial", "Environment"], StringComparer.Ordinal);
+        var optional = new HashSet<string>(["EstimatedMinutesWindows", "Serial", "Environment", "Repeat"], StringComparer.Ordinal);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var name in header.Skip(9))
         {
@@ -74,6 +74,7 @@ public static class PlanTableImporter
         var windowsColumn = header.IndexOf("EstimatedMinutesWindows");
         var serialColumn = header.IndexOf("Serial");
         var environmentColumn = header.IndexOf("Environment");
+        var repeatColumn = header.IndexOf("Repeat");
 
         var manifest = new CheckpointManifest { Plan = planProvenance };
         var rowBuilds = new Dictionary<string, (string BuildId, string AfterKey)>(StringComparer.Ordinal);
@@ -98,6 +99,12 @@ public static class PlanTableImporter
                 Group = group,
                 ExpectText = expectText,
             };
+            if (repeatColumn >= 0 && cells[repeatColumn].Trim().Length > 0)
+            {
+                if (!int.TryParse(cells[repeatColumn].Trim(), out var repeat) || repeat < 1)
+                    return Fail($"{id}: Repeat must be a positive integer");
+                row.Repeat = repeat;
+            }
             if (serialColumn >= 0)
             {
                 var serial = cells[serialColumn].Trim();
@@ -179,6 +186,10 @@ public static class PlanTableImporter
                 if (floor.Success)
                     row.MinExecuted = int.Parse(floor.Groups[1].Value);
             }
+            if (row.MinExecuted is int minimum && (minimum < 0 || (long)minimum * row.Repeat > int.MaxValue))
+                return Fail($"{id}: Repeat x Min exceeds the supported result count");
+            if (row.IsCommand && row.Repeat != 1)
+                return Fail($"{id}: command row cannot use Repeat > 1");
 
             if (row.IsCommand)
             {
@@ -218,6 +229,9 @@ public static class PlanTableImporter
 
             if (!row.IsCommand && row.Build is not null)
             {
+                var priorRepeat = manifest.Checkpoints.FirstOrDefault(previous => previous.Build == row.Build);
+                if (priorRepeat is not null && priorRepeat.Repeat != row.Repeat)
+                    return Fail($"{id}: reused build '{row.Build}' has a different Repeat; use a distinct isolated output");
                 var priorBuild = rowBuilds.Values.FirstOrDefault(value => value.BuildId == row.Build);
                 if (priorBuild.BuildId is not null && priorBuild.AfterKey != string.Join(",", after))
                     return Fail($"{id}: After differs for build '{row.Build}'; use a fresh build output");
