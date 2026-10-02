@@ -13,6 +13,45 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentTaskLandHalfResetTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C954_IgnoredResidueAllowsHalfResetPublication(bool freshRequest)
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (local, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
+        var first = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        fixture.Interceptor.RequestId = first.RequestId;
+        await Should.ThrowAsync<DbUpdateConcurrencyException>(() => h.RunQueuedAsync());
+        var brief = Path.Combine(h.Fixture.Source, ".antiphon", "inbox", "brief.md");
+        var obj = Path.Combine(h.Fixture.Source, "obj", "x");
+        Directory.CreateDirectory(Path.GetDirectoryName(brief)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(obj)!);
+        await File.WriteAllTextAsync(brief, "private brief\n");
+        await File.WriteAllTextAsync(obj, "private build output\n");
+        var exclude = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "--git-path", "info/exclude")).Trim();
+        await File.AppendAllTextAsync(Path.GetFullPath(exclude, h.Fixture.Source), "\n.antiphon/\nobj/\n");
+        if (freshRequest) await h.FailAsync(new IOException("interrupted adoption"));
+        else await h.SweepAsync();
+        var requestId = freshRequest
+            ? (await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+                recoverReviewedSource: true)).RequestId
+            : first.RequestId;
+        await h.RunQueuedAsync();
+        await using var db = h.CreateContext();
+        var row = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == requestId);
+        row.SourceRefusalReason.ShouldBeNull(freshRequest ? "H.FreshIgnoredResidueAccepted" : "H.SameRequestIgnoredResidueAccepted");
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim()
+            .ShouldBe(reviewed, "H.IgnoredResidueHeadAligned");
+        (await File.ReadAllTextAsync(brief)).ShouldBe("private brief\n", "H.IgnoredBriefPreserved");
+        (await File.ReadAllTextAsync(obj)).ShouldBe("private build output\n", "H.IgnoredObjPreserved");
+        var op = await h.OperationAsync();
+        (op is not null && new AgentTaskLandingState().HasPublication(op))
+            .ShouldBeTrue(freshRequest ? "H.FreshIgnoredResiduePublishes" : "H.SameRequestIgnoredResiduePublishes");
+    }
+
+    [Test]
     public async Task C883_IgnoredFileDoesNotHalfResetOrdinaryAdoption()
     {
         await using var fixture = new LandHalfResetFixture();
