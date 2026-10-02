@@ -35,7 +35,7 @@ public sealed class PlanCoverageGoldenTests
             [new("state.cs.txt", PlanCoverageFixture.Raw("c835-state.cs.txt")), new("script.cs.txt", PlanCoverageFixture.Raw("c835-script.cs.txt")), new("approval.cs.txt", PlanCoverageFixture.Raw("c835-approval.cs.txt"))]);
         using var expected = JsonDocument.Parse(PlanCoverageFixture.Raw("c835-expected.json"));
         report.Pcs.Select(p => p.Id).Order().ShouldBe(expected.RootElement.EnumerateObject().Select(p => p.Name).Order(), "coverage-eight-pc-risks");
-        foreach (var p in expected.RootElement.EnumerateObject()) report.Pcs.Single(pc => pc.Id == p.Name).Status.ShouldBe(p.Value.GetString(), "coverage-eight-pc-status");
+        foreach (var p in expected.RootElement.EnumerateObject()) report.Pcs.Single(pc => pc.Id == p.Name).Status.ShouldBe(p.Value.GetString(), "coverage-eight-pc-status " + p.Name);
         report.Pcs.Single(p => p.Id == "PC-23").EarlierOtherLabels.ShouldNotBeEmpty("coverage-pc23-advisory");
         report.Pcs.ShouldAllBe(p => p.Reachability == "unproven", "coverage-historical-unproven");
     }
