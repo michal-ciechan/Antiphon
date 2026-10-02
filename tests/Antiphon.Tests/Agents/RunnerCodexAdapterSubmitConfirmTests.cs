@@ -317,7 +317,15 @@ public class RunnerCodexAdapterSubmitConfirmTests
 
         if (last == 4)
         {
-            time.AdvanceTo(started + TimeSpan.FromSeconds(2));
+            for (var ms = 1_000; ms <= 2_000; ms += 250)
+            {
+                var expected = started + TimeSpan.FromMilliseconds(ms);
+                var pollTask = time.WaitForTimerAsync(e =>
+                    e.DueTime == TimeSpan.FromMilliseconds(250) && e.Deadline == expected);
+                var next = await Task.WhenAny(pollTask, Task.Delay(TimeSpan.FromSeconds(5)));
+                next.ShouldBe(pollTask, "submit-poll-uses-clock");
+                time.AdvanceTo(expected);
+            }
             if (client.ThrowOnTranscript)
             {
                 if (client.IndicatorScreenReads > 0)
