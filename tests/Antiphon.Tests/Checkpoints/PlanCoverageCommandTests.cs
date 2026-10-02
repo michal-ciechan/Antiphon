@@ -24,7 +24,7 @@ public sealed class PlanCoverageCommandTests : CheckpointTestBase
         var again = new StringWriter(); command.Run(root, world.Plan, output: again);
         again.ToString().ShouldBe(text.ToString(), "coverage-stable-order");
         var json = new StringWriter(); command.Run(root, world.Plan, format: "json", output: json).ShouldBe(1, "coverage-json-exit");
-        json.ToString().ShouldContain("MISSING_LABEL", "coverage-json-decisions");
+        json.ToString().ShouldContain("MISSING_LABEL", Case.Sensitive, "coverage-json-decisions");
         File.WriteAllText(world.Source, "class Demo { void Check() { x.ShouldBe(1, \"target-label\"); } }");
         command.Run(root, world.Plan, output: new StringWriter()).ShouldBe(0, "coverage-exit-clean");
     }
@@ -34,7 +34,7 @@ public sealed class PlanCoverageCommandTests : CheckpointTestBase
         var root = TempDir(); var world = PlanCoverageFixture.WriteWorld(root);
         var output = new StringWriter();
         new CoverageCommand().Run(root, "missing.md", output: output).ShouldBe(2, "coverage-invalid-never-clean");
-        output.ToString().ShouldContain("result=invalid", "coverage-invalid-footer");
+        output.ToString().ShouldContain("result=invalid", Case.Sensitive, "coverage-invalid-footer");
         File.WriteAllText(world.Source, "class Demo { void Check( {");
         new CoverageCommand().Run(root, world.Plan, output: new StringWriter()).ShouldBe(2, "coverage-invalid-syntax");
         new CoverageCommand().Run(root, world.Plan, format: "yaml", output: new StringWriter()).ShouldBe(2, "coverage-invalid-format");
@@ -47,7 +47,7 @@ public sealed class PlanCoverageCommandTests : CheckpointTestBase
         var driver = new FakeDriver(); driver.When(_ => true, (_, _) => throw new InvalidOperationException("coverage launched driver"));
         var runtime = new CheckpointApp.Runtime { Driver = driver, Output = new StringWriter() };
         var exit = await Antiphon.Checkpoints.Program.RunAsync(["coverage", "--repo-root", root, "--plan", world.Plan], runtime);
-        Directory.GetFileSystemEntries(root, "*", SearchOption.AllDirectories).Order().ShouldBe(before, "coverage-no-side-effects");
+        Directory.GetFileSystemEntries(root, "*", SearchOption.AllDirectories).Order().ShouldBe(before, customMessage: "coverage-no-side-effects");
         driver.Count(_ => true).ShouldBe(0, "coverage-driver-zero");
         exit.ShouldBe(0, "coverage-public-cli");
     }

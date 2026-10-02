@@ -33,7 +33,7 @@ public sealed class PlanCoveragePcTests
     {
         var report = PlanCoverageFixture.Analyze("class Demo { void Check() { x.ShouldBe(1, \"target-label before\"); x.ShouldBe(2, \"target-label after\"); } }", PcPlan());
         report.Pcs.Single().Status.ShouldBe("static-labeled", "coverage-pc-unproven");
-        report.Text().ShouldContain("reachability=unproven", "coverage-pc-footer");
-        report.Json().ShouldNotContain("reachable", "coverage-pc-no-dynamic-certificate");
+        report.Text().ShouldContain("reachability=unproven", Case.Sensitive, "coverage-pc-footer");
+        report.Json().ShouldNotContain("reachable", Case.Sensitive, "coverage-pc-no-dynamic-certificate");
     }
 }
