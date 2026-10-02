@@ -16,6 +16,28 @@ namespace Antiphon.Tests.Application;
 public sealed class HostCleanupReportTests
 {
     [Test]
+    public async Task Delayed_complete_inventory_cannot_clear_open_backlog()
+    {
+        await using var f = await HostCleanupServerFixture.CreateAsync();
+        for (var day = 1; day <= 3; day++)
+        {
+            f.Clock.UtcNow = new DateTimeOffset(2026, 10, day, 12, 0, 0, TimeSpan.Zero);
+            await f.IngestAsync(f.Receipt(day));
+        }
+        Backlog(await f.AttentionAsync()).ShouldBeTrue();
+        f.Clock.UtcNow = new DateTimeOffset(2026, 10, 8, 12, 0, 0, TimeSpan.Zero);
+        var delayed = f.Receipt(4, worktreeBytes: 1);
+        await f.IngestAsync(delayed);
+        Backlog(await f.AttentionAsync()).ShouldBeTrue("C826.delayed-recovery-cannot-clear-backlog");
+        await using var db = f.Db();
+        (await db.HostCleanupRuns.SingleAsync(run => run.Id == delayed.RunId)).Complete.ShouldBeFalse();
+        // The original observation remains in the immutable receipt; re-upload cannot
+        // refresh its age, completeness or digest merely because it arrived again.
+        (await f.IngestAsync(delayed)).ShouldBe(delayed.RunId);
+        Backlog(await f.AttentionAsync()).ShouldBeTrue();
+    }
+
+    [Test]
     public async Task Receipt_candidates_are_snapshotted_before_database_await()
     {
         await using var f = await HostCleanupServerFixture.CreateAsync();
