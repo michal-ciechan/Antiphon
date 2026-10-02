@@ -95,6 +95,36 @@ public sealed class AgentTaskLandHalfResetTests
     }
 
     [Test]
+    public async Task C883_StaleIndexSizeCrLfRewriteRefusesBeforeAdoption()
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (local, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "config", "core.autocrlf", "true");
+        var file = Path.Combine(h.Fixture.Source, "feature.txt");
+        var lf = await File.ReadAllTextAsync(file);
+        var crlf = lf.Replace("\n", "\r\n", StringComparison.Ordinal);
+        await File.WriteAllTextAsync(file, crlf);
+        new FileInfo(file).Length.ShouldBeGreaterThan(System.Text.Encoding.UTF8.GetByteCount(lf),
+            "H.StaleIndexSizeFixtureHasLongerWorktreeBytes");
+        (await h.Fixture.Git.RunAsync(h.Fixture.Source,
+            ["diff", "--quiet", local, "--"], CancellationToken.None)).ExitCode
+            .ShouldBe(0, "H.StaleIndexSizeNormalizedDiffIsClean");
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "status", "--porcelain=v1", "--untracked-files=all"))
+            .ShouldContain(" M feature.txt", "H.StaleIndexSizeStatusIsDirty");
+
+        var request = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        await h.RunQueuedAsync();
+        await using var db = h.CreateContext();
+        (await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId))
+            .SourceRefusalReason.ShouldBe("source_dirty", "H.StaleIndexSizeRefusedBeforeAdoption");
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim()
+            .ShouldBe(local, "H.StaleIndexSizeLeavesOldHead");
+        (await File.ReadAllTextAsync(file)).ShouldBe(crlf, "H.StaleIndexSizePreservesBytes");
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task C883_FilemodeFalseExecutableAdoptsAndRepairs(bool interrupted)

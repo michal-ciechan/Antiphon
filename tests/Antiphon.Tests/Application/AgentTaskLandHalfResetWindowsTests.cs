@@ -67,12 +67,14 @@ public sealed class AgentTaskLandHalfResetWindowsTests
         var (local, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
         await h.Fixture.RequiredAsync(h.Fixture.Source, "config", "core.autocrlf", "true");
         var file = Path.Combine(h.Fixture.Source, "feature.txt");
-        await ConvertTrackedFixtureFilesToCrLfAsync(h.Fixture);
+        await CheckoutTrackedFixtureFilesWithCrLfAsync(h.Fixture);
         (await File.ReadAllTextAsync(file)).Contains("\r\n", StringComparison.Ordinal)
             .ShouldBeTrue("W.NativeFixtureCheckedOutCrLf");
         (await h.Fixture.Git.RunAsync(h.Fixture.Source,
             ["diff", "--quiet", local, "--"], CancellationToken.None)).ExitCode
             .ShouldBe(0, "W.CrLfIsGitCleanAtOldTip");
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "status", "--porcelain=v1", "--untracked-files=all"))
+            .ShouldBe(string.Empty, "W.CrLfCheckoutHasFreshIndexStat");
         var first = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
             recoverReviewedSource: true);
         fixture.Interceptor.RequestId = first.RequestId;
@@ -90,7 +92,7 @@ public sealed class AgentTaskLandHalfResetWindowsTests
         var (editedLocal, editedReviewed, editedEvidence) = await editedFixture.SeedReviewedDescendantAsync();
         await e.Fixture.RequiredAsync(e.Fixture.Source, "config", "core.autocrlf", "true");
         var editedFile = Path.Combine(e.Fixture.Source, "feature.txt");
-        await ConvertTrackedFixtureFilesToCrLfAsync(e.Fixture);
+        await CheckoutTrackedFixtureFilesWithCrLfAsync(e.Fixture);
         var before = (await File.ReadAllTextAsync(editedFile)).Replace("\r\n", "\n", StringComparison.Ordinal);
         var interrupted = await e.RequestAsync(expectedSourceSha: editedReviewed,
             reviewEvidenceId: editedEvidence, recoverReviewedSource: true);
@@ -134,15 +136,15 @@ public sealed class AgentTaskLandHalfResetWindowsTests
             throw new PlatformNotSupportedException("CP-5 requires native Windows Git and NTFS path semantics");
     }
 
-    private static async Task ConvertTrackedFixtureFilesToCrLfAsync(LandingGitFixture fixture)
+    private static async Task CheckoutTrackedFixtureFilesWithCrLfAsync(LandingGitFixture fixture)
     {
         foreach (var relative in (await fixture.RequiredAsync(fixture.Source, "ls-files", "-z"))
                      .Split('\0', StringSplitOptions.RemoveEmptyEntries))
         {
             var full = Path.Combine(fixture.Source, relative.Replace('/', Path.DirectorySeparatorChar));
-            var lf = (await File.ReadAllTextAsync(full)).Replace("\r\n", "\n", StringComparison.Ordinal);
-            await File.WriteAllTextAsync(full, lf.Replace("\n", "\r\n", StringComparison.Ordinal));
+            File.Delete(full);
         }
+        await fixture.RequiredAsync(fixture.Source, "checkout", "--", ".");
     }
 
     private static async Task<(string Local, string Reviewed, Guid Evidence)> InterruptAsync(
