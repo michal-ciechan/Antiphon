@@ -95,7 +95,7 @@ public sealed class CoverageCommand
                 if (!selected.ContainsKey(path)) selected.Add(path, new(Relative(root, path), File.ReadAllText(path)));
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException or InvalidOperationException
                                    or System.Xml.XmlException or NotSupportedException)
         {
             report.Invalid = true;
