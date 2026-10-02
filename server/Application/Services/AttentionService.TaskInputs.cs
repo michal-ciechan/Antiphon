@@ -74,7 +74,7 @@ public sealed partial class AttentionService
             long? firstPromptSequence = null;
             var candidates = _db.TranscriptEntries.AsNoTracking()
                 .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt
-                    && t.Text != null && patterns.Any(pattern => EF.Functions.Like(t.Text, pattern, "!")))
+                    && t.Text != null)
                 .OrderBy(t => t.Sequence)
                 .Select(t => new TaskInputTranscript(t.Sequence, t.Kind, t.Text, t.Timestamp ?? t.CreatedAt));
             await foreach (var prompt in candidates.AsAsyncEnumerable().WithCancellation(ct))
@@ -87,7 +87,7 @@ public sealed partial class AttentionService
             if (firstPromptSequence is not long floor)
                 continue;
             transcripts[sessionId] = await _db.TranscriptEntries.AsNoTracking()
-                .Where(t => t.AgentSessionId == sessionId
+                .Where(t => t.AgentSessionId == sessionId && t.Sequence >= floor
                     && (t.Kind == TranscriptKinds.UserPrompt || t.Kind == TranscriptKinds.AssistantText))
                 .OrderBy(t => t.Sequence)
                 .Select(t => new TaskInputTranscript(t.Sequence, t.Kind, t.Text, t.Timestamp ?? t.CreatedAt))
