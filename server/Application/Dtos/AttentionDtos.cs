@@ -329,16 +329,16 @@ public enum AttentionKind
     ChannelOutboundDelivery = 51,
 
     /// <summary>CARD-0826: latest complete or incomplete daily host cleanup receipt.</summary>
-    HostCleanupSummary = 52,
+    HostCleanupSummary = 53,
 
     /// <summary>CARD-0826: fresh host or runner storage pressure observation.</summary>
-    HostCleanupDiskPressure = 53,
+    HostCleanupDiskPressure = 54,
 
     /// <summary>CARD-0826: an expired hold still requires explicit disposition.</summary>
-    HostCleanupHoldExpired = 54,
+    HostCleanupHoldExpired = 55,
 
     /// <summary>CARD-0826: eligible inventory-only worktrees sustained over complete daily reports.</summary>
-    WorktreeCleanupBacklog = 55,
+    WorktreeCleanupBacklog = 56,
 }
 
 /// <summary>
