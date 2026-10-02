@@ -17,9 +17,9 @@ This supplements the [S1–S5 handoff](2026-10-02-card-0788-code-handoff.md). Ea
 | 226–227 | `ReviewEvidenceConsistencyTests.cs:29,55,81,111`: settlement through `AgentTaskReplyService`, persisted review base and subject facts | Yes |
 | 234–235 | `docs/superpowers/plans/2026-09-29-card-0788-review-evidence-attribution-and-base-inspection-plan.md:559-582`: source roster and fixed floors; checkpoint receipts are reported separately | Yes (roster) |
 | 255 | Post-land `/api/version` and live canary require publication/activation | No (later Land) |
-| 274 | `AgentTaskWorktreeBaseResolverTests.cs:30`: injected deadline reached at configured five seconds | Yes |
-| 276 | `AgentTaskWorktreeBaseResolverTests.cs:30`: failed common-directory lookup remains row-local | Yes |
-| 279–280 | `AgentTaskWorktreeBaseResolverTests.cs:30,177`: excluded branch sees no Git inspection; fault hook is reached | Yes |
+| 274 | `AgentTaskWorktreeBaseResolverTests.cs:706` `T0442_V29_inspection_budget_never_selects_a_partial_inventory`: configured/default five seconds and reached deadline hook | Yes |
+| 276 | `AgentTaskWorktreeBaseResolverTests.cs:582` `T0442_V08_local_commit_availability_is_explicit`: reached failed common-directory lookup remains row-local | Yes |
+| 279–280 | `AgentTaskWorktreeBaseResolverTests.cs:270,177`: landed branch sees no Git fault call, while pending land remains held | Yes |
 | 283 | `ReviewEvidenceConsistencyTests.cs:29,55,111`: full distinct A/B/C and Review's own base | Yes |
 | 312 | `ReviewEvidenceConsistencyTests.cs:268`, `CompletionWarningDeliveryTests.cs:58`, `LandEvidenceWarningDeliveryTests.cs:42`: named cut reached and recovered | Yes |
 | 315 | Same three recovery methods: scan after receipt does not submit another prompt | Yes |
