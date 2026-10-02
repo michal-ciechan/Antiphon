@@ -42,6 +42,28 @@ RUN dotnet publish src/Antiphon.SessionRunner/Antiphon.SessionRunner.csproj -c R
 
 FROM node:22-bookworm AS node22
 
+# CARD-0913: SDK 10 knows the net9 9.0.20 packs but does not ship them. Extract only
+# the net9 reference and linux-x64 apphost packs from Microsoft's pinned SDK 9.0.318
+# archive. The official release metadata publishes this SHA-512. A changed archive
+# fails before tar runs; never refresh the digest without reviewing the version pair.
+# A full side-by-side SDK would add about 564 MiB and could replace the SDK 10 host
+# when merged into /usr/share/dotnet. The selected packs add about 88 MiB.
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS net9-packs
+ARG NET9_SDK_VERSION=9.0.318
+ARG NET9_PACK_VERSION=9.0.20
+ARG NET9_SDK_SHA512=e8685293a3512178e0de1bb3c1663e31fdf9d761af705094bf833cc1ff6b9a18c543aa4141f0216503c98039c719585a6d32905b0bbb3279e93b7e7616e047c3
+RUN mkdir -p /opt/net9-packs \
+ && curl -fsSL -o /tmp/net9-sdk.tar.gz "https://builds.dotnet.microsoft.com/dotnet/Sdk/${NET9_SDK_VERSION}/dotnet-sdk-${NET9_SDK_VERSION}-linux-x64.tar.gz" \
+ && echo "${NET9_SDK_SHA512}  /tmp/net9-sdk.tar.gz" | sha512sum -c - \
+ && tar -xzf /tmp/net9-sdk.tar.gz -C /opt/net9-packs \
+      "./packs/Microsoft.NETCore.App.Ref/${NET9_PACK_VERSION}" \
+      "./packs/Microsoft.NETCore.App.Host.linux-x64/${NET9_PACK_VERSION}" \
+      "./packs/Microsoft.AspNetCore.App.Ref/${NET9_PACK_VERSION}" \
+ && test -f "/opt/net9-packs/packs/Microsoft.NETCore.App.Ref/${NET9_PACK_VERSION}/data/FrameworkList.xml" \
+ && test -x "/opt/net9-packs/packs/Microsoft.NETCore.App.Host.linux-x64/${NET9_PACK_VERSION}/runtimes/linux-x64/native/apphost" \
+ && test -f "/opt/net9-packs/packs/Microsoft.AspNetCore.App.Ref/${NET9_PACK_VERSION}/data/FrameworkList.xml" \
+ && rm /tmp/net9-sdk.tar.gz
+
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime-base
 ARG SOURCE_REVISION=unknown
 ARG GIT_MINIMUM_VERSION
@@ -166,6 +188,7 @@ RUN apt-get update \
 # Toolchain for in-runner builds and tests (D-6). COPY merges, so the aspnet 9 runtime already in
 # the base survives alongside SDK 10 and runtime 10.
 COPY --from=build /usr/share/dotnet /usr/share/dotnet
+COPY --from=net9-packs /opt/net9-packs/packs/ /usr/share/dotnet/packs/
 COPY --from=node22 /usr/local /usr/local
 # Baked, non-secret git and ssh custody configuration (D-8). The private key half never enters
 # the image; dind-entrypoint.sh materialises it on the /run/antiphon tmpfs at 0400 uid 1654,

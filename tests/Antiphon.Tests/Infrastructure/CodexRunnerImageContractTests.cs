@@ -22,6 +22,8 @@ namespace Antiphon.Tests.Infrastructure;
 public sealed class CodexRunnerImageContractTests
 {
     private const string Version = "0.160.0";
+    // Microsoft's 9.0.20 release metadata, sdk.files dotnet-sdk-linux-x64.tar.gz.
+    private const string Net9SdkSha512 = "e8685293a3512178e0de1bb3c1663e31fdf9d761af705094bf833cc1ff6b9a18c543aa4141f0216503c98039c719585a6d32905b0bbb3279e93b7e7616e047c3";
 
     // npm's dist.integrity for @openai/codex@0.160.0-linux-x64, verified against the tarball for CARD-0904.
     private const string NpmIntegrity =
@@ -117,6 +119,42 @@ public sealed class CodexRunnerImageContractTests
         foreach (var stage in stages.Where(stage => stage.Name is "receipt-probe" or "session-testing" or "runtime"))
             stage.Body.Contains("codex", StringComparison.OrdinalIgnoreCase)
                 .ShouldBeFalse(stage.Name + " must not re-install or shadow codex");
+    }
+
+    [Test]
+    public void Net9_packs_are_pinned_verified_before_extraction_and_available_to_session_testing()
+    {
+        var dockerfile = Read("docker/session-runner-grok/Dockerfile");
+        var stages = DockerStackDocuments.Stages(dockerfile);
+        var packs = stages.Single(stage => stage.Name == "net9-packs").Body;
+        packs.ShouldContain("ARG NET9_SDK_VERSION=9.0.318\n");
+        packs.ShouldContain("ARG NET9_PACK_VERSION=9.0.20\n");
+        Regex.Match(packs, @"ARG NET9_SDK_SHA512=([0-9a-f]{128})\n").Groups[1].Value
+            .ShouldBe(Net9SdkSha512, "the digest must match Microsoft's pinned SDK archive");
+
+        var install = Run(packs, "dotnet-sdk-${NET9_SDK_VERSION}-linux-x64.tar.gz");
+        install.ShouldContain("https://builds.dotnet.microsoft.com/dotnet/Sdk/${NET9_SDK_VERSION}/dotnet-sdk-${NET9_SDK_VERSION}-linux-x64.tar.gz");
+        install.ShouldContain("&& echo \"${NET9_SDK_SHA512}  /tmp/net9-sdk.tar.gz\" | sha512sum -c -");
+        install.ShouldContain("&& tar -xzf /tmp/net9-sdk.tar.gz");
+        Order(install, "sha512sum -c -", "tar -xzf").ShouldBeTrue("the hash must pass before extraction");
+        foreach (var pack in new[] { "Microsoft.NETCore.App.Ref", "Microsoft.NETCore.App.Host.linux-x64", "Microsoft.AspNetCore.App.Ref" })
+            install.ShouldContain("./packs/" + pack + "/${NET9_PACK_VERSION}");
+        install.ShouldContain("&& rm /tmp/net9-sdk.tar.gz");
+
+        var testing = stages.Single(stage => stage.Name == "session-testing").Body;
+        Order(testing, "COPY --from=build /usr/share/dotnet /usr/share/dotnet",
+            "COPY --from=net9-packs /opt/net9-packs/packs/ /usr/share/dotnet/packs/").ShouldBeTrue();
+        dockerfile.ShouldContain("dotnet --list-sdks | grep -E '^10\\.'");
+
+        var probe = Read("docker/session-runner-grok/verify-codex-image.sh");
+        var wrapper = Read("scripts/verify-card0660-codex-image.ps1");
+        probe.ShouldContain("net9-offline)");
+        probe.ShouldContain("need_uid 1654");
+        probe.ShouldContain("NUGET_PACKAGES=\"$root/packages\"");
+        probe.ShouldContain("--source \"$root/feed\"");
+        probe.ShouldContain("<UseAppHost>true</UseAppHost>");
+        probe.ShouldContain("dotnet build \"$root/project/Offline.csproj\" --no-restore");
+        wrapper.ShouldContain("$rows['net9-offline'] = Invoke-Probe 'net9-offline' '1654:1654'");
     }
 
     [Test]

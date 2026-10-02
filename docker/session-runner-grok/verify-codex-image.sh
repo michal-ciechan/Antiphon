@@ -170,8 +170,40 @@ case "$row" in
     rm -f /state/.c660-preserve
     result ok "second init preserved existing config and auth bytes, owner and mode"
     ;;
+  net9-offline)
+    need_uid 1654
+    root=$PROBE_HOME/net9-offline
+    mkdir -p "$root/home/.nuget" "$root/packages" "$root/feed" "$root/project" || result fail "cannot create empty restore directories"
+    [ -z "$(find "$root/packages" -mindepth 1 -print -quit)" ] || result fail "NuGet packages cache is not empty"
+    [ -z "$(find "$root/home/.nuget" -mindepth 1 -print -quit)" ] || result fail "NuGet home is not empty"
+    [ "$(dotnet --version)" = 10.0.401 ] || result fail "default SDK is not 10.0.401"
+    dotnet --list-sdks | grep -q '^10\.0\.401 ' || result fail "SDK 10.0.401 missing"
+    cat > "$root/project/Offline.csproj" <<'EOF'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <UseAppHost>true</UseAppHost>
+    <RuntimeFrameworkVersion>9.0.20</RuntimeFrameworkVersion>
+    <TargetLatestRuntimePatch>false</TargetLatestRuntimePatch>
+  </PropertyGroup>
+</Project>
+EOF
+    printf '%s\n' 'System.Console.WriteLine("net9-offline-ok");' > "$root/project/Program.cs"
+    output=$(env HOME="$root/home" DOTNET_CLI_HOME="$root/home" NUGET_PACKAGES="$root/packages" \
+      dotnet restore "$root/project/Offline.csproj" --source "$root/feed" --nologo 2>&1)
+    code=$?
+    [ "$code" -eq 0 ] || result fail "offline restore exit=$code: $(printf '%s' "$output" | tail -c 500)"
+    output=$(env HOME="$root/home" DOTNET_CLI_HOME="$root/home" NUGET_PACKAGES="$root/packages" \
+      dotnet build "$root/project/Offline.csproj" --no-restore --nologo 2>&1)
+    code=$?
+    [ "$code" -eq 0 ] || result fail "offline apphost build exit=$code: $(printf '%s' "$output" | tail -c 500)"
+    [ -x "$root/project/bin/Debug/net9.0/Offline" ] || result fail "native apphost missing"
+    [ "$("$root/project/bin/Debug/net9.0/Offline")" = net9-offline-ok ] || result fail "native apphost did not run"
+    result ok "SDK=10.0.401 net9 apphost restore+build+run uid=1654 empty NuGet cache and home"
+    ;;
   *)
-    echo "usage: verify-codex-image.sh version|layout|install-readonly|no-baked-auth|fresh-home|trust|config-accepted|preserve-arm <nonce>|preserve-check" >&2
+    echo "usage: verify-codex-image.sh version|layout|install-readonly|no-baked-auth|fresh-home|trust|config-accepted|preserve-arm <nonce>|preserve-check|net9-offline" >&2
     exit 2
     ;;
 esac
