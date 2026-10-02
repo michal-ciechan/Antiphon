@@ -7,8 +7,8 @@ namespace Antiphon.Checkpoints.Coverage;
 /// <summary>Reads promises, never commands. All coordinates refer to the original Markdown.</summary>
 public sealed class PlanCoverageReader
 {
-    private sealed record Row(string Id, string Text, int Line, string Test, bool Pc);
-    private sealed record Span(string Value, int Column);
+    private sealed record Row(string Id, string Text, int Line, string Test, bool Pc, int Offset = 0);
+    private sealed record Span(string Value, int Column, int Start, int End);
 
     public PlanCoverageReport Read(string plan, string text, string? checklist = null)
     {
@@ -46,7 +46,7 @@ public sealed class PlanCoverageReader
                 var method = spans.Select(s => NormalizeMethod(s.Value)).FirstOrDefault(s => s is not null && (s.Contains('.') || s.Contains('_') || Regex.IsMatch(body, @"^V-\d+\s+`"))) ?? "";
                 if (current.StartsWith("PC-", StringComparison.Ordinal) && method.Length == 0)
                     method = "@" + Regex.Match(body, @"\bV-\d+\b").Value;
-                rows.Add(new(current, body, i + 1, method, current.StartsWith("PC-", StringComparison.Ordinal)));
+                rows.Add(new(current, body, i + 1, method, current.StartsWith("PC-", StringComparison.Ordinal), line.IndexOf(body, StringComparison.Ordinal)));
             }
             else if (current.Length > 0 && !trim.StartsWith('|') && !trim.StartsWith('#')
                 && (Regex.IsMatch(trim, @"^(For each |[0-9]+\. )") || Regex.IsMatch(trim, @"^(Verify|Check|Assert|Preserve)\b", RegexOptions.IgnoreCase)))
@@ -73,8 +73,7 @@ public sealed class PlanCoverageReader
             {
                 var name = span.Value;
                 if (methodSpans.Contains(span)) continue;
-                var at = Math.Max(0, row.Text.IndexOf(new string('`', 1) + name, StringComparison.Ordinal));
-                var before = row.Text[..at]; var after = row.Text[Math.Min(row.Text.Length, at + name.Length + 2)..];
+                var before = row.Text[..span.Start]; var after = row.Text[span.End..];
                 if (!row.Pc && (Regex.IsMatch(before, @"PC-\d+[A-Z]? targets\b", RegexOptions.IgnoreCase) || Regex.IsMatch(after, @"^\s*label forms\b", RegexOptions.IgnoreCase)))
                     report.Exclusions.Add(new("EXAMPLE", row.Line, span.Column, row.Id, test, name, Detail: "case key or input label form"));
                 else if (row.Pc || Regex.IsMatch(before, @"(?:label|witness|assertion|fails at)\s*$", RegexOptions.IgnoreCase)
@@ -85,6 +84,8 @@ public sealed class PlanCoverageReader
                     report.Exclusions.Add(new("NON_OBLIGATION", row.Line, span.Column, row.Id, test, name, Detail: "example, type or expected display value"));
                 else Add("unmapped", name, span.Column);
             }
+            if (!row.Pc)
+            {
             // Legacy lists keep exact clauses; fuzzy English is a finding, not inferred proof.
             foreach (Match sentence in Regex.Matches(row.Text, @"\bVerify\s+([^.;]+)", RegexOptions.IgnoreCase))
                 foreach (var clause in Regex.Split(sentence.Groups[1].Value, @",|/|\s+and\s+").Select(c => c.Trim()).Where(c => c.Length > 0))
@@ -105,7 +106,8 @@ public sealed class PlanCoverageReader
                 Add(predicate.Groups[1].Value.ToLowerInvariant(), member, predicate.Index + 1);
             }
             foreach (Match value in Regex.Matches(row.Text, @"exact\s+([A-Z][A-Za-z0-9_]*)\s+blocker")) Add("value", value.Groups[1].Value, value.Index + 1);
-            void Add(string kind, string name, int column) => report.Obligations.Add(new(row.Id, test, kind, name, row.Line, column));
+            }
+            void Add(string kind, string name, int column) => report.Obligations.Add(new(row.Id, test, kind, name, row.Line, column + row.Offset));
         }
         if (inlineJson is not null && checklist is not null) Invalid(report, "CHECKLIST_INVALID", 0, "inline and external checklist conflict");
         var json = checklist ?? inlineJson;
@@ -141,7 +143,7 @@ public sealed class PlanCoverageReader
             while (end >= 0 && ((end > 0 && text[end - 1] == '`') || end + delimiter.Length < text.Length && text[end + delimiter.Length] == '`'))
                 end = text.IndexOf(delimiter, end + delimiter.Length, StringComparison.Ordinal);
             if (end < 0) { Invalid(report, "PLAN_PARSE", line, "unmatched code span", start + 1); break; }
-            spans.Add(new(text[content..end], content + 1)); i = end + delimiter.Length - 1;
+            spans.Add(new(text[content..end], content + 1, start, end + delimiter.Length)); i = end + delimiter.Length - 1;
         }
         return spans;
     }
