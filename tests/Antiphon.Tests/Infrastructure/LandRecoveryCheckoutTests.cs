@@ -339,7 +339,7 @@ public sealed class LandRecoveryCheckoutTests
     }
 
     private static void AssertReadOnly(LandingGitFixture f) =>
-        f.Git.Commands.ShouldNotContain(x => x.Arguments[0] is "reset" or "clean" or "checkout" or "checkout-index" or "add" or "update-index" or "update-ref" or "push", "G.InspectorRunsNoMutation");
+        f.Git.Commands.ShouldNotContain(x => (x.Arguments[0] == "reset" || x.Arguments[0] == "clean" || x.Arguments[0] == "checkout" || x.Arguments[0] == "checkout-index" || x.Arguments[0] == "add" || x.Arguments[0] == "update-index" || x.Arguments[0] == "update-ref" || x.Arguments[0] == "push"), "G.InspectorRunsNoMutation");
 
     private static async Task<(string Local, string Reviewed)> HalfResetAsync(LandingGitFixture f, string? shape = null)
     {
