@@ -298,7 +298,7 @@ Closed ordinary list: one isolated build and one exact filter per row. The D-1 r
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S1-S2, D-1 repair, CARD-0999 | `tests/Antiphon.Tests -> bin-c891-static/` | plan-coverage-static | `/*/*/(PlanCoverageParserTests*)\|(PlanCoverageAssertionTests*)\|(PlanCoveragePcTests*)\|(PlanCoverageGoldenTests*)\|(PlanCoverageCommandTests*)\|(CheckpointImportTests*)\|(CheckpointManifestTests*)/*` | V-1..V-5, R-1, D-1, CARD-0999 | Linux 54 = 7+5+4+3+9+20+6, final 0 failed/skipped; Windows 0 selected | 54 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c891-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-1 | S1-S2, D-1 repair | `tests/Antiphon.Tests -> bin-c891-static/` | plan-coverage-static | `/*/*/(PlanCoverageParserTests*)\|(PlanCoverageAssertionTests*)\|(PlanCoveragePcTests*)\|(PlanCoverageGoldenTests*)\|(PlanCoverageCommandTests*)\|(CheckpointImportTests*)\|(CheckpointManifestTests*)/*` | V-1..V-5, R-1, D-1 | Linux 48 = 4+5+4+3+6+20+6, final 0 failed/skipped; Windows 0 selected | 48 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c891-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 
 ## Execution, acceptance and handoff
 
@@ -622,21 +622,3 @@ uncommitted diagnostic sources. Require both intended labels red for each mutant
 an empty Git diff after restoration, and restored green. Run the frozen-plan
 coverage verb through `build-slot.ps1 -Label c891fix-coverage` and final CP-1 once
 on the final committed SHA. Preserve complete output in the task report/evidence.
-
-## CARD-0999 checklist cardinality census (2026-10-02)
-
-The frozen V/R requirements and the 72-item acceptance checklist retain their
-original wording and coordinates. CARD-0999 adds six single-result tests: three
-PlanCoverageCommandTests (frozen_checklist_preserves_all_72_obligations,
-dropped_frozen_method_is_a_checklist_count_finding,
-extra_frozen_method_is_a_checklist_count_finding) and three
-PlanCoverageParserTests (declared_row_counts_reject_missing_and_extra_bound_methods,
-declared_counts_keep_class_and_requirement_bindings,
-declared_results_expand_arguments_without_inventing_dynamic_counts).
-CP-1 now selects 54 = 48 + 6, with Parser 7, Assertions 5, PC 4, Golden 3,
-Command 9, Import 20 and Manifest 6. These new test methods have no Arguments
-or data sources; argument expansion is inert C# input inside one parser test.
-The frozen fixture c999-frozen-plan.md.txt is an exact copy of the plan at
-1fb0e18556a9062e70a183410eec33a30d11f260. No shared helper/registry changes;
-no Unit lane is commissioned. The targeted red and two scratch mutations are
-commissioned extra runs; the final CP-1 selection remains the single ordinary row.
