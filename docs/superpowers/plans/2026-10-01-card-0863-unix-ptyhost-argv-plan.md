@@ -399,3 +399,68 @@ Post-land Mutation floor is separately **108 minutes**: 6 minutes external-drive
 Ordinary plus Mutation verification floors total **148 minutes**; including Code authoring/test-first work yields **221–251 minutes across separate stages**, before queue waits. Pending Mutation does not block ordinary Review. Measured savings here are zero (no runs were profiled); avoiding compulsory repeat rounds preserves the 40-minute ordinary floor instead of multiplying it. No full Unit sweep, tool bootstrap, real provider, deployment or unrelated flake isolation is included.
 
 Next stage: **Code**, after CARD-0778's confirmed land and a fresh source-area collision check. Implement S1-S3 against this frozen roster; preserve the scoped Windows lane. TestDesign ran only static census/manifest checks, with zero builds/tests/mutations on either OS.
+
+## Code evidence, 2026-10-02 (task 50a6b1fb)
+
+The Code start ref was d81ff99ce3e3bc95a571e778081b19a68c009a17. The required baseline diff from fccef27e to this ref found exactly one changed cited file: tests/Antiphon.Tests/Application/GrokRulesLaunchRefusalTests.cs gained a CARD-0882 Linux gate for its two named-agent Windows-policy rows and strengthened three Windows assertion labels. The cited Pty runner, SessionRunner runtime/routes/dispatcher, Pty tests, Grok runner tests, and shared Herdr fixture had no baseline drift. CARD-0778 was already landed. This Code slice neither changed nor credited the CARD-0882 gate.
+
+The 13-path footprint is the planned five production paths, seven test/probe paths, and this plan. The PhoneHomeCommandDispatcher change is one typed catch. No server, migration, checkpoint tool, bundle, provider, or deployment file changed. Windows keeps the original escape branch because the new condition only excludes non-Windows. The original and placed vectors are validated before native spawn, and the early runtime guard runs after platform validation and before launch-lock/custody work. Unknown backend and Herdr stay on their existing paths.
+
+| Evidence | Commit / result | Fresh TRX |
+|---|---|---|
+| CP-1 test-first red | d2c4b85cbee4789e098db15bf5579ae9dca7ea3e; build ok, 24 executed, 7 pass, 17 fail, 0 skip. Named native-argv-exact, pure NUL exception, and pre/post-containment assertions failed. The earlier f215a4be attempt was a compile error and is not credited as red. | .antiphon/c863-linux-red-2/CP-1-20261002-112025-9daa/run.trx |
+| CP-1 green | 52c90ccaa37826731e114dd56d0e0bd6fd607ffd; build ok, 24/24 pass, 0 fail/skip; UnixPtyArgvTests 17, LinuxCgroupContainmentTests 7. | .antiphon/c863-linux-green/CP-1-20261002-112151-8641/run.trx |
+| CP-2 test-first red | b56b2b643521707cfa833373c2115aa914bc1ec6; build ok, 50 executed, 41 pass, 9 fail, 0 skip. Named registration, disk-effect, HTTP status, phone-home code and pre-registration NUL assertions failed. | .antiphon/c863-linux-red/CP-2-20261002-112758-565d/run.trx |
+| CP-2 green | 405ec6a5981f5ee215bda7cdbfb2a95e1368dcd2; build ok, 50/50 pass, 0 fail/skip; GrokRulesFileLaunchTests 21, GrokRulesRunnerRefusalTests 11, GrokRulesStoreFailureTests 6, UnixPtyArgvAdmissionTests 12. Rerun 1 after owned-host teardown and custody fixture improvements; earlier fa0536b2 green was 50/50. | .antiphon/c863-linux-green-final/CP-2-20261002-114804-887b/run.trx |
+| CP-3 green | 392da64bad50395c242a0bdcdefc62656104b0d2; build ok, 2/2 pass, 0 fail/skip; Investigate and Code real composition, owned native child. Two earlier attempts failed compilation on the new test limiter namespace and are not credited as red. | .antiphon/c863-linux-green-3/CP-3-20261002-114046-2bdc/run.trx |
+
+The exact Linux filters were the frozen CP-1, CP-2, CP-3 filters above, with literal pipes. The three final green TRX files contain the expected class counts, 76 executed, 76 passed, zero failed or skipped. CP-4..CP-6 (69 Windows executions), Windows native backend behavior, and all PC-1..PC-16 method-scoped SourceLanding mutations remain pending on their designated later lanes. No real provider was launched. The dispatch's Final verification profile explicitly requires one ordinary Unit lane; this supersedes the older plan exclusion at line 338. Its result is recorded in the task report after it finishes.
+
+### Requirement trace against the frozen plan
+
+The plan line numbers below refer to the 401-line TestDesign text above this appendix. File:line points to the test assertion (or explicit test fixture invariant); Yes means implemented and exercised on Linux. Windows-only assertions are implemented but marked Pending execution. Historical observations, rejected alternatives, future deployment and post-land Mutation instructions are tracked in the evidence and pending statement above rather than treated as new Code requirements.
+
+| Plan line | Requirement | Test and assertion label at file:line | Yes/no |
+|---:|---|---|---|
+| 7 | Unix args preserve newlines, quotes, slash, empty, Unicode, and literal shell text | V-1 native-argv-exact, UnixPtyArgvTests.cs:50 | Yes |
+| 7 | NUL refuses before truncated native exec with stable code | V-2 named-nul-code / nul-no-native-spawn, UnixPtyArgvTests.cs:144 and :78 | Yes |
+| 7, 43-48 | Remove exactly two gates, execute all eight Linux rows | R-1 native-argv-exact-bytes / native-nul-before-registration, GrokRulesFileLaunchTests.cs:103 and :79; GrokRulesRunnerRefusalTests.cs:181 | Yes |
+| 9, 63 | Windows escape and modern branch unchanged; Unix no CRT quoting | V-1 native-argv-exact, UnixPtyArgvTests.cs:50; V-9 windows-native-argv-exact, WindowsPtyArgvNativeTests.cs:38 | Pending Windows execution |
+| 9, 48 | Unix multiline Grok remains admitted; Windows raw rules still refuse | R-1 native-argv-exact-bytes, GrokRulesRunnerRefusalTests.cs:181; Windows refusal, GrokRulesRunnerRefusalTests.cs:159 | Pending Windows execution |
+| 11, 73 | Early runtime refusal before registration and custody | V-5 nul-before-registration / nul-before-disk-effects, UnixPtyArgvAdmissionTests.cs:52 and :55 | Yes |
+| 11, 26, 75 | Direct guard scans original and placed vectors before journal/spawn | V-10 original-nul-before-placement, UnixPtyArgvTests.cs:134; V-4 final-nul-before-start-intent, UnixPtyArgvTests.cs:117 | Yes |
+| 11, 30, 80-84 | Named refusal crosses ordinary HTTP, constrained HTTP and phone-home | V-6 http-nul-status/type, UnixPtyArgvAdmissionTests.cs:82 and :84; V-7 phone-home-nul-code, UnixPtyArgvAdmissionTests.cs:117 | Yes |
+| 26, 63 | Tracked containment rewrite and start-intent/tracking order preserved | V-3 tracked-native-argv-exact / tracked-journal-order, UnixPtyArgvTests.cs:97 and :98 | Yes |
+| 29, 48, 243 | Native capture compares complete bytes including separators and completes atomically | R-1 native-argv-exact-bytes, GrokRulesFileLaunchTests.cs:103 and GrokRulesRunnerRefusalTests.cs:181; V-8 composed-native-argv-exact-bytes, UnixDelegateLaunchArgvTests.cs:55 | Yes |
+| 48, 54 | Existing platform assertions and historical test names preserved; CARD-0882 remains separate | R-1 Windows refusal, GrokRulesFileLaunchTests.cs:68; CARD-0882 Windows code, GrokRulesLaunchRefusalTests.cs:134 | Pending Windows execution |
+| 63 | Caller vector is not normalized or mutated | V-1 caller-vector-unchanged, UnixPtyArgvTests.cs:51 | Yes |
+| 69 | Exception has code, reason, and 0-based executable / 1-based argument index | V-2 named-nul-code / nul-index, UnixPtyArgvTests.cs:144 and :146 | Yes |
+| 69 | Diagnostic excludes executable, arguments, and synthetic sentinel | V-2 nul-sanitized / nul-no-executable, UnixPtyArgvTests.cs:148 and :149 | Yes |
+| 69 | Scan start, middle, end, duplicate flags and past terminator | V-2 four argument rows and nul-index, UnixPtyArgvTests.cs:60-78 and :146 | Yes |
+| 69 | Empty and non-NUL controls remain unchanged | V-1 empty/cr/native-argv-exact, UnixPtyArgvTests.cs:28-50 | Yes |
+| 73 | Platform mismatch keeps precedence | V-11 platform-precedence, UnixPtyArgvAdmissionTests.cs:166-167 | Yes |
+| 73 | Unknown backend and Herdr are excluded from native NUL guard | V-11 unknown-backend-keeps-existing-verdict / herdr-script-preserves-nul, UnixPtyArgvAdmissionTests.cs:162 and :152 | Yes |
+| 75 | Tracked launch still consumes a rejected attempt | V-10 tracked-attempt-consumed, UnixPtyArgvTests.cs:139 | Yes |
+| 82 | HTTP returns 409 with type/title/detail, without private value | V-6 http-nul-status/type/title/sanitized, UnixPtyArgvAdmissionTests.cs:82-86 | Yes |
+| 84, 240 | Phone-home retains accepted generation and request identity | V-7 phone-home-retains-watermark / RequestId, UnixPtyArgvAdmissionTests.cs:122 and :115 | Yes |
+| 88 | Owned Node child captures process.argv as JSON, atomically | V-1 native-argv-exact, UnixPtyArgvTests.cs:50; probe fixture, probes/argv-echo.js:5-8 | Yes |
+| 88, 92 | No provider binary/network; owned process is killed and awaited | V-1 fixture teardown, UnixPtyArgvTests.cs:217-231; V-8 owned teardown, UnixDelegateLaunchArgvTests.cs:62-72 | Yes |
+| 92, 245 | Native deadline bounds harness, never establishes success by time alone | V-1 CaptureAsync completion, UnixPtyArgvTests.cs:203-212; V-8 capture, UnixDelegateLaunchArgvTests.cs:48-55 | Yes |
+| 92, 245 | Process-spawning classes carry assembly-local limiter | V-1 / V-5 / V-8 / V-9 class attributes, UnixPtyArgvTests.cs:10; UnixPtyArgvAdmissionTests.cs:21; UnixDelegateLaunchArgvTests.cs:13; WindowsPtyArgvNativeTests.cs:10 | Yes |
+| 92, 245 | Owned hosts are killed and awaited in finally | R-1 teardown, GrokRulesFileLaunchTests.cs:109-113; GrokRulesRunnerRefusalTests.cs:184-189 | Yes |
+| 243 | Shell child uses quoted argv and atomic rename, no eval | R-1 fixture script, GrokRulesFileLaunchTests.cs:253; V-8 fixture, UnixDelegateLaunchArgvTests.cs:26 | Yes |
+| 253 | V-1 nine literal rows compare full native array and count | V-1 native-argv-exact, UnixPtyArgvTests.cs:15-50 | Yes |
+| 254 | V-2 four rows validate pure and runner refusal, PID/capture absent | V-2 named-nul-code / nul-no-native-spawn, UnixPtyArgvTests.cs:58-79 | Yes |
+| 255 | V-3 placement preserves original and placed final argv | V-3 tracked-native-argv-exact, UnixPtyArgvTests.cs:83-99 | Yes |
+| 256 | V-4 final executable/argument NUL before journal | V-4 final-nul-before-start-intent, UnixPtyArgvTests.cs:103-121 | Yes |
+| 257 | V-5 four runtime shapes have zero registration/disk effects | V-5 nul-before-registration / nul-before-disk-effects, UnixPtyArgvAdmissionTests.cs:24-57 | Yes |
+| 258 | V-6 both real isolated routes name 409 without registration | V-6 http-nul-status / http-no-registration, UnixPtyArgvAdmissionTests.cs:62-88 | Yes |
+| 259 | V-7 both operations return named frame and retained watermark | V-7 phone-home-nul-code / phone-home-retains-watermark, UnixPtyArgvAdmissionTests.cs:93-122 | Yes |
+| 260 | V-8 two role-default compositions compare full child bytes and identity position | V-8 composed-native-argv-exact-bytes / composed-identity-position, UnixDelegateLaunchArgvTests.cs:40 and :55 | Yes |
+| 261 | V-9 two Windows backend native captures, no fallback | V-9 backend-no-fallback / windows-native-argv-exact, WindowsPtyArgvNativeTests.cs:30 and :38 | Pending Windows execution |
+| 262 | V-10 pre-placement refusal and consumed attempt | V-10 original-nul-before-placement / tracked-attempt-consumed, UnixPtyArgvTests.cs:134 and :139 | Yes |
+| 263 | V-11 platform/backend/Herdr verdicts stay intact | V-11 platform-precedence / unknown-backend-keeps-existing-verdict / herdr-script-preserves-nul, UnixPtyArgvAdmissionTests.cs:152-167 | Yes |
+| 275 | R-1 all 38 source results, seven ungated Linux cases | R-1 native-argv-exact-bytes / native-nul-code, GrokRulesFileLaunchTests.cs:75 and :103; CP-2 roster above | Yes |
+| 276 | R-2 seven containment contracts remain intact | R-2 Place_prefixes_the_root_owned_shim_with_a_separator, LinuxCgroupContainmentTests.cs:27; CP-1 roster above | Yes |
+| 277-278, 334 | R-3/R-4 Windows parser, Grok policy and shipped bundles unchanged | R-3/R-4 exact Windows CP-4/CP-6 rows in frozen manifest; V-9 WindowsPtyArgvNativeTests.cs:30-38 | Pending Windows execution |
+| 354-387 | Exact Linux checkpoint roster and zero skips | CP-1/2/3 TRX and per-class counts above; run-checkpoint.ps1 receipt in each checkpoint directory | Yes |
