@@ -16,12 +16,23 @@ $script:groups = 0
 
 function Test-C973Jq {
     # Probe the shell that actually executes the marker reader, once per run.
-    # The offline regression driver may stub only the missing-probe result.
+    # The offline driver may stub absence or inject an application to probe.
     if ($env:C973_TEST_JQ_PROBE -eq 'missing') { return $false }
-    if ($env:C973_JQ_PROBE_SHELL) { $null = & $env:C973_JQ_PROBE_SHELL -c 'command -v jq' 2>$null }
-    elseif ($IsWindows) { $null = & wsl -e bash -c 'command -v jq' 2>$null }
-    else { $null = & bash -c 'command -v jq' 2>$null }
-    return $LASTEXITCODE -eq 0
+    try {
+        $shell = if ($env:C973_JQ_PROBE_SHELL) { $env:C973_JQ_PROBE_SHELL }
+            elseif ($IsWindows) { 'wsl' } else { 'bash' }
+        $application = Get-Command $shell -CommandType Application -ErrorAction SilentlyContinue
+        if (-not $application) { return $false }
+        if ($IsWindows -and -not $env:C973_JQ_PROBE_SHELL) {
+            $null = & $application.Source -e bash -c 'command -v jq' 2>$null
+        } else {
+            $null = & $application.Source -c 'command -v jq' 2>$null
+        }
+        return $LASTEXITCODE -eq 0
+    } catch {
+        # Missing executables, launch errors and native-command exceptions are absence.
+        return $false
+    }
 }
 $hasJq = Test-C973Jq
 Write-Output "C973_JQ_PROBE available=$hasJq"
