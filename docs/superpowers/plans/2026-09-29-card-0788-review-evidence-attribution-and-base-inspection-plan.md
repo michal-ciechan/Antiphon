@@ -178,6 +178,13 @@ no duplicate line. Status stays Succeeded (CARD-0657 chose not to fail non-Code 
 Rejected: failing non-Code tasks (a status-semantics change beyond this card); parsing prose
 commit claims (the structured `[antiphon-progress:]` line is the contract).
 
+Final Code clock-skew correction: a local non-Code task whose `DispatchedAt` is later than the
+settlement clock has no valid post-dispatch interval. Skip S5's new local progress probe in that
+case and use the pre-S5 merge-back path. An unchanged branch is cleaned up; an ordinary committed
+branch still merges. `AgentTaskReplyIntegrationTests.C788_NoChangeFutureDispatchCleansUp`
+pins both controls and the `no-change-future-dispatch` case (3 results; the latter was red before
+the correction). Remote prepared-sync assessment is unchanged.
+
 ### D-6: documentation lands with the code, outside CARD-0807's paragraphs
 
 `docs/ops-http.md`: the land/v2 and reviewed-recovery rows state that a review-evidence 409
@@ -562,6 +569,7 @@ claims. Methods invoking tests or looping assertions still count once.
 | ReviewEvidenceConsistencyTests | 0 / 0 | 31 | 31 |
 | CompletionWarningDeliveryTests | 0 / 0 | 11 | 11 |
 | LandEvidenceWarningDeliveryTests | 0 / 0 | 7 | 7 |
+| AgentTaskReplyIntegrationTests (clock-skew method only) | 0 / 0 | 3 | 3 |
 
 CP floors rise: CP-2 **36 -> 44**, CP-3 **55 -> 170**, CP-4 **24 -> 31**,
 CP-5 **33 -> 58**. CP-1 retains **3000**; all seven new shape rows and existing 41 continuation
@@ -579,7 +587,8 @@ Final Code source census after the delivery and recovery slice (expanded results
 partial files): Approval 23, Adoption 21, Resolver 67, Selection 16, Dispatch 87, Runner
 settlement 23, Runner progress 8, Continuation 48, Review evidence 16, CARD-0807 settlement
 11, Consistency 31, Completion delivery 11, Land refusal delivery 7. The CP floors above
-match these source counts; CP-1 retains its lane floor of 3000.
+match these source counts; CP-1 retains its lane floor of 3000. The final clock-skew correction
+adds 3 focused Integration results outside those earlier counts; CP-8 records them.
 
 ### Checkpoints
 
@@ -600,6 +609,7 @@ fail even when the count floor passes. These are the closed ordinary rows.
 | CP-5 | S2 | `tests/Antiphon.Tests -> bin-c788b/` | evidence-consistency | `/*/Antiphon.Tests.Application/(ReviewEvidenceConsistencyTests*)\|(ReviewEvidenceSettlementTests*)\|(AgentTaskReviewEvidenceTests*)/*` | V-2, V-8, R-2 | all listed, 0 failed/skipped | 58 | 35 | true |
 | CP-6 | S1,S3,S4,S5 | `CP-1` | progress-delivery | `/*/Antiphon.Tests.Application/CompletionWarningDeliveryTests/*` | V-6 | all listed, 0 failed/skipped | 11 | 25 | true |
 | CP-7 | S1,S3,S4,S5 | `CP-1` | refusal-delivery | `/*/Antiphon.Tests.Application/LandEvidenceWarningDeliveryTests/*` | V-7 | all listed, 0 failed/skipped | 7 | 25 | true |
+| CP-8 | S5 final clock-skew correction | `CP-1` | future-dispatch-cleanup | `/*/Antiphon.Tests.Application/AgentTaskReplyIntegrationTests/C788_NoChangeFutureDispatchCleansUp*` | S5 cleanup regression | all 3 arguments, 0 failed/skipped | 3 | 10 | true |
 
 ## Platform, execution and rollout
 

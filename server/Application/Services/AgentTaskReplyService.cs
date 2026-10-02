@@ -3232,11 +3232,14 @@ public sealed class AgentTaskReplyService
             // requirement to author a commit; the assessment never changes its status here.
             await RecordRemoteEvidenceAsync(services, task, body, prepared, ct);
             if (task.Role != AgentTaskRole.Code && task.Workspace == WorkspaceMode.Worktree
-                && prepared is null && task.DispatchedAt is not null
+                && prepared is null && task.DispatchedAt is { } dispatchedAt
+                && dispatchedAt <= UtcNow()
                 && !string.IsNullOrWhiteSpace(task.WorktreePath))
             {
                 // A local Plan/Review worktree also needs a persisted observation. Without it,
                 // an unchanged checkout has no fact for the caller-visible progress warning.
+                // A future dispatch timestamp cannot establish post-dispatch progress; keep the
+                // earlier merge-back path so a no-change worktree is still cleaned up.
                 try
                 {
                     var probe = services.GetService<TaskCompletionProgressService>();
