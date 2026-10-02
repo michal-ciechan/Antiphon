@@ -42,6 +42,53 @@ The delayed-receipt regression at `cf2c147110aefe83a0a834f49bf8e2fb252bf3d1` exe
 33 passed and the named `C826.delayed-recovery-cannot-clear-backlog` assertion failed.
 Its production fix and final ordinary verification are recorded in the task report.
 
+Final tested production source is `c20f26028dd72c8d2f3b14258b12534e0ce86be2`:
+
+| Check | Executed / passed / failed / skipped | Result |
+|---|---|---|
+| CP-1 replay | 42 / 42 / 0 / 0 | Passed at `a9cc771591e7c8cfbb776cdcc9503043d05d9ea9`; covered source unchanged. |
+| CP-2 | 12 / 12 / 0 / 0 | Exit 3: unchanged Min=66; adapter and compatibility classes absent. |
+| CP-3 final | 34 / 34 / 0 / 0 | Exit 3: unchanged Min=56; expanded complete roster would be 60. |
+| CP-8 client | 29 / 29 / 0 / 0 | Passed; client source unchanged after replay. |
+| Full Unit lane | 3805 / 3805 / 0 / 40 | Driver exit 0; 33 Windows-only and seven missing-jq skips remain unverified. |
+| Full StandingSessionOwnershipTests | 5 / 1 / 4 / 0 | C561 model/snapshot check passed; four inherited CARD-0966 failures identified in the brief. |
+| Whole solution build | n/a | Passed: zero errors, 613 warnings, 3m08s; leased and isolated output. |
+
+The Unit lane also passed all 69 cleanup/wire cases in its selection: policy 22, executor 20,
+ownership 12, inventory six and wire three. No inherited failure was repaired or retried.
+The four ownership failures are the delete/recreate case and upgrade cases `(0)`, `(2)`, `(500)`.
+Unit skips, roster failures and unimplemented cases are not acceptance evidence.
+
+Evidence roots are `.antiphon/c826-replay`, `.antiphon/c826-checkpoints`, and
+`.antiphon/c826-final`; detailed run commands, red rounds and limitations are in
+`.antiphon/task-863ee584.md`. All drivers took build slots. The final CP-3/CP-2 waits were
+225/150 seconds. CP-4/5/6 were not run because their implementations and tests are absent;
+CP-7/Windows and every prescribed PC variant are separate commissioned work, still pending.
+119 task-owned alternate-output directories were removed after all runs completed and an
+active-process check; receipts and TRX were retained. Reruns need fresh builds.
+
+### Ordinary requirement disposition
+
+| IDs | Disposition and limit |
+|---|---|
+| V-1, V-2, V-3 | Authored virtual-facts rosters passed: 22, 20, 12. Native custody/deletion is not qualified. |
+| V-4, R-1 | PENDING: 14 adapter cases, 40 virtual compatibility ports and pre-move run; no extraction occurred. |
+| V-5 | PENDING: all 14 orchestration cases. Two additional schema tests passed, including actual baseline upgrade. |
+| V-6 | PARTIAL: 15 planned cases plus two receipt regressions passed. No authenticated HTTP attention GET, runner outbox or ACK/status recovery. |
+| V-7 | PARTIAL: nine persisted decision tests passed; native syscall barrier and actual land/restart/deploy caller ordering absent. |
+| V-13 | PARTIAL: six inventory cases passed; full mixed execute graph, read-only Git probe, source graph and caller tripwires absent. |
+| V-8, V-9 | PENDING: runner capability/transport/store and worker/script fixtures absent. ASCII byte check is a narrow manual lead only. |
+| V-10, V-11, R-5 | PENDING: native adapters throw; Linux fixtures absent; Windows not commissioned in this task. |
+| V-12 | Presentation roster passed, 29 cases (frozen 26 plus three landed CARD-0888 cases). No producer-to-HTTP-recipient acceptance. |
+| R-2 | PARTIAL: policy/ownership/inventory and gate decisions passed; scheduled transitive no-lease/native mixed graph absent. |
+| R-3 | PARTIAL: virtual shared claim checks passed and old owners untouched; scheduler/cutover/wrapper participation absent. |
+| R-4 | PARTIAL: immutable receipt/projection/invalidation recovery and client visuals passed; dispatcher/outbox/recipient HTTP delivery absent. |
+| Activation/manual host qualification | PENDING: per-host dry-run, config/store binding, exact volume evidence, historical holds, cutover and operator activation. |
+| PC-1..PC-118 | All 119 prescribed variants PENDING for SourceLanding Mutation; none run here. Additional receipt snapshot/staleness controls need commissioning too. |
+
+This task explicitly authorizes regression-only Review of the partial pushed implementation.
+It does not authorize treating incomplete ordinary rows or activation requirements as passed.
+
 Current CP-3 roster: zero of 14 planned orchestration cases plus two schema tests; 15 of 20
 planned report cases plus two receipt regression tests; nine of ten maintenance cases;
 six of twelve worktree-inventory cases. Total 34 = 30 planned + four supplemental, leaving
@@ -73,14 +120,15 @@ never rebase or merge master into a fast-forward-only task branch.
 The plan's frozen roster, time box, and per-host activation checks remain the acceptance contract.
 No operator should set up or run this partial worker against a live host.
 
-## Keyword requirement trace
+## Historical whole-requirement trace from the prior Code task
 
 The table below indexes every **plan line** containing `verify`, `assert`, `must`, `exact`,
 `never`, or `always` (case-insensitive). A line can hold multiple sentences; **No** covers every
 unproved clause on that line. A partial assertion is listed as a lead, never treated as complete
 proof. This deliberately conservative trace records the Code time-box departure rather than
 weakening the plan. Full implementation and a sentence-level Yes/No audit remain required before
-Review or activation.
+full-plan acceptance or activation. The continuation dispositions above supersede the prior
+task's assertion leads; whole unproved clauses remain pending.
 
 | Plan line | Requirement lead (abridged) | Test and assertion lead (file:line) | All clauses enforced? |
 |---:|---|---|:---:|
