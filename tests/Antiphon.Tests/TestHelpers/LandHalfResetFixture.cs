@@ -120,6 +120,38 @@ internal sealed class LandHalfResetFixture : IAsyncDisposable
 
     public ValueTask DisposeAsync() => Harness.DisposeAsync();
 
+    internal sealed class PairObservationGit(string home, LandingSafetyHarness h) : LandingGitFixture.FixtureGit(home, h.Fixture.TaskId)
+    {
+        public bool InAdoptionPair { get; private set; }
+        public int DurableIntents { get; private set; }
+        private bool AdoptionCommand(string directory, IReadOnlyList<string> args) =>
+            args[0] == "update-ref" && args.Contains("--no-deref") && args.Contains(h.Fixture.SourceRef)
+            || args[0] == "reset" && directory == h.Fixture.Source;
+
+        protected override System.Diagnostics.Process? StartProcess(System.Diagnostics.ProcessStartInfo start)
+        {
+            if (AdoptionCommand(start.WorkingDirectory, start.ArgumentList))
+            {
+                var children = Path.Combine(h.Fixture.Repository, ".git", "antiphon", "children");
+                var intents = Directory.GetFiles(children, "*.json");
+                if (intents.Length != 1) throw new InvalidOperationException("fixture_missing_durable_child_intent");
+                using var record = System.Text.Json.JsonDocument.Parse(File.ReadAllText(intents[0]));
+                if (record.RootElement.GetProperty("ProcessId").ValueKind != System.Text.Json.JsonValueKind.Null)
+                    throw new InvalidOperationException("fixture_intent_not_observed_before_start");
+                DurableIntents++;
+            }
+            return base.StartProcess(start);
+        }
+
+        public override async Task<Antiphon.Server.Application.Dtos.LandingGitResult> RunAsync(
+            string repository, IReadOnlyList<string> args, CancellationToken ct)
+        {
+            if (args[0] == "update-ref" && AdoptionCommand(repository, args)) InAdoptionPair = true;
+            try { return await base.RunAsync(repository, args, ct); }
+            finally { if (args[0] == "reset" && repository == h.Fixture.Source) InAdoptionPair = false; }
+        }
+    }
+
     internal sealed class CustodyGit(string home, Guid taskId) : LandingGitFixture.FixtureGit(home, taskId), Antiphon.Server.Application.Interfaces.ILandingGit
     {
         public bool? ChildAlive { get; set; }
@@ -134,6 +166,7 @@ internal sealed class LandHalfResetFixture : IAsyncDisposable
 
     internal sealed class SaveCut : SaveChangesInterceptor
     {
+        public Action<DbContext>? BeforeSave { get; set; }
         public Func<DbContext, Task>? AfterSave { get; set; }
         public override async ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData data, int result, CancellationToken ct = default)
         {
@@ -150,6 +183,7 @@ internal sealed class LandHalfResetFixture : IAsyncDisposable
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
             DbContextEventData data, InterceptionResult<int> result, CancellationToken ct = default)
         {
+            if (data.Context is not null) BeforeSave?.Invoke(data.Context);
             if (Armed && data.Context is { } db)
             {
                 var entry = db.ChangeTracker.Entries<AgentTaskLandRequest>()

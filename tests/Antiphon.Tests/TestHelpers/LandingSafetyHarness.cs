@@ -28,6 +28,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     public IEventBus Events { get; set; } = new MockEventBus();
     public Action<IServiceCollection>? ConfigureServices { get; set; }
     public SessionMessageQueueService? Messages { get; set; }
+    public AppDbContext? CurrentLandContext { get; private set; }
     public ILandingGit? GitOverride { get; set; }
     public LandDeliveryBoundary? Boundary { get; set; }
     public DbCommandInterceptor? CommandInterceptor { get; set; }
@@ -290,6 +291,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
 
     private AgentTaskLandService CreateLand(AppDbContext db, IServiceProvider services)
     {
+        CurrentLandContext = db;
         var tasks = new AgentTaskService(db, new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
             Options.Create(new DelegationSettings { MaxTasksPerRoot = 40, MaxDepth = 5 }), Events,
             new RecordingSessionStopper(), Clock, NullLogger<AgentTaskService>.Instance);

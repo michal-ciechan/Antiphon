@@ -501,7 +501,8 @@ public sealed class AgentTaskLandHalfResetTests
             "review-sha" => "review_evidence_sha_mismatch",
             "review-clean-false" or "review-clean-null" => "review_evidence_source_not_clean",
             "review-superseded" => "review_evidence_superseded",
-            "remote" or "fingerprint" => "adopt_source_remote_changed",
+            "remote" => "recovery_source_changed",
+            "fingerprint" => "source_remote_endpoint_changed",
             _ => "adopt_authority_changed",
         };
         if (variant == "owner")
@@ -645,8 +646,8 @@ public sealed class AgentTaskLandHalfResetTests
             }
             else
             {
-                marker = Path.Combine((await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "--absolute-git-dir")).Trim(), "gitdir");
-                await File.WriteAllTextAsync(marker, Path.Combine(h.Fixture.Observer, ".git") + "\n");
+                marker = Path.Combine(h.Fixture.Root, "trees", "moved-source");
+                await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "move", h.Fixture.Source, marker);
             }
         };
         await h.RunQueuedAsync();
@@ -656,7 +657,12 @@ public sealed class AgentTaskLandHalfResetTests
         row.SourceRefusalReason.ShouldNotBeNull("H.ChangedIdentityRefused");
         if (variant == "head") (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim().ShouldBe(h.Fixture.SeedSha);
         if (variant == "branch") (await h.Fixture.RequiredAsync(h.Fixture.Source, "symbolic-ref", "HEAD")).Trim().ShouldBe("refs/heads/other");
-        if (variant == "registration") (await File.ReadAllTextAsync(marker)).ShouldBe(Path.Combine(h.Fixture.Observer, ".git") + "\n");
+        if (variant == "registration")
+        {
+            Directory.Exists(marker).ShouldBeTrue("H.ChangedRegistrationPreserved");
+            (await File.ReadAllTextAsync(Path.Combine(marker, "feature.txt"))).ShouldBe("valuable feature\n");
+            (await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "list", "--porcelain")).ShouldContain(marker, customMessage: "H.ChangedRegistrationStillRegistered");
+        }
         AssertNoResetOrPublication(h);
     }
 
@@ -865,7 +871,7 @@ public sealed class AgentTaskLandHalfResetTests
 
     private static void AssertNoResetOrPublication(LandingSafetyHarness h)
     {
-        h.Fixture.Git.Commands.ShouldNotContain(x => x.Directory == h.Fixture.Source && x.Arguments[0] == "reset", "H.NoResetOnRefusal");
+        h.Fixture.Git.Commands.Where(x => x.Arguments[0] == "reset").Select(x => string.Join(" ", x.Arguments)).ToArray().ShouldBeEmpty("H.NoResetOnRefusal");
         h.Fixture.Git.Commands.ShouldNotContain(x => x.Arguments[0] == "push" && x.Arguments.Any(a => a.Contains(":refs/heads/master", StringComparison.Ordinal)), "H.NoTargetPublicationOnRefusal");
     }
 
