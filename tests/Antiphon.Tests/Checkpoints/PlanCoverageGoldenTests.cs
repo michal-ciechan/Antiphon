@@ -14,9 +14,10 @@ public sealed class PlanCoverageGoldenTests
         row.ShouldContain("`ClaudeTokenRefreshOptInTests` (6 results)", Case.Sensitive, "coverage-c780-count-present");
         var report = new PlanCoverageAnalyzer().Analyze("c780-r1.md", PlanCoverageFixture.Plan(row),
             [new("source.cs", "class ClaudeTokenRefreshOptInTests { [Test] void Regression() {} }")]);
-        report.Obligations.ShouldBeEmpty("coverage-c780-no-bound-methods");
-        report.Diagnostics.ShouldBeEmpty("coverage-c780-master-findings");
-        report.ExitCode.ShouldBe(0, "coverage-c780-class-only-clean");
+        report.Obligations.ShouldNotContain(o => o.Kind == "method", "coverage-c780-no-bound-methods");
+        report.Diagnostics.ShouldBe([new CoverageDiagnostic("PROSE_UNMAPPED", 5, 54, "R-1", Name: "c590-real.ps1",
+            Detail: "explicit member mapping required")], "coverage-c780-master-findings");
+        report.ExitCode.ShouldBe(1, "coverage-c780-existing-finding-preserved");
     }
 
     [Test]
