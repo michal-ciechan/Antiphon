@@ -20,13 +20,19 @@ public sealed class AgentTaskLandHalfResetTests
         var next = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
             recoverReviewedSource: true);
         next.RequestId.ShouldNotBe(oldRequest, "H.FreshRequestHasNewIdentity");
+        string? alignedTree = null;
+        h.Fixture.Git.AfterCommand = async (directory, args, result) =>
+        {
+            if (result.Succeeded && directory == h.Fixture.Source && args.Count > 0 && args[0] == "reset")
+                alignedTree = (await h.Fixture.RequiredAsync(h.Fixture.Source, "write-tree")).Trim();
+        };
         await h.RunQueuedAsync();
         await using var db = h.CreateContext();
         var row = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == next.RequestId);
         row.RecoveryWitnessRequestId.ShouldBe(oldRequest, "H.WitnessIsDurable");
         row.RecoveryLocalBeforeSha.ShouldBe(local, "H.OldTipIsPinned");
-        (await h.Fixture.RequiredAsync(h.Fixture.Source, "write-tree")).Trim()
-            .ShouldBe((await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", reviewed + "^{tree}")).Trim(),
+        alignedTree.ShouldNotBeNull("H.ResetAlignedBeforeCleanup");
+        alignedTree.ShouldBe((await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", reviewed + "^{tree}")).Trim(),
                 "H.IndexAlignedToReviewedSource");
         var op = await h.OperationAsync();
         (op is not null && new AgentTaskLandingState().HasPublication(op))
