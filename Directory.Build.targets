@@ -37,4 +37,6 @@
     <Delete Condition="$(_AntiphonCleanFileChars) &gt; $(AntiphonCleanFileMaxBytes)"
             Files="$(IntermediateOutputPath)$(CleanFile)" />
   </Target>
+  <Import Project="$(MSBuildThisFileDirectory)tests/Shared/CheckpointRepeat.targets"
+          Condition="Exists('$(MSBuildThisFileDirectory)tests/Shared/CheckpointRepeat.targets')" />
 </Project>

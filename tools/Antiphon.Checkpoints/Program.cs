@@ -307,6 +307,9 @@ public static class Program
     {
         var output = runtime?.Output ?? Console.Out;
         var platform = runtime?.Platform ?? new RuntimePlatform();
+        var repeat = options.Get("repeat") is string directRepeat ? RepeatRequest.Parse(directRepeat) : 1;
+        if (repeat > 1)
+            _ = RepeatRequest.CanonicalProject(repo, Required(options, "project"));
         var expectedSha = options.Get("expected-source-sha");
         var start = (runtime?.SourceCapture ?? new SourceSnapshot().Capture)(repo);
         var source = new SourceEvidence { Start = start };
@@ -365,6 +368,7 @@ public static class Program
             WorkingDirectory = repo,
             NoBuild = options.Has("no-build"),
             MinExecuted = int.TryParse(options.Get("min-executed"), out var min) ? min : 1,
+            Repeat = repeat,
             Expect = (options.Get("expect") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(token => token.Trim('\'', '"')).Where(token => token.Length > 0).ToList(),
             Properties = properties,
             Commit = commit.Trim(),
@@ -413,10 +417,23 @@ public static class Program
             rows = rows.Count == 0 ? ids.ToList() : rows.Where(ids.Contains).ToList();
         }
 
+        int? repeatOverride = null;
+        if (options.Get("repeat") is string repeatText)
+        {
+            repeatOverride = RepeatRequest.Parse(repeatText);
+            var selected = manifest.Checkpoints.Where(row => rows.Count == 0 || rows.Contains(row.Id)).ToList();
+            if (selected.Count == 0)
+                throw new ManifestValidationException("rows", "--repeat selected no rows");
+            if (repeatOverride > 1 && selected.Any(row => row.IsCommand))
+                throw new ManifestValidationException("repeat", "--repeat > 1 cannot select command rows");
+            foreach (var row in selected)
+                row.Repeat = repeatOverride.Value;
+        }
         ManifestValidator.Validate(manifest, repo);
         return (manifest, new RunRequest
         {
             Rows = rows,
+            Repeat = repeatOverride,
             Baseline = options.Get("baseline"),
             KnownFlaky = (options.Get("known-flaky") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList(),
             RowTimeoutMinutes = Minutes(options.Get("row-timeout")),

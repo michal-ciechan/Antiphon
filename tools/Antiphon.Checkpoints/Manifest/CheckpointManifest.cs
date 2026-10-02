@@ -57,6 +57,7 @@ public sealed class BuildSpec
 public sealed class CheckpointSpec
 {
     public string Id { get; set; } = "";
+    public int Repeat { get; set; } = 1;
     public List<string> After { get; set; } = [];
     public string? Build { get; set; }
     public string? Group { get; set; }

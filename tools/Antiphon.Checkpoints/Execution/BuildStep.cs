@@ -4,11 +4,16 @@ public static class BuildStep
 {
     public static IReadOnlyList<string> PropertyArguments(
         IEnumerable<KeyValuePair<string, string>> properties,
-        bool isWindows)
+        bool isWindows,
+        int repeat = 1,
+        string? canonicalProject = null)
     {
+        if (repeat < 1 || repeat > 1 && string.IsNullOrWhiteSpace(canonicalProject))
+            throw new ManifestValidationException("repeat", "repeat requires a selected canonical TUnit project");
         var copy = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var pair in properties)
         {
+            RepeatRequest.RejectReservedProperty(pair.Key, pair.Value);
             if (pair.Key.Equals("OutputPath", StringComparison.OrdinalIgnoreCase)
                 || pair.Key.Equals("OutDir", StringComparison.OrdinalIgnoreCase)
                 || pair.Key.Equals("BaseOutputPath", StringComparison.OrdinalIgnoreCase))
@@ -22,6 +27,12 @@ public static class BuildStep
 
         if (!isWindows && !copy.ContainsKey("UseAppHost"))
             copy["UseAppHost"] = "false";
+
+        if (repeat > 1)
+        {
+            copy["AntiphonCheckpointRepeat"] = repeat.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            copy["AntiphonCheckpointRepeatProject"] = canonicalProject!;
+        }
 
         return copy.Select(pair => "--property:" + pair.Key + "=" + pair.Value).ToList();
     }
