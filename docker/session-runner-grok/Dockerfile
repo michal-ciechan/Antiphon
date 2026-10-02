@@ -86,11 +86,11 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates bash libcurl3-gnutls libexpat1 zlib1g procps \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir -p /tmp/grok-install \
- && curl -fsSL https://x.ai/cli/install.sh | env HOME=/tmp/grok-install GROK_BIN_DIR=/usr/local/bin bash -s 1.0.40 \
+ && curl -fsSL https://x.ai/cli/install.sh | env HOME=/tmp/grok-install GROK_BIN_DIR=/usr/local/bin bash -s 1.0.41 \
  && install -m 0755 /tmp/grok-install/.grok/downloads/grok-linux-x86_64 /usr/local/bin/grok \
  && ln -sf grok /usr/local/bin/agent \
  && /usr/local/bin/grok --version \
- && /usr/local/bin/grok --version | grep -F '1.0.40' \
+ && /usr/local/bin/grok --version | grep -F '1.0.41' \
  && rm -rf /tmp/grok-install \
  && mkdir -p /tmp/claude-install \
  && curl -fsSL -o /tmp/claude-install/claude "https://downloads.claude.ai/claude-code-releases/${CLAUDE_CODE_VERSION}/linux-x64/claude" \
