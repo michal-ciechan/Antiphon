@@ -105,6 +105,14 @@ describe('attentionVisuals', () => {
       'unreadable-home-review').toBe('review')
   })
 
+  it('keeps runner outages in the broken bucket with danger styling', () => {
+    const visual = ATTENTION_VISUALS.RunnerUnavailable
+    expect(visual.label, 'runner-outage-label').toBe('Runner unavailable')
+    expect(visual.color, 'runner-outage-color').toBe('danger')
+    expect(homeBucketOf(item({ kind: 'RunnerUnavailable', severity: 'Error' })),
+      'runner-outage-bucket').toBe('broken')
+  })
+
   it.each([
     ['RunnerUnavailable', 'Error', 'broken'],
     ['RepositoryChildJournalStale', 'Error', 'broken'],

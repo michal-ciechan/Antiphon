@@ -53,7 +53,7 @@ public sealed class ParkedMessageSweepService
                 && m.AgentSession.GrokRulesState != GrokRulesState.Failed
                 && m.DeliveryAttempts >= maxAttempts
                 && m.SourceTaskId == null
-                && m.ConversationKey == null
+                && (m.ConversationKey == null || m.ConversationKey.StartsWith("task-input:"))
                 && (m.Origin == QueuedMessageOrigin.Delegation
                     || m.Origin == QueuedMessageOrigin.System
                     || m.Origin == QueuedMessageOrigin.Check
@@ -70,8 +70,15 @@ public sealed class ParkedMessageSweepService
                 m.DeliveryAttempts,
                 m.CreatedAt,
                 m.LastDeliveryStartedAt,
+                m.ConversationKey,
                 m.Body.Substring(0, 80)))
             .ToListAsync(ct);
+
+        // A task-input key is a delivery identity, not a live conversation. Accept only keys
+        // produced by the input service; other keyed correlations still require human handling.
+        candidates = candidates.Where(candidate => candidate.ConversationKey is null
+            || AgentTaskInputService.TryParseConversationKey(candidate.ConversationKey, out _, out _))
+            .ToList();
 
         var discarded = 0;
         foreach (var candidate in candidates)
@@ -146,5 +153,6 @@ public sealed class ParkedMessageSweepService
         int DeliveryAttempts,
         DateTime CreatedAt,
         DateTime? LastDeliveryStartedAt,
+        string? ConversationKey,
         string Head);
 }
