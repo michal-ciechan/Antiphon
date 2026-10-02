@@ -52,4 +52,48 @@ public sealed class PlanCoverageParserTests : CheckpointTestBase
         new PlanCoverageReader().Read("p", plan, checklist.Replace("\"version\":1", "\"version\":2")).Invalid.ShouldBeTrue("coverage-checklist-version");
         new PlanCoverageReader().Read("p", plan, checklist.Replace("incarnation facts", "stale clause")).Invalid.ShouldBeTrue("coverage-checklist-stale");
     }
+
+    [Test]
+    public void declared_row_counts_reject_missing_and_extra_bound_methods()
+    {
+        var plan = PlanCoverageFixture.Plan("| V-1 | `DemoTests` (2 results) | `DemoTests.First`; label `target-label` |");
+        var source = "class DemoTests { [Test] void First() { x.ShouldBe(1, \"target-label\"); } [Test] void Second() {} [Test] void Third() {} }";
+        var analyzer = new PlanCoverageAnalyzer();
+        var second = PlanCoverageFixture.Item("method", "DemoTests.Second", test: "DemoTests.Second");
+        var third = PlanCoverageFixture.Item("method", "DemoTests.Third", test: "DemoTests.Third");
+        var missing = analyzer.Analyze("p", plan, [new("s.cs", source)]);
+        missing.Diagnostics.ShouldContain(d => d.Code == "CHECKLIST_COUNT_MISMATCH" && d.Test == "DemoTests" && d.PlanLine == 5 && d.Detail == "results expected=2 actual=1", "coverage-row-count-missing");
+        missing.ExitCode.ShouldBe(1, "coverage-row-count-missing");
+        var extra = analyzer.Analyze("p", plan, [new("s.cs", source)], PlanCoverageFixture.Checklist(second, third));
+        extra.Diagnostics.ShouldContain(d => d.Code == "CHECKLIST_COUNT_MISMATCH" && d.Detail == "results expected=2 actual=3", "coverage-row-count-extra");
+        extra.ExitCode.ShouldBe(1, "coverage-row-count-extra");
+        analyzer.Analyze("p", plan, [new("s.cs", source)], PlanCoverageFixture.Checklist(second)).ExitCode.ShouldBe(0, "coverage-row-count-exact");
+    }
+
+    [Test]
+    public void declared_counts_keep_class_and_requirement_bindings()
+    {
+        var plan = PlanCoverageFixture.Plan("| V-1 | `DemoTests` (2 results) | `DemoTests.First`; label `target-label` |\n| V-2 | `OtherTests` (1 results) | `OtherTests.First` |");
+        var source = "namespace Example; class DemoTests { void First() { x.ShouldBe(1, \"target-label\"); } void Second() {} } class OtherTests { void First() {} }";
+        var checklist = PlanCoverageFixture.Checklist(
+            PlanCoverageFixture.Item("method", "DemoTests.First", test: "Example.DemoTests.First"),
+            PlanCoverageFixture.Item("method", "DemoTests.Second", id: "V-2", test: "DemoTests.Second", line: 6),
+            PlanCoverageFixture.Item("method", "OtherTests.First", test: "OtherTests.First"));
+        var report = new PlanCoverageAnalyzer().Analyze("p", plan, [new("s.cs", source)], checklist);
+        report.Diagnostics.Where(d => d.Code == "CHECKLIST_COUNT_MISMATCH").Select(d => (d.Id, d.Test, d.Detail))
+            .ShouldBe([("V-1", "DemoTests", "results expected=2 actual=1")], "coverage-count-binding-scoped");
+    }
+
+    [Test]
+    public void declared_results_expand_arguments_without_inventing_dynamic_counts()
+    {
+        var plan = PlanCoverageFixture.Plan("| V-1 | `DemoTests` (2 results) | `DemoTests.Check`; label `target-label` |");
+        var source = "class DemoTests { [Test, Arguments(1), Arguments(2)] void Check(int x) { x.ShouldBe(1, \"target-label\"); } }";
+        var analyzer = new PlanCoverageAnalyzer();
+        analyzer.Analyze("p", plan, [new("s.cs", source)]).ExitCode.ShouldBe(0, "coverage-count-arguments");
+        var dynamic = source.Replace("Arguments(1), Arguments(2)", "MethodDataSource(nameof(Cases))", StringComparison.Ordinal);
+        var report = analyzer.Analyze("p", plan, [new("s.cs", dynamic)]);
+        report.Diagnostics.ShouldContain(d => d.Code == "CHECKLIST_COUNT_UNMAPPED", "coverage-count-dynamic-unmapped");
+        report.ExitCode.ShouldBe(1, "coverage-count-dynamic-unmapped");
+    }
 }

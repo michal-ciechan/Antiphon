@@ -127,6 +127,56 @@ public sealed class PlanCoverageCommandTests : CheckpointTestBase
         { Skip.Test($"coverage project symlink creation unavailable: {ex.GetType().Name}: {ex.Message}"); }
     }
 
+    [Test]
+    public void frozen_checklist_preserves_all_72_obligations()
+    {
+        var root = TempDir(); var plan = WriteFrozenWorld(root);
+        var output = new StringWriter();
+        new CoverageCommand().Run(root, plan, format: "json", output: output).ShouldBe(0, "coverage-frozen-count-clean");
+        using var json = JsonDocument.Parse(output.ToString());
+        json.RootElement.GetProperty("summary").GetProperty("matched").GetInt32().ShouldBe(72, "coverage-frozen-count-clean");
+    }
+
+    [Test]
+    public void dropped_frozen_method_is_a_checklist_count_finding()
+    {
+        var root = TempDir(); var plan = WriteFrozenWorld(root);
+        // Keep every original line coordinate; only the promised method item disappears.
+        var lines = File.ReadAllLines(plan);
+        var item = Array.FindIndex(lines, l => l.Contains("\"name\":\"CheckpointImportTests.imports_the_card_0688_table\"", StringComparison.Ordinal));
+        lines[item] = ""; File.WriteAllLines(plan, lines);
+        var output = new StringWriter();
+        new CoverageCommand().Run(root, plan, output: output).ShouldBe(1, "coverage-checklist-method-omitted");
+        output.ToString().ShouldContain("CHECKLIST_COUNT_MISMATCH", Case.Sensitive, "coverage-checklist-method-omitted");
+        output.ToString().ShouldContain("id=R-1", Case.Sensitive, "coverage-checklist-method-omitted");
+        output.ToString().ShouldContain("expected=26 actual=25", Case.Sensitive, "coverage-checklist-method-omitted");
+    }
+
+    [Test]
+    public void extra_frozen_method_is_a_checklist_count_finding()
+    {
+        var root = TempDir(); var plan = WriteFrozenWorld(root);
+        var text = File.ReadAllText(plan);
+        var extra = "    {\"id\":\"R-1\",\"test\":\"PlanCoverageCommandTests.coverage_command_preserves_existing_import_contract\",\"kind\":\"method\",\"name\":\"PlanCoverageCommandTests.coverage_command_preserves_existing_import_contract\",\"planLine\":178},\n";
+        text = text.Replace("    {\"id\":\"R-1\",\"test\":\"CheckpointImportTests.imports_the_card_0688_table\"", extra + "    {\"id\":\"R-1\",\"test\":\"CheckpointImportTests.imports_the_card_0688_table\"", StringComparison.Ordinal);
+        File.WriteAllText(plan, text);
+        var output = new StringWriter();
+        new CoverageCommand().Run(root, plan, output: output).ShouldBe(1, "coverage-checklist-extra-method");
+        output.ToString().ShouldContain("expected=26 actual=27", Case.Sensitive, "coverage-checklist-extra-method");
+        output.ToString().ShouldContain("CHECKLIST_COUNT_MISMATCH", Case.Sensitive, "coverage-checklist-extra-method");
+    }
+
+    private static string WriteFrozenWorld(string root)
+    {
+        var plan = Path.Combine(root, "plan.md");
+        File.WriteAllText(plan, PlanCoverageFixture.Raw("c999-frozen-plan.md.txt"));
+        var directory = Path.Combine(root, "tests", "Antiphon.Tests", "Checkpoints");
+        Directory.CreateDirectory(directory);
+        foreach (var name in new[] { "PlanCoverageParserTests", "PlanCoverageAssertionTests", "PlanCoveragePcTests", "PlanCoverageGoldenTests", "PlanCoverageCommandTests", "PlanCoverageFixture", "CheckpointImportTests", "CheckpointManifestTests" })
+            File.Copy(Path.Combine(CheckpointFixtures.RepoRoot, "tests", "Antiphon.Tests", "Checkpoints", name + ".cs"), Path.Combine(directory, name + ".cs"));
+        return plan;
+    }
+
     [DllImport("libc", EntryPoint = "mkfifo", SetLastError = true)]
     private static extern int MkFifo(string path, uint mode);
 }
