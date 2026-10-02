@@ -359,6 +359,8 @@ public sealed class HerdrPaneDisposalRedactionTests
     [Arguments("build:1")][Arguments("CARD-0866 12:30")]
     [Arguments("Å:notes")][Arguments("Review： notes")]
     [Arguments("Review＼ notes")][Arguments("Review∕ notes")][Arguments("Review\u202e notes")]
+    // A letter immediately before the candidate drive letter is indistinguishable from word-final text.
+    [Arguments("xC:secret-home")]
     public async Task Redaction_preserves_non_drive_display_text(string value)
     {
         await AssertDisplayValueAsync(value, value, "preserved");
@@ -370,6 +372,30 @@ public sealed class HerdrPaneDisposalRedactionTests
     [Arguments(@"log at C:\secret-home")]
     [Arguments(" D:secret-home")][Arguments("\"E:secret-home\"")]
     [Arguments("log at C:secret-home")]
+    [Arguments("=C:secret-home")][Arguments("(C:secret-home")]
+    [Arguments("[C:secret-home")][Arguments("{C:secret-home")]
+    [Arguments(",C:secret-home")][Arguments(";C:secret-home")]
+    [Arguments("|C:secret-home")][Arguments(":C:secret-home")]
+    [Arguments("<C:secret-home")][Arguments(">C:secret-home")]
+    [Arguments("@C:secret-home")][Arguments("#C:secret-home")]
+    [Arguments("-C:secret-home")][Arguments("_C:secret-home")]
+    [Arguments(".C:secret-home")][Arguments("+C:secret-home")]
+    [Arguments("*C:secret-home")][Arguments("!C:secret-home")]
+    [Arguments("?C:secret-home")][Arguments("~C:secret-home")]
+    [Arguments("`C:secret-home")][Arguments("&C:secret-home")]
+    [Arguments("%C:secret-home")][Arguments("$C:secret-home")]
+    [Arguments("^C:secret-home")][Arguments("éC:secret-home")]
+    [Arguments("\u200bC:secret-home")][Arguments("（C:secret-home")]
+    [Arguments("「C:secret-home")][Arguments("“C:secret-home")]
+    [Arguments("‘C:secret-home")][Arguments("«C:secret-home")]
+    [Arguments("x(C:secret-home)")][Arguments("x=C:secret-home")]
+    [Arguments("path=C:secret-home")][Arguments("name:C:secret-home")]
+    [Arguments("cwd=D:secret")][Arguments("--dir=C:secret-home")]
+    [Arguments("work (C:secret-home) selected")][Arguments("\"(C:secret-home)\"")]
+    [Arguments("file:C:secret")]
+    // Separator-bearing variants remain whole-value masked regardless of the drive boundary.
+    [Arguments(@"=C:\Users\secret-home")][Arguments("foo/C:/Users/secret-home")]
+    [Arguments(@"name:C:\Users\secret-home")][Arguments(@"a,C:\secret-home")]
     public async Task Redaction_masks_drive_prefix_at_boundary(string value)
     {
         await AssertDisplayValueAsync(value, Mask, "drive-boundary");
