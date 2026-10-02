@@ -886,8 +886,12 @@ public sealed class AgentTaskReplyService
         if (task.Status == AgentTaskStatus.Succeeded && task.Workspace == WorkspaceMode.Worktree)
         {
             var progressEvidenceForMerge = TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson);
+            var cleanupOnly = task.Role != AgentTaskRole.Code && remote.Result is null
+                && progressEvidenceForMerge is
+                    { Assessment: CompletionProgressAssessment.NoAttributedProgress, Reason: "no_movement" };
             if (progressEvidenceForMerge is not null
-                && !TaskCompletionProgressService.AllowsAutomaticWorkspaceMutation(progressEvidenceForMerge))
+                && !TaskCompletionProgressService.AllowsAutomaticWorkspaceMutation(progressEvidenceForMerge)
+                && !cleanupOnly)
             {
                 workspaceNote = $"branch {task.WorktreeBranch} left for review";
                 db.AgentTaskEvents.Add(NewEvent(
@@ -895,7 +899,7 @@ public sealed class AgentTaskReplyService
                     $"Alternate or unavailable progress does not authorize merge-back; {workspaceNote}.", now));
             }
             else
-                workspaceNote = await MergeBackAsync(services, db, task, now, ct, remote.Result);
+                workspaceNote = await MergeBackAsync(services, db, task, now, ct, remote.Result, cleanupOnly);
         }
 
         // CARD-0657 D-6/D-7. The caller reads the full source SHA it reviews and lands against.
@@ -1907,7 +1911,7 @@ public sealed class AgentTaskReplyService
     /// </summary>
     private async Task<string?> MergeBackAsync(
         IServiceProvider services, AppDbContext db, AgentTask task, DateTime now, CancellationToken ct,
-        RemoteSettlementSyncResult? prepared = null)
+        RemoteSettlementSyncResult? prepared = null, bool cleanupOnly = false)
     {
         if (task.Role == AgentTaskRole.Mutation || task.SourceLandingOperationId is not null)
             return "verification snapshot retained";
@@ -1921,8 +1925,10 @@ public sealed class AgentTaskReplyService
         DelegationWorktreeService.MergeOutcome outcome;
         try
         {
-            outcome = await services.GetRequiredService<DelegationWorktreeService>()
-                .TryMergeBackAsync(task, ct);
+            var worktrees = services.GetRequiredService<DelegationWorktreeService>();
+            outcome = cleanupOnly
+                ? await worktrees.TryCleanupNoChangeAsync(task, ct)
+                : await worktrees.TryMergeBackAsync(task, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -3232,14 +3238,11 @@ public sealed class AgentTaskReplyService
             // requirement to author a commit; the assessment never changes its status here.
             await RecordRemoteEvidenceAsync(services, task, body, prepared, ct);
             if (task.Role != AgentTaskRole.Code && task.Workspace == WorkspaceMode.Worktree
-                && prepared is null && task.DispatchedAt is { } dispatchedAt
-                && dispatchedAt <= UtcNow()
+                && prepared is null && task.DispatchedAt is not null
                 && !string.IsNullOrWhiteSpace(task.WorktreePath))
             {
                 // A local Plan/Review worktree also needs a persisted observation. Without it,
                 // an unchanged checkout has no fact for the caller-visible progress warning.
-                // A future dispatch timestamp cannot establish post-dispatch progress; keep the
-                // earlier merge-back path so a no-change worktree is still cleaned up.
                 try
                 {
                     var probe = services.GetService<TaskCompletionProgressService>();
