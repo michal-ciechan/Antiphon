@@ -264,7 +264,9 @@ obligations for the same ID, including continuation rows and additive checklist 
 In the class cell, `<class>` in a code span followed by `(N results)` counts results;
 `(N existing)` counts methods. The literal sentence `All N class-qualified methods
 in the checklist are required` declares the ID's total method count. Class counts
-use the resolved declaring class; qualified/unqualified aliases count once. A deficit
+use the resolved declaring class; qualified/unqualified aliases count once. A class-cell
+count is checked only when at least one method binds for that ID and class; a class-only
+whole-class run census is skipped. The ID-wide total is still checked with zero bindings. A deficit
 or surplus emits `CHECKLIST_COUNT_MISMATCH` at the declaration and exits 1. Result
 counts support single-result methods and method-level `Arguments` attributes. Dynamic
 data sources, Matrix/Repeat or class/parameter expansion emit

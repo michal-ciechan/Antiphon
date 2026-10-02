@@ -298,7 +298,7 @@ Closed ordinary list: one isolated build and one exact filter per row. The D-1 r
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S1-S2, D-1 repair, CARD-0999 | `tests/Antiphon.Tests -> bin-c891-static/` | plan-coverage-static | `/*/*/(PlanCoverageParserTests*)\|(PlanCoverageAssertionTests*)\|(PlanCoveragePcTests*)\|(PlanCoverageGoldenTests*)\|(PlanCoverageCommandTests*)\|(CheckpointImportTests*)\|(CheckpointManifestTests*)/*` | V-1..V-5, R-1, D-1, CARD-0999 | Linux 54 = 7+5+4+3+9+20+6, final 0 failed/skipped; Windows 0 selected | 54 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c891-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-1 | S1-S2, D-1 repair, CARD-0999 | `tests/Antiphon.Tests -> bin-c891-static/` | plan-coverage-static | `/*/*/(PlanCoverageParserTests*)\|(PlanCoverageAssertionTests*)\|(PlanCoveragePcTests*)\|(PlanCoverageGoldenTests*)\|(PlanCoverageCommandTests*)\|(CheckpointImportTests*)\|(CheckpointManifestTests*)/*` | V-1..V-5, R-1, D-1, CARD-0999 | Linux 57 = 8+5+4+4+10+20+6, final 0 failed/skipped; Windows 0 selected | 57 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c891-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 
 ## Execution, acceptance and handoff
 
@@ -653,3 +653,28 @@ needs a stronger explicit plan promise: the frozen sentence requires the methods
 expanding that frozen promise set. The original requirements are unchanged.
 Item 2 already has the D-1 FIFO/existing-file/symlink controls; no duplicate added.
 The frozen fixture SHA-256 is c41db9d4010adb7762c714f2e12b16b83f1385e8852db2eb050ba1e6d79cc193.
+
+## CARD-0999 Final Review class-only repair (2026-10-02)
+
+Class-cell counts are checked only when the ID/class has at least one successfully
+bound method. A class-only whole-class run census has no checklist method promise
+and is skipped. The literal R-1 total check is unchanged, including zero bindings.
+CARD-1005's opt-in class-filter census remains outside scope.
+
+Three single-result tests bring CP-1 to **57 = 54 + 3**: Command
+`class_only_frozen_result_count_has_no_findings`, Golden
+`c780_class_only_regression_row_keeps_master_findings`, and Parser
+`declared_total_still_rejects_zero_bound_methods`. Parser 8, Assertions 5, PC 4,
+Golden 4, Command 10, Import 20 and Manifest 6; no new Arguments/data sources.
+The frozen fixture and its 72 obligations retain their exact bytes/coordinates.
+The new command test replaces the blank line after R-1 with R-2's true
+`CheckpointManifestTests` (6 results) census. The golden reads CARD-0780's actual
+R-1 row; the total test preserves the zero-binding deficit finding.
+
+The fix brief commissions the targeted red, two restored scratch mutations, one
+final CP-1 at the final committed SHA, frozen coverage, and master-versus-branch
+byte comparisons for frozen, frozen-plus-R-2, and CARD-0780 inputs. Direct
+`scripts/run-checkpoint.ps1` takes the test leases; coverage bootstraps use
+`scripts/build-slot.ps1` and `UseAppHost=false` on Linux. No shared helper or
+registry changes, so no Unit lane is commissioned. All PCs remain pending for
+method-scoped SourceLanding Mutation.
