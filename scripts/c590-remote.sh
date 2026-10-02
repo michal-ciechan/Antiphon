@@ -1841,10 +1841,6 @@ c849_seed() {
             || write_result false CacheSeedMarkerInvalid 2
         c849_cold_seed
     fi
-    c849_lock
-    if [ -n "${C590_SAVED_DONOR:-}" ] && { [ -e "$C849_READY" ] || [ -L "$C849_READY" ]; }; then
-        c849_require_ready
-    fi
     c849_prepare yes
     local image donor donor_image stage recovery helper payload_hash reference_hash package_bytes npm_bytes now i saved
     image="$(c849_image)"
@@ -1991,7 +1987,7 @@ c849_require_ready() {
     local context="${1:-full-required}" marker image name role
     C849_KIND=full
     [ -e "$C849_READY" ] || [ -L "$C849_READY" ] \
-        || write_result false 'CacheSeedRequired: run pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -Cold' 2
+        || write_result false 'CacheSeedRequired: run pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -SavedDonor /home/mc/runner-cache-donor/temp-runner-cache.tar' 2
     [ -f "$C849_READY" ] && [ ! -L "$C849_READY" ] && [ -s "$C849_READY" ] \
         || write_result false CacheSeedMarkerInvalid 2
     if grep -Eq '^(schema|kind|cold)=' "$C849_READY"; then
@@ -2248,7 +2244,7 @@ c849_reset() {
     require_lane host
     c849_lock
     if [ -e "$C849_READY" ] || [ -L "$C849_READY" ]; then
-        c849_require_ready
+        if [ -f "$C849_READY" ] && grep -Fxq kind=cold "$C849_READY"; then c849_require_ready; fi
         write_result false CacheSeedAlreadyReady 2
     fi
     # A reset is only for an interrupted, unmarked seed. The common idle check

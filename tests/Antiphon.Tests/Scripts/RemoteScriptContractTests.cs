@@ -131,7 +131,8 @@ public sealed class RemoteScriptContractTests
                     C849WriteLfFixture (Join-Path $caseDir 'runner-mounts.txt') (
                         "antiphon-runner-cache-nuget-packages antiphon-runner-cache-nuget-scratch antiphon-runner-cache-npm-content`n$private /tmp true")
                     C849WriteLfFixture (Join-Path $caseDir 'seed-hash.txt') ('a' * 64)
-                    foreach ($name in @('c590-result.json', 'status.json', 'smoke-summary.txt', 'runner-mounts.txt', 'seed-hash.txt')) {
+                    C849WriteLfFixture (Join-Path $caseDir 'seed-kind.txt') 'full'
+                    foreach ($name in @('c590-result.json', 'status.json', 'smoke-summary.txt', 'runner-mounts.txt', 'seed-hash.txt', 'seed-kind.txt')) {
                         C849AssertLfFixture (Join-Path $caseDir $name)
                     }
                 }
