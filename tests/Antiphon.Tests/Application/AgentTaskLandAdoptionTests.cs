@@ -182,6 +182,9 @@ public sealed class AgentTaskLandAdoptionTests
         }
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "update-ref", "--no-deref",
             h.Fixture.SourceRef, reviewed, oldLocal);
+        var pinPrefix = $"refs/antiphon/land/{h.Fixture.TaskId:N}/{accepted.RequestId:N}/adopt";
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "update-ref", $"{pinPrefix}/local-before", oldLocal);
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "update-ref", $"{pinPrefix}/source", reviewed);
 
         await h.RunQueuedAsync();
 
