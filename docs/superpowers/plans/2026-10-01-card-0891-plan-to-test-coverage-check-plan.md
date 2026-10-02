@@ -640,3 +640,16 @@ The frozen fixture c999-frozen-plan.md.txt is an exact copy of the plan at
 1fb0e18556a9062e70a183410eec33a30d11f260. No shared helper/registry changes;
 no Unit lane is commissioned. The targeted red and two scratch mutations are
 commissioned extra runs; the final CP-1 selection remains the single ordinary row.
+
+CARD-0999 implements declared-count reconciliation (item 1(b)), using class-cell
+`(N results)` / `(N existing)` and the literal total-method sentence in R-1.
+Only distinct bound method obligations for the declaration's ID/class count;
+continued rows and class-qualified aliases retain their resolved identities.
+`CHECKLIST_COUNT_MISMATCH` is an exit-1 finding for deficits and surpluses;
+`CHECKLIST_COUNT_UNMAPPED` is exit 1 when dynamic result expansion needs a census.
+Item 1(a), a blanket census of every method a selected class filter would execute,
+needs a stronger explicit plan promise: the frozen sentence requires the methods
+*in the checklist*, while later D-1/CARD-0999 tests expand selected classes without
+expanding that frozen promise set. The original requirements are unchanged.
+Item 2 already has the D-1 FIFO/existing-file/symlink controls; no duplicate added.
+The frozen fixture SHA-256 is c41db9d4010adb7762c714f2e12b16b83f1385e8852db2eb050ba1e6d79cc193.

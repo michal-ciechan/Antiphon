@@ -17,8 +17,11 @@ public sealed record CoverageDiagnostic(string Code, int PlanLine = 0, int PlanC
 public sealed record CoveragePc(string Id, string Status, string Target, string Test, int TargetLine, int PredecessorLine, IReadOnlyList<string> EarlierOtherLabels, string Reachability = "unproven");
 public sealed record CoverageSelection(string Path, string Sha256, IReadOnlyList<string> Classes);
 public sealed record CoverageSummary(int Obligations, int Matched, int Missing, int Unmapped, int PcIssues, int PcAdvisories, string Result, string Reachability = "unproven");
+internal sealed record CoverageCountPromise(string Id, string Class, int Expected, string Unit, int PlanLine, int PlanColumn);
 public sealed class PlanCoverageReport
 {
+    // Reader/analyzer state, deliberately absent from the public JSON schema.
+    internal List<CoverageCountPromise> CountPromises { get; } = [];
     public int SchemaVersion => 1;
     public string Mode => "static";
     public string Plan { get; set; } = "";

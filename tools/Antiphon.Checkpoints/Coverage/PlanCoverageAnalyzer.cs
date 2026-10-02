@@ -1,3 +1,5 @@
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+
 namespace Antiphon.Checkpoints.Coverage;
 
 public sealed class PlanCoverageAnalyzer
@@ -37,12 +39,59 @@ public sealed class PlanCoverageAnalyzer
             if (obligation.Id.StartsWith("PC-", StringComparison.Ordinal) && obligation.Kind == "label") AnalyzePc(report, index, obligation, evidence.Assertions, evidence.Unknown);
             void Finding(string code, string detail, string path = "") => report.Diagnostics.Add(new(code, obligation.PlanLine, obligation.PlanColumn, obligation.Id, obligation.Test, obligation.Name, path, Detail: detail));
         }
+        ValidateCounts(report, index);
         report.Obligations = report.Obligations.OrderBy(o => o.PlanLine).ThenBy(o => o.PlanColumn).ThenBy(o => o.Id, StringComparer.Ordinal)
             .ThenBy(o => o.Kind, StringComparer.Ordinal).ThenBy(o => o.Name, StringComparer.Ordinal).ThenBy(o => o.Test, StringComparer.Ordinal).ToList();
         report.Diagnostics = report.Diagnostics.Distinct().OrderBy(d => d.PlanLine).ThenBy(d => d.PlanColumn).ThenBy(d => d.Id, StringComparer.Ordinal)
             .ThenBy(d => d.Name, StringComparer.Ordinal).ThenBy(d => d.TestPath, StringComparer.Ordinal).ThenBy(d => d.TestLine).ThenBy(d => d.Code, StringComparer.Ordinal).ToList();
         report.Pcs = report.Pcs.DistinctBy(p => (p.Id, p.Test, p.Target)).ToList();
         return report;
+    }
+    private static void ValidateCounts(PlanCoverageReport report, TestAssertionIndex index)
+    {
+        foreach (var promise in report.CountPromises.Distinct())
+        {
+            var methods = report.Obligations.Where(o => o.Id == promise.Id && o.Kind == "method" && o.Matches.Count > 0)
+                .SelectMany(o => index.Resolve(o.Test))
+                .Where(m => promise.Class.Length == 0 || m.Class == promise.Class || m.Class.EndsWith("." + promise.Class, StringComparison.Ordinal))
+                .DistinctBy(m => (m.Path, m.Syntax.SpanStart)).ToArray();
+            var actual = methods.Length;
+            if (promise.Unit == "results")
+            {
+                var counts = methods.Select(ResultCount).ToArray();
+                if (counts.Any(c => c is null))
+                {
+                    report.Diagnostics.Add(new("CHECKLIST_COUNT_UNMAPPED", promise.PlanLine, promise.PlanColumn, promise.Id, promise.Class,
+                        Detail: "result count requires explicit census for dynamic data sources or class/parameter expansion"));
+                    continue;
+                }
+                actual = counts.Sum(c => c!.Value);
+            }
+            if (actual != promise.Expected)
+                report.Diagnostics.Add(new("CHECKLIST_COUNT_MISMATCH", promise.PlanLine, promise.PlanColumn, promise.Id, promise.Class,
+                    Detail: $"{promise.Unit} expected={promise.Expected} actual={actual}"));
+        }
+    }
+    private static int? ResultCount(IndexedMethod method)
+    {
+        var attributes = method.Syntax.AttributeLists.SelectMany(l => l.Attributes).Select(AttributeName).ToArray();
+        var surrounding = method.Syntax.Ancestors().OfType<ClassDeclarationSyntax>().SelectMany(c => c.AttributeLists).SelectMany(l => l.Attributes)
+            .Concat(method.Syntax.ParameterList.Parameters.SelectMany(p => p.AttributeLists).SelectMany(l => l.Attributes)).Select(AttributeName);
+        if (attributes.Any(Dynamic) || surrounding.Any(n => n == "Arguments" || Dynamic(n))) return null;
+        return Math.Max(1, attributes.Count(n => n == "Arguments"));
+
+        static bool Dynamic(string name) => name.Contains("DataSource", StringComparison.Ordinal) || name is "Matrix" or "Repeat";
+        static string AttributeName(AttributeSyntax attribute)
+        {
+            var name = attribute.Name switch
+            {
+                SimpleNameSyntax s => s.Identifier.ValueText,
+                QualifiedNameSyntax q => q.Right.Identifier.ValueText,
+                AliasQualifiedNameSyntax a => a.Name.Identifier.ValueText,
+                _ => attribute.Name.ToString()
+            };
+            return name.EndsWith("Attribute", StringComparison.Ordinal) ? name[..^9] : name;
+        }
     }
     private static bool Matches(IndexedAssertion assertion, CoverageObligation obligation) => obligation.Kind switch
     {
