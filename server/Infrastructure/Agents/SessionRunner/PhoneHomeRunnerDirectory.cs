@@ -288,8 +288,22 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
 
         lock (_gate)
         {
+            // Recheck under the admission gate: retirement may have been mirrored during validation.
+            if (slot.State?.RetiredAt is not null)
+                throw new ConflictException(
+                    $"Runner '{request.RunnerId}' is retired until its drain is cleared.",
+                    PhoneHomeProblemTypes.RunnerRetired);
             var now = _clock.GetUtcNow();
             var lease = TimeSpan.FromSeconds(_settings.LeaseSeconds);
+            if (slot.StoreId is { } store && store != request.RunnerStoreId)
+            {
+                // CARD-0953: only an explicit retirement clear authorizes a replacement store.
+                // Keep the old binding while any connection or lease can still own this identity.
+                if (!slot.StoreReplacementAuthorized || slot.Live is not null
+                    || slot.LeaseUntil > now
+                    || slot.LastDisconnect is { } disconnected && disconnected.AtUtc.Add(lease) > now)
+                    throw new ConflictException("Runner store identity does not match the live binding.", PhoneHomeProblemTypes.StoreMismatch);
+            }
             if (slot.BootId is { } currentBoot
                 && currentBoot != Guid.Empty
                 && currentBoot != request.ProcessBootId
@@ -302,10 +316,6 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             {
                 if (live.ProcessBootId != request.ProcessBootId)
                     throw new ConflictException("A competing boot cannot replace an unexpired owner.", PhoneHomeProblemTypes.BootConflict);
-            }
-            else if (slot.StoreId is { } store && store != request.RunnerStoreId)
-            {
-                throw new ConflictException("Runner store identity does not match the live binding.", PhoneHomeProblemTypes.StoreMismatch);
             }
 
             var ticket = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
@@ -320,6 +330,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
                 request.Capacity, platform, request.Capabilities, epoch);
             slot.StoreId = request.RunnerStoreId;
             slot.BootId = request.ProcessBootId;
+            slot.StoreReplacementAuthorized = false;
             slot.LeaseUntil = now.AddSeconds(_settings.LeaseSeconds);
             slot.RegisteredPlatform = platform;
             slot.PlatformObservedAt = platform is null ? slot.PlatformObservedAt : now;
@@ -795,6 +806,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
         public PhoneHomeLiveConnection? LastRecovered;
         public Guid? StoreId;
         public Guid? BootId;
+        public bool StoreReplacementAuthorized;
         public DateTimeOffset LeaseUntil;
         public long Epoch;
         public long Reconnects;
@@ -815,7 +827,13 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
         if (string.IsNullOrWhiteSpace(runnerId) || !_slots.TryGetValue(runnerId, out var slot))
             throw new NotFoundException("SessionRunner", runnerId);
         lock (_gate)
+        {
+            if (slot.State?.RetiredAt is not null && state.RetiredAt is null && !state.Draining)
+                slot.StoreReplacementAuthorized = true;
+            else if (state.RetiredAt is not null)
+                slot.StoreReplacementAuthorized = false;
             slot.State = state;
+        }
     }
 
     public RunnerState? DrainState(string? runnerId)

@@ -60,11 +60,16 @@ records the original `retiredAt` and clear reason. The server drain state record
 subsequent hold reason. Retain both with the host case receipts. Do not manually clear
 the placeholder before this phase.
 
-CARD-0953 tracks a separate same-AppHost reuse limit: after a previous temp container
-registered and was retired with private volumes removed, its next container has a new
-runner store id, but the server may still hold the old id and reject Register with
-`StoreMismatch`. A previous AppHost restart leaves that slot unbound. If `StoreMismatch`
-appears, stop at gate 1 and follow CARD-0953; this phase does not change server identity.
+CARD-0953 permits same-AppHost reuse after a stamped retirement is explicitly cleared.
+That clear authorizes one replacement registration, including while the verification
+hold drain is set. A different runner store id is admitted only after the old connection
+is detached, its registration lease expires, and a full lease window passes after its
+last disconnect. The old store and boot binding remain until registration succeeds.
+A successful same-store reconnect consumes the authorization too. An ordinary drain
+clear or an offline standing runner does not authorize a foreign store; an attached
+connection still refuses it even after heartbeat expiry. `StoreMismatch` remains a
+gate 1 stop condition: inspect retirement, connection and lease evidence rather than
+replacing the standing runner or bypassing identity admission.
 
 For either smoke gate, run the following from the desktop, replacing `<runner>` with `server2-temp`
 or `server2` and using the matching Compose project name (`antiphon-runner-temp` or
