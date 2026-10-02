@@ -1,7 +1,9 @@
 <Project>
   <!-- The exact selected csproj alone receives native TUnit expansion. A referenced project
        sees the global properties but never receives the generated attributes. -->
-  <Target Name="AntiphonGenerateCheckpointRepeat" BeforeTargets="CoreCompile"
+  <!-- BeforeCompile precedes _GenerateCompileDependencyCache. The cache must see the
+       generated Compile items so a later ordinary build invalidates the repeat DLL. -->
+  <Target Name="AntiphonGenerateCheckpointRepeat" BeforeTargets="BeforeCompile"
           Condition="'$(AntiphonCheckpointRepeat)' != '' and '$(AntiphonCheckpointRepeat)' != '1' and '$(AntiphonCheckpointRepeatProject)' == '$(MSBuildProjectFullPath)'">
     <Error Condition="'@(PackageReference->WithMetadataValue('Identity', 'TUnit'))' == ''"
            Text="AntiphonCheckpointRepeat requires the selected project to reference TUnit" />
