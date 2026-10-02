@@ -304,12 +304,20 @@ function Invoke-C590LiveCase {
     $runnerId = ''
     $previewRunId = ''
     $savedDonor = ''
+    $coldSeed = '0'
+    if ($names -contains 'coldSeed') {
+        if ($Manifest.coldSeed -isnot [bool] -or $Case -ne 'runner-cache-seed') {
+            throw 'CacheColdModeInvalid'
+        }
+        if ($Manifest.coldSeed) { $coldSeed = '1' }
+    }
     if ($names -contains 'savedDonor' -and $Manifest.savedDonor) {
         if ($Case -ne 'runner-cache-seed') { throw 'CacheSavedDonorCaseInvalid' }
         $savedDonor = [string]$Manifest.savedDonor
         if ($savedDonor -cnotmatch '^/[A-Za-z0-9._/-]{1,500}$' -or $savedDonor.Contains('..') -or
             $savedDonor.Contains('//')) { throw 'CacheSavedDonorPathInvalid' }
     }
+    if ($coldSeed -eq '1' -and $savedDonor) { throw 'CacheDonorSourceConflict' }
     if ($names -contains 'previewRunId') { $previewRunId = [string]$Manifest.previewRunId }
     if ($previewRunId -and $previewRunId -cnotmatch '^c849[0-9a-f]{16}0$') { throw 'CachePreviewInvalid' }
     $expectAccepting = '0'
@@ -381,6 +389,7 @@ function Invoke-C590LiveCase {
             "export C590_RUNNER_ID='$runnerId'"
             "export C590_PREVIEW_RUN='$previewRunId'"
             "export C590_SAVED_DONOR='$savedDonor'"
+            "export C590_COLD_SEED='$coldSeed'"
             "export C590_EXPECT_ACCEPTING='$expectAccepting'"
             "bash /home/mc/antiphon-c590/c590-remote.sh"
         ) -join '; '

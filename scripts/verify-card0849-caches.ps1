@@ -6,7 +6,8 @@ param(
     [string]$Case,
     [string]$Sha = '',
     [string]$Preview = '',
-    [string]$SavedDonor = ''
+    [string]$SavedDonor = '',
+    [switch]$Cold
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
@@ -17,6 +18,8 @@ if ($LASTEXITCODE -ne 0 -or $head -ne $Sha) { throw 'C849 source SHA does not eq
 if ($Case -eq 'Prune' -and -not $Preview) { throw 'Prune requires -Preview receipt path' }
 if ($Case -ne 'Prune' -and $Preview) { throw 'Preview belongs to Prune only' }
 if ($SavedDonor -and $Case -ne 'Seed') { throw 'SavedDonor belongs to Seed only' }
+if ($Cold -and $Case -ne 'Seed') { throw 'CacheColdModeInvalid' }
+if ($Cold -and $SavedDonor) { throw 'CacheDonorSourceConflict' }
 if ($SavedDonor -and ($SavedDonor -cnotmatch '^/[A-Za-z0-9._/-]{1,500}$' -or
         $SavedDonor.Contains('..') -or $SavedDonor.Contains('//'))) { throw 'CacheSavedDonorPathInvalid' }
 if ($Preview) {
@@ -89,6 +92,7 @@ for ($i = 0; $i -lt $cases.Count; $i++) {
     if ($Preview) { $manifest.preview = $Preview }
     if ($previewRunId) { $manifest.previewRunId = $previewRunId }
     if ($SavedDonor) { $manifest.savedDonor = $SavedDonor }
+    if ($Cold) { $manifest.coldSeed = $true }
     New-Item -ItemType Directory -Path $manifest.evidenceRoot -Force | Out-Null
     $manifestPath = Join-Path $manifest.evidenceRoot 'manifest.json'
     $manifest | ConvertTo-Json -Compress | Set-Content -LiteralPath $manifestPath -Encoding ascii
@@ -112,6 +116,19 @@ switch ($Case) {
     }
     'Seed' {
         $seed = Read-C849Receipt 0 'seed.txt'
+        if ($seed.Trim() -ceq 'ready=true kind=cold writable=3') {
+            $status = Read-C849Receipt 0 'status.json' | ConvertFrom-Json
+            $main = Read-C849Receipt 0 'main-status.json' | ConvertFrom-Json
+            if ($null -eq $status.retiredAt -or $status.available -ne $false -or
+                $status.dispatchEligible -ne $false -or $status.acceptingNewWork -ne $false -or
+                $status.draining -ne $true -or $status.retireWhenIdle -ne $true -or
+                $status.redirectTo -cne 'server2' -or $status.sessions -ne 0 -or
+                $status.queuedTasks -ne 0 -or ($null -ne $status.runnerSessions -and $status.runnerSessions -ne 0) -or
+                $null -eq $main.sessions -or $null -eq $main.queuedTasks) { throw 'C849 cold seed status invalid' }
+            Write-Output 'C849_SEED kind=cold ready=true writable=3'
+            break
+        }
+        if ($Cold) { throw 'C849 cold seed receipt invalid' }
         if ($seed -match '(?m)^ready=true donor=saved(?: |\r?$)') {
             $status = Read-C849Receipt 0 'status.json' | ConvertFrom-Json
             if ($status.sessions -ne 0 -or $status.queuedTasks -ne 0 -or
@@ -141,32 +158,50 @@ switch ($Case) {
     }
     'Both' {
         $hashes = @()
+        $kinds = @()
         for ($i = 0; $i -lt 2; $i++) {
             [void](Assert-C849Status (Read-C849Receipt $i 'status.json') $true)
-            $smoke = Read-C849Receipt $i 'smoke-summary.txt'
-            if ($smoke -notmatch 'uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK') { throw 'C849 smoke receipt invalid' }
+            $kind = (Read-C849Receipt $i 'seed-kind.txt').Trim()
+            if ($kind -cnotin @('full', 'cold')) { throw 'C849 marker kind invalid' }
+            $kinds += $kind
+            if ($kind -eq 'full') {
+                $smoke = Read-C849Receipt $i 'smoke-summary.txt'
+                if ($smoke -notmatch 'uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK') { throw 'C849 smoke receipt invalid' }
+            }
             $mounts = Read-C849Receipt $i 'runner-mounts.txt'
             foreach ($volume in @('antiphon-runner-cache-nuget-packages', 'antiphon-runner-cache-nuget-scratch', 'antiphon-runner-cache-npm-content')) {
                 if ($mounts -cnotmatch [regex]::Escape($volume)) { throw "C849 shared mount missing: $volume" }
             }
             $private = if ($i -eq 0) { 'antiphon-runner_runner-tmp' } else { 'antiphon-runner-temp_runner-tmp' }
             if ($mounts -cnotmatch [regex]::Escape($private + ' /tmp true')) { throw 'C849 private tmp mount invalid' }
-            $hashes += (Read-C849Receipt $i 'seed-hash.txt').Trim()
+            if ($kind -eq 'full') { $hashes += (Read-C849Receipt $i 'seed-hash.txt').Trim() }
+        }
+        if ($kinds[0] -cne $kinds[1]) { throw 'C849 mixed marker kinds' }
+        if ($kinds[0] -eq 'cold') {
+            Write-Output 'C849_BOTH kind=cold runners=2 writableVolumes=3 sharedVolumes=3 privateTmpVolumes=2 tmpMode=1777 failures=0'
+            break
         }
         if ($hashes[0] -cnotmatch '^[0-9a-f]{64}$' -or $hashes[0] -cne $hashes[1]) { throw 'C849 seed payload differs' }
         Write-Output 'C849_BOTH runners=2 smokes=2 sharedVolumes=3 privateTmpVolumes=2 tmpMode=1777 failures=0'
     }
     'Retired' {
         [void](Assert-C849Status (Read-C849Receipt 0 'status.json') $true)
-        $smoke = Read-C849Receipt 0 'smoke-summary.txt'
+        $kind = (Read-C849Receipt 0 'seed-kind.txt').Trim()
+        if ($kind -cnotin @('full', 'cold')) { throw 'C849 marker kind invalid' }
         $mounts = Read-C849Receipt 0 'runner-mounts.txt'
-        $hash = (Read-C849Receipt 0 'seed-hash.txt').Trim()
         $rollback = Read-C849Receipt 0 'rollback.txt'
-        if ($smoke -notmatch 'uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK' -or
-            $mounts -cnotmatch 'antiphon-runner_runner-tmp /tmp true' -or $hash -cnotmatch '^[0-9a-f]{64}$' -or
+        if ($mounts -cnotmatch 'antiphon-runner_runner-tmp /tmp true' -or
             $rollback -cnotmatch '^rollback-image=sha256:[0-9a-f]{64}\r?\n?$') {
             throw 'C849 retired receipt invalid'
         }
+        if ($kind -eq 'cold') {
+            Write-Output 'C849_RETIRED kind=cold externalVolumes=3 tempPrivateVolumes=0 mainTmpRetained=true rollback=retained failures=0'
+            break
+        }
+        $smoke = Read-C849Receipt 0 'smoke-summary.txt'
+        $hash = (Read-C849Receipt 0 'seed-hash.txt').Trim()
+        if ($smoke -notmatch 'uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK' -or
+            $hash -cnotmatch '^[0-9a-f]{64}$') { throw 'C849 retired receipt invalid' }
         Write-Output 'C849_RETIRED externalVolumes=3 tempPrivateVolumes=0 mainTmpRetained=true smokes=1 rollback=retained failures=0'
     }
     'PrunePreview' {

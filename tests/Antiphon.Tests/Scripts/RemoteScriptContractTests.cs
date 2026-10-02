@@ -2041,6 +2041,226 @@ public sealed class RemoteScriptContractTests
         output.ShouldContain("toxic-not-exported");
     }
 
+    private static string ColdSeedHarness()
+    {
+        var source = Remote();
+        return "set -u\n" + """
+            root="$(mktemp -d /tmp/c912-cold-XXXXXXXX)"
+            trap 'rm -rf -- "$root"' EXIT
+            mkdir -p "$root/volumes" "$root/case" "$root/server2"
+            CASE_DIR="$root/case"; SERVER2_ROOT="$root/server2"
+            C849_READY="$SERVER2_ROOT/cache/seed-accepted"
+            C849_PACKAGES=antiphon-runner-cache-nuget-packages
+            C849_SCRATCH=antiphon-runner-cache-nuget-scratch
+            C849_NPM=antiphon-runner-cache-npm-content
+            SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+            RUN=c912cold
+            HOST_PROJECT=antiphon-runner; TEMP_PROJECT=antiphon-runner-temp
+            MAIN_ID=1111111111111111111111111111111111111111111111111111111111111111
+            IMAGE_ID=sha256:0000000000000000000000000000000000000000000000000000000000000000
+            FAULT=''; PHASE=''; C849_COLD_MAIN_ID=''
+            : > "$root/effects"
+            write_result() { printf 'RESULT accepted=%s diagnosis=%s\n' "$1" "$2"; exit "$3"; }
+            require_lane() { [ "$1" = host ]; }
+            c849_lock() { :; }
+            sudo() {
+                [ "$1" = -n ] && shift
+                if [ "$1" = stat ]; then printf '1654:1654:700\n'; return 0; fi
+                if [ "$1" = install ]; then mkdir -p "${@: -1}"; return 0; fi
+                "$@"
+            }
+            c849_status_body() {
+                if [ "$1" = server2 ]; then
+                    printf '{"sessions":3,"runnerSessions":3,"queuedTasks":1,"acceptingNewWork":true,"draining":false,"dispatchEligible":true}'
+                else
+                    printf '{"retiredAt":"2026-10-02T00:00:00Z","available":false,"dispatchEligible":false,"acceptingNewWork":false,"draining":true,"retireWhenIdle":true,"redirectTo":"server2","sessions":0,"runnerSessions":null,"queuedTasks":0}'
+                fi
+            }
+            c849_no_temp_containers() { [ "$FAULT" != temp-container ] || write_result false CacheTempContainerExists 2; }
+            docker() {
+                local verb="$1" sub="${2:-}" name='' format='' code='' mount='' arg i path role
+                case "$verb:$sub" in
+                    info:*) printf '%s\n' "$root"; return 0 ;;
+                    image:inspect) return 0 ;;
+                    ps:*)
+                        case "$*" in
+                            *'name=^/'*) return 0 ;;
+                            *'com.docker.compose.project=antiphon-runner-temp'*) return 0 ;;
+                        esac
+                        printf '%s\n' "$MAIN_ID"; return 0 ;;
+                    inspect:*)
+                        [ "$FAULT" = inspect-error ] && return 2
+                        printf '[{"Id":"%s","Image":"%s","State":{"Running":true},"Config":{"Labels":{"com.docker.compose.project":"antiphon-runner","com.docker.compose.service":"session-runner"}},"Mounts":[]}]\n' "$MAIN_ID" "$IMAGE_ID"
+                        return 0 ;;
+                    volume:ls)
+                        [ "$FAULT" = census-error ] && return 2
+                        find "$root/volumes" -mindepth 1 -maxdepth 1 -printf '%f\n'; return 0 ;;
+                    volume:create)
+                        name="${@: -1}"; printf 'create %s\n' "$name" >> "$root/effects"
+                        [ "$FAULT" = create-error ] && return 2
+                        mkdir -p "$root/volumes/$name/_data"; printf '%s\n' "$name"; return 0 ;;
+                    volume:inspect)
+                        name="${@: -1}"; [ -d "$root/volumes/$name" ] || return 1
+                        role=nuget-packages
+                        [ "$name" = "$C849_SCRATCH" ] && role=nuget-scratch
+                        [ "$name" = "$C849_NPM" ] && role=npm-content
+                        printf '[{"Name":"%s","Driver":"local","Options":{},"Mountpoint":"%s/volumes/%s/_data","Labels":{"io.antiphon.owner":"server2-runner","io.antiphon.cache-schema":"1","io.antiphon.cache-role":"%s"}}]\n' "$name" "$root" "$name" "$role"
+                        return 0 ;;
+                    run:*)
+                        for ((i=1;i<=$#;i++)); do
+                            arg="${!i}"
+                            [ "$arg" = --mount ] && { i=$((i+1)); mount="${!i}"; }
+                            [ "$arg" = -c ] && { i=$((i+1)); code="${!i}"; }
+                        done
+                        name="${mount#*source=}"; name="${name%%,*}"
+                        path="$root/volumes/$name/_data"
+                        if [[ "$code" == *chown* ]]; then
+                            printf 'init %s\n' "$name" >> "$root/effects"; return 0
+                        fi
+                        printf 'probe %s %s\n' "$name" "$*" >> "$root/effects"
+                        code="${code//\/cache/$path}"
+                        bash -c "$code" sh "$RUN"; return $? ;;
+                    rm:*) printf 'remove %s\n' "${@: -1}" >> "$root/effects"; return 0 ;;
+                esac
+                printf 'UNEXPECTED-DOCKER %s\n' "$*" >> "$root/effects"
+                return 2
+            }
+            timeout() { [ "$1" = --kill-after=2s ] && [ "$2" = 10s ] || return 2; shift 2; "$@"; }
+            """ + "\n" +
+            Block(source, "c849_cold_volume_facts") + "\n" +
+            Block(source, "c849_cold_proof") + "\n" +
+            Block(source, "c849_cold_probe") + "\n" +
+            Block(source, "c849_cold_seed") + "\n";
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C912_Cold_volumes_seed_accepts_busy_main_without_packages()
+    {
+        var output = LinuxShell(ColdSeedHarness() + """
+            mkdir -p "$SERVER2_ROOT/cache"
+            (c849_cold_seed)
+            [ -f "$C849_READY" ] && grep -Fxq kind=cold "$C849_READY" && echo cold-ready
+            [ "$(grep -c '^create ' "$root/effects")" = 3 ] && echo only-absent-created
+            grep -Fxq 'ready=true kind=cold writable=3' "$CASE_DIR/seed.txt" && echo cold-receipt
+            [ -z "$(find "$root/volumes" -type f -print -quit)" ] && echo empty-roots
+            [ -z "$(grep -Ei 'dotnet|npm|build-slot|restore|network [^-]' "$root/effects")" ] && echo no-package-network-or-slot-call
+            echo main-unchanged
+            """);
+        output.ShouldContain("cold-ready");
+        output.ShouldContain("only-absent-created");
+        output.ShouldContain("empty-roots");
+        output.ShouldContain("main-unchanged");
+        output.ShouldContain("no-package-network-or-slot-call");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C912_Cold_volumes_seed_refuses_unknown_mounted_or_populated_targets()
+    {
+        var output = LinuxShell(ColdSeedHarness() + """
+            mkdir -p "$SERVER2_ROOT/cache"
+            FAULT=census-error
+            (c849_cold_seed)
+            [ ! -e "$C849_READY" ] && [ ! -s "$root/effects" ] && echo preflight-no-write-census-error
+            FAULT=inspect-error
+            (c849_cold_seed)
+            [ ! -e "$C849_READY" ] && [ ! -s "$root/effects" ] && echo preflight-no-write-inspect-error
+            FAULT=''
+            mkdir -p "$root/volumes/$C849_PACKAGES/_data"
+            printf x > "$root/volumes/$C849_PACKAGES/_data/.hidden"
+            (c849_cold_seed)
+            [ ! -e "$C849_READY" ] && [ ! -s "$root/effects" ] && echo preflight-no-write-hidden
+            """);
+        output.ShouldContain("RESULT accepted=false diagnosis=CacheFirstSeedPreconditionUnknown");
+        output.ShouldContain("preflight-no-write-census-error");
+        output.ShouldContain("preflight-no-write-inspect-error");
+        output.ShouldContain("RESULT accepted=false diagnosis=CacheUnmarkedContent");
+        output.ShouldContain("preflight-no-write-hidden");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C912_Cold_volumes_seed_rechecks_initialization_and_probe_boundaries()
+    {
+        var output = LinuxShell(ColdSeedHarness() + """
+            mkdir -p "$SERVER2_ROOT/cache"
+            (c849_cold_seed)
+            for p in P0 P1 P2 P3 P4 P5 P6; do
+                grep -q "phase=$p " "$CASE_DIR/cold-proof.txt" && echo "phase-proof-recorded-$p"
+            done
+            [ "$(grep -c '^phase=' "$CASE_DIR/cold-proof.txt")" -ge 11 ] && echo repeated-proof
+            """);
+        foreach (var phase in new[] { "P0", "P1", "P2", "P3", "P4", "P5", "P6" })
+            output.ShouldContain("phase-proof-recorded-" + phase);
+        output.ShouldContain("repeated-proof");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C912_Cold_cache_probe_requires_uid_writes_cleanup_and_bounded_exit()
+    {
+        var output = LinuxShell(ColdSeedHarness() + """
+            mkdir -p "$SERVER2_ROOT/cache"
+            (c849_cold_seed)
+            [ "$(grep -c '^probe ' "$root/effects")" = 3 ] && echo probe-writable
+            grep -q -- '--user 1654:1654' "$root/effects" && echo probe-uid-1654
+            [ "$(grep -c '^remove ' "$root/effects")" = 3 ] && echo probe-owned-helper-stopped
+            """);
+        output.ShouldContain("probe-writable");
+        output.ShouldContain("probe-uid-1654");
+        output.ShouldContain("probe-owned-helper-stopped");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C912_Cold_marker_has_distinct_validation_and_full_context_refusal()
+    {
+        var source = Remote();
+        var output = LinuxShell(ColdSeedHarness() + "\n" + Block(source, "c849_require_ready") + "\n" + """
+            mkdir -p "$SERVER2_ROOT/cache"
+            (c849_cold_seed)
+            c849_require_ready allow-cold
+            [ "$C849_KIND" = cold ] && echo cold-marker-valid
+            (c849_require_ready)
+            printf 'payload-sha256=bad\n' >> "$C849_READY"
+            (c849_require_ready allow-cold)
+            """);
+        output.ShouldContain("cold-marker-valid");
+        output.ShouldContain("RESULT accepted=false diagnosis=CacheFullSeedRequired", "full-context-refused");
+        output.ShouldContain("RESULT accepted=false diagnosis=CacheSeedMarkerInvalid", "malformed-marker-refused");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C912_Cold_runner_verification_uses_mounts_and_writability_not_payloads()
+    {
+        var remote = Remote();
+        foreach (var function in new[] { "case_verify_runner_caches", "case_verify_runner_caches_retired",
+                     "case_deploy_parent", "case_deploy_temp_runner", "case_retire_temp_runner" })
+        {
+            var body = Block(remote, function);
+            body.ShouldContain("c849_require_ready allow-cold", "cold-verify-empty-cache " + function);
+        }
+        Block(remote, "case_verify_runner_caches").ShouldContain("if [ \"$C849_KIND\" = full ]; then c849_smoke", "cold-no-smoke");
+        Block(remote, "case_verify_runner_caches_retired").ShouldContain("if [ \"$C849_KIND\" = full ]; then c849_smoke", "full-smoke-retained");
+        var front = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "verify-card0849-caches.ps1"));
+        front.ShouldContain("C849 mixed marker kinds", "mixed-kind-refused");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C912_Cold_exception_never_weakens_maintenance_or_donor_gates()
+    {
+        var remote = Remote();
+        Block(remote, "c849_reset").ShouldContain("c849_require_ready", "full-gate-refused-reset");
+        Block(remote, "c849_prune").ShouldContain("c849_require_ready", "full-gate-refused-prune");
+        Block(remote, "c849_seed").ShouldContain("c849_prune_idle", "full-gate-refused-saved");
+        Block(remote, "c849_seed").ShouldContain("CacheDonorNotIdleDrained", "full-gate-refused-donor");
+        var rolling = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "deploy-server2.ps1"));
+        rolling.ShouldContain("OldRunnerStillBusy", "redeploy-old still checks zero");
+    }
+
     private static string CacheSeedTreeHarness()
     {
         var text = Remote();
