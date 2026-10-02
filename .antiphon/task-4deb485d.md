@@ -85,3 +85,10 @@ For an isolated LF probe, use the same driver with `-Filter '/*/*/FakeGrokContra
 
 ## Exact checkpoint receipts
 
+```text
+CHECKPOINT CP-1 commit=196c88ea2eb60264e91bcb46b22c647b26ad62d8 build=ok filter=/*/*/UnixPtyArgvTests/*|/*/*/FakeGrokContractTests/* executed=17 passed=17 failed=0 skipped=0 trx=/work/worktrees/task-4deb485d/.antiphon/c984-baseline/CP-1-20261002-222719-24d3/run.trx slot=granted waited=0s dirty=0 source=196c88ea2eb60264e91bcb46b22c647b26ad62d8 sourceState=clean buildSource=verified
+CHECKPOINT CP-1 commit=196c88ea2eb60264e91bcb46b22c647b26ad62d8 build=reused filter=/*/*/(UnixPtyArgvTests*)|(FakeGrokContractTests*)/* executed=17 passed=17 failed=0 skipped=18 trx=/work/worktrees/task-4deb485d/.antiphon/c984-baseline-corrected/CP-1-20261002-222818-eb80/run.trx slot=granted waited=0s dirty=0 source=196c88ea2eb60264e91bcb46b22c647b26ad62d8 sourceState=clean buildSource=verified
+CHECKPOINT CP-2 commit=844eec1f304eab388821dc4b6bae81dfcf2d038f build=n/a filter=/*/*/(UnixPtyArgvTests*)|(FakeGrokContractTests*)/* executed=0 passed=0 failed=0 skipped=0 trx=n/a slot=skipped waited=0s dirty=0 source=844eec1f304eab388821dc4b6bae81dfcf2d038f sourceState=unknown buildSource=unknown reason=source_mismatch
+CHECKPOINT CP-2 commit=844eec1f304eab388821dc4b6bae81dfcf2d038f build=ok filter=/*/*/(UnixPtyArgvTests*)|(FakeGrokContractTests*)/* executed=17 passed=17 failed=0 skipped=18 trx=/work/worktrees/task-4deb485d/.antiphon/c984-green/CP-2-20261002-222935-11fd/run.trx slot=granted waited=0s dirty=0 source=844eec1f304eab388821dc4b6bae81dfcf2d038f sourceState=clean buildSource=verified
+CHECKPOINT CP-3 commit=844eec1f304eab388821dc4b6bae81dfcf2d038f build=ok filter=/*/*/UnixPtyArgvTests*/* executed=0 passed=0 failed=0 skipped=17 trx=/work/worktrees/task-4deb485d/.antiphon/c984-mutation/CP-3-20261002-223039-2a87/run.trx slot=granted waited=0s dirty=1 source=844eec1f304eab388821dc4b6bae81dfcf2d038f+dirty:fe9278da0e20967e70b31a3597977f8ab7d5fa213f4dd65f136a4852609985f9 sourceState=dirty buildSource=verified
+```
