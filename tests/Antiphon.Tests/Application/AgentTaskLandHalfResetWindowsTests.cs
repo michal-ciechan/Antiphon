@@ -21,7 +21,8 @@ public sealed class AgentTaskLandHalfResetWindowsTests
         await using var fixture = new LandHalfResetFixture(root);
         var (_, reviewed, evidence) = await InterruptAsync(fixture);
         var h = fixture.Harness;
-        h.Fixture.Source.ShouldContain(" with spaces", "W.RegisteredPathHasSpaces");
+        h.Fixture.Source.Contains(" with spaces", StringComparison.Ordinal)
+            .ShouldBeTrue("W.RegisteredPathHasSpaces");
         var next = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
             recoverReviewedSource: true);
         await h.RunQueuedAsync();
