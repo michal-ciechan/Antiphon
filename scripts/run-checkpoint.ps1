@@ -204,7 +204,7 @@ if ($Repeat -gt 1) {
     [xml]$repeatProjectXml = [System.IO.File]::ReadAllText($repeatProject)
     $tunit = @($repeatProjectXml.SelectNodes('//*[local-name()="PackageReference"]') | Where-Object { $_.GetAttribute('Include') -eq 'TUnit' })
     if ($tunit.Count -ne 1) { Stop-Invalid 'Repeat project must reference TUnit directly' }
-    $propertyTokens = @($propertyTokens) + @('AntiphonCheckpointRepeat=' + $Repeat, 'AntiphonCheckpointRepeatProject=' + $repeatProject)
+    $propertyTokens = @($propertyTokens) + @("AntiphonCheckpointRepeat=$Repeat", "AntiphonCheckpointRepeatProject=$repeatProject")
 }
 # Off Windows the extensionless fakeclaude apphost and the fakeclaude/ directory Antiphon.Tests
 # stages beside it are the same path, so the build fails; with no apphost `dotnet run` falls back
