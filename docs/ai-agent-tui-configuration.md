@@ -56,6 +56,31 @@ The Linux runner image pins Grok 1.0.41 (CARD-0986), matching the startup
 classifier's captured 120x30 dashboard. Other versions or terminal geometries
 require separate qualification.
 
+**Startup screen qualification (CARD-0778 / CARD-1004).** The empty composer
+marker is ASCII `>` on Windows ConPTY and `❯` (U+276F) in Linux runner containers.
+The classifier accepts exactly those two markers, with no following text or ghost
+suggestion. It remains fail-closed on the rest of the captured layout: 30 rendered
+rows, composer borders at columns 2 and 117, blank status rows, and the exact
+enabled shortcut hint. Spinner/`Starting session…`, working hints, sign-in and
+trust screens cannot authorize a first prompt. The ready region must still settle.
+
+| Grok Build | Platform | Terminal | Marker | Evidence |
+|---|---|---|---|---|
+| 1.0.41 | Windows modern ConPTY | 120x30 | ASCII `>` | CARD-0778 captured screen replay and measured complete prompt |
+| 1.0.41 | Linux server2-temp container | 120x30 | U+276F `❯` | CARD-1004 real startup frame; real first-prompt canary pending after server activation |
+| 1.0.40 | Linux server2 container | 120x30 | U+276F `❯` | CARD-1004 matching real startup frame; this does not change the image pin |
+
+Windows captures live in `tests/Antiphon.Tests/Agents/Fixtures/card0778/`;
+the two decoded Linux frames and their dated provenance live in
+[`tests/Antiphon.Tests/Agents/Fixtures/card1004/`](../tests/Antiphon.Tests/Agents/Fixtures/card1004/provenance.md).
+Version qualification is an evidence policy; the classifier inspects the current
+screen shape rather than a version banner. Other sizes remain CARD-0861 work.
+Activation requires the server's canonical AppHost restart, with no runner-image
+change. The orchestrator's post-rollout unpinned server2-temp Grok canary must
+confirm the complete matching `UserPrompt` transcript; readiness or a redraw alone
+is not delivery proof. FakeGrok can exercise U+276F through the native PTY and
+adapter with `ANTIPHON_FAKE_GROK_LINUX_COMPOSER=1`; its default stays ASCII `>`.
+
 Grok is a first-class runner kind (`AgentKind.Grok`), not only an OpenCode model id. Create **Grok** as wrapper-managed:
 
 | Field | Value |

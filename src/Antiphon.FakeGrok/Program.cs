@@ -336,7 +336,10 @@ internal static class Program
         // CARD-0778: the 1.0.41 120x30 ready shape. Keep the historical marker above it
         // for existing harnesses; readiness uses only this measured empty composer region.
         var topBorder = "  ╭" + new string('─', 114) + "╮";
-        var composerRow = "  │ >" + new string(' ', 112) + "│";
+        // CARD-1004: opt in to the captured Linux marker; existing harnesses keep ASCII '>'.
+        var composerMarker = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_GROK_LINUX_COMPOSER") == "1"
+            ? '\u276f' : '>';
+        var composerRow = "  │ " + composerMarker + new string(' ', 112) + "│";
         const string footerLabel = " grok-4.7 · always-approve ─╯";
         var bottomBorder = "  ╰" + new string('─', 118 - 3 - footerLabel.Length) + footerLabel;
         Write("\x1b[23;1H\x1b[2K\x1b[25;1H" + topBorder

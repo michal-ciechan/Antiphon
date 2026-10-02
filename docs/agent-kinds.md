@@ -325,7 +325,7 @@ outside `TranscriptTailer`.
 the captured 120x30 startup dashboard below. Other CLI versions require separate
 qualification before changing the pin.
 
-**Startup readiness (CARD-0778).** The Grok adapter waits for the captured
+**Startup readiness (CARD-0778 / CARD-1004).** The Grok adapter waits for the captured
 120x30 Grok Build 1.0.41 dashboard with an empty complete composer box, a blank
 status row two rows above it, and the exact enabled hint
 `  Shift+Tab:mode  │  Ctrl+x:shortcuts`. It scans upward from the bottom to find
@@ -336,6 +336,16 @@ fail closed until separately captured. Sign-in blocks without input; the
 measured 1.0.13 trust dialog is answered once with `y`, then the composer must
 still settle. A real 1.0.41 trust capture remains outstanding. The sixty-second
 maximum and two-second minimum process age remain within one bounded wait.
+
+The empty composer contains only ASCII `>` on Windows ConPTY or `❯` (U+276F)
+on Linux; both exact markers are accepted, with typed text and ghost suggestions
+still blocked. Windows 1.0.41 captures remain under
+`tests/Antiphon.Tests/Agents/Fixtures/card0778/`; Linux 1.0.40 and 1.0.41 captures
+and dated provenance are under `tests/Antiphon.Tests/Agents/Fixtures/card1004/`.
+See the [platform/version/size qualification matrix](ai-agent-tui-configuration.md#local-grok-build-tui-profile).
+Linux screen qualification still needs the orchestrator's post-rollout unpinned
+server2-temp real first-prompt canary with a complete matching `UserPrompt` receipt.
+CARD-0861 size qualification and the 1.0.41 runner-image pin remain separate.
 
 **Launch.** `grok.exe --always-approve --no-alt-screen [--model grok-4.7] [--rules <text>]
 (--session-id <guid> | --resume <guid>)` — decided from the on-disk session directory
