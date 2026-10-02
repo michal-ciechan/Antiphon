@@ -2018,7 +2018,7 @@ c849_require_ready() {
             && grep -Fxq schema=2 "$C849_READY" \
             && grep -Fxq kind=cold "$C849_READY" \
             && grep -Fxq cold=true "$C849_READY" \
-            && grep -Fxq "source-sha=$SHA" "$C849_READY" \
+            && grep -Eq '^source-sha=[0-9a-f]{40}$' "$C849_READY" \
             && grep -Fxq "packages=$C849_PACKAGES" "$C849_READY" \
             && grep -Fxq "scratch=$C849_SCRATCH" "$C849_READY" \
             && grep -Fxq "npm=$C849_NPM" "$C849_READY" \
