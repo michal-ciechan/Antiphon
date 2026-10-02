@@ -11,6 +11,8 @@ if ($Method -eq 'POST') {
     if ($RunnerId -eq 'server2' -and $Suffix -eq '/drain') { $state.oldDraining = $true }
     if ($RunnerId -eq 'server2' -and $Suffix -eq '/drain/clear') { $state.oldDraining = $false }
     if ($RunnerId -eq 'server2-temp' -and $Suffix -eq '/drain') {
+        if ($state.scenario -eq 'hold-post-fails') { Write-Output '__503__'; exit 0 }
+        if ($state.scenario -eq 'retire-race') { $state.tempRetiredAt = '2026-09-27T10:00:00Z' }
         $state.tempDraining = $true
         $state.tempRedirectTo = $body.redirectTo
         $state.tempRetireWhenIdle = [bool]$body.retireWhenIdle
@@ -37,6 +39,8 @@ if ($RunnerId -eq 'server2-temp') {
         exit 0
     }
     $offline = (-not $state.tempContainer) -or $state.tempOffline
+    $recovering = $state.scenario -eq 'recovering' -and $state.PSObject.Properties.Name -notcontains 'recoveryObserved'
+    if ($recovering) { $state | Add-Member -NotePropertyName recoveryObserved -NotePropertyValue $true; $state | ConvertTo-Json -Compress | Set-Content -LiteralPath $env:C727_TEST_STATE }
     $accepting = $state.scenario -ne 'ineligible' -and -not $state.tempDraining -and -not $offline
     $status = [ordered]@{
         available = (-not $offline); acceptingNewWork = $accepting; dispatchEligible = ($state.scenario -ne 'ineligible' -and -not $offline); buildVersion = $(if ($state.tempDeployed) { $state.sha } else { 'old' })
@@ -48,6 +52,7 @@ if ($RunnerId -eq 'server2-temp') {
         if ($state.faultKind -eq 'omitted') { $status.Remove([string]$state.faultField) }
         else { $status[[string]$state.faultField] = $state.faultValue }
     }
+    if ($recovering) { $status.dispatchEligible = $false; $status.acceptingNewWork = $false; $status.runnerSessions = $null }
     $status | ConvertTo-Json -Compress
     exit 0
 }
@@ -55,7 +60,7 @@ if ($RunnerId -eq 'server2') {
     $sessions = if ($state.scenario -eq 'busy') { 1 } else { 0 }
     $version = if ($state.oldDeployed -or $state.scenario -eq 'rerun') { $state.sha } else { 'old' }
     $status = [ordered]@{
-        acceptingNewWork = (-not $state.oldDraining); dispatchEligible = $true; buildVersion = $version
+        available = $true; acceptingNewWork = (-not $state.oldDraining); dispatchEligible = $true; buildVersion = $version
         draining = [bool]$state.oldDraining; redirectTo = $(if ($state.oldDraining) { 'server2-temp' } else { $null })
         retireWhenIdle = $false; retiredAt = $null
         sessions = $sessions; runnerSessions = 0; queuedTasks = 0
