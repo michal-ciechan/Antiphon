@@ -232,7 +232,16 @@ patch containment; uncontained owner commit IDs are printed when present.
 A fresh explicitly reviewed recovery can finish a prior half-reset only when the prior request's
 durable adoption intent and L/S pins identify the same owner, worktree, repository, source and
 remote endpoint. The index and actual tracked bytes must still equal the pinned old tip, with no
-untracked or ignored files or unsupported checkout transforms. An unknown proof remains
+untracked non-ignored files or unsupported checkout transforms. Unrelated ignored residue
+(`.antiphon/inbox`, `bin-*/`, `obj/`) is permitted. An ignored path is refused as `source_dirty`
+if it matches a path the reviewed tip S tracks, is an ignored file or symlink at a parent of an
+S-tracked path, or lies below an S-tracked file. An ignored nested Git repository (listed by Git
+as `dir/`) still fails closed as `recovery_checkout_unproven`. This strict proof is implemented by
+[`LandingGit.InspectRecoveryCheckoutAsync`](../server/Infrastructure/Git/LandingGit.cs), with
+residue and obstruction coverage in
+[`AgentTaskLandHalfResetTests`](../tests/Antiphon.Tests/Application/AgentTaskLandHalfResetTests.cs)
+and [`LandRecoveryCheckoutTests`](../tests/Antiphon.Tests/Infrastructure/LandRecoveryCheckoutTests.cs).
+An unknown proof remains
 `source_dirty` with `recovery_checkout_unproven`; do not reset the owner tree based only on HEAD.
 The repair never runs for ordinary land or cleanup-only requests. The request's
 `RecoveryWitnessRequestId` records the prior intent that authorized a successful repair.
