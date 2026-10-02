@@ -202,7 +202,11 @@ public sealed class AgentTaskInputSpillTests
         after.Id.ShouldBe(before.Id, "same-queue-id");
         after.ConversationKey.ShouldBe(before.ConversationKey);
         after.Body.ShouldBe(before.Body);
-        after.RemoteSpillBody.ShouldBe(before.RemoteSpillBody);
+        // A complete matching UserPrompt releases delivery-only bytes. The event keeps
+        // the exact logical input after this receipt.
+        after.RemoteSpillBody.ShouldBeNull("complete-prompt-releases-queue-bytes");
+        var input = await afterDb.AgentTaskEvents.SingleAsync(e => e.Type == AgentTaskEventType.Refined);
+        input.InputBody.ShouldBe(before.RemoteSpillBody);
         after.Status.ShouldBe(QueuedMessageStatus.Sent);
         f.Adapter.SubmittedBodies.ShouldContain(after.Body);
     }
