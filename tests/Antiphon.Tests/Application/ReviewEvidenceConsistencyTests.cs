@@ -19,6 +19,9 @@ public sealed class ReviewEvidenceConsistencyTests
     private static readonly string A = new('a', 40);
     private static readonly string B = new('b', 40);
     private static readonly string C = new('c', 40);
+    private static readonly string D = new('d', 40);
+    private static readonly string E = new('e', 40);
+    private static readonly string F = new('f', 40);
 
     [Test]
     [Arguments("remote")]
@@ -109,18 +112,45 @@ public sealed class ReviewEvidenceConsistencyTests
     {
         await using var world = await C544World.CreateAsync();
         var evidence = new CompletionProgressEvidence(1, CompletionProgressAssessment.ProgressObserved,
+            ClaimedSha: D,
             Sources: [new CompletionProgressSource(ProgressOrigin.Primary, CompletionProgressAssessment.ProgressObserved,
-                VerifiedSha: remoteMatches ? A : B)],
+                    VerifiedSha: remoteMatches ? A : B),
+                new CompletionProgressSource(ProgressOrigin.PrimaryAlternate,
+                    CompletionProgressAssessment.ProgressObserved, VerifiedSha: F)],
             RemoteSync: new RemoteSyncEvidence(1, RemoteSettlementSyncState.Synchronized,
-                "refs/heads/" + world.Owner.WorktreeBranch, ConfirmedSha: remoteMatches ? B : A));
+                "refs/heads/" + world.Owner.WorktreeBranch,
+                ObservedSha: E, ConfirmedSha: remoteMatches ? B : A));
         var row = await SettleAsync(world, B, B, evidence);
         row.Outcome.ReviewedSourceSha.ShouldBe(B);
         if (remoteMatches)
+        {
             row.Header.ShouldNotContain("review_evidence_subject_tip_mismatch");
+            row.Warnings.ShouldNotContain(w => w.Contains("review_evidence_subject_tip_mismatch", StringComparison.Ordinal));
+            row.Header.ShouldNotContain(A);
+        }
         else
         {
             row.Header.ShouldContain("review_evidence_subject_tip_mismatch");
             row.Header.ShouldContain(A);
+        }
+        row.Header.ShouldNotContain(D);
+        row.Header.ShouldNotContain(E);
+        row.Header.ShouldNotContain(F);
+
+        foreach (var remote in new[] { "absent", "non-full" })
+        {
+            await using var fallbackWorld = await C544World.CreateAsync();
+            var fallbackEvidence = new CompletionProgressEvidence(1, CompletionProgressAssessment.ProgressObserved,
+                Sources: [new CompletionProgressSource(ProgressOrigin.Primary,
+                    CompletionProgressAssessment.ProgressObserved, VerifiedSha: remoteMatches ? A : B)],
+                RemoteSync: remote == "absent" ? null : new RemoteSyncEvidence(1,
+                    RemoteSettlementSyncState.Synchronized, ConfirmedSha: "deadbee"));
+            var fallback = await SettleAsync(fallbackWorld, B, B, fallbackEvidence);
+            fallback.Outcome.ReviewedSourceSha.ShouldBe(B, remote);
+            if (remoteMatches)
+                fallback.Header.ShouldContain("review_evidence_subject_tip_mismatch", Case.Sensitive, remote);
+            else
+                fallback.Header.ShouldNotContain("review_evidence_subject_tip_mismatch", Case.Sensitive, remote);
         }
     }
 
@@ -134,9 +164,27 @@ public sealed class ReviewEvidenceConsistencyTests
         var row = await SettleAsync(world, A, B, evidence);
         row.Header.ShouldContain("review_evidence_sha_not_review_base");
         row.Header.ShouldContain("review_evidence_subject_tip_mismatch");
+        var originalOutcome = row.Outcome.ShouldNotBeNull();
+        await using (var before = world.CreateContext())
+        {
+            var originalTask = await before.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == row.Id);
+            originalTask.Status.ShouldBe(AgentTaskStatus.Succeeded);
+            originalOutcome.Outcome.ShouldBe(StageOutcomeKind.Clean);
+            originalOutcome.OrdinaryScopeCompleted.ShouldBe(VerificationScope.Full);
+            originalTask.NextStage.ShouldBe(PipelineHandoffKind.Land);
+            originalTask.NextHandoff.ShouldBe("C544 fixture handoff.");
+        }
         await world.Services.GetRequiredService<AgentTaskReplyService>()
             .OnTurnEndAsync(row.Session, CancellationToken.None);
         await using var db = world.CreateContext();
+        var settledTask = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == row.Id);
+        settledTask.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settledTask.NextStage.ShouldBe(PipelineHandoffKind.Land);
+        settledTask.NextHandoff.ShouldBe("C544 fixture handoff.");
+        var settledOutcome = await db.StageOutcomes.AsNoTracking().SingleAsync(o => o.StageTaskId == row.Id);
+        settledOutcome.Id.ShouldBe(originalOutcome.Id);
+        settledOutcome.Outcome.ShouldBe(StageOutcomeKind.Clean);
+        settledOutcome.OrdinaryScopeCompleted.ShouldBe(VerificationScope.Full);
         (await db.StageOutcomes.CountAsync(o => o.StageTaskId == row.Id)).ShouldBe(1);
         (await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == row.Id
             && n.Kind == LandNotificationKind.TaskCompletion)).ShouldBe(1);
