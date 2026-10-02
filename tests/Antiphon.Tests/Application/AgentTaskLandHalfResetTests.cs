@@ -857,7 +857,7 @@ public sealed class AgentTaskLandHalfResetTests
         }
         (await h.Fixture.RequiredAsync(h.Fixture.Source, "write-tree")).Trim()
             .ShouldBe((await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", local + "^{tree}")).Trim());
-        custody.Commands.ShouldNotContain(x => x.Arguments[0] is "reset" or "clean" or "push", "H.UncertainChildNoMutationOrKill");
+        custody.Commands.ShouldNotContain(x => (x.Arguments[0] == "reset" || x.Arguments[0] == "clean" || x.Arguments[0] == "push"), "H.UncertainChildNoMutationOrKill");
         (await h.OperationAsync()).ShouldBeNull();
         }
         finally { journal?.NotStarted(); } // Only synthetic fixture custody; no child was created.

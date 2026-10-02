@@ -36,8 +36,8 @@ public sealed class LandRequestWriteDiagnosticTests
         await using (var db = h.CreateContext())
         {
             var row = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == accepted.RequestId);
-            row.LastWriterOperation.ShouldBe("admission", "D.AdmissionStamped");
-            row.LastWriterToken.ShouldBe(row.ConcurrencyToken, "D.AdmissionTokenLinked");
+            row.LastWriterOperation.ShouldBe("admission", customMessage: "D.AdmissionStamped");
+            row.LastWriterToken.ShouldBe(row.ConcurrencyToken, customMessage: "D.AdmissionTokenLinked");
             row.LastWriterAt.ShouldNotBeNull("D.AdmissionTimeStamped");
         }
         await using (var db = h.CreateContext())
@@ -49,8 +49,8 @@ public sealed class LandRequestWriteDiagnosticTests
         await using (var db = h.CreateContext())
         {
             var row = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == accepted.RequestId);
-            row.LastWriterOperation.ShouldBe("monitor-sweep", "D.MonitorStamped");
-            row.LastWriterToken.ShouldBe(row.ConcurrencyToken, "D.MonitorTokenLinked");
+            row.LastWriterOperation.ShouldBe("monitor-sweep", customMessage: "D.MonitorStamped");
+            row.LastWriterToken.ShouldBe(row.ConcurrencyToken, customMessage: "D.MonitorTokenLinked");
         }
         if (variant == "hold")
         {
@@ -103,7 +103,7 @@ public sealed class LandRequestWriteDiagnosticTests
             request.HoldDetail = "stale private value"; request.ConcurrencyToken = attempted = Guid.NewGuid();
         }
         var failure = await Should.ThrowAsync<DbUpdateConcurrencyException>(() => stale.SaveChangesAsync());
-        failure.Entries.Count.ShouldBe(1, "D.RealConflictingEntry");
+        failure.Entries.Count.ShouldBe(1, customMessage: "D.RealConflictingEntry");
         Guid observed;
         await using (var observer = h.CreateContext()) observed = (await observer.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == accepted.RequestId)).ConcurrencyToken;
         if (variant == "request-hosted")
@@ -119,23 +119,23 @@ public sealed class LandRequestWriteDiagnosticTests
         else await h.FailAsync(failure);
         await using var db = h.CreateContext();
         var row = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == accepted.RequestId);
-        row.TerminalFailureCode.ShouldBe("landing_concurrency_conflict", "D.ConcurrencyCodePersisted");
+        row.TerminalFailureCode.ShouldBe("landing_concurrency_conflict", customMessage: "D.ConcurrencyCodePersisted");
         var terminal = await db.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.Id == row.TerminalEventId);
         var entity = variant == "other-entity" ? "AgentTask" : "AgentTaskLandRequest";
-        terminal.Detail.ShouldContain("entity=" + entity, Case.Sensitive, "D.EntryEntityNamed");
-        terminal.Detail.ShouldContain($"row={key:N}", Case.Sensitive, "D.EntryRowNamed");
-        terminal.Detail.ShouldContain($"originalToken={original:N}", Case.Sensitive, "D.OriginalTokenNamed");
-        terminal.Detail.ShouldContain($"attemptedToken={attempted:N}", Case.Sensitive, "D.AttemptedTokenNamed");
-        terminal.Detail.ShouldContain("observedDatabaseWriter=", Case.Sensitive, "D.ObservedWriterNamed");
+        terminal.Detail.ShouldContain("entity=" + entity, Case.Sensitive, customMessage: "D.EntryEntityNamed");
+        terminal.Detail.ShouldContain($"row={key:N}", Case.Sensitive, customMessage: "D.EntryRowNamed");
+        terminal.Detail.ShouldContain($"originalToken={original:N}", Case.Sensitive, customMessage: "D.OriginalTokenNamed");
+        terminal.Detail.ShouldContain($"attemptedToken={attempted:N}", Case.Sensitive, customMessage: "D.AttemptedTokenNamed");
+        terminal.Detail.ShouldContain("observedDatabaseWriter=", Case.Sensitive, customMessage: "D.ObservedWriterNamed");
         // Hosted start is an intervening committed writer; attribution is explicitly observed.
-        if (variant != "request-hosted") terminal.Detail.ShouldContain($"observedToken={observed:N}", "D.FreshStoredTokenNamed");
-        terminal.Detail.ShouldNotContain("stale private value", Case.Sensitive, "D.RawExceptionHidden");
-        terminal.Detail.ShouldNotContain("fixture-request-save-conflict", Case.Sensitive, "D.RawExceptionHidden");
+        if (variant != "request-hosted") terminal.Detail.ShouldContain($"observedToken={observed:N}", customMessage: "D.FreshStoredTokenNamed");
+        terminal.Detail.ShouldNotContain("stale private value", Case.Sensitive, customMessage: "D.RawExceptionHidden");
+        terminal.Detail.ShouldNotContain("fixture-request-save-conflict", Case.Sensitive, customMessage: "D.RawExceptionHidden");
         original.ShouldNotBe(attempted);
         var log = entries.Single(e => e.State.ContainsKey("ConcurrencySummary"));
-        log.State["ConcurrencySummary"]!.ToString().ShouldContain($"row={key:N}", "D.SummarySurvivesTrackerClear");
+        log.State["ConcurrencySummary"]!.ToString().ShouldContain($"row={key:N}", customMessage: "D.SummarySurvivesTrackerClear");
         var note = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.RequestId == accepted.RequestId && n.Kind == LandNotificationKind.Outcome);
-        note.Body.ShouldContain($"originalToken={original:N}", "D.SafeSummaryPersistedInNotification");
+        note.Body.ShouldContain($"originalToken={original:N}", customMessage: "D.SafeSummaryPersistedInNotification");
     }
 
     [Test]
@@ -155,7 +155,7 @@ public sealed class LandRequestWriteDiagnosticTests
         var migrations = db.Database.GetMigrations().ToArray();
         var position = Array.FindIndex(migrations,
             m => m.EndsWith("_AddLandRequestWriterProvenance", StringComparison.Ordinal));
-        position.ShouldBeGreaterThan(0, "D.MigrationExists");
+        position.ShouldBeGreaterThan(0, customMessage: "D.MigrationExists");
         migrations[position - 1].EndsWith("_AddReviewSourceClean", StringComparison.Ordinal)
             .ShouldBeTrue("D.ActualImmediatePredecessor");
         await db.GetService<IMigrator>().MigrateAsync(migrations[position - 1]);
@@ -183,9 +183,9 @@ public sealed class LandRequestWriteDiagnosticTests
         await db.GetService<IMigrator>().MigrateAsync(migrations[position]);
         await using var observer = new AppDbContext(options);
         var saved = await observer.AgentTaskLandRequests.SingleAsync(r => r.Id == requestId);
-        saved.ConcurrencyToken.ShouldBe(token, "D.LegacyTokenUnchanged");
-        saved.ExpectedSourceSha.ShouldBe(expected, "D.LegacyApprovalUnchanged");
-        saved.RecoveryLocalBeforeSha.ShouldBe(expected, "D.LegacyProgressUnchanged");
+        saved.ConcurrencyToken.ShouldBe(token, customMessage: "D.LegacyTokenUnchanged");
+        saved.ExpectedSourceSha.ShouldBe(expected, customMessage: "D.LegacyApprovalUnchanged");
+        saved.RecoveryLocalBeforeSha.ShouldBe(expected, customMessage: "D.LegacyProgressUnchanged");
         saved.LastWriterOperation.ShouldBeNull("D.LegacyWriterNull");
         saved.LastWriterToken.ShouldBeNull("D.LegacyWriterTokenNull");
         saved.LastWriterAt.ShouldBeNull("D.LegacyWriterAtNull");
@@ -199,8 +199,8 @@ public sealed class LandRequestWriteDiagnosticTests
         await observer.SaveChangesAsync();
         observer.ChangeTracker.Clear();
         saved = await observer.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == requestId);
-        saved.RecoveryWitnessRequestId.ShouldBe(witness, "D.NewWitnessRoundTrips");
-        saved.LastWriterToken.ShouldBe(saved.ConcurrencyToken, "D.NewWriterTokenRoundTrips");
+        saved.RecoveryWitnessRequestId.ShouldBe(witness, customMessage: "D.NewWitnessRoundTrips");
+        saved.LastWriterToken.ShouldBe(saved.ConcurrencyToken, customMessage: "D.NewWriterTokenRoundTrips");
     }
     [Test]
     [Arguments("legacy")]
@@ -228,9 +228,9 @@ public sealed class LandRequestWriteDiagnosticTests
         await h.FailAsync(new DbUpdateConcurrencyException("synthetic private value"));
         var log = entries.Single(e => e.State.ContainsKey("ConcurrencySummary"));
         var summary = log.State["ConcurrencySummary"]!.ToString()!;
-        summary.ShouldContain("entity=unknown", "D.MissingEntryListSupported");
-        summary.ShouldContain("observedDatabaseWriter=unknown", "D.UnknownWriterNeverInferred");
-        log.State["Code"].ShouldBe("landing_concurrency_conflict", "D.DiagnosticReadCannotMaskConflict");
+        summary.ShouldContain("entity=unknown", customMessage: "D.MissingEntryListSupported");
+        summary.ShouldContain("observedDatabaseWriter=unknown", customMessage: "D.UnknownWriterNeverInferred");
+        log.State["Code"].ShouldBe("landing_concurrency_conflict", customMessage: "D.DiagnosticReadCannotMaskConflict");
         if (variant == "deleted-row") summary.ShouldContain("observedToken=deleted");
         if (variant == "read-unavailable") { fault.Hits.ShouldBe(1); summary.ShouldContain("observedToken=unavailable"); }
         if (variant != "deleted-row")
@@ -270,21 +270,21 @@ public sealed class LandRequestWriteDiagnosticTests
         finally { await hosted.StopAsync(CancellationToken.None); }
         foreach (var log in entries)
         {
-            log.Message.ShouldNotContain(marker, "D.SafeLogMessage");
-            log.Exception?.ToString().ShouldNotContain(marker, "D.SafeExceptionObject");
-            foreach (var field in log.State.Values) field?.ToString()?.ShouldNotContain(marker, "D.SafeStructuredState");
+            log.Message.ShouldNotContain(marker, customMessage: "D.SafeLogMessage");
+            log.Exception?.ToString().ShouldNotContain(marker, customMessage: "D.SafeExceptionObject");
+            foreach (var field in log.State.Values) field?.ToString()?.ShouldNotContain(marker, customMessage: "D.SafeStructuredState");
         }
         await using var db = h.CreateContext();
         var saved = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
         saved.TerminalFailureCode.ShouldBe("landing_concurrency_conflict");
         var terminal = await db.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.Id == saved.TerminalEventId);
-        terminal.Detail.ShouldNotContain(marker, "D.SafeTerminalDetail");
+        terminal.Detail.ShouldNotContain(marker, customMessage: "D.SafeTerminalDetail");
         terminal.Detail.ShouldContain($"row={request.RequestId:N}");
-        terminal.Detail.Split("entity=AgentTaskLandRequest").Length.ShouldBe(5, "D.EntryListBoundedAtFour");
-        terminal.Detail.Length.ShouldBeLessThan(3000, "D.BoundedSafeSummary");
+        terminal.Detail.Split("entity=AgentTaskLandRequest").Length.ShouldBe(5, customMessage: "D.EntryListBoundedAtFour");
+        terminal.Detail.Length.ShouldBeLessThan(3000, customMessage: "D.BoundedSafeSummary");
         var note = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.RequestId == request.RequestId && n.Kind == LandNotificationKind.Outcome);
-        note.Body.ShouldNotContain(marker, "D.SafeImmutableNotification");
-        entries.Count(e => e.State.ContainsKey("DiagnosticId")).ShouldBe(2, "D.DirectAndHostedLoggersObserved");
+        note.Body.ShouldNotContain(marker, customMessage: "D.SafeImmutableNotification");
+        entries.Count(e => e.State.ContainsKey("DiagnosticId")).ShouldBe(2, customMessage: "D.DirectAndHostedLoggersObserved");
     }
 
     [Test]
@@ -302,13 +302,13 @@ public sealed class LandRequestWriteDiagnosticTests
         await h.FailAsync(new IOException("later unrelated failure"));
         await using var after = h.CreateContext();
         var saved = await after.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
-        saved.FailureDiagnosticId.ShouldBe(first.FailureDiagnosticId, "D.OriginalDiagnosticRetained");
+        saved.FailureDiagnosticId.ShouldBe(first.FailureDiagnosticId, customMessage: "D.OriginalDiagnosticRetained");
         saved.TerminalEventId.ShouldBe(first.TerminalEventId);
         saved.TerminalFailureCode.ShouldBe("landing_concurrency_conflict");
         (await after.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.Id == saved.TerminalEventId)).Detail.ShouldBe(detail);
         var notes = await after.AgentTaskLandNotifications.AsNoTracking().Where(n => n.RequestId == request.RequestId && n.Kind == LandNotificationKind.Outcome).ToListAsync();
-        notes.Count.ShouldBe(1, "D.OneTerminalNotification");
-        notes[0].Body.ShouldBe(note.Body, "D.ImmutableOriginalSummary");
+        notes.Count.ShouldBe(1, customMessage: "D.OneTerminalNotification");
+        notes[0].Body.ShouldBe(note.Body, customMessage: "D.ImmutableOriginalSummary");
         notes[0].ContentDigest.ShouldBe(note.ContentDigest);
         (await after.AgentTaskEvents.CountAsync(e => e.LandRequestId == request.RequestId && e.Type == AgentTaskEventType.LandRefused)).ShouldBe(1);
     }
@@ -329,11 +329,11 @@ public sealed class LandRequestWriteDiagnosticTests
             var monitor = new AgentTaskLandMonitorService(db, h.Clock, Options.Create(new DelegationSettings()), h.Events);
             await Should.ThrowAsync<IOException>(() => monitor.SweepAsync(CancellationToken.None));
         }
-        cut.Aborts.ShouldBe(1, "D.ActualMonitorCommitAborted");
+        cut.Aborts.ShouldBe(1, customMessage: "D.ActualMonitorCommitAborted");
         cut.Commits.ShouldBeEmpty("D.NoCommittedWriterReceiptOnRollback");
         await using var after = h.CreateContext();
         var saved = await after.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
-        saved.ConcurrencyToken.ShouldBe(original.ConcurrencyToken, "D.RollbackPreservesPriorToken");
+        saved.ConcurrencyToken.ShouldBe(original.ConcurrencyToken, customMessage: "D.RollbackPreservesPriorToken");
         saved.LastWriterOperation.ShouldBe(original.LastWriterOperation);
         saved.LastWriterToken.ShouldBe(original.LastWriterToken);
         saved.LastWriterAt.ShouldBe(original.LastWriterAt);
