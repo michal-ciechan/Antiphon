@@ -17,6 +17,124 @@ namespace Antiphon.Tests.Scripts;
 [Category("Unit")]
 public sealed class RemoteScriptContractTests
 {
+    [Test]
+    public void C944_All_cache_loop_variables_are_local()
+    {
+        var remote = Remote();
+        CacheLoopLeaks(remote).ShouldBeEmpty("every cache helper owns its loop variables");
+        var mutant = remote.Replace("local context=\"${1:-full-required}\" marker image name role item",
+            "local context=\"${1:-full-required}\" marker image name role", StringComparison.Ordinal);
+        CacheLoopLeaks(mutant).ShouldContain("c849_require_ready: item");
+    }
+
+    private static List<string> CacheLoopLeaks(string source)
+    {
+        var leaks = new List<string>();
+        foreach (Match function in Regex.Matches(source, @"(?m)^(c849_\w+)\(\) \{"))
+        {
+            var name = function.Groups[1].Value;
+            var body = Block(source, name);
+            var locals = Regex.Matches(body, @"(?m)^\s*local\s+([^\n]+)")
+                .SelectMany(line => Regex.Matches(line.Groups[1].Value,
+                    @"(?:^|\s)([A-Za-z_]\w*)(?==|\s|$)").Select(v => v.Groups[1].Value)).ToHashSet();
+            foreach (Match loop in Regex.Matches(body, @"\bfor\s+(?:\(\(\s*)?([A-Za-z_]\w*)\s*(?:in\b|=)"))
+                if (!locals.Contains(loop.Groups[1].Value)) leaks.Add(name + ": " + loop.Groups[1].Value);
+        }
+        return leaks;
+    }
+
+    [Test]
+    [Arguments("observe", "symlink")]
+    [Arguments("prune", "symlink")]
+    [Arguments("observe", "sudo-refused")]
+    [Arguments("prune", "sudo-refused")]
+    [Arguments("observe", "sudo-test-refused")]
+    [Arguments("prune", "sudo-test-refused")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo(string reader, string fault)
+    {
+        var output = LinuxShell("set -u\n" + $"reader='{reader}'; fault='{fault}'\n" + """
+            root="$(mktemp -d /tmp/c951-path-XXXXXXXX)"
+            printf 'C951_ROOT=%s\n' "$root"
+            trap '[[ "$root" == /tmp/c951-path-???????? && -d "$root" ]] && rm -rf -- "$root"' EXIT
+            C849_PACKAGES=antiphon-runner-cache-nuget-packages; C849_SCRATCH=scratch; C849_NPM=npm
+            CASE=runner-cache-inventory
+            canonical="$root/volumes/$C849_PACKAGES/_data"
+            mkdir -p "$canonical"
+            path="$canonical"
+            if [ "$fault" = symlink ]; then ln -s "$canonical" "$root/link"; path="$root/link"; fi
+            docker() {
+                case "$1:${2:-}:${4:-}" in
+                    info:*) printf '%s\n' "$root" ;;
+                    volume:inspect:*)
+                        case "${4:-}" in
+                            *'.Driver'*) echo local ;; *'.Options'*) echo '{}' ;;
+                            *'io.antiphon.owner'*) echo server2-runner ;;
+                            *'io.antiphon.cache-schema'*) echo 1 ;;
+                            *'io.antiphon.cache-role'*) echo nuget-packages ;;
+                            *'.Mountpoint'*) printf '%s\n' "$path" ;;
+                        esac ;;
+                    *) return 2 ;;
+                esac
+            }
+            sudo() {
+                [ "$1" = -n ] && shift
+                [ "$fault" != sudo-refused ] || return 77
+                if [ "$1" = test ] && [ "$2" = -L ] && [ "$fault" = sudo-test-refused ]; then return 77; fi
+                if [ "$1" = stat ]; then echo 1654:1654:700; else "$@"; fi
+            }
+            write_result() { printf 'DIAGNOSIS=%s\n' "$2"; exit "$3"; }
+            """ + "\n" + Block(Remote(), "c849_observe_volume") + "\n" + Block(Remote(), "c849_prune_validate_tree") + "\n" + """
+            if [ "$reader" = observe ]; then
+                ( c849_observe_volume "$C849_PACKAGES" nuget-packages 999999 ) > "$root/out" 2>&1
+            else
+                ( c849_prune_validate_tree "$path" "$path" ) > "$root/out" 2>&1
+            fi
+            printf 'READER_EXIT=%s\n' "$?"; cat "$root/out"
+            """);
+        output.ShouldContain("READER_EXIT=2", reader + ": " + fault + " must fail closed");
+        output.ShouldContain("DIAGNOSIS=CacheTargetInvalid");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C976_Missing_helper_image_preserves_final_receipt_diagnosis()
+    {
+        var remote = Remote();
+        var trap = remote.Split('\n').Single(line => line.StartsWith("trap 'ec=$?;", StringComparison.Ordinal));
+        var output = LinuxShell("set -u\n" + """
+            root="$(mktemp -d /tmp/c976-receipt-XXXXXXXX)"
+            printf 'C976_ROOT=%s\n' "$root"
+            mkdir -p "$root/case"
+            """ + "\n" + Block(remote, "json_escape") + "\n" + Block(remote, "scrub_file") + "\n" +
+            Block(remote, "write_result") + "\n" + Block(remote, "c849_image") + "\n" + Block(remote, "c849_prepare") + "\n" + """
+            docker() { return 1; }; compose_host() { :; }; c849_optional_donor() { :; }
+            c849_volume() { echo UNEXPECTED_VOLUME; }; c849_lock() { :; }
+            CASE_DIR="$root/case"; C849_READY="$root/missing"; CASE=runner-cache-seed
+            SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; HOST_PROJECT=main; WROTE=0
+            """ + "\n( set -e; " + trap + "\nc849_prepare yes\n) > \"$root/out\" 2>&1\n" + """
+            printf 'PREPARE_EXIT=%s\n' "$?"
+            cat "$root/case/c590-result.json"
+            cat "$root/out"
+            [[ "$root" == /tmp/c976-receipt-???????? && -d "$root" ]] && rm -rf -- "$root"
+            """);
+        output.ShouldContain("PREPARE_EXIT=2");
+        output.ShouldContain("\"diagnosis\":\"CacheHelperImageMissing\"");
+        output.ShouldNotContain("UnhandledExit");
+        output.ShouldNotContain("UNEXPECTED_VOLUME");
+    }
+
+    [Test]
+    public void C946_Rolling_harness_cleans_only_its_owned_success_root()
+    {
+        var script = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "test-deploy-server2.ps1"));
+        script.ShouldContain("[switch]$KeepTemp");
+        script.ShouldContain("finally {");
+        script.ShouldContain("Remove-Item -LiteralPath $ownedRoot");
+        script.ShouldContain("^c849-rolling-[0-9a-f]{32}$");
+        script.ShouldContain("C849_TEMP kept=");
+    }
+
     private const string NoLinuxPwshReason = "CARD-0905: pwsh is not on the Linux shell PATH (WSL has no pwsh); install pwsh in WSL to run C849 script-block tests.";
     private const string NoLinuxJqReason = "CARD-0912: jq is not on the Linux shell PATH; install jq in the runner or WSL to run C912 cold-seed tests.";
     private static readonly AsyncLocal<bool> ForceNoLinuxPwsh = new();
