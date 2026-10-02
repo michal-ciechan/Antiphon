@@ -46,10 +46,11 @@ internal sealed class TaskInputSpillFixture : IAsyncDisposable
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var serverRoot = Directory.CreateTempSubdirectory("c888-server-").FullName;
-        var runnerParent = Directory.CreateTempSubdirectory("c888-runner-").FullName;
+        var runnerParent = Directory.CreateTempSubdirectory("c888-runner-").FullName.Replace('\\', '/');
         var sessionId = Guid.NewGuid();
         var taskId = Guid.NewGuid();
-        var runnerRoot = Path.Combine(runnerParent, "worktrees", $"task-{taskId.ToString("N")[..8]}");
+        var runnerRoot = Path.Combine(runnerParent, "worktrees", $"task-{taskId.ToString("N")[..8]}")
+            .Replace('\\', '/');
         Directory.CreateDirectory(runnerRoot);
         var now = DateTime.UtcNow;
         await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
@@ -152,7 +153,8 @@ internal sealed class TaskInputDeliveryFixture : IAsyncDisposable
             },
         });
         var taskId = Guid.NewGuid();
-        var cwd = Path.Combine(bridge.TempRoot, "runner", "worktrees", $"task-{taskId:N}");
+        var cwd = Path.Combine(bridge.TempRoot, "runner", "worktrees", $"task-{taskId:N}")
+            .Replace('\\', '/');
         Directory.CreateDirectory(cwd);
         var now = DateTime.UtcNow;
         await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))

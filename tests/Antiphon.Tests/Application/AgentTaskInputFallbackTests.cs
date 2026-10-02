@@ -48,15 +48,19 @@ public sealed class AgentTaskInputFallbackTests
     [Test]
     public async Task Runner_path_refusal_never_writes_outside_the_mirror()
     {
-        var parent = Directory.CreateTempSubdirectory("c888-refusal-").FullName;
+        var parent = Directory.CreateTempSubdirectory("c888-refusal-").FullName.Replace('\\', '/');
         try
         {
-            var mirror = Path.Combine(parent, "worktrees", "task-00000001");
+            var mirror = Path.Combine(parent, "worktrees", "task-00000001")
+                .Replace('\\', '/');
             Directory.CreateDirectory(mirror);
-            var writer = new RunnerWorkspaceService(Path.Combine(parent, "repo"), parent);
-            await Should.ThrowAsync<PhoneHomeAdmissionException>(() =>
+            var writer = new RunnerWorkspaceService(
+                Path.Combine(parent, "repo").Replace('\\', '/'), parent);
+            var refusal = await Should.ThrowAsync<PhoneHomeAdmissionException>(() =>
                 writer.WriteSpillAsync(mirror,
                     new PhoneHomeInputSpill("../outside.md", "secret"), CancellationToken.None));
+            refusal.Message.ShouldContain("Spill relative path is not admitted.",
+                customMessage: "traversal-refusal-not-workspace-refusal");
             File.Exists(Path.Combine(parent, "worktrees", "outside.md")).ShouldBeFalse(
                 "refused-path-input-count=0");
         }
