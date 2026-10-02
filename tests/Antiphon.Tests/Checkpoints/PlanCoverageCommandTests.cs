@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Runtime.InteropServices;
 using Antiphon.Checkpoints;
 using Antiphon.Checkpoints.Coverage;
 using Shouldly;
@@ -57,4 +58,75 @@ public sealed class PlanCoverageCommandTests : CheckpointTestBase
         driver.Count(_ => true).ShouldBe(0, "coverage-driver-zero");
         exit.ShouldBe(0, "coverage-public-cli");
     }
+
+    [Test]
+    public async Task outside_project_fifo_is_refused_without_opening()
+    {
+        if (!OperatingSystem.IsLinux())
+            Skip.Test("coverage outside-project FIFO read sentinel requires Linux mkfifo");
+        var root = TempDir(); var world = PlanCoverageFixture.WriteWorld(root);
+        var outside = TempDir(); var fifo = Path.Combine(outside, "sentinel.csproj");
+        MkFifo(fifo, 0x180).ShouldBe(0, "coverage-fifo-created");
+        var link = Path.Combine(Path.GetDirectoryName(world.Source)!, "Probe.csproj");
+        try
+        {
+            CreateProjectLink(link, fifo);
+            // An open reader consumes the XML, then hangs until this writer closes.
+            // Always close it and join the command, including on the red implementation.
+            var writer = new FileStream(fifo, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+            var output = new StringWriter();
+            Task<int>? run = null; var refusedWithoutWaiting = false;
+            try
+            {
+                writer.Write(System.Text.Encoding.UTF8.GetBytes("<Project />")); writer.Flush();
+                run = Task.Run(() => new CoverageCommand().Run(root, world.Plan, output: output));
+                refusedWithoutWaiting = await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(5))) == run;
+            }
+            finally
+            {
+                writer.Dispose();
+                if (run is not null) await run.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            refusedWithoutWaiting.ShouldBeTrue("coverage-outside-project-never-opened");
+            run!.Result.ShouldBe(2, "coverage-outside-project-fifo-refused");
+            output.ToString().ShouldContain("missing or unconfined selected path", Case.Sensitive, "coverage-fifo-confinement-verdict");
+        }
+        finally
+        {
+            File.Delete(link);
+            File.Delete(fifo);
+        }
+    }
+
+    [Test]
+    public void existing_outside_project_is_refused_by_root_boundary()
+    {
+        var root = TempDir(); var world = PlanCoverageFixture.WriteWorld(root);
+        var outside = TempDir(); var project = Path.Combine(outside, "existing.csproj");
+        File.WriteAllText(project, "<Project />");
+        var link = Path.Combine(Path.GetDirectoryName(world.Source)!, "Probe.csproj");
+        try
+        {
+            CreateProjectLink(link, project);
+            var output = new StringWriter();
+            new CoverageCommand().Run(root, world.Plan, output: output).ShouldBe(2, "coverage-existing-outside-project-refused");
+            output.ToString().ShouldContain("missing or unconfined selected path", Case.Sensitive, "coverage-existing-outside-root-boundary");
+            // Also guard direct selection with an existing escape, independently of project loading.
+            var source = Path.Combine(outside, "Outside.cs");
+            File.WriteAllText(source, File.ReadAllText(world.Source));
+            new CoverageCommand().Run(root, world.Plan, tests: [source], output: new StringWriter())
+                .ShouldBe(2, "coverage-existing-outside-source-refused");
+        }
+        finally { File.Delete(link); }
+    }
+
+    private static void CreateProjectLink(string link, string target)
+    {
+        try { File.CreateSymbolicLink(link, target); }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or PlatformNotSupportedException or IOException)
+        { Skip.Test($"coverage project symlink creation unavailable: {ex.GetType().Name}: {ex.Message}"); }
+    }
+
+    [DllImport("libc", EntryPoint = "mkfifo", SetLastError = true)]
+    private static extern int MkFifo(string path, uint mode);
 }
