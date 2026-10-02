@@ -40,11 +40,14 @@ internal static class HerdrDisposalRedactor
             var c = value[i];
             if (((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
                 && value[i + 1] == ':'
-                && (i == 0 || char.IsWhiteSpace(value[i - 1]) || value[i - 1] is '"' or '\''))
+                && (i == 0 || !IsAsciiLetterOrDigit(value[i - 1])))
                 return true;
         }
         return false;
     }
+
+    private static bool IsAsciiLetterOrDigit(char c) =>
+        (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
 
     private static HerdrPaneDisposalProcess? Process(HerdrPaneDisposalProcess? process) =>
         process is null ? null : process with { ExecutableName = Leaf(process.ExecutableName) };
