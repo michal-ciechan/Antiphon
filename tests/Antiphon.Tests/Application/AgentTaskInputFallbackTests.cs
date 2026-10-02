@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -104,20 +105,30 @@ public sealed class AgentTaskInputFallbackTests
     {
         await using var f = await TaskInputSpillFixture.CreateAsync();
         await f.Replies.RefineAsync(f.TaskId, "exact " + new string('d', 1800), CancellationToken.None);
+        const string recipientToken = "c888-recipient-test-token";
         await using var db = f.Db();
         var task = await db.AgentTasks.SingleAsync();
+        task.TokenHash = AgentTaskService.HashToken(recipientToken);
+        await db.SaveChangesAsync();
         var input = await db.AgentTaskEvents.SingleAsync(e => e.Type == AgentTaskEventType.Refined);
-        var reader = new AgentTaskInputService(db);
-        var correct = new AgentTaskService.Caller(task, f.SessionId, f.RunnerRoot);
-        (await reader.ReadAsync(f.TaskId, input.Id, correct, CancellationToken.None))
-            .ShouldBe(input.InputBody, "owner-exact-input-body");
-        var other = new AgentTaskService.Caller(new AgentTask
-            { Id = Guid.NewGuid(), AgentSessionId = f.SessionId }, f.SessionId, f.RunnerRoot);
-        await Should.ThrowAsync<ForbiddenException>(() =>
-            reader.ReadAsync(f.TaskId, input.Id, other, CancellationToken.None));
-        await Should.ThrowAsync<ForbiddenException>(() =>
-            reader.ReadAsync(f.TaskId, input.Id,
-                new AgentTaskService.Caller(null, f.SessionId, f.RunnerRoot), CancellationToken.None));
+        await using var host = new TaskInputWebAppFactory(f.ConnectionString);
+        using var client = host.CreateClient();
+        var route = AgentTaskInputService.Route(f.TaskId, input.Id);
+        using var correct = new HttpRequestMessage(HttpMethod.Get, route);
+        correct.Headers.Add("X-Antiphon-Task-Token", recipientToken);
+        using var response = await client.SendAsync(correct);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK, "owner-http-200");
+        (await response.Content.ReadAsStringAsync()).ShouldBe(input.InputBody,
+            "owner-exact-input-body");
+        response.Content.Headers.ContentType?.ToString().ShouldBe("text/plain; charset=utf-8");
+        response.Headers.CacheControl?.NoStore.ShouldBeTrue("private-body-no-store");
+        using var missing = await client.GetAsync(route);
+        missing.StatusCode.ShouldBe(HttpStatusCode.Forbidden, "missing-token-403");
+        using var staleRequest = new HttpRequestMessage(HttpMethod.Get, route);
+        staleRequest.Headers.Add("X-Antiphon-Task-Token", "stale-c888-test-token");
+        using var stale = await client.SendAsync(staleRequest);
+        stale.StatusCode.ShouldBe(HttpStatusCode.Forbidden, "stale-token-403");
+        (await stale.Content.ReadAsStringAsync()).ShouldNotContain(input.InputBody!);
     }
 
     [Test]
@@ -205,5 +216,10 @@ public sealed class AgentTaskInputFallbackTests
     {
         await using var db = f.Db();
         return await db.SessionQueuedMessages.AsNoTracking().SingleAsync();
+    }
+
+    private sealed class TaskInputWebAppFactory(string connectionString) : AntiphonWebAppFactory
+    {
+        protected override string ConnectionString => connectionString;
     }
 }
