@@ -55,6 +55,9 @@ public sealed class PlanCoverageAnalyzer
                 .SelectMany(o => index.Resolve(o.Test))
                 .Where(m => promise.Class.Length == 0 || m.Class == promise.Class || m.Class.EndsWith("." + promise.Class, StringComparison.Ordinal))
                 .DistinctBy(m => (m.Path, m.Syntax.SpanStart)).ToArray();
+            // A class-only row describes its run census without promising checklist methods.
+            // The ID-wide total remains a promise even when no methods bind.
+            if (promise.Class.Length > 0 && methods.Length == 0) continue;
             var actual = methods.Length;
             if (promise.Unit == "results")
             {
