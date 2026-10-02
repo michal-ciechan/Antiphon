@@ -21,7 +21,7 @@ public sealed class PhoneHomeRunnerRetirementCycleTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = new FakeTimeProvider();
-        var settings = RollingRunnerSettings.Pair("test-main", "test-temp");
+        var settings = RollingRunnerSettings.Pair("test-main", "test-temp", leaseSeconds: 3600);
         await using var host = await PhoneHomeTestHost.StartAsync(clock, schema.ConnectionString, configured: settings);
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var id = RollingRunnerSettings.Server2Temp;
