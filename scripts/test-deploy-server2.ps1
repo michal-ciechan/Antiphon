@@ -21,7 +21,7 @@ function Test-C973Jq {
     try {
         $shell = if ($env:C973_JQ_PROBE_SHELL) { $env:C973_JQ_PROBE_SHELL }
             elseif ($IsWindows) { 'wsl' } else { 'bash' }
-        $application = Get-Command $shell -CommandType Application -ErrorAction SilentlyContinue
+        $application = Get-Command $shell -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
         if (-not $application) { return $false }
         if ($IsWindows -and -not $env:C973_JQ_PROBE_SHELL) {
             $null = & $application.Source -e bash -c 'command -v jq' 2>$null
