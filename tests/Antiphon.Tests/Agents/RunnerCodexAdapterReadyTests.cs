@@ -82,13 +82,20 @@ public class RunnerCodexAdapterReadyTests
             (await ready).ShouldBeTrue();
             client.SnapshotCompletions.ShouldBe(2, "snapshot-one-per-decision");
 
-            foreach (var supplied in new TimeProvider?[] { null, TimeProvider.System })
+            var omittedAdapter = new RunnerCodexAdapter(
+                new ScriptedCodexRunnerClient(), Options.Create(new AgentRegistrySettings()));
+            foreach (var defaultAdapter in new[]
             {
-                await using var defaultAdapter = NewAdapter(new ScriptedCodexRunnerClient(), timeProvider: supplied);
+                omittedAdapter,
+                NewAdapter(new ScriptedCodexRunnerClient(), timeProvider: null),
+                NewAdapter(new ScriptedCodexRunnerClient(), timeProvider: TimeProvider.System),
+            })
+            {
                 var field = typeof(RunnerCodexAdapter).GetField("_timeProvider",
                     System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
                 ReferenceEquals(field?.GetValue(defaultAdapter), TimeProvider.System)
                     .ShouldBeTrue("ready-default-is-system");
+                await defaultAdapter.DisposeAsync();
             }
         }
         finally

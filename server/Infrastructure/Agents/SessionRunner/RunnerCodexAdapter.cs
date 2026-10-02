@@ -152,6 +152,7 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
                 MaxWait = TimeSpan.FromMilliseconds(_settings.CodexReadyMaxWaitMs),
                 Settle = TimeSpan.FromMilliseconds(_settings.CodexReadyQuietPeriodMs),
                 BootStatusThreshold = TimeSpan.FromMilliseconds(_settings.CodexBootStatusMaxWaitMs),
+                TimeProvider = _timeProvider,
                 OnDiagnostic = message =>
                 {
                     if (message.StartsWith("codex-startup not-ready", StringComparison.Ordinal))
