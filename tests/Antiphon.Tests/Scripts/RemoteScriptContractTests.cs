@@ -1433,7 +1433,7 @@ public sealed class RemoteScriptContractTests
             export C727_TEST_STATE="$root/state.json" C727_TEST_TRACE="$root/trace.jsonl"
             sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             for container in false true; do
-                printf '{"scenario":"retired","sha":"%s","tempDeployed":false,"oldDeployed":false,"oldDraining":false,"tempDraining":true,"tempRetiredAt":"2026-09-27T10:00:00Z","tempContainer":%s,"tempOffline":true,"faultRunner":"","faultField":"","faultKind":"","faultValue":null,"failVerify":""}\n' "$sha" "$container" > "$C727_TEST_STATE"
+                printf '{"scenario":"retired","sha":"%s","tempDeployed":false,"oldDeployed":false,"oldDraining":false,"tempDraining":true,"tempRedirectTo":"server2","tempRetireWhenIdle":true,"tempRetiredAt":"2026-09-27T10:00:00Z","tempContainer":%s,"tempOffline":true,"faultRunner":"","faultField":"","faultKind":"","faultValue":null,"failVerify":""}\n' "$sha" "$container" > "$C727_TEST_STATE"
                 : > "$C727_TEST_TRACE"
                 pwsh -NoProfile -File "$repo/scripts/deploy-server2.ps1" -Rolling -Sha "$sha" -Phase deploy-temp > "$root/out" 2>&1
                 code=$?
