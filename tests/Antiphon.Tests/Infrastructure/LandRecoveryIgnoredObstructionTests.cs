@@ -91,7 +91,19 @@ public sealed class LandRecoveryIgnoredObstructionTests
         await WriteAsync(outside, "sentinel.txt", "outside owner bytes\n");
         await IgnoreAsync(f, "/gen");
         var link = Path.Combine(f.Source, "gen");
-        Directory.CreateSymbolicLink(link, outside);
+        // A Git index entry changes the old index; a junction is enumerated as a directory.
+        // Keep the real ignored symlink so the reviewed-parent rule is the only refusal.
+        try
+        {
+            Directory.CreateSymbolicLink(link, outside);
+        }
+        catch (Exception ex) when (OperatingSystem.IsWindows()
+            && ex is IOException or UnauthorizedAccessException)
+        {
+            Skip.Test("G.SymlinkParent.WindowsDeniedSymlinkCreation: Windows denied symlink creation. "
+                + "The ignored directory-symlink obstruction runs on Linux without that privilege.");
+            return;
+        }
         try
         {
             new DirectoryInfo(link).LinkTarget.ShouldBe(outside, "G.SymlinkParent.ExternalTargetSeeded");
