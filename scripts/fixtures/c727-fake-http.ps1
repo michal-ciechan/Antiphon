@@ -12,10 +12,14 @@ if ($Method -eq 'POST') {
     if ($RunnerId -eq 'server2' -and $Suffix -eq '/drain/clear') { $state.oldDraining = $false }
     if ($RunnerId -eq 'server2-temp' -and $Suffix -eq '/drain') {
         $state.tempDraining = $true
+        $state.tempRedirectTo = $body.redirectTo
+        $state.tempRetireWhenIdle = [bool]$body.retireWhenIdle
         if ([string]$body.reason -eq 'CARD-0727 rolling upgrade complete') { $state.tempRetiredAt = '2026-09-27T10:00:00Z' }
     }
     if ($RunnerId -eq 'server2-temp' -and $Suffix -eq '/drain/clear') {
         $state.tempDraining = $false
+        $state.tempRedirectTo = $null
+        $state.tempRetireWhenIdle = $false
         $state.tempRetiredAt = $null
     }
     $state | ConvertTo-Json -Compress | Set-Content -LiteralPath $env:C727_TEST_STATE
@@ -36,8 +40,8 @@ if ($RunnerId -eq 'server2-temp') {
     $accepting = $state.scenario -ne 'ineligible' -and -not $state.tempDraining -and -not $offline
     $status = [ordered]@{
         available = (-not $offline); acceptingNewWork = $accepting; dispatchEligible = ($state.scenario -ne 'ineligible' -and -not $offline); buildVersion = $(if ($state.tempDeployed) { $state.sha } else { 'old' })
-        draining = [bool]$state.tempDraining; redirectTo = $(if ($state.tempDraining) { 'server2' } else { $null })
-        retireWhenIdle = [bool]$state.tempDraining; retiredAt = $state.tempRetiredAt
+        draining = [bool]$state.tempDraining; redirectTo = $(if ($state.tempDraining) { $state.tempRedirectTo } else { $null })
+        retireWhenIdle = [bool]$state.tempRetireWhenIdle; retiredAt = $state.tempRetiredAt
         sessions = 0; runnerSessions = $(if ($offline) { $null } else { 0 }); queuedTasks = 0
     }
     if ($state.faultRunner -eq $RunnerId -and $state.faultField) {

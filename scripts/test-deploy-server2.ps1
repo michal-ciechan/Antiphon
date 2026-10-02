@@ -1,4 +1,5 @@
 # CARD-0849 frozen offline rolling roster. No network or live runner access.
+param([ValidateSet('all', 'retired-start', 'cleared-offline-start')][string]$Only = 'all', [switch]$AlreadyAtSha)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $driver = Join-Path $PSScriptRoot 'deploy-server2.ps1'
@@ -36,6 +37,7 @@ function Run-C727 {
     $state = [ordered]@{
         scenario = $Scenario; sha = $sha; tempDeployed = $false; oldDeployed = $false
         oldDraining = $false; tempDraining = $false; tempRetiredAt = $null; tempContainer = $true; tempOffline = $false
+        tempRedirectTo = 'server2'; tempRetireWhenIdle = $true
         faultRunner = ''; faultField = ''; faultKind = ''; faultValue = $null; failVerify = ''
     }
     foreach ($key in $Set.Keys) { $state[$key] = $Set[$key] }
@@ -63,19 +65,80 @@ function Run-C727 {
     $stderr = $proc.StandardError.ReadToEnd()
     $proc.WaitForExit()
     $trace = if (Test-Path -LiteralPath $tracePath) { @(Get-Content -LiteralPath $tracePath | ForEach-Object { $_ | ConvertFrom-Json }) } else { @() }
-    return [pscustomobject]@{ Exit = $proc.ExitCode; Out = $stdout + $stderr; Trace = $trace; Sentinel = $sentinel }
+    $finalState = Get-Content -Raw -LiteralPath $statePath | ConvertFrom-Json
+    return [pscustomobject]@{ Exit = $proc.ExitCode; Out = $stdout + $stderr; Trace = $trace; Sentinel = $sentinel; State = $finalState; StatePath = $statePath; TracePath = $tracePath }
 }
 function Cases { param($Run) return @($Run.Trace | Where-Object kind -eq 'case') }
 function Posts { param($Run) return @($Run.Trace | Where-Object { $_.kind -eq 'http' -and $_.method -eq 'POST' }) }
 function Has-Case { param($Run, [string]$Name) return @((Cases $Run) | Where-Object name -eq $Name).Count -gt 0 }
+function Final-TempStatus {
+    param($Run)
+    $psi = [System.Diagnostics.ProcessStartInfo]::new('pwsh')
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    foreach ($arg in @('-NoProfile', '-File', $http, '-Method', 'GET', '-RunnerId', 'server2-temp', '-Suffix', '/status')) {
+        [void]$psi.ArgumentList.Add($arg)
+    }
+    $psi.Environment['C727_TEST_STATE'] = $Run.StatePath
+    $psi.Environment['C727_TEST_TRACE'] = $Run.TracePath
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $output = $proc.StandardOutput.ReadToEnd()
+    $proc.WaitForExit()
+    if ($proc.ExitCode -ne 0) { throw 'FinalTempStatusFailed' }
+    return $output | ConvertFrom-Json
+}
+
+function Assert-RetiredStart {
+    param([bool]$AlreadyAtSha = $false)
+    $t = Run-C727 -Scenario "retired-start-$AlreadyAtSha" -Phase deploy-temp -Set @{
+        tempDraining = $true; tempRetiredAt = '2026-09-27T10:00:00Z'; tempContainer = $false; tempOffline = $true; tempDeployed = $AlreadyAtSha
+    }
+    $c = Cases $t; $p = Posts $t
+    Assert-C727 ($t.Exit -eq 0) 'T-18 retired registration succeeds'
+    Assert-C727 ((@($c | ForEach-Object name) -join ',') -eq 'runner-cache-seed,deploy-temp-runner,verify-runner-caches') 'T-18 retired host order'
+    Assert-C727 ($p.Count -eq 3 -and $p[0].suffix -eq '/drain/clear' -and $p[1].suffix -eq '/drain' -and
+        $p[1].body.redirectTo -eq 'server2' -and $p[1].body.retireWhenIdle -eq $false -and $p[2].suffix -eq '/drain/clear') 'T-18 retired clear and safe hold'
+    Assert-C727 ([array]::IndexOf($t.Trace, $p[0]) -lt [array]::IndexOf($t.Trace, $p[1]) -and
+        [array]::IndexOf($t.Trace, $p[1]) -lt [array]::IndexOf($t.Trace, $c[0]) -and
+        [array]::IndexOf($t.Trace, $p[2]) -gt [array]::IndexOf($t.Trace, $c[2])) 'T-18 retired order and verification gate'
+    Assert-C727 ($p[0].body.reason -match 'CARD-0948' -and $t.State.tempDeployed -and
+        -not $t.State.tempDraining -and -not $t.State.tempRetiredAt) 'T-18 retired evidence and accepting state'
+    $final = Final-TempStatus $t
+    Assert-C727 ($final.dispatchEligible -and $final.acceptingNewWork -and $final.buildVersion -eq $sha -and
+        -not $final.draining -and -not $final.retiredAt) 'T-18 retired final status and SHA'
+}
+
+function Assert-ClearedOfflineStart {
+    param([bool]$Draining, [bool]$RetireWhenIdle, [bool]$AlreadyAtSha = $false)
+    $t = Run-C727 -Scenario "cleared-offline-$Draining-$RetireWhenIdle-$AlreadyAtSha" -Phase deploy-temp -Set @{
+        tempContainer = $false; tempOffline = $true; tempDraining = $Draining; tempRetireWhenIdle = $RetireWhenIdle; tempDeployed = $AlreadyAtSha
+    }
+    $c = Cases $t; $p = Posts $t
+    Assert-C727 ($t.Exit -eq 0) 'T-19 cleared offline registration succeeds'
+    Assert-C727 ((@($c | ForEach-Object name) -join ',') -eq 'runner-cache-seed,deploy-temp-runner,verify-runner-caches') 'T-19 cleared host order'
+    $needsHold = -not $Draining -or $RetireWhenIdle
+    $clear = if ($needsHold) { $p[1] } else { $p[0] }
+    Assert-C727 ($p.Count -eq $(if ($needsHold) { 2 } else { 1 }) -and
+        (-not $needsHold -or ($p[0].suffix -eq '/drain' -and $p[0].body.redirectTo -eq 'server2' -and
+            $p[0].body.retireWhenIdle -eq $false)) -and $clear.suffix -eq '/drain/clear') 'T-19 cleared safe hold'
+    Assert-C727 ((-not $needsHold -or [array]::IndexOf($t.Trace, $p[0]) -lt [array]::IndexOf($t.Trace, $c[0])) -and
+        [array]::IndexOf($t.Trace, $clear) -gt [array]::IndexOf($t.Trace, $c[2])) 'T-19 cleared verification gate'
+    Assert-C727 ($t.State.tempDeployed -and -not $t.State.tempDraining -and
+        -not $t.State.tempRetiredAt) 'T-19 cleared accepting state'
+    $final = Final-TempStatus $t
+    Assert-C727 ($final.dispatchEligible -and $final.acceptingNewWork -and $final.buildVersion -eq $sha -and
+        -not $final.draining -and -not $final.retiredAt) 'T-19 cleared final status and SHA'
+}
 
 try {
+    if ($Only -eq 'retired-start') { Assert-RetiredStart -AlreadyAtSha $AlreadyAtSha; Write-Output 'PASS T-18 retired start'; exit 0 }
+    if ($Only -eq 'cleared-offline-start') { Assert-ClearedOfflineStart -Draining $true -RetireWhenIdle $true -AlreadyAtSha $AlreadyAtSha; Write-Output 'PASS T-19 cleared offline start'; exit 0 }
     $t1 = Run-C727 -Scenario happy
     $c = Cases $t1; $p = Posts $t1
     Assert-C727 ($t1.Exit -eq 0) 'T-1 exit'
     Assert-C727 ((@($c | ForEach-Object { "$($_.name):$($_.runnerId)" }) -join ',') -eq 'runner-cache-seed:,deploy-temp-runner:,verify-runner-caches:server2-temp,deploy-parent:,verify-runner-caches:server2,retire-temp-runner:') 'T-1 host order/targets'
     Assert-C727 ($p.Count -eq 5) 'T-1 post count'
-    Assert-C727 ($p[0].runnerId -eq 'server2-temp' -and $p[0].suffix -eq '/drain' -and $p[0].body.redirectTo -eq 'server2' -and $p[0].body.retireWhenIdle -eq $true -and [array]::IndexOf($t1.Trace, $p[0]) -lt [array]::IndexOf($t1.Trace, $c[0])) 'T-1 hold before seed'
+    Assert-C727 ($p[0].runnerId -eq 'server2-temp' -and $p[0].suffix -eq '/drain' -and $p[0].body.redirectTo -eq 'server2' -and $p[0].body.retireWhenIdle -eq $false -and [array]::IndexOf($t1.Trace, $p[0]) -lt [array]::IndexOf($t1.Trace, $c[0])) 'T-1 hold before seed'
     Assert-C727 ($p[1].runnerId -eq 'server2-temp' -and $p[1].suffix -eq '/drain/clear' -and [array]::IndexOf($t1.Trace, $p[1]) -gt [array]::IndexOf($t1.Trace, $c[2])) 'T-1 temp verify before clear'
     Assert-C727 ($p[2].runnerId -eq 'server2' -and $p[2].suffix -eq '/drain' -and $p[2].body.redirectTo -eq 'server2-temp' -and $p[2].body.retireWhenIdle -eq $false) 'T-1 main drain'
     Assert-C727 ($p[3].runnerId -eq 'server2' -and $p[3].suffix -eq '/drain/clear' -and [array]::IndexOf($t1.Trace, $p[3]) -gt [array]::IndexOf($t1.Trace, $c[4])) 'T-1 main verify before clear'
@@ -125,7 +188,8 @@ try {
     Assert-C727 ($t.Exit -eq 0) 'T-8 exit'
     Assert-C727 ($c.Count -eq 3 -and $c[0].name -eq 'runner-cache-seed' -and $c[1].name -eq 'deploy-temp-runner') 'T-8 seed/start'
     Assert-C727 ($c[2].name -eq 'verify-runner-caches' -and $c[2].runnerId -eq 'server2-temp' -and $c[2].sourceSha -eq $sha) 'T-8 verify target'
-    Assert-C727 ($p.Count -eq 1 -and $p[0].suffix -eq '/drain/clear' -and [array]::IndexOf($t.Trace, $p[0]) -gt [array]::IndexOf($t.Trace, $c[2])) 'T-8 hold until verified'
+    Assert-C727 ($p.Count -eq 2 -and $p[0].suffix -eq '/drain' -and $p[0].body.retireWhenIdle -eq $false -and
+        $p[1].suffix -eq '/drain/clear' -and [array]::IndexOf($t.Trace, $p[1]) -gt [array]::IndexOf($t.Trace, $c[2])) 'T-8 hold until verified'
     Assert-C727 (@($p | Where-Object runnerId -eq 'server2').Count -eq 0) 'T-8 no main post'
     Complete-Group 8 'held fresh temp'
 
@@ -133,13 +197,16 @@ try {
     $c = Cases $t; $p = Posts $t
     Assert-C727 ($t.Exit -eq 0) 'T-9 exit'
     Assert-C727 ((@($c | ForEach-Object name) -join ',') -eq 'runner-cache-seed,deploy-temp-runner,verify-runner-caches') 'T-9 seed/replacement/verify'
-    Assert-C727 ($p.Count -eq 1 -and $p[0].suffix -eq '/drain/clear') 'T-9 one clear'
-    Assert-C727 ([array]::IndexOf($t.Trace, $p[0]) -gt [array]::IndexOf($t.Trace, $c[2])) 'T-9 clear after verify'
+    Assert-C727 ($p.Count -eq 3 -and $p[0].suffix -eq '/drain/clear' -and
+        $p[1].suffix -eq '/drain' -and $p[1].body.retireWhenIdle -eq $false -and
+        $p[2].suffix -eq '/drain/clear') 'T-9 rearm and final clear'
+    Assert-C727 ([array]::IndexOf($t.Trace, $p[2]) -gt [array]::IndexOf($t.Trace, $c[2])) 'T-9 clear after verify'
     Assert-C727 (@($p | Where-Object runnerId -eq 'server2').Count -eq 0) 'T-9 main untouched'
     $t = Run-C727 -Scenario retired-container-present -Phase deploy-temp -Set @{ tempDraining = $true; tempRetiredAt = '2026-09-27T10:00:00Z'; tempContainer = $true; tempOffline = $true }
     Assert-C727 ($t.Exit -eq 2 -and $t.Out.Contains('HostCaseFailed runner-cache-seed')) 'T-9 leftover container refused'
     Assert-C727 ((@((Cases $t) | ForEach-Object name) -join ',') -eq 'runner-cache-seed') 'T-9 no replacement after host refusal'
-    Assert-C727 ((Posts $t).Count -eq 0) 'T-9 hold retained after host refusal'
+    Assert-C727 ((Posts $t).Count -eq 2 -and (Posts $t)[0].suffix -eq '/drain/clear' -and
+        (Posts $t)[1].suffix -eq '/drain' -and (Posts $t)[1].body.retireWhenIdle -eq $false) 'T-9 safe hold after host refusal'
     Complete-Group 9 'retired temp reactivation'
 
     foreach ($variant in @('main', 'temp')) {
@@ -242,11 +309,23 @@ try {
         -not (Has-Case $t 'deploy-parent')) 'T-17 cold marker reuse leaves busy main untouched'
     Complete-Group 17 'saved donor transport'
 
-    if ($script:groups -ne 17 -or $script:invocations -ne 48 -or $script:assertions -ne 155) {
+    Assert-RetiredStart
+    Assert-RetiredStart -AlreadyAtSha $true
+    Complete-Group 18 'retired start registration'
+
+    foreach ($draining in @($false, $true)) {
+        foreach ($retireWhenIdle in @($false, $true)) {
+            Assert-ClearedOfflineStart -Draining $draining -RetireWhenIdle $retireWhenIdle
+        }
+    }
+    Assert-ClearedOfflineStart -Draining $true -RetireWhenIdle $true -AlreadyAtSha $true
+    Complete-Group 19 'cleared offline start variants'
+
+    if ($script:groups -ne 19 -or $script:invocations -ne 55 -or $script:assertions -ne 197) {
         throw "Frozen roster mismatch groups=$script:groups invocations=$script:invocations assertions=$script:assertions"
     }
-    Write-Output 'C849_ROLLING groups=17 invocations=48 assertions=155 failures=0'
-    Write-Output 'V-32 assertions=155 failures=0'
+    Write-Output 'C849_ROLLING groups=19 invocations=55 assertions=197 failures=0'
+    Write-Output 'V-32 assertions=197 failures=0'
     exit 0
 }
 catch {

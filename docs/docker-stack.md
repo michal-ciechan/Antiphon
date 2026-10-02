@@ -23,7 +23,11 @@ For status checks below, run `pwsh -NoProfile -File scripts/runner-drain.ps1 sta
 server2` (or `server2-temp`). A healthy deployment needs `buildVersion=<sha>`,
 `dispatchEligible=true`, and `acceptingNewWork=true`; a drained runner needs fresh non-null zero
 `sessions`, `runnerSessions`, and `queuedTasks`. A 404, null counter, stale observation or wrong
-SHA is a stop-and-report condition. Run `Invoke-RestMethod 'http://localhost:17202/api/runner-defaults'`
+SHA is a stop-and-report condition. Before `deploy-temp`, an absent temp container may have
+`runnerSessions=null` only when the temp status is offline (`available=false`,
+`dispatchEligible=false`, `acceptingNewWork=false`) with zero bound `sessions` and
+`queuedTasks`. The phase checks this before changing a retired placeholder; a live or busy
+runner still requires a known zero `runnerSessions`. Run `Invoke-RestMethod 'http://localhost:17202/api/runner-defaults'`
 to record the configured global and per-kind preferences; these phases do not change that
 setting or a routing pin. If the intended unpinned work does not currently prefer `server2`,
 the drain redirect cannot promote temp for it: stop and report the missing routing prerequisite.
@@ -39,6 +43,28 @@ the drain redirect cannot promote temp for it: stop and report the missing routi
 | 7. Smoke upgraded old | Run the command block below for `server2`, a sanctioned `Plan` canary pinned with `-Runner server2`, and `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Both -Sha <sha>`. | `redeploy-old` already clears old's drain after its own host checks, before this separate canary. If this gate fails, immediately drain old toward accepting temp with `pwsh -NoProfile -File scripts/runner-drain.ps1 drain -RunnerId server2 -RedirectTo server2-temp -Reason 'post-upgrade smoke failed'`; stop and report. CARD-0935 tracks a separate canary-before-promotion gate. |
 | 8. Return scheduling and drain temp | Once old passes step 7 and accepts work, run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase drain-temp -WaitIdleMinutes 240`. This sets temp `redirectTo=server2` and `retireWhenIdle=true`; automatic placement uses old again. Verify old accepting and temp drained/retired. | If the phase refuses, leave old accepting and temp in its observed state; report the code. If a rollback is needed before temp retires, clear temp's drain only after verifying old remains accepting; do not start two drains. |
 | 9. Retire temp | `retire-temp` is a separate one-way phase. Do not invoke it without fresh human confirmation; keep the temp container and evidence for rollback. | A retirement refusal or cleanup request goes to the human. |
+
+At gate 1, `deploy-temp` accepts either a retired temp placeholder or a cleared offline
+one, whether its drain is set or clear. For a retired start it checks offline zero work,
+then POSTs `/drain/clear` with reason `CARD-0948 retired temp placeholder reactivation`,
+and POSTs `/drain` with `redirectTo=server2`, `retireWhenIdle=false`. A cleared start
+establishes that same non-retiring drain if needed. Both paths hold new work away from
+temp during cache seed, container start, and cache verification. A connected temp can be
+`dispatchEligible=true` while draining; only after verification does the phase POST the
+final `/drain/clear` and wait for `acceptingNewWork=true` at the requested SHA.
+An offline slot can retain its prior `buildVersion=<sha>`; the phase still starts a new
+container when it is not dispatch eligible.
+The phase writes `temp-retirement-clear.json` under its printed
+`.antiphon/rolling-server2/<run-id>/` receipt after a successful retirement clear; it
+records the original `retiredAt` and clear reason. The server drain state records the
+subsequent hold reason. Retain both with the host case receipts. Do not manually clear
+the placeholder before this phase.
+
+CARD-0953 tracks a separate same-AppHost reuse limit: after a previous temp container
+registered and was retired with private volumes removed, its next container has a new
+runner store id, but the server may still hold the old id and reject Register with
+`StoreMismatch`. A previous AppHost restart leaves that slot unbound. If `StoreMismatch`
+appears, stop at gate 1 and follow CARD-0953; this phase does not change server identity.
 
 For either smoke gate, run the following from the desktop, replacing `<runner>` with `server2-temp`
 or `server2` and using the matching Compose project name (`antiphon-runner-temp` or
@@ -193,10 +219,10 @@ after its cache mount and apphost smoke checks pass. When there is no saved dono
 a temporary runner in its private cache, drain it to zero, then use Seed without
 `-SavedDonor` before deploying either runner against the shared volumes.
 After temp retirement, an accepted full ready marker and verified volume payload allow the
-next `deploy-temp` to reuse the caches when the status is retired, unavailable and not
-dispatch eligible, its bound sessions and queue are zero, and the host confirms the
-temp project has no containers. The absent live connection may make only
-`runnerSessions` null. If a donor container exists, Seed still requires its drained
+next `deploy-temp` to reuse the caches when the status is retired or cleared offline,
+its bound sessions and queue are zero, and the host confirms the temp project has no
+containers. The absent live connection may make only `runnerSessions` null, regardless
+of drain and `retireWhenIdle`. If a donor container exists, Seed still requires its drained
 zero-counter status and reconnect receipt.
 
 An interrupted first Seed may leave imported content without a ready marker. For that

@@ -80,16 +80,14 @@ function Assert-ZeroCounters {
 function Assert-TempSeedCounters {
     param($Status)
     if ($null -eq $Status) { throw 'RunnerStatusMissing server2-temp' }
-    # Retirement removes the live connection, so runnerSessions becomes null after
-    # compose down -v. Seed verifies on the host that the temp project is absent.
-    $retiredOffline = $Status.retiredAt -and $Status.draining -and
-        [string]$Status.redirectTo -eq 'server2' -and $Status.retireWhenIdle -eq $true -and
-        $Status.available -eq $false -and $Status.dispatchEligible -eq $false -and
+    # An absent temp container has no live inventory, whether its placeholder is
+    # retired or cleared. Seed verifies on the host that the project is absent.
+    $offline = $Status.available -eq $false -and $Status.dispatchEligible -eq $false -and
         $Status.acceptingNewWork -eq $false
     foreach ($name in @('sessions', 'runnerSessions', 'queuedTasks')) {
         $value = $Status.$name
         if ($Status.PSObject.Properties.Name -notcontains $name -or $null -eq $value) {
-            if ($name -eq 'runnerSessions' -and $retiredOffline -and
+            if ($name -eq 'runnerSessions' -and $offline -and
                 $Status.PSObject.Properties.Name -contains $name) { continue }
             throw "RunnerCounterUnknown server2-temp $name"
         }
@@ -136,16 +134,29 @@ function Invoke-Phase {
         'deploy-temp' {
             $s = Get-RunnerStatus -RunnerId 'server2-temp'
             if ($null -eq $s) { throw 'TempRunnerStatusMissing' }
-            if ([string]$s.buildVersion -ne $Sha) {
+            # An offline slot may still report the last container's SHA. It needs a
+            # fresh container even when that retained version matches this rollout.
+            if ([string]$s.buildVersion -ne $Sha -or -not $s.dispatchEligible) {
                 Assert-TempSeedCounters -Status $s
-                if (-not $s.draining) {
+                if ($s.retiredAt) {
+                    if ($s.available -ne $false -or $s.dispatchEligible -ne $false -or
+                        $s.acceptingNewWork -ne $false) { throw 'TempRunnerDrainConflict' }
+                    $clearReason = 'CARD-0948 retired temp placeholder reactivation'
+                    [void](Invoke-RunnerRequest -Method POST -RunnerId 'server2-temp' -Suffix '/drain/clear' -Body @{ reason = $clearReason })
+                    @{ runnerId = 'server2-temp'; retiredAt = $s.retiredAt; clearReason = $clearReason } |
+                        ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $evidenceRoot 'temp-retirement-clear.json') -Encoding ascii
+                    $s = Get-RunnerStatus -RunnerId 'server2-temp'
+                    Assert-TempSeedCounters -Status $s
+                }
+                if ($s.draining -and [string]$s.redirectTo -ne 'server2') { throw 'TempRunnerDrainConflict' }
+                if (-not $s.draining -or $s.retireWhenIdle) {
                     [void](Invoke-RunnerRequest -Method POST -RunnerId 'server2-temp' -Suffix '/drain' -Body @{
-                        reason = 'CARD-0849 cache migration'; redirectTo = 'server2'; retireWhenIdle = $true
+                        reason = 'CARD-0948 temp deployment hold'; redirectTo = 'server2'; retireWhenIdle = $false
                     })
                     $s = Get-RunnerStatus -RunnerId 'server2-temp'
                     Assert-TempSeedCounters -Status $s
                 }
-                if (-not $s.draining -or [string]$s.redirectTo -ne 'server2' -or -not $s.retireWhenIdle) {
+                if (-not $s.draining -or [string]$s.redirectTo -ne 'server2' -or $s.retireWhenIdle) {
                     throw 'TempRunnerDrainConflict'
                 }
                 Invoke-HostCase -Case 'runner-cache-seed'
@@ -157,7 +168,7 @@ function Invoke-Phase {
             Invoke-HostCase -Case 'verify-runner-caches' -RunnerId 'server2-temp'
             $s = Get-RunnerStatus -RunnerId 'server2-temp'
             if ($s.draining) {
-                if ([string]$s.redirectTo -ne 'server2' -or -not $s.retireWhenIdle) { throw 'TempRunnerDrainConflict' }
+                if ([string]$s.redirectTo -ne 'server2' -or $s.retireWhenIdle) { throw 'TempRunnerDrainConflict' }
                 [void](Invoke-RunnerRequest -Method POST -RunnerId 'server2-temp' -Suffix '/drain/clear' -Body @{ reason = 'CARD-0849 cache verification passed' })
             }
             [void](Wait-RunnerStatus -RunnerId 'server2-temp' -Minutes 5 -Diagnosis 'TempRunnerNotAcceptingNewWork' -Ready {

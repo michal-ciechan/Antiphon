@@ -9,8 +9,22 @@ $savedDonor = if ($request.PSObject.Properties.Name -contains 'savedDonor') { [s
 $entry = [ordered]@{ kind = 'case'; name = $Case; runnerId = $request.runnerId; sourceSha = $request.sourceSha; savedDonor = $savedDonor }
 Add-Content -LiteralPath $env:C727_TEST_TRACE -Value ($entry | ConvertTo-Json -Compress)
 if ($Case -eq 'verify-runner-caches' -and $state.failVerify -eq $request.runnerId) { exit 1 }
-if ($Case -eq 'runner-cache-seed' -and $state.tempRetiredAt -and $state.tempContainer -and $state.tempOffline) { exit 1 }
-if ($Case -eq 'deploy-temp-runner') { $state.tempDeployed = $true; $state.tempRetiredAt = $null; $state.tempOffline = $false; $state.tempContainer = $true }
+if ($Case -eq 'runner-cache-seed' -and $state.tempContainer -and $state.tempOffline) { exit 1 }
+if ($Case -eq 'deploy-temp-runner') {
+    # Register refuses a retired id. An idle draining runner with retireWhenIdle
+    # can also be retired by the service while the new container connects.
+    if (-not $state.tempRetiredAt -and $state.tempDraining -and $state.tempRetireWhenIdle) {
+        $state.tempRetiredAt = '2026-09-27T10:00:00Z'
+    }
+    if ($state.tempRetiredAt) {
+        Add-Content -LiteralPath $env:C727_TEST_TRACE -Value '{"kind":"registration","result":"RunnerRetired"}'
+        $state | ConvertTo-Json -Compress | Set-Content -LiteralPath $env:C727_TEST_STATE
+        exit 1
+    }
+    $state.tempDeployed = $true
+    $state.tempOffline = $false
+    $state.tempContainer = $true
+}
 elseif ($Case -eq 'deploy-parent') { $state.oldDeployed = $true }
 elseif ($Case -notin @('runner-cache-seed', 'verify-runner-caches', 'retire-temp-runner')) { exit 2 }
 $state | ConvertTo-Json -Compress | Set-Content -LiteralPath $env:C727_TEST_STATE
