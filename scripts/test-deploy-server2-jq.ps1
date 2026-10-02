@@ -19,7 +19,7 @@ if ($Case -eq 'missing-shell') {
     $psi.Environment['C973_JQ_PROBE_SHELL'] = Join-Path $evidenceRoot 'nonexistent-shell'
 } elseif ($Case -eq 'failing-shell') {
     # A real application on both platforms: git -c 'command -v jq' exits nonzero.
-    $psi.Environment['C973_JQ_PROBE_SHELL'] = (Get-Command git -CommandType Application -ErrorAction Stop).Source
+    $psi.Environment['C973_JQ_PROBE_SHELL'] = (Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 }
 $proc = [System.Diagnostics.Process]::Start($psi)
 $stdout = $proc.StandardOutput.ReadToEndAsync()
