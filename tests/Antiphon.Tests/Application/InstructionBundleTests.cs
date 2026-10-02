@@ -455,9 +455,9 @@ public class InstructionBundleTests
         foreach (var sentence in new[]
         {
             "talk to the caller, and perform authorized canonical pulls/restarts/rollouts.",
-            "Delegate everything else - every code edit, every test run, every git operation except the authorized pulls/restarts/rollouts above.",
-            "If you are about to Edit, Write, or run a build outside an authorized restart, stop: that is a delegation.",
-            "For desktop runner restarts use scripts/restart-session-runner.ps1 without -KillSessions; use -Hard only for a planned supervisor refresh, check both AppHost locks first, and inspect AppHost exit 3 before retrying.",
+            "Delegate everything else - every code edit, every test run, every git operation except authorized pulls/restarts/rollouts.",
+            "About to Edit, Write, or build outside an authorized restart? Stop: delegate it.",
+            "Desktop runner: scripts/restart-session-runner.ps1; -Hard only for planned refresh, -KillSessions human-only; check AppHost locks, inspect exit 3 before retry.",
         })
         {
             contract.ShouldContain(sentence);
@@ -472,7 +472,7 @@ public class InstructionBundleTests
         var bundle = File.ReadAllText(Path.Combine(
             DelegateScriptRunner.RepoRoot, "server", "Bundles", "orchestrator.md"));
         bundle.ShouldContain("Follow docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout for autonomous AppHost and runner restarts and server2 rollouts.");
-        bundle.Length.ShouldBeLessThanOrEqualTo(14_561, "CARD-0940/0942 restored policy with minimal bundle growth");
+        bundle.Length.ShouldBeLessThanOrEqualTo(14_470, "CARD-0940/0942 restored policy with minimal bundle growth");
     }
 
     [Test]
