@@ -219,34 +219,70 @@ public class FakeGrokContractTests
     public async Task Unbracketed_body_with_LF_line_endings_submits_as_one_turn_with_newlines_dropped()
     {
         SkipIfUnavailable();
-        await using var runner = await LaunchReadyFakeAsync();
+        var home = Path.Combine(Path.GetTempPath(), $"fakegrok-home-{Guid.NewGuid():N}");
+        var cwd = Path.Combine(Path.GetTempPath(), $"fakegrok-cwd-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(cwd);
+        var sessionId = Guid.NewGuid().ToString("D");
+        try
+        {
+            await using var runner = await LaunchReadyFakeAsync(
+                env: new Dictionary<string, string> { ["GROK_HOME"] = home },
+                args: ["--cwd", cwd, "--session-id", sessionId]);
 
-        var body = "HEAD first line of a big paste\n"
-            + string.Join("\n", Enumerable.Range(1, 10).Select(i => $"line {i} " + new string('x', 60)))
-            + "\nTAIL last line";
-        await runner.WriteAsync(body);
-        await Task.Delay(25);
-        await runner.WriteAsync("\r");
+            var body = "HEAD first line of a big paste\n"
+                + string.Join("\n", Enumerable.Range(1, 10).Select(i => $"line {i} " + new string('x', 60)))
+                + "\nTAIL last line";
+            await runner.WriteAsync(body);
+            await Task.Delay(25);
+            await runner.WriteAsync("\r");
 
-        var intact = await runner.WaitForOutputAsync(
-            s =>
+            var intact = await runner.WaitForOutputAsync(
+                s =>
+                {
+                    var flat = FlattenLfSubmitEcho(s);
+                    return System.Text.RegularExpressions.Regex.IsMatch(
+                        flat, @"SUBMITTED:(?:(?!FAKE response).)*HEAD first line(?:(?!FAKE response).)*TAIL last line");
+                },
+                TimeSpan.FromSeconds(5));
+            intact.ShouldBeTrue("LF endings must stay in the composer and submit as one turn");
+            // Measured 1.0.5: LFs are DROPPED — lines join with NO separator ("…big pasteline 1 …").
+            // The SUBMITTED echo escapes surviving newlines as \n, so their absence pins the drop.
+            runner.SnapshotText().ShouldContain("big pasteline 1");
+            runner.SnapshotText().ShouldNotContain("SUBMITTED:HEAD first line of a big paste\\n");
+
+            var updatesPath = Path.Combine(
+                home, "sessions", Uri.EscapeDataString(Path.GetFullPath(cwd)), sessionId, "updates.jsonl");
+            var updates = await WaitForUpdatesAsync(updatesPath, "\"stop_reason\":\"end_turn\"");
+            var submittedBodies = new List<string>();
+            var completedTurns = 0;
+            foreach (var line in updates.Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
-                var flat = FlattenLfSubmitEcho(s);
-                return System.Text.RegularExpressions.Regex.IsMatch(
-                    flat, @"SUBMITTED:(?:(?!FAKE response).)*HEAD first line(?:(?!FAKE response).)*TAIL last line");
-            },
-            TimeSpan.FromSeconds(5));
-        intact.ShouldBeTrue("LF endings must stay in the composer and submit as one turn");
-        // Measured 1.0.5: LFs are DROPPED — lines join with NO separator ("…big pasteline 1 …").
-        // The SUBMITTED echo escapes surviving newlines as \n, so their absence pins the drop.
-        runner.SnapshotText().ShouldContain("big pasteline 1");
-        runner.SnapshotText().ShouldNotContain("SUBMITTED:HEAD first line of a big paste\\n");
+                using var doc = JsonDocument.Parse(line);
+                var update = doc.RootElement.GetProperty("params").GetProperty("update");
+                var kind = update.GetProperty("sessionUpdate").GetString();
+                if (kind == "user_message_chunk")
+                    submittedBodies.Add(update.GetProperty("content").GetProperty("text").GetString()!);
+                if (kind == "turn_completed")
+                    completedTurns++;
+            }
+            submittedBodies.Count.ShouldBe(1, "LF body must produce exactly one native user message chunk");
+            submittedBodies.Single().ShouldBe(
+                body.Replace("\n", ""), "native LF submit must contain the entire body with only LFs dropped");
+            completedTurns.ShouldBe(1, "LF body must complete exactly one native turn");
 
-        await runner.KillAsync(TimeSpan.FromSeconds(2));
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            try { Directory.Delete(home, true); } catch { /* best effort */ }
+            try { Directory.Delete(cwd, true); } catch { /* best effort */ }
+        }
     }
 
+    // Inbox conhost inserts CR/LF and backspaces when the submitted echo wraps at 120 columns.
+    // Normalize that echo only; the native-log assertion compares the actual submitted body.
     internal static string FlattenLfSubmitEcho(string output) =>
-        output.Replace("\r", "").Replace("\n", "");
+        output.Replace("\r", "").Replace("\n", "").Replace("\u0008", "");
 
     [Test]
     [Category("Unit")]
