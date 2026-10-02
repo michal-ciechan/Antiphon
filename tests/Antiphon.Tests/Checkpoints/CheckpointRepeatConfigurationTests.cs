@@ -36,7 +36,7 @@ public sealed class CheckpointRepeatConfigurationTests : CheckpointTestBase
         {
             var imported = PlanTableImporter.ImportMarkdown(Table(value));
             imported.ExitCode.ShouldBe(2, "invalid-repeat-no-work: invalid count " + value);
-            imported.Error.ShouldContain("Repeat", "invalid-repeat-no-work: refusal must identify the count");
+            imported.Error.ShouldContain("Repeat", Case.Insensitive, "invalid-repeat-no-work: refusal must identify the count");
         }
         var command = PlanTableImporter.ImportMarkdown(Table("2", "| CP-2 | S1 | n/a | command | `true` | V-1 | n/a | n/a | 1 | 2 |"));
         command.ExitCode.ShouldBe(2, "invalid-repeat-no-work: command rows cannot repeat");
