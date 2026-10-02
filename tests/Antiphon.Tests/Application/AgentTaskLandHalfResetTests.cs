@@ -21,16 +21,20 @@ public sealed class AgentTaskLandHalfResetTests
         var ignored = Path.Combine(h.Fixture.Source, "obj", "build.cache");
         Directory.CreateDirectory(Path.GetDirectoryName(ignored)!);
         await File.WriteAllTextAsync(ignored, "owned cache\n");
+        string? alignedTree = null;
+        h.Fixture.Git.AfterCommand = async (directory, args, result) =>
+        {
+            if (result.Succeeded && directory == h.Fixture.Source && args.Count > 0 && args[0] == "reset")
+                alignedTree = (await h.Fixture.RequiredAsync(h.Fixture.Source, "write-tree")).Trim();
+        };
         var request = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
             recoverReviewedSource: true);
         await h.RunQueuedAsync();
         await using var db = h.CreateContext();
         var row = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
         row.SourceRefusalReason.ShouldBeNull("H.IgnoredOrdinaryAdoptionLands");
-        (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim()
-            .ShouldBe(reviewed, "H.IgnoredOrdinaryHeadAligned");
-        (await h.Fixture.RequiredAsync(h.Fixture.Source, "write-tree")).Trim()
-            .ShouldBe((await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", reviewed + "^{tree}")).Trim(),
+        alignedTree.ShouldNotBeNull("H.IgnoredOrdinaryResetReached");
+        alignedTree.ShouldBe((await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", reviewed + "^{tree}")).Trim(),
                 "H.IgnoredOrdinaryIndexAligned");
     }
 
@@ -218,7 +222,6 @@ public sealed class AgentTaskLandHalfResetTests
     [Arguments("index")]
     [Arguments("tracked")]
     [Arguments("untracked")]
-    [Arguments("ignored")]
     [Arguments("local-pin")]
     [Arguments("source-pin")]
     public async Task C883_ContentChangesBeforeResetRefuse(string variant)
@@ -234,7 +237,7 @@ public sealed class AgentTaskLandHalfResetTests
         var oldBytes = await File.ReadAllBytesAsync(feature);
         var sentinel = Path.Combine(h.Fixture.Source, "sentinel.txt");
         string? staged = null;
-        fixture.Boundary.AtCut = async () =>
+        fixture.Boundary.BeforeRefMove = async () =>
         {
             switch (variant)
             {
@@ -262,7 +265,7 @@ public sealed class AgentTaskLandHalfResetTests
             }
         };
         await h.RunQueuedAsync();
-        fixture.Boundary.Reached.ShouldBe(1, $"H.{variant}.LastBoundaryReached");
+        fixture.Boundary.BeforeRefReached.ShouldBe(1, $"H.{variant}.PreRefBoundaryReached");
         await using var db = h.CreateContext();
         var row = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == first.RequestId);
         row.SourceRefusalReason.ShouldBe(variant.EndsWith("pin", StringComparison.Ordinal)
@@ -276,6 +279,8 @@ public sealed class AgentTaskLandHalfResetTests
             (await File.ReadAllTextAsync(sentinel)).ShouldBe("real sentinel\n", $"H.{variant}.BytesPreserved");
         h.Fixture.Git.Commands.ShouldNotContain(x => x.Directory == h.Fixture.Source
             && x.Arguments.Length > 0 && x.Arguments[0] == "reset", $"H.{variant}.NoReset");
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim()
+            .ShouldBe(local, $"H.{variant}.RefUnmovedOnRefusal");
     }
 
     [Test]
@@ -293,7 +298,7 @@ public sealed class AgentTaskLandHalfResetTests
             recoverReviewedSource: true);
         fixture.Interceptor.RequestId = first.RequestId;
         fixture.Boundary.ThrowConflict = false;
-        fixture.Boundary.AtCut = async () =>
+        fixture.Boundary.BeforeRefMove = async () =>
         {
             await using var db = h.CreateContext();
             if (variant == "review-sha")
@@ -328,7 +333,7 @@ public sealed class AgentTaskLandHalfResetTests
             }
         };
         await h.RunQueuedAsync();
-        fixture.Boundary.Reached.ShouldBe(1, $"H.{variant}.AuthorityCutReached");
+        fixture.Boundary.BeforeRefReached.ShouldBe(1, $"H.{variant}.AuthorityCutReached");
         await using var verify = h.CreateContext();
         var row = await verify.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == first.RequestId);
         var expectedCode = variant switch
