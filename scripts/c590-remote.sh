@@ -2080,8 +2080,8 @@ c849_observe_volume() {
     docker_root="$(docker info -f '{{.DockerRootDir}}')"
     mountpoint="$(docker volume inspect -f '{{.Mountpoint}}' "$name")"
     [ -n "$docker_root" ] && [ -n "$mountpoint" ] || write_result false CacheTargetInvalid 2
-    resolved="$(realpath -e -- "$mountpoint" 2>/dev/null)" || write_result false CacheTargetInvalid 2
-    if [ "$resolved" != "$docker_root/volumes/$name/_data" ] || [ -L "$mountpoint" ]; then
+    resolved="$(sudo -n realpath -e -- "$mountpoint" 2>/dev/null)" || write_result false CacheTargetInvalid 2
+    if [ "$resolved" != "$docker_root/volumes/$name/_data" ] || sudo -n test -L "$mountpoint"; then
         write_result false CacheTargetInvalid 2
     fi
     mode="$(sudo -n stat -c '%u:%g:%a' -- "$resolved")" || write_result false CacheRootInvalid 2
@@ -2311,9 +2311,9 @@ c849_reset() {
 
 c849_prune_validate_tree() {
     local path="$1" canonical="$2" resolved unsafe mounts
-    [ -n "$path" ] && [ "$path" = "$canonical" ] && [ -d "$path" ] && [ ! -L "$path" ] \
+    [ -n "$path" ] && [ "$path" = "$canonical" ] && sudo -n test -d "$path" && ! sudo -n test -L "$path" \
         || write_result false CacheTargetInvalid 2
-    resolved="$(realpath -e -- "$path")" || write_result false CacheTargetInvalid 2
+    resolved="$(sudo -n realpath -e -- "$path")" || write_result false CacheTargetInvalid 2
     [ "$resolved" = "$canonical" ] || write_result false CacheTargetInvalid 2
     unsafe="$(sudo -n find "$path" -xdev -mindepth 1 \( -type l -o -type b -o -type c -o -type p -o -type s -o -type f -links +1 \) -print -quit)" \
         || write_result false CacheTargetInvalid 2
