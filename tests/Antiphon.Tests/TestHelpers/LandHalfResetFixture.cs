@@ -10,6 +10,8 @@ namespace Antiphon.Tests.TestHelpers;
 internal sealed class LandHalfResetFixture : IAsyncDisposable
 {
     public LandingSafetyHarness Harness { get; }
+    public Guid? AdoptionSourceId { get; private set; }
+    public string? AdoptionSourcePath { get; private set; }
     public SaveCut Interceptor { get; } = new();
     public RefMovedBoundary Boundary { get; }
 
@@ -22,7 +24,7 @@ internal sealed class LandHalfResetFixture : IAsyncDisposable
     }
 
     public async Task<(string Local, string Reviewed, Guid Evidence)> SeedReviewedDescendantAsync(bool bulk = false,
-        bool executable = false)
+        bool executable = false, bool equivalentOldTip = false, bool adoption = false)
     {
         var h = Harness;
         await h.InitializeAsync();
@@ -43,6 +45,11 @@ internal sealed class LandHalfResetFixture : IAsyncDisposable
             await h.Fixture.RequiredAsync(h.Fixture.Source, "commit", "-m", "old bulk tip");
             local = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim();
         }
+        if (equivalentOldTip)
+        {
+            await h.Fixture.RequiredAsync(h.Fixture.Source, "commit", "--allow-empty", "-m", "equivalent old tree");
+            local = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim();
+        }
         await h.Fixture.RequiredAsync(h.Fixture.Source, "push", "origin", h.Fixture.SourceRef);
         var reviewedTree = Path.Combine(h.Fixture.Root, "trees", "reviewed");
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "add", "--detach", reviewedTree, local);
@@ -58,20 +65,48 @@ internal sealed class LandHalfResetFixture : IAsyncDisposable
         await h.Fixture.RequiredAsync(reviewedTree, "add", ".");
         await h.Fixture.RequiredAsync(reviewedTree, "commit", "-m", "reviewed descendant");
         var reviewed = (await h.Fixture.RequiredAsync(reviewedTree, "rev-parse", "HEAD")).Trim();
-        await h.Fixture.RequiredAsync(reviewedTree, "push", "origin", $"HEAD:{h.Fixture.SourceRef}");
+        var sourceRef = h.Fixture.SourceRef;
+        if (adoption)
+        {
+            AdoptionSourceId = Guid.NewGuid();
+            AdoptionSourcePath = reviewedTree;
+            sourceRef = $"refs/heads/feat/card-task-{AdoptionSourceId:N}";
+            await h.Fixture.RequiredAsync(reviewedTree, "checkout", "-b", sourceRef[11..]);
+        }
+        await h.Fixture.RequiredAsync(reviewedTree, "push", "origin", $"HEAD:{sourceRef}");
         Guid evidence;
         await using (var db = h.CreateContext())
         {
             var owner = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
             owner.Status = Antiphon.Server.Domain.Enums.AgentTaskStatus.Failed;
+            if (adoption)
+            {
+                var now = DateTime.UtcNow;
+                var projectId = Guid.NewGuid();
+                var boardId = Guid.NewGuid();
+                var columnId = Guid.NewGuid();
+                var cardId = Guid.NewGuid();
+                db.Projects.Add(new Project { Id = projectId, Name = "C939 fixture", LocalRepositoryPath = h.Fixture.Repository, CreatedAt = now, UpdatedAt = now });
+                db.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "C939", CreatedAt = now, UpdatedAt = now });
+                db.BoardColumns.Add(new BoardColumn { Id = columnId, BoardId = boardId, Name = "Ready", StateKey = "ready", CreatedAt = now, UpdatedAt = now });
+                db.Cards.Add(new Card { Id = cardId, BoardId = boardId, BoardColumnId = columnId, Identifier = "CARD-0939", Title = "fixture", CreatedAt = now, UpdatedAt = now });
+                owner.ProjectId = projectId;
+                owner.CardId = cardId;
+                db.AgentTasks.Add(new AgentTask { Id = AdoptionSourceId!.Value, RootTaskId = AdoptionSourceId.Value,
+                    Title = "reviewed source", Goal = "fixture", Kind = Antiphon.Server.Domain.Enums.AgentTaskKind.Worker,
+                    Role = Antiphon.Server.Domain.Enums.AgentTaskRole.Code, Workspace = Antiphon.Server.Domain.Enums.WorkspaceMode.Worktree,
+                    WorkingDirectory = h.Fixture.Repository, RepoPath = h.Fixture.Repository, WorktreePath = reviewedTree,
+                    WorktreeBranch = sourceRef[11..], WorktreeBaseSha = local, Status = Antiphon.Server.Domain.Enums.AgentTaskStatus.Failed,
+                    ProjectId = projectId, CardId = cardId, ReplyTo = Antiphon.Server.Domain.Enums.AgentTaskReplyTo.None, CreatedAt = now, CompletedAt = now });
+            }
             var row = new StageOutcome
             {
                 Id = Guid.NewGuid(), Stage = Antiphon.Server.Domain.Enums.OrchestrationStage.Review,
                 Outcome = Antiphon.Server.Domain.Enums.StageOutcomeKind.Clean,
                 Source = Antiphon.Server.Domain.Enums.StageOutcomeSource.Delegate,
-                SubjectTaskId = owner.Id, StageTaskId = Guid.NewGuid(),
+                SubjectTaskId = AdoptionSourceId ?? owner.Id, StageTaskId = Guid.NewGuid(),
                 ReviewedSourceSha = reviewed, ReviewedSourceClean = true,
-                ReviewedSourceRef = h.Fixture.SourceRef, ReviewedRepositoryPath = owner.RepoPath,
+                ReviewedSourceRef = sourceRef, ReviewedRepositoryPath = owner.RepoPath,
                 CommissionedRound = Antiphon.Server.Domain.Enums.VerificationRound.Final,
                 OrdinaryScopeCompleted = Antiphon.Server.Domain.Enums.VerificationScope.Full,
                 RecordedAt = DateTime.UtcNow,
