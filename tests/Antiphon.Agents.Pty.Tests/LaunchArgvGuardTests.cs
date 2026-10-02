@@ -2,6 +2,7 @@ using System.Reflection;
 using Antiphon.Agents.Pty;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Agents.Pty.Tests;
 
@@ -31,6 +32,8 @@ public class LaunchArgvGuardTests
     [Test]
     public void The_corrected_escaping_passes_the_guard()
     {
+        if (!OperatingSystem.IsWindows())
+            throw new SkipTestException("Windows launch argv verification requires shell32.dll CommandLineToArgvW");
         var commandLine = ModernConPtyConnection.BuildCommandLine(App, TheFailingLaunch, verbatim: false);
 
         Should.NotThrow(() => LaunchArgvGuard.VerifyOrThrow(App, TheFailingLaunch, commandLine, "modern ConPTY"));
@@ -39,6 +42,8 @@ public class LaunchArgvGuardTests
     [Test]
     public void The_old_doubling_rule_is_caught_before_the_process_is_created()
     {
+        if (!OperatingSystem.IsWindows())
+            throw new SkipTestException("Windows launch argv verification requires shell32.dll CommandLineToArgvW");
         // Exactly what BuildCommandLine produced before aa1c8f1.
         var shredded = LaunchArgvGuard.FormatPortaStyle(App, TheFailingLaunch);
 
@@ -56,6 +61,8 @@ public class LaunchArgvGuardTests
     [Test]
     public void A_truncated_bundle_is_caught_by_LENGTH_not_by_presence()
     {
+        if (!OperatingSystem.IsWindows())
+            throw new SkipTestException("Windows launch argv verification requires shell32.dll CommandLineToArgvW");
         // The 2026-08-20 failure survived because everything downstream only ever asked "is the
         // flag there?". It was: the flag and the head of its value both arrived. 42% of the body
         // did not. A presence check passes this; the guard must not.
@@ -73,6 +80,8 @@ public class LaunchArgvGuardTests
     [Test]
     public void An_argument_lost_off_the_end_is_reported_as_missing_rather_than_as_a_mismatch()
     {
+        if (!OperatingSystem.IsWindows())
+            throw new SkipTestException("Windows launch argv verification requires shell32.dll CommandLineToArgvW");
         string[] intended = ["--model", "opus", "--session-id", "1a1b6b7b-0000-0000-0000-000000000000"];
         var short_ = $"{App} --model opus";
 
@@ -86,6 +95,8 @@ public class LaunchArgvGuardTests
     [Test]
     public void A_correct_launch_with_no_special_characters_passes()
     {
+        if (!OperatingSystem.IsWindows())
+            throw new SkipTestException("Windows launch argv verification requires shell32.dll CommandLineToArgvW");
         string[] intended = ["--model", "opus", "--session-id", "1a1b6b7b-0000-0000-0000-000000000000"];
         var commandLine = ModernConPtyConnection.BuildCommandLine(App, intended, verbatim: false);
 
@@ -95,6 +106,8 @@ public class LaunchArgvGuardTests
     [Test]
     public void An_app_path_with_spaces_still_round_trips()
     {
+        if (!OperatingSystem.IsWindows())
+            throw new SkipTestException("Windows launch argv verification requires shell32.dll CommandLineToArgvW");
         const string spacedApp = @"C:\Program Files\nodejs\claude.exe";
         string[] intended = ["--session-id", "b42dc25b-56aa-44c0-97d0-9464cd47716f"];
         var commandLine = ModernConPtyConnection.BuildCommandLine(spacedApp, intended, verbatim: false);
@@ -149,6 +162,8 @@ public class LaunchArgvGuardTests
     [Test]
     public void The_inbox_backends_pre_escaped_verbatim_line_round_trips()
     {
+        if (!OperatingSystem.IsWindows())
+            throw new SkipTestException("Windows launch argv verification requires shell32.dll CommandLineToArgvW");
         foreach (var args in new[]
                  {
                      TheFailingLaunch,
@@ -176,6 +191,8 @@ public class LaunchArgvGuardTests
     [Test]
     public void Portas_format_does_not_round_trip_the_shape_that_shredded_production()
     {
+        if (!OperatingSystem.IsWindows())
+            throw new SkipTestException("Windows launch argv verification requires shell32.dll CommandLineToArgvW");
         var portaLine = LaunchArgvGuard.FormatPortaStyle(App, TheFailingLaunch);
 
         LaunchArgvGuard.ParseArgv(portaLine).Length.ShouldNotBe(
@@ -197,6 +214,8 @@ public class LaunchArgvGuardTests
     [Test]
     public void ParseArgv_is_the_real_parser()
     {
+        if (!OperatingSystem.IsWindows())
+            throw new SkipTestException("Windows launch argv verification requires shell32.dll CommandLineToArgvW");
         // Sanity on the primitive everything else here leans on: the classic CRT rule, where a
         // backslash is only special immediately before a quote.
         LaunchArgvGuard.ParseArgv(@"app.exe ""a b"" c\\""d").ShouldBe([@"app.exe", "a b", @"c\d"]);

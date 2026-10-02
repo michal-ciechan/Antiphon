@@ -35,6 +35,7 @@ public sealed class ConPtyEnvironmentIsolationGuardTests
             "MutationFixtures.BadKeyedHelper",
             "MutationFixtures.BadLambda",
             "MutationFixtures.BadParameterHelper",
+            "MutationFixtures.BadRuntimeParameter",
         });
         mutators.ShouldContain(method => method.Name == nameof(MutationFixtures.SafeHelper));
         mutators.ShouldContain(method => method.DeclaringType == typeof(SerializedFixture));
@@ -59,15 +60,12 @@ public sealed class ConPtyEnvironmentIsolationGuardTests
         var mutators = new List<MethodBase>();
         foreach (var type in types)
         {
-            // Async state machines are inspected through their original method below, where
-            // TUnit reads the scheduling attributes, rather than through generated MoveNext.
+            // Generated bodies are reached through call/delegate/state-machine edges below.
+            // Scheduling always belongs to the outer user method, never a lambda or MoveNext.
             if (type.IsDefined(typeof(CompilerGeneratedAttribute), inherit: false)) continue;
             foreach (var method in type.GetMethods(flags).Cast<MethodBase>().Concat(type.GetConstructors(flags)))
             {
-                var stateMachine = method.GetCustomAttribute<AsyncStateMachineAttribute>()?.StateMachineType
-                    ?? method.GetCustomAttribute<IteratorStateMachineAttribute>()?.StateMachineType;
-                var body = stateMachine?.GetMethod("MoveNext", flags) ?? method;
-                if (MutatesConPtyDirectory(body, opCodes)) mutators.Add(method);
+                if (MutatesConPtyDirectory(method, opCodes)) mutators.Add(method);
             }
         }
 
@@ -81,40 +79,61 @@ public sealed class ConPtyEnvironmentIsolationGuardTests
 
     private static bool MutatesConPtyDirectory(MethodBase method, IReadOnlyDictionary<short, OpCode> opCodes)
     {
-        var il = method.GetMethodBody()?.GetILAsByteArray();
-        if (il is null) return false;
         var loadsDirectoryVariable = false;
         var callsEnvironmentSetter = false;
-        for (var offset = 0; offset < il.Length;)
+        var parameterisedSetter = false;
+        var pending = new Stack<MethodBase>();
+        var visited = new HashSet<MethodBase>();
+        pending.Push(method);
+        while (pending.TryPop(out var body))
         {
-            short value = il[offset++];
-            if (value == 0xfe) value = (short)(0xfe00 | il[offset++]);
-            var opCode = opCodes[value];
-            if (opCode == OpCodes.Ldstr)
-                loadsDirectoryVariable |= method.Module.ResolveString(BitConverter.ToInt32(il, offset))
-                    == ConPtyRedistributable.DirectoryEnvVar;
-            if (opCode == OpCodes.Call || opCode == OpCodes.Callvirt)
+            if (!visited.Add(body)) continue;
+            var stateMachine = body.GetCustomAttribute<AsyncStateMachineAttribute>()?.StateMachineType
+                ?? body.GetCustomAttribute<IteratorStateMachineAttribute>()?.StateMachineType;
+            if (stateMachine?.GetMethod("MoveNext", BindingFlags.Public | BindingFlags.NonPublic
+                | BindingFlags.Instance) is { } moveNext) pending.Push(moveNext);
+            var il = body.GetMethodBody()?.GetILAsByteArray();
+            if (il is null) continue;
+            for (var offset = 0; offset < il.Length;)
             {
-                var called = method.Module.ResolveMethod(BitConverter.ToInt32(il, offset),
-                    method.DeclaringType?.GetGenericArguments(),
-                    method is MethodInfo { IsGenericMethod: true } generic ? generic.GetGenericArguments() : null);
-                callsEnvironmentSetter |= called?.DeclaringType == typeof(Environment)
-                    && called.Name == nameof(Environment.SetEnvironmentVariable);
+                short value = il[offset++];
+                if (value == 0xfe) value = (short)(0xfe00 | il[offset++]);
+                var opCode = opCodes[value];
+                if (opCode == OpCodes.Ldstr)
+                    loadsDirectoryVariable |= body.Module.ResolveString(BitConverter.ToInt32(il, offset))
+                        == ConPtyRedistributable.DirectoryEnvVar;
+                if (opCode == OpCodes.Call || opCode == OpCodes.Callvirt || opCode == OpCodes.Newobj
+                    || opCode == OpCodes.Ldftn || opCode == OpCodes.Ldvirtftn)
+                {
+                    var called = body.Module.ResolveMethod(BitConverter.ToInt32(il, offset),
+                        body.DeclaringType?.GetGenericArguments(),
+                        body is MethodInfo { IsGenericMethod: true } generic ? generic.GetGenericArguments() : null);
+                    if (called?.DeclaringType == typeof(Environment)
+                        && called.Name == nameof(Environment.SetEnvironmentVariable))
+                    {
+                        callsEnvironmentSetter = true;
+                        // A parameterised setter can receive the directory name at runtime.
+                        // Fail conservatively for EVERY caller, even without a literal in it;
+                        // a scheduling attribute on the helper cannot serialize its callers.
+                        parameterisedSetter |= body.GetParameters().Any(p => p.ParameterType == typeof(string));
+                    }
+                    if (called?.Module.Assembly == method.Module.Assembly) pending.Push(called);
+                }
+                offset += opCode.OperandType switch
+                {
+                    OperandType.InlineNone => 0,
+                    OperandType.ShortInlineBrTarget or OperandType.ShortInlineI or OperandType.ShortInlineVar => 1,
+                    OperandType.InlineVar => 2,
+                    OperandType.InlineI8 or OperandType.InlineR => 8,
+                    OperandType.InlineSwitch => 4 + 4 * BitConverter.ToInt32(il, offset),
+                    OperandType.InlineBrTarget or OperandType.InlineField or OperandType.InlineI
+                        or OperandType.InlineMethod or OperandType.InlineSig or OperandType.InlineString
+                        or OperandType.InlineTok or OperandType.InlineType or OperandType.ShortInlineR => 4,
+                    _ => throw new InvalidOperationException($"Unsupported IL operand: {opCode.OperandType}")
+                };
             }
-            offset += opCode.OperandType switch
-            {
-                OperandType.InlineNone => 0,
-                OperandType.ShortInlineBrTarget or OperandType.ShortInlineI or OperandType.ShortInlineVar => 1,
-                OperandType.InlineVar => 2,
-                OperandType.InlineI8 or OperandType.InlineR => 8,
-                OperandType.InlineSwitch => 4 + 4 * BitConverter.ToInt32(il, offset),
-                OperandType.InlineBrTarget or OperandType.InlineField or OperandType.InlineI
-                    or OperandType.InlineMethod or OperandType.InlineSig or OperandType.InlineString
-                    or OperandType.InlineTok or OperandType.InlineType or OperandType.ShortInlineR => 4,
-                _ => throw new InvalidOperationException($"Unsupported IL operand: {opCode.OperandType}")
-            };
         }
-        return loadsDirectoryVariable && callsEnvironmentSetter;
+        return parameterisedSetter || loadsDirectoryVariable && callsEnvironmentSetter;
     }
 
     // Compiled IL fixtures, never executed and deliberately without [Test]. Only the
@@ -135,12 +154,15 @@ public sealed class ConPtyEnvironmentIsolationGuardTests
 
         public static void BadParameterHelper() => SetVariable(ConPtyRedistributable.DirectoryEnvVar, null);
 
+        public static void BadRuntimeParameter(string name) => SetVariable(name, null);
+
         [NotInParallel("keyed-is-insufficient")]
         public static void BadKeyedHelper() => SetVariable(ConPtyRedistributable.DirectoryEnvVar, null);
 
         [NotInParallel]
         public static void SafeHelper() => SetVariable(ConPtyRedistributable.DirectoryEnvVar, null);
 
+        [NotInParallel]
         internal static void SetVariable(string name, string? value) => Environment.SetEnvironmentVariable(name, value);
     }
 

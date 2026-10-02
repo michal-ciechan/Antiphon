@@ -23,7 +23,8 @@ public class FakeGrokContractTests
     [Test]
     public async Task C467_BusyGatePreservesNativePromptAndTurnEnd()
     {
-        OperatingSystem.IsWindows().ShouldBeTrue();
+        if (!OperatingSystem.IsWindows())
+            throw new SkipTestException("FakeGrok native busy-gate contract requires Windows ConPTY");
         File.Exists(FakeGrokExe).ShouldBeTrue();
         var root = Path.Combine(Path.GetTempPath(), "c467-gate-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);

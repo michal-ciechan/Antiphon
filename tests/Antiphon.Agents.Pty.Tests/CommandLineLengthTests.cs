@@ -3,6 +3,7 @@ using Antiphon.Agents.Pty;
 using Antiphon.FakeLlmApi;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Agents.Pty.Tests;
 
@@ -19,6 +20,8 @@ public sealed class CommandLineLengthTests
     [Test]
     public void Measure_equals_the_line_the_child_parses()
     {
+        if (!OperatingSystem.IsWindows())
+            throw new SkipTestException("Windows native argv oracle requires shell32.dll CommandLineToArgvW");
         var exe = @"C:\Program Files\nodejs\node.exe";
         var args = new[]
         {

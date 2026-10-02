@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using Antiphon.Agents.Pty;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Agents.Pty.Tests;
 
@@ -25,6 +26,8 @@ public class ModernConPtyCommandLineTests
 
     private static string[] RealArgv(string commandLine)
     {
+        if (!OperatingSystem.IsWindows())
+            throw new SkipTestException("Windows native argv oracle requires shell32.dll CommandLineToArgvW");
         var argv = CommandLineToArgvW(commandLine, out var count);
         if (argv == nint.Zero)
             throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
