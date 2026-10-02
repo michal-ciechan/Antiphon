@@ -97,6 +97,17 @@ public sealed class StandingPipelinePolicyDocumentationTests
         end.ShouldBeGreaterThan(start);
         var loop = Collapse(document[start..end]);
         loop.ShouldContain(policySentence);
+        foreach (var sentence in new[]
+        {
+            "For a desktop runner restart, use `pwsh -NoProfile -File scripts/restart-session-runner.ps1`; use `-Hard` only for a planned supervisor refresh under the AppHost runbook.",
+            "`-KillSessions` kills detached sessions and is human-only, never part of this autonomy grant.",
+            "Before an AppHost or desktop runner restart, ensure `logs/apphost.restart.lock` and `logs/apphost.launch.lock` are clear; AppHost exit 3 refuses the restart, so inspect ownership and both locks before retrying.",
+        })
+        {
+            loop.ShouldContain(sentence);
+            var scratch = loop.Replace(sentence, "", StringComparison.Ordinal);
+            Should.Throw<ShouldAssertException>(() => scratch.ShouldContain(sentence));
+        }
         foreach (var phrase in new[]
         {
             "git pull --rebase", "queued lands have finished", "no worktree is half-reset",
@@ -127,5 +138,18 @@ public sealed class StandingPipelinePolicyDocumentationTests
         })
             ReadRepoFile(path).ShouldContain(anchor);
         ReadRepoFile("AGENTS.md").ShouldContain("docs/docker-stack.md#staged-server2-rolling-rollout-card-0934");
+    }
+
+    [Test]
+    public void operational_autonomy_short_copies_pin_the_runner_restart_boundary()
+    {
+        const string shortSentence = "For a desktop runner restart use `pwsh -NoProfile -File scripts/restart-session-runner.ps1` (`-Hard` only for a planned supervisor refresh; `-KillSessions` is human-only); check `logs/apphost.restart.lock` and `logs/apphost.launch.lock` first, and inspect AppHost exit 3 before retrying.";
+        foreach (var relative in new[] { "AGENTS.md", ".claude/skills/antiphon-orchestrator/SKILL.md" })
+        {
+            var text = Collapse(ReadRepoFile(relative));
+            text.ShouldContain(shortSentence);
+            var scratch = text.Replace(shortSentence, "", StringComparison.Ordinal);
+            Should.Throw<ShouldAssertException>(() => scratch.ShouldContain(shortSentence));
+        }
     }
 }

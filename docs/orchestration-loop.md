@@ -21,6 +21,9 @@ while detached PtyHosts are active (they are re-adopted), the cold first Seed, a
 `deploy-server2.ps1 -Rolling` phases `deploy-temp`, `drain-old`, `redeploy-old`, and `drain-temp`. Restart the
 standing server2 runner only through those rolling phases. Follow the
 [AppHost restart](apphost-runbook.md) and [staged server2 rollout](docker-stack.md#staged-server2-rolling-rollout-card-0934) runbooks.
+For a desktop runner restart, use `pwsh -NoProfile -File scripts/restart-session-runner.ps1`;
+use `-Hard` only for a planned supervisor refresh under the AppHost runbook.
+`-KillSessions` kills detached sessions and is human-only, never part of this autonomy grant.
 
 Before and after the operation, verify that queued lands have finished, no worktree is half-reset,
 the canonical source-root `HEAD` matches `GET /api/version` SHA, and `/health` succeeds. Wait for
@@ -28,6 +31,9 @@ any land in progress before pulling; never pull while a land runs. After a resta
 registered child journal. Never use `-AllowWorktree` or touch the user's untracked files in the
 canonical checkout. If an intended upgrade makes the before-version differ from the new `HEAD`,
 record the old matching SHA before pulling and require the new matching SHA after restarting.
+Before an AppHost or desktop runner restart, ensure `logs/apphost.restart.lock` and
+`logs/apphost.launch.lock` are clear; AppHost exit 3 refuses the restart, so inspect ownership
+and both locks before retrying.
 
 Still requires a human: destructive or irreversible steps (`Reset`, `Prune`, `retire-temp`, or
 any other one-way step), deleting data or donor tars; killing other sessions or alwaysOn agents;
