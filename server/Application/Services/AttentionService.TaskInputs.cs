@@ -74,7 +74,7 @@ public sealed partial class AttentionService
             long? firstPromptSequence = null;
             var candidates = _db.TranscriptEntries.AsNoTracking()
                 .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt
-                    && t.Text != null)
+                    && t.Text != null && patterns.Any(pattern => EF.Functions.Like(t.Text, pattern, "!")))
                 .OrderBy(t => t.Sequence)
                 .Select(t => new TaskInputTranscript(t.Sequence, t.Kind, t.Text, t.Timestamp ?? t.CreatedAt));
             await foreach (var prompt in candidates.AsAsyncEnumerable().WithCancellation(ct))
