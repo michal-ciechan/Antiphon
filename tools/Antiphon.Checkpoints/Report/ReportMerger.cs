@@ -86,7 +86,6 @@ public static class ReportMerger
             Failures = row.Failures,
             RerunLines = row.RerunLines.ToList(),
             SlowClasses = row.SlowClasses,
-            Attempt = row.Attempt,
             Source = row.Source,
             Repeat = row.Repeat,
             Timings = row.Timings,
