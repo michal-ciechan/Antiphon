@@ -17,7 +17,8 @@ public sealed class PhoneHomeRunnerRetirementIdentityTests
     public async Task Cleared_retirement_allows_one_new_store_after_disconnect_and_lease_expiry()
     {
         var clock = new FakeTimeProvider();
-        await using var host = await PhoneHomeTestHost.StartAsync(clock);
+        await using var host = await PhoneHomeTestHost.StartAsync(clock,
+            configureRunnerSettings: settings => settings.TicketTtlSeconds = 3600);
         var first = host.Directory.Register(host.Registration());
         RetireAndClear(host, clock);
         // The deployment holds new work away from temp while verifying its new container.
@@ -45,11 +46,30 @@ public sealed class PhoneHomeRunnerRetirementIdentityTests
         var ticket = host.Directory.Register(host.Registration());
         var live = host.Directory.AcceptConnect(host.AllowedRunnerId, ticket.Ticket, socket);
         RetireAndClear(host, clock);
-        if (expired) clock.Advance(TimeSpan.FromSeconds(90));
+        if (expired) clock.Advance(TimeSpan.FromSeconds(91));
         RefuseStore(host, host.Registration(storeId: Guid.NewGuid()));
         RefuseStore(host, host.Registration(bootId: Guid.NewGuid(), storeId: Guid.NewGuid()));
         host.Directory.SnapshotLive().ShouldBeSameAs(live);
         host.Directory.GetLiveStoreId(host.AllowedRunnerId).ShouldBe(host.StoreId);
+    }
+
+    [Test]
+    public async Task Cleared_retirement_waits_a_full_lease_after_a_recent_heartbeat_and_disconnect()
+    {
+        var clock = new FakeTimeProvider();
+        await using var host = await PhoneHomeTestHost.StartAsync(clock);
+        using var socket = WebSocket.CreateFromStream(new MemoryStream(), new WebSocketCreationOptions { IsServer = true });
+        var ticket = host.Directory.Register(host.Registration());
+        var live = host.Directory.AcceptConnect(host.AllowedRunnerId, ticket.Ticket, socket);
+        clock.Advance(TimeSpan.FromSeconds(91));
+        live.NoteHeartbeat(clock.GetUtcNow());
+        RetireAndClear(host, clock);
+        host.Directory.Disconnect(live, "container removed");
+        var replacement = host.Registration(bootId: Guid.NewGuid(), storeId: Guid.NewGuid());
+        clock.Advance(TimeSpan.FromSeconds(89));
+        RefuseStore(host, replacement);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        host.Directory.Register(replacement).RunnerStoreId.ShouldBe(replacement.RunnerStoreId);
     }
 
     [Test]
