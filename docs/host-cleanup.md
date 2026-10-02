@@ -10,7 +10,12 @@ The branch contains a virtual-facts policy/executor seam, a read-only worktree
 classifier, attention DTO/client presentation, ASCII-only `dev-aspire.ps1`, and the additive
 `20261002145938_AddHostCleanup` migration. Standalone services persist metadata-only receipts,
 reject changed replays, retain pending invalidation after event failure, page board-scoped reports,
-and project backlog, pressure and expired holds. These services are not registered in the HTTP,
+and project backlog, pressure and expired holds. A receipt older than one day is retained as an
+incomplete observation; it cannot qualify or clear backlog. The receipt candidate list is snapshotted
+before any database await, so its hash and stored rows cannot diverge through caller mutation.
+The standalone maintenance store/service publishes a durable storage-scoped epoch and uses
+compare-and-swap for one bounded operation. Pending intent blocks admission; uncertain custody
+requires a positive injected probe, with no TTL expiry. These services are not registered in the HTTP,
 scheduler or runner graph. Worktree inventory rows never confer deletion
 authority. The classifier has no repository mutation lease, Git mutation, or retirement dependency.
 These facts do **not** establish the plan's full transitive no-lease invariant; the scheduled call
@@ -29,6 +34,21 @@ Schema tests first failed at named assertions on the baseline. Fifteen report te
 against neutral compiling services before implementation. The generated Designer model body is
 identical to the snapshot; upgrading from `AddAgentTaskEventInputBody` preserves existing task
 and event/InputBody rows. This is not acceptance of missing CP-3 cases or operational delivery.
+
+The next maintenance/immutability red round at `291800e69ebfa51a726b128765f68c0667b8f446`
+executed 33: 23 passed and ten named assertions failed. After implementation at
+`e66ade5474470b1f21bad0e315062cdc3789aa02`, all 33 passed (CP-3 still exited 3 on Min=56).
+The delayed-receipt regression at `cf2c147110aefe83a0a834f49bf8e2fb252bf3d1` executed 34:
+33 passed and the named `C826.delayed-recovery-cannot-clear-backlog` assertion failed.
+Its production fix and final ordinary verification are recorded in the task report.
+
+Current CP-3 roster: zero of 14 planned orchestration cases plus two schema tests; 15 of 20
+planned report cases plus two receipt regression tests; nine of ten maintenance cases;
+six of twelve worktree-inventory cases. Total 34 = 30 planned + four supplemental, leaving
+26 planned cases missing. The frozen floor remains 56; a completed expanded roster would be 60.
+The maintenance tests prove persisted decisions and CAS, including a paused inventory scan,
+not a live native syscall, repository lease, restart, deploy or land caller. In particular
+`Land_waits_only_for_bounded_inflight_delete` remains unimplemented.
 
 S2's 40 virtual compatibility ports and pre-move run are still pending; no shared checkpoint
 files have moved. CARD-0885's repeat tool changes remain intact. S4 transport/store/packaging,

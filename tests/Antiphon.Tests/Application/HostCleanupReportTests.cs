@@ -105,9 +105,10 @@ public sealed class HostCleanupReportTests
         await f.IngestAsync(f.Receipt(daily: false));
         await f.IngestAsync(f.Receipt(daily: false));
         Backlog(await f.AttentionAsync()).ShouldBeFalse("C826.one-backlog-day");
+        f.Clock.UtcNow = new DateTimeOffset(2026, 10, 2, 12, 0, 0, TimeSpan.Zero);
         await f.IngestAsync(f.Receipt(2));
+        f.Clock.UtcNow = new DateTimeOffset(2026, 10, 3, 12, 0, 0, TimeSpan.Zero);
         await f.IngestAsync(f.Receipt(3));
-        f.Clock.UtcNow = f.Clock.UtcNow.AddDays(2);
         Backlog(await f.AttentionAsync()).ShouldBeTrue("C826.three-distinct-days");
     }
 
@@ -115,11 +116,14 @@ public sealed class HostCleanupReportTests
     public async Task Missing_day_breaks_backlog_streak()
     {
         await using var f = await HostCleanupServerFixture.CreateAsync();
-        foreach (var day in new[] { 1, 3, 4 }) await f.IngestAsync(f.Receipt(day));
-        f.Clock.UtcNow = f.Clock.UtcNow.AddDays(3);
+        foreach (var day in new[] { 1, 3, 4 })
+        {
+            f.Clock.UtcNow = new DateTimeOffset(2026, 10, day, 12, 0, 0, TimeSpan.Zero);
+            await f.IngestAsync(f.Receipt(day));
+        }
         Backlog(await f.AttentionAsync()).ShouldBeFalse("C826.missing-day-breaks-streak");
+        f.Clock.UtcNow = new DateTimeOffset(2026, 10, 5, 12, 0, 0, TimeSpan.Zero);
         await f.IngestAsync(f.Receipt(5));
-        f.Clock.UtcNow = f.Clock.UtcNow.AddDays(1);
         Backlog(await f.AttentionAsync()).ShouldBeTrue("C826.streak-restarts-after-gap");
     }
 
@@ -127,12 +131,19 @@ public sealed class HostCleanupReportTests
     public async Task Incomplete_inventory_cannot_open_or_clear_backlog()
     {
         await using var f = await HostCleanupServerFixture.CreateAsync();
-        await f.IngestAsync(f.Receipt(1)); await f.IngestAsync(f.Receipt(2));
+        await f.IngestAsync(f.Receipt(1));
+        f.Clock.UtcNow = new DateTimeOffset(2026, 10, 2, 12, 0, 0, TimeSpan.Zero);
+        await f.IngestAsync(f.Receipt(2));
+        f.Clock.UtcNow = new DateTimeOffset(2026, 10, 3, 12, 0, 0, TimeSpan.Zero);
         await f.IngestAsync(f.Receipt(3, complete: false));
         Backlog(await f.AttentionAsync()).ShouldBeFalse("C826.incomplete-cannot-open");
-        foreach (var day in new[] { 4, 5, 6 }) await f.IngestAsync(f.Receipt(day));
+        foreach (var day in new[] { 4, 5, 6 })
+        {
+            f.Clock.UtcNow = new DateTimeOffset(2026, 10, day, 12, 0, 0, TimeSpan.Zero);
+            await f.IngestAsync(f.Receipt(day));
+        }
+        f.Clock.UtcNow = new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero);
         await f.IngestAsync(f.Receipt(7, worktreeBytes: 0, complete: false));
-        f.Clock.UtcNow = f.Clock.UtcNow.AddDays(6);
         Backlog(await f.AttentionAsync()).ShouldBeTrue("C826.incomplete-cannot-clear");
     }
 
@@ -140,11 +151,14 @@ public sealed class HostCleanupReportTests
     public async Task Fresh_below_threshold_inventory_clears_backlog()
     {
         await using var f = await HostCleanupServerFixture.CreateAsync();
-        foreach (var day in new[] { 1, 2, 3 }) await f.IngestAsync(f.Receipt(day));
-        f.Clock.UtcNow = f.Clock.UtcNow.AddDays(2);
+        foreach (var day in new[] { 1, 2, 3 })
+        {
+            f.Clock.UtcNow = new DateTimeOffset(2026, 10, day, 12, 0, 0, TimeSpan.Zero);
+            await f.IngestAsync(f.Receipt(day));
+        }
         Backlog(await f.AttentionAsync()).ShouldBeTrue("C826.threshold-opens");
+        f.Clock.UtcNow = new DateTimeOffset(2026, 10, 4, 12, 0, 0, TimeSpan.Zero);
         await f.IngestAsync(f.Receipt(4, worktreeBytes: 19 * GiB));
-        f.Clock.UtcNow = f.Clock.UtcNow.AddDays(1);
         Backlog(await f.AttentionAsync()).ShouldBeFalse("C826.fresh-below-threshold-clears");
     }
 
@@ -155,8 +169,8 @@ public sealed class HostCleanupReportTests
         f.Settings.BacklogBytes = 7 * GiB; f.Settings.BacklogDays = 2;
         await f.IngestAsync(f.Receipt(worktreeBytes: 7 * GiB));
         Backlog(await f.AttentionAsync()).ShouldBeFalse("C826.configured-first-day");
+        f.Clock.UtcNow = new DateTimeOffset(2026, 10, 2, 12, 0, 0, TimeSpan.Zero);
         await f.IngestAsync(f.Receipt(2, worktreeBytes: 7 * GiB));
-        f.Clock.UtcNow = f.Clock.UtcNow.AddDays(1);
         Backlog(await f.AttentionAsync()).ShouldBeTrue("C826.configured-window-threshold");
     }
 
