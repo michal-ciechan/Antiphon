@@ -1312,6 +1312,8 @@ c849_evidence_dir() {
     sudo -n install -d -o mc -g mc -m 0700 "$CASE_DIR"
 }
 
+# Return 10 for a missing helper, 11 for donor lookup failure. Callers write the
+# receipt in their own shell; write_result here would run inside a substitution.
 c849_image() {
     local image="antiphon-server2/session-testing:${SHA:0:12}"
     if ! docker image inspect "$image" >/dev/null 2>&1; then
