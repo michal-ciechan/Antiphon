@@ -301,6 +301,24 @@ Exercise normal, logically late-ready (fake observation timestamp >10 seconds) a
 
 The marker phase needs a finite observation even when a marker is removed: in the fault subcase provide explicit wrapper stream-drained acknowledgement after releasing the shim, capture readiness earlier, and inspect final log without waiting for the missing text. Ordinary held readiness proves live streaming; the faulty schedule proves the exact marker assertion detects omission. Keep ASCII encoding and the process limiter. S6 waits for CARD-0885/0886 tooling/fixture land before using their final script contract.
 
+#### S7 frozen controls
+
+Roster rechecked: six singleton methods, CP-12=6 and CP-19=30 x 6 per OS. Constructor source is optional System; UTC origin, monotonic origin/frequency and timer creation all use that source. In the existing speed test advance FakeTimeProvider exactly 100 ms and assert UTC and timestamp elapsed both equal 1 second at speed 10. Timer test is incomplete at source 99 ms, complete at 100 ms. Offset Advance changes UTC/timestamp only; it cannot advance source timers. Speed one tests exact 31-second offset and an independently advanced 100-ms source timer. Cancellation observes token at source 99/100 ms, then observes the cancelled wait. Dispose/cancel/drain in finally. Keep positive rounding, zero/infinite timer semantics and existing returned-timer Change behavior; do not introduce a different timer wrapper contract.
+
+| Guard / PC | Detecting method and distinct label | One compiling defect; finite red witness |
+|---|---|---|
+| G-48 / PC-48 | Speed_10_advances_ten_times_real_time / `scaled-utc-100ms-is-1s` | Drop UTC multiplier only; exact 100 ms source step yields 100 ms instead of 1 second. |
+| G-49 / PC-49 | Same / `scaled-timestamp-100ms-is-1s` | Drop timestamp multiplier only; UTC check stays green, elapsed timestamp assertion fails. |
+| G-50 / PC-50 | Delay_on_the_clock_completes_speed_times_sooner / `scaled-timer-due-at-100ms` | Leave dueTime unscaled; immediate task state at source=100 ms stays pending and fails before await. |
+| G-51 / PC-51 | Advance_jumps_now_without_firing_a_pending_delay / `offset-does-not-fire-timer` | Make Advance also advance fake source; pending-delay state fails immediately after offset change. |
+| G-52 / PC-52 | Speed_one_is_an_offset_clock / `speed-one-offset-exact` | Omit offset from UTC calculation; frozen source leaves expected +31 seconds absent. |
+| G-53 / PC-53 | CancelAfter_on_the_clock_is_scaled / `scaled-cancel-at-100ms` | Scale cancellation timer twice; token at source=99 ms is already cancelled and fails its before-boundary label (the same named assertion checks the 99/100 transition as a tuple). |
+| G-54 / PC-54 | Non_positive_speed_is_refused / existing ArgumentOutOfRangeException assertion | Admit speed zero; constructor returns, causing the existing explicit exception assertion to fail. |
+
+### Out of scope
+
+No EF/model/migration or instruction-bundle edits in S1-S7. The bundle guard's approximately 365-character headroom is not consumed. No slow-test allowlist change, live stack restart, model prompt, auth/provider-home access, broad Unit sweep, CARD-0820 filesystem contention repair, CARD-0863 NUL transport change or wholesale legacy Pump migration. Unchanged neighboring real-time tests are retained for regression; this does not certify their scheduling assumptions. S2/S3/S4/S6/S7 need no activation restart; S1/S5 require only separately commissioned server activation after Review/land, never a runner restart for these seams.
+
 ### Stress recipes: fixed workload, honest red/green evidence
 
 CP-13..19 are the **closed diagnostic stress selections** below. For each, take a clean committed pre-fix source and a clean committed post-fix source; retain source SHA, OS, driver SHA, filter, repetition count, 24 owned burner PIDs/start times, actual failures/skips and named first failure. No baseline worktree is created by fetching/rebasing this branch. The caller may commission a fresh source-pinned worktree for baseline; raw old receipts are retained, never overwritten by a successful rerun.
