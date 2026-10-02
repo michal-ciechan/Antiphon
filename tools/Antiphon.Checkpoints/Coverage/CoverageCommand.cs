@@ -10,11 +10,12 @@ public sealed class CoverageCommand
     {
         output ??= Console.Out;
         var report = new PlanCoverageReport { Plan = SafeDisplay(plan) };
+        var inputPath = SafeDisplay(plan);
         try
         {
             if (format is not ("text" or "json")) throw new InvalidDataException("unsupported format");
             root = CanonicalRoot(root);
-            var planPath = Confined(root, plan); var planText = File.ReadAllText(planPath);
+            var planPath = SelectPath(plan); var planText = File.ReadAllText(planPath);
             report.Plan = Relative(root, planPath); report.PlanSha256 = PlanCoverageReport.Hash(planText);
             var imported = PlanTableImporter.ImportFile(planPath);
             if (imported.Manifest is null) throw new InvalidDataException("invalid checkpoint manifest");
@@ -22,7 +23,7 @@ public sealed class CoverageCommand
             var explicitSet = new HashSet<string>(PathComparer());
             foreach (var path in tests ?? [])
             {
-                var canonical = Confined(root, path);
+                var canonical = SelectPath(path);
                 if (!explicitSet.Add(canonical)) throw new InvalidDataException("duplicate explicit source");
                 Add(canonical);
             }
@@ -34,12 +35,12 @@ public sealed class CoverageCommand
                 if (fence) continue;
                 if (Regex.IsMatch(line, @"^#{1,3} ")) scope = Regex.IsMatch(line, @"scope|implementation footprint", RegexOptions.IgnoreCase);
                 if (!scope) continue;
-                foreach (Match match in Regex.Matches(line, @"(?:tests/[A-Za-z0-9._/-]+\.cs)\b")) Add(Confined(root, match.Value));
+                foreach (Match match in Regex.Matches(line, @"(?:tests/[A-Za-z0-9._/-]+\.cs)\b")) Add(SelectPath(match.Value));
                 // Cells listing a directory then short filenames inherit that directory.
                 var prefix = Regex.Match(line, @"tests/[A-Za-z0-9._/-]+/[A-Za-z0-9_]+\.cs");
                 if (prefix.Success)
                     foreach (Match shortName in Regex.Matches(line, @"`([A-Za-z_][A-Za-z0-9_]+\.cs)`"))
-                        Add(Confined(root, Path.Combine(Path.GetDirectoryName(prefix.Value)!, shortName.Groups[1].Value)));
+                        Add(SelectPath(Path.Combine(Path.GetDirectoryName(prefix.Value)!, shortName.Groups[1].Value)));
             }
             foreach (var row in imported.Manifest.Checkpoints)
             {
@@ -59,7 +60,7 @@ public sealed class CoverageCommand
                 var classOperands = segments[3].Split('|').Select(s => s.Trim('(', ')')).ToArray();
                 if (classOperands.Any(s => !Regex.IsMatch(s, @"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\*?$"))) throw new InvalidDataException("unsupported class filter");
                 var build = imported.Manifest.Builds.Single(b => b.Id == row.Build);
-                var project = Confined(root, build.Project, directoryAllowed: true);
+                var project = SelectPath(build.Project, true);
                 var directory = Directory.Exists(project) ? project : Path.GetDirectoryName(project)!;
                 var candidates = ProjectSources(root, directory, selected.Values);
                 var index = new TestAssertionIndex(candidates);
@@ -71,7 +72,7 @@ public sealed class CoverageCommand
                     if (matches.Length == 0) throw new InvalidDataException("unresolved selected class");
                     foreach (var source in matches)
                     {
-                        var path = Confined(root, source.Path);
+                        var path = SelectPath(source.Path);
                         if (!path.StartsWith(directory.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) && !selected.ContainsKey(path))
                             throw new InvalidDataException("linked source requires explicit scope or tests");
                         Add(path);
@@ -79,10 +80,17 @@ public sealed class CoverageCommand
                 }
             }
             if (selected.Count == 0) throw new InvalidDataException("empty source selection");
-            var checklistText = checklist is null ? null : File.ReadAllText(Confined(root, checklist));
+            var checklistText = checklist is null ? null : File.ReadAllText(SelectPath(checklist));
             report = new PlanCoverageAnalyzer().Analyze(report.Plan, planText, selected.Values.OrderBy(s => s.Path, StringComparer.Ordinal).ToArray(), checklistText);
+            string SelectPath(string path, bool directoryAllowed = false)
+            {
+                var full = Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(root, path));
+                inputPath = full.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) ? Relative(root, full) : SafeDisplay(path);
+                return Confined(root, path, directoryAllowed);
+            }
             void Add(string path)
             {
+                inputPath = Relative(root, path);
                 if (!path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("source must be C#");
                 if (!selected.ContainsKey(path)) selected.Add(path, new(Relative(root, path), File.ReadAllText(path)));
             }
@@ -91,7 +99,7 @@ public sealed class CoverageCommand
                                    or System.Xml.XmlException or NotSupportedException)
         {
             report.Invalid = true;
-            report.Diagnostics.Add(new("INPUT_INVALID", Detail: ex is InvalidDataException ? ex.Message : "unreadable or invalid selected path"));
+            report.Diagnostics.Add(new("INPUT_INVALID", TestPath: inputPath, Detail: ex is InvalidDataException ? ex.Message : "unreadable or invalid selected path"));
         }
         catch (Exception)
         {

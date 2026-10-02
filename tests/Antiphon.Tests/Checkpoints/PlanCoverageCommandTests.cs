@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.Checkpoints;
 using Antiphon.Checkpoints.Coverage;
 using Shouldly;
@@ -25,8 +26,12 @@ public sealed class PlanCoverageCommandTests : CheckpointTestBase
         again.ToString().ShouldBe(text.ToString(), "coverage-stable-order");
         var json = new StringWriter(); command.Run(root, world.Plan, format: "json", output: json).ShouldBe(1, "coverage-json-exit");
         json.ToString().ShouldContain("MISSING_LABEL", Case.Sensitive, "coverage-json-decisions");
+        using var firstJson = JsonDocument.Parse(json.ToString());
         File.WriteAllText(world.Source, "class Demo { void Check() { x.ShouldBe(1, \"target-label\"); } }");
         command.Run(root, world.Plan, output: new StringWriter()).ShouldBe(0, "coverage-exit-clean");
+        var changed = new StringWriter(); command.Run(root, world.Plan, format: "json", output: changed);
+        using var nextJson = JsonDocument.Parse(changed.ToString());
+        nextJson.RootElement.GetProperty("inputsSha256").GetString().ShouldNotBe(firstJson.RootElement.GetProperty("inputsSha256").GetString(), "coverage-digest-change");
     }
     [Test]
     public void invalid_inputs_cannot_produce_clean_summary()
@@ -35,6 +40,7 @@ public sealed class PlanCoverageCommandTests : CheckpointTestBase
         var output = new StringWriter();
         new CoverageCommand().Run(root, "missing.md", output: output).ShouldBe(2, "coverage-invalid-never-clean");
         output.ToString().ShouldContain("result=invalid", Case.Sensitive, "coverage-invalid-footer");
+        output.ToString().ShouldContain("testPath=\"missing.md\"", Case.Sensitive, "coverage-read-error-path");
         File.WriteAllText(world.Source, "class Demo { void Check( {");
         new CoverageCommand().Run(root, world.Plan, output: new StringWriter()).ShouldBe(2, "coverage-invalid-syntax");
         new CoverageCommand().Run(root, world.Plan, format: "yaml", output: new StringWriter()).ShouldBe(2, "coverage-invalid-format");

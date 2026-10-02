@@ -20,6 +20,9 @@ public sealed class PlanCoverageAssertionTests
         var wrong = PlanCoverageFixture.Analyze("class Demo { void Check() { var x = \"secret\"; x.ShouldBe(\"secret\"); } }", plan);
         wrong.Diagnostics.ShouldContain(d => d.Code == "MISSING_CANARY" && d.Name == "secret", "coverage-canary-asserted");
         PlanCoverageFixture.Analyze("class Demo { void Check() { json.ShouldNotContain(\"secret\", \"absent\"); } }", plan).ExitCode.ShouldBe(0, "coverage-canary-exclusion");
+        var namespacedPlan = PlanCoverageFixture.Plan("| V-1 | `One.Demo.Check` | check canary `secret` absent |");
+        var decoy = PlanCoverageFixture.Analyze("namespace One { class Demo { void Check() { json.ShouldNotContain(Canary); } } } namespace Two { class Demo { const string Canary = \"secret\"; } }", namespacedPlan);
+        decoy.Diagnostics.ShouldContain(d => d.Code == "MISSING_CANARY", "coverage-canary-namespace");
     }
     [Test]
     public void requires_members_and_collection_predicates()
@@ -46,6 +49,8 @@ public sealed class PlanCoverageAssertionTests
         var plan = PlanCoverageFixture.Plan("| V-1 | `Demo.Check` | label `target-label`; check canary `secret` absent |" );
         var source = "class Demo { void Check() { AssertNoPath(json, \"target-label\"); } static void AssertNoPath(string json, string witness) { foreach (var canary in new[] { \"secret\", \"another\" }) json.ShouldNotContain(canary, witness + \" case\"); } }";
         PlanCoverageFixture.Analyze(source, plan).ExitCode.ShouldBe(0, "coverage-helper-literals");
+        var named = "class Demo { void Check() { AssertNoPath(witness: \"target-label\", json: payload); } static void AssertNoPath(string json, string witness) { json.ShouldNotContain(\"secret\", Case.Sensitive, witness); } }";
+        PlanCoverageFixture.Analyze(named, plan).ExitCode.ShouldBe(0, "coverage-helper-named-arguments");
         PlanCoverageFixture.Analyze(source.Replace("\"target-label\");", "BuildLabel());"), plan).Diagnostics.ShouldContain(d => d.Code == "MISSING_LABEL" || d.Code == "HELPER_UNMAPPED", "coverage-helper-return-opaque");
     }
 }

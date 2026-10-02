@@ -92,7 +92,8 @@ public sealed class TestAssertionIndex
                     for (var i = 0; i < helper.Syntax.ParameterList.Parameters.Count; i++)
                     {
                         var param = helper.Syntax.ParameterList.Parameters[i];
-                        var arg = i < arguments.Count ? arguments[i].Expression : param.Default?.Value;
+                        var named = arguments.FirstOrDefault(a => a.NameColon?.Name.Identifier.ValueText == param.Identifier.ValueText);
+                        var arg = named?.Expression ?? (i < arguments.Count && arguments[i].NameColon is null ? arguments[i].Expression : param.Default?.Value);
                         if (arg is null) continue;
                         var literal = Literals(arg, method.Syntax, call, parameters, new HashSet<string>(), 0);
                         if (literal.Count > 0) bindings[param.Identifier.ValueText] = SyntheticLiterals(literal);
@@ -106,7 +107,7 @@ public sealed class TestAssertionIndex
         }
         finally { stack.Remove(method.Syntax); }
     }
-    private static string OuterClass(SyntaxNode node) => node.Ancestors().OfType<ClassDeclarationSyntax>().LastOrDefault()?.Identifier.ValueText ?? "";
+    private static string OuterClass(SyntaxNode node) => node.Ancestors().OfType<ClassDeclarationSyntax>().LastOrDefault() is ClassDeclarationSyntax outer ? ClassName(outer) : "";
     private static bool HasAssertions(MethodDeclarationSyntax method) => method.DescendantNodes().OfType<InvocationExpressionSyntax>()
         .Any(c => CallName(c).StartsWith("Should", StringComparison.Ordinal) || CallName(c) is "Throw" or "ThrowAsync" || CallName(c).StartsWith("Assert", StringComparison.Ordinal));
     private static string CallName(InvocationExpressionSyntax call) => call.Expression switch

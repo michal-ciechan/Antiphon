@@ -34,8 +34,12 @@ public sealed class PlanCoverageParserTests : CheckpointTestBase
         File.WriteAllText(world.Plan, PlanCoverageFixture.Plan().Replace("Demo*", "Missing*"));
         command.Run(root, world.Plan, [world.Source], output: new StringWriter()).ShouldBe(2, "coverage-scope-missing-selected");
         File.WriteAllText(world.Plan, PlanCoverageFixture.Plan().Replace("`Demo.Check`", "`Check`"));
+        var unique = new StringWriter();
+        command.Run(root, world.Plan, output: unique).ShouldBe(0, "coverage-unqualified-unique");
         File.WriteAllText(world.Source, "partial class Demo { void Check() { x.ShouldBe(1, \"target-label\"); } } partial class Other { void Check() {} }");
-        command.Run(root, world.Plan, [world.Source], output: new StringWriter()).ShouldBe(1, "coverage-method-ambiguous");
+        var ambiguous = new StringWriter();
+        command.Run(root, world.Plan, [world.Source], output: ambiguous).ShouldBe(1, "coverage-method-ambiguous");
+        ambiguous.ToString().ShouldContain("METHOD_UNMAPPED", Case.Sensitive, "coverage-method-ambiguity-visible");
     }
     [Test]
     public void maps_checklist_without_erasing_legacy_requirements()

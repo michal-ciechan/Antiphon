@@ -44,6 +44,8 @@ public sealed class PlanCoverageReader
                 var body = current.StartsWith("PC-", StringComparison.Ordinal) && cells.Count > 2 ? cells[^1] : line;
                 var spans = CodeSpans(body, i + 1, report);
                 var method = spans.Select(s => NormalizeMethod(s.Value)).FirstOrDefault(s => s is not null && (current.StartsWith("PC-", StringComparison.Ordinal) ? s.Contains('.') : s.Contains('.') || s.Contains('_') || Regex.IsMatch(body, @"^V-\d+\s+`"))) ?? "";
+                if (!current.StartsWith("PC-", StringComparison.Ordinal) && method.Length == 0 && cells.Count > 1)
+                    method = CodeSpans(cells[1], i + 1, report).Select(s => NormalizeMethod(s.Value)).FirstOrDefault(s => s is not null && !s.EndsWith("Tests", StringComparison.Ordinal)) ?? "";
                 if (current.StartsWith("PC-", StringComparison.Ordinal) && method.Length == 0)
                     method = "@" + Regex.Match(body, @"\bV-\d+\b").Value;
                 rows.Add(new(current, body, i + 1, method, current.StartsWith("PC-", StringComparison.Ordinal), line.IndexOf(body, StringComparison.Ordinal)));
@@ -76,6 +78,7 @@ public sealed class PlanCoverageReader
                 var before = row.Text[..span.Start]; var after = row.Text[span.End..];
                 if (!row.Pc && (Regex.IsMatch(before, @"PC-\d+[A-Z]? targets\b", RegexOptions.IgnoreCase) || Regex.IsMatch(after, @"^\s*label forms\b", RegexOptions.IgnoreCase) || row.Text.Contains("explicit internal cases", StringComparison.Ordinal)))
                     report.Exclusions.Add(new("EXAMPLE", row.Line, span.Column, row.Id, test, name, Detail: "case key or input label form"));
+                else if (row.Pc && Regex.IsMatch(before, @"(?:code|value|reason|expected|enum|constant)\s*$", RegexOptions.IgnoreCase)) Add("value", name, span.Column);
                 else if (row.Pc || Regex.IsMatch(before, @"(?:label|witness|assertion|fails at)\s*$", RegexOptions.IgnoreCase)
                     || Regex.IsMatch(name, @"^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$") && (row.Text.StartsWith('|') || before.TrimEnd().EndsWith('(')) && !Regex.IsMatch(before, @"check|absent|canary", RegexOptions.IgnoreCase)) Add("label", name, span.Column);
                 else if (Regex.IsMatch(before, @"canary\s*$", RegexOptions.IgnoreCase) || Regex.IsMatch(before, @"(?:check|exclude|exclusion|omit|canary)\b[^.;]*$", RegexOptions.IgnoreCase) && Regex.IsMatch(after, @"absent|exclude|canary", RegexOptions.IgnoreCase)) Add("canary", name, span.Column);
