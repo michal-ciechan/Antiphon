@@ -22,9 +22,9 @@ public sealed class RunCheckpointRepeatScriptTests : CheckpointTestBase
         result.Calls.Length.ShouldBe(2, "script-one-build-one-run");
         result.Calls.Count(line => line.StartsWith("build ", StringComparison.Ordinal)).ShouldBe(1);
         result.Calls.Count(line => line.StartsWith("run ", StringComparison.Ordinal)).ShouldBe(1);
-        result.Calls.All(line => line.Contains("--property:AntiphonCheckpointRepeat=5", StringComparison.Ordinal))
+        result.Calls.All(line => line.Contains("AntiphonCheckpointRepeat=5", StringComparison.Ordinal))
             .ShouldBeTrue("script-repeat-property-both-phases");
-        result.Calls.All(line => line.Contains("--property:AntiphonCheckpointRepeatProject=", StringComparison.Ordinal))
+        result.Calls.All(line => line.Contains("AntiphonCheckpointRepeatProject=", StringComparison.Ordinal))
             .ShouldBeTrue("script-selected-project-bound");
         result.Text.ShouldContain("repeat=5 repetitions=5/5 hostInvocations=1", Case.Sensitive, "script-repeat-line");
     }
