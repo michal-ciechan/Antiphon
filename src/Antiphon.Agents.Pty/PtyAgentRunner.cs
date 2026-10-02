@@ -149,6 +149,8 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         // with the argument vector rewritten through the shim before anything spawns.
         if (custody is not null && OperatingSystem.IsWindows() && backend.Backend != PtyBackend.ModernConPty)
             throw new PlatformNotSupportedException("verification_custody_unsupported_backend");
+        if (!OperatingSystem.IsWindows())
+            UnixPtyArgvGuard.VerifyOrThrow(app, commandLine);
         if (custody is not null && !OperatingSystem.IsWindows())
         {
             _containment = CustodyContainment ?? new LinuxCgroupContainment(custody.ContainerId);
@@ -158,6 +160,8 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
             app = placed.App;
             commandLine = options.CommandLine;
         }
+        if (!OperatingSystem.IsWindows())
+            UnixPtyArgvGuard.VerifyOrThrow(options.App, options.CommandLine);
         _custody = custody;
 
         // CARD-0101: aa1c8f1 corrected the escaping in ModernConPtyConnection only. Porta's own
@@ -175,7 +179,7 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         // does not, and splits there instead. So the inbox backend has always been correct for .NET
         // children and shredding for the child that actually matters, and the one test covering it
         // could not see the difference.
-        if (backend.Backend != PtyBackend.ModernConPty && !options.VerbatimCommandLine)
+        if (OperatingSystem.IsWindows() && backend.Backend != PtyBackend.ModernConPty && !options.VerbatimCommandLine)
         {
             var escaped = commandLine.Select(ModernConPtyConnection.EscapeArgument).ToArray();
             LaunchArgvGuard.VerifyOrThrow(

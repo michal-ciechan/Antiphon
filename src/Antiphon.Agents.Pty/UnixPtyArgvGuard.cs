@@ -13,6 +13,9 @@ public static class UnixPtyArgvGuard
 {
     public static void VerifyOrThrow(string app, IReadOnlyList<string> arguments)
     {
-        // Test-first seam. The native-launch implementation follows the red checkpoint.
+        if (app.Contains('\0')) throw new UnixPtyArgvException(0);
+        for (var index = 0; index < arguments.Count; index++)
+            if (arguments[index].Contains('\0'))
+                throw new UnixPtyArgvException(index + 1);
     }
 }
