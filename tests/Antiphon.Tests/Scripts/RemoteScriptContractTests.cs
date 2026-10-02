@@ -2043,10 +2043,15 @@ public sealed class RemoteScriptContractTests
             build_server2_images() { :; }; c849_prepare() { :; }; c849_require_ready() { :; }
             ensure_build_slots_broker() { echo DEPLOY_REACHED_BROKER; exit 0; }
             """ + "\n" + Block(remote, "c849_observe_volume") + "\n" +
-            Block(remote, "c849_budget_gate") + "\n" + Block(remote, "case_deploy_temp_runner") + "\n" + """
+            Block(remote, "c849_budget_gate") + "\n" + Block(remote, "c849_prune_validate_tree") + "\n" +
+            Block(remote, "case_deploy_temp_runner") + "\n" + """
             ( c849_observe_volume "$C849_PACKAGES" nuget-packages 10737418240 ) > "$root/observe" 2>&1
             printf 'OBSERVE_EXIT=%s\n' "$?"
             cat "$root/observe"
+            mountpoint="$root/docker/volumes/$C849_PACKAGES/_data"
+            ( c849_prune_validate_tree "$mountpoint" "$mountpoint" ) > "$root/prune" 2>&1
+            printf 'PRUNE_EXIT=%s\n' "$?"
+            cat "$root/prune"
             ( case_deploy_temp_runner ) > "$root/deploy" 2>&1
             printf 'DEPLOY_EXIT=%s\n' "$?"
             cat "$root/deploy"
@@ -2055,6 +2060,8 @@ public sealed class RemoteScriptContractTests
             """);
         output.Contains("OBSERVE_EXIT=0", StringComparison.Ordinal)
             .ShouldBeTrue("CacheTargetInvalid: observe must traverse the Docker volume through sudo");
+        output.Contains("PRUNE_EXIT=0", StringComparison.Ordinal)
+            .ShouldBeTrue("CacheTargetInvalid: prune must validate the Docker volume through sudo");
         output.Contains("DEPLOY_EXIT=0", StringComparison.Ordinal)
             .ShouldBeTrue("CacheTargetInvalid: deploy-temp must pass its volume observation through sudo");
         output.ShouldContain("DEPLOY_REACHED_BROKER");
@@ -2083,7 +2090,7 @@ public sealed class RemoteScriptContractTests
             foreach (var line in Block(source, name).Split('\n').Select(x => x.Trim()))
             {
                 if (!Regex.IsMatch(line, @"\$(mountpoint|path|resolved|docker_root|C849_COLD_DOCKER_ROOT)(\b|[}""/])")) continue;
-                if (Regex.IsMatch(line, @"(?<!sudo -n )\b(realpath|stat|readlink|ls|test)\s+(?:-[^ ]+\s+)*(?:--\s+)?""?\$(?:mountpoint|path|resolved|docker_root|C849_COLD_DOCKER_ROOT)\b")
+                if (Regex.IsMatch(line, @"(?<!sudo -n )\b(realpath|stat|readlink|ls|test)\b[^;&|]*\$(?:mountpoint|path|resolved|docker_root|C849_COLD_DOCKER_ROOT)\b")
                     || Regex.IsMatch(line, @"\[\s*!?\s*-[Lde]\s+""?\$(?:mountpoint|path|resolved|docker_root|C849_COLD_DOCKER_ROOT)\b"))
                     violations.Add(name + ": " + line);
             }
