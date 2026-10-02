@@ -321,6 +321,10 @@ outside `TranscriptTailer`.
 
 ## 5. Grok (xAI Grok Build TUI)
 
+**Runner image (CARD-0986).** The Linux runner image pins Grok 1.0.41, matching
+the captured 120x30 startup dashboard below. Other CLI versions require separate
+qualification before changing the pin.
+
 **Startup readiness (CARD-0778).** The Grok adapter waits for the captured
 120x30 Grok Build 1.0.41 dashboard with an empty complete composer box, a blank
 status row two rows above it, and the exact enabled hint

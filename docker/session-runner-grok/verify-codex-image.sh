@@ -9,6 +9,7 @@
 set -u
 
 CODEX_VERSION=0.160.0
+GROK_VERSION=1.0.41
 PACKAGE_ROOT=/opt/codex/$CODEX_VERSION/package
 VENDOR=$PACKAGE_ROOT/vendor/x86_64-unknown-linux-musl
 # Regular files in @openai/codex@0.160.0-linux-x64 (measured from the pinned tarball).
@@ -59,6 +60,19 @@ case "$row" in
     [ "$out" = "codex-cli $CODEX_VERSION" ] || result fail "stdout=[$out]"
     [ ! -s "$PROBE_HOME/version.err" ] || result fail "stderr=[$(head -c 300 "$PROBE_HOME/version.err")]"
     result ok "codex-cli $CODEX_VERSION as uid 1654 home=$PROBE_HOME/codex"
+    ;;
+  grok-version)
+    need_uid 1654
+    mkdir -p "$PROBE_HOME/grok" || result fail "cannot create isolated Grok home"
+    out=$(env HOME=$PROBE_HOME GROK_HOME=$PROBE_HOME/grok /usr/local/bin/grok --version 2>"$PROBE_HOME/grok-version.err")
+    code=$?
+    [ $code -eq 0 ] || result fail "exit=$code"
+    case "$out" in
+      "grok $GROK_VERSION ("*") [stable]") ;;
+      *) result fail "version output does not match pinned Grok $GROK_VERSION stable" ;;
+    esac
+    [ ! -s "$PROBE_HOME/grok-version.err" ] || result fail "unexpected version stderr"
+    result ok "Grok $GROK_VERSION stable as uid 1654 home=$PROBE_HOME/grok"
     ;;
   layout)
     command -v ps >/dev/null 2>&1 || result fail "ps required by codex managed app-server"
@@ -203,7 +217,7 @@ EOF
     result ok "SDK=10.0.401 net9 apphost restore+build+run uid=1654 empty NuGet cache and home"
     ;;
   *)
-    echo "usage: verify-codex-image.sh version|layout|install-readonly|no-baked-auth|fresh-home|trust|config-accepted|preserve-arm <nonce>|preserve-check|net9-offline" >&2
+    echo "usage: verify-codex-image.sh version|grok-version|layout|install-readonly|no-baked-auth|fresh-home|trust|config-accepted|preserve-arm <nonce>|preserve-check|net9-offline" >&2
     exit 2
     ;;
 esac
