@@ -95,7 +95,7 @@ public sealed class UnixPtyArgvTests
             placement.Original!.App.ShouldBe(Node);
             placement.Original.CommandLine.ShouldBe(original);
             (await fixture.CaptureAsync()).ShouldBe(new[] { "placed-sentinel", original[1], original[2] }, "tracked-native-argv-exact");
-            journal.Events.ShouldBe(new[] { "start", "track" }, "tracked-journal-order");
+            journal.Events.ToArray().ShouldBe(new[] { "start", "track" }, "tracked-journal-order");
         }
         finally { await NativeFixture.StopAsync(runner); }
     }
