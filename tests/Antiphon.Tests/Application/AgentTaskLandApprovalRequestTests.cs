@@ -95,8 +95,9 @@ public class AgentTaskLandApprovalRequestTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
         var land = CreateLand(db, new AgentTaskLandQueue(), Frozen(DateTime.UtcNow));
-        var owner = await SeedSucceededWorktreeAsync(db);
-        var other = await SeedSucceededWorktreeAsync(db, cardId: owner.CardId);
+        var card = await SeedCardAsync(db);
+        var owner = await SeedSucceededWorktreeAsync(db, card);
+        var other = await SeedSucceededWorktreeAsync(db, card);
         var evidence = await SeedReviewAsync(db, other, ShaB);
         var error = await Should.ThrowAsync<ConflictException>(() => land.RequestAsync(owner.Id,
             new LandAgentTaskRequest(ExpectedSourceSha: ShaB, ReviewEvidenceId: evidence.Id), CancellationToken.None));
@@ -134,8 +135,9 @@ public class AgentTaskLandApprovalRequestTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
         var land = CreateLand(db, new AgentTaskLandQueue(), Frozen(DateTime.UtcNow));
-        var owner = await SeedSucceededWorktreeAsync(db, Guid.NewGuid());
-        var source = await SeedSucceededWorktreeAsync(db, owner.CardId);
+        var card = await SeedCardAsync(db);
+        var owner = await SeedSucceededWorktreeAsync(db, card);
+        var source = await SeedSucceededWorktreeAsync(db, card);
         var evidence = await SeedReviewAsync(db, owner, ShaB);
         var error = await Should.ThrowAsync<ConflictException>(() => land.RequestAsync(owner.Id,
             new LandAgentTaskRequest(ExpectedSourceSha: ShaB, ReviewEvidenceId: evidence.Id,
@@ -153,8 +155,9 @@ public class AgentTaskLandApprovalRequestTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
         var land = CreateLand(db, new AgentTaskLandQueue(), Frozen(DateTime.UtcNow));
-        var owner = await SeedSucceededWorktreeAsync(db, Guid.NewGuid());
-        var sibling = await SeedSucceededWorktreeAsync(db, owner.CardId);
+        var card = await SeedCardAsync(db);
+        var owner = await SeedSucceededWorktreeAsync(db, card);
+        var sibling = await SeedSucceededWorktreeAsync(db, card);
         var evidence = await SeedReviewAsync(db, sibling, ShaB);
         var error = await Should.ThrowAsync<ConflictException>(() => land.RequestAsync(owner.Id,
             new LandAgentTaskRequest(ExpectedSourceSha: ShaB, ReviewEvidenceId: evidence.Id), CancellationToken.None));
@@ -341,6 +344,23 @@ public class AgentTaskLandApprovalRequestTests
 
     private static string FullRef(string? branch) =>
         branch is null ? "refs/heads/missing" : branch.StartsWith("refs/", StringComparison.Ordinal) ? branch : "refs/heads/" + branch;
+
+    private static async Task<Guid> SeedCardAsync(AppDbContext db)
+    {
+        var now = DateTime.UtcNow;
+        var project = Guid.NewGuid(); var board = Guid.NewGuid();
+        var column = Guid.NewGuid(); var card = Guid.NewGuid();
+        db.Projects.Add(new Project { Id = project, Name = "land approval",
+            LocalRepositoryPath = "C:/tmp/land-approval", CreatedAt = now, UpdatedAt = now });
+        db.Boards.Add(new Board { Id = board, ProjectId = project, Name = "land approval",
+            CreatedAt = now, UpdatedAt = now });
+        db.BoardColumns.Add(new BoardColumn { Id = column, BoardId = board, Name = "Ready",
+            StateKey = "ready", CreatedAt = now, UpdatedAt = now });
+        db.Cards.Add(new Card { Id = card, BoardId = board, BoardColumnId = column,
+            Identifier = "CARD-0788", Title = "land approval", CreatedAt = now, UpdatedAt = now });
+        await db.SaveChangesAsync();
+        return card;
+    }
 
     private static async Task<StageOutcome> SeedReviewAsync(AppDbContext db, AgentTask subject, string sha,
         StageOutcomeKind outcome = StageOutcomeKind.Clean, string? sourceRef = null, string? repository = null,
