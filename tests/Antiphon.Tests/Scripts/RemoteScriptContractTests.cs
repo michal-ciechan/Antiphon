@@ -1976,6 +1976,121 @@ public sealed class RemoteScriptContractTests
 
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Deploy_temp_observes_inaccessible_docker_mountpoints_with_sudo()
+    {
+        var remote = Remote();
+        var output = LinuxShell("set -u\n" + """
+            root="$(mktemp -d /tmp/c849-privilege-XXXXXXXX)"
+            printf 'C849_PRIVILEGE_ROOT=%s\n' "$root"
+            trap '[[ "$root" == /tmp/c849-privilege-???????? && -d "$root" ]] && rm -rf -- "$root"' EXIT
+            mkdir -p "$root/docker/volumes" "$root/case" "$root/server2" "$root/state/grok"
+            CASE_DIR="$root/case"; SERVER2_ROOT="$root/server2"
+            SERVER2_ENV="$root/main.env"; SERVER2_TEMP_ENV="$root/temp.env"
+            printf 'parent\n' > "$SERVER2_ENV"
+            C849_PACKAGES=antiphon-runner-cache-nuget-packages
+            C849_SCRATCH=antiphon-runner-cache-nuget-scratch
+            C849_NPM=antiphon-runner-cache-npm-content
+            for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+                mkdir -p "$root/docker/volumes/$name/_data"
+            done
+            SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+            HOST_PROJECT=main; TEMP_PROJECT=temp; LANE=host; CASE=deploy-temp-runner
+            C604_SERVER_ORIGIN=https://example.invalid
+            DEPLOY_KEY=x; PHONE_HOME_SECRET=x; CLAUDE_OAUTH_TOKEN_PATH=x
+            GIT_IDENTITY_PATH=x; CODEX_HOME_PATH=x
+            require_lane() { [ "$1" = host ]; }
+            write_result() { printf 'DIAGNOSIS=%s\n' "$2"; exit "$3"; }
+            realpath() {
+                if [[ "$*" == *"$root/docker/"* && "${PRIVILEGED:-0}" != 1 ]]; then
+                    printf 'DENIED unprivileged realpath\n' >> "$root/access"
+                    return 13
+                fi
+                command realpath "$@"
+            }
+            sudo() {
+                [ "$1" = -n ] && shift
+                printf '%s %s\n' "$1" "${*: -1}" >> "$root/elevated"
+                if [ "$1" = df ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\ndocker 30000000 1 29999999 1%% /docker\n'; return 0; fi
+                if [ "$1" = stat ]; then echo 1654:1654:700; return 0; fi
+                PRIVILEGED=1 "$@"
+            }
+            docker() {
+                local name="${@: -1}" format=''
+                case "$1:$2" in
+                    info:*) printf '%s\n' "$root/docker" ;;
+                    volume:inspect)
+                        if [ "${3:-}" = -f ]; then format="$4"; fi
+                        if [ "$name" = antiphon-runner_runner-state ]; then
+                            printf '%s\n' "$root/state"; return 0
+                        fi
+                        case "$format" in
+                            *'.Driver'*) echo local ;;
+                            *'.Options'*) echo '{}' ;;
+                            *'io.antiphon.owner'*) echo server2-runner ;;
+                            *'io.antiphon.cache-schema'*) echo 1 ;;
+                            *'io.antiphon.cache-role'*)
+                                case "$name" in
+                                    "$C849_PACKAGES") echo nuget-packages ;;
+                                    "$C849_SCRATCH") echo nuget-scratch ;;
+                                    "$C849_NPM") echo npm-content ;;
+                                esac ;;
+                            *'.Mountpoint'*) printf '%s\n' "$root/docker/volumes/$name/_data" ;;
+                        esac ;;
+                    *) return 2 ;;
+                esac
+            }
+            ensure_checkout() { :; }; ensure_runner_boot_files() { :; }
+            build_server2_images() { :; }; c849_prepare() { :; }; c849_require_ready() { :; }
+            ensure_build_slots_broker() { echo DEPLOY_REACHED_BROKER; exit 0; }
+            """ + "\n" + Block(remote, "c849_observe_volume") + "\n" +
+            Block(remote, "c849_budget_gate") + "\n" + Block(remote, "case_deploy_temp_runner") + "\n" + """
+            ( c849_observe_volume "$C849_PACKAGES" nuget-packages 10737418240 ) > "$root/observe" 2>&1
+            printf 'OBSERVE_EXIT=%s\n' "$?"
+            cat "$root/observe"
+            ( case_deploy_temp_runner ) > "$root/deploy" 2>&1
+            printf 'DEPLOY_EXIT=%s\n' "$?"
+            cat "$root/deploy"
+            printf 'ELEVATED_REALPATH=%s\n' "$(grep -c '^realpath .*docker/volumes/' "$root/elevated" 2>/dev/null || true)"
+            printf 'ELEVATED_SYMLINK=%s\n' "$(grep -c '^test .*docker/volumes/' "$root/elevated" 2>/dev/null || true)"
+            """);
+        output.ShouldContain("OBSERVE_EXIT=0", "CacheTargetInvalid: observe must traverse the Docker volume through sudo");
+        output.ShouldContain("DEPLOY_EXIT=0", "CacheTargetInvalid: deploy-temp must pass its volume observation through sudo");
+        output.ShouldContain("DEPLOY_REACHED_BROKER");
+        output.ShouldNotContain("DENIED unprivileged realpath");
+        Regex.Match(output, @"ELEVATED_REALPATH=(\d+)").Groups[1].Value.ShouldNotBe("0");
+        Regex.Match(output, @"ELEVATED_SYMLINK=(\d+)").Groups[1].Value.ShouldNotBe("0");
+    }
+
+    [Test]
+    public void C849_Docker_volume_paths_have_no_bare_host_reads()
+    {
+        var remote = Remote();
+        BareDockerRootReads(remote).ShouldBeEmpty();
+        var scratch = remote.Replace("c849_observe_volume() {", "c849_observe_volume() {\n    realpath -e -- \"$mountpoint\"", StringComparison.Ordinal);
+        BareDockerRootReads(scratch).ShouldContain("c849_observe_volume: realpath -e -- \"$mountpoint\"");
+        File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "c590-remote.sh")).ShouldBe(remote);
+    }
+
+    private static List<string> BareDockerRootReads(string source)
+    {
+        var violations = new List<string>();
+        foreach (var name in new[] { "c849_observe_volume", "c849_cold_volume_facts", "c849_cold_proof",
+                     "c849_cold_probe", "c849_prune_validate_tree", "c849_preview", "c849_budget_gate",
+                     "case_deploy_temp_runner" })
+        {
+            foreach (var line in Block(source, name).Split('\n').Select(x => x.Trim()))
+            {
+                if (!Regex.IsMatch(line, @"\$(mountpoint|path|resolved|docker_root|C849_COLD_DOCKER_ROOT)(\b|[}""/])")) continue;
+                if (Regex.IsMatch(line, @"(?<!sudo -n )\b(realpath|stat|readlink|ls|test)\s+(?:-[^ ]+\s+)*(?:--\s+)?""?\$(?:mountpoint|path|resolved|docker_root|C849_COLD_DOCKER_ROOT)\b")
+                    || Regex.IsMatch(line, @"\[\s*!?\s*-[Lde]\s+""?\$(?:mountpoint|path|resolved|docker_root|C849_COLD_DOCKER_ROOT)\b"))
+                    violations.Add(name + ": " + line);
+            }
+        }
+        return violations;
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public void C849_Prune_preview_is_read_only_and_bounded()
     {
         var text = Remote();
