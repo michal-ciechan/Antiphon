@@ -67,6 +67,7 @@
     <ProjectReference Include="..\..\tools\Antiphon.Checkpoints\Antiphon.Checkpoints.csproj" />
     <ProjectReference Include="..\Antiphon.Checkpoints.LifecycleHost\Antiphon.Checkpoints.LifecycleHost.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.Checkpoints.FilterHost\Antiphon.Checkpoints.FilterHost.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\Antiphon.Checkpoints.RepeatHost\Antiphon.Checkpoints.RepeatHost.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\src\Antiphon.Messaging.Client.Testing\Antiphon.Messaging.Client.Testing.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.Messaging.Gateway\Antiphon.Messaging.Gateway.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.Messaging.Slack\Antiphon.Messaging.Slack.csproj" />
@@ -112,19 +113,28 @@
              Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
       <Output TaskParameter="TargetOutputs" ItemName="_FilterHostTarget" />
     </MSBuild>
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.RepeatHost\Antiphon.Checkpoints.RepeatHost.csproj"
+             Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
+      <Output TaskParameter="TargetOutputs" ItemName="_RepeatHostTarget" />
+    </MSBuild>
     <PropertyGroup>
       <_LifecycleHostDir>@(_LifecycleHostTarget->'%(RootDir)%(Directory)')</_LifecycleHostDir>
       <_FilterHostDir>@(_FilterHostTarget->'%(RootDir)%(Directory)')</_FilterHostDir>
+      <_RepeatHostDir>@(_RepeatHostTarget->'%(RootDir)%(Directory)')</_RepeatHostDir>
     </PropertyGroup>
     <ItemGroup>
       <_LifecycleHostFiles Include="$(_LifecycleHostDir)**\*" />
       <_FilterHostFiles Include="$(_FilterHostDir)**\*" />
+      <_RepeatHostFiles Include="$(_RepeatHostDir)**\*" />
     </ItemGroup>
     <Copy SourceFiles="@(_LifecycleHostFiles)"
           DestinationFiles="@(_LifecycleHostFiles->'$(OutDir)checkpoint-lifecycle-host/%(RecursiveDir)%(Filename)%(Extension)')"
           SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(_FilterHostFiles)"
           DestinationFiles="@(_FilterHostFiles->'$(OutDir)checkpoint-filter-host/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_RepeatHostFiles)"
+          DestinationFiles="@(_RepeatHostFiles->'$(OutDir)checkpoint-repeat-host/%(RecursiveDir)%(Filename)%(Extension)')"
           SkipUnchangedFiles="true" />
   </Target>
 
