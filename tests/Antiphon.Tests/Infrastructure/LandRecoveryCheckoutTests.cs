@@ -24,7 +24,13 @@ public sealed class LandRecoveryCheckoutTests
         await f.RequiredAsync(f.Source, "commit", "-m", "old text tip");
         var local = (await f.RequiredAsync(f.Source, "rev-parse", "HEAD")).Trim();
         await f.RequiredAsync(f.Source, "config", "core.autocrlf", "true");
-        await f.RequiredAsync(f.Source, "reset", "--hard", local);
+        foreach (var relative in (await f.RequiredAsync(f.Source, "ls-files", "-z"))
+                     .Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var full = Path.Combine(f.Source, relative.Replace('/', Path.DirectorySeparatorChar));
+            var lf = (await File.ReadAllTextAsync(full)).Replace("\r\n", "\n", StringComparison.Ordinal);
+            await File.WriteAllTextAsync(full, lf.Replace("\n", "\r\n", StringComparison.Ordinal));
+        }
         (await File.ReadAllTextAsync(feature)).Contains("\r\n", StringComparison.Ordinal)
             .ShouldBeTrue($"G.{attributes}.FixtureCheckedOutCrLf");
         var reviewedTree = Path.Combine(f.Root, "trees", "reviewed");

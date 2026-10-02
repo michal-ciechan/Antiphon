@@ -67,7 +67,7 @@ public sealed class AgentTaskLandHalfResetWindowsTests
         var (local, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
         await h.Fixture.RequiredAsync(h.Fixture.Source, "config", "core.autocrlf", "true");
         var file = Path.Combine(h.Fixture.Source, "feature.txt");
-        await h.Fixture.RequiredAsync(h.Fixture.Source, "reset", "--hard", local);
+        await ConvertTrackedFixtureFilesToCrLfAsync(h.Fixture);
         (await File.ReadAllTextAsync(file)).Contains("\r\n", StringComparison.Ordinal)
             .ShouldBeTrue("W.NativeFixtureCheckedOutCrLf");
         (await h.Fixture.Git.RunAsync(h.Fixture.Source,
@@ -90,7 +90,7 @@ public sealed class AgentTaskLandHalfResetWindowsTests
         var (editedLocal, editedReviewed, editedEvidence) = await editedFixture.SeedReviewedDescendantAsync();
         await e.Fixture.RequiredAsync(e.Fixture.Source, "config", "core.autocrlf", "true");
         var editedFile = Path.Combine(e.Fixture.Source, "feature.txt");
-        await e.Fixture.RequiredAsync(e.Fixture.Source, "reset", "--hard", editedLocal);
+        await ConvertTrackedFixtureFilesToCrLfAsync(e.Fixture);
         var before = (await File.ReadAllTextAsync(editedFile)).Replace("\r\n", "\n", StringComparison.Ordinal);
         var interrupted = await e.RequestAsync(expectedSourceSha: editedReviewed,
             reviewEvidenceId: editedEvidence, recoverReviewedSource: true);
@@ -98,6 +98,9 @@ public sealed class AgentTaskLandHalfResetWindowsTests
         var editConflict = await Should.ThrowAsync<DbUpdateConcurrencyException>(() => e.RunQueuedAsync());
         await e.FailAsync(editConflict);
         await File.WriteAllTextAsync(editedFile, before);
+        (await e.Fixture.Git.RunAsync(e.Fixture.Source,
+            ["diff", "--quiet", editedLocal, "--"], CancellationToken.None)).ExitCode
+            .ShouldBe(0, "W.RawEditNormalizesToOldBlob");
         var next = await e.RequestAsync(expectedSourceSha: editedReviewed, reviewEvidenceId: editedEvidence,
             recoverReviewedSource: true);
         await e.RunQueuedAsync();
@@ -129,6 +132,17 @@ public sealed class AgentTaskLandHalfResetWindowsTests
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("CP-5 requires native Windows Git and NTFS path semantics");
+    }
+
+    private static async Task ConvertTrackedFixtureFilesToCrLfAsync(LandingGitFixture fixture)
+    {
+        foreach (var relative in (await fixture.RequiredAsync(fixture.Source, "ls-files", "-z"))
+                     .Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var full = Path.Combine(fixture.Source, relative.Replace('/', Path.DirectorySeparatorChar));
+            var lf = (await File.ReadAllTextAsync(full)).Replace("\r\n", "\n", StringComparison.Ordinal);
+            await File.WriteAllTextAsync(full, lf.Replace("\n", "\r\n", StringComparison.Ordinal));
+        }
     }
 
     private static async Task<(string Local, string Reviewed, Guid Evidence)> InterruptAsync(
