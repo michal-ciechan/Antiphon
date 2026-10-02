@@ -13,6 +13,74 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentTaskLandHalfResetTests
 {
     [Test]
+    public async Task C883_IgnoredFileDoesNotHalfResetOrdinaryAdoption()
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (_, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
+        var ignored = Path.Combine(h.Fixture.Source, "obj", "build.cache");
+        Directory.CreateDirectory(Path.GetDirectoryName(ignored)!);
+        await File.WriteAllTextAsync(ignored, "owned cache\n");
+        var request = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        await h.RunQueuedAsync();
+        await using var db = h.CreateContext();
+        var row = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
+        row.SourceRefusalReason.ShouldBeNull("H.IgnoredOrdinaryAdoptionLands");
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim()
+            .ShouldBe(reviewed, "H.IgnoredOrdinaryHeadAligned");
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "write-tree")).Trim()
+            .ShouldBe((await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", reviewed + "^{tree}")).Trim(),
+                "H.IgnoredOrdinaryIndexAligned");
+    }
+
+    [Test]
+    public async Task C883_DirtyFreshRequestAtOldHeadKeepsSourceDirty()
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (local, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
+        var file = Path.Combine(h.Fixture.Source, "feature.txt");
+        await File.WriteAllTextAsync(file, "real edit\n");
+        var request = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        await h.RunQueuedAsync();
+        await using var db = h.CreateContext();
+        var row = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
+        row.SourceRefusalReason.ShouldBe("source_dirty", "H.OldHeadEditRetainsSourceDirty");
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim()
+            .ShouldBe(local, "H.OldHeadEditPreservesRef");
+        (await File.ReadAllTextAsync(file)).ShouldBe("real edit\n", "H.OldHeadEditPreservesBytes");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C883_FilemodeFalseExecutableAdoptsAndRepairs(bool interrupted)
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (_, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync(executable: true);
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "config", "core.filemode", "false");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(Path.Combine(h.Fixture.Source, "run.sh"), UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        var first = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        if (interrupted)
+        {
+            fixture.Interceptor.RequestId = first.RequestId;
+            var conflict = await Should.ThrowAsync<DbUpdateConcurrencyException>(() => h.RunQueuedAsync());
+            await h.FailAsync(conflict);
+            first = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+                recoverReviewedSource: true);
+        }
+        await h.RunQueuedAsync();
+        await using var db = h.CreateContext();
+        var row = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == first.RequestId);
+        row.SourceRefusalReason.ShouldBeNull(interrupted ? "H.FilemodeFalseRepairLands" : "H.FilemodeFalseAdoptionLands");
+    }
+
+    [Test]
     public async Task C883_FreshRequestRepairsPinnedAncestor()
     {
         await using var fixture = new LandHalfResetFixture();
