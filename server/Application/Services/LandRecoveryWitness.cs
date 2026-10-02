@@ -35,6 +35,8 @@ internal static class LandRecoveryWitnessFinder
             if (!SamePath(old.WorktreePathSnapshot, coordinates.WorktreePath)
                 || !SamePath(await git.CommonDirectoryAsync(old.RepositoryPathSnapshot, ct), common))
                 continue;
+            if ((old.SourceAdvanceChildProcessId is null) != (old.SourceAdvanceChildStartTicks is null))
+                return new(old.Id, old.RecoveryLocalBeforeSha!, "interrupted_process_requires_inspection");
             if (old.SourceAdvanceChildProcessId is int pid)
             {
                 if (old.SourceAdvanceChildStartTicks is not long ticks

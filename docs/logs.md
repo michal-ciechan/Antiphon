@@ -16,6 +16,16 @@ This is the authoritative operator inventory for logs and transcript evidence. R
 
 The desktop server was initially unavailable during this verification and later recovered enough to serve Hangfire. Do not restart it from a worktree; use [the AppHost runbook](apphost-runbook.md) from the canonical checkout.
 
+For a `landing_concurrency_conflict`, select the exact task, request and diagnostic ID in
+`desktop-server` during the incident window. The terminal land event and outcome notification
+carry the same bounded diagnostic. `entity`, `row`, `originalToken` and `attemptedToken` identify
+the failed EF entry; `observedToken` and `observedDatabaseWriter` describe the fresh database
+observation. A writer label is trusted only when its stored writer token matches the observed
+concurrency token. It names the last observed committed writer, which may be later than the
+writer that first caused the conflict. `unknown` and `unavailable` are deliberate outcomes;
+do not infer a writer from elapsed time or a nearby Merge event. Keep paths, exception text,
+SQL parameters and credentials out of shared incident notes.
+
 ## Desktop Postgres query statistics
 
 `docker-compose.dev.yml` preloads `pg_stat_statements` for the desktop's

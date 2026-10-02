@@ -58,11 +58,11 @@ public sealed class LandRequestWriteDiagnosticTests
         row.TerminalFailureCode.ShouldBe("landing_concurrency_conflict", "D.ConcurrencyCodePersisted");
         var terminal = await db.AgentTaskEvents.AsNoTracking()
             .SingleAsync(e => e.Id == row.TerminalEventId);
-        terminal.Detail.ShouldContain("entity=AgentTaskLandRequest", "D.EntryEntityNamed");
-        terminal.Detail.ShouldContain($"row={accepted.RequestId:N}", "D.EntryRowNamed");
-        terminal.Detail.ShouldContain("originalToken=", "D.OriginalTokenNamed");
-        terminal.Detail.ShouldContain("attemptedToken=", "D.AttemptedTokenNamed");
-        terminal.Detail.ShouldContain("observedDatabaseWriter=", "D.ObservedWriterNamed");
-        terminal.Detail.ShouldNotContain("fixture-request-save-conflict", "D.RawExceptionHidden");
+        terminal.Detail.ShouldContain("entity=AgentTaskLandRequest", Case.Sensitive, "D.EntryEntityNamed");
+        terminal.Detail.ShouldContain($"row={accepted.RequestId:N}", Case.Sensitive, "D.EntryRowNamed");
+        terminal.Detail.ShouldContain("originalToken=", Case.Sensitive, "D.OriginalTokenNamed");
+        terminal.Detail.ShouldContain("attemptedToken=", Case.Sensitive, "D.AttemptedTokenNamed");
+        terminal.Detail.ShouldContain("observedDatabaseWriter=", Case.Sensitive, "D.ObservedWriterNamed");
+        terminal.Detail.ShouldNotContain("fixture-request-save-conflict", Case.Sensitive, "D.RawExceptionHidden");
     }
 }
