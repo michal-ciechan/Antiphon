@@ -82,7 +82,7 @@ Rejected: a 10 s fixture budget as the sole fix, requiring four presses even aft
 
 Use the existing `New-C578Case -Hold build -FailBuild` mechanism. Child publishes entry identity, both flushed stream markers and build.ready, then waits for its owned build.release. Parent observes matching live identity and readiness, waits for both markers in the wrapper's build.log, and only then releases. Await wrapper completion and preserve actual build exit 37/checkpoint exit 2/no test run. Keep all five exact existing assertion labels.
 
-Wait-C578Ready reports elapsed time, readiness/entry/log state, wrapper/child exit and phase on failure. Use a 60 s safety cap for readiness and completion instead of 10 s; this is justified by two dotnet source captures plus PowerShell startup under load, and does not decide any product deadline. Controlled schedules cover a ready signal delayed past the old ten-second gate and a parent observation deferred until after the old unheld child would exit. TestDesign should inject the wait clock/readiness release in the **test script**, so the deterministic late schedule does not sleep eleven real seconds in every run. Finally releases gates and joins only captured children even if the first assertion fails. Preserve ASCII script encoding.
+Wait-C578Ready reports elapsed time, readiness/entry/log state, wrapper/child exit and phase on failure. TestDesign supersedes the proposed deadline increase: use readiness/release/exit events under unchanged outer harness cancellation, without a local elapsed-time success rule. Controlled schedules cover a ready signal delayed past the old ten-second gate and a parent observation deferred until after the old unheld child would exit. TestDesign should inject the wait clock/readiness release in the **test script**, so the deterministic late schedule does not sleep eleven real seconds in every run. Finally releases gates and joins only captured children even if the first assertion fails. Preserve ASCII script encoding.
 
 Rejected: timeout increase alone, treating existing log text as live child ownership, swallowing premature exit, broad process cleanup or editing the production checkpoint driver.
 
@@ -280,6 +280,26 @@ Resolve the optional options provider through one effective Clock property (Syst
 | G-40 / PC-40 | A_blind_first_turn_with_the_body_still_standing_after_every_Enter_throws_composer_may_hold_body / `blind-settle-uses-clock` | Use System only for blind settle; direct zero-confirm-budget subcase reaches first look synchronously, then immediately assert registered fake AbsentSettle timer. |
 
 Default controls assert provider identity and immediate behavior without measuring elapsed system time. They fail if null silently chooses a fake provider; fake-clock phase controls fail if production delays ignore the injected provider. Preserve default 20-second production settings, matching, cancellation, four-press maximum and separate Enter. S1/S2/S5 changes activate in the **Antiphon server process**, including the direct Pty adapter's shared confirmation helper; the SessionRunner binary has no changed code and needs no restart.
+
+#### S6 frozen controls
+
+Roster rechecked: RunCheckpointScriptTests has 24 singleton results. C578 has three TUnit methods with current internal PASS counts 8/5/6. Preserve the failed-build five exact labels and add two labelled handshake assertions below: final internal counts 8/7/6, still 24 TUnit results and CP-18=10 x 1. Update only that method's required labels/expectedRows from 5 to 7. No checkpoint-driver edit is authorized here.
+
+Supersede D-6's proposed 60-second increase: remove scheduling decisions based on elapsed wall time. Keep New-C578Case -Hold build -FailBuild. Replace touched ready/log/release polling with subscribed filesystem notifications plus immediate state recheck and wrapper/child exit events; child release also uses subscribe-before-check. Await completion asynchronously under the unchanged outer ScriptHarness cancellation. A log notification causes a full marker re-read; it is not itself proof. Child publishes entry and both flushed markers, then holds until parent verifies matching identity and both markers in wrapper build.log. Parent releases in finally even if an assertion fails. Existing hang protection is not raised.
+
+Exercise normal, logically late-ready (fake observation timestamp >10 seconds) and parent-deferred-until-child-would-have-exited schedules inside the same method. A test-local event/clock reducer receives explicit records in that order; no eleven-second sleep. Then exercise the real held shim once. Emit each of the seven PASS labels once after its internal schedule assertions, so logical schedules are not extra TUnit results or repeated PASS lines. A legacy deadline reducer consumes the explicit late record and supplies the deterministic baseline red at c578-late-ready-event-accepted.
+
+| Guard / PC | Detecting method / assertion | One compiling defect; finite red witness |
+|---|---|---|
+| G-41 / PC-41 | C578_FailedBuildKeepsLogAndExit / `c578-child-held-until-observed` | Disable hold in the controlled schedule, deliver Exited before parent observation; assert live owned child at readiness before releasing the real fixture. |
+| G-42 / PC-42 | Same / `c578-late-ready-event-accepted` | Restore old ten-second local decision in test reducer; supply Ready at logical +11 seconds with live identity, assert accepted event without a real wait. |
+| G-43 / PC-43 | Same / `C578 FailedBuild retains stdout and stderr` | Suppress only stderr marker; signal shim completion of marker phase so marker-presence assertion fails finitely before release, rather than waiting forever for missing stderr. |
+| G-44 / PC-44 | Same / `C578 FailedBuild records actual exit 37 once` | Let child perform identical failed build but exit 38, preserving checkpoint exit 2; exact 37 marker assertion fails. |
+| G-45 / PC-45 | Same / `C578 FailedBuild returns checkpoint exit 2` | Fixture projects wrapper exit 0 after recording actual build exit 37; first two labels remain green. |
+| G-46 / PC-46 | Same / `C578 FailedBuild never invokes tests` | Fixture adds a run invocation record while retaining build failure and wrapper exit 2; calls/absent-run-evidence assertion fails. |
+| G-47 / PC-47 | Same / `C578 FailedBuild owned processes exited` | Return from inner cleanup while captured shim stays held; label checks live identity, unconditional outer finally releases and joins. |
+
+The marker phase needs a finite observation even when a marker is removed: in the fault subcase provide explicit wrapper stream-drained acknowledgement after releasing the shim, capture readiness earlier, and inspect final log without waiting for the missing text. Ordinary held readiness proves live streaming; the faulty schedule proves the exact marker assertion detects omission. Keep ASCII encoding and the process limiter. S6 waits for CARD-0885/0886 tooling/fixture land before using their final script contract.
 
 ### Stress recipes: fixed workload, honest red/green evidence
 
