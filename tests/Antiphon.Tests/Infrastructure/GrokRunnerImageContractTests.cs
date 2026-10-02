@@ -49,6 +49,7 @@ public sealed class GrokRunnerImageContractTests
     }
 
     [Test]
+    [Arguments("grok 1.0.41 (4220f3b224a6)", 0, "ok")]
     [Arguments("grok 1.0.41 (abcdef1234) [stable]", 0, "ok")]
     [Arguments("grok 1.0.40 (abcdef1234) [stable]", 0, "fail")]
     [Arguments("grok 1.0.410 (abcdef1234) [stable]", 0, "fail")]
