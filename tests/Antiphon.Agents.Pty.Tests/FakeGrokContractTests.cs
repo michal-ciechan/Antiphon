@@ -288,10 +288,10 @@ public class FakeGrokContractTests
     [Category("Unit")]
     public void Lf_submit_echo_flattens_console_wrap_backspaces_and_line_endings()
     {
-        var echoed = "SUBMITTED:HEAD first\r\n line\r\nTAIL last\u0008 line\r\nFAKE response";
+        var echoed = "SUBMITTED:HEAD first\r\n line\r\nTAIL last\u0008 line\u0009\r\nFAKE response";
 
         FlattenLfSubmitEcho(echoed).ShouldBe(
-            "SUBMITTED:HEAD first lineTAIL last lineFAKE response",
+            "SUBMITTED:HEAD first lineTAIL last line\u0009FAKE response",
             "LF submit echo must remain intact across console wrap artifacts");
     }
 
