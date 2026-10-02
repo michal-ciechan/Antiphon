@@ -213,13 +213,15 @@ public sealed class AgentTaskLandHalfResetTests
     }
 
     [Test]
-    public async Task C883_FreshRequestRepairsPinnedAncestor()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C883_FreshRequestRepairsPinnedAncestor(bool adoption)
     {
         await using var fixture = new LandHalfResetFixture();
-        var (local, reviewed, evidence, oldRequest) = await InterruptedAsync(fixture);
+        var (local, reviewed, evidence, oldRequest) = await InterruptedAsync(fixture, adoption: adoption);
         var h = fixture.Harness;
         var next = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
-            recoverReviewedSource: true);
+            recoverReviewedSource: !adoption, adoptFromTaskId: fixture.AdoptionSourceId);
         next.RequestId.ShouldNotBe(oldRequest, "H.FreshRequestHasNewIdentity");
         string? alignedTree = null;
         h.Fixture.Git.AfterCommand = async (directory, args, result) =>
@@ -235,16 +237,23 @@ public sealed class AgentTaskLandHalfResetTests
         alignedTree.ShouldNotBeNull("H.ResetAlignedBeforeCleanup");
         alignedTree.ShouldBe((await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", reviewed + "^{tree}")).Trim(),
                 "H.IndexAlignedToReviewedSource");
+        if (adoption)
+        {
+            (await h.Fixture.RequiredAsync(fixture.AdoptionSourcePath!, "rev-parse", "HEAD")).Trim().ShouldBe(reviewed, "H.SeparateSourceHeadPreserved");
+            (await File.ReadAllTextAsync(Path.Combine(fixture.AdoptionSourcePath!, "feature.txt"))).ShouldBe("reviewed feature\n", "H.SeparateSourceBytesPreserved");
+        }
         var op = await h.OperationAsync();
         (op is not null && new AgentTaskLandingState().HasPublication(op))
             .ShouldBeTrue("H.FreshPublicationConfirmed");
     }
 
     [Test]
-    public async Task C883_StagedEditSurvivesFreshAndSameRequest()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C883_StagedEditSurvivesFreshAndSameRequest(bool sameRequest)
     {
         await using var fixture = new LandHalfResetFixture();
-        var (_, reviewed, evidence, _) = await InterruptedAsync(fixture);
+        var (local, reviewed, evidence, oldId) = await InterruptedAsync(fixture, sameRequest: sameRequest);
         var h = fixture.Harness;
         var file = Path.Combine(h.Fixture.Source, "feature.txt");
         var oldBytes = await File.ReadAllBytesAsync(file);
@@ -252,30 +261,38 @@ public sealed class AgentTaskLandHalfResetTests
         await h.Fixture.RequiredAsync(h.Fixture.Source, "add", "feature.txt");
         await File.WriteAllBytesAsync(file, oldBytes);
         var before = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", ":feature.txt")).Trim();
-        var next = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence, recoverReviewedSource: true);
+        var nextId = sameRequest ? oldId : (await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence, recoverReviewedSource: true)).RequestId;
+        var indexBefore = (await h.Fixture.RequiredAsync(h.Fixture.Source, "write-tree")).Trim();
         await h.RunQueuedAsync();
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "write-tree")).Trim().ShouldBe(indexBefore, "H.EditPreservesIndex");
+        AssertNoResetOrPublication(h);
         (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", ":feature.txt")).Trim()
             .ShouldBe(before, "H.StagedBlobPreserved");
         (await File.ReadAllBytesAsync(file)).ShouldBe(oldBytes, "H.WorktreeBytesPreserved");
         await using var db = h.CreateContext();
-        var newest = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == next.RequestId);
+        var newest = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == nextId);
         newest.SourceRefusalReason.ShouldBe("source_dirty", "H.StagedEditRefused");
     }
 
     [Test]
-    public async Task C883_UnstagedEditSurvivesFreshAndSameRequest()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C883_UnstagedEditSurvivesFreshAndSameRequest(bool sameRequest)
     {
         await using var fixture = new LandHalfResetFixture();
-        var (_, reviewed, evidence, _) = await InterruptedAsync(fixture);
+        var (local, reviewed, evidence, oldId) = await InterruptedAsync(fixture, sameRequest: sameRequest);
         var h = fixture.Harness;
         var file = Path.Combine(h.Fixture.Source, "feature.txt");
         var edit = "real unstaged edit\n";
         await File.WriteAllTextAsync(file, edit);
-        var next = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence, recoverReviewedSource: true);
+        var nextId = sameRequest ? oldId : (await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence, recoverReviewedSource: true)).RequestId;
+        var indexBefore = (await h.Fixture.RequiredAsync(h.Fixture.Source, "write-tree")).Trim();
         await h.RunQueuedAsync();
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "write-tree")).Trim().ShouldBe(indexBefore, "H.EditPreservesIndex");
+        AssertNoResetOrPublication(h);
         (await File.ReadAllTextAsync(file)).ShouldBe(edit, "H.UnstagedBytesPreserved");
         await using var db = h.CreateContext();
-        var newest = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == next.RequestId);
+        var newest = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == nextId);
         newest.SourceRefusalReason.ShouldBe("source_dirty", "H.UnstagedEditRefused");
     }
 
@@ -344,6 +361,8 @@ public sealed class AgentTaskLandHalfResetTests
                 $"H.{variant}.IndexPreserved");
         h.Fixture.Git.Commands.ShouldNotContain(x => x.Directory == h.Fixture.Source
             && x.Arguments.Length > 0 && x.Arguments[0] == "reset", $"H.{variant}.NoReset");
+        if (variant == "remote") (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.SourceRef)).Trim().ShouldBe(local);
+        if (variant == "fingerprint") (await h.Fixture.RequiredAsync(h.Fixture.Repository, "remote", "get-url", "origin")).Trim().ShouldBe(Path.Combine(h.Fixture.Root, "alternate.git"));
     }
 
     [Test]
@@ -416,6 +435,8 @@ public sealed class AgentTaskLandHalfResetTests
     [Arguments("review-clean-false")]
     [Arguments("review-clean-null")]
     [Arguments("review-superseded")]
+    [Arguments("remote")]
+    [Arguments("fingerprint")]
     [Arguments("owner")]
     public async Task C883_AuthorityChangesBeforeResetRefuse(string variant)
     {
@@ -453,6 +474,14 @@ public sealed class AgentTaskLandHalfResetTests
                 });
                 await db.SaveChangesAsync();
             }
+            else if (variant == "remote")
+                await h.Fixture.RequiredAsync(h.Fixture.Remote, "update-ref", h.Fixture.SourceRef, local, reviewed);
+            else if (variant == "fingerprint")
+            {
+                var alternate = Path.Combine(h.Fixture.Root, "alternate.git");
+                await h.Fixture.RequiredAsync(h.Fixture.Root, "clone", "--bare", h.Fixture.Remote, alternate);
+                await h.Fixture.RequiredAsync(h.Fixture.Repository, "remote", "set-url", "origin", alternate);
+            }
             else
             {
                 var owner = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
@@ -469,6 +498,7 @@ public sealed class AgentTaskLandHalfResetTests
             "review-sha" => "review_evidence_sha_mismatch",
             "review-clean-false" or "review-clean-null" => "review_evidence_source_not_clean",
             "review-superseded" => "review_evidence_superseded",
+            "remote" or "fingerprint" => "adopt_source_remote_changed",
             _ => "adopt_authority_changed",
         };
         if (variant == "owner")
@@ -486,17 +516,253 @@ public sealed class AgentTaskLandHalfResetTests
             && x.Arguments.Length > 0 && x.Arguments[0] == "reset", $"H.{variant}.NoReset");
     }
 
+    [Test]
+    [Arguments("owner")]
+    [Arguments("ref")]
+    [Arguments("worktree")]
+    [Arguments("sha")]
+    [Arguments("fingerprint")]
+    [Arguments("common-directory")]
+    [Arguments("source-identity")]
+    [Arguments("local-pin")]
+    [Arguments("source-pin")]
+    [Arguments("ambiguous")]
+    public async Task C883_FreshRequestRejectsWitnessIdentity(string variant)
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (local, reviewed, evidence, oldId) = await InterruptedAsync(fixture, equivalentOldTip: variant == "ambiguous");
+        var bytes = await File.ReadAllBytesAsync(Path.Combine(h.Fixture.Source, "feature.txt"));
+        var prefix = $"refs/antiphon/land/{h.Fixture.TaskId:N}/{oldId:N}/adopt";
+        await using (var db = h.CreateContext())
+        {
+            var old = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == oldId);
+            switch (variant)
+            {
+                case "owner":
+                    var owner = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == h.Fixture.TaskId);
+                    var otherId = Guid.NewGuid();
+                    db.AgentTasks.Add(new AgentTask { Id = otherId, RootTaskId = otherId, Title = "other owner", Goal = "fixture",
+                        Kind = owner.Kind, Role = owner.Role, Workspace = owner.Workspace, WorkingDirectory = owner.WorkingDirectory,
+                        RepoPath = owner.RepoPath, Status = AgentTaskStatus.Failed, ReplyTo = AgentTaskReplyTo.None, CreatedAt = DateTime.UtcNow });
+                    old.TaskId = otherId;
+                    break;
+                case "ref": old.SourceFullRefSnapshot = "refs/heads/other"; break;
+                case "worktree": old.WorktreePathSnapshot = h.Fixture.Observer; break;
+                case "sha": old.ExpectedSourceSha = local; break;
+                case "fingerprint": old.RecoverySourceFingerprint = new string('0', 64); break;
+                case "common-directory": old.RepositoryPathSnapshot = h.Fixture.Observer; break;
+                case "source-identity": old.RecoverySourceTaskId = Guid.NewGuid(); break;
+                case "local-pin": await h.Fixture.RequiredAsync(h.Fixture.Repository, "update-ref", prefix + "/local-before", reviewed); break;
+                case "source-pin": await h.Fixture.RequiredAsync(h.Fixture.Repository, "update-ref", prefix + "/source", local); break;
+                case "ambiguous":
+                    var duplicate = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == oldId);
+                    duplicate.Id = Guid.NewGuid();
+                    duplicate.RecoveryLocalBeforeSha = (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", local + "^")).Trim();
+                    (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", duplicate.RecoveryLocalBeforeSha + "^{tree}")).Trim()
+                        .ShouldBe((await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", local + "^{tree}")).Trim(), "H.AmbiguousEqualOldTrees");
+                    (await h.Fixture.Git.RunAsync(h.Fixture.Repository, ["merge-base", "--is-ancestor", duplicate.RecoveryLocalBeforeSha, reviewed], CancellationToken.None))
+                        .Succeeded.ShouldBeTrue("H.BothWitnessesAreAncestors");
+                    db.AgentTaskLandRequests.Add(duplicate);
+                    var duplicatePrefix = $"refs/antiphon/land/{h.Fixture.TaskId:N}/{duplicate.Id:N}/adopt";
+                    await h.Fixture.RequiredAsync(h.Fixture.Repository, "update-ref", duplicatePrefix + "/local-before", duplicate.RecoveryLocalBeforeSha);
+                    await h.Fixture.RequiredAsync(h.Fixture.Repository, "update-ref", duplicatePrefix + "/source", reviewed);
+                    break;
+            }
+            await db.SaveChangesAsync();
+        }
+        var next = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence, recoverReviewedSource: true);
+        await h.RunQueuedAsync();
+        await using var verify = h.CreateContext();
+        var row = await verify.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == next.RequestId);
+        row.SourceRefusalReason.ShouldBe(variant == "ambiguous" ? "adopt_recovery_ambiguous" : "source_dirty", $"H.{variant}.WitnessBindingRefused");
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "write-tree")).Trim()
+            .ShouldBe((await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", local + "^{tree}")).Trim(), "H.WitnessRefusalPreservesIndex");
+        (await File.ReadAllBytesAsync(Path.Combine(h.Fixture.Source, "feature.txt"))).ShouldBe(bytes, "H.WitnessRefusalPreservesBytes");
+        AssertNoResetOrPublication(h);
+    }
+
+    [Test]
+    public async Task C883_FreshRequestRequiresAncestor()
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var (local, reviewed, evidence, oldId) = await InterruptedAsync(fixture);
+        var h = fixture.Harness;
+        var tree = (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", local + "^{tree}")).Trim();
+        var unrelated = (await h.Fixture.RequiredAsync(h.Fixture.Repository, "commit-tree", tree, "-m", "unrelated equal tree")).Trim();
+        (await h.Fixture.Git.RunAsync(h.Fixture.Repository, ["merge-base", "--is-ancestor", unrelated, reviewed], CancellationToken.None)).ExitCode.ShouldBe(1);
+        await using (var db = h.CreateContext())
+        {
+            var old = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == oldId);
+            old.RecoveryLocalBeforeSha = unrelated;
+            await db.SaveChangesAsync();
+        }
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "update-ref", $"refs/antiphon/land/{h.Fixture.TaskId:N}/{oldId:N}/adopt/local-before", unrelated);
+        var next = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence, recoverReviewedSource: true);
+        await h.RunQueuedAsync();
+        await using var verify = h.CreateContext();
+        var row = await verify.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == next.RequestId);
+        row.SourceRefusalReason.ShouldBe("source_dirty", "H.NonAncestorRefused");
+        (await verify.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.Id == row.TerminalEventId)).Detail.ShouldContain("recovery_checkout_unproven");
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "write-tree")).Trim().ShouldBe(tree);
+        AssertNoResetOrPublication(h);
+    }
+
+    [Test]
+    [Arguments("head")]
+    [Arguments("branch")]
+    [Arguments("registration")]
+    public async Task C883_IdentityChangesBeforeResetRefuse(string variant)
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (local, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
+        var first = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence, recoverReviewedSource: true);
+        fixture.Interceptor.RequestId = first.RequestId;
+        fixture.Boundary.ThrowConflict = false;
+        var marker = "";
+        fixture.Boundary.BeforeRefMove = async () =>
+        {
+            if (variant == "head") await h.Fixture.RequiredAsync(h.Fixture.Repository, "update-ref", h.Fixture.SourceRef, h.Fixture.SeedSha, local);
+            else if (variant == "branch")
+            {
+                await h.Fixture.RequiredAsync(h.Fixture.Repository, "update-ref", "refs/heads/other", local);
+                await h.Fixture.RequiredAsync(h.Fixture.Source, "symbolic-ref", "HEAD", "refs/heads/other");
+            }
+            else
+            {
+                marker = Path.Combine((await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "--absolute-git-dir")).Trim(), "gitdir");
+                await File.WriteAllTextAsync(marker, Path.Combine(h.Fixture.Observer, ".git") + "\n");
+            }
+        };
+        await h.RunQueuedAsync();
+        fixture.Boundary.BeforeRefReached.ShouldBe(1, "H.IdentityFinalBoundaryReached");
+        await using var db = h.CreateContext();
+        var row = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == first.RequestId);
+        row.SourceRefusalReason.ShouldNotBeNull("H.ChangedIdentityRefused");
+        if (variant == "head") (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim().ShouldBe(h.Fixture.SeedSha);
+        if (variant == "branch") (await h.Fixture.RequiredAsync(h.Fixture.Source, "symbolic-ref", "HEAD")).Trim().ShouldBe("refs/heads/other");
+        if (variant == "registration") (await File.ReadAllTextAsync(marker)).ShouldBe(Path.Combine(h.Fixture.Observer, ".git") + "\n");
+        AssertNoResetOrPublication(h);
+    }
+
+    [Test]
+    [Arguments("dirty")]
+    [Arguments("wrong-head")]
+    public async Task C883_PostResetMismatchCannotPublish(string variant)
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (local, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
+        var first = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence, recoverReviewedSource: true);
+        fixture.Interceptor.RequestId = first.RequestId;
+        fixture.Boundary.ThrowConflict = false;
+        var hit = 0;
+        h.Fixture.Git.AfterCommand = async (directory, args, result) =>
+        {
+            if (directory != h.Fixture.Source || args[0] != "reset" || !result.Succeeded) return;
+            hit++;
+            if (variant == "dirty") await File.WriteAllTextAsync(Path.Combine(h.Fixture.Source, "feature.txt"), "post reset edit\n");
+            else await h.Fixture.RequiredAsync(h.Fixture.Repository, "update-ref", h.Fixture.SourceRef, local, reviewed);
+        };
+        await h.RunQueuedAsync();
+        hit.ShouldBe(1, "H.PostResetCutReached");
+        await using var db = h.CreateContext();
+        var row = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == first.RequestId);
+        row.SourceRefusalReason.ShouldBe("adopt_local_changed", "H.PostResetMismatchRefused");
+        row.RecoveryAdoptedAt.ShouldBeNull("H.MismatchNotAcknowledged");
+        row.SourceAdvanceChildOperation.ShouldBe("source-adopt-reset", "H.MismatchRetainsIntent");
+        if (variant == "dirty") (await File.ReadAllTextAsync(Path.Combine(h.Fixture.Source, "feature.txt"))).ShouldBe("post reset edit\n");
+        else (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim().ShouldBe(local);
+        h.Fixture.Git.Commands.ShouldNotContain(x => x.Arguments[0] == "push" && x.Arguments.Any(a => a.Contains(":refs/heads/master", StringComparison.Ordinal)), "H.MismatchNoTargetPush");
+    }
+
+    [Test]
+    public async Task C883_CurrentPendingRequestCannotBeStolen()
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (_, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
+        var first = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence, recoverReviewedSource: true);
+        fixture.Interceptor.RequestId = first.RequestId;
+        await Should.ThrowAsync<DbUpdateConcurrencyException>(() => h.RunQueuedAsync());
+        await using var before = h.CreateContext();
+        var original = await before.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == first.RequestId);
+        await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(() => h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence, recoverReviewedSource: true));
+        await using var after = h.CreateContext();
+        var preserved = await after.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == first.RequestId);
+        preserved.ConcurrencyToken.ShouldBe(original.ConcurrencyToken, "H.PendingIdentityNotStolen");
+        preserved.RecoveryLocalBeforeSha.ShouldBe(original.RecoveryLocalBeforeSha);
+        preserved.SourceAdvanceChildOperation.ShouldBe(original.SourceAdvanceChildOperation);
+        preserved.IsPending.ShouldBeTrue();
+        (await after.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == h.Fixture.TaskId)).CurrentLandRequestId.ShouldBe(first.RequestId);
+        AssertNoResetOrPublication(h);
+    }
+
+    [Test]
+    public async Task C883_CompletedResetIsIdempotent()
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (_, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
+        var first = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence, recoverReviewedSource: true);
+        fixture.Interceptor.RequestId = first.RequestId;
+        fixture.Boundary.ThrowConflict = false;
+        var resets = 0;
+        h.Fixture.Git.AfterCommand = (directory, args, result) =>
+        {
+            if (directory == h.Fixture.Source && args[0] == "reset" && result.Succeeded) { resets++; fixture.Interceptor.Armed = true; }
+            return Task.CompletedTask;
+        };
+        var error = await Should.ThrowAsync<DbUpdateConcurrencyException>(() => h.RunQueuedAsync());
+        await h.FailAsync(error);
+        resets.ShouldBe(1);
+        var next = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence, recoverReviewedSource: true);
+        await h.RunQueuedAsync();
+        resets.ShouldBe(1, "H.CompletedResetNotReplayed");
+        new AgentTaskLandingState().HasPublication((await h.OperationAsync()).ShouldNotBeNull()).ShouldBeTrue();
+        await using var db = h.CreateContext();
+        (await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == first.RequestId)).TerminalFailureCode.ShouldBe("landing_concurrency_conflict");
+        next.RequestId.ShouldNotBe(first.RequestId);
+
+        // Ordinary land publishes its branch and leaves dirty checkout residue without recovery probes.
+        await using var ordinary = new LandingSafetyHarness();
+        await ordinary.InitializeAsync();
+        await ordinary.AddSourceAsync();
+        await File.WriteAllTextAsync(Path.Combine(ordinary.Fixture.Source, "feature.txt"), "ordinary real edit\n");
+        var probes = 0;
+        ordinary.Fixture.Git.BeforeCommand = (_, args) =>
+        {
+            if (args[0] == "check-attr") probes++;
+            return Task.FromResult<Antiphon.Server.Application.Dtos.LandingGitResult?>(null);
+        };
+        await ordinary.RequestAsync();
+        await ordinary.RunQueuedAsync();
+        probes.ShouldBe(0, "H.OrdinaryLandSkipsRecoveryProof");
+        var op = (await ordinary.OperationAsync()).ShouldNotBeNull();
+        new AgentTaskLandingState().HasPublication(op).ShouldBeTrue("H.OrdinaryDirtyCheckoutPublishes");
+        op.Cleanup.ShouldNotBe(LandCleanupStatus.Complete, "H.OrdinaryDirtyCheckoutRetained");
+        (await File.ReadAllTextAsync(Path.Combine(ordinary.Fixture.Source, "feature.txt"))).ShouldBe("ordinary real edit\n");
+    }
+
+    private static void AssertNoResetOrPublication(LandingSafetyHarness h)
+    {
+        h.Fixture.Git.Commands.ShouldNotContain(x => x.Directory == h.Fixture.Source && x.Arguments[0] == "reset", "H.NoResetOnRefusal");
+        h.Fixture.Git.Commands.ShouldNotContain(x => x.Arguments[0] == "push" && x.Arguments.Any(a => a.Contains(":refs/heads/master", StringComparison.Ordinal)), "H.NoTargetPublicationOnRefusal");
+    }
+
     private static async Task<(string Local, string Reviewed, Guid Evidence, Guid RequestId)> InterruptedAsync(
-        LandHalfResetFixture fixture, bool bulk = false)
+        LandHalfResetFixture fixture, bool bulk = false, bool sameRequest = false, bool equivalentOldTip = false, bool adoption = false)
     {
         var h = fixture.Harness;
-        var (local, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync(bulk);
+        var (local, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync(bulk, equivalentOldTip: equivalentOldTip, adoption: adoption);
         var first = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
-            recoverReviewedSource: true);
+            recoverReviewedSource: !adoption, adoptFromTaskId: fixture.AdoptionSourceId);
         fixture.Interceptor.RequestId = first.RequestId;
         var conflict = await Should.ThrowAsync<DbUpdateConcurrencyException>(() => h.RunQueuedAsync());
         fixture.Boundary.Reached.ShouldBe(1, "H.HistoricalCutReached");
-        await h.FailAsync(conflict);
+        if (sameRequest) await h.SweepAsync();
+        else await h.FailAsync(conflict);
         return (local, reviewed, evidence, first.RequestId);
     }
 }
