@@ -21,6 +21,11 @@ No product code was changed. The predicate below is **evidence for review**, not
 
 Content digests (SHA-256 of UTF-8; line-ending independent):
 
+The `[stable]` tag above records the Windows install's output. It is optional in
+the image version check: CARD-0986 Review observed `grok 1.0.41 (4220f3b224a6)`
+without a channel tag after the installer home was removed. The version is pinned;
+the twelve-character lowercase hex hash records the observed build, not a pin.
+
 | Capture | Chunks | Concatenated sanitized chunk text | Checkpoints | Checkpoint screens joined by U+0000 |
 |---|---:|---|---:|---|
 | `idle-20260930173209-21944bcbd833` | 97 | `bedd9d072a6ed4f07e864e4ad868fb322a1ffb82a0ca8b1b274b086be14e2ac1` | 68 | `cf1b3ede1d73cb24adacad5d50c7a9227957f14d648fad8305868177fea2256a` |
@@ -201,4 +206,4 @@ checkpoints have `ComposerUnavailable` rather than `StartingSession`; both reaso
 - The operator's imported MCP server identities (not inspected by design).
 - Whether an LF-preserving multi-line paste is possible on 1.0.41 (defect candidate).
 - A newer CLI would need its own capture; these captures qualify only
-  `grok 1.0.41 (4220f3b224a6)` at 120x30 on ModernConPty 1.24.260710001.
+  Grok 1.0.41 at 120x30 on ModernConPty 1.24.260710001 (observed build `4220f3b224a6`).

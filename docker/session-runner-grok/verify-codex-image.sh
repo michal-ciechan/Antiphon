@@ -67,12 +67,12 @@ case "$row" in
     out=$(env HOME=$PROBE_HOME GROK_HOME=$PROBE_HOME/grok /usr/local/bin/grok --version 2>"$PROBE_HOME/grok-version.err")
     code=$?
     [ $code -eq 0 ] || result fail "exit=$code"
-    case "$out" in
-      "grok $GROK_VERSION ("*") [stable]") ;;
-      *) result fail "version output does not match pinned Grok $GROK_VERSION stable" ;;
-    esac
+    # The installer home is removed in the image, so the channel tag is optional.
+    # Require the real CLI's hash shape, but pin only the qualified version.
+    version_pattern="^grok ${GROK_VERSION//./\\.} \\([0-9a-f]{12}\\)( \\[stable\\])?$"
+    [[ "$out" =~ $version_pattern ]] || result fail "version output does not match pinned Grok $GROK_VERSION format"
     [ ! -s "$PROBE_HOME/grok-version.err" ] || result fail "unexpected version stderr"
-    result ok "Grok $GROK_VERSION stable as uid 1654 home=$PROBE_HOME/grok"
+    result ok "Grok $GROK_VERSION as uid 1654 home=$PROBE_HOME/grok"
     ;;
   layout)
     command -v ps >/dev/null 2>&1 || result fail "ps required by codex managed app-server"
