@@ -73,6 +73,8 @@ public sealed class ReportRow
     public List<string> RerunLines { get; set; } = [];
     public List<SlowClass> SlowClasses { get; set; } = [];
     public int Attempt { get; set; } = 1;
+    public RepeatEvidence? Repeat { get; set; }
+    public PhaseTimings? Timings { get; set; }
 }
 
 public sealed class ReportFailure

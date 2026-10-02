@@ -524,6 +524,18 @@ public static class CheckpointApp
             rows.Add(ToReportRow(row, spec));
         }
 
+        var chargedBuilds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var row in rows.Where(item => item.Timings is not null && item.Build is not null))
+        {
+            var build = state.Builds.FirstOrDefault(item => item.Id == row.Build);
+            var first = chargedBuilds.Add(row.Build!);
+            row.Timings!.ProducingBuild = row.Build;
+            row.Timings.BuildSeconds = first ? build?.Seconds : 0;
+            row.Timings.BuildSlotWaitSeconds = first ? build?.WaitedSeconds : 0;
+            row.Timings.RowSlotWaitSeconds = row.WaitedSeconds;
+            row.Timings.SlotWaitSeconds = row.Timings.BuildSlotWaitSeconds + row.Timings.RowSlotWaitSeconds;
+        }
+
         foreach (var row in rows)
         {
             if (!string.IsNullOrWhiteSpace(row.Line))
@@ -551,6 +563,7 @@ public static class CheckpointApp
         var ended = DateTimeOffset.UtcNow;
         var model = new ReportModel
         {
+            SchemaVersion = rows.Any(row => row.Repeat is not null) ? 3 : 2,
             RunId = state.RunId,
             ManifestPath = Path.Combine(runDirectory, "manifest.resolved.yaml"),
             ManifestHash = Hash(File.ReadAllText(Path.Combine(runDirectory, "manifest.resolved.yaml"))),
@@ -612,6 +625,8 @@ public static class CheckpointApp
             Failed = row.Trx?.Failed ?? (row.State == "slot-refused" ? 0 : null),
             Skipped = row.Trx?.Skipped ?? (row.State == "slot-refused" ? 0 : null),
             Reruns = row.Reruns,
+            Repeat = row.Repeat,
+            Timings = row.Timings,
             Trx = row.TrxPath,
             Seconds = row.Seconds,
             Line = row.Line,

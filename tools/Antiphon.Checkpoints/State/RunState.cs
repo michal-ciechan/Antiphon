@@ -91,4 +91,6 @@ public sealed class RowProgress
     public string Slot { get; set; } = "";
     public string? SlotReason { get; set; }
     public int WaitedSeconds { get; set; }
+    public RepeatEvidence? Repeat { get; set; }
+    public PhaseTimings? Timings { get; set; }
 }

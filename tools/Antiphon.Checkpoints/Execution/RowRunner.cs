@@ -49,6 +49,7 @@ public sealed class RowRunResult
     public int WaitedSeconds { get; set; }
     public double Seconds { get; set; }
     public RepeatEvidence? Repeat { get; set; }
+    public PhaseTimings? Timings { get; set; }
 }
 
 public sealed class RowRunner
@@ -169,11 +170,15 @@ public sealed class RowRunner
             : null;
         if (runEnvironment is not null)
             runEnvironment["ANTIPHON_CHECKPOINT_NONCE"] = nonce!;
+        var hostLaunch = DateTimeOffset.UtcNow;
+        var hostStartTick = System.Diagnostics.Stopwatch.GetTimestamp();
         var run = await RowTimeout.RunWithDeadlineAsync(
             _driver,
             new DriverRequest(fileName, runArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: runEnvironment ?? request.Environment),
             request.Deadline,
             cancellationToken).ConfigureAwait(false);
+        var hostExit = DateTimeOffset.UtcNow;
+        var hostElapsed = System.Diagnostics.Stopwatch.GetElapsedTime(hostStartTick);
         var sourceStable = request.SourceBoundary?.Invoke() != false;
         if (run.TimedOut)
             return TimeoutResult(request, buildState, buffer, combined);
@@ -192,6 +197,7 @@ public sealed class RowRunner
             combined.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: 2");
             return Finish(ExitCodes.Invalid, buildState, "", buffer, 0, [], trxPath, parsed, false, "malformed");
         }
+        var timings = PhaseTimings.Reduce(hostLaunch, hostExit, hostElapsed, parsed.Results);
 
         var repeatCheck = request.Repeat > 1
             ? RepeatEvidenceValidator.Validate(parsed, request.Repeat, nonce!, request.MinExecuted, request.Expect)
@@ -338,6 +344,7 @@ public sealed class RowRunner
         };
         var completed = Finish(exit, buildState, lineModel, buffer, reruns, rerunLines, Path.GetFullPath(trxPath), parsed, false, state);
         completed.Repeat = repeatCheck?.Evidence;
+        completed.Timings = timings;
         return completed;
     }
 

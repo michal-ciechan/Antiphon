@@ -45,6 +45,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 . (Join-Path $PSScriptRoot (Join-Path 'lib' 'checkpoint-source.ps1'))
+. (Join-Path $PSScriptRoot (Join-Path 'lib' 'checkpoint-repeat.ps1'))
 $script:sourceStart = $null
 $script:sourceEnd = $null
 $script:buildSource = 'unknown'
@@ -58,6 +59,13 @@ $script:trxPath = 'n/a'
 $script:slotState = 'skipped'
 $script:slotWaited = 0
 $script:resultsDirectory = $null
+$script:repeatEvidence = $null
+$script:repeatReason = $null
+$script:phaseTimings = $null
+$script:buildSeconds = 0.0
+$script:hostLaunch = [DateTimeOffset]::MinValue
+$script:hostExit = [DateTimeOffset]::MinValue
+$script:hostElapsedSeconds = -1.0
 
 function Assert-CheckpointBoundary {
     param([string]$Boundary)
@@ -120,6 +128,10 @@ function Write-Trailer {
     $commit = if ($start.captureStatus -eq 'known') { [string]$start.commit } else { 'unknown' }
     $line = ('CHECKPOINT {0} commit={1} build={2} filter={3} executed={4} passed={5} failed={6} skipped={7} trx={8} slot={9} waited={10}s dirty={11} source={12} sourceState={13} buildSource={14}' -f `
         $Name, $commit, $script:buildState, $Filter, $script:executed, $script:passed, $script:failed, $script:skipped, $script:trxPath, $script:slotState, $script:slotWaited, $dirty, (Get-CheckpointSourceToken $start), $state, $script:buildSource)
+    if ($Repeat -gt 1) {
+        $completed = if ($null -eq $script:repeatEvidence) { 0 } else { [int]$script:repeatEvidence.passed }
+        $line += (' repeat={0} repetitions={1}/{0} hostInvocations=1' -f $Repeat, $completed)
+    }
     if ($null -ne $script:sourceReason) { $line += ' reason=' + $script:sourceReason }
     Write-Host $line
     if ($null -ne $script:resultsDirectory) {
@@ -128,6 +140,17 @@ function Write-Trailer {
             state = $state; buildSource = $script:buildSource; reason = $script:sourceReason
             receipt = $line; exitCode = $Code; executed = $script:executed
             passed = $script:passed; failed = $script:failed; skipped = $script:skipped
+            timings = $script:phaseTimings
+        }
+        if ($Repeat -gt 1) {
+            $source = [pscustomobject]@{ version = 1; start = $start; end = $script:sourceEnd
+                state = $state; buildSource = $script:buildSource }
+            $evidence = [pscustomobject]@{
+                version = 2; source = $source; name = $Name; receipt = $line; exitCode = $Code
+                executed = $script:executed; passed = $script:passed; failed = $script:failed
+                skipped = $script:skipped; repeat = $script:repeatEvidence
+                repeatReason = $script:repeatReason; timings = $script:phaseTimings
+            }
         }
         $evidence | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $script:resultsDirectory 'source.json') -Encoding utf8
         ('commit={0} source={1} sourceState={2} buildSource={3}' -f $commit,
@@ -291,6 +314,8 @@ function Invoke-Dotnet {
     $writer = [System.IO.StreamWriter]::new($stream)
     $writer.AutoFlush = $true
     try {
+        $launched = [DateTimeOffset]::UtcNow
+        $watch = [System.Diagnostics.Stopwatch]::StartNew()
         $proc = [System.Diagnostics.Process]::Start($psi)
         try {
             $stdoutTask = $proc.StandardOutput.ReadLineAsync()
@@ -313,6 +338,13 @@ function Invoke-Dotnet {
                 }
             }
             $proc.WaitForExit()
+            $watch.Stop()
+            $exited = [DateTimeOffset]::UtcNow
+            if ($Phase -eq 'build') { $script:buildSeconds = $watch.Elapsed.TotalSeconds }
+            elseif ($Phase -eq 'run') {
+                $script:hostLaunch = $launched; $script:hostExit = $exited
+                $script:hostElapsedSeconds = $watch.Elapsed.TotalSeconds
+            }
             $exitCode = $proc.ExitCode
             $writer.WriteLine(('DOTNET {0} EXIT CODE: {1}' -f $Phase, $exitCode))
             return $exitCode
@@ -455,6 +487,17 @@ $script:executed = $executed
 $script:passed = $passed
 $script:failed = $failed
 $script:skipped = $skipped
+$script:phaseTimings = Get-CheckpointPhaseTimings -Document $doc -Launched $script:hostLaunch -Exited $script:hostExit `
+    -HostElapsedSeconds $script:hostElapsedSeconds -BuildSeconds $script:buildSeconds -SlotWaitSeconds $script:slotWaited
+if ($Repeat -gt 1) {
+    try {
+        $script:repeatEvidence = Get-CheckpointRepeatEvidence -Document $doc -Requested $Repeat -Nonce $repeatNonce `
+            -MinExecuted $MinExecuted -Expect $Expect
+        if (-not (Test-CheckpointRepeatSummary $script:repeatEvidence $executed $passed $failed $skipped $Repeat)) {
+            $script:repeatReason = 'repeat_counter_or_outcome_disagreement'
+        }
+    } catch { $script:repeatReason = $_.Exception.Message }
+}
 
 # (6) The report line the bundle asks Code to produce, then the roster.
 foreach ($token in $propertyTokens) { Write-Host ('MSBUILD PROPERTY {0}' -f $token) }
@@ -495,6 +538,11 @@ foreach ($token in $rosterMisses) { Write-Host ('ROSTER MISS {0}' -f $token) }
 if ($failed -gt 0) {
     Write-Trailer -Code 1
     exit 1
+}
+if ($Repeat -gt 1 -and $null -ne $script:repeatReason) {
+    Write-Host ('REPEAT INVALID {0}' -f $script:repeatReason)
+    Write-Trailer -Code 2
+    exit 2
 }
 if ($executed -lt $MinExecuted) {
     Write-Host ('MIN EXECUTED expected at least={0} actual={1}' -f $MinExecuted, $executed)
