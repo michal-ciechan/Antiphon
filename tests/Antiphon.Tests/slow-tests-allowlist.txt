@@ -211,3 +211,5 @@ Antiphon.Tests.Application.ReviewEvidenceConsistencyTests
 Antiphon.Tests.Application.CompletionWarningDeliveryTests
 # CARD-0788: real land refusal outbox, busy caller, and recovery-cut delivery matrix.
 Antiphon.Tests.Application.LandEvidenceWarningDeliveryTests
+# CARD-0953: isolated PostgreSQL schema plus two real runner registration/retirement cycles.
+Antiphon.Tests.Application.PhoneHomeRunnerRetirementCycleTests
