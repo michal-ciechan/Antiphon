@@ -57,7 +57,7 @@ internal static class DockerStackDocuments
                 continue;
             }
 
-            body.AppendLine(line);
+            body.Append(line).Append('\n');
         }
 
         Flush();
@@ -98,7 +98,7 @@ internal static class DockerStackDocuments
                 break;
             if (lines[i].StartsWith("  ", StringComparison.Ordinal) && !lines[i].StartsWith("   ", StringComparison.Ordinal))
                 break;
-            block.AppendLine(lines[i]);
+            block.Append(lines[i]).Append('\n');
         }
 
         return block.ToString();
