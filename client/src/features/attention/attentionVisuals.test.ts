@@ -96,7 +96,6 @@ function item(overrides: Partial<AttentionItemDto> & { kind: AttentionKind }): A
 }
 
 describe('attentionVisuals', () => {
-<<<<<<< HEAD
   it('draws TaskInputUnreadable as a warning with a task target', () => {
     const visual = ATTENTION_VISUALS.TaskInputUnreadable
     expect(visual.label, 'unreadable-visual-label').toBe('Input unreadable')
@@ -116,7 +115,8 @@ describe('attentionVisuals', () => {
     expect(visual.color, 'runner-outage-color').toBe('danger')
     expect(homeBucketOf(item({ kind: 'RunnerUnavailable', severity: 'Error' })),
       'runner-outage-bucket').toBe('broken')
-=======
+  })
+
   it('links a host cleanup summary to its run', () => {
     const row = item({ kind: 'HostCleanupSummary', hostCleanupRunId: 'run-c826', severity: 'Warning' })
     expect(targetOf(row)).toContain('run-c826')
@@ -148,7 +148,6 @@ describe('attentionVisuals', () => {
     expect(row.hostCleanupOwner).toBe('CARD-0692')
     expect(row.hostCleanupRefusal).toBe('owner_unavailable')
     expect(ATTENTION_VISUALS[row.kind].label.toLowerCase()).toContain('backlog')
->>>>>>> 5b4aae49 (CARD-0826 map host cleanup attention receipt kinds in client)
   })
 
   it.each([
