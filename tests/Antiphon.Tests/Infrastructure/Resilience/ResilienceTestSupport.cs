@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using Antiphon.Tests.TestHelpers;
+using System.Diagnostics;
 
 namespace Antiphon.Tests.Infrastructure.Resilience;
 
@@ -136,12 +137,34 @@ internal static class ResilienceTestHost
         ControlledTimeProvider time,
         ControlledTimeProvider.TimerEvent timer,
         Task phase,
-        DateTimeOffset boundary)
+        DateTimeOffset boundary,
+        CancellationToken token)
     {
         if (timer.Sequence <= 0 || timer.Deadline != boundary || time.GetUtcNow() > boundary)
             throw new InvalidOperationException("Expected timer was not registered at the requested boundary.");
         time.AdvanceTo(boundary);
-        await phase.WaitAsync(TimeSpan.FromSeconds(5));
+        var watchdog = Stopwatch.StartNew();
+        while (!phase.IsCompleted)
+        {
+            if (watchdog.Elapsed >= TimeSpan.FromSeconds(5))
+            {
+                var events = string.Join("; ", time.Events.Select(e =>
+                    $"#{e.Sequence} timer={e.TimerId} {e.Action} at={e.RegisteredAt:O} due={e.DueTime}"));
+                var states = string.Join("; ", time.TimerStates.Select(e => $"{e.Key}={e.Value}"));
+                throw new TimeoutException(
+                    $"Boundary phase did not complete at {boundary:O}; now={time.GetUtcNow():O}; " +
+                    $"tokenCancelled={token.IsCancellationRequested}; expectedTimer={timer.TimerId}; " +
+                    $"timerStates=[{states}]; timerEvents=[{events}]");
+            }
+
+            // A timer can be registered or rearmed by a continuation after the first advance.
+            // Drive due callbacks again without changing the asserted virtual instant.
+            time.Advance(TimeSpan.Zero);
+            if (!phase.IsCompleted)
+                await Task.WhenAny(phase, Task.Delay(1));
+        }
+
+        await phase;
     }
 
     public static HttpResponseMessage Status(HttpStatusCode status, string body = "") =>

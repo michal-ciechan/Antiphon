@@ -8,6 +8,7 @@ internal sealed class ControlledTimeProvider : TimeProvider
     private readonly FakeTimeProvider _inner;
     private readonly object _gate = new();
     private readonly List<TimerEvent> _events = [];
+    private readonly Dictionary<int, string> _timerStates = [];
     private TaskCompletionSource _changed = NewSignal();
     private int _nextId;
 
@@ -22,6 +23,11 @@ internal sealed class ControlledTimeProvider : TimeProvider
     public IReadOnlyList<TimerEvent> Events
     {
         get { lock (_gate) return _events.ToArray(); }
+    }
+
+    public IReadOnlyDictionary<int, string> TimerStates
+    {
+        get { lock (_gate) return new Dictionary<int, string>(_timerStates); }
     }
 
     public void AdvanceTo(DateTimeOffset target)
@@ -53,7 +59,11 @@ internal sealed class ControlledTimeProvider : TimeProvider
     public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
     {
         var id = Interlocked.Increment(ref _nextId);
-        var timer = _inner.CreateTimer(callback, state, dueTime, period);
+        var timer = _inner.CreateTimer(value =>
+        {
+            Record(id, "fire", TimeSpan.Zero, period);
+            callback(value);
+        }, state, dueTime, period);
         Record(id, "create", dueTime, period);
         return new ObservedTimer(this, id, timer);
     }
@@ -63,6 +73,7 @@ internal sealed class ControlledTimeProvider : TimeProvider
         lock (_gate)
         {
             _events.Add(new TimerEvent(_events.Count + 1, id, action, GetUtcNow(), due, period));
+            _timerStates[id] = action;
             _changed.TrySetResult();
             _changed = NewSignal();
         }
@@ -86,7 +97,16 @@ internal sealed class ControlledTimeProvider : TimeProvider
             return changed;
         }
 
-        public void Dispose() => inner.Dispose();
-        public ValueTask DisposeAsync() => inner.DisposeAsync();
+        public void Dispose()
+        {
+            inner.Dispose();
+            owner.Record(id, "dispose", Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await inner.DisposeAsync();
+            owner.Record(id, "dispose", Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        }
     }
 }

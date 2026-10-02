@@ -141,7 +141,7 @@ public class HttpResilienceRegistrationTests
         time.AdvanceTo(started + TimeSpan.FromSeconds(3) - TimeSpan.FromTicks(1));
         runnerToken.IsCancellationRequested.ShouldBeFalse("runner-owner-cancel-at-3");
         await ResilienceTestHost.AdvanceAfterAsync(time, runnerTimer!, runnerCancelled.Task,
-            started + TimeSpan.FromSeconds(3));
+            started + TimeSpan.FromSeconds(3), runnerToken);
         (await runnerCancelled.Task).ShouldBe(started + TimeSpan.FromSeconds(3),
             "runner-owner-cancel-at-3");
         await Should.ThrowAsync<TaskCanceledException>(() => runnerWork.WaitAsync(TimeSpan.FromSeconds(5)));
@@ -189,7 +189,7 @@ public class HttpResilienceRegistrationTests
         gitTime.AdvanceTo(gitStarted + TimeSpan.FromSeconds(10) - TimeSpan.FromTicks(1));
         gitToken.IsCancellationRequested.ShouldBeFalse("git-owner-cancel-at-10");
         await ResilienceTestHost.AdvanceAfterAsync(gitTime, gitTimer!, gitCancelled.Task,
-            gitStarted + TimeSpan.FromSeconds(10));
+            gitStarted + TimeSpan.FromSeconds(10), gitToken);
         (await gitCancelled.Task).ShouldBe(gitStarted + TimeSpan.FromSeconds(10),
             "git-owner-cancel-at-10");
         var result = await gitWork.WaitAsync(TimeSpan.FromSeconds(5));

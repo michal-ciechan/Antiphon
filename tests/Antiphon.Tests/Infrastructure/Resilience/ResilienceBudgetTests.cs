@@ -105,7 +105,7 @@ public class ResilienceBudgetTests
             time.AdvanceTo(started + TimeSpan.FromSeconds(10) - TimeSpan.FromTicks(1));
             firstToken.IsCancellationRequested.ShouldBeFalse("attempt-cancel-at-10");
             await ResilienceTestHost.AdvanceAfterAsync(time, attemptTimer!, cancelled.Task,
-                started + TimeSpan.FromSeconds(10));
+                started + TimeSpan.FromSeconds(10), firstToken);
             (await cancelled.Task).ShouldBe(started + TimeSpan.FromSeconds(10), "attempt-cancel-at-10");
             time.GetUtcNow().ShouldBe(started + TimeSpan.FromSeconds(10),
                 "held-completion-keeps-time-at-10");
