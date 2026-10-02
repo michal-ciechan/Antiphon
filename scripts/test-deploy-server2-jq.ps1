@@ -1,5 +1,5 @@
 # CARD-0973 jq precondition regression. Run through build-slot.ps1.
-param([Parameter(Mandatory)][ValidateSet('absent', 'present', 'missing-shell', 'failing-shell')][string]$Case)
+param([Parameter(Mandatory)][ValidateSet('absent', 'present', 'missing-shell', 'failing-shell')][string]$Case, [switch]$KeepTemp)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $evidenceRoot = Join-Path $root ('.antiphon/c973-jq-' + [guid]::NewGuid().ToString('N'))
@@ -42,34 +42,47 @@ try {
     if ($Case -eq 'present' -and -not $jqAvailable) {
         Write-Output 'C973_JQ_SKIPPED present jq-missing: real probe unavailable; present proof needs jq'
     }
-    foreach ($number in 1..19) {
+    foreach ($number in (@(1..19) + @(21..24))) {
         Assert-Jq ([regex]::Matches($output, "(?m)^PASS T-$number ").Count -eq 1) "T-$number passed"
     }
     $states = @(Get-ChildItem -LiteralPath $evidenceRoot -Filter state.json -Recurse | ForEach-Object {
         Get-Content -Raw -LiteralPath $_.FullName | ConvertFrom-Json
     })
-    Assert-Jq ($states.Count -eq $(if ($expectPresent) { 59 } else { 55 })) 'invocation evidence count'
+    Assert-Jq ($states.Count -eq $(if ($expectPresent) { 66 } else { 62 })) 'invocation evidence count'
     $markerStates = @($states | Where-Object { $_.PSObject.Properties.Name -contains 'markerPath' })
     $ordinaryStates = @($states | Where-Object { $_.scenario -notlike 'cold-*' })
-    Assert-Jq ($ordinaryStates.Count -eq 55 -and @($ordinaryStates | Where-Object {
+    Assert-Jq ($ordinaryStates.Count -eq 62 -and @($ordinaryStates | Where-Object {
         $_.PSObject.Properties.Name -contains 'markerPath'
     }).Count -eq 0) 'T-1..T-19 never receive a marker'
     if (-not $expectPresent) {
         Assert-Jq ($output.Contains('C973_SKIPPED jq-missing: T-20 marker-reader groups need jq (CARD-0927)')) 'named skip notice'
         Assert-Jq (-not $output.Contains('PASS T-20 ')) 'T-20 skipped'
-        Assert-Jq ($output.Contains('C849_ROLLING groups=19 invocations=55 assertions=197 failures=0')) 'base roster preserved'
+        Assert-Jq ($output.Contains('C849_ROLLING groups=23 invocations=62 assertions=218 failures=0')) 'base roster preserved'
         Assert-Jq ($markerStates.Count -eq 0) 'no marker-reader invocation'
     } else {
         Assert-Jq (-not $output.Contains('C973_SKIPPED')) 'nothing skipped with jq'
         Assert-Jq ($output.Contains('PASS T-20 ')) 'T-20 passed'
-        Assert-Jq ($output.Contains('C849_ROLLING groups=20 invocations=59 assertions=206 failures=0')) 'jq-present roster preserved'
+        Assert-Jq ($output.Contains('C849_ROLLING groups=24 invocations=66 assertions=227 failures=0')) 'jq-present roster preserved'
         Assert-Jq ($markerStates.Count -eq 4 -and @($markerStates | Where-Object {
             $_.scenario -notlike 'cold-*'
         }).Count -eq 0) 'only T-20 receives a marker'
     }
     # Delete only the DirectoryInfo returned when this driver created its own root.
     # No environment-supplied or reconstructed path is used for deletion.
-    $evidenceDirectory.Delete($true)
+    $ownedRoot = [IO.Path]::GetFullPath($evidenceRoot)
+    if ((Split-Path -Parent $ownedRoot) -ne [IO.Path]::GetFullPath((Join-Path $root '.antiphon')) -or
+        (Split-Path -Leaf $ownedRoot) -cnotmatch '^c973-jq-[0-9a-f]{32} "C973_JQ case=$Case assertions=$assertions failures=0 evidence=$(if ($KeepTemp) { $ownedRoot } else { 'removed' })"
+    exit 0
+}
+catch {
+    [Console]::Error.WriteLine($_.Exception.Message)
+    [Console]::Error.WriteLine("C973_JQ case=$Case assertions=$assertions failures=1 evidence=$evidenceRoot")
+    exit 1
+}
+ -or
+        ($evidenceDirectory.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'C973TempRootInvalid' }
+    if ($KeepTemp) { Write-Output "C973_TEMP kept=$ownedRoot" }
+    else { $evidenceDirectory.Delete($true) }
     Write-Output "C973_JQ case=$Case assertions=$assertions failures=0 evidence=removed"
     exit 0
 }

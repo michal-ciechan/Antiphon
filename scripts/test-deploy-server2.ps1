@@ -1,5 +1,5 @@
 # CARD-0849 frozen offline rolling roster. No network or live runner access.
-param([ValidateSet('all', 'retired-start', 'cleared-offline-start', 'host-race', 'host-absence', 'host-recovery', 'host-saved')][string]$Only = 'all', [switch]$AlreadyAtSha)
+param([ValidateSet('all', 'retired-start', 'cleared-offline-start', 'host-race', 'host-absence', 'host-recovery', 'host-saved', 'cleanup-failure')][string]$Only = 'all', [switch]$AlreadyAtSha, [switch]$KeepTemp)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $driver = Join-Path $PSScriptRoot 'deploy-server2.ps1'
@@ -8,6 +8,8 @@ $verify = Join-Path $PSScriptRoot 'fixtures/c727-fake-verify.ps1'
 $front = Join-Path $PSScriptRoot 'verify-card0849-caches.ps1'
 $sha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 $tempRoot = Join-Path $root ('.antiphon/c849-rolling-' + [guid]::NewGuid().ToString('N'))
+$ownsTempRoot = -not $env:C973_TEST_ROOT
+$success = $false
 if ($env:C973_TEST_ROOT) { $tempRoot = $env:C973_TEST_ROOT }
 New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
 $script:assertions = 0
@@ -204,14 +206,15 @@ function Assert-HostSaved {
 }
 
 try {
+    if ($Only -eq 'cleanup-failure') { throw 'C946 requested cleanup failure' }
     switch ($Only) {
-        host-race { Assert-HostRace; exit 0 }
-        host-absence { Assert-HostAbsence; exit 0 }
-        host-recovery { Assert-HostRecovery; exit 0 }
-        host-saved { Assert-HostSaved; exit 0 }
+        host-race { Assert-HostRace; $success = $true; exit 0 }
+        host-absence { Assert-HostAbsence; $success = $true; exit 0 }
+        host-recovery { Assert-HostRecovery; $success = $true; exit 0 }
+        host-saved { Assert-HostSaved; $success = $true; exit 0 }
     }
-    if ($Only -eq 'retired-start') { Assert-RetiredStart -AlreadyAtSha $AlreadyAtSha; Write-Output 'PASS T-18 retired start'; exit 0 }
-    if ($Only -eq 'cleared-offline-start') { Assert-ClearedOfflineStart -Draining $true -RetireWhenIdle $true -AlreadyAtSha $AlreadyAtSha; Write-Output 'PASS T-19 cleared offline start'; exit 0 }
+    if ($Only -eq 'retired-start') { Assert-RetiredStart -AlreadyAtSha $AlreadyAtSha; Write-Output 'PASS T-18 retired start'; $success = $true; exit 0 }
+    if ($Only -eq 'cleared-offline-start') { Assert-ClearedOfflineStart -Draining $true -RetireWhenIdle $true -AlreadyAtSha $AlreadyAtSha; Write-Output 'PASS T-19 cleared offline start'; $success = $true; exit 0 }
     if ($hasJq) {
         $t = Run-C727 -UseMarker -Scenario cold-marker-pruned -Phase redeploy-old -Set @{ oldDraining = $true }
         Assert-C727 ($t.Exit -eq 0) ('T-20 pruned cold seed image verifies before admission: ' + $t.Out)
@@ -431,10 +434,27 @@ try {
     }
     Write-Output "C849_ROLLING groups=$script:groups invocations=$script:invocations assertions=$script:assertions failures=0"
     Write-Output "V-32 assertions=$script:assertions failures=0"
+    $success = $true
     exit 0
 }
 catch {
     [Console]::Error.WriteLine($_.Exception.Message)
     [Console]::Error.WriteLine("C849_ROLLING groups=$script:groups invocations=$script:invocations assertions=$script:assertions failures=1")
     exit 1
+}
+finally {
+    if ($ownsTempRoot) {
+        if ($success -and -not $KeepTemp) {
+            $ownedRoot = [IO.Path]::GetFullPath($tempRoot)
+            $parent = [IO.Path]::GetFullPath((Join-Path $root '.antiphon'))
+            $item = Get-Item -LiteralPath $ownedRoot -ErrorAction Stop
+            if ([string]::IsNullOrWhiteSpace($tempRoot) -or (Split-Path -Parent $ownedRoot) -ne $parent -or
+                (Split-Path -Leaf $ownedRoot) -cnotmatch '^c849-rolling-[0-9a-f]{32}$' -or
+                ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'C849TempRootInvalid' }
+            Remove-Item -LiteralPath $ownedRoot -Recurse -Force
+            Write-Output "C849_TEMP removed=$ownedRoot"
+        } else {
+            Write-Output "C849_TEMP kept=$tempRoot"
+        }
+    }
 }

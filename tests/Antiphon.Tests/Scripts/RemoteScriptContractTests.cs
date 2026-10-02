@@ -55,6 +55,11 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo(string reader, string fault)
     {
+        CheckCachePath(reader, fault, Remote());
+    }
+
+    private void CheckCachePath(string reader, string fault, string remote)
+    {
         var output = LinuxShell("set -u\n" + $"reader='{reader}'; fault='{fault}'\n" + """
             root="$(mktemp -d /tmp/c951-path-XXXXXXXX)"
             printf 'C951_ROOT=%s\n' "$root"
@@ -86,7 +91,7 @@ public sealed class RemoteScriptContractTests
                 if [ "$1" = stat ]; then echo 1654:1654:700; else "$@"; fi
             }
             write_result() { printf 'DIAGNOSIS=%s\n' "$2"; exit "$3"; }
-            """ + "\n" + Block(Remote(), "c849_observe_volume") + "\n" + Block(Remote(), "c849_prune_validate_tree") + "\n" + """
+            """ + "\n" + Block(remote, "c849_observe_volume") + "\n" + Block(remote, "c849_prune_validate_tree") + "\n" + """
             if [ "$reader" = observe ]; then
                 ( c849_observe_volume "$C849_PACKAGES" nuget-packages 999999 ) > "$root/out" 2>&1
             else
@@ -102,7 +107,11 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C976_Missing_helper_image_preserves_final_receipt_diagnosis()
     {
-        var remote = Remote();
+        CheckHelperReceipt(Remote());
+    }
+
+    private void CheckHelperReceipt(string remote)
+    {
         var trap = remote.Split('\n').Single(line => line.StartsWith("trap 'ec=$?;", StringComparison.Ordinal));
         var output = LinuxShell("set -u\n" + """
             root="$(mktemp -d /tmp/c976-receipt-XXXXXXXX)"
@@ -135,6 +144,78 @@ public sealed class RemoteScriptContractTests
         script.ShouldContain("Remove-Item -LiteralPath $ownedRoot");
         script.ShouldContain("^c849-rolling-[0-9a-f]{32}$");
         script.ShouldContain("C849_TEMP kept=");
+    }
+
+    [Test]
+    [Arguments("loop")]
+    [Arguments("observe")]
+    [Arguments("receipt")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C957_Scratch_mutation_controls_go_red_and_restore(string control)
+    {
+        var original = Remote();
+        var directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "c957-spots-" + Guid.NewGuid().ToString("N")));
+        var path = Path.Combine(directory.FullName, "remote.sh");
+        var bytes = Encoding.UTF8.GetBytes(original);
+        File.WriteAllBytes(path, bytes);
+        try
+        {
+            string mutant;
+            if (control == "loop")
+                mutant = original.Replace("local context=\"${1:-full-required}\" marker image name role item",
+                    "local context=\"${1:-full-required}\" marker image name role", StringComparison.Ordinal);
+            else if (control == "observe")
+                mutant = original.Replace("[ \"$symlink_status\" = 1 ] || write_result false CacheTargetInvalid 2", ": # scratch mutation drops status refusal", StringComparison.Ordinal);
+            else
+            {
+                var image = Block(original, "c849_image");
+                mutant = original.Replace(image, image.Replace("return 10", "write_result false CacheHelperImageMissing 2", StringComparison.Ordinal), StringComparison.Ordinal);
+            }
+            mutant.ShouldNotBe(original, "control must change scratch source");
+            File.WriteAllText(path, mutant);
+            if (control == "loop") CacheLoopLeaks(File.ReadAllText(path)).ShouldContain("c849_require_ready: item");
+            else if (control == "observe") Should.Throw<ShouldAssertException>(() => CheckCachePath("observe", "sudo-test-refused", File.ReadAllText(path)));
+            else Should.Throw<ShouldAssertException>(() => CheckHelperReceipt(File.ReadAllText(path)));
+            File.WriteAllBytes(path, bytes);
+            if (control == "loop") CacheLoopLeaks(File.ReadAllText(path)).ShouldBeEmpty();
+            else if (control == "observe") CheckCachePath("observe", "sudo-test-refused", File.ReadAllText(path));
+            else CheckHelperReceipt(File.ReadAllText(path));
+            File.ReadAllBytes(path).SequenceEqual(bytes).ShouldBeTrue("exact scratch byte restoration");
+            Remote().ShouldBe(original, "tracked source unchanged");
+        }
+        finally { File.WriteAllBytes(path, bytes); directory.Delete(true); }
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C946_Green_harness_removes_root_and_failed_keep_run_retains_evidence()
+    {
+        RequireLinuxPwsh();
+        var repo = DelegateScriptRunner.RepoRoot.Replace("\\", "/", StringComparison.Ordinal);
+        if (OperatingSystem.IsWindows()) repo = LinuxShell("wslpath -u '" + repo + "'").Trim();
+        var output = LinuxShell("repo='" + repo + "'\n" + """
+            set -u
+            root="$(mktemp -d /tmp/c946-cleanup-XXXXXXXX)"
+            printf 'C946_ROOT=%s\n' "$root"
+            trap '[[ "$root" == /tmp/c946-cleanup-???????? && -d "$root" ]] && rm -rf -- "$root"' EXIT
+            pwsh -NoProfile -File "$repo/scripts/test-deploy-server2.ps1" -Only retired-start > "$root/green" 2>&1
+            printf 'GREEN_EXIT=%s\n' "$?"
+            cat "$root/green"
+            removed="$(sed -n 's/^C849_TEMP removed=//p' "$root/green" | tr -d '\r')"
+            if [[ "$removed" == "$repo/.antiphon/"c849-rolling-* && ! -e "$removed" ]]; then echo GREEN_ROOT_REMOVED; fi
+            pwsh -NoProfile -File "$repo/scripts/test-deploy-server2.ps1" -Only cleanup-failure -KeepTemp > "$root/fail" 2>&1
+            printf 'FAILED_KEEP_EXIT=%s\n' "$?"
+            kept="$(sed -n 's/^C849_TEMP kept=//p' "$root/fail" | tr -d '\r')"
+            if [[ "$kept" == "$repo/.antiphon/"c849-rolling-* && -d "$kept" ]]; then
+                echo FAILED_KEEP_ROOT_RETAINED
+                # Only the root created and printed by this invocation is removed.
+                rm -rf -- "$kept"
+            fi
+            """);
+        output.ShouldContain("GREEN_EXIT=0");
+        output.ShouldContain("GREEN_ROOT_REMOVED");
+        output.ShouldContain("FAILED_KEEP_EXIT=1");
+        output.ShouldContain("FAILED_KEEP_ROOT_RETAINED");
     }
 
     private const string NoLinuxPwshReason = "CARD-0905: pwsh is not on the Linux shell PATH (WSL has no pwsh); install pwsh in WSL to run C849 script-block tests.";
