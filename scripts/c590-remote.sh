@@ -1779,20 +1779,34 @@ c849_cold_proof() {
 }
 
 c849_cold_probe() {
-    local name="$1" phase="$2" helper code=0
+    local name="$1" phase="$2" helper code=0 timed_out=0 role path canary
     helper="c849-cold-${RUN}-${phase}"
     c849_cold_proof "pre-$phase" yes
     timeout --kill-after=2s 10s docker run --name "$helper" --network none --user 1654:1654 \
         --entrypoint /bin/sh --mount "type=volume,source=$name,target=/cache,volume-nocopy" \
         "$C849_COLD_MAIN_IMAGE" -c 'set -eu; p="/cache/.c849-cold-$1"; (umask 077; : > "$p"); mv "$p" "$p.moved"; rm "$p.moved"' sh "$RUN" \
         >/dev/null 2>> "$CASE_DIR/command.log" || code=$?
-    if [ "$code" -eq 124 ] || [ "$code" -eq 137 ]; then
-        docker rm -f "$helper" >/dev/null 2>&1 || write_result false CacheSeedProbeCleanupFailed 2
-        write_result false CacheColdProbeTimeout 2
-    fi
+    if [ "$code" -eq 124 ] || [ "$code" -eq 137 ]; then timed_out=1; fi
     docker rm -f "$helper" >/dev/null 2>&1 || write_result false CacheSeedProbeCleanupFailed 2
     [ -z "$(docker ps -aq --filter "name=^/${helper}$")" ] \
         || write_result false CacheSeedProbeCleanupFailed 2
+    role=nuget-packages
+    [ "$name" = "$C849_SCRATCH" ] && role=nuget-scratch
+    [ "$name" = "$C849_NPM" ] && role=npm-content
+    c849_cold_volume_facts "$name" "$role" no
+    path="$C849_COLD_DOCKER_ROOT/volumes/$name/_data"
+    canary="$path/.c849-cold-$RUN"
+    if [ -e "$canary" ] || [ -L "$canary" ] || [ -e "$canary.moved" ] || [ -L "$canary.moved" ]; then
+        sudo -n rm -f -- "$canary" "$canary.moved" \
+            || write_result false CacheSeedProbeCleanupFailed 2
+        [ ! -e "$canary" ] && [ ! -L "$canary" ] \
+            && [ ! -e "$canary.moved" ] && [ ! -L "$canary.moved" ] \
+            || write_result false CacheSeedProbeCleanupFailed 2
+        code=1
+    fi
+    if [ "$timed_out" -eq 1 ]; then
+        write_result false CacheColdProbeTimeout 2
+    fi
     [ "$code" -eq 0 ] || write_result false CacheRootNotWritable 2
     c849_cold_proof "$phase" yes
 }

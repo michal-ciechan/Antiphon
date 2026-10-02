@@ -2066,7 +2066,10 @@ public sealed class RemoteScriptContractTests
             c849_lock() { :; }
             sudo() {
                 [ "$1" = -n ] && shift
-                if [ "$1" = stat ]; then printf '1654:1654:700\n'; return 0; fi
+                if [ "$1" = stat ]; then
+                    [ "$FAULT" = wrong-mode ] && printf '1654:1654:755\n' || printf '1654:1654:700\n'
+                    return 0
+                fi
                 if [ "$1" = install ]; then mkdir -p "${@: -1}"; return 0; fi
                 "$@"
             }
@@ -2074,6 +2077,14 @@ public sealed class RemoteScriptContractTests
                 if [ "$1" = server2 ]; then
                     printf '{"sessions":3,"runnerSessions":3,"queuedTasks":1,"acceptingNewWork":true,"draining":false,"dispatchEligible":true}'
                 else
+                    if [ "$FAULT" = temp-counter-omitted ]; then
+                        printf '{"retiredAt":"2026-10-02T00:00:00Z","available":false,"dispatchEligible":false,"acceptingNewWork":false,"draining":true,"retireWhenIdle":true,"redirectTo":"server2","sessions":0,"queuedTasks":0}'
+                        return 0
+                    fi
+                    if [ "$FAULT" = temp-unretired ]; then
+                        printf '{"retiredAt":null,"available":true,"dispatchEligible":true,"acceptingNewWork":true,"draining":false,"retireWhenIdle":false,"redirectTo":null,"sessions":0,"runnerSessions":0,"queuedTasks":0}'
+                        return 0
+                    fi
                     printf '{"retiredAt":"2026-10-02T00:00:00Z","available":false,"dispatchEligible":false,"acceptingNewWork":false,"draining":true,"retireWhenIdle":true,"redirectTo":"server2","sessions":0,"runnerSessions":null,"queuedTasks":0}'
                 fi
             }
@@ -2082,15 +2093,31 @@ public sealed class RemoteScriptContractTests
                 local verb="$1" sub="${2:-}" name='' format='' code='' mount='' arg i path role
                 case "$verb:$sub" in
                     info:*) printf '%s\n' "$root"; return 0 ;;
-                    image:inspect) return 0 ;;
+                    image:inspect) [ "$FAULT" != missing-image ]; return $? ;;
                     ps:*)
                         case "$*" in
                             *'name=^/'*) return 0 ;;
                             *'com.docker.compose.project=antiphon-runner-temp'*) return 0 ;;
                         esac
-                        printf '%s\n' "$MAIN_ID"; return 0 ;;
+                        printf '%s\n' "$MAIN_ID"
+                        if [ "$sub" = -aq ] && { [ "$FAULT" = other-mount ] || [ "$FAULT" = stopped-mount ]; }; then
+                            printf '%064d\n' 2
+                        fi
+                        return 0 ;;
                     inspect:*)
                         [ "$FAULT" = inspect-error ] && return 2
+                        if [ "$FAULT" = change-after-init ] && [ "$PHASE" = changed ]; then
+                            printf '[{"Id":"%064d","Image":"%s","State":{"Running":true},"Config":{"Labels":{"com.docker.compose.project":"antiphon-runner","com.docker.compose.service":"session-runner"}},"Mounts":[]}]\n' 3 "$IMAGE_ID"
+                            return 0
+                        fi
+                        if [ "$2" = "$(printf '%064d' 2)" ]; then
+                            printf '[{"Id":"%064d","Image":"%s","State":{"Running":false},"Config":{"Labels":{}},"Mounts":[{"Type":"volume","Name":"%s","Source":"%s/volumes/%s/_data","Destination":"/cache","RW":true}]}]\n' 2 "$IMAGE_ID" "$C849_PACKAGES" "$root" "$C849_PACKAGES"
+                            return 0
+                        fi
+                        if [ "$FAULT" = main-mount ]; then
+                            printf '[{"Id":"%s","Image":"%s","State":{"Running":true},"Config":{"Labels":{"com.docker.compose.project":"antiphon-runner","com.docker.compose.service":"session-runner"}},"Mounts":[{"Type":"volume","Name":"%s","Source":"%s/volumes/%s/_data","Destination":"/home/app/.nuget/packages","RW":true}]}]\n' "$MAIN_ID" "$IMAGE_ID" "$C849_PACKAGES" "$root" "$C849_PACKAGES"
+                            return 0
+                        fi
                         printf '[{"Id":"%s","Image":"%s","State":{"Running":true},"Config":{"Labels":{"com.docker.compose.project":"antiphon-runner","com.docker.compose.service":"session-runner"}},"Mounts":[]}]\n' "$MAIN_ID" "$IMAGE_ID"
                         return 0 ;;
                     volume:ls)
@@ -2105,7 +2132,9 @@ public sealed class RemoteScriptContractTests
                         role=nuget-packages
                         [ "$name" = "$C849_SCRATCH" ] && role=nuget-scratch
                         [ "$name" = "$C849_NPM" ] && role=npm-content
-                        printf '[{"Name":"%s","Driver":"local","Options":{},"Mountpoint":"%s/volumes/%s/_data","Labels":{"io.antiphon.owner":"server2-runner","io.antiphon.cache-schema":"1","io.antiphon.cache-role":"%s"}}]\n' "$name" "$root" "$name" "$role"
+                        local owner=server2-runner
+                        [ "$FAULT" = foreign-owner ] && owner=foreign
+                        printf '[{"Name":"%s","Driver":"local","Options":{},"Mountpoint":"%s/volumes/%s/_data","Labels":{"io.antiphon.owner":"%s","io.antiphon.cache-schema":"1","io.antiphon.cache-role":"%s"}}]\n' "$name" "$root" "$name" "$owner" "$role"
                         return 0 ;;
                     run:*)
                         for ((i=1;i<=$#;i++)); do
@@ -2116,17 +2145,27 @@ public sealed class RemoteScriptContractTests
                         name="${mount#*source=}"; name="${name%%,*}"
                         path="$root/volumes/$name/_data"
                         if [[ "$code" == *chown* ]]; then
-                            printf 'init %s\n' "$name" >> "$root/effects"; return 0
+                            printf 'init %s\n' "$name" >> "$root/effects"
+                            [ "$FAULT" = change-after-init ] && PHASE=changed
+                            [ "$FAULT" = init-error ] && return 2
+                            return 0
                         fi
                         printf 'probe %s %s\n' "$name" "$*" >> "$root/effects"
                         code="${code//\/cache/$path}"
+                        [ "$FAULT" = probe-create-fail ] && code="set -e; false; $code"
+                        [ "$FAULT" = probe-rename-fail ] && code="mv() { return 2; }; $code"
+                        [ "$FAULT" = probe-delete-fail ] && code="rm() { return 2; }; $code"
                         bash -c "$code" sh "$RUN"; return $? ;;
-                    rm:*) printf 'remove %s\n' "${@: -1}" >> "$root/effects"; return 0 ;;
+                    rm:*) printf 'remove %s\n' "${@: -1}" >> "$root/effects"; [ "$FAULT" != cleanup-fail ]; return $? ;;
                 esac
                 printf 'UNEXPECTED-DOCKER %s\n' "$*" >> "$root/effects"
                 return 2
             }
-            timeout() { [ "$1" = --kill-after=2s ] && [ "$2" = 10s ] || return 2; shift 2; "$@"; }
+            timeout() {
+                [ "$1" = --kill-after=2s ] && [ "$2" = 10s ] || return 2
+                [ "$FAULT" = probe-timeout ] && return 124
+                shift 2; "$@"
+            }
             """ + "\n" +
             Block(source, "c849_cold_volume_facts") + "\n" +
             Block(source, "c849_cold_proof") + "\n" +
@@ -2138,21 +2177,33 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C912_Cold_volumes_seed_accepts_busy_main_without_packages()
     {
-        var output = LinuxShell(ColdSeedHarness() + """
-            mkdir -p "$SERVER2_ROOT/cache"
-            (c849_cold_seed)
-            [ -f "$C849_READY" ] && grep -Fxq kind=cold "$C849_READY" && echo cold-ready
-            [ "$(grep -c '^create ' "$root/effects")" = 3 ] && echo only-absent-created
-            grep -Fxq 'ready=true kind=cold writable=3' "$CASE_DIR/seed.txt" && echo cold-receipt
-            [ -z "$(find "$root/volumes" -type f -print -quit)" ] && echo empty-roots
-            [ -z "$(grep -Ei '^UNEXPECTED|dotnet restore|npm ci|build-slot|--network (bridge|host)' "$root/effects")" ] && echo no-package-network-or-slot-call
-            echo main-unchanged
-            """);
-        output.ShouldContain("cold-ready");
-        output.ShouldContain("only-absent-created");
-        output.ShouldContain("empty-roots");
-        output.ShouldContain("main-unchanged");
-        output.ShouldContain("no-package-network-or-slot-call");
+        for (var mask = 0; mask < 8; mask++)
+        {
+            var existing = new[] { "$C849_PACKAGES", "$C849_SCRATCH", "$C849_NPM" };
+            var setup = string.Concat(existing.Where((_, index) => (mask & (1 << index)) != 0)
+                .Select(name => "mkdir -p \"$root/volumes/" + name + "/_data\"\n"));
+            var expectedCreates = 3 - Convert.ToString(mask, 2).Count(bit => bit == '1');
+            var output = LinuxShell(ColdSeedHarness() + setup + "\n" + """
+                mkdir -p "$SERVER2_ROOT/cache"
+                (c849_cold_seed)
+                [ -f "$C849_READY" ] && grep -Fxq kind=cold "$C849_READY" &&
+                    [ "$(wc -l < "$C849_READY")" = 8 ] &&
+                    ! grep -Eq '^(payload|reference|recovery|apphost)' "$C849_READY" && echo cold-ready
+                """ + "\n" +
+                "[ \"$(grep -c '^create ' \"$root/effects\")\" = " + expectedCreates + " ] && echo only-absent-created\n" + """
+                grep -Fxq 'ready=true kind=cold writable=3' "$CASE_DIR/seed.txt" && echo cold-receipt
+                [ -z "$(find "$root/volumes" -type f -print -quit)" ] && echo empty-roots
+                [ -z "$(grep -Ei '^UNEXPECTED|dotnet restore|npm ci|build-slot|--network (bridge|host)' "$root/effects")" ] && echo no-package-network-or-slot-call
+                [ -z "$(grep -E '^(stop|post|deploy) ' "$root/effects")" ] &&
+                    [ "$(c849_status_body server2 | jq -r .acceptingNewWork)" = true ] && echo main-unchanged
+                """);
+            output.Contains("cold-ready").ShouldBeTrue("cold-ready mask=" + mask);
+            output.Contains("only-absent-created").ShouldBeTrue("only-absent-created mask=" + mask);
+            output.Contains("cold-receipt").ShouldBeTrue("cold-receipt mask=" + mask);
+            output.Contains("empty-roots").ShouldBeTrue("empty-roots mask=" + mask);
+            output.Contains("main-unchanged").ShouldBeTrue("main-unchanged mask=" + mask);
+            output.Contains("no-package-network-or-slot-call").ShouldBeTrue("no-package-network-or-slot-call mask=" + mask);
+        }
     }
 
     [Test]
@@ -2167,17 +2218,35 @@ public sealed class RemoteScriptContractTests
             FAULT=inspect-error
             (c849_cold_seed)
             [ ! -e "$C849_READY" ] && [ ! -s "$root/effects" ] && echo preflight-no-write-inspect-error
+            for fault in main-mount other-mount stopped-mount temp-unretired temp-counter-omitted; do
+                FAULT="$fault"
+                (c849_cold_seed)
+                [ ! -e "$C849_READY" ] && [ ! -s "$root/effects" ] && echo "preflight-no-write-$fault"
+            done
             FAULT=''
             mkdir -p "$root/volumes/$C849_PACKAGES/_data"
+            FAULT=foreign-owner
+            (c849_cold_seed)
+            [ ! -e "$C849_READY" ] && [ ! -s "$root/effects" ] && echo preflight-no-write-foreign-owner
+            FAULT=wrong-mode
+            (c849_cold_seed)
+            [ ! -e "$C849_READY" ] && [ ! -s "$root/effects" ] && echo preflight-no-write-wrong-mode
+            FAULT=''
             printf x > "$root/volumes/$C849_PACKAGES/_data/.hidden"
             (c849_cold_seed)
             [ ! -e "$C849_READY" ] && [ ! -s "$root/effects" ] && echo preflight-no-write-hidden
             """);
-        output.ShouldContain("RESULT accepted=false diagnosis=CacheFirstSeedPreconditionUnknown");
-        output.ShouldContain("preflight-no-write-census-error");
-        output.ShouldContain("preflight-no-write-inspect-error");
-        output.ShouldContain("RESULT accepted=false diagnosis=CacheUnmarkedContent");
-        output.ShouldContain("preflight-no-write-hidden");
+        output.Contains("RESULT accepted=false diagnosis=CacheFirstSeedPreconditionUnknown").ShouldBeTrue("refusal-CacheFirstSeedPreconditionUnknown");
+        output.Contains("preflight-no-write-census-error").ShouldBeTrue("preflight-no-write-census-error");
+        output.Contains("preflight-no-write-inspect-error").ShouldBeTrue("preflight-no-write-inspect-error");
+        foreach (var fault in new[] { "main-mount", "other-mount", "stopped-mount", "temp-unretired", "temp-counter-omitted", "foreign-owner", "wrong-mode" })
+            output.Contains("preflight-no-write-" + fault).ShouldBeTrue("preflight-no-write-" + fault);
+        output.Contains("RESULT accepted=false diagnosis=CacheFirstSeedVolumeInUse").ShouldBeTrue("refusal-CacheFirstSeedVolumeInUse");
+        output.Contains("RESULT accepted=false diagnosis=CacheFirstSeedTempNotRetired").ShouldBeTrue("refusal-CacheFirstSeedTempNotRetired");
+        output.Contains("RESULT accepted=false diagnosis=CacheVolumeForeign").ShouldBeTrue("refusal-CacheVolumeForeign");
+        output.Contains("RESULT accepted=false diagnosis=CacheRootOwnershipInvalid").ShouldBeTrue("refusal-CacheRootOwnershipInvalid");
+        output.Contains("RESULT accepted=false diagnosis=CacheUnmarkedContent").ShouldBeTrue("refusal-CacheUnmarkedContent-hidden");
+        output.Contains("preflight-no-write-hidden").ShouldBeTrue("preflight-no-write-hidden");
     }
 
     [Test]
@@ -2193,8 +2262,17 @@ public sealed class RemoteScriptContractTests
             [ "$(grep -c '^phase=' "$CASE_DIR/cold-proof.txt")" -ge 11 ] && echo repeated-proof
             """);
         foreach (var phase in new[] { "P0", "P1", "P2", "P3", "P4", "P5", "P6" })
-            output.ShouldContain("phase-proof-recorded-" + phase);
-        output.ShouldContain("repeated-proof");
+            output.Contains("phase-proof-recorded-" + phase).ShouldBeTrue("phase-proof-recorded-" + phase);
+        output.Contains("repeated-proof").ShouldBeTrue("repeated-proof");
+        var changed = LinuxShell(ColdSeedHarness() + """
+            mkdir -p "$SERVER2_ROOT/cache"
+            FAULT=change-after-init
+            (c849_cold_seed)
+            [ ! -e "$C849_READY" ] && [ "$(grep -c '^create ' "$root/effects")" = 1 ] &&
+                [ "$(grep -c '^probe ' "$root/effects")" = 0 ] && echo recheck-refused-P1
+            """);
+        changed.Contains("RESULT accepted=false diagnosis=CacheFirstSeedMainMountChanged").ShouldBeTrue("refusal-CacheFirstSeedMainMountChanged-id");
+        changed.Contains("recheck-refused-P1").ShouldBeTrue("recheck-refused-P1");
     }
 
     [Test]
@@ -2208,9 +2286,31 @@ public sealed class RemoteScriptContractTests
             grep -q -- '--user 1654:1654' "$root/effects" && echo probe-uid-1654
             [ "$(grep -c '^remove ' "$root/effects")" = 3 ] && echo probe-owned-helper-stopped
             """);
-        output.ShouldContain("probe-writable");
-        output.ShouldContain("probe-uid-1654");
-        output.ShouldContain("probe-owned-helper-stopped");
+        output.Contains("probe-writable").ShouldBeTrue("probe-writable");
+        output.Contains("probe-uid-1654").ShouldBeTrue("probe-uid-1654");
+        output.Contains("probe-owned-helper-stopped").ShouldBeTrue("probe-owned-helper-stopped");
+        foreach (var variant in new[] {
+                     (Fault: "missing-image", Code: "CacheHelperImageMissing"),
+                     (Fault: "create-error", Code: "CacheVolumeCreateFailed"),
+                     (Fault: "init-error", Code: "CacheVolumeInitFailed"),
+                     (Fault: "probe-create-fail", Code: "CacheRootNotWritable"),
+                     (Fault: "probe-rename-fail", Code: "CacheRootNotWritable"),
+                     (Fault: "probe-delete-fail", Code: "CacheRootNotWritable"),
+                     (Fault: "probe-timeout", Code: "CacheColdProbeTimeout"),
+                     (Fault: "cleanup-fail", Code: "CacheSeedProbeCleanupFailed") })
+        {
+            var refused = LinuxShell(ColdSeedHarness() + "\nFAULT=" + variant.Fault + "\n" + """
+                mkdir -p "$SERVER2_ROOT/cache"
+                printf keep > "$root/outside"
+                (c849_cold_seed)
+                [ ! -e "$C849_READY" ] && [ "$(cat "$root/outside")" = keep ] && echo probe-refused-no-marker-or-outside-write
+                grep -q '^remove c849-cold-' "$root/effects" && echo probe-owned-helper-stopped
+                """);
+            refused.Contains("RESULT accepted=false diagnosis=" + variant.Code).ShouldBeTrue("probe-refused-" + variant.Fault);
+            refused.Contains("probe-refused-no-marker-or-outside-write").ShouldBeTrue("probe-refused-no-marker-or-outside-write " + variant.Fault);
+            if (variant.Fault == "probe-timeout")
+                refused.Contains("probe-owned-helper-stopped").ShouldBeTrue("probe-owned-helper-stopped");
+        }
     }
 
     [Test]
@@ -2223,13 +2323,71 @@ public sealed class RemoteScriptContractTests
             (c849_cold_seed)
             c849_require_ready allow-cold
             [ "$C849_KIND" = cold ] && echo cold-marker-valid
+            printf payload > "$root/volumes/$C849_PACKAGES/_data/ordinary-build-package"
+            before="$(grep -c '^probe ' "$root/effects")"
+            c849_require_ready allow-cold
+            [ "$(grep -c '^probe ' "$root/effects")" = "$before" ] && echo marker-reuse-no-probe-or-restore
+            cp "$C849_READY" "$root/valid-marker"
             (c849_require_ready)
             printf 'payload-sha256=bad\n' >> "$C849_READY"
             (c849_require_ready allow-cold)
+            cp "$root/valid-marker" "$C849_READY"
+            printf 'kind=cold\n' >> "$C849_READY"
+            (c849_require_ready allow-cold)
+            cp "$root/valid-marker" "$C849_READY"
+            rm "$C849_READY"; ln -s "$root/valid-marker" "$C849_READY"
+            (c849_require_ready allow-cold)
             """);
-        output.ShouldContain("cold-marker-valid");
+        output.Contains("cold-marker-valid").ShouldBeTrue("cold-marker-valid");
+        output.Contains("marker-reuse-no-probe-or-restore").ShouldBeTrue("marker-reuse-no-probe-or-restore");
         output.Contains("RESULT accepted=false diagnosis=CacheFullSeedRequired").ShouldBeTrue("full-context-refused");
         output.Contains("RESULT accepted=false diagnosis=CacheSeedMarkerInvalid").ShouldBeTrue("malformed-marker-refused");
+        var invalidCount = Regex.Matches(output, "RESULT accepted=false diagnosis=CacheSeedMarkerInvalid").Count;
+        invalidCount.ShouldBeGreaterThanOrEqualTo(3, "malformed-marker-refused mixed, duplicate, symlink");
+        var repo = DelegateScriptRunner.RepoRoot;
+        var front = Path.Combine(repo, "scripts", "verify-card0849-caches.ps1");
+        var script = "$Front='" + front.Replace("'", "''") + "';" + """
+            $sha = (& git -C (Split-Path -Parent (Split-Path -Parent $Front)) rev-parse HEAD).Trim()
+            $global:seen = $false; $global:owned = ''
+            function global:pwsh {
+                param([switch]$NoProfile,[string]$File,[string]$Case,[string]$Manifest)
+                $m = Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json
+                $global:owned = Split-Path -Parent $m.evidenceRoot
+                if ($Case -eq 'runner-cache-seed' -and $m.coldSeed -is [bool] -and $m.coldSeed) {
+                    $global:seen = $true
+                    Write-Output 'cold-transport'
+                }
+                throw 'C912_STUB_STOP'
+            }
+            try {
+                try { & $Front -Case Seed -Cold -Sha $sha } catch { if ($_.Exception.Message -ne 'C912_STUB_STOP') { throw } }
+                if (-not $global:seen) { throw 'cold-transport missing' }
+                try { & $Front -Case Reset -Cold -Sha $sha | Out-Null; throw 'bad-case-accepted' }
+                catch { if ($_.Exception.Message -ne 'CacheColdModeInvalid') { throw } }
+                try { & $Front -Case Seed -Cold -SavedDonor /tmp/donor -Sha $sha | Out-Null; throw 'conflict-accepted' }
+                catch { if ($_.Exception.Message -ne 'CacheDonorSourceConflict') { throw } }
+                Write-Output 'cold-conflict-refused'
+            }
+            finally {
+                if ($global:owned -and (Split-Path -Leaf $global:owned) -match '^c849-c849[0-9a-f]{16}$') {
+                    Remove-Item -LiteralPath $global:owned -Recurse -Force
+                }
+                Remove-Item Function:\pwsh -ErrorAction SilentlyContinue
+            }
+            """;
+        var start = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        start.ArgumentList.Add("-NoProfile");
+        start.ArgumentList.Add("-Command");
+        start.ArgumentList.Add(script);
+        using var process = Process.Start(start)!;
+        var frontOutput = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        process.ExitCode.ShouldBe(0, "cold-transport " + frontOutput);
+        frontOutput.Contains("cold-transport").ShouldBeTrue("cold-transport");
+        frontOutput.Contains("cold-conflict-refused").ShouldBeTrue("refusal-CacheDonorSourceConflict");
+        var bridge = File.ReadAllText(Path.Combine(repo, "scripts", "c590-real.ps1"));
+        bridge.Contains("$Manifest.coldSeed -isnot [bool]").ShouldBeTrue("cold-bridge-boolean-only");
+        bridge.Contains("export C590_COLD_SEED=").ShouldBeTrue("cold-bridge-host-flag");
     }
 
     [Test]
@@ -2247,6 +2405,63 @@ public sealed class RemoteScriptContractTests
         Block(remote, "case_verify_runner_caches_retired").Contains("if [ \"$C849_KIND\" = full ]; then c849_smoke").ShouldBeTrue("full-smoke-retained");
         var front = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "verify-card0849-caches.ps1"));
         front.Contains("C849 mixed marker kinds").ShouldBeTrue("mixed-kind-refused");
+        var frontPath = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "verify-card0849-caches.ps1");
+        var script = "$Front='" + frontPath.Replace("'", "''") + "';" + """
+            $repo = Split-Path -Parent (Split-Path -Parent $Front)
+            $sha = (& git -C $repo rev-parse HEAD).Trim()
+            $global:owned = @(); $global:kind2 = 'cold'
+            function global:pwsh {
+                param([switch]$NoProfile,[string]$File,[string]$Case,[string]$Manifest)
+                $m = Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json
+                $global:owned += Split-Path -Parent $m.evidenceRoot
+                $dir = Join-Path $m.evidenceRoot $Case
+                New-Item -ItemType Directory -Path $dir -Force | Out-Null
+                [IO.File]::WriteAllText((Join-Path $dir 'c590-result.json'), '{"accepted":true,"exit":0}' + "`n")
+                $status = @{ buildVersion=$sha; dispatchEligible=$true; acceptingNewWork=$true; draining=$false;
+                    sessions=0; runnerSessions=0; queuedTasks=0; credential='TOKEN_SENTINEL_C912' } | ConvertTo-Json -Compress
+                [IO.File]::WriteAllText((Join-Path $dir 'status.json'), $status + "`n")
+                $private = if ($m.runnerId -eq 'server2-temp') { 'antiphon-runner-temp_runner-tmp' } else { 'antiphon-runner_runner-tmp' }
+                $mounts = "antiphon-runner-cache-nuget-packages antiphon-runner-cache-nuget-scratch antiphon-runner-cache-npm-content`n$private /tmp true`n"
+                [IO.File]::WriteAllText((Join-Path $dir 'runner-mounts.txt'), $mounts)
+                $kind = if ($m.runnerId -eq 'server2-temp') { $global:kind2 } else { 'cold' }
+                [IO.File]::WriteAllText((Join-Path $dir 'seed-kind.txt'), $kind + "`n")
+                if ($Case -eq 'verify-runner-caches-retired') {
+                    [IO.File]::WriteAllText((Join-Path $dir 'rollback.txt'), 'rollback-image=sha256:' + ('0' * 64) + "`n")
+                }
+            }
+            try {
+                $both = & $Front -Case Both -Sha $sha | Out-String
+                if ($both -notmatch 'C849_BOTH kind=cold') { throw 'cold-verify-empty-cache' }
+                Write-Output 'cold-verify-empty-cache'
+                $retired = & $Front -Case Retired -Sha $sha | Out-String
+                if ($retired -notmatch 'C849_RETIRED kind=cold') { throw 'cold-retired-without-smoke' }
+                Write-Output 'cold-no-smoke'
+                $global:kind2 = 'full'
+                try { & $Front -Case Both -Sha $sha | Out-Null; throw 'mixed-kind-accepted' }
+                catch { if ($_.Exception.Message -ne 'C849 mixed marker kinds') { throw } }
+                Write-Output 'mixed-kind-refused'
+            }
+            finally {
+                foreach ($path in ($global:owned | Select-Object -Unique)) {
+                    if ((Split-Path -Leaf $path) -match '^c849-c849[0-9a-f]{16}$') {
+                        Remove-Item -LiteralPath $path -Recurse -Force
+                    }
+                }
+                Remove-Item Function:\pwsh -ErrorAction SilentlyContinue
+            }
+            """;
+        var start = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        start.ArgumentList.Add("-NoProfile");
+        start.ArgumentList.Add("-Command");
+        start.ArgumentList.Add(script);
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        process.ExitCode.ShouldBe(0, output);
+        output.Contains("cold-verify-empty-cache").ShouldBeTrue("cold-verify-empty-cache");
+        output.Contains("cold-no-smoke").ShouldBeTrue("cold-no-smoke");
+        output.Contains("mixed-kind-refused").ShouldBeTrue("mixed-kind-refused");
+        output.Contains("TOKEN_SENTINEL_C912").ShouldBeFalse("cold-toxic-sentinel-absent");
     }
 
     [Test]
@@ -2254,10 +2469,20 @@ public sealed class RemoteScriptContractTests
     public void C912_Cold_exception_never_weakens_maintenance_or_donor_gates()
     {
         var remote = Remote();
-        Block(remote, "c849_reset").Contains("c849_require_ready").ShouldBeTrue("full-gate-refused-reset");
-        Block(remote, "c849_prune").Contains("c849_require_ready").ShouldBeTrue("full-gate-refused-prune");
-        Block(remote, "c849_seed").Contains("c849_prune_idle").ShouldBeTrue("full-gate-refused-saved");
-        Block(remote, "c849_seed").Contains("CacheDonorNotIdleDrained").ShouldBeTrue("full-gate-refused-donor");
+        var reset = Block(remote, "c849_reset");
+        reset.Contains("c849_require_ready").ShouldBeTrue("full-gate-refused-reset");
+        reset.Contains("c849_prune_idle").ShouldBeTrue("full-gate-refused-reset-idle");
+        reset.Contains("CacheResetInUse").ShouldBeTrue("full-gate-refused-reset-attachments");
+        var prune = Block(remote, "c849_prune");
+        prune.Contains("c849_require_ready").ShouldBeTrue("full-gate-refused-prune");
+        prune.Contains("c849_prune_idle").ShouldBeTrue("full-gate-refused-prune-idle");
+        prune.Contains("c849_budget_gate").ShouldBeTrue("full-gate-refused-prune-budget");
+        var seed = Block(remote, "c849_seed");
+        seed.Contains("c849_prune_idle").ShouldBeTrue("full-gate-refused-saved");
+        seed.Contains("c849_no_cache_attachments").ShouldBeTrue("full-gate-refused-saved-attachments");
+        seed.Contains("CacheDonorNotIdleDrained").ShouldBeTrue("full-gate-refused-donor");
+        Order(seed, "c849_status_zero server2-temp ||", "docker stop \"$donor\"").ShouldBeTrue("full-gate-refused-donor-before-stop");
+        seed.Contains("CacheDonorConsumerBusy").ShouldBeTrue("full-gate-refused-donor-process");
         var rolling = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "deploy-server2.ps1"));
         rolling.Contains("OldRunnerStillBusy").ShouldBeTrue("redeploy-old still checks zero");
     }
