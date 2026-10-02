@@ -2227,8 +2227,8 @@ public sealed class RemoteScriptContractTests
             (c849_require_ready allow-cold)
             """);
         output.ShouldContain("cold-marker-valid");
-        output.ShouldContain("RESULT accepted=false diagnosis=CacheFullSeedRequired", "full-context-refused");
-        output.ShouldContain("RESULT accepted=false diagnosis=CacheSeedMarkerInvalid", "malformed-marker-refused");
+        output.Contains("RESULT accepted=false diagnosis=CacheFullSeedRequired").ShouldBeTrue("full-context-refused");
+        output.Contains("RESULT accepted=false diagnosis=CacheSeedMarkerInvalid").ShouldBeTrue("malformed-marker-refused");
     }
 
     [Test]
@@ -2240,12 +2240,12 @@ public sealed class RemoteScriptContractTests
                      "case_deploy_parent", "case_deploy_temp_runner", "case_retire_temp_runner" })
         {
             var body = Block(remote, function);
-            body.ShouldContain("c849_require_ready allow-cold", "cold-verify-empty-cache " + function);
+            body.Contains("c849_require_ready allow-cold").ShouldBeTrue("cold-verify-empty-cache " + function);
         }
-        Block(remote, "case_verify_runner_caches").ShouldContain("if [ \"$C849_KIND\" = full ]; then c849_smoke", "cold-no-smoke");
-        Block(remote, "case_verify_runner_caches_retired").ShouldContain("if [ \"$C849_KIND\" = full ]; then c849_smoke", "full-smoke-retained");
+        Block(remote, "case_verify_runner_caches").Contains("if [ \"$C849_KIND\" = full ]; then c849_smoke").ShouldBeTrue("cold-no-smoke");
+        Block(remote, "case_verify_runner_caches_retired").Contains("if [ \"$C849_KIND\" = full ]; then c849_smoke").ShouldBeTrue("full-smoke-retained");
         var front = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "verify-card0849-caches.ps1"));
-        front.ShouldContain("C849 mixed marker kinds", "mixed-kind-refused");
+        front.Contains("C849 mixed marker kinds").ShouldBeTrue("mixed-kind-refused");
     }
 
     [Test]
@@ -2253,12 +2253,12 @@ public sealed class RemoteScriptContractTests
     public void C912_Cold_exception_never_weakens_maintenance_or_donor_gates()
     {
         var remote = Remote();
-        Block(remote, "c849_reset").ShouldContain("c849_require_ready", "full-gate-refused-reset");
-        Block(remote, "c849_prune").ShouldContain("c849_require_ready", "full-gate-refused-prune");
-        Block(remote, "c849_seed").ShouldContain("c849_prune_idle", "full-gate-refused-saved");
-        Block(remote, "c849_seed").ShouldContain("CacheDonorNotIdleDrained", "full-gate-refused-donor");
+        Block(remote, "c849_reset").Contains("c849_require_ready").ShouldBeTrue("full-gate-refused-reset");
+        Block(remote, "c849_prune").Contains("c849_require_ready").ShouldBeTrue("full-gate-refused-prune");
+        Block(remote, "c849_seed").Contains("c849_prune_idle").ShouldBeTrue("full-gate-refused-saved");
+        Block(remote, "c849_seed").Contains("CacheDonorNotIdleDrained").ShouldBeTrue("full-gate-refused-donor");
         var rolling = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "deploy-server2.ps1"));
-        rolling.ShouldContain("OldRunnerStillBusy", "redeploy-old still checks zero");
+        rolling.Contains("OldRunnerStillBusy").ShouldBeTrue("redeploy-old still checks zero");
     }
 
     private static string CacheSeedTreeHarness()
