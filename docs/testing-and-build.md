@@ -235,6 +235,68 @@ Exit codes: 0 green, 1 failed tests, 2 invalid manifest or build or missing/malf
 
 `import --plan <plan.md>` writes the same manifest as YAML under `.antiphon/` when a row needs `knownFlaky`, `serial`, or a timeout pin. A legacy eight-column table (minutes stored under `Min`) is refused until the time column is renamed `EstimatedMinutes` (CARD-0617). `import` warns when `3 × EstimatedMinutes` exceeds the 45-minute row ceiling or a row names more than four land classes. A land row stays at about 120 `[Test]` methods. `row` runs one row with the same lines as `scripts/run-checkpoint.ps1`. The repo tool manifest does not list this package until a feed exists; prove the package with `dotnet pack` and `dotnet tool install --tool-path`.
 
+### Static plan-to-test coverage (CARD-0891/0901)
+
+`coverage --plan <path> [--tests <literal.cs> ...] [--format text|json]
+[--checklist <path>] [--repo-root <root>]` performs a read-only syntax lint. It imports
+the checkpoint table through the existing importer, selects C# class declarations
+under its named projects and literal Scope/implementation test paths, and binds each
+Verification design promise to its named method. Class OR operands and trailing `*`
+are supported; partial declarations are included. Unsupported category/command
+selection needs explicit files and checklist bindings. Missing plan-selected files,
+ambiguous bindings, malformed syntax, stale checklist locations and paths escaping
+the repository (including resolved links) remain visible; explicit files do not erase
+a missing selection. No driver, build slot, Git process or run-state write occurs in
+this verb.
+
+V/R paragraphs and tables, and PC tables, are read inside `## Verification design`;
+checkpoint rows and fenced examples are excluded. Backtick methods, assertion/witness
+labels and exclusion canaries are bound to their V/test. Unmapped legacy prose is
+reported with original line/column coordinates. One inline `plan-coverage-v1` JSON
+fence, or an external checklist, can add exact promises and map an exact legacy
+clause. Its schema is `{version:1, items:[{id,test,kind,name,planLine,maps?}]}`;
+kinds are `method`, `label`, `canary`, `member`, `empty`, `null`, `value`.
+`test` is class-qualified; mappings supplement extraction and cannot remove a label
+or canary. The empty string is a valid expected `value`, but never a label.
+
+Roslyn parses syntax only. Supported Shouldly signatures distinguish the actual,
+expected, Case and custom-message arguments. Setup/comments/another method cannot
+satisfy an assertion. Literal aliases, interpolated literal segments, literal-array
+loops and uniquely bound local helpers supply bounded evidence; unknown assertion
+syntax/helper dispatch is unmapped. A member must occur in the asserted actual;
+a canary must occur in an exclusion assertion; an expected value must occur in the
+expected expression. Null and empty are separate obligations. No general dataflow,
+whole-object expansion, semantic compilation or helper execution is performed.
+
+Every PC prints its method/target and predecessor findings. Unlabeled predecessors
+are issues; earlier different stable labels are advisories. Every PC, including
+`static-labeled`, carries `reachability=unproven`. **A static pass means the syntax
+checks passed, not that a mutant reached its intended assertion.** SourceLanding
+Mutation remains the separate method-scoped proof.
+
+Exit 0 means no missing/unmapped obligations or PC issues (advisories may remain),
+1 means completed analysis with findings, and 2 means invalid input/analysis. Text
+uses JSON-quoted string fields, a `PLAN-COVERAGE` header and `PLAN-COVERAGE-END`
+footer; JSON is a separate schemaVersion 1 report with selected paths/classes,
+SHA-256 digests, obligations/matches, exclusions, diagnostics, PC statuses and counts.
+Neither form includes timestamps, source bodies or environment values.
+
+Code builds the changed tool once through a leased bootstrap, then runs the verb
+before final ordinary checkpoints. For example:
+
+```powershell
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label coverage-tool-bootstrap -- dotnet build tools/Antiphon.Checkpoints --property:OutputPath=bin-coverage-tool/ --nologo
+dotnet run --project tools/Antiphon.Checkpoints --no-build --property:OutputPath=bin-coverage-tool/ -- coverage --plan <plan.md>
+```
+
+Paste the **complete** text output before final CHECKPOINT lines and give a disposition
+for remaining advisories. If findings cause a tracked edit, commit/push and regenerate
+coverage/checkpoint evidence at the resulting source. Review builds at its reviewed
+source, reruns the same plan/selection/checklist, and compares digests/diagnostics;
+it does not accept Code's paste as its own run. Lint findings are evidence to reconcile,
+not an independent Final Review gate: the operator's regression/fail-open standard
+continues to govern.
+
 ### CARD-0490 phone-home runner and native PC-28–31
 
 Opt-in Linux Grok phone-home is `docker-compose.runner-grok.yml` plus `scripts/verify-phone-home-grok.ps1`. It never publishes a runner port and never targets production 17202–17205. `PhoneHome__ServerOrigin` is launch env only (`PHONE_HOME_SERVER_ORIGIN`); compose/Dockerfile do not hardcode it. V-7 allocates an isolated server/Postgres, writes `.antiphon/card0490-live.json` (example: `tests/fixtures/card0490-linux/card0490-live.example.json`), and tears the instance down. Local Docker injects `http://host.docker.internal:<isolated-port>`. `-Placement server2` injects `http://<desktop-tailscale-ipv4>:<isolated-port>` (this desktop is `100.79.51.37` / `desktop-ktlkpif`; `host.docker.internal` on server2 is server2 itself). The image installs Grok 1.0.41 from `https://x.ai/cli/install.sh` (CARD-0575) and does not `COPY` credential files. Grok OAuth is a **copy** of primary `GROK_HOME` `auth.json` (optional `config.toml`, `version.json`) into a throwaway directory, bind-mounted **read-only** at `/state/grok` via `PHONE_HOME_GROK_HOME`. Session writes use `PHONE_HOME_GROK_SESSIONS`. Never live-mount the primary store. Not `XAI_API_KEY`. QEMU `assets.lock.json` pins are a native-lane obligation and do not block the isolated container.

@@ -563,3 +563,27 @@ Helper analysis must stay obligation-specific: a field reference inside uniquely
 The 20 new class-qualified methods and the 26 current existing names are fully enumerated in the active checklist. The latter were read from their source attributes, not inferred from a previous plan count. No Arguments or data-source attributes occur on those 26 methods at the observed master. Dynamic reachability remains unproved for both historical datasets and for all six future controls until their separately commissioned Mutation execution.
 
 TestDesign document validation: the active checklist has 72 entries (20 new methods + 20 labels + 26 existing methods + 6 PC targets); the historical checklist has 121 mapping entries. Repeated identical obligations with different maps clauses are additive aliases, not conflicting requirements, and deduplicate under D-2 while retaining the clause locations. Both JSON objects parse; all planLine/maps references resolve against their respective plan bytes. Seven raw fixture blob hashes, byte counts and line ranges match Git. The 20+6 existing method names match the current-master source census. CP-1 remains byte-for-byte unchanged with seven class operands, 11 cells, Min 46 and estimate 8. The scratch directory is absent and only this plan is changed. These are document/source checks, not analyzer/TUnit/PC execution receipts.
+
+## Code admission reconciliation (2026-10-02)
+
+Assigned base `b26c97658e712c53083e6777e5753bbf336011cc` contains CARD-0885
+and CARD-0826's landed replay. The Code brief supersedes the conditional assumption
+that CARD-0826 necessarily extracted checkpoint cleanup: its landing added the
+HostCleanup project and migration, but left the original tool Cleanup files and
+caller wiring intact. Those planned extraction dependencies are moot for this
+read-only verb. All files this closed footprint needs exist; no reconstruction or
+HostCleanup/caller edit is required.
+
+Reread: Program/project, CheckpointApp runtime/driver seams, WaitCommand,
+EvidenceFolder, RunStateStore, Manifest classes, owned-temp helpers and testing
+owner. The tool remains net9.0 with per-project package pins. Import still supports
+Serial/Environment/Repeat and retains repeated CLI option values. TempDir custody
+and `C804_ORPHAN_SWEEP_ROOT=c891-disabled;TUNIT_MAX_PARALLEL_TESTS=1` are unchanged.
+
+Admission census: CheckpointImportTests 20 and CheckpointManifestTests 6,
+no Arguments/data-source/skip attributes. The seven CP-1 wildcard operands select
+only the five new classes and those two existing classes. New single-result methods
+remain 4+5+4+3+4=20. Delta from freeze: existing 0, new 0, rows 0; CP-1 remains 46.
+The brief additionally commissions one normal Unit lane at the end, overriding
+this plan's earlier narrow-lane statement. That lane is separately disclosed in the
+Code report, with its actual expanded counts and any failures.

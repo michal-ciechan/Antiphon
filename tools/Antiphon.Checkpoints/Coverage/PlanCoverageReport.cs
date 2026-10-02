@@ -9,6 +9,7 @@ public sealed record CoverageLocation(int Line, int Column);
 public sealed record CoverageMatch(string Path, int Line);
 public sealed record CoverageObligation(string Id, string Test, string Kind, string Name, int PlanLine, int PlanColumn = 1, string? Maps = null)
 {
+    public bool FromChecklist { get; init; }
     public List<CoverageLocation> Locations { get; init; } = [];
     public List<CoverageMatch> Matches { get; init; } = [];
 }
