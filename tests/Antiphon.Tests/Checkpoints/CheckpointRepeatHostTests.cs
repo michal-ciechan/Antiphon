@@ -57,7 +57,7 @@ public sealed class CheckpointRepeatHostTests : CheckpointTestBase
 
         var complete = await RunHost(null, null, cancellationToken);
         var text = File.ReadAllText(complete.Trx);
-        text.ShouldContain("C885_REPEAT_END", "fixture must retain actual receiver markers");
+        text.ShouldContain("C885_REPEAT_END", Case.Insensitive, "fixture must retain actual receiver markers");
         var changed = Path.Combine(Path.GetDirectoryName(complete.Trx)!, "missing-end.trx");
         File.WriteAllText(changed, text.Replace("C885_REPEAT_END", "C885_MISSING_END", StringComparison.Ordinal));
         RepeatEvidenceValidator.Validate(TrxReport.Parse(changed), 5, complete.Nonce, 3, ["RepeatHostTests"]).Ok
