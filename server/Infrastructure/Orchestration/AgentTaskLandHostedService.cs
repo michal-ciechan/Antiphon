@@ -40,21 +40,22 @@ public sealed class AgentTaskLandHostedService : BackgroundService
                         {
                             var handled = await lands.FailRequestAsync(request.TaskId, request.RequestId, ex, stoppingToken);
                             _logger.LogWarning(
-                                "Land operation failed for task {TaskId} request {RequestId} attempt {Attempt} exception {ExceptionType} code {Code} diagnostic {DiagnosticId}",
+                                "Land operation failed for task {TaskId} request {RequestId} attempt {Attempt} exception {ExceptionType} code {Code} diagnostic {DiagnosticId} frames {Frames}",
                                 request.TaskId, handled.RequestId, handled.Attempt, handled.ExceptionType, handled.Code,
-                                handled.DiagnosticId);
+                                handled.DiagnosticId, LandFailureDiagnostic.RedactedFrames(ex));
                         }
                         catch (LandFailurePersistenceException persistEx)
                         {
                             _logger.LogWarning(
-                                "Could not persist land failure for task {TaskId} diagnostic {DiagnosticId} persistence {PersistenceErrorType}",
-                                request.TaskId, persistEx.DiagnosticId, persistEx.PersistenceErrorType);
+                                "Could not persist land failure for task {TaskId} diagnostic {DiagnosticId} persistence {PersistenceErrorType} frames {Frames}",
+                                request.TaskId, persistEx.DiagnosticId, persistEx.PersistenceErrorType,
+                                LandFailureDiagnostic.RedactedFrames(persistEx.InnerException ?? persistEx));
                         }
                         catch (Exception failEx) when (failEx is not OperationCanceledException)
                         {
                             _logger.LogWarning(
-                                "Could not persist land failure for task {TaskId}; the sweep will retry",
-                                request.TaskId);
+                                "Could not persist land failure for task {TaskId}; the sweep will retry; diagnostic {DiagnosticId} frames {Frames}",
+                                request.TaskId, Guid.NewGuid(), LandFailureDiagnostic.RedactedFrames(failEx));
                         }
                     }
                 }
@@ -64,8 +65,9 @@ public sealed class AgentTaskLandHostedService : BackgroundService
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning("Land operation failed for task {TaskId} exception {ExceptionType}",
-                        request.TaskId, LandFailureDiagnostic.ExceptionTypeName(ex));
+                    _logger.LogWarning("Land operation failed for task {TaskId} exception {ExceptionType} diagnostic {DiagnosticId} frames {Frames}",
+                        request.TaskId, LandFailureDiagnostic.ExceptionTypeName(ex), Guid.NewGuid(),
+                        LandFailureDiagnostic.RedactedFrames(ex));
                 }
                 finally
                 {
