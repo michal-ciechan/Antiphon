@@ -1715,9 +1715,9 @@ c849_cold_proof() {
     fi
     status="$(c849_status_body server2)" || write_result false CacheFirstSeedPreconditionUnknown 2
     printf '%s' "$status" | jq -e '
-      (.sessions | type) == "number" and .sessions >= 0 and .sessions == floor and
-      (.queuedTasks | type) == "number" and .queuedTasks >= 0 and .queuedTasks == floor and
-      ((.runnerSessions | type) == "number" and .runnerSessions >= 0 and .runnerSessions == floor) and
+      (.sessions | type) == "number" and .sessions >= 0 and .sessions == (.sessions | floor) and
+      (.queuedTasks | type) == "number" and .queuedTasks >= 0 and .queuedTasks == (.queuedTasks | floor) and
+      ((.runnerSessions | type) == "number" and .runnerSessions >= 0 and .runnerSessions == (.runnerSessions | floor)) and
       (.acceptingNewWork | type) == "boolean" and (.draining | type) == "boolean" and
       (.dispatchEligible | type) == "boolean"' >/dev/null \
         || write_result false CacheFirstSeedPreconditionUnknown 2
@@ -1779,7 +1779,8 @@ c849_cold_proof() {
 }
 
 c849_cold_probe() {
-    local name="$1" phase="$2" helper="c849-cold-${RUN}-${phase}" code=0
+    local name="$1" phase="$2" helper code=0
+    helper="c849-cold-${RUN}-${phase}"
     c849_cold_proof "pre-$phase" yes
     timeout --kill-after=2s 10s docker run --name "$helper" --network none --user 1654:1654 \
         --entrypoint /bin/sh --mount "type=volume,source=$name,target=/cache,volume-nocopy" \

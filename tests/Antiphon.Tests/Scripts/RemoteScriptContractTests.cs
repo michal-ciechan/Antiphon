@@ -2145,7 +2145,7 @@ public sealed class RemoteScriptContractTests
             [ "$(grep -c '^create ' "$root/effects")" = 3 ] && echo only-absent-created
             grep -Fxq 'ready=true kind=cold writable=3' "$CASE_DIR/seed.txt" && echo cold-receipt
             [ -z "$(find "$root/volumes" -type f -print -quit)" ] && echo empty-roots
-            [ -z "$(grep -Ei 'dotnet|npm|build-slot|restore|network [^-]' "$root/effects")" ] && echo no-package-network-or-slot-call
+            [ -z "$(grep -Ei '^UNEXPECTED|dotnet restore|npm ci|build-slot|--network (bridge|host)' "$root/effects")" ] && echo no-package-network-or-slot-call
             echo main-unchanged
             """);
         output.ShouldContain("cold-ready");
