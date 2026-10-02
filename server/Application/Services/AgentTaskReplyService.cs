@@ -2022,6 +2022,7 @@ public sealed class AgentTaskReplyService
                 request.State = LandRequestState.Superseded;
                 request.IsPending = false;
                 request.TerminalEventId = mergedEvent.Id;
+                LandRequestWriteProvenance.Stamp(request, "merge-supersession", _timeProvider);
                 mergedEvent.LandRequestId = request.Id;
                 mergedEvent.IsLandTerminal = true;
             }

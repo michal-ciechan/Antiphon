@@ -281,36 +281,79 @@ public sealed class AgentTaskLandSourceResolver(
         {
             request.SourceAdvanceChildProcessId = pid;
             request.SourceAdvanceChildStartTicks = ticks;
-            request.ConcurrencyToken = Guid.NewGuid();
+            LandRequestWriteProvenance.Stamp(request, "source-child-start", clock);
             await db.SaveChangesAsync(startedCt);
         }
         var inspected = await git.InspectAsync(coordinates, LandInspectionScope.IdentityAndStatus, ct);
-        if (!inspected.Accepted && inspected.Reason == "source_dirty"
-            && request.SourceAdvanceChildOperation == "source-adopt-reset"
-            && GitObjectId.IsFull(request.RecoveryLocalBeforeSha))
+        if (!inspected.Accepted && inspected.Reason == "source_dirty")
         {
-            // An interrupted update-ref leaves HEAD at S while the index and worktree still show L.
-            // Reset only when the checkout still equals the pinned old L; actual new edits refuse.
             var identity = await git.InspectAsync(coordinates, LandInspectionScope.IdentityOnly, ct);
             if (!identity.Accepted || identity.Snapshot!.HeadSha != expected)
                 return await RefuseAsync(task, request, baseline, "adopt_local_changed",
                     identity.Snapshot?.HeadSha, ownerObserved.Sha, expected, ct);
-            var unchanged = await git.RunAsync(coordinates.WorktreePath,
-                ["diff", "--quiet", request.RecoveryLocalBeforeSha!], ct);
-            var untracked = await git.RunAsync(coordinates.WorktreePath,
-                ["ls-files", "--others", "--exclude-standard"], ct);
-            if (!unchanged.Succeeded || !untracked.Succeeded || untracked.Output.Length != 0)
-                return await RefuseAsync(task, request, baseline, "source_dirty",
-                    expected, ownerObserved.Sha, expected, ct);
-            var resetResume = await git.RunOwnedAsync(coordinates.WorktreePath,
-                ["reset", "--hard", expected], StartedAsync, ct);
-            baseline = LandSourceCheckpointBaseline.From(request, task);
+            var sameRequest = request.SourceAdvanceChildOperation == "source-adopt-reset"
+                && GitObjectId.IsFull(request.RecoveryLocalBeforeSha);
+            if (!sameRequest)
+            {
+                var witness = await LandRecoveryWitnessFinder.FindAsync(db, git, request, coordinates,
+                    await git.CommonDirectoryAsync(repository, ct), expected, sourceObserved.Fingerprint!, ct);
+                if (witness is null)
+                    return await RefuseAsync(task, request, baseline, "source_dirty",
+                        expected, ownerObserved.Sha, expected, ct, detail: "recovery_checkout_unproven");
+                if (witness.Reason is not null)
+                    return await RefuseAsync(task, request, baseline, witness.Reason,
+                        expected, ownerObserved.Sha, expected, ct);
+                var ancestry = await git.RunAsync(repository,
+                    ["merge-base", "--is-ancestor", witness.LocalBeforeSha, expected], ct);
+                if (!ancestry.Succeeded)
+                    return await RefuseAsync(task, request, baseline, "source_dirty",
+                        expected, ownerObserved.Sha, expected, ct, detail: "recovery_checkout_unproven");
+                request.RecoveryLocalBeforeSha = witness.LocalBeforeSha;
+                request.RecoveryWitnessRequestId = witness.RequestId;
+                request.RecoverySourceFingerprint = sourceObserved.Fingerprint;
+                var recoveryPinPrefix = $"refs/antiphon/land/{task.Id:N}/{request.Id:N}/adopt";
+                if (!(await git.PinAsync(repository, $"{recoveryPinPrefix}/local-before", witness.LocalBeforeSha, ct)).Succeeded
+                    || !(await git.PinAsync(repository, $"{recoveryPinPrefix}/source", expected, ct)).Succeeded)
+                    return await RefuseAsync(task, request, baseline, "adopt_source_pin_failed",
+                        expected, ownerObserved.Sha, expected, ct);
+                request.SourceResolutionState = LandSourceResolutionState.AdvanceStarted;
+                request.SourceAdvanceChildOperation = "source-adopt-reset";
+                if (await CheckpointAsync(task, request, baseline, ct) is { } intentStop) return intentStop;
+                baseline = LandSourceCheckpointBaseline.From(request, task);
+            }
+            var proof = await git.InspectRecoveryCheckoutAsync(coordinates,
+                request.RecoveryLocalBeforeSha!, expected, ct);
+            if (!proof.Accepted)
+                return await RefuseAsync(task, request, baseline,
+                    proof.Reason == "adopt_local_changed" ? "adopt_local_changed" : "source_dirty",
+                    expected, ownerObserved.Sha, expected, ct, detail: proof.Reason);
+            var authority = await RecheckRecoveryAuthorityAsync(request, source, sourceObserved, ct);
+            if (authority is not null)
+                return await RefuseAsync(task, request, baseline, authority.Value.Code,
+                    expected, ownerObserved.Sha, expected, ct, detail: authority.Value.Detail);
+            if (ownerObserved.Sha is not null)
+            {
+                var remote = await git.RecheckSourceRemoteAsync(repository, coordinates.SourceFullRef,
+                    ownerObserved.Sha, ownerObserved.Fingerprint!, ct);
+                if (!remote.Accepted || remote.Sha != ownerObserved.Sha)
+                    return await RefuseAsync(task, request, baseline, "adopt_source_remote_changed",
+                        expected, remote.Sha, expected, ct);
+            }
+            proof = await git.InspectRecoveryCheckoutAsync(coordinates, request.RecoveryLocalBeforeSha!, expected, ct);
+            if (!proof.Accepted)
+                return await RefuseAsync(task, request, baseline,
+                    proof.Reason == "adopt_local_changed" ? "adopt_local_changed" : "source_dirty",
+                    expected, ownerObserved.Sha, expected, ct, detail: proof.Reason);
+            var resetResume = await git.RunAsync(coordinates.WorktreePath, ["reset", "--hard", expected], ct);
             if (!resetResume.Succeeded)
                 return await RefuseAsync(task, request, baseline, "adopt_local_reset_failed",
                     expected, ownerObserved.Sha, expected, ct);
+            inspected = await git.InspectAsync(coordinates, LandInspectionScope.IdentityAndStatus, ct);
+            if (!inspected.Accepted || inspected.Snapshot?.HeadSha != expected)
+                return await RefuseAsync(task, request, baseline, "adopt_local_changed",
+                    inspected.Snapshot?.HeadSha, ownerObserved.Sha, expected, ct);
             request.SourceAdvanceChildProcessId = null;
             request.SourceAdvanceChildStartTicks = null;
-            inspected = await git.InspectAsync(coordinates, LandInspectionScope.IdentityAndStatus, ct);
         }
         if (!inspected.Accepted)
             return await RefuseAsync(task, request, baseline, inspected.Reason ?? "source_identity_unreadable",
@@ -402,32 +445,42 @@ public sealed class AgentTaskLandSourceResolver(
             request.SourceAdvanceChildOperation = "source-adopt-reset";
             if (await CheckpointAsync(task, request, baseline, ct) is { } resetStop) return resetStop;
             baseline = LandSourceCheckpointBaseline.From(request, task);
-            var moved = await git.RunOwnedAsync(repository,
-                ["update-ref", "--no-deref", coordinates.SourceFullRef, expected, local], StartedAsync, ct);
-            baseline = LandSourceCheckpointBaseline.From(request, task);
+            var moved = await git.RunAsync(repository,
+                ["update-ref", "--no-deref", coordinates.SourceFullRef, expected, local], ct);
             if (!moved.Succeeded)
                 return await RefuseAsync(task, request, baseline, "adopt_local_cas_rejected",
                     local, ownerObserved.Sha, expected, ct);
-            request.SourceAdvanceChildProcessId = null;
-            request.SourceAdvanceChildStartTicks = null;
             await _boundary.ReachedAsync("source-adopt-ref-moved-before-reset", task.Id, request.Id, ct);
-            request.ConcurrencyToken = Guid.NewGuid();
-            await db.SaveChangesAsync(ct);
-            var reset = await git.RunOwnedAsync(coordinates.WorktreePath,
-                ["reset", "--hard", expected], StartedAsync, ct);
-            baseline = LandSourceCheckpointBaseline.From(request, task);
+            var resetAuthority = await RecheckRecoveryAuthorityAsync(request, source, sourceObserved, ct);
+            if (resetAuthority is not null)
+                return await RefuseAsync(task, request, baseline, resetAuthority.Value.Code,
+                    expected, ownerObserved.Sha, expected, ct, detail: resetAuthority.Value.Detail);
+            if (ownerObserved.Sha is not null)
+            {
+                var resetRemote = await git.RecheckSourceRemoteAsync(repository, coordinates.SourceFullRef,
+                    ownerObserved.Sha, ownerObserved.Fingerprint!, ct);
+                if (!resetRemote.Accepted || resetRemote.Sha != ownerObserved.Sha)
+                    return await RefuseAsync(task, request, baseline, "adopt_source_remote_changed",
+                        expected, resetRemote.Sha, expected, ct);
+            }
+            var proof = await git.InspectRecoveryCheckoutAsync(coordinates, local, expected, ct);
+            if (!proof.Accepted)
+                return await RefuseAsync(task, request, baseline,
+                    proof.Reason == "adopt_local_changed" ? "adopt_local_changed" : "source_dirty",
+                    expected, ownerObserved.Sha, expected, ct, detail: proof.Reason);
+            var reset = await git.RunAsync(coordinates.WorktreePath, ["reset", "--hard", expected], ct);
             if (!reset.Succeeded)
                 return await RefuseAsync(task, request, baseline, "adopt_local_reset_failed",
                     local, ownerObserved.Sha, expected, ct);
+            var afterLocal = await git.InspectAsync(coordinates, LandInspectionScope.IdentityAndStatus, ct);
+            if (!afterLocal.Accepted || afterLocal.Snapshot!.HeadSha != expected)
+                return await RefuseAsync(task, request, baseline, "adopt_local_changed",
+                    afterLocal.Snapshot?.HeadSha, ownerObserved.Sha, expected, ct);
             request.SourceAdvanceChildOperation = null;
             request.SourceAdvanceChildProcessId = null;
             request.SourceAdvanceChildStartTicks = null;
             if (await CheckpointAsync(task, request, baseline, ct) is { } advancedStop) return advancedStop;
             baseline = LandSourceCheckpointBaseline.From(request, task);
-            var afterLocal = await git.InspectAsync(coordinates, LandInspectionScope.IdentityAndStatus, ct);
-            if (!afterLocal.Accepted || afterLocal.Snapshot!.HeadSha != expected)
-                return await RefuseAsync(task, request, baseline, "adopt_local_changed",
-                    afterLocal.Snapshot?.HeadSha, ownerObserved.Sha, expected, ct);
         }
         if (request.SourceAdvanceChildOperation == "source-adopt-reset")
         {
@@ -495,6 +548,30 @@ public sealed class AgentTaskLandSourceResolver(
     private async Task<(string Code, string? Detail)?> RecheckRecoveryAuthorityAsync(AgentTaskLandRequest request, AgentTask source,
         LandingSourceObservation observed, CancellationToken ct)
     {
+        var committed = await db.AgentTaskLandRequests.AsNoTracking()
+            .SingleOrDefaultAsync(r => r.Id == request.Id, ct);
+        var owner = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == request.TaskId, ct);
+        if (committed is null || owner is null || !committed.IsPending
+            || owner.CurrentLandRequestId != request.Id
+            || !LandApproval.RecoveryStatusEligible(owner.Status)
+            || committed.ExpectedSourceSha != request.ExpectedSourceSha
+            || committed.ReviewEvidenceId != request.ReviewEvidenceId
+            || committed.RecoveryMode != request.RecoveryMode
+            || committed.RecoverySourceTaskId != request.RecoverySourceTaskId
+            || committed.RecoveryLocalBeforeSha != request.RecoveryLocalBeforeSha
+            || committed.SourceAdvanceChildOperation != request.SourceAdvanceChildOperation)
+            return ("adopt_authority_changed", null);
+        if (request.SourceAdvanceChildOperation == "source-adopt-reset" && request.RecoveryLocalBeforeSha is { } local)
+        {
+            var prefix = $"refs/antiphon/land/{request.TaskId:N}/{request.Id:N}/adopt";
+            var localPin = await git.RunAsync(request.RepositoryPathSnapshot!,
+                ["show-ref", "--verify", "--hash", $"{prefix}/local-before"], ct);
+            var sourcePin = await git.RunAsync(request.RepositoryPathSnapshot!,
+                ["show-ref", "--verify", "--hash", $"{prefix}/source"], ct);
+            if (!localPin.Succeeded || localPin.Output.Trim() != local
+                || !sourcePin.Succeeded || sourcePin.Output.Trim() != request.ExpectedSourceSha)
+                return ("adopt_source_pin_changed", null);
+        }
         try
         {
             await LandApproval.LoadRecoveryEvidenceAsync(db, request.ReviewEvidenceId!.Value,

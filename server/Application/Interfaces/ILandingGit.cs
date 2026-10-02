@@ -23,6 +23,10 @@ public interface ILandingGit
     /// returns empty <see cref="LandSourceSnapshot.IgnoredPaths"/>; the dirty check is unchanged.</summary>
     Task<LandSourceInspection> InspectAsync(LandSourceCoordinates coordinates, LandInspectionScope scope, CancellationToken ct)
         => InspectAsync(coordinates, ct);
+    /// <summary>Fail closed for doubles that do not implement recovery inspection.</summary>
+    Task<LandRecoveryCheckoutInspection> InspectRecoveryCheckoutAsync(LandSourceCoordinates coordinates,
+        string oldSha, string expectedSha, CancellationToken ct)
+        => Task.FromResult(LandRecoveryCheckoutInspection.Refused());
     /// <summary>CARD-0642 D-4: read caches bounded by the caller (a land holds the repository lease for the
     /// scope's lifetime). A nested call borrows the live scope.</summary>
     ILandingOperationScope BeginOperationScope() => LandingOperationScope.None;

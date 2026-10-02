@@ -1715,6 +1715,7 @@ public class AppDbContext : DbContext
             });
             entity.HasKey(r => r.Id);
             entity.Property(r => r.ConcurrencyToken).IsConcurrencyToken();
+            entity.Property(r => r.LastWriterOperation).HasMaxLength(80);
             entity.Property(r => r.VerifyFilter).HasMaxLength(400);
             entity.Property(r => r.HoldReasonCode).HasMaxLength(100);
             entity.Property(r => r.HoldDetail).HasMaxLength(2000);

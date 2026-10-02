@@ -38,6 +38,9 @@ public sealed class AgentTaskLandRequest
     public DateTime? ErrorAt { get; set; }
     public string? ReconciliationError { get; set; }
     public Guid ConcurrencyToken { get; set; } = Guid.NewGuid();
+    public string? LastWriterOperation { get; set; }
+    public Guid? LastWriterToken { get; set; }
+    public DateTime? LastWriterAt { get; set; }
 
     public int SchemaVersion { get; set; } = 1;
     public string? ExpectedSourceSha { get; set; }
@@ -48,6 +51,7 @@ public sealed class AgentTaskLandRequest
     public string? RecoverySourceFullRef { get; set; }
     public string? RecoverySourceFingerprint { get; set; }
     public Guid? SupersedesRequestId { get; set; }
+    public Guid? RecoveryWitnessRequestId { get; set; }
     public string? RecoveryStartBaseSha { get; set; }
     public string? RecoveryLocalBeforeSha { get; set; }
     public string? RecoveryOwnerRemoteBeforeSha { get; set; }

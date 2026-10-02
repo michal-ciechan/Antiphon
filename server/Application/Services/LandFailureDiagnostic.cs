@@ -2,6 +2,7 @@ using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -19,6 +20,47 @@ internal static class LandFailureDiagnostic
     public const string AccessDenied = "landing_access_denied";
     public const string Unexpected = "landing_unexpected_exception";
     public const string InterruptedAfterPublication = "landing_interrupted_after_publication";
+
+    private static readonly HashSet<string> AllowedWriters = new(StringComparer.Ordinal)
+    {
+        "admission", "admission-resume", "admission-supersession", "start", "hold", "yield", "terminal",
+        "target-race-retry", "sweep-cancel", "needs-resolution", "monitor-sweep", "source-checkpoint",
+        "operation-attach", "source-child-start", "protocol-progress", "merge-supersession",
+    };
+
+    public static string? CaptureConcurrency(Exception exception)
+    {
+        if (exception is not DbUpdateConcurrencyException conflict) return null;
+        var parts = new List<string>();
+        foreach (var entry in conflict.Entries.Take(4))
+        {
+            var entity = entry.Entity switch
+            {
+                AgentTaskLandRequest => "AgentTaskLandRequest",
+                AgentTask => "AgentTask",
+                _ => null,
+            };
+            if (entity is null) continue;
+            try
+            {
+                var id = entry.Property("Id").CurrentValue is Guid key ? key.ToString("N") : "unknown";
+                var original = entry.OriginalValues["ConcurrencyToken"] is Guid before ? before.ToString("N") : "unknown";
+                var attempted = entry.CurrentValues["ConcurrencyToken"] is Guid after ? after.ToString("N") : "unknown";
+                parts.Add($"entity={entity}; row={id}; originalToken={original}; attemptedToken={attempted}");
+            }
+            catch (InvalidOperationException) { parts.Add($"entity={entity}; row=unknown"); }
+        }
+        return parts.Count == 0 ? "entity=unknown" : string.Join(" | ", parts);
+    }
+
+    public static string ObservedDatabaseWriter(AgentTaskLandRequest? row, bool unavailable = false)
+    {
+        if (unavailable) return "observedToken=unavailable; observedDatabaseWriter=unknown";
+        if (row is null) return "observedToken=deleted; observedDatabaseWriter=unknown";
+        var writer = row.LastWriterToken == row.ConcurrencyToken && row.LastWriterOperation is { } label
+            && AllowedWriters.Contains(label) ? label : "unknown";
+        return $"observedToken={row.ConcurrencyToken:N}; observedDatabaseWriter={writer}";
+    }
 
     private static readonly HashSet<string> AllowedCommands = new(StringComparer.Ordinal)
     {
@@ -140,12 +182,13 @@ internal static class LandFailureDiagnostic
     }
 
     public static string FormatUnconfirmed(string code, Guid diagnosticId, string? exceptionType,
-        AgentTaskLandRequest request)
+        AgentTaskLandRequest request, string? concurrencySummary = null)
     {
         var type = exceptionType ?? "Exception";
         return $"land unconfirmed: {code}; diagnostic={diagnosticId:N}; exception={type}; "
             + $"expected={request.ExpectedSourceSha ?? "null"}; local={request.LocalBeforeSha ?? "null"}; "
-            + $"remote={request.RemoteSourceSha ?? "null"}; candidate={request.CandidateSourceSha ?? "null"}";
+            + $"remote={request.RemoteSourceSha ?? "null"}; candidate={request.CandidateSourceSha ?? "null"}"
+            + (concurrencySummary is null ? "" : $"; phase={BoundIdentifier(request.SourceAdvanceChildOperation, 80) ?? "unknown"}; {concurrencySummary}");
     }
 
     public static string AppendInspection(string core, AgentTaskLandRequest request)

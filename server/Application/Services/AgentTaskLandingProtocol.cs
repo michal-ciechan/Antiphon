@@ -786,7 +786,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             request.LastProgressAt = Now();
             request.LandingOperationId = op.Id;
             request.WarningAt = request.ErrorAt = null;
-            request.ConcurrencyToken = Guid.NewGuid();
+            LandRequestWriteProvenance.Stamp(request, "protocol-progress", clock);
         }
         await db.SaveChangesAsync(ct);
         if (transaction is not null) await transaction.CommitAsync(ct);

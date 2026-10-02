@@ -41,7 +41,7 @@ public sealed class AgentTaskLandMonitorService(AppDbContext db, TimeProvider cl
             { request.WarningAt = now; await AddAgedAsync(request, operation, "Warning", now, ct); changed = true; }
             if (age >= settings.Value.LandErrorSeconds && request.ErrorAt is null)
             { request.ErrorAt = now; await AddAgedAsync(request, operation, "Error", now, ct); changed = true; }
-            request.ConcurrencyToken = Guid.NewGuid();
+            LandRequestWriteProvenance.Stamp(request, "monitor-sweep", clock);
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
             if (changed) await events.PublishToAllAsync("AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
