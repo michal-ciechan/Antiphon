@@ -24,7 +24,8 @@ internal static class LandFailureDiagnostic
     private static readonly HashSet<string> AllowedWriters = new(StringComparer.Ordinal)
     {
         "admission", "admission-resume", "admission-supersession", "start", "hold", "yield", "terminal",
-        "target-race-retry", "sweep-cancel", "needs-resolution", "monitor-sweep", "source-checkpoint",
+        "target-race-retry", "sweep-cancel", "admission-cancel", "mirror-disagreement",
+        "needs-resolution", "monitor-sweep", "source-checkpoint",
         "operation-attach", "source-child-start", "protocol-progress", "merge-supersession",
     };
 
@@ -48,7 +49,7 @@ internal static class LandFailureDiagnostic
                 var attempted = entry.CurrentValues["ConcurrencyToken"] is Guid after ? after.ToString("N") : "unknown";
                 parts.Add($"entity={entity}; row={id}; originalToken={original}; attemptedToken={attempted}");
             }
-            catch (InvalidOperationException) { parts.Add($"entity={entity}; row=unknown"); }
+            catch (Exception) { parts.Add($"entity={entity}; row=unknown"); }
         }
         return parts.Count == 0 ? "entity=unknown" : string.Join(" | ", parts);
     }

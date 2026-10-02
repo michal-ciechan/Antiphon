@@ -418,6 +418,7 @@ public sealed class AgentTaskLandService
             request.State = LandRequestState.Canceled;
             request.IsPending = false;
             request.ReconciliationError = "task_no_longer_eligible";
+            LandRequestWriteProvenance.Stamp(request, "admission-cancel", _clock);
             ClearPending(task);
             await _db.SaveChangesAsync(ct);
             await canceled.CommitAsync(ct);
@@ -504,6 +505,7 @@ public sealed class AgentTaskLandService
         if (task.LandRequestedAt != request.RequestedAt || task.LandAttempt != request.Attempt)
         {
             request.ReconciliationError = "land_request_mirror_disagreement";
+            LandRequestWriteProvenance.Stamp(request, "mirror-disagreement", _clock);
             await _db.SaveChangesAsync(ct); await admission.CommitAsync(ct);
             return LandRunResult.Complete;
         }
