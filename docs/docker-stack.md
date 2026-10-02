@@ -28,7 +28,50 @@ temp project's private work, state, dind and tmp volumes.
 The image creates `/home/app/.nuget` and `/home/app/.npm` for uid 1654 before Docker
 mounts their child cache volumes. This lets an offline restore create NuGet's home files.
 
-Before the first temp recreation, refresh both runner statuses and cache inventory. Wait
+### Volumes-only cold first seed
+
+When the three external volumes have not been populated, the operator can seed them
+while the standing `server2` runner remains accepting work:
+
+```powershell
+pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -Cold
+```
+
+Run this only from the trusted desktop checkout at the reviewed full
+`C849_DEPLOY_SHA`. `-Cold` is valid only for Seed and cannot be combined with
+`-SavedDonor`. The host maintenance lock protects this supported lane. Before
+any volume is created, it checks the retired temp status, one identified main
+container, every container's mounts including stopped containers and bind
+ancestors, and all three volume roots. Existing roots must be correctly
+labelled, owned by uid/gid 1654, mode 0700 and empty, including hidden files.
+The host repeats these checks around initialization, each uid-1654 canary
+create/rename/delete probe, and marker publication. A failed probe removes only
+its owned helper and canary; unaccepted empty volumes may remain for diagnosis.
+There is no package copy, restore, apphost build, smoke or build-slot lease.
+
+Success writes a distinct `schema=2`, `kind=cold` marker and reports
+`C849_SEED kind=cold ready=true writable=3`. It carries the reviewed source SHA,
+inspected image identity and the three fixed volume names, with no payload hash
+or recovery directory. Normal `deploy-temp` reuses this marker without a donor
+and verifies shared/private mounts, `/tmp` mode and uid writability before temp
+admission. `Both` and `Retired` accept cold receipts without apphost smoke or
+package hash; a valid cold marker remains usable as ordinary builds populate
+the caches. Their full-marker receipts retain the prior smoke/hash checks.
+Reset, Prune, and explicit saved/live donor maintenance require a full marker;
+they refuse a cold marker with `CacheFullSeedRequired`. An absent marker never
+starts cold creation implicitly. The standing runner's drain/zero gate for
+redeploy-old remains unchanged. After temp verification, complete a canary Plan
+task on temp before the explicit `drain-old` phase.
+
+Package contents are best effort. Cache misses may make the first builds slower,
+but missing package payload does not block admission; wrong mounts or unwritable
+roots do. An optional pre-redeploy snapshot of old package/npm trees can be
+saved after drain-old and before redeploy-old. It is not a Seed source or a
+rollout gate. Keep the existing saved archive untouched.
+
+### Legacy full seed and maintenance
+
+For a full-marker seed, refresh both runner statuses and cache inventory. Wait
 for the already drained temp runner to reach fresh non-null zero `sessions`,
 `runnerSessions` and `queuedTasks`. Use the explicit Seed front door from the reviewed
 desktop checkout with `C849_DEPLOY_SHA` set to its full landed SHA. The host helper stops
@@ -77,7 +120,7 @@ runners, retain the saved archive and recovery copy, and switch to the prior ima
 after its cache mount and apphost smoke checks pass. When there is no saved donor, warm
 a temporary runner in its private cache, drain it to zero, then use Seed without
 `-SavedDonor` before deploying either runner against the shared volumes.
-After temp retirement, an accepted ready marker and verified volume payload allow the
+After temp retirement, an accepted full ready marker and verified volume payload allow the
 next `deploy-temp` to reuse the caches when the status is retired, unavailable and not
 dispatch eligible, its bound sessions and queue are zero, and the host confirms the
 temp project has no containers. The absent live connection may make only

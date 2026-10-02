@@ -1318,6 +1318,14 @@ c849_image() {
         case "$CASE" in
             runner-cache-seed|runner-cache-inventory|runner-cache-fixture|runner-cache-prune-preview|runner-cache-reset)
                 local donor marker_image
+                if [ -f "$C849_READY" ] && grep -Fxq kind=cold "$C849_READY"; then
+                    marker_image="$(sed -n 's/^image=//p' "$C849_READY")"
+                    [[ "$marker_image" =~ ^sha256:[0-9a-f]{64}$ ]] \
+                        && docker image inspect "$marker_image" >/dev/null 2>&1 \
+                        || write_result false CacheHelperImageMissing 2
+                    printf '%s' "$marker_image"
+                    return 0
+                fi
                 donor="$(c849_optional_donor)" || write_result false CacheDonorLookupFailed 2
                 if [ -n "$donor" ]; then
                     image="$(docker inspect -f '{{.Image}}' "$donor")" \
@@ -1626,15 +1634,236 @@ c849_saved_copy() {
         || { printf '%s\n' "${diagnosis:-CacheSavedDonorReadFailed}"; return 2; }
 }
 
+# Cold creation is deliberately separate from c849_prepare: that legacy helper can
+# create and probe one root before it knows whether another root is safe.
+c849_cold_volume_facts() {
+    local name="$1" role="$2" require_empty="$3" allow_uninitialized="${4:-}" names facts path mode entry
+    names="$(docker volume ls -q)" || write_result false CacheFirstSeedPreconditionUnknown 2
+    if ! printf '%s\n' "$names" | grep -Fxq "$name"; then
+        C849_COLD_PRESENT=0
+        return 0
+    fi
+    C849_COLD_PRESENT=1
+    facts="$(docker volume inspect "$name")" || write_result false CacheFirstSeedPreconditionUnknown 2
+    printf '%s' "$facts" | jq -e --arg n "$name" --arg r "$role" '
+      length == 1 and .[0].Name == $n and .[0].Driver == "local" and
+      (.[0].Options == null or .[0].Options == {}) and
+      .[0].Labels["io.antiphon.owner"] == "server2-runner" and
+      .[0].Labels["io.antiphon.cache-schema"] == "1" and
+      .[0].Labels["io.antiphon.cache-role"] == $r' >/dev/null \
+        || write_result false CacheVolumeForeign 2
+    path="$(printf '%s' "$facts" | jq -r '.[0].Mountpoint')" \
+        || write_result false CacheFirstSeedPreconditionUnknown 2
+    [ "$path" = "$C849_COLD_DOCKER_ROOT/volumes/$name/_data" ] \
+        || write_result false CacheRootInvalid 2
+    [ -d "$path" ] && [ ! -L "$path" ] \
+        && [ "$(realpath -e -- "$path" 2>/dev/null)" = "$path" ] \
+        || write_result false CacheRootInvalid 2
+    mode="$(sudo -n stat -c '%u:%g:%a' -- "$path")" \
+        || write_result false CacheRootInvalid 2
+    if [ "$name" != "$allow_uninitialized" ]; then
+        [ "$mode" = 1654:1654:700 ] || write_result false CacheRootOwnershipInvalid 2
+    fi
+    if [ "$require_empty" = yes ]; then
+        entry="$(sudo -n find "$path" -mindepth 1 -print -quit)" \
+            || write_result false CacheFirstSeedPreconditionUnknown 2
+        [ -z "$entry" ] || write_result false CacheUnmarkedContent 2
+    fi
+}
+
+c849_cold_proof() {
+    local phase="$1" require_empty="$2" allowed_helper="${3:-}" allow_uninitialized="${4:-}" main_list main facts status temp containers id mounts source destination canonical target
+    command -v jq >/dev/null || write_result false CacheFirstSeedPreconditionUnknown 2
+    C849_COLD_DOCKER_ROOT="$(docker info -f '{{.DockerRootDir}}')" \
+        || write_result false CacheFirstSeedPreconditionUnknown 2
+    [ -n "$C849_COLD_DOCKER_ROOT" ] && [ ! -L "$C849_COLD_DOCKER_ROOT" ] \
+        && [ "$(realpath -e -- "$C849_COLD_DOCKER_ROOT")" = "$C849_COLD_DOCKER_ROOT" ] \
+        || write_result false CacheFirstSeedPreconditionUnknown 2
+    main_list="$(docker ps -q --filter "label=com.docker.compose.project=$HOST_PROJECT" \
+        --filter 'label=com.docker.compose.service=session-runner')" \
+        || write_result false CacheFirstSeedPreconditionUnknown 2
+    [ "$(printf '%s\n' "$main_list" | sed '/^$/d' | wc -l)" -eq 1 ] \
+        || write_result false CacheFirstSeedPreconditionUnknown 2
+    main="$main_list"
+    facts="$(docker inspect "$main")" || write_result false CacheFirstSeedPreconditionUnknown 2
+    printf '%s' "$facts" | jq -e --arg p "$HOST_PROJECT" '
+      length == 1 and .[0].State.Running == true and
+      .[0].Config.Labels["com.docker.compose.project"] == $p and
+      .[0].Config.Labels["com.docker.compose.service"] == "session-runner" and
+      (.[0].Id | type == "string" and length >= 12) and
+      (.[0].Image | test("^sha256:[0-9a-f]{64}$"))' >/dev/null \
+        || write_result false CacheFirstSeedPreconditionUnknown 2
+    id="$(printf '%s' "$facts" | jq -r '.[0].Id')"
+    mounts="$(printf '%s' "$facts" | jq -c '.[0].Mounts | map({Type,Name,Source,Destination,RW}) | sort_by(.Destination)')" \
+        || write_result false CacheFirstSeedPreconditionUnknown 2
+    printf '%s' "$facts" | jq -e '
+      [.[0].Mounts[] | select(.Destination as $d |
+        ["/home/app/.nuget/packages","/var/cache/antiphon/nuget-scratch","/home/app/.npm/_cacache"] |
+        any(. as $p | $d == $p or ($d | startswith($p+"/")) or ($p | startswith($d+"/"))))] | length == 0' >/dev/null \
+        || write_result false CacheFirstSeedVolumeInUse 2
+    if [ -n "${C849_COLD_MAIN_ID:-}" ]; then
+        [ "$id" = "$C849_COLD_MAIN_ID" ] \
+            && [ "$(printf '%s' "$facts" | jq -r '.[0].Image')" = "$C849_COLD_MAIN_IMAGE" ] \
+            && [ "$mounts" = "$C849_COLD_MAIN_MOUNTS" ] \
+            || write_result false CacheFirstSeedMainMountChanged 2
+    else
+        C849_COLD_MAIN_ID="$id"
+        C849_COLD_MAIN_IMAGE="$(printf '%s' "$facts" | jq -r '.[0].Image')"
+        C849_COLD_MAIN_MOUNTS="$mounts"
+        docker image inspect "$C849_COLD_MAIN_IMAGE" >/dev/null 2>&1 \
+            || write_result false CacheHelperImageMissing 2
+    fi
+    status="$(c849_status_body server2)" || write_result false CacheFirstSeedPreconditionUnknown 2
+    printf '%s' "$status" | jq -e '
+      (.sessions | type) == "number" and .sessions >= 0 and .sessions == floor and
+      (.queuedTasks | type) == "number" and .queuedTasks >= 0 and .queuedTasks == floor and
+      ((.runnerSessions | type) == "number" and .runnerSessions >= 0 and .runnerSessions == floor) and
+      (.acceptingNewWork | type) == "boolean" and (.draining | type) == "boolean" and
+      (.dispatchEligible | type) == "boolean"' >/dev/null \
+        || write_result false CacheFirstSeedPreconditionUnknown 2
+    temp="$(c849_status_body server2-temp)" || write_result false CacheFirstSeedPreconditionUnknown 2
+    printf '%s' "$temp" | jq -e '
+      has("retiredAt") and has("available") and has("dispatchEligible") and
+      has("acceptingNewWork") and has("draining") and has("retireWhenIdle") and
+      has("redirectTo") and has("sessions") and has("queuedTasks") and
+      has("runnerSessions") and
+      (.sessions | type) == "number" and (.queuedTasks | type) == "number" and
+      (.runnerSessions == null or (.runnerSessions | type) == "number")' >/dev/null \
+        || write_result false CacheFirstSeedPreconditionUnknown 2
+    printf '%s' "$temp" | jq -e '
+      has("runnerSessions") and .retiredAt != null and .available == false and
+      .dispatchEligible == false and .acceptingNewWork == false and
+      .draining == true and .retireWhenIdle == true and .redirectTo == "server2" and
+      (.sessions | type) == "number" and .sessions == 0 and
+      (.queuedTasks | type) == "number" and .queuedTasks == 0 and
+      (.runnerSessions == null or ((.runnerSessions | type) == "number" and .runnerSessions == 0))' >/dev/null \
+        || write_result false CacheFirstSeedTempNotRetired 2
+    c849_no_temp_containers
+    if [ "$phase" = P6 ]; then
+        printf '%s' "$temp" | jq -c '{sessions,runnerSessions,queuedTasks,retiredAt,available,dispatchEligible,acceptingNewWork,draining,retireWhenIdle,redirectTo}' \
+            > "$CASE_DIR/status.json" || write_result false CacheFirstSeedPreconditionUnknown 2
+        printf '%s' "$status" | jq -c '{sessions,runnerSessions,queuedTasks,dispatchEligible,acceptingNewWork,draining}' \
+            > "$CASE_DIR/main-status.json" || write_result false CacheFirstSeedPreconditionUnknown 2
+    fi
+    c849_cold_volume_facts "$C849_PACKAGES" nuget-packages "$require_empty" "$allow_uninitialized"
+    c849_cold_volume_facts "$C849_SCRATCH" nuget-scratch "$require_empty" "$allow_uninitialized"
+    c849_cold_volume_facts "$C849_NPM" npm-content "$require_empty" "$allow_uninitialized"
+    containers="$(docker ps -aq)" || write_result false CacheFirstSeedPreconditionUnknown 2
+    while IFS= read -r container; do
+        [ -n "$container" ] || continue
+        facts="$(docker inspect "$container")" || write_result false CacheFirstSeedPreconditionUnknown 2
+        printf '%s' "$facts" | jq -e --arg root "$C849_COLD_DOCKER_ROOT" \
+          --arg a "$C849_PACKAGES" --arg b "$C849_SCRATCH" --arg c "$C849_NPM" \
+          --arg helper "$allowed_helper" '
+          def overlaps($s;$p): $s == $p or ($s | startswith($p+"/")) or ($p | startswith($s+"/"));
+          length == 1 and (.[0].Id | type == "string") and
+          ((.[0].Id == $helper and $helper != "") or
+           ([.[0].Mounts[] | select(
+             (.Type == "volume" and (.Name == $a or .Name == $b or .Name == $c)) or
+             (.Type == "bind" and (.Source as $s | [$a,$b,$c] | any(. as $n |
+               overlaps($s;$root+"/volumes/"+$n+"/_data"))))) ] | length == 0))' >/dev/null \
+            || write_result false CacheFirstSeedVolumeInUse 2
+        while IFS=$'\t' read -r source destination; do
+            [ -n "$source" ] || continue
+            canonical="$(realpath -m -- "$source")" \
+                || write_result false CacheFirstSeedPreconditionUnknown 2
+            for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+                target="$C849_COLD_DOCKER_ROOT/volumes/$name/_data"
+                case "$canonical/" in "$target/"* ) write_result false CacheFirstSeedVolumeInUse 2 ;; esac
+                case "$target/" in "$canonical/"* ) write_result false CacheFirstSeedVolumeInUse 2 ;; esac
+            done
+        done < <(printf '%s' "$facts" | jq -r '.[0].Mounts[] | select(.Type == "bind") | [.Source,.Destination] | @tsv')
+    done <<< "$containers"
+    printf 'phase=%s main=%s containers=%s\n' "$phase" "$id" "$(printf '%s\n' "$containers" | sed '/^$/d' | wc -l)" \
+        >> "$CASE_DIR/cold-proof.txt"
+}
+
+c849_cold_probe() {
+    local name="$1" phase="$2" helper="c849-cold-${RUN}-${phase}" code=0
+    c849_cold_proof "pre-$phase" yes
+    timeout --kill-after=2s 10s docker run --name "$helper" --network none --user 1654:1654 \
+        --entrypoint /bin/sh --mount "type=volume,source=$name,target=/cache,volume-nocopy" \
+        "$C849_COLD_MAIN_IMAGE" -c 'set -eu; p="/cache/.c849-cold-$1"; (umask 077; : > "$p"); mv "$p" "$p.moved"; rm "$p.moved"' sh "$RUN" \
+        >/dev/null 2>> "$CASE_DIR/command.log" || code=$?
+    if [ "$code" -eq 124 ] || [ "$code" -eq 137 ]; then
+        docker rm -f "$helper" >/dev/null 2>&1 || write_result false CacheSeedProbeCleanupFailed 2
+        write_result false CacheColdProbeTimeout 2
+    fi
+    docker rm -f "$helper" >/dev/null 2>&1 || write_result false CacheSeedProbeCleanupFailed 2
+    [ -z "$(docker ps -aq --filter "name=^/${helper}$")" ] \
+        || write_result false CacheSeedProbeCleanupFailed 2
+    [ "$code" -eq 0 ] || write_result false CacheRootNotWritable 2
+    c849_cold_proof "$phase" yes
+}
+
+c849_cold_seed() {
+    local name role
+    c849_lock
+    [ ! -e "$C849_READY" ] && [ ! -L "$C849_READY" ] \
+        || write_result false CacheSeedMarkerInvalid 2
+    c849_cold_proof P0 yes
+    for item in "$C849_PACKAGES:nuget-packages" "$C849_SCRATCH:nuget-scratch" "$C849_NPM:npm-content"; do
+        name="${item%%:*}"; role="${item#*:}"
+        if ! docker volume ls -q | grep -Fxq "$name"; then
+            docker volume create --driver local --label io.antiphon.owner=server2-runner \
+                --label io.antiphon.cache-schema=1 --label "io.antiphon.cache-role=$role" "$name" >/dev/null \
+                || write_result false CacheVolumeCreateFailed 2
+            c849_cold_proof "before-init-$role" yes '' "$name"
+            docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
+                --mount "type=volume,source=$name,target=/cache,volume-nocopy" "$C849_COLD_MAIN_IMAGE" \
+                -c 'chown 1654:1654 /cache && chmod 0700 /cache' >/dev/null \
+                || write_result false CacheVolumeInitFailed 2
+        fi
+        c849_cold_proof "init-$role" yes
+    done
+    c849_cold_proof P1 yes
+    c849_cold_probe "$C849_PACKAGES" P2
+    c849_cold_probe "$C849_SCRATCH" P3
+    c849_cold_probe "$C849_NPM" P4
+    c849_cold_proof P5 yes
+    sudo -n install -d -o mc -g mc -m 0700 "$SERVER2_ROOT/cache"
+    [ ! -e "$C849_READY" ] && [ ! -L "$C849_READY" ] || write_result false CacheSeedMarkerInvalid 2
+    c849_cold_proof P6 yes
+    printf 'schema=2\nkind=cold\ncold=true\nsource-sha=%s\nimage=%s\npackages=%s\nscratch=%s\nnpm=%s\n' \
+        "$SHA" "$C849_COLD_MAIN_IMAGE" "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM" \
+        > "$C849_READY.tmp-$RUN"
+    chmod 0600 "$C849_READY.tmp-$RUN"
+    mv -T -- "$C849_READY.tmp-$RUN" "$C849_READY" || write_result false CacheSeedMarkerInvalid 2
+    printf 'ready=true kind=cold writable=3\n' > "$CASE_DIR/seed.txt"
+    write_result true '' 0
+}
+
 c849_seed() {
     require_lane host
+    if [ "${C590_COLD_SEED:-0}" = 1 ]; then
+        [ -z "${C590_SAVED_DONOR:-}" ] || write_result false CacheDonorSourceConflict 2
+        [ ! -e "$C849_READY" ] && [ ! -L "$C849_READY" ] \
+            || write_result false CacheSeedMarkerInvalid 2
+        c849_cold_seed
+    fi
+    c849_lock
+    if [ -n "${C590_SAVED_DONOR:-}" ] && { [ -e "$C849_READY" ] || [ -L "$C849_READY" ]; }; then
+        c849_require_ready
+    fi
     c849_prepare yes
     local image donor donor_image stage recovery helper payload_hash reference_hash package_bytes npm_bytes now i saved
     image="$(c849_image)"
-    donor="$(c849_optional_donor)" || write_result false CacheDonorLookupFailed 2
+    if [ -f "$C849_READY" ] && grep -Fxq kind=cold "$C849_READY"; then
+        donor=''
+    else
+        donor="$(c849_optional_donor)" || write_result false CacheDonorLookupFailed 2
+    fi
     saved="${C590_SAVED_DONOR:-}"
-    if [ -f "$C849_READY" ]; then
-        c849_require_ready
+    if [ -e "$C849_READY" ] || [ -L "$C849_READY" ]; then
+        if [ -n "$saved" ]; then
+            c849_require_ready
+        else
+            c849_require_ready allow-cold
+        fi
+        if [ "$C849_KIND" = cold ]; then
+            printf 'ready=true kind=cold writable=3\n' > "$CASE_DIR/seed.txt"
+            write_result true '' 0
+        fi
         if [ -n "$donor" ]; then
             c849_status_zero server2-temp reconnected || write_result false CacheDonorNotReady 2
             c849_status_body server2-temp | jq -c '{sessions,runnerSessions,queuedTasks,draining,retireWhenIdle,redirectTo,dispatchEligible,acceptingNewWork}' \
@@ -1759,7 +1988,38 @@ c849_seed() {
 }
 
 c849_require_ready() {
-    [ -s "$C849_READY" ] || write_result false 'CacheSeedRequired: run pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -SavedDonor /home/mc/runner-cache-donor/temp-runner-cache.tar' 2
+    local context="${1:-full-required}" marker image name role
+    C849_KIND=full
+    [ -e "$C849_READY" ] || [ -L "$C849_READY" ] \
+        || write_result false 'CacheSeedRequired: run pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -Cold' 2
+    [ -f "$C849_READY" ] && [ ! -L "$C849_READY" ] && [ -s "$C849_READY" ] \
+        || write_result false CacheSeedMarkerInvalid 2
+    if grep -Eq '^(schema|kind|cold)=' "$C849_READY"; then
+        [ "$(wc -l < "$C849_READY")" -eq 8 ] \
+            && [ "$(cut -d= -f1 "$C849_READY" | sort -u | wc -l)" -eq 8 ] \
+            && grep -Fxq schema=2 "$C849_READY" \
+            && grep -Fxq kind=cold "$C849_READY" \
+            && grep -Fxq cold=true "$C849_READY" \
+            && grep -Fxq "source-sha=$SHA" "$C849_READY" \
+            && grep -Fxq "packages=$C849_PACKAGES" "$C849_READY" \
+            && grep -Fxq "scratch=$C849_SCRATCH" "$C849_READY" \
+            && grep -Fxq "npm=$C849_NPM" "$C849_READY" \
+            || write_result false CacheSeedMarkerInvalid 2
+        image="$(sed -n 's/^image=//p' "$C849_READY")"
+        [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            && docker image inspect "$image" >/dev/null 2>&1 \
+            || write_result false CacheSeedMarkerInvalid 2
+        [ "$context" = allow-cold ] || write_result false CacheFullSeedRequired 2
+        C849_COLD_DOCKER_ROOT="$(docker info -f '{{.DockerRootDir}}')" \
+            || write_result false CacheSeedMarkerInvalid 2
+        for item in "$C849_PACKAGES:nuget-packages" "$C849_SCRATCH:nuget-scratch" "$C849_NPM:npm-content"; do
+            name="${item%%:*}"; role="${item#*:}"
+            c849_cold_volume_facts "$name" "$role" no
+            [ "$C849_COLD_PRESENT" = 1 ] || write_result false CacheSeedMarkerInvalid 2
+        done
+        C849_KIND=cold
+        return 0
+    fi
     local recovery
     recovery="$(sed -n 's/^recovery=//p' "$C849_READY" | head -n 1)"
     case "$recovery" in "$SERVER2_ROOT"/cache/recovery-[a-z0-9]*) ;; *) write_result false CacheRecoveryInvalid 2 ;; esac
@@ -1987,7 +2247,10 @@ c849_prune_idle() {
 c849_reset() {
     require_lane host
     c849_lock
-    [ ! -e "$C849_READY" ] || write_result false CacheSeedAlreadyReady 2
+    if [ -e "$C849_READY" ] || [ -L "$C849_READY" ]; then
+        c849_require_ready
+        write_result false CacheSeedAlreadyReady 2
+    fi
     # A reset is only for an interrupted, unmarked seed. The common idle check
     # proves both runners drained and the build broker empty under this lock.
     c849_prune_idle
@@ -2040,6 +2303,7 @@ c849_prune() {
     require_lane host
     [[ "${C590_PREVIEW_RUN:-}" =~ ^c849[0-9a-f]{16}0$ ]] || write_result false CachePreviewInvalid 2
     c849_lock
+    c849_require_ready
     local receipt="$SERVER2_ROOT/cache/previews/$C590_PREVIEW_RUN" age created previous_sha actual_sha
     [ -d "$receipt" ] && [ ! -L "$receipt" ] \
         && [ -f "$receipt/preview.txt" ] && [ -f "$receipt/volumes.txt" ] \
@@ -3001,7 +3265,7 @@ case_verify_runner_caches() {
     require_lane host
     case "${C590_RUNNER_ID:-}" in server2|server2-temp) ;; *) write_result false CacheRunnerInvalid 2 ;; esac
     c849_prepare no
-    c849_require_ready
+    c849_require_ready allow-cold
     local status
     status="$(c849_status_body "$C590_RUNNER_ID")" || write_result false CacheRunnerStatusUnavailable 2
     printf '%s' "$status" | jq -e --arg sha "$SHA" '.buildVersion == $sha and .dispatchEligible == true' >/dev/null \
@@ -3012,7 +3276,8 @@ case_verify_runner_caches() {
     fi
     printf '%s' "$status" | jq -c '{buildVersion,dispatchEligible,acceptingNewWork,draining,sessions,runnerSessions,queuedTasks}' \
         > "$CASE_DIR/status.json" || write_result false CacheRunnerStatusInvalid 2
-    sed -n 's/^payload-sha256=//p' "$C849_READY" > "$CASE_DIR/seed-hash.txt"
+    printf '%s\n' "$C849_KIND" > "$CASE_DIR/seed-kind.txt"
+    if [ "$C849_KIND" = full ]; then sed -n 's/^payload-sha256=//p' "$C849_READY" > "$CASE_DIR/seed-hash.txt"; fi
     local project container
     project="$HOST_PROJECT"
     [ "$C590_RUNNER_ID" = server2-temp ] && project="$TEMP_PROJECT"
@@ -3020,7 +3285,7 @@ case_verify_runner_caches() {
         --filter 'label=com.docker.compose.service=session-runner')"
     [ -n "$container" ] || write_result false CacheRunnerUnavailable 2
     c849_assert_mounts "$container"
-    c849_smoke "$container" "$C590_RUNNER_ID"
+    if [ "$C849_KIND" = full ]; then c849_smoke "$container" "$C590_RUNNER_ID"; fi
     write_result true '' 0
 }
 
@@ -3064,7 +3329,7 @@ case_runner_cache_inventory() {
 case_verify_runner_caches_retired() {
     require_lane host
     c849_prepare no
-    c849_require_ready
+    c849_require_ready allow-cold
     local rollback_image
     rollback_image="$(sed -n 's/^image=//p' "$C849_READY" | head -n 1)"
     [[ "$rollback_image" =~ ^sha256:[0-9a-f]{64}$ ]] \
@@ -3077,7 +3342,8 @@ case_verify_runner_caches_retired() {
         || write_result false MainRunnerNotAccepting 2
     printf '%s' "$status" | jq -c '{buildVersion,dispatchEligible,acceptingNewWork,draining,sessions,runnerSessions,queuedTasks}' \
         > "$CASE_DIR/status.json" || write_result false MainRunnerStatusInvalid 2
-    sed -n 's/^payload-sha256=//p' "$C849_READY" > "$CASE_DIR/seed-hash.txt"
+    printf '%s\n' "$C849_KIND" > "$CASE_DIR/seed-kind.txt"
+    if [ "$C849_KIND" = full ]; then sed -n 's/^payload-sha256=//p' "$C849_READY" > "$CASE_DIR/seed-hash.txt"; fi
     if [ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$TEMP_PROJECT")" ]; then
         write_result false TempContainersRemain 2
     fi
@@ -3096,7 +3362,7 @@ case_verify_runner_caches_retired() {
     c849_assert_mounts "$container"
     tmp_mode="$(docker exec "$container" stat -c %a /tmp)" || write_result false MainTmpUnavailable 2
     [ "$tmp_mode" = 1777 ] || write_result false MainTmpModeInvalid 2
-    c849_smoke "$container" server2
+    if [ "$C849_KIND" = full ]; then c849_smoke "$container" server2; fi
     write_result true '' 0
 }
 
@@ -3127,7 +3393,7 @@ EOF
 
     build_server2_images
     c849_prepare yes
-    c849_require_ready
+    c849_require_ready allow-cold
     c849_budget_gate
     ensure_build_slots_broker
 
@@ -3220,7 +3486,7 @@ EOF
     verify_runner_git_identity "$container" /
     verify_runner_checkout "$container"
     c849_assert_mounts "$container"
-    c849_smoke "$container" server2
+    if [ "$C849_KIND" = full ]; then c849_smoke "$container" server2; fi
 
     # The new deployment is proven: this round's own superseded build products go now (D-5).
     retire_superseded_server2_images "${SHA:0:12}"
@@ -3283,7 +3549,7 @@ case_deploy_temp_runner() {
     RUNNER_GROK_STORE_DIR="$grok_dir"
     build_server2_images
     c849_prepare yes
-    c849_require_ready
+    c849_require_ready allow-cold
     c849_budget_gate
     ensure_build_slots_broker
 
@@ -3364,7 +3630,7 @@ EOF
     verify_runner_git_identity "$container" /
     verify_runner_checkout "$container"
     c849_assert_mounts "$container"
-    c849_smoke "$container" server2-temp
+    if [ "$C849_KIND" = full ]; then c849_smoke "$container" server2-temp; fi
     docker exec "$container" docker info --format '{{.Name}}' > "$CASE_DIR/daemon-name.txt" 2>&1 \
         || write_result false NestedDaemonUnavailable 2
     docker exec "$container" hostname > "$CASE_DIR/runner-hostname.txt"
@@ -3393,7 +3659,7 @@ case_retire_temp_runner() {
       "$(date -u -d "$C590_TEMP_RETIRED_AT" +%s 2>/dev/null)" ] \
         || write_result false TempRunnerRetirementChanged 2
     c849_prepare no
-    c849_require_ready
+    c849_require_ready allow-cold
     c849_budget_gate
     if [ ! -s "$SERVER2_TEMP_ENV" ]; then write_result false TempStackMissing 2; fi
     RUNNER_GROK_STORE_DIR="$(sed -n 's/^RUNNER_GROK_STORE_DIR=//p' "$SERVER2_TEMP_ENV" | head -n 1)"
@@ -3621,6 +3887,10 @@ case "$CASE" in
         if [ "$LANE" != host ]; then printf 'DIAGNOSIS=WrongLane\n'; exit 2; fi
         if [[ ! "$RUN" =~ ^[a-z0-9]{1,64}$ ]] || [[ ! "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
             printf 'DIAGNOSIS=CacheManifestInvalid\n'; exit 2
+        fi
+        case "${C590_COLD_SEED:-0}" in 0|1) ;; *) printf 'DIAGNOSIS=CacheColdModeInvalid\n'; exit 2 ;; esac
+        if [ "${C590_COLD_SEED:-0}" = 1 ] && [ "$CASE" != runner-cache-seed ]; then
+            printf 'DIAGNOSIS=CacheColdModeInvalid\n'; exit 2
         fi
         c849_evidence_dir
         ;;
