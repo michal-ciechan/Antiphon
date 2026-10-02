@@ -133,6 +133,16 @@ public sealed class AgentTaskLandFailureDiagnosticTests
         handled.State["ExceptionType"].ShouldBe(exceptionType);
         handled.State["Code"].ShouldBe(code);
         handled.State["DiagnosticId"].ShouldBe(request.FailureDiagnosticId);
+        var diagnosticLogs = entries.Where(e => e.State.ContainsKey("DiagnosticId")).ToArray();
+        diagnosticLogs.Length.ShouldBe(2, "D.HostedAndServiceFailuresShareDiagnostic");
+        foreach (var diagnosticLog in diagnosticLogs)
+        {
+            diagnosticLog.State["DiagnosticId"].ShouldBe(request.FailureDiagnosticId,
+                "D.HostedFrameDiagnosticId");
+            diagnosticLog.State["Frames"]?.ToString().ShouldNotBeNullOrWhiteSpace(
+                "D.HostedFramesEmitted");
+            diagnosticLog.Message.ShouldNotContain(Marker, customMessage: "D.HostedFramesRedacted");
+        }
         AssertNoMarker(request, terminal.Detail, outcome.Body, handled.Message);
         request.FailureExceptionType!.Length.ShouldBeLessThanOrEqualTo(200);
         request.TerminalFailureCode!.Length.ShouldBeLessThanOrEqualTo(100);

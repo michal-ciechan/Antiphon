@@ -69,6 +69,15 @@ public sealed class AgentTaskLandHalfResetTests
         var ignored = Path.Combine(h.Fixture.Source, "obj", "build.cache");
         Directory.CreateDirectory(Path.GetDirectoryName(ignored)!);
         await File.WriteAllTextAsync(ignored, "owned cache\n");
+        var strictProbes = 0;
+        h.Fixture.Git.BeforeCommand = (_, args) =>
+        {
+            if (args.Count == 0 || args[0] != "check-attr")
+                return Task.FromResult<Antiphon.Server.Application.Dtos.LandingGitResult?>(null);
+            strictProbes++;
+            return Task.FromResult<Antiphon.Server.Application.Dtos.LandingGitResult?>(
+                new Antiphon.Server.Application.Dtos.LandingGitResult(128, "", "strict_inspector_unexpected"));
+        };
         string? alignedTree = null;
         h.Fixture.Git.AfterCommand = async (directory, args, result) =>
         {
@@ -81,6 +90,7 @@ public sealed class AgentTaskLandHalfResetTests
         await using var db = h.CreateContext();
         var row = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
         row.SourceRefusalReason.ShouldBeNull("H.IgnoredOrdinaryAdoptionLands");
+        strictProbes.ShouldBe(0, "H.OrdinaryAdoptionSkipsStrictInspector");
         alignedTree.ShouldNotBeNull("H.IgnoredOrdinaryResetReached");
         alignedTree.ShouldBe((await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", reviewed + "^{tree}")).Trim(),
                 "H.IgnoredOrdinaryIndexAligned");
