@@ -115,10 +115,18 @@ internal sealed class LandHalfResetFixture : IAsyncDisposable
     internal sealed class RefMovedBoundary(SaveCut cut, LandingSafetyHarness harness) : LandDeliveryBoundary
     {
         public int Reached { get; private set; }
+        public int BeforeRefReached { get; private set; }
         public bool ThrowConflict { get; set; } = true;
         public Func<Task>? AtCut { get; set; }
+        public Func<Task>? BeforeRefMove { get; set; }
         public override async Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
         {
+            if (boundary == "source-adopt-before-ref-move" && identity == cut.RequestId
+                && BeforeRefMove is not null)
+            {
+                BeforeRefReached++;
+                await BeforeRefMove();
+            }
             if (boundary == "source-adopt-ref-moved-before-reset" && identity == cut.RequestId)
             {
                 Reached++;

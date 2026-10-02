@@ -483,6 +483,15 @@ public class LandingGit : ILandingGit
             if (!index.Succeeded || index.Output.Contains('\uFFFD')
                 || index.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries).Any(x => x.StartsWith("160000 ", StringComparison.Ordinal)))
                 return LandRecoveryCheckoutInspection.Refused();
+            var indexModes = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var row in index.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var tab = row.IndexOf('\t');
+                if (tab < 0) return LandRecoveryCheckoutInspection.Refused();
+                var fields = row[..tab].Split(' ');
+                if (fields.Length != 3 || fields[2] != "0" || !indexModes.TryAdd(row[(tab + 1)..], fields[0]))
+                    return LandRecoveryCheckoutInspection.Refused();
+            }
             var tree = await RunAsync(path, ["ls-tree", "-r", "-z", oldSha], ct);
             if (!tree.Succeeded || tree.Output.Contains('\uFFFD')) return LandRecoveryCheckoutInspection.Refused();
             var auto = await RunAsync(path, ["config", "--get", "core.autocrlf"], ct);
@@ -501,6 +510,8 @@ public class LandingGit : ILandingGit
                     || metadata[0] is not ("100644" or "100755" or "120000"))
                     return LandRecoveryCheckoutInspection.Refused();
                 var relative = row[(tab + 1)..];
+                if (!indexModes.TryGetValue(relative, out var indexMode) || indexMode != metadata[0])
+                    return LandRecoveryCheckoutInspection.Refused("source_dirty");
                 if (relative.Length == 0 || Path.IsPathRooted(relative)
                     || relative.Split('/').Any(x => x is "" or "." or ".."))
                     return LandRecoveryCheckoutInspection.Refused();
@@ -539,15 +550,17 @@ public class LandingGit : ILandingGit
                 var info = new FileInfo(full);
                 if (!info.Exists || info.LinkTarget is not null)
                     return LandRecoveryCheckoutInspection.Refused("source_dirty");
-                if (!OperatingSystem.IsWindows())
+                if (filemode.Output.Trim() == "true")
                 {
+                    if (OperatingSystem.IsWindows()) return LandRecoveryCheckoutInspection.Refused();
                     var mode = File.GetUnixFileMode(full);
                     var executable = (mode & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
                     if (executable != (metadata[0] == "100755"))
                         return LandRecoveryCheckoutInspection.Refused("source_dirty");
                 }
-                else if (metadata[0] == "100755" && filemode.Output.Trim() != "true")
-                    return LandRecoveryCheckoutInspection.Refused();
+                // With core.filemode=false, Git deliberately ignores worktree stat bits.
+                // The index mode is the authoritative checkout mode on Windows and in
+                // repositories that opt out of executable-bit tracking.
                 var expected = blob;
                 if (!binary && !blob.Contains((byte)0) && (eol == "crlf" || eol is null && autoCrlf))
                     expected = ExpandLf(blob);

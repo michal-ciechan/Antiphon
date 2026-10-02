@@ -288,8 +288,10 @@ public sealed class AgentTaskLandSourceResolver(
         if (!inspected.Accepted && inspected.Reason == "source_dirty")
         {
             var identity = await git.InspectAsync(coordinates, LandInspectionScope.IdentityOnly, ct);
+            // A dirty checkout at the old head is an ordinary source_dirty refusal.
+            // Only HEAD already moved to S can be an interrupted adoption.
             if (!identity.Accepted || identity.Snapshot!.HeadSha != expected)
-                return await RefuseAsync(task, request, baseline, "adopt_local_changed",
+                return await RefuseAsync(task, request, baseline, "source_dirty",
                     identity.Snapshot?.HeadSha, ownerObserved.Sha, expected, ct);
             var sameRequest = request.SourceAdvanceChildOperation == "source-adopt-reset"
                 && GitObjectId.IsFull(request.RecoveryLocalBeforeSha);
@@ -445,29 +447,33 @@ public sealed class AgentTaskLandSourceResolver(
             request.SourceAdvanceChildOperation = "source-adopt-reset";
             if (await CheckpointAsync(task, request, baseline, ct) is { } resetStop) return resetStop;
             baseline = LandSourceCheckpointBaseline.From(request, task);
-            var moved = await git.RunAsync(repository,
-                ["update-ref", "--no-deref", coordinates.SourceFullRef, expected, local], ct);
-            if (!moved.Succeeded)
-                return await RefuseAsync(task, request, baseline, "adopt_local_cas_rejected",
-                    local, ownerObserved.Sha, expected, ct);
-            await _boundary.ReachedAsync("source-adopt-ref-moved-before-reset", task.Id, request.Id, ct);
+            await _boundary.ReachedAsync("source-adopt-before-ref-move", task.Id, request.Id, ct);
             var resetAuthority = await RecheckRecoveryAuthorityAsync(request, source, sourceObserved, ct);
             if (resetAuthority is not null)
                 return await RefuseAsync(task, request, baseline, resetAuthority.Value.Code,
-                    expected, ownerObserved.Sha, expected, ct, detail: resetAuthority.Value.Detail);
+                    local, ownerObserved.Sha, expected, ct, detail: resetAuthority.Value.Detail);
             if (ownerObserved.Sha is not null)
             {
                 var resetRemote = await git.RecheckSourceRemoteAsync(repository, coordinates.SourceFullRef,
                     ownerObserved.Sha, ownerObserved.Fingerprint!, ct);
                 if (!resetRemote.Accepted || resetRemote.Sha != ownerObserved.Sha)
                     return await RefuseAsync(task, request, baseline, "adopt_source_remote_changed",
-                        expected, resetRemote.Sha, expected, ct);
+                        local, resetRemote.Sha, expected, ct);
             }
-            var proof = await git.InspectRecoveryCheckoutAsync(coordinates, local, expected, ct);
-            if (!proof.Accepted)
+            // Preserve the ordinary adoption rule: identity and Git-visible status at L
+            // must still be clean. Ignored files are not dirty in that rule. Refuse
+            // before moving the branch, since a refusal after CAS leaves a half-reset.
+            var beforeMove = await git.InspectAsync(coordinates, LandInspectionScope.IdentityAndStatus, ct);
+            if (!beforeMove.Accepted || beforeMove.Snapshot?.HeadSha != local)
                 return await RefuseAsync(task, request, baseline,
-                    proof.Reason == "adopt_local_changed" ? "adopt_local_changed" : "source_dirty",
-                    expected, ownerObserved.Sha, expected, ct, detail: proof.Reason);
+                    beforeMove.Accepted ? "adopt_local_changed" : beforeMove.Reason ?? "source_identity_unreadable",
+                    beforeMove.Snapshot?.HeadSha, ownerObserved.Sha, expected, ct);
+            var moved = await git.RunAsync(repository,
+                ["update-ref", "--no-deref", coordinates.SourceFullRef, expected, local], ct);
+            if (!moved.Succeeded)
+                return await RefuseAsync(task, request, baseline, "adopt_local_cas_rejected",
+                    local, ownerObserved.Sha, expected, ct);
+            await _boundary.ReachedAsync("source-adopt-ref-moved-before-reset", task.Id, request.Id, ct);
             var reset = await git.RunAsync(coordinates.WorktreePath, ["reset", "--hard", expected], ct);
             if (!reset.Succeeded)
                 return await RefuseAsync(task, request, baseline, "adopt_local_reset_failed",
