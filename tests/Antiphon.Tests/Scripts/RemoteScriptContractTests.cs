@@ -2053,8 +2053,10 @@ public sealed class RemoteScriptContractTests
             printf 'ELEVATED_REALPATH=%s\n' "$(grep -c '^realpath .*docker/volumes/' "$root/elevated" 2>/dev/null || true)"
             printf 'ELEVATED_SYMLINK=%s\n' "$(grep -c '^test .*docker/volumes/' "$root/elevated" 2>/dev/null || true)"
             """);
-        output.ShouldContain("OBSERVE_EXIT=0", "CacheTargetInvalid: observe must traverse the Docker volume through sudo");
-        output.ShouldContain("DEPLOY_EXIT=0", "CacheTargetInvalid: deploy-temp must pass its volume observation through sudo");
+        output.Contains("OBSERVE_EXIT=0", StringComparison.Ordinal)
+            .ShouldBeTrue("CacheTargetInvalid: observe must traverse the Docker volume through sudo");
+        output.Contains("DEPLOY_EXIT=0", StringComparison.Ordinal)
+            .ShouldBeTrue("CacheTargetInvalid: deploy-temp must pass its volume observation through sudo");
         output.ShouldContain("DEPLOY_REACHED_BROKER");
         output.ShouldNotContain("DENIED unprivileged realpath");
         Regex.Match(output, @"ELEVATED_REALPATH=(\d+)").Groups[1].Value.ShouldNotBe("0");
