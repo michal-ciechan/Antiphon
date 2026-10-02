@@ -22,6 +22,20 @@ public class RunnerGrokAdapterReadyTests
     private const string SignIn = "Approve in your browser to finish signing in.\nWaiting for approval...";
 
     [Test]
+    [Arguments("1.0.40")]
+    [Arguments("1.0.41")]
+    public async Task Captured_linux_frame_reaches_ready_without_startup_input(string version)
+    {
+        var client = new ScriptedClient([GrokLinuxStartupFixture.Screen(version)]);
+        await using var adapter = NewAdapter(client, max: 5000, settle: 60);
+        await adapter.StartAsync(Spec(), CancellationToken.None);
+        (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue();
+        client.SnapshotReads.ShouldBeGreaterThanOrEqualTo(2);
+        client.BufferReads.ShouldBe(0);
+        client.Writes.ShouldBeEmpty();
+    }
+
+    [Test]
     public async Task Spinner_sequence_advance_does_not_prevent_positive_ready()
     {
         using var document = GrokStartupFixture.Read();

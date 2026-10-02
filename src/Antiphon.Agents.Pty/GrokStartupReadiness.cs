@@ -12,7 +12,11 @@ public readonly record struct GrokStartupObservation(
 public sealed record GrokStartupSnapshot(
     string RenderedScreen, string? RawOutput, long Sequence, DateTime CapturedAt);
 
-/// <summary>Recognizes only the Grok Build 1.0.41 dashboard captured at 120x30.</summary>
+/// <summary>
+/// Recognizes the captured Grok Build 1.0.41 dashboards at 120x30: Windows ConPTY
+/// uses ASCII '&gt;' and Linux uses U+276F for the empty composer marker.
+/// Other terminal sizes require separate qualification (CARD-0861).
+/// </summary>
 public static class GrokStartupScreen
 {
     public const string EnabledHint = "  Shift+Tab:mode  │  Ctrl+x:shortcuts";
@@ -43,7 +47,7 @@ public static class GrokStartupScreen
             if (input.Length != right + 1 || input[left] != '│' || input[right] != '│'
                 || bottom.Length != right + 1 || bottom[left] != '╰' || bottom[right] != '╯')
                 return No(GrokStartupReason.ComposerUnavailable);
-            if (input[(left + 1)..right].Trim() != ">")
+            if (input[(left + 1)..right].Trim() is not (">" or "\u276f"))
                 return No(GrokStartupReason.ComposerUnavailable);
             if (lines[top - 2].Length > left
                 && lines[top - 2].Substring(left, Math.Min(right - left + 1, lines[top - 2].Length - left)).Trim().Length != 0)
