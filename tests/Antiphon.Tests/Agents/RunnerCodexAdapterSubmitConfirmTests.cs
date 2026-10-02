@@ -298,7 +298,7 @@ public class RunnerCodexAdapterSubmitConfirmTests
         try
         {
         await enters[1].Task.WaitAsync(TimeSpan.FromSeconds(5));
-        if (client.ConfirmAfterEnters == 1)
+        if (client.ConfirmAfterEnters == 1 && !client.ThrowOnTranscript)
             return send;
 
         var last = client.ConfirmAfterEnters == 2 ? 2 : 4;
