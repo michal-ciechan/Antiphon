@@ -29,6 +29,8 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     public Action<IServiceCollection>? ConfigureServices { get; set; }
     public SessionMessageQueueService? Messages { get; set; }
     public LandDeliveryBoundary? Boundary { get; set; }
+    public DbCommandInterceptor? CommandInterceptor { get; set; }
+    public DbTransactionInterceptor? TransactionInterceptor { get; set; }
     public SaveChangesInterceptor? LandCutInterceptor { get; set; }
     /// <summary>CARD-0672: the land service's delegation settings (the yield budget among them).</summary>
     public DelegationSettings LandSettings { get; set; } = new();
@@ -228,6 +230,8 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
             TestDbFixture.CreateDbContextOptions(Schema.ConnectionString)).AddInterceptors(
             Fault, new TransactionFault(Fault), RetirementCut, new RetirementTransactionPause(RetirementCut));
         if (LandCutInterceptor is not null) options.AddInterceptors(LandCutInterceptor);
+        if (CommandInterceptor is not null) options.AddInterceptors(CommandInterceptor);
+        if (TransactionInterceptor is not null) options.AddInterceptors(TransactionInterceptor);
         return new(options.Options);
     }
 
