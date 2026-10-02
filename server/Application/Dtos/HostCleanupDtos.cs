@@ -46,3 +46,27 @@ public sealed record HostCleanupWorktreeInventorySummary(
 
 public sealed record HostCleanupWorktreeInventoryResult(
     IReadOnlyList<HostCleanupWorktreeInventoryRow> Rows, bool Complete, string? IncompleteReason);
+
+public sealed record HostCleanupReportedCandidate(
+    string CanonicalPath, string StorageId, string? FileId, string? OwnerGeneration,
+    string Family, bool Worktree, string Disposition, string ReasonCode,
+    string ContentClass, string ExistingOwner, string? OwnerRefusalCode,
+    DateTime? NewestWriteAt, bool ScanComplete, long? LogicalBytes, long? AllocatedBytes,
+    long? ReservedBytes, string Outcome, long ReclaimedBytes);
+
+/// <summary>Metadata-only completed receipt. No file contents, environment or raw stderr.</summary>
+public sealed record HostCleanupReceiptDto(
+    Guid RunId, Guid BoardId, string HostId, string StorageId, string RunnerStoreId,
+    string ProcessBootId, string SourceSha, string ConfigDigest, string PlanDigest,
+    DateOnly LocalDate, bool Daily, bool Execute, bool Complete, DateTime PlannedAt,
+    DateTime FinishedAt, int AttemptLimit, long ByteLimit, int Attempts, long ReservedBytes,
+    IReadOnlyList<HostCleanupReportedCandidate> Candidates,
+    DateTime? SampledAt = null, bool SampleComplete = false,
+    long? NamespaceAllocatedBytes = null, long? DiskCapacityBytes = null,
+    long? FreeBytesBefore = null, long? FreeBytesAfter = null);
+
+public sealed record HostCleanupReportPage(
+    Guid RunId, Guid BoardId, string HostId, string StorageId, string ReceiptDigest,
+    bool Complete, long ReclaimedBytes, long EligibleWorktreeBytes,
+    int TotalCandidates, IReadOnlyList<HostCleanupReportedCandidate> Candidates,
+    int? NextOffset);
