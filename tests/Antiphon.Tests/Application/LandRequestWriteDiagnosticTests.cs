@@ -109,9 +109,15 @@ public sealed class LandRequestWriteDiagnosticTests
         failure.Entries.Count.ShouldBe(1, customMessage: "D.RealConflictingEntry");
         Guid observed;
         await using (var observer = h.CreateContext()) observed = (await observer.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == accepted.RequestId)).ConcurrencyToken;
+        h.Fixture.Git.BeforeCommand = async (_, args) =>
+        {
+            if (args[0] != "check-ref-format") return null;
+            await using var atFailure = h.CreateContext();
+            observed = (await atFailure.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == accepted.RequestId)).ConcurrencyToken;
+            throw failure;
+        };
         if (variant == "request-hosted")
         {
-            h.Fixture.Git.BeforeCommand = (_, _) => throw failure;
             var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             using var hosted = new Antiphon.Server.Infrastructure.Orchestration.AgentTaskLandHostedService(h.Queue,
                 h.Services.GetRequiredService<IServiceScopeFactory>(), new CompletionLogger<Antiphon.Server.Infrastructure.Orchestration.AgentTaskLandHostedService>(entries, completion));
@@ -119,7 +125,7 @@ public sealed class LandRequestWriteDiagnosticTests
             try { await completion.Task.WaitAsync(TimeSpan.FromSeconds(30)); }
             finally { await hosted.StopAsync(CancellationToken.None); }
         }
-        else await h.FailAsync(failure);
+        else await h.FailQueuedInSameScopeAsync();
         await using var db = h.CreateContext();
         var row = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == accepted.RequestId);
         row.TerminalFailureCode.ShouldBe("landing_concurrency_conflict", customMessage: "D.ConcurrencyCodePersisted");
@@ -130,13 +136,14 @@ public sealed class LandRequestWriteDiagnosticTests
         terminal.Detail.ShouldContain($"originalToken={original:N}", Case.Sensitive, customMessage: "D.OriginalTokenNamed");
         terminal.Detail.ShouldContain($"attemptedToken={attempted:N}", Case.Sensitive, customMessage: "D.AttemptedTokenNamed");
         terminal.Detail.ShouldContain("observedDatabaseWriter=", Case.Sensitive, customMessage: "D.ObservedWriterNamed");
-        // Hosted start is an intervening committed writer; attribution is explicitly observed.
-        if (variant != "request-hosted") terminal.Detail.ShouldContain($"observedToken={observed:N}", customMessage: "D.FreshStoredTokenNamed");
+        // This is the request token observed at the actual failure, after any intervening start writer.
+        terminal.Detail.ShouldContain($"observedToken={observed:N}", customMessage: "D.FreshStoredTokenNamed");
         terminal.Detail.ShouldNotContain("stale private value", Case.Sensitive, customMessage: "D.RawExceptionHidden");
         terminal.Detail.ShouldNotContain("fixture-request-save-conflict", Case.Sensitive, customMessage: "D.RawExceptionHidden");
         original.ShouldNotBe(attempted);
         var log = entries.Single(e => e.State.ContainsKey("ConcurrencySummary"));
         log.State["ConcurrencySummary"]!.ToString().ShouldContain($"row={key:N}", customMessage: "D.SummarySurvivesTrackerClear");
+        log.State["Attempt"].ShouldBe(row.Attempt, "D.ExecutingAttemptRetained");
         var note = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.RequestId == accepted.RequestId && n.Kind == LandNotificationKind.Outcome);
         note.Body.ShouldContain($"originalToken={original:N}", customMessage: "D.SafeSummaryPersistedInNotification");
     }
