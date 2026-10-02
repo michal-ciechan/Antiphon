@@ -26,15 +26,6 @@ public class RunnerGrokAdapterReadyTestsPty
         var cwd = Path.Combine(root, "cwd");
         Directory.CreateDirectory(cwd);
         var sessionId = Guid.NewGuid();
-        var exe = TestAppHostPath.Require("fakegrok", AppContext.BaseDirectory);
-        string[] args = ["--session-id", sessionId.ToString("D"), "--cwd", cwd];
-        if (!OperatingSystem.IsWindows())
-        {
-            // FakeGrok only configures Windows console input. A real Unix TUI enables
-            // raw mode itself; do so on this test's owned PTY to preserve literal CR/LF.
-            args = ["-c", "stty raw -echo; exec \"$@\"", "c1004-fakegrok", exe, .. args];
-            exe = "/bin/sh";
-        }
         await using var client = new DirectSessionRunnerClient(Path.Combine(root, "logs"),
             ptyBackend: OperatingSystem.IsWindows() ? "modern" : null);
         await using var adapter = new RunnerGrokAdapter(client,
@@ -48,11 +39,15 @@ public class RunnerGrokAdapterReadyTestsPty
             }));
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         await adapter.StartAsync(new AgentLaunchSpec("fakegrok", AgentKind.Grok,
-            exe, args,
+            TestAppHostPath.Require("fakegrok", AppContext.BaseDirectory),
+            ["--session-id", sessionId.ToString("D"), "--cwd", cwd],
             new Dictionary<string, string>
             {
                 ["GROK_HOME"] = Path.Combine(root, "grok-home"),
                 ["ANTIPHON_FAKE_GROK_LINUX_COMPOSER"] = linuxMarker ? "1" : "0",
+                // The .NET fake's Unix console can turn a typed CR into LF and
+                // deliver it in the body's read. Use its existing transport opt-in.
+                ["ANTIPHON_FAKE_LF_ENTER"] = OperatingSystem.IsWindows() ? "0" : "1",
             }, cwd, 120, 30, SessionId: sessionId), deadline.Token);
         (await adapter.WaitForReadyAsync(deadline.Token)).ShouldBeTrue();
         var snapshot = await client.GetSnapshotAsync(sessionId, deadline.Token);
@@ -61,9 +56,9 @@ public class RunnerGrokAdapterReadyTestsPty
         (await client.GetTranscriptAsync(sessionId, deadline.Token)).Entries
             .ShouldNotContain(x => x.Kind == TranscriptKinds.UserPrompt);
 
-        // CRLF source must normalize to LF, bracketed paste, then a separate submitting CR.
-        // FakeGrok models the measured LF drop; the complete joined body is the oracle.
-        const string body = "C1004 first prompt HEAD\r\ncomplete body TAIL";
+        // A single-line nonce avoids the .NET fake's unqualified Unix multi-line
+        // console behavior. Real Grok paste/Enter qualification belongs to the canary.
+        const string body = "C1004 complete first prompt HEAD and TAIL";
         await adapter.SendPromptAsync(body, deadline.Token);
         SessionRunnerTranscriptDto transcript;
         do
@@ -74,7 +69,7 @@ public class RunnerGrokAdapterReadyTestsPty
         } while (true);
         var prompts = transcript.Entries.Where(x => x.Kind == TranscriptKinds.UserPrompt).ToArray();
         prompts.ShouldHaveSingleItem();
-        prompts[0].Text.ShouldBe("C1004 first prompt HEADcomplete body TAIL");
+        prompts[0].Text.ShouldBe(body);
         // DirectSessionRunnerClient owns and kills every child on disposal. Retain its
         // unique log root for diagnosis; it never uses the production runner or provider.
     }

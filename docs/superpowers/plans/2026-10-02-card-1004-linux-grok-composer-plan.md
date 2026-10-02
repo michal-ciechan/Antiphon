@@ -25,7 +25,11 @@ reject ghost/typed text, U+2192, U+203A, `x`, status/spinner, wrong hints, 29 ro
 V-3: Runner adapter settles both original Linux captures without startup input
 (`RunnerGrokAdapterReadyTests`). FakeGrok's default ASCII marker and opt-in U+276F
 both traverse the native PTY, TerminalScreen and adapter, then produce exactly one
-complete joined UserPrompt for a CRLF source body (`RunnerGrokAdapterReadyTestsPty`).
+complete UserPrompt for a single-line nonce (`RunnerGrokAdapterReadyTestsPty`).
+The .NET fake's Unix console can convert CR to LF and coalesce multi-line paste
+with Enter even after a shell raw-mode preamble. Use its existing Linux
+`ANTIPHON_FAKE_LF_ENTER` opt-in for the nonce. This does not qualify real Grok
+multi-line paste/Enter behavior; that remains the real-provider canary's job.
 R-1: Unchanged Windows fixture and readiness regression tests, capture privacy,
 sign-in/trust predicates and adapter factory (`GrokStartupReadinessTests`,
 `GrokStartupCaptureStoreTests`, `GrokSignInPromptDetectorTests`,
