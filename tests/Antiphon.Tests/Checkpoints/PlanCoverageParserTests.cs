@@ -28,7 +28,7 @@ public sealed class PlanCoverageParserTests : CheckpointTestBase
         var root = TempDir(); var world = PlanCoverageFixture.WriteWorld(root);
         var output = new StringWriter(); var command = new CoverageCommand();
         command.Run(root, world.Plan, output: output).ShouldBe(0, "coverage-scope-closed");
-        output.ToString().ShouldContain("files=1", "coverage-scope-files");
+        output.ToString().ShouldContain("files=1", Case.Sensitive, "coverage-scope-files");
         command.Run(root, world.Plan, [world.Source, world.Source], output: new StringWriter()).ShouldBe(2, "coverage-scope-duplicate");
         command.Run(root, "../outside.md", output: new StringWriter()).ShouldBe(2, "coverage-scope-escape");
         File.WriteAllText(world.Plan, PlanCoverageFixture.Plan().Replace("Demo*", "Missing*"));
