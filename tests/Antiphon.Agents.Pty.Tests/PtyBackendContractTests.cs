@@ -92,6 +92,8 @@ public class PtyBackendContractTests
     /// the ceilings still in force. This is the missing-redistributable case the card asks for.
     /// </summary>
     [Test]
+    // The probe directory is process-wide; the Headed key alone does not exclude modern readers.
+    [NotInParallel]
     public async Task A_modern_request_falls_back_to_the_inbox_conhost_when_the_pair_is_incomplete()
     {
         SkipIfNotWindows();
