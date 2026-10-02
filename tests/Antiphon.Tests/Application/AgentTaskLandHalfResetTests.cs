@@ -111,7 +111,7 @@ public sealed class AgentTaskLandHalfResetTests
             ["diff", "--quiet", local, "--"], CancellationToken.None)).ExitCode
             .ShouldBe(0, "H.StaleIndexSizeNormalizedDiffIsClean");
         (await h.Fixture.RequiredAsync(h.Fixture.Source, "status", "--porcelain=v1", "--untracked-files=all"))
-            .ShouldContain(" M feature.txt", "H.StaleIndexSizeStatusIsDirty");
+            .ShouldContain(" M feature.txt", customMessage: "H.StaleIndexSizeStatusIsDirty");
 
         var request = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
             recoverReviewedSource: true);
