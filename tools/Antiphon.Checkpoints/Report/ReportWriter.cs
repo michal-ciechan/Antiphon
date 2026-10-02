@@ -23,6 +23,13 @@ public static class ReportWriter
         {
             if (!string.IsNullOrWhiteSpace(row.Line))
                 text.AppendLine(row.Line);
+            if (row.Repeat is { } repeat)
+            {
+                foreach (var ordinal in repeat.Repetitions)
+                    text.AppendLine($"REPETITION {ordinal.Ordinal + 1}/{repeat.Requested} executed={ordinal.Executed} passed={ordinal.Passed} failed={ordinal.Failed} skipped={ordinal.Skipped} ({row.Id})");
+            }
+            if (row.Timings is { } phases)
+                text.AppendLine($"PHASES {row.Id} slotWait={phases.SlotWaitSeconds?.ToString() ?? "unavailable"}s build={phases.BuildSeconds?.ToString() ?? "unavailable"}s startup={phases.StartupSeconds?.ToString() ?? "unavailable"}s testsWall={phases.TestsWallSeconds?.ToString() ?? "unavailable"}s teardown={phases.TeardownSeconds?.ToString() ?? "unavailable"}s hostWall={phases.TestHostWallSeconds?.ToString() ?? "unavailable"}s" + (phases.UnavailableReason is null ? "" : " reason=" + phases.UnavailableReason));
             foreach (var rerun in row.RerunLines)
                 text.AppendLine(rerun);
             foreach (var failure in row.Failures)

@@ -288,10 +288,14 @@ public static class Program
         var expected = Required(options, "expected-source-sha");
         try
         {
-            var report = JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(path), ReportWriter.Json);
+            var raw = File.ReadAllText(path);
+            using var document = JsonDocument.Parse(raw);
+            AssertUniqueJson(document.RootElement);
+            var report = JsonSerializer.Deserialize<ReportModel>(raw, ReportWriter.Json);
             if (report is null) throw new InvalidDataException("report_empty");
             var rows = (options.Get("rows") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            var refusal = ReportValidator.Validate(report, expected, rows);
+            var expectedRepeat = options.Get("expected-repeat") is string count ? RepeatRequest.Parse(count) : 1;
+            var refusal = ReportValidator.Validate(report, expected, rows, expectedRepeat);
             if (refusal is not null) { Console.Error.WriteLine("CHECKPOINT SOURCE INVALID reason=" + refusal); return ExitCodes.Invalid; }
             Console.WriteLine("CHECKPOINT SOURCE VALID source=" + expected + " rows=" + (rows.Length == 0 ? report.Rows.Count : rows.Length));
             return ExitCodes.Green;
@@ -301,6 +305,21 @@ public static class Program
             Console.Error.WriteLine("CHECKPOINT SOURCE INVALID reason=" + ex.GetType().Name);
             return ExitCodes.Invalid;
         }
+    }
+
+    private static void AssertUniqueJson(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var property in element.EnumerateObject())
+            {
+                if (!names.Add(property.Name)) throw new InvalidDataException("duplicate_json_property");
+                AssertUniqueJson(property.Value);
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+            foreach (var item in element.EnumerateArray()) AssertUniqueJson(item);
     }
 
     private static async Task<int> Row(ArgSet options, string repo, CheckpointApp.Runtime? runtime)

@@ -10,7 +10,7 @@ public static class ReportMerger
         var latest = ordered[^1];
         // Every attempt contributes to the merged run's provenance, including a row later
         // replaced by the same checkpoint ID. Validate before replacement can hide it.
-        if (ordered.Any(run => run.SchemaVersion != 2 || run.Commit != latest.Commit ||
+        if (ordered.Any(run => run.SchemaVersion is not (2 or 3) || run.Commit != latest.Commit ||
             !ReportValidator.IsSourceEligible(run.Source, latest.Commit) ||
             run.Source.Start.Fingerprint != latest.Source.Start.Fingerprint ||
             run.Rows.Any(row => !ReportValidator.IsSourceEligible(row.Source, latest.Commit) ||
@@ -24,7 +24,11 @@ public static class ReportMerger
             foreach (var row in run.Rows)
             {
                 if (byId.TryGetValue(row.Id, out var existing))
+                {
+                    if (existing.Row.Repeat?.Requested != row.Repeat?.Requested || existing.Row.Build != row.Build)
+                        throw new InvalidOperationException("cannot merge incompatible repeat or build binding for row " + row.Id);
                     byId[row.Id] = (Clone(row, existing.Earlier + 1), existing.Earlier + 1);
+                }
                 else
                     byId[row.Id] = (Clone(row, 0), 0);
             }
@@ -32,7 +36,7 @@ public static class ReportMerger
 
         var merged = new ReportModel
         {
-            SchemaVersion = 2,
+            SchemaVersion = byId.Values.Any(item => item.Row.Repeat is not null) ? 3 : 2,
             Source = latest.Source,
             RunId = latest.RunId,
             ManifestPath = latest.ManifestPath,
@@ -75,7 +79,7 @@ public static class ReportMerger
             Passed = row.Passed,
             Failed = row.Failed,
             Skipped = row.Skipped,
-            Reruns = row.Reruns + earlierAttempts,
+            Reruns = row.Reruns + (row.Repeat is null ? earlierAttempts : 0),
             Trx = row.Trx,
             Seconds = row.Seconds,
             Line = row.Line,
@@ -84,8 +88,11 @@ public static class ReportMerger
             SlowClasses = row.SlowClasses,
             Attempt = row.Attempt,
             Source = row.Source,
+            Repeat = row.Repeat,
+            Timings = row.Timings,
+            Attempt = earlierAttempts + 1,
         };
-        if (earlierAttempts > 0 && copy.Line is not null && !copy.Line.Contains("reruns=", StringComparison.Ordinal))
+        if (row.Repeat is null && earlierAttempts > 0 && copy.Line is not null && !copy.Line.Contains("reruns=", StringComparison.Ordinal))
             copy.Line += " reruns=" + copy.Reruns;
         return copy;
     }

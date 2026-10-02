@@ -21,9 +21,12 @@ public static class ReportValidator
             && start.Fingerprint == end.Fingerprint;
     }
 
-    public static string? Validate(ReportModel report, string expectedSha, IReadOnlyList<string>? selectedIds = null)
+    public static string? Validate(ReportModel report, string expectedSha, IReadOnlyList<string>? selectedIds = null, int expectedRepeat = 1)
     {
-        if (report.SchemaVersion != 2 || !IsSourceEligible(report.Source, expectedSha) || report.Commit != expectedSha)
+        if (expectedRepeat < 1 || report.SchemaVersion is not (2 or 3)
+            || report.SchemaVersion == 2 && report.Rows.Any(row => row.Repeat is not null)
+            || report.SchemaVersion == 3 && report.Rows.All(row => row.Repeat is null)
+            || !IsSourceEligible(report.Source, expectedSha) || report.Commit != expectedSha)
             return "report_source_ineligible";
         var rows = selectedIds is { Count: > 0 }
             ? report.Rows.Where(row => selectedIds.Contains(row.Id, StringComparer.Ordinal)).ToList()
@@ -55,7 +58,36 @@ public static class ReportValidator
             if (row.Executed is int count &&
                 (!fields.TryGetValue("executed", out var executed) || executed != count.ToString()))
                 return "receipt_count_disagreement";
+            if (expectedRepeat > 1)
+            {
+                if (row.Repeat is null || row.Repeat.Requested != expectedRepeat
+                    || row.Repeat.HostInvocations != 1 || row.Repeat.Passed != expectedRepeat
+                    || row.Repeat.Completed != expectedRepeat || row.Reruns != 0)
+                    return "repeat_missing_or_incomplete";
+                if (!fields.TryGetValue("repeat", out var repeatToken) || repeatToken != expectedRepeat.ToString()
+                    || !fields.TryGetValue("repetitions", out var rounds) || rounds != $"{expectedRepeat}/{expectedRepeat}"
+                    || !fields.TryGetValue("hostInvocations", out var invocations) || invocations != "1")
+                    return "repeat_receipt_disagreement";
+                foreach (var (key, actual) in new[]
+                {
+                    ("passed", row.Passed), ("failed", row.Failed), ("skipped", row.Skipped),
+                })
+                    if (!fields.TryGetValue(key, out var written) || written != actual?.ToString())
+                        return "repeat_receipt_count_disagreement";
+                if (row.Trx is null || !File.Exists(row.Trx)) return "repeat_trx_missing";
+                var trx = TrxReport.Parse(row.Trx);
+                var checkedRepeat = RepeatEvidenceValidator.Validate(trx, expectedRepeat, row.Repeat.Nonce, 1, []);
+                if (!checkedRepeat.Ok || !SameRepeat(checkedRepeat.Evidence, row.Repeat)
+                    || row.Executed != trx.Executed || row.Passed != trx.Passed
+                    || row.Failed != trx.Failed || row.Skipped != trx.Skipped)
+                    return "repeat_trx_disagreement";
+            }
+            else if (row.Repeat is not null)
+                return "repeat_requires_expected_repeat";
         }
         return null;
     }
+
+    private static bool SameRepeat(RepeatEvidence actual, RepeatEvidence stored) =>
+        System.Text.Json.JsonSerializer.Serialize(actual) == System.Text.Json.JsonSerializer.Serialize(stored);
 }

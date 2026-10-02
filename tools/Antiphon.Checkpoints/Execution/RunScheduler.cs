@@ -230,6 +230,8 @@ public sealed class RunScheduler
             progress.SlotReason = result.SlotReason;
             progress.WaitedSeconds = result.WaitedSeconds;
             progress.Seconds = result.Seconds > 0 ? result.Seconds : Elapsed(progress.StartedAt);
+            progress.Repeat = result.Repeat;
+            progress.Timings = result.Timings;
             finished.Add(result);
             Publish(request);
         }
@@ -252,6 +254,8 @@ public sealed class RunScheduler
             progress.Slot = result.Slot;
             progress.SlotReason = result.SlotReason;
             progress.WaitedSeconds = result.WaitedSeconds;
+            progress.Repeat = result.Repeat;
+            progress.Timings = result.Timings;
             finished.Add(result);
             Publish(request);
         }
