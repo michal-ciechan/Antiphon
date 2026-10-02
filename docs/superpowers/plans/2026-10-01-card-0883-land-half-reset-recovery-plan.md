@@ -1,6 +1,6 @@
 # CARD-0883: recover a land adoption interrupted between ref movement and checkout reset
 
-Date: 2026-10-01. Stage: Plan; next TestDesign. Baseline: `origin/master` at **`fccef27eb03f2522f2a40574dc1c764335d4a490`**. `git rev-parse HEAD origin/master` and `git ls-remote origin refs/heads/master` agreed during inspection. Assigned branch: `feat/card-task-373933b4`, starting at that same commit; no rebase, merge, reset, or master update is part of this task. Line references and the existing-test census below are against this frozen baseline, not a claim about the currently loaded server.
+Date: 2026-10-01. Stage: Code on `feat/card-task-0d765df1` from `150fa807b32aa2b720b67bc62646b0ec3f6f0881`, atop master `4380891cca92111cd6271a0bf0f3662965a7440d`. The original Plan baseline was `fccef27eb03f2522f2a40574dc1c764335d4a490`; its line references are historical. Code-start source and checkpoint counts are refreshed below. No rebase, merge, reset, or master update is part of this task.
 
 ## Outcome and scope
 
@@ -111,7 +111,7 @@ Rejected: naming the monitor as a proven historical culprit; timing-only inferen
 
 ### D-5: preserve approval and serialize shared source owners
 
-**Code must wait for CARD-0835 to land.** It changes AgentTaskLandingProtocol, Review/land authority and the EF model snapshot/migration sequence also touched here. Reinspect its landed source-clean Review contract and seed valid clean evidence in this card's fixtures; do not relax LandApproval or bypass the new gate. TestDesign may proceed now against this baseline, marking the required seed/census refresh. No Plan-time rebase/merge is authorized.
+**CARD-0835 landed before this Code start.** Its source-clean Review gate remains required and is seeded in the fixture. Do not relax LandApproval or bypass the gate. No rebase/merge is authorized.
 
 Other collisions are explicit below. Prefer server2 for all authoring, Linux checkpoints and isolated PostgreSQL/Git fixtures. Scope Windows work to the native checkout row, not a second full Code task or full-suite run.
 
@@ -157,7 +157,7 @@ These are source-footprint comparisons against the supplied plans, not live occu
 | `LandingSafetyHarness` construction/admission/execution/restart/interceptors; `LandingGitFixture` command hooks/disposal | Real Git and fresh persistence observers. Existing `InjectedSaveFailure` is not a concurrency exception; add the typed request-specific interceptor in the new fixture. |
 | `TestDbFixture` and lifecycle; `AgentTaskLandReceiptTests.C467_V12_CatchUpAndRecoverReceiptWithoutRetyping`; `BridgeQueueHarness.CreateAsync`/`OnSubmitted`; notifier boundary calls | Owned cloned DB, real queue with fake adapter, recovery at persistence boundaries: V-4. |
 
-**Code serialization:** use CARD-0826 → CARD-0788 → CARD-0883 for the shared source owners; never overlap their Code tasks. CARD-0826's in-flight cleanup changes `AgentTaskLandService.cs`, `AppDbContext.cs`, `AddHostCleanup` migration/Designer and model snapshot. CARD-0788 shares `LandApproval.cs` (consumed unchanged here), `AgentTaskLandService.cs`, `AgentTaskLandSourceResolver.cs`, `AgentTaskReplyService.cs` and `docs/orchestration-loop.md`. CARD-0835 remains a required landed predecessor. The caller verifies actual occupancy before dispatch; this is the chosen serialization order, not a claim that either other card has landed. Recount at the eventual Code start SHA; changed counts require a committed manifest amendment. These instructions refine D-5 without changing recovery behavior.
+**Code-start serialization refresh:** CARD-0835 and CARD-0788 are landed at `4380891c`; CARD-0826 is not landed and supplies no migration predecessor. This branch adds its migration after `20261001052023_AddReviewSourceClean`. Keep later shared-file work serialized. The prior planned CARD-0826 → CARD-0788 sequence was a forecast, not the source history used for this Code task.
 
 ### Delivery inventory
 
@@ -172,7 +172,7 @@ The fake bridge adapter supplies transcript evidence; it proves application rout
 
 Use LandingSafetyHarness/LandingGitFixture for real Git in an owned temporary local repository with a local bare origin, an isolated PostgreSQL schema, a controlled verifier and ReplyTo=None. LandHalfResetFixture supplies the reviewed owner/source, pinned L/S intent, reset barrier and optional interceptor. No real provider, network Git remote, application restart, production runner, or production database. Add the assembly-local `[ParallelLimiter<ProcessSpawnLimit>]` to every new class that starts Git; serialize these rows and set `TUNIT_MAX_PARALLEL_TESTS=1`. Do not co-schedule Antiphon.Agents.Pty.Tests.
 
-Here “isolated schema” means `TestDbFixture.CreateIsolatedSchemaAsync`'s current **owned cloned database**, not a SearchPath schema. Scope assertions to fixture identities; global sweeps run only on that clone. Migration coverage uses the shared testcontainer and an owned empty database at the actual immediate predecessor (including AddHostCleanup), inserts predecessor-compatible legacy rows, then upgrades through the CLI-generated migration. Never downgrade shared/template stores or use EnsureCreated as upgrade evidence.
+Here “isolated schema” means `TestDbFixture.CreateIsolatedSchemaAsync`'s current **owned cloned database**, not a SearchPath schema. Scope assertions to fixture identities; global sweeps run only on that clone. Migration coverage uses the shared testcontainer and an owned empty database at the actual immediate predecessor (`20261001052023_AddReviewSourceClean`), inserts predecessor-compatible legacy rows, then upgrades through the CLI-generated migration. Never downgrade shared/template stores or use EnsureCreated as upgrade evidence.
 
 Missing setup to implement inside the named fixture/harness footprint: a fixture-specific interceptor (not the existing generic SaveFault), an instance ILandingGit override used by both harness DI and CreateLand, and a scoped service factory for same-context RunRequestAsync/FailRequestAsync. `LandingSafetyHarness.RunQueuedAsync` propagates a DbUpdateConcurrencyException; it does not settle it. The exact-cut driver therefore catches that specific observed exception and calls the **same scoped service's** FailRequestAsync, as the actual hosted drain does, then releases the queue claim. It must assert the caught exception and persisted terminal result. V-4 also drives the real hosted drain. Do not add a broad production catch merely to make the fixture pass.
 
@@ -280,13 +280,13 @@ TestDesign reran the read-only PowerShell census at `4cdd8809b85ed479a8a2b3d43f8
 
 | ID / class | Source methods | Expanded existing results Linux / Windows | Count derivation in source order |
 |---|---:|---:|---|
-| R-1 AgentTaskLandAdoptionTests | 9 | 15 / 15 | `2+3+1+1+1+1+1+1+4` |
+| R-1 AgentTaskLandAdoptionTests | 10 | 21 / 21 | `2+3+1+1+1+1+1+1+4+6` |
 | R-2 AgentTaskLandSourcePersistenceTests | 9 | 35 / 35 | `3+8+3+1+10+4+3+2+1` |
 | R-3 AgentTaskLandFailureDiagnosticTests | 7 | 25 / 25 | `8+2+3+1+4+2+5` |
 | R-4 AgentTaskLandMonitoringTests | 8 | 25 / 25 | `4+4+4+4+1+1+5+2` |
 | R-5 LandingGitTests | 22 | 55 / 55 | `2+4+1+1+1+7+4+4+2+3+7+3+4+1+4+1+1+1+1+1+1+1` |
 
-Total existing selection: `9+9+7+8+22 = 55` source methods; `15+35+25+25+55 = 155` expanded results per OS; static skip count 0. Existing same-request non-ancestor recovery stays green. Complete its synthetic interrupted-state fixture with the actual durable pin setup that production performs before update-ref, preserving its outcome/assertions and result count. That fixture-only edit is explicitly in S1's footprint.
+Code-start recount from `4380891c`: CARD-0788 added `C788_RecoveryMismatchDetailSurvivesRestart` with six arguments to R-1; the other four named class files are unchanged from TestDesign. Total existing selection is `10+9+7+8+22 = 56` source methods and `21+35+25+25+55 = 161` expanded results per OS; static skip count 0. Existing same-request non-ancestor recovery stays green. Complete its synthetic interrupted-state fixture with the actual durable pin setup that production performs before update-ref, preserving its outcome/assertions and result count. That fixture-only edit is explicitly in S1's footprint.
 
 Recount recipe (read-only PowerShell, with `$names` set to the five exact classes above): enumerate `$name.cs` and `$name.*.cs`; apply regex `\[Test\]([\s\S]*?)(?:public|internal)\s+(?:async\s+)?(?:Task(?:<[^>]+>)?|void|ValueTask)\s+(\w+)\s*\(`, then count `\[Arguments\(` in capture 1 with minimum one. Print each method and count; inspect generators/conditional skips manually. This is source-shape-specific, not a general C# parser. Code repeats it after serialized landings and after creating the new tests, then reconciles against actual TRX. New cardinalities are specifications, not source-measured tests.
 
@@ -396,7 +396,7 @@ Do not add those unrelated classes to the land filters or claim they passed. No 
 
 ### Cost
 
-All figures are estimates, not observed runtimes. Closed Code floor = CP-1..CP-5 **8+18+12+18+8 = 64 minutes**: one deliberate pre-fix red plus 56 minutes final V/R. Final unique results = **69+85+108+4 = 266**, of which 155 are source-counted existing results and 111 are specified new results. CP-1 repeats one result, giving 267 planned executions and one intentional pre-fix failure. All final results must pass without skips.
+All figures are estimates, not observed runtimes. Closed Code floor = CP-1..CP-5 **8+18+12+18+8 = 64 minutes**: one deliberate pre-fix red plus 56 minutes final V/R. Code-start final unique results = **75+85+108+4 = 272**, of which 161 are source-counted existing results and 111 are specified new results. CP-1 repeats one result, giving 273 planned executions and one intentional pre-fix failure. All final results must pass without skips.
 
 Mutation has 81 distinct PCs plus four Windows native variants = **85 method-scoped variants**. At an estimated 4 minutes per isolated build/test phase, baseline + red + restored green costs **85×3×4 = 1,020 minutes**, separate from mutation editing/discovery and host-slot waits. Split Mutation into bounded commissions; do not represent 18 unsplit Plan labels as 18 executed controls. Code+Mutation execution floor is 1,084 minutes. Five batched Code builds replace one build per 43 new test methods (38 avoided builds); no full-suite claim or speculative numeric wall-time saving. Authoring remains approximately 120–180 minutes, plus any fixture work beyond that estimate; this TestDesign's 60-minute target is separate.
 
@@ -407,7 +407,7 @@ The **closed list** follows. S1-red is deliberately minimal and precedes repair/
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1-red | `tests/Antiphon.Tests -> bin-c883-red/` | historical-save-red | `/*/*/AgentTaskLandAdoptionConcurrencyTests*/C883_Save409FaultThenFreshRequestCompletes*` | V-2 baseline | Linux or Windows: 1 executed, 0 passed, exactly 1 fresh-publication assertion failed, 0 skipped; exit 1 intentional | 1 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-2 | S1-S4 | `tests/Antiphon.Tests -> bin-c883-recovery/` | recovery-and-ordering | `/*/*/(AgentTaskLandHalfResetTests*)\|(AgentTaskLandAdoptionConcurrencyTests*)\|(AgentTaskLandAdoptionTests*)/*` | V-1,V-2,R-1 | Linux 69 / Windows 69 = 47+7+15; all listed, 0 failed/skipped | 69 | 18 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-2 | S1-S4 | `tests/Antiphon.Tests -> bin-c883-recovery/` | recovery-and-ordering | `/*/*/(AgentTaskLandHalfResetTests*)\|(AgentTaskLandAdoptionConcurrencyTests*)\|(AgentTaskLandAdoptionTests*)/*` | V-1,V-2,R-1 | Linux 75 / Windows 75 = 47+7+21; all listed, 0 failed/skipped | 75 | 18 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-3 | S1-S4 | `tests/Antiphon.Tests -> bin-c883-git/` | checkout-proof | `/*/*/(LandRecoveryCheckoutTests*)\|(LandingGitTests*)/*` | V-3,R-5 | Linux 85 / Windows 85 = 30+55; all listed, 0 failed/skipped | 85 | 12 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-4 | S1-S4 | `tests/Antiphon.Tests -> bin-c883-diagnostics/` | writer-and-persistence | `/*/*/(LandRequestWriteDiagnosticTests*)\|(AgentTaskLandSourcePersistenceTests*)\|(AgentTaskLandFailureDiagnosticTests*)\|(AgentTaskLandMonitoringTests*)/*` | V-4,R-2,R-3,R-4 | Linux 108 / Windows 108 = 23+35+25+25; all listed, 0 failed/skipped | 108 | 18 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-5 | S1-S4 | `tests/Antiphon.Tests -> bin-c883-windows/` | windows-checkout | `/*/*/AgentTaskLandHalfResetWindowsTests*/*` | V-5 | Windows 4, all listed, 0 failed/skipped; Linux not commissioned | 4 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
@@ -419,25 +419,22 @@ Test-first sequence is frozen:
 1. **S1-red:** instance-scoped exact-cut observation only, typed request-entry interceptor, minimal 0801 fixture and Save409FaultThenFreshRequestCompletes. Preserve old ordering/behavior. Commit/push, run only CP-1. Require its one intended fresh-publication failure; setup/cut/half-tree assertions pass first.
 2. **S1:** add V-1/V-3 in table order, then witness/checkout proof and existing C753 pin setup. Its current clean Review seed already exists. Write the additional content/provenance assertions before production changes.
 3. **S2:** remaining V-2 in table order, then checkpoint ordering/callback removal. Transfer Save409's injection to the same boundary when the old save disappears. Do not leave a dormant interceptor. Real monitor stale-save replay stays test-only.
-4. **S3:** V-4 in table order before provenance/failure formatting/migration work. Generate the additive migration after CARD-0826 and the other mandatory source owners land.
+4. **S3:** V-4 in table order before provenance/failure formatting/migration work. Generate the additive migration against the landed `AddReviewSourceClean` predecessor; CARD-0826 is not a dependency.
 5. **S4:** four V-5 native tests before native adjustments/docs. Commit/push each slice; run CP-2..CP-4 at the same final SHA and CP-5 on Windows at that SHA. No uncommitted source fixes hidden under an old receipt.
 
-The current brief and owner require the **CARD-0723 checkpoint tool**; the earlier Plan's claimed direct-script exception is not carried forward. Use the tool front door, one run per committed group, and wait until exit is not 75. Do not change ownership settings, omit task identity or bypass host slots if the tool refuses. No checkpoint runs in TestDesign.
+The current Code brief requires **`scripts/run-checkpoint.ps1` directly** because the checkpoint tool refuses owner-unverified execution without a task token (CARD-0853). The script self-leases. Commit before each row, pass the exact SHA and a literal filter with unescaped pipes, and preserve its receipt. No checkpoint runs occurred in TestDesign.
 
 ```powershell
-$plan = 'docs/superpowers/plans/2026-10-01-card-0883-land-half-reset-recovery-plan.md'
 $sourceSha = (git rev-parse HEAD).Trim()
-# S1-red SHA only; intentional exit 1 is evidence, never a clean certificate.
-dotnet run --project tools/Antiphon.Checkpoints --no-build -- run --plan $plan --rows CP-1 --expected-source-sha $sourceSha
-# Final committed S1-S4 SHA; preferred host server2, otherwise any qualified OS.
-dotnet run --project tools/Antiphon.Checkpoints --no-build -- run --plan $plan --rows CP-2,CP-3,CP-4 --expected-source-sha $sourceSha
-# Same final source SHA, native Windows only.
-dotnet run --project tools/Antiphon.Checkpoints --no-build -- run --plan $plan --rows CP-5 --expected-source-sha $sourceSha
-# When run/wait yields 75, substitute its actual run ID and continue:
-dotnet run --project tools/Antiphon.Checkpoints --no-build -- wait <run-id> --max-wait 50s
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-1 -Project tests/Antiphon.Tests -OutputPath bin-c883-red/ -Filter '/*/*/AgentTaskLandAdoptionConcurrencyTests*/C883_Save409FaultThenFreshRequestCompletes*' -MinExecuted 1 -Expect AgentTaskLandAdoptionConcurrencyTests -ResultsRoot .antiphon/c883-red -ExpectedSourceSha $sourceSha
+# At final committed S1-S4 SHA, run each final row once; CP-5 runs on Windows only.
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-2 -Project tests/Antiphon.Tests -OutputPath bin-c883-recovery/ -Filter '/*/*/(AgentTaskLandHalfResetTests*)|(AgentTaskLandAdoptionConcurrencyTests*)|(AgentTaskLandAdoptionTests*)/*' -MinExecuted 75 -Expect AgentTaskLandHalfResetTests,AgentTaskLandAdoptionConcurrencyTests,AgentTaskLandAdoptionTests -ResultsRoot .antiphon/c883-final -ExpectedSourceSha $sourceSha
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-3 -Project tests/Antiphon.Tests -OutputPath bin-c883-git/ -Filter '/*/*/(LandRecoveryCheckoutTests*)|(LandingGitTests*)/*' -MinExecuted 85 -Expect LandRecoveryCheckoutTests,LandingGitTests -ResultsRoot .antiphon/c883-final -ExpectedSourceSha $sourceSha
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-4 -Project tests/Antiphon.Tests -OutputPath bin-c883-diagnostics/ -Filter '/*/*/(LandRequestWriteDiagnosticTests*)|(AgentTaskLandSourcePersistenceTests*)|(AgentTaskLandFailureDiagnosticTests*)|(AgentTaskLandMonitoringTests*)/*' -MinExecuted 108 -Expect LandRequestWriteDiagnosticTests,AgentTaskLandSourcePersistenceTests,AgentTaskLandFailureDiagnosticTests,AgentTaskLandMonitoringTests -ResultsRoot .antiphon/c883-final -ExpectedSourceSha $sourceSha
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-5 -Project tests/Antiphon.Tests -OutputPath bin-c883-windows/ -Filter '/*/*/AgentTaskLandHalfResetWindowsTests*/*' -MinExecuted 4 -Expect AgentTaskLandHalfResetWindowsTests -ResultsRoot .antiphon/c883-final -ExpectedSourceSha $sourceSha
 ```
 
-If no matching compiled checkpoint tool exists, its **one infrastructure bootstrap** is an explicitly listed non-verification build: run `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c883-checkpoint-tool -- dotnet build tools/Antiphon.Checkpoints`, then release that slot before launching the tool. Rows acquire their own slots; never hold a wrapper slot around their wait. The tool drives isolated `dotnet build` and **TUnit via `dotnet run --project tests/Antiphon.Tests --no-build ... -- --treenode-filter <literal>`**, never dotnet test. No unfiltered namespace/full-suite acceptance. Do not use -NoSlot. Report slot refusal/timeout/unleased as incomplete host evidence, not a passed row.
+Each script row acquires and releases its own build slot and drives an isolated build plus TUnit filter. Never dotnet test, bypass the slot, or treat zero selected tests as a pass. Report slot refusal/timeout/unleased as incomplete host evidence.
 
 At each run preserve unedited CHECKPOINT/FAILED/EXECUTED lines, source.json/report.json, exact committed SHA, OS, filter, build result, executed/passed/failed/skipped, reruns and fresh TRX roster. Strict source evidence must be clean/verified. Compare method/argument identities as well as Min; a count alone cannot prove the intended selection. Final Review has every final row; CP-1 is separately labeled pre-fix red, not accepted as clean evidence. Windows evidence pending remains pending. For illustration, CP-2's actual filter is `/*/*/(AgentTaskLandHalfResetTests*)|(AgentTaskLandAdoptionConcurrencyTests*)|(AgentTaskLandAdoptionTests*)/*` (no backslashes).
 
@@ -451,6 +448,6 @@ Rollback: roll forward with a reviewed revert of this feature's behavior on the 
 
 ### Handoff status
 
-TestDesign is complete: 43 specified new methods / 111 results, 55 existing methods / 155 source-counted results, 81 guards mapped to 81 controls plus four native variants, five closed checkpoint rows. No build/test/positive-control execution is claimed. Code must use the serialized source-owner order, preserve source-clean Review approval, and report actual fresh TRX counts against the frozen roster. No implementation or activation occurred in this stage.
+TestDesign specified 43 new methods / 111 results. Code-start recount finds 56 existing methods / 161 source-counted results after CARD-0788; 81 guards map to 81 controls plus four native variants, with five closed checkpoint rows. Code preserves source-clean Review approval and reports actual fresh TRX counts against this roster. No activation occurred in this stage.
 
 Next stage: **Code** after the source-owner collisions are clear. The exact-cut red is the first implementation checkpoint; the historical concurrent writer remains unproven until correlated live evidence exists.

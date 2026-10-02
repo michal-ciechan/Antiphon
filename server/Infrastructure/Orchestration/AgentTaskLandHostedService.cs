@@ -39,20 +39,20 @@ public sealed class AgentTaskLandHostedService : BackgroundService
                         try
                         {
                             var handled = await lands.FailRequestAsync(request.TaskId, request.RequestId, ex, stoppingToken);
-                            _logger.LogWarning(ex,
+                            _logger.LogWarning(
                                 "Land operation failed for task {TaskId} request {RequestId} attempt {Attempt} exception {ExceptionType} code {Code} diagnostic {DiagnosticId}",
                                 request.TaskId, handled.RequestId, handled.Attempt, handled.ExceptionType, handled.Code,
                                 handled.DiagnosticId);
                         }
                         catch (LandFailurePersistenceException persistEx)
                         {
-                            _logger.LogWarning(persistEx,
+                            _logger.LogWarning(
                                 "Could not persist land failure for task {TaskId} diagnostic {DiagnosticId} persistence {PersistenceErrorType}",
                                 request.TaskId, persistEx.DiagnosticId, persistEx.PersistenceErrorType);
                         }
                         catch (Exception failEx) when (failEx is not OperationCanceledException)
                         {
-                            _logger.LogWarning(failEx,
+                            _logger.LogWarning(
                                 "Could not persist land failure for task {TaskId}; the sweep will retry",
                                 request.TaskId);
                         }
@@ -64,7 +64,8 @@ public sealed class AgentTaskLandHostedService : BackgroundService
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Land operation failed for task {TaskId}", request.TaskId);
+                    _logger.LogWarning("Land operation failed for task {TaskId} exception {ExceptionType}",
+                        request.TaskId, LandFailureDiagnostic.ExceptionTypeName(ex));
                 }
                 finally
                 {

@@ -15,7 +15,7 @@ internal sealed class LandHalfResetFixture : IAsyncDisposable
 
     public LandHalfResetFixture()
     {
-        Boundary = new RefMovedBoundary(Interceptor);
+        Boundary = new RefMovedBoundary(Interceptor, Harness);
         Harness.Boundary = Boundary;
         Harness.LandCutInterceptor = Interceptor;
     }
@@ -64,6 +64,7 @@ internal sealed class LandHalfResetFixture : IAsyncDisposable
         public Guid RequestId { get; set; }
         public bool Armed { get; set; }
         public int Fired { get; private set; }
+        public void FiredAtBoundary() => Fired++;
 
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
             DbContextEventData data, InterceptionResult<int> result, CancellationToken ct = default)
@@ -84,17 +85,21 @@ internal sealed class LandHalfResetFixture : IAsyncDisposable
         }
     }
 
-    internal sealed class RefMovedBoundary(SaveCut cut) : LandDeliveryBoundary
+    internal sealed class RefMovedBoundary(SaveCut cut, LandingSafetyHarness harness) : LandDeliveryBoundary
     {
         public int Reached { get; private set; }
-        public override Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
+        public override async Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
         {
             if (boundary == "source-adopt-ref-moved-before-reset" && identity == cut.RequestId)
             {
                 Reached++;
-                cut.Armed = true;
+                await using var db = harness.CreateContext();
+                var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == identity, ct);
+                db.Entry(request).State = EntityState.Modified;
+                cut.FiredAtBoundary();
+                throw new DbUpdateConcurrencyException("fixture-request-save-conflict",
+                    (IReadOnlyList<IUpdateEntry>)[(IUpdateEntry)db.Entry(request).GetInfrastructure()]);
             }
-            return Task.CompletedTask;
         }
     }
 }

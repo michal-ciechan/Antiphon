@@ -6,6 +6,7 @@ using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain;
 
 namespace Antiphon.Server.Infrastructure.Git;
 
@@ -415,6 +416,196 @@ public class LandingGit : ILandingGit
             return new(null, "identity_io_error", LandFailureDiagnostic.FromIo(ex));
         }
         catch (ArgumentException) { return new(null, "invalid_identity"); }
+    }
+
+    public async Task<LandRecoveryCheckoutInspection> InspectRecoveryCheckoutAsync(
+        LandSourceCoordinates coordinates, string oldSha, string expectedSha, CancellationToken ct)
+    {
+        // A reset destroys the old checkout. Every unsupported or unreadable input is a refusal.
+        try
+        {
+            var before = await InspectAsync(coordinates, LandInspectionScope.IdentityOnly, ct);
+            if (!before.Accepted || before.Snapshot!.HeadSha != expectedSha)
+                return LandRecoveryCheckoutInspection.Refused("adopt_local_changed");
+            var path = before.Snapshot.RegisteredPath;
+            // Refuse filter-bearing checkouts before any diff can ask Git to clean worktree bytes.
+            var changedAttributes = await RunAsync(path,
+                ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", oldSha, expectedSha], ct);
+            if (!changedAttributes.Succeeded || changedAttributes.Output.Contains('\uFFFD')
+                || changedAttributes.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+                    .Any(x => x == ".gitattributes" || x.EndsWith("/.gitattributes", StringComparison.Ordinal)))
+                return LandRecoveryCheckoutInspection.Refused();
+            foreach (var sha in new[] { oldSha, expectedSha })
+            {
+                var listed = await RunAsync(path, ["ls-tree", "-r", "-z", sha], ct);
+                if (!listed.Succeeded || listed.Output.Contains('\uFFFD'))
+                    return LandRecoveryCheckoutInspection.Refused();
+                foreach (var row in listed.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var tab = row.IndexOf('\t');
+                    if (tab < 0) return LandRecoveryCheckoutInspection.Refused();
+                    var relative = row[(tab + 1)..];
+                    var attrsResult = await RunAsync(path, ["check-attr", "--all", "-z", "--", relative], ct);
+                    if (!attrsResult.Succeeded || attrsResult.Output.Contains('\uFFFD'))
+                        return LandRecoveryCheckoutInspection.Refused();
+                    var attrs = attrsResult.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+                    if (attrs.Length % 3 != 0) return LandRecoveryCheckoutInspection.Refused();
+                    for (var i = 0; i < attrs.Length; i += 3)
+                        if (attrs[i] != relative || attrs[i + 1] is not ("text" or "eol")
+                            || attrs[i + 1] == "eol" && attrs[i + 2] is not ("lf" or "crlf")
+                            || attrs[i + 1] == "text" && attrs[i + 2] is not ("set" or "unset" or "auto"))
+                            return LandRecoveryCheckoutInspection.Refused();
+                }
+            }
+            async Task<bool> CleanDiff(params string[] args) =>
+                (await RunAsync(path, args, ct)).ExitCode == 0;
+            if (!await CleanDiff("diff", "--cached", "--quiet", "--no-ext-diff", "--no-textconv", oldSha, "--")
+                || !await CleanDiff("diff", "--quiet", "--no-ext-diff", "--no-textconv",
+                    "--ignore-submodules=none", oldSha, "--"))
+                return LandRecoveryCheckoutInspection.Refused("source_dirty");
+            foreach (var args in new[] {
+                new[] { "ls-files", "--unmerged", "-z" },
+                new[] { "ls-files", "--others", "--exclude-standard", "-z" },
+                new[] { "ls-files", "--others", "--ignored", "--exclude-standard", "-z" } })
+            {
+                var result = await RunAsync(path, args, ct);
+                if (!result.Succeeded) return LandRecoveryCheckoutInspection.Refused();
+                if (result.Output.Length != 0) return LandRecoveryCheckoutInspection.Refused("source_dirty");
+            }
+            var sparse = await RunAsync(path, ["config", "--bool", "core.sparseCheckout"], ct);
+            if (sparse.ExitCode is not (0 or 1) || sparse.Output.Trim() == "true")
+                return LandRecoveryCheckoutInspection.Refused();
+            var flags = await RunAsync(path, ["ls-files", "-v", "-z"], ct);
+            if (!flags.Succeeded || flags.Output.Contains('\uFFFD')
+                || flags.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries).Any(x => !x.StartsWith("H ", StringComparison.Ordinal)))
+                return LandRecoveryCheckoutInspection.Refused();
+            var index = await RunAsync(path, ["ls-files", "--stage", "-z"], ct);
+            if (!index.Succeeded || index.Output.Contains('\uFFFD')
+                || index.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries).Any(x => x.StartsWith("160000 ", StringComparison.Ordinal)))
+                return LandRecoveryCheckoutInspection.Refused();
+            var tree = await RunAsync(path, ["ls-tree", "-r", "-z", oldSha], ct);
+            if (!tree.Succeeded || tree.Output.Contains('\uFFFD')) return LandRecoveryCheckoutInspection.Refused();
+            var auto = await RunAsync(path, ["config", "--get", "core.autocrlf"], ct);
+            if (auto.ExitCode is not (0 or 1)) return LandRecoveryCheckoutInspection.Refused();
+            var autoCrlf = auto.Output.Trim() == "true";
+            if (auto.ExitCode == 0 && !autoCrlf && auto.Output.Trim() is not ("false" or "input"))
+                return LandRecoveryCheckoutInspection.Refused();
+            var filemode = await RunAsync(path, ["config", "--bool", "core.filemode"], ct);
+            if (filemode.ExitCode is not (0 or 1)) return LandRecoveryCheckoutInspection.Refused();
+            foreach (var row in tree.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var tab = row.IndexOf('\t');
+                if (tab < 0) return LandRecoveryCheckoutInspection.Refused();
+                var metadata = row[..tab].Split(' ');
+                if (metadata.Length != 3 || metadata[1] != "blob"
+                    || metadata[0] is not ("100644" or "100755" or "120000"))
+                    return LandRecoveryCheckoutInspection.Refused();
+                var relative = row[(tab + 1)..];
+                if (relative.Length == 0 || Path.IsPathRooted(relative)
+                    || relative.Split('/').Any(x => x is "" or "." or ".."))
+                    return LandRecoveryCheckoutInspection.Refused();
+                var attributes = await RunAsync(path, ["check-attr", "--all", "-z", "--", relative], ct);
+                if (!attributes.Succeeded || attributes.Output.Contains('\uFFFD'))
+                    return LandRecoveryCheckoutInspection.Refused();
+                var attrs = attributes.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+                if (attrs.Length % 3 != 0) return LandRecoveryCheckoutInspection.Refused();
+                string? eol = null;
+                bool binary = false;
+                for (var i = 0; i < attrs.Length; i += 3)
+                {
+                    if (attrs[i] != relative) return LandRecoveryCheckoutInspection.Refused();
+                    if (attrs[i + 1] == "eol" && attrs[i + 2] is "lf" or "crlf") eol = attrs[i + 2];
+                    else if (attrs[i + 1] == "text" && attrs[i + 2] is "set" or "auto") { }
+                    else if (attrs[i + 1] == "text" && attrs[i + 2] == "unset") binary = true;
+                    else return LandRecoveryCheckoutInspection.Refused();
+                }
+                var blob = await ReadGitBlobAsync(path, metadata[2], ct);
+                if (blob is null) return LandRecoveryCheckoutInspection.Refused();
+                var full = Path.Combine(path, relative.Replace('/', Path.DirectorySeparatorChar));
+                var parent = Path.GetDirectoryName(full);
+                while (parent is not null && !PathsEqual(parent, path))
+                {
+                    if ((File.GetAttributes(parent) & FileAttributes.ReparsePoint) != 0)
+                        return LandRecoveryCheckoutInspection.Refused();
+                    parent = Path.GetDirectoryName(parent);
+                }
+                if (metadata[0] == "120000")
+                {
+                    var target = new FileInfo(full).LinkTarget;
+                    if (target is null || !Encoding.UTF8.GetBytes(target).AsSpan().SequenceEqual(blob))
+                        return LandRecoveryCheckoutInspection.Refused("source_dirty");
+                    continue;
+                }
+                var info = new FileInfo(full);
+                if (!info.Exists || info.LinkTarget is not null)
+                    return LandRecoveryCheckoutInspection.Refused("source_dirty");
+                if (!OperatingSystem.IsWindows())
+                {
+                    var mode = File.GetUnixFileMode(full);
+                    var executable = (mode & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
+                    if (executable != (metadata[0] == "100755"))
+                        return LandRecoveryCheckoutInspection.Refused("source_dirty");
+                }
+                else if (metadata[0] == "100755" && filemode.Output.Trim() != "true")
+                    return LandRecoveryCheckoutInspection.Refused();
+                var expected = blob;
+                if (!binary && !blob.Contains((byte)0) && (eol == "crlf" || eol is null && autoCrlf))
+                    expected = ExpandLf(blob);
+                var actual = await File.ReadAllBytesAsync(full, ct);
+                if (!actual.AsSpan().SequenceEqual(expected))
+                    return LandRecoveryCheckoutInspection.Refused("source_dirty");
+            }
+            var after = await InspectAsync(coordinates, LandInspectionScope.IdentityOnly, ct);
+            return after.Accepted && after.Snapshot is { } sampled
+                && sampled.CommonDirectory == before.Snapshot.CommonDirectory
+                && sampled.RegisteredPath == before.Snapshot.RegisteredPath
+                && sampled.GitDirectory == before.Snapshot.GitDirectory
+                && sampled.SymbolicHead == before.Snapshot.SymbolicHead
+                && sampled.HeadSha == before.Snapshot.HeadSha
+                && sampled.BranchSha == before.Snapshot.BranchSha
+                ? new LandRecoveryCheckoutInspection(true)
+                : LandRecoveryCheckoutInspection.Refused("adopt_local_changed");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
+                                   or System.ComponentModel.Win32Exception)
+        { return LandRecoveryCheckoutInspection.Refused(); }
+    }
+
+    private static byte[] ExpandLf(byte[] input)
+    {
+        using var output = new MemoryStream();
+        for (var i = 0; i < input.Length; i++)
+        {
+            if (input[i] == '\n' && (i == 0 || input[i - 1] != '\r')) output.WriteByte((byte)'\r');
+            output.WriteByte(input[i]);
+        }
+        return output.ToArray();
+    }
+
+    private static async Task<byte[]?> ReadGitBlobAsync(string path, string oid, CancellationToken ct)
+    {
+        if (!GitObjectId.IsFull(oid)) return null;
+        var start = new ProcessStartInfo("git") { WorkingDirectory = path, UseShellExecute = false,
+            RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+        start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
+        start.ArgumentList.Add("cat-file"); start.ArgumentList.Add("blob"); start.ArgumentList.Add(oid);
+        using var child = Process.Start(start);
+        if (child is null) return null;
+        using var output = new MemoryStream();
+        var copy = child.StandardOutput.BaseStream.CopyToAsync(output, ct);
+        var error = child.StandardError.ReadToEndAsync(ct);
+        try
+        {
+            await Task.WhenAll(copy, error);
+            await child.WaitForExitAsync(ct);
+        }
+        catch
+        {
+            if (!child.HasExited) child.Kill(entireProcessTree: true);
+            await child.WaitForExitAsync(CancellationToken.None);
+            throw;
+        }
+        return child.ExitCode == 0 ? output.ToArray() : null;
     }
 
     private async Task<LandSourceInspection> IdentityAsync(LandSourceCoordinates coordinates, CancellationToken ct)
