@@ -1,10 +1,13 @@
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -165,6 +168,46 @@ public sealed class AgentTaskInputSpillTests
     }
 
     [Test]
+    public async Task Open_question_reply_remains_unmarked_now_and_toolresult_confirmed()
+    {
+        await using var f = await TaskInputDeliveryFixture.CreateAsync();
+        const string toolUseId = "question-c888";
+        await f.InsertTranscriptEntryAsync(TranscriptKinds.ToolCall,
+            toolName: GrokQuestionTool.AskUserQuestionName, toolUseId: toolUseId);
+        f.Adapter.OnSubmitted = submitted => f.InsertTranscriptEntryAsync(
+            TranscriptKinds.ToolResult,
+            $"{GrokQuestionTool.CompletedAnswerPrefix} \"q\"=\"{submitted}\". You can now continue.",
+            toolName: GrokQuestionTool.AskUserQuestionName, toolUseId: toolUseId);
+        await f.Replies.AnswerAsync(f.TaskId, "Proceed as planned", CancellationToken.None);
+        await using var db = f.Db();
+        var row = await db.SessionQueuedMessages.SingleAsync();
+        row.Body.ShouldBe("Proceed as planned", "overlay-answer-unmarked");
+        row.Body.ShouldNotContain(DelegationReportFormatter.TaskMarker(f.TaskId));
+        row.Status.ShouldBe(QueuedMessageStatus.Sent);
+        (await db.AgentTaskEvents.SingleAsync(e => e.Type == AgentTaskEventType.Replied))
+            .InputBody.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task Refinement_send_now_upgrades_the_same_owned_row()
+    {
+        await using var f = await TaskInputDeliveryFixture.CreateAsync();
+        await f.Replies.RefineAsync(f.TaskId, "send now " + new string('n', 1700),
+            CancellationToken.None);
+        await using var beforeDb = f.Db();
+        var before = await beforeDb.SessionQueuedMessages.AsNoTracking().SingleAsync();
+        await f.Queue.SendNowAsync(f.SessionId, before.Id, CancellationToken.None);
+        await using var afterDb = f.Db();
+        var after = await afterDb.SessionQueuedMessages.AsNoTracking().SingleAsync();
+        after.Id.ShouldBe(before.Id, "same-queue-id");
+        after.ConversationKey.ShouldBe(before.ConversationKey);
+        after.Body.ShouldBe(before.Body);
+        after.RemoteSpillBody.ShouldBe(before.RemoteSpillBody);
+        after.Status.ShouldBe(QueuedMessageStatus.Sent);
+        f.Adapter.SubmittedBodies.ShouldContain(after.Body);
+    }
+
+    [Test]
     public async Task Queued_refinement_still_amends_the_goal()
     {
         await using var f = await TaskInputSpillFixture.CreateAsync(status: AgentTaskStatus.Queued);
@@ -173,6 +216,30 @@ public sealed class AgentTaskInputSpillTests
         (await db.AgentTasks.SingleAsync()).Goal.ShouldContain("add this");
         (await db.SessionQueuedMessages.CountAsync()).ShouldBe(0);
         (await db.AgentTaskEvents.SingleAsync()).InputBody.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task Missing_runner_cwd_selects_api_without_a_server_write()
+    {
+        await using var f = await TaskInputSpillFixture.CreateAsync();
+        await using (var mutate = f.Db())
+        {
+            // This private database represents a corrupt pre-fix binding; keep the
+            // production all-or-none constraint untouched.
+            await mutate.Database.ExecuteSqlRawAsync(
+                "ALTER TABLE \"AgentSessions\" DROP CONSTRAINT IF EXISTS \"CK_AgentSessions_RunnerBinding_AllOrNone\"");
+            await mutate.AgentSessions.Where(s => s.Id == f.SessionId)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.RunnerCwd, (string?)null));
+        }
+        await f.Replies.RefineAsync(f.TaskId, new string('m', 2500), CancellationToken.None);
+        await using var db = f.Db();
+        var row = await db.SessionQueuedMessages.SingleAsync();
+        var input = await db.AgentTaskEvents.SingleAsync(e => e.Type == AgentTaskEventType.Refined);
+        row.Body.ShouldContain(AgentTaskInputService.Route(f.TaskId, input.Id),
+            customMessage: "api-route-instead-of-server-path");
+        row.RemoteSpillBody.ShouldBeNull();
+        row.Body.ShouldNotContain(f.ServerRoot);
+        (await db.AgentTaskEvents.CountAsync(e => e.Type == AgentTaskEventType.Warning)).ShouldBe(1);
     }
 
     [Test]
@@ -193,6 +260,25 @@ public sealed class AgentTaskInputSpillTests
         var read = await service.ReadAsync(f.TaskId, input.Id, caller, CancellationToken.None);
         read.ShouldContain("sentinel-input-tail-888", customMessage: "immutable-input-tail");
         read.ShouldBe(input.InputBody);
+    }
+
+    [Test]
+    public async Task Pending_refinement_age_remains_visible_without_delivery_attempts()
+    {
+        await using var f = await TaskInputDeliveryFixture.CreateAsync();
+        await f.Replies.RefineAsync(f.TaskId, "old caller note", CancellationToken.None);
+        await using var db = f.Db();
+        var row = await db.SessionQueuedMessages.SingleAsync();
+        row.CreatedAt = DateTime.UtcNow.AddMinutes(-38).AddSeconds(-2);
+        await db.SaveChangesAsync();
+        var task = await db.AgentTasks.AsNoTracking().SingleAsync();
+        var git = f.Provider.GetRequiredService<GitWorkspaceService>();
+        var probe = new DelegateCheckProbe(db, git, TimeProvider.System,
+            Options.Create(new SupervisionSettings()), Options.Create(new DelegationSettings()));
+        var digest = DelegateCheckProbe.RenderDigest(await probe.GatherAsync(task, CancellationToken.None));
+        digest.ShouldContain("38m old", customMessage: "pending-age-38m");
+        row.DeliveryAttempts.ShouldBe(0);
+        row.Status.ShouldBe(QueuedMessageStatus.Pending);
     }
 
     private static async Task WriteOnRunnerAsync(TaskInputSpillFixture f, SessionQueuedMessage row)
