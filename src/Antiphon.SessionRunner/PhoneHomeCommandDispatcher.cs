@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using Antiphon.Agents.Pty;
 using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.SessionRunner;
@@ -342,6 +343,10 @@ public sealed class PhoneHomeCommandDispatcher
         catch (HerdrLaunchException ex)
         {
             return Error(request, PhoneHomeProblemTypes.UnsupportedTarget, ex.Message, 409);
+        }
+        catch (UnixPtyArgvException ex)
+        {
+            return Error(request, ex.Code, ex.Message, 409);
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
         {

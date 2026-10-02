@@ -1,3 +1,4 @@
+using Antiphon.Agents.Pty;
 using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.SessionRunner;
@@ -47,6 +48,10 @@ public static class SessionReadLaunchRoutes
             {
                 return Results.Problem(title: ex.Code, detail: ex.Message, statusCode: ex.StatusCode, type: ex.Code);
             }
+            catch (UnixPtyArgvException ex)
+            {
+                return Results.Problem(title: ex.Code, detail: ex.Message, statusCode: 409, type: ex.Code);
+            }
         });
     }
 
@@ -94,6 +99,10 @@ public static class SessionReadLaunchRoutes
             catch (RunnerPlatformLaunchException ex)
             {
                 return Results.Problem(title: ex.Code, detail: ex.Message, statusCode: ex.StatusCode, type: ex.Code);
+            }
+            catch (UnixPtyArgvException ex)
+            {
+                return Results.Problem(title: ex.Code, detail: ex.Message, statusCode: 409, type: ex.Code);
             }
         });
     }

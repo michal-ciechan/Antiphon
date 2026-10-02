@@ -239,6 +239,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         // Before the launch lock's session work, and before custody: a mismatched OS must not
         // create a session, mutate custody, materialize Grok files or start a child.
         RunnerPlatformLaunchGuard.RefuseBeforeLaunch(request.RequiredPlatform);
+        if (!OperatingSystem.IsWindows()
+            && (request.Backend is null
+                || string.Equals(request.Backend, SessionBackends.PtyHost, StringComparison.OrdinalIgnoreCase)))
+            UnixPtyArgvGuard.VerifyOrThrow(request.Exe, request.Args);
         var gate = _launchLocks.GetOrAdd(request.SessionId, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(ct);
         try
