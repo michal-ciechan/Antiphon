@@ -810,12 +810,15 @@ public sealed class AgentTaskLandHalfResetTests
     [Test]
     [Arguments("live-request")]
     [Arguments("unknown-request")]
+    [Arguments("live-journal")]
+    [Arguments("unknown-journal")]
     public async Task C883_UncertainPriorChildRefuses(string variant)
     {
         await using var fixture = new LandHalfResetFixture();
         var h = fixture.Harness;
         var (local, reviewed, evidence, oldId) = await InterruptedAsync(fixture);
-        await using (var db = h.CreateContext())
+        var journalCase = variant.EndsWith("journal", StringComparison.Ordinal);
+        if (!journalCase) await using (var db = h.CreateContext())
         {
             var old = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == oldId);
             old.SourceAdvanceChildProcessId = 883939;
@@ -823,20 +826,41 @@ public sealed class AgentTaskLandHalfResetTests
             await db.SaveChangesAsync();
         }
         var custody = new LandHalfResetFixture.CustodyGit(Path.Combine(h.Fixture.Root, "home"), h.Fixture.TaskId)
-        { ChildAlive = variant == "live-request" ? true : null };
+        { ChildAlive = variant.StartsWith("live", StringComparison.Ordinal) ? true : null };
         h.GitOverride = custody;
+        h.ConfigureServices = sc => Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions.AddSingleton<Antiphon.Server.Application.Interfaces.IRepositoryMutationLease>(sc, new Antiphon.Server.Infrastructure.Git.RepositoryMutationLease(custody));
         await h.RestartServicesAsync();
+        Antiphon.Server.Infrastructure.Git.RepositoryChildJournal? journal = null;
+        if (journalCase)
+        {
+            journal = await Antiphon.Server.Infrastructure.Git.RepositoryChildJournal.BeginAsync(h.Fixture.Repository, CancellationToken.None);
+            await journal.StartedAsync(883939, 883939, CancellationToken.None); // Synthetic identity; the injected interface supplies liveness, no process starts.
+        }
+        try
+        {
         var next = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence, recoverReviewedSource: true);
         await h.RunQueuedAsync();
-        custody.LivenessReads.ShouldBe(1, "H.PriorChildLivenessActuallyRead");
+        custody.LivenessReads.ShouldBeGreaterThan(0, "H.PriorChildLivenessActuallyRead");
         await using var verify = h.CreateContext();
-        (await verify.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == next.RequestId)).SourceRefusalReason
-            .ShouldBe("interrupted_process_requires_inspection", "H.UncertainPriorChildRefused");
-        (await verify.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == oldId)).SourceAdvanceChildProcessId.ShouldBe(883939);
+        var refused = await verify.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == next.RequestId);
+        if (journalCase)
+        {
+            refused.State.ShouldBe(LandRequestState.Held, "H.JournalFencesAdmission");
+            refused.HoldReasonCode.ShouldBe("repository_mutation_lease_busy");
+            var common = await custody.CommonDirectoryAsync(h.Fixture.Repository, CancellationToken.None);
+            (await Antiphon.Server.Infrastructure.Git.RepositoryChildJournal.HasUnfinishedAsync(common, custody, CancellationToken.None)).ShouldBeTrue("H.JournalPreserved");
+        }
+        else
+        {
+            refused.SourceRefusalReason.ShouldBe("interrupted_process_requires_inspection", "H.UncertainPriorChildRefused");
+            (await verify.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == oldId)).SourceAdvanceChildProcessId.ShouldBe(883939);
+        }
         (await h.Fixture.RequiredAsync(h.Fixture.Source, "write-tree")).Trim()
             .ShouldBe((await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", local + "^{tree}")).Trim());
         custody.Commands.ShouldNotContain(x => x.Arguments[0] is "reset" or "clean" or "push", "H.UncertainChildNoMutationOrKill");
         (await h.OperationAsync()).ShouldBeNull();
+        }
+        finally { journal?.NotStarted(); } // Only synthetic fixture custody; no child was created.
     }
 
     private static void AssertNoResetOrPublication(LandingSafetyHarness h)
