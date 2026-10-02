@@ -11,7 +11,7 @@ Production scripts c590-remote.sh and deploy-server2.ps1 are byte-identical to t
 
 Red first:
 - At assigned base 9affbc51, no jq on PATH: exit 1, FAIL T-20 pruned cold seed image verifies before admission, DIAGNOSIS=CacheVolumeForeign, jq: command not found, Rolling deploy stopped: HostCaseFailed deploy-parent exit=2. Frozen counters: 0 groups / 1 invocation / 1 assertion / 1 failure. Build slot granted, 0s wait, released after 4s.
-- S1 8b5f8094e's regression assertion was red before fixing the harness: same underlying T-20 failure, FAIL C973_JQ absent harness exit=1. One regression assertion, one failure. Slot granted, 0s wait, released after 5s. Full S1 SHA is recorded by Git history.
+- S1 8b5f8094759258d09a0bf3f51c57585e6855f226's regression assertion was red before fixing the harness: same underlying T-20 failure, FAIL C973_JQ absent harness exit=1. One regression assertion, one failure. Slot granted, 0s wait, released after 5s. Full S1 SHA is recorded by Git history.
 
 Green at verified code source:
 - CP-jq-absent: exit 0; named skip; T-1..T-19 all passed; 19 groups / 55 invocations / 197 harness assertions / 0 failures; 27 regression assertions / 0 failures. No marker path in any saved invocation. Slot granted, 0s wait; held 264s.
