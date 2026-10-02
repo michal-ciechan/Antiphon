@@ -153,20 +153,20 @@ try {
     if ($Only -eq 'retired-start') { Assert-RetiredStart -AlreadyAtSha $AlreadyAtSha; Write-Output 'PASS T-18 retired start'; exit 0 }
     if ($Only -eq 'cleared-offline-start') { Assert-ClearedOfflineStart -Draining $true -RetireWhenIdle $true -AlreadyAtSha $AlreadyAtSha; Write-Output 'PASS T-19 cleared offline start'; exit 0 }
     if ($hasJq) {
-    $t = Run-C727 -UseMarker -Scenario cold-marker-pruned -Phase redeploy-old -Set @{ oldDraining = $true }
-    Assert-C727 ($t.Exit -eq 0) ('T-20 pruned cold seed image verifies before admission: ' + $t.Out)
-    $markers = @($t.Trace | Where-Object kind -eq 'marker')
-    Assert-C727 ($markers.Count -eq 2 -and $markers[0].seedImageAvailable -and -not $markers[1].seedImageAvailable -and
-        $markers[1].markerKind -eq 'cold' -and $markers[1].exit -eq 0) 'T-20 parent prunes seed image before real cold verification'
-    Assert-C727 (@(Posts $t | Where-Object suffix -eq '/drain/clear').Count -eq 1) 'T-20 verified old admission clears'
-    foreach ($variant in @('missing', 'malformed', 'foreign-marker')) {
-        $t = Run-C727 -UseMarker -Scenario "cold-$variant" -Phase redeploy-old -Set @{
-            oldDraining = $true; oldDeployed = $true; seedImageAvailable = $false; markerVariant = $variant
+        $t = Run-C727 -UseMarker -Scenario cold-marker-pruned -Phase redeploy-old -Set @{ oldDraining = $true }
+        Assert-C727 ($t.Exit -eq 0) ('T-20 pruned cold seed image verifies before admission: ' + $t.Out)
+        $markers = @($t.Trace | Where-Object kind -eq 'marker')
+        Assert-C727 ($markers.Count -eq 2 -and $markers[0].seedImageAvailable -and -not $markers[1].seedImageAvailable -and
+            $markers[1].markerKind -eq 'cold' -and $markers[1].exit -eq 0) 'T-20 parent prunes seed image before real cold verification'
+        Assert-C727 (@(Posts $t | Where-Object suffix -eq '/drain/clear').Count -eq 1) 'T-20 verified old admission clears'
+        foreach ($variant in @('missing', 'malformed', 'foreign-marker')) {
+            $t = Run-C727 -UseMarker -Scenario "cold-$variant" -Phase redeploy-old -Set @{
+                oldDraining = $true; oldDeployed = $true; seedImageAvailable = $false; markerVariant = $variant
+            }
+            Assert-C727 ($t.Exit -eq 2 -and $t.Out.Contains('HostCaseFailed verify-runner-caches exit=2')) "T-20 $variant refuses"
+            Assert-C727 ((Posts $t).Count -eq 0 -and $t.State.oldDraining) "T-20 $variant holds drain"
         }
-        Assert-C727 ($t.Exit -eq 2 -and $t.Out.Contains('HostCaseFailed verify-runner-caches exit=2')) "T-20 $variant refuses"
-        Assert-C727 ((Posts $t).Count -eq 0 -and $t.State.oldDraining) "T-20 $variant holds drain"
-    }
-    Complete-Group 20 'cold marker survives parent image cleanup'
+        Complete-Group 20 'cold marker survives parent image cleanup'
     } else {
         Write-Output 'C973_SKIPPED jq-missing: T-20 marker-reader groups need jq (CARD-0927)'
     }
