@@ -37,7 +37,9 @@ public sealed class RemoteScriptContractTests
             var locals = Regex.Matches(body, @"(?m)^\s*local\s+([^\n]+)")
                 .SelectMany(line => Regex.Matches(line.Groups[1].Value,
                     @"(?:^|\s)([A-Za-z_]\w*)(?==|\s|$)").Select(v => v.Groups[1].Value)).ToHashSet();
-            foreach (Match loop in Regex.Matches(body, @"\bfor\s+(?:\(\(\s*)?([A-Za-z_]\w*)\s*(?:in\b|=)"))
+            // A loop inside a quoted docker sh -c program belongs to that child shell.
+            var executable = Regex.Replace(body, @"'(?:[^']*)'", "''", RegexOptions.Singleline);
+            foreach (Match loop in Regex.Matches(executable, @"(?m)^\s*for\s+(?:\(\(\s*)?([A-Za-z_]\w*)\s*(?:in\b|=)"))
                 if (!locals.Contains(loop.Groups[1].Value)) leaks.Add(name + ": " + loop.Groups[1].Value);
         }
         return leaks;
@@ -92,7 +94,7 @@ public sealed class RemoteScriptContractTests
             fi
             printf 'READER_EXIT=%s\n' "$?"; cat "$root/out"
             """);
-        output.ShouldContain("READER_EXIT=2", reader + ": " + fault + " must fail closed");
+        output.Contains("READER_EXIT=2", StringComparison.Ordinal).ShouldBeTrue(reader + ": " + fault + " must fail closed");
         output.ShouldContain("DIAGNOSIS=CacheTargetInvalid");
     }
 
