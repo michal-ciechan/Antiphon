@@ -284,14 +284,15 @@ public sealed class ReviewEvidenceConsistencyTests
             RemoteSync: new RemoteSyncEvidence(1, RemoteSettlementSyncState.Synchronized,
                 "refs/heads/" + world.Owner.WorktreeBranch, ConfirmedSha: C));
         var row = await SettleAsync(world, A, B, progress, shape: shape);
-        row.Outcome.ReviewedSourceSha.ShouldBeNull();
+        if (shape is "failed" or "blocked") row.Outcome.ShouldBeNull();
+        else row.Outcome!.ReviewedSourceSha.ShouldBeNull();
         row.Header.ShouldNotContain("review_evidence_sha_not_review_base");
         row.Header.ShouldNotContain("review_evidence_subject_tip_mismatch");
         row.Warnings.ShouldNotContain(w => w.Contains("review_evidence_sha_not_review_base", StringComparison.Ordinal)
             || w.Contains("review_evidence_subject_tip_mismatch", StringComparison.Ordinal));
     }
 
-    private static async Task<(Guid Id, Guid Session, StageOutcome Outcome, string Header, string[] Warnings)> SettleAsync(
+    private static async Task<(Guid Id, Guid Session, StageOutcome? Outcome, string Header, string[] Warnings)> SettleAsync(
         C544World world, string? reviewBase, string claim, CompletionProgressEvidence? progress = null,
         string? raw = null, bool seedRaw = false, bool mentionDirtyFile = false,
         string? shape = null)
@@ -320,7 +321,7 @@ public sealed class ReviewEvidenceConsistencyTests
         await world.SeedTurnAsync(session, created.Id, report);
         await world.Services.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(session, CancellationToken.None);
         await using var settled = world.CreateContext();
-        var outcome = await settled.StageOutcomes.AsNoTracking().SingleAsync(o => o.StageTaskId == created.Id);
+        var outcome = await settled.StageOutcomes.AsNoTracking().SingleOrDefaultAsync(o => o.StageTaskId == created.Id);
         var note = await settled.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.TaskId == created.Id
             && n.Kind == LandNotificationKind.TaskCompletion);
         var header = TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson)!.NoteHeader;
