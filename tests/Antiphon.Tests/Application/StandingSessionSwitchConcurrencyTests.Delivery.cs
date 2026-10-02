@@ -34,6 +34,8 @@ public partial class StandingSessionSwitchConcurrencyTests
         var messageId = Guid.NewGuid(); gate.MessageId = messageId; gate.TargetId = f.A.Id;
         await using (var db = f.Db())
         {
+            // The real queue admits input only while the source is Running.
+            if (deliveryWins) (await db.AgentSessions.FindAsync(f.B.Id))!.Status = SessionStatus.Running;
             db.SessionQueuedMessages.Add(new SessionQueuedMessage { Id = messageId, AgentSessionId = f.B.Id,
                 Sequence = 1, Body = "A stale delivery must never cross conversations", CreatedAt = DateTime.UtcNow,
                 HoldUntil = deliveryWins ? null : DateTime.UtcNow.AddDays(1) });
@@ -51,6 +53,14 @@ public partial class StandingSessionSwitchConcurrencyTests
             if (deliveryWins) flush = queue.FlushSessionAsync(f.B.Id, default);
             else selection = f.StartAsync(new(ResumeSessionId: f.A.Id));
             await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            if (deliveryWins)
+            {
+                // Stop can be observed after the durable claim while delivery still owns the
+                // queue lock. History selection must then wait and refuse the attempted input.
+                await using var db = f.Db();
+                (await db.AgentSessions.FindAsync(f.B.Id))!.Status = SessionStatus.Stopped;
+                await db.SaveChangesAsync();
+            }
             if (deliveryWins) selection = f.StartAsync(new(ResumeSessionId: f.A.Id));
             else flush = queue.FlushSessionAsync(f.B.Id, default);
             // The contender uses the actual singleton queue semaphore, not a mock lock.

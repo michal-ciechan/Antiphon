@@ -218,15 +218,19 @@ public class StandingSessionQueueSwitchTests
             .ExecuteUpdateAsync(m => m.SetProperty(x => x.HoldUntil, DateTime.UtcNow.AddMinutes(-1)));
         var queue = f.Harness.Provider.GetRequiredService<SessionMessageQueueService>();
         foreach (var message in ordinary) await queue.FlushSessionAsync(f.A.Id, default);
-        adapter.SubmittedBodies.ShouldBe(new[] { initial }.Concat(ordinary.Select(m => m.Body)).ToArray());
+        // An untouched legacy Channel row gains its own wire identity on its first attempt.
+        var expectedBodies = ordinary.ToDictionary(m => m.Id, m => m.Origin == QueuedMessageOrigin.Channel
+            ? $"[antiphon-channel:{m.Id:N}] {m.Body}" : m.Body);
+        adapter.SubmittedBodies.ShouldBe(new[] { initial }.Concat(ordinary.Select(m => expectedBodies[m.Id])).ToArray());
         verify.ChangeTracker.Clear();
         foreach (var message in ordinary)
         {
             var delivered = (await verify.SessionQueuedMessages.FindAsync(message.Id))!;
+            delivered.Body.ShouldBe(expectedBodies[message.Id]); delivered.Origin.ShouldBe(message.Origin);
             delivered.Status.ShouldBe(QueuedMessageStatus.Sent); delivered.DeliveryAttempts.ShouldBe(1);
             delivered.LastDeliveryBaselineSequence.ShouldNotBeNull();
             (await verify.TranscriptEntries.AnyAsync(e => e.AgentSessionId == f.A.Id && e.Kind == TranscriptKinds.UserPrompt
-                && e.Sequence > delivered.LastDeliveryBaselineSequence && e.Text == message.Body)).ShouldBeTrue();
+                && e.Sequence > delivered.LastDeliveryBaselineSequence && e.Text == expectedBodies[message.Id])).ShouldBeTrue();
         }
     }
 }
