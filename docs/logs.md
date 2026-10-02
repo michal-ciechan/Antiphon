@@ -16,6 +16,13 @@ This is the authoritative operator inventory for logs and transcript evidence. R
 
 The desktop server was initially unavailable during this verification and later recovered enough to serve Hangfire. Do not restart it from a worktree; use [the AppHost runbook](apphost-runbook.md) from the canonical checkout.
 
+For a future `landing_concurrency_conflict`, filter `desktop-server` to the exact diagnostic ID,
+request ID and attempt. The terminal event and outcome notification carry the same bounded
+summary. `entity`, GUID `key`, original/attempted/database tokens and `observedDatabaseWriter`
+identify the conflicting row and the last **observed** committed request writer when its stamp
+matches the database token. `unknown`, `deleted` or `read_unavailable` is not evidence for a
+particular writer. The summary omits exception messages, SQL, endpoints and file contents.
+
 ## Desktop Postgres query statistics
 
 `docker-compose.dev.yml` preloads `pg_stat_statements` for the desktop's

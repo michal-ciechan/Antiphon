@@ -198,6 +198,16 @@ patch containment; uncontained owner commit IDs are printed when present.
 | `adopt_source_remote_changed`, `adopt_source_push_rejected` | Inspect the owner remote tip and request a fresh reviewed adoption. |
 | `source_remote_diverged` | Plain land refused the diverged mirror; use `-FromTask` as above. |
 
+If a reviewed adoption stopped after moving the owner's branch ref but before resetting its
+registered checkout, a **new** reviewed request can complete the reset only when the old request
+retains its unfinished adoption intent and request-owned L/S pins, the same owner/source/remote
+identity still holds, and the index and every tracked checkout byte still equal the old L. The
+repair also refuses untracked or ignored files, uncertain index modes and unsupported conversion
+attributes. `source_dirty` with `recovery_witness_missing` or `recovery_checkout_unproven` detail
+means the checkout must be inspected manually; never use `reset --hard` to resolve that refusal
+without first preserving and reviewing real edits. A successful repair records the witness
+request ID on the new request and keeps the historical request unchanged.
+
 A delegate that nonetheless ends up off its own branch is no longer settled as a false failure.
 Antiphon reads the registered checkout's actual HEAD and accepts a task-scoped claim line
 (`[antiphon-progress:<full-guid> commit=<full-sha>]`, on its own unquoted line) reachable from it,

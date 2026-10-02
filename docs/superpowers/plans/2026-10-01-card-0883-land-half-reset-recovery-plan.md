@@ -2,6 +2,21 @@
 
 Date: 2026-10-01. Stage: Plan; next TestDesign. Baseline: `origin/master` at **`fccef27eb03f2522f2a40574dc1c764335d4a490`**. `git rev-parse HEAD origin/master` and `git ls-remote origin refs/heads/master` agreed during inspection. Assigned branch: `feat/card-task-373933b4`, starting at that same commit; no rebase, merge, reset, or master update is part of this task. Line references and the existing-test census below are against this frozen baseline, not a claim about the currently loaded server.
 
+**Code-start amendment, 2026-10-02:** assigned branch `feat/card-task-b5c4f994` starts at
+`4380891cca92111cd6271a0bf0f3662965a7440d`; `git ls-remote origin refs/heads/master`
+confirmed that SHA. CARD-0835 and CARD-0788 are present, while CARD-0826/0505/0822/0888 are
+not. The current immediate EF predecessor is `20261001052023_AddReviewSourceClean`.
+`20261002060540_AddLandRequestWriterProvenance` was generated with the pinned EF CLI from this
+snapshot. It adds four nullable columns, with no legacy backfill or `AddHostCleanup` dependency.
+The original source line references and R-1..R-5 counts below are historical baseline
+observations pending a full current-roster execution; they are not Code-stage pass claims.
+CP-1's current-master run at `150fa807b32aa2b720b67bc62646b0ec3f6f0881` executed one
+result and failed only `C883: fresh request publication confirmed`, as intended. Subsequent
+partial focused receipts are recorded in the Code report, not substituted for the frozen CP-2..CP-5
+rosters. The assigned brief supersedes this plan's CARD-0723 tool paragraph for this runner:
+`scripts/run-checkpoint.ps1` is used directly because the tool refuses owner-unverified runs
+without a task token.
+
 ## Outcome and scope
 
 An explicitly reviewed recovery can finish an interrupted source adoption using a **new land request**, while genuine staged, unstaged, untracked, or obstructing ignored work remains preserved. Persist adoption intent before moving the ref, and eliminate land-request saves between successful `update-ref` and completed checkout reset. Keep recovery of historical half-reset states because process death, cancellation, filesystem failure, and old binaries can still leave them.
