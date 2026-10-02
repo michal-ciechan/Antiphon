@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
+using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -41,18 +42,63 @@ public class RunnerCodexAdapterReadyTests
     [Test]
     public async Task One_snapshot_is_used_for_each_startup_decision()
     {
+        var time = new ControlledTimeProvider();
+        var secondEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseSecond = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var client = new ScriptedCodexRunnerClient
         {
             StartupScreens = [CodexStartupFixtures.P3, CodexStartupFixtures.P3, CodexStartupFixtures.P3],
+            BeforeSnapshotAsync = async (attempt, ct) =>
+            {
+                if (attempt == 2)
+                {
+                    secondEntered.TrySetResult();
+                    await releaseSecond.Task.WaitAsync(ct);
+                }
+            },
         };
-        var adapter = NewAdapter(client, settleMs: 50, maxMs: 5_000);
-        await adapter.StartAsync(NewSpec(), CancellationToken.None);
-        var ready = adapter.WaitForReadyAsync(CancellationToken.None);
-        await WaitUntilAsync(() => client.SnapshotReads >= 1);
-        await Task.Delay(20);
-        client.SnapshotReads.ShouldBe(1, "R-33: snapshotReads.ShouldBe(decisions) on an alternating-frame script");
-        (await ready).ShouldBeTrue();
-        client.SnapshotReads.ShouldBeLessThan(4, "R-33: a double GetSnapshot per loop would be 4+");
+        var adapter = NewAdapter(client, settleMs: 50, maxMs: 5_000, timeProvider: time);
+        using var cancel = new CancellationTokenSource();
+        Task<bool>? ready = null;
+        try
+        {
+            await adapter.StartAsync(NewSpec(), cancel.Token);
+            ready = adapter.WaitForReadyAsync(cancel.Token);
+            var pollTask = time.WaitForTimerAsync(e =>
+                e.DueTime == TimeSpan.FromMilliseconds(50) && e.RegisteredAt == time.GetUtcNow(),
+                ct: cancel.Token);
+            var registered = await Task.WhenAny(pollTask, Task.Delay(TimeSpan.FromSeconds(5)));
+            registered.ShouldBe(pollTask, "snapshot-one-before-first-poll");
+            var poll = await pollTask;
+            poll.Deadline.ShouldBe(time.GetUtcNow() + TimeSpan.FromMilliseconds(50));
+            client.SnapshotCompletions.ShouldBe(1, "snapshot-one-before-first-poll");
+
+            time.AdvanceTo(poll.Deadline);
+            var next = await Task.WhenAny(secondEntered.Task, ready).WaitAsync(TimeSpan.FromSeconds(5));
+            client.SnapshotAttempts.ShouldBe(2, "snapshot-two-held");
+            client.SnapshotCompletions.ShouldBe(1, "snapshot-two-held");
+            next.ShouldBe(secondEntered.Task, "snapshot-two-held");
+            releaseSecond.TrySetResult();
+            (await ready).ShouldBeTrue();
+            client.SnapshotCompletions.ShouldBe(2, "snapshot-one-per-decision");
+
+            foreach (var supplied in new TimeProvider?[] { null, TimeProvider.System })
+            {
+                await using var defaultAdapter = NewAdapter(new ScriptedCodexRunnerClient(), timeProvider: supplied);
+                var field = typeof(RunnerCodexAdapter).GetField("_timeProvider",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                ReferenceEquals(field?.GetValue(defaultAdapter), TimeProvider.System)
+                    .ShouldBeTrue("ready-default-is-system");
+            }
+        }
+        finally
+        {
+            releaseSecond.TrySetResult();
+            cancel.Cancel();
+            if (ready is not null)
+                try { await ready; } catch (OperationCanceledException) { }
+            await adapter.DisposeAsync();
+        }
     }
 
     [Test]
@@ -229,7 +275,8 @@ public class RunnerCodexAdapterReadyTests
         int maxMs = 5_000,
         int bootMs = 10_000,
         ILogger? logger = null,
-        string? captureDir = null) =>
+        string? captureDir = null,
+        TimeProvider? timeProvider = null) =>
         new(
             client,
             Options.Create(new AgentRegistrySettings
@@ -240,7 +287,8 @@ public class RunnerCodexAdapterReadyTests
                 CodexStartupCaptureDirectory = captureDir
                     ?? Path.Combine(Path.GetTempPath(), "antiphon-tests-codex-startup"),
             }),
-            logger);
+            logger,
+            timeProvider);
 
     private static AgentLaunchSpec NewSpec() => new(
         DefinitionName: "codex",

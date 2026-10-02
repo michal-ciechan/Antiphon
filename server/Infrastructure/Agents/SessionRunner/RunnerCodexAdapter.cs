@@ -20,6 +20,7 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
     private readonly ISessionRunnerClient _client;
     private readonly AgentRegistrySettings _settings;
     private readonly ILogger? _logger;
+    private readonly TimeProvider _timeProvider;
     private long _promptStartSequence;
     private long _transcriptBaselineSequence;
     // CARD-0113: last successful GetTranscript LastSequence. Distinct from the per-turn floor
@@ -31,12 +32,14 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
     public RunnerCodexAdapter(
         ISessionRunnerClient client,
         IOptions<AgentRegistrySettings> options,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        TimeProvider? timeProvider = null)
     {
         _client = client;
         _terminal = new RunnerTerminalSession(client);
         _settings = options.Value;
         _logger = logger;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public Task<int> Exited => _terminal.Exited;

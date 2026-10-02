@@ -40,6 +40,8 @@ internal sealed class ScriptedCodexRunnerClient : ISessionRunnerClient
     private DateTime? _liveAcceptedStartedAt;
     private bool _exited;
     private int _waitingOnSnapshot;
+    private int _snapshotAttempts;
+    private int _snapshotCompletions;
 
     public Guid SessionId { get; set; }
 
@@ -62,6 +64,10 @@ internal sealed class ScriptedCodexRunnerClient : ISessionRunnerClient
     public bool ReportNullAcceptedStartedAt { get; set; }
     public int ResizeCalls { get; private set; }
     public int SnapshotReads => _screenReads;
+    public int SnapshotAttempts => Volatile.Read(ref _snapshotAttempts);
+    public int SnapshotCompletions => Volatile.Read(ref _snapshotCompletions);
+    public Func<int, CancellationToken, Task>? BeforeSnapshotAsync { get; set; }
+    public Action<int>? OnEnter { get; set; }
     public DateTime? AcceptedStartedAt => _acceptedStartedAt;
     public DateTime? LiveAcceptedStartedAt => _liveAcceptedStartedAt;
 
@@ -148,6 +154,9 @@ internal sealed class ScriptedCodexRunnerClient : ISessionRunnerClient
 
     public async Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct)
     {
+        var attempt = Interlocked.Increment(ref _snapshotAttempts);
+        if (BeforeSnapshotAsync is { } before)
+            await before(attempt, ct);
         if (SnapshotHold is not null)
         {
             Interlocked.Increment(ref _waitingOnSnapshot);
@@ -178,6 +187,7 @@ internal sealed class ScriptedCodexRunnerClient : ISessionRunnerClient
             screen = working ? WorkingScreen : QuietScreen;
         }
 
+        Interlocked.Increment(ref _snapshotCompletions);
         return new SessionRunnerSnapshotDto(
             sessionId, RawOutput, screen, _sequence, _acceptedStartedAt ?? DateTime.UtcNow,
             _acceptedStartedAt);
@@ -206,6 +216,7 @@ internal sealed class ScriptedCodexRunnerClient : ISessionRunnerClient
         if (input == "\r")
         {
             _enters++;
+            OnEnter?.Invoke(_enters);
             if (ConfirmAfterEnters > 0 && _enters >= ConfirmAfterEnters && _lastBody is not null)
             {
                 Append(TranscriptKinds.UserPrompt, _lastBody);
