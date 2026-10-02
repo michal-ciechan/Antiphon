@@ -38,4 +38,25 @@ public class AttentionKindWireTests
         JsonSerializer.Deserialize<AttentionKind>("\"TaskInputUnreadable\"", ServerJson)
             .ShouldBe(AttentionKind.TaskInputUnreadable, "task-input-unreadable-round-trip");
     }
+    [Test]
+    public void Host_cleanup_kinds_have_distinct_appended_values_and_json_names()
+    {
+        var kinds = new[]
+        {
+            AttentionKind.HostCleanupSummary,
+            AttentionKind.HostCleanupDiskPressure,
+            AttentionKind.HostCleanupHoldExpired,
+            AttentionKind.WorktreeCleanupBacklog,
+        };
+        kinds.Select(kind => (int)kind).ShouldBe(new[] { 53, 54, 55, 56 }, "cleanup-appended-wire-values");
+        foreach (var kind in kinds)
+        {
+            Enum.GetNames<AttentionKind>().Count(name => Enum.Parse<AttentionKind>(name) == kind)
+                .ShouldBe(1, "cleanup-distinct-wire-value");
+            var json = JsonSerializer.Serialize(kind, ServerJson);
+            json.ShouldBe($"\"{kind}\"", "cleanup-json-name");
+            JsonSerializer.Deserialize<AttentionKind>(json).ShouldBe(kind, "cleanup-json-round-trip");
+        }
+    }
+
 }
