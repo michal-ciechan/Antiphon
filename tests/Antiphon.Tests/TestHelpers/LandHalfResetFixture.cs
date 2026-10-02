@@ -20,15 +20,31 @@ internal sealed class LandHalfResetFixture : IAsyncDisposable
         Harness.LandCutInterceptor = Interceptor;
     }
 
-    public async Task<(string Local, string Reviewed, Guid Evidence)> SeedReviewedDescendantAsync()
+    public async Task<(string Local, string Reviewed, Guid Evidence)> SeedReviewedDescendantAsync(bool bulk = false)
     {
         var h = Harness;
         await h.InitializeAsync();
         var local = await h.AddSourceAsync();
+        if (bulk)
+        {
+            for (var i = 0; i < 51; i++)
+                await File.WriteAllTextAsync(Path.Combine(h.Fixture.Source, $"changed-{i:D2}.txt"), "old\n");
+            await h.Fixture.RequiredAsync(h.Fixture.Source, "add", ".");
+            await h.Fixture.RequiredAsync(h.Fixture.Source, "commit", "-m", "old bulk tip");
+            local = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim();
+        }
         await h.Fixture.RequiredAsync(h.Fixture.Source, "push", "origin", h.Fixture.SourceRef);
         var reviewedTree = Path.Combine(h.Fixture.Root, "trees", "reviewed");
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "add", "--detach", reviewedTree, local);
-        await File.WriteAllTextAsync(Path.Combine(reviewedTree, "feature.txt"), "reviewed feature\n");
+        if (bulk)
+        {
+            for (var i = 0; i < 51; i++)
+                await File.WriteAllTextAsync(Path.Combine(reviewedTree, $"changed-{i:D2}.txt"), "reviewed\n");
+            for (var i = 0; i < 13; i++)
+                await File.WriteAllTextAsync(Path.Combine(reviewedTree, $"added-{i:D2}.txt"), "reviewed addition\n");
+        }
+        else
+            await File.WriteAllTextAsync(Path.Combine(reviewedTree, "feature.txt"), "reviewed feature\n");
         await h.Fixture.RequiredAsync(reviewedTree, "add", ".");
         await h.Fixture.RequiredAsync(reviewedTree, "commit", "-m", "reviewed descendant");
         var reviewed = (await h.Fixture.RequiredAsync(reviewedTree, "rev-parse", "HEAD")).Trim();
@@ -88,11 +104,15 @@ internal sealed class LandHalfResetFixture : IAsyncDisposable
     internal sealed class RefMovedBoundary(SaveCut cut, LandingSafetyHarness harness) : LandDeliveryBoundary
     {
         public int Reached { get; private set; }
+        public bool ThrowConflict { get; set; } = true;
+        public Func<Task>? AtCut { get; set; }
         public override async Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
         {
             if (boundary == "source-adopt-ref-moved-before-reset" && identity == cut.RequestId)
             {
                 Reached++;
+                if (AtCut is not null) await AtCut();
+                if (!ThrowConflict) return;
                 await using var db = harness.CreateContext();
                 var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == identity, ct);
                 db.Entry(request).State = EntityState.Modified;

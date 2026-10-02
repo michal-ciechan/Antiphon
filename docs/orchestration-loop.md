@@ -224,10 +224,18 @@ patch containment; uncontained owner commit IDs are printed when present.
 | Refusal | Action |
 |---|---|
 | `adopt_source_lineage` | Cut a new repair at the owner tip and Review it. |
-| `source_dirty`, `source_branch_mismatch` | Restore the owner's registered desktop checkout identity and clean state. |
+| `source_dirty`, `source_branch_mismatch` | Inspect the owner's registered checkout, branch, index and working files. Preserve real edits; resolve the cause before a new request. |
 | `review_evidence_subject_mismatch`, `review_verification_scope_ineligible` | Review the repair itself in a Final/Full round. |
 | `adopt_source_remote_changed`, `adopt_source_push_rejected` | Inspect the owner remote tip and request a fresh reviewed adoption. |
 | `source_remote_diverged` | Plain land refused the diverged mirror; use `-FromTask` as above. |
+
+A fresh explicitly reviewed recovery can finish a prior half-reset only when the prior request's
+durable adoption intent and L/S pins identify the same owner, worktree, repository, source and
+remote endpoint. The index and actual tracked bytes must still equal the pinned old tip, with no
+untracked or ignored files or unsupported checkout transforms. An unknown proof remains
+`source_dirty` with `recovery_checkout_unproven`; do not reset the owner tree based only on HEAD.
+The repair never runs for ordinary land or cleanup-only requests. The request's
+`RecoveryWitnessRequestId` records the prior intent that authorized a successful repair.
 
 A delegate that nonetheless ends up off its own branch is no longer settled as a false failure.
 Antiphon reads the registered checkout's actual HEAD and accepts a task-scoped claim line
