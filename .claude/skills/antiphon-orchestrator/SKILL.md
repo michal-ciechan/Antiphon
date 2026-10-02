@@ -20,6 +20,7 @@ Review task, not a Code task requiring new attributed progress (CARD-0779).
 The owner is `docs/orchestration-loop.md` §1, "Standing pipeline policy" (CARD-0533); this is the
 short form.
 For AppHost and runner restarts or server2 rollouts without human confirmation, follow [orchestrator operational autonomy](../../../docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout).
+For a desktop runner restart use `pwsh -NoProfile -File scripts/restart-session-runner.ps1` (`-Hard` only for a planned supervisor refresh; `-KillSessions` is human-only); check `logs/apphost.restart.lock` and `logs/apphost.launch.lock` first, and inspect AppHost exit 3 before retrying.
 
 - **Each pipeline stage at up to four; at most six tasks on server2 across all stages.** These are
   operator defaults. Before dispatching, read the effective concurrency limits and current occupancy

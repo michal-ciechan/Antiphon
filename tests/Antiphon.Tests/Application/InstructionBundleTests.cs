@@ -448,6 +448,22 @@ public class InstructionBundleTests
         DelegationReportFormatter.OrchestratorContract.ShouldContain("quote exactly or must judge personally");
         DelegationReportFormatter.OrchestratorContract.ShouldContain("frontier-tier");
         DelegationReportFormatter.OrchestratorContract.ShouldNotContain("single file read");
+        // CARD-0940/0942: each restored instruction must fail its pin when removed
+        // from a scratch copy of the forwarded contract.
+        var contract = System.Text.RegularExpressions.Regex.Replace(
+            DelegationReportFormatter.OrchestratorContract, @"\s+", " ");
+        foreach (var sentence in new[]
+        {
+            "talk to the caller, and perform authorized canonical pulls/restarts/rollouts.",
+            "Delegate everything else - every code edit, every test run, every git operation except the authorized pulls/restarts/rollouts above.",
+            "If you are about to Edit, Write, or run a build outside an authorized restart, stop: that is a delegation.",
+            "For desktop runner restarts use scripts/restart-session-runner.ps1 without -KillSessions; use -Hard only for a planned supervisor refresh, check both AppHost locks first, and inspect AppHost exit 3 before retrying.",
+        })
+        {
+            contract.ShouldContain(sentence);
+            var scratch = contract.Replace(sentence, "", StringComparison.Ordinal);
+            Should.Throw<ShouldAssertException>(() => scratch.ShouldContain(sentence));
+        }
     }
 
     [Test]
@@ -456,7 +472,7 @@ public class InstructionBundleTests
         var bundle = File.ReadAllText(Path.Combine(
             DelegateScriptRunner.RepoRoot, "server", "Bundles", "orchestrator.md"));
         bundle.ShouldContain("Follow docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout for autonomous AppHost and runner restarts and server2 rollouts.");
-        bundle.Length.ShouldBeLessThanOrEqualTo(14_147, "CARD-0934 must leave bundle size headroom");
+        bundle.Length.ShouldBeLessThanOrEqualTo(14_561, "CARD-0940/0942 restored policy with minimal bundle growth");
     }
 
     [Test]
