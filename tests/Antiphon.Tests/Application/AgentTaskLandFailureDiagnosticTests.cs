@@ -45,9 +45,9 @@ public sealed class AgentTaskLandFailureDiagnosticTests
         foreach (var value in new[] { windowsPath, linuxPath, secret, sql })
             foreach (var entry in entries)
             {
-                entry.Message.ShouldNotContain(value, "D.MessageRedacted");
+                entry.Message.ShouldNotContain(value, customMessage: "D.MessageRedacted");
                 foreach (var field in entry.State.Values)
-                    field?.ToString()?.ShouldNotContain(value, "D.StateRedacted");
+                    field?.ToString()?.ShouldNotContain(value, customMessage: "D.StateRedacted");
             }
 
         static void ThrowSensitiveLandFailure()
