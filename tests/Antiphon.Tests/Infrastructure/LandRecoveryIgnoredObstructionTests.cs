@@ -68,7 +68,7 @@ public sealed class LandRecoveryIgnoredObstructionTests
         await f.RequiredAsync(tree, "update-index", "--add", "--cacheinfo", "120000," + oid + ",link");
         await f.RequiredAsync(tree, "commit", "-m", "reviewed symlink");
         (await f.RequiredAsync(tree, "ls-tree", "HEAD", "--", "link"))
-            .ShouldStartWith("120000 blob ", "G.SymlinkChild.ReviewedTreeTracksSymlink");
+            .ShouldStartWith("120000 blob ", customMessage: "G.SymlinkChild.ReviewedTreeTracksSymlink");
         var reviewed = await MoveRefAsync(f, local, tree, "SymlinkChild");
         await IgnoreAsync(f, "/link/");
         await WriteAsync(f.Source, "link/x", "owner real directory child\n");
@@ -189,8 +189,10 @@ public sealed class LandRecoveryIgnoredObstructionTests
 
         proof.Accepted.ShouldBeFalse("G." + label + ".ObstructionRefused");
         proof.Reason.ShouldBe("source_dirty", "G." + label + ".ObstructionIsSourceDirty");
-        f.Git.Commands.ShouldNotContain(x => x.Arguments[0] is "reset" or "clean" or "checkout"
-            or "checkout-index" or "add" or "update-index" or "update-ref" or "push",
+        f.Git.Commands.ShouldNotContain(x => x.Arguments[0] == "reset" || x.Arguments[0] == "clean"
+            || x.Arguments[0] == "checkout" || x.Arguments[0] == "checkout-index"
+            || x.Arguments[0] == "add" || x.Arguments[0] == "update-index"
+            || x.Arguments[0] == "update-ref" || x.Arguments[0] == "push",
             "G." + label + ".InspectionIsReadOnly");
         (await f.RequiredAsync(f.Source, "rev-parse", "HEAD")).Trim()
             .ShouldBe(reviewed, "G." + label + ".ReviewedHeadPreserved");
