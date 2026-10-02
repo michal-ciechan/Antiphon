@@ -26,6 +26,15 @@ public class RunnerGrokAdapterReadyTestsPty
         var cwd = Path.Combine(root, "cwd");
         Directory.CreateDirectory(cwd);
         var sessionId = Guid.NewGuid();
+        var exe = TestAppHostPath.Require("fakegrok", AppContext.BaseDirectory);
+        string[] args = ["--session-id", sessionId.ToString("D"), "--cwd", cwd];
+        if (!OperatingSystem.IsWindows())
+        {
+            // FakeGrok only configures Windows console input. A real Unix TUI enables
+            // raw mode itself; do so on this test's owned PTY to preserve literal CR/LF.
+            args = ["-c", "stty raw -echo; exec \"$@\"", "c1004-fakegrok", exe, .. args];
+            exe = "/bin/sh";
+        }
         await using var client = new DirectSessionRunnerClient(Path.Combine(root, "logs"),
             ptyBackend: OperatingSystem.IsWindows() ? "modern" : null);
         await using var adapter = new RunnerGrokAdapter(client,
@@ -39,8 +48,7 @@ public class RunnerGrokAdapterReadyTestsPty
             }));
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         await adapter.StartAsync(new AgentLaunchSpec("fakegrok", AgentKind.Grok,
-            TestAppHostPath.Require("fakegrok", AppContext.BaseDirectory),
-            ["--session-id", sessionId.ToString("D"), "--cwd", cwd],
+            exe, args,
             new Dictionary<string, string>
             {
                 ["GROK_HOME"] = Path.Combine(root, "grok-home"),
