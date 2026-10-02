@@ -71,13 +71,14 @@ public class ResilienceBudgetTests
         var secondEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelled = new TaskCompletionSource<DateTimeOffset>(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var firstCancellation = new RetainedCancellationRegistration();
         CancellationToken firstToken = default;
         var handler = new ScriptHandler(async (_, ct) =>
         {
             if (Interlocked.Increment(ref step) == 1)
             {
                 firstToken = ct;
-                using var registration = ct.Register(() => cancelled.TrySetResult(time.GetUtcNow()));
+                firstCancellation.Register(ct, () => cancelled.TrySetResult(time.GetUtcNow()));
                 entered.TrySetResult();
                 try { await Task.Delay(Timeout.Infinite, ct); }
                 catch (OperationCanceledException) { }

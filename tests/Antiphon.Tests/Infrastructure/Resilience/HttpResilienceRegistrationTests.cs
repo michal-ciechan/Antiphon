@@ -120,11 +120,12 @@ public class HttpResilienceRegistrationTests
         var time = new ControlledTimeProvider();
         var runnerEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var runnerCancelled = new TaskCompletionSource<DateTimeOffset>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var runnerCancellation = new RetainedCancellationRegistration();
         CancellationToken runnerToken = default;
         var reads = new ScriptHandler(async (_, ct) =>
         {
             runnerToken = ct;
-            using var registration = ct.Register(() => runnerCancelled.TrySetResult(time.GetUtcNow()));
+            runnerCancellation.Register(ct, () => runnerCancelled.TrySetResult(time.GetUtcNow()));
             runnerEntered.TrySetResult();
             await Task.Delay(Timeout.Infinite, ct);
             return ResilienceTestHost.Status(HttpStatusCode.OK);
@@ -149,11 +150,12 @@ public class HttpResilienceRegistrationTests
         var gitTime = new ControlledTimeProvider();
         var gitEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var gitCancelled = new TaskCompletionSource<DateTimeOffset>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var gitCancellation = new RetainedCancellationRegistration();
         CancellationToken gitToken = default;
         var gitHandler = new ScriptHandler(async (_, ct) =>
         {
             gitToken = ct;
-            using var registration = ct.Register(() => gitCancelled.TrySetResult(gitTime.GetUtcNow()));
+            gitCancellation.Register(ct, () => gitCancelled.TrySetResult(gitTime.GetUtcNow()));
             gitEntered.TrySetResult();
             await Task.Delay(Timeout.Infinite, ct);
             return ResilienceTestHost.Status(HttpStatusCode.OK);

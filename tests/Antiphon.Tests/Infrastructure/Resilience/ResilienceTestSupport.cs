@@ -84,6 +84,17 @@ internal sealed class CollectingLoggerProvider : ILoggerProvider
     }
 }
 
+/// <summary>Keeps an observed cancellation callback alive until its test acknowledges it.</summary>
+internal sealed class RetainedCancellationRegistration : IDisposable
+{
+    private CancellationTokenRegistration _registration;
+
+    public void Register(CancellationToken token, Action callback) =>
+        _registration = token.Register(callback);
+
+    public void Dispose() => _registration.Dispose();
+}
+
 internal static class ResilienceTestHost
 {
     public static ServiceProvider Build(
