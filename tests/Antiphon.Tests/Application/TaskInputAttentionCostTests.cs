@@ -124,6 +124,15 @@ public sealed class TaskInputAttentionCostTests
         public int ReadOperations { get; private set; }
         public int MaxColumns { get; private set; }
 
+        public override ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command,
+            CommandExecutedEventData eventData, DbDataReader result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("\"TranscriptEntries\"", StringComparison.Ordinal))
+                MaxColumns = Math.Max(MaxColumns, result.FieldCount);
+            return ValueTask.FromResult(result);
+        }
+
         public override InterceptionResult DataReaderDisposing(DbCommand command,
             DataReaderDisposingEventData eventData, InterceptionResult result)
         {
@@ -131,7 +140,6 @@ public sealed class TaskInputAttentionCostTests
             {
                 Commands++;
                 ReadOperations += eventData.ReadCount;
-                MaxColumns = Math.Max(MaxColumns, eventData.DataReader.FieldCount);
             }
             return result;
         }
