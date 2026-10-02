@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
+using Antiphon.Tests.TestHelpers;
 
 namespace Antiphon.Tests.Infrastructure.Resilience;
 
@@ -88,7 +89,7 @@ internal static class ResilienceTestHost
         ScriptHandler handler,
         string clientName,
         ResilienceSettings? settings = null,
-        FakeTimeProvider? time = null,
+        TimeProvider? time = null,
         IResilienceJitter? jitter = null,
         CollectingLoggerProvider? logs = null)
     {
@@ -128,6 +129,20 @@ internal static class ResilienceTestHost
         }
 
         return await work.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    /// <summary>Advance one registered virtual boundary, then wait for its explicit phase.</summary>
+    public static async Task AdvanceAfterAsync(
+        ControlledTimeProvider time,
+        ControlledTimeProvider.TimerEvent timer,
+        Task phase,
+        DateTimeOffset boundary)
+    {
+        if (timer.Sequence <= 0 || timer.Deadline != boundary || time.GetUtcNow() > boundary)
+            throw new InvalidOperationException("Expected timer was not registered at the requested boundary.");
+        time.AdvanceTo(boundary);
+        await phase.WaitAsync(TimeSpan.FromSeconds(5));
+        time.Advance(TimeSpan.FromTicks(1)); // S2 test-first witness: old advance-on-unfinished rule.
     }
 
     public static HttpResponseMessage Status(HttpStatusCode status, string body = "") =>
