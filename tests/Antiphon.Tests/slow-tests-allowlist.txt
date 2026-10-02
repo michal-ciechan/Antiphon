@@ -211,3 +211,5 @@ Antiphon.Tests.Application.ReviewEvidenceConsistencyTests
 Antiphon.Tests.Application.CompletionWarningDeliveryTests
 # CARD-0788: real land refusal outbox, busy caller, and recovery-cut delivery matrix.
 Antiphon.Tests.Application.LandEvidenceWarningDeliveryTests
+# CARD-0974: isolated migrated databases, 2,000-row transcript costs and behavior oracle matrix.
+Antiphon.Tests.Application.TaskInputAttentionCostTests
