@@ -126,6 +126,38 @@ Caller refreshes pipeline/session-runners/runner-defaults/hosts and scoped task 
 
 ## Verification design
 
+### Inspection
+
+TestDesign freeze: task `26622af0`, start **`490812911d267e1e51497f59055d3d4b514dc3f1`**. Counts below were independently recounted from that checkout by reading attributes, argument values, both post-land partials and `WorkerMarkers()`. No test discovery, build or execution: **Linux executed 0; Windows executed 0**. CARD-0742 was read through `card.ps1 get`; its historical red is not a fresh receipt.
+
+Read the investigation and this plan in full; the named test bodies and their relevant helpers; `RunnerCodexAdapter`, `CodexSubmitConfirmation`, readiness timer calls, `ResilienceTestSupport`, `TestWorkerModes`, `LandingRemovalCrashWorker`, lifecycle registry/warmup selections, `ScaledTimeProvider`, and C578's shim/ready/exit/cleanup path. Inspection maps S1-S7 to V-1..7/R-1..7 below. The three reflection hosts are independently present; migrating only C448 is insufficient.
+
+Frozen test scheduling rule: no added sleep, real-time polling window, raised deadline, or successful elapsed-wall-time assertion. Use causal events and explicit virtual steps. Existing outer harness cancellation is only a hang diagnostic; it never supplies a positive-control red. Preserve existing unrelated tests and production terminal transport delays. D-6's proposed 10-to-60-second increase is superseded by the S6 event design below.
+
+### Delivery inventory
+
+S1 readiness and S2 HTTP reads are in-process return/cancellation paths, without durable message delivery. S7 is a test clock. S6 publishes owned child entry/stream/exit evidence, without a session recipient. None introduces a product queue or persistence path.
+
+S5 preserves `SendPromptAsync` -> terminal body plus separate Enter -> transcript observer. Identity is session plus pre-send sequence floor plus matching body. `ScriptedCodexRunnerClient` supplies synthetic complete UserPrompt rows; a screen, write count or degraded blind result is not transcript delivery proof. This fixture proves confirmation decisions, not a live model receiving input. No provider launch or prompt is part of this design.
+
+S4 preserves the real landing transaction -> `AgentTaskLandNotifications` -> real `SessionMessageQueue` -> caller session -> persisted complete UserPrompt -> notification confirmation. Join task ID, landing operation ID, notification ID/queue deduplication key, caller session and sequence above the attempt floor. CP-7 retains busy and already eligible caller pairs for before-enqueue, queue-inserted, lost-wakeup, receipt-before-save and after-receipt, plus publication-commit and post-submit-process cuts. The fake terminal/runner substitutes only recipient I/O; it cannot certify a live session. The shared receipt helper's current `QueueMessageId == null` return must become a named failure in these success-required cases, so every selected recovery case reaches its receipt assertions.
+
+### Proves it works now
+
+| ID | Behaviour and layer | Closed checkpoint / required outcome |
+|---|---|---|
+| V-1 | Adapter readiness decisions under stopped time | CP-1/13: exactly two completed snapshots across the two intended decisions; default clock control also runs inside the existing method. |
+| V-2 | Real HTTP resilience pipeline with fake handlers/time | CP-2/14: token cancellation at 10/30 seconds and owner limits 3/10; no overlapping attempt. |
+| V-3 | Platform-specific launch refusal and pure argv policy | CP-3/4/5/15: Linux 3 applicable plus diagnostic 2 skips; Windows 5; policy 26 on each OS. |
+| V-4 | Real dotnet crash workers, parent-owned store and queue recovery | CP-6/7/8/9/16: 7 land cuts, 12 delivery cases, 13 retirement cuts, 1 registry + 8 worker markers. |
+| V-5 | Adapter submit confirmation with virtual polls | CP-10/17: eight existing cases; four Enters by 750 ms where budget permits, one body per turn. |
+| V-6 | Real wrapper plus controlled failed-build shim | CP-11/18: all five failed-build labels and neighboring script contracts; asynchronous entry/log/exit gates. |
+| V-7 | Test clock arithmetic and timers from one fake source | CP-12/19: six existing methods with exact clock/timer assertions. |
+
+### Guards the regression
+
+R-1 is V-1 with duplicate/reused snapshot witnesses. R-2 preserves original shared budget and both short owners. R-3 keeps Windows code/privacy/no-session assertions and non-Windows policy acceptance. R-4 retains each durable cut, restart identity, owned process/store and complete caller receipt. R-5 preserves transcript floor, body-once, retry cap, deadline and blind two-look semantics. R-6 retains stdout/stderr, exit 37, checkpoint exit 2, no test run and owned cleanup. R-7 preserves scaling, offset-only Advance, timer boundary and cancellation. Their detecting sites and independently injected variants are frozen below; neighboring unmodified tests remain the ordinary regression roster.
+
 ### Recounted roster and OS expectations
 
 Counts below are source-derived, **not executions**. New assertion labels and internal schedules do not add TUnit results. No Repeat attributes are introduced into tracked target tests. Trailing class wildcards account for TUnit class naming; assert exact returned method/argument roster, not merely a floor.
@@ -148,23 +180,22 @@ Counts below are source-derived, **not executions**. New assertion labels and in
 
 Ordinary final totals: **Linux 134, Windows 136**, zero failures/skips in the selected ordinary filters. CP-3 is Linux-only; CP-4 Windows-only. CP-9 is 1+8=9 after migration, not baseline's 7. These counts exclude diagnostic/stress repetitions. S3 deliberately skipped policy rows cannot be called Linux passes or given a clean zero-skip source certificate; the applicable ordinary rows and mandatory Windows evidence close that gap explicitly.
 
-### Named positive controls
+### Guard inventory and positive controls
 
-TestDesign freezes the following labels on reachable assertion sites before Code. One original-green / isolated-mutant-red / restored-green triple per variant in a separately commissioned Mutation round. No syntax error, missing API, generic exception sweep or safety timeout counts as a detecting red. Controls run fake-backed tests only. The mutation column authorizes a future scratch control, not a production edit in this Plan.
+Every row below is one independently bypassable guard G-n and its unique PC-n. Method names resolve through the source roster/CP filter; labels are assertion messages, not additional TUnit methods. Mutation runs one original-green / compiling-defect-red / restored-green triple per row after land. Assert the labelled fact before a generic sweep or missing-event wait. Capture task outcomes as data when needed; an uncaught exception, compile failure, setup failure or timeout is not a detecting red. All gates are released and owned work drained in finally. Code runs ordinary V/R; these controls remain pending for Mutation.
 
-| PC | Detecting method / named assertion | Concrete variant that must reach that assertion |
+#### S1 frozen controls
+
+Roster rechecked: 10 methods, 12 results (0/10000/250 boot arguments); CP-1=12, CP-13=30 x 1 on each OS. Keep the existing snapshot method; extra internal schedules add no results. Add attempt/completion counters and phase hooks to the scripted client. Allow every unexpected read to complete until the first poll registration, then install the second-read gate. Observe registration by due time plus phase, including CreateTimer and Change. Freeze at t=0, advance 50 ms once, release read two and await the settled decision. Race expected entry against completion/next timer registration and assert the phase before awaiting a missing gate.
+
+| Guard / PC | Detecting method and distinct label | One compiling defect; finite red witness |
 |---|---|---|
-| PC-1 | One_snapshot_is_used_for_each_startup_decision / `snapshot-one-before-first-poll` | Add a second completed snapshot fetch before the first poll. The hook permits the extra read, so the count fails before any barrier wait. |
-| PC-2 | Same / `snapshot-two-held`, `snapshot-one-per-decision` | Reuse the first snapshot for the second decision. Race second-read entry with wait completion/next-poll registration after the finite clock step; snapshot reuse reaches completion without entry, then the named count assertion fails. No infinite wait for an event the mutant removes. |
-| PC-3 | Slow_first_attempt_consumes_the_same_budget / `attempt-cancel-at-10` | Change test settings attempt timeout to 11 with assertion fixed at 10; inspect cancellation state at t=10 before awaiting request completion. |
-| PC-4 | Same / `second-request-original-total-deadline` | Give second request a fresh budget. Assert its observed total timer deadline/remaining budget before waiting for its terminal task, so this fails as an assertion rather than a hang. |
-| PC-5 | Runner_list_and_git_connectivity_keep_their_short_deadlines / `runner-owner-cancel-at-3`, `git-owner-cancel-at-10` | Independently widen each exercised owner deadline in a scratch copy. Assert recorded cancellation/token state at the original instant; then cancel/drain work in finally. Two variants. |
-| PC-6 | Both Named_grok_* unsafe cases on Windows / `windows-unsafe-code`, `windows-no-session` | Suppress raw-argv refusal using the fake adapter. Wrong code or persisted session reaches these assertions. Linux Any_payload_is_allowed_when_not_windows separately uses label `nonwindows-policy-allows`; force isWindows=true there for its independent refusal witness. |
-| PC-7 | C448_V15 / `worker-cut-identity`, `worker-resume-exit`, `worker-durable-phase` | Independently alter ready cut identity, resumed reported exit, and expected durable phase in the owned child fixture. Inspect ready JSON, not just existence. Dependency-host restoration is a separate historical red, not a generic timeout positive control. |
-| PC-8 | A_worker_child_exits_before_the_shared_store_warmup / existing marker-specific `dbLifecycle=never-requested`; Worker_mode_list_names_every_owned_child_worker / `all-owned-worker-markers-registered` | Omit one new registry entry: finite registry equality fails. For warmup order, force lifecycle initialization ahead of requested mode; existing finite failure record detects it. No live runner launch permitted. |
-| PC-9 | Both four-Enter submit cases / `submit-enter-4-before-deadline`, `submit-body-once`; blind case / `blind-body-two-looks` | Reduce ExtraEnterAttempts to two with assertions unchanged; separately retype body on retry; separately remove one blind screen look. Concrete count/receipt assertions detect each before teardown. |
-| PC-10 | C578_FailedBuildKeepsLogAndExit / exact `C578 FailedBuild retains stdout and stderr`, `C578 FailedBuild records actual exit 37 once` | Independently suppress stderr marker and replace exit 37 with zero in the owned shim. Existing named assertions fail; all owned children still join. Restoring old no-hold schedule supplies the readiness-race red. |
-| PC-11 | Speed_10_advances_ten_times_real_time / `scaled-100ms-is-1s`; Delay_on_the_clock_completes_speed_times_sooner / `scaled-timer-due-at-100ms`; Advance_jumps_now_without_firing_a_pending_delay / `offset-does-not-fire-timer` | Independently drop multiplier, stop scaling due time, and make offset Advance also advance source timers. Assert immediate fake-clock state; no real timeout determines failure. |
+| G-1 / PC-1 | One_snapshot_is_used_for_each_startup_decision / `snapshot-one-before-first-poll` | Add a second fetch before poll registration; both fetches return and count=2 fails the count=1 label. |
+| G-2 / PC-2 | Same / `snapshot-two-held` | Reuse the prior frame on decision two; the next poll/completed wait wins the phase race, then assert attempts=2/completions=1 without awaiting absent entry. |
+| G-3 / PC-3 | Same / `snapshot-one-per-decision` | Add a fetch after releasing read two; unannounced reads return immediately, and final completion count=3 fails expected 2. |
+| G-4 / PC-4 | Same / `ready-default-is-system` | Change only the constructor's null fallback to a fixed fake provider; test omitted argument, explicit null and explicit System, reading the private effective provider by test reflection and asserting reference identity to System before any asynchronous wait. |
+
+The injected clock instance must also be the one passed into readiness options; the stopped-clock phase assertions exercise that connection. Default-path subcases use the fake runner and an already-cancelled token for cleanup; no timer-progress measurement or production probe API is added. S1 is part of the serialized S1/S2/S5 Code group.
 
 ### Stress recipes: fixed workload, honest red/green evidence
 
