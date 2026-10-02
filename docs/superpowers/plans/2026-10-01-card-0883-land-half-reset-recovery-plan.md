@@ -411,7 +411,7 @@ The **closed list** follows. S1-red is deliberately minimal and precedes repair/
 | CP-3 | S1-S4 | CP-2 (-NoBuild) | checkout-proof | `/*/*/(LandRecoveryCheckoutTests*)\|(LandingGitTests*)/*` | V-3,R-5 | Linux 89 = 34+55; Windows source census 89 (not executed); ancestry probe PENDING; all listed, 0 failed/skipped | 89 | 12 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-4 | S1-S4 | CP-2 (-NoBuild) | writer-and-persistence | `/*/*/(LandRequestWriteDiagnosticTests*)\|(AgentTaskLandSourcePersistenceTests*)\|(AgentTaskLandFailureDiagnosticTests*)\|(AgentTaskLandMonitoringTests*)/*` | V-4,R-2,R-3,R-4 | Linux 101 = 15+35+26+25; Windows source census 101 (not executed); other-entity/merge/delivery PENDING; all listed, 0 failed/skipped | 101 | 18 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-5 | S1-S4 | `tests/Antiphon.Tests -> bin-c883-windows/` | windows-checkout | `/*/*/AgentTaskLandHalfResetWindowsTests*/*` | V-5 | Windows 4, all listed, 0 failed/skipped; Linux not commissioned | 4 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-6 | S1-S4 | CP-2 (-NoBuild) | unit-regression | `/*/*/*/*[Category=Unit]` | Unit lane (CARD-0939) | Whole Unit lane once; inherited Linux failures disclosed separately, no skips | 1 | 12 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-6 | S1-S4 | CP-2 (-NoBuild) | unit-regression | `/*/*/*/*[Category=Unit]` | Unit lane (CARD-0939) | Whole Unit lane once; platform/dependency skips and inherited failures disclosed separately | 1 | 12 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
 ### CARD-0939 census and scoped execution (2026-10-02)
 
@@ -426,7 +426,22 @@ Measured start SHA `4453dab63e5005414b2ded095b674f7b0ef1919e`: CP-2 **53/53**
 LandingGit 55). Both used one build, granted slots, strict clean source receipts, no skips.
 Source census after the CARD-0939 test slices: HalfReset 55, AdoptionConcurrency 7,
 Adoption 21, Checkout 34, LandingGit 55, Diagnostics 15, SourcePersistence 35,
-FailureDiagnostic 26, Monitoring 25. Runtime counts will be reconciled with fresh TRX.
+FailureDiagnostic 26, Monitoring 25. Fresh final TRX at code SHA
+`f3c11e0a7c6d0cf3f3cd87518355a491a51eac35` reconciles CP-2 **83/83**,
+CP-3 **89/89**, CP-4 **101/101**, each 0 failed/skipped. Every in-scope C883
+method/argument identity matches a Passed row. The one whole Unit lane has **3733
+executed / 3733 passed / 0 failed / 40 existing platform/dependency skips**.
+The Unit driver exits 0, but the strict receipt validator rejects its nonzero skip
+count (exit 2, receipt_failed); no zero-skip Unit qualification is claimed.
+
+Net added runtime results are **59** (28+2+17+12), plus the existing synthetic
+conflict result strengthened to real two-context EF concurrency. Against the commissioned
+69 unfinished requirements: **59 added + 1 strengthened + 9 pending = 69**. The frozen
+ordinary V roster has **98/107** executable/qualified results. A Code sensitivity sample
+proves **23 new argument assertions RED across V-1..V-4**, then restores an empty Git
+diff and qualifies the same 51-result selection **51/51 GREEN**. It does not discharge
+any PC. The final reporting commit changes only this measured trace and the requested
+report artifact; it does not change the qualified C# source.
 
 PENDING: V-3 ProbeErrorsRefuse(ancestry), because the production checkout inspector
 has no ancestry probe (the fresh-request resolver owns it); V-4 writer merge and all
