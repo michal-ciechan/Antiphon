@@ -9,7 +9,7 @@ vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
 
 const empty: ModelAvailabilityDto = {
   holds: [],
-  available: ['fable', 'opus', 'sonnet', 'haiku', 'grok-4.7', 'gpt-6-astra', 'gpt-6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'],
+  available: ['fable', 'opus', 'sonnet', 'haiku', 'grok-4.7', 'gpt-6-astra', 'gpt-6.1-sol', 'gpt-5.6-luna'],
 }
 
 describe('ModelAvailabilityPanel', () => {
@@ -18,6 +18,7 @@ describe('ModelAvailabilityPanel', () => {
     renderWithProviders(<ModelAvailabilityPanel />)
     expect(await screen.findByText('All models available.')).toBeInTheDocument()
     expect(await screen.findByText(/available: fable, opus/)).toBeInTheDocument()
+    expect(screen.getByText(/gpt-6.1-sol/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Manage routing settings' })).toHaveAttribute(
       'href',
       '/settings?tab=routing',

@@ -16,11 +16,10 @@ namespace Antiphon.Server.Application.Services;
 /// twice over — "Model metadata for `luna` not found" locally, then HTTP 400 "the 'luna' model is
 /// not supported" from the service. There are no unversioned aliases in Codex's catalog (bare
 /// <c>astra</c> 400s the same way), so the Codex ladder pins full slugs
-/// (<c>gpt-6-astra</c> / <c>gpt-6-sol</c> / <c>gpt-5.6-terra</c> / <c>gpt-5.6-luna</c>) and needs
-/// a deliberate bump when the catalog's priority-1 model changes. <c>gpt-6-astra</c> requires
-/// <b>codex-cli 0.153.4+</b> (older installs HTTP 400 "requires a newer version of Codex" on every
-/// Frontier Codex dispatch). Grok's ladder already pins versioned ids, so this breaks no rule Grok
-/// did not break first.</para>
+/// (<c>gpt-6-astra</c> / <c>gpt-6.1-sol</c> / <c>gpt-6.1-sol</c> / <c>gpt-5.6-luna</c>) and needs
+/// deliberate catalog bumps. <c>gpt-6-astra</c> requires codex-cli 0.153.4+; <c>gpt-6.1-sol</c>
+/// requires 0.159.1+. Runner capabilities do not yet advertise the installed Codex CLI version,
+/// so rollout must upgrade every Codex-serving runner before activating this ladder.</para>
 /// </summary>
 public static class ModelLevelAliases
 {
@@ -40,35 +39,26 @@ public static class ModelLevelAliases
     public static string ForGrok(AgentModelLevel level) => "grok-4.7";
 
     /// <summary>
-    /// Codex's ladder (CARD-0099 S3, CARD-0396, CARD-0611). Verified against the live CLI's own
-    /// catalog (<c>models_cache.json</c>, codex-cli 0.156.1, 2026-09-23): the capability order is
-    /// <b>Astra &gt; Sol 6 &gt; Luna 6 &gt; Sol 5.6 &gt; Terra &gt; Luna 5.6</b> — priority
-    /// 1/2/3/4/7/8. Dispatch follows that order at the top: Frontier is the flagship
-    /// <c>gpt-6-astra</c>; High is <c>gpt-6-sol</c> (CARD-0611 bump from <c>gpt-5.6-sol</c>, which
-    /// dropped to priority 4 when GPT-6 shipped); Medium is <c>gpt-5.6-terra</c>; Low is
-    /// <c>gpt-5.6-luna</c>. All four rungs are distinct models. The Medium rung's
-    /// Terra-vs-<c>gpt-6-luna</c> question is deliberately still open — do not bump it here without
-    /// an explicit operator decision.
+    /// Codex's ladder (CARD-0099 S3, CARD-0396, CARD-0611, CARD-0903). Frontier remains
+    /// <c>gpt-6-astra</c> and Low remains <c>gpt-5.6-luna</c>. The operator pinned both High
+    /// and Medium to <c>gpt-6.1-sol</c> on 2026-10-02. They use the same model but retain distinct
+    /// reasoning efforts (high and medium). The old <c>gpt-6-sol</c> and <c>gpt-5.6-terra</c>
+    /// slugs remain selectable profile ids and recognizable historical aliases.
     ///
-    /// <para>A Low → Medium Codex escalation is therefore a real model change (luna → terra), not a
-    /// same-alias fresh-context note. <c>AgentTaskService.SameModelEscalationNote</c> still compares
-    /// ALIASES, not kinds (CARD-0289); it simply no longer fires on Codex. <c>gpt-5.4-mini</c>
-    /// exists if a cheaper bottom rung is ever wanted; Luna covers Low. (Grok's own ladder no
-    /// longer has rungs to compare against — CARD-0169 collapsed <see cref="ForGrok"/> to one id
-    /// for every level; 2026-09-21 that id is grok-4.7.)</para>
+    /// <para>Low → Medium and High → Frontier are real model changes. Medium → High and High → Medium
+    /// use <c>AgentTaskService.SameModelEscalationNote</c>'s same-alias fresh-context wording;
+    /// the former increases reasoning effort. The note compares aliases for every kind.</para>
     ///
-    /// <para><c>gpt-6-astra</c> is rejected by CLI &lt; 0.153.4 and <c>gpt-6-sol</c> by
-    /// CLI &lt; 0.156.1 (this desktop was upgraded 0.155.1 → 0.156.1 on 2026-09-23 for exactly
-    /// that). Do not pass the bare id <c>astra</c> or <c>sol</c> — the backend 400s them the same
-    /// way as a garbage slug.</para>
+    /// <para><c>gpt-6.1-sol</c> is bundled from codex-cli 0.159.1 onward and supports both
+    /// medium and high effort in 0.160.0. Do not pass bare <c>astra</c> or <c>sol</c> to Codex.</para>
     /// </summary>
     public static string ForCodex(AgentModelLevel level) => level switch
     {
         AgentModelLevel.Frontier => "gpt-6-astra",
-        AgentModelLevel.High => "gpt-6-sol",
-        AgentModelLevel.Medium => "gpt-5.6-terra",
+        AgentModelLevel.High => "gpt-6.1-sol",
+        AgentModelLevel.Medium => "gpt-6.1-sol",
         AgentModelLevel.Low => "gpt-5.6-luna",
-        _ => "gpt-6-sol",
+        _ => "gpt-6.1-sol",
     };
 
     /// <summary>

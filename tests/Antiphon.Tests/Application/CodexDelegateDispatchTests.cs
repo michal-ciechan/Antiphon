@@ -49,7 +49,7 @@ public class CodexDelegateDispatchTests
 
         args.ShouldNotContain("--name", customMessage:
             "Codex has no --name flag at all; the launch would die on an unknown argument");
-        args[args.IndexOf("--model") + 1].ShouldBe("gpt-6-sol");
+        args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.1-sol");
         args.ShouldNotContain("--append-system-prompt", customMessage:
             "Codex's standing-instruction channel is a -c config override, not Claude's flag");
         args.ShouldNotContain("--rules", customMessage: "--rules is Grok's flag");
@@ -88,8 +88,8 @@ public class CodexDelegateDispatchTests
 
     [Test]
     [Arguments(AgentModelLevel.Frontier, "gpt-6-astra", "xhigh")]
-    [Arguments(AgentModelLevel.High, "gpt-6-sol", "high")]
-    [Arguments(AgentModelLevel.Medium, "gpt-5.6-terra", "medium")]
+    [Arguments(AgentModelLevel.High, "gpt-6.1-sol", "high")]
+    [Arguments(AgentModelLevel.Medium, "gpt-6.1-sol", "medium")]
     [Arguments(AgentModelLevel.Low, "gpt-5.6-luna", "low")]
     public void every_tier_pins_a_full_slug_and_names_its_own_reasoning_effort(
         AgentModelLevel level, string expectedSlug, string expectedEffort)
@@ -157,7 +157,7 @@ public class CodexDelegateDispatchTests
         args.ShouldNotContain("-c", customMessage:
             "Codex's config overrides must never leak onto a Claude command line");
         args.ShouldNotContain(GrokLaunchArgs.ReasoningEffortFlag);
-        args.ShouldNotContain("gpt-5.6-terra");
+        args.ShouldNotContain("gpt-6.1-sol");
     }
 
     [Test]
@@ -222,21 +222,18 @@ public class CodexDelegateDispatchTests
     // ---- escalation (plan section 4 S3's last bullet, verified rather than assumed) -------------
 
     [Test]
-    public async Task escalating_a_codex_task_between_real_models_makes_no_disclosure()
+    public async Task escalating_codex_high_to_frontier_changes_model()
     {
-        // Unlike Grok, Codex's top three rungs are all real model changes, so the note that Grok
-        // needs must NOT fire here. Nothing special-cases the kind: SameModelEscalationNote compares
-        // ALIASES, which is why this needed no code change at all — only proof.
+        // The Debug role policy reaches Frontier, a real model change.
         using var workspace = new TempWorkspace();
-        var task = await SeedSettledTaskAsync(workspace.Path, AgentKind.Codex, AgentModelLevel.Medium);
+        var task = await SeedSettledTaskAsync(workspace.Path, AgentKind.Codex, AgentModelLevel.High);
 
         await using var db = CreateContext();
         await CreateService(db).EscalateAsync(task.Id, to: null, CancellationToken.None);
 
         var detail = await LatestEscalationDetailAsync(task.Id);
-        // The Debug role's policy escalates straight to Frontier, so this is terra -> astra: still a
-        // real model change, which is the whole point of the assertion.
-        detail.ShouldStartWith("Escalated gpt-5.6-terra -> gpt-6-astra.");
+        // High Sol -> Frontier Astra.
+        detail.ShouldStartWith("Escalated gpt-6.1-sol -> gpt-6-astra.");
         detail.ShouldNotContain("FRESH CONTEXT");
         detail.ShouldNotContain("opus", customMessage: "a Codex task never runs a Claude model");
         detail.ShouldNotContain("grok");
@@ -245,8 +242,7 @@ public class CodexDelegateDispatchTests
     [Test]
     public async Task escalating_a_codex_task_from_low_to_medium_is_a_real_model_change()
     {
-        // All four Codex rungs are distinct slugs now: Low is luna, Medium is terra. SameModelEscalationNote
-        // compares aliases, so this must read as a bigger model, not a fresh-context-at-the-same-model note.
+        // Low is Luna and Medium is Sol, so this is a model change.
         using var workspace = new TempWorkspace();
         var task = await SeedSettledTaskAsync(workspace.Path, AgentKind.Codex, AgentModelLevel.Low);
 
@@ -255,10 +251,33 @@ public class CodexDelegateDispatchTests
         await CreateService(db).EscalateAsync(task.Id, to: AgentModelLevel.Medium, CancellationToken.None);
 
         var detail = await LatestEscalationDetailAsync(task.Id);
-        detail.ShouldStartWith("Escalated gpt-5.6-luna -> gpt-5.6-terra.");
+        detail.ShouldStartWith("Escalated gpt-5.6-luna -> gpt-6.1-sol.");
         detail.ShouldNotContain("FRESH CONTEXT");
         detail.ShouldNotContain("opus", customMessage: "a Codex task never runs a Claude model");
         detail.ShouldNotContain("grok");
+    }
+
+    [Test]
+    public async Task escalating_codex_medium_to_high_names_same_model_and_deeper_effort()
+    {
+        using var workspace = new TempWorkspace();
+        var task = await SeedSettledTaskAsync(workspace.Path, AgentKind.Codex, AgentModelLevel.Medium);
+
+        await using var db = CreateContext();
+        await CreateService(db).EscalateAsync(task.Id, to: AgentModelLevel.High, CancellationToken.None);
+
+        var detail = await LatestEscalationDetailAsync(task.Id);
+        detail.ShouldStartWith("Escalated gpt-6.1-sol -> gpt-6.1-sol.");
+        detail.ShouldContain("FRESH CONTEXT at the same model at deeper reasoning effort (medium → high)");
+    }
+
+    [Test]
+    public void codex_high_to_medium_keeps_model_but_changes_effort()
+    {
+        ModelLevelAliases.ForCodex(AgentModelLevel.High).ShouldBe(
+            ModelLevelAliases.ForCodex(AgentModelLevel.Medium));
+        CodexLaunchArgs.ReasoningEffort(AgentModelLevel.High).ShouldBe("high");
+        CodexLaunchArgs.ReasoningEffort(AgentModelLevel.Medium).ShouldBe("medium");
     }
 
     // ---- the dispatch itself -------------------------------------------------------------------
@@ -361,7 +380,7 @@ public class CodexDelegateDispatchTests
     public async Task the_dispatch_event_names_the_codex_model_the_task_actually_runs()
     {
         // The event is what the operator and the check interpreter read. Before ModelLevelAliases
-        // grew its Codex arm this line said "sonnet" about a gpt-5.6-luna session (Medium is terra now).
+        // grew its Codex arm this line said "sonnet" about a Codex session.
         using var workspace = new TempWorkspace();
         var dispatcher = CreateDispatchHarness();
         var task = await SeedQueuedTaskAsync(workspace.Path, AgentKind.Codex);
@@ -369,7 +388,7 @@ public class CodexDelegateDispatchTests
         await dispatcher.TickAsync(CancellationToken.None);
 
         var detail = await LatestDispatchDetailAsync(task.Id);
-        detail.ShouldContain("gpt-5.6-terra");
+        detail.ShouldContain("gpt-6.1-sol");
         detail.ShouldNotContain("sonnet");
         await using var verify = CreateContext();
         var dispatched = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);

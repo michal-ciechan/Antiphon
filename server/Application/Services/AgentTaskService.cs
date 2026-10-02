@@ -2854,8 +2854,8 @@ public sealed class AgentTaskService
     /// <para>CARD-0289: once effort is tier-wired, a same-model escalation on Grok also buys a
     /// deeper reasoning effort. The event names that when the kind's tier-wired efforts actually
     /// differ; when they are equal the wording is byte-identical to the pre-CARD-0289 note. Claude
-    /// never takes this arm (four distinct aliases). Codex's four rungs are also distinct (astra /
-    /// sol / terra / luna), so a Low→Medium Codex escalation is a real model change.</para>
+    /// never takes this arm (four distinct aliases). Codex Medium→High shares the 6.1 Sol alias
+    /// and gains deeper effort; Low→Medium and High→Frontier change models.</para>
     ///
     /// <para>The test is the ALIAS COMPARISON, not the kind (CARD-0084 S4): now that
     /// <see cref="ModelLevelAliases.For"/> answers per kind, "both rungs are the same model" is

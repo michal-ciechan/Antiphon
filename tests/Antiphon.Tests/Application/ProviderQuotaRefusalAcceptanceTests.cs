@@ -302,7 +302,7 @@ public class ProviderQuotaRefusalAcceptanceTests
         {
             db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
             {
-                Id = Guid.NewGuid(), Kind = AgentKind.Codex, ModelAlias = "gpt-6-sol",
+                Id = Guid.NewGuid(), Kind = AgentKind.Codex, ModelAlias = "gpt-6.1-sol",
                 Source = ModelAvailabilitySource.Manual, DisabledUntil = manualUntil,
                 Reason = "operator", HitAt = IncidentAt.UtcDateTime,
             });
@@ -325,7 +325,7 @@ public class ProviderQuotaRefusalAcceptanceTests
         {
             db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
             {
-                Id = Guid.NewGuid(), Kind = AgentKind.Codex, ModelAlias = "gpt-6-sol",
+                Id = Guid.NewGuid(), Kind = AgentKind.Codex, ModelAlias = "gpt-6.1-sol",
                 Source = ModelAvailabilitySource.Manual, DisabledUntil = null,
                 Reason = "operator", HitAt = IncidentAt.UtcDateTime,
             });
@@ -456,7 +456,7 @@ public class ProviderQuotaRefusalAcceptanceTests
         (await db.ModelAvailabilityHolds.AnyAsync(h => h.SourceSessionId == s.H.SessionId)).ShouldBeTrue();
         using var scope = s.H.Provider.CreateScope();
         (await scope.ServiceProvider.GetRequiredService<ModelAvailability>()
-            .IsHeldAsync(AgentKind.Codex, "gpt-6-sol", CancellationToken.None)).ShouldBeTrue();
+            .IsHeldAsync(AgentKind.Codex, "gpt-6.1-sol", CancellationToken.None)).ShouldBeTrue();
     }
 
     [Test]
@@ -609,7 +609,7 @@ public class ProviderQuotaRefusalAcceptanceTests
         s.Clock.Advance(TimeSpan.FromDays(2));
         using var scope = s.H.Provider.CreateScope();
         (await scope.ServiceProvider.GetRequiredService<ModelAvailability>()
-            .IsHeldAsync(AgentKind.Codex, "gpt-6-sol", CancellationToken.None)).ShouldBeFalse();
+            .IsHeldAsync(AgentKind.Codex, "gpt-6.1-sol", CancellationToken.None)).ShouldBeFalse();
         (await s.ReadAsync()).Task.Status.ShouldBe(AgentTaskStatus.Blocked);
     }
 }
