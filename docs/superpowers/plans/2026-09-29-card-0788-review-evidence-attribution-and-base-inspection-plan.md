@@ -575,6 +575,12 @@ files): Approval 23, Adoption 15, Resolver 67, Selection 16, Dispatch 87, Runner
 Consistency 31, Completion delivery 0, Land refusal delivery 0. The frozen CP floors above
 remain the completion gate; the missing Adoption and delivery results are still required.
 
+Final Code source census after the delivery and recovery slice (expanded results, including
+partial files): Approval 23, Adoption 21, Resolver 67, Selection 16, Dispatch 87, Runner
+settlement 23, Runner progress 8, Continuation 48, Review evidence 16, CARD-0807 settlement
+11, Consistency 31, Completion delivery 11, Land refusal delivery 7. The CP floors above
+match these source counts; CP-1 retains its lane floor of 3000.
+
 ### Checkpoints
 
 Commit each complete group before its one tool run. Through scripts/build-slot.ps1 launch

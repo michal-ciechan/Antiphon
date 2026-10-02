@@ -66,7 +66,7 @@ public sealed class CompletionWarningDeliveryTests
             if (cut == "wakeup-dropped") rig.Boundary.DropCompletionWakeup = true;
             else if (cut is not ("render-committed" or "spill-written" or "attempt-committed" or "prompt-accepted"))
                 rig.Fault.Cut = cut;
-            var taskId = await SettlePlanAsync(rig);
+            var taskId = await SettlePlanAsync(rig, expectRollback: cut == "obligation-insert");
             if (cut == "obligation-insert")
             {
                 rig.Fault.Throws.ShouldBe(1, row + ": cut reached");
@@ -111,7 +111,7 @@ public sealed class CompletionWarningDeliveryTests
         }
     }
 
-    private static async Task<Guid> SettlePlanAsync(C544DeliveryRig rig)
+    private static async Task<Guid> SettlePlanAsync(C544DeliveryRig rig, bool expectRollback = false)
     {
         var request = new CreateAgentTaskRequest("Write a plan.", Title: "CARD-0788 local plan",
             Role: AgentTaskRole.Plan, Workspace: WorkspaceMode.Worktree,
@@ -140,6 +140,11 @@ public sealed class CompletionWarningDeliveryTests
                 await db.SaveChangesAsync();
             });
         var settled = await rig.World.TaskAsync(taskId);
+        if (expectRollback)
+        {
+            settled.Status.ShouldBe(AgentTaskStatus.Dispatched, "obligation insertion rolls back settlement");
+            return taskId;
+        }
         settled.Status.ShouldBe(AgentTaskStatus.Succeeded,
             $"completion producer status={settled.Status} failure={settled.FailureCode}: {settled.FailureReason}");
         var progress = TaskProgressJson.TryReadEvidence(settled.CompletionProgressEvidenceJson);
