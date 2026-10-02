@@ -52,7 +52,9 @@ public class ModelAvailabilityTests
         await using var db = CreateContext(schema);
         try
         {
-            await ReplaceHoldAsync(db, Hold(id, ModelAlias.Gpt6Sol, DateTime.UtcNow.AddHours(1)));
+            var oldSolHold = Hold(id, ModelAlias.Gpt6Sol, DateTime.UtcNow.AddHours(1));
+            oldSolHold.Kind = AgentKind.Codex;
+            await ReplaceHoldAsync(db, oldSolHold);
             var availability = Service(db);
             (await availability.IsHeldAsync(AgentKind.Codex, ModelAlias.Gpt6Sol, CancellationToken.None)).ShouldBeTrue();
             (await availability.IsHeldAsync(AgentKind.Codex, ModelAlias.Gpt61Sol, CancellationToken.None)).ShouldBeFalse();
