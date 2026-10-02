@@ -2338,6 +2338,14 @@ public sealed class RemoteScriptContractTests
             before="$(grep -c '^probe ' "$root/effects")"
             c849_require_ready allow-cold
             [ "$(grep -c '^probe ' "$root/effects")" = "$before" ] && echo marker-reuse-no-probe-or-restore
+            SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+            for context in deploy-temp verify retire; do
+                (c849_require_ready allow-cold) && echo "cross-sha-$context-accepted"
+            done
+            for context in reset prune saved-donor redeploy-old; do
+                refusal="$( (c849_require_ready) )"
+                [ "$refusal" = 'RESULT accepted=false diagnosis=CacheFullSeedRequired' ] && echo "cross-sha-$context-full-required"
+            done
             cp "$C849_READY" "$root/valid-marker"
             (c849_require_ready)
             printf 'payload-sha256=bad\n' >> "$C849_READY"
@@ -2351,6 +2359,10 @@ public sealed class RemoteScriptContractTests
             """);
         output.Contains("cold-marker-valid").ShouldBeTrue("cold-marker-valid");
         output.Contains("marker-reuse-no-probe-or-restore").ShouldBeTrue("marker-reuse-no-probe-or-restore");
+        foreach (var context in new[] { "deploy-temp", "verify", "retire" })
+            output.Contains($"cross-sha-{context}-accepted").ShouldBeTrue($"cross-sha-{context}-accepted");
+        foreach (var context in new[] { "reset", "prune", "saved-donor", "redeploy-old" })
+            output.Contains($"cross-sha-{context}-full-required").ShouldBeTrue($"cross-sha-{context}-full-required");
         output.Contains("RESULT accepted=false diagnosis=CacheFullSeedRequired").ShouldBeTrue("full-context-refused");
         output.Contains("RESULT accepted=false diagnosis=CacheSeedMarkerInvalid").ShouldBeTrue("malformed-marker-refused");
         var invalidCount = Regex.Matches(output, "RESULT accepted=false diagnosis=CacheSeedMarkerInvalid").Count;
