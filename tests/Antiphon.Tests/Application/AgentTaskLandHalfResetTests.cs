@@ -39,6 +39,40 @@ public sealed class AgentTaskLandHalfResetTests
     }
 
     [Test]
+    public async Task C883_PreRefDirtyRefusalLeavesRefAndCheckoutAtOldTip()
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (local, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
+        var feature = Path.Combine(h.Fixture.Source, "feature.txt");
+        var oldTree = (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", local + "^{tree}")).Trim();
+        var injected = false;
+        h.Fixture.Git.AfterCommand = async (_, args, result) =>
+        {
+            if (!injected && result.Succeeded && args.Count > 1 && args[0] == "update-ref"
+                && args[1].EndsWith("/adopt/source", StringComparison.Ordinal))
+            {
+                injected = true;
+                await File.WriteAllTextAsync(feature, "real edit before branch move\n");
+            }
+        };
+        var request = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        await h.RunQueuedAsync();
+        injected.ShouldBeTrue("H.PreRefEditInjected");
+        await using var db = h.CreateContext();
+        (await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId))
+            .SourceRefusalReason.ShouldBe("source_dirty", "H.PreRefEditRefused");
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim()
+            .ShouldBe(local, "H.PreRefRefusalLeavesRefAtOldTip");
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "write-tree")).Trim()
+            .ShouldBe(oldTree, "H.PreRefRefusalLeavesIndexAtOldTip");
+        (await File.ReadAllTextAsync(feature)).ShouldBe("real edit before branch move\n",
+            "H.PreRefRefusalPreservesOwnerBytes");
+    }
+
+
+    [Test]
     public async Task C883_DirtyFreshRequestAtOldHeadKeepsSourceDirty()
     {
         await using var fixture = new LandHalfResetFixture();
