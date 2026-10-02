@@ -141,7 +141,9 @@ case "$reader" in
         eval "$slice"
         write_result true '' 0 ;;
     c849_image)
-        helper="$(c849_image)" || exit $?
+        helper_code=0
+        helper="$(c849_image)" || helper_code=$?
+        if [ "$helper_code" != 0 ]; then printf '%s\n' "$helper"; exit "$helper_code"; fi
         printf 'HELPER=%s\n' "$helper"
         write_result true '' 0 ;;
     full-required)

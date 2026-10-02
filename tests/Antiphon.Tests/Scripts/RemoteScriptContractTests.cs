@@ -2777,12 +2777,12 @@ public sealed class RemoteScriptContractTests
                 [ "$code" = 2 ] && printf '%s' "$result" | grep -Fq '"accepted":false' && echo "invalid-marker-refused-$variant"
             done
             """);
-        output.ShouldContain("pruned-seed-image-accepted", $"pruned-seed-image-accepted {reader}: {output}");
+        output.Contains("pruned-seed-image-accepted").ShouldBeTrue($"pruned-seed-image-accepted {reader}: {output}");
         foreach (var variant in new[] { "missing", "malformed", "duplicate", "foreign-marker", "malformed-image",
                      "malformed-source", "symlink", "foreign-volume", "unwritable" })
-            output.ShouldContain("invalid-marker-refused-" + variant, $"{reader} refuses {variant}");
+            output.Contains("invalid-marker-refused-" + variant).ShouldBeTrue($"{reader} refuses {variant}");
         if (reader == "case_verify_runner_caches_retired")
-            output.ShouldContain("rollback-image=sha256:" + new string('1', 64), "cold rollback receipt names an available helper, not pruned seed provenance");
+            output.Contains("rollback-image=sha256:" + new string('1', 64)).ShouldBeTrue("cold rollback receipt names an available helper, not pruned seed provenance");
     }
 
     [Test]
@@ -2804,9 +2804,9 @@ public sealed class RemoteScriptContractTests
                 [ "$code" = 2 ] && printf '%s' "$result" | grep -Fq 'DIAGNOSIS=CacheHelperImageMissing' && echo "helper-refused-$variant"
             done
             """);
-        output.ShouldContain("available-main-helper", $"available-main-helper {context}: {output}");
+        output.Contains("available-main-helper").ShouldBeTrue($"available-main-helper {context}: {output}");
         foreach (var variant in new[] { "malformed-image", "foreign-main", "no-main", "no-image" })
-            output.ShouldContain("helper-refused-" + variant, $"{context} refuses {variant}");
+            output.Contains("helper-refused-" + variant).ShouldBeTrue($"{context} refuses {variant}");
     }
 
     [Test]
