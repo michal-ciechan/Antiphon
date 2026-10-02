@@ -99,6 +99,9 @@ public sealed class GrokRulesLaunchRefusalTests
 
     private static async Task AssertNamedGrokRefused(SessionBackend backend)
     {
+        if (!OperatingSystem.IsWindows())
+            Skip.Test("CARD-0882: Windows Grok raw-argv refusal policy; cmd.exe fixture");
+
         await using var db = CreateContext();
         var tempRoot = AgentControlServiceIntegrationTests.NewTempRoot();
         try
