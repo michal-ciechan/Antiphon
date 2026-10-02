@@ -105,7 +105,8 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
                 TimeSpan.FromMilliseconds(_settings.CodexSubmitReEnterIntervalMs),
                 _settings.CodexSubmitAttempts,
                 TimeSpan.FromMilliseconds(_settings.CodexSubmitConfirmTimeoutMs),
-                TurnPollInterval),
+                TurnPollInterval,
+                _timeProvider),
             message => _logger?.LogWarning(
                 "Session {SessionId} Codex prompt delivery: {Message}", _terminal.SessionId, message),
             ct);
