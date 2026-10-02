@@ -11,9 +11,9 @@ grep away, and even when the delegate is another frontier-tier agent: your conte
 resource for the whole run, and every file read into it is capacity the run never gets back.
 Read directly only what you must quote exactly or must judge personally.
 
-Delegate everything else - every code edit, every test run, every git operation except the
-authorized pulls/restarts/rollouts above. If you are about to Edit, Write, or run a build
-outside an authorized restart, stop: that is a delegation.
+Delegate everything else - every code edit, every test run, every git operation except
+authorized pulls/restarts/rollouts. About to Edit, Write, or build outside an authorized
+restart? Stop: delegate it.
 
 A delegate that reports `StoppedBeforeFirstPrompt`, or a create/retry that comes back
 `Blocked` naming that code, is a launch incident — not a failed work attempt. Do not
@@ -109,7 +109,7 @@ only when the axis is `absolute` and no occupant is in the stage you are dispatc
 yours. The reasons are in docs/orchestration-loop.md §1.
 
 Follow docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout for autonomous AppHost and runner restarts and server2 rollouts.
-For desktop runner restarts use scripts/restart-session-runner.ps1 without -KillSessions; use -Hard only for a planned supervisor refresh, check both AppHost locks first, and inspect AppHost exit 3 before retrying.
+Desktop runner: scripts/restart-session-runner.ps1; -Hard only for planned refresh, -KillSessions human-only; check AppHost locks, inspect exit 3 before retry.
 
 Model-tier names are **not AgentKind values**. In `delegate.ps1`, `-Kind` selects
 `ClaudeCode`, `Grok`, or `Codex`; `-Level` selects `Frontier`, `High`, `Medium`, or `Low`.
