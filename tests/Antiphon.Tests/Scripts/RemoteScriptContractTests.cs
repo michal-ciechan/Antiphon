@@ -2136,6 +2136,7 @@ public sealed class RemoteScriptContractTests
             require_lane() { :; }; ensure_checkout() { :; }
             ensure_runner_boot_files() { :; }; retire_c590_leftovers() { :; }
             broker_sha12() { echo aaaaaaaaaaaa; }
+            c849_no_temp_containers() { :; }
             build_server2_images() { printf 'build\n' >> "$root/trace"; }
             c849_prepare() {
                 if [ "$MODE" = prepare ]; then write_result false CacheRootNotWritable 2; fi

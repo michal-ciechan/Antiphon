@@ -71,19 +71,12 @@ try {
     # No environment-supplied or reconstructed path is used for deletion.
     $ownedRoot = [IO.Path]::GetFullPath($evidenceRoot)
     if ((Split-Path -Parent $ownedRoot) -ne [IO.Path]::GetFullPath((Join-Path $root '.antiphon')) -or
-        (Split-Path -Leaf $ownedRoot) -cnotmatch '^c973-jq-[0-9a-f]{32} "C973_JQ case=$Case assertions=$assertions failures=0 evidence=$(if ($KeepTemp) { $ownedRoot } else { 'removed' })"
-    exit 0
-}
-catch {
-    [Console]::Error.WriteLine($_.Exception.Message)
-    [Console]::Error.WriteLine("C973_JQ case=$Case assertions=$assertions failures=1 evidence=$evidenceRoot")
-    exit 1
-}
- -or
+        (Split-Path -Leaf $ownedRoot) -cnotmatch '^c973-jq-[0-9a-f]{32}$' -or
         ($evidenceDirectory.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'C973TempRootInvalid' }
     if ($KeepTemp) { Write-Output "C973_TEMP kept=$ownedRoot" }
     else { $evidenceDirectory.Delete($true) }
-    Write-Output "C973_JQ case=$Case assertions=$assertions failures=0 evidence=removed"
+    $retained = if ($KeepTemp) { $ownedRoot } else { 'removed' }
+    Write-Output "C973_JQ case=$Case assertions=$assertions failures=0 evidence=$retained"
     exit 0
 }
 catch {
