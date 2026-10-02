@@ -582,22 +582,26 @@ public class LandingGit : ILandingGit
         return output.ToArray();
     }
 
-    private static async Task<byte[]?> ReadGitBlobAsync(string path, string oid, CancellationToken ct)
+    private async Task<byte[]?> ReadGitBlobAsync(string path, string oid, CancellationToken ct)
     {
         if (!GitObjectId.IsFull(oid)) return null;
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        budget.CancelAfter(TimeSpan.FromMinutes(5));
         var start = new ProcessStartInfo("git") { WorkingDirectory = path, UseShellExecute = false,
             RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
         start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
+        start.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        ConfigureProcess(start);
         start.ArgumentList.Add("cat-file"); start.ArgumentList.Add("blob"); start.ArgumentList.Add(oid);
-        using var child = Process.Start(start);
+        using var child = StartProcess(start);
         if (child is null) return null;
         using var output = new MemoryStream();
-        var copy = child.StandardOutput.BaseStream.CopyToAsync(output, ct);
-        var error = child.StandardError.ReadToEndAsync(ct);
+        var copy = child.StandardOutput.BaseStream.CopyToAsync(output, budget.Token);
+        var error = child.StandardError.ReadToEndAsync(budget.Token);
         try
         {
             await Task.WhenAll(copy, error);
-            await child.WaitForExitAsync(ct);
+            await child.WaitForExitAsync(budget.Token);
         }
         catch
         {
