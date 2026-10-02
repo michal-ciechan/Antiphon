@@ -226,6 +226,13 @@ public sealed class RunnerTaskSettlementTests
             Workspace: workspace, WorkingDirectory: world.RepositoryPath,
             Card: world.Card.Id.ToString("D")));
         var session = await world.DispatchAsync(created.Id);
+        await using (var seed = world.CreateContext())
+        {
+            var task = await seed.AgentTasks.SingleAsync(t => t.Id == created.Id);
+            task.CompletionProgressEvidenceJson = TaskProgressJson.SerializeEvidence(new(
+                1, CompletionProgressAssessment.NoAttributedProgress, Reason: "no_movement"));
+            await seed.SaveChangesAsync();
+        }
         await world.SeedTurnAsync(session, created.Id,
             "Plan complete.\n\n--- next stage ---\nnext: code\nhandoff: Implement the plan.\n"
             + DelegationReportFormatter.ReportToken(created.Id, "done"));
