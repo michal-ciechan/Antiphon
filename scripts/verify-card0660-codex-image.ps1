@@ -1,6 +1,7 @@
 # CARD-0660 V-9 image qualification (Q-1 runtime, Q-2 session-testing; CP-10/11). Evidence
 # tooling, not product. Builds ONE image target in the foreground (or checks a separately built
-# CARD-0904 image with -SkipBuild), then grades eight rows by
+# CARD-0904 image with -SkipBuild), then grades eight Codex rows plus a net9 offline
+# apphost row for the SDK-bearing session-testing target by
 # running docker/session-runner-grok/verify-codex-image.sh inside throwaway containers of that
 # image: phone-home disabled, --network none, no published port, no Docker socket, not
 # privileged, and only this run's own volumes. session-testing's DinD entrypoint is overridden
@@ -11,8 +12,8 @@
 # is touched.
 #
 # Rows: (1) version (2) layout (3) install-readonly (4) no-baked-auth (5) fresh-home (6) trust
-# (7) preserve (8) config-accepted.
-# Exit codes: 0 all 8 rows ok, 1 one or more rows not ok, 2 setup failed (dirty or mismatched
+# (7) preserve (8) config-accepted; session-testing also grades (9) net9-offline.
+# Exit codes: 0 all applicable rows ok, 1 one or more rows not ok, 2 setup failed (dirty or mismatched
 # source, reused tag, non-fresh results root, no Docker, failed build or image revision mismatch).
 param(
     [Parameter(Mandatory = $true)][ValidateSet('runtime', 'session-testing')][string] $Target,
@@ -38,6 +39,7 @@ $rows = [ordered]@{
     'version' = 'unknown'; 'layout' = 'unknown'; 'install-readonly' = 'unknown'; 'no-baked-auth' = 'unknown'
     'fresh-home' = 'unknown'; 'trust' = 'unknown'; 'preserve' = 'unknown'; 'config-accepted' = 'unknown'
 }
+if ($Target -eq 'session-testing') { $rows['net9-offline'] = 'unknown' }
 $imageId = 'none'
 $volumesCreated = $false
 
@@ -63,7 +65,7 @@ function Exit-Qualification([int] $code, [string] $reason) {
     $okCount = @($rows.Values | Where-Object { $_ -eq 'ok' }).Count
     $summary = @()
     if ($reason) { $summary += "C660 IMAGE NOTE: $reason" }
-    $summary += ("C660 IMAGE: target={0} image={1} imageId={2} source={3} rows={4}/8 " -f $Target, $Image, $imageId, $SourceRevision, $okCount) +
+    $summary += ("C660 IMAGE: target={0} image={1} imageId={2} source={3} rows={4}/{5} " -f $Target, $Image, $imageId, $SourceRevision, $okCount, $rows.Count) +
         (($rows.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ' ')
     $summary += "C660 IMAGE EXIT CODE: $code"
     if ($resultsPath -and (Test-Path -LiteralPath $resultsPath)) { Write-Evidence 'result.txt' ($summary -join "`n") }
@@ -157,6 +159,9 @@ $rows['no-baked-auth'] = Invoke-Probe 'no-baked-auth' '0:0' @()
 $rows['fresh-home'] = Invoke-Probe 'fresh-home' '1654:1654' @()
 $rows['trust'] = Invoke-Probe 'trust' '1654:1654' @()
 $rows['config-accepted'] = Invoke-Probe 'config-accepted' '1654:1654' @()
+if ($Target -eq 'session-testing') {
+    $rows['net9-offline'] = Invoke-Probe 'net9-offline' '1654:1654' @()
+}
 
 # Row 7: sentinel config and auth, a second init, then the same bytes, owner and mode.
 $nonce = [guid]::NewGuid().ToString('N')

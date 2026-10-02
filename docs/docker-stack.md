@@ -2,6 +2,22 @@
 
 ## Shared server2 runner caches (CARD-0849)
 
+The `session-testing` image now carries the .NET 9.0.20 `Microsoft.NETCore.App.Ref`,
+`Microsoft.AspNetCore.App.Ref`, and `Microsoft.NETCore.App.Host.linux-x64` packs in
+`/usr/share/dotnet/packs`. Its SDK remains 10.0.401, selected by `global.json`. The
+packs come from Microsoft's SDK 9.0.318 Linux x64 archive, pinned to the SHA-512 in
+the [official .NET 9 release record](https://builds.dotnet.microsoft.com/dotnet/release-metadata/9.0/releases.json)
+and checked before extraction. Only those three packs are copied into the final image;
+the .NET 9 SDK is not installed alongside SDK 10. `scripts/verify-card0660-codex-image.ps1`
+checks the eight Codex rows and, for `session-testing`, a ninth `net9-offline` row:
+uid 1654 restores, builds, and runs a `net9.0` native apphost with `--network none`,
+an empty NuGet package directory, and an empty NuGet home. This covers framework
+targeting and the Linux x64 apphost. Ordinary `PackageReference` packages still need
+online restore or the best-effort shared cache. The Seed cache-only assertions below
+still describe the existing CARD-0849 scripts; CARD-0912 owns their cold-first-Seed
+update. Deploy the rebuilt image to server2-temp first within the CARD-0849 rolling
+window, with a cold cache.
+
 `docker-compose.server2-runner.yml` declares three external local Docker volumes shared by
 the `antiphon-runner` and `antiphon-runner-temp` Compose projects:
 
