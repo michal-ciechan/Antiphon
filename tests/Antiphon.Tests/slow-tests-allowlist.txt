@@ -207,3 +207,4 @@ Antiphon.Tests.Checkpoints.CheckpointSourceExecutionTests
 Antiphon.Tests.Application.CheckpointSourceApprovalTests
 # CARD-0788: real reply settlement with isolated database and scratch Git repository.
 Antiphon.Tests.Application.ReviewEvidenceConsistencyTests
+Antiphon.Tests.Application.CompletionWarningDeliveryTests
