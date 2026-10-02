@@ -220,6 +220,7 @@ public static class PhoneHomeProblemTypes
     public const string BootConflict = "phone_home_boot_conflict";
     public const string UnsupportedOperation = "phone_home_unsupported_operation";
     public const string UnsupportedTarget = "phone_home_unsupported_target";
+    public const string SpillWriteFailedBeforeInput = "spill_write_failed_before_input";
     public const string UnpublishedWork = "phone_home_unpublished_work";
     public const string RepositoryNotAdmitted = "phone_home_repository_not_admitted";
     public const string RepositoryMismatch = "phone_home_repository_mismatch";

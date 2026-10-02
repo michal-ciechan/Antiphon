@@ -676,6 +676,8 @@ public class AgentTaskEvent
     public AgentTaskEventType Type { get; set; }
     public AgentModelLevel? ModelLevel { get; set; }
     public string Detail { get; set; } = string.Empty;
+    /// <summary>Exact marked caller input; populated only for newly queued task inputs.</summary>
+    public string? InputBody { get; set; }
     public DateTime At { get; set; }
     public Guid? LandingOperationId { get; set; }
     public Guid? LandRequestId { get; set; }

@@ -40,6 +40,10 @@ export interface AttentionVisual {
 }
 
 export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
+  TaskInputUnreadable: {
+    label: 'Input unreadable', color: 'warning', icon: TbEyeOff,
+    hint: 'The delegate says it cannot read a caller refinement or reply. Open the task and session evidence.',
+  },
   ChannelOutboundDelivery: {
     label: 'Outbound reply held', color: 'danger', icon: TbMailExclamation,
     hint: 'An agent reply could not be published safely. Inspect the delivery and conversion task evidence.',

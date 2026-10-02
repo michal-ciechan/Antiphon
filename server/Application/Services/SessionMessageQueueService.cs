@@ -140,6 +140,15 @@ public sealed partial class SessionMessageQueueService
         _remoteSpills.Stage(sessionId, runnerCwd, spill);
     }
 
+    internal bool TryStageTaskInputSpill(Guid sessionId, string runnerCwd, PhoneHomeInputSpill spill)
+    {
+        if (_remoteSpills is null || string.IsNullOrWhiteSpace(runnerCwd)
+            || string.IsNullOrWhiteSpace(spill.RelativePath))
+            return false;
+        _remoteSpills.Stage(sessionId, runnerCwd, spill);
+        return true;
+    }
+
     private RemoteSpillCourier.StagedSpill? BindStagedSpill(Guid sessionId, SessionQueuedMessage row)
     {
         if (_remoteSpills is null || !_remoteSpills.TryPeek(sessionId, row.Body, out var staged))
@@ -214,6 +223,67 @@ public sealed partial class SessionMessageQueueService
             return true;
         await RemoteSpillCourier.CancelUndeliverableAsync(db, row, [], ct);
         return false;
+    }
+
+    /// <summary>Replace only a first-attempt, event-owned input after a proven pre-input refusal.</summary>
+    private async Task<bool> TryCommitTaskInputFallbackAsync(
+        AppDbContext db, Guid sessionId, SessionQueuedMessage row, CancellationToken ct)
+    {
+        if (row.Origin != QueuedMessageOrigin.Delegation || row.SourceTaskId is not null
+            || row.DeliveryAttempts != 1 || row.DeliveryVerdict is not null
+            || row.RemoteSpillBody is null || row.RemoteSpillRelativePath is null
+            || !row.Body.Contains(row.RemoteSpillRelativePath, StringComparison.Ordinal)
+            || !AgentTaskInputService.TryParseConversationKey(
+                row.ConversationKey, out var taskId, out var eventId))
+            return false;
+
+        var inputEvent = await db.AgentTaskEvents.AsNoTracking().SingleOrDefaultAsync(
+            e => e.Id == eventId && e.AgentTaskId == taskId && e.AgentSessionId == sessionId
+                && e.InputBody != null
+                && (e.Type == AgentTaskEventType.Refined || e.Type == AgentTaskEventType.Replied), ct);
+        var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(
+            t => t.Id == taskId && t.AgentSessionId == sessionId, ct);
+        var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(
+            s => s.Id == sessionId && s.RunnerId != null, ct);
+        if (inputEvent is null || task is null || session is null)
+            return false;
+
+        var limits = _delegationSettings.CeilingsFor(
+            PtyBackend.InboxConhost, "runner-bound input").ForAgentKind(session.AgentKind);
+        var pointer = DelegationReportFormatter.BuildTaskInputPointer(task, eventId, null,
+            inputEvent.InputBody!.Length, session.AgentKind, limits.SingleWriteMaxBytes,
+            reply: inputEvent.Type == AgentTaskEventType.Replied);
+        var warningKey = $"input {eventId:D} queue {row.Id:D}";
+        await using var transaction = db.Database.CurrentTransaction is null
+            ? await db.Database.BeginTransactionAsync(ct) : null;
+        if (!await db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == taskId
+            && e.Type == AgentTaskEventType.Warning && e.Detail.Contains(warningKey), ct))
+        {
+            db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(), AgentTaskId = taskId, AgentSessionId = sessionId,
+                Type = AgentTaskEventType.Warning, At = UtcNow(),
+                Detail = $"spill_write_failed_before_input: {warningKey}; exact input: {AgentTaskInputService.Route(taskId, eventId)}",
+            });
+        }
+        // Keep the durable bytes through the normal complete-prompt receipt, but remove the
+        // file pointer from the wire so FindDurableAsync sends no spill on the next attempt.
+        var oldWire = row.Body;
+        row.Body = pointer;
+        row.RemoteSpillRelativePath = null;
+        row.Status = QueuedMessageStatus.Pending;
+        row.SentAt = null;
+        row.DeliveryAttempts = 0;
+        row.LastDeliveryStartedAt = null;
+        row.LastDeliveryGeneration = null;
+        row.LastDeliveryBaselineSequence = null;
+        ClearAttemptVerdict(row);
+        await db.SaveChangesAsync(ct);
+        if (transaction is not null)
+            await transaction.CommitAsync(ct);
+        if (_remoteSpills is not null && _remoteSpills.TryPeek(sessionId, oldWire, out var staged))
+            _remoteSpills.Ack(sessionId, staged);
+        return true;
     }
 
     private async Task PersistHeldSpillAsync(
@@ -912,6 +982,14 @@ public sealed partial class SessionMessageQueueService
 
             var capturedGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
             outcome = await DeliverAsync(sessionId, nowBody, ct, nowBaseline);
+            if (outcome.SpillWriteFailedBeforeInput)
+            {
+                if (!await TryCommitTaskInputFallbackAsync(db, sessionId, row, ct))
+                    await RevertRunAsync(db, [row]);
+                throw new ConflictException(
+                    "Runner could not write the input spill before typing; queued delivery was deferred.",
+                    PhoneHomeProblemTypes.SpillWriteFailedBeforeInput);
+            }
             if (outcome.Verdict == DeliveryVerdict.ForbiddenBody)
             {
                 await RevertRunAsync(db, [row]);
@@ -1328,6 +1406,14 @@ public sealed partial class SessionMessageQueueService
             {
                 await CancelJustClaimedExpiredBriefsAsync(db, [message], ct);
                 return await BuildQueueDtoAsync(db, sessionId, MaxAttempts, ct);
+            }
+            if (outcome.SpillWriteFailedBeforeInput)
+            {
+                if (!await TryCommitTaskInputFallbackAsync(db, sessionId, message, ct))
+                    await RevertRunAsync(db, [message]);
+                throw new ConflictException(
+                    "Runner could not write the input spill before typing; queued delivery was deferred.",
+                    PhoneHomeProblemTypes.SpillWriteFailedBeforeInput);
             }
             if (outcome.UnavailabilityCode is not null)
             {
@@ -2366,6 +2452,14 @@ public sealed partial class SessionMessageQueueService
             return FlushResult.Failed;
         }
 
+        if (outcome.SpillWriteFailedBeforeInput)
+        {
+            if (run.Count != 1
+                || !await TryCommitTaskInputFallbackAsync(db, sessionId, run[0], ct))
+                await RevertRunAsync(db, run);
+            return FlushResult.Failed;
+        }
+
         if (outcome.Verdict == DeliveryVerdict.Delivered)
         {
             foreach (var landRow in run.Where(m => m.SourceLandNotificationId != null))
@@ -3047,7 +3141,7 @@ public sealed partial class SessionMessageQueueService
 
     private readonly record struct DeliveryOutcome(
         DeliveryVerdict Verdict, string? RecordText = null, string ConfirmedBy = DeliveryConfirmedBy.None,
-        string? UnavailabilityCode = null)
+        string? UnavailabilityCode = null, bool SpillWriteFailedBeforeInput = false)
     {
         public static DeliveryOutcome Delivered { get; } = new(DeliveryVerdict.Delivered);
         public static DeliveryOutcome Of(DeliveryVerdict verdict, string? recordText = null) =>
@@ -3431,6 +3525,12 @@ public sealed partial class SessionMessageQueueService
         try
         {
             await _runtime.SendInputAsync(sessionId, payload, ct);
+        }
+        catch (RunnerSpillWriteException)
+        {
+            // The runner issued this code inside its spill writer, before SendInputAsync.
+            return new DeliveryOutcome(DeliveryVerdict.BackendUnreachable,
+                SpillWriteFailedBeforeInput: true);
         }
         // CARD-0693: an unreachable body write is refundable even after an overlay Esc: no body
         // byte has left. Once the body leaves, an unreachable Enter or re-Enter must keep the

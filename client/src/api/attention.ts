@@ -24,6 +24,7 @@ export type AttentionKind =
   | 'ZombieCensusReport'
   /** A task is still open under a card that was closed or archived; it was not stopped (CARD-0738). */
   | 'CardClosedWhileWorking'
+  | 'TaskInputUnreadable'
   | 'LandHeld'
   | 'LandNoProgress'
   | 'LandOutcomeUnconfirmed'

@@ -118,10 +118,22 @@ public sealed class PhoneHomeCommandDispatcher
         var spill = raw.Deserialize<PhoneHomeInputSpill>(PhoneHomeFraming.Json);
         if (spill is null || string.IsNullOrWhiteSpace(spill.RelativePath))
             return;
-        if (!payload.TryGetProperty("runnerCwd", out var cwd) || cwd.ValueKind != System.Text.Json.JsonValueKind.String)
+        try
+        {
+            if (!payload.TryGetProperty("runnerCwd", out var cwd)
+                || cwd.ValueKind != System.Text.Json.JsonValueKind.String)
+                throw new PhoneHomeAdmissionException(
+                    PhoneHomeProblemTypes.UnsupportedTarget, "A spill requires the session's runner cwd.", 409);
+            await Workspace().WriteSpillAsync(cwd.GetString()!, spill, ct);
+        }
+        catch (Exception ex) when (ex is PhoneHomeAdmissionException or IOException
+            or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
+        {
+            // This code is emitted only before SendInputAsync starts. Do not include a host path.
             throw new PhoneHomeAdmissionException(
-                PhoneHomeProblemTypes.UnsupportedTarget, "A spill requires the session's runner cwd.", 409);
-        await Workspace().WriteSpillAsync(cwd.GetString()!, spill, ct);
+                PhoneHomeProblemTypes.SpillWriteFailedBeforeInput,
+                "The runner could not write this input spill before sending input.", 409);
+        }
     }
 
     public async Task<PhoneHomeFrame> DispatchAsync(PhoneHomeFrame request, CancellationToken ct)
