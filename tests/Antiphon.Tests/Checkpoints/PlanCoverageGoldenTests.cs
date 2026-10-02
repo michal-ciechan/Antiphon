@@ -11,9 +11,10 @@ public sealed class PlanCoverageGoldenTests
     {
         var path = Path.Combine(CheckpointFixtures.RepoRoot, "docs", "superpowers", "plans", "2026-09-30-card-0780-retire-temp-date-parse-plan.md");
         var row = File.ReadAllLines(path).Single(l => l.StartsWith("| R-1 |", StringComparison.Ordinal));
+        row.ShouldContain("`ClaudeTokenRefreshOptInTests` (6 results)", Case.Sensitive, "coverage-c780-count-present");
         var report = new PlanCoverageAnalyzer().Analyze("c780-r1.md", PlanCoverageFixture.Plan(row),
             [new("source.cs", "class ClaudeTokenRefreshOptInTests { [Test] void Regression() {} }")]);
-        report.CountPromises.ShouldContain(p => p.Id == "R-1" && p.Class == "ClaudeTokenRefreshOptInTests" && p.Expected == 6, "coverage-c780-count-present");
+        report.Obligations.ShouldBeEmpty("coverage-c780-no-bound-methods");
         report.Diagnostics.ShouldBeEmpty("coverage-c780-master-findings");
         report.ExitCode.ShouldBe(0, "coverage-c780-class-only-clean");
     }
