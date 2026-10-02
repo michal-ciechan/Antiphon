@@ -119,13 +119,15 @@ public class HttpResilienceRegistrationTests
     {
         var time = new ControlledTimeProvider();
         var runnerEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var runnerCancelled = new TaskCompletionSource<DateTimeOffset>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runnerCancelled = new TaskCompletionSource<(int Phase, DateTimeOffset At, bool TokenCancelled)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         using var runnerCancellation = new RetainedCancellationRegistration();
         CancellationToken runnerToken = default;
         var reads = new ScriptHandler(async (_, ct) =>
         {
             runnerToken = ct;
-            runnerCancellation.Register(ct, () => runnerCancelled.TrySetResult(time.GetUtcNow()));
+            runnerCancellation.Register(ct, () => runnerCancelled.TrySetResult(
+                (1, time.GetUtcNow(), ct.IsCancellationRequested)));
             runnerEntered.TrySetResult();
             await Task.Delay(Timeout.Infinite, ct);
             return ResilienceTestHost.Status(HttpStatusCode.OK);
@@ -143,19 +145,23 @@ public class HttpResilienceRegistrationTests
         runnerToken.IsCancellationRequested.ShouldBeFalse("runner-owner-cancel-at-3");
         await ResilienceTestHost.AdvanceAfterAsync(time, runnerTimer!, runnerCancelled.Task,
             started + TimeSpan.FromSeconds(3), runnerToken);
-        (await runnerCancelled.Task).ShouldBe(started + TimeSpan.FromSeconds(3),
-            "runner-owner-cancel-at-3");
+        var runnerPhase = await runnerCancelled.Task;
+        runnerPhase.Phase.ShouldBe(1, "runner-owner-cancel-at-3");
+        runnerPhase.At.ShouldBe(started + TimeSpan.FromSeconds(3), "runner-owner-cancel-at-3");
+        runnerPhase.TokenCancelled.ShouldBeTrue("runner-owner-cancel-at-3");
         await Should.ThrowAsync<TaskCanceledException>(() => runnerWork.WaitAsync(TimeSpan.FromSeconds(5)));
 
         var gitTime = new ControlledTimeProvider();
         var gitEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var gitCancelled = new TaskCompletionSource<DateTimeOffset>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gitCancelled = new TaskCompletionSource<(int Phase, DateTimeOffset At, bool TokenCancelled)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         using var gitCancellation = new RetainedCancellationRegistration();
         CancellationToken gitToken = default;
         var gitHandler = new ScriptHandler(async (_, ct) =>
         {
             gitToken = ct;
-            gitCancellation.Register(ct, () => gitCancelled.TrySetResult(gitTime.GetUtcNow()));
+            gitCancellation.Register(ct, () => gitCancelled.TrySetResult(
+                (1, gitTime.GetUtcNow(), ct.IsCancellationRequested)));
             gitEntered.TrySetResult();
             await Task.Delay(Timeout.Infinite, ct);
             return ResilienceTestHost.Status(HttpStatusCode.OK);
@@ -192,8 +198,10 @@ public class HttpResilienceRegistrationTests
         gitToken.IsCancellationRequested.ShouldBeFalse("git-owner-cancel-at-10");
         await ResilienceTestHost.AdvanceAfterAsync(gitTime, gitTimer!, gitCancelled.Task,
             gitStarted + TimeSpan.FromSeconds(10), gitToken);
-        (await gitCancelled.Task).ShouldBe(gitStarted + TimeSpan.FromSeconds(10),
-            "git-owner-cancel-at-10");
+        var gitPhase = await gitCancelled.Task;
+        gitPhase.Phase.ShouldBe(1, "git-owner-cancel-at-10");
+        gitPhase.At.ShouldBe(gitStarted + TimeSpan.FromSeconds(10), "git-owner-cancel-at-10");
+        gitPhase.TokenCancelled.ShouldBeTrue("git-owner-cancel-at-10");
         var result = await gitWork.WaitAsync(TimeSpan.FromSeconds(5));
         result.Success.ShouldBeFalse();
         (gitTime.GetUtcNow() - gitStarted).ShouldBe(TimeSpan.FromSeconds(10));

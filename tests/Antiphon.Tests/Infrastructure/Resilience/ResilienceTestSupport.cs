@@ -153,6 +153,12 @@ internal static class ResilienceTestHost
     {
         if (timer.Sequence <= 0 || timer.Deadline != boundary || time.GetUtcNow() > boundary)
             throw new InvalidOperationException("Expected timer was not registered at the requested boundary.");
+        var dueTimers = time.Events.GroupBy(e => e.TimerId).Select(group => group.Last())
+            .Where(e => e.Action is "create" or "change" && e.DueTime > TimeSpan.Zero
+                && e.Deadline <= boundary).ToArray();
+        if (dueTimers.Length == 0 || dueTimers.Any(e => e.Deadline != boundary)
+            || dueTimers.All(e => e.TimerId != timer.TimerId))
+            throw new InvalidOperationException("all-timers-at-boundary: live timer inventory changed before advance.");
         time.AdvanceTo(boundary);
         var watchdog = Stopwatch.StartNew();
         while (!phase.IsCompleted)
@@ -171,11 +177,16 @@ internal static class ResilienceTestHost
             // A timer can be registered or rearmed by a continuation after the first advance.
             // Drive due callbacks again without changing the asserted virtual instant.
             time.Advance(TimeSpan.Zero);
+            if (time.GetUtcNow() != boundary)
+                throw new InvalidOperationException("held-completion-keeps-time-at-boundary");
             if (!phase.IsCompleted)
                 await Task.WhenAny(phase, Task.Delay(1));
         }
 
         await phase;
+        if (!token.IsCancellationRequested || time.GetUtcNow() != boundary
+            || !time.Events.Any(e => e.Action == "fire" && e.RegisteredAt == boundary))
+            throw new InvalidOperationException("cancellation-callback-at-boundary: timer/token phase was not acknowledged.");
     }
 
     public static HttpResponseMessage Status(HttpStatusCode status, string body = "") =>

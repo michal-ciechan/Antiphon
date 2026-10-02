@@ -61,6 +61,30 @@ public class RunnerCodexAdapterSubmitConfirmTests
         client.Enters.ShouldBe(4, "submit-enter-4-before-deadline");
         client.BodyWrites.ShouldBe(1);
 
+        // The helper reaches its first fake poll before returning this pending task.
+        var directClock = new ControlledTimeProvider();
+        using var directCancel = new CancellationTokenSource();
+        var direct = CodexSubmitConfirmation.SubmitAsync(
+            Body, 1, _ => Task.CompletedTask, _ => Task.CompletedTask,
+            _ => Task.FromResult<IReadOnlyList<SessionRunnerTranscriptEvent>?>(
+                [Row(1, TranscriptKinds.UserPrompt, "previous turn")]),
+            _ => Task.FromResult(string.Empty),
+            new CodexSubmitOptions(TimeSpan.FromMilliseconds(150), 3,
+                TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(250), directClock),
+            null, directCancel.Token);
+        try
+        {
+            direct.IsCompleted.ShouldBeFalse("submit-poll-uses-clock");
+            directClock.Events.ShouldContain(e => e.DueTime == TimeSpan.FromMilliseconds(250)
+                && e.Deadline == directClock.GetUtcNow() + TimeSpan.FromMilliseconds(250),
+                "submit-poll-uses-clock");
+        }
+        finally
+        {
+            directCancel.Cancel();
+            try { await direct; } catch (Exception) { }
+        }
+
         // The real deadline may stop re-presses early. Hold the transcript read after Enter
         // three, then expire the virtual budget before that read is released.
         var cutoffClock = new ControlledTimeProvider();
@@ -184,6 +208,27 @@ public class RunnerCodexAdapterSubmitConfirmTests
         client.Enters.ShouldBe(4, "submit-enter-4-before-deadline");
         client.BodyWrites.ShouldBe(1);
         client.SnapshotReads.ShouldBe(2, "blind-body-two-looks");
+
+        var directClock = new ControlledTimeProvider();
+        using var directCancel = new CancellationTokenSource();
+        var direct = CodexSubmitConfirmation.SubmitAsync(
+            Body, 0, _ => Task.CompletedTask, _ => Task.CompletedTask,
+            _ => Task.FromResult<IReadOnlyList<SessionRunnerTranscriptEvent>?>(null),
+            _ => Task.FromResult(Body),
+            new CodexSubmitOptions(TimeSpan.Zero, 0, TimeSpan.Zero,
+                TimeSpan.FromMilliseconds(250), directClock), null, directCancel.Token);
+        try
+        {
+            direct.IsCompleted.ShouldBeFalse("blind-settle-uses-clock");
+            directClock.Events.ShouldContain(e => e.DueTime == CodexMcpBoot.AbsentSettle
+                && e.Deadline == directClock.GetUtcNow() + CodexMcpBoot.AbsentSettle,
+                "blind-settle-uses-clock");
+        }
+        finally
+        {
+            directCancel.Cancel();
+            try { await direct; } catch (OperationCanceledException) { }
+        }
     }
 
     [Test]
@@ -311,6 +356,13 @@ public class RunnerCodexAdapterSubmitConfirmTests
             first.ShouldBe(timerTask, "submit-poll-uses-clock");
             time.AdvanceTo(expected);
             await enters[enter].Task.WaitAsync(TimeSpan.FromSeconds(5));
+            if (enter is 2 or 3)
+            {
+                (client.Enters - priorEnters).ShouldBe(enter,
+                    $"submit-enter-{enter}-at-{250 * (enter - 1)}");
+                time.GetUtcNow().ShouldBe(expected,
+                    $"submit-enter-{enter}-at-{250 * (enter - 1)}");
+            }
             if (enter == 4)
                 (client.Enters - priorEnters).ShouldBe(4, "submit-enter-4-before-deadline");
         }

@@ -69,7 +69,8 @@ public class ResilienceBudgetTests
         var step = 0;
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var secondEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var cancelled = new TaskCompletionSource<DateTimeOffset>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = new TaskCompletionSource<(int Phase, DateTimeOffset At, bool TokenCancelled)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var firstCancellation = new RetainedCancellationRegistration();
         CancellationToken firstToken = default;
@@ -78,7 +79,8 @@ public class ResilienceBudgetTests
             if (Interlocked.Increment(ref step) == 1)
             {
                 firstToken = ct;
-                firstCancellation.Register(ct, () => cancelled.TrySetResult(time.GetUtcNow()));
+                firstCancellation.Register(ct, () => cancelled.TrySetResult(
+                    (1, time.GetUtcNow(), ct.IsCancellationRequested)));
                 entered.TrySetResult();
                 try { await Task.Delay(Timeout.Infinite, ct); }
                 catch (OperationCanceledException) { }
@@ -107,7 +109,10 @@ public class ResilienceBudgetTests
             firstToken.IsCancellationRequested.ShouldBeFalse("attempt-cancel-at-10");
             await ResilienceTestHost.AdvanceAfterAsync(time, attemptTimer!, cancelled.Task,
                 started + TimeSpan.FromSeconds(10), firstToken);
-            (await cancelled.Task).ShouldBe(started + TimeSpan.FromSeconds(10), "attempt-cancel-at-10");
+            var firstCancel = await cancelled.Task;
+            firstCancel.Phase.ShouldBe(1, "attempt-cancel-at-10");
+            firstCancel.At.ShouldBe(started + TimeSpan.FromSeconds(10), "attempt-cancel-at-10");
+            firstCancel.TokenCancelled.ShouldBeTrue("attempt-cancel-at-10");
             time.GetUtcNow().ShouldBe(started + TimeSpan.FromSeconds(10),
                 "held-completion-keeps-time-at-10");
             handler.Sends.ShouldBe(1, "cancelled-attempt-is-terminal");

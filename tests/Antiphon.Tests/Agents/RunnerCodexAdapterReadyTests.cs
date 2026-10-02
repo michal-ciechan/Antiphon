@@ -70,11 +70,16 @@ public class RunnerCodexAdapterReadyTests
             var registered = await Task.WhenAny(pollTask, Task.Delay(TimeSpan.FromSeconds(5)));
             registered.ShouldBe(pollTask, "snapshot-one-before-first-poll");
             var poll = await pollTask;
+            new[] { "create", "change" }.ShouldContain(poll.Action,
+                "snapshot-one-before-first-poll");
             poll.Deadline.ShouldBe(time.GetUtcNow() + TimeSpan.FromMilliseconds(50));
             client.SnapshotCompletions.ShouldBe(1, "snapshot-one-before-first-poll");
 
             time.AdvanceTo(poll.Deadline);
-            var next = await Task.WhenAny(secondEntered.Task, ready).WaitAsync(TimeSpan.FromSeconds(5));
+            var nextTimer = time.WaitForTimerAsync(e => e.DueTime > TimeSpan.Zero,
+                poll.Sequence, cancel.Token);
+            var next = await Task.WhenAny(secondEntered.Task, ready, nextTimer)
+                .WaitAsync(TimeSpan.FromSeconds(5));
             client.SnapshotAttempts.ShouldBe(2, "snapshot-two-held");
             client.SnapshotCompletions.ShouldBe(1, "snapshot-two-held");
             next.ShouldBe(secondEntered.Task, "snapshot-two-held");
