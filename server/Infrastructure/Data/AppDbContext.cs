@@ -55,6 +55,10 @@ public class AppDbContext : DbContext
     public DbSet<LegacyCheckNotePublication> LegacyCheckNotePublications => Set<LegacyCheckNotePublication>();
     public DbSet<AgentIncident> AgentIncidents => Set<AgentIncident>();
     public DbSet<HostBudget> HostBudgets => Set<HostBudget>();
+    public DbSet<HostCleanupRun> HostCleanupRuns => Set<HostCleanupRun>();
+    public DbSet<HostCleanupCandidate> HostCleanupCandidates => Set<HostCleanupCandidate>();
+    public DbSet<HostCleanupHold> HostCleanupHolds => Set<HostCleanupHold>();
+    public DbSet<HostMaintenanceActivity> HostMaintenanceActivities => Set<HostMaintenanceActivity>();
     public DbSet<FileReviewState> FileReviewStates => Set<FileReviewState>();
     public DbSet<FileSectionReview> FileSectionReviews => Set<FileSectionReview>();
     public DbSet<AgentReviewCheckpoint> AgentReviewCheckpoints => Set<AgentReviewCheckpoint>();
@@ -119,6 +123,83 @@ public class AppDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<HostCleanupRun>(entity =>
+        {
+            entity.ToTable("HostCleanupRuns", table =>
+            {
+                table.HasCheckConstraint("CK_HostCleanupRuns_Budget",
+                    "\"AttemptLimit\" > 0 AND \"ByteLimit\" > 0 AND \"Attempts\" >= 0 AND \"Attempts\" <= \"AttemptLimit\" AND \"ReservedBytes\" >= 0 AND \"ReservedBytes\" <= \"ByteLimit\" AND \"ReclaimedBytes\" >= 0 AND \"EligibleWorktreeBytes\" >= 0");
+            });
+            entity.HasKey(run => run.Id);
+            entity.Property(run => run.HostId).IsRequired().HasMaxLength(64);
+            entity.Property(run => run.StorageId).IsRequired().HasMaxLength(200);
+            entity.Property(run => run.RunnerStoreId).IsRequired().HasMaxLength(200);
+            entity.Property(run => run.ProcessBootId).IsRequired().HasMaxLength(200);
+            entity.Property(run => run.SourceSha).IsRequired().HasMaxLength(64);
+            entity.Property(run => run.ConfigDigest).IsRequired().HasMaxLength(64);
+            entity.Property(run => run.PlanDigest).IsRequired().HasMaxLength(64);
+            entity.Property(run => run.ReceiptDigest).HasMaxLength(64);
+            entity.Property(run => run.Status).IsRequired().HasMaxLength(64);
+            entity.Property(run => run.NextCursor).HasMaxLength(1000);
+            entity.HasIndex(run => new { run.StorageId, run.LocalDate }).IsUnique()
+                .HasFilter("\"Daily\" = TRUE");
+            entity.HasIndex(run => new { run.BoardId, run.HostId, run.PlannedAt });
+        });
+
+        modelBuilder.Entity<HostCleanupCandidate>(entity =>
+        {
+            entity.ToTable("HostCleanupCandidates", table =>
+                table.HasCheckConstraint("CK_HostCleanupCandidates_WorktreeInventory",
+                    "\"ReclaimedBytes\" >= 0 AND (NOT \"Worktree\" OR (\"ReclaimedBytes\" = 0 AND \"ReservedBytes\" IS NULL AND (\"Outcome\" IS NULL OR \"Outcome\" = 'inventory_only')))"));
+            entity.HasKey(candidate => candidate.Id);
+            entity.Property(candidate => candidate.CanonicalPath).IsRequired().HasMaxLength(4000);
+            entity.Property(candidate => candidate.StorageId).IsRequired().HasMaxLength(200);
+            entity.Property(candidate => candidate.FileId).HasMaxLength(200);
+            entity.Property(candidate => candidate.OwnerGeneration).HasMaxLength(200);
+            entity.Property(candidate => candidate.Family).IsRequired().HasMaxLength(64);
+            entity.Property(candidate => candidate.Disposition).IsRequired().HasMaxLength(32);
+            entity.Property(candidate => candidate.ReasonCode).IsRequired().HasMaxLength(64);
+            entity.Property(candidate => candidate.ContentClass).IsRequired().HasMaxLength(32);
+            entity.Property(candidate => candidate.ExistingOwner).IsRequired().HasMaxLength(64);
+            entity.Property(candidate => candidate.OwnerRefusalCode).HasMaxLength(64);
+            entity.Property(candidate => candidate.Branch).HasMaxLength(300);
+            entity.Property(candidate => candidate.SourceSha).HasMaxLength(64);
+            entity.Property(candidate => candidate.PushedSha).HasMaxLength(64);
+            entity.Property(candidate => candidate.TargetSha).HasMaxLength(64);
+            entity.Property(candidate => candidate.Outcome).HasMaxLength(64);
+            entity.HasIndex(candidate => new { candidate.RunId, candidate.Ordinal }).IsUnique();
+            entity.HasOne(candidate => candidate.Run).WithMany(run => run.Candidates)
+                .HasForeignKey(candidate => candidate.RunId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<HostCleanupHold>(entity =>
+        {
+            entity.ToTable("HostCleanupHolds");
+            entity.HasKey(hold => hold.Id);
+            entity.Property(hold => hold.HostId).IsRequired().HasMaxLength(64);
+            entity.Property(hold => hold.StorageId).IsRequired().HasMaxLength(200);
+            entity.Property(hold => hold.CanonicalPath).HasMaxLength(4000);
+            entity.Property(hold => hold.OwnerGeneration).HasMaxLength(200);
+            entity.Property(hold => hold.UnresolvedTaskPrefix).HasMaxLength(64);
+            entity.Property(hold => hold.Reason).IsRequired().HasMaxLength(400);
+            entity.Property(hold => hold.Creator).IsRequired().HasMaxLength(200);
+            entity.Property(hold => hold.DispositionReason).HasMaxLength(400);
+            entity.Property(hold => hold.Revision).IsConcurrencyToken();
+            entity.HasIndex(hold => new { hold.BoardId, hold.StorageId, hold.DisposedAt });
+        });
+
+        modelBuilder.Entity<HostMaintenanceActivity>(entity =>
+        {
+            entity.ToTable("HostMaintenanceActivities");
+            entity.HasKey(activity => activity.StorageId);
+            entity.Property(activity => activity.StorageId).HasMaxLength(200);
+            entity.Property(activity => activity.HostId).IsRequired().HasMaxLength(64);
+            entity.Property(activity => activity.MaintenanceKind).HasMaxLength(64);
+            entity.Property(activity => activity.WorkerStoreId).HasMaxLength(200);
+            entity.Property(activity => activity.WorkerBootId).HasMaxLength(200);
+            entity.Property(activity => activity.Revision).IsConcurrencyToken();
+        });
 
         modelBuilder.Entity<HostBudget>(entity =>
         {
