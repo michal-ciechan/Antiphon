@@ -281,7 +281,7 @@ public sealed class AgentTaskLandSourceResolver(
         {
             request.SourceAdvanceChildProcessId = pid;
             request.SourceAdvanceChildStartTicks = ticks;
-            request.ConcurrencyToken = Guid.NewGuid();
+            LandRequestWriteProvenance.Stamp(request, "source-child", clock);
             await db.SaveChangesAsync(startedCt);
         }
         var inspected = await git.InspectAsync(coordinates, LandInspectionScope.IdentityAndStatus, ct);

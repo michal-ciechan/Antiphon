@@ -37,6 +37,7 @@ public sealed class AgentTaskLandService
     private readonly WorkspaceUseAdmission? _workspaceUse;
     private readonly RepositoryLeaseWaiters? _leaseWaiters;
     private LandExecutionIdentity? _execution;
+    private string _failurePhase = "land_execution";
 
     /// <summary>CARD-0672 D-2: the land stood aside at admission for queued dispatches.</summary>
     public const string LeaseYieldedToDispatchCode = "repository_lease_yielded_to_dispatch";
@@ -282,6 +283,7 @@ public sealed class AgentTaskLandService
                     }
                     existing!.State = LandRequestState.Superseded;
                     existing.IsPending = false;
+                    LandRequestWriteProvenance.Stamp(existing, "request-supersede", _clock);
                     var supersededEvent = Event(task.Id, AgentTaskEventType.LandSuperseded,
                         $"Land request {existing.Id:N} superseded by {request.Id:N}; reviewed={expected}.", now);
                     supersededEvent.LandRequestId = existing.Id;
@@ -302,6 +304,7 @@ public sealed class AgentTaskLandService
                 _db.AgentTaskEvents.Add(requestedEvent);
             }
             task.LandVerifyFilter = request!.VerifyFilter;
+            LandRequestWriteProvenance.Stamp(request, "admission", _clock);
             task.ConcurrencyToken = Guid.NewGuid();
             await _db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
@@ -353,6 +356,7 @@ public sealed class AgentTaskLandService
         request.ReplyTo = AgentTaskReplyTo.None;
         request.ParentSessionId = null;
         _db.AgentTaskLandRequests.Add(request);
+        LandRequestWriteProvenance.Stamp(request, "admission", _clock);
         task.CurrentLandRequestId = request.Id;
         task.LandRequestedAt = now;
         task.LandStartedAt = null;
@@ -416,6 +420,7 @@ public sealed class AgentTaskLandService
             request.State = LandRequestState.Canceled;
             request.IsPending = false;
             request.ReconciliationError = "task_no_longer_eligible";
+            LandRequestWriteProvenance.Stamp(request, "sweep-cancel", _clock);
             ClearPending(task);
             await _db.SaveChangesAsync(ct);
             await canceled.CommitAsync(ct);
@@ -502,6 +507,7 @@ public sealed class AgentTaskLandService
         if (task.LandRequestedAt != request.RequestedAt || task.LandAttempt != request.Attempt)
         {
             request.ReconciliationError = "land_request_mirror_disagreement";
+            LandRequestWriteProvenance.Stamp(request, "start", _clock);
             await _db.SaveChangesAsync(ct); await admission.CommitAsync(ct);
             return LandRunResult.Complete;
         }
@@ -530,6 +536,7 @@ public sealed class AgentTaskLandService
         request.LastAttemptAt = task.LandStartedAt;
         request.Attempt = task.LandAttempt + 1;
         task.LandAttempt += 1;
+        LandRequestWriteProvenance.Stamp(request, "start", _clock);
         task.ConcurrencyToken = Guid.NewGuid();
         await _db.SaveChangesAsync(ct);
         await admission.CommitAsync(ct);
@@ -577,6 +584,7 @@ public sealed class AgentTaskLandService
             }
             try
             {
+                _failurePhase = "source_adoption";
                 var resolved = await new AgentTaskLandSourceResolver(_db, _landingGit, _leases, _clock,
                     _gitSettings is null ? null : Options.Create(_gitSettings), _protocol.LandWorkspace, _boundary)
                     .ResolveAsync(task, request, lease, ct);
@@ -595,6 +603,7 @@ public sealed class AgentTaskLandService
             await _db.Entry(task).ReloadAsync(ct);
             await _db.Entry(request).ReloadAsync(ct);
         }
+        _failurePhase = "landing_protocol";
         var result = await _protocol.RunAsync(task, lease, request, ct);
         if (result.Conflicts.Count > 0)
         {
@@ -619,6 +628,7 @@ public sealed class AgentTaskLandService
             conflictEvent.LandRequestId = request.Id;
             request.State = LandRequestState.NeedsResolution;
             request.LandingOperationId = result.Operation?.Id;
+            LandRequestWriteProvenance.Stamp(request, "hold", _clock);
             _db.AgentTaskEvents.Add(conflictEvent);
             AddNotification(task, request, conflictEvent, LandNotificationKind.Conflict);
             await _db.SaveChangesAsync(ct);
@@ -698,7 +708,7 @@ public sealed class AgentTaskLandService
         request.HighestProgress = -1;
         request.LastProgressAt = now;
         request.WarningAt = request.ErrorAt = null;
-        request.ConcurrencyToken = Guid.NewGuid();
+        LandRequestWriteProvenance.Stamp(request, "race-retry", _clock);
         _db.AgentTaskEvents.Add(warning);
         await _db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
@@ -1041,6 +1051,7 @@ public sealed class AgentTaskLandService
             request.State = LandRequestState.Canceled;
             request.IsPending = false;
             request.ReconciliationError = "task_no_longer_eligible";
+            LandRequestWriteProvenance.Stamp(request, "sweep-cancel", _clock);
             ClearPending(row);
             await _db.SaveChangesAsync(ct);
             await canceled.CommitAsync(ct);
@@ -1118,6 +1129,7 @@ public sealed class AgentTaskLandService
     public async Task<LandFailureHandleResult> FailRequestAsync(Guid taskId, Guid? requestId, Exception exception, CancellationToken ct)
     {
         var diagnosticId = Guid.NewGuid();
+        var entries = LandFailureDiagnostic.CaptureConcurrencyEntries(exception);
         _db.ChangeTracker.Clear();
         var task = await _db.AgentTasks.SingleOrDefaultAsync(t => t.Id == taskId, ct);
         if (task is null)
@@ -1135,22 +1147,25 @@ public sealed class AgentTaskLandService
 
         var code = LandFailureDiagnostic.Classify(exception);
         var typeName = LandFailureDiagnostic.ExceptionTypeName(exception);
-        _logger.LogWarning(exception,
-            "Land operation failed for task {TaskId} request {RequestId} attempt {Attempt} exception {ExceptionType} code {Code} diagnostic {DiagnosticId}",
-            taskId, expectedRequest, expectedAttempt ?? 0, typeName, code, diagnosticId);
+        var safeSummary = await LandFailureDiagnostic.DescribeConcurrencyAsync(_db, exception, entries,
+            _failurePhase, taskId, expectedRequest.Value, expectedAttempt ?? 0, ct);
+        _logger.LogWarning(
+            "Land operation failed for task {TaskId} request {RequestId} attempt {Attempt} exception {ExceptionType} code {Code} diagnostic {DiagnosticId} conflict {ConflictSummary}",
+            taskId, expectedRequest, expectedAttempt ?? 0, typeName, code, diagnosticId, safeSummary);
         try
         {
-            await PersistFailureAsync(task, expectedRequest.Value, expectedAttempt, diagnosticId, exception, ct);
+            await PersistFailureAsync(task, expectedRequest.Value, expectedAttempt, diagnosticId, exception,
+                safeSummary, ct);
         }
         catch (Exception persistEx) when (persistEx is not OperationCanceledException)
         {
             throw new LandFailurePersistenceException(diagnosticId, persistEx);
         }
-        return new(diagnosticId, code, typeName, expectedRequest.Value, expectedAttempt ?? 0);
+        return new(diagnosticId, code, typeName, expectedRequest.Value, expectedAttempt ?? 0, safeSummary);
     }
 
     private async Task PersistFailureAsync(AgentTask task, Guid expectedRequest, int? expectedAttempt,
-        Guid diagnosticId, Exception exception, CancellationToken ct)
+        Guid diagnosticId, Exception exception, string safeSummary, CancellationToken ct)
     {
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
         await LockTaskAsync(task.Id, ct);
@@ -1182,7 +1197,8 @@ public sealed class AgentTaskLandService
         }
 
         if (task.LandRequestedAt is null) return;
-        var line = LandFailureDiagnostic.FormatUnconfirmed(code, diagnosticId, typeName, request);
+        var line = LandFailureDiagnostic.FormatUnconfirmed(code, diagnosticId, typeName, request)
+            + (safeSummary.Length == 0 ? "" : "; " + safeSummary);
         await CompleteTerminalLockedAsync(task, request, AgentTaskEventType.LandRefused, line,
             [$"Landing not confirmed; no cleanup authorized by this result. {code}"], null, ct);
     }
@@ -1384,6 +1400,7 @@ public sealed class AgentTaskLandService
         request = NewRequest(task, task.LandRequestedAt ?? _clock.GetUtcNow().UtcDateTime, task.LandVerifyFilter);
         request.StartedAt = request.LastAttemptAt = task.LandStartedAt;
         request.Attempt = task.LandAttempt;
+        LandRequestWriteProvenance.Stamp(request, "request-repair", _clock);
         _db.AgentTaskLandRequests.Add(request);
         task.CurrentLandRequestId = request.Id;
         await _db.SaveChangesAsync(ct);
@@ -1480,7 +1497,7 @@ public sealed class AgentTaskLandService
             _db.AgentTaskEvents.Add(held);
         }
 
-        request.ConcurrencyToken = Guid.NewGuid();
+        LandRequestWriteProvenance.Stamp(request, "yield", _clock);
         await _db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
         if (changed)
@@ -1584,7 +1601,7 @@ public sealed class AgentTaskLandService
             if (notify)
                 AddNotification(task, request, held, LandNotificationKind.Held);
         }
-        request.ConcurrencyToken = Guid.NewGuid();
+        LandRequestWriteProvenance.Stamp(request, "hold", _clock);
         await _db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
         await PublishAsync(task, ct);
@@ -1628,7 +1645,7 @@ public sealed class AgentTaskLandService
         request.HoldingTaskId = null;
         request.HoldingTaskStatus = null;
         request.HeldSince = null;
-        request.ConcurrencyToken = Guid.NewGuid();
+        LandRequestWriteProvenance.Stamp(request, "terminal", terminal.At);
     }
 
     private void AddNotification(AgentTask task, AgentTaskLandRequest request, AgentTaskEvent source, LandNotificationKind kind,
@@ -1785,4 +1802,5 @@ internal sealed record LandVerification(bool Ok, string Step, string Tail, strin
 public sealed record LandRequestResult(Guid TaskId, string Status, Guid RequestId = default, string Notification = "tracked");
 public enum LandRunResult { Complete, Held }
 internal sealed record LandExecutionIdentity(Guid RequestId, int Attempt);
-public sealed record LandFailureHandleResult(Guid DiagnosticId, string Code, string? ExceptionType, Guid RequestId, int Attempt);
+public sealed record LandFailureHandleResult(Guid DiagnosticId, string Code, string? ExceptionType, Guid RequestId,
+    int Attempt, string SafeSummary = "");

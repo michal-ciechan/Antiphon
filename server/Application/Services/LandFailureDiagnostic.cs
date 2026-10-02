@@ -1,12 +1,85 @@
 using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 
 namespace Antiphon.Server.Application.Services;
 
 internal static class LandFailureDiagnostic
 {
+    internal sealed record ConflictEntry(string Entity, Guid? Key, Guid? OriginalToken, Guid? AttemptedToken,
+        string ModifiedProperties);
+
+    public static IReadOnlyList<ConflictEntry> CaptureConcurrencyEntries(Exception exception)
+    {
+        if (exception is not DbUpdateConcurrencyException conflict) return [];
+        var result = new List<ConflictEntry>(4);
+        foreach (var entry in conflict.Entries.Take(4))
+        {
+            var entity = entry.Entity switch
+            {
+                AgentTaskLandRequest => nameof(AgentTaskLandRequest),
+                AgentTask => nameof(AgentTask),
+                _ => "unknown",
+            };
+            if (entity == "unknown") { result.Add(new(entity, null, null, null, "unknown")); continue; }
+            var id = entry.Entity is AgentTaskLandRequest request ? request.Id : ((AgentTask)entry.Entity).Id;
+            Guid? original = null;
+            Guid? attempted = null;
+            try
+            {
+                original = entry.OriginalValues[nameof(AgentTask.ConcurrencyToken)] as Guid?;
+                attempted = entry.CurrentValues[nameof(AgentTask.ConcurrencyToken)] as Guid?;
+            }
+            catch (InvalidOperationException) { }
+            var names = string.Join(",", entry.Properties.Where(p => p.IsModified).Take(8)
+                .Select(p => BoundIdentifier(p.Metadata.Name, 40) ?? "unknown"));
+            result.Add(new(entity, id, original, attempted, names.Length <= 320 ? names : names[..320]));
+        }
+        return result;
+    }
+
+    public static async Task<string> DescribeConcurrencyAsync(AppDbContext db, Exception exception,
+        IReadOnlyList<ConflictEntry> entries, string phase, Guid taskId, Guid requestId, int attempt,
+        CancellationToken ct)
+    {
+        if (exception is not DbUpdateConcurrencyException) return "";
+        var parts = new List<string>
+        {
+            $"phase={BoundIdentifier(phase, 40) ?? "unknown"}",
+            $"owner={taskId:N}", $"request={requestId:N}", $"attempt={attempt}",
+        };
+        if (entries.Count == 0) parts.Add("entries=unavailable; observedDatabaseWriter=unknown");
+        foreach (var entry in entries)
+        {
+            var observedToken = "unavailable";
+            var observedWriter = "unknown";
+            try
+            {
+                if (entry.Entity == nameof(AgentTaskLandRequest) && entry.Key is Guid requestKey)
+                {
+                    var row = await db.AgentTaskLandRequests.AsNoTracking().SingleOrDefaultAsync(r => r.Id == requestKey, ct);
+                    observedToken = row?.ConcurrencyToken.ToString("N") ?? "deleted";
+                    if (row is not null) observedWriter = LandRequestWriteProvenance.ObservedLabel(row);
+                }
+                else if (entry.Entity == nameof(AgentTask) && entry.Key is Guid taskKey)
+                {
+                    var row = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == taskKey, ct);
+                    observedToken = row?.ConcurrencyToken.ToString("N") ?? "deleted";
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            { observedToken = "read_unavailable"; observedWriter = "unknown"; }
+            parts.Add($"entity={entry.Entity}; key={entry.Key?.ToString("N") ?? "unknown"}; "
+                + $"originalToken={entry.OriginalToken?.ToString("N") ?? "unknown"}; "
+                + $"attemptedToken={entry.AttemptedToken?.ToString("N") ?? "unknown"}; "
+                + $"databaseToken={observedToken}; observedDatabaseWriter={observedWriter}; "
+                + $"modifiedProperties={entry.ModifiedProperties}");
+        }
+        var summary = string.Join("; ", parts);
+        return summary.Length <= 1600 ? summary : summary[..1600];
+    }
     public const int CodeMaxLength = 100;
     public const int ExceptionTypeMaxLength = 200;
     public const int CommandMaxLength = 160;

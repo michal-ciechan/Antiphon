@@ -157,7 +157,7 @@ internal sealed class AgentTaskLandRequestWriter(AppDbContext db, TimeProvider c
 
         var adoptedNow = request.RecoveryAdoptedAt is null && patch.RecoveryAdoptedAt is not null;
         ApplyPatch(request, patch);
-        request.ConcurrencyToken = Guid.NewGuid();
+        LandRequestWriteProvenance.Stamp(request, "source-checkpoint", clock);
         var now = clock.GetUtcNow().UtcDateTime;
         if (adoptedNow)
         {
@@ -219,7 +219,7 @@ internal sealed class AgentTaskLandRequestWriter(AppDbContext db, TimeProvider c
         task.ActiveLandingId = operation.Id;
         request.LandingOperationId = operation.Id;
         task.ConcurrencyToken = Guid.NewGuid();
-        request.ConcurrencyToken = Guid.NewGuid();
+        LandRequestWriteProvenance.Stamp(request, "operation-attach", clock);
         var now = clock.GetUtcNow().UtcDateTime;
         if (now > request.LastProgressAt) request.LastProgressAt = now;
         await db.SaveChangesAsync(ct);
