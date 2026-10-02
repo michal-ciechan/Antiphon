@@ -57,6 +57,17 @@ internal sealed class LandHalfResetFixture : IAsyncDisposable
         return (local, reviewed, evidence);
     }
 
+    public async Task<(string Local, string Reviewed, Guid Evidence, Guid FirstRequest)> CutAfterRefMoveAsync()
+    {
+        var (local, reviewed, evidence) = await SeedReviewedDescendantAsync();
+        var first = await Harness.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        Interceptor.RequestId = first.RequestId;
+        var failure = await Shouldly.Should.ThrowAsync<DbUpdateConcurrencyException>(() => Harness.RunQueuedAsync());
+        await Harness.FailAsync(failure);
+        return (local, reviewed, evidence, first.RequestId);
+    }
+
     public ValueTask DisposeAsync() => Harness.DisposeAsync();
 
     internal sealed class SaveCut : SaveChangesInterceptor
