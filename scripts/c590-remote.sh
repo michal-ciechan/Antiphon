@@ -1321,33 +1321,33 @@ c849_image() {
                 if [ -f "$C849_READY" ] && grep -Fxq kind=cold "$C849_READY"; then
                     marker_image="$(sed -n 's/^image=//p' "$C849_READY")"
                     [[ "$marker_image" =~ ^sha256:[0-9a-f]{64}$ ]] \
-                        || write_result false CacheHelperImageMissing 2
+                        || return 10
                     # Cold provenance survives normal superseded-image cleanup.
                     # Use the marker image if retained, otherwise the identified main.
                     donor=''
                 else
-                    donor="$(c849_optional_donor)" || write_result false CacheDonorLookupFailed 2
+                    donor="$(c849_optional_donor)" || return 11
                 fi
                 if [ -n "$donor" ]; then
                     image="$(docker inspect -f '{{.Image}}' "$donor")" \
-                        || write_result false CacheHelperImageMissing 2
+                        || return 10
                 else
                     marker_image="$(sed -n 's/^image=//p' "$C849_READY" 2>/dev/null | head -n 1)"
                     if [[ ! "$marker_image" =~ ^sha256:[0-9a-f]{64}$ ]] \
                         || ! docker image inspect "$marker_image" >/dev/null 2>&1; then
                         local main
-                        main="$(compose_host ps -q session-runner)"
-                        [ -n "$main" ] || write_result false CacheHelperImageMissing 2
+                        main="$(compose_host ps -q session-runner)" || return 10
+                        [ -n "$main" ] || return 10
                         [ "$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$main")" = "$HOST_PROJECT" ] \
-                            || write_result false CacheHelperImageMissing 2
-                        marker_image="$(docker inspect -f '{{.Image}}' "$main")"
+                            || return 10
+                        marker_image="$(docker inspect -f '{{.Image}}' "$main")" || return 10
                         [[ "$marker_image" =~ ^sha256:[0-9a-f]{64}$ ]] \
                             && docker image inspect "$marker_image" >/dev/null 2>&1 \
-                            || write_result false CacheHelperImageMissing 2
+                            || return 10
                     fi
                     image="$marker_image"
                 fi ;;
-            *) write_result false CacheHelperImageMissing 2 ;;
+            *) return 10 ;;
         esac
     fi
     printf '%s' "$image"
@@ -1407,7 +1407,10 @@ c849_volume() {
 
 c849_prepare() {
     local create="$1" image
-    image="$(c849_image)"
+    image="$(c849_image)" || {
+        if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
+        write_result false CacheHelperImageMissing 2
+    }
     c849_lock
     c849_volume "$C849_PACKAGES" nuget-packages "$create" "$image"
     c849_volume "$C849_SCRATCH" nuget-scratch "$create" "$image"
@@ -1867,8 +1870,11 @@ c849_seed() {
         c849_cold_seed
     fi
     c849_prepare yes
-    local image donor donor_image stage recovery helper payload_hash reference_hash package_bytes npm_bytes now i saved
-    image="$(c849_image)"
+    local image donor donor_image stage recovery helper payload_hash reference_hash package_bytes npm_bytes now i saved name item source
+    image="$(c849_image)" || {
+        if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
+        write_result false CacheHelperImageMissing 2
+    }
     if [ -f "$C849_READY" ] && grep -Fxq kind=cold "$C849_READY"; then
         donor=''
     else
@@ -1882,6 +1888,7 @@ c849_seed() {
             c849_require_ready allow-cold
         fi
         if [ "$C849_KIND" = cold ]; then
+            c849_no_temp_containers
             printf 'ready=true kind=cold writable=3\n' > "$CASE_DIR/seed.txt"
             write_result true '' 0
         fi
@@ -2009,7 +2016,7 @@ c849_seed() {
 }
 
 c849_require_ready() {
-    local context="${1:-full-required}" marker image name role
+    local context="${1:-full-required}" marker image name role item
     C849_KIND=full
     [ -e "$C849_READY" ] || [ -L "$C849_READY" ] \
         || write_result false 'CacheSeedRequired: run pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -SavedDonor /home/mc/runner-cache-donor/temp-runner-cache.tar' 2
@@ -2053,7 +2060,10 @@ c849_require_ready() {
     local expected actual image
     expected="$(sed -n 's/^payload-sha256=//p' "$C849_READY" | head -n 1)"
     [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || write_result false CacheSeedMarkerInvalid 2
-    image="$(c849_image)"
+    image="$(c849_image)" || {
+        if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
+        write_result false CacheHelperImageMissing 2
+    }
     actual="$(docker run --rm --network none --user 1654:1654 --entrypoint sha256sum \
         --mount "type=volume,source=$C849_PACKAGES,target=/home/app/.nuget/packages,volume-nocopy" \
         "$image" /home/app/.nuget/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost \
@@ -2083,9 +2093,11 @@ c849_observe_volume() {
     mountpoint="$(docker volume inspect -f '{{.Mountpoint}}' "$name")"
     [ -n "$docker_root" ] && [ -n "$mountpoint" ] || write_result false CacheTargetInvalid 2
     resolved="$(sudo -n realpath -e -- "$mountpoint" 2>/dev/null)" || write_result false CacheTargetInvalid 2
-    if [ "$resolved" != "$docker_root/volumes/$name/_data" ] || sudo -n test -L "$mountpoint"; then
-        write_result false CacheTargetInvalid 2
-    fi
+    [ "$mountpoint" = "$docker_root/volumes/$name/_data" ] && [ "$resolved" = "$mountpoint" ] \
+        || write_result false CacheTargetInvalid 2
+    local symlink_status=0
+    sudo -n test -L "$mountpoint" || symlink_status=$?
+    [ "$symlink_status" = 1 ] || write_result false CacheTargetInvalid 2
     mode="$(sudo -n stat -c '%u:%g:%a' -- "$resolved")" || write_result false CacheRootInvalid 2
     [ "$mode" = 1654:1654:700 ] || write_result false CacheRootOwnershipInvalid 2
     bytes="$(sudo -n du -s -B1 -- "$resolved" | cut -f1)" || write_result false CacheSizeUnavailable 2
@@ -2282,7 +2294,10 @@ c849_reset() {
     # proves both runners drained and the build broker empty under this lock.
     c849_prune_idle
     local image name role attached
-    image="$(c849_image)"
+    image="$(c849_image)" || {
+        if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
+        write_result false CacheHelperImageMissing 2
+    }
     for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
         case "$name" in
             "$C849_PACKAGES") role=nuget-packages ;;
@@ -2313,8 +2328,11 @@ c849_reset() {
 
 c849_prune_validate_tree() {
     local path="$1" canonical="$2" resolved unsafe mounts
-    [ -n "$path" ] && [ "$path" = "$canonical" ] && sudo -n test -d "$path" && ! sudo -n test -L "$path" \
+    [ -n "$path" ] && [ "$path" = "$canonical" ] && sudo -n test -d "$path" \
         || write_result false CacheTargetInvalid 2
+    local symlink_status=0
+    sudo -n test -L "$path" || symlink_status=$?
+    [ "$symlink_status" = 1 ] || write_result false CacheTargetInvalid 2
     resolved="$(sudo -n realpath -e -- "$path")" || write_result false CacheTargetInvalid 2
     [ "$resolved" = "$canonical" ] || write_result false CacheTargetInvalid 2
     unsafe="$(sudo -n find "$path" -xdev -mindepth 1 \( -type l -o -type b -o -type c -o -type p -o -type s -o -type f -links +1 \) -print -quit)" \
@@ -2353,7 +2371,10 @@ c849_prune() {
     c849_prune_idle
     c849_require_ready
     local name role path mode bytes budget selected=0 image recovery main_container temp_container expected_hash actual_hash donor_image required_bytes
-    image="$(c849_image)"
+    image="$(c849_image)" || {
+        if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
+        write_result false CacheHelperImageMissing 2
+    }
     recovery="$(sed -n 's/^recovery=//p' "$C849_READY" | head -n 1)"
     [ -d "$recovery/packages" ] && [ ! -L "$recovery" ] \
         && [ -s "$recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata" ] \
@@ -2449,7 +2470,7 @@ C849_REFILL
 # The Fixture case uses only run-scoped Docker resources. A failed group is a
 # refusal; it never falls through to a passing summary or touches the live names.
 c849_fixture_model() {
-    local model="$1" key name target env
+    local model="$1" key name target env expected item
     for item in \
         'runner-nuget-packages:antiphon-runner-cache-nuget-packages:/home/app/.nuget/packages:NUGET_PACKAGES:/home/app/.nuget/packages' \
         'runner-nuget-scratch:antiphon-runner-cache-nuget-scratch:/var/cache/antiphon/nuget-scratch:NUGET_SCRATCH:/var/cache/antiphon/nuget-scratch' \
@@ -2497,7 +2518,7 @@ c849_fixture_model_fault() {
 }
 
 c849_fixture_compose() {
-    local dir="$SERVER2_ROOT/compose" env="$SERVER2_ROOT/compose/fixture.env" project file
+    local dir="$SERVER2_ROOT/compose" env="$SERVER2_ROOT/compose/fixture.env" project file model
     mkdir -p "$dir"
     for file in token gitconfig codex-home deploy-key phone-home grok-home; do
         : > "$dir/$file"
@@ -2576,7 +2597,10 @@ c849_fixture_prepare() {
             && write_result false FixtureNamespaceOccupied 2
         printf '%s\n' "$name" >> "$CASE_DIR/.fixture-volumes"
     done
-    image="$(c849_image)"
+    image="$(c849_image)" || {
+        if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
+        write_result false CacheHelperImageMissing 2
+    }
     c849_prepare yes
     for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
         docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
@@ -2630,7 +2654,10 @@ c849_fixture_tree_fault() {
 
 c849_fixture_seed() {
     local image donor tree name before after recovery npm_work
-    image="$(c849_image)"
+    image="$(c849_image)" || {
+        if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
+        write_result false CacheHelperImageMissing 2
+    }
     TEMP_PROJECT="c849${RUN}temp"
     C849_PACKAGES="c849${RUN}seed-packages"
     C849_SCRATCH="c849${RUN}seed-scratch"
@@ -2777,7 +2804,10 @@ c849_fixture_lock_assert() {
 
 c849_fixture_nuget_race() {
     local image root packages scratch private_scratch name a b holder waiter
-    image="$(c849_image)"
+    image="$(c849_image)" || {
+        if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
+        write_result false CacheHelperImageMissing 2
+    }
     root="$SERVER2_ROOT/race"
     packages="c849${RUN}race-packages"
     scratch="c849${RUN}race-scratch"
@@ -2894,7 +2924,10 @@ c849_fixture_empty_apphost() {
 
 c849_fixture_apphost() {
     local image donor packages scratch empty_packages empty_scratch name root helper before after
-    image="$(c849_image)"
+    image="$(c849_image)" || {
+        if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
+        write_result false CacheHelperImageMissing 2
+    }
     donor="$(docker ps -aq --filter label=com.docker.compose.project=antiphon-runner-temp \
         --filter label=com.docker.compose.service=session-runner)"
     [ -n "$donor" ] && [ "${donor//$'\n'/}" = "$donor" ] \
@@ -2978,7 +3011,10 @@ c849_fixture_npm_install() {
 
 c849_fixture_npm() {
     local image root cache empty_cache network integrity name
-    image="$(c849_image)"
+    image="$(c849_image)" || {
+        if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
+        write_result false CacheHelperImageMissing 2
+    }
     root="$SERVER2_ROOT/npm-offline"
     cache="c849${RUN}npmcache-npm"; empty_cache="c849${RUN}npmempty-npm"
     network="c849-${RUN}-npm"
@@ -3043,7 +3079,10 @@ c849_fixture_nonexternal_loss() {
 
 c849_fixture_retention() {
     local image root main temp name volume target
-    image="$(c849_image)"
+    image="$(c849_image)" || {
+        if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
+        write_result false CacheHelperImageMissing 2
+    }
     root="$SERVER2_ROOT/compose-retention"
     main="c849${RUN}main"; temp="c849${RUN}temp"
     mkdir -p "$root"
@@ -3161,7 +3200,10 @@ c849_fixture_prune_case() {
 
 c849_fixture_prune() {
     local image recovery payload image_id name path mode bytes budget source_root
-    image="$(c849_image)"
+    image="$(c849_image)" || {
+        if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
+        write_result false CacheHelperImageMissing 2
+    }
     C849_PACKAGES="c849${RUN}smoke-packages"
     C849_SCRATCH="c849${RUN}smoke-scratch"
     C849_NPM="c849${RUN}npmcache-npm"
@@ -3565,6 +3607,8 @@ EOF
 
 case_deploy_temp_runner() {
     require_lane host
+    # Never replace an unverified leftover, including a stopped project container.
+    c849_no_temp_containers
     ensure_checkout
     ensure_runner_boot_files
     if [ ! -s "$SERVER2_ENV" ]; then write_result false ParentStackMissing 2; fi
@@ -3698,7 +3742,10 @@ case_retire_temp_runner() {
     RUNNER_GROK_STORE_DIR="$(sed -n 's/^RUNNER_GROK_STORE_DIR=//p' "$SERVER2_TEMP_ENV" | head -n 1)"
     compose_temp down -v >> "$CASE_DIR/command.log" 2>&1 || write_result false TempComposeDownFailed 2
     local image
-    image="$(c849_image)"
+    image="$(c849_image)" || {
+        if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
+        write_result false CacheHelperImageMissing 2
+    }
     c849_volume "$C849_PACKAGES" nuget-packages no "$image" || write_result false CacheVolumeMissing 2
     c849_volume "$C849_SCRATCH" nuget-scratch no "$image" || write_result false CacheVolumeMissing 2
     c849_volume "$C849_NPM" npm-content no "$image" || write_result false CacheVolumeMissing 2

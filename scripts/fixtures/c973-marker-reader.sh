@@ -143,7 +143,10 @@ case "$reader" in
     c849_image)
         helper_code=0
         helper="$(c849_image)" || helper_code=$?
-        if [ "$helper_code" != 0 ]; then printf '%s\n' "$helper"; exit "$helper_code"; fi
+        if [ "$helper_code" != 0 ]; then
+            if [ "$helper_code" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
+            write_result false CacheHelperImageMissing 2
+        fi
         printf 'HELPER=%s\n' "$helper"
         write_result true '' 0 ;;
     full-required)

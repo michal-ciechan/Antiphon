@@ -81,7 +81,7 @@ function Assert-TempSeedCounters {
     param($Status)
     if ($null -eq $Status) { throw 'RunnerStatusMissing server2-temp' }
     # An absent temp container has no live inventory, whether its placeholder is
-    # retired or cleared. Seed verifies on the host that the project is absent.
+    # retired or cleared. The phase confirms host absence before changing the slot.
     $offline = $Status.available -eq $false -and $Status.dispatchEligible -eq $false -and
         $Status.acceptingNewWork -eq $false
     foreach ($name in @('sessions', 'runnerSessions', 'queuedTasks')) {
@@ -128,16 +128,56 @@ function Invoke-HostCase {
     if ($LASTEXITCODE -ne 0) { throw "HostCaseFailed $Case exit=$LASTEXITCODE" }
 }
 
+# Read-only host census before a retired slot can be cleared. Keep stopped containers
+# in the census: any leftover may reconnect after the clear.
+function Assert-TempProjectAbsent {
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    if ($env:C727_TEST_VERIFY_STUB) {
+        $manifestPath = Join-Path $evidenceRoot 'temp-project-absent.manifest.json'
+        @{ sourceSha = $Sha; runId = $runId } | ConvertTo-Json -Compress |
+            Set-Content -LiteralPath $manifestPath -Encoding ascii
+        $psi.FileName = 'pwsh'
+        $tokens = @('-NoProfile', '-File', $env:C727_TEST_VERIFY_STUB, '-Case', 'temp-project-absent', '-Manifest', $manifestPath)
+    } else {
+        $psi.FileName = 'ssh'
+        $tokens = @('-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', 'mc@server2',
+            'docker ps -aq --filter label=com.docker.compose.project=antiphon-runner-temp')
+    }
+    foreach ($token in $tokens) { [void]$psi.ArgumentList.Add($token) }
+    try {
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        try {
+            $stdout = $proc.StandardOutput.ReadToEndAsync()
+            $stderr = $proc.StandardError.ReadToEndAsync()
+            if (-not $proc.WaitForExit(30000)) { $proc.Kill($true); $proc.WaitForExit(); throw 'TempContainerCensusUnavailable' }
+            $ids = $stdout.GetAwaiter().GetResult()
+            [void]$stderr.GetAwaiter().GetResult()
+            if ($proc.ExitCode -ne 0) { throw 'TempContainerCensusUnavailable' }
+            $ids | Set-Content -LiteralPath (Join-Path $evidenceRoot 'temp-project-containers.txt') -Encoding ascii
+        } finally { $proc.Dispose() }
+    } catch { throw 'TempContainerCensusUnavailable' }
+    if (-not [string]::IsNullOrWhiteSpace($ids)) { throw 'TempContainersRemain' }
+}
+
 function Invoke-Phase {
     param([string]$Name)
     switch ($Name) {
         'deploy-temp' {
+            if ($SavedDonor) { throw 'TempSavedDonorRequiresMaintenance' }
             $s = Get-RunnerStatus -RunnerId 'server2-temp'
             if ($null -eq $s) { throw 'TempRunnerStatusMissing' }
             # An offline slot may still report the last container's SHA. It needs a
             # fresh container even when that retained version matches this rollout.
-            if ([string]$s.buildVersion -ne $Sha -or -not $s.dispatchEligible) {
+            if ([string]$s.buildVersion -ne $Sha -or $s.available -ne $true) {
                 Assert-TempSeedCounters -Status $s
+                if ($s.draining -and [string]$s.redirectTo -ne 'server2') { throw 'TempRunnerDrainConflict' }
+                $old = Get-RunnerStatus -RunnerId 'server2'
+                if ($null -eq $old -or $old.dispatchEligible -ne $true -or $old.acceptingNewWork -ne $true -or
+                    $old.draining -ne $false -or $old.retiredAt) { throw 'OldRunnerRedirectNotEligible' }
+                Assert-TempProjectAbsent
                 if ($s.retiredAt) {
                     if ($s.available -ne $false -or $s.dispatchEligible -ne $false -or
                         $s.acceptingNewWork -ne $false) { throw 'TempRunnerDrainConflict' }
@@ -156,6 +196,7 @@ function Invoke-Phase {
                     $s = Get-RunnerStatus -RunnerId 'server2-temp'
                     Assert-TempSeedCounters -Status $s
                 }
+                if ($s.retiredAt) { throw 'TempRunnerRetiredDuringHold' }
                 if (-not $s.draining -or [string]$s.redirectTo -ne 'server2' -or $s.retireWhenIdle) {
                     throw 'TempRunnerDrainConflict'
                 }
@@ -167,6 +208,7 @@ function Invoke-Phase {
             })
             Invoke-HostCase -Case 'verify-runner-caches' -RunnerId 'server2-temp'
             $s = Get-RunnerStatus -RunnerId 'server2-temp'
+            if ($null -eq $s -or $s.retiredAt) { throw 'TempRunnerRetiredDuringHold' }
             if ($s.draining) {
                 if ([string]$s.redirectTo -ne 'server2' -or $s.retireWhenIdle) { throw 'TempRunnerDrainConflict' }
                 [void](Invoke-RunnerRequest -Method POST -RunnerId 'server2-temp' -Suffix '/drain/clear' -Body @{ reason = 'CARD-0849 cache verification passed' })

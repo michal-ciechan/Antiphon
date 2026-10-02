@@ -82,6 +82,53 @@ confirm it started, ran, and produced a report on the intended runner. If a cana
 sanctioned, stop before the next handoff. `runner-defaults` may still name `server2` throughout;
 the drain redirect, rather than a settings write, is the current scheduling switch.
 
+### Failed temp deployment and abandoning a rollout (CARD-0957/0958)
+
+`deploy-temp` requires an absent temp Compose project before changing its drain or
+retirement. Its read-only SSH census includes stopped containers and refuses
+`TempContainersRemain` or `TempContainerCensusUnavailable` before clearing a retired
+placeholder. It also requires old to remain dispatch eligible, accepting, and not
+retired or draining (`OldRunnerRedirectNotEligible`). The host repeats the absence
+check before deployment and on cold-marker reuse. An available temp already at the
+requested SHA waits for dispatch eligibility and verifies caches without reseeding.
+A retirement stamp surviving the hold refuses `TempRunnerRetiredDuringHold` before
+Seed; record it and stop. A failed hold POST after retirement clear is safe only
+because the earlier census established absence; preserve the failure receipt.
+
+A full donor container belongs to ordinary Seed's maintenance flow. Deploy-temp
+refuses an existing donor with `TempContainersRemain` and refuses `-SavedDonor` with
+`TempSavedDonorRequiresMaintenance`; run the documented ordinary Seed first under
+its drained-consumer gates. Do not drain the standing runner just to satisfy Seed
+during a beside-old rolling rollout.
+
+A failed deploy-temp can leave a non-retiring hold (`draining=true`,
+`retireWhenIdle=false`, redirect to `server2`). Normal `drain-temp` and
+`retire-temp` intentionally refuse this hold. To **abandon** this rollout, first
+verify that old is healthy and accepting and temp has zero bound `sessions` and
+`queuedTasks`; `runnerSessions` must be zero, or null only when temp is offline.
+Run the following host census and require success with **empty output**:
+
+```powershell
+ssh mc@server2 'docker ps -aq --filter label=com.docker.compose.project=antiphon-runner-temp'
+```
+
+If any container remains, stop and report its ID and the deployment receipt for a
+reviewed recovery; this procedure never removes or stops a leftover container.
+With absence confirmed, convert the hold into retirement explicitly:
+
+```powershell
+pwsh -NoProfile -File scripts/runner-drain.ps1 drain -RunnerId server2-temp -RedirectTo server2 -RetireWhenIdle -Reason 'abandon failed rolling rollout after confirmed temp absence'
+pwsh -NoProfile -File scripts/runner-drain.ps1 status -RunnerId server2-temp
+```
+
+Wait until `retiredAt` is non-null, `draining=true`, `retireWhenIdle=true`, and
+`redirectTo=server2`. Preserve the status and census with the failed phase receipt.
+The absent offline placeholder may keep `runnerSessions=null`; do not run
+`retire-temp` until all three counters are fresh non-null zero. When that gate is
+satisfied, use the ordinary `retire-temp` phase to finish host cleanup. Leave a
+retired absent placeholder in place if its live inventory stays unknown; the next
+`deploy-temp` supports that shape. Do not clear the hold to abandon a rollout.
+
 ## Shared server2 runner caches (CARD-0849)
 
 The `session-testing` image now carries the .NET 9.0.20 `Microsoft.NETCore.App.Ref`,
