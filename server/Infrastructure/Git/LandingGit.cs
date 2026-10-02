@@ -437,6 +437,9 @@ public class LandingGit : ILandingGit
                 return LandRecoveryCheckoutInspection.Refused();
             var trees = new Dictionary<string, string>(StringComparer.Ordinal);
             var paths = new HashSet<string>(StringComparer.Ordinal);
+            var reviewedPaths = new HashSet<string>(OperatingSystem.IsWindows()
+                ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+            var reviewedParents = new HashSet<string>(reviewedPaths.Comparer);
             foreach (var sha in new[] { oldSha, expectedSha }.Distinct(StringComparer.Ordinal))
             {
                 var listed = await RunAsync(path, ["ls-tree", "-r", "-z", sha], ct);
@@ -451,6 +454,13 @@ public class LandingGit : ILandingGit
                     if (relative.Length == 0 || relative.Contains('\uFFFD'))
                         return LandRecoveryCheckoutInspection.Refused();
                     paths.Add(relative);
+                    if (sha == expectedSha)
+                    {
+                        reviewedPaths.Add(relative);
+                        for (var slash = relative.LastIndexOf('/'); slash >= 0;
+                             slash = relative.LastIndexOf('/', slash - 1))
+                            reviewedParents.Add(relative[..slash]);
+                    }
                 }
             }
             var attrInput = Encoding.UTF8.GetBytes(string.Join('\0', paths) + '\0');
@@ -485,12 +495,29 @@ public class LandingGit : ILandingGit
                 return LandRecoveryCheckoutInspection.Refused("source_dirty");
             foreach (var args in new[] {
                 new[] { "ls-files", "--unmerged", "-z" },
-                new[] { "ls-files", "--others", "--exclude-standard", "-z" },
-                new[] { "ls-files", "--others", "--ignored", "--exclude-standard", "-z" } })
+                new[] { "ls-files", "--others", "--exclude-standard", "-z" } })
             {
                 var result = await RunAsync(path, args, ct);
                 if (!result.Succeeded) return LandRecoveryCheckoutInspection.Refused();
                 if (result.Output.Length != 0) return LandRecoveryCheckoutInspection.Refused("source_dirty");
+            }
+            var ignored = await RunAsync(path,
+                ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], ct);
+            if (!ignored.Succeeded || ignored.Output.Contains('\uFFFD'))
+                return LandRecoveryCheckoutInspection.Refused();
+            foreach (var relative in ignored.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (relative.Length == 0 || Path.IsPathRooted(relative)
+                    || relative.Split('/').Any(x => x is "" or "." or ".."))
+                    return LandRecoveryCheckoutInspection.Refused();
+                // A tracked file at this path, a tracked file below an ignored file/directory,
+                // or a tracked file above an ignored child can be overwritten by reset --hard.
+                if (reviewedPaths.Contains(relative) || reviewedParents.Contains(relative))
+                    return LandRecoveryCheckoutInspection.Refused("source_dirty");
+                for (var slash = relative.LastIndexOf('/'); slash >= 0;
+                     slash = relative.LastIndexOf('/', slash - 1))
+                    if (reviewedPaths.Contains(relative[..slash]))
+                        return LandRecoveryCheckoutInspection.Refused("source_dirty");
             }
             var sparse = await RunAsync(path, ["config", "--bool", "core.sparseCheckout"], ct);
             if (sparse.ExitCode is not (0 or 1) || sparse.Output.Trim() == "true")

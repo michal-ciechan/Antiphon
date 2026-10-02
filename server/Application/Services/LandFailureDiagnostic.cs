@@ -1,4 +1,5 @@
 using System.Text;
+using System.Diagnostics;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -95,6 +96,25 @@ internal static class LandFailureDiagnostic
     {
         if (exception is null) return null;
         return BoundIdentifier(exception.GetType().Name, ExceptionTypeMaxLength);
+    }
+
+    public static string RedactedFrames(Exception exception)
+    {
+        try
+        {
+            var frames = new StackTrace(exception, true).GetFrames();
+            if (frames is null || frames.Length == 0) return "unavailable";
+            var safe = new List<string>();
+            foreach (var frame in frames.Take(16))
+            {
+                var name = BoundIdentifier(frame.GetMethod()?.Name, 100);
+                if (name is null) continue;
+                var line = frame.GetFileLineNumber();
+                safe.Add(line > 0 ? $"{name}:{line}" : name);
+            }
+            return safe.Count == 0 ? "unavailable" : string.Join(" <- ", safe);
+        }
+        catch (Exception) { return "unavailable"; }
     }
 
     public static string? BoundIdentifier(string? value, int maxLength)

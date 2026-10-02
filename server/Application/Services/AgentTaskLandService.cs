@@ -1154,8 +1154,9 @@ public sealed class AgentTaskLandService
             concurrencySummary = entrySummary + "; " + LandFailureDiagnostic.ObservedDatabaseWriter(observed, unavailable);
         }
         _logger.LogWarning(
-            "Land operation failed for task {TaskId} request {RequestId} attempt {Attempt} exception {ExceptionType} code {Code} diagnostic {DiagnosticId} concurrency {ConcurrencySummary}",
-            taskId, expectedRequest, expectedAttempt ?? 0, typeName, code, diagnosticId, concurrencySummary);
+            "Land operation failed for task {TaskId} request {RequestId} attempt {Attempt} exception {ExceptionType} code {Code} diagnostic {DiagnosticId} concurrency {ConcurrencySummary} frames {Frames}",
+            taskId, expectedRequest, expectedAttempt ?? 0, typeName, code, diagnosticId, concurrencySummary,
+            LandFailureDiagnostic.RedactedFrames(exception));
         try
         {
             await PersistFailureAsync(task, expectedRequest.Value, expectedAttempt, diagnosticId, exception,

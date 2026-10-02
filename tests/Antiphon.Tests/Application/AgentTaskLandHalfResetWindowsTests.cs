@@ -23,12 +23,22 @@ public sealed class AgentTaskLandHalfResetWindowsTests
         var h = fixture.Harness;
         h.Fixture.Source.Contains(" with spaces", StringComparison.Ordinal)
             .ShouldBeTrue("W.RegisteredPathHasSpaces");
+        var brief = Path.Combine(h.Fixture.Source, ".antiphon", "inbox", "brief.md");
+        var obj = Path.Combine(h.Fixture.Source, "obj", "x");
+        Directory.CreateDirectory(Path.GetDirectoryName(brief)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(obj)!);
+        await File.WriteAllTextAsync(brief, "private brief\n");
+        await File.WriteAllTextAsync(obj, "private build output\n");
+        var exclude = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "--git-path", "info/exclude")).Trim();
+        await File.AppendAllTextAsync(Path.GetFullPath(exclude, h.Fixture.Source), "\n.antiphon/\nobj/\n");
         var next = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
             recoverReviewedSource: true);
         await h.RunQueuedAsync();
         var op = await h.OperationAsync();
         (op is not null && new AgentTaskLandingState().HasPublication(op))
             .ShouldBeTrue("W.SpacedLinkedWorktreePublishes");
+        (await File.ReadAllTextAsync(brief)).ShouldBe("private brief\n", "W.IgnoredBriefPreserved");
+        (await File.ReadAllTextAsync(obj)).ShouldBe("private build output\n", "W.IgnoredObjPreserved");
         await using var db = h.CreateContext();
         (await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == next.RequestId))
             .SourceRefusalReason.ShouldBeNull("W.SpacedRegisteredIdentityAccepted");
