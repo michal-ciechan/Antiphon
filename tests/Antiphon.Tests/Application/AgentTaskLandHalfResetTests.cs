@@ -270,7 +270,17 @@ public sealed class AgentTaskLandHalfResetTests
             "review-superseded" => "review_evidence_superseded",
             _ => "adopt_authority_changed",
         };
-        row.SourceRefusalReason.ShouldBe(expectedCode, $"H.{variant}.AuthorityRefused");
+        if (variant == "owner")
+        {
+            // The task-locked checkpoint rejects a changed owner as stale; it must not write
+            // a new refusal under the now-ineligible owner status.
+            row.SourceRefusalReason.ShouldBeNull("H.owner.StaleWriterDidNotOverwriteRequest");
+            row.IsPending.ShouldBeTrue("H.owner.PendingRequestLeftForSweep");
+            (await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == h.Fixture.TaskId))
+                .Status.ShouldBe(AgentTaskStatus.Working, "H.owner.WorkingStatusPreserved");
+        }
+        else
+            row.SourceRefusalReason.ShouldBe(expectedCode, $"H.{variant}.AuthorityRefused");
         h.Fixture.Git.Commands.ShouldNotContain(x => x.Directory == h.Fixture.Source
             && x.Arguments.Length > 0 && x.Arguments[0] == "reset", $"H.{variant}.NoReset");
     }
