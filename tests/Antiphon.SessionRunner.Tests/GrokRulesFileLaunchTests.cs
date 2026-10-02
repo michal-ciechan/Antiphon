@@ -1,3 +1,4 @@
+using System.Text;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -26,9 +27,6 @@ public sealed class GrokRulesFileLaunchTests
     [Arguments("env_flag")]
     public async Task Unsafe_final_runner_boundary_has_zero_effects_even_without_server_validation(string variant)
     {
-        if (OperatingSystem.IsLinux() && variant is ("alias" or "crlf" or "duplicate_first"
-            or "duplicate_second" or "equals" or "lf" or "nul"))
-            Skip.Test("CARD-0863: Unix PtyHost argv quotes multiline values or truncates NUL.");
         foreach (var herdr in new[] { false, true })
         {
             if (variant.Contains("env") && !herdr) continue;
@@ -57,7 +55,7 @@ public sealed class GrokRulesFileLaunchTests
             {
                 var unixEnv = request.Env.ToDictionary(pair => pair.Key, pair => pair.Value);
                 unixEnv["ANTIPHON_TEST_ARGV"] = argvCapture;
-                request = request with { Exe = HerdrTestProcess.CreateOwnedUnixArgvChild(root), Env = unixEnv };
+                request = request with { Exe = CreateAtomicUnixArgvChild(root), Env = unixEnv };
             }
             try
             {
@@ -72,8 +70,12 @@ public sealed class GrokRulesFileLaunchTests
                 else if (variant == "nul" && !herdr)
                 {
                     var failure = await CaptureAsync(() => runtime.StartAsync(request, CancellationToken.None));
-                    failure.ShouldNotBeNull("a native process cannot receive an argv element containing NUL");
+                    var refusal = failure.ShouldBeOfType<Antiphon.Agents.Pty.UnixPtyArgvException>();
+                    refusal.Code.ShouldBe("pty_argv_nul", "native-nul-code");
+                    refusal.Reason.ShouldBe("nul");
+                    refusal.Message.ShouldNotContain("private", customMessage: "native-nul-sanitized");
                     runtime.List().ShouldBeEmpty();
+                    runtime.StartCoreSessionRegistrations.ShouldBe(0, "native-nul-before-registration");
                     File.Exists(argvCapture).ShouldBeFalse();
                 }
                 else
@@ -93,17 +95,18 @@ public sealed class GrokRulesFileLaunchTests
                     }
                     else
                     {
-                        var until = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+                        var until = DateTime.UtcNow + TimeSpan.FromSeconds(20);
                         while (!File.Exists(argvCapture) && DateTime.UtcNow < until) await Task.Delay(20);
                         File.Exists(argvCapture).ShouldBeTrue("owned native child must receive the argv");
-                        File.ReadAllText(argvCapture).Split('\0', StringSplitOptions.RemoveEmptyEntries).ShouldBe(args);
+                        File.ReadAllBytes(argvCapture).ShouldBe(Encoding.UTF8.GetBytes(string.Concat(args.Select(arg => arg + "\0"))),
+                            "native-argv-exact-bytes");
                     }
                 }
             }
             finally
             {
-                if (runtime.List().Any(s => s.SessionId == request.SessionId))
-                    await runtime.KillAsync(request.SessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+                if (runtime.List().FirstOrDefault(s => s.SessionId == request.SessionId) is { } live)
+                    await TestSessionTeardown.KillAndAwaitHostExitAsync(runtime, request.SessionId, live.HostPid);
             }
         }
     }
@@ -238,6 +241,15 @@ public sealed class GrokRulesFileLaunchTests
     private static RunnerLaunchRequest Request(string root) => new(Guid.NewGuid(), "missing-executable", [],
         new Dictionary<string, string>(), root, 120, 30, TranscriptFormat: TranscriptFormats.Grok,
         GrokRulesPayload: new("full\r\nrules", 1, Guid.NewGuid()));
+
+    private static string CreateAtomicUnixArgvChild(string root)
+    {
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "owned-argv-child.sh");
+        File.WriteAllText(path, "#!/bin/sh\ntemp=\"$ANTIPHON_TEST_ARGV.tmp.$$\"\nprintf '%s\\0' \"$@\" > \"$temp\"\nmv \"$temp\" \"$ANTIPHON_TEST_ARGV\"\nprintf 'ARGV_CAPTURED\\n'\nwhile :; do sleep 1; done\n");
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        return path;
+    }
 
     private static async Task<Exception?> CaptureAsync(Func<Task> action)
     {

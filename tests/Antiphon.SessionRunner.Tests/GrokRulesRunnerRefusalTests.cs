@@ -1,3 +1,4 @@
+using System.Text;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.AspNetCore.Http.HttpResults;
@@ -10,6 +11,7 @@ namespace Antiphon.SessionRunner.Tests;
 
 /// <summary>CARD-0382 V-3: runner backstop refuses unsafe Grok rules before any session or Herdr work.</summary>
 [NotInParallel("HerdrLaunchShape")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class GrokRulesRunnerRefusalTests
 {
     [Test]
@@ -135,8 +137,6 @@ public sealed class GrokRulesRunnerRefusalTests
     [Test]
     public async Task Pty_host_grok_multiline_rules_are_refused_before_a_session_is_registered()
     {
-        if (OperatingSystem.IsLinux())
-            Skip.Test("CARD-0863: Unix PtyHost argv quotes multiline values.");
         var sentinel = Sentinel();
         var settings = BuildSettings();
         await using var runtime = new SessionRunnerRuntime(
@@ -145,7 +145,7 @@ public sealed class GrokRulesRunnerRefusalTests
         var sessionId = Guid.NewGuid();
         var request = new RunnerLaunchRequest(
             sessionId,
-            OperatingSystem.IsWindows() ? @"C:\tools\grok.exe" : HerdrTestProcess.CreateOwnedUnixArgvChild(settings.SessionLogPath),
+            OperatingSystem.IsWindows() ? @"C:\tools\grok.exe" : CreateAtomicUnixArgvChild(settings.SessionLogPath),
             ["--always-approve", "--rules", "line one\nline two " + sentinel],
             OperatingSystem.IsWindows() ? new Dictionary<string, string>()
                 : new Dictionary<string, string> { ["ANTIPHON_TEST_ARGV"] = Path.Combine(settings.SessionLogPath, "native-argv") },
@@ -173,13 +173,17 @@ public sealed class GrokRulesRunnerRefusalTests
                 var started = await runtime.StartAsync(request, CancellationToken.None);
                 started.Status.ShouldBe("Running");
                 var capture = request.Env["ANTIPHON_TEST_ARGV"];
-                var until = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+                var until = DateTime.UtcNow + TimeSpan.FromSeconds(20);
                 while (!File.Exists(capture) && DateTime.UtcNow < until) await Task.Delay(20);
                 File.Exists(capture).ShouldBeTrue();
-                File.ReadAllText(capture).Split('\0', StringSplitOptions.RemoveEmptyEntries)
-                    .ShouldBe(request.Args.ToArray());
+                File.ReadAllBytes(capture).ShouldBe(Encoding.UTF8.GetBytes(string.Concat(request.Args.Select(arg => arg + "\0"))),
+                    "native-argv-exact-bytes");
             }
-            finally { await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None); }
+            finally
+            {
+                var live = runtime.List().FirstOrDefault(s => s.SessionId == sessionId);
+                await TestSessionTeardown.KillAndAwaitHostExitAsync(runtime, sessionId, live?.HostPid);
+            }
         }
         DeleteLogRoot(settings.SessionLogPath);
     }
@@ -385,6 +389,15 @@ public sealed class GrokRulesRunnerRefusalTests
     };
 
     private static string Sentinel() => "card0382-sentinel-" + Guid.NewGuid().ToString("N");
+
+    private static string CreateAtomicUnixArgvChild(string root)
+    {
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "owned-argv-child.sh");
+        File.WriteAllText(path, "#!/bin/sh\ntemp=\"$ANTIPHON_TEST_ARGV.tmp.$$\"\nprintf '%s\\0' \"$@\" > \"$temp\"\nmv \"$temp\" \"$ANTIPHON_TEST_ARGV\"\nprintf 'ARGV_CAPTURED\\n'\nwhile :; do sleep 1; done\n");
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        return path;
+    }
 
     private static void DeleteLogRoot(string path)
     {
