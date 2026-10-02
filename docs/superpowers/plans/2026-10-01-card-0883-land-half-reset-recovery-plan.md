@@ -411,6 +411,7 @@ The **closed list** follows. S1-red is deliberately minimal and precedes repair/
 | CP-3 | S1-S4 | CP-2 (-NoBuild) | checkout-proof | `/*/*/(LandRecoveryCheckoutTests*)\|(LandingGitTests*)/*` | V-3,R-5 | Linux 89 = 34+55; Windows source census 89 (not executed); ancestry probe PENDING; all listed, 0 failed/skipped | 89 | 12 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-4 | S1-S4 | CP-2 (-NoBuild) | writer-and-persistence | `/*/*/(LandRequestWriteDiagnosticTests*)\|(AgentTaskLandSourcePersistenceTests*)\|(AgentTaskLandFailureDiagnosticTests*)\|(AgentTaskLandMonitoringTests*)/*` | V-4,R-2,R-3,R-4 | Linux 102 = 16+35+26+25; Windows source census 102 (not executed); merge/delivery PENDING; all listed, 0 failed/skipped | 102 | 18 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-5 | S1-S4 | `tests/Antiphon.Tests -> bin-c883-windows/` | windows-checkout | `/*/*/AgentTaskLandHalfResetWindowsTests*/*` | V-5 | Windows 4, all listed, 0 failed/skipped; Linux not commissioned | 4 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-6 | S1-S4 | CP-2 (-NoBuild) | unit-regression | `/*/*/*/*[Category=Unit]` | Unit lane (CARD-0939) | Whole Unit lane once; inherited Linux failures disclosed separately, no skips | 1 | 12 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
 ### CARD-0939 census and scoped execution (2026-10-02)
 

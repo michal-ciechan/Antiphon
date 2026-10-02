@@ -57,7 +57,17 @@ public sealed class AgentTaskLandAdoptionConcurrencyTests
     {
         await using var fixture = new LandHalfResetFixture();
         var h = fixture.Harness;
-        var (_, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
+        var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+        h.Clock = time;
+        var git = new LandHalfResetFixture.PairObservationGit(Path.Combine(h.Fixture.Root, "home"), h);
+        h.GitOverride = git;
+        var (local, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
+        var requestSavesInPair = 0;
+        var committedIntents = 0;
+        fixture.Interceptor.BeforeSave = context =>
+        {
+            if (git.InAdoptionPair && ReferenceEquals(context, h.CurrentLandContext)) requestSavesInPair++;
+        };
         var request = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
             recoverReviewedSource: true);
         fixture.Interceptor.RequestId = request.RequestId;
@@ -65,21 +75,41 @@ public sealed class AgentTaskLandAdoptionConcurrencyTests
         Guid before = Guid.Empty;
         Guid after = Guid.Empty;
         DateTime evaluated = default;
+        git.BeforeCommand = async (directory, args) =>
+        {
+            if (args[0] != "reset" && !(args[0] == "update-ref" && args.Contains("--no-deref") && args.Contains(h.Fixture.SourceRef))) return null;
+            h.CurrentLandContext!.Database.CurrentTransaction.ShouldBeNull("V2.NoTransactionAcrossAdoptionGit");
+            await using var observer = h.CreateContext();
+            var intent = await observer.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
+            intent.SourceResolutionState.ShouldBe(LandSourceResolutionState.AdvanceStarted, "V2.IntentCommittedBeforeGit");
+            intent.SourceAdvanceChildOperation.ShouldBe("source-adopt-reset");
+            intent.RecoveryLocalBeforeSha.ShouldBe(local);
+            committedIntents++;
+            return null;
+        };
         fixture.Boundary.AtCut = async () =>
         {
             await using var db = h.CreateContext();
             var row = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
             before = row.ConcurrencyToken;
+            time.Advance(TimeSpan.FromSeconds(2));
             var monitor = new AgentTaskLandMonitorService(db, h.Clock,
                 Options.Create(new DelegationSettings()), h.Events);
             await monitor.SweepAsync(CancellationToken.None);
             await using var fresh = h.CreateContext();
             row = await fresh.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
             after = row.ConcurrencyToken;
+            row.LastWriterOperation.ShouldBe("monitor-sweep", "V2.MonitorWriterObservedAtCut");
+            row.LastWriterToken.ShouldBe(after);
+            row.WarningAt.ShouldBeNull("V2.MonitorWriteHasNoAgedWarning");
+            row.ErrorAt.ShouldBeNull();
             evaluated = row.LastEvaluatedAt;
         };
         await h.RunQueuedAsync();
         fixture.Boundary.Reached.ShouldBe(1, "V2.MonitorCutReached");
+        committedIntents.ShouldBe(2, "V2.DurableRequestIntentForBothCommands");
+        git.DurableIntents.ShouldBe(2, "V2.StandingJournalObservedBeforeBothChildStarts");
+        requestSavesInPair.ShouldBe(0, "V2.NoRequestSavingCallbackInsideAdoptionPair");
         before.ShouldNotBe(Guid.Empty, "V2.IntentCommittedBeforeCAS");
         after.ShouldNotBe(before, "V2.MonitorRotatedTokenAtCut");
         await using var verify = h.CreateContext();
@@ -118,6 +148,8 @@ public sealed class AgentTaskLandAdoptionConcurrencyTests
             recoverReviewedSource: true);
         second.RequestId.ShouldNotBe(first.RequestId, "V2.PreIntentRecoveryFreshId");
         await h.RunQueuedAsync();
+        var cas = h.Fixture.Git.Commands.Single(x => x.Arguments[0] == "update-ref" && x.Arguments.Contains("--no-deref") && x.Arguments.Contains(h.Fixture.SourceRef));
+        cas.Arguments.ShouldBe(new[] { "update-ref", "--no-deref", h.Fixture.SourceRef, reviewed, local }, "V2.ExactExpectedOldCASOperand");
         var op = await h.OperationAsync();
         (op is not null && new AgentTaskLandingState().HasPublication(op))
             .ShouldBeTrue("V2.PreIntentRetryPublished");
