@@ -229,6 +229,39 @@ Capture launch outcome once, then check code, session census and bounded diagnos
 
 Windows executes both named launch cases with all existing code/privacy/no-session/idle assertions, regardless of which method carries a particular isolated PC. Linux baseline code mismatches and final policy skips are diagnostic outcomes, never passing execution certificates.
 
+#### S4 frozen controls
+
+Recount: C448 8 methods/22 results, selected V15=7; post-land both partials 46/67, selected V09a=12; retirement 10/22, selected worker method=13. Lifecycle 15/33 selects 1; lazy lifecycle 10/15 currently selects 6 dynamic markers, becoming 10/17 overall and 8 selected after adding exactly two modes. CP-9 therefore changes 7 -> 9. CP-6/7/8/9 final per OS=7/12/13/9; CP-16=3 x 7. Whole-class lifecycle counts are declaration expansion, not a promise that child-only probes execute in the parent.
+
+Install ready-file observation before launch, combine change notifications with an immediate read after subscription and Process.Exited; re-read complete JSON after each notification, with exclusive child identity. This avoids missed creation and partial writes without a sleep loop. Ready JSON currently contains cut and worker PID; compare both against requested cut and captured child, while task/root ownership is validated before entering the harness. Keep parent connection in child environment only. Drain both pipes from start. Root-only cut kill stays separate from final owned-tree cleanup. Await resume exit and both drains. Replace positional argument mutation with a fresh typed resume payload.
+
+Preflight invalid-request subcases execute the new worker's validation before it can open a database or spawn work; use a valid owned root for one-field deviations and catch the expected rejection into a labelled assertion. They run inside the existing V15 method and add no results. Do not weaken the check in the detecting test when mutating the implementation. CP-7 must reach caller receipt even on its publication-commit case. Existing SQL/real queue assertions are retained; add messages and finite preconditions in already authorized files, including replacing the success-path early return.
+
+| Guard / PC | Detecting method and distinct label | One compiling defect; finite red witness |
+|---|---|---|
+| G-15 / PC-15 | C448_V15_RealWorkerDeathRecoversDurableBoundaries / `worker-cut-identity` | Write another allowed cut into ready JSON while keeping PID valid; identity fails before reading phase. |
+| G-16 / PC-16 | Same / `worker-durable-phase` | Fixture publishes the requested ready cut but changes the captured durable phase; phase assertion fails before resume. |
+| G-17 / PC-17 | Same / `worker-resume-exit` | Resume completes its work but exits 7; code is asserted before durable recovery checks. |
+| G-18 / PC-18 | Same / `worker-root-owned` | Bypass root validation; invalid-root preflight returns admitted, caught as data and fails before launch. |
+| G-19 / PC-19 | Same / `worker-ready-confined` | Bypass Ready-parent check; valid root/task/cut plus Ready outside root fails the specific rejection assertion. |
+| G-20 / PC-20 | Same / `worker-task-owned` | Bypass fixture-owner task comparison; only task differs in an otherwise valid request. |
+| G-21 / PC-21 | Same / `worker-cut-allowed` | Permit an unknown cut; capture validator result before invoking harness. Include land and retirement validator subcases. |
+| G-22 / PC-22 | Worker_mode_list_names_every_owned_child_worker / `all-owned-worker-markers-registered` | Omit only LandProtocolCrashWorker from registry; constant-field census remains independent and equality fails. |
+| G-23 / PC-23 | A_worker_child_exits_before_the_shared_store_warmup / existing marker-specific dbLifecycle=never-requested | Initialize lifecycle before dispatching the malformed selected worker request; child exits finitely, then its recorded lifecycle assertion fails. |
+| G-24 / PC-24 | C448_V15_RealWorkerDeathRecoversDurableBoundaries / `worker-one-selected-marker` | Stop clearing inherited marker keys in owned ProcessStartInfo; inspect its environment dictionary before process start and assert exactly the chosen marker. No parent environment mutation. |
+| G-25 / PC-25 | Same / `worker-owned-children-joined` | Fixture cleanup returns before joining a deliberately held owned child; inspect captured process state at this label, then unconditional outer finally actually releases/joins it. |
+| G-26 / PC-26 | C459_WorkerDeathAtEveryRetirementHandoff / `retirement-durable-handoff` | For directory-result preserve ready and successful resume but suppress persisted DirectoryRemoved; label the existing selected-cut component assertion before final state sweep. All thirteen cut branches retain their existing assertions. |
+| G-27 / PC-27 | C478_V09a_LandCrashMatrix / `land-queue-row-required` | Fixture suppresses notification enqueue while retaining RetryPending; replace the helper's early return with queue ID required at this label. No assertion may report success before reaching recipient checks. |
+| G-28 / PC-28 | Same / `land-busy-does-not-submit` | In lost-wakeup/true fixture make queue submit while caller Working; Inputs-empty fails before clearing Working. |
+| G-29 / PC-29 | Same / `land-receipt-session-identity` | Supply an otherwise complete fresh receipt for a different session in an internal invalid-receipt subcase; assert notification stays unconfirmed before supplying the valid receipt. |
+| G-30 / PC-30 | Same / `land-receipt-complete-body` | Bypass completeness matching and supply head+tail-only UserPrompt; same-session fresh receipt must leave notification unconfirmed. |
+| G-31 / PC-31 | Same / `land-receipt-after-floor` | Bypass sequence floor and supply complete same-session receipt at the attempt baseline; finite reconcile must remain unconfirmed. |
+| G-32 / PC-32 | Same / `land-recovery-does-not-retype` | Repeat queue submit on the second reconciliation after a valid persisted receipt; keep receipt correct so the final Inputs count fails at its own label. |
+
+For PC-29 mutate the session-identity check as well as supplying the deliberately wrong-session fixture; original and restored code must reject that fixture. For PC-30/31 only the corresponding matcher guard is bypassed. Each subcase first asserts unconfirmed, restores valid input, then proves the complete correlated receipt, ConfirmingPromptSequence=11 and one persisted UserPrompt. The fake recipient does not replace the real queue/persistence/recovery services. These added subcases do not introduce new production delivery paths.
+
+Windows obligations are explicit: C448 all seven cuts AND WorktreeResidueRecovery all thirteen cuts use the same PowerShell reflection pattern today and must pass after migration, with native dotnet dependency binding, correct resume exit, captured-child cleanup and no parent-store ownership transfer. Post-land publication-commit and all 12 queue cases remain required there too.
+
 ### Stress recipes: fixed workload, honest red/green evidence
 
 CP-13..19 are the **closed diagnostic stress selections** below. For each, take a clean committed pre-fix source and a clean committed post-fix source; retain source SHA, OS, driver SHA, filter, repetition count, 24 owned burner PIDs/start times, actual failures/skips and named first failure. No baseline worktree is created by fetching/rebasing this branch. The caller may commission a fresh source-pinned worktree for baseline; raw old receipts are retained, never overwritten by a successful rerun.
