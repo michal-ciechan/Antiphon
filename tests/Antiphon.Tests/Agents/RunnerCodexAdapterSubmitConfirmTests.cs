@@ -3,8 +3,10 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Agents;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
@@ -26,20 +28,21 @@ public class RunnerCodexAdapterSubmitConfirmTests
     [Test]
     public async Task A_folded_first_CR_is_recovered_by_pressing_Enter_again_and_never_by_re_typing()
     {
+        var time = new ControlledTimeProvider();
         var client = new ScriptedCodexRunnerClient { ConfirmAfterEnters = 2 };
-        var adapter = NewAdapter(client);
+        var adapter = NewAdapter(client, time);
         await adapter.StartAsync(NewSpec(), CancellationToken.None);
 
-        await adapter.SendPromptAsync(Body, CancellationToken.None);
+        await await DriveSendAsync(client, adapter, time);
 
         client.Enters.ShouldBe(2, "the first CR folded; exactly one re-press was needed");
-        client.BodyWrites.ShouldBe(1,
-            "the body must be typed ONCE — a re-type onto a composer that is holding it sends it twice");
+        client.BodyWrites.ShouldBe(1, "submit-body-once");
     }
 
     [Test]
     public async Task An_unconfirmed_submit_over_a_live_transcript_throws_prompt_delivery()
     {
+        var time = new ControlledTimeProvider();
         var client = new ScriptedCodexRunnerClient
         {
             ConfirmAfterEnters = 0, // no Enter ever submits
@@ -48,20 +51,100 @@ public class RunnerCodexAdapterSubmitConfirmTests
         // confirming row" is the pipeline saying the body did not submit — not an absent observer.
         client.Seed(Row(1, TranscriptKinds.UserPrompt, "a prompt from the previous turn"));
 
-        var adapter = NewAdapter(client);
+        var adapter = NewAdapter(client, time);
         await adapter.StartAsync(NewSpec(), CancellationToken.None);
 
-        var ex = await Should.ThrowAsync<PromptDeliveryException>(
-            () => adapter.SendPromptAsync(Body, CancellationToken.None));
+        var send = await DriveSendAsync(client, adapter, time);
+        var ex = await Should.ThrowAsync<PromptDeliveryException>(() => send);
 
         ex.Message.ShouldContain("no UserPrompt transcript row");
-        client.Enters.ShouldBe(4, "the initial CR plus CodexSubmitAttempts (3) re-presses");
+        client.Enters.ShouldBe(4, "submit-enter-4-before-deadline");
         client.BodyWrites.ShouldBe(1);
+
+        // The helper reaches its first fake poll before returning this pending task.
+        var directClock = new ControlledTimeProvider();
+        using var directCancel = new CancellationTokenSource();
+        var direct = CodexSubmitConfirmation.SubmitAsync(
+            Body, 1, _ => Task.CompletedTask, _ => Task.CompletedTask,
+            _ => Task.FromResult<IReadOnlyList<SessionRunnerTranscriptEvent>?>(
+                [Row(1, TranscriptKinds.UserPrompt, "previous turn")]),
+            _ => Task.FromResult(string.Empty),
+            new CodexSubmitOptions(TimeSpan.FromMilliseconds(150), 3,
+                TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(250), directClock),
+            null, directCancel.Token);
+        try
+        {
+            direct.IsCompleted.ShouldBeFalse("submit-poll-uses-clock");
+            var pollInterval = TimeSpan.FromMilliseconds(250);
+            var pollDeadline = directClock.GetUtcNow() + pollInterval;
+            directClock.Events.ShouldContain(e => e.DueTime == pollInterval
+                && e.Deadline == pollDeadline,
+                "submit-poll-uses-clock");
+        }
+        finally
+        {
+            directCancel.Cancel();
+            try { await direct; } catch (Exception) { }
+        }
+
+        // The real deadline may stop re-presses early. Hold the transcript read after Enter
+        // three, then expire the virtual budget before that read is released.
+        var cutoffClock = new ControlledTimeProvider();
+        var releaseThirdRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thirdEnter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fourthEnter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cutoffCancel = new CancellationTokenSource();
+        var presses = 1;
+        var cutoff = CodexSubmitConfirmation.SubmitAsync(
+            Body, 1,
+            _ => Task.CompletedTask,
+            _ =>
+            {
+                presses++;
+                if (presses == 3) thirdEnter.TrySetResult();
+                if (presses == 4) fourthEnter.TrySetResult();
+                return Task.CompletedTask;
+            },
+            async ct =>
+            {
+                if (presses >= 3) await releaseThirdRead.Task.WaitAsync(ct);
+                return [Row(1, TranscriptKinds.UserPrompt, "previous turn")];
+            },
+            _ => Task.FromResult(string.Empty),
+            new CodexSubmitOptions(TimeSpan.FromMilliseconds(150), 3,
+                TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(250), cutoffClock),
+            null, cutoffCancel.Token);
+        try
+        {
+            var first = await cutoffClock.WaitForTimerAsync(e =>
+                e.DueTime == TimeSpan.FromMilliseconds(250) &&
+                e.Deadline == cutoffClock.GetUtcNow() + TimeSpan.FromMilliseconds(250))
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            cutoffClock.AdvanceTo(first.Deadline);
+            var second = await cutoffClock.WaitForTimerAsync(e =>
+                e.DueTime == TimeSpan.FromMilliseconds(250) &&
+                e.Deadline == cutoffClock.GetUtcNow() + TimeSpan.FromMilliseconds(250))
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            cutoffClock.AdvanceTo(second.Deadline);
+            await thirdEnter.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            cutoffClock.AdvanceTo(cutoffClock.GetUtcNow() + TimeSpan.FromMilliseconds(1_500));
+            releaseThirdRead.TrySetResult();
+            await Task.WhenAny(cutoff, fourthEnter.Task).WaitAsync(TimeSpan.FromSeconds(5));
+            fourthEnter.Task.IsCompleted.ShouldBeFalse("submit-expired-budget-stops-repress");
+            await Should.ThrowAsync<PromptDeliveryException>(() => cutoff);
+        }
+        finally
+        {
+            releaseThirdRead.TrySetResult();
+            cutoffCancel.Cancel();
+            try { await cutoff.WaitAsync(TimeSpan.FromSeconds(5)); } catch (Exception) { }
+        }
     }
 
     [Test]
     public async Task A_body_still_standing_in_the_composer_is_named_in_the_failure_and_blocks_a_re_type()
     {
+        var time = new ControlledTimeProvider();
         var client = new ScriptedCodexRunnerClient
         {
             ConfirmAfterEnters = 0,
@@ -71,11 +154,11 @@ public class RunnerCodexAdapterSubmitConfirmTests
         };
         client.Seed(Row(1, TranscriptKinds.UserPrompt, "a prompt from the previous turn"));
 
-        var adapter = NewAdapter(client);
+        var adapter = NewAdapter(client, time);
         await adapter.StartAsync(NewSpec(), CancellationToken.None);
 
-        var ex = await Should.ThrowAsync<PromptDeliveryException>(
-            () => adapter.SendPromptAsync(Body, CancellationToken.None));
+        var send = await DriveSendAsync(client, adapter, time);
+        var ex = await Should.ThrowAsync<PromptDeliveryException>(() => send);
 
         ex.ComposerMayHoldBody.ShouldBeTrue(
             "AgentSessionService.SendBootPromptWithRetryAsync keys its skip-the-re-type on this");
@@ -85,19 +168,20 @@ public class RunnerCodexAdapterSubmitConfirmTests
     [Test]
     public async Task A_session_with_no_observable_transcript_degrades_to_a_blind_send_instead_of_failing()
     {
+        var time = new ControlledTimeProvider();
         var client = new ScriptedCodexRunnerClient
         {
             ConfirmAfterEnters = 0,
             ThrowOnTranscript = true, // bind refused / no tailer: nothing to confirm against
         };
-        var adapter = NewAdapter(client);
+        var adapter = NewAdapter(client, time);
         await adapter.StartAsync(NewSpec(), CancellationToken.None);
 
         // Must NOT throw: a missing observer is not evidence that the prompt failed, and failing
         // the launch over it would kill sessions that are working fine (CARD-0055's degrade posture).
         // IdleScreen holds neither the body nor Working, so S1b-A's two-look still takes the
         // blind return (neither arm).
-        await adapter.SendPromptAsync(Body, CancellationToken.None);
+        await await DriveSendAsync(client, adapter, time);
 
         client.BodyWrites.ShouldBe(1);
     }
@@ -105,6 +189,7 @@ public class RunnerCodexAdapterSubmitConfirmTests
     [Test]
     public async Task A_blind_first_turn_with_the_body_still_standing_after_every_Enter_throws_composer_may_hold_body()
     {
+        var time = new ControlledTimeProvider();
         var client = new ScriptedCodexRunnerClient
         {
             ThrowOnTranscript = true,
@@ -113,31 +198,55 @@ public class RunnerCodexAdapterSubmitConfirmTests
             QuietScreen = ScriptedCodexRunnerClient.IdleScreen.Replace(
                 "  > \n", $"  > {Body}\n", StringComparison.Ordinal),
         };
-        var adapter = NewAdapter(client);
+        var adapter = NewAdapter(client, time);
         await adapter.StartAsync(NewSpec(), CancellationToken.None);
 
-        var ex = await Should.ThrowAsync<PromptDeliveryException>(
-            () => adapter.SendPromptAsync(Body, CancellationToken.None));
+        var send = await DriveSendAsync(client, adapter, time);
+        var ex = await Should.ThrowAsync<PromptDeliveryException>(() => send);
 
         ex.ComposerMayHoldBody.ShouldBeTrue();
         ex.Message.ShouldContain("STILL SHOWS");
         ex.Message.ShouldContain("transcript never produced a row");
-        client.Enters.ShouldBe(4);
+        client.Enters.ShouldBe(4, "submit-enter-4-before-deadline");
         client.BodyWrites.ShouldBe(1);
+        client.SnapshotReads.ShouldBe(2, "blind-body-two-looks");
+
+        var directClock = new ControlledTimeProvider();
+        using var directCancel = new CancellationTokenSource();
+        var direct = CodexSubmitConfirmation.SubmitAsync(
+            Body, 0, _ => Task.CompletedTask, _ => Task.CompletedTask,
+            _ => Task.FromResult<IReadOnlyList<SessionRunnerTranscriptEvent>?>(null),
+            _ => Task.FromResult(Body),
+            new CodexSubmitOptions(TimeSpan.Zero, 0, TimeSpan.Zero,
+                TimeSpan.FromMilliseconds(250), directClock), null, directCancel.Token);
+        try
+        {
+            direct.IsCompleted.ShouldBeFalse("blind-settle-uses-clock");
+            var settleDeadline = directClock.GetUtcNow() + CodexMcpBoot.AbsentSettle;
+            directClock.Events.ShouldContain(e => e.DueTime == CodexMcpBoot.AbsentSettle
+                && e.Deadline == settleDeadline,
+                "blind-settle-uses-clock");
+        }
+        finally
+        {
+            directCancel.Cancel();
+            try { await direct; } catch (OperationCanceledException) { }
+        }
     }
 
     [Test]
     public async Task A_blind_first_turn_that_shows_the_Working_indicator_is_a_degraded_success()
     {
+        var time = new ControlledTimeProvider();
         var client = new ScriptedCodexRunnerClient
         {
             ThrowOnTranscript = true,
             IndicatorScreenReads = 100,
         };
-        var adapter = NewAdapter(client);
+        var adapter = NewAdapter(client, time);
         await adapter.StartAsync(NewSpec(), CancellationToken.None);
 
-        await adapter.SendPromptAsync(Body, CancellationToken.None);
+        await await DriveSendAsync(client, adapter, time);
 
         client.BodyWrites.ShouldBe(1);
     }
@@ -145,40 +254,75 @@ public class RunnerCodexAdapterSubmitConfirmTests
     [Test]
     public async Task A_transient_fetch_failure_on_a_later_turn_does_not_confirm_against_the_previous_UserPrompt()
     {
+        var time = new ControlledTimeProvider();
         // CARD-0113 sibling: the same `?? 0` floor is the submit-confirmation baseline. A
         // second send of the same body whose capture fetch misses would otherwise match the
         // previous turn's UserPrompt (sequence > 0) and report Sent without this Enter landing.
         var client = new ScriptedCodexRunnerClient { ConfirmAfterEnters = 1 };
-        var adapter = NewAdapter(client);
+        var adapter = NewAdapter(client, time);
         await adapter.StartAsync(NewSpec(), CancellationToken.None);
 
-        await adapter.SendPromptAsync(Body, CancellationToken.None);
+        await await DriveSendAsync(client, adapter, time);
         client.BodyWrites.ShouldBe(1);
         client.Enters.ShouldBe(1);
 
         client.RemainingTranscriptFailures = 1;
         client.ConfirmAfterEnters = 0; // the second Enter must not be treated as a submit
 
-        var ex = await Should.ThrowAsync<PromptDeliveryException>(
-            () => adapter.SendPromptAsync(Body, CancellationToken.None));
-
-        ex.Message.ShouldContain("no UserPrompt transcript row");
+        var send = await DriveSendAsync(client, adapter, time);
+        Exception? outcome = null;
+        try { await send; } catch (Exception ex) { outcome = ex; }
+        (outcome is PromptDeliveryException)
+            .ShouldBeTrue("submit-does-not-reuse-old-receipt");
+        var delivery = (PromptDeliveryException)outcome!;
+        delivery.Message.ShouldContain("no UserPrompt transcript row");
         client.BodyWrites.ShouldBe(2, "the second turn types the body once");
     }
 
     [Test]
     public async Task A_confirmed_first_CR_costs_no_extra_enters()
     {
+        var time = new ControlledTimeProvider();
         var client = new ScriptedCodexRunnerClient { ConfirmAfterEnters = 1 };
-        var adapter = NewAdapter(client);
+        var adapter = NewAdapter(client, time);
         await adapter.StartAsync(NewSpec(), CancellationToken.None);
 
-        await adapter.SendPromptAsync(Body, CancellationToken.None);
+        await await DriveSendAsync(client, adapter, time);
 
         client.Enters.ShouldBe(1, "a submit that landed first time must not be poked again");
+        var field = typeof(RunnerCodexAdapter).GetField("_timeProvider",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        var defaultAdapter = NewAdapter(new ScriptedCodexRunnerClient());
+        ReferenceEquals(field?.GetValue(defaultAdapter), TimeProvider.System)
+            .ShouldBeTrue("submit-default-is-system");
+        await defaultAdapter.DisposeAsync();
+
+        var options = new CodexSubmitOptions(TimeSpan.FromMilliseconds(150), 3,
+            TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(250));
+        foreach (var supplied in new[]
+        {
+            options,
+            options with { TimeProvider = null },
+            options with { TimeProvider = TimeProvider.System },
+        })
+        {
+            ReferenceEquals(supplied.Clock, TimeProvider.System)
+                .ShouldBeTrue("submit-default-is-system");
+            var bodyWrites = 0;
+            var extraEnters = 0;
+            await CodexSubmitConfirmation.SubmitAsync(
+                Body, 0,
+                _ => { bodyWrites++; return Task.CompletedTask; },
+                _ => { extraEnters++; return Task.CompletedTask; },
+                _ => Task.FromResult<IReadOnlyList<SessionRunnerTranscriptEvent>?>(
+                    [Row(1, TranscriptKinds.UserPrompt, Body)]),
+                _ => Task.FromResult(string.Empty), supplied, null, CancellationToken.None);
+            bodyWrites.ShouldBe(1, "submit-default-is-system");
+            extraEnters.ShouldBe(0, "submit-default-is-system");
+        }
     }
 
-    private static RunnerCodexAdapter NewAdapter(ISessionRunnerClient client) =>
+    private static RunnerCodexAdapter NewAdapter(ISessionRunnerClient client, TimeProvider? time = null) =>
         new(
             client,
             Options.Create(new AgentRegistrySettings
@@ -187,7 +331,82 @@ public class RunnerCodexAdapterSubmitConfirmTests
                 CodexSubmitReEnterIntervalMs = 150,
                 CodexSubmitAttempts = 3,
                 CodexSubmitConfirmTimeoutMs = 2_000,
-            }));
+            }), timeProvider: time);
+
+    private static async Task<Task> DriveSendAsync(
+        ScriptedCodexRunnerClient client, RunnerCodexAdapter adapter, ControlledTimeProvider time)
+    {
+        var started = time.GetUtcNow();
+        var priorEnters = client.Enters;
+        var enters = Enumerable.Range(0, 5)
+            .Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).ToArray();
+        client.OnEnter = count => enters[count - priorEnters].TrySetResult();
+        var cancel = new CancellationTokenSource();
+        var send = adapter.SendPromptAsync(Body, cancel.Token);
+        try
+        {
+        await enters[1].Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (client.ConfirmAfterEnters == 1 && !client.ThrowOnTranscript)
+            return send;
+
+        var last = client.ConfirmAfterEnters == 2 ? 2 : 4;
+        for (var enter = 2; enter <= last; enter++)
+        {
+            var expected = started + TimeSpan.FromMilliseconds(250 * (enter - 1));
+            var timerTask = time.WaitForTimerAsync(e =>
+                e.DueTime == TimeSpan.FromMilliseconds(250) && e.Deadline == expected);
+            var first = await Task.WhenAny(timerTask, Task.Delay(TimeSpan.FromSeconds(5)));
+            first.ShouldBe(timerTask, "submit-poll-uses-clock");
+            time.AdvanceTo(expected);
+            await enters[enter].Task.WaitAsync(TimeSpan.FromSeconds(5));
+            if (enter is 2 or 3)
+            {
+                (client.Enters - priorEnters).ShouldBe(enter,
+                    $"submit-enter-{enter}-at-{250 * (enter - 1)}");
+                time.GetUtcNow().ShouldBe(expected,
+                    $"submit-enter-{enter}-at-{250 * (enter - 1)}");
+            }
+            if (enter == 4)
+                (client.Enters - priorEnters).ShouldBe(4, "submit-enter-4-before-deadline");
+        }
+
+        if (last == 4)
+        {
+            for (var ms = 1_000; ms <= 2_000; ms += 250)
+            {
+                var expected = started + TimeSpan.FromMilliseconds(ms);
+                var pollTask = time.WaitForTimerAsync(e =>
+                    e.DueTime == TimeSpan.FromMilliseconds(250) && e.Deadline == expected);
+                var next = await Task.WhenAny(pollTask, Task.Delay(TimeSpan.FromSeconds(5)));
+                next.ShouldBe(pollTask, "submit-poll-uses-clock");
+                time.AdvanceTo(expected);
+            }
+            if (client.ThrowOnTranscript)
+            {
+                if (client.IndicatorScreenReads > 0)
+                {
+                    await send.WaitAsync(TimeSpan.FromSeconds(5));
+                    _ = send.ContinueWith(_ => cancel.Dispose(), TaskScheduler.Default);
+                    return send;
+                }
+                var settleTask = time.WaitForTimerAsync(e =>
+                    e.DueTime == CodexMcpBoot.AbsentSettle && e.RegisteredAt == time.GetUtcNow());
+                var first = await Task.WhenAny(settleTask, Task.Delay(TimeSpan.FromSeconds(5)));
+                first.ShouldBe(settleTask, "blind-settle-uses-clock");
+                time.AdvanceTo((await settleTask).Deadline);
+            }
+        }
+        _ = send.ContinueWith(_ => cancel.Dispose(), TaskScheduler.Default);
+        return send;
+        }
+        catch
+        {
+            cancel.Cancel();
+            try { await send.WaitAsync(TimeSpan.FromSeconds(5)); } catch (Exception) { }
+            cancel.Dispose();
+            throw;
+        }
+    }
 
     private static AgentLaunchSpec NewSpec() => new(
         DefinitionName: "codex",

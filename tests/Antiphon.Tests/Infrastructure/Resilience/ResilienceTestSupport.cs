@@ -5,6 +5,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
+using Antiphon.Tests.TestHelpers;
+using System.Diagnostics;
 
 namespace Antiphon.Tests.Infrastructure.Resilience;
 
@@ -82,13 +84,24 @@ internal sealed class CollectingLoggerProvider : ILoggerProvider
     }
 }
 
+/// <summary>Keeps an observed cancellation callback alive until its test acknowledges it.</summary>
+internal sealed class RetainedCancellationRegistration : IDisposable
+{
+    private CancellationTokenRegistration _registration;
+
+    public void Register(CancellationToken token, Action callback) =>
+        _registration = token.Register(callback);
+
+    public void Dispose() => _registration.Dispose();
+}
+
 internal static class ResilienceTestHost
 {
     public static ServiceProvider Build(
         ScriptHandler handler,
         string clientName,
         ResilienceSettings? settings = null,
-        FakeTimeProvider? time = null,
+        TimeProvider? time = null,
         IResilienceJitter? jitter = null,
         CollectingLoggerProvider? logs = null)
     {
@@ -128,6 +141,52 @@ internal static class ResilienceTestHost
         }
 
         return await work.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    /// <summary>Advance one registered virtual boundary, then wait for its explicit phase.</summary>
+    public static async Task AdvanceAfterAsync(
+        ControlledTimeProvider time,
+        ControlledTimeProvider.TimerEvent timer,
+        Task phase,
+        DateTimeOffset boundary,
+        CancellationToken token)
+    {
+        if (timer.Sequence <= 0 || timer.Deadline != boundary || time.GetUtcNow() > boundary)
+            throw new InvalidOperationException("Expected timer was not registered at the requested boundary.");
+        var dueTimers = time.Events.GroupBy(e => e.TimerId).Select(group => group.Last())
+            .Where(e => e.Action is "create" or "change" && e.DueTime > TimeSpan.Zero
+                && e.Deadline <= boundary).ToArray();
+        if (dueTimers.Length == 0 || dueTimers.Any(e => e.Deadline != boundary)
+            || dueTimers.All(e => e.TimerId != timer.TimerId))
+            throw new InvalidOperationException("all-timers-at-boundary: live timer inventory changed before advance.");
+        time.AdvanceTo(boundary);
+        var watchdog = Stopwatch.StartNew();
+        while (!phase.IsCompleted)
+        {
+            if (watchdog.Elapsed >= TimeSpan.FromSeconds(5))
+            {
+                var events = string.Join("; ", time.Events.Select(e =>
+                    $"#{e.Sequence} timer={e.TimerId} {e.Action} at={e.RegisteredAt:O} due={e.DueTime}"));
+                var states = string.Join("; ", time.TimerStates.Select(e => $"{e.Key}={e.Value}"));
+                throw new TimeoutException(
+                    $"Boundary phase did not complete at {boundary:O}; now={time.GetUtcNow():O}; " +
+                    $"tokenCancelled={token.IsCancellationRequested}; expectedTimer={timer.TimerId}; " +
+                    $"timerStates=[{states}]; timerEvents=[{events}]");
+            }
+
+            // A timer can be registered or rearmed by a continuation after the first advance.
+            // Drive due callbacks again without changing the asserted virtual instant.
+            time.Advance(TimeSpan.Zero);
+            if (time.GetUtcNow() != boundary)
+                throw new InvalidOperationException("held-completion-keeps-time-at-boundary");
+            if (!phase.IsCompleted)
+                await Task.WhenAny(phase, Task.Delay(1));
+        }
+
+        await phase;
+        if (!token.IsCancellationRequested || time.GetUtcNow() != boundary
+            || !time.Events.Any(e => e.Action == "fire" && e.RegisteredAt == boundary))
+            throw new InvalidOperationException("cancellation-callback-at-boundary: timer/token phase was not acknowledged.");
     }
 
     public static HttpResponseMessage Status(HttpStatusCode status, string body = "") =>
