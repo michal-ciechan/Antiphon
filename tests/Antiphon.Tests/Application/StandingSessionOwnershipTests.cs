@@ -109,7 +109,8 @@ public class StandingSessionOwnershipTests
             s.HerdrConsecutiveFailures, s.ContinuityHeldAt, s.NextRestartAt, s.LivenessLatchedAt,
             s.HerdrFailureHeldAt, s.CapacityRecoveryActionKey, s.CapacityNextDueAt
         }).SingleAsync();
-        state.ConsecutiveFailures.ShouldBe(0); state.RestartBackoffFailures.ShouldBe(oldCount);
+        state.ConsecutiveFailures.ShouldBe(0);
+        state.RestartBackoffFailures.ShouldBe(oldCount);
         state.Suspended.ShouldBeTrue(); state.LastEscalationTier.ShouldBe(2);
         state.HerdrConsecutiveFailures.ShouldBe(3); state.ContinuityHeldAt.ShouldBeNull();
         state.NextRestartAt!.Value.ShouldBe(now.AddDays(1), TimeSpan.FromMilliseconds(1));
