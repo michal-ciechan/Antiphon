@@ -105,8 +105,8 @@ public sealed class StandingPipelinePolicyDocumentationTests
         })
         {
             loop.ShouldContain(sentence);
-            var scratch = loop.Replace(sentence, "", StringComparison.Ordinal);
-            Should.Throw<ShouldAssertException>(() => scratch.ShouldContain(sentence));
+            var withoutSentence = loop.Replace(sentence, "", StringComparison.Ordinal);
+            Should.Throw<ShouldAssertException>(() => withoutSentence.ShouldContain(sentence));
         }
         foreach (var phrase in new[]
         {
