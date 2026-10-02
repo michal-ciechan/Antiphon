@@ -22,7 +22,7 @@ public static class Program
     {
         if (args.Length == 0 || args[0] is "-h" or "--help")
         {
-            Console.WriteLine("antiphon-checkpoints run|start|wait|status|stop|report|validate|import|row|clean|execute|hold|--version");
+            Console.WriteLine("antiphon-checkpoints run|start|wait|status|stop|report|validate|import|coverage|row|clean|execute|hold|--version");
             return ExitCodes.Green;
         }
 
@@ -43,6 +43,8 @@ public static class Program
         var repo = options.Get("repo-root") ?? RepoPaths.FindRoot();
         switch (verb)
         {
+            case "coverage":
+                return new Coverage.CoverageCommand().Run(repo, options.Get("plan") ?? "", options.GetAll("tests").ToList(), options.Get("format") ?? "text", options.Get("checklist"), runtime?.Output ?? Console.Out);
             case "import":
                 return Import(options, repo);
             case "run":
