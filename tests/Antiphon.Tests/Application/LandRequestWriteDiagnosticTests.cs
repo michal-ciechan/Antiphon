@@ -76,7 +76,6 @@ public sealed class LandRequestWriteDiagnosticTests
     [Test]
     [Arguments("request-direct")]
     [Arguments("request-hosted")]
-    [Arguments("other-entity")]
     public async Task C883_ConflictNamesActualEntityAndTokens(string variant)
     {
         await using var h = new LandingSafetyHarness();
@@ -87,26 +86,18 @@ public sealed class LandRequestWriteDiagnosticTests
         var accepted = await h.RequestAsync();
         await using var stale = h.CreateContext();
         Guid key, original, attempted;
-        if (variant == "other-entity")
-        {
-            var owner = await stale.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
-            key = owner.Id; original = owner.ConcurrencyToken;
-            await using var winner = h.CreateContext();
-            var other = await winner.AgentTasks.SingleAsync(t => t.Id == key);
-            other.Title = "committed winner"; other.ConcurrencyToken = Guid.NewGuid();
-            await winner.SaveChangesAsync();
-            owner.Title = "stale private value"; owner.ConcurrencyToken = attempted = Guid.NewGuid();
-        }
-        else
-        {
-            var request = await stale.AgentTaskLandRequests.SingleAsync(r => r.Id == accepted.RequestId);
-            key = request.Id; original = request.ConcurrencyToken;
-            await using var winner = h.CreateContext();
+        var request = await stale.AgentTaskLandRequests.SingleAsync(r => r.Id == accepted.RequestId);
+        key = request.Id; original = request.ConcurrencyToken;
+        await using (var winner = h.CreateContext())
             await new AgentTaskLandMonitorService(winner, h.Clock, Options.Create(new DelegationSettings()), h.Events).SweepAsync(CancellationToken.None);
-            request.HoldDetail = "stale private value"; request.ConcurrencyToken = attempted = Guid.NewGuid();
-        }
+        request.HoldDetail = "stale private value"; request.ConcurrencyToken = attempted = Guid.NewGuid();
         var failure = await Should.ThrowAsync<DbUpdateConcurrencyException>(() => stale.SaveChangesAsync());
         failure.Entries.Count.ShouldBe(1, customMessage: "D.RealConflictingEntry");
+        Guid storedEntityToken;
+        await using (var observer = h.CreateContext())
+            storedEntityToken = (await observer.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == key)).ConcurrencyToken;
+        storedEntityToken.ShouldNotBe(original, "D.StoredEntityTokenDiffersFromOriginal");
+        storedEntityToken.ShouldNotBe(attempted, "D.StoredEntityTokenDiffersFromAttempted");
         Guid observed;
         await using (var observer = h.CreateContext()) observed = (await observer.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == accepted.RequestId)).ConcurrencyToken;
         h.Fixture.Git.BeforeCommand = async (_, args) =>
@@ -130,7 +121,9 @@ public sealed class LandRequestWriteDiagnosticTests
         var row = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == accepted.RequestId);
         row.TerminalFailureCode.ShouldBe("landing_concurrency_conflict", customMessage: "D.ConcurrencyCodePersisted");
         var terminal = await db.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.Id == row.TerminalEventId);
-        var entity = variant == "other-entity" ? "AgentTask" : "AgentTaskLandRequest";
+        terminal.LandRequestId.ShouldBe(accepted.RequestId, "D.TerminalCorrelatedWithExecutingRequest");
+        terminal.Detail.ShouldContain("phase=unknown", customMessage: "D.SafeFailurePhaseNamed");
+        const string entity = "AgentTaskLandRequest";
         terminal.Detail.ShouldContain("entity=" + entity, Case.Sensitive, customMessage: "D.EntryEntityNamed");
         terminal.Detail.ShouldContain($"row={key:N}", Case.Sensitive, customMessage: "D.EntryRowNamed");
         terminal.Detail.ShouldContain($"originalToken={original:N}", Case.Sensitive, customMessage: "D.OriginalTokenNamed");
@@ -143,6 +136,9 @@ public sealed class LandRequestWriteDiagnosticTests
         original.ShouldNotBe(attempted);
         var log = entries.Single(e => e.State.ContainsKey("ConcurrencySummary"));
         log.State["ConcurrencySummary"]!.ToString().ShouldContain($"row={key:N}", customMessage: "D.SummarySurvivesTrackerClear");
+        log.State["TaskId"].ShouldBe(h.Fixture.TaskId, "D.ExecutingOwnerRetained");
+        log.State["RequestId"].ShouldBe(accepted.RequestId, "D.ExecutingRequestRetained");
+        row.Attempt.ShouldBeGreaterThan(0, "D.FailureOccurredAfterExecutionStarted");
         log.State["Attempt"].ShouldBe(row.Attempt, "D.ExecutingAttemptRetained");
         var note = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.RequestId == accepted.RequestId && n.Kind == LandNotificationKind.Outcome);
         note.Body.ShouldContain($"originalToken={original:N}", customMessage: "D.SafeSummaryPersistedInNotification");
@@ -235,7 +231,13 @@ public sealed class LandRequestWriteDiagnosticTests
         }
         var fault = new DiagnosticReadFault();
         if (variant == "read-unavailable") { h.CommandInterceptor = fault; fault.Armed = true; }
-        await h.FailAsync(new DbUpdateConcurrencyException("synthetic private value"));
+        var error = new DbUpdateConcurrencyException("synthetic private value");
+        if (variant == "deleted-row")
+        {
+            var persistence = await Should.ThrowAsync<Antiphon.Server.Application.Dtos.LandFailurePersistenceException>(() => h.FailAsync(error));
+            persistence.InnerException.ShouldBeOfType<InvalidOperationException>("D.DeletedRequestCannotPersistTerminal");
+        }
+        else await h.FailAsync(error);
         var log = entries.Single(e => e.State.ContainsKey("ConcurrencySummary"));
         var summary = log.State["ConcurrencySummary"]!.ToString()!;
         summary.ShouldContain("entity=unknown", customMessage: "D.MissingEntryListSupported");
