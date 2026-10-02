@@ -130,8 +130,22 @@ public sealed class CompletionWarningDeliveryTests
                 task.WorktreePath = path;
                 task.WorktreeBranch = branch;
                 task.WorktreeBaseSha = world.BaseSha;
+                // The worktree is provisioned by this test after manual dispatch. Its files are
+                // the baseline, so place the progress cutoff after that provisioning step.
+                task.DispatchedAt = DateTime.UtcNow.AddMinutes(1);
+                task.VerificationProfileVersion = 1;
+                task.VerificationRound = VerificationRound.Final;
+                task.ReplyTo = AgentTaskReplyTo.Session;
+                task.ParentSessionId = world.CallerSessionId;
                 await db.SaveChangesAsync();
             });
+        var settled = await rig.World.TaskAsync(taskId);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded,
+            $"completion producer status={settled.Status} failure={settled.FailureCode}: {settled.FailureReason}");
+        var progress = TaskProgressJson.TryReadEvidence(settled.CompletionProgressEvidenceJson);
+        progress.ShouldNotBeNull("real local progress evaluation ran");
+        progress.Assessment.ShouldBe(CompletionProgressAssessment.NoAttributedProgress,
+            $"local assessment={progress.Assessment} reason={progress.Reason}");
         return taskId;
     }
 }

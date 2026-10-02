@@ -461,6 +461,124 @@ public sealed class AgentTaskLandAdoptionTests
         h.Fixture.Git.Trace.ShouldContain(a => a.Contains($"--force-with-lease={h.Fixture.SourceRef}:{ownerBefore}"));
     }
 
+    [Test]
+    [Arguments("source_resolver", "owner_recovery")]
+    [Arguments("protocol_prepare", "owner_recovery")]
+    [Arguments("protocol_resume", "owner_recovery")]
+    [Arguments("source_resolver", "adoption")]
+    [Arguments("protocol_prepare", "adoption")]
+    [Arguments("protocol_resume", "adoption")]
+    public async Task C788_RecoveryMismatchDetailSurvivesRestart(string boundary, string mode)
+    {
+        var row = $"{boundary}/{mode}";
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var ownerTip = await h.AddSourceAsync();
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "push", "origin", h.Fixture.SourceRef);
+        var subjectId = h.Fixture.TaskId;
+        var expected = ownerTip;
+        if (mode == "adoption")
+        {
+            subjectId = Guid.NewGuid();
+            var sourceRef = $"refs/heads/feat/card-task-{subjectId:N}";
+            var sourcePath = Path.Combine(h.Fixture.Root, "trees", "reviewed-source");
+            await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "add", "-b", sourceRef[11..],
+                sourcePath, ownerTip);
+            await File.WriteAllTextAsync(Path.Combine(sourcePath, "repair.txt"), "reviewed repair\n");
+            await h.Fixture.RequiredAsync(sourcePath, "add", ".");
+            await h.Fixture.RequiredAsync(sourcePath, "commit", "-m", "reviewed repair");
+            expected = (await h.Fixture.RequiredAsync(sourcePath, "rev-parse", "HEAD")).Trim();
+            await h.Fixture.RequiredAsync(sourcePath, "push", "origin", sourceRef);
+            await using var db = h.CreateContext();
+            var now = DateTime.UtcNow;
+            var projectId = Guid.NewGuid();
+            var boardId = Guid.NewGuid();
+            var columnId = Guid.NewGuid();
+            var cardId = Guid.NewGuid();
+            db.Projects.Add(new Project { Id = projectId, Name = "C788 adoption",
+                LocalRepositoryPath = h.Fixture.Repository, CreatedAt = now, UpdatedAt = now });
+            db.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "C788 adoption",
+                CreatedAt = now, UpdatedAt = now });
+            db.BoardColumns.Add(new BoardColumn { Id = columnId, BoardId = boardId, Name = "Ready",
+                StateKey = "ready", CreatedAt = now, UpdatedAt = now });
+            db.Cards.Add(new Card { Id = cardId, BoardId = boardId, BoardColumnId = columnId,
+                Identifier = "CARD-0788", Title = "reviewed source", CreatedAt = now, UpdatedAt = now });
+            var owner = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            owner.Status = AgentTaskStatus.Failed;
+            owner.ProjectId = projectId;
+            owner.CardId = cardId;
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = subjectId, RootTaskId = subjectId, Title = "C788 reviewed source", Goal = "repair",
+                Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Worktree,
+                WorkingDirectory = h.Fixture.Repository, RepoPath = h.Fixture.Repository,
+                WorktreePath = sourcePath, WorktreeBranch = sourceRef[11..], WorktreeBaseSha = ownerTip,
+                Status = AgentTaskStatus.Failed, CardId = cardId, ProjectId = projectId,
+                ReplyTo = AgentTaskReplyTo.None, CreatedAt = now, CompletedAt = now,
+            });
+            await db.SaveChangesAsync();
+        }
+        var evidenceId = Guid.Empty;
+        await using (var db = h.CreateContext())
+        {
+            var owner = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            owner.Status = AgentTaskStatus.Failed;
+            var subject = await db.AgentTasks.SingleAsync(t => t.Id == subjectId);
+            evidenceId = await AddReviewAsync(db, subject, expected);
+        }
+        var accepted = await h.RequestAsync(expectedSourceSha: expected, reviewEvidenceId: evidenceId,
+            recoverReviewedSource: mode == "owner_recovery",
+            adoptFromTaskId: mode == "adoption" ? subjectId : null);
+        accepted.Status.ShouldBe("queued", row + ": valid approval admitted");
+        var wrongSubject = Guid.NewGuid();
+        var reached = false;
+        if (boundary == "source_resolver")
+        {
+            await using var db = h.CreateContext();
+            await db.StageOutcomes.Where(o => o.Id == evidenceId)
+                .ExecuteUpdateAsync(s => s.SetProperty(o => o.SubjectTaskId, wrongSubject));
+            reached = true;
+        }
+        else
+        {
+            h.Fault.AfterSaveAcknowledged = async context =>
+            {
+                if (reached) return;
+                var hit = boundary == "protocol_prepare"
+                    ? context.ChangeTracker.Entries<AgentTaskLandRequest>().Any(e =>
+                        e.Entity.Id == accepted.RequestId
+                        && e.Entity.SourceResolutionState == LandSourceResolutionState.Resolved)
+                    : context.ChangeTracker.Entries<AgentTaskLanding>().Any(e =>
+                        e.Entity.TaskId == h.Fixture.TaskId && e.Entity.Phase == LandPhase.RecoveryPinned);
+                if (!hit) return;
+                reached = true;
+                await context.Set<StageOutcome>().Where(o => o.Id == evidenceId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(o => o.SubjectTaskId, wrongSubject));
+            };
+        }
+        await h.RunQueuedAsync();
+        reached.ShouldBeTrue(row + ": named recheck hook reached");
+        await h.RestartServicesAsync();
+        await using var verify = h.CreateContext();
+        var saved = await verify.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == accepted.RequestId);
+        if (boundary == "source_resolver")
+            saved.SourceRefusalReason.ShouldBe("review_evidence_subject_mismatch", row + ": original code");
+        else
+            (await verify.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.TaskId == h.Fixture.TaskId))
+                .LastReason.ShouldBe("review_evidence_subject_mismatch", row + ": original code");
+        var refusal = await verify.AgentTaskEvents.AsNoTracking().SingleAsync(e =>
+            e.AgentTaskId == h.Fixture.TaskId && e.LandRequestId == accepted.RequestId
+            && e.Type == AgentTaskEventType.LandRefused);
+        refusal.Detail.ShouldContain(evidenceId.ToString("D"), Case.Sensitive, row + ": evidence ID retained");
+        refusal.Detail.ShouldContain(wrongSubject.ToString("N")[..8], Case.Sensitive, row + ": actual subject retained");
+        refusal.Detail.ShouldContain(subjectId.ToString("N")[..8], Case.Sensitive, row + ": required subject retained");
+        refusal.Detail.ShouldContain(expected, Case.Sensitive, row + ": expected SHA retained");
+        refusal.Detail.ShouldContain(mode == "adoption" ? "-FromTask" : "-RecoverReviewedSource",
+            Case.Sensitive, row + ": corrective mode retained");
+        (await verify.AgentTaskLandings.AsNoTracking().Where(o => o.TaskId == h.Fixture.TaskId).ToListAsync())
+            .ShouldAllBe(o => !new AgentTaskLandingState().HasPublication(o), row + ": no publication");
+    }
+
     private static async Task<Guid> AddReviewAsync(
         Antiphon.Server.Infrastructure.Data.AppDbContext db, AgentTask subject, string sha)
     {
