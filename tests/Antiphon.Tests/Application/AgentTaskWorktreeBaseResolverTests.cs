@@ -320,8 +320,9 @@ public class AgentTaskWorktreeBaseResolverTests
         }
         await db.SaveChangesAsync();
         var fault = scenario is "landed_event" or "landed_with_residue_event"
-            ? new RefLookupFailureGit(source.WorktreeBranch!) : null;
+            ? new RefLookupFailureGit(source.RepoPath!) : null;
         var auto = await ResolveAsync(db, NewRequest(repo, card.Id), fault);
+        if (fault is not null) fault.Calls.ShouldBe(0, "landed rows must not reach the Git fault hook");
         switch (scenario)
         {
             case "merge_plus_one_tip":
@@ -604,12 +605,13 @@ public class AgentTaskWorktreeBaseResolverTests
             source.RepoPath = await CheckoutAsync(repo, source);
             await db.SaveChangesAsync();
         }
-        ILandingGit? fault = scenario == "git_error" ? new RefLookupFailureGit(source.RepoPath!) : null;
+        RefLookupFailureGit? fault = scenario == "git_error" ? new RefLookupFailureGit(source.RepoPath!) : null;
         var auto = await ResolveAsync(db, NewRequest(repo, card.Id), fault);
         var explicitRequest = NewRequest(repo, card.Id);
         explicitRequest.RequestedWorktreeBaseMode = RequestedWorktreeBaseMode.Task;
         explicitRequest.RequestedWorktreeBaseTaskId = source.Id;
         var explicitSelection = await ResolveAsync(db, explicitRequest, fault);
+        if (scenario == "git_error") fault!.Calls.ShouldBeGreaterThan(0, "the common-directory fault must be reached");
         if (scenario is "unregistered_local_branch" or "missing_original_directory")
         {
             auto.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
@@ -703,6 +705,7 @@ public class AgentTaskWorktreeBaseResolverTests
     [Arguments("caller_canceled")]
     public async Task T0442_V29_inspection_budget_never_selects_a_partial_inventory(string scenario)
     {
+        new GitSettings().WorktreeBaseInspectionTimeoutSeconds.ShouldBe(5);
         using var repo = new ScratchGitRepo("c442-v29");
         await repo.CommitFileAsync("seed.txt", "M\n");
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -723,12 +726,13 @@ public class AgentTaskWorktreeBaseResolverTests
             DefaultBranch = "master",
             WorktreeBaseMaxCandidates = 16,
             WorktreeBaseMaxGitCommands = scenario == "git_call_cap" ? 2 : 128,
-            WorktreeBaseInspectionTimeoutSeconds = 2,
+            WorktreeBaseInspectionTimeoutSeconds = 5,
         };
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var gate = new GitProcessGate(1);
+        var deadlineGit = new DeadlineGit(clock);
         ILandingGit git = scenario is "deadline" or "explicit_deadline"
-            ? new DeadlineGit(clock) : new LandingGit();
+            ? deadlineGit : new LandingGit();
         var request = NewRequest(repo, card.Id);
         if (scenario == "explicit_deadline")
         {
@@ -757,12 +761,14 @@ public class AgentTaskWorktreeBaseResolverTests
                 barrierTimeout.Token.ThrowIfCancellationRequested();
                 await Task.Yield();
             }
-            clock.Advance(TimeSpan.FromSeconds(2));
+            clock.Advance(TimeSpan.FromSeconds(5));
             selection = await pending;
             gate.Started.ShouldBe(1); // only the fixture's lease entered the gate.
         }
         else
             selection = await resolver.ResolveAsync(request, CancellationToken.None);
+        if (scenario is "deadline" or "explicit_deadline")
+            deadlineGit.Calls.ShouldBeGreaterThan(0, "the deadline injection must be reached");
 
         if (scenario == "six_kept")
         {
@@ -878,12 +884,18 @@ public class AgentTaskWorktreeBaseResolverTests
 
     private sealed class RefLookupFailureGit(string repositoryPath) : LandingGit
     {
+        public int Calls { get; private set; }
         public override Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> args,
-            CancellationToken ct) =>
-            args is ["rev-parse", "--path-format=absolute", "--git-common-dir"]
-                && repository == repositoryPath
-                    ? Task.FromResult(new LandingGitResult(128, "", "injected common directory error"))
-                    : base.RunAsync(repository, args, ct);
+            CancellationToken ct)
+        {
+            if (args is ["rev-parse", "--path-format=absolute", "--git-common-dir"]
+                && repository == repositoryPath)
+            {
+                Calls++;
+                return Task.FromResult(new LandingGitResult(128, "", "injected common directory error"));
+            }
+            return base.RunAsync(repository, args, ct);
+        }
     }
 
     private sealed class TraceGit : LandingGit
@@ -899,10 +911,12 @@ public class AgentTaskWorktreeBaseResolverTests
 
     private sealed class DeadlineGit(FakeTimeProvider clock) : LandingGit
     {
+        public int Calls { get; private set; }
         public override Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> args,
             CancellationToken ct)
         {
-            clock.Advance(TimeSpan.FromSeconds(2));
+            Calls++;
+            clock.Advance(TimeSpan.FromSeconds(5));
             return Task.FromResult(new LandingGitResult(0, repository, ""));
         }
     }
