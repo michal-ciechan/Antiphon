@@ -243,8 +243,11 @@ only their final leaf on either OS; unsafe or empty leaves become null. Plain sa
 labels and typed identity fields remain intact. Classification, exact process
 stamps and claim matching use the raw observation before this display projection.
 The drive-prefix rule masks an ASCII `[A-Za-z]:` at the start of a value or
-immediately after whitespace or an opening quote, including drive-relative paths
-such as `C:secret-home`. A `letter:` sequence inside a word stays visible.
+after any character except an ASCII letter or digit. This includes drive-relative
+paths such as `C:secret-home` after punctuation, Unicode quotes, or non-ASCII
+characters. A letter-preceded form such as `xC:secret-home` remains visible:
+masking it would also mask safe labels such as `Review: notes`. The same residual
+applies after an ASCII digit, such as `1C:secret-home`.
 Unicode look-alike separators U+FF3C and U+2215 and bidi format character U+202E
 are kept because they are not path syntax on any OS.
 This text policy applies on Windows and Unix, including refused previews; it does
