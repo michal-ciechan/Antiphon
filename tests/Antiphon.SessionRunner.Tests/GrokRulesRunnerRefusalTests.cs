@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
@@ -183,6 +184,7 @@ public sealed class GrokRulesRunnerRefusalTests
             {
                 var live = runtime.List().FirstOrDefault(s => s.SessionId == sessionId);
                 await TestSessionTeardown.KillAndAwaitHostExitAsync(runtime, sessionId, live?.HostPid);
+                await AwaitOwnedHostExitAsync(live?.HostPid);
             }
         }
         DeleteLogRoot(settings.SessionLogPath);
@@ -397,6 +399,18 @@ public sealed class GrokRulesRunnerRefusalTests
         File.WriteAllText(path, "#!/bin/sh\ntemp=\"$ANTIPHON_TEST_ARGV.tmp.$$\"\nprintf '%s\\0' \"$@\" > \"$temp\"\nmv \"$temp\" \"$ANTIPHON_TEST_ARGV\"\nprintf 'ARGV_CAPTURED\\n'\nwhile :; do sleep 1; done\n");
         File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         return path;
+    }
+
+    private static async Task AwaitOwnedHostExitAsync(int? hostPid)
+    {
+        if (hostPid is not { } pid) return;
+        try
+        {
+            using var host = Process.GetProcessById(pid);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            await host.WaitForExitAsync(deadline.Token);
+        }
+        catch (ArgumentException) { /* already exited */ }
     }
 
     private static void DeleteLogRoot(string path)

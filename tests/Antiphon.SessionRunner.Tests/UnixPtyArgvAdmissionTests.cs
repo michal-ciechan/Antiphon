@@ -176,7 +176,18 @@ public sealed class UnixPtyArgvAdmissionTests
     };
 
     private static SessionRunnerRuntime Runtime(SessionRunnerSettings settings) => new(
-        Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance);
+        Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance)
+    {
+        CustodyEnvironment = new UnavailableCustodyRoot(),
+    };
+
+    private sealed class UnavailableCustodyRoot : ILinuxCustodyEnvironment
+    {
+        public bool IsLinux => true;
+        public bool CustodyRootExists(string rootName) => false;
+        public int NoNewPrivs => 0;
+        public bool HelperProbeSucceeds(string helperPath) => false;
+    }
 
     private static RunnerLaunchRequest Launch(string root) => new(Guid.NewGuid(), "/bin/sh", [],
         new Dictionary<string, string>(), root, 80, 24);
