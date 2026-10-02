@@ -158,12 +158,12 @@ switch ($Case) {
     }
     'Both' {
         $hashes = @()
-        $kinds = @()
+        $kinds = @((Read-C849Receipt 0 'seed-kind.txt').Trim(), (Read-C849Receipt 1 'seed-kind.txt').Trim())
+        if ($kinds[0] -cnotin @('full', 'cold') -or $kinds[1] -cnotin @('full', 'cold')) { throw 'C849 marker kind invalid' }
+        if ($kinds[0] -cne $kinds[1]) { throw 'C849 mixed marker kinds' }
         for ($i = 0; $i -lt 2; $i++) {
             [void](Assert-C849Status (Read-C849Receipt $i 'status.json') $true)
-            $kind = (Read-C849Receipt $i 'seed-kind.txt').Trim()
-            if ($kind -cnotin @('full', 'cold')) { throw 'C849 marker kind invalid' }
-            $kinds += $kind
+            $kind = $kinds[$i]
             if ($kind -eq 'full') {
                 $smoke = Read-C849Receipt $i 'smoke-summary.txt'
                 if ($smoke -notmatch 'uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK') { throw 'C849 smoke receipt invalid' }
@@ -176,7 +176,6 @@ switch ($Case) {
             if ($mounts -cnotmatch [regex]::Escape($private + ' /tmp true')) { throw 'C849 private tmp mount invalid' }
             if ($kind -eq 'full') { $hashes += (Read-C849Receipt $i 'seed-hash.txt').Trim() }
         }
-        if ($kinds[0] -cne $kinds[1]) { throw 'C849 mixed marker kinds' }
         if ($kinds[0] -eq 'cold') {
             Write-Output 'C849_BOTH kind=cold runners=2 writableVolumes=3 sharedVolumes=3 privateTmpVolumes=2 tmpMode=1777 failures=0'
             break
