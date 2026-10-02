@@ -27,6 +27,7 @@ public sealed class HostCleanupService(AppDbContext db, IEventBus events,
             throw new ValidationException("candidates", "Invalid cleanup receipt metadata.");
         receipt = receipt with { Candidates = receipt.Candidates.ToArray() };
         Validate(receipt);
+        var receivedAt = _clock.GetUtcNow().UtcDateTime;
         var digest = Convert.ToHexStringLower(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(receipt)));
         var existing = await db.HostCleanupRuns.AsNoTracking()
             .SingleOrDefaultAsync(run => run.Id == receipt.RunId, cancellationToken);
@@ -44,13 +45,17 @@ public sealed class HostCleanupService(AppDbContext db, IEventBus events,
             ProcessBootId = receipt.ProcessBootId, SourceSha = receipt.SourceSha,
             ConfigDigest = receipt.ConfigDigest, PlanDigest = receipt.PlanDigest, ReceiptDigest = digest,
             LocalDate = receipt.LocalDate, Daily = receipt.Daily, Execute = receipt.Execute,
-            Complete = receipt.Complete && receipt.Candidates.All(candidate => candidate.ScanComplete &&
+            // An old outbox upload preserves its observation and digest, but cannot become
+            // today's complete inventory or clear an already-open backlog episode.
+            Complete = receipt.Complete && receipt.FinishedAt <= receivedAt &&
+                receivedAt - receipt.FinishedAt <= TimeSpan.FromDays(1) &&
+                receipt.Candidates.All(candidate => candidate.ScanComplete &&
                 candidate.Outcome is not ("partial" or "deferred" or "unknown")),
             PlannedAt = receipt.PlannedAt, FinishedAt = receipt.FinishedAt,
             SampledAt = receipt.SampledAt,
             SampleComplete = receipt.SampleComplete && receipt.SampledAt is { } sampled &&
-                sampled <= _clock.GetUtcNow().UtcDateTime &&
-                _clock.GetUtcNow().UtcDateTime - sampled <= TimeSpan.FromMinutes(_settings.SampleFreshMinutes),
+                sampled <= receivedAt &&
+                receivedAt - sampled <= TimeSpan.FromMinutes(_settings.SampleFreshMinutes),
             NamespaceAllocatedBytes = receipt.NamespaceAllocatedBytes, DiskCapacityBytes = receipt.DiskCapacityBytes,
             FreeBytesBefore = receipt.FreeBytesBefore, FreeBytesAfter = receipt.FreeBytesAfter,
             AttemptLimit = receipt.AttemptLimit, ByteLimit = receipt.ByteLimit,
