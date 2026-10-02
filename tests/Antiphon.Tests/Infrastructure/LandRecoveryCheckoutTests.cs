@@ -117,21 +117,8 @@ public sealed class LandRecoveryCheckoutTests
     {
         await using var f = new LandingGitFixture();
         await f.InitializeAsync();
-        var feature = Path.Combine(f.Source, "feature.txt");
-        if (shape == "binary") await File.WriteAllBytesAsync(feature, [0, 1, 2, 10]);
-        else await File.WriteAllTextAsync(feature, shape == "eol" ? "old\nsecond\n" : "old\n");
+        await File.WriteAllTextAsync(Path.Combine(f.Source, "feature.txt"), "old\n");
         await f.RequiredAsync(f.Source, "add", ".");
-        if (shape == "gitlink") await f.RequiredAsync(f.Source, "update-index", "--add", "--cacheinfo", "160000," + f.SeedSha + ",module");
-        if (shape == "mode")
-        {
-            await f.RequiredAsync(f.Source, "update-index", "--chmod=+x", "feature.txt");
-            if (!OperatingSystem.IsWindows())
-            {
-                File.SetUnixFileMode(feature, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-                File.CreateSymbolicLink(Path.Combine(f.Source, "link"), "feature.txt");
-                await f.RequiredAsync(f.Source, "add", "link");
-            }
-        }
         await f.RequiredAsync(f.Source, "commit", "-m", "old tip");
         var local = (await f.RequiredAsync(f.Source, "rev-parse", "HEAD")).Trim();
         var reviewedTree = Path.Combine(f.Root, "trees", "reviewed");
@@ -140,7 +127,6 @@ public sealed class LandRecoveryCheckoutTests
         var reviewedPath = Path.Combine(reviewedTree, tracked);
         Directory.CreateDirectory(Path.GetDirectoryName(reviewedPath)!);
         await File.WriteAllTextAsync(reviewedPath, "reviewed\n");
-        if (shape == "added") await File.WriteAllTextAsync(Path.Combine(reviewedTree, "reviewed-addition.txt"), "reviewed addition\n");
         await f.RequiredAsync(reviewedTree, "add", ".");
         await f.RequiredAsync(reviewedTree, "commit", "-m", "reviewed tip");
         var reviewed = (await f.RequiredAsync(reviewedTree, "rev-parse", "HEAD")).Trim();
@@ -358,13 +344,27 @@ public sealed class LandRecoveryCheckoutTests
     private static async Task<(string Local, string Reviewed)> HalfResetAsync(LandingGitFixture f, string? shape = null)
     {
         await f.InitializeAsync();
-        await File.WriteAllTextAsync(Path.Combine(f.Source, "feature.txt"), "old\n");
+        var feature = Path.Combine(f.Source, "feature.txt");
+        if (shape == "binary") await File.WriteAllBytesAsync(feature, [0, 1, 2, 10]);
+        else await File.WriteAllTextAsync(feature, shape == "eol" ? "old\nsecond\n" : "old\n");
         await f.RequiredAsync(f.Source, "add", ".");
+        if (shape == "gitlink") await f.RequiredAsync(f.Source, "update-index", "--add", "--cacheinfo", "160000," + f.SeedSha + ",module");
+        if (shape == "mode")
+        {
+            await f.RequiredAsync(f.Source, "update-index", "--chmod=+x", "feature.txt");
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(feature, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                File.CreateSymbolicLink(Path.Combine(f.Source, "link"), "feature.txt");
+                await f.RequiredAsync(f.Source, "add", "link");
+            }
+        }
         await f.RequiredAsync(f.Source, "commit", "-m", "old tip");
         var local = (await f.RequiredAsync(f.Source, "rev-parse", "HEAD")).Trim();
         var reviewedTree = Path.Combine(f.Root, "trees", "reviewed");
         await f.RequiredAsync(f.Repository, "worktree", "add", "--detach", reviewedTree, local);
         await File.WriteAllTextAsync(Path.Combine(reviewedTree, "feature.txt"), "reviewed\n");
+        if (shape == "added") await File.WriteAllTextAsync(Path.Combine(reviewedTree, "reviewed-addition.txt"), "reviewed addition\n");
         await f.RequiredAsync(reviewedTree, "add", ".");
         await f.RequiredAsync(reviewedTree, "commit", "-m", "reviewed tip");
         var reviewed = (await f.RequiredAsync(reviewedTree, "rev-parse", "HEAD")).Trim();
