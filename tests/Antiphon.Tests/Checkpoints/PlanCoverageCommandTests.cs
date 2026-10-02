@@ -138,6 +138,22 @@ public sealed class PlanCoverageCommandTests : CheckpointTestBase
     }
 
     [Test]
+    public void class_only_frozen_result_count_has_no_findings()
+    {
+        var root = TempDir(); var plan = WriteFrozenWorld(root);
+        var lines = File.ReadAllLines(plan);
+        var row = Array.FindIndex(lines, l => l.StartsWith("| R-1 |", StringComparison.Ordinal));
+        lines[row + 1].ShouldBeEmpty("coverage-class-only-coordinate-preserved");
+        lines[row + 1] = "| R-2 | `CheckpointManifestTests` (6 results) | Whole-class regression run. |";
+        File.WriteAllLines(plan, lines);
+        var output = new StringWriter();
+        new CoverageCommand().Run(root, plan, format: "json", output: output).ShouldBe(0, "coverage-class-only-count-clean");
+        using var json = JsonDocument.Parse(output.ToString());
+        json.RootElement.GetProperty("diagnostics").GetArrayLength().ShouldBe(0, "coverage-class-only-no-findings");
+        json.RootElement.GetProperty("summary").GetProperty("matched").GetInt32().ShouldBe(72, "coverage-class-only-frozen-obligations");
+    }
+
+    [Test]
     public void dropped_frozen_method_is_a_checklist_count_finding()
     {
         var root = TempDir(); var plan = WriteFrozenWorld(root);

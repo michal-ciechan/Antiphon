@@ -7,6 +7,18 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class PlanCoverageGoldenTests
 {
     [Test]
+    public void c780_class_only_regression_row_keeps_master_findings()
+    {
+        var path = Path.Combine(CheckpointFixtures.RepoRoot, "docs", "superpowers", "plans", "2026-09-30-card-0780-retire-temp-date-parse-plan.md");
+        var row = File.ReadAllLines(path).Single(l => l.StartsWith("| R-1 |", StringComparison.Ordinal));
+        var report = new PlanCoverageAnalyzer().Analyze("c780-r1.md", PlanCoverageFixture.Plan(row),
+            [new("source.cs", "class ClaudeTokenRefreshOptInTests { [Test] void Regression() {} }")]);
+        report.CountPromises.ShouldContain(p => p.Id == "R-1" && p.Class == "ClaudeTokenRefreshOptInTests" && p.Expected == 6, "coverage-c780-count-present");
+        report.Diagnostics.ShouldBeEmpty("coverage-c780-master-findings");
+        report.ExitCode.ShouldBe(0, "coverage-c780-class-only-clean");
+    }
+
+    [Test]
     public void c866_legacy_reports_v1_v4_v5()
     {
         var report = PlanCoverageFixture.C866(false, false);

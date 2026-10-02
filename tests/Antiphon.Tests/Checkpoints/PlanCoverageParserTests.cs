@@ -54,6 +54,15 @@ public sealed class PlanCoverageParserTests : CheckpointTestBase
     }
 
     [Test]
+    public void declared_total_still_rejects_zero_bound_methods()
+    {
+        var plan = PlanCoverageFixture.Plan("| R-1 | Regression | All 1 class-qualified methods in the checklist are required. |");
+        var report = new PlanCoverageAnalyzer().Analyze("p", plan, [new("s.cs", "class DemoTests { void Check() {} }")]);
+        report.Diagnostics.ShouldContain(d => d.Code == "CHECKLIST_COUNT_MISMATCH" && d.Id == "R-1" && d.Test == "" && d.Detail == "methods expected=1 actual=0", "coverage-total-zero-still-checked");
+        report.ExitCode.ShouldBe(1, "coverage-total-zero-still-fails");
+    }
+
+    [Test]
     public void declared_row_counts_reject_missing_and_extra_bound_methods()
     {
         var plan = PlanCoverageFixture.Plan("| V-1 | `DemoTests` (2 results) | `DemoTests.First`; label `target-label` |");
