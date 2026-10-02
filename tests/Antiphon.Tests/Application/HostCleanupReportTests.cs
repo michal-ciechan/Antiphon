@@ -29,7 +29,7 @@ public sealed class HostCleanupReportTests
         var item = (await f.AttentionAsync()).Single(item => item.Kind == AttentionKind.WorktreeCleanupBacklog);
         item.HostCleanupOwner.ShouldBe("CARD-0692", "C826.backlog-owner");
         item.HostCleanupRefusal.ShouldBe("owner_unavailable", "C826.backlog-refusal");
-        item.Headline.ShouldContain("20", "C826.backlog-bytes");
+        item.Headline.ShouldContain("20", customMessage: "C826.backlog-bytes");
     }
 
     [Test]
