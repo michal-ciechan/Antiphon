@@ -356,6 +356,25 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         finally { Queue.Release(request.TaskId); }
     }
 
+    public async Task FailQueuedInSameScopeAsync()
+    {
+        if (!Queue.TryDequeue(out var request) || request.TaskId != Fixture.TaskId)
+            throw new InvalidOperationException("Expected exact fixture queue claim");
+        try
+        {
+            await using var scope = Services.CreateAsyncScope();
+            var service = CreateLand(scope.ServiceProvider.GetRequiredService<AppDbContext>(), scope.ServiceProvider);
+            try { await service.RunRequestAsync(request.TaskId, request.RequestId, request.VerifyFilter, CancellationToken.None); }
+            catch (DbUpdateConcurrencyException error)
+            {
+                await service.FailRequestAsync(request.TaskId, request.RequestId, error, CancellationToken.None);
+                return;
+            }
+            throw new InvalidOperationException("Expected the fixture's real concurrency failure");
+        }
+        finally { Queue.Release(request.TaskId); }
+    }
+
     public async Task<LandRunResult> RunRequestAsync(Guid requestId, CancellationToken ct = default)
     {
         await using var scope = Services.CreateAsyncScope();
