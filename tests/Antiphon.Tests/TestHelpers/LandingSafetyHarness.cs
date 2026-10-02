@@ -28,6 +28,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     public IEventBus Events { get; set; } = new MockEventBus();
     public Action<IServiceCollection>? ConfigureServices { get; set; }
     public SessionMessageQueueService? Messages { get; set; }
+    public ILandingGit? GitOverride { get; set; }
     public LandDeliveryBoundary? Boundary { get; set; }
     public DbCommandInterceptor? CommandInterceptor { get; set; }
     public DbTransactionInterceptor? TransactionInterceptor { get; set; }
@@ -64,7 +65,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddSingleton(Clock);
-        services.AddSingleton<ILandingGit>(Fixture.Git);
+        services.AddSingleton<ILandingGit>(GitOverride ?? Fixture.Git);
         services.AddSingleton<ILandingVerifier>(Verifier);
         services.AddScoped(_ => CreateContext());
         services.AddDelegationWorktreeGraph(new GitSettings { WorktreeBasePath = Path.Combine(Fixture.Root, "trees") });
@@ -296,7 +297,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
             tasks, Queue, Messages!, Events, Clock,
             Options.Create(LandSettings), Logger,
             services.GetRequiredService<AgentTaskLandingProtocol>(),
-            Services.GetRequiredService<IRepositoryMutationLease>(), Fixture.Git, Boundary,
+            Services.GetRequiredService<IRepositoryMutationLease>(), GitOverride ?? Fixture.Git, Boundary,
             leaseWaiters: Services.GetService<RepositoryLeaseWaiters>());
     }
 

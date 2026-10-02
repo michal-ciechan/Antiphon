@@ -120,6 +120,18 @@ internal sealed class LandHalfResetFixture : IAsyncDisposable
 
     public ValueTask DisposeAsync() => Harness.DisposeAsync();
 
+    internal sealed class CustodyGit(string home, Guid taskId) : LandingGitFixture.FixtureGit(home, taskId), Antiphon.Server.Application.Interfaces.ILandingGit
+    {
+        public bool? ChildAlive { get; set; }
+        public int LivenessReads { get; private set; }
+        Task<bool?> Antiphon.Server.Application.Interfaces.ILandingGit.IsProcessAliveAsync(int pid, long ticks, CancellationToken ct)
+        {
+            if (pid != 883939 || ticks != 883939) throw new InvalidOperationException("unexpected fixture child identity");
+            LivenessReads++;
+            return Task.FromResult(ChildAlive);
+        }
+    }
+
     internal sealed class SaveCut : SaveChangesInterceptor
     {
         public Func<DbContext, Task>? AfterSave { get; set; }

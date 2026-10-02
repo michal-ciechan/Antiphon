@@ -807,6 +807,38 @@ public sealed class AgentTaskLandHalfResetTests
         AssertNoResetOrPublication(h);
     }
 
+    [Test]
+    [Arguments("live-request")]
+    [Arguments("unknown-request")]
+    public async Task C883_UncertainPriorChildRefuses(string variant)
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (local, reviewed, evidence, oldId) = await InterruptedAsync(fixture);
+        await using (var db = h.CreateContext())
+        {
+            var old = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == oldId);
+            old.SourceAdvanceChildProcessId = 883939;
+            old.SourceAdvanceChildStartTicks = 883939;
+            await db.SaveChangesAsync();
+        }
+        var custody = new LandHalfResetFixture.CustodyGit(Path.Combine(h.Fixture.Root, "home"), h.Fixture.TaskId)
+        { ChildAlive = variant == "live-request" ? true : null };
+        h.GitOverride = custody;
+        await h.RestartServicesAsync();
+        var next = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence, recoverReviewedSource: true);
+        await h.RunQueuedAsync();
+        custody.LivenessReads.ShouldBe(1, "H.PriorChildLivenessActuallyRead");
+        await using var verify = h.CreateContext();
+        (await verify.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == next.RequestId)).SourceRefusalReason
+            .ShouldBe("interrupted_process_requires_inspection", "H.UncertainPriorChildRefused");
+        (await verify.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == oldId)).SourceAdvanceChildProcessId.ShouldBe(883939);
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "write-tree")).Trim()
+            .ShouldBe((await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", local + "^{tree}")).Trim());
+        custody.Commands.ShouldNotContain(x => x.Arguments[0] is "reset" or "clean" or "push", "H.UncertainChildNoMutationOrKill");
+        (await h.OperationAsync()).ShouldBeNull();
+    }
+
     private static void AssertNoResetOrPublication(LandingSafetyHarness h)
     {
         h.Fixture.Git.Commands.ShouldNotContain(x => x.Directory == h.Fixture.Source && x.Arguments[0] == "reset", "H.NoResetOnRefusal");
