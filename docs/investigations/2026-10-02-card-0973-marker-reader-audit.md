@@ -1,7 +1,29 @@
-# CARD-0973: marker-reader audit and live-evidence access blocker
+# CARD-0973: marker-reader audit and cold-image cleanup diagnosis
 
-The production fix is pending the mandatory live-marker read. The assigned Linux
-runner cannot authenticate to `mc@server2`; no production script or test was changed.
+The caller supplied the mandatory read-only live capture in
+`.antiphon/inbox/EVIDENCE-0973.md`, resolving the initial access blocker below.
+It proves `deploy-parent` deleted the cold marker's seed image, so the later
+`docker image inspect` failed at base lines 2030-2031. Every format predicate
+passed. The marker has schema=2, kind=cold, cold=true, source SHA
+`1f43624d1353ea59338a9c4294912cb83e47fc2e`, image
+`sha256:09fe5601ba1d88a8658e7d78d1818a16b15c1cf1d39cc859601fcdaedc364bc1`, and
+the three fixed volume names. stat was mc:mc/600, 287 bytes, mtime
+2026-10-02 08:39:21Z. The deployed script hash was
+`870e226e89ae78adcb9147f6b745c581d210d3112a68fcdd31aad58c785da782`, identical
+to base/deploy source. No additional server2 access was attempted after that capture.
+
+Red evidence on production base plus committed fixtures: the rolling T-20 assertion
+reports CacheSeedMarkerInvalid after fake parent image cleanup; CP-973-red executes
+12 results, all 12 fail at the intended reader assertions, 0 skipped. An earlier
+assertion-overload compilation failure and short-SHA input refusal do not count
+as red evidence. Production now checks cold seed-image format without requiring
+that historical image to exist. Helper fallback uses an identified current main
+image, and cold Retired records a locally available helper identity. Full-marker
+recovery/hash/retained-image validation and maintenance rules are unchanged.
+
+The following sections preserve the original base-source audit. Final coverage and
+rerun commands are in
+`docs/superpowers/plans/2026-10-02-card-0973-cold-marker-verification-fix.md`.
 
 ## Evidence and blocker
 
@@ -19,7 +41,7 @@ file, the same request failed with `mc@server2: Permission denied (publickey)`.
 No host command ran. This container has no mc SSH identity; its documented
 repo-scoped GitHub deploy key is not a host-login credential.
 
-The caller must supply the approved host-login path, or a read-only marker capture
+Initially the caller needed to supply the approved host-login path, or a read-only marker capture
 from its trusted desktop. The brief requires the real marker before implementation;
 substituting a fake would violate that requirement. Capture only the specified
 non-secret marker and receipt, never provider homes or credential files:
@@ -38,7 +60,7 @@ Both already use `c849_require_ready allow-cold` in `case_deploy_parent` and
 `case_verify_runner_caches`. The brief's suggested missing cold mode is not
 established by the source.
 
-The live failure cannot yet be attributed to a single source line. In
+Before the supplied live capture, the failure could not be attributed to a single source line. In
 `scripts/c590-remote.sh`, the cold branch can emit `CacheSeedMarkerInvalid` at:
 
 | Line | Exact check |
@@ -52,7 +74,7 @@ The live failure cannot yet be attributed to a single source line. In
 
 Additional foreign-volume/root refusals come from `c849_cold_volume_facts`.
 The marker's real field names and values, file metadata, and precise failing
-predicate remain unverified. A syntactically valid marker alone may not distinguish
+predicate were initially unverified. A syntactically valid marker alone may not distinguish
 the host-dependent predicates. Do not weaken these guards based on the generic
 diagnosis alone.
 
@@ -107,7 +129,7 @@ marker-reading path. New regression coverage must execute the real failure
 against a captured marker in a private scratch copy, then model that shape in
 the rolling fake without stubbing readiness success.
 
-Pending: real receipt/marker capture; exact source predicate diagnosis; committed
+Initially pending: real receipt/marker capture; exact source predicate diagnosis; committed
 named-assertion red on base; script fix; cold/missing/malformed/foreign reader
 matrix; checkpoint rows and rolling harness green with exact amended counts.
 No build, TUnit, harness, deploy phase or drain-clear operation ran. No Unit lane

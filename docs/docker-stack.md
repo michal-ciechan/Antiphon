@@ -155,6 +155,12 @@ and verifies shared/private mounts, `/tmp` mode and uid writability before temp
 admission. `Both` and `Retired` accept cold receipts without apphost smoke or
 package hash; a valid cold marker remains usable as ordinary builds populate
 the caches. Their full-marker receipts retain the prior smoke/hash checks.
+The cold marker's `image=` is seed-time provenance checked by SHA-256 format;
+normal superseded-image cleanup may remove that image. Later cache probes use
+the requested deployment image or fall back to an identified standing runner
+image when the historical seed image is absent. Cold Retired verification records
+the resolved, locally available helper image in its rollback receipt. Full-marker
+Retired verification still requires the retained seed/recovery image.
 Reset, Prune, and explicit saved/live donor maintenance require a full marker;
 they refuse a cold marker with `CacheFullSeedRequired`. An absent marker never
 starts cold creation implicitly. The standing runner's drain/zero gate for

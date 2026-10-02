@@ -1321,12 +1321,13 @@ c849_image() {
                 if [ -f "$C849_READY" ] && grep -Fxq kind=cold "$C849_READY"; then
                     marker_image="$(sed -n 's/^image=//p' "$C849_READY")"
                     [[ "$marker_image" =~ ^sha256:[0-9a-f]{64}$ ]] \
-                        && docker image inspect "$marker_image" >/dev/null 2>&1 \
                         || write_result false CacheHelperImageMissing 2
-                    printf '%s' "$marker_image"
-                    return 0
+                    # Cold provenance survives normal superseded-image cleanup.
+                    # Use the marker image if retained, otherwise the identified main.
+                    donor=''
+                else
+                    donor="$(c849_optional_donor)" || write_result false CacheDonorLookupFailed 2
                 fi
-                donor="$(c849_optional_donor)" || write_result false CacheDonorLookupFailed 2
                 if [ -n "$donor" ]; then
                     image="$(docker inspect -f '{{.Image}}' "$donor")" \
                         || write_result false CacheHelperImageMissing 2
@@ -2026,8 +2027,9 @@ c849_require_ready() {
             && grep -Fxq "npm=$C849_NPM" "$C849_READY" \
             || write_result false CacheSeedMarkerInvalid 2
         image="$(sed -n 's/^image=//p' "$C849_READY")"
+        # This is seed-time provenance, not a retained recovery image. Ordinary
+        # redeploys may retire it; cold acceptance checks format across deploy SHAs.
         [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] \
-            && docker image inspect "$image" >/dev/null 2>&1 \
             || write_result false CacheSeedMarkerInvalid 2
         [ "$context" = allow-cold ] || write_result false CacheFullSeedRequired 2
         C849_COLD_DOCKER_ROOT="$(docker info -f '{{.DockerRootDir}}')" \
@@ -3356,7 +3358,13 @@ case_verify_runner_caches_retired() {
     c849_prepare no
     c849_require_ready allow-cold
     local rollback_image
-    rollback_image="$(sed -n 's/^image=//p' "$C849_READY" | head -n 1)"
+    if [ "$C849_KIND" = cold ]; then
+        # Record a usable image for cold caches, rather than their retired seed image.
+        rollback_image="$(docker image inspect -f '{{.Id}}' "$(c849_image)")" \
+            || write_result false CacheRollbackImageMissing 2
+    else
+        rollback_image="$(sed -n 's/^image=//p' "$C849_READY" | head -n 1)"
+    fi
     [[ "$rollback_image" =~ ^sha256:[0-9a-f]{64}$ ]] \
         && docker image inspect "$rollback_image" >/dev/null 2>&1 \
         || write_result false CacheRollbackImageMissing 2
