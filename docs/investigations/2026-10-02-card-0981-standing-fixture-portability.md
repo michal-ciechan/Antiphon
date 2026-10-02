@@ -14,7 +14,7 @@ used by restart accounting, and the recovery HTTP factory. Align CARD-0950's pri
 selection factory and CARD-0966's ownership configuration override with the same value.
 The ownership override returns to validating system `cmd.exe` on Windows; its assertions
 are unchanged. Keep the private factories and overrides to avoid unrelated test refactoring.
-No production code, assertions, skips, seed-helper logic or timeouts change.
+No production code, skips, seed-helper logic or timeouts change. The two latent fixture corrections below preserve the queue and concurrency assertions while matching the current delivery contract.
 
 ## Unchanged-source red evidence
 
@@ -29,8 +29,8 @@ reported `dirty=0 sourceState=clean buildSource=verified`.
 Preflight runs before history selection and runner/reservation boundaries. The missing
 `cmd.exe` therefore appears as a direct ConflictException, a generic `conflict` instead
 of the asserted refusal code, an HTTP body mismatch, an exception-type mismatch, or a
-boundary timeout. The final exact filter must prove every listed case passes after only
-executable configuration changes; any remaining failure requires separate investigation.
+boundary timeout. The first fixed-source exact filter resolves 62/64 failures with only
+executable configuration changes (219 passed, 2 failed, 0 skipped). The two remaining failures are investigated below; the final rerun must prove all listed cases pass.
 
 ## Requirement trace
 
@@ -44,9 +44,9 @@ Each row's proof is the same named test case in CP-1's fresh TRX; arguments are 
 | StandingContinuityAttentionTests | 5 / 6 | C1 | CP-1: all 6 |
 | StandingContinuityRecoveryTests | 11 / 11 | C1 | CP-1: all 11 |
 | StandingRestartAccountingTests | 18 / 21 | C2 | CP-1: all 21 |
-| StandingSessionQueueSwitchTests | 8 / 8 | C1 | CP-1: all 8 |
+| StandingSessionQueueSwitchTests | 8 / 8 | C1, C4 | CP-1: all 8 |
 | StandingSessionRecoveryHttpTests | 1 / 1 | C3 | CP-1: full HTTP flow |
-| StandingSessionSwitchConcurrencyTests | 21 / 24 | C1 | CP-1: all 24 |
+| StandingSessionSwitchConcurrencyTests | 21 / 24 | C1, C5 | CP-1: all 24 |
 
 | Failing case at start | Observed signature | Cause / fix | Proving case |
 |---|---|---|---|
@@ -87,7 +87,7 @@ Each row's proof is the same named test case in CP-1's fresh TRX; arguments are 
 | StandingSessionQueueSwitchTests.A_corrupt_current_pointer_cannot_transfer_another_owners_pending_input(False) | Generic executable conflict masks asserted refusal code | C1 | CP-1: StandingSessionQueueSwitchTests.A_corrupt_current_pointer_cannot_transfer_another_owners_pending_input(False) |
 | StandingSessionQueueSwitchTests.A_corrupt_current_pointer_cannot_transfer_another_owners_pending_input(True) | Generic executable conflict masks asserted refusal code | C1 | CP-1: StandingSessionQueueSwitchTests.A_corrupt_current_pointer_cannot_transfer_another_owners_pending_input(True) |
 | StandingSessionQueueSwitchTests.Any_prior_delivery_evidence_refuses_switch_and_fresh | Generic executable conflict masks asserted refusal code | C1 | CP-1: StandingSessionQueueSwitchTests.Any_prior_delivery_evidence_refuses_switch_and_fresh |
-| StandingSessionQueueSwitchTests.Only_unattempted_messages_move_atomically_and_keep_order_and_routing | cmd.exe missing in executable preflight | C1 | CP-1: StandingSessionQueueSwitchTests.Only_unattempted_messages_move_atomically_and_keep_order_and_routing |
+| StandingSessionQueueSwitchTests.Only_unattempted_messages_move_atomically_and_keep_order_and_routing | cmd.exe missing in executable preflight | C1, C4 | CP-1: StandingSessionQueueSwitchTests.Only_unattempted_messages_move_atomically_and_keep_order_and_routing |
 | StandingSessionQueueSwitchTests.Open_execution_on_either_history_or_current_target_refuses_selection(Blocked) | Generic executable conflict masks asserted refusal code | C1 | CP-1: StandingSessionQueueSwitchTests.Open_execution_on_either_history_or_current_target_refuses_selection(Blocked) |
 | StandingSessionQueueSwitchTests.Open_execution_on_either_history_or_current_target_refuses_selection(Dispatched) | Generic executable conflict masks asserted refusal code | C1 | CP-1: StandingSessionQueueSwitchTests.Open_execution_on_either_history_or_current_target_refuses_selection(Dispatched) |
 | StandingSessionQueueSwitchTests.Open_execution_on_either_history_or_current_target_refuses_selection(Working) | Generic executable conflict masks asserted refusal code | C1 | CP-1: StandingSessionQueueSwitchTests.Open_execution_on_either_history_or_current_target_refuses_selection(Working) |
@@ -103,7 +103,7 @@ Each row's proof is the same named test case in CP-1's fresh TRX; arguments are 
 | StandingSessionSwitchConcurrencyTests.Obsolete_queued_launch_cannot_overwrite_a_newer_outcome(Running, True) | cmd.exe missing in executable preflight | C1 | CP-1: StandingSessionSwitchConcurrencyTests.Obsolete_queued_launch_cannot_overwrite_a_newer_outcome(Running, True) |
 | StandingSessionSwitchConcurrencyTests.Obsolete_queued_launch_cannot_overwrite_a_newer_outcome(Stopped, True) | cmd.exe missing in executable preflight | C1 | CP-1: StandingSessionSwitchConcurrencyTests.Obsolete_queued_launch_cannot_overwrite_a_newer_outcome(Stopped, True) |
 | StandingSessionSwitchConcurrencyTests.Reservation_and_real_queue_flush_serialize_in_both_orders(False) | Executable preflight refusal prevents boundary entry | C1 | CP-1: StandingSessionSwitchConcurrencyTests.Reservation_and_real_queue_flush_serialize_in_both_orders(False) |
-| StandingSessionSwitchConcurrencyTests.Reservation_and_real_queue_flush_serialize_in_both_orders(True) | Executable preflight refusal prevents boundary entry | C1 | CP-1: StandingSessionSwitchConcurrencyTests.Reservation_and_real_queue_flush_serialize_in_both_orders(True) |
+| StandingSessionSwitchConcurrencyTests.Reservation_and_real_queue_flush_serialize_in_both_orders(True) | Executable preflight refusal prevents boundary entry | C1, C5 | CP-1: StandingSessionSwitchConcurrencyTests.Reservation_and_real_queue_flush_serialize_in_both_orders(True) |
 | StandingSessionSwitchConcurrencyTests.Reservation_rechecks_changes_committed_after_runner_preflight(card) | Executable preflight refusal prevents boundary entry | C1 | CP-1: StandingSessionSwitchConcurrencyTests.Reservation_rechecks_changes_committed_after_runner_preflight(card) |
 | StandingSessionSwitchConcurrencyTests.Reservation_rechecks_changes_committed_after_runner_preflight(delivery) | Executable preflight refusal prevents boundary entry | C1 | CP-1: StandingSessionSwitchConcurrencyTests.Reservation_rechecks_changes_committed_after_runner_preflight(delivery) |
 | StandingSessionSwitchConcurrencyTests.Reservation_rechecks_changes_committed_after_runner_preflight(execution) | Executable preflight refusal prevents boundary entry | C1 | CP-1: StandingSessionSwitchConcurrencyTests.Reservation_rechecks_changes_committed_after_runner_preflight(execution) |
@@ -115,6 +115,35 @@ Each row's proof is the same named test case in CP-1's fresh TRX; arguments are 
 | StandingSessionSwitchConcurrencyTests.Stop_at_launch_boundaries_prevents_obsolete_work_and_allows_later_owned_generation(start-rpc) | cmd.exe missing in executable preflight | C1 | CP-1: StandingSessionSwitchConcurrencyTests.Stop_at_launch_boundaries_prevents_obsolete_work_and_allows_later_owned_generation(start-rpc) |
 | StandingSessionSwitchConcurrencyTests.Stop_supersedes_launch_before_spawn_and_before_typing | cmd.exe missing in executable preflight | C1 | CP-1: StandingSessionSwitchConcurrencyTests.Stop_supersedes_launch_before_spawn_and_before_typing |
 
+## Separately investigated failures exposed by executable resolution
+
+CP-1 at `92b6f1f19dd285469649b674fae7df576cd6f7e4` executes 221: 219 passed,
+2 failed, 0 skipped. Its TRX is `.antiphon/c981-checkpoints/CP-1-20261002-190023-2e8f/run.trx`.
+These are test-contract mismatches, not Linux executable failures or production defects.
+
+C4: `Only_unattempted_messages_move_atomically_and_keep_order_and_routing` expects raw
+`Safe`, but actual delivery is `[antiphon-channel:<queue-row-id:N>] Safe`.
+`ChannelPromptCorrelation.PrepareFirstAttempt` intentionally wraps an untouched Channel
+row. The standing-continuity owner documents this exact durable wire identity.
+Change the expected ordered body list and full post-baseline UserPrompt equality to
+include the exact row ID for the Channel message. UI, Delegation and Scheduled bodies
+remain byte-exact. Add persisted Body and Origin assertions for every delivered row.
+This strengthens identity proof and keeps every order, routing, attempt and receipt check;
+it does not strip markers, accept substrings or trust Sent as delivery evidence.
+
+C5: `Reservation_and_real_queue_flush_serialize_in_both_orders(True)` times out waiting
+for its SavedChanges interceptor. `StandingRecoveryFixture.SeedAsync` seeds both sessions
+Stopped, while `SessionMessageQueueService.DeliverNextLockedAsync` refuses any status other
+than Running before claiming delivery. Registering a fake adapter does not alter DB status.
+Seed the source Running in the delivery-first case. Once the interceptor confirms the
+durable claim and holds the actual singleton queue lock, record its Stopped status before
+starting history selection. This models stop observation after an in-flight claim and
+preserves the requirement to settle attempted input before selecting history. Keep the
+same 15-second entry bound, 150-ms contender-block assertion, exact refusal code,
+source/target ownership and attempt-floor assertions. The selection-first case is unchanged.
+
+Rerun CP-1 after this second committed test-only slice; retain the first receipt as
+`reruns=1` evidence. CP-2 and CP-3 remain the same closed-list rows.
 ## Verification design
 
 CP-RED is the explicitly requested unchanged-start diagnostic, completed before this
