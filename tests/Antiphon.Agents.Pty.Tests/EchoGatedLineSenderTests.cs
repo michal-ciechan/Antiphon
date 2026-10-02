@@ -12,21 +12,25 @@ public class EchoGatedLineSenderTests
     public async Task Fractional_pre_submit_pause_is_not_truncated_to_zero()
     {
         const string body = "instant evidence for a fractional pause";
-        var terminal = new ScriptedTerminal();
-        var evidenceAt = TimeSpan.Zero;
         var options = new SendLineGateOptions(
             PreSubmitPause: TimeSpan.FromMilliseconds(0.9),
             EvidenceTimeout: TimeSpan.FromSeconds(1),
             PollInterval: TimeSpan.FromMilliseconds(10));
 
-        await EchoGatedLineSender.SendAsync(body, _ =>
+        // Include warm calls: first-use JIT can hide truncation of a sub-millisecond delay.
+        for (var sample = 0; sample < 8; sample++)
         {
-            if (terminal.BodyWasWritten) evidenceAt = terminal.Elapsed;
-            return Task.FromResult(terminal.BodyWasWritten ? body : string.Empty);
-        }, terminal.WriteAsync, options, CancellationToken.None);
+            var terminal = new ScriptedTerminal();
+            var evidenceAt = TimeSpan.Zero;
+            await EchoGatedLineSender.SendAsync(body, _ =>
+            {
+                if (terminal.BodyWasWritten) evidenceAt = terminal.Elapsed;
+                return Task.FromResult(terminal.BodyWasWritten ? body : string.Empty);
+            }, terminal.WriteAsync, options, CancellationToken.None);
 
-        terminal.Writes.Select(w => w.Text).ShouldBe([body, "\r"]);
-        (terminal.Writes[^1].At - evidenceAt).ShouldBeGreaterThanOrEqualTo(options.PreSubmitPause);
+            terminal.Writes.Select(w => w.Text).ShouldBe([body, "\r"]);
+            (terminal.Writes[^1].At - evidenceAt).ShouldBeGreaterThanOrEqualTo(options.PreSubmitPause);
+        }
     }
 
     [Test]
