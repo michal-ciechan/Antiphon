@@ -52,6 +52,8 @@ public sealed class RemoteScriptContractTests
     [Arguments("prune", "sudo-refused")]
     [Arguments("observe", "sudo-test-refused")]
     [Arguments("prune", "sudo-test-refused")]
+    [Arguments("observe", "symlink-sudo-test-refused")]
+    [Arguments("prune", "symlink-sudo-test-refused")]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo(string reader, string fault)
     {
@@ -69,7 +71,7 @@ public sealed class RemoteScriptContractTests
             canonical="$root/volumes/$C849_PACKAGES/_data"
             mkdir -p "$canonical"
             path="$canonical"
-            if [ "$fault" = symlink ]; then ln -s "$canonical" "$root/link"; path="$root/link"; fi
+            if [[ "$fault" == symlink* ]]; then ln -s "$canonical" "$root/link"; path="$root/link"; fi
             docker() {
                 case "$1:${2:-}:${4:-}" in
                     info:*) printf '%s\n' "$root" ;;
@@ -87,7 +89,7 @@ public sealed class RemoteScriptContractTests
             sudo() {
                 [ "$1" = -n ] && shift
                 [ "$fault" != sudo-refused ] || return 77
-                if [ "$1" = test ] && [ "$2" = -L ] && [ "$fault" = sudo-test-refused ]; then return 77; fi
+                if [ "$1" = test ] && [ "$2" = -L ] && [[ "$fault" == *sudo-test-refused ]]; then return 77; fi
                 if [ "$1" = stat ]; then echo 1654:1654:700; else "$@"; fi
             }
             write_result() { printf 'DIAGNOSIS=%s\n' "$2"; exit "$3"; }
@@ -2060,6 +2062,7 @@ public sealed class RemoteScriptContractTests
     }
 
     [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public void C849_Deploy_prepares_and_verifies_before_acceptance()
     {
         var remote = Remote();
