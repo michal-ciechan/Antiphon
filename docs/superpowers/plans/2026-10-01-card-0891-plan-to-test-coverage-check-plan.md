@@ -294,11 +294,11 @@ These hazards cannot excuse a selected test failure. Preserve the established or
 
 ### Checkpoints
 
-Closed ordinary list: one isolated build and one exact filter per row. CP-1 executes through the checkpoint tool, which uses `dotnet run --project tests/Antiphon.Tests --no-build`, never `dotnet test`. One preparatory red and one final green are declared; each is one run of this same row. Markdown `\|` becomes literal `|` in a quoted shell filter; every class operand retains trailing `*`. Counts below are source/design counts until fresh TRX confirms them. Windows's 46-result compatible roster is not a commissioned second run: selected Windows count is 0, not a passing skip.
+Closed ordinary list: one isolated build and one exact filter per row. The D-1 repair brief requires `scripts/run-checkpoint.ps1` directly (the tool requires a verified owner token); it uses `dotnet run --project tests/Antiphon.Tests --no-build`, never `dotnet test`. The original preparatory red and final green remain historical. This repair commissions a targeted red, two scratch mutation proofs and one final CP-1. Markdown `\|` becomes literal `|` in a quoted shell filter; every class operand retains trailing `*`. Counts below are source/design counts until fresh TRX confirms them. Windows is not commissioned; the new FIFO sentinel is Linux-only with an explicit skip reason.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S1-S2 | `tests/Antiphon.Tests -> bin-c891-static/` | plan-coverage-static | `/*/*/(PlanCoverageParserTests*)\|(PlanCoverageAssertionTests*)\|(PlanCoveragePcTests*)\|(PlanCoverageGoldenTests*)\|(PlanCoverageCommandTests*)\|(CheckpointImportTests*)\|(CheckpointManifestTests*)/*` | V-1..V-5, R-1 | Linux 46 = 4+5+4+3+4+20+6, final 0 failed/skipped; Windows 0 selected (portable roster 46) | 46 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c891-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-1 | S1-S2, D-1 repair | `tests/Antiphon.Tests -> bin-c891-static/` | plan-coverage-static | `/*/*/(PlanCoverageParserTests*)\|(PlanCoverageAssertionTests*)\|(PlanCoveragePcTests*)\|(PlanCoverageGoldenTests*)\|(PlanCoverageCommandTests*)\|(CheckpointImportTests*)\|(CheckpointManifestTests*)/*` | V-1..V-5, R-1, D-1 | Linux 48 = 4+5+4+3+6+20+6, final 0 failed/skipped; Windows 0 selected | 48 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c891-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 
 ## Execution, acceptance and handoff
 
@@ -587,3 +587,38 @@ remain 4+5+4+3+4=20. Delta from freeze: existing 0, new 0, rows 0; CP-1 remains 
 The brief additionally commissions one normal Unit lane at the end, overriding
 this plan's earlier narrow-lane statement. That lane is separately disclosed in the
 Code report, with its actual expanded counts and any failures.
+
+## Final Review D-1 repair reconciliation (2026-10-02)
+
+The repair brief for task 47aa3487 supersedes the earlier admission's Unit-lane
+instruction: run Unit only if shared helpers or registries change. Neither changes
+in this repair. CARD-0998 remains outside scope. CARD-0999 is deferred because a
+correct checklist-count comparison requires selection/count reconciliation beyond
+a few safe lines; the frozen checklist remains exactly 72 obligations.
+
+`ProjectSources` now resolves each discovered csproj through `Confined` before
+`XDocument.Load`. Two single-result methods in `PlanCoverageCommandTests` guard it:
+`outside_project_fifo_is_refused_without_opening` uses an outside Linux FIFO,
+holds a writer open, and requires immediate confinement refusal before reading.
+Its writer is always closed and the command joined before deleting the link/FIFO.
+`existing_outside_project_is_refused_by_root_boundary` uses a valid existing
+outside csproj and also checks direct selection of an existing outside C# file.
+Both explicitly skip with a named reason if project symlink creation is unavailable;
+the FIFO method also declares its Linux-only reason.
+
+Current census: original new methods 20 + D-1 methods 2 + unchanged Import 20 and
+Manifest 6 = **48** Linux results (4+5+4+3+6+20+6), no Arguments/data sources.
+This is a delta of +2 command methods/results, 0 existing regression results and
+0 checkpoint rows. CP-1 retains seven class operands and its 8-minute estimate;
+its Min/Expect are now 48. Earlier 46-result censuses describe their historical
+source, not this repair. No new entries or shifted locations are introduced in
+the frozen 72-item static checklist.
+
+Commissioned extra runs: targeted red on the unchanged f4e10fdd implementation,
+targeted fixed baseline, M1 (remove root-prefix check) and M-136 (remove csproj
+confinement), with the same two exact methods and restoration after each mutation.
+Each run uses the checkpoint script and its build slot; scratch mutations remain
+uncommitted diagnostic sources. Require both intended labels red for each mutant,
+an empty Git diff after restoration, and restored green. Run the frozen-plan
+coverage verb through `build-slot.ps1 -Label c891fix-coverage` and final CP-1 once
+on the final committed SHA. Preserve complete output in the task report/evidence.
