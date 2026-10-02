@@ -20,11 +20,20 @@ internal sealed class LandHalfResetFixture : IAsyncDisposable
         Harness.LandCutInterceptor = Interceptor;
     }
 
-    public async Task<(string Local, string Reviewed, Guid Evidence)> SeedReviewedDescendantAsync(bool bulk = false)
+    public async Task<(string Local, string Reviewed, Guid Evidence)> SeedReviewedDescendantAsync(bool bulk = false,
+        bool executable = false)
     {
         var h = Harness;
         await h.InitializeAsync();
         var local = await h.AddSourceAsync();
+        if (executable)
+        {
+            await File.WriteAllTextAsync(Path.Combine(h.Fixture.Source, "run.sh"), "#!/bin/sh\nexit 0\n");
+            await h.Fixture.RequiredAsync(h.Fixture.Source, "add", "run.sh");
+            await h.Fixture.RequiredAsync(h.Fixture.Source, "update-index", "--chmod=+x", "run.sh");
+            await h.Fixture.RequiredAsync(h.Fixture.Source, "commit", "-m", "executable old tip");
+            local = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim();
+        }
         if (bulk)
         {
             for (var i = 0; i < 51; i++)
