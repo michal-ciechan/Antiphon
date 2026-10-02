@@ -416,17 +416,32 @@ public sealed class AgentTaskReplyService
                 var repliedDetail = BlockedQuestion.RepliedEventDetail(origin, currentRound, message.Trim());
                 if (!string.IsNullOrEmpty(repliedDetailPrefix))
                     repliedDetail = repliedDetailPrefix + repliedDetail;
-                db.AgentTaskEvents.Add(NewEvent(
+                var blockedBody = $"{DelegationReportFormatter.TaskMarker(taskId)}\n\n{message.Trim()}".ReplaceLineEndings("\n");
+                var replyEvent = NewEvent(
                     taskId,
                     AgentTaskEventType.Replied,
                     repliedDetail,
-                    now));
+                    now);
+                replyEvent.AgentSessionId = blockedSessionId;
+                replyEvent.InputBody = blockedBody;
+                db.AgentTaskEvents.Add(replyEvent);
                 await db.SaveChangesAsync(ct);
                 saved = true;
 
                 // The marker rides the answer so the delegate's NEXT turn correlates back to this task.
-                var blockedBody = $"{DelegationReportFormatter.TaskMarker(taskId)}\n\n{message.Trim()}";
-                await queue.EnqueueAsync(blockedSessionId, blockedBody, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
+                var blockedSession = await db.AgentSessions.AsNoTracking()
+                    .SingleAsync(s => s.Id == blockedSessionId, ct);
+                var replyWire = FitBlockedReplyForTyping(task, replyEvent.Id, blockedBody,
+                    blockedSession, queue, out var replyApiOnly);
+                if (replyApiOnly)
+                {
+                    db.AgentTaskEvents.Add(NewEvent(taskId, AgentTaskEventType.Warning,
+                        $"task_input_file_unavailable: {AgentTaskInputService.Route(taskId, replyEvent.Id)}", now));
+                    await db.SaveChangesAsync(ct);
+                }
+                await queue.EnqueueAsync(blockedSessionId, replyWire, MessageSendMode.WhenIdle, ct,
+                    QueuedMessageOrigin.Delegation,
+                    conversationKey: AgentTaskInputService.ConversationKey(taskId, replyEvent.Id));
 
                 await PublishAsync(task, ct);
                 var blockedFamily = await db.AgentTasks.AsNoTracking().Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
@@ -610,21 +625,31 @@ public sealed class AgentTaskReplyService
 
                     // The event is saved BEFORE the enqueue: if delivery fails the timeline still shows
                     // what the caller tried to say, which is the record a diverging report is judged by.
-                    db.AgentTaskEvents.Add(NewEvent(
+                    var inputEvent = NewEvent(
                         taskId, AgentTaskEventType.Refined,
-                        $"Caller refined the running task: {trimmed}", now));
+                        $"Caller refined the running task: {trimmed}", now);
+                    inputEvent.AgentSessionId = sessionId;
+                    inputEvent.InputBody = DelegationReportFormatter.BuildRefinement(task, trimmed);
+                    db.AgentTaskEvents.Add(inputEvent);
                     await db.SaveChangesAsync(ct);
                     saved = true;
 
                     var queue = scope.ServiceProvider.GetRequiredService<SessionMessageQueueService>();
                     // Whose composer this is typed into decides whether it may be typed at all
                     // (CARD-0084 S1) — a Grok session joins every line, so its refinement spills.
-                    var agentKind = await db.AgentSessions.AsNoTracking()
-                        .Where(s => s.Id == sessionId)
-                        .Select(s => (AgentKind?)s.AgentKind)
-                        .FirstOrDefaultAsync(ct) ?? AgentKind.ClaudeCode;
-                    var body = FitRefinementForTyping(task, trimmed, now, agentKind);
-                    await queue.EnqueueAsync(sessionId, body, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
+                    var boundSession = await db.AgentSessions.AsNoTracking()
+                        .SingleAsync(s => s.Id == sessionId, ct);
+                    var body = FitRefinementForTyping(task, inputEvent, now, boundSession,
+                        queue, out var refineApiOnly);
+                    if (refineApiOnly)
+                    {
+                        db.AgentTaskEvents.Add(NewEvent(taskId, AgentTaskEventType.Warning,
+                            $"task_input_file_unavailable: {AgentTaskInputService.Route(taskId, inputEvent.Id)}", now));
+                        await db.SaveChangesAsync(ct);
+                    }
+                    await queue.EnqueueAsync(sessionId, body, MessageSendMode.WhenIdle, ct,
+                        QueuedMessageOrigin.Delegation,
+                        conversationKey: AgentTaskInputService.ConversationKey(taskId, inputEvent.Id));
                     break;
 
                 case AgentTaskStatus.Blocked:
@@ -663,14 +688,43 @@ public sealed class AgentTaskReplyService
     /// lines we type has an inline ceiling of 0, so its refinement always travels as a file plus a
     /// join-proof pointer (CARD-0084 S1).
     /// </param>
-    private string FitRefinementForTyping(AgentTask task, string message, DateTime now, AgentKind agentKind)
+    private string FitRefinementForTyping(
+        AgentTask task, AgentTaskEvent inputEvent, DateTime now, AgentSession session,
+        SessionMessageQueueService queue, out bool apiOnly)
     {
-        var ceilings = (_ptyProfile?.Ceilings
-            ?? _settings.CeilingsFor(PtyBackend.InboxConhost, "no pty profile — assuming the default backend"))
-            .ForAgentKind(agentKind);
-        var body = DelegationReportFormatter.BuildRefinement(task, message);
+        apiOnly = false;
+        var remote = !string.IsNullOrWhiteSpace(session.RunnerId);
+        var ceilings = (remote
+            ? _settings.CeilingsFor(PtyBackend.InboxConhost, "runner-bound input")
+            : _ptyProfile?.Ceilings
+                ?? _settings.CeilingsFor(PtyBackend.InboxConhost, "no pty profile — assuming the default backend"))
+            .ForAgentKind(session.AgentKind);
+        var body = inputEvent.InputBody!;
         if (System.Text.Encoding.UTF8.GetByteCount(body) <= ceilings.BriefInlineMaxBytes)
             return body;
+
+        if (remote)
+        {
+            if (string.IsNullOrWhiteSpace(session.RunnerCwd))
+            {
+                apiOnly = true;
+                return DelegationReportFormatter.BuildTaskInputPointer(task, inputEvent.Id, null,
+                    body.Length, session.AgentKind, ceilings.SingleWriteMaxBytes);
+            }
+            var temporary = $".antiphon/i-{inputEvent.Id:N}";
+            var bound = TypedBodySpill.InboxRelativePath(Guid.Empty.ToString("D"));
+            var pointer = DelegationReportFormatter.BuildTaskInputPointer(task, inputEvent.Id, temporary,
+                body.Length, session.AgentKind, ceilings.SingleWriteMaxBytes,
+                boundSpillPath: bound);
+            if (!queue.TryStageTaskInputSpill(session.Id, session.RunnerCwd,
+                    new PhoneHomeInputSpill(temporary, body)))
+            {
+                apiOnly = true;
+                return DelegationReportFormatter.BuildTaskInputPointer(task, inputEvent.Id, null,
+                    body.Length, session.AgentKind, ceilings.SingleWriteMaxBytes);
+            }
+            return pointer;
+        }
 
         string? spillPath = null;
         try
@@ -690,8 +744,44 @@ public sealed class AgentTaskReplyService
                 DelegationReportFormatter.Short(task.Id));
         }
 
-        return DelegationReportFormatter.BuildRefinementPointer(
-            task, _settings, spillPath, body.Length, agentKind);
+        apiOnly = spillPath is null;
+        return spillPath is not null
+            ? DelegationReportFormatter.BuildRefinementPointer(
+                task, _settings, spillPath, body.Length, session.AgentKind)
+            : DelegationReportFormatter.BuildTaskInputPointer(task, inputEvent.Id, null,
+                body.Length, session.AgentKind, ceilings.SingleWriteMaxBytes);
+    }
+
+    private string FitBlockedReplyForTyping(
+        AgentTask task, Guid eventId, string body, AgentSession session,
+        SessionMessageQueueService queue, out bool apiOnly)
+    {
+        apiOnly = false;
+        if (string.IsNullOrWhiteSpace(session.RunnerId))
+            return body; // The established local queue spill handles oversized desktop replies.
+        var ceilings = _settings.CeilingsFor(PtyBackend.InboxConhost, "runner-bound input")
+            .ForAgentKind(session.AgentKind);
+        if (System.Text.Encoding.UTF8.GetByteCount(body) <= ceilings.SingleWriteMaxBytes)
+            return body;
+        if (string.IsNullOrWhiteSpace(session.RunnerCwd))
+        {
+            apiOnly = true;
+            return DelegationReportFormatter.BuildTaskInputPointer(task, eventId, null,
+                body.Length, session.AgentKind, ceilings.SingleWriteMaxBytes, reply: true);
+        }
+        var temporary = $".antiphon/i-{eventId:N}";
+        var bound = TypedBodySpill.InboxRelativePath(Guid.Empty.ToString("D"));
+        var pointer = DelegationReportFormatter.BuildTaskInputPointer(task, eventId, temporary,
+            body.Length, session.AgentKind, ceilings.SingleWriteMaxBytes, reply: true,
+            boundSpillPath: bound);
+        if (!queue.TryStageTaskInputSpill(session.Id, session.RunnerCwd,
+                new PhoneHomeInputSpill(temporary, body)))
+        {
+            apiOnly = true;
+            return DelegationReportFormatter.BuildTaskInputPointer(task, eventId, null,
+                body.Length, session.AgentKind, ceilings.SingleWriteMaxBytes, reply: true);
+        }
+        return pointer;
     }
 
     /// <summary>

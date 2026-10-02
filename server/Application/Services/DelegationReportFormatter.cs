@@ -1017,6 +1017,35 @@ public static class DelegationReportFormatter
         return joins ? FlattenForJoiningComposer(pointer) : pointer;
     }
 
+    /// <summary>A bounded pointer to one immutable task input and its exact recovery route.</summary>
+    public static string BuildTaskInputPointer(
+        AgentTask task, Guid eventId, string? spillPath, int fullLength,
+        AgentKind agentKind, int maxWireBytes, bool reply = false,
+        string? boundSpillPath = null)
+    {
+        var marker = TaskMarker(task.Id);
+        var route = AgentTaskInputService.Route(task.Id, eventId);
+        var api = $"$ANTIPHON_API{route}";
+        var command = $"curl -fsS -H \"X-Antiphon-Task-Token: $ANTIPHON_TASK_TOKEN\" \"{api}\"";
+        var location = spillPath is null
+            ? $"Read the exact input with: {command}"
+            : $"Read '{spillPath}'. If that file is unavailable, read the exact input with: {command}";
+        var kind = reply ? "REPLY" : "REFINEMENT";
+        var verbose = $"{marker} {kind}\n\nTask: {task.Title}\nYour caller sent {fullLength:N0} characters. {location}\nApply the input and continue working. Do not end your turn just to acknowledge it.\n\n{marker}";
+        var compact = $"{marker} {kind} Input {eventId:D}: {location} Apply it and continue; do not end merely to acknowledge. {marker}";
+        var joins = PtyDeliveryCeilings.RequiresJoinSafeDelivery(agentKind);
+        var candidate = joins ? FlattenForJoiningComposer(verbose) : verbose;
+        if (System.Text.Encoding.UTF8.GetByteCount(
+                boundSpillPath is null ? candidate : candidate.Replace(spillPath!, boundSpillPath, StringComparison.Ordinal))
+            > maxWireBytes)
+            candidate = joins ? FlattenForJoiningComposer(compact) : compact;
+        if (System.Text.Encoding.UTF8.GetByteCount(
+                boundSpillPath is null ? candidate : candidate.Replace(spillPath!, boundSpillPath, StringComparison.Ordinal))
+            > maxWireBytes)
+            throw new InvalidOperationException("Task input pointer exceeds the session write ceiling.");
+        return candidate;
+    }
+
     private static string StatusWord(AgentTaskStatus status) => status switch
     {
         AgentTaskStatus.Succeeded => "done",

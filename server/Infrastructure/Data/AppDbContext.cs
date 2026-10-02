@@ -2087,6 +2087,7 @@ public class AppDbContext : DbContext
             entity.Property(e => e.AgentTaskId).IsRequired();
             entity.Property(e => e.Type).IsRequired();
             entity.Property(e => e.Detail).IsRequired().HasMaxLength(4000);
+            entity.Property(e => e.InputBody).HasColumnType("text");
             entity.Property(e => e.At).IsRequired();
 
             entity.HasIndex(e => new { e.AgentTaskId, e.At }).HasDatabaseName("IX_AgentTaskEvents_AgentTaskId_At");

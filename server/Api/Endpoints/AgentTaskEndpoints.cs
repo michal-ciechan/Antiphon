@@ -16,6 +16,18 @@ public static class AgentTaskEndpoints
     {
         var tasks = app.MapGroup("/api/agent-tasks").WithTags("AgentTasks");
 
+        // Exact caller input is private even though ordinary task status is publicly readable.
+        tasks.MapGet("/{id:guid}/inputs/{eventId:guid}", async (
+            Guid id, Guid eventId, HttpContext http, AgentTaskService tasksService,
+            AgentTaskInputService inputs, CancellationToken ct) =>
+        {
+            http.Response.Headers.CacheControl = "no-store";
+            var caller = await tasksService.AuthenticateAsync(
+                http.Request.Headers[TokenHeader].FirstOrDefault(), ct);
+            var body = await inputs.ReadAsync(id, eventId, caller, ct);
+            return body is null ? Results.NotFound() : Results.Text(body, "text/plain; charset=utf-8");
+        });
+
         // Agent-invoked AND manual creation land here. The caller is resolved from the token, never
         // from the body — a delegate cannot claim to be someone else's parent.
         tasks.MapPost("/", async (

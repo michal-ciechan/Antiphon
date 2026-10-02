@@ -71,6 +71,7 @@ const ALL_KINDS: AttentionKind[] = [
   'SessionUnowned',
   'ZombieCensusReport',
   'CardClosedWhileWorking',
+  'TaskInputUnreadable',
 ]
 
 function item(overrides: Partial<AttentionItemDto> & { kind: AttentionKind }): AttentionItemDto {
@@ -91,6 +92,19 @@ function item(overrides: Partial<AttentionItemDto> & { kind: AttentionKind }): A
 }
 
 describe('attentionVisuals', () => {
+  it('draws TaskInputUnreadable as a warning with a task target', () => {
+    const visual = ATTENTION_VISUALS.TaskInputUnreadable
+    expect(visual.label, 'unreadable-visual-label').toBe('Input unreadable')
+    expect(visual.color).toBe('warning')
+    expect(targetOf(item({ kind: 'TaskInputUnreadable', taskId: 'task-888' })),
+      'unreadable-task-target').toBe('/orchestrator?tab=delegations&task=task-888')
+  })
+
+  it('keeps unreadable input in the review home bucket', () => {
+    expect(homeBucketOf(item({ kind: 'TaskInputUnreadable' })),
+      'unreadable-home-review').toBe('review')
+  })
+
   it.each([
     ['RunnerUnavailable', 'Error', 'broken'],
     ['RepositoryChildJournalStale', 'Error', 'broken'],

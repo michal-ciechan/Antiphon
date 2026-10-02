@@ -380,6 +380,8 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
             return;
         var code = frame.ErrorCode ?? "phone_home_error";
         var detail = frame.ErrorDetail ?? "Phone-home command failed.";
+        if (code == PhoneHomeProblemTypes.SpillWriteFailedBeforeInput)
+            throw new RunnerSpillWriteException();
         throw frame.StatusCode switch
         {
             404 => new RunnerProblemException(404, detail, code),
