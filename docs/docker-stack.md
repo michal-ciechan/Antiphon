@@ -23,8 +23,10 @@ For status checks below, run `pwsh -NoProfile -File scripts/runner-drain.ps1 sta
 server2` (or `server2-temp`). A healthy deployment needs `buildVersion=<sha>`,
 `dispatchEligible=true`, and `acceptingNewWork=true`; a drained runner needs fresh non-null zero
 `sessions`, `runnerSessions`, and `queuedTasks`. A 404, null counter, stale observation or wrong
-SHA is a stop-and-report condition. Read `GET /api/runner-defaults` to record the configured
-global and per-kind preferences; these phases do not change that setting or a routing pin.
+SHA is a stop-and-report condition. Run `Invoke-RestMethod 'http://localhost:17202/api/runner-defaults'`
+to record the configured global and per-kind preferences; these phases do not change that
+setting or a routing pin. If the intended unpinned work does not currently prefer `server2`,
+the drain redirect cannot promote temp for it: stop and report the missing routing prerequisite.
 
 | Gate | Exact phase / verification command | Stop and rollback |
 |---|---|---|
