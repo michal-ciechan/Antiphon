@@ -48,7 +48,7 @@ Add `AdvanceAfterAsync`/boundary-driver support in ResilienceTestSupport, accept
 
 For slow-first: pin start; await first handler entry and registered attempt cancellation; advance to just before 10 s and assert cancellation has not fired; advance to exactly 10 s, await cancellation plus first task completion **without advancing further**; assert exact 10 s and one send. Stamp the second request with the same budget, signal its entry instead of polling sends, observe retry/total timer registration, and advance through explicit registered boundaries up to absolute t=30 s. Never advance beyond t=30 while waiting for completion. Assert exact total elapsed and independently observed original deadline. Preserve non-overlap and terminal attempt-timeout semantics.
 
-For short owners: signal runner-list and git handler entry and timer installation separately; check token state immediately below the deadline, advance to exactly 3 s/10 s relative to each request's start, then await the exception/failed result. Cancellation callbacks record the virtual instant and their own phase number before the result continuation is allowed to finish. Hold that result continuation while inspecting the recorded instant; no real delay advances virtual time. Other timer callbacks must be drained/acknowledged before the next requested boundary. Use one generous 60 s real safety timeout solely to diagnose missing progress; never a timing tolerance or a successful assertion.
+For short owners: signal runner-list and git handler entry and timer installation separately; check token state immediately below the deadline, advance to exactly 3 s/10 s relative to each request's start, then await the exception/failed result. Cancellation callbacks record the virtual instant and their own phase number before the result continuation is allowed to finish. Hold that result continuation while inspecting the recorded instant; no real delay advances virtual time. Other timer callbacks must be drained/acknowledged before the next requested boundary. Retain existing outer safety cancellation solely to diagnose missing progress; never raise a deadline or use it as a timing tolerance or successful assertion.
 
 Rejected: increasing 12/15 s ceilings, a longer Task.Delay(1), `Task.Yield` as a claim that all continuations drained, manually throwing cancellation instead of exercising production timers, or modifying the retry policy. The second operation's total timer/remaining budget assertion must fail before a missing timeout turns into a watchdog failure.
 
@@ -196,6 +196,23 @@ Roster rechecked: 10 methods, 12 results (0/10000/250 boot arguments); CP-1=12, 
 | G-4 / PC-4 | Same / `ready-default-is-system` | Change only the constructor's null fallback to a fixed fake provider; test omitted argument, explicit null and explicit System, reading the private effective provider by test reflection and asserting reference identity to System before any asynchronous wait. |
 
 The injected clock instance must also be the one passed into readiness options; the stopped-clock phase assertions exercise that connection. Default-path subcases use the fake runner and an already-cancelled token for cleanup; no timer-progress measurement or production probe API is added. S1 is part of the serialized S1/S2/S5 Code group.
+
+#### S2 frozen controls
+
+Roster rechecked: ResilienceBudgetTests 7/7 and HttpResilienceRegistrationTests 7/7; CP-2=14 per OS and CP-14=30 x 2. Existing internal loops are not argument rows. Keep production budgets and unrelated Pump callers unchanged. Broaden the local Runner helper's clock argument as well as Build to TimeProvider so the controlled wrapper is actually accepted.
+
+At handler entry register a cancellation callback that records (phase, virtual instant, token state), then signal entry. Await timer installation as a separate signal. At 10 seconds hold the first handler's outcome continuation after cancellation; inspect its token and time before release. Stamp the second operation with the original budget at t=10 and assert its total timer targets absolute t=30 (remaining 20), then drive only acknowledged retry boundaries. At t=30 stop advancing and await cancellation/completion. Runner-list and git use separate entry/install/cancel/outcome gates at their own relative 3/10 seconds. Inspect immediately-before and exact-boundary states. A changed due time is caught from the registered timer inventory before awaiting completion; no mutant can escape as a hang.
+
+| Guard / PC | Detecting method and distinct label | One compiling defect; finite red witness |
+|---|---|---|
+| G-5 / PC-5 | Slow_first_attempt_consumes_the_same_budget / `attempt-cancel-at-10` | Set attempt timeout to 11, leave assertion at 10; registered deadline or uncancelled token fails before any completion wait. |
+| G-6 / PC-6 | Same / `second-request-original-total-deadline` | Stamp second request with a fresh budget; observed absolute total timer=40 fails expected 30 before driving it. |
+| G-7 / PC-7 | Same / `cancelled-attempt-is-terminal` | Retry the cancelled first attempt; held handler release plus next phase reveals sends=2 versus 1 before second request is issued. |
+| G-8 / PC-8 | Runner_list_and_git_connectivity_keep_their_short_deadlines / `runner-owner-cancel-at-3` | Widen only Runner ListTimeoutSeconds to 4; inspect registered deadline/token at 3. |
+| G-9 / PC-9 | Same / `git-owner-cancel-at-10` | In scratch production owner code widen only the connectivity cap to 11; registered deadline/token at 10 fails. |
+| G-10 / PC-10 | Slow_first_attempt_consumes_the_same_budget / `held-completion-keeps-time-at-10` | Restore advancing-on-unfinished behavior in the new boundary driver; keep outcome gate closed and request its next deterministic step, then assert elapsed remains 10 before releasing. The driver must expose step completion, not use a real pump. |
+
+Retain existing watchdog values; do not replace the old 6/8/12-second hang limits with a 60-second wait. Their expiration is infrastructure failure, never timer evidence. The 10/30/3/10 virtual boundaries, single-attempt cancellation and no-overlap assertions are independent of host scheduling.
 
 ### Stress recipes: fixed workload, honest red/green evidence
 
