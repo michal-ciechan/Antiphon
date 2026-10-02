@@ -223,4 +223,77 @@ public sealed class AgentTaskLandAdoptionConcurrencyTests
         (op is not null && new AgentTaskLandingState().HasPublication(op))
             .ShouldBeTrue("V2.BulkRecoveryPublishes");
     }
+    [Test]
+    public async Task C883_HeldWriterBetweenMoveAndResetDoesNotLoseHoldFacts()
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (_, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
+        var request = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence, recoverReviewedSource: true);
+        fixture.Interceptor.RequestId = request.RequestId;
+        fixture.Boundary.ThrowConflict = false;
+        AgentTaskLandRequest? held = null;
+        fixture.Boundary.AtCut = async () =>
+        {
+            (await h.RunRequestAsync(request.RequestId)).ShouldBe(LandRunResult.Held, "V2.CompetingDrainHeldByRealLease");
+            await using var db = h.CreateContext();
+            held = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
+            held.State.ShouldBe(LandRequestState.Held);
+            held.HoldReasonCode.ShouldBe("repository_mutation_lease_busy");
+            held.HoldEpisode.ShouldBeGreaterThan(0);
+            held.LastWriterOperation.ShouldBe("hold");
+            held.LastWriterToken.ShouldBe(held.ConcurrencyToken);
+        };
+        AgentTaskLandRequest? acknowledged = null;
+        fixture.Interceptor.AfterSave = async context =>
+        {
+            if (!context.ChangeTracker.Entries<AgentTaskLandRequest>().Any(e => e.Entity.Id == request.RequestId
+                && e.Entity.LastWriterOperation == "source-checkpoint" && e.Entity.SourceAdvanceChildOperation is null)) return;
+            await using var db = h.CreateContext();
+            acknowledged = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
+        };
+        await h.RunQueuedAsync();
+        fixture.Boundary.Reached.ShouldBe(1);
+        held.ShouldNotBeNull();
+        acknowledged.ShouldNotBeNull();
+        acknowledged.HoldEpisode.ShouldBe(held.HoldEpisode, "V2.HoldEpisodeRetainedAcrossReset");
+        acknowledged.HoldReasonCode.ShouldBe(held.HoldReasonCode);
+        acknowledged.HoldingTaskId.ShouldBe(held.HoldingTaskId);
+        await using var verify = h.CreateContext();
+        var final = await verify.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
+        final.HoldEpisode.ShouldBe(held.HoldEpisode, "V2.SourceCheckpointPreservesHoldEpisode");
+        h.Fixture.Git.Commands.Count(x => x.Directory == h.Fixture.Source && x.Arguments[0] == "reset").ShouldBe(1, "V2.OnlyLeaseOwnerResets");
+        new AgentTaskLandingState().HasPublication((await h.OperationAsync()).ShouldNotBeNull()).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task C883_RestartAfterMoveResumesPendingBeforeFreshAdmission()
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (local, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
+        var request = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence, recoverReviewedSource: true);
+        fixture.Interceptor.RequestId = request.RequestId;
+        fixture.Boundary.ThrowConflict = false;
+        fixture.Boundary.AtCut = () => throw new OperationCanceledException("owned controlled shutdown cut");
+        await Should.ThrowAsync<OperationCanceledException>(() => h.RunQueuedAsync());
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim().ShouldBe(reviewed);
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "write-tree")).Trim()
+            .ShouldBe((await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", local + "^{tree}")).Trim());
+        await h.RestartServicesAsync();
+        await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(() => h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence, recoverReviewedSource: true));
+        await using (var db = h.CreateContext())
+        {
+            var pending = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
+            pending.IsPending.ShouldBeTrue();
+            pending.SourceAdvanceChildOperation.ShouldBe("source-adopt-reset");
+            pending.RecoveryLocalBeforeSha.ShouldBe(local);
+        }
+        fixture.Boundary.AtCut = null;
+        await h.RunRequestAsync(request.RequestId);
+        new AgentTaskLandingState().HasPublication((await h.OperationAsync()).ShouldNotBeNull()).ShouldBeTrue("V2.RestartResumesOriginalRequest");
+        await using var verify = h.CreateContext();
+        (await verify.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId)).IsPending.ShouldBeFalse();
+        (await verify.AgentTaskLandRequests.CountAsync(r => r.TaskId == h.Fixture.TaskId)).ShouldBe(1, "V2.NoReplacementAdmitted");
+    }
 }
