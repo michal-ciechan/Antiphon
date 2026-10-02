@@ -106,3 +106,83 @@ internal sealed class TaskInputSpillFixture : IAsyncDisposable
         Directory.Delete(RunnerParent, recursive: true);
     }
 }
+
+/// <summary>Live fake composer for queue fallback and transcript receipt assertions.</summary>
+internal sealed class TaskInputDeliveryFixture : IAsyncDisposable
+{
+    private readonly IsolatedTestSchema _schema;
+    private readonly BridgeQueueHarness _bridge;
+    public Guid TaskId { get; }
+    public Guid SessionId => _bridge.SessionId;
+    public SessionMessageQueueService Queue => _bridge.Queue;
+    public AgentTaskReplyService Replies => _bridge.Provider.GetRequiredService<AgentTaskReplyService>();
+    public Antiphon.Tests.Agents.FakeAgentProtocolAdapter Adapter => _bridge.Adapter;
+    public string RunnerCwd { get; }
+    public Microsoft.Extensions.DependencyInjection.ServiceProvider Provider => _bridge.Provider;
+    public Task InsertTranscriptEntryAsync(string kind, string? text = null,
+        string? toolName = null, string? toolUseId = null) =>
+        _bridge.InsertTranscriptEntryAsync(kind, text, toolName: toolName, toolUseId: toolUseId);
+    public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(_schema.ConnectionString));
+
+    private TaskInputDeliveryFixture(IsolatedTestSchema schema, BridgeQueueHarness bridge,
+        Guid taskId, string runnerCwd)
+    {
+        _schema = schema;
+        _bridge = bridge;
+        TaskId = taskId;
+        RunnerCwd = runnerCwd;
+    }
+
+    public static async Task<TaskInputDeliveryFixture> CreateAsync(
+        Action<DbContextOptionsBuilder>? configureDb = null)
+    {
+        var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var bridge = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            ConnectionString = schema.ConnectionString,
+            AlwaysOn = false,
+            ConfigureDbContext = configureDb,
+            ConfigureServices = services =>
+            {
+                services.AddSingleton<RemoteSpillCourier>();
+                services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
+                services.AddSingleton<DelegationWorkspaceResolver>();
+                services.AddSingleton<AgentTaskReplyService>();
+                services.AddScoped<AgentTaskService>();
+            },
+        });
+        var taskId = Guid.NewGuid();
+        var cwd = Path.Combine(bridge.TempRoot, "runner", "worktrees", $"task-{taskId:N}");
+        Directory.CreateDirectory(cwd);
+        var now = DateTime.UtcNow;
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == bridge.SessionId);
+            session.AgentKind = AgentKind.Codex;
+            session.RunnerId = "server2";
+            session.RunnerStoreId = Guid.NewGuid();
+            session.RunnerCwd = cwd;
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = taskId, RootTaskId = taskId, AgentSessionId = session.Id,
+                AgentId = bridge.AgentId, Title = "delivery fixture", Goal = "Work.",
+                Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code,
+                AgentKind = AgentKind.Codex, ModelLevel = AgentModelLevel.High,
+                Workspace = WorkspaceMode.Worktree,
+                WorkingDirectory = bridge.TempRoot,
+                Status = AgentTaskStatus.Working,
+                CreatedAt = now, DispatchedAt = now,
+            });
+            await db.SaveChangesAsync();
+        }
+        await bridge.InsertTurnAsync("previous prompt", "previous answer");
+        await bridge.MarkWorkingAsync();
+        return new TaskInputDeliveryFixture(schema, bridge, taskId, cwd);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _bridge.DisposeAsync();
+        await _schema.DisposeAsync();
+    }
+}
