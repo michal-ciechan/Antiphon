@@ -8,6 +8,7 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -273,11 +274,12 @@ public sealed class AgentTaskInputSpillTests
         await f.Replies.RefineAsync(f.TaskId, "old caller note", CancellationToken.None);
         await using var db = f.Db();
         var row = await db.SessionQueuedMessages.SingleAsync();
-        row.CreatedAt = DateTime.UtcNow.AddMinutes(-38).AddSeconds(-2);
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 2, 12, 0, 0, TimeSpan.Zero));
+        row.CreatedAt = clock.GetUtcNow().UtcDateTime.AddMinutes(-38).AddSeconds(-2);
         await db.SaveChangesAsync();
         var task = await db.AgentTasks.AsNoTracking().SingleAsync();
         var git = f.Provider.GetRequiredService<GitWorkspaceService>();
-        var probe = new DelegateCheckProbe(db, git, TimeProvider.System,
+        var probe = new DelegateCheckProbe(db, git, clock,
             Options.Create(new SupervisionSettings()), Options.Create(new DelegationSettings()));
         var digest = DelegateCheckProbe.RenderDigest(await probe.GatherAsync(task, CancellationToken.None));
         digest.ShouldContain("38m old", customMessage: "pending-age-38m");

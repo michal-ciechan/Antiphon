@@ -109,6 +109,19 @@ public sealed class AgentTaskInputFallbackTests
         await using var db = f.Db();
         var task = await db.AgentTasks.SingleAsync();
         task.TokenHash = AgentTaskService.HashToken(recipientToken);
+        const string otherToken = "c888-other-task-test-token";
+        var otherTaskId = Guid.NewGuid();
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = otherTaskId, RootTaskId = otherTaskId,
+            AgentSessionId = f.SessionId,
+            Title = "unrelated task", Goal = "Other work.",
+            Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code,
+            AgentKind = AgentKind.Codex, ModelLevel = AgentModelLevel.High,
+            Workspace = WorkspaceMode.Worktree, WorkingDirectory = f.ServerRoot,
+            Status = AgentTaskStatus.Working, CreatedAt = DateTime.UtcNow,
+            TokenHash = AgentTaskService.HashToken(otherToken),
+        });
         await db.SaveChangesAsync();
         var input = await db.AgentTaskEvents.SingleAsync(e => e.Type == AgentTaskEventType.Refined);
         await using var host = new TaskInputWebAppFactory(f.ConnectionString);
@@ -129,6 +142,11 @@ public sealed class AgentTaskInputFallbackTests
         using var stale = await client.SendAsync(staleRequest);
         stale.StatusCode.ShouldBe(HttpStatusCode.Forbidden, "stale-token-403");
         (await stale.Content.ReadAsStringAsync()).ShouldNotContain(input.InputBody!);
+        using var otherRequest = new HttpRequestMessage(HttpMethod.Get, route);
+        otherRequest.Headers.Add("X-Antiphon-Task-Token", otherToken);
+        using var other = await client.SendAsync(otherRequest);
+        other.StatusCode.ShouldBe(HttpStatusCode.Forbidden, "other-task-token-403");
+        (await other.Content.ReadAsStringAsync()).ShouldNotContain(input.InputBody!);
     }
 
     [Test]
@@ -143,6 +161,24 @@ public sealed class AgentTaskInputFallbackTests
         var caller = new AgentTaskService.Caller(task, f.SessionId, f.RunnerRoot);
         (await reader.ReadAsync(f.TaskId, Guid.NewGuid(), caller, CancellationToken.None))
             .ShouldBeNull("wrong-event-404");
+        var legacy = new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(), AgentTaskId = f.TaskId, AgentSessionId = f.SessionId,
+            Type = AgentTaskEventType.Refined, Detail = "legacy truncated detail",
+            At = DateTime.UtcNow,
+        };
+        var nonInput = new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(), AgentTaskId = f.TaskId, AgentSessionId = f.SessionId,
+            Type = AgentTaskEventType.Warning, Detail = "not input",
+            InputBody = "must stay private", At = DateTime.UtcNow,
+        };
+        db.AgentTaskEvents.AddRange(legacy, nonInput);
+        await db.SaveChangesAsync();
+        (await reader.ReadAsync(f.TaskId, legacy.Id, caller, CancellationToken.None))
+            .ShouldBeNull("legacy-null-404");
+        (await reader.ReadAsync(f.TaskId, nonInput.Id, caller, CancellationToken.None))
+            .ShouldBeNull("non-input-404");
         await Should.ThrowAsync<ForbiddenException>(() =>
             reader.ReadAsync(Guid.NewGuid(), input.Id, caller, CancellationToken.None));
         task.AgentSessionId = Guid.NewGuid();
