@@ -31,6 +31,8 @@ function Run-C727 {
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     $statePath = Join-Path $dir 'state.json'
     $tracePath = Join-Path $dir 'trace.jsonl'
+    $markerPath = Join-Path $dir 'seed-accepted'
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/c973-cold-seed-accepted.txt') -Destination $markerPath
     $tokenPath = Join-Path $dir 'operator-token'
     $sentinel = 'SENTINEL_C727_OPERATOR_TOKEN_1234567890'
     if ($TokenPresent) { Set-Content -LiteralPath $tokenPath -Value $sentinel -NoNewline }
@@ -39,6 +41,7 @@ function Run-C727 {
         oldDraining = $false; tempDraining = $false; tempRetiredAt = $null; tempContainer = $true; tempOffline = $false
         tempRedirectTo = 'server2'; tempRetireWhenIdle = $true
         faultRunner = ''; faultField = ''; faultKind = ''; faultValue = $null; failVerify = ''
+        markerPath = $markerPath; markerVariant = 'valid'; seedImageAvailable = $true
     }
     foreach ($key in $Set.Keys) { $state[$key] = $Set[$key] }
     $state | ConvertTo-Json -Compress | Set-Content -LiteralPath $statePath
@@ -133,6 +136,20 @@ function Assert-ClearedOfflineStart {
 try {
     if ($Only -eq 'retired-start') { Assert-RetiredStart -AlreadyAtSha $AlreadyAtSha; Write-Output 'PASS T-18 retired start'; exit 0 }
     if ($Only -eq 'cleared-offline-start') { Assert-ClearedOfflineStart -Draining $true -RetireWhenIdle $true -AlreadyAtSha $AlreadyAtSha; Write-Output 'PASS T-19 cleared offline start'; exit 0 }
+    $t = Run-C727 -Scenario cold-marker-pruned -Phase redeploy-old -Set @{ oldDraining = $true }
+    Assert-C727 ($t.Exit -eq 0) ('T-20 pruned cold seed image verifies before admission: ' + $t.Out)
+    $markers = @($t.Trace | Where-Object kind -eq 'marker')
+    Assert-C727 ($markers.Count -eq 2 -and $markers[0].seedImageAvailable -and -not $markers[1].seedImageAvailable -and
+        $markers[1].markerKind -eq 'cold' -and $markers[1].exit -eq 0) 'T-20 parent prunes seed image before real cold verification'
+    Assert-C727 (@(Posts $t | Where-Object suffix -eq '/drain/clear').Count -eq 1) 'T-20 verified old admission clears'
+    foreach ($variant in @('missing', 'malformed', 'foreign-marker')) {
+        $t = Run-C727 -Scenario "cold-$variant" -Phase redeploy-old -Set @{
+            oldDraining = $true; oldDeployed = $true; seedImageAvailable = $false; markerVariant = $variant
+        }
+        Assert-C727 ($t.Exit -eq 2 -and $t.Out.Contains('HostCaseFailed verify-runner-caches exit=2')) "T-20 $variant refuses"
+        Assert-C727 ((Posts $t).Count -eq 0 -and $t.State.oldDraining) "T-20 $variant holds drain"
+    }
+    Complete-Group 20 'cold marker survives parent image cleanup'
     $t1 = Run-C727 -Scenario happy
     $c = Cases $t1; $p = Posts $t1
     Assert-C727 ($t1.Exit -eq 0) 'T-1 exit'
@@ -321,11 +338,11 @@ try {
     Assert-ClearedOfflineStart -Draining $true -RetireWhenIdle $true -AlreadyAtSha $true
     Complete-Group 19 'cleared offline start variants'
 
-    if ($script:groups -ne 19 -or $script:invocations -ne 55 -or $script:assertions -ne 197) {
+    if ($script:groups -ne 20 -or $script:invocations -ne 59 -or $script:assertions -ne 206) {
         throw "Frozen roster mismatch groups=$script:groups invocations=$script:invocations assertions=$script:assertions"
     }
-    Write-Output 'C849_ROLLING groups=19 invocations=55 assertions=197 failures=0'
-    Write-Output 'V-32 assertions=197 failures=0'
+    Write-Output 'C849_ROLLING groups=20 invocations=59 assertions=206 failures=0'
+    Write-Output 'V-32 assertions=206 failures=0'
     exit 0
 }
 catch {
