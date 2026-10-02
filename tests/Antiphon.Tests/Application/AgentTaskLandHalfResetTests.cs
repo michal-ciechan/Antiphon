@@ -36,6 +36,9 @@ public sealed class AgentTaskLandHalfResetTests
         alignedTree.ShouldNotBeNull("H.IgnoredOrdinaryResetReached");
         alignedTree.ShouldBe((await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", reviewed + "^{tree}")).Trim(),
                 "H.IgnoredOrdinaryIndexAligned");
+        var op = await h.OperationAsync();
+        (op is not null && new AgentTaskLandingState().HasPublication(op))
+            .ShouldBeTrue("H.IgnoredOrdinaryPublicationConfirmed");
     }
 
     [Test]
@@ -116,6 +119,9 @@ public sealed class AgentTaskLandHalfResetTests
         await using var db = h.CreateContext();
         var row = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == first.RequestId);
         row.SourceRefusalReason.ShouldBeNull(interrupted ? "H.FilemodeFalseRepairLands" : "H.FilemodeFalseAdoptionLands");
+        var op = await h.OperationAsync();
+        (op is not null && new AgentTaskLandingState().HasPublication(op))
+            .ShouldBeTrue(interrupted ? "H.FilemodeFalseRepairPublishes" : "H.FilemodeFalseAdoptionPublishes");
     }
 
     [Test]
