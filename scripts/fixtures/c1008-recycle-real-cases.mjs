@@ -60,14 +60,23 @@ function createVolume(name, labels) {
   runDocker('volume','create','--label',label+'='+prefix,...labels.flatMap(x=>['--label',x]),guard(name)); objects.volumes.add(name);
 }
 function createContainer(f, service, running, names, project=f.main, overrideName='') {
-  const args=['run','-d','--network','none','--name',guard(overrideName||f.prefix+'-'+service+'-'+crypto.randomBytes(3).toString('hex')),
+  const args=['run','-d','--init','--network','none','--name',guard(overrideName||f.prefix+'-'+service+'-'+crypto.randomBytes(3).toString('hex')),
     '--label',label+'='+prefix,'--label','com.docker.compose.project='+guard(project),'--label','com.docker.compose.service='+service];
   names.forEach((name,i)=>args.push('--mount','type=volume,source='+guard(name)+',target='+mounts[i]));
   const id=runDocker(...args,image,'sleep','infinity'); objects.containers.add(id);
   if (!running) runDocker('stop','--time','1','--',id);
   return id;
 }
+function cleanupCase(f) {
+  if (!f) return;
+  for (const id of runDocker('ps','-aq','--no-trunc','--filter','label='+label+'='+prefix).split('\n').filter(Boolean)) {
+    const fact=JSON.parse(docker('inspect',id))[0];
+    if (fact.Name.startsWith('/'+f.prefix)) {objects.containers.add(id); runDocker('rm','-f','--',id);}
+  }
+  for(const n of [...f.names,f.origin]) if(allVolumes().includes(n)) runDocker('volume','rm','--',guard(n));
+}
 function fixture(mainReplacement=true) {
+  cleanupCase(active);
   const p=prefix+'c'+crypto.randomBytes(4).toString('hex');
   const f={prefix:p,main:p+'main',temp:p+'temp',root:path.join(root,p),mainReplacement,op:'c1008'+crypto.randomBytes(16).toString('hex')};
   f.caches=cacheRoles.map(r=>p+'cache-'+r);
@@ -80,7 +89,7 @@ function fixture(mainReplacement=true) {
   for (const project of [f.main,f.temp]) {
     for (const role of roles) createVolume(project+'_'+role,['com.docker.compose.project='+project,'com.docker.compose.volume='+role]);
     const volumes=Object.fromEntries([...roles.map(r=>[r,{name:project+'_'+r}]),...cacheRoles.map((r,i)=>['runner-'+r,{name:f.caches[i],external:true}])]);
-    const services={'session-runner':{image,command:['sleep','infinity'],labels:{[label]:prefix},volumes:[...roles,...cacheRoles.map(r=>'runner-'+r)].map((r,i)=>r+':'+mounts[i])},
+    const services={'session-runner':{image,init:true,command:['sleep','infinity'],labels:{[label]:prefix},volumes:[...roles,...cacheRoles.map(r=>'runner-'+r)].map((r,i)=>r+':'+mounts[i])},
       'state-init':{image,command:['true'],labels:{[label]:prefix},volumes:['work:/work','runner-state:/state']}};
     fs.writeFileSync(f.root+'/'+project+'.json',JSON.stringify({services,volumes}));
   }
@@ -117,6 +126,7 @@ SERVER2_ENV='${f.root}/main.env'; SERVER2_TEMP_ENV='${f.root}/temp.env'; C849_RE
 C1008_CONTEXT=default; C1008_OPERATION=${f.op}; C1008_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1; C1008_RESUME=${options.resume?1:0}
 C590_TEMP_RETIRED_AT=2026-10-03T09:30:00Z; RUNNER_GIT_USER_NAME=Fixture; RUNNER_GIT_USER_EMAIL=fixture@example.invalid
 mkdir -p "$CASE_DIR"
+exec 3>'${f.root}/${name}.trace'; export BASH_XTRACEFD=3; set -x
 detect_lane() { LANE=host; }
 ensure_dirs() { mkdir -p "$CASE_DIR"; }
 ensure_checkout() { :; }; ensure_runner_boot_files() { :; }; retire_c590_leftovers() { :; }; broker_sha12() { echo aaaaaaaaaaaa; }
@@ -151,7 +161,7 @@ build_server2_images() {
 `;
   const script=f.root+'/'+name+'.sh'; fs.writeFileSync(script,transformed.replace("trap 'ec=$?;",injected+"\ntrap 'ec=$?;"));
   const env={...process.env,C590_CASE:hostCase,C590_SHA:source,C590_RUN:'c1008real',C590_REEXEC:'1',C604_SERVER_ORIGIN:originUrl};
-  let outcome; try {outcome=await exec('bash',['-x',script],{env,timeout:90000,maxBuffer:1024*1024});outcome.code=0;} catch(e){outcome=e;}
+  let outcome; try {outcome=await exec('bash',[script],{env,timeout:90000,maxBuffer:1024*1024});outcome.code=0;} catch(e){outcome=e;}
   fs.writeFileSync(f.root+'/'+name+'.log',(outcome.stdout||'')+(outcome.stderr||''));
   const result=JSON.parse(fs.readFileSync(dest+'/c590-result.json','utf8'));
   const journalPath=f.root+'/server/recycle/'+f.op+'.json';
