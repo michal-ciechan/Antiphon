@@ -299,7 +299,7 @@ layout, and it is the only relaxation used: `/tmp` and `/dev/shm` stayed
 `noexec` in the successful runs. Evidence is a one-variable change between two
 runs: with `/scratch` `noexec` the launch request returned 500 (no Grok process
 started); with `exec` on `/scratch` and nothing else changed it returned 201 in
-three runs. The 500 body was not recorded in that failing run, so the cause is
+two runs. The 500 body was not recorded in that failing run, so the cause is
 inferred from that single change, not read from an error message. The runner
 executes its shadow-copied pty-host from `<log path>/pty-hosts/bin`; a narrower
 exec-only mount for just that directory was not tested, so `exec` on the whole
