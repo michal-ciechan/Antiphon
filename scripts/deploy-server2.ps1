@@ -398,8 +398,19 @@ function Invoke-Phase {
         'redeploy-old' {
             $s = Get-RunnerStatus -RunnerId 'server2'
             if ($null -eq $s) { throw 'OldRunnerStatusMissing' }
+            if ([string]$s.buildVersion -eq $Sha -and -not $ResumeRecycle -and
+                ($s.available -ne $true -or $s.dispatchEligible -ne $true)) { throw 'RecycleResumeRequired' }
+            $preservedStore = [string]$s.runnerStoreId
             if ([string]$s.buildVersion -ne $Sha -or $ResumeRecycle -or $DryRun) {
-                Assert-ZeroCounters -Status $s -RunnerId 'server2'
+                if ($ResumeRecycle -and $null -eq $s.runnerSessions -and $s.available -is [bool] -and
+                    $s.available -eq $false -and $s.dispatchEligible -is [bool] -and $s.dispatchEligible -eq $false) {
+                    # Only the host's operation journal can prove its own prior stop/removal.
+                    # This admits the request to that proof; it never authorizes deletion here.
+                    $zero = $s | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+                    $zero.runnerSessions = 0
+                    Assert-ZeroCounters -Status $zero -RunnerId 'server2'
+                }
+                else { Assert-ZeroCounters -Status $s -RunnerId 'server2' }
                 if ($s.draining -isnot [bool] -or $s.draining -ne $true -or [string]$s.redirectTo -cne 'server2-temp' -or
                     $s.retireWhenIdle -isnot [bool] -or $s.retireWhenIdle -ne $false -or $s.retiredAt) { throw 'OldRunnerDrainConflict' }
                 if ($s.acceptingNewWork -isnot [bool] -or $s.acceptingNewWork -ne $false) { throw 'RecycleRoutingActive' }
@@ -417,6 +428,7 @@ function Invoke-Phase {
             })
             Invoke-HostCase -Case 'verify-runner-caches' -RunnerId 'server2'
             $s = Get-RunnerStatus -RunnerId 'server2'
+            if ([string]$s.runnerStoreId -cne $preservedStore) { throw 'RecycleRunnerStoreChanged' }
             if ($s.draining) {
                 if ([string]$s.redirectTo -ne 'server2-temp' -or $s.retireWhenIdle) { throw 'OldRunnerDrainConflict' }
                 [void](Invoke-RunnerRequest -Method POST -RunnerId 'server2' -Suffix '/drain/clear' -Body @{ reason = 'CARD-0727 rolling upgrade complete' })

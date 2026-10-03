@@ -75,6 +75,30 @@ public sealed class RollingVolumeRecycleScriptTests
         run.Trace.Where(x => x["kind"]?.GetValue<string>() == "case").Select(x => x["name"]!.GetValue<string>())
             .ShouldBe(new[] { "verify-runner-caches" }, "recycle-wrapper-resume: healthy same SHA only verifies; " + run.Output);
         run.Exit.ShouldBe(0);
+        foreach (var fail in new[] { "", "deploy", "cache", "no-resume" })
+        {
+            using var partial = new C1008WrapperFixture();
+            partial.State["statuses"]!["server2"]!["draining"] = true;
+            partial.State["statuses"]!["server2"]!["redirectTo"] = "server2-temp";
+            partial.State["statuses"]!["server2"]!["acceptingNewWork"] = false;
+            partial.State["statuses"]!["server2"]!["available"] = false;
+            partial.State["statuses"]!["server2"]!["dispatchEligible"] = false;
+            partial.State["statuses"]!["server2"]!["runnerSessions"] = null;
+            partial.State["statuses"]!["server2-temp"] = JsonNode.Parse(File.ReadAllText(Path.Combine(
+                DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1008-recycle-cases.json")))!["tempAccepting"]!.DeepClone();
+            partial.State["allowClear"] = true;
+            partial.State["failDeploy"] = fail == "deploy";
+            partial.State["failVerify"] = fail == "cache" ? "server2" : "";
+            var recovered = fail == "no-resume" ? await partial.Run("redeploy-old") :
+                await partial.Run("redeploy-old", "-ResumeRecycle", "c100800000000000000000000000000000001");
+            if (fail.Length == 0) recovered.Exit.ShouldBe(0, "recycle-wrapper-resume: request reaches the host's saved proof; " + recovered.Output);
+            else
+            {
+                recovered.Exit.ShouldNotBe(0);
+                recovered.Trace.Any(x => x["method"]?.GetValue<string>() == "POST").ShouldBeFalse(
+                    "recycle-wrapper-resume: failure retains admission drain " + fail);
+            }
+        }
     }
 
     [Test]
@@ -284,12 +308,21 @@ internal sealed class C1008HostFixture : IDisposable
     internal string[][] Trace => File.Exists(Path.Combine(Root, "docker-trace.jsonl"))
         ? File.ReadAllLines(Path.Combine(Root, "docker-trace.jsonl"))
             .Select(x => JsonNode.Parse(x)!.AsArray().Select(y => y!.GetValue<string>()).ToArray()).ToArray() : [];
+    internal void ReloadDocker()
+    {
+        var persisted = JsonNode.Parse(File.ReadAllText(StatePath))!.AsObject();
+        Docker.Clear();
+        foreach (var (key, value) in persisted) Docker[key] = value?.DeepClone();
+    }
     internal JsonObject Vectors { get; }
+    internal JsonObject TaskScopes { get; } = new();
+    internal JsonObject TaskDetails { get; } = new();
 
     internal C1008HostFixture(bool main = true)
     {
         Vectors = JsonNode.Parse(File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot,
             "scripts/fixtures/c1008-recycle-cases.json")))!.AsObject();
+        TaskScopes["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1"] = Vectors["emptyTasks"]!.DeepClone();
         Statuses = new JsonObject
         {
             ["server2"] = Vectors[main ? "mainDrained" : "mainAccepting"]!.DeepClone(),
@@ -315,7 +348,14 @@ internal sealed class C1008HostFixture : IDisposable
                 { ["io.antiphon.owner"] = "server2-runner", ["io.antiphon.cache-schema"] = "1", ["io.antiphon.cache-role"] = role });
                 model[key] = new JsonObject { ["name"] = name, ["external"] = true };
             }
-            models[project] = new JsonObject { ["volumes"] = model };
+            var mounts = new[] { ("work", "/work"), ("runner-state", "/state"), ("runner-tmp", "/tmp"),
+                ("dind-data", "/var/lib/docker"), ("runner-nuget-packages", "/home/app/.nuget/packages"),
+                ("runner-nuget-scratch", "/var/cache/antiphon/nuget-scratch"), ("runner-npm-content", "/home/app/.npm/_cacache") };
+            JsonArray Mounts(int count) => new(mounts.Take(count).Select(x => (JsonNode)new JsonObject
+                { ["type"] = "volume", ["source"] = x.Item1, ["target"] = x.Item2 }).ToArray());
+            models[project] = new JsonObject { ["volumes"] = model, ["services"] = new JsonObject
+                { ["session-runner"] = new JsonObject { ["volumes"] = Mounts(7) },
+                    ["state-init"] = new JsonObject { ["volumes"] = Mounts(2) } } };
         }
         foreach (var name in new[] { "antiphon-runner_work-extra", "schoolrevision-staging", "openclaw-state" })
             volumes[name] = Volume(name, new JsonObject());
@@ -356,6 +396,8 @@ internal sealed class C1008HostFixture : IDisposable
     {
         File.WriteAllText(StatePath, Docker.ToJsonString());
         File.WriteAllText(Path.Combine(Root, "statuses.json"), Statuses.ToJsonString());
+        File.WriteAllText(Path.Combine(Root, "tasks.json"), new JsonObject
+            { ["scopes"] = TaskScopes.DeepClone(), ["details"] = TaskDetails.DeepClone() }.ToJsonString());
         var source = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"));
         var injection = $$"""
             C1008_FIXTURE_ROOT='{{Root}}'; export C1008_FIXTURE_ROOT
@@ -377,7 +419,7 @@ internal sealed class C1008HostFixture : IDisposable
             c849_lock() { :; }
             c849_budget_gate() { :; }
             c849_status_body() { node -e 'process.stdout.write(JSON.stringify(JSON.parse(require("fs").readFileSync(process.argv[1]))[process.argv[2]]))' '{{Root}}/statuses.json' "$1"; }
-            c1008_tasks() { printf '[]'; }
+            c1008_http() { node -e 'const fs=require("fs"),s=JSON.parse(fs.readFileSync(process.argv[1])),p=process.argv[2],u=new URL(p,"http://fixture.invalid"),v=u.searchParams.has("projectId")?s.scopes[u.searchParams.get("projectId")]:s.details[u.pathname.split("/").at(-1)];if(!v)process.exit(2);process.stdout.write(JSON.stringify(v))' '{{Root}}/tasks.json' "$1"; }
             sudo() { [ "$1" = -n ] && shift; if [ "$1" = install ]; then mkdir -p "${@: -1}"; elif [ "$1" = df ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nfixture 99999999 1 25000000 1%% /fixture\n'; else "$@"; fi; }
             {{extra}}
             """;
