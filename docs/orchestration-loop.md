@@ -36,14 +36,14 @@ Before an AppHost or desktop runner restart, ensure `logs/apphost.restart.lock` 
 and both locks before retrying.
 
 Orchestrators may recycle the disposable volumes of a drained, stopped runner and
-must ALWAYS retire temp once scheduling is back on main, under the
+must ALWAYS retire temp (`retire-temp`) once scheduling is back on main, under the
 [volume recycling policy](docker-stack.md#volume-recycling-and-disk-reclaim-card-1008).
 Every drain, zero-work, routing, land, unpublished-work and unreferenced-volume
 precondition in that procedure must pass; use its manual equivalent until the script fixes land.
 
 Still requires a human: `Reset`, Docker prune, recycling runner-state or cache volumes
 beyond that policy (main state/cache recycling requires explicit opt-in), deleting
-deployment markers or the donor tar, any removal while a recycling precondition fails,
+deployment markers or donor tars, any removal while a recycling precondition fails,
 and other destructive or irreversible steps outside that grant; deleting other data;
 killing other sessions or alwaysOn agents;
 changing budgets, routing pins, or settings; spend beyond a sanctioned canary; handling secrets;
