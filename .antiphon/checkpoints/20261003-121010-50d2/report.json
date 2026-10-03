@@ -1,0 +1,342 @@
+{
+  "schemaVersion": 2,
+  "source": {
+    "version": 1,
+    "start": {
+      "commit": "1462102cb4e88dea9c42223a554f8b9dd67ed0cf",
+      "dirtyFiles": 0,
+      "fingerprint": "136c534588e18f6aef14fa4b8fbb79bfc820ce9f0ff93649991f0b27e47f8813",
+      "observedAtUtc": "2026-10-03T12:10:11.3465342+00:00",
+      "captureStatus": "known",
+      "errorCode": null
+    },
+    "end": {
+      "commit": "1462102cb4e88dea9c42223a554f8b9dd67ed0cf",
+      "dirtyFiles": 0,
+      "fingerprint": "136c534588e18f6aef14fa4b8fbb79bfc820ce9f0ff93649991f0b27e47f8813",
+      "observedAtUtc": "2026-10-03T12:16:31.4151868+00:00",
+      "captureStatus": "known",
+      "errorCode": null
+    },
+    "state": "clean",
+    "buildSource": "verified"
+  },
+  "runId": "20261003-121010-50d2",
+  "manifestPath": "/work/worktrees/task-4c1697dc/.antiphon/checkpoints/20261003-121010-50d2/manifest.resolved.yaml",
+  "manifestHash": "4b1ab9a4797f5fd681dbc73f810075581301e4ac366818a9c1d02c4493df801d",
+  "commit": "1462102cb4e88dea9c42223a554f8b9dd67ed0cf",
+  "branch": "feat/card-task-4c1697dc",
+  "worktree": "/work/worktrees/task-4c1697dc",
+  "host": {
+    "os": "Debian GNU/Linux 12 (bookworm)",
+    "cores": 24,
+    "memAvailableMb": 103733,
+    "loadAvg": "8.71 13.27 12.48 4/2934 24969"
+  },
+  "startedAt": "2026-10-03T12:10:12.9826201+00:00",
+  "endedAt": "2026-10-03T12:16:31.4289656+00:00",
+  "wallSeconds": 378.4463455,
+  "sequentialEquivalentSeconds": 116.622881,
+  "exitCode": 1,
+  "reason": null,
+  "verdict": "RED",
+  "builds": [
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": null,
+          "dirtyFiles": null,
+          "fingerprint": null,
+          "observedAtUtc": "2026-10-03T12:10:13.3197224+00:00",
+          "captureStatus": "unknown",
+          "errorCode": "not_observed"
+        },
+        "end": null,
+        "state": "unknown",
+        "buildSource": "unknown"
+      },
+      "id": "bin-c965-input",
+      "project": "tests/Antiphon.Tests",
+      "state": "unused",
+      "seconds": 0,
+      "slot": "",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": "1462102cb4e88dea9c42223a554f8b9dd67ed0cf",
+          "dirtyFiles": 0,
+          "fingerprint": "136c534588e18f6aef14fa4b8fbb79bfc820ce9f0ff93649991f0b27e47f8813",
+          "observedAtUtc": "2026-10-03T12:10:11.3465342+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "end": {
+          "commit": "1462102cb4e88dea9c42223a554f8b9dd67ed0cf",
+          "dirtyFiles": 0,
+          "fingerprint": "136c534588e18f6aef14fa4b8fbb79bfc820ce9f0ff93649991f0b27e47f8813",
+          "observedAtUtc": "2026-10-03T12:12:52.7571708+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "state": "clean",
+        "buildSource": "verified"
+      },
+      "id": "bin-c965-fallback",
+      "project": "tests/Antiphon.Tests",
+      "state": "ok",
+      "seconds": 159.2015854,
+      "slot": "granted",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": "1462102cb4e88dea9c42223a554f8b9dd67ed0cf",
+          "dirtyFiles": 0,
+          "fingerprint": "136c534588e18f6aef14fa4b8fbb79bfc820ce9f0ff93649991f0b27e47f8813",
+          "observedAtUtc": "2026-10-03T12:10:11.3465342+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "end": {
+          "commit": "1462102cb4e88dea9c42223a554f8b9dd67ed0cf",
+          "dirtyFiles": 0,
+          "fingerprint": "136c534588e18f6aef14fa4b8fbb79bfc820ce9f0ff93649991f0b27e47f8813",
+          "observedAtUtc": "2026-10-03T12:15:35.6684907+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "state": "clean",
+        "buildSource": "verified"
+      },
+      "id": "bin-c965-attention",
+      "project": "tests/Antiphon.Tests",
+      "state": "ok",
+      "seconds": 101.5130819,
+      "slot": "granted",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": null,
+          "dirtyFiles": null,
+          "fingerprint": null,
+          "observedAtUtc": "2026-10-03T12:10:13.3199408+00:00",
+          "captureStatus": "unknown",
+          "errorCode": "not_observed"
+        },
+        "end": null,
+        "state": "unknown",
+        "buildSource": "unknown"
+      },
+      "id": "bin-c965-unit",
+      "project": "tests/Antiphon.Tests",
+      "state": "unused",
+      "seconds": 0,
+      "slot": "",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": null,
+          "dirtyFiles": null,
+          "fingerprint": null,
+          "observedAtUtc": "2026-10-03T12:10:13.3199415+00:00",
+          "captureStatus": "unknown",
+          "errorCode": "not_observed"
+        },
+        "end": null,
+        "state": "unknown",
+        "buildSource": "unknown"
+      },
+      "id": "bin-c965-compat",
+      "project": "tests/Antiphon.Tests",
+      "state": "unused",
+      "seconds": 0,
+      "slot": "",
+      "slotReason": null,
+      "waitedSeconds": 0
+    }
+  ],
+  "rows": [
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": "1462102cb4e88dea9c42223a554f8b9dd67ed0cf",
+          "dirtyFiles": 0,
+          "fingerprint": "136c534588e18f6aef14fa4b8fbb79bfc820ce9f0ff93649991f0b27e47f8813",
+          "observedAtUtc": "2026-10-03T12:10:11.3465342+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "end": {
+          "commit": "1462102cb4e88dea9c42223a554f8b9dd67ed0cf",
+          "dirtyFiles": 0,
+          "fingerprint": "136c534588e18f6aef14fa4b8fbb79bfc820ce9f0ff93649991f0b27e47f8813",
+          "observedAtUtc": "2026-10-03T12:13:53.867111+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "state": "clean",
+        "buildSource": "verified"
+      },
+      "id": "CP-2",
+      "group": "fallback",
+      "filter": "/*/*/(AgentTaskInputFallbackTests*)|(PhoneHomeSpillTests*)|(PhoneHomeSpillTransportTests*)|(DurableRunnerSpillReceiptTests*)/*",
+      "command": null,
+      "build": "bin-c965-fallback",
+      "state": "red",
+      "exitCode": 1,
+      "slot": "granted",
+      "slotReason": null,
+      "waitedSeconds": 0,
+      "executed": 29,
+      "passed": 28,
+      "failed": 1,
+      "skipped": 0,
+      "reruns": 0,
+      "trx": "/work/worktrees/task-4c1697dc/.antiphon/checkpoints/20261003-121010-50d2/rows/CP-2/run.trx",
+      "seconds": 61.0878702,
+      "line": "CHECKPOINT CP-2 commit=1462102cb4e88dea9c42223a554f8b9dd67ed0cf build=ok filter=/*/*/(AgentTaskInputFallbackTests*)|(PhoneHomeSpillTests*)|(PhoneHomeSpillTransportTests*)|(DurableRunnerSpillReceiptTests*)/* executed=29 passed=28 failed=1 skipped=0 trx=/work/worktrees/task-4c1697dc/.antiphon/checkpoints/20261003-121010-50d2/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=1462102cb4e88dea9c42223a554f8b9dd67ed0cf sourceState=clean buildSource=verified",
+      "failures": [
+        {
+          "name": "Antiphon.Tests.Application.AgentTaskInputFallbackTests.Input_body_is_absent_from_task_summary_events_and_logs",
+          "message": "NotSupportedException: Serialization and deserialization of \u0027System.Reflection.RuntimeMethodInfo\u0027 instances is not supported. The unsupported member type is located on type \u0027System.Object\u0027. Path: $.Metadata.",
+          "stackTrace": "   at System.Text.Json.ThrowHelper.ThrowNotSupportedException(WriteStack\u0026 state, Exception innerException)\n   at System.Text.Json.Serialization.JsonConverter\u00601.WriteCore(Utf8JsonWriter writer, T\u0026 value, JsonSerializerOptions options, WriteStack\u0026 state)\n   at System.Text.Json.Serialization.Metadata.JsonTypeInfo\u00601.Serialize(Utf8JsonWriter writer, T\u0026 rootValue, Object rootValueBoxed)\n   at System.Text.Json.JsonSerializer.WriteString[TValue](TValue\u0026 value, JsonTypeInfo\u00601 jsonTypeInfo)\n   at System.Text.Json.JsonSerializer.Serialize[TValue](TValue value, JsonSerializerOptions options)\n   at Antiphon.Tests.Application.AgentTaskInputFallbackTests.Input_body_is_absent_from_task_summary_events_and_logs() in /work/worktrees/task-4c1697dc/tests/Antiphon.Tests/Application/AgentTaskInputFallbackTests.cs:line 335\n   at Antiphon.Tests.Application.AgentTaskInputFallbackTests.Input_body_is_absent_from_task_summary_events_and_logs() in /work/worktrees/task-4c1697dc/tests/Antiphon.Tests/Application/AgentTaskInputFallbackTests.cs:line 332\n   at Antiphon.Tests.Application.AgentTaskInputFallbackTests.Input_body_is_absent_from_task_summary_events_and_logs() in /work/worktrees/task-4c1697dc/tests/Antiphon.Tests/Application/AgentTaskInputFallbackTests.cs:line 332\n   at Antiphon.Tests.Application.AgentTaskInputFallbackTests.Input_body_is_absent_from_task_summary_events_and_logs() in /work/worktrees/task-4c1697dc/tests/Antiphon.Tests/Application/AgentTaskInputFallbackTests.cs:line 332\n   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---",
+          "stdOut": "",
+          "baseline": null,
+          "durationSeconds": 1.4637954
+        }
+      ],
+      "rerunLines": [],
+      "slowClasses": [
+        {
+          "className": "Antiphon.Tests.Application.AgentTaskInputFallbackTests",
+          "seconds": 21.778656099999996,
+          "tests": 11
+        },
+        {
+          "className": "Antiphon.Tests.Application.DurableRunnerSpillReceiptTests",
+          "seconds": 17.9358042,
+          "tests": 11
+        },
+        {
+          "className": "Antiphon.Tests.Application.PhoneHomeSpillTransportTests",
+          "seconds": 0.3610519,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Application.PhoneHomeSpillTests",
+          "seconds": 0.010485999999999999,
+          "tests": 4
+        }
+      ],
+      "attempt": 1,
+      "repeat": null,
+      "timings": {
+        "slotWaitSeconds": 0,
+        "buildSlotWaitSeconds": 0,
+        "rowSlotWaitSeconds": 0,
+        "buildSeconds": 159.2015854,
+        "producingBuild": "bin-c965-fallback",
+        "startupSeconds": 37.4123395,
+        "testsWallSeconds": 21.8093483,
+        "teardownSeconds": 1.3309314,
+        "testHostWallSeconds": 60.552644,
+        "method": "utc-trx-and-monotonic-host",
+        "unavailableReason": null
+      }
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": "1462102cb4e88dea9c42223a554f8b9dd67ed0cf",
+          "dirtyFiles": 0,
+          "fingerprint": "136c534588e18f6aef14fa4b8fbb79bfc820ce9f0ff93649991f0b27e47f8813",
+          "observedAtUtc": "2026-10-03T12:10:11.3465342+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "end": {
+          "commit": "1462102cb4e88dea9c42223a554f8b9dd67ed0cf",
+          "dirtyFiles": 0,
+          "fingerprint": "136c534588e18f6aef14fa4b8fbb79bfc820ce9f0ff93649991f0b27e47f8813",
+          "observedAtUtc": "2026-10-03T12:16:31.2220821+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "state": "clean",
+        "buildSource": "verified"
+      },
+      "id": "CP-3",
+      "group": "attention",
+      "filter": "/*/*/TaskInputReadFailureTests*/*",
+      "command": null,
+      "build": "bin-c965-attention",
+      "state": "green",
+      "exitCode": 0,
+      "slot": "granted",
+      "slotReason": null,
+      "waitedSeconds": 0,
+      "executed": 8,
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "reruns": 0,
+      "trx": "/work/worktrees/task-4c1697dc/.antiphon/checkpoints/20261003-121010-50d2/rows/CP-3/run.trx",
+      "seconds": 55.5350108,
+      "line": "CHECKPOINT CP-3 commit=1462102cb4e88dea9c42223a554f8b9dd67ed0cf build=ok filter=/*/*/TaskInputReadFailureTests*/* executed=8 passed=8 failed=0 skipped=0 trx=/work/worktrees/task-4c1697dc/.antiphon/checkpoints/20261003-121010-50d2/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=1462102cb4e88dea9c42223a554f8b9dd67ed0cf sourceState=clean buildSource=verified",
+      "failures": [],
+      "rerunLines": [],
+      "slowClasses": [
+        {
+          "className": "Antiphon.Tests.Application.TaskInputReadFailureTests",
+          "seconds": 13.222127500000001,
+          "tests": 8
+        }
+      ],
+      "attempt": 1,
+      "repeat": null,
+      "timings": {
+        "slotWaitSeconds": 0,
+        "buildSlotWaitSeconds": 0,
+        "rowSlotWaitSeconds": 0,
+        "buildSeconds": 101.5130819,
+        "producingBuild": "bin-c965-attention",
+        "startupSeconds": 40.5387697,
+        "testsWallSeconds": 13.2634412,
+        "teardownSeconds": 1.3944662,
+        "testHostWallSeconds": 55.1966772,
+        "method": "utc-trx-and-monotonic-host",
+        "unavailableReason": null
+      }
+    }
+  ],
+  "unlisted": [],
+  "evidence": "/work/worktrees/task-4c1697dc/.antiphon/checkpoints/20261003-121010-50d2/report.md",
+  "cleanedOutputs": false,
+  "outputNames": [
+    "bin-c965-input/",
+    "bin-c965-fallback/",
+    "bin-c965-attention/",
+    "bin-c965-unit/",
+    "bin-c965-compat/"
+  ],
+  "maxConcurrentRows": 1,
+  "maxConcurrentBuilds": 1
+}

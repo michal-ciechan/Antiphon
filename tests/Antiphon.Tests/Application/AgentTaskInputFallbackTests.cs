@@ -1,5 +1,7 @@
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Reflection;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -329,12 +331,23 @@ public sealed class AgentTaskInputFallbackTests
         (await authorized.Content.ReadAsStringAsync()).ShouldBe(input.InputBody,
             "authorized-private-tail-exact");
         logs.Entries.ShouldNotBeEmpty("log-capture-active");
+        var logJson = new JsonSerializerOptions();
+        logJson.Converters.Add(new ReflectionLogValue());
         foreach (var entry in logs.Entries)
         {
             entry.Message.ShouldNotContain("private-tail-888", customMessage: "log-tail-absent");
-            JsonSerializer.Serialize(entry.Properties).ShouldNotContain("private-tail-888",
+            JsonSerializer.Serialize(entry.Properties, logJson).ShouldNotContain("private-tail-888",
                 customMessage: "structured-log-tail-absent");
         }
+    }
+
+    private sealed class ReflectionLogValue : JsonConverter<MemberInfo>
+    {
+        public override bool CanConvert(Type typeToConvert) => typeof(MemberInfo).IsAssignableFrom(typeToConvert);
+        public override MemberInfo? Read(ref Utf8JsonReader reader, Type typeToConvert,
+            JsonSerializerOptions options) => throw new NotSupportedException();
+        public override void Write(Utf8JsonWriter writer, MemberInfo value, JsonSerializerOptions options) =>
+            writer.WriteStringValue(value.ToString());
     }
 
     [Test]
