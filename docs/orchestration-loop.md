@@ -53,7 +53,7 @@ and other destructive or irreversible steps outside that grant; deleting other d
 killing other sessions or alwaysOn agents;
 changing budgets, routing pins, or settings; spend beyond a sanctioned canary; handling secrets;
 touching the user's untracked files; or touching the standing server2 runner container outside
-the rolling phases. Pause for explicit human authorization before any such step, except the
+the rolling phases or the documented in-container cleanup of a running main. Pause for explicit human authorization before any such step, except the
 operator's CARD-0934 authorization to stop remaining server2 sessions after the staged rollout's
 four-hour drain cap, under [that procedure](docker-stack.md#staged-server2-rolling-rollout-card-0934).
 
