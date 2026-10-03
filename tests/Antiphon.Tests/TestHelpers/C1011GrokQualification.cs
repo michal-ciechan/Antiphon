@@ -42,7 +42,7 @@ internal static class C1011GrokQualification
             && x.Sequence > replies[^1].Sequence).OrderBy(x => x.Sequence).FirstOrDefault();
         var hasLaterTurnEnd = end is not null;
         return hasLaterTurnEnd
-            ? new(TurnVerdict.Accepted, prompt.Sequence, replySequences, end!.Sequence)
+            ? new(TurnVerdict.Accepted, prompt.Sequence, replySequences, end?.Sequence)
             : new(TurnVerdict.MissingTurnEnd, prompt.Sequence, replySequences);
     }
 
