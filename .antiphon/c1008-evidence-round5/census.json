@@ -1,0 +1,1250 @@
+[
+  {
+    "path": "tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs",
+    "currentMethods": 77,
+    "currentResults": 95,
+    "masterMethods": 66,
+    "masterResults": 84,
+    "roster": [
+      {
+        "method": "C1008_Recycle_exact_default_volumes",
+        "results": 1
+      },
+      {
+        "method": "C1008_Recycle_refuses_references_and_unknown_census",
+        "results": 1
+      },
+      {
+        "method": "C1008_Recycle_audits_work_as_1654",
+        "results": 1
+      },
+      {
+        "method": "C1008_Recycle_refuses_unpublished_and_dirty_work",
+        "results": 1
+      },
+      {
+        "method": "C1008_Recycle_refuses_uninspectable_git",
+        "results": 1
+      },
+      {
+        "method": "C1008_Recycle_preserves_tmp_copyup",
+        "results": 1
+      },
+      {
+        "method": "C1008_Recycle_resume_requires_matching_receipt",
+        "results": 1
+      },
+      {
+        "method": "C1008_Recycle_receipt_records_disk_and_partial_failure",
+        "results": 1
+      },
+      {
+        "method": "C1008_Retire_temp_rechecks_absence_and_retirement",
+        "results": 1
+      },
+      {
+        "method": "C1008_Retire_temp_reclaims_below_cache_disk_gate",
+        "results": 1
+      },
+      {
+        "method": "C1008_Recycle_dry_run_never_mutates",
+        "results": 1
+      },
+      {
+        "method": "C944_All_cache_loop_variables_are_local",
+        "results": 1
+      },
+      {
+        "method": "C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo",
+        "results": 8
+      },
+      {
+        "method": "C976_Missing_helper_image_preserves_final_receipt_diagnosis",
+        "results": 1
+      },
+      {
+        "method": "C946_Rolling_harness_cleans_only_its_owned_success_root",
+        "results": 1
+      },
+      {
+        "method": "C957_Scratch_mutation_controls_go_red_and_restore",
+        "results": 3
+      },
+      {
+        "method": "C946_Green_harness_removes_root_and_failed_keep_run_retains_evidence",
+        "results": 1
+      },
+      {
+        "method": "C905_Missing_linux_pwsh_skips_all_five_cases_before_a_script_block",
+        "results": 1
+      },
+      {
+        "method": "C905_Linux_shell_finds_pwsh_when_installed",
+        "results": 1
+      },
+      {
+        "method": "C849_front_door_passes_every_full_case_name_to_the_invoker",
+        "results": 1
+      },
+      {
+        "method": "Nested_lane_never_uses_sudo_or_python",
+        "results": 1
+      },
+      {
+        "method": "Testing_payload_expects_linux_backend_never_windows",
+        "results": 1
+      },
+      {
+        "method": "Custody_containment_case_measures_the_v1_path_as_the_app_uid",
+        "results": 1
+      },
+      {
+        "method": "Custody_residue_counts_subdirectories_only",
+        "results": 1
+      },
+      {
+        "method": "Custody_containment_is_routed_to_the_remote_and_not_left_pending",
+        "results": 1
+      },
+      {
+        "method": "Linux_custody_case_requires_the_linux_backend",
+        "results": 1
+      },
+      {
+        "method": "Scrub_covers_github_token_prefixes",
+        "results": 1
+      },
+      {
+        "method": "Smoke_deletes_its_branch",
+        "results": 1
+      },
+      {
+        "method": "Child_project_is_run_scoped_and_distinct",
+        "results": 1
+      },
+      {
+        "method": "Host_compose_uses_the_deployed_tag_not_this_runs_sha",
+        "results": 1
+      },
+      {
+        "method": "Retirement_is_anchored_on_the_run_scoped_prefix",
+        "results": 1
+      },
+      {
+        "method": "Host_daemon_is_never_pruned",
+        "results": 1
+      },
+      {
+        "method": "Lane_detection_separates_a_bare_host_from_the_runner",
+        "results": 1
+      },
+      {
+        "method": "Every_case_declares_a_lane",
+        "results": 1
+      },
+      {
+        "method": "Deploy_parent_probes_the_phone_home_secret_as_the_app_uid",
+        "results": 1
+      },
+      {
+        "method": "Deploy_parent_phone_home_grep_matches_the_runners_registration_failure_template",
+        "results": 1
+      },
+      {
+        "method": "Deploy_parent_refuses_a_runner_whose_phone_home_keeps_failing",
+        "results": 1
+      },
+      {
+        "method": "Deploy_parent_retires_its_own_superseded_images",
+        "results": 1
+      },
+      {
+        "method": "Temp_deploy_uses_its_own_project_and_the_inspected_grok_store",
+        "results": 1
+      },
+      {
+        "method": "Temp_retire_requires_the_retired_receipt_and_downs_only_temp_volumes",
+        "results": 1
+      },
+      {
+        "method": "Deploy_parent_creates_the_git_identity_file_without_overwriting",
+        "results": 1
+      },
+      {
+        "method": "Deploy_parent_seeds_or_verifies_runner_checkout",
+        "results": 1
+      },
+      {
+        "method": "Deploy_parent_seeds_a_fresh_runner_checkout_before_starting_the_runner",
+        "results": 1
+      },
+      {
+        "method": "Persistent_restart_ensures_the_identity_file_before_stopping_an_older_runner",
+        "results": 1
+      },
+      {
+        "method": "Deploy_parent_refuses_a_git_identity_symlink_and_leaves_its_target_mode",
+        "results": 1
+      },
+      {
+        "method": "Deploy_parent_creates_the_codex_home_directory_without_reading_it",
+        "results": 1
+      },
+      {
+        "method": "Deploy_parent_codex_home_refuses_a_symlink_or_file_and_keeps_contents",
+        "results": 1
+      },
+      {
+        "method": "Host_lane_ownership_reset_never_enters_the_codex_home",
+        "results": 1
+      },
+      {
+        "method": "C849_Cache_cases_use_only_the_validated_host_lane",
+        "results": 1
+      },
+      {
+        "method": "C849_Cache_prepare_is_idempotent_and_preserves_payloads",
+        "results": 1
+      },
+      {
+        "method": "C849_Cache_prepare_refuses_foreign_or_unsafe_roots",
+        "results": 1
+      },
+      {
+        "method": "C849_Prune_refuses_stale_or_busy_authority",
+        "results": 1
+      },
+      {
+        "method": "C849_Seed_publishes_complete_payloads_before_its_marker",
+        "results": 1
+      },
+      {
+        "method": "C849_Seed_refuses_invalid_donors_and_partial_payloads",
+        "results": 1
+      },
+      {
+        "method": "C849_Saved_donor_archive_is_checked_and_imported_without_a_container",
+        "results": 1
+      },
+      {
+        "method": "C849_Saved_donor_rejects_unsafe_archives_missing_pack_and_busy_counters",
+        "results": 1
+      },
+      {
+        "method": "C849_Saved_donor_rejects_declared_size_bomb_before_writing",
+        "results": 1
+      },
+      {
+        "method": "C849_Retired_guard_refuses_docker_ps_errors",
+        "results": 1
+      },
+      {
+        "method": "C849_Deploy_temp_names_saved_import_when_seed_is_missing",
+        "results": 1
+      },
+      {
+        "method": "C849_Deploy_prepares_and_verifies_before_acceptance",
+        "results": 1
+      },
+      {
+        "method": "C849_Deploy_temp_observes_inaccessible_docker_mountpoints_with_sudo",
+        "results": 1
+      },
+      {
+        "method": "C849_Docker_volume_paths_have_no_bare_host_reads",
+        "results": 1
+      },
+      {
+        "method": "C849_Prune_preview_is_read_only_and_bounded",
+        "results": 1
+      },
+      {
+        "method": "C849_Prune_and_rollback_retain_roots_and_recovery",
+        "results": 1
+      },
+      {
+        "method": "C849_Cache_receipts_exclude_credentials_and_payloads",
+        "results": 1
+      },
+      {
+        "method": "C912_Cold_seed_with_unrelated_bind_initializes_only_three_labelled_roots",
+        "results": 1
+      },
+      {
+        "method": "C912_Cold_seed_refuses_when_created_volume_disappears_before_init",
+        "results": 1
+      },
+      {
+        "method": "C912_Cold_volumes_seed_accepts_busy_main_without_packages",
+        "results": 1
+      },
+      {
+        "method": "C912_Cold_volumes_seed_refuses_unknown_mounted_or_populated_targets",
+        "results": 1
+      },
+      {
+        "method": "C912_Cold_volumes_seed_rechecks_initialization_and_probe_boundaries",
+        "results": 1
+      },
+      {
+        "method": "C912_Cold_cache_probe_requires_uid_writes_cleanup_and_bounded_exit",
+        "results": 1
+      },
+      {
+        "method": "C912_Cold_marker_has_distinct_validation_and_full_context_refusal",
+        "results": 1
+      },
+      {
+        "method": "C912_Cold_runner_verification_uses_mounts_and_writability_not_payloads",
+        "results": 1
+      },
+      {
+        "method": "C912_Cold_exception_never_weakens_maintenance_or_donor_gates",
+        "results": 1
+      },
+      {
+        "method": "C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers",
+        "results": 6
+      },
+      {
+        "method": "C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune",
+        "results": 5
+      },
+      {
+        "method": "C973_Prune_and_saved_donor_still_require_full_after_seed_image_prune",
+        "results": 1
+      }
+    ],
+    "masterAbsent": false
+  },
+  {
+    "path": "tests/Antiphon.Tests/Scripts/RollingVolumeRecycleScriptTests.cs",
+    "currentMethods": 8,
+    "currentResults": 8,
+    "masterMethods": 0,
+    "masterResults": 0,
+    "roster": [
+      {
+        "method": "C1008_Present_or_unknown_temp_keeps_null_refusal",
+        "results": 1
+      },
+      {
+        "method": "C1008_Busy_routed_and_land_in_flight_refuse",
+        "results": 1
+      },
+      {
+        "method": "C1008_Same_sha_and_partial_retries_are_safe",
+        "results": 1
+      },
+      {
+        "method": "C1008_Option_manifest_is_strict",
+        "results": 1
+      },
+      {
+        "method": "C1008_Legacy_rolling_and_jq_rosters_remain",
+        "results": 1
+      },
+      {
+        "method": "C1008_Documentation_and_transport_pins_match",
+        "results": 1
+      },
+      {
+        "method": "C1008_Refusal_receipts_do_not_leak_secrets",
+        "results": 1
+      },
+      {
+        "method": "C1008_Retired_absent_null_is_accepted",
+        "results": 1
+      }
+    ],
+    "masterAbsent": true
+  },
+  {
+    "path": "tests/Antiphon.Tests/Infrastructure/DockerStackContractTests.cs",
+    "currentMethods": 112,
+    "currentResults": 112,
+    "masterMethods": 112,
+    "masterResults": 112,
+    "roster": [
+      {
+        "method": "Server_project_graph_is_available",
+        "results": 1
+      },
+      {
+        "method": "Runtime_contains_built_client",
+        "results": 1
+      },
+      {
+        "method": "Runtime_contains_instruction_bundles",
+        "results": 1
+      },
+      {
+        "method": "Sdk_satisfies_repository_pin",
+        "results": 1
+      },
+      {
+        "method": "Runtime_and_rid_match_linux_amd64",
+        "results": 1
+      },
+      {
+        "method": "Runner_contains_linux_host",
+        "results": 1
+      },
+      {
+        "method": "Runner_contains_porta_library",
+        "results": 1
+      },
+      {
+        "method": "Runner_contains_host_runtime_payload",
+        "results": 1
+      },
+      {
+        "method": "Runner_requires_executable_host",
+        "results": 1
+      },
+      {
+        "method": "Server_publish_has_revision",
+        "results": 1
+      },
+      {
+        "method": "Runner_publish_has_revision",
+        "results": 1
+      },
+      {
+        "method": "Fixture_publish_has_revision",
+        "results": 1
+      },
+      {
+        "method": "Runner_route_is_internal",
+        "results": 1
+      },
+      {
+        "method": "Database_route_is_internal",
+        "results": 1
+      },
+      {
+        "method": "antiphon_phone_home_is_disabled",
+        "results": 1
+      },
+      {
+        "method": "session_runner_phone_home_is_disabled",
+        "results": 1
+      },
+      {
+        "method": "session_runner_port_is_private",
+        "results": 1
+      },
+      {
+        "method": "postgres_port_is_private",
+        "results": 1
+      },
+      {
+        "method": "Default_server_bind_is_loopback",
+        "results": 1
+      },
+      {
+        "method": "postgres_must_be_healthy",
+        "results": 1
+      },
+      {
+        "method": "session_runner_must_be_healthy",
+        "results": 1
+      },
+      {
+        "method": "antiphon_health_probe_exists",
+        "results": 1
+      },
+      {
+        "method": "session_runner_health_probe_exists",
+        "results": 1
+      },
+      {
+        "method": "antiphon_base_has_no_socket",
+        "results": 1
+      },
+      {
+        "method": "session_runner_base_has_no_socket",
+        "results": 1
+      },
+      {
+        "method": "Server2_runner_owns_its_daemon",
+        "results": 1
+      },
+      {
+        "method": "Only_the_server2_runner_is_privileged",
+        "results": 1
+      },
+      {
+        "method": "Server2_runner_starts_as_root_and_drops",
+        "results": 1
+      },
+      {
+        "method": "Deploy_key_secret_is_required",
+        "results": 1
+      },
+      {
+        "method": "Server2_runner_capacity_is_ten",
+        "results": 1
+      },
+      {
+        "method": "Server2_runner_requires_phone_home_origin_and_secret",
+        "results": 1
+      },
+      {
+        "method": "Server2_runner_has_nested_store_volume",
+        "results": 1
+      },
+      {
+        "method": "Server2_services_name_their_images",
+        "results": 1
+      },
+      {
+        "method": "Server2_runner_restarts_unless_stopped",
+        "results": 1
+      },
+      {
+        "method": "Server2_file_defines_runner_state_init_and_profiled_broker",
+        "results": 1
+      },
+      {
+        "method": "Temp_runner_override_keeps_project_state_separate",
+        "results": 1
+      },
+      {
+        "method": "C849_Cache_volumes_are_external_narrow_and_nocopy",
+        "results": 1
+      },
+      {
+        "method": "C849_Temp_inherits_caches_and_keeps_private_state",
+        "results": 1
+      },
+      {
+        "method": "Server2_broker_is_unprivileged_and_pinned_separately",
+        "results": 1
+      },
+      {
+        "method": "Stack_env_example_has_no_socket_gid",
+        "results": 1
+      },
+      {
+        "method": "Base_compose_keeps_phone_home_disabled",
+        "results": 1
+      },
+      {
+        "method": "Testing_stage_ships_the_engine",
+        "results": 1
+      },
+      {
+        "method": "Testing_stage_pins_legacy_iptables",
+        "results": 1
+      },
+      {
+        "method": "Testing_stage_has_build_toolchain",
+        "results": 1
+      },
+      {
+        "method": "Testing_stage_entrypoint_is_the_dind_script",
+        "results": 1
+      },
+      {
+        "method": "Testing_stage_creates_docker_nested_group",
+        "results": 1
+      },
+      {
+        "method": "Testing_services_are_unprivileged",
+        "results": 1
+      },
+      {
+        "method": "Applications_share_nonroot_identity",
+        "results": 1
+      },
+      {
+        "method": "State_paths_are_linux_absolute",
+        "results": 1
+      },
+      {
+        "method": "Workspace_mount_paths_match",
+        "results": 1
+      },
+      {
+        "method": "Reusable_state_has_named_volumes",
+        "results": 1
+      },
+      {
+        "method": "Linux_backend_is_inbox",
+        "results": 1
+      },
+      {
+        "method": "Linux_herdr_is_disabled",
+        "results": 1
+      },
+      {
+        "method": "Fresh_stack_is_inactive",
+        "results": 1
+      },
+      {
+        "method": "Keyring_is_private_external_state",
+        "results": 1
+      },
+      {
+        "method": "Runtime_context_denies_GitPointer",
+        "results": 1
+      },
+      {
+        "method": "Runtime_context_denies_AgentState",
+        "results": 1
+      },
+      {
+        "method": "Runtime_context_denies_Environment",
+        "results": 1
+      },
+      {
+        "method": "Runtime_context_denies_Auth",
+        "results": 1
+      },
+      {
+        "method": "Runtime_context_denies_ProviderHome",
+        "results": 1
+      },
+      {
+        "method": "Runtime_context_denies_Certificate",
+        "results": 1
+      },
+      {
+        "method": "Runtime_context_denies_Bin",
+        "results": 1
+      },
+      {
+        "method": "Runtime_context_denies_AlternateBin",
+        "results": 1
+      },
+      {
+        "method": "Runtime_context_denies_Obj",
+        "results": 1
+      },
+      {
+        "method": "Runtime_context_denies_NodeModules",
+        "results": 1
+      },
+      {
+        "method": "Runtime_context_denies_Workspace",
+        "results": 1
+      },
+      {
+        "method": "Runtime_context_denies_Logs",
+        "results": 1
+      },
+      {
+        "method": "Runtime_context_denies_Pem",
+        "results": 1
+      },
+      {
+        "method": "Tests_context_denies_GitPointer",
+        "results": 1
+      },
+      {
+        "method": "Tests_context_denies_AgentState",
+        "results": 1
+      },
+      {
+        "method": "Tests_context_denies_Environment",
+        "results": 1
+      },
+      {
+        "method": "Tests_context_denies_Auth",
+        "results": 1
+      },
+      {
+        "method": "Tests_context_denies_ProviderHome",
+        "results": 1
+      },
+      {
+        "method": "Tests_context_denies_Certificate",
+        "results": 1
+      },
+      {
+        "method": "Tests_context_denies_Bin",
+        "results": 1
+      },
+      {
+        "method": "Tests_context_denies_AlternateBin",
+        "results": 1
+      },
+      {
+        "method": "Tests_context_denies_Obj",
+        "results": 1
+      },
+      {
+        "method": "Tests_context_denies_NodeModules",
+        "results": 1
+      },
+      {
+        "method": "Tests_context_denies_Workspace",
+        "results": 1
+      },
+      {
+        "method": "Tests_context_denies_Logs",
+        "results": 1
+      },
+      {
+        "method": "Tests_context_denies_Pem",
+        "results": 1
+      },
+      {
+        "method": "Runtime_context_denies_ClaudeHome",
+        "results": 1
+      },
+      {
+        "method": "Runtime_context_denies_ClaudeCredentials",
+        "results": 1
+      },
+      {
+        "method": "Tests_context_denies_ClaudeHome",
+        "results": 1
+      },
+      {
+        "method": "Tests_context_denies_ClaudeCredentials",
+        "results": 1
+      },
+      {
+        "method": "Tests_context_retains_claude_skill_docs_only",
+        "results": 1
+      },
+      {
+        "method": "Runner_pins_claude_by_version_and_digest",
+        "results": 1
+      },
+      {
+        "method": "Runner_image_ships_the_off_settings_file_at_the_server_constant",
+        "results": 1
+      },
+      {
+        "method": "Testing_stage_asserts_claude_after_node_merge",
+        "results": 1
+      },
+      {
+        "method": "Server2_compose_projects_claude_config_dir",
+        "results": 1
+      },
+      {
+        "method": "Compose_never_lists_the_claude_token_under_environment",
+        "results": 1
+      },
+      {
+        "method": "Server2_deploy_streams_the_claude_token_file",
+        "results": 1
+      },
+      {
+        "method": "Test_context_retains_linked_sources",
+        "results": 1
+      },
+      {
+        "method": "Test_target_has_supported_tools",
+        "results": 1
+      },
+      {
+        "method": "Http_test_factory_keeps_refusing_client",
+        "results": 1
+      },
+      {
+        "method": "Default_runtime_excludes_test_payload",
+        "results": 1
+      },
+      {
+        "method": "Default_runtime_excludes_custody_helpers",
+        "results": 1
+      },
+      {
+        "method": "Runner_git_meets_the_declared_minimum",
+        "results": 1
+      },
+      {
+        "method": "Stock_server_excludes_fixture",
+        "results": 1
+      },
+      {
+        "method": "Receipt_stack_is_socket_free",
+        "results": 1
+      },
+      {
+        "method": "Receipt_runner_has_no_docker_tools",
+        "results": 1
+      },
+      {
+        "method": "Fixture_restart_policy_is_disabled",
+        "results": 1
+      },
+      {
+        "method": "Fresh_Delegation__DiagnoseEnabled_is_disabled",
+        "results": 1
+      },
+      {
+        "method": "Fresh_Delegation__OutputDistillerEnabled_is_disabled",
+        "results": 1
+      },
+      {
+        "method": "Fresh_Hangfire__ServerEnabled_is_disabled",
+        "results": 1
+      },
+      {
+        "method": "Fresh_ZombieCensus__Enabled_is_disabled",
+        "results": 1
+      },
+      {
+        "method": "Fresh_WorktreeResidue__Enabled_is_disabled",
+        "results": 1
+      },
+      {
+        "method": "Fresh_Schedules__Enabled_is_disabled",
+        "results": 1
+      },
+      {
+        "method": "Fresh_ChannelBridge__Enabled_is_disabled",
+        "results": 1
+      },
+      {
+        "method": "Fresh_Digest__Enabled_is_disabled",
+        "results": 1
+      },
+      {
+        "method": "Receipt_server_has_no_socket",
+        "results": 1
+      },
+      {
+        "method": "Receipt_runner_has_no_socket",
+        "results": 1
+      }
+    ],
+    "masterAbsent": false
+  },
+  {
+    "path": "tests/Antiphon.Tests/Infrastructure/DindRunnerContractTests.cs",
+    "currentMethods": 23,
+    "currentResults": 23,
+    "masterMethods": 23,
+    "masterResults": 23,
+    "roster": [
+      {
+        "method": "Entrypoint_refuses_missing_deploy_key",
+        "results": 1
+      },
+      {
+        "method": "Entrypoint_refuses_missing_phone_home_secret",
+        "results": 1
+      },
+      {
+        "method": "Entrypoint_stages_the_phone_home_secret_for_the_app_uid",
+        "results": 1
+      },
+      {
+        "method": "Entrypoint_proves_the_app_uid_can_read_the_staged_secret",
+        "results": 1
+      },
+      {
+        "method": "Server2_compose_reads_the_staged_phone_home_secret",
+        "results": 1
+      },
+      {
+        "method": "Server2_healthcheck_covers_phone_home_secret_readability",
+        "results": 1
+      },
+      {
+        "method": "Temp_override_keeps_the_base_healthcheck_and_secret_path",
+        "results": 1
+      },
+      {
+        "method": "Entrypoint_drops_to_app_uid",
+        "results": 1
+      },
+      {
+        "method": "Entrypoint_exports_the_claude_token_from_the_mounted_file",
+        "results": 1
+      },
+      {
+        "method": "Entrypoint_exits_when_either_process_exits",
+        "results": 1
+      },
+      {
+        "method": "Entrypoint_checks_iptables_before_dockerd",
+        "results": 1
+      },
+      {
+        "method": "Entrypoint_never_prints_the_key",
+        "results": 1
+      },
+      {
+        "method": "Entrypoint_prepares_custody_root_on_both_cgroup_versions",
+        "results": 1
+      },
+      {
+        "method": "Nested_daemon_uses_private_address_pools",
+        "results": 1
+      },
+      {
+        "method": "Nested_daemon_socket_group_is_docker_nested",
+        "results": 1
+      },
+      {
+        "method": "Ssh_config_pins_identity_and_known_hosts",
+        "results": 1
+      },
+      {
+        "method": "Ssh_config_uses_port_443",
+        "results": 1
+      },
+      {
+        "method": "Gitconfig_pushes_over_ssh_only",
+        "results": 1
+      },
+      {
+        "method": "Gitconfig_sets_runner_identity_from_the_mounted_file",
+        "results": 1
+      },
+      {
+        "method": "Known_hosts_carry_github_keys",
+        "results": 1
+      },
+      {
+        "method": "Init_state_creates_the_claude_home",
+        "results": 1
+      },
+      {
+        "method": "Entrypoint_seeds_claude_onboarding_before_dockerd",
+        "results": 1
+      },
+      {
+        "method": "Seed_script_merges_onboarding_and_trust_and_keeps_credentials",
+        "results": 1
+      }
+    ],
+    "masterAbsent": false
+  },
+  {
+    "path": "tests/Antiphon.Tests/Scripts/DockerStackSmokeCommandTests.cs",
+    "currentMethods": 35,
+    "currentResults": 35,
+    "masterMethods": 35,
+    "masterResults": 35,
+    "roster": [
+      {
+        "method": "Wrong_live_revision_is_refused",
+        "results": 1
+      },
+      {
+        "method": "Foreign_state_owner_refuses",
+        "results": 1
+      },
+      {
+        "method": "Auto_keyring_without_protector_is_unavailable",
+        "results": 1
+      },
+      {
+        "method": "Parent_as_child_is_refused",
+        "results": 1
+      },
+      {
+        "method": "Manifest_precedes_create",
+        "results": 1
+      },
+      {
+        "method": "Wrong_context_source_is_refused",
+        "results": 1
+      },
+      {
+        "method": "Runner_local_bind_source_is_refused",
+        "results": 1
+      },
+      {
+        "method": "Foreign_resource_id_is_refused",
+        "results": 1
+      },
+      {
+        "method": "Foreign_resource_label_is_refused",
+        "results": 1
+      },
+      {
+        "method": "Normal_down_retains_volumes",
+        "results": 1
+      },
+      {
+        "method": "Global_cleanup_is_forbidden",
+        "results": 1
+      },
+      {
+        "method": "Raw_challenge_is_required",
+        "results": 1
+      },
+      {
+        "method": "Raw_exit_is_required",
+        "results": 1
+      },
+      {
+        "method": "Session_created_run_is_required",
+        "results": 1
+      },
+      {
+        "method": "Child_probe_cannot_launch_parent",
+        "results": 1
+      },
+      {
+        "method": "Linux_custody_advertisement_is_refused",
+        "results": 1
+      },
+      {
+        "method": "Missing_deploy_key_refuses_deploy",
+        "results": 1
+      },
+      {
+        "method": "Missing_phone_home_secret_refuses_deploy",
+        "results": 1
+      },
+      {
+        "method": "Non_persistent_policy_refuses_deploy",
+        "results": 1
+      },
+      {
+        "method": "Sibling_daemon_refuses_deploy",
+        "results": 1
+      },
+      {
+        "method": "Not_dispatch_eligible_refuses_nested_stack_case",
+        "results": 1
+      },
+      {
+        "method": "Session_origin_is_required_for_nested_stack",
+        "results": 1
+      },
+      {
+        "method": "Host_residue_refuses_nested_stack_case",
+        "results": 1
+      },
+      {
+        "method": "Nested_residue_refuses_nested_stack_case",
+        "results": 1
+      },
+      {
+        "method": "Still_running_session_is_not_a_result",
+        "results": 1
+      },
+      {
+        "method": "Dead_session_without_marker_is_incomplete",
+        "results": 1
+      },
+      {
+        "method": "Subordinate_failure_refuses_acceptance",
+        "results": 1
+      },
+      {
+        "method": "Lost_nested_store_refuses_restart_case",
+        "results": 1
+      },
+      {
+        "method": "Changed_store_id_refuses_restart_case",
+        "results": 1
+      },
+      {
+        "method": "Undeleted_smoke_branch_is_refused",
+        "results": 1
+      },
+      {
+        "method": "Containment_refuses_a_runner_that_does_not_advertise_the_linux_backend",
+        "results": 1
+      },
+      {
+        "method": "Containment_refuses_helpers_that_are_not_root_owned",
+        "results": 1
+      },
+      {
+        "method": "Containment_refuses_a_v2_reading_on_the_server2_row",
+        "results": 1
+      },
+      {
+        "method": "Containment_refuses_a_surviving_cgroup",
+        "results": 1
+      },
+      {
+        "method": "Containment_accepts_a_measured_v1_run",
+        "results": 1
+      }
+    ],
+    "masterAbsent": false
+  },
+  {
+    "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocumentationTests.cs",
+    "currentMethods": 11,
+    "currentResults": 11,
+    "masterMethods": 11,
+    "masterResults": 11,
+    "roster": [
+      {
+        "method": "Main_volume_recycling_is_scripted_only",
+        "results": 1
+      },
+      {
+        "method": "Docker_stack_doc_names_the_nested_daemon",
+        "results": 1
+      },
+      {
+        "method": "Docs_name_linux_cgroup_backend",
+        "results": 1
+      },
+      {
+        "method": "Orchestration_loop_names_server2_producer",
+        "results": 1
+      },
+      {
+        "method": "Credentials_doc_names_the_deploy_key_custody",
+        "results": 1
+      },
+      {
+        "method": "Card_0590_D6_is_annotated_superseded",
+        "results": 1
+      },
+      {
+        "method": "Ops_http_names_runner_status_and_runner_id",
+        "results": 1
+      },
+      {
+        "method": "Testing_doc_names_the_production_enablement_steps",
+        "results": 1
+      },
+      {
+        "method": "Agent_kinds_doc_names_the_raw_allow_list",
+        "results": 1
+      },
+      {
+        "method": "Credentials_doc_names_the_claude_login",
+        "results": 1
+      },
+      {
+        "method": "Ops_http_names_provider_auth",
+        "results": 1
+      }
+    ],
+    "masterAbsent": false
+  },
+  {
+    "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+    "currentMethods": 20,
+    "currentResults": 20,
+    "masterMethods": 20,
+    "masterResults": 20,
+    "roster": [
+      {
+        "method": "imports_the_card_0688_table",
+        "results": 1
+      },
+      {
+        "method": "unescapes_pipes_in_filters",
+        "results": 1
+      },
+      {
+        "method": "maps_cp_reuse_to_the_same_build",
+        "results": 1
+      },
+      {
+        "method": "command_rows_become_command_checkpoints",
+        "results": 1
+      },
+      {
+        "method": "derives_roster_tokens_from_the_filter",
+        "results": 1
+      },
+      {
+        "method": "refuses_the_legacy_eight_column_table",
+        "results": 1
+      },
+      {
+        "method": "warns_when_estimate_exceeds_row_timeout",
+        "results": 1
+      },
+      {
+        "method": "imports_the_card_0723_table",
+        "results": 1
+      },
+      {
+        "method": "serial_import_round_trips_and_excludes_other_rows",
+        "results": 1
+      },
+      {
+        "method": "environment_map_round_trips_without_changing_serial",
+        "results": 1
+      },
+      {
+        "method": "environment_reaches_only_its_row_and_its_reruns",
+        "results": 1
+      },
+      {
+        "method": "scheduler_passes_test_parallel_limit_only_to_serial_rows_process",
+        "results": 1
+      },
+      {
+        "method": "invalid_serial_is_refused_before_execution",
+        "results": 1
+      },
+      {
+        "method": "unknown_duplicate_and_malformed_columns_are_refused",
+        "results": 1
+      },
+      {
+        "method": "invalid_environment_names_and_duplicates_are_refused",
+        "results": 1
+      },
+      {
+        "method": "annotated_reuse_resolves_only_an_earlier_filter_build",
+        "results": 1
+      },
+      {
+        "method": "filter_shorthand_and_trailing_environment_prose_are_refused",
+        "results": 1
+      },
+      {
+        "method": "cross_after_reuse_is_refused_without_a_relaxation_flag",
+        "results": 1
+      },
+      {
+        "method": "conflicting_projects_cannot_share_an_output_identity",
+        "results": 1
+      },
+      {
+        "method": "run_plan_and_import_resolve_the_committed_table_identically",
+        "results": 1
+      }
+    ],
+    "masterAbsent": false
+  },
+  {
+    "path": "tests/Antiphon.Tests/Checkpoints/CheckpointManifestTests.cs",
+    "currentMethods": 6,
+    "currentResults": 6,
+    "masterMethods": 6,
+    "masterResults": 6,
+    "roster": [
+      {
+        "method": "parses_yaml_and_defaults",
+        "results": 1
+      },
+      {
+        "method": "rejects_backslash_or_trailing_space_output_path",
+        "results": 1
+      },
+      {
+        "method": "rejects_duplicate_or_unknown_build_ids",
+        "results": 1
+      },
+      {
+        "method": "rejects_reuse_across_different_after",
+        "results": 1
+      },
+      {
+        "method": "after_selector_parses_ranges_and_all",
+        "results": 1
+      },
+      {
+        "method": "results_root_must_be_under_worktree",
+        "results": 1
+      }
+    ],
+    "masterAbsent": false
+  }
+]
