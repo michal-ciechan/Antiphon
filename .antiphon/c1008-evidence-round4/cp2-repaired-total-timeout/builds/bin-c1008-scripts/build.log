@@ -1,0 +1,70 @@
+
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  Antiphon.Resilience -> /work/worktrees/task-52bffc69/src/Antiphon.Resilience/bin-c1008-scripts/Antiphon.Resilience.dll
+  Antiphon.HostCleanup -> /work/worktrees/task-52bffc69/src/Antiphon.HostCleanup/bin-c1008-scripts/Antiphon.HostCleanup.dll
+  Antiphon.FakeLlmApi -> /work/worktrees/task-52bffc69/src/Antiphon.FakeLlmApi/bin-c1008-scripts/Antiphon.FakeLlmApi.dll
+  Antiphon.Messaging -> /work/worktrees/task-52bffc69/src/Antiphon.Messaging/bin-c1008-scripts/Antiphon.Messaging.dll
+  Antiphon.Agents.Pty -> /work/worktrees/task-52bffc69/src/Antiphon.Agents.Pty/bin-c1008-scripts/Antiphon.Agents.Pty.dll
+  Antiphon.Checkpoints -> /work/worktrees/task-52bffc69/tools/Antiphon.Checkpoints/bin-c1008-scripts/Antiphon.Checkpoints.dll
+  Antiphon.SessionRunner.Contracts -> /work/worktrees/task-52bffc69/src/Antiphon.SessionRunner.Contracts/bin-c1008-scripts/Antiphon.SessionRunner.Contracts.dll
+  Antiphon.NightlyWatchdog -> /work/worktrees/task-52bffc69/src/Antiphon.NightlyWatchdog/bin-c1008-scripts/Antiphon.NightlyWatchdog.dll
+  Antiphon.Messaging.Slack -> /work/worktrees/task-52bffc69/src/Antiphon.Messaging.Slack/bin-c1008-scripts/Antiphon.Messaging.Slack.dll
+  Antiphon.Messaging.Client -> /work/worktrees/task-52bffc69/src/Antiphon.Messaging.Client/bin-c1008-scripts/Antiphon.Messaging.Client.dll
+  Antiphon.Messaging.Gateway -> /work/worktrees/task-52bffc69/src/Antiphon.Messaging.Gateway/bin-c1008-scripts/Antiphon.Messaging.Gateway.dll
+  Antiphon.PtyHost.Protocol -> /work/worktrees/task-52bffc69/src/Antiphon.PtyHost.Protocol/bin-c1008-scripts/Antiphon.PtyHost.Protocol.dll
+  Antiphon.Messaging.Client.Testing -> /work/worktrees/task-52bffc69/src/Antiphon.Messaging.Client.Testing/bin-c1008-scripts/Antiphon.Messaging.Client.Testing.dll
+  Antiphon.PtyHost.Client -> /work/worktrees/task-52bffc69/src/Antiphon.PtyHost.Client/bin-c1008-scripts/Antiphon.PtyHost.Client.dll
+  Antiphon.PtyHost -> /work/worktrees/task-52bffc69/src/Antiphon.PtyHost/bin-c1008-scripts/Antiphon.PtyHost.dll
+  Antiphon.SessionRunner -> /work/worktrees/task-52bffc69/src/Antiphon.SessionRunner/bin-c1008-scripts/Antiphon.SessionRunner.dll
+  Antiphon.Server -> /work/worktrees/task-52bffc69/server/bin-c1008-scripts/Antiphon.Server.dll
+/usr/share/dotnet/sdk/10.0.401/Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: Found conflicts between different versions of "Microsoft.EntityFrameworkCore.Relational" that could not be resolved. [/work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj]
+/usr/share/dotnet/sdk/10.0.401/Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: There was a conflict between "Microsoft.EntityFrameworkCore.Relational, Version=9.0.1.0, Culture=neutral, PublicKeyToken=adb9793829ddae60" and "Microsoft.EntityFrameworkCore.Relational, Version=9.0.20.0, Culture=neutral, PublicKeyToken=adb9793829ddae60". [/work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj]
+/usr/share/dotnet/sdk/10.0.401/Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     "Microsoft.EntityFrameworkCore.Relational, Version=9.0.1.0, Culture=neutral, PublicKeyToken=adb9793829ddae60" was chosen because it was primary and "Microsoft.EntityFrameworkCore.Relational, Version=9.0.20.0, Culture=neutral, PublicKeyToken=adb9793829ddae60" was not. [/work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj]
+/usr/share/dotnet/sdk/10.0.401/Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     References which depend on "Microsoft.EntityFrameworkCore.Relational, Version=9.0.1.0, Culture=neutral, PublicKeyToken=adb9793829ddae60" [/home/app/.nuget/packages/microsoft.entityframeworkcore.relational/9.0.1/lib/net8.0/Microsoft.EntityFrameworkCore.Relational.dll]. [/work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj]
+/usr/share/dotnet/sdk/10.0.401/Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         /home/app/.nuget/packages/microsoft.entityframeworkcore.relational/9.0.1/lib/net8.0/Microsoft.EntityFrameworkCore.Relational.dll [/work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj]
+/usr/share/dotnet/sdk/10.0.401/Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           Project file item includes which caused reference "/home/app/.nuget/packages/microsoft.entityframeworkcore.relational/9.0.1/lib/net8.0/Microsoft.EntityFrameworkCore.Relational.dll". [/work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj]
+/usr/share/dotnet/sdk/10.0.401/Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             /home/app/.nuget/packages/microsoft.entityframeworkcore.relational/9.0.1/lib/net8.0/Microsoft.EntityFrameworkCore.Relational.dll [/work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj]
+/usr/share/dotnet/sdk/10.0.401/Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     References which depend on or have been unified to "Microsoft.EntityFrameworkCore.Relational, Version=9.0.20.0, Culture=neutral, PublicKeyToken=adb9793829ddae60" []. [/work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj]
+/usr/share/dotnet/sdk/10.0.401/Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         /work/worktrees/task-52bffc69/server/bin-c1008-scripts/Antiphon.Server.dll [/work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj]
+/usr/share/dotnet/sdk/10.0.401/Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           Project file item includes which caused reference "/work/worktrees/task-52bffc69/server/bin-c1008-scripts/Antiphon.Server.dll". [/work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj]
+/usr/share/dotnet/sdk/10.0.401/Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             /work/worktrees/task-52bffc69/server/bin-c1008-scripts/Antiphon.Server.dll [/work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj]
+  Antiphon.DockerStack.Fixture -> /work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/bin-c1008-scripts/Antiphon.DockerStack.Fixture.dll
+  Antiphon.Checkpoints.RepeatHost -> /work/worktrees/task-52bffc69/tests/Antiphon.Checkpoints.RepeatHost/bin-c1008-scripts/Antiphon.Checkpoints.RepeatHost.dll
+  Antiphon.CustodyTestChild -> /work/worktrees/task-52bffc69/tests/Antiphon.CustodyTestChild/bin-c1008-scripts/Antiphon.CustodyTestChild.dll
+  Antiphon.Checkpoints.FilterHost -> /work/worktrees/task-52bffc69/tests/Antiphon.Checkpoints.FilterHost/bin-c1008-scripts/Antiphon.Checkpoints.FilterHost.dll
+  Antiphon.FakeGrok -> /work/worktrees/task-52bffc69/src/Antiphon.FakeGrok/bin-c1008-scripts/fakegrok.dll
+  Antiphon.FakeClaude -> /work/worktrees/task-52bffc69/src/Antiphon.FakeClaude/bin-c1008-scripts/fakeclaude.dll
+  Antiphon.ChannelOutbound.Probe -> /work/worktrees/task-52bffc69/tests/Antiphon.ChannelOutbound.Probe/bin-c1008-scripts/Antiphon.ChannelOutbound.Probe.dll
+  Antiphon.Checkpoints.LifecycleHost -> /work/worktrees/task-52bffc69/tests/Antiphon.Checkpoints.LifecycleHost/bin-c1008-scripts/Antiphon.Checkpoints.LifecycleHost.dll
+  Antiphon.Tests -> /work/worktrees/task-52bffc69/tests/Antiphon.Tests/bin-c1008-scripts/Antiphon.Tests.dll
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  Antiphon.Agents.Pty -> /work/worktrees/task-52bffc69/tests/Antiphon.Tests/bin-c1008-scripts/ptyhost-native/Antiphon.Agents.Pty.dll
+  Antiphon.SessionRunner.Contracts -> /work/worktrees/task-52bffc69/tests/Antiphon.Tests/bin-c1008-scripts/ptyhost-native/Antiphon.SessionRunner.Contracts.dll
+  Antiphon.PtyHost.Protocol -> /work/worktrees/task-52bffc69/tests/Antiphon.Tests/bin-c1008-scripts/ptyhost-native/Antiphon.PtyHost.Protocol.dll
+  Antiphon.PtyHost -> /work/worktrees/task-52bffc69/tests/Antiphon.Tests/bin-c1008-scripts/ptyhost-native/Antiphon.PtyHost.dll
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  Antiphon.FakeClaude -> /work/worktrees/task-52bffc69/tests/Antiphon.Tests/bin-c1008-scripts/fake-native-claude/fakeclaude.dll
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  Antiphon.FakeGrok -> /work/worktrees/task-52bffc69/tests/Antiphon.Tests/bin-c1008-scripts/fake-native-grok/fakegrok.dll
+
+Build succeeded.
+
+/usr/share/dotnet/sdk/10.0.401/Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: Found conflicts between different versions of "Microsoft.EntityFrameworkCore.Relational" that could not be resolved. [/work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj]
+/usr/share/dotnet/sdk/10.0.401/Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: There was a conflict between "Microsoft.EntityFrameworkCore.Relational, Version=9.0.1.0, Culture=neutral, PublicKeyToken=adb9793829ddae60" and "Microsoft.EntityFrameworkCore.Relational, Version=9.0.20.0, Culture=neutral, PublicKeyToken=adb9793829ddae60". [/work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj]
+/usr/share/dotnet/sdk/10.0.401/Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     "Microsoft.EntityFrameworkCore.Relational, Version=9.0.1.0, Culture=neutral, PublicKeyToken=adb9793829ddae60" was chosen because it was primary and "Microsoft.EntityFrameworkCore.Relational, Version=9.0.20.0, Culture=neutral, PublicKeyToken=adb9793829ddae60" was not. [/work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj]
+/usr/share/dotnet/sdk/10.0.401/Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     References which depend on "Microsoft.EntityFrameworkCore.Relational, Version=9.0.1.0, Culture=neutral, PublicKeyToken=adb9793829ddae60" [/home/app/.nuget/packages/microsoft.entityframeworkcore.relational/9.0.1/lib/net8.0/Microsoft.EntityFrameworkCore.Relational.dll]. [/work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj]
+/usr/share/dotnet/sdk/10.0.401/Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         /home/app/.nuget/packages/microsoft.entityframeworkcore.relational/9.0.1/lib/net8.0/Microsoft.EntityFrameworkCore.Relational.dll [/work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj]
+/usr/share/dotnet/sdk/10.0.401/Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           Project file item includes which caused reference "/home/app/.nuget/packages/microsoft.entityframeworkcore.relational/9.0.1/lib/net8.0/Microsoft.EntityFrameworkCore.Relational.dll". [/work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj]
+/usr/share/dotnet/sdk/10.0.401/Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             /home/app/.nuget/packages/microsoft.entityframeworkcore.relational/9.0.1/lib/net8.0/Microsoft.EntityFrameworkCore.Relational.dll [/work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj]
+/usr/share/dotnet/sdk/10.0.401/Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     References which depend on or have been unified to "Microsoft.EntityFrameworkCore.Relational, Version=9.0.20.0, Culture=neutral, PublicKeyToken=adb9793829ddae60" []. [/work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj]
+/usr/share/dotnet/sdk/10.0.401/Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         /work/worktrees/task-52bffc69/server/bin-c1008-scripts/Antiphon.Server.dll [/work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj]
+/usr/share/dotnet/sdk/10.0.401/Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           Project file item includes which caused reference "/work/worktrees/task-52bffc69/server/bin-c1008-scripts/Antiphon.Server.dll". [/work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj]
+/usr/share/dotnet/sdk/10.0.401/Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             /work/worktrees/task-52bffc69/server/bin-c1008-scripts/Antiphon.Server.dll [/work/worktrees/task-52bffc69/tests/Antiphon.DockerStack.Fixture/Antiphon.DockerStack.Fixture.csproj]
+    1 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:11.84
