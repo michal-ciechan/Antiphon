@@ -115,9 +115,9 @@ function Invoke-RecycleRead {
 
 function Get-RecycleProjectId {
     $projects = @(Invoke-RecycleRead -Path '/api/projects?includeArchived=true')
-    $matches = @($projects | Where-Object { $_.gitRepositoryUrl -eq 'https://github.com/michal-ciechan/Antiphon.git' })
-    if ($matches.Count -ne 1 -or [string]$matches[0].id -cnotmatch '^[0-9a-f-]{36}$') { throw 'RecycleTaskCensusUnknown' }
-    return [string]$matches[0].id
+    $projectMatches = @($projects | Where-Object { $_.gitRepositoryUrl -eq 'https://github.com/michal-ciechan/Antiphon.git' })
+    if ($projectMatches.Count -ne 1 -or [string]$projectMatches[0].id -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { throw 'RecycleTaskCensusUnknown' }
+    return [string]$projectMatches[0].id
 }
 
 function Assert-RecycleTaskCensus {
