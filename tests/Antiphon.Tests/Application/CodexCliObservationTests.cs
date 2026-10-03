@@ -365,6 +365,42 @@ public sealed class CodexCliObservationTests
         await retry.TickAsync();
         await AssertDeliveryAsync(retry, first.Id, $"C959-pc-194 retry/{vector}");
         retry.Client.Requests.ShouldBeEmpty($"C959-no-probe-after-retry/{vector}");
+        await AssertWarmReuseAsync(sample, vector);
+        foreach (var busy in new[] { false, true })
+            await CodexCliRemoteDeliveryFixture.RunAsync(Body, sample(DateTimeOffset.UtcNow), busy);
+    }
+
+    private static async Task AssertWarmReuseAsync(Func<DateTimeOffset, RunnerCodexCliVersionDto?> sample, string vector)
+    {
+        await using var warm = await DispatchKit.BuildAsync();
+        await using var db = warm.Context();
+        await db.Agents.Where(a => a.Id == warm.Harness.AgentId).ExecuteUpdateAsync(u => u
+            .SetProperty(a => a.Kind, AgentKind.Codex).SetProperty(a => a.ModelLevel, AgentModelLevel.High));
+        await db.AgentSessions.Where(s => s.Id == warm.Harness.SessionId).ExecuteUpdateAsync(u => u
+            .SetProperty(s => s.AgentKind, AgentKind.Codex).SetProperty(s => s.EffectiveModelId, "gpt-6.1-sol"));
+        warm.Client.Sample = sample(DateTimeOffset.UtcNow);
+        AgentTaskCreatedDto created;
+        using (var scope = warm.Harness.Provider.CreateScope())
+            created = await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CreateAsync(
+                new(Body, Title: Body, Role: AgentTaskRole.Docs, AgentKind: AgentKind.Codex,
+                    ModelLevel: AgentModelLevel.High, Workspace: WorkspaceMode.Shared, RunnerId: "local", AgentId: warm.Harness.AgentId),
+                new(null, null, Path.Combine(warm.Harness.TempRoot, "workspace")), CancellationToken.None);
+        // Freeze independent producer inputs before the real reuse handoff.
+        var before = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
+        var full = DelegationReportFormatter.BuildBrief(before, warm.Harness.Delegation,
+            warm.Boundary.Ceilings.ForAgentKind(AgentKind.Codex).ReplyInlineMaxChars, refocus: false);
+        var path = Path.Combine(before.WorkingDirectory, ".antiphon", $"task-{DelegationReportFormatter.Short(created.Id)}-brief.md");
+        var wire = DelegationReportFormatter.BuildBriefPointer(before, warm.Harness.Delegation, path, full.Length, AgentKind.Codex).TrimEnd();
+        await warm.TickAsync();
+        warm.Client.Requests.ShouldBeEmpty("C959-pc-240 warm pinned " + vector);
+        warm.Factory.Created.ShouldBeEmpty("C959-warm-no-cold-launch " + vector);
+        var row = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
+        row.AgentSessionId.ShouldBe(warm.Harness.SessionId, "C959-warm-session " + vector);
+        var receipts = await db.TranscriptEntries.AsNoTracking().Where(e => e.AgentSessionId == warm.Harness.SessionId && e.Kind == TranscriptKinds.UserPrompt).ToListAsync();
+        receipts.Count.ShouldBe(1, "C959-warm-real-receipt " + vector);
+        receipts.Single().Text.ShouldBe(wire, "C959-warm-complete-W " + vector);
+        File.Exists(path).ShouldBeTrue("C959-warm-E-exists " + vector);
+        (await File.ReadAllBytesAsync(path)).ShouldBe(Encoding.UTF8.GetBytes(full), "C959-warm-complete-E " + vector);
     }
 
     private static async Task AssertDeliveryAsync(DispatchKit kit, Guid taskId, string label)
