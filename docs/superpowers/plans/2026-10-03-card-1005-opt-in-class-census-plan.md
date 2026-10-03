@@ -752,7 +752,7 @@ receipts. CP-3 keeps the original plan's two raw byte comparisons unchanged.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1-S2 | `tests/Antiphon.Tests -> bin-c1005-final/` | linux-unit-coverage | `/*/*/(PlanCoverageCensusTests*)\|(PlanCoverageParserTests*)\|(PlanCoverageAssertionTests*)\|(PlanCoveragePcTests*)\|(PlanCoverageGoldenTests*)\|(PlanCoverageCommandTests*)\|(PlanCoverageHandleTests*)\|(CheckpointImportTests*)\|(CheckpointManifestTests*)\|(CheckpointNamespaceCensusUsageTests*)/*` | V-1..V-10, R-1, R-2, R-4, R-5 | all 86 listed results, 0 failed/skipped | 86 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c1005-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-2 | S1-S2 | `tests/Antiphon.Tests -> bin-c1005-unit/` | linux-unit | `/*[Category=Unit]/*/*/(A*)\|(B*)\|(C4*)\|(C5*)\|(C60*)\|(C61*)\|(C64*)\|(C65*)\|(C664*)\|(C665_D*)\|(C665_E*)\|(C665_F*)\|(C665_J*)\|(C665_N*)\|(C665_P*)\|(C665_R*)\|(C665_U*)\|(C67*)\|(C68*)\|(C71*)\|(C721_S*)\|(C75*)\|(c78*)\|(C8*)\|(C9*)\|(Ca*)\|(Ce*)\|(Cg*)\|(Ch*)\|(cl*)\|(Co*)\|(Cr*)\|(cs*)\|(Cu*)\|(D*)\|(E*)\|(F*)\|(G*)\|(H*)\|(i*)\|(J*)\|(K*)\|(L*)\|(M*)\|(n*)\|(O*)\|(P*)\|(Q*)\|(R*)\|(s*)\|(T*)\|(U*)\|(V*)\|(wa*)\|(we*)\|(Wh*)\|(wid*)\|(Windows_d*)\|(windows_e*)\|(windows_l*)\|(Windows_p*)\|(windows_s*)\|(Windows_v*)\|(wit*)\|(wo*)\|(Wr*)\|(X*)\|(Y*)\|(z*)` | R-5 | >= 4000 executed, 0 failed/skipped; all Linux-eligible Unit names | 4000 | 15 | true | `C804_ORPHAN_SWEEP_ROOT=c1005-disabled;TUNIT_MAX_PARALLEL_TESTS=4` |
+| CP-2 | S1-S2 | `tests/Antiphon.Tests -> bin-c1005-unit/` | linux-unit | `/*[Category=Unit]/*/*/(!windows_quick_row_finishes_beside_a_slow_row*)&(!windows_row_arguments_round_trip_intact*)&(!windows_chatty_row_drains_interleaved_stdout_and_stderr*)&(!windows_row_timeout_kills_the_start_b_grandchild*)&(!C665_LockedFileMidDeleteResumesOnLaterPass*)&(!C721_HeldHandleDuringCleanupStaysRegisteredOrRecorded*)` | R-5 | >= 4000 executed, 0 failed/skipped; all Linux-eligible Unit names | 4000 | 15 | true | `C804_ORPHAN_SWEEP_ROOT=c1005-disabled;TUNIT_MAX_PARALLEL_TESTS=4` |
 | CP-3 | S1-S2 | n/a | linux-cli-legacy-json | `sh -eu -c 'mkdir -p .antiphon/c1005-compat; for p in docs/superpowers/plans/2026-10-01-card-0891-plan-to-test-coverage-check-plan.md tests/Antiphon.Tests/Checkpoints/Fixtures/PlanCoverage/c999-frozen-plan.md.txt; do n=$(basename "$p"); dotnet .antiphon/c1005-baseline/tools/Antiphon.Checkpoints/bin-c1005-master/net9.0/Antiphon.Checkpoints.dll coverage --repo-root "$PWD" --plan "$p" --format json > ".antiphon/c1005-compat/$n.master.json"; dotnet tools/Antiphon.Checkpoints/bin-c1005-tool/net9.0/Antiphon.Checkpoints.dll coverage --repo-root "$PWD" --plan "$p" --format json > ".antiphon/c1005-compat/$n.branch.json"; cmp ".antiphon/c1005-compat/$n.master.json" ".antiphon/c1005-compat/$n.branch.json"; sha256sum ".antiphon/c1005-compat/$n.master.json" ".antiphon/c1005-compat/$n.branch.json"; done'` | R-3 | four exit-0 coverage invocations; two byte-identical JSON pairs and two matching hash pairs | n/a | 2 | true | n/a |
 
 ### Cost
@@ -896,3 +896,32 @@ passed with byte-identical implementation/test source and unchanged selections.
 No production/test file changed since `f42849b3`, no assertions or deadlines were
 relaxed, and fresh source-qualified CP-2 evidence is still required. Evidence:
 `.antiphon/c1005-unit-stack.txt`, `.antiphon/c1005-filter-admission-root.log`.
+### Continuation filter repair (Code 535715ec)
+
+The earlier statement that MTP 2.2.2 rejects unary NOT was too broad. Inspection
+of the installed binary confirms it accepts `(!pattern)`, but a property predicate
+may attach only to a value expression, not to a grouped Boolean expression.
+The frozen filter's trailing `[Category=Unit]` after the final negation caused
+its parser refusal. CP-2 now puts that predicate on the assembly wildcard and
+uses the original six method negations with trailing stars to cover any result
+name suffix. This retains exactly 2,771 eligible identities / 4,000 results and
+excludes exactly the same six Windows methods. No count, assertion, timeout,
+environment or other checkpoint changed.
+
+TUnit 1.44's MetadataFilterMatcher strips property predicates and reconstructs
+the path-only TreeNodeFilter for each metadata entry. Each value expression
+compiles a Regex. A gated diagnostic using the installed MTP binary reproduced
+both filters against the independent inherited compiled roster: both selected
+2,771 identities / 4,000 cases with zero mismatches, and rejected Integration
+metadata. For 100 TUnit-style reconstructions, the 70-operand replacement took
+4.040 seconds versus 0.882 seconds for the six-exclusion expression. This is a
+filter construction cost before any census test runs; it is not a census loop.
+Evidence is `.antiphon/c1005-filter-probe.log`, with probe source in
+`.antiphon/c1005-filter-probe/Program.cs`. Ordinary CP-2/R-5 remains pending until
+a fresh source-qualified whole-Unit TRX reconciles every identity and case.
+
+Current master observed/fetched: b0ccedda2e93a6b847e9219a602a3413694f64ea.
+Its delta from pinned bb5fa774 contains no tests, checkpoint implementation or
+namespace-census changes, so the frozen counts remain 86 / 377 / 4,000. A
+comparison discovery run will use its own detached checkout and owned output;
+ordinary verification in this task remains sequential with committed source.
