@@ -4008,7 +4008,7 @@ c1008_recycle() {
     command -v jq >/dev/null || write_result false RecycleToolsMissing 2
     C1008_TARGETS=("${C1008_PROJECT}_work" "${C1008_PROJECT}_runner-tmp" "${C1008_PROJECT}_dind-data")
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1008_TARGETS+=("${C1008_PROJECT}_runner-state"); fi
-    local model digest owned image id service facts name audit after code=0 current originals='{}' preserved='{}'
+    local model digest owned image id service facts name audit after code=0 current journal_root mount originals='{}' preserved='{}'
     model="$(c1008_compose_model)" || write_result false RecycleComposeMismatch 2
     digest="$(printf '%s' "$model" | sha256sum | cut -d' ' -f1)"
     C1008_JOURNAL="$SERVER2_ROOT/recycle/$C1008_OPERATION.json"
@@ -4032,6 +4032,14 @@ c1008_recycle() {
     fi
     c1008_lock
     c1008_status_proof
+    journal_root="$(sudo -n readlink -e -- "$SERVER2_ROOT" 2>/dev/null)" || c1008_refuse RecycleReceiptUnavailable
+    [ "$journal_root" = "$SERVER2_ROOT" ] && [ ! -L "$SERVER2_ROOT/recycle" ] || c1008_refuse RecycleReceiptUnavailable
+    for name in "${C1008_TARGETS[@]}"; do
+        facts="$(c1008_volume "$name")" || c1008_refuse RecycleVolumeCensusUnknown
+        [ "$facts" != null ] || continue
+        mount="$(printf '%s' "$facts" | jq -r .Mountpoint)"
+        [[ "$journal_root/" != "$mount/"* ]] || c1008_refuse RecycleReceiptUnavailable
+    done
     if [ "${C1008_RESUME:-0}" = 1 ] && printf '%s' "$C1008_RECORD" | jq -e '.phase=="recreating" or .phase=="verified"' >/dev/null; then
         [ "$C1008_PROJECT" = "$HOST_PROJECT" ] || c1008_refuse RecycleResumeMismatch
         printf '%s' "$C1008_RECORD" | jq -e '.ownedRemoved==true and all(.volumes[]; .outcome=="removed" or .outcome=="alreadyAbsent") and (.recreated.volumes|type)=="object" and (.recreated.owned|type)=="array"' >/dev/null \
@@ -4095,6 +4103,9 @@ c1008_recycle() {
     c1008_save || c1008_refuse RecycleReceiptUnavailable
     C1008_ACTIVE=1
     c1008_audit_checked; audit="$C1008_AUDIT"
+    if [ "${C1008_RESUME:-0}" = 1 ]; then
+        [ "$audit" = "$(printf '%s' "$C1008_RECORD" | jq -r .audit)" ] || c1008_refuse RecycleResumeMismatch
+    fi
     if [ "${C1008_RESUME:-0}" = 0 ]; then
         C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg audit "$audit" '.audit=$audit')"
         c1008_save || c1008_refuse RecycleReceiptUnavailable

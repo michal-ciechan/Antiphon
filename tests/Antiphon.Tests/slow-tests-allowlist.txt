@@ -215,3 +215,6 @@ Antiphon.Tests.Application.LandEvidenceWarningDeliveryTests
 Antiphon.Tests.Application.PhoneHomeRunnerRetirementCycleTests
 # CARD-0974: isolated migrated databases, 2,000-row transcript costs and behavior oracle matrix.
 Antiphon.Tests.Application.TaskInputAttentionCostTests
+
+# CARD-1008: isolated real Docker/Git volume recycle comparison.
+Antiphon.Tests.Scripts.RollingVolumeRecycleDockerTests
