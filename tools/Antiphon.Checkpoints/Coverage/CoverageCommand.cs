@@ -22,8 +22,7 @@ public sealed class CoverageCommand
             if (imported.Manifest is null) throw new InvalidDataException("invalid checkpoint manifest");
             var checklistText = checklist is null ? null : Read(SelectPath(checklist), ConfinedFileReader.DocumentLimit);
             var contract = new PlanCoverageReader().Read(report.Plan, planText, checklistText);
-            if (contract.Invalid) { report = contract; output.Write(format == "json" ? report.Json() : report.Text()); return report.ExitCode; }
-            var census = contract.SelectedClassCensus ? new ClassCensusSelection() : null;
+            var census = !contract.Invalid && contract.SelectedClassCensus ? new ClassCensusSelection() : null;
             var selected = new Dictionary<string, CoverageSource>(PathComparer());
             var explicitSet = new HashSet<string>(PathComparer());
             foreach (var path in tests ?? [])
