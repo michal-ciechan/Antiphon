@@ -357,6 +357,11 @@ are specified below; the existing Review Grok/Opus pin remains in force.
 
 ## Verification design
 
+**Current authority: amendment 3, task `eea9b11b`.** The appended amendment
+below supersedes the earlier trust oracle, real WQ-1 requirement, paid filter,
+checkpoint manifest and cost. The fix design above remains historical and is
+not rewritten. No other qualification, Review or activation gate is waived.
+
 **Amendment authority — task `418b258e`, 2026-10-03.** The exhaustion oracle,
 commit sequence, Final checkpoint scope and counts amended below supersede the
 corresponding original freeze text. S0-S3's fix design and all WQ gates remain.
@@ -535,11 +540,11 @@ It preserves `-Platform Windows`, `-Kind ClaudeCode -Level High`, and
 `no -IgnoreRoutingPin` in that recovery recipe. It states each of the following
 as separate, individually asserted clauses:
 
-1. `Both actual InboxConhost and ModernConPty require real Review evidence.`
-2. `A fresh worktree must visibly show trust, receive one y, clear trust, and reach Ready.`
+1. `Actual ModernConPty requires real Review evidence; WQ-1 is excluded by the operator for CARD-1022.`
+2. `A fresh worktree must reach Ready. Record whether trust appeared; send no startup input without observed trust, or exactly one y if it appeared, then require cleared trust and Ready.`
 3. `Delivery requires a matching complete UserPrompt transcript.`
 4. `Settlement requires a final report and confirmed release ownership.`
-5. `WQ-1, WQ-2 and WQ-3 gate prompt landing and Debug pin activation.`
+5. `WQ-2 and WQ-3 gate prompt landing and Debug pin activation; WQ-1 is operator-excluded.`
 
 The owner activation recipe has ordered anchors `confirmed land`,
 `canonical restart and /api/version`, `pin write and readback`,
@@ -594,11 +599,11 @@ are allowed, shared PC identifiers are not.
 | G-9 | D-1: both roles use the approved role-wide scope including Linux | PC-9 |
 | G-10 | D-1/D-3: published candidate pair order | PC-10 |
 | G-11 | D-5: startup failure requires explicit authorized recovery, not automatic retry | PC-11 |
-| G-12 | D-2/WQ-1/2: both actual hosts required | PC-12 |
-| G-13 | D-2/WQ-3: visible real trust transition required | PC-13 |
+| G-12 | Amendment 3/WQ-2: actual modern Review required; real inbox WQ-1 operator-excluded | PC-12 |
+| G-13 | Amendment 3/WQ-3: accept observed trust or its absence; expected startup inputs derive from observation, not an assumed dialog | PC-13 |
 | G-14 | WQ: complete UserPrompt is the delivery verdict | PC-14 |
 | G-15 | WQ: report plus release ownership required | PC-15 |
-| G-16 | S0: WQ-1/2/3 before prompt land or pin activation | PC-16 |
+| G-16 | S0/amendment 3: WQ-2/3 before prompt land or pin activation; record explicit WQ-1 exclusion | PC-16 |
 | G-17 | S3: canonical activation/source check precedes pin change | PC-17 |
 | G-18 | S3: unrelated Human card exceptions are preserved | PC-18 |
 | G-19 | S3: bundle stamp and idle refresh precede rollout acceptance | PC-19 |
@@ -618,9 +623,9 @@ are allowed, shared PC identifiers are not.
 | G-33 | WQ-2/V-3: modern row observes actual ModernConPty, not fallback | PC-33 |
 | G-34 | S2/V-3: startup must actually become Ready | PC-34 |
 | G-35 | S2/V-3: exact complete recipient prompt after Ready | PC-35 |
-| G-36 | WQ-3/R-3: affirmative trust key is y | PC-36 |
-| G-37 | WQ-3/R-3: trust is answered at most once | PC-37 |
-| G-38 | WQ-3/R-3: uncleared trust never becomes Ready | PC-38 |
+| G-36 | WQ-3/R-3: if current trust appears, its affirmative input is literal y | PC-36 |
+| G-37 | WQ-3/R-3: repeated trust frames never cause a second affirmative write | PC-37 |
+| G-38 | WQ-3/R-3: after answering trust, a remaining trust screen never qualifies as Ready | PC-38 |
 | G-39 | V-4: enqueue must commit before any recipient write | PC-39 |
 | G-40 | V-4: busy WhenIdle recipient is held | PC-40 |
 | G-41 | V-4: attempt and baseline commit before transport | PC-41 |
@@ -646,6 +651,12 @@ are allowed, shared PC identifiers are not.
 | G-61 | S0: backend configuration is restored and its actual host verified before the gate closes | PC-61 |
 | G-62 | S3: independent Final/Full Review precedes implementation land | PC-62 |
 | G-63 | S3: fresh role/card pin, default and runner reads precede the pin write | PC-63 |
+| G-64 | WQ-3 receipt retains measured CLI version/build, not the plan's version | PC-64 |
+| G-65 | WQ-3 receipt retains the actual backend line, not the configured preference | PC-65 |
+| G-66 | WQ-3 paid turn requires this prompt's AssistantText to form exactly the nonce reply once | PC-66 |
+| G-67 | WQ-3 paid turn requires a later TurnEnd after the assistant reply | PC-67 |
+| G-68 | WQ-3 final transcript contains exactly one complete UserPrompt, not merely one in an early snapshot | PC-68 |
+| G-69 | WQ-3 published owner policy requires Ready with observation-matched input, without requiring a dialog to appear | PC-69 |
 
 ### Positive controls
 
@@ -675,8 +686,8 @@ assertions. Keep each mutation separate even when it uses the same method/file.
 | PC-9 | In the new owner section replace `including Linux` with `excluding Linux` | InstructionBundleTests.C1011_owner_role_wide_policy_and_fallback; `all-platforms` |
 | PC-10 | Reverse the published `Grok/High then ClaudeCode/High` order | InstructionBundleTests.C1011_owner_role_wide_policy_and_fallback; `required-pair` |
 | PC-11 | Replace `Startup failure requires explicit authorized recovery; do not retry Grok automatically.` with `Retry Grok automatically.` | InstructionBundleTests.C1011_owner_role_wide_policy_and_fallback; `startup-recovery` |
-| PC-12 | Delete owner clause 1 (both actual hosts) | InstructionBundleTests.C1011_qualification_gates; `both-hosts` |
-| PC-13 | Delete owner clause 2 (visible trust) | InstructionBundleTests.C1011_qualification_gates; `fresh-trust` |
+| PC-12 | Delete amended owner clause 1 (actual modern Review) | InstructionBundleTests.C1011_qualification_gates; `modern-review` |
+| PC-13 | In the shared test-local startup verdict, replace the conditional expected-input list with unconditional `new[] { "y" }` | GrokFreshWorktreeQualificationTests.C1011_startup_accepts_observed_trust_or_absence; false argument fails `startup-accepted` because empty startup input is incorrectly rejected |
 | PC-14 | Replace `matching complete UserPrompt transcript` with `Sent flag` | InstructionBundleTests.C1011_qualification_gates; `whole-receipt` |
 | PC-15 | Delete `and confirmed release ownership` from clause 4 | InstructionBundleTests.C1011_qualification_gates; `release-owner` |
 | PC-16 | Delete clause 5 (prelanding evidence gate) | InstructionBundleTests.C1011_qualification_gates; `preland-gate` |
@@ -727,6 +738,12 @@ assertions. Keep each mutation separate even when it uses the same method/file.
 | PC-61 | Delete `Backend configuration must be restored and the actual restored host verified.` from the routing owner | InstructionBundleTests.C1011_qualification_gates; `backend-restored` fails on the missing exact clause. |
 | PC-62 | Delete `and independent Final/Full Review` from the owner's activation heading | InstructionBundleTests.C1011_qualification_gates; `final-full-review` fails on the missing heading. |
 | PC-63 | Delete the owner's step-3 sentence starting `Serialize affected dispatches; re-read role/card pins` and ending `pipeline and host occupancy.` | InstructionBundleTests.C1011_activation_order; `fresh-state` existence assertion fails before ordering assertions. |
+| PC-64 | Shared test-local receipt projection assigns `version = ""` instead of the captured argument | GrokFreshWorktreeQualificationTests.C1011_receipt_retains_cli_and_backend; deserialized version equality fails at `cli-version` |
+| PC-65 | That projection assigns `backendLine = ""` instead of the observed host-log line argument | GrokFreshWorktreeQualificationTests.C1011_receipt_retains_cli_and_backend; deserialized backendLine equality fails at `backend-line` |
+| PC-66 | Shared turn-verdict calculation substitutes the expected nonce for concatenated observed AssistantText | GrokFreshWorktreeQualificationTests.C1011_paid_turn_requires_complete_receipt; duplicate-reply argument fails `turn-rejection`, returning Accepted instead of AssistantReplyMismatch |
+| PC-67 | That calculation assigns `hasLaterTurnEnd = true` instead of deriving it from transcript entries | GrokFreshWorktreeQualificationTests.C1011_paid_turn_requires_complete_receipt; missing-turn-end fails `turn-rejection`, returning Accepted instead of MissingTurnEnd |
+| PC-68 | Before the final UserPrompt count/body check use `prompts.Take(1).ToArray()` instead of the full array | GrokFreshWorktreeQualificationTests.C1011_paid_turn_requires_complete_receipt; duplicate-prompt fails `turn-rejection`, returning Accepted instead of PromptMultiplicity |
+| PC-69 | Delete amended owner clause 2 (conditional trust and fresh-worktree Ready) | InstructionBundleTests.C1011_qualification_gates; `fresh-startup` fails |
 
 PC-23 uses a compiling list expression or `pinSlots.Concat(new[] { ... }).ToList()`;
 PC-34 stores the awaited bool in a local before `return false`, not unreachable
@@ -783,7 +800,7 @@ if (pinDecision.Applied)
         .ExecuteUpdateAsync(s => s.SetProperty(p => p.Reason, "PC-60 unauthorized edit"), ct);
 ```
 
-All 63 PCs remain pending; the two refusal controls run the exact four-result
+All 69 PCs, including amendment 3 controls below, remain pending; the two refusal controls run the exact four-result
 exhaustion method, never the class. No mutation runs are commissioned to Code.
 
 Add G-61/G-62 assertions to the existing C1011_qualification_gates method with
@@ -858,35 +875,13 @@ and prove the restored actual backend before ending the window. Never change
 tracked defaults, restart from a worktree, switch beneath active test runs, or
 kill unrelated sessions. This freeze grants no canonical settings mutation.
 
-WQ-3 needs input observation absent from the existing adapter fake. Implement
-`RunnerGrokAdapterReadyTestsPty.C1011_real_fresh_worktree_trust` as a Windows-only
-Explicit test, enabled only by `ANTIPHON_HEADED_TESTS=1` and an explicit method
-filter, with method-level `NotInParallel("Headed")` and the class's existing
-process limiter. Use a new task-owned git worktree/cwd, the installed real grok executable
-and its already authorized provider session; do not copy/read auth stores or run
-login. Use DirectSessionRunnerClient with `ptyBackend: "modern"`, the real
-RunnerGrokAdapter at normal settings, 120x30 and a test-local forwarding
-ISessionRunnerClient that observes snapshot classification and exact startup
-inputs before forwarding. No global environment/backend mutation. Normal launch
-args are `--always-approve --no-alt-screen --model grok-4.7 --session-id <id>`;
-the spec Cwd is the new worktree and spec.SessionId is that same GUID. This
-probe is separate from WQ-1/2's live
-pin/routing proof; combining it with a Review row is permitted only when that
-row has equivalent actual key/snapshot evidence.
-
-The observer records a Trust frame before the first write, exactly one literal
-`y` before Ready, a non-trust settled Ready frame and actual modern host log.
-After Ready send one unique single-line read-only nonce prompt and require the
-complete normalized UserPrompt, a useful response/turn end, and confirmed exit
-of this owned session in finally/disposal. Missing trust is a failed
-qualification row, even if the worktree is new; it is not a skip or permission
-to alter trust/auth files. Keep bounded observations limited to this probe and
-suppress sign-in screen contents. Run at most ten minutes. Exact paid filter:
-`/*/*/RunnerGrokAdapterReadyTestsPty/C1011_real_fresh_worktree_trust*`, MinExecuted 1,
-through run-checkpoint.ps1 under an explicit S0 commission. It is excluded from
-ordinary CP-3's filter. New probe scaffolding is committed before its paid run;
-it may precede the gated prompt landing. Each live Review canary also has a
-ten-minute budget. Refusal or deadline means incomplete, not another silent try.
+WQ-3 follows amendment 3 below: a fresh worktree must reach Ready with
+observation-matched startup inputs, then complete the one paid nonce turn.
+TrustBeforeFirstInput is recorded, not required true. The Explicit method/filter
+is now C1011_real_fresh_worktree_ready_and_one_turn. Preserve all Windows,
+Headed/process-limiter, modern backend, provider-state, deadline and ownership
+constraints; the obsolete mandatory-visible-trust oracle is not an acceptance
+requirement. The full receipt, fake controls and final-SHA commission are below.
 
 WQ-4 follows the plan's activation order, on the live Debug role pin, with no
 kind/level/bypass override. Preserve same-platform authorized Opus recovery,
@@ -1020,7 +1015,7 @@ are explicitly budgeted additions, using the exact Code-evidence filters:
 | Q-native, CP-4 at A, reuse its build | `/*/*/InstructionBundleTests/orchestrator_bundle_points_to_operational_autonomy_without_growing*` | 2 | 1 |
 | Q-queue, CP-5 subset at A | `/*/*/SessionQueueReceiptPlumbingTests/(C475_QueueCommitAndTransportRecovery*)\|(C475_AlreadyIdleWhenIdleHasRecipientReceipt*)` | 7 | 11 |
 | Q-queue, CP-6 subset at A, reuse its build | `/*/*/SessionMessageQueueGrokPtyIntegrationTests/Multiline_delivery_is_transcript_confirmed_through_the_real_grok_tailer*` | 1 | 4 |
-| Q-trust, WQ-3 at A, Explicit and ANTIPHON_HEADED_TESTS=1 | `/*/*/RunnerGrokAdapterReadyTestsPty/C1011_real_fresh_worktree_trust*` | 1 | 10 live + 3 build |
+| Q-fresh, WQ-3 at final amended harness SHA, Explicit and ANTIPHON_HEADED_TESTS=1 | `/*/*/RunnerGrokAdapterReadyTestsPty/C1011_real_fresh_worktree_ready_and_one_turn*` | 1 | 10 live + 3 build |
 
 The Debug tasks run commands/evidence collection; they are not the real Review
 canaries or independent Final implementation Review. The caller separately
@@ -1106,7 +1101,7 @@ Code owner identity, then follow the landing/activation order above. If a WQ row
 fails, preserve it and return the concrete gap; no prompt/pin activation or
 production routing repair is a fallback action.
 
-### Checkpoints
+### Earlier amendment checkpoints (historical; superseded by amendment 3)
 
 This is the sole active checkpoint table. All final rows follow committed S1-S2
 and the amendment's P/Q slices; CP-1/2 are Any, CP-3..6 Windows at identical C.
@@ -1154,7 +1149,7 @@ Serial native runs must not overlap Antiphon.Agents.Pty.Tests/FakeClaude in
 another process. Freeze source during runs; retain CP receipts/TRX/source SHA
 and remove only task-owned alternate outputs after all owned children exit.
 
-### Cost
+### Earlier amendment cost (historical; superseded by amendment 3)
 
 Prospective times are estimates. Ordinary V/R floor (Code) is the active-table
 sum **8+6+7+1+12+8 = 42 minutes** for CP-1..6, including two isolated builds.
@@ -1227,3 +1222,300 @@ decisive assertion. The two refusal assertions remain Code work; their controls
 are executable once X lands, not existing red/green results.
 Next is Code under the admission/evidence gates above; PCs remain pending for
 independent post-land Mutation.
+
+### Amendment 3: observed trust and a complete fresh-worktree turn
+
+Authority: TestDesign task `eea9b11b`, inspected start ref
+`aeb2250863d85c8d6bc8e9cb2447906ea2d63d32`. This appendix overrides earlier
+mandatory-visible-trust wording, real inbox WQ-1, the paid filter, A-only
+commissioning and checkpoint/cost counts. S0-S3's routing fix, prompt cap,
+restoration, Final/Full Review and activation ordering remain. WQ-1 is
+**operator-excluded for CARD-1022**, not passed. No other gate is waived.
+
+The supplied Windows Debug report records WQ-3 failing at `749e73f1` before a
+paid prompt: real Grok **1.0.46 (`2765805b9442` [stable])**, auto-updated on
+2026-10-03 at 14:24Z; **ModernConPty**, Microsoft.Windows.Console.ConPTY
+**1.24.260710001**; 73 snapshots over about three seconds, Unknown -> Working ->
+StartingSession -> Ready, no Trust, `StartupInputs=[]`, adapter
+WaitForReadyAsync=true. Line 111's obsolete TrustBeforeFirstInput=true assertion
+rejected that startup. This is failed historical qualification, not a completed
+paid turn. Shared-git-directory trust and version/`--always-approve` behavior
+remain hypotheses; no extra launch is commissioned to distinguish them.
+
+The same report says WQ-2 was met by real Windows Review task `02e5b9b7` on the
+same CLI/backend, 120x30, ASCII `>` at row 26, UserPrompts at sequences 1 and 10.
+Retain the caller-held full task/session identities, report and release evidence.
+This docs-only task has not independently retrieved or certified those receipts.
+
+#### Inspection delta
+
+| Bodies read for amendment 3 | Boundaries -> coverage or exclusion |
+|---|---|
+| Entire RunnerGrokAdapterReadyTestsPty: both ordinary methods, Explicit probe, TrustObserver, host-log/transcript/process/worktree helpers | V-3/V-6/R-3/R-5; Ready versus trust, actual backend, input observation, transcript completion and owned release |
+| Entire RunnerGrokAdapterTrustPromptTests including ScreenScriptedRunnerClient/NewAdapter/NewSpec; GrokStartupFixture; RunnerGrokAdapterReadyTests.Current_trust_is_answered_once_before_positive_ready and its ScriptedClient | V-6/R-3/R-5; nearest fixtures for new test/helper files; answerable, persistent, absent, repeated and stale trust |
+| Five C1011 InstructionBundle methods and owner/whitespace helpers; current routing-owner section, qualification ledger and held prompt replacement above | V-1/R-1; conditional owner wording, WQ-1 exclusion and unchanged prompt cap |
+| RunnerGrokAdapter.SendPromptAsync/WaitForReadyAsync; GrokReadyWait current-screen/trust-write/settled-Ready branches; DirectSessionRunnerClient constructor/runtime/start/disposal | V-3/V-6/R-3; actual forwarding, one startup y, normal budgets and transcript tailing |
+| FakeGrok Program startup/CLI setup and full-file trust search; FakeGrokContractTests launch helper and full-file trust search | No native FakeGrok trust mode exists at this ref; use the existing scripted Grok fake, not an invented native mode |
+| Testing manifest/Mutation/delivery owner, session runtime startup/delivery owner, modern backend ADR and Grok qualification sections | Checkpoint schema, recipient evidence and substitute limits |
+
+Missing setup is concrete Code work: shared test-local verdict/receipt plumbing,
+the new eight-result unit fixture, renamed/amended Explicit method and owner/
+ledger assertions. Windows execution is separately commissioned. No production
+adapter/classifier/queue or native FakeGrok change is authorized. The previous
+amendment's X refusal/gate corrections are already implemented at `1f4fa69d1`,
+with a clean 44-result CP-2-X proof recorded on the start branch; do not redo X.
+
+#### WQ-3 replacement oracle
+
+Rename the Explicit method to
+`RunnerGrokAdapterReadyTestsPty.C1011_real_fresh_worktree_ready_and_one_turn`.
+Keep Windows, Explicit, ANTIPHON_HEADED_TESTS=1, Headed serialization, the class
+process limiter, fresh task-owned detached git worktree, installed real CLI and
+normal launch args/settings. Use per-instance `ptyBackend: "modern"`, 120x30,
+normal adapter deadlines and at most ten minutes total. Do not read/copy/edit
+provider auth or trust stores, run login or change global backend settings.
+A fresh worktree is not assumed to be untrusted.
+
+Require the real adapter's WaitForReadyAsync=true, current Ready with ASCII `>`,
+no visible trust, and the actual modern host line. **TrustBeforeFirstInput is an
+observation, true or false**, not a required-true assertion. StartupInputs must
+be exactly `[]` when trust was not observed, or exactly `["y"]` when trust was
+observed before the first write. Repeated trust frames permit only one y; a
+trust screen that remains cannot qualify as Ready. No task/body/Enter input is
+permitted before Ready; the observed-trust y is the sole startup exception.
+Require no UserPrompt in the pre-prompt transcript.
+
+Keep **one short paid turn after Ready**. Generate one nonce and submit once:
+`Reply exactly <nonce>. Do not use tools or change files.` In the final normalized
+transcript require exactly one UserPrompt equal to that whole body, AssistantText
+after its sequence concatenating to exactly the nonce (trim surrounding whitespace
+only), and a later TurnEnd after the assistant reply. Streaming AssistantText
+chunks are allowed; duplicate replies or a second UserPrompt fail. Check the final
+transcript, not only its first prompt-bearing snapshot. No manual prompt retry or
+extra model turn is permitted. Owned-child exit remains confirmed in finally;
+preserve failure observations as well as success evidence. Finalize the success
+receipt only after the owned-child exit check; the current pre-finally receipt
+write cannot by itself attest release. Keep failure observations on every path.
+
+The serialized success receipt must retain nonempty **`version`** (complete
+captured `grok --version` output, build/channel included) and **`backendLine`**
+(the exact per-session `pty backend: ModernConPty (requested 'modern')` line),
+plus harness/source SHA, session/worktree identity, requested model and transcript
+model metadata, runner/pty-host build identity, modern binary/package provenance,
+geometry, TrustBeforeFirstInput, ordered startup inputs/observations, complete
+prompt/body and sequence, reply/TurnEnd sequences and confirmed release result.
+Capture version immediately before launch; preserve any differing session-banner
+version separately as drift. Never relabel it 1.0.41. Capture/persist backendLine
+before later prompt assertions. A failed launch without readable backend evidence
+records the missing field as failure diagnostics and cannot qualify. These fields
+feed the operator's **CLI version x model x session-runner/pty-host/backend**
+compatibility matrix; designing that matrix is out of scope.
+
+#### Proves it works now and guards the regression: V-6 / R-5
+
+Extract only shared test-local observation/verdict/receipt code to
+`tests/Antiphon.Tests/TestHelpers/C1011GrokQualification.cs`. Generalize the
+existing observer's inner type to ISessionRunnerClient, retaining real forwarding,
+bounded metadata-only snapshots and sign-in content suppression. Both Explicit
+and fast tests must use the same startup verdict, final-transcript verdict and
+receipt projection; a copied oracle does not qualify. Verdicts return Accepted
+or named rejections. Reproduce the private scripted fake locally or extract it
+within the test assembly; it is not a new production dependency. The Explicit
+method asserts Accepted, and still directly
+observes Ready/backend/release. The projection retains measured input fields;
+it does not infer backend from requested configuration.
+
+Add `tests/Antiphon.Tests/Agents/GrokFreshWorktreeQualificationTests.cs`, Category
+Unit, using the inspected scripted fake/ReadyScreen as the nearest fixture:
+
+- `C1011_startup_accepts_observed_trust_or_absence`: two arguments false/true.
+  Run the real adapter over the scripted fake through the shared observer.
+  False starts Ready and requires false observation, no writes and Accepted
+  (`startup-accepted`). True starts the complete trust screen, clears only on
+  literal y and requires true observation, exactly one y, Ready and Accepted.
+  Both assert no pre-prompt transcript input. First preserve the legacy shared
+  trust requirement: the false row must be assertion-red; correcting the oracle
+  then makes both rows green. This proves the new assertion accepts absence.
+- `C1011_receipt_retains_cli_and_backend`: one result. Project/serialize a valid
+  synthetic receipt, deserialize the emitted JSON, then compare measured version/
+  build and exact backendLine with the independent input values (`cli-version`,
+  `backend-line`). Require false observation and an empty startup list to survive.
+  This tests emitted evidence, not a local variable self-comparison.
+- `C1011_paid_turn_requires_complete_receipt`: five arguments `complete`,
+`missing-assistant`, `missing-turn-end`, `duplicate-prompt`, `duplicate-reply`.
+  Independently construct normalized records with increasing sequences, a complete
+  nonce prompt, two AssistantText chunks forming the nonce and one later TurnEnd.
+  Complete expects Accepted. Each negative varies only its named boundary and
+  expects, respectively, AssistantReplyMismatch, MissingTurnEnd,
+  PromptMultiplicity, AssistantReplyMismatch (`turn-rejection`). No polling or
+  live turn is used. The real probe polls for its turn within its existing budget,
+  then applies this same final verdict.
+
+New census: **three methods/eight TUnit results**; one renamed Explicit result
+remains outside ordinary automation. Missing CLI/payload, off-platform skips,
+missing required receipt fields, timeout and release failure remain incomplete
+or failed evidence, never passing qualification.
+
+CP-1 already executes all four scripted Grok trust cases:
+`A_launch_into_an_untrusted_directory_answers_y_before_reporting_ready`,
+`A_trust_dialog_that_does_not_clear_is_not_ready`,
+`Enter_is_not_the_affirmative_key`, and `A_healthy_launch_types_nothing`.
+They pin one y then Ready, one y with false Ready on persistent trust, no Enter
+substitution, and no unsolicited key. PC-36 (wrong n), PC-37 (repeat y), PC-38
+(premature Ready) and PC-46 (unsolicited y) remain method-scoped fake controls,
+independent of whether the installed CLI currently shows trust. The existing
+`Current_trust_is_answered_once_before_positive_ready` additionally pins repeated
+frames/stale raw trust; it is inherited coverage outside this amendment's ordinary
+selection, not claimed as rerun. Sign-in/unknown/alternate-size classifier
+matrices remain CARD-1006's scope. No tolerances, retries or timeouts are widened.
+
+#### Delivery inventory delta and substitutes
+
+There is no new async production path. WQ-3's producer is its one post-Ready
+SendPromptAsync; destination is the real Grok session; native JSONL -> production
+tailer -> normalized transcript is the persistence boundary, joined by sessionId,
+nonce, full body and sequence. Input/turn failure preserves evidence and fails the
+probe rather than retransmitting. This is not a recovery implementation.
+The real-queue busy/eligible recipient tests, six crash/enqueue-failure handoffs,
+and complete recipient/file plus DB UserPrompt assertions remain V-4/V-5,
+CP-5/6 and PC-39..45 above. No request, queue insert, event, Sent flag or ack
+can replace recipient evidence. The direct probe cannot prove dispatcher/rules/
+pin/queue recovery; WQ-2/4 and the real-queue cases retain those responsibilities.
+Scripted fake and synthetic receipt tests cannot prove installed CLI behavior,
+actual backend, native transport, paid model output or process release.
+
+#### Questions and exclusions
+
+These are caller reconciliation questions, not new waivers or blockers to the
+amended Code oracle:
+
+1. How should the historical 1.0.41/`4220f3b224a6` rows be reconciled with the
+   reported 1.0.46 tuple? Default: retain dated old facts and append measured new
+   evidence; never claim this run tested 1.0.41 or change the Linux image pin.
+2. WQ-1 exclusion contradicts D-2/S0/S2 and owner/ledger “both hosts” wording.
+   Does CARD-1022 also commission removal/migration of the existing **fake**
+   inbox arguments in CP-3/5/6 and PC-32? Default: preserve those ordinary
+   regressions until explicitly changed. No real inbox canary is commissioned.
+3. The owner/ledger and their current assertion still demand visible trust.
+   Code must update them to the conditional clauses below. The exact held
+   868-to-674 prompt replacement above contains **no trust claim**; keep it and
+   its 14116 length unchanged. Does any separate desktop-held prompt/custom
+   append claim trust always appears? That inaccessible text needs caller audit;
+   if so, use “if trust appears,” not a new routing or activation exception.
+
+The owner and C1011_qualification_gates replace only these three clauses:
+
+- `Actual ModernConPty requires real Review evidence; WQ-1 is excluded by the operator for CARD-1022.` (`modern-review`, G-12)
+- `A fresh worktree must reach Ready. Record whether trust appeared; send no startup input without observed trust, or exactly one y if it appeared, then require cleared trust and Ready.` (`fresh-startup`, G-69; runtime oracle G-13)
+- `WQ-2 and WQ-3 gate prompt landing and Debug pin activation; WQ-1 is operator-excluded.` (`preland-gate`, G-16)
+
+Whole UserPrompt, report/release, restoration, fresh-state, Final/Full Review and
+all other owner assertions remain. This plan task edits no owner/test/source file.
+A new native trust mode, root-cause experiment, compatibility-matrix design,
+production fixes, new geometry or provider-state changes are out of scope.
+
+#### Commit and commission order
+
+Code starts at this amendment's pushed tip, retains original Code/landing owner
+`698c0e44-127d-4a7a-9584-7031570573e5`, and rechecks collisions. Commit/push the
+shared seam/new tests with the legacy trust verdict, then its correction and
+receipt/owner/ledger changes. The two-phase fake RED/GREEN is the preparatory
+exception: CP-7's exact filter/minimum, fresh isolated build per committed phase;
+false startup must fail before correction. Build/fixture failures are not red.
+Code runs ordinary V/R; all planned PC mutations stay post-land with Mutation.
+
+Push the final amended executable harness, then commission **ONE** Windows WQ-3
+launch at that exact full implementation SHA. Exact Explicit paid filter:
+`/*/*/RunnerGrokAdapterReadyTestsPty/C1011_real_fresh_worktree_ready_and_one_turn*`;
+MinExecuted **1**, ANTIPHON_HEADED_TESTS=1, modern-only, ten minutes maximum,
+slot-owning run-checkpoint.ps1, its own `bin-c1011-wq3/` output. Do not use the
+obsolete `...fresh_worktree_trust*` filter or old A harness. The paid turn is
+estimated **at most $1** within the operator's roughly $2 WQ-2/3 authorization,
+not a measured provider charge; no automatic relaunch on failure. WQ-2's supplied
+attributable evidence avoids another real Review launch.
+
+After successful Q and required restoration evidence, apply the unchanged held P
+prompt edit, run the complete final CP manifest at C, then independent Final/Full
+Review and the existing land/activation/WQ-4 order. The paid run's “final
+implementation SHA” is the final amended executable harness. Subsequent P/docs-
+only commits need explicit diff/receipt binding, not another paid launch solely
+because HEAD changed. A later harness/runtime change that invalidates that binding
+returns the affected gate to pending; it is not covered by this one-run commission.
+
+### Checkpoints
+
+This is the sole active table, replacing both earlier manifests. CP-1/2/7 are Any;
+CP-3..6 are Windows at the same committed C. Each row has its own isolated build
+and exactly one filter. Union = the complete ordinary V-1..6/R-1..5 scope; paid
+WQ-3 is separate. All historical evidence remains bound to its actual SHA.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | C-final | `tests/Antiphon.Tests -> bin-c1011-any/` | any-guidance-unit | `/*/*/(InstructionBundleTests*)\|(TaskPlatformGuidanceTests*)\|(RunnerDefaultGuidanceTests*)\|(StandingPipelinePolicyDocumentationTests*)\|(RunnerGrokAdapterTrustPromptTests*)/*` | V-1, R-1, R-3 | 90 results incl. amended owner clauses and all four trust cases; 0 failed/skipped | 90 | 8 |
+| CP-2 | C-final | `tests/Antiphon.Tests -> bin-c1011-routing/` | any-routing | `/*/*/(WindowsGrokRoutingPolicyTests*)\|(RoutingPinCandidateCreateTests*)\|(TaskPlatformPlacementTests*)/*` | V-2, R-2 | 12 matrix + 17 create + 15 placement; 0 failed/skipped | 44 | 9 |
+| CP-3 | C-final | `tests/Antiphon.Tests -> bin-c1011-win/` | windows-native | `/*/*/RunnerGrokAdapterReadyTestsPty/(Fake_dashboard_marker_reaches_ready_and_complete_first_prompt*)\|(C1011_windows_backends_reach_ready_and_complete_prompt*)` | V-3, R-3 | 2 marker + 2 fake backend results; renamed paid Explicit excluded; 0 failed/skipped | 4 | 7 |
+| CP-4 | C-final | `tests/Antiphon.Tests -> bin-c1011-cap/` | windows-bundle-cap | `/*/*/InstructionBundleTests/orchestrator_bundle_points_to_operational_autonomy_without_growing*` | V-1, R-1 | LF and CRLF; cap <=14310, held edit 14116; 0 failed/skipped | 2 | 4 |
+| CP-5 | C-final | `tests/Antiphon.Tests -> bin-c1011-queue/` | windows-queue-recovery | `/*/*/SessionQueueReceiptPlumbingTests/*` | V-4, R-4 | Full 20-result class including six cuts/eligible recipient; 0 failed/skipped | 20 | 15 |
+| CP-6 | C-final | `tests/Antiphon.Tests -> bin-c1011-tailer/` | windows-grok-tailer | `/*/*/SessionMessageQueueGrokPtyIntegrationTests/*` | V-5, R-4 | Full 5-result class; 0 failed/skipped | 5 | 11 |
+| CP-7 | C-final | `tests/Antiphon.Tests -> bin-c1011-wq-unit/` | any-wq3-oracle | `/*/*/GrokFreshWorktreeQualificationTests/*` | V-6, R-5 | 2 startup + 1 emitted receipt + 5 turn verdict results; 0 failed/skipped | 8 | 5 |
+
+Source-derived census: existing 165 + 8 new = **173 ordinary executions**.
+The five InstructionBundle methods stay five; their assertions change, not their
+execution count. The paid method is one Explicit execution, excluded above.
+Import this seven-row table afresh; the four-minute gated tool bootstrap exception
+remains. Require seven imported rows with exact filters/minima. Run the checkpoint
+tool's `run --plan` for CP-1,CP-2,CP-7 and separately CP-3,CP-4,CP-5,CP-6; wait to
+terminal exit, not 75. Validate clean source/build receipts at C. All drivers take
+host slots; native assemblies remain serial. Keep source frozen during runs and
+remove only owned alternate outputs after children exit. No importer/build/test
+or live canary was run in this TestDesign task.
+
+### Cost
+
+All prospective figures are **estimated minutes**, excluding authoring/slot waits.
+Ordinary Code V/R floor = CP-1..7 **8+9+7+4+15+11+5 = 59**. Each literal filter
+is in the active table and each estimate includes its own build. Gated tool
+bootstrap/import adds **4**, so final Code setup/V/R = **63**. Independent
+Review of the same complete selection adds **59**.
+
+Mutation floor = previous PC-1..63 **546** + PC-64..69 **6 x 7 = 42**, total
+**588**. PC-13 now uses the exact two-result startup method; its retained seven-
+minute allocation covers baseline build/test 2, red 2, restored-green 2, edit/
+evidence 1. Each new PC uses that same 2+2+2+1 allocation. PC-69 uses
+`/*/*/InstructionBundleTests/C1011_qualification_gates*` (Min 1). PC-64/65 select
+`/*/*/GrokFreshWorktreeQualificationTests/C1011_receipt_retains_cli_and_backend*`
+(Min 1); PC-66/67/68 select
+`/*/*/GrokFreshWorktreeQualificationTests/C1011_paid_turn_requires_complete_receipt*`
+(Min 5); PC-13 selects
+`/*/*/GrokFreshWorktreeQualificationTests/C1011_startup_accepts_observed_trust_or_absence*`
+(Min 2). PC-36..38 retain the exact existing trust-method filters and 21-minute
+subtotal. Every PC is a separate compiling defect/red/restore/green cycle; no
+assertion is removed and no whole-class PC selection is allowed.
+
+Remaining preparatory work = fake RED/GREEN CP-7 filter **2 x 5 = 10**, plus
+WQ-3's isolated build **3**, total **13**. Completed X and older A commissions
+are sunk historical work, not reruns hidden in this floor. Remaining live allowance
+= WQ-3 **10** + post-activation WQ-4 **10** + setup/restoration/evidence **15**
+= **35**. WQ-1 is excluded; reported WQ-2 is reused subject to receipt binding.
+Total remaining execution estimate = **4 + 59 + 588 + 13 + 35 = 699 minutes**;
+with independent ordinary Review **758**. Paid WQ-3 allowance is one short turn,
+estimated at most **$1**; the failed pre-prompt attempt spent no model turn per
+the supplied report. WQ-4 remains its separate activation commission.
+
+Savings: no real WQ-1 and reuse of WQ-2 avoid **20 minutes/two live launches**
+versus the previous four-run allowance. No further paid repetition is budgeted.
+Independent builds add **12 minutes** versus the old four reused-build rows;
+this amendment follows one isolated build per row and books zero build-reuse
+savings. CP-7 adds **5 minutes/eight results**; the six new PCs add **42 minutes**.
+The earlier approximately 4.3-minute whole-Unit rerun saving still applies. New
+Windows/PC times are unmeasured; the earlier source-bound timings are historical.
+
+Final handoff audit: amendment bodies above read; **guards=69, mapped=69,
+missing=0, duplicate PC maps=0**. All controls name compiling value/branch defects,
+exact methods and decisive assertions, executable after the specified Code seam
+lands; none was executed here. Seven active rows, minima
+**90/44/4/2/20/5/8 = 173**, EstimatedMinutes **59**; numeric Code/Mutation/total
+floors above. No remaining unverifiable seam: the missing shared helpers and
+fixture are concrete Code deliverables; real installed-CLI/backend/turn/release
+qualification remains the one commissioned Windows gate. Next: Code, then one
+WQ-3 real launch at its final pushed executable-harness SHA with the paid turn.
