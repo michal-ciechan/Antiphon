@@ -468,7 +468,7 @@ committed/pushed; repairs require a separate commissioned task.
 |---|---|---|
 | PC-1 | Include standing runner-state in the default allowlist. | `RemoteScriptContractTests.C1008_Recycle_exact_default_volumes` / `recycle-exact-defaults`. |
 | PC-2 | Replace all-container reference census with running-only. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` / `recycle-reference-refusal`. |
-| PC-3 | Run the work audit as uid 0 and coerce failed count to zero. | `RemoteScriptContractTests.C1008_Recycle_audits_work_as_1654` / `recycle-audit-uid`. |
+| PC-3 | Change only the work-audit Docker user from 1654:1654 to 0:0; leave exit handling intact. | `RemoteScriptContractTests.C1008_Recycle_audits_work_as_1654` / `recycle-audit-uid`. |
 | PC-4 | Drop origin-only ancestry comparison so another remote masks HEAD. | `RemoteScriptContractTests.C1008_Recycle_refuses_unpublished_and_dirty_work` / `recycle-work-preserved`. |
 | PC-5 | Accept failed Git inspection as empty/zero. | `RemoteScriptContractTests.C1008_Recycle_refuses_uninspectable_git` / `recycle-git-unknown-refuses`. |
 | PC-6 | Allow null live inventory regardless of host census. | `RollingVolumeRecycleScriptTests.C1008_Present_or_unknown_temp_keeps_null_refusal` / `retire-null-stays-closed`. |
@@ -743,7 +743,7 @@ All five other reader arguments retain their nine invalid-marker cases. Preserve
 54 results; changing semantic assertions is not permission to drop argument rows.
 
 Manual source expansion of T1..T24, expressed as invocations/assertions:
-`1/7,2/6,1/3,1/2,1/2,0/2,3/9,1/5,2/8,2/8,2/6,19/57,2/6,2/6,3/9,4/12,2/6,2/12,5/30,4/9,3/9,2/6,1/3,1/3`.
+`1/8,2/6,1/3,1/2,1/2,0/2,3/9,1/5,2/8,2/8,2/6,19/57,2/6,2/6,3/9,4/12,2/6,2/12,5/30,4/9,3/9,2/6,1/3,1/3`.
 Sum **24 groups / 66 invocations / 227 assertions**. No-jq omits T20 only:
 **23 / 62 / 218**, not CARD-0983's pre-0957 19/55/197. Each jq driver has **31**
 outer assertions. V-18's four modes total **93 groups / 252 invocations / 881
@@ -781,14 +781,448 @@ payload checks, real uid-1654 probes and actual final cold verification. RD-12 s
 only df's reported capacity, recording real df separately. RD-10 cannot be promoted
 from fixture registration to proof of an exposed server lease contract (B-1).
 
+### Guard inventory
+
+The inventory is for D-1..D-8's script guards, including independent wrapper and
+host checks. Each G has exactly one distinct PC; the original PC-1..PC-14 table
+is retained (PC-3 now changes uid only; PC-5 owns error handling). Input variants
+for a guard run inside its named single-result method. B-1 blocks the two
+lease proof controls expressly identified below; no fake field may conceal it.
+
+| Guard | Plan reference and safety-critical invariant | Control |
+|---|---|---|
+| G-1 | D-1: Default state volume excluded | PC-1 |
+| G-2 | D-2: Exited references count | PC-2 |
+| G-3 | D-3: Audit uid 1654 | PC-3 |
+| G-4 | D-3: Origin-only ancestry | PC-4 |
+| G-5 | D-3: Failed Git inspection cannot mean zero | PC-5 |
+| G-6 | D-4: Wrapper present-container null refusal | PC-6 |
+| G-7 | D-4: Wrapper absent-retired null acceptance | PC-7 |
+| G-8 | D-4: Host fresh absence proof | PC-8 |
+| G-9 | D-2: Succeeded task can have pending land | PC-9 |
+| G-10 | D-5: Retirement may reclaim under low disk | PC-10 |
+| G-11 | D-5: Resume generation binding | PC-11 |
+| G-12 | D-7: Preview exits before mutation | PC-12 |
+| G-13 | D-6: Cache opt-in cannot use accepting temp | PC-13 |
+| G-14 | D-5: Receipt uses real after-df | PC-14 |
+| G-15 | D-1: Default shared caches excluded | PC-15 |
+| G-16 | D-1: Default target names exact | PC-16 |
+| G-17 | D-1: Temp includes all four private volumes | PC-17 |
+| G-18 | D-1: Private volumes non-external and project-private | PC-18 |
+| G-19 | D-1: Cache volumes external under fixed names | PC-19 |
+| G-20 | D-1: No daemon prune | PC-20 |
+| G-21 | D-1: Broker survives | PC-21 |
+| G-22 | D-1: Post-down selected volumes absent | PC-22 |
+| G-23 | D-1: Preserved volume identities unchanged | PC-23 |
+| G-24 | D-1: Wrapper options are typed booleans | PC-24 |
+| G-25 | D-1: Bridge options are typed booleans | PC-25 |
+| G-26 | D-1: Unknown recycle fields refused | PC-26 |
+| G-27 | D-1: Arbitrary volume lists refused | PC-27 |
+| G-28 | D-1: Only supported project admitted | PC-28 |
+| G-29 | D-1: Opt-ins only explicit redeploy-old | PC-29 |
+| G-30 | D-1: Legacy deploy-parent remains nondestructive | PC-30 |
+| G-31 | D-5: Operation ID is not a path/shell fragment | PC-31 |
+| G-32 | D-2: Wrapper counters have present integer types | PC-32 |
+| G-33 | D-2: Wrapper nonzero counter refuses | PC-33 |
+| G-34 | D-2: Host counters have present integer types | PC-34 |
+| G-35 | D-2: Host nonzero counter refuses | PC-35 |
+| G-36 | D-2: Main admission closed | PC-36 |
+| G-37 | D-2: Main drain established | PC-37 |
+| G-38 | D-2: Main redirect expected | PC-38 |
+| G-39 | D-2: Counterpart accepting on normal replacement | PC-39 |
+| G-40 | D-2: Final status/routing snapshot fresh | PC-40 |
+| G-41 | D-2: Main null requires own saved live-zero proof | PC-41 |
+| G-42 | D-2: Main null requires own stop/removal receipt | PC-42 |
+| G-43 | D-2: Target-bound active/retained tasks block | PC-43 |
+| G-44 | D-2: Queued/dispatched/working routed work blocks | PC-44 |
+| G-45 | D-2: Excluded project scopes closed | PC-45 |
+| G-46 | D-2: Unscoped tasks included | PC-46 |
+| G-47 | D-2: Census errors cannot become empty | PC-47 |
+| G-48 | D-2: Census stable IDs/counts and duplicate consistency | PC-48 |
+| G-49 | D-2: Pending land timestamps checked | PC-49 |
+| G-50 | D-2: Land detail state checked | PC-50 |
+| G-51 | D-2: Unknown/legacy land evidence fails closed | PC-51 |
+| G-52 | D-2: Fresh land/task recheck before deletion | PC-52 |
+| G-53 | D-2: Stop is graceful and never forced | PC-53 |
+| G-54 | D-2: Stop failure retains all volumes | PC-54 |
+| G-55 | D-2: Stopped state inspected before rm | PC-55 |
+| G-56 | D-2: Remove only inspected exact owned IDs | PC-56 |
+| G-57 | D-2: Running/ambiguous state-init refused | PC-57 |
+| G-58 | D-2: Duplicate runner identity refused | PC-58 |
+| G-59 | D-2: Failed ps is unknown | PC-59 |
+| G-60 | D-2: Failed/malformed inspect is unknown | PC-60 |
+| G-61 | D-2: Canonical bind overlap refused | PC-61 |
+| G-62 | D-2: Validate entire target set before first delete | PC-62 |
+| G-63 | D-2: Recheck each target at removal | PC-63 |
+| G-64 | D-2: Docker in-use refusal is final | PC-64 |
+| G-65 | D-2: Volume removal failure is not success | PC-65 |
+| G-66 | D-2: Inspected volume identity required | PC-66 |
+| G-67 | D-3: Enumerate all repositories/worktrees | PC-67 |
+| G-68 | D-3: Enumerate unchecked-out local refs | PC-68 |
+| G-69 | D-3: Current origin advertisement agrees | PC-69 |
+| G-70 | D-3: Dirty work refuses | PC-70 |
+| G-71 | D-3: Count must be nonnegative integer | PC-71 |
+| G-72 | D-3: History completeness proved | PC-72 |
+| G-73 | D-3: Git traversal stays within work volume | PC-73 |
+| G-74 | D-3: In-progress Git operations refused | PC-74 |
+| G-75 | D-3: Audit is readonly and disables lazy writes | PC-75 |
+| G-76 | D-3: Quiescent second audit required | PC-76 |
+| G-77 | D-2: Audit helper removed before final census | PC-77 |
+| G-78 | D-2: Audit mount source must exist | PC-78 |
+| G-79 | D-2: Helper uses inspected pinned image | PC-79 |
+| G-80 | D-2: Helper cannot start runner | PC-80 |
+| G-81 | D-2: Audit work mount readonly at original path | PC-81 |
+| G-82 | D-5: Journal writable before effects | PC-82 |
+| G-83 | D-5: Per-volume completion survives later failure | PC-83 |
+| G-84 | D-5: Atomic journal replacement | PC-84 |
+| G-85 | D-5: Journal outside recycled volumes | PC-85 |
+| G-86 | D-5: Resume source binding | PC-86 |
+| G-87 | D-5: Resume flags binding | PC-87 |
+| G-88 | D-5: Resume project binding | PC-88 |
+| G-89 | D-5: Resume retirement/store binding | PC-89 |
+| G-90 | D-5: Resume Compose binding | PC-90 |
+| G-91 | D-5: Recreated containers must belong to operation | PC-91 |
+| G-92 | D-5: Owned new generations not recycled twice | PC-92 |
+| G-93 | D-5: Incomplete same-SHA journal not hidden | PC-93 |
+| G-94 | D-5: Healthy same-SHA retry does not recycle | PC-94 |
+| G-95 | D-5: Before-df parse failure refuses | PC-95 |
+| G-96 | D-5: Unknown after-df reported honestly | PC-96 |
+| G-97 | D-5: Signed byte delta on same filesystem | PC-97 |
+| G-98 | D-5: Exactly one summary per attempt | PC-98 |
+| G-99 | D-5: Wrapper receipt-copy failure blocks completion | PC-99 |
+| G-100 | D-2: Recreate failure keeps drain | PC-100 |
+| G-101 | D-2: Requested SHA observed before clear | PC-101 |
+| G-102 | D-2: Mount identities verified before clear | PC-102 |
+| G-103 | D-2: Cache verification before clear | PC-103 |
+| G-104 | D-4: Wrapper valid retirement stamp | PC-104 |
+| G-105 | D-4: Wrapper draining requirement | PC-105 |
+| G-106 | D-4: Wrapper retireWhenIdle requirement | PC-106 |
+| G-107 | D-4: Wrapper redirect requirement | PC-107 |
+| G-108 | D-4: Wrapper unavailable requirement for null | PC-108 |
+| G-109 | D-4: Wrapper ineligible requirement for null | PC-109 |
+| G-110 | D-4: Wrapper nonaccepting requirement for null | PC-110 |
+| G-111 | D-4: Wrapper requires live-counter key even when null | PC-111 |
+| G-112 | D-4: Host retirement timestamp freshness | PC-112 |
+| G-113 | D-4: Host rechecks all retirement fields | PC-113 |
+| G-114 | D-4: Host null exception remains absence-only | PC-114 |
+| G-115 | D-4: Main accepting before temp retirement | PC-115 |
+| G-116 | D-4: Retirement retained after temp removal | PC-116 |
+| G-117 | D-4: Shared donor/reset/prune null guard unchanged | PC-117 |
+| G-118 | D-6: State reset needs stamped retirement | PC-118 |
+| G-119 | D-6: State clear follows owned removal | PC-119 |
+| G-120 | D-6: State replacement waits detached connection | PC-120 |
+| G-121 | D-6: State replacement waits registration lease | PC-121 |
+| G-122 | D-6: State replacement waits post-disconnect lease | PC-122 |
+| G-123 | D-6: Registration observes different new store | PC-123 |
+| G-124 | D-6: StoreMismatch is not bypassed | PC-124 |
+| G-125 | D-6: Both cache consumers closed and zero | PC-125 |
+| G-126 | D-6: Cache bind/foreign consumers excluded | PC-126 |
+| G-127 | D-6: Maintenance context journal required | PC-127 |
+| G-128 | D-6: Maintenance helper image retained and inspected | PC-128 |
+| G-129 | D-6: Default must not cold seed | PC-129 |
+| G-130 | D-6: Old marker invalidated only for completed cache removal | PC-130 |
+| G-131 | D-6: Cold seed creates exact labelled volumes | PC-131 |
+| G-132 | D-6: Cold roots have correct driver/options | PC-132 |
+| G-133 | D-6: Cold root canonical and non-symlink | PC-133 |
+| G-134 | D-6: Cold ownership 1654 and mode 0700 | PC-134 |
+| G-135 | D-6: Cold roots empty including hidden entries | PC-135 |
+| G-136 | D-6: Cold uid-write probe must succeed | PC-136 |
+| G-137 | D-6: Cold probe helpers/canaries cleaned | PC-137 |
+| G-138 | D-6: Cold rechecks around create/init/probe/marker | PC-138 |
+| G-139 | D-6: Cold seed cannot autocreate missing source | PC-139 |
+| G-140 | D-6: Cold marker validated atomically | PC-140 |
+| G-141 | D-6: Cold verification really observes recreated roots | PC-141 |
+| G-142 | D-6: Full-only contexts stay full-only | PC-142 |
+| G-143 | D-6: Ordinary Cold still requires running main | PC-143 |
+| G-144 | D-6: Seed host-case success cannot terminate deploy early | PC-144 |
+| G-145 | D-7: Preview never provisions secrets/checkouts | PC-145 |
+| G-146 | D-7: Preview is not apply authority | PC-146 |
+| G-147 | D-7: Absent-helper audit pending in preview | PC-147 |
+| G-148 | D-8: Tmp mount retains copy-up | PC-148 |
+| G-149 | D-8: Tmp assets and mode verified | PC-149 |
+| G-150 | D-5: Receipts omit sensitive content | PC-150 |
+| G-151 | D-5: Structured refusal survives EXIT trap | PC-151 |
+| G-152 | D-2: Host lane cannot target sibling daemon | PC-152 |
+| G-153 | D-2: Rollout lock held before cache lock | PC-153 |
+| G-154 | D-2: All admission-changing rollout phases respect lock | PC-154 |
+| G-155 | D-2: Lock is not reacquired recursively | PC-155 |
+| G-156 | D-1: Real bridge routes new host case | PC-156 |
+
+### Positive controls
+
+PC-1..PC-14 use the earlier exact methods/labels; PC-15 onward extend that
+inventory. Each mutation below is a syntactically valid replacement/removal of
+the corresponding production guard, not a test-fixture edit. C# still compiles;
+PowerShell/bash must parse. The named method runs the real production decision.
+All substantive effects/retained-sentinel assertions carry its listed label and
+precede generic exit/count checks. Unrelated setup errors, hangs and zero results
+do not count as red. For a lock control, assert an observed forbidden entry using
+a held-lock barrier and bounded child termination; do not count a timeout as red.
+Code must record production statement coordinates when implementing these named
+guards; if the guard cannot be reached by its frozen method, return to TestDesign
+before Review rather than silently substituting a source-text assertion.
+
+Each row selects exactly `/*/*/ClassName/ExactTestMethod` using its fully spelled
+class/method below, Min=1. Mutation runs break/red/restore/green after land under
+SourceLanding custody; Code runs V/R, Review judges this design before land.
+All children remain inherited/local; no snapshot access via a Docker executor.
+The PC harness is offline. RD is ordinary Code evidence and is not rerun as a
+Mutation executor. SourceLanding never commits or pushes its temporary mutations.
+
+| PC | Compiling production defect (break the matching G) | Exact detecting method | First assertion label |
+|---|---|---|---|
+| PC-15 | Append P to the default removal array. | `RemoteScriptContractTests.C1008_Recycle_exact_default_volumes` | `recycle-exact-defaults` |
+| PC-16 | Replace the exact work name with a volume-ls prefix match. | `RemoteScriptContractTests.C1008_Recycle_exact_default_volumes` | `recycle-exact-defaults` |
+| PC-17 | Replace compose_temp down -v with compose_temp down. | `RollingVolumeRecycleScriptTests.C1008_Retired_absent_null_is_accepted` | `retire-absent-null-accepted` |
+| PC-18 | Replace the rendered private-volume model validation with :. | `RemoteScriptContractTests.C1008_Recycle_exact_default_volumes` | `recycle-exact-defaults` |
+| PC-19 | Replace the rendered external-cache model validation with :. | `RemoteScriptContractTests.C1008_Recycle_exact_default_volumes` | `recycle-exact-defaults` |
+| PC-20 | Insert docker volume prune -f after selected removals. | `RemoteScriptContractTests.C1008_Recycle_exact_default_volumes` | `recycle-exact-defaults` |
+| PC-21 | Add the broker ID to the owned-container removal list. | `RemoteScriptContractTests.C1008_Recycle_exact_default_volumes` | `recycle-exact-defaults` |
+| PC-22 | Remove post-down inspection and report all targets removed. | `RemoteScriptContractTests.C1008_Retire_temp_rechecks_absence_and_retirement` | `retire-host-proof` |
+| PC-23 | Replace preserved-volume after-inspection comparison with :. | `RemoteScriptContractTests.C1008_Recycle_exact_default_volumes` | `recycle-exact-defaults` |
+| PC-24 | Replace wrapper boolean type rejection with boolean coercion. | `RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict` | `recycle-manifest-strict` |
+| PC-25 | Replace bridge boolean type rejection with boolean coercion. | `RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict` | `recycle-manifest-strict` |
+| PC-26 | Remove the recycle-object unknown-property rejection. | `RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict` | `recycle-manifest-strict` |
+| PC-27 | Accept and use manifest recycle.volumes as the removal array. | `RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict` | `recycle-manifest-strict` |
+| PC-28 | Replace project allowlist check with true. | `RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict` | `recycle-manifest-strict` |
+| PC-29 | Remove the flag/Phase rejection branch. | `RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict` | `recycle-manifest-strict` |
+| PC-30 | Make absent recycle context take the default recycle apply branch. | `RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict` | `recycle-manifest-strict` |
+| PC-31 | Remove ResumeRecycle grammar rejection before path/SSH construction. | `RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict` | `recycle-manifest-strict` |
+| PC-32 | Coerce null or string counter to int before validation. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
+| PC-33 | Replace the nonzero-counter refusal with return. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
+| PC-34 | Remove the jq has/type/integer check before zero comparison. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` | `recycle-reference-refusal` |
+| PC-35 | Replace host zero-counter predicate with true. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` | `recycle-reference-refusal` |
+| PC-36 | Remove acceptingNewWork=false check from recycle preflight. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
+| PC-37 | Remove draining=true check from recycle preflight. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
+| PC-38 | Remove redirectTo comparison from recycle preflight. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
+| PC-39 | Remove temp accepting check outside maintenance context. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
+| PC-40 | Reuse preflight status instead of the immediate pre-removal GET. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` | `recycle-reference-refusal` |
+| PC-41 | Accept offline/null main when journal has no strict-zero observation. | `RemoteScriptContractTests.C1008_Recycle_resume_requires_matching_receipt` | `recycle-resume-generation` |
+| PC-42 | Accept saved zeros without matching stop/removal container receipt. | `RemoteScriptContractTests.C1008_Recycle_resume_requires_matching_receipt` | `recycle-resume-generation` |
+| PC-43 | Drop target-bound Blocked and Failed rows from the obligation set. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
+| PC-44 | Ignore routed task rows when status counters report zero. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
+| PC-45 | Treat excluded.byProject as informational and return after first response. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
+| PC-46 | Change unscoped=include to unscoped=exclude. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
+| PC-47 | Replace failed task-list request result with an empty items array. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
+| PC-48 | Remove repeated-closure/dedup consistency comparison. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
+| PC-49 | Ignore landRequestedAt and landStartedAt when detail landRequest is null. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
+| PC-50 | Ignore Queued/Held/Running detail when pending timestamps are null. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
+| PC-51 | Treat omitted landRequest or unknown state as no pending land. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
+| PC-52 | Remove the final task/land census and reuse its preflight digest. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` | `recycle-reference-refusal` |
+| PC-53 | Replace docker stop with docker rm -f for main. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` | `recycle-reference-refusal` |
+| PC-54 | Append || true to the owned-runner stop command. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` | `recycle-reference-refusal` |
+| PC-55 | Remove the post-stop State.Running=false check. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` | `recycle-reference-refusal` |
+| PC-56 | Use an unvalidated project-prefix container list for rm. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` | `recycle-reference-refusal` |
+| PC-57 | Admit state-init regardless of State.Running/Status. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` | `recycle-reference-refusal` |
+| PC-58 | Select the first of multiple runner IDs instead of refusing. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` | `recycle-reference-refusal` |
+| PC-59 | Append || true to the final all-container census command substitution. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` | `recycle-reference-refusal` |
+| PC-60 | Replace failed container inspection with an empty Mounts array. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` | `recycle-reference-refusal` |
+| PC-61 | Remove the bind overlap comparison while retaining named-volume checks. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` | `recycle-reference-refusal` |
+| PC-62 | Move each target validation into its own rm loop only. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` | `recycle-reference-refusal` |
+| PC-63 | Remove the per-target final reference check. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` | `recycle-reference-refusal` |
+| PC-64 | Retry a failed volume rm using --force. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` | `recycle-reference-refusal` |
+| PC-65 | Append || true to volume rm and journal removed. | `RemoteScriptContractTests.C1008_Recycle_receipt_records_disk_and_partial_failure` | `recycle-receipt-facts` |
+| PC-66 | Accept mismatched name/driver/labels from volume inspect. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` | `recycle-reference-refusal` |
+| PC-67 | Restrict audit roots to the primary checkout only. | `RemoteScriptContractTests.C1008_Recycle_audits_work_as_1654` | `recycle-audit-uid` |
+| PC-68 | Remove local branch/tag tip enumeration and audit HEAD only. | `RemoteScriptContractTests.C1008_Recycle_refuses_unpublished_and_dirty_work` | `recycle-work-preserved` |
+| PC-69 | Skip current origin-advertisement comparison. | `RemoteScriptContractTests.C1008_Recycle_refuses_uninspectable_git` | `recycle-git-unknown-refuses` |
+| PC-70 | Ignore nonempty status --porcelain output. | `RemoteScriptContractTests.C1008_Recycle_refuses_unpublished_and_dirty_work` | `recycle-work-preserved` |
+| PC-71 | Replace nonnumeric/empty count validation with default zero. | `RemoteScriptContractTests.C1008_Recycle_refuses_uninspectable_git` | `recycle-git-unknown-refuses` |
+| PC-72 | Bypass shallow/partial/missing-object refusal. | `RemoteScriptContractTests.C1008_Recycle_refuses_uninspectable_git` | `recycle-git-unknown-refuses` |
+| PC-73 | Skip canonical root/gitdir confinement checks. | `RemoteScriptContractTests.C1008_Recycle_refuses_uninspectable_git` | `recycle-git-unknown-refuses` |
+| PC-74 | Ignore merge/rebase/index-lock markers. | `RemoteScriptContractTests.C1008_Recycle_refuses_uninspectable_git` | `recycle-git-unknown-refuses` |
+| PC-75 | Remove GIT_OPTIONAL_LOCKS=0 and no-lazy-fetch setting from audit invocation. | `RemoteScriptContractTests.C1008_Recycle_audits_work_as_1654` | `recycle-audit-uid` |
+| PC-76 | Remove the post-stop tip/ref comparison and accept pre-stop audit. | `RemoteScriptContractTests.C1008_Recycle_refuses_unpublished_and_dirty_work` | `recycle-work-preserved` |
+| PC-77 | Leave the stopped audit helper after audit and proceed. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` | `recycle-reference-refusal` |
+| PC-78 | Skip explicit source-volume inspection before helper run. | `RemoteScriptContractTests.C1008_Recycle_refuses_uninspectable_git` | `recycle-git-unknown-refuses` |
+| PC-79 | Replace pinned image digest with mutable requested tag. | `RemoteScriptContractTests.C1008_Recycle_audits_work_as_1654` | `recycle-audit-uid` |
+| PC-80 | Remove audit --entrypoint override. | `RemoteScriptContractTests.C1008_Recycle_audits_work_as_1654` | `recycle-audit-uid` |
+| PC-81 | Remove readonly from /work audit mount. | `RemoteScriptContractTests.C1008_Recycle_audits_work_as_1654` | `recycle-audit-uid` |
+| PC-82 | Ignore failure of the preflight journal write. | `RemoteScriptContractTests.C1008_Recycle_receipt_records_disk_and_partial_failure` | `recycle-receipt-facts` |
+| PC-83 | Reset removed outcomes to empty on a subsequent rm failure. | `RemoteScriptContractTests.C1008_Recycle_receipt_records_disk_and_partial_failure` | `recycle-receipt-facts` |
+| PC-84 | Write journal destination directly instead of temp plus rename. | `RemoteScriptContractTests.C1008_Recycle_receipt_records_disk_and_partial_failure` | `recycle-receipt-facts` |
+| PC-85 | Put host journal under the selected work volume. | `RemoteScriptContractTests.C1008_Recycle_resume_requires_matching_receipt` | `recycle-resume-generation` |
+| PC-86 | Skip journal sourceSha equality. | `RemoteScriptContractTests.C1008_Recycle_resume_requires_matching_receipt` | `recycle-resume-generation` |
+| PC-87 | Skip journal recycle-options equality. | `RemoteScriptContractTests.C1008_Recycle_resume_requires_matching_receipt` | `recycle-resume-generation` |
+| PC-88 | Skip journal project equality. | `RemoteScriptContractTests.C1008_Recycle_resume_requires_matching_receipt` | `recycle-resume-generation` |
+| PC-89 | Skip journal retiredAt/oldStore equality. | `RemoteScriptContractTests.C1008_Recycle_resume_requires_matching_receipt` | `recycle-resume-generation` |
+| PC-90 | Skip journal Compose digest equality. | `RemoteScriptContractTests.C1008_Recycle_resume_requires_matching_receipt` | `recycle-resume-generation` |
+| PC-91 | Accept an unrecorded recreated container ID with matching SHA. | `RemoteScriptContractTests.C1008_Recycle_resume_requires_matching_receipt` | `recycle-resume-generation` |
+| PC-92 | Restart the deletion loop after partial up instead of verification. | `RemoteScriptContractTests.C1008_Recycle_resume_requires_matching_receipt` | `recycle-resume-generation` |
+| PC-93 | Return same-SHA verification branch before inspecting incomplete journal. | `RollingVolumeRecycleScriptTests.C1008_Same_sha_and_partial_retries_are_safe` | `recycle-wrapper-resume` |
+| PC-94 | Always invoke recycle for healthy same-SHA runner. | `RollingVolumeRecycleScriptTests.C1008_Same_sha_and_partial_retries_are_safe` | `recycle-wrapper-resume` |
+| PC-95 | Replace invalid before-df with zero and continue. | `RemoteScriptContractTests.C1008_Recycle_receipt_records_disk_and_partial_failure` | `recycle-receipt-facts` |
+| PC-96 | Copy before-df into after-df on after-probe error. | `RemoteScriptContractTests.C1008_Recycle_receipt_records_disk_and_partial_failure` | `recycle-receipt-facts` |
+| PC-97 | Calculate absolute block difference without 1024 conversion. | `RemoteScriptContractTests.C1008_Recycle_receipt_records_disk_and_partial_failure` | `recycle-receipt-facts` |
+| PC-98 | Print completed summary in both rm helper and wrapper continuation. | `RemoteScriptContractTests.C1008_Recycle_receipt_records_disk_and_partial_failure` | `recycle-receipt-facts` |
+| PC-99 | Ignore failed SCP of host journal and report completed. | `RemoteScriptContractTests.C1008_Recycle_receipt_records_disk_and_partial_failure` | `recycle-receipt-facts` |
+| PC-100 | Clear main drain in failure cleanup after seed/up failure. | `RollingVolumeRecycleScriptTests.C1008_Same_sha_and_partial_retries_are_safe` | `recycle-wrapper-resume` |
+| PC-101 | Remove requested buildVersion equality from verification wait. | `RollingVolumeRecycleScriptTests.C1008_Same_sha_and_partial_retries_are_safe` | `recycle-wrapper-resume` |
+| PC-102 | Treat failed mount verification as success. | `RollingVolumeRecycleScriptTests.C1008_Same_sha_and_partial_retries_are_safe` | `recycle-wrapper-resume` |
+| PC-103 | Move drain clear before verify-runner-caches. | `RollingVolumeRecycleScriptTests.C1008_Same_sha_and_partial_retries_are_safe` | `recycle-wrapper-resume` |
+| PC-104 | Accept nonempty non-date retiredAt. | `RollingVolumeRecycleScriptTests.C1008_Present_or_unknown_temp_keeps_null_refusal` | `retire-null-stays-closed` |
+| PC-105 | Drop draining=true from absent-temp predicate. | `RollingVolumeRecycleScriptTests.C1008_Present_or_unknown_temp_keeps_null_refusal` | `retire-null-stays-closed` |
+| PC-106 | Drop retireWhenIdle=true from absent-temp predicate. | `RollingVolumeRecycleScriptTests.C1008_Present_or_unknown_temp_keeps_null_refusal` | `retire-null-stays-closed` |
+| PC-107 | Drop redirectTo=server2 from absent-temp predicate. | `RollingVolumeRecycleScriptTests.C1008_Present_or_unknown_temp_keeps_null_refusal` | `retire-null-stays-closed` |
+| PC-108 | Drop available=false from absent-temp predicate. | `RollingVolumeRecycleScriptTests.C1008_Present_or_unknown_temp_keeps_null_refusal` | `retire-null-stays-closed` |
+| PC-109 | Drop dispatchEligible=false from absent-temp predicate. | `RollingVolumeRecycleScriptTests.C1008_Present_or_unknown_temp_keeps_null_refusal` | `retire-null-stays-closed` |
+| PC-110 | Drop acceptingNewWork=false from absent-temp predicate. | `RollingVolumeRecycleScriptTests.C1008_Present_or_unknown_temp_keeps_null_refusal` | `retire-null-stays-closed` |
+| PC-111 | Treat missing runnerSessions as explicit null. | `RollingVolumeRecycleScriptTests.C1008_Present_or_unknown_temp_keeps_null_refusal` | `retire-null-stays-closed` |
+| PC-112 | Remove host comparison to wrapper retiredAt. | `RemoteScriptContractTests.C1008_Retire_temp_rechecks_absence_and_retirement` | `retire-host-proof` |
+| PC-113 | Use wrapper supplied retired predicate instead of fresh host status predicate. | `RemoteScriptContractTests.C1008_Retire_temp_rechecks_absence_and_retirement` | `retire-host-proof` |
+| PC-114 | Treat exited temp container as absent in null predicate. | `RemoteScriptContractTests.C1008_Retire_temp_rechecks_absence_and_retirement` | `retire-host-proof` |
+| PC-115 | Remove host counterpart accepting check. | `RemoteScriptContractTests.C1008_Retire_temp_rechecks_absence_and_retirement` | `retire-host-proof` |
+| PC-116 | Add temp drain/clear on successful retirement. | `RollingVolumeRecycleScriptTests.C1008_Retired_absent_null_is_accepted` | `retire-absent-null-accepted` |
+| PC-117 | Allow null runnerSessions in c849_status_zero. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-118 | Allow state reset from ordinary drain without retirement stamp. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-119 | Move retirement clear before owned container removal. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-120 | Treat unavailable status alone as detached. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-121 | Replace lease-expiry proof with fixed sleep using default 90. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-122 | Ignore recent-disconnect lease window. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-123 | Accept old runnerStoreId as successful state reset. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-124 | Treat StoreMismatch registration result as success. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-125 | Use only main status for maintenance admission. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-126 | Exclude foreign containers from maintenance cache reference scan. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-127 | Allow absent-main cold proof with flags only and no completed journal. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-128 | Accept an uninspectable helper image digest before cache rm. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-129 | Invoke runner-cache-recycle-seed unconditionally after default recycle. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-130 | Delete seed marker before cache reference/removal proof. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-131 | Remove io.antiphon.cache-role label from cache volume create. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-132 | Skip driver/options check in c849_cold_volume_facts. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-133 | Skip canonical-root/symlink validation. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-134 | Skip owner/mode validation after initialization. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-135 | Replace find emptiness probe with non-dot glob. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-136 | Ignore nonzero c849_cold_probe result. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-137 | Ignore helper cleanup failure and publish marker. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-138 | Remove the final P6 c849_cold_proof call. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-139 | Remove C849_COLD_PRESENT check before init helper. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-140 | Write ready marker before final proof using direct destination write. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-141 | Return success in case_verify_runner_caches before mounts/writability. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-142 | Make c849_require_ready accept cold in full-required context. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-143 | Apply maintenance absent-main exception when no recycle context is supplied. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-144 | Call exit-producing c849_cold_seed inline in deploy-parent. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-145 | Move dry-run dispatch below ensure_checkout/boot-file preparation. | `RemoteScriptContractTests.C1008_Recycle_dry_run_never_mutates` | `recycle-preview-readonly` |
+| PC-146 | Reuse preview status/journal without fresh apply preflight. | `RemoteScriptContractTests.C1008_Recycle_dry_run_never_mutates` | `recycle-preview-readonly` |
+| PC-147 | Start audit Docker helper during offline preview. | `RemoteScriptContractTests.C1008_Recycle_dry_run_never_mutates` | `recycle-preview-readonly` |
+| PC-148 | Add volume-nocopy to runner-tmp mount rendering. | `RemoteScriptContractTests.C1008_Recycle_preserves_tmp_copyup` | `recycle-tmp-assets` |
+| PC-149 | Skip recreated /tmp asset/mode validation. | `RemoteScriptContractTests.C1008_Recycle_preserves_tmp_copyup` | `recycle-tmp-assets` |
+| PC-150 | Write raw Git stderr or HTTP exception body to public receipt. | `RollingVolumeRecycleScriptTests.C1008_Refusal_receipts_do_not_leak_secrets` | `recycle-receipt-custody` |
+| PC-151 | Remove WROTE protection so EXIT overwrites diagnosis with UnhandledExit. | `RollingVolumeRecycleScriptTests.C1008_Refusal_receipts_do_not_leak_secrets` | `recycle-receipt-custody` |
+| PC-152 | Replace host lane refusal at recycle entry with :. | `RollingVolumeRecycleScriptTests.C1008_Documentation_and_transport_pins_match` | `recycle-doc-contract` |
+| PC-153 | Remove rollout-lock acquisition while retaining cache lock. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` | `recycle-reference-refusal` |
+| PC-154 | Remove rollout-lock acquisition on drain/clear path. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
+| PC-155 | Unconditionally reacquire cache lock inside maintenance seed while parent holds it. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-156 | Remove runner-cache-recycle-seed from live-case dispatch roster. | `RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict` | `recycle-manifest-strict` |
+
+Inventory audit: **guards=156, mapped=156, missing=0, duplicate PC maps=0**.
+**Executable-design exceptions: PC-121, PC-122 (B-1)**; their predicates lack a production-observable contract.
+The remaining 154 controls have specified mutations, methods, inputs and first
+assertions, but are not claimed executed. The all-PCs-executable handoff condition
+is therefore **not satisfied**; the next stage is Plan, not Code.
+
+### Out of scope
+
+- Live rollout, production Docker deletion, provider launches, cache warmup duration,
+  server lease implementation and new API fields. RD's identity fixture cannot prove
+  production lease expiry; existing CARD-0953 server tests are read-only dependencies.
+- Recovery of unreachable Git reflog objects, automatic publication/salvage and the
+  retained-container/null extension of CARD-0994. Those remain deliberately refused.
+- Atomic exclusion of independently initiated server lands. The no-new-land window
+  is an operational prerequisite; script locks and a repeated census do not supply
+  an atomic server maintenance lease.
+- CARD-0980's five Windows path fixes and CARD-0983's require-jq feature. Reserve the
+  shared regions below, but do not implement either sibling card in CARD-1008.
+- Async session delivery: no changed queue/session producer exists, as inventoried
+  above. Command acceptance is never substituted for observed Docker/receipt effects.
+
+### Admission blockers, shared files and platform qualification
+
+**B-1 — state-reset lease proof is not implementable from the frozen HTTP seam.**
+`PhoneHomeRunnerDirectory.Register` checks `slot.Live`, `slot.LeaseUntil` and
+`LastDisconnect.AtUtc + _settings.LeaseSeconds`, in addition to retirement-clear
+authorization. `Status`/`PhoneHomeRunnerStatusDto` expose old store, epoch, last
+heartbeat/disconnect and counters, but not LeaseUntil or configured LeaseSeconds.
+The setting defaults to 90 and is configurable; copying 90 into a fake proves
+neither production expiry condition. `available=false` also covers an attached
+expired connection. Inspection of `SnapshotOf`/`ReadSnapshot` confirms a **present
+epoch key with null value** can witness `slot.Live == null` at that observation;
+PC-120 therefore has an executable vector (unavailable plus non-null epoch must
+refuse), while PC-121/122 do not yet have an observable expiry predicate.
+
+Missing input: Plan must choose and specify the production-observable contract for
+the two lease waits, or explicitly revise D-6's timing/authority and scope. Existing
+server registration acceptance could be an authoritative later observation, but
+adopting that as the wait protocol would change the decided design; TestDesign does
+not silently make that choice. No fake `leaseExpired`/`connectionAttached` fields
+may be added to the status DTO fixture. Keep the state flag refused until this is
+resolved; that is not permission to ship partial acceptance as CARD-1008 complete.
+
+**B-2 — actual importer receipt is unavailable in this docs-only dispatch.**
+No prebuilt `Antiphon.Checkpoints.dll` exists under the tool checkout. The brief
+forbids repository builds/tests, so the actual importer was read but not executed.
+The table was checked for its nine ordered required columns plus Serial/Environment,
+escaped pipes, five distinct forward-slash outputs and numeric floors. This is
+source validation, not an importer pass. Missing evidence: run the unchanged real
+importer against this committed file using the already-declared isolated tool
+bootstrap in the next authorized implementation task, before any checkpoint run.
+No build is requested from this TestDesign delegate to erase the limitation.
+
+| Shared path/region | Overlap and required ordering |
+|---|---|
+| `tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs` | C1008 new methods and changed retirement/cold reader blocks overlap the class edited by 0980's five C849 LinuxShell/RepoRoot sites (cache lane, seed, saved-donor import/unsafe archive/size bomb). 0983 may add jq qualification contracts here. |
+| `scripts/test-deploy-server2.ps1` | C1008 targeted dispatch/fake state and frozen counters share param/probe/roster regions with 0983's require-jq option. |
+| `scripts/test-deploy-server2-jq.ps1` | Shared present-probe qualification, expected groups/invocations/assertions and no-jq fallback. |
+| `scripts/fixtures/c727-fake-http.ps1`, `scripts/fixtures/c727-fake-verify.ps1`, `scripts/fixtures/c973-marker-reader.sh` | C1008 extends runner/task state, manifest tracing and retire-reader behavior; reserve against sibling harness edits and re-read any later shared helper change. |
+| `scripts/c590-remote.sh` | C1008 deploy/retire, c849 cold/ready and host dispatcher regions; reserve as the brief's shared production region. The current 0980 card is test-only and 0983 names jq harnesses, so neither currently establishes a required production edit here. |
+| `scripts/deploy-server2.ps1` | C1008 parameters, strict/retirement predicates, manifest and phase dispatch; same conservative serialization reservation from the brief, not a claim that 0980 currently commissions a production fix. |
+| `docs/docker-stack.md`, `DockerStackDocumentationTests.cs` | Policy Docs branch must land first, including b71e8e105's correction and added test; C1008 then updates implementation status without reinstating manual main removal. |
+
+**Landing order:** corrected policy Docs -> this freeze and B-1 Plan repair ->
+CARD-1008 Code/Review/land **first** -> CARD-0980 and CARD-0983 re-baseline their
+shared files and counts. Do not let either sibling dispatch into these regions
+while CARD-1008 owns them. Their historical 57-result/19-group figures are not
+current admission floors. `server/Bundles/orchestrator.md` has no matching rolling,
+retire-temp, redeploy-old or recycling instruction in this baseline; no bundle edit
+is justified by this inspection.
+
+Missing setup to be supplied by S1: file-backed fake Docker, literal status and task
+responses, real local Git graph factory, per-operation persistent journal driver,
+injected stop/rm/write/SCP boundaries, isolated RD image/object ledger, and process
+ownership/cleanup. Existing c727 verifier only marks oldDeployed and cannot prove
+recycling; existing CacheStatusHarness fakes jq with word tokens and cannot prove
+null/type predicates. Neither is sufficient without those extensions.
+
+The five existing C849 methods named by CARD-0980 require its Windows/WSL row to
+prove wslpath conversion; this Linux worktree cannot run that row and the desktop
+checkout is not reachable. New C1008 source-byte shell fixtures must materialize
+under Linux or explicitly convert each Windows path, following C973ReaderHarness
+and c727-fake-verify, not the five defective callers. V-13/14/16/17/18/19 are the
+wrapper/manifest/jq portability observations worth including in a later Windows
+qualification; CP-5 requires Linux's own isolated nested daemon. The current five
+CPs commission Linux evidence only; no Windows green or live-desktop activation is
+claimed. CARD-0980's later Windows full-Remote row must recount from 96 expected
+post-C1008 results, plus its own additions, and prove zero skips. Do not block the
+ordered C1008 land on an uncommissioned Windows repair or silently add a sixth CP.
+
+**Code start condition:** B-1 has a reviewed Plan amendment and a completed
+TestDesign reconciliation making PC-121/122 executable; the corrected policy Docs
+land is contained in the Code base; C1008 has exclusive shared-file ownership ahead
+of 0980/0983; the source census is refreshed at that base; and the real importer
+passes after the declared bootstrap (B-2). All 21 V methods, 39 RD outcomes and 156
+guard mappings then remain binding unless that amendment explicitly reconciles them.
+
+Freeze count deltas: CP-3 Min **52 -> 54**; CP-4 Min **36 -> 207** (170 existing
+Compose/command results previously omitted plus one pending policy test); CP-5
+keeps Min **1** and now explicitly requires **39** internal outcomes. CP-1/2 remain
+1/20. Five rows and **51 estimated minutes** are unchanged; no measured speed claim.
+
 ### Checkpoints
 
 Closed Code list. Each row owns one isolated build and one literal TUnit filter.
 Group names name the lane; no unsupported `Lane` column is added to the importer.
 CP-1 is the explicit expected-red preparatory row, not a final green certificate.
 All other rows require zero failures/skips at their committed slice SHA. Final
-Review runs CP-2..CP-5 at the reviewed tip. Counts are prospective until TestDesign
-freezes fixtures/rosters; `Min` counts TUnit results, not harness assertions.
+Review runs CP-2..CP-5 at the reviewed tip. Counts are frozen by source inspection above; `Min` counts TUnit results, not harness assertions.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
@@ -800,8 +1234,9 @@ freezes fixtures/rosters; `Min` counts TUnit results, not harness assertions.
 
 ## Test-design freeze and execution hooks
 
-TestDesign is next, and must commit/push the following reconciliation to this plan
-before admitting Code:
+The original Plan handoff checklist below is retained for traceability. The additive
+freeze above supplies its vectors and counts; B-1/B-2 remain explicit admission
+conditions, so it does not yet admit Code:
 
 1. Freeze `c1008-recycle-cases.json`: each accepted/refused state, intended reason,
    command ordering, receipt shape and first labelled assertion. Model missing vs
@@ -931,6 +1366,28 @@ and counted separately from its 20 TUnit results. No performance claim follows
 from these estimates. This Plan task is time-boxed to 40 minutes and runs only its
 36-result documentation selection.
 
+TestDesign cost reconciliation (all estimates; this dispatch ran **0** builds,
+**0** tests and **0** PCs): ordinary Code floor remains **51 minutes**, CP-1
+6 + CP-2 15 + CP-3 10 + CP-4 8 + CP-5 12, including their isolated builds.
+One-time Code tool bootstrap/setup adds **6 minutes**, giving **57** before authoring
+or slot waits. Expanded PC inventory is **156**, rather than the original 14.
+Mutation has **6 minutes** setup and **1,078 minutes** of method-scoped cycles:
+115 controls at 6 minutes, 11 V-7 resume controls at 8, and 30 V-11 opt-in controls
+at 10. Each uses the literal exact method filter bound in the PC tables, Min=1.
+The six-minute unit includes 0.5 edit/restore, 2 red build, 0.5 red method, 2 green
+build, 0.5 restored method and 0.5 evidence; V-7 adds 1 per method execution and
+V-11 adds 2 per execution for their internal vectors. Mutation floor = **1,084
+minutes**. Combined verification estimate = **6 + 51 + 6 + 1,078 = 1,141 minutes**
+(19 hours 1 minute), excluding authoring, repairs, queue waits and any newly
+commissioned lease-contract work. PC-121/122 costs reserve work blocked by B-1;
+reserving time is not executable proof. Final Review CP-2..CP-5 adds **45** if
+budgeting that separate dispatch, for **1,186** including Review.
+
+Compared with two whole CP-2 builds/runs per control (156 x 30 = 4,680 minutes),
+the method-scoped cycle estimate saves **3,602 minutes**; measured savings are
+**0** because nothing ran. The large mandatory PC floor is disclosed to Plan,
+not hidden behind the earlier 14-control proposal or credited as Code work.
+
 ## FOLLOW-UPS
 
 Board searches `unpublished` and `retire-temp` used `card.ps1 search -Board Antiphon
@@ -942,6 +1399,6 @@ promotion issue; this card does not move that gate. No additional structural
 defect requiring a new card was established during this Plan inspection.
 
 --- next stage ---
-next: test-design
-handoff: Freeze CARD-1008's status/Git/volume and partial-resume fixtures, maintenance cold-seed proof, exact checkpoint and real-Docker counts, and method-scoped PCs before Code; serialize the shared remote-script tests with CARD-0980/0983.
+next: plan
+handoff: Resolve B-1: D-6 lease waits lack an observable HTTP contract, leaving PC-121/122 unexecutable. Preserve the frozen status/Git/volume/resume vectors, 21 V methods, 54/207 checkpoint counts, 39 RD outcomes and 156 guard mappings; then reconcile TestDesign before Code. Require corrected policy Docs land and C1008-first serialization ahead of 0980/0983.
 artifact: docs/superpowers/plans/2026-10-03-card-1008-rolling-volume-recycle-and-retire-temp-plan.md
