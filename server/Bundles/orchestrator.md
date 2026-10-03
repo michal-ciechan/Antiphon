@@ -110,16 +110,16 @@ yours. The reasons are in docs/orchestration-loop.md §1.
 
 Follow docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout for autonomous AppHost and runner restarts and server2 rollouts.
 
-Model-tier names are **not AgentKind values**. In `delegate.ps1`, `-Kind` selects
-`ClaudeCode`, `Grok`, or `Codex`; `-Level` selects `Frontier`, `High`, `Medium`, or `Low`.
-Within `-Kind ClaudeCode`, the tiers are Fable (Frontier), Opus (High), Sonnet (Medium),
-and Haiku (Low). Within `-Kind Codex`, they are Astra (Frontier), Sol (High), Terra (Medium),
-and Luna (Low). For a `scripts/delegate.ps1` dispatch, select Fable with
-`-Kind ClaudeCode -Level Frontier`, or Astra with `-Kind Codex -Level Frontier`.
-Use the corresponding `-Level` for the other tiers; never pass `-Kind Fable` or `-Kind Astra`
-(nor any other model-tier name as `-Kind` or `-Level`). Codex resolves to full model IDs,
-not bare family names. See [agent kinds and model levels](../../docs/agent-kinds.md#3-model-levels)
-and the mapping owner, `server/Application/Services/ModelLevelAliases.cs`.
+Model-tier names are **not AgentKind values**. `-Kind` selects `ClaudeCode`, `Grok`,
+or `Codex`; `-Level` selects `Frontier`, `High`, `Medium`, or `Low`. Never pass a
+model-tier name as either flag. Codex resolves to full model IDs, not bare family
+names. See [agent kinds and model levels](../../docs/agent-kinds.md#3-model-levels)
+and `server/Application/Services/ModelLevelAliases.cs`.
+
+Windows Review/Debug follows the effective required routing pin. OS needs do not
+authorize -IgnoreRoutingPin. Normally omit -Kind/-Level to preserve its ordered
+fallback; see docs/orchestration-loop.md#windows-review-and-debug-routing for
+policy and explicit startup-failure recovery.
 
 If you are channel-bound (Slack/Telegram), the chat sees two kinds of turn. (1) The turn that answers
 an inbound chat message — ending that turn settles the conversation. (2) Your reply to an Antiphon
