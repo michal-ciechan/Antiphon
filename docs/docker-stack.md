@@ -42,7 +42,7 @@ the drain redirect cannot promote temp for it: stop and report the missing routi
 | 6. Upgrade old | Run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase redeploy-old` only after step 5's zero gate. The phase runs `deploy-parent`, verifies mounts/cache and `buildVersion`, then clears old's drain. | If it refuses, keep temp accepting and old drained; use the retained rollback image and the [rollback procedure](#shared-server2-runner-caches-card-0849) only through a reviewed recovery. Do not clear an unverified old runner. |
 | 7. Smoke upgraded old | Run the command block below for `server2`, a sanctioned `Plan` canary pinned with `-Runner server2`, and `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Both -Sha <sha>`. | `redeploy-old` already clears old's drain after its own host checks, before this separate canary. If this gate fails, immediately drain old toward accepting temp with `pwsh -NoProfile -File scripts/runner-drain.ps1 drain -RunnerId server2 -RedirectTo server2-temp -Reason 'post-upgrade smoke failed'`; stop and report. CARD-0935 tracks a separate canary-before-promotion gate. |
 | 8. Return scheduling and drain temp | Once old passes step 7 and accepts work, run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase drain-temp -WaitIdleMinutes 240`. This sets temp `redirectTo=server2` and `retireWhenIdle=true`; automatic placement uses old again. Verify old accepting and temp drained/retired. | If the phase refuses, leave old accepting and temp in its observed state; report the code. If a rollback is needed before temp retires, clear temp's drain only after verifying old remains accepting; do not start two drains. |
-| 9. Retire temp | Always retire temp once scheduling is back on main, after drain and the zero-work gate; reclaim its volumes under [Volume recycling and disk reclaim](#volume-recycling-and-disk-reclaim-card-1008). Retain the rollout receipts. | The current absent-row guard can refuse the normal path; use only the documented manual equivalent below, with every precondition satisfied. Other refusals stop the rollout. |
+| 9. Retire temp | Always retire temp once scheduling is back on main, after drain and the zero-work gate; reclaim its volumes under [Volume recycling and disk reclaim](#volume-recycling-and-disk-reclaim-card-1008). Retain the rollout receipts. | The retired, offline, absent placeholder may have null live inventory only with the complete host proof. Other refusals stop the rollout. |
 
 At gate 1, `deploy-temp` accepts either a retired temp placeholder or a cleared offline
 one, whether its drain is set or clear. For a retired start it checks offline zero work,
@@ -128,9 +128,9 @@ pwsh -NoProfile -File scripts/runner-drain.ps1 status -RunnerId server2-temp
 
 Wait until `retiredAt` is non-null, `draining=true`, `retireWhenIdle=true`, and
 `redirectTo=server2`. Preserve the status and census with the failed phase receipt.
-The absent offline placeholder may keep `runnerSessions=null`; the current phase
-refuses that shape. Follow the [manual retirement equivalent](#volume-recycling-and-disk-reclaim-card-1008)
-only with confirmed container absence and all other preconditions satisfied. Preserve
+The absent offline placeholder may keep `runnerSessions=null`; `retire-temp` accepts
+that shape only with its retirement, counter, routing, work and current host-absence
+proof. Run `retire-temp` and retain its volume and disk receipt. Preserve
 the retired absent row; the next `deploy-temp` supports it. Unknown live inventory
 without confirmed absence still stops cleanup. Do not clear the hold to abandon a rollout.
 
@@ -141,13 +141,15 @@ main runner. After drain and the checks below, temp is disposable: `compose_temp
 removes all four private volumes (work, runner-tmp, dind-data, runner-state). This is
 part of the rollout's disk reclaim, not a reason to retain temp for rollback.
 
-Main volume recycling is **scripted only**: CARD-1008 must implement recycling
+Main volume recycling is **scripted only**: the rolling script implements recycling
 `antiphon-runner_work`, `antiphon-runner_runner-tmp` and `antiphon-runner_dind-data`
 inside the `redeploy-old` / `deploy-parent` flow, after its admission checks and
-controlled stop. Until that script work lands, do not stop or remove main's container
-or recycle its volumes by hand. A stopped main reports `runnerSessions=null` while
+controlled stop. Do not stop or remove main's container or recycle its volumes by
+hand. A manually stopped main without this operation's journal reports `runnerSessions=null` while
 still advertising the old SHA: `Assert-ZeroCounters` makes `redeploy-old` refuse
 with `RunnerCounterUnknown server2 runnerSessions` before `deploy-parent` runs.
+A matching `-ResumeRecycle <operation-id>` delegates proof of this script's own
+stop/removal to the saved host journal; a generic offline main remains refused.
 Never use blanket `down -v` on main. Its only documented manual disk reclaim is
 the in-container cleanup below, with the runner kept **running**.
 
@@ -157,13 +159,18 @@ the in-container cleanup below, with the runner kept **running**.
 | `antiphon-runner-temp_runner-tmp` | Temp `/tmp` | Remove on temp retirement | Image `/tmp`, including `/tmp/antiphon-pty-hosts`, copies in on first mount (CARD-0827) |
 | `antiphon-runner-temp_dind-data` | Temp nested Docker data | Remove on temp retirement | Nested images and containers must be rebuilt |
 | `antiphon-runner-temp_runner-state` | Temp identity/store and volume-backed provider state | Remove on temp retirement | New store; next deployment uses explicit retirement clear and lease admission (CARD-0953) |
-| `antiphon-runner_work` | Main task worktrees and mirrors | Preserve until CARD-1008 scripted replacement recycling lands | Empty workspace; recover unpublished work first |
-| `antiphon-runner_runner-tmp` | Main `/tmp` | Preserve until CARD-1008 scripted replacement recycling lands | Image `/tmp`, including `/tmp/antiphon-pty-hosts`, copies in on first mount; never substitute a name-pattern sweep |
-| `antiphon-runner_dind-data` | Main nested Docker data | Preserve until CARD-1008 scripted replacement recycling lands | Nested images and containers must be rebuilt |
-| `antiphon-runner_runner-state` | Main runner identity/store and volume-backed provider state | Preserve; explicit human opt-in to recycle | A different store hits `StoreMismatch`; retire, explicitly clear retirement, allow connection detachment and lease expiry, then re-register under CARD-0953 |
-| `antiphon-runner-cache-nuget-packages` | Shared NuGet packages | Preserve; explicit human opt-in to recycle | CARD-0912 cold Seed required; minutes to an hour, best effort |
-| `antiphon-runner-cache-nuget-scratch` | Shared NuGet lock scratch | Preserve; explicit human opt-in to recycle | Recreate through the cache maintenance/Seed procedure |
-| `antiphon-runner-cache-npm-content` | Shared npm package content | Preserve; explicit human opt-in to recycle | CARD-0912 cold Seed required; minutes to an hour, best effort |
+| `antiphon-runner_work` | Main task worktrees and mirrors | Recycle inside scripted replacement | Empty workspace; recover unpublished work first |
+| `antiphon-runner_runner-tmp` | Main `/tmp` | Recycle inside scripted replacement | Image `/tmp`, including `/tmp/antiphon-pty-hosts`, copies in on first mount; never substitute a name-pattern sweep |
+| `antiphon-runner_dind-data` | Main nested Docker data | Recycle inside scripted replacement | Nested images and containers must be rebuilt |
+| `antiphon-runner_runner-state` | Main runner identity/store and volume-backed provider state | Preserve; opt-in deferred to CARD-1010 | A different store hits `StoreMismatch`; retire, explicitly clear retirement, allow connection detachment and lease expiry, then re-register under CARD-0953 |
+| `antiphon-runner-cache-nuget-packages` | Shared NuGet packages | Preserve; opt-in deferred to CARD-1010 | CARD-0912 cold Seed required; minutes to an hour, best effort |
+| `antiphon-runner-cache-nuget-scratch` | Shared NuGet lock scratch | Preserve; opt-in deferred to CARD-1010 | Recreate through the cache maintenance/Seed procedure |
+| `antiphon-runner-cache-npm-content` | Shared npm package content | Preserve; opt-in deferred to CARD-1010 | CARD-0912 cold Seed required; minutes to an hour, best effort |
+
+State/cache opt-in flags are not shipped by CARD-1008; `-RecycleRunnerState` and
+`-RecycleCaches` are rejected by parameter binding. CARD-1010 owns them. Default
+replacement preserves main state, all three caches and the seed marker, and invokes
+no cold seed.
 
 The three shared cache volumes remain external to temp's `down -v`. Any cache
 recreation must finish the documented Seed and `verify-runner-caches` validation;
@@ -193,6 +200,29 @@ Run Git as the runner user (UID 1654), not root; root encounters `dubious owners
 and an ignored Git failure can masquerade as a zero unpublished-commit count.
 Require successful command exits and current origin refs proving every commit is
 published, rather than trusting a zero against an unrelated remote.
+
+Preview each destructive phase with `-DryRun`; `all` is not a preview phase. The
+preview reads inventories and prints the exact targets, preserved names and
+`auditPending=true` when an offline audit would need a helper. It grants no apply
+authority. Keep the no-new-land interval throughout reclaim. Apply obtains fresh
+proofs, stops/removes only inspected owned container IDs, and never prunes.
+
+Every attempt retains a schema-1 host journal under the deployment evidence root
+outside the recycled volumes and a copied receipt under
+`.antiphon/rolling-server2/<run-id>/`. `C1008_RECYCLE` records removed/alreadyAbsent
+counts, before/after available bytes and a signed delta on Docker's data-root
+filesystem. Reclamation occurs before main's allocation budget gate; safe temp
+retirement does not require a warm marker or 20 GiB free.
+
+After any stop, removal, seed/up or receipt-copy failure, keep main drained and temp
+accepting. Use the recorded operation ID with the same full source SHA and phase:
+
+`pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase redeploy-old -ResumeRecycle <operation-id>`
+
+Resume rechecks source, options, project, Compose, retirement/store, publication
+audit and original/recreated generations. It never deletes a replacement
+generation. Same-SHA retries refuse an unfinished journal until explicitly resumed.
+Recovery never commits, publishes, resets or salvages suspicious work.
 
 #### Manual main cleanup while running
 
