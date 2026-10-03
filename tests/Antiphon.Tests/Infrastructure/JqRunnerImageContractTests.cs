@@ -32,7 +32,8 @@ public sealed class JqRunnerImageContractTests
             Regex.IsMatch(stage.Body, @"(?s)apt-get install[^\n]*(?:\\\n[^\n]*)*\bjq\b").ShouldBeFalse("no apt jq in " + stage.Name);
         foreach (var target in new[] { "runtime", "receipt-probe", "session-testing" })
             DockerStackDocuments.Closure(stages, target).ShouldContain("/tmp/jq-download/jq /usr/local/bin/jq");
-        Read("docs/docker-stack.md").ShouldContain("jq " + Version + " (static jq-linux-amd64, SHA-256 `" + Sha256 + "`)");
+        Read("docs/docker-stack.md").ShouldContain("jq " + Version + " (static jq-linux-amd64, SHA-256 `" + Sha256
+            + "`, verified before installing root-owned mode 755 at `/usr/local/bin/jq`)");
     }
 
     [Test]
