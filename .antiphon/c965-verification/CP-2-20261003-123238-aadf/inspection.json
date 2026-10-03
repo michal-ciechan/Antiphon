@@ -1,0 +1,127 @@
+{
+  "counters": "<Counters total=\"29\" executed=\"29\" passed=\"29\" failed=\"0\" error=\"0\" timeout=\"0\" aborted=\"0\" inconclusive=\"0\" passedButRunAborted=\"0\" notRunnable=\"0\" notExecuted=\"0\" disconnected=\"0\" warning=\"0\" completed=\"0\" inProgress=\"0\" pending=\"0\" />",
+  "classDefinitions": {
+    "Antiphon.Tests.Application.DurableRunnerSpillReceiptTests": 11,
+    "Antiphon.Tests.Application.AgentTaskInputFallbackTests": 11,
+    "Antiphon.Tests.Application.PhoneHomeSpillTests": 4,
+    "Antiphon.Tests.Application.PhoneHomeSpillTransportTests": 3
+  },
+  "results": [
+    {
+      "method": "A_null_body_pointer_is_respilled_when_the_source_message_is_still_on_the_row",
+      "outcome": "Passed"
+    },
+    {
+      "method": "Screen_only_delivery_keeps_spill_bytes_and_a_retry_writes_the_same_body",
+      "outcome": "Passed"
+    },
+    {
+      "method": "Runner_write_failure_types_only_the_durable_api_pointer(send-now)",
+      "outcome": "Passed"
+    },
+    {
+      "method": "Queued_brief_is_written_by_the_runner_when_a_busy_recipient_becomes_eligible",
+      "outcome": "Passed"
+    },
+    {
+      "method": "Fallback_commit_failure_sends_no_replacement_input",
+      "outcome": "Passed"
+    },
+    {
+      "method": "A_complete_matching_UserPrompt_releases_a_null_body_pointer",
+      "outcome": "Passed"
+    },
+    {
+      "method": "A_screen_only_Delivered_null_body_pointer_is_canceled_instead_of_typed_without_bytes",
+      "outcome": "Passed"
+    },
+    {
+      "method": "Ordinary_spill_errors_keep_their_existing_delivery_behavior",
+      "outcome": "Passed"
+    },
+    {
+      "method": "A_screen_only_Delivered_null_body_is_respilled_from_the_source_message",
+      "outcome": "Passed"
+    },
+    {
+      "method": "A_null_body_spill_pointer_is_canceled_instead_of_a_silent_lookup_miss",
+      "outcome": "Passed"
+    },
+    {
+      "method": "Input_endpoint_binds_task_event_and_recipient_session",
+      "outcome": "Passed"
+    },
+    {
+      "method": "Dispatcher_pointer_survives_queue_binding_and_reaches_a_complete_UserPrompt",
+      "outcome": "Passed"
+    },
+    {
+      "method": "Input_endpoint_requires_the_recipient_task_token",
+      "outcome": "Passed"
+    },
+    {
+      "method": "Queued_runner_spill_keeps_its_bytes_and_receives_a_complete_UserPrompt",
+      "outcome": "Passed"
+    },
+    {
+      "method": "Input_body_is_absent_from_task_summary_events_and_logs",
+      "outcome": "Passed"
+    },
+    {
+      "method": "Grok_rules_launch_brief_uses_runner_ceiling_despite_a_modern_desktop_profile",
+      "outcome": "Passed"
+    },
+    {
+      "method": "SendNow_persists_the_spill_body_before_delivery_so_a_restart_can_read_it",
+      "outcome": "Passed"
+    },
+    {
+      "method": "Different_pointers_keep_their_own_staged_bodies",
+      "outcome": "Passed"
+    },
+    {
+      "method": "Remote_spill_never_writes_desktop_file",
+      "outcome": "Passed"
+    },
+    {
+      "method": "Remote_spill_travels_in_input_payload",
+      "outcome": "Passed"
+    },
+    {
+      "method": "Sessions_do_not_share_a_staged_body",
+      "outcome": "Passed"
+    },
+    {
+      "method": "A_body_staged_during_the_send_survives_the_acknowledgement",
+      "outcome": "Passed"
+    },
+    {
+      "method": "A_failed_input_frame_leaves_the_body_recoverable",
+      "outcome": "Passed"
+    },
+    {
+      "method": "Staged_body_reaches_the_runner_and_lands_on_disk",
+      "outcome": "Passed"
+    },
+    {
+      "method": "Input_failure_after_write_never_selects_fallback",
+      "outcome": "Passed"
+    },
+    {
+      "method": "Runner_path_refusal_never_writes_outside_the_mirror",
+      "outcome": "Passed"
+    },
+    {
+      "method": "Runner_write_failure_types_only_the_durable_api_pointer(enqueue-now)",
+      "outcome": "Passed"
+    },
+    {
+      "method": "Runner_write_failure_types_only_the_durable_api_pointer(flush)",
+      "outcome": "Passed"
+    },
+    {
+      "method": "Restart_after_fallback_commit_replays_the_same_api_pointer",
+      "outcome": "Passed"
+    }
+  ]
+}

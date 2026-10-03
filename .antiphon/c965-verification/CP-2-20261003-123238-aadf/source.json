@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "name": "CP-2",
+  "start": {
+    "commit": "01cc6fb776b96b8670a751422ce781adabd8abb2",
+    "dirtyFiles": 0,
+    "fingerprint": "2f53284c22ab359d58b1089fd7675b347397cc986c21adcb75c8e1af90606165",
+    "observedAtUtc": "2026-10-03T12:32:39.0286113+00:00",
+    "captureStatus": "known",
+    "errorCode": null
+  },
+  "end": {
+    "commit": "01cc6fb776b96b8670a751422ce781adabd8abb2",
+    "dirtyFiles": 0,
+    "fingerprint": "2f53284c22ab359d58b1089fd7675b347397cc986c21adcb75c8e1af90606165",
+    "observedAtUtc": "2026-10-03T12:36:56.1224875+00:00",
+    "captureStatus": "known",
+    "errorCode": null
+  },
+  "state": "clean",
+  "buildSource": "verified",
+  "reason": null,
+  "receipt": "CHECKPOINT CP-2 commit=01cc6fb776b96b8670a751422ce781adabd8abb2 build=ok filter=/*/*/(AgentTaskInputFallbackTests*)|(PhoneHomeSpillTests*)|(PhoneHomeSpillTransportTests*)|(DurableRunnerSpillReceiptTests*)/* executed=29 passed=29 failed=0 skipped=0 trx=/work/worktrees/task-22b182d6/.antiphon/c965-verification/CP-2-20261003-123238-aadf/run.trx slot=granted waited=0s dirty=0 source=01cc6fb776b96b8670a751422ce781adabd8abb2 sourceState=clean buildSource=verified",
+  "exitCode": 0,
+  "executed": 29,
+  "passed": 29,
+  "failed": 0,
+  "skipped": 0,
+  "timings": {
+    "slotWaitSeconds": 0.0,
+    "buildSeconds": 168.4266745,
+    "startupSeconds": 60.6841507,
+    "testsWallSeconds": 22.3601372,
+    "teardownSeconds": 2.5163906,
+    "testHostWallSeconds": 85.5606674,
+    "method": "utc-trx-and-monotonic-host",
+    "unavailableReason": null
+  }
+}
