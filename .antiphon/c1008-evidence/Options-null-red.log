@@ -1,0 +1,5 @@
+MSBUILD PROPERTY UseAppHost=false
+CHECKPOINT C1008-null-red commit=9342aca57d79c4276b3251bbe04605f240f41937 build=ok filter=/*/*/RemoteScriptContractTests/C1008_Recycle_exact_default_volumes executed=1 passed=0 failed=1 skipped=0 trx=/work/worktrees/task-b3777342/.antiphon/c1008-checkpoints/C1008-null-red-20261003-142802-5a7b/run.trx slot=granted waited=0s dirty=0 source=9342aca57d79c4276b3251bbe04605f240f41937 sourceState=clean buildSource=verified
+FAILED Antiphon.Tests.Scripts.RemoteScriptContractTests.C1008_Recycle_exact_default_volumes
+EXECUTED Antiphon.Tests.Scripts.RemoteScriptContractTests.C1008_Recycle_exact_default_volumes
+CHECKPOINT C1008-null-red EXIT CODE: 1

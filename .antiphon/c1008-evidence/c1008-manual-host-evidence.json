@@ -1,0 +1,45 @@
+{
+  "source": "eea7ce0fa06113f89de49948c2e1c5574cbe8cb5",
+  "base": "c6d5d56b5b4c565d36157e21de9c85029cc45b53",
+  "prefix": "c1008hostmanual67dcb93d9345df29",
+  "results": [
+    {
+      "name": "base-absent-null",
+      "exit": 2,
+      "diagnosis": "TempRunnerNotIdle",
+      "accepted": false,
+      "scriptDigest": "ed0729a9ad003166b4c5e9390329cec7cf033dd9f3dd56587dcc7de870bb34da",
+      "operation": "c1008cafc2915c496a1e3b46cf23c50a00446",
+      "absent": false
+    },
+    {
+      "name": "changed-absent-null",
+      "exit": 0,
+      "diagnosis": "",
+      "accepted": true,
+      "scriptDigest": "bee25f970d7255cc9c35080e5a4782fc18b77685cc4dc94f93b3a96d5bf61256",
+      "operation": "c1008b3f6a2e9e4e3f615a8109a3b20ab567c",
+      "absent": false
+    },
+    {
+      "name": "changed-all-already-absent",
+      "exit": 0,
+      "diagnosis": "",
+      "accepted": true,
+      "scriptDigest": "bee25f970d7255cc9c35080e5a4782fc18b77685cc4dc94f93b3a96d5bf61256",
+      "operation": "c10088d2c073bb6d68d2ab9bcf5a887169f30",
+      "absent": true
+    }
+  ],
+  "failure": null,
+  "cleanup": "all recorded containers and volumes absent",
+  "shims": [
+    "lane/root relocation",
+    "private HTTP status/task endpoint",
+    "sudo through owned nested-root namespace helper",
+    "read-only fixed helper-image pin",
+    "private compose model",
+    "cache lock on private root"
+  ],
+  "scope": "manual real host subset; formal 32-outcome class pending"
+}

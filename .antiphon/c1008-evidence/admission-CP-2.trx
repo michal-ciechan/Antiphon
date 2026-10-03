@@ -1,0 +1,321 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="b0223710-3d8e-4620-b422-33072dd64b50" name="@5d9e09695ab3 2026-10-03 14:20:15.0250979" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-10-03T13:53:14.6231178Z" queuing="2026-10-03T13:53:14.6231178Z" start="2026-10-03T13:53:14.6231178Z" finish="2026-10-03T14:20:15.0263708Z" />
+  <TestSettings name="default" id="5d4614bd-315e-424f-bd33-de7d7cb9aefb">
+    <Deployment runDeploymentRoot="_5d9e09695ab3_2026-10-03_14_20_15.0250979" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="bfb73d20-478e-4d86-9949-f3d5f6700750" testId="c9cab0ea-23c1-ad6b-31c5-360f203fc656" testName="C1008_Recycle_exact_default_volumes" computerName="5d9e09695ab3" duration="00:00:45.9493636" startTime="2026-10-03T13:53:16.0856130+00:00" endTime="2026-10-03T13:54:02.0349766+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="bfb73d20-478e-4d86-9949-f3d5f6700750">
+      <Output>
+        <StdOut>[CARD-0204] SessionRunner__BaseUrl=http://127.0.0.1:1, Delegation__CheckInterpreterEnabled=false, Delegation__DiagnoseEnabled=false and Delegation__OutputDistillerEnabled=false for every Program boot in this assembly (inherited SessionRunner__BaseUrl='&lt;unset&gt;') - test hosts never launch on the production session-runner.
+[CARD-0298] Hangfire__ServerEnabled=false for every Program boot in this assembly - test hosts never start a Hangfire worker (no WMI census, no production-runner list).
+[CARD-0045] cleared inherited ANTIPHON_PTY_BACKEND='inbox' — pty tests declare their backend; the suite means the same thing whoever launched it.
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="d57273f8-4f12-4f7a-9325-c88daa39ddf1" testId="2dec8b54-3489-2a31-1813-05bffc59d381" testName="C1008_Recycle_dry_run_never_mutates" computerName="5d9e09695ab3" duration="00:00:01.5159736" startTime="2026-10-03T13:54:02.0768935+00:00" endTime="2026-10-03T13:54:03.5928671+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="d57273f8-4f12-4f7a-9325-c88daa39ddf1" />
+    <UnitTestResult executionId="1d357a11-d750-4b2e-bc58-f4e65fafb313" testId="d0389f2e-ab2c-6ec8-c862-8ade0ba8fb4e" testName="C1008_Retire_temp_rechecks_absence_and_retirement" computerName="5d9e09695ab3" duration="00:00:13.9099664" startTime="2026-10-03T13:54:03.5953941+00:00" endTime="2026-10-03T13:54:17.5053605+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="1d357a11-d750-4b2e-bc58-f4e65fafb313" />
+    <UnitTestResult executionId="002f176c-333b-47f0-a3c0-ffcd7d8182d9" testId="173ac385-6bf5-5da3-0191-8d889ffd0500" testName="C1008_Recycle_receipt_records_disk_and_partial_failure" computerName="5d9e09695ab3" duration="00:00:14.9421401" startTime="2026-10-03T13:54:17.5061629+00:00" endTime="2026-10-03T13:54:32.4483030+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="002f176c-333b-47f0-a3c0-ffcd7d8182d9" />
+    <UnitTestResult executionId="1e686853-7349-4508-8fce-9b7d52598e25" testId="a4a219c0-654a-2f43-db29-ba7f2ba45411" testName="C1008_Recycle_resume_requires_matching_receipt" computerName="5d9e09695ab3" duration="00:00:26.6534512" startTime="2026-10-03T13:54:32.4489258+00:00" endTime="2026-10-03T13:54:59.1023770+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="1e686853-7349-4508-8fce-9b7d52598e25" />
+    <UnitTestResult executionId="81279bdd-c4f1-45a3-a323-a858f63ffeee" testId="6d7c8e6d-a9a8-4183-b2e6-84ee4e156d94" testName="C1008_Retire_temp_reclaims_below_cache_disk_gate" computerName="5d9e09695ab3" duration="00:00:11.9623638" startTime="2026-10-03T13:54:59.1030179+00:00" endTime="2026-10-03T13:55:11.0653817+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="81279bdd-c4f1-45a3-a323-a858f63ffeee" />
+    <UnitTestResult executionId="a44c67b7-274c-4ccc-b25a-22f9f90afeae" testId="b69ddeea-1ab2-d7e0-d7d5-d0a6b9d0eb48" testName="C1008_Recycle_refuses_uninspectable_git" computerName="5d9e09695ab3" duration="00:00:36.9965703" startTime="2026-10-03T13:55:11.0660675+00:00" endTime="2026-10-03T13:55:48.0626378+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="a44c67b7-274c-4ccc-b25a-22f9f90afeae" />
+    <UnitTestResult executionId="88b0a46d-0653-49e3-8157-fc6b1fad50b4" testId="b7ae2b37-dff5-9d0c-91b3-3e7d4e46cd66" testName="C1008_Recycle_refuses_unpublished_and_dirty_work" computerName="5d9e09695ab3" duration="00:01:00.2427068" startTime="2026-10-03T13:55:48.0632669+00:00" endTime="2026-10-03T13:56:48.3059737+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="88b0a46d-0653-49e3-8157-fc6b1fad50b4" />
+    <UnitTestResult executionId="2fb14e64-ae55-4525-8820-2edd4d4a510c" testId="f544e5c1-e9ef-9576-94ed-8bad2837cce4" testName="C1008_Recycle_audits_work_as_1654" computerName="5d9e09695ab3" duration="00:00:12.8028382" startTime="2026-10-03T13:56:48.3069977+00:00" endTime="2026-10-03T13:57:01.1098359+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="2fb14e64-ae55-4525-8820-2edd4d4a510c" />
+    <UnitTestResult executionId="be67fa7f-b421-48b7-bdd2-38e35e9c5a9c" testId="2fa1b4a9-b7f1-958d-d5b7-58564ac86db1" testName="C1008_Recycle_refuses_references_and_unknown_census" computerName="5d9e09695ab3" duration="00:00:32.0154070" startTime="2026-10-03T13:57:01.1104324+00:00" endTime="2026-10-03T13:57:33.1258394+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="be67fa7f-b421-48b7-bdd2-38e35e9c5a9c" />
+    <UnitTestResult executionId="172d4296-1a2a-472d-aee4-4cea5dbed29f" testId="fb708800-8313-59f9-37b9-d0d390d91bef" testName="C1008_Recycle_preserves_tmp_copyup" computerName="5d9e09695ab3" duration="00:00:12.4477626" startTime="2026-10-03T13:57:33.1269878+00:00" endTime="2026-10-03T13:57:45.5747504+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="172d4296-1a2a-472d-aee4-4cea5dbed29f" />
+    <UnitTestResult executionId="2ac40469-d8b5-4427-bef5-f8b922243cbb" testId="42a01e7a-b63c-9454-95fe-f294b24800cb" testName="C1008_Refusal_receipts_do_not_leak_secrets" computerName="5d9e09695ab3" duration="00:00:05.5673899" startTime="2026-10-03T13:57:45.5852508+00:00" endTime="2026-10-03T13:57:51.1526407+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="2ac40469-d8b5-4427-bef5-f8b922243cbb" />
+    <UnitTestResult executionId="a338c2dd-0269-425c-8b28-db16faa2491e" testId="5b773749-7d90-5180-31fd-76cd63a9d4fb" testName="C1008_Present_or_unknown_temp_keeps_null_refusal" computerName="5d9e09695ab3" duration="00:00:30.7650483" startTime="2026-10-03T13:57:51.1532330+00:00" endTime="2026-10-03T13:58:21.9182813+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="a338c2dd-0269-425c-8b28-db16faa2491e" />
+    <UnitTestResult executionId="b841cf84-6c46-4def-a264-de185eecd6a8" testId="e452e890-fb23-a6c2-2350-e2d445747c9a" testName="C1008_Busy_routed_and_land_in_flight_refuse" computerName="5d9e09695ab3" duration="00:01:17.0834260" startTime="2026-10-03T13:58:21.9190612+00:00" endTime="2026-10-03T13:59:39.0024872+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="b841cf84-6c46-4def-a264-de185eecd6a8" />
+    <UnitTestResult executionId="7584547d-ae8c-4858-bcbf-9b8984969250" testId="391e2a0c-57ff-5633-2569-ac3606d38d0c" testName="C1008_Same_sha_and_partial_retries_are_safe" computerName="5d9e09695ab3" duration="00:00:05.9352987" startTime="2026-10-03T13:59:39.0033736+00:00" endTime="2026-10-03T13:59:44.9386723+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="7584547d-ae8c-4858-bcbf-9b8984969250" />
+    <UnitTestResult executionId="7d77f996-73f5-410a-84dd-abb98d61f5cb" testId="61df658c-0119-3839-1218-362d32be8023" testName="C1008_Option_manifest_is_strict" computerName="5d9e09695ab3" duration="00:00:14.1065664" startTime="2026-10-03T13:59:44.9392794+00:00" endTime="2026-10-03T13:59:59.0458458+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="7d77f996-73f5-410a-84dd-abb98d61f5cb" />
+    <UnitTestResult executionId="3be5f573-efd5-4ebb-b526-2c5ba5630ff9" testId="7cbb3e15-e822-a945-0488-a66f4cb733d0" testName="C1008_Legacy_rolling_and_jq_rosters_remain" computerName="5d9e09695ab3" duration="00:19:55.1324709" startTime="2026-10-03T13:59:59.0470527+00:00" endTime="2026-10-03T14:19:54.1795236+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="3be5f573-efd5-4ebb-b526-2c5ba5630ff9" />
+    <UnitTestResult executionId="61bccc7d-d58d-4d97-acc9-8113853325cc" testId="fc0cba69-76a6-3dd7-3abc-f729d5ec91a1" testName="C1008_Documentation_and_transport_pins_match" computerName="5d9e09695ab3" duration="00:00:00.0796489" startTime="2026-10-03T14:19:54.1804708+00:00" endTime="2026-10-03T14:19:54.2601197+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="61bccc7d-d58d-4d97-acc9-8113853325cc" />
+    <UnitTestResult executionId="fc17c8ce-e329-43bc-9c02-9e93d807d7ac" testId="1b8cc7e9-cdc2-e441-832a-d35e5adc58fa" testName="C1008_Retired_absent_null_is_accepted" computerName="5d9e09695ab3" duration="00:00:20.5773339" startTime="2026-10-03T14:19:54.2606654+00:00" endTime="2026-10-03T14:20:14.8379993+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="fc17c8ce-e329-43bc-9c02-9e93d807d7ac" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="C1008_Recycle_exact_default_volumes" storage="/work/worktrees/task-b3777342/tests/antiphon.tests/bin-c1008-scripts/antiphon.tests.dll" id="c9cab0ea-23c1-ad6b-31c5-360f203fc656">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="bfb73d20-478e-4d86-9949-f3d5f6700750" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b3777342/tests/Antiphon.Tests/bin-c1008-scripts/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C1008_Recycle_exact_default_volumes" />
+    </UnitTest>
+    <UnitTest name="C1008_Recycle_dry_run_never_mutates" storage="/work/worktrees/task-b3777342/tests/antiphon.tests/bin-c1008-scripts/antiphon.tests.dll" id="2dec8b54-3489-2a31-1813-05bffc59d381">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="d57273f8-4f12-4f7a-9325-c88daa39ddf1" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b3777342/tests/Antiphon.Tests/bin-c1008-scripts/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C1008_Recycle_dry_run_never_mutates" />
+    </UnitTest>
+    <UnitTest name="C1008_Retire_temp_rechecks_absence_and_retirement" storage="/work/worktrees/task-b3777342/tests/antiphon.tests/bin-c1008-scripts/antiphon.tests.dll" id="d0389f2e-ab2c-6ec8-c862-8ade0ba8fb4e">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="1d357a11-d750-4b2e-bc58-f4e65fafb313" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b3777342/tests/Antiphon.Tests/bin-c1008-scripts/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C1008_Retire_temp_rechecks_absence_and_retirement" />
+    </UnitTest>
+    <UnitTest name="C1008_Recycle_receipt_records_disk_and_partial_failure" storage="/work/worktrees/task-b3777342/tests/antiphon.tests/bin-c1008-scripts/antiphon.tests.dll" id="173ac385-6bf5-5da3-0191-8d889ffd0500">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="002f176c-333b-47f0-a3c0-ffcd7d8182d9" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b3777342/tests/Antiphon.Tests/bin-c1008-scripts/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C1008_Recycle_receipt_records_disk_and_partial_failure" />
+    </UnitTest>
+    <UnitTest name="C1008_Recycle_resume_requires_matching_receipt" storage="/work/worktrees/task-b3777342/tests/antiphon.tests/bin-c1008-scripts/antiphon.tests.dll" id="a4a219c0-654a-2f43-db29-ba7f2ba45411">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="1e686853-7349-4508-8fce-9b7d52598e25" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b3777342/tests/Antiphon.Tests/bin-c1008-scripts/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C1008_Recycle_resume_requires_matching_receipt" />
+    </UnitTest>
+    <UnitTest name="C1008_Retire_temp_reclaims_below_cache_disk_gate" storage="/work/worktrees/task-b3777342/tests/antiphon.tests/bin-c1008-scripts/antiphon.tests.dll" id="6d7c8e6d-a9a8-4183-b2e6-84ee4e156d94">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="81279bdd-c4f1-45a3-a323-a858f63ffeee" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b3777342/tests/Antiphon.Tests/bin-c1008-scripts/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C1008_Retire_temp_reclaims_below_cache_disk_gate" />
+    </UnitTest>
+    <UnitTest name="C1008_Recycle_refuses_uninspectable_git" storage="/work/worktrees/task-b3777342/tests/antiphon.tests/bin-c1008-scripts/antiphon.tests.dll" id="b69ddeea-1ab2-d7e0-d7d5-d0a6b9d0eb48">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="a44c67b7-274c-4ccc-b25a-22f9f90afeae" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b3777342/tests/Antiphon.Tests/bin-c1008-scripts/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C1008_Recycle_refuses_uninspectable_git" />
+    </UnitTest>
+    <UnitTest name="C1008_Recycle_refuses_unpublished_and_dirty_work" storage="/work/worktrees/task-b3777342/tests/antiphon.tests/bin-c1008-scripts/antiphon.tests.dll" id="b7ae2b37-dff5-9d0c-91b3-3e7d4e46cd66">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="88b0a46d-0653-49e3-8157-fc6b1fad50b4" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b3777342/tests/Antiphon.Tests/bin-c1008-scripts/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C1008_Recycle_refuses_unpublished_and_dirty_work" />
+    </UnitTest>
+    <UnitTest name="C1008_Recycle_audits_work_as_1654" storage="/work/worktrees/task-b3777342/tests/antiphon.tests/bin-c1008-scripts/antiphon.tests.dll" id="f544e5c1-e9ef-9576-94ed-8bad2837cce4">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="2fb14e64-ae55-4525-8820-2edd4d4a510c" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b3777342/tests/Antiphon.Tests/bin-c1008-scripts/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C1008_Recycle_audits_work_as_1654" />
+    </UnitTest>
+    <UnitTest name="C1008_Recycle_refuses_references_and_unknown_census" storage="/work/worktrees/task-b3777342/tests/antiphon.tests/bin-c1008-scripts/antiphon.tests.dll" id="2fa1b4a9-b7f1-958d-d5b7-58564ac86db1">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="be67fa7f-b421-48b7-bdd2-38e35e9c5a9c" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b3777342/tests/Antiphon.Tests/bin-c1008-scripts/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C1008_Recycle_refuses_references_and_unknown_census" />
+    </UnitTest>
+    <UnitTest name="C1008_Recycle_preserves_tmp_copyup" storage="/work/worktrees/task-b3777342/tests/antiphon.tests/bin-c1008-scripts/antiphon.tests.dll" id="fb708800-8313-59f9-37b9-d0d390d91bef">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="172d4296-1a2a-472d-aee4-4cea5dbed29f" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b3777342/tests/Antiphon.Tests/bin-c1008-scripts/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C1008_Recycle_preserves_tmp_copyup" />
+    </UnitTest>
+    <UnitTest name="C1008_Refusal_receipts_do_not_leak_secrets" storage="/work/worktrees/task-b3777342/tests/antiphon.tests/bin-c1008-scripts/antiphon.tests.dll" id="42a01e7a-b63c-9454-95fe-f294b24800cb">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="2ac40469-d8b5-4427-bef5-f8b922243cbb" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b3777342/tests/Antiphon.Tests/bin-c1008-scripts/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RollingVolumeRecycleScriptTests" name="C1008_Refusal_receipts_do_not_leak_secrets" />
+    </UnitTest>
+    <UnitTest name="C1008_Present_or_unknown_temp_keeps_null_refusal" storage="/work/worktrees/task-b3777342/tests/antiphon.tests/bin-c1008-scripts/antiphon.tests.dll" id="5b773749-7d90-5180-31fd-76cd63a9d4fb">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="a338c2dd-0269-425c-8b28-db16faa2491e" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b3777342/tests/Antiphon.Tests/bin-c1008-scripts/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RollingVolumeRecycleScriptTests" name="C1008_Present_or_unknown_temp_keeps_null_refusal" />
+    </UnitTest>
+    <UnitTest name="C1008_Busy_routed_and_land_in_flight_refuse" storage="/work/worktrees/task-b3777342/tests/antiphon.tests/bin-c1008-scripts/antiphon.tests.dll" id="e452e890-fb23-a6c2-2350-e2d445747c9a">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="b841cf84-6c46-4def-a264-de185eecd6a8" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b3777342/tests/Antiphon.Tests/bin-c1008-scripts/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RollingVolumeRecycleScriptTests" name="C1008_Busy_routed_and_land_in_flight_refuse" />
+    </UnitTest>
+    <UnitTest name="C1008_Same_sha_and_partial_retries_are_safe" storage="/work/worktrees/task-b3777342/tests/antiphon.tests/bin-c1008-scripts/antiphon.tests.dll" id="391e2a0c-57ff-5633-2569-ac3606d38d0c">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="7584547d-ae8c-4858-bcbf-9b8984969250" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b3777342/tests/Antiphon.Tests/bin-c1008-scripts/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RollingVolumeRecycleScriptTests" name="C1008_Same_sha_and_partial_retries_are_safe" />
+    </UnitTest>
+    <UnitTest name="C1008_Option_manifest_is_strict" storage="/work/worktrees/task-b3777342/tests/antiphon.tests/bin-c1008-scripts/antiphon.tests.dll" id="61df658c-0119-3839-1218-362d32be8023">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="7d77f996-73f5-410a-84dd-abb98d61f5cb" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b3777342/tests/Antiphon.Tests/bin-c1008-scripts/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RollingVolumeRecycleScriptTests" name="C1008_Option_manifest_is_strict" />
+    </UnitTest>
+    <UnitTest name="C1008_Legacy_rolling_and_jq_rosters_remain" storage="/work/worktrees/task-b3777342/tests/antiphon.tests/bin-c1008-scripts/antiphon.tests.dll" id="7cbb3e15-e822-a945-0488-a66f4cb733d0">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="3be5f573-efd5-4ebb-b526-2c5ba5630ff9" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b3777342/tests/Antiphon.Tests/bin-c1008-scripts/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RollingVolumeRecycleScriptTests" name="C1008_Legacy_rolling_and_jq_rosters_remain" />
+    </UnitTest>
+    <UnitTest name="C1008_Documentation_and_transport_pins_match" storage="/work/worktrees/task-b3777342/tests/antiphon.tests/bin-c1008-scripts/antiphon.tests.dll" id="fc0cba69-76a6-3dd7-3abc-f729d5ec91a1">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="61bccc7d-d58d-4d97-acc9-8113853325cc" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b3777342/tests/Antiphon.Tests/bin-c1008-scripts/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RollingVolumeRecycleScriptTests" name="C1008_Documentation_and_transport_pins_match" />
+    </UnitTest>
+    <UnitTest name="C1008_Retired_absent_null_is_accepted" storage="/work/worktrees/task-b3777342/tests/antiphon.tests/bin-c1008-scripts/antiphon.tests.dll" id="1b8cc7e9-cdc2-e441-832a-d35e5adc58fa">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="fc17c8ce-e329-43bc-9c02-9e93d807d7ac" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b3777342/tests/Antiphon.Tests/bin-c1008-scripts/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RollingVolumeRecycleScriptTests" name="C1008_Retired_absent_null_is_accepted" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="c9cab0ea-23c1-ad6b-31c5-360f203fc656" executionId="bfb73d20-478e-4d86-9949-f3d5f6700750" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="2dec8b54-3489-2a31-1813-05bffc59d381" executionId="d57273f8-4f12-4f7a-9325-c88daa39ddf1" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="d0389f2e-ab2c-6ec8-c862-8ade0ba8fb4e" executionId="1d357a11-d750-4b2e-bc58-f4e65fafb313" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="173ac385-6bf5-5da3-0191-8d889ffd0500" executionId="002f176c-333b-47f0-a3c0-ffcd7d8182d9" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="a4a219c0-654a-2f43-db29-ba7f2ba45411" executionId="1e686853-7349-4508-8fce-9b7d52598e25" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="6d7c8e6d-a9a8-4183-b2e6-84ee4e156d94" executionId="81279bdd-c4f1-45a3-a323-a858f63ffeee" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="b69ddeea-1ab2-d7e0-d7d5-d0a6b9d0eb48" executionId="a44c67b7-274c-4ccc-b25a-22f9f90afeae" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="b7ae2b37-dff5-9d0c-91b3-3e7d4e46cd66" executionId="88b0a46d-0653-49e3-8157-fc6b1fad50b4" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="f544e5c1-e9ef-9576-94ed-8bad2837cce4" executionId="2fb14e64-ae55-4525-8820-2edd4d4a510c" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="2fa1b4a9-b7f1-958d-d5b7-58564ac86db1" executionId="be67fa7f-b421-48b7-bdd2-38e35e9c5a9c" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="fb708800-8313-59f9-37b9-d0d390d91bef" executionId="172d4296-1a2a-472d-aee4-4cea5dbed29f" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="42a01e7a-b63c-9454-95fe-f294b24800cb" executionId="2ac40469-d8b5-4427-bef5-f8b922243cbb" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="5b773749-7d90-5180-31fd-76cd63a9d4fb" executionId="a338c2dd-0269-425c-8b28-db16faa2491e" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="e452e890-fb23-a6c2-2350-e2d445747c9a" executionId="b841cf84-6c46-4def-a264-de185eecd6a8" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="391e2a0c-57ff-5633-2569-ac3606d38d0c" executionId="7584547d-ae8c-4858-bcbf-9b8984969250" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="61df658c-0119-3839-1218-362d32be8023" executionId="7d77f996-73f5-410a-84dd-abb98d61f5cb" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="7cbb3e15-e822-a945-0488-a66f4cb733d0" executionId="3be5f573-efd5-4ebb-b526-2c5ba5630ff9" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="fc0cba69-76a6-3dd7-3abc-f729d5ec91a1" executionId="61bccc7d-d58d-4d97-acc9-8113853325cc" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="1b8cc7e9-cdc2-e441-832a-d35e5adc58fa" executionId="fc17c8ce-e329-43bc-9c02-9e93d807d7ac" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="19" executed="19" passed="19" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <CollectorDataEntries>
+      <Collector agentName="5d9e09695ab3" uri="datacollector://TUnitExtensionHtmlReporter/1.44.0.0" collectorDisplayName="TUnit">
+        <UriAttachments>
+          <UriAttachment>
+            <A href="5d9e09695ab3/Antiphon.Tests-linux-net9.0-report.html" />
+          </UriAttachment>
+        </UriAttachments>
+      </Collector>
+    </CollectorDataEntries>
+  </ResultSummary>
+</TestRun>
