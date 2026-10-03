@@ -486,6 +486,301 @@ assertions that could mask a mutant. Pin each concrete replacement to the eventu
 production helper and record why the assertion is reachable; do not count an inline
 self-mutating text assertion as post-land execution.
 
+### Inspection
+
+TestDesign task `97e2c86f`, 2026-10-03: the following is an additive freeze of
+verification, not a replacement for D-1..D-8. **Code admission is blocked by B-1
+below.** Source observations are at `b0b9aa34d91da9fbe3b84f5c1f945173a1aa8af6`,
+also the `git ls-remote origin refs/heads/master` result at inspection. No rebase,
+repository build, test execution, fixture implementation or Docker mutation was
+performed. Counts below are source counts, never passing receipts.
+
+| Bodies read | Boundaries and coverage |
+|---|---|
+| Entire plan; full CARD-1008/0994/0831/0980/0983 via `card.ps1 get`; CARD-0891 freeze at `7bd76794`; testing manifest/runner/Mutation and orchestration stage owners | Admission, scope, receipt limits and checkpoint schema |
+| Entire `RemoteScriptContractTests.cs`, including `LinuxShell`, `Block`, `ColdSeedHarness`, `CacheStatusHarness`, `C973ReaderHarness`, prepare/prune/seed helpers; entire `test-deploy-server2.ps1`, jq driver, both c727 fakes, c973 marker reader and real host fixture | V-1..V-21, R-1; the existing status-token jq fake cannot prove JSON types and is not reusable for C1008 status verdicts |
+| Entire `deploy-server2.ps1`; `c590-real.ps1` live-case validation/exports; verifier deploy/retire dispatch; `c590-remote.sh` status-zero, cold facts/proof/probe/seed/ready, deploy and retire bodies; Compose private/external volume declarations | V-1..V-17; transport must execute real wrapper/host guards, not just c727 host-success stub |
+| Entire `DockerStackDocumentationTests.cs`, `DockerStackDocuments.cs`, `DelegateScriptRunner.cs`, `ProcessSpawnLimit.cs`; policy branch's new `Main_volume_recycling_is_scripted_only` body | V-19/R-2; literal args, LF fixtures, whitespace-normalized prose, owned processes |
+| `AgentTaskSummaryDto`, list envelope/scope/exclusion DTOs, detail and `LandRequestStatusDto`; scoped-list fixture IDs/setup; documented GET query contract | V-4/V-15; complete census includes unscoped/excluded projects and terminal owners with nonterminal lands |
+| `PhoneHomeRunnerStatusDto`, directory `Status` and `Register`, all `PhoneHomeRunnerRetirementIdentityTests` bodies | V-11/V-16, RD-10 and B-1; fake clock controls establish server semantics, not an HTTP lease-proof field |
+| `PlanTableImporter`, complete Import/Manifest test bodies; source Test/Arguments attributes of DockerStackContract, DindRunnerContract and DockerStackSmokeCommand classes | CP-1..CP-5 schema and counts; those three unchanged classes were counted, not represented as newly inspected behavioral coverage |
+
+The separate Docs branch now contains `b71e8e105` (following `ebda8f490`), whose
+volume section was read with `git show`. It corrects the earlier manual-main
+instruction to **scripted only** and adds one documentation test. It is not an
+ancestor of this checkout. The final landed revision must include that correction;
+the earlier `ebda8f490` alone is not an adequate prerequisite.
+
+### Delivery inventory
+
+No new asynchronous message/session-delivery path is commissioned: no queue
+producer, user-session destination or UserPrompt exists in this script change.
+Real queue busy/eligible/crash delivery cases are excluded for that reason. If Code
+introduces notifications or async work submission, this exclusion expires and
+TestDesign must supply producer-to-recipient tests, including a matching complete
+UserPrompt for session input. A successful host request never proves delivery.
+
+The changed cross-process operations still require end-to-end effect evidence:
+
+| Producer -> destination | Durable identity and persistence | Recovery and observed outcome |
+|---|---|---|
+| Rolling wrapper -> verifier -> real bridge -> host recycle | Full source SHA + operation ID + project + options; wrapper manifest and host journal outside selected volumes | V-17 executes validation and transport with intercepted SSH/SCP, then the production host entry; V-7/V-8 restart a fresh child from the persisted journal. Docker inspection and volume payloads, not a host-case trace alone, prove removal/recreation. |
+| Host -> maintenance cold-seed host case -> deploy continuation | Same operation, pinned helper image, cache generations and schema-2 marker | V-11 interrupts before request, after cache rm/before seed, after each create/probe and after marker publication/before reply. Fresh invocation reconciles the journal; real `c849_require_ready` and `case_verify_runner_caches` observe new roots before any clear. RD-9 corroborates filesystem ownership/mount behavior. |
+| Host journal -> wrapper receipt copy | Same operation/source/project, journal phase and per-volume outcomes | V-8 fails SCP after deletion; wrapper cannot report completed or clear admission, and retry retrieves the existing host receipt without another deletion. Both copies and current Docker generations must agree. |
+| Wrapper retire/clear/hold -> existing server -> replacement registration | Runner ID, old/new store, retirement stamp, requested SHA | V-11 checks POST ordering and final observed new-store/SHA status; a POST 200 or container health is insufficient. B-1 prevents claiming the prerequisite lease observation is available. |
+
+Fakes substitute only HTTP, SSH, Docker and controlled fault boundaries. Their
+command logs prove requested operations, not actual Docker copy-up, uid isolation,
+server persistence or registration leases. Real Git objects replace canned counts.
+RD proves Docker/Git effects on an isolated daemon, not live fleet routing, elapsed
+production leases, a provider conversation or package warmup performance.
+
+### Proves it works now
+
+V-1..V-21 retain the exact methods and primary labels in the V-matrix. CP-2 owns
+the 12 Remote and 8 Rolling methods; CP-5 owns the single Real method. Each is one
+`[Test]`, with internal vectors and **no Arguments/data-source expansion**. The
+following fixture contract is to be implemented in S1, not generated by this task.
+
+**Fixture encoding.** `c1008-recycle-cases.json` stores literal JSON values plus
+ordered observations, never PowerShell truthy string substitutions. Omitted keys
+are removed, not encoded as null. `c1008-fake-docker.sh` maintains a file-backed
+volume/container ledger and records argv arrays, exits and observations. Every
+unknown Docker verb/format refuses. All paths resolve below one printed owned
+scratch root; fake mount paths are never forwarded to a real daemon. Frozen aliases:
+`M=antiphon-runner`, `T=antiphon-runner-temp`,
+`P=antiphon-runner-cache-nuget-packages`,
+`S=antiphon-runner-cache-nuget-scratch`,
+`N=antiphon-runner-cache-npm-content`. Expand these aliases before the production
+entry, including in expected argv; they are not prefix selectors.
+
+`volume ls -q` initially exits 0 with one LF-terminated name on each line, in this
+order: `M_work`, `M_runner-tmp`, `M_dind-data`, `M_runner-state`, `T_work`,
+`T_runner-tmp`, `T_dind-data`, `T_runner-state`, `P`, `S`, `N`,
+`antiphon-runner_work-extra`, `schoolrevision-staging`, `openclaw-state`.
+Each starts with payload `sentinel:<exact-name>:old\n`. Each volume inspect returns
+a one-element array of this shape, replacing the exact name/project/role:
+
+```json
+[{"Name":"antiphon-runner_work","Driver":"local","Options":{},"CreatedAt":"2026-10-03T09:00:00Z","Mountpoint":"/fixture/docker/volumes/antiphon-runner_work/_data","Labels":{"com.docker.compose.project":"antiphon-runner","com.docker.compose.volume":"work"}}]
+```
+
+Cache labels instead are `io.antiphon.owner=server2-runner`,
+`io.antiphon.cache-schema=1`, `io.antiphon.cache-role=<nuget-packages|nuget-scratch|npm-content>`.
+Private Compose volumes are non-external; all three caches are external under the
+fixed names. Mutate each property independently, including `{}` versus null options,
+foreign driver/labels/name, external private target, missing/malformed Compose input,
+and canonical bind ancestor/descendant overlap. Missing volume: successful ls omits
+it, exact inspect exits 1 with `No such volume`, no object is created. Failed ls,
+daemon-unavailable inspect and corrupt inspect JSON are separate unknown cases.
+
+Container IDs use `1` repeated 64 for main, `2` repeated 64 for stopped state-init,
+`3` repeated 64 for broker, `4` repeated 64 for temp, and `5` repeated 64 for foreign.
+Images are `sha256:` plus `a` repeated 64. Main inspect is a one-element array with
+`Id`, `Image`, `State:{Running:true,Status:"running"}`,
+`Config.Labels:{com.docker.compose.project:"antiphon-runner",com.docker.compose.service:"session-runner"}`
+and seven volume Mounts. Each mount has Type `volume`, exact Name, canonical Source,
+RW true, and Destination `/work`, `/tmp`, `/var/lib/docker`, `/state`,
+`/home/app/.nuget/packages`, `/var/cache/antiphon/nuget-scratch`, `/home/app/.npm/_cacache`.
+State-init has the same project, service `state-init`, State false/`exited`, work/state
+mounts. Broker has service `build-slots`, State true/`running`, and no selected mount.
+`ps -aq --no-trunc` emits all three IDs; project/service/volume filters select from
+the actual ledger, including exited and created containers. Stop changes State;
+rm without `-v` removes only an exited exact ID; referenced volume rm exits 1 and
+keeps its payload. At each mutation the fixture persists state before returning.
+
+Frozen baseline status documents (SHA `a` repeated 40, old store
+`11111111-1111-1111-1111-111111111111`):
+
+```json
+{
+  "mainDrained": {"runnerId":"server2","runnerStoreId":"11111111-1111-1111-1111-111111111111","epoch":7,"available":true,"dispatchEligible":true,"acceptingNewWork":false,"draining":true,"redirectTo":"server2-temp","retireWhenIdle":false,"retiredAt":null,"sessions":0,"runnerSessions":0,"queuedTasks":0,"buildVersion":"old"},
+  "tempAccepting": {"runnerId":"server2-temp","available":true,"dispatchEligible":true,"acceptingNewWork":true,"draining":false,"redirectTo":null,"retireWhenIdle":false,"retiredAt":null,"sessions":0,"runnerSessions":0,"queuedTasks":0,"buildVersion":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+  "tempRetiredAbsent": {"runnerId":"server2-temp","epoch":null,"available":false,"dispatchEligible":false,"acceptingNewWork":false,"draining":true,"redirectTo":"server2","retireWhenIdle":true,"retiredAt":"2026-10-03T09:30:00Z","sessions":0,"runnerSessions":null,"queuedTasks":0,"buildVersion":"old"}
+}
+```
+
+For temp retirement, main is the accepting counterpart: change main to available,
+eligible and accepting true, draining/retireWhenIdle false, redirect/stamp null,
+and requested SHA. The temp project census exits 0 with **zero bytes**, distinct
+from a failed process with empty stdout. No test uses a live fleet status snapshot.
+
+| Vector family | Exact change and expected boundary | V |
+|---|---|---|
+| Default controlled stop | mainDrained + tempAccepting; stopped main/state-init still appear in all-container census until exact rm; after own stop main may become unavailable, epoch/live count null with server counters 0 | 1, 2, 7 |
+| Already stopped main | Same offline/null main without a matching operation's saved live-zero, stop and removal receipts: `RunnerCounterUnknown` or `RecycleResumeMismatch`; all volumes retained. Never arrange this state by stopping live main manually. | 7, 16 |
+| Busy/unknown counters | Independently replace each of sessions/runnerSessions/queuedTasks with 1, -1, 0.5, `"0"`, false, null or omit it. 1 is `RunnerBusy`; malformed/negative values are `RunnerCounterUnknown`; zero control passes. Apply at initial and final observations in wrapper and host. | 2, 14, 15 |
+| Routing | Independently change drain false, accepting true, redirect wrong/null/missing, other runner nonaccepting, or fresh routed task; initial and final reads refuse before next destructive operation | 2, 15 |
+| Reference/census | Foreign running, exited, created container with target mount; bind exact/ancestor/descendant; duplicate runner, wrong labels, running state-init, ps error, inspect error/empty/malformed, attachment just before rm. Earlier selected target remains intact on whole-set validation failure. | 2 |
+| Prefix collision | Keep both M/T names, `M_work-extra` and unrelated sentinels; assert exact ordered default argv `volume rm -- M_work`, `volume rm -- M_runner-tmp`, `volume rm -- M_dind-data`, never a prefix list/prune or rm force | 1 |
+| Retired ABSENT | tempRetiredAbsent and successful empty project census in both processes: host runs validated temp down; four volume outcomes and unchanged retirement; explicit runnerSessions 0 also passes | 9, 13 |
+| Retired PRESENT | Same row with running/exited/created runner or only exited state-init in temp census: `RunnerCounterUnknown`, no host deletion/clear; error+empty census is unknown, not absent | 9, 14 |
+| Exception predicates | Starting from absent/null, omit or corrupt each required field, set each offline boolean true, change stamp/redirect/retireWhenIdle/draining; new container or changed retirement between wrapper and host refuses | 9, 14 |
+
+Do not cross every independent fault with every other fault: one-fault vectors
+establish attribution and their accepted neighbor establishes reachability. Required
+combinations are null+retired+absence (and each missing fact), stopped+reference,
+same SHA+partial journal, both opt-ins, cache opt-in+accepting temp, nonterminal
+land+Succeeded task, and scope exclusion+bound work. These combinations cannot be
+replaced by independent single-field tests.
+
+**Git fixtures.** Use local bare origin plus a clone owned by the actual fixture
+uid, deterministic empty commit A pushed to origin/master, commit B descending
+from A, and a second bare remote holding B. Create a linked worktree with a space
+in its name, detached worktree at B, standalone clone, bare mirror with explicit
+local branch refs, and a tag-only B. Independently leave B on HEAD, an unchecked-out
+branch, or the tag while origin has A. Actual origin-only rev-list returns 1 even
+when the second remote holds B; after publishing B and refreshing deliberately,
+it returns 0. Do not embed invented SHA results. Test dirty tracked, staged and
+untracked files separately; ignored build output alone passes. Worktree enumeration
+includes each repo kind; all audited tips and comparison-ref digests survive in the
+receipt. Repeat the audit after stop; change a tip between audits to prove refusal.
+Fault boundaries cover exit 128/dubious ownership, 124/timeout, empty/nonnumeric
+stdout, stale/deleted/missing origin refs, failed ls-remote, missing objects,
+shallow/partial history, broken gitdir, escaping symlink and merge/rebase/index lock.
+V-3's fake checks `--user 1654:1654`, readonly `/work`, pinned image and overridden
+entrypoint; RD-7 is the actual uid/ownership proof. Never grant `safe.directory=*`.
+
+**Task/land fixtures.** Reuse scoped fixture IDs: project X
+`aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1`, Y ending `aaa2`, task X1
+`11111111-1111-1111-1111-111111111111`, Y1
+`22222222-2222-2222-2222-222222222221`, unscoped N1
+`33333333-3333-3333-3333-333333333331`. X request includes N1; excluded is
+`{"total":1,"unscoped":0,"byProject":[{"projectId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2","projectName":"gym-stat","count":1}]}`.
+Read Y explicitly and deduplicate N1 by ID; re-read closure until stable, refusing
+changed IDs/counts, unreadable scope, duplicate conflicting rows or perpetual drift.
+Items carry real DTO names `id,status,runnerId,projectId,scopeSource,landRequestedAt,landStartedAt`.
+Use Queued/Dispatched/Working/Blocked/Failed target-bound rows individually, plus
+unscoped and Y variants. Detail has nested `summary` and `landRequest`; do not read
+`detail.status` as though it were a summary. Succeeded with either pending timestamp
+or landRequest state Queued/Held/Running refuses. NeedsResolution also refuses until
+an explicit resolved terminal receipt; unknown states/missing required fields refuse.
+Completed/Superseded/Canceled request plus null pending timestamps and consistent
+terminal evidence is the accepted control. Explicit `landRequest:null` with both
+timestamps null is the supported legacy no-pending shape; omitted key/HTTP failure
+is unknown. Task status never substitutes for land state. Goals/results/credential
+URLs stay outside evidence. No invented runnerId/limit/page query parameters.
+
+**Partial-resume fixtures.** One operation `c1008` + 32 lowercase hex digits;
+reject separators, uppercase, empty, `..`, shell metacharacters and arbitrary paths.
+Journal schema 1 binds full source, flags, project, Compose digest, original
+container/image, volume driver/name/CreatedAt/labels, audit and census digests.
+Freeze original time `2026-10-03T09:00:00Z`, recreated time `2026-10-03T10:00:00Z`.
+Inject interruption in a fresh child at each boundary; parent retains journal/root.
+
+| Persisted boundary / actual ledger | Next invocation's required observable result |
+|---|---|
+| preflight; stop failed | zero volume rm; drain retained; retry re-observes strict zero |
+| stopped; owned containers still present | remove only recorded stopped IDs, then audit/census; never force-stop a new ID |
+| containersRemoved; 3 original volumes | fresh audits/counters/references then remove exactly 3 |
+| work removed; tmp+dind original | remove exactly tmp then dind; removed work stays absent until deliberate recreate |
+| work+tmp removed; dind original | remove only dind; preserve completed subset in any later failure |
+| volume rm succeeded but per-volume journal replacement failed | successful ls+inspect corroborate original's absence; recover that entry, never interpret daemon error as absence |
+| any one/two removed name reappears at new generation | `RecycleResumeMismatch`, no deletion including remaining originals |
+| partial seed/up created new owned work/tmp/dind and main container | verify recorded new generations and finish registration/cache checks; zero second rm, including same-SHA retry |
+| recreated container ID/image/mount not recorded in operation | refuse even when requested SHA matches |
+| completed healthy same SHA | verification only; zero recycle/seed/stop |
+| source/flags/project/stamp/Compose/audit or preserved-volume identity differs | refuse resume before new effects; each is a separate vector |
+
+Disk vector: before available 1024-blocks 1024, after 3072 -> bytes 1048576 and
+3145728, signed delta 2097152; reversed values -> -2097152. Preserve raw rows and
+filesystem identity. Empty/invalid df before refuses; after-failure reports unknown
+after/delta plus the real removed subset. Journal prewrite failure stops all effects;
+per-volume write/SCP failure leaves drain set and never erases the host journal.
+
+**Maintenance cold seed.** V-11 runs all four flag pairs (false/false, true/false,
+false/true, true/true). Default and state-only leave cache payload/marker identity
+unchanged and record **zero calls** to cold proof/seed, cache create/rm or marker
+invalidation; a missing default marker fails verification without secretly seeding.
+Cache opt-in with tempAccepting refuses before main stop. Maintenance uses both
+closed-admission proofs, tempRetiredAbsent, saved main live-zero, matching completed
+stop/audit/removal journal and retained helper digest. No fake may inject a running
+main merely to satisfy ordinary Cold. Execute the real maintenance cold helpers
+and the real post-up verify function; the host request trace alone is insufficient.
+
+Old marker is removed only after exact old cache generations are removed. New
+labelled empty roots are uid/gid 1654, mode 0700; probes create/rename/delete as 1654,
+remove only owned helpers/canaries, and publish exactly the existing eight-field
+schema-2 cold marker by atomic rename after P6. Probe failures and new consumers at
+each pre/post boundary prevent marker/admission. Retry before marker requires empty
+roots; retry after a valid committed marker uses allow-cold and permits normal
+subsequent content without reseeding. Real `verify-runner-caches` must observe correct
+shared/private mounts, `/tmp` 1777 and uid writability, return kind=cold, and never
+invoke full-payload smoke. Ordinary Cold still requires one running main with no
+cache overlap and permits a busy main; absent main without the maintenance journal
+refuses. Saved donor/Reset/Prune remain full-only. B-1 separately limits state reset.
+
+### Guards the regression
+
+R-1's current source census is **36 methods / 54 results**: C849 18/18,
+C912 9/9, C973 3/12 (Arguments 6+5+one), C944 1/1, C951 1/8,
+C976 1/1, C946 2/2, C957 1/3. Historical 52 is short by the two C912
+root-initialization/disappearance methods. Remote overall is **66/84**; adding the
+12 C1008 Remote methods yields **78/96**. C905's two results and 28 other results
+remain outside CP-3; V-19 explicitly protects touched lane/transport boundaries.
+
+R-2 at this baseline is **206** single-result methods: DockerStackContractTests 112,
+DindRunnerContractTests 23, DockerStackSmokeCommandTests 35,
+DockerStackDocumentationTests 10, CheckpointImportTests 20, CheckpointManifestTests 6.
+The required policy-doc branch adds `Main_volume_recycling_is_scripted_only`, making
+the admitted total **207**, documentation class **11**. Extend that method's policy
+assertions in place; no extra documentation method is commissioned. Preserve its
+scripted-only/no-manual-main-rm assertion after implementation. No other argument
+or data-source expansion appears in these six source classes.
+
+Intentional R-1 reconciliation: `C849_Deploy_prepares_and_verifies_before_acceptance`
+currently requires strict `c849_status_zero`, warm-ready and pre-down disk checks
+on retirement. Replace only its retirement portion with the narrow absent predicate,
+read-only preserved-cache identity checks and post-reclaim allocation ordering.
+`C912_Cold_runner_verification_uses_mounts_and_writability_not_payloads` must stop
+requiring allow-cold as an unconditional retirement prerequisite; its other callers
+retain it. `C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers`
+keeps **six** argument results, but its retirement argument executes the new
+read-only preservation gate: missing/malformed marker alone does not block reclaim;
+foreign/missing preserved cache identity still refuses. Update c973-marker-reader's
+retirement branch to execute that real gate: an empty awk slice is a false positive.
+All five other reader arguments retain their nine invalid-marker cases. Preserve
+54 results; changing semantic assertions is not permission to drop argument rows.
+
+Manual source expansion of T1..T24, expressed as invocations/assertions:
+`1/7,2/6,1/3,1/2,1/2,0/2,3/9,1/5,2/8,2/8,2/6,19/57,2/6,2/6,3/9,4/12,2/6,2/12,5/30,4/9,3/9,2/6,1/3,1/3`.
+Sum **24 groups / 66 invocations / 227 assertions**. No-jq omits T20 only:
+**23 / 62 / 218**, not CARD-0983's pre-0957 19/55/197. Each jq driver has **31**
+outer assertions. V-18's four modes total **93 groups / 252 invocations / 881
+harness assertions + 124 driver assertions**, still one TUnit result. Freeze these
+totals unchanged after C1008; targeted new vectors stay outside the legacy all
+roster. The `present` execution must show available=True and no skip notice even
+before CARD-0983 adds its opt-in; a lower green roster cannot qualify CP-2.
+
+### Real-Docker count freeze
+
+RD outcomes are separately named runs, not assertions or TUnit results. Base is
+`c6d5d56b5b4c565d36157e21de9c85029cc45b53`; branch is committed Code SHA. Drive common
+entry points on base, never new flags that only prove unknown-option refusal.
+
+| RD | Frozen named outcomes (B=base, C=changed) | Count |
+|---|---|---:|
+| RD-1 | B default payload retained; C default three recreated with state/cache/marker retained and zero cold seed | 2 |
+| RD-2 | B/C retired-null running-container refusal; B/C exited-state-init-only refusal | 4 |
+| RD-3 | B absent-null refuses; C absent-null removes four with retirement retained | 2 |
+| RD-4 | C four-alreadyAbsent succeeds without volume creation | 1 |
+| RD-5 | C foreign running reference refuses; C foreign stopped reference refuses | 2 |
+| RD-6 | C prefix-neighbor/unrelated payload identities survive | 1 |
+| RD-7 | C linked-unpublished; detached-unpublished; unchecked-out-branch-unpublished; bare-unpublished; tag-only-unpublished; dirty; uid-0 ownership error; all-published clean passes | 8 |
+| RD-8 | C fail after first removal; resume first; fail after second; resume second; recreated-volume intrusion; recorded partial-up resumes without rm; foreign recreated-container refuses | 7 |
+| RD-9 | C temp consumer refuses; maintenance cold seed+real verify passes; probe failure leaves marker absent; retry after successful marker performs no seed | 4 |
+| RD-10 | C fixture-approved identity transition; missing retirement-clear refusal; attached/unexpired fixture refusal (limited by B-1) | 3 |
+| RD-11 | C wrapper-absent/host-new-container refusal; census error+empty stdout refusal | 2 |
+| RD-12 | B low-disk retirement refuses; C low-disk retirement reclaims; C main reclaim then low-budget allocation refusal | 3 |
+| Total | 5 B outcomes + 34 C outcomes; 39 named results, one TUnit result | 39 |
+
+The unique-object ledger must verify cleanup exits and final absence of every
+fixture container/volume/image while retaining evidence. No inherited c973 helper
+that silently ignores cleanup exit codes qualifies. RD-9 retains actual stat/mount/
+payload checks, real uid-1654 probes and actual final cold verification. RD-12 shims
+only df's reported capacity, recording real df separately. RD-10 cannot be promoted
+from fixture registration to proof of an exposed server lease contract (B-1).
+
 ### Checkpoints
 
 Closed Code list. Each row owns one isolated build and one literal TUnit filter.
@@ -499,9 +794,9 @@ freezes fixtures/rosters; `Min` counts TUnit results, not harness assertions.
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1008-red/` | linux-offline-red | `/*/*/RollingVolumeRecycleScriptTests/C1008_Retired_absent_null_is_accepted` | V-13 | 1 executed, 1 expected assertion failure against unchanged scripts; no setup error | 1 | 6 | true | `C804_ORPHAN_SWEEP_ROOT=c1008-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-2 | S1-S3 | `tests/Antiphon.Tests -> bin-c1008-scripts/` | linux-offline-contract | `/*/*/(RemoteScriptContractTests*)\|(RollingVolumeRecycleScriptTests*)/C1008_*` | V-1..V-20 | 20 named single-result methods, 0 failed/skipped; internal rolling rosters reported separately | 20 | 15 | true | `C804_ORPHAN_SWEEP_ROOT=c1008-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-3 | S4 | `tests/Antiphon.Tests -> bin-c1008-cache/` | linux-cache-regression | `/*/*/RemoteScriptContractTests*/(C849_*)\|(C912_*)\|(C973_*)\|(C944_*)\|(C951_*)\|(C976_*)\|(C946_*)\|(C957_*)` | R-1 | complete expanded baseline roster, at least historical 52, 0 failed/skipped | 52 | 10 | true | `C804_ORPHAN_SWEEP_ROOT=c1008-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1008-docs/` | linux-compose-doc-contract | `/*/*/(DockerStackContractTests*)\|(DindRunnerContractTests*)\|(DockerStackSmokeCommandTests*)\|(DockerStackDocumentationTests*)\|(CheckpointImportTests*)\|(CheckpointManifestTests*)/*` | R-2 | every named class, at least 10+20+6 existing doc/import results plus all compose/command results; freeze total | 36 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c1008-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-5 | S4 | `tests/Antiphon.Tests -> bin-c1008-real/` | linux-isolated-docker | `/*/*/RollingVolumeRecycleDockerTests/C1008_Real_docker_comparison` | V-21 | 1 TUnit result, every frozen RD outcome, 0 failed/skipped, zero fixture residue | 1 | 12 | true | `C804_ORPHAN_SWEEP_ROOT=c1008-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-3 | S4 | `tests/Antiphon.Tests -> bin-c1008-cache/` | linux-cache-regression | `/*/*/RemoteScriptContractTests*/(C849_*)\|(C912_*)\|(C973_*)\|(C944_*)\|(C951_*)\|(C976_*)\|(C946_*)\|(C957_*)` | R-1 | 54 expanded results from 36 methods, 0 failed/skipped; retirement reader changes specified in the freeze | 54 | 10 | true | `C804_ORPHAN_SWEEP_ROOT=c1008-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1008-docs/` | linux-compose-doc-contract | `/*/*/(DockerStackContractTests*)\|(DindRunnerContractTests*)\|(DockerStackSmokeCommandTests*)\|(DockerStackDocumentationTests*)\|(CheckpointImportTests*)\|(CheckpointManifestTests*)/*` | R-2 | 207 results = 112+23+35+11+20+6 after the required policy-doc land, 0 failed/skipped | 207 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c1008-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-5 | S4 | `tests/Antiphon.Tests -> bin-c1008-real/` | linux-isolated-docker | `/*/*/RollingVolumeRecycleDockerTests/C1008_Real_docker_comparison` | V-21 | 1 TUnit result, 39 named RD outcomes (5 base + 34 changed), 0 failed/skipped, zero fixture residue | 1 | 12 | true | `C804_ORPHAN_SWEEP_ROOT=c1008-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 
 ## Test-design freeze and execution hooks
 
