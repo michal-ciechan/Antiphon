@@ -1,0 +1,25 @@
+
+████████╗██╗   ██╗███╗   ██╗██╗████████╗
+╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝
+   ██║   ██║   ██║██╔██╗ ██║██║   ██║
+   ██║   ██║   ██║██║╚██╗██║██║   ██║
+   ██║   ╚██████╔╝██║ ╚████║██║   ██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝
+
+   TUnit v1.44.0.0 | 64-bit | Debian GNU/Linux 12 (bookworm) | linux-x64 | .NET 9.0.20 | Microsoft Testing Platform v2.2.2
+
+   Engine Mode: SourceGenerated
+
+HTML test report written to: /work/worktrees/task-3aebd909/.antiphon/c1008-evidence-round3/cp3-qualified/CP-3-20261003-175412-2e97/Antiphon.Tests-linux-net9.0-report.html
+
+  In process file artifacts produced:
+    - /work/worktrees/task-3aebd909/.antiphon/c1008-evidence-round3/cp3-qualified/CP-3-20261003-175412-2e97/Antiphon.Tests-linux-net9.0-report.html
+    - /work/worktrees/task-3aebd909/.antiphon/c1008-evidence-round3/cp3-qualified/CP-3-20261003-175412-2e97/run.trx
+
+Test run summary: Passed! - /work/worktrees/task-3aebd909/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll (net9.0|x64)
+  total: 54
+  failed: 0
+  succeeded: 54
+  skipped: 0
+  duration: 2m 36s 493ms
+DOTNET run EXIT CODE: 0
