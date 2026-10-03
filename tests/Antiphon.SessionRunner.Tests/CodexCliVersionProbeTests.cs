@@ -21,12 +21,12 @@ public sealed class CodexCliVersionProbeTests
                      "0.159.1-beta.1", "0.160.0-beta.1", "0.159.1+build.7" })
         {
             foreach (var terminator in new[] { "", "\n", "\r\n" })
-                Parse("codex-cli " + value + terminator)?.ToString()
+                (Parse("codex-cli " + value + terminator)?.ToString())
                     .ShouldBe(value, "C959-v01-numeric " + value);
         }
         foreach (var banner in new[] { "codex 0.160.0", "codex version 0.160.0",
                      "codex-cli version v0.160.0", "CODEX-CLI 0.160.0" })
-            Parse(banner)?.ToString().ShouldBe("0.160.0", "C959-v01-banner " + banner);
+            (Parse(banner)?.ToString()).ShouldBe("0.160.0", "C959-v01-banner " + banner);
 
         var invalid = new (string? Output, int Guard)[]
         {
