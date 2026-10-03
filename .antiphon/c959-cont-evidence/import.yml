@@ -1,0 +1,168 @@
+schemaVersion: 1
+plan: /work/worktrees/task-1a73906f/docs/superpowers/plans/2026-10-03-card-0959-runner-codex-version-plan.md
+resultsRoot: .antiphon/checkpoints
+build:
+  properties: {}
+  maxCpuCount: 0
+  slots: auto
+  slotWaitMinutes: 45
+parallel: {}
+timeouts:
+  rowMinutes: 15
+  totalMinutes: 90
+rerun:
+  knownFlaky: []
+baseline: {}
+builds:
+- id: bin-c959-probe
+  project: tests/Antiphon.SessionRunner.Tests
+  outputPath: bin-c959-probe/
+- id: bin-c959-windows
+  project: tests/Antiphon.SessionRunner.Tests
+  outputPath: bin-c959-windows/
+- id: bin-c959-evidence
+  project: tests/Antiphon.Tests
+  outputPath: bin-c959-evidence/
+- id: bin-c959-admission
+  project: tests/Antiphon.Tests
+  outputPath: bin-c959-admission/
+- id: bin-c959-auth
+  project: tests/Antiphon.Tests
+  outputPath: bin-c959-auth/
+- id: bin-c959-directory
+  project: tests/Antiphon.Tests
+  outputPath: bin-c959-directory/
+- id: bin-c959-models
+  project: tests/Antiphon.Tests
+  outputPath: bin-c959-models/
+checkpoints:
+- id: CP-1
+  repeat: 1
+  after:
+  - S1
+  build: bin-c959-probe
+  group: portable-runner-probe
+  filter: /*/*/CodexCliVersionProbeTests*/C959_*
+  expect: []
+  expectText: 5 proposed single-result methods; 0 failed/skipped
+  minExecuted: 5
+  estimatedMinutes: 8
+  timeoutMinutes: 24
+  serial: true
+  environment:
+    TUNIT_MAX_PARALLEL_TESTS: 1
+  isCommand: false
+- id: CP-2
+  repeat: 1
+  after:
+  - S1
+  build: bin-c959-windows
+  group: windows-native-launcher
+  filter: /*/*/(CodexCliVersionWindowsTests*)|(CodexWindowsLaunchPolicyTests*)/*
+  expect:
+  - CodexCliVersionWindowsTests
+  - CodexWindowsLaunchPolicyTests
+  expectText: 3 proposed plus 26 source-derived regression results; 0 failed/skipped
+  minExecuted: 29
+  estimatedMinutes: 8
+  timeoutMinutes: 24
+  serial: true
+  environment:
+    TUNIT_MAX_PARALLEL_TESTS: 1
+  isCommand: false
+- id: CP-3
+  repeat: 1
+  after:
+  - S2
+  - S3
+  - S4
+  build: bin-c959-evidence
+  group: portable-capability-wire
+  filter: /*/*/RunnerCodexCliEvidenceTests*/C959_*
+  expect: []
+  expectText: 5 proposed single-result methods; 0 failed/skipped
+  minExecuted: 5
+  estimatedMinutes: 8
+  timeoutMinutes: 24
+  serial: true
+  environment:
+    C804_ORPHAN_SWEEP_ROOT: c959-disabled
+    TUNIT_MAX_PARALLEL_TESTS: 1
+  isCommand: false
+- id: CP-4
+  repeat: 1
+  after:
+  - S3
+  build: bin-c959-admission
+  group: portable-admission-db
+  filter: /*/*/CodexCliAdmissionTests*/C959_*
+  expect: []
+  expectText: 9 proposed single-result methods; 0 failed/skipped
+  minExecuted: 9
+  estimatedMinutes: 10
+  timeoutMinutes: 30
+  serial: true
+  environment:
+    C804_ORPHAN_SWEEP_ROOT: c959-disabled
+    TUNIT_MAX_PARALLEL_TESTS: 1
+  isCommand: false
+- id: CP-5
+  repeat: 1
+  after:
+  - S3
+  build: bin-c959-auth
+  group: portable-existing-refusals
+  filter: /*/*/(CodexPhoneHomeCreateTests*)|(PinnedCodexProfileDispatchLaunchTests*)|(ModelAvailabilityCreateTests*)|(ModelAvailabilityDispatcherTests*)/*
+  expect:
+  - CodexPhoneHomeCreateTests
+  - PinnedCodexProfileDispatchLaunchTests
+  - ModelAvailabilityCreateTests
+  - ModelAvailabilityDispatcherTests
+  expectText: 22 source-derived expanded results; 0 failed/skipped
+  minExecuted: 22
+  estimatedMinutes: 8
+  timeoutMinutes: 24
+  serial: true
+  environment:
+    C804_ORPHAN_SWEEP_ROOT: c959-disabled
+    TUNIT_MAX_PARALLEL_TESTS: 1
+  isCommand: false
+- id: CP-6
+  repeat: 1
+  after:
+  - S2
+  - S3
+  - S4
+  build: bin-c959-directory
+  group: portable-directory-regression
+  filter: /*/*/(RunnerCatalogueTests*)|(PhoneHomeDirectoryTests*)|(PhoneHomeRunnerRetirementIdentityTests*)/*
+  expect:
+  - RunnerCatalogueTests
+  - PhoneHomeDirectoryTests
+  - PhoneHomeRunnerRetirementIdentityTests
+  expectText: 20 source-derived expanded results; 0 failed/skipped
+  minExecuted: 20
+  estimatedMinutes: 8
+  timeoutMinutes: 24
+  serial: true
+  environment:
+    C804_ORPHAN_SWEEP_ROOT: c959-disabled
+    TUNIT_MAX_PARALLEL_TESTS: 1
+  isCommand: false
+- id: CP-7
+  repeat: 1
+  after:
+  - S3
+  build: bin-c959-models
+  group: portable-model-regression
+  filter: /*/*/ModelAliasTests*/*
+  expect: []
+  expectText: 76 source-derived expanded results; 0 failed/skipped
+  minExecuted: 76
+  estimatedMinutes: 5
+  timeoutMinutes: 15
+  serial: true
+  environment:
+    C804_ORPHAN_SWEEP_ROOT: c959-disabled
+    TUNIT_MAX_PARALLEL_TESTS: 1
+  isCommand: false
