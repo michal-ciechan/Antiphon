@@ -961,6 +961,34 @@ public sealed class AgentTaskDispatcher
                 await FailClaimedGrokRulesDispatchAsync(task, ex, ct);
                 failures++;
             }
+            catch (CodexCliVersionRequiredException ex)
+            {
+                // A late refresh may refuse after a cold claim committed, before any launch
+                // was queued. Terminalize only that unstarted session and preserve the CLI code.
+                if (task.AgentSessionId is Guid rejectedSessionId)
+                {
+                    var rejected = await _db.AgentSessions.SingleOrDefaultAsync(s => s.Id == rejectedSessionId, ct);
+                    if (rejected is { Status: SessionStatus.Starting })
+                    {
+                        rejected.Status = SessionStatus.Failed;
+                        rejected.FailureReason = ex.Message;
+                        rejected.EndedAt = UtcNow();
+                        SessionTermination.Record(rejected, SessionTerminationSource.SystemRequest);
+                        if (task.AgentId is Guid rejectedAgentId)
+                        {
+                            var rejectedAgent = await _db.Agents.SingleOrDefaultAsync(a => a.Id == rejectedAgentId, ct);
+                            if (rejectedAgent?.PersistentSessionId == rejectedSessionId.ToString("D"))
+                            {
+                                rejectedAgent.PersistentSessionId = null;
+                                rejectedAgent.Status = AgentStatus.Idle;
+                            }
+                        }
+                    }
+                }
+                await BlockAsync(task, ex.Message, ct);
+                await ReleaseTaskConsumersAsync(task);
+                failures++;
+            }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
                 _logger.LogWarning(ex, "Failed to dispatch task {ShortId}",
@@ -4397,12 +4425,12 @@ public sealed class AgentTaskDispatcher
         var claudeAuth = await ReadClaudeProviderAuthBeforeClaimAsync(task, ct);
         var grokAuth = await ReadGrokProviderAuthBeforeClaimAsync(task, ct);
         await _tasks.RefuseUnauthenticatedRunnerCodexAsync(task.AgentKind, false, task.RunnerId, ct);
+        var preflight = await CodexCliProbeDescriptor.ResolveAsync(_db, task, _agentRegistry.Settings, _phoneHome, _apiKeyEnvResolver, ct);
         CodexCliAdmissionPolicy.Admission? cli;
         try
         {
             cli = await CodexCliAdmissionPolicy.RequireAsync(
-                await CodexCliProbeDescriptor.ResolveAsync(_db, task, _agentRegistry.Settings, _phoneHome, _apiKeyEnvResolver, ct),
-                _runners, _settings, _timeProvider, ct);
+                preflight, _runners, _settings, _timeProvider, ct);
         }
         catch (CodexCliVersionRequiredException ex)
         {
@@ -4454,18 +4482,18 @@ public sealed class AgentTaskDispatcher
         // FOR UPDATE reuses the tick's tracked instance; reload so Capture sees the locked row
         // (a pre-claim route edit) rather than the outer snapshot. PC-71.
         await _db.Entry(claimed).ReloadAsync(ct);
-        if (cli is not null)
+        if (preflight is not null)
         {
             // No runner RPC or probe under the claim. A concurrent profile/route edit invalidates
             // the preflight rather than borrowing the old installation's observation.
             var current = await CodexCliProbeDescriptor.ResolveAsync(_db, claimed, _agentRegistry.Settings, _phoneHome, _apiKeyEnvResolver, ct);
-            if (current != cli.Descriptor)
+            if (current != preflight)
             {
                 await BlockAsync(claimed, "codex_cli_version_unknown: launch identity changed after preflight; retry with current evidence.", ct);
                 await transaction.CommitAsync(ct);
                 return DispatchOneResult.NotClaimed;
             }
-            if (cli.Warning is { } cliWarning)
+            if (cli?.Warning is { } cliWarning)
                 _db.AgentTaskEvents.Add(new AgentTaskEvent { Id = Guid.NewGuid(), AgentTaskId = claimed.Id,
                     Type = AgentTaskEventType.Warning, Detail = cliWarning, At = UtcNow() });
         }
@@ -5203,8 +5231,26 @@ public sealed class AgentTaskDispatcher
             var actual = CodexCliProbeDescriptor.FromSpec(string.IsNullOrWhiteSpace(task.RunnerId) ? "desktop" : task.RunnerId,
                 actualModel, session.TuiProfileRevisionId, spec.Exe, spec.Args, spec.Env, spec.Cwd);
             if (actual != admission.Descriptor)
-                throw new CodexCliVersionRequiredException(CodexCliVersionRequiredException.Unknown,
-                    actual.RunnerId, actualModel ?? admission.Descriptor.Model!, ModelLevelAliases.MinimumCodexCliVersion(AgentKind.Codex, admission.Descriptor.Model)!.ToString(), null, "launcher_mismatch", _settings.CodexCliVersionMaxAgeMinutes);
+            {
+                // A freshly cut worktree/mirror has a new resolution cwd. This boundary is
+                // after the claim commit: refresh its exact descriptor without a task lock.
+                // A changed executable, environment, model, runner or revision still refuses.
+                var sameInputs = actual.Request is { } request && admission.Descriptor.Request is { } earlier
+                    && (actual with { Request = request with { ResolutionCwd = earlier.ResolutionCwd } }) == admission.Descriptor;
+                if (!sameInputs)
+                    throw new CodexCliVersionRequiredException(CodexCliVersionRequiredException.Unknown,
+                        actual.RunnerId, actualModel ?? admission.Descriptor.Model!, ModelLevelAliases.MinimumCodexCliVersion(AgentKind.Codex, admission.Descriptor.Model)!.ToString(), null, "launcher_mismatch", _settings.CodexCliVersionMaxAgeMinutes);
+                admission = (await CodexCliAdmissionPolicy.RequireAsync(actual, _runners, _settings, _timeProvider, ct))!;
+                _codexAdmissions[task.Id] = admission;
+                if (admission.Warning is { } refreshedWarning)
+                {
+                    _db.AgentTaskEvents.Add(new AgentTaskEvent { Id = Guid.NewGuid(), AgentTaskId = task.Id,
+                        Type = AgentTaskEventType.Warning, Detail = refreshedWarning, At = UtcNow() });
+                    await _db.SaveChangesAsync(ct);
+                }
+            }
+            else
+                CodexCliAdmissionPolicy.Authorize(actual, admission.Sample, _settings, _timeProvider);
         }
         GrokLaunchArgs.EnsureWindowsRulesArgv(
             spec.Args, session.AgentKind, session.SessionBackend, spec.Env, $"Session {session.Id}");
