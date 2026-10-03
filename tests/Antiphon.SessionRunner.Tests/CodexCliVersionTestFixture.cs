@@ -18,6 +18,7 @@ internal sealed class CodexCliVersionTestFixture : IDisposable
     public List<string> Reads { get; } = [];
     public List<Process> Children { get; } = [];
     public string Mode { get; set; } = "success";
+    public Func<ProcessStartInfo, string>? ChildMode { get; set; }
     public string Executable { get; }
     public object? Probe { get; private set; }
     public SessionRunnerRuntime Runtime { get; }
@@ -50,11 +51,12 @@ internal sealed class CodexCliVersionTestFixture : IDisposable
     public JsonElement Local() => JsonSerializer.SerializeToElement(Runtime.DescribeCapabilities(Build, [SessionBackends.PtyHost], []), Web);
     public JsonElement Registration() => JsonSerializer.SerializeToElement(new PhoneHomeRuntimeAdapter(Runtime, Build).Capabilities(), Web);
 
-    public async Task<JsonElement> Attempt(string? executable = null, bool force = true, CancellationToken ct = default)
+    public async Task<JsonElement> Attempt(string? executable = null, bool force = true, CancellationToken ct = default,
+        string? resolutionCwd = null, string? path = null, string? pathExt = null, string? codexJsPrefix = null)
     {
         if (Probe is null) return Local();
         var requestType = typeof(RunnerCapabilitiesDto).Assembly.GetType("Antiphon.SessionRunner.Contracts.RunnerCodexCliProbeRequest")!;
-        var request = Activator.CreateInstance(requestType, executable ?? Executable, Root, null, null, null)!;
+        var request = Activator.CreateInstance(requestType, executable ?? Executable, resolutionCwd ?? Root, path, pathExt, codexJsPrefix)!;
         var task = (Task)Probe.GetType().GetMethod("ProbeAsync")!.Invoke(Probe, [request, force, ct])!;
         await task;
         return JsonSerializer.SerializeToElement(task.GetType().GetProperty("Result")!.GetValue(task), Web);
@@ -122,8 +124,17 @@ internal sealed class CodexCliVersionTestFixture : IDisposable
         };
         child.Environment.Clear();
         foreach (var item in actual.Environment) child.Environment[item.Key] = item.Value;
-        foreach (var arg in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-File",
-                     ChildScript(), "-Mode", Mode, "-ReceiptRoot", receipts }) child.ArgumentList.Add(arg);
+        var mode = ChildMode?.Invoke(actual) ?? Mode;
+        // Additional literal version records are independent harmless process-I/O fixtures.
+        if (mode == "version-old" || mode == "version-floor")
+        {
+            foreach (var arg in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+                         mode == "version-old" ? "[Console]::Out.WriteLine('codex-cli 0.156.1')"
+                             : "[Console]::Out.WriteLine('codex-cli 0.159.1')" }) child.ArgumentList.Add(arg);
+        }
+        else
+            foreach (var arg in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-File",
+                         ChildScript(), "-Mode", mode, "-ReceiptRoot", receipts }) child.ArgumentList.Add(arg);
         var process = Process.Start(child)!;
         // Keep an independent observation/rescue handle; the product owns and disposes its handle.
         Children.Add(Process.GetProcessById(process.Id));
