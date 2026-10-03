@@ -242,6 +242,20 @@ function Get-C590PlanRow {
     }
 }
 
+function Assert-C1008BridgeContext {
+    param($Context, [string]$Case)
+    if ($null -eq $Context -or $Case -notin @('deploy-parent','retire-temp-runner')) { throw 'RecycleContextInvalid' }
+    $keys = @($Context.PSObject.Properties.Name)
+    $expected = @('version','project','operationId','dryRun','resume','projectId')
+    if ($keys.Count -ne $expected.Count -or @($keys | Where-Object { $_ -notin $expected }).Count) { throw 'RecycleContextInvalid' }
+    $project = if ($Case -eq 'deploy-parent') { 'antiphon-runner' } else { 'antiphon-runner-temp' }
+    if (($Context.version -isnot [int] -and $Context.version -isnot [long]) -or $Context.version -ne 1 -or
+        [string]$Context.project -cne $project -or [string]$Context.operationId -cnotmatch '^c1008[0-9a-f]{32}$' -or
+        $Context.dryRun -isnot [bool] -or $Context.resume -isnot [bool] -or
+        [string]$Context.projectId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or
+        $Context.dryRun -and $Context.resume) { throw 'RecycleContextInvalid' }
+}
+
 function Invoke-C590LiveCase {
     param(
         [Parameter(Mandatory = $true)][string]$Case,
@@ -249,6 +263,19 @@ function Invoke-C590LiveCase {
     )
     $root = [string]$Manifest.evidenceRoot
     if (-not $root) { throw 'evidenceRoot is required' }
+    $recycleContext = ''
+    $recycleOperation = ''
+    $recycleProjectId = ''
+    $recycleDryRun = '0'
+    $recycleResume = '0'
+    if ($Manifest.PSObject.Properties.Name -contains 'recycle') {
+        Assert-C1008BridgeContext -Context $Manifest.recycle -Case $Case
+        $recycleContext = 'default'
+        $recycleOperation = [string]$Manifest.recycle.operationId
+        $recycleProjectId = [string]$Manifest.recycle.projectId
+        if ($Manifest.recycle.dryRun) { $recycleDryRun = '1' }
+        if ($Manifest.recycle.resume) { $recycleResume = '1' }
+    }
     if ($Case -in @('runner-cache-inventory', 'runner-cache-fixture', 'runner-cache-seed', 'runner-cache-reset',
             'verify-runner-caches', 'verify-runner-caches-retired', 'runner-cache-prune-preview', 'runner-cache-prune')) {
         $cacheNames = @($Manifest.PSObject.Properties.Name)
@@ -339,7 +366,7 @@ function Invoke-C590LiveCase {
         if ($tempRetiredAt -and $tempRetiredAt -notmatch '^[0-9TZ:+.-]{10,40}$') { throw 'tempRetiredAt rejected' }
     }
     try {
-        if ($Case -eq 'deploy-parent') {
+        if ($Case -eq 'deploy-parent' -and $recycleDryRun -ne '1') {
             [void](Invoke-C628ClaudeTokenOnDeploy -Manifest $Manifest)
         }
 
@@ -391,11 +418,19 @@ function Invoke-C590LiveCase {
             "export C590_SAVED_DONOR='$savedDonor'"
             "export C590_COLD_SEED='$coldSeed'"
             "export C590_EXPECT_ACCEPTING='$expectAccepting'"
+            "export C1008_CONTEXT='$recycleContext'"
+            "export C1008_OPERATION='$recycleOperation'"
+            "export C1008_PROJECT_ID='$recycleProjectId'"
+            "export C1008_DRY_RUN='$recycleDryRun'"
+            "export C1008_RESUME='$recycleResume'"
             "bash /home/mc/antiphon-c590/c590-remote.sh"
         ) -join '; '
         $code = Invoke-C590Ssh $remote
         $destParent = $root
         & scp -o BatchMode=yes -r ("mc@server2:/work/test-evidence/" + $run + "/" + $Case) $destParent | Out-Null
+        if ($LASTEXITCODE -ne 0 -and $recycleContext) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'RecycleReceiptUnavailable' -ExitCode 2
+        }
         $resultPath = Join-Path (Join-Path $root $Case) 'c590-result.json'
         if (-not (Test-Path -LiteralPath $resultPath)) {
             Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis ("RemoteResultMissing exit=" + $code) -ExitCode 2

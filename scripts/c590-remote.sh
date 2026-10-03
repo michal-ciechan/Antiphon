@@ -3443,8 +3443,465 @@ case_verify_runner_caches_retired() {
     write_result true '' 0
 }
 
+# CARD-1008. Destructive work is admitted only by the typed rolling context.
+# Keep the legacy deploy-parent entry nondestructive when no context was supplied.
+c1008_lock() {
+    require_lane host
+    [ "${C1008_LOCK_HELD:-0}" = 1 ] && return 0
+    sudo -n install -d -o mc -g mc -m 0700 "$SERVER2_ROOT/locks" || write_result false RecycleReceiptUnavailable 2
+    exec 8>"$SERVER2_ROOT/locks/rollout.lock"
+    flock -w 60 8 || write_result false RecycleRolloutBusy 2
+    C1008_LOCK_HELD=1
+    c849_lock
+}
+
+c1008_save() {
+    local tmp="$C1008_JOURNAL.new.$$"
+    printf '%s\n' "$C1008_RECORD" > "$tmp" && chmod 0600 "$tmp" && mv -f -- "$tmp" "$C1008_JOURNAL" || return 1
+    cp -- "$C1008_JOURNAL" "$CASE_DIR/recycle.json" || return 1
+}
+
+c1008_summary() {
+    [ "${C1008_SUMMARY_WRITTEN:-0}" = 0 ] || return 0
+    C1008_SUMMARY_WRITTEN=1
+    local removed absent before after delta outcome
+    removed="$(printf '%s' "$C1008_RECORD" | jq '[.volumes[] | select(.outcome == "removed")] | length')"
+    absent="$(printf '%s' "$C1008_RECORD" | jq '[.volumes[] | select(.outcome == "alreadyAbsent")] | length')"
+    before="$(printf '%s' "$C1008_RECORD" | jq -r '.diskBefore.bytes // "unknown"')"
+    after="$(printf '%s' "$C1008_RECORD" | jq -r '.diskAfter.bytes // "unknown"')"
+    delta=unknown
+    if [[ "$before" =~ ^[0-9]+$ && "$after" =~ ^[0-9]+$ ]]; then delta=$((after - before)); fi
+    outcome="$(printf '%s' "$C1008_RECORD" | jq -r '.outcome')"
+    printf 'C1008_RECYCLE project=%s operation=%s removed=%s alreadyAbsent=%s freeBeforeBytes=%s freeAfterBytes=%s deltaBytes=%s outcome=%s receipt=%s\n' \
+        "$C1008_PROJECT" "$C1008_OPERATION" "$removed" "$absent" "$before" "$after" "$delta" "$outcome" "$C1008_JOURNAL"
+}
+
+c1008_refuse() {
+    local reason="$1" count
+    if [ "${C1008_ACTIVE:-0}" = 1 ]; then
+        count="$(printf '%s' "$C1008_RECORD" | jq '[.volumes[] | select(.outcome == "removed")] | length')"
+        C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq --arg reason "$reason" --argjson count "$count" \
+            '.diagnosis=$reason | .outcome=(if $count>0 then "partial" else "refused" end)')"
+        c1008_save || reason=RecycleReceiptUnavailable
+        c1008_summary
+    fi
+    write_result false "$reason" 2
+}
+
+c1008_volume() {
+    local name="$1" names raw code
+    names="$(docker volume ls -q 2>/dev/null)" || return 2
+    code=0
+    raw="$(docker volume inspect "$name" 2>&1)" || code=$?
+    if [ "$code" != 0 ]; then
+        if [ "$code" = 1 ] && ! printf '%s\n' "$names" | grep -Fxq -- "$name" && \
+            [[ "${raw,,}" == *'no such volume'* ]]; then printf 'null'; return 0; fi
+        return 2
+    fi
+    printf '%s' "$raw" | jq -ce --arg name "$name" '
+      if type=="array" and length==1 and .[0].Name==$name and .[0].Driver=="local" and
+         (.[0].Options | type)=="object" and (.[0].Options | length)==0 and
+         (.[0].Labels | type)=="object" and (.[0].CreatedAt | type)=="string" and
+         (.[0].Mountpoint | type)=="string" then .[0] else error("identity") end' || return 2
+}
+
+c1008_compose_model() {
+    local model role key expected
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then model="$(compose_temp config --format json 2>/dev/null)"
+    else model="$(compose_host config --format json 2>/dev/null)"; fi || c1008_refuse RecycleComposeMismatch
+    for role in work runner-tmp dind-data runner-state; do
+        expected="${C1008_PROJECT}_$role"
+        printf '%s' "$model" | jq -e --arg role "$role" --arg name "$expected" \
+            '.volumes[$role].name==$name and ((.volumes[$role].external // false)==false)' >/dev/null \
+            || c1008_refuse RecycleComposeMismatch
+    done
+    for role in nuget-packages nuget-scratch npm-content; do
+        key="runner-$role"; expected="antiphon-runner-cache-$role"
+        printf '%s' "$model" | jq -e --arg key "$key" --arg name "$expected" \
+            '.volumes[$key].name==$name and .volumes[$key].external==true' >/dev/null \
+            || c1008_refuse RecycleComposeMismatch
+    done
+    printf '%s' "$model" | jq -Sc .
+}
+
+c1008_container_census() {
+    local ids id raw result='[]'
+    ids="$(docker ps -aq --no-trunc 2>/dev/null)" || return 2
+    while IFS= read -r id; do
+        [ -n "$id" ] || continue
+        [[ "$id" =~ ^[0-9a-f]{64}$ ]] || return 2
+        raw="$(docker inspect "$id" 2>/dev/null)" || return 2
+        raw="$(printf '%s' "$raw" | jq -ce --arg id "$id" '
+          if type=="array" and length==1 and .[0].Id==$id and
+             (.[0].Mounts|type)=="array" and (.[0].State.Running|type)=="boolean" and
+             (.[0].Config.Labels|type)=="object" and (.[0].Image|type)=="string"
+          then .[0] else error("container") end')" || return 2
+        result="$(printf '%s' "$result" | jq -c --argjson c "$raw" '. + [$c]')" || return 2
+    done <<< "$ids"
+    printf '%s' "$result"
+}
+
+c1008_zero() {
+    local body="$1" field value
+    for field in sessions runnerSessions queuedTasks; do
+        printf '%s' "$body" | jq -e --arg field "$field" \
+            'has($field) and (.[$field]|type)=="number" and .[$field]>=0 and (.[$field]|floor)==.[$field]' >/dev/null \
+            || c1008_refuse RunnerCounterUnknown
+        value="$(printf '%s' "$body" | jq -r --arg field "$field" '.[$field]')"
+        [ "$value" = 0 ] || c1008_refuse RunnerBusy
+    done
+}
+
+c1008_http() {
+    local path="$1" response code
+    response="$(curl -sS --max-time 15 -w '\n%{http_code}' "${C604_SERVER_ORIGIN:?}$path" 2>/dev/null)" || return 2
+    code="${response##*$'\n'}"; [ "$code" = 200 ] || return 2
+    printf '%s' "${response%$'\n'*}" | jq -ce . || return 2
+}
+
+c1008_tasks() {
+    local pass scope envelope excluded id row detail previous='' snapshot scopes rows pending
+    for pass in 1 2; do
+        scopes='[]'; rows='{}'; pending="$C1008_PROJECT_ID"; snapshot='{}'
+        while [ -n "$pending" ]; do
+            scope="${pending%%$'\n'*}"; pending="${pending#"$scope"}"; pending="${pending#$'\n'}"
+            printf '%s' "$scopes" | jq -e --arg scope "$scope" 'index($scope)!=null' >/dev/null && continue
+            [[ "$scope" =~ ^[0-9a-f-]{36}$ ]] || return 2
+            scopes="$(printf '%s' "$scopes" | jq -c --arg scope "$scope" '. + [$scope]')"
+            [ "$(printf '%s' "$scopes" | jq length)" -le 1000 ] || return 2
+            envelope="$(c1008_http "/api/agent-tasks?projectId=$scope&unscoped=include&includeChecks=true")" || return 2
+            printf '%s' "$envelope" | jq -e --arg scope "$scope" '
+                (.items|type)=="array" and (.excluded.byProject|type)=="array" and
+                .scope.projectId==$scope and .scope.unscoped=="include"' >/dev/null || return 2
+            snapshot="$(printf '%s' "$snapshot" | jq -c --arg scope "$scope" --argjson envelope "$envelope" \
+                '.[$scope]={ids:($envelope.items|map(.id)|sort),excluded:$envelope.excluded}')"
+            excluded="$(printf '%s' "$envelope" | jq -r '.excluded.byProject[] | .projectId')" || return 2
+            if [ -n "$excluded" ]; then pending="${pending:+$pending$'\n'}$excluded"; fi
+            while IFS= read -r row; do
+                [ -n "$row" ] || continue
+                printf '%s' "$row" | jq -e '
+                    has("id") and has("status") and has("runnerId") and has("projectId") and has("scopeSource") and
+                    has("landRequestedAt") and has("landStartedAt") and (.id|type)=="string" and
+                    (.status as $s | ["Queued","Dispatched","Working","Blocked","Succeeded","Failed","Canceled"]|index($s)!=null)' >/dev/null || return 2
+                id="$(printf '%s' "$row" | jq -r .id)"; [[ "$id" =~ ^[0-9a-f-]{36}$ ]] || return 2
+                row="$(printf '%s' "$row" | jq -c '{id,status,runnerId,projectId,scopeSource,landRequestedAt,landStartedAt}')"
+                printf '%s' "$rows" | jq -e --arg id "$id" --argjson row "$row" \
+                    'has($id) and .[$id]!=$row' >/dev/null && return 2
+                rows="$(printf '%s' "$rows" | jq -c --arg id "$id" --argjson row "$row" '.[$id]=$row')"
+                printf '%s' "$row" | jq -e '.landRequestedAt!=null or .landStartedAt!=null' >/dev/null && return 3
+                printf '%s' "$row" | jq -e --arg runner "$C1008_RUNNER" \
+                    '.runnerId==$runner and (.status as $s | ["Queued","Dispatched","Working","Blocked","Failed"] | index($s)!=null)' >/dev/null && return 4
+                detail="$(c1008_http "/api/agent-tasks/$id")" || return 2
+                printf '%s' "$detail" | jq -e --arg id "$id" 'has("landRequest") and .summary.id==$id' >/dev/null || return 2
+                printf '%s' "$detail" | jq -e '.landRequest!=null and (.landRequest.state as $s | ["Queued","Held","Running","NeedsResolution"] | index($s)!=null)' >/dev/null && return 3
+                printf '%s' "$detail" | jq -e '.landRequest==null or
+                  ((.landRequest.state as $s | ["Completed","Superseded","Canceled"]|index($s)!=null) and .landRequest.terminalEventId!=null)' >/dev/null || return 2
+            done < <(printf '%s' "$envelope" | jq -c '.items[]')
+        done
+        snapshot="$(printf '%s' "$snapshot" | jq -Sc --argjson rows "$rows" '{scopes:.,tasks:$rows}')" || return 2
+        if [ "$pass" = 2 ] && [ "$snapshot" != "$previous" ]; then return 2; fi
+        previous="$snapshot"
+    done
+    printf '%s' "$snapshot"
+}
+
+c1008_status_proof() {
+    local body counterpart census ids stamp saved code tasks
+    body="$(c849_status_body "$C1008_RUNNER")" || c1008_refuse RunnerStatusMissing
+    census="$(c1008_container_census)" || c1008_refuse RecycleVolumeCensusUnknown
+    ids="$(printf '%s' "$census" | jq -c --arg project "$C1008_PROJECT" \
+        '[.[]|select(.Config.Labels["com.docker.compose.project"]==$project)]')"
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        stamp="$(printf '%s' "$body" | jq -r '.retiredAt // empty')"
+        [[ "$stamp" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]] || c1008_refuse TempRunnerNotRetired
+        [ -n "${C590_TEMP_RETIRED_AT:-}" ] || c1008_refuse TempRunnerNotRetired
+        [ "$(date -u -d "$stamp" +%s 2>/dev/null)" = "$(date -u -d "$C590_TEMP_RETIRED_AT" +%s 2>/dev/null)" ] \
+            || c1008_refuse TempRunnerRetirementChanged
+        printf '%s' "$body" | jq -e '.draining==true and .retireWhenIdle==true and .redirectTo=="server2" and .acceptingNewWork==false' >/dev/null \
+            || c1008_refuse TempRunnerDrainConflict
+        if printf '%s' "$body" | jq -e 'has("runnerSessions") and .runnerSessions==null' >/dev/null; then
+            [ "$(printf '%s' "$ids" | jq length)" = 0 ] || c1008_refuse RunnerCounterUnknown
+            printf '%s' "$body" | jq -e '.available==false and .dispatchEligible==false and .acceptingNewWork==false' >/dev/null \
+                || c1008_refuse RunnerCounterUnknown
+            body="$(printf '%s' "$body" | jq '.runnerSessions=0')"
+        fi
+        c1008_zero "$body"
+        counterpart="$(c849_status_body server2)" || c1008_refuse RunnerStatusMissing
+    else
+        printf '%s' "$body" | jq -e '.draining==true and .retireWhenIdle==false and .redirectTo=="server2-temp" and .acceptingNewWork==false and .retiredAt==null' >/dev/null \
+            || c1008_refuse RecycleRoutingActive
+        if printf '%s' "$body" | jq -e 'has("runnerSessions") and .runnerSessions==null' >/dev/null; then
+            saved="$(printf '%s' "$C1008_RECORD" | jq -r '.phase')"
+            case "$saved" in containersRemoved|removing|volumesRemoved) ;; *) c1008_refuse RunnerCounterUnknown ;; esac
+            printf '%s' "$C1008_RECORD" | jq -e '.liveZero.runnerSessions==0 and .liveZero.sessions==0 and .liveZero.queuedTasks==0 and .ownedRemoved==true' >/dev/null \
+                || c1008_refuse RecycleResumeMismatch
+            [ "$(printf '%s' "$ids" | jq '[.[]|select(.Config.Labels["com.docker.compose.service"]!="build-slots")]|length')" = 0 ] || c1008_refuse RecycleResumeMismatch
+            body="$(printf '%s' "$body" | jq '.runnerSessions=0')"
+        fi
+        c1008_zero "$body"
+        counterpart="$(c849_status_body server2-temp)" || c1008_refuse RunnerStatusMissing
+    fi
+    printf '%s' "$counterpart" | jq -e '.acceptingNewWork==true and .available==true and .dispatchEligible==true and .draining==false and .retiredAt==null' >/dev/null \
+        || c1008_refuse RecycleRoutingActive
+    code=0; tasks="$(c1008_tasks)" || code=$?
+    case "$code" in 0) ;; 3) c1008_refuse RecycleLandInFlight ;; 4) c1008_refuse RecycleBoundTasks ;; *) c1008_refuse RecycleTaskCensusUnknown ;; esac
+    C1008_STATUS="$body"; C1008_CENSUS="$census"; C1008_TASKS="$tasks"
+}
+
+c1008_git_program() {
+    cat <<'C1008_GIT'
+set -euo pipefail
+export GIT_OPTIONAL_LOCKS=0 GIT_NO_LAZY_FETCH=1 GIT_TERMINAL_PROMPT=0
+export GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_GLOBAL=/dev/null
+unknown() { printf 'RecycleGitAuditUnknown\n'; exit 2; }
+trap 'unknown' ERR
+root="$(readlink -e /work)" || unknown
+declare -A seen=()
+while IFS= read -r -d '' entry; do
+    case "$entry" in */.git) repo="${entry%/.git}" ;; */HEAD) repo="${entry%/HEAD}" ;; *) unknown ;; esac
+    top="$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || unknown
+    top="$(readlink -e "$top")" || unknown
+    [[ "$top/" == "$root/"* ]] || unknown
+    for marker in index.lock MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply; do
+        [ ! -e "$top/$marker" ] || unknown
+    done
+    [ "$(git -C "$repo" rev-parse --is-shallow-repository 2>/dev/null)" = false ] || unknown
+    if git -C "$repo" config --get-regexp '^(extensions\.partialclone|remote\..*\.promisor)$' >/dev/null 2>&1; then unknown; fi
+    if [ "$(git -C "$repo" rev-parse --is-bare-repository)" = false ]; then
+        clean="$(git -C "$repo" status --porcelain --untracked-files=all 2>/dev/null)" || unknown
+        if [ -n "$clean" ]; then printf 'RecycleWorktreeDirty\n'; exit 2; fi
+    fi
+    # Every linked/detached worktree is observed even if no local branch names its tip.
+    while IFS= read -r work; do
+        [[ "$work" == worktree\ * ]] || continue
+        work="${work#worktree }"; work="$(readlink -e "$work")" || unknown
+        [[ "$work/" == "$root/"* ]] || unknown
+        [ -z "$(git -C "$work" status --porcelain --untracked-files=all 2>/dev/null)" ] || { printf 'RecycleWorktreeDirty\n'; exit 2; }
+    done < <(git -C "$repo" worktree list --porcelain 2>/dev/null)
+    origin="$(timeout --kill-after=5s 30s git -C "$repo" ls-remote --heads origin 2>/dev/null | sort)" || unknown
+    [ -n "$origin" ] || unknown
+    local_refs="$(git -C "$repo" for-each-ref --format='%(objectname)%09refs/heads/%(refname:strip=3)' refs/remotes/origin | grep -v $'\trefs/heads/HEAD$' | sort)" || unknown
+    if [ "$origin" != "$local_refs" ]; then unknown; fi
+    tips="$(git -C "$repo" for-each-ref --format='%(objectname)' refs/heads refs/tags)" || unknown
+    head="$(git -C "$repo" rev-parse --verify HEAD 2>/dev/null)" || unknown
+    tips="$tips"$'\n'"$head"
+    while IFS= read -r tip; do
+        [ -n "$tip" ] || continue
+        count="$(timeout --kill-after=5s 30s git -C "$repo" rev-list --count "$tip" --not --remotes=origin 2>/dev/null)" || unknown
+        [[ "$count" =~ ^[0-9]+$ ]] || unknown
+        if [ "$count" != 0 ]; then printf 'RecycleUnpublishedWork\n'; exit 2; fi
+        printf 'tip=%s origin=%s repo=%s\n' "$tip" "$(printf '%s' "$origin" | sha256sum | cut -d' ' -f1)" "$(printf '%s' "$repo" | sha256sum | cut -d' ' -f1)"
+    done <<< "$tips"
+done < <(find "$root" -xdev -name .git -print0 -prune -o -type f -name HEAD -print0)
+C1008_GIT
+}
+
+c1008_audit() {
+    local work="$C1008_PROJECT"_work facts image helper output code=0 program
+    facts="$(c1008_volume "$work")" || return 2
+    if [ "$facts" = null ]; then
+        [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && { printf 'absent'; return 0; }
+        return 2
+    fi
+    image="$(printf '%s' "$C1008_RECORD" | jq -r '.image // empty')"
+    if [ -z "$image" ]; then
+        # An absent temp still needs a pinned uid-1654 helper. Never manufacture a
+        # source volume while trying to inspect it.
+        image="$(docker image inspect -f '{{.Id}}' "antiphon-server2/session-testing:${SHA:0:12}" 2>/dev/null)" \
+            || return 2
+    fi
+    [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || return 2
+    program="$(c1008_git_program)"
+    helper="$(docker create --user 1654:1654 --entrypoint /bin/bash \
+        --mount "type=volume,source=$work,target=/work,readonly" "$image" -c "$program" 2>/dev/null)" \
+        || return 2
+    [[ "$helper" =~ ^[0-9a-f]{64}$ ]] || return 2
+    output="$(docker start -a "$helper" 2>/dev/null)" || code=$?
+    docker rm -- "$helper" >/dev/null 2>&1 || return 2
+    if [ "$code" != 0 ]; then
+        case "$output" in *RecycleUnpublishedWork*) return 3 ;; *RecycleWorktreeDirty*) return 4 ;; *) return 2 ;; esac
+    fi
+    printf '%s' "$output" | sort
+}
+
+c1008_audit_checked() {
+    local audit code=0 work_state
+    work_state="$(printf '%s' "$C1008_RECORD" | jq -r --arg name "${C1008_PROJECT}_work" '.volumes[$name].outcome')"
+    if [ "${C1008_RESUME:-0}" = 1 ] && [ "$work_state" = removed ]; then
+        [ "$(c1008_volume "${C1008_PROJECT}_work")" = null ] || c1008_refuse RecycleResumeMismatch
+        C1008_AUDIT="$(printf '%s' "$C1008_RECORD" | jq -r .audit)"
+        return 0
+    fi
+    audit="$(c1008_audit)" || code=$?
+    case "$code" in 0) ;; 3) c1008_refuse RecycleUnpublishedWork ;; 4) c1008_refuse RecycleWorktreeDirty ;; *) c1008_refuse RecycleGitAuditUnknown ;; esac
+    C1008_AUDIT="$audit"
+}
+
+c1008_references() {
+    local census="$1" owned="$2" name facts mount id source target
+    for name in "${C1008_TARGETS[@]}"; do
+        facts="$(c1008_volume "$name")" || c1008_refuse RecycleVolumeCensusUnknown
+        [ "$facts" != null ] || continue
+        mount="$(printf '%s' "$facts" | jq -r .Mountpoint)"
+        target="$(sudo -n readlink -e -- "$mount" 2>/dev/null)" || c1008_refuse RecycleVolumeCensusUnknown
+        [ "$target" = "$mount" ] || c1008_refuse RecycleVolumeIdentityMismatch
+        while IFS= read -r id; do
+            [ -n "$id" ] || continue
+            printf '%s' "$owned" | jq -e --arg id "$id" 'index($id)!=null' >/dev/null && continue
+            printf '%s' "$census" | jq -e --arg id "$id" --arg name "$name" \
+                '.[]|select(.Id==$id)|.Mounts[]|select(.Type=="volume" and .Name==$name)' >/dev/null && c1008_refuse RecycleVolumeInUse
+            while IFS= read -r source; do
+                [ -n "$source" ] || continue
+                source="$(sudo -n readlink -e -- "$source" 2>/dev/null)" || c1008_refuse RecycleVolumeCensusUnknown
+                if [[ "$source/" == "$target/"* || "$target/" == "$source/"* ]]; then c1008_refuse RecycleVolumeInUse; fi
+            done < <(printf '%s' "$census" | jq -r --arg id "$id" '.[]|select(.Id==$id)|.Mounts[]|select(.Type=="bind")|.Source')
+        done < <(printf '%s' "$census" | jq -r '.[].Id')
+    done
+}
+
+c1008_disk() {
+    local data raw row free
+    data="$(docker info -f '{{.DockerRootDir}}' 2>/dev/null)" || return 2
+    [ -n "$data" ] || return 2
+    raw="$(sudo -n df -Pk "$data" 2>/dev/null)" || return 2
+    row="$(printf '%s\n' "$raw" | awk 'NR==2 {print $1 " " $4 " " $6}')"
+    free="$(printf '%s' "$row" | awk '{print $2}')"
+    [[ "$free" =~ ^[0-9]+$ ]] && [ "${#free}" -le 14 ] || return 2
+    jq -cn --arg raw "$raw" --arg filesystem "$(printf '%s' "$row" | awk '{print $1}')" \
+        --argjson bytes "$((free * 1024))" '{raw:$raw,filesystem:$filesystem,bytes:$bytes}'
+}
+
+c1008_recycle() {
+    C1008_PROJECT="$1"; C1008_RUNNER=server2
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1008_RUNNER=server2-temp; fi
+    require_lane host
+    [[ "${C1008_OPERATION:-}" =~ ^c1008[0-9a-f]{32}$ ]] && \
+    [[ "${C1008_PROJECT_ID:-}" =~ ^[0-9a-f-]{36}$ ]] && [ "${C1008_CONTEXT:-}" = default ] \
+        || write_result false RecycleContextInvalid 2
+    case "${C1008_DRY_RUN:-0}:${C1008_RESUME:-0}" in 0:0|0:1|1:0) ;; *) write_result false RecycleContextInvalid 2 ;; esac
+    command -v jq >/dev/null || write_result false RecycleToolsMissing 2
+    C1008_TARGETS=("${C1008_PROJECT}_work" "${C1008_PROJECT}_runner-tmp" "${C1008_PROJECT}_dind-data")
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1008_TARGETS+=("${C1008_PROJECT}_runner-state"); fi
+    local model digest owned image id service facts name audit after code=0 current originals='{}' preserved='{}'
+    model="$(c1008_compose_model)" || write_result false RecycleComposeMismatch 2
+    digest="$(printf '%s' "$model" | sha256sum | cut -d' ' -f1)"
+    C1008_JOURNAL="$SERVER2_ROOT/recycle/$C1008_OPERATION.json"
+    C1008_RECORD="$(jq -cn --arg sha "$SHA" --arg op "$C1008_OPERATION" --arg project "$C1008_PROJECT" --arg digest "$digest" \
+        '{schema:1,sourceSha:$sha,operationId:$op,project:$project,context:"default",dryRun:false,composeDigest:$digest,phase:"preflight",outcome:"refused",volumes:{},ownedRemoved:false}')"
+    if [ "${C1008_RESUME:-0}" = 1 ]; then
+        [ -f "$C1008_JOURNAL" ] && [ ! -L "$C1008_JOURNAL" ] || c1008_refuse RecycleResumeMismatch
+        current="$(cat "$C1008_JOURNAL")"
+        printf '%s' "$current" | jq -e --arg sha "$SHA" --arg op "$C1008_OPERATION" --arg project "$C1008_PROJECT" --arg digest "$digest" \
+            '.schema==1 and .sourceSha==$sha and .operationId==$op and .project==$project and .context=="default" and .dryRun==false and .composeDigest==$digest' >/dev/null \
+            || c1008_refuse RecycleResumeMismatch
+        C1008_RECORD="$current"
+    elif [ -e "$C1008_JOURNAL" ]; then c1008_refuse RecycleResumeMismatch; fi
+    c1008_status_proof
+    if [ "${C1008_DRY_RUN:-0}" = 1 ]; then
+        for name in "${C1008_TARGETS[@]}"; do printf 'C1008_PREVIEW remove=%s\n' "$name"; done
+        printf 'C1008_PREVIEW preserve=%s_runner-state,antiphon-runner-cache-nuget-packages,antiphon-runner-cache-nuget-scratch,antiphon-runner-cache-npm-content auditPending=true\n' "$HOST_PROJECT"
+        write_result true '' 0
+    fi
+    c1008_lock
+    c1008_status_proof
+    for name in "${C1008_TARGETS[@]}"; do
+        facts="$(c1008_volume "$name")" || c1008_refuse RecycleVolumeCensusUnknown
+        if [ "${C1008_RESUME:-0}" = 1 ]; then
+            current="$(printf '%s' "$C1008_RECORD" | jq -c --arg name "$name" '.volumes[$name]')"
+            [ "$current" != null ] || c1008_refuse RecycleResumeMismatch
+            if [ "$facts" != null ]; then
+                [ "$(printf '%s' "$current" | jq -Sc .original)" = "$(printf '%s' "$facts" | jq -Sc .)" ] || c1008_refuse RecycleResumeMismatch
+                [ "$(printf '%s' "$current" | jq -r .outcome)" = pending ] || c1008_refuse RecycleResumeMismatch
+            fi
+        else
+            originals="$(printf '%s' "$originals" | jq -c --arg name "$name" --argjson facts "$facts" '.[$name]={original:$facts,outcome:"pending"}')"
+        fi
+    done
+    for name in "${HOST_PROJECT}_runner-state" "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+        facts="$(c1008_volume "$name")" || c1008_refuse RecycleVolumeIdentityMismatch
+        [ "$facts" != null ] || c1008_refuse RecycleVolumeIdentityMismatch
+        preserved="$(printf '%s' "$preserved" | jq -c --arg name "$name" --argjson facts "$facts" '.[$name]=$facts')"
+    done
+    owned="$(printf '%s' "$C1008_CENSUS" | jq -c --arg project "$C1008_PROJECT" \
+        '[.[]|select(.Config.Labels["com.docker.compose.project"]==$project and .Config.Labels["com.docker.compose.service"]!="build-slots")]')"
+    printf '%s' "$owned" | jq -e 'all(.[]; .Config.Labels["com.docker.compose.service"]=="session-runner" or
+        (.Config.Labels["com.docker.compose.service"]=="state-init" and .State.Running==false and .State.Status=="exited")) and
+        ([.[]|select(.Config.Labels["com.docker.compose.service"]=="session-runner")]|length)<=1' >/dev/null || c1008_refuse RecycleContainerStateUnknown
+    if [ "${C1008_RESUME:-0}" = 0 ]; then
+        image="$(printf '%s' "$owned" | jq -r '[.[]|select(.Config.Labels["com.docker.compose.service"]=="session-runner")][0].Image // empty')"
+        C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --argjson volumes "$originals" --argjson preserved "$preserved" \
+            --argjson owned "$owned" --argjson live "$C1008_STATUS" --argjson tasks "$C1008_TASKS" --arg image "$image" \
+            '.volumes=$volumes|.preserved=$preserved|.owned=$owned|.liveZero=$live|.tasks=$tasks|.image=$image')"
+    else
+        [ "$(printf '%s' "$preserved" | jq -Sc .)" = "$(printf '%s' "$C1008_RECORD" | jq -Sc .preserved)" ] || c1008_refuse RecycleResumeMismatch
+        printf '%s' "$C1008_RECORD" | jq -e --argjson owned "$owned" \
+            '. as $saved | all($owned[]; .Id as $id | .Image as $image | .Mounts as $mounts |
+                any($saved.owned[]; .Id==$id and .Image==$image and .Mounts==$mounts))' >/dev/null 2>&1 \
+            || c1008_refuse RecycleResumeMismatch
+    fi
+    c1008_references "$C1008_CENSUS" "$(printf '%s' "$owned" | jq '[.[].Id]')"
+    mkdir -p "$SERVER2_ROOT/recycle" || c1008_refuse RecycleReceiptUnavailable
+    c1008_save || c1008_refuse RecycleReceiptUnavailable
+    C1008_ACTIVE=1
+    c1008_audit_checked; audit="$C1008_AUDIT"
+    if [ "${C1008_RESUME:-0}" = 0 ]; then
+        C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg audit "$audit" '.audit=$audit')"
+        c1008_save || c1008_refuse RecycleReceiptUnavailable
+    fi
+    while IFS= read -r id; do
+        [ -n "$id" ] || continue
+        current="$(docker inspect "$id" 2>/dev/null)" || c1008_refuse RecycleVolumeCensusUnknown
+        service="$(printf '%s' "$current" | jq -r '.[0].Config.Labels["com.docker.compose.service"]')"
+        if [ "$service" = session-runner ] && [ "$(printf '%s' "$current" | jq -r '.[0].State.Running')" = true ]; then
+            docker stop --time 90 -- "$id" >/dev/null 2>&1 || c1008_refuse RecycleStopFailed
+            current="$(docker inspect "$id" 2>/dev/null)" || c1008_refuse RecycleVolumeCensusUnknown
+        fi
+        printf '%s' "$current" | jq -e '.[0].State.Running==false and .[0].State.Status=="exited"' >/dev/null || c1008_refuse RecycleStopFailed
+    done < <(printf '%s' "$owned" | jq -r '.[].Id')
+    C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c '.phase="stopped"')"; c1008_save || c1008_refuse RecycleReceiptUnavailable
+    while IFS= read -r id; do
+        [ -n "$id" ] || continue
+        docker rm -- "$id" >/dev/null 2>&1 || c1008_refuse RecycleRemoveFailed
+    done < <(printf '%s' "$owned" | jq -r '.[].Id')
+    C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c '.phase="containersRemoved"|.ownedRemoved=true')"; c1008_save || c1008_refuse RecycleReceiptUnavailable
+    c1008_audit_checked; after="$C1008_AUDIT"
+    [ "$after" = "$audit" ] || c1008_refuse RecycleGitAuditUnknown
+    c1008_status_proof
+    c1008_references "$C1008_CENSUS" '[]'
+    after="$(c1008_disk)" || c1008_refuse RecycleDiskUnknown
+    C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --argjson disk "$after" '.diskBefore=$disk|.phase="removing"')"; c1008_save || c1008_refuse RecycleReceiptUnavailable
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        compose_temp down -v >> "$CASE_DIR/command.log" 2>&1 || c1008_refuse RecycleRemoveFailed
+    fi
+    for name in "${C1008_TARGETS[@]}"; do
+        c1008_status_proof; c1008_references "$C1008_CENSUS" '[]'
+        facts="$(c1008_volume "$name")" || c1008_refuse RecycleVolumeCensusUnknown
+        if [ "$facts" != null ]; then
+            [ "$C1008_PROJECT" != "$TEMP_PROJECT" ] || c1008_refuse RecycleRemoveFailed
+            docker volume rm -- "$name" >/dev/null 2>&1 || c1008_refuse RecycleVolumeInUse
+            [ "$(c1008_volume "$name")" = null ] || c1008_refuse RecycleRemoveFailed
+        fi
+        C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg name "$name" \
+            '.volumes[$name].outcome=(if .volumes[$name].original==null then "alreadyAbsent" else "removed" end)')"
+        c1008_save || c1008_refuse RecycleReceiptUnavailable
+    done
+    after="$(c1008_disk)" || { after=null; code=2; }
+    C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --argjson disk "$after" '.diskAfter=$disk|.phase="volumesRemoved"')"
+    for name in "${HOST_PROJECT}_runner-state" "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+        facts="$(c1008_volume "$name")" || c1008_refuse RecycleVolumeIdentityMismatch
+        [ "$(printf '%s' "$facts" | jq -Sc .)" = "$(printf '%s' "$preserved" | jq -Sc --arg name "$name" '.[$name]')" ] || c1008_refuse RecycleVolumeIdentityMismatch
+    done
+    [ "$code" = 0 ] || c1008_refuse RecycleDiskUnknown
+    C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c '.outcome="completed"')"; c1008_save || c1008_refuse RecycleReceiptUnavailable
+    c1008_summary
+}
+
 case_deploy_parent() {
     require_lane host
+    if [ "${C1008_CONTEXT:-}" = default ]; then
+        c1008_recycle "$HOST_PROJECT"
+        c849_budget_gate
+    fi
     ensure_checkout
     ensure_runner_boot_files
 
@@ -3728,29 +4185,9 @@ EOF
 
 case_retire_temp_runner() {
     require_lane host
-    if [ -z "${C590_TEMP_RETIRED_AT:-}" ]; then write_result false TempRunnerNotRetired 2; fi
-    c849_status_zero server2-temp || write_result false TempRunnerNotIdle 2
-    local live_retired_at
-    live_retired_at="$(c849_status_body server2-temp \
-        | jq -r '.retiredAt // empty')" || write_result false TempRunnerStatusUnavailable 2
-    [ -n "$live_retired_at" ] || write_result false TempRunnerNotRetired 2
-    [ "$(date -u -d "$live_retired_at" +%s 2>/dev/null)" = \
-      "$(date -u -d "$C590_TEMP_RETIRED_AT" +%s 2>/dev/null)" ] \
-        || write_result false TempRunnerRetirementChanged 2
-    c849_prepare no
-    c849_require_ready allow-cold
-    c849_budget_gate
     if [ ! -s "$SERVER2_TEMP_ENV" ]; then write_result false TempStackMissing 2; fi
     RUNNER_GROK_STORE_DIR="$(sed -n 's/^RUNNER_GROK_STORE_DIR=//p' "$SERVER2_TEMP_ENV" | head -n 1)"
-    compose_temp down -v >> "$CASE_DIR/command.log" 2>&1 || write_result false TempComposeDownFailed 2
-    local image
-    image="$(c849_image)" || {
-        if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
-        write_result false CacheHelperImageMissing 2
-    }
-    c849_volume "$C849_PACKAGES" nuget-packages no "$image" || write_result false CacheVolumeMissing 2
-    c849_volume "$C849_SCRATCH" nuget-scratch no "$image" || write_result false CacheVolumeMissing 2
-    c849_volume "$C849_NPM" npm-content no "$image" || write_result false CacheVolumeMissing 2
+    c1008_recycle "$TEMP_PROJECT"
     printf 'down retiredAt=%s\n' "$C590_TEMP_RETIRED_AT" > "$CASE_DIR/temp-down.txt"
     write_result true '' 0
 }
@@ -3962,7 +4399,16 @@ case_throwaway() {
 trap 'ec=$?; if [ "$WROTE" != 1 ] && [ "$ec" != 0 ]; then write_result false "UnhandledExit $ec" "$ec"; fi' EXIT
 
 detect_lane > /dev/null
+# Preview intercepts before generic checkout, recursive ownership or boot setup.
+if [ "${C1008_CONTEXT:-}" = default ] && [ "${C1008_DRY_RUN:-0}" = 1 ]; then
+    require_lane host
+    c849_evidence_dir
+    case "$CASE" in deploy-parent) c1008_recycle "$HOST_PROJECT" ;; retire-temp-runner) c1008_recycle "$TEMP_PROJECT" ;; *) write_result false RecycleContextInvalid 2 ;; esac
+fi
 case "$CASE" in
+    deploy-parent|retire-temp-runner)
+        if [ "${C1008_CONTEXT:-}" = default ]; then c849_evidence_dir; else ensure_dirs; fi
+        ;;
     runner-cache-inventory|runner-cache-fixture|runner-cache-seed|runner-cache-reset|verify-runner-caches|verify-runner-caches-retired|runner-cache-prune-preview|runner-cache-prune)
         # The cache lane is host-only and must never invoke ensure_dirs: it recursively chowns
         # /work and the server2 root, which may contain live runner state and recovery data.
@@ -3980,7 +4426,7 @@ case "$CASE" in
 esac
 printf '%s\n' "$LANE" > "$CASE_DIR/lane.txt"
 if [ "${C590_REEXEC:-}" != "1" ] && [[ "$CASE" != runner-cache-* ]] \
-    && [[ "$CASE" != verify-runner-caches* ]]; then
+    && [[ "$CASE" != verify-runner-caches* ]] && [ "${C1008_CONTEXT:-}" != default ]; then
     ensure_checkout
     export C590_REEXEC=1
     exec bash "$CHECKOUT/scripts/c590-remote.sh"
