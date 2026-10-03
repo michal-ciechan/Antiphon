@@ -232,6 +232,8 @@ public sealed class EvidenceDiffGuardTests
         (await f.HistoryAsync(f.Base, "missing-head")).Exit.ShouldBe(2, "c1015-head-unresolved");
         var blob = await f.PutAsync("fixture.md", Text());
         (await f.HistoryAsync(blob, f.Base)).Exit.ShouldBe(2);
+        await f.GitAsync("tag", "-a", "blob-tag", "-m", "blob tag", blob);
+        (await f.HistoryAsync("blob-tag", f.Base)).Exit.ShouldBe(2);
         await f.GitAsync("read-tree", "--empty");
         var unrelated = await f.CommitIndexAsync([]);
         var refused = await f.HistoryAsync(f.Base, unrelated);
@@ -312,6 +314,13 @@ public sealed class EvidenceDiffGuardTests
         pinned.Output.Split("FAULT-HIT", StringSplitOptions.None).Length.ShouldBe(2, "head movement cut hit exactly once");
         pinned.Exit.ShouldBe(0, "c1015-pinned-head");
         pinned.Output.ShouldContain("head=" + head, customMessage: "c1015-pinned-head");
+        var baseHook = "function Get-EvidenceGitResult { param($Repository,$Arguments) $r=Invoke-EvidenceNativeGit $Repository $Arguments; " +
+            "if ($Arguments -contains 'moving-base^{commit}') { [void](Invoke-EvidenceNativeGit $Repository @('update-ref','refs/heads/moving-base'," +
+            EvidenceGitFixture.Quote(bad) + ")); Write-Host 'FAULT-HIT' }; return $r }";
+        var pinnedBase = await f.HistoryAsync("moving-base", head, baseHook);
+        pinnedBase.Output.Split("FAULT-HIT", StringSplitOptions.None).Length.ShouldBe(2);
+        pinnedBase.Exit.ShouldBe(0, "c1015-pinned-base");
+        pinnedBase.Output.ShouldContain("base=" + f.Base + " head=" + head);
     }
 
     [Test]

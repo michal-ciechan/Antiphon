@@ -82,6 +82,8 @@ public sealed class EvidenceDeletionGuardTests
             validated.Output.ShouldContain("deletion=" + deletion);
             validated.Output.ShouldContain("finalTreeViolations=0");
             (await f.SnapshotAsync()).ShouldBe(before, "c1015-deletion-read-only");
+            var laterReport = await f.AddCommitAsync(deletion, ".antiphon/later-summary.md", Text("permitted new report"));
+            (await f.DeletionAsync(b, laterReport, inv)).Exit.ShouldBe(0);
             foreach (var e in inv.Delete.Where(x => x.Type == "blob"))
                 (await f.RunAsync("git", ["cat-file", "-e", e.Oid])).Exit.ShouldBe(0);
         }
@@ -92,9 +94,11 @@ public sealed class EvidenceDeletionGuardTests
     {
         await using var f = await EvidenceGitFixture.CreateAsync(anchored: true);
         var b = await BoundaryBaseAsync(f); var inv = await f.InventoryAsync(b); var deletion = await f.ExactDeletionAsync(b, inv);
+        var before = await f.SnapshotAsync();
         (await f.DeletionAsync(b, deletion, inv, count: (inv.Delete.Length + 1).ToString())).Exit.ShouldBe(1, "c1015-inventory-count");
         (await f.DeletionAsync(b, deletion, inv, digest: new string('0', 64))).Exit.ShouldBe(1, "c1015-inventory-digest");
         (await f.DeletionAsync(b, deletion, inv, bytes: (inv.Bytes + 1).ToString())).Exit.ShouldBe(1, "c1015-inventory-bytes");
+        (await f.SnapshotAsync()).ShouldBe(before, "c1015-deletion-read-only-failure");
         var anchorKeep = (await f.TreeAsync(EvidenceGitFixture.Anchor)).First(x => EvidenceGitFixture.Scoped(x) && !EvidenceGitFixture.Reject(x));
         await f.GitAsync("read-tree", b); await f.RemoveAsync(anchorKeep.Path);
         var absent = await f.CommitIndexAsync([b]);
@@ -106,6 +110,12 @@ public sealed class EvidenceDeletionGuardTests
         await f.GitAsync("read-tree", b); await f.SetAsync(anchorKeep.Path, anchorKeep.Oid, "100755");
         var mode = await f.CommitIndexAsync([b]);
         (await f.InventoryOnlyAsync(mode)).Exit.ShouldBe(1, "c1015-anchor-mode");
+        foreach (var invalidBase in new[] { absent, changed, mode })
+        {
+            var invalidInventory = await f.InventoryAsync(invalidBase);
+            var exactInvalid = await f.ExactDeletionAsync(invalidBase, invalidInventory);
+            (await f.DeletionAsync(invalidBase, exactInvalid, invalidInventory)).Exit.ShouldBe(1);
+        }
         var hook = "function Get-EvidenceGitResult { param($Repository,$Arguments) $r=Invoke-EvidenceNativeGit $Repository $Arguments; " +
             "if ($Arguments[0] -eq 'ls-tree' -and $Arguments[-1] -eq '" + EvidenceGitFixture.Anchor + "') { $s=[Text.Encoding]::UTF8.GetString($r.Bytes); " +
             "$old=" + EvidenceGitFixture.Quote(anchorKeep.Mode + " blob " + anchorKeep.Oid) + "; " +
@@ -113,6 +123,9 @@ public sealed class EvidenceDeletionGuardTests
         var classifier = await f.InventoryOnlyAsync(b, hook);
         classifier.Output.Split("FAULT-HIT", StringSplitOptions.None).Length.ShouldBe(2, "fault cut hit exactly once");
         classifier.Exit.ShouldBe(1, "c1015-anchor-classification");
+        var classifierValidation = await f.DeletionAsync(b, deletion, inv, hook: hook);
+        classifierValidation.Output.Split("FAULT-HIT", StringSplitOptions.None).Length.ShouldBe(2);
+        classifierValidation.Exit.ShouldBe(1, "c1015-anchor-classification-validation");
         foreach (var (count, digest, bytes) in new[] { ("", inv.Digest, inv.Bytes.ToString()), ("-1", inv.Digest, inv.Bytes.ToString()), ("0", "invalid", "0"), ("0", inv.Digest, "NaN") })
             (await f.DeletionAsync(b, deletion, inv, count, digest, bytes)).Exit.ShouldBe(2);
         (await f.GuardAsync("check-evidence-deletion.ps1", [])).Exit.ShouldBe(2);
