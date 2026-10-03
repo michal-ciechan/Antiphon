@@ -30,7 +30,6 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
     private readonly ILogger _logger;
     private readonly Antiphon.Server.Application.Services.RemoteSpillCourier? _spills;
     private readonly IRunnerEligibilityObserver? _observer;
-    private readonly IOptions<DelegationSettings>? _delegation;
     internal DateTimeOffset CodexCliEvidenceNow => _clock.GetUtcNow();
 
     public PhoneHomeRunnerDirectory(
@@ -41,10 +40,9 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
         // CARD-0604 G-21: absent, a remote spill is typed whole rather than written anywhere.
         Antiphon.Server.Application.Services.RemoteSpillCourier? spills = null,
         ILogger<PhoneHomeRunnerDirectory>? inventoryLogger = null,
-        IRunnerEligibilityObserver? observer = null, IOptions<DelegationSettings>? delegation = null)
+        IRunnerEligibilityObserver? observer = null)
     {
         _observer = observer;
-        _delegation = delegation;
         _spills = spills;
         _local = local;
         _settings = settings.Value;
@@ -698,9 +696,8 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             RunnerSessions: live?.ListedNonExited,
             CodexCliVersion: cli?.CodexCliVersion,
             CodexCliVersionCheckedAtUtc: cli?.CodexCliVersionCheckedAtUtc,
-            CodexCliVersionError: cli?.CodexCliVersionError,
-            CodexCliVersionStale: CodexCliAdmissionPolicy.DisplayStale(cli, _clock.GetUtcNow(),
-                _delegation?.Value.CodexCliVersionMaxAgeMinutes ?? 15));
+            CodexCliVersionError: CodexCliObservation.DisplayError(cli, _clock.GetUtcNow()),
+            CodexCliVersionStale: CodexCliObservation.DisplayStale(cli, _clock.GetUtcNow()));
     }
 
     /// <summary>Null when this process has no database. Otherwise every non-terminal bound session and every queued unlaunched task.</summary>

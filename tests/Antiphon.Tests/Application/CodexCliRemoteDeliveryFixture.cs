@@ -52,7 +52,6 @@ internal static class CodexCliRemoteDeliveryFixture
                     settings.RunnerWorkspace = root;
                     settings.RunnerRepository = Path.Combine(root, "repo");
                     settings.CallbackOrigin = "https://antiphon.test";
-                    settings.CodexAuthProbeEnabled = false;
                 },
                 configureServices: services =>
                 {
@@ -157,7 +156,7 @@ internal static class CodexCliRemoteDeliveryFixture
             terminal.SubmittedBodies.Single().ShouldBe(expectedWire, "C959-v21-remote-W " + vector);
             expectedWire.ShouldNotContain("\n", customMessage: "C959-pc-212 remote " + vector);
             expectedWire.ShouldNotContain("\r");
-            runtime.ProbeRequests.ShouldNotBeEmpty("C959-v21-real-version-operation " + vector);
+            runtime.ProbeRequests.ShouldBeEmpty("C959-v21-zero-version-operations " + vector);
             var args = terminal.StartedArgs.ToList();
             args.Count(a => a == "--model").ShouldBe(1, "C959-pc-184 remote " + vector);
             args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.1-sol");

@@ -396,10 +396,6 @@ public sealed class CodexPhoneHomeCreateTests
     {
         public string? CurrentRunner { get; set; }
         public List<(string? Runner, string Provider)> Calls { get; } = [];
-        // This class varies auth, so the separate CLI operation explicitly represents a current installation.
-        public Task<RunnerCodexCliVersionDto?> GetCodexCliVersionAsync(RunnerCodexCliProbeRequest request, CancellationToken ct) =>
-            Task.FromResult<RunnerCodexCliVersionDto?>(new("0.160.0", DateTimeOffset.UtcNow, null, new string('a',64)));
-
         public Task<RunnerProviderAuthDto?> GetProviderAuthAsync(string provider, CancellationToken ct)
         {
             Calls.Add((CurrentRunner, provider));

@@ -1398,11 +1398,6 @@ public sealed class AgentTaskService
                 request.AllowUnauthenticatedProvider, remoteRunnerId, ct);
             await RefuseUnauthenticatedRunnerCodexAsync(
                 agentKind, request.AllowUnauthenticatedProvider, remoteRunnerId, ct);
-            var cli = await CodexCliAdmissionPolicy.RequireAsync(
-                await CodexCliProbeDescriptor.ResolveAsync(_db, task, _registrySettings, _phoneHome, _apiKeyEnvResolver, ct),
-                _runners, _settings, _timeProvider, ct);
-            if (cli?.Warning is { } cliWarning)
-                warning = warning is null ? cliWarning : warning + " " + cliWarning;
         }
 
         if (repeatOf is not null)
@@ -2647,12 +2642,6 @@ public sealed class AgentTaskService
             allowUnauthenticated: false, task.RunnerId, ct);
         await RefuseUnauthenticatedRunnerCodexAsync(
             task.AgentKind, allowUnauthenticated: false, task.RunnerId, ct);
-        var cli = await CodexCliAdmissionPolicy.RequireAsync(
-            await CodexCliProbeDescriptor.ResolveAsync(_db, task, _registrySettings, _phoneHome, _apiKeyEnvResolver, ct),
-            _runners, _settings, _timeProvider, ct);
-        if (cli?.Warning is { } cliWarning)
-            AddEvent(task.Id, AgentTaskEventType.Warning, null, cliWarning, UtcNow());
-
         await RequeueAsync(
             task, AgentTaskEventType.Retried, task.ModelLevel,
             $"Retried at {ModelLevelAliases.For(task.AgentKind, task.ModelLevel)}.", ct, abandonCommitRecovery);
