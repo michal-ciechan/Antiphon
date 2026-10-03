@@ -108,7 +108,7 @@ public sealed class RollingVolumeRecycleScriptTests
         {
             var run = await C1008Process("pwsh", "-NoProfile", "-File",
                 Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/test-deploy-server2-jq.ps1"), "-Case", mode);
-            run.Output.ShouldContain($"C973_JQ case={mode} assertions=31 failures=0", "rolling-regressions-preserved: " + run.Output);
+            run.Output.ShouldContain($"C973_JQ case={mode} assertions=31 failures=0", Case.Sensitive, "rolling-regressions-preserved: " + run.Output);
             if (mode == "present") run.Output.ShouldNotContain("C973_JQ_SKIPPED");
             run.Exit.ShouldBe(0);
         }
@@ -120,7 +120,7 @@ public sealed class RollingVolumeRecycleScriptTests
     {
         using var f = new C1008HostFixture(main: false);
         var run = await f.Run("retire-temp-runner", "detect_lane() { LANE=nested; }");
-        run.Output.ShouldContain("WrongLane", "recycle-doc-contract: host operations refuse nested lane");
+        run.Output.ShouldContain("WrongLane", Case.Sensitive, "recycle-doc-contract: host operations refuse nested lane");
         f.Removed.ShouldBeEmpty();
         foreach (var script in new[] { "deploy-server2.ps1", "c590-real.ps1", "c590-remote.sh", "verify-docker-stack.ps1" })
             File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", script)).All(x => x < 128)
@@ -134,7 +134,7 @@ public sealed class RollingVolumeRecycleScriptTests
         using var f = new C1008WrapperFixture();
         f.State["taskError"] = "SENTINEL_C1008_HTTP_CREDENTIAL";
         var run = await f.Run("retire-temp");
-        run.Output.ShouldContain("RecycleTaskCensusUnknown", "recycle-receipt-custody: typed census refusal survives");
+        run.Output.ShouldContain("RecycleTaskCensusUnknown", Case.Sensitive, "recycle-receipt-custody: typed census refusal survives");
         run.Output.ShouldNotContain("SENTINEL_C1008_HTTP_CREDENTIAL");
         run.Output.ShouldNotContain("C1008_TEST_TOKEN_SENTINEL");
         run.Output.ShouldNotContain("UnhandledExit");
