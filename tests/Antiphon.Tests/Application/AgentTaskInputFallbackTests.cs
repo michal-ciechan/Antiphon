@@ -3,6 +3,10 @@ using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Api.Endpoints;
+using Antiphon.Server.Api.Middleware;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -16,6 +20,12 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Primitives;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
 using Shouldly;
 using TUnit.Core;
 
@@ -115,7 +125,7 @@ public sealed class AgentTaskInputFallbackTests
         const string token = "c965-writer-fallback-test-token";
         (await db.AgentTasks.SingleAsync()).TokenHash = AgentTaskService.HashToken(token);
         await db.SaveChangesAsync();
-        await using var host = new TaskInputWebAppFactory(db.Database.GetConnectionString()!);
+        await using var host = await TaskInputHttpHost.StartAsync(db.Database.GetConnectionString()!);
         using var client = host.CreateClient();
         using var request = new HttpRequestMessage(HttpMethod.Get, AgentTaskInputService.Route(f.TaskId, input.Id));
         request.Headers.Add("X-Antiphon-Task-Token", token);
@@ -207,7 +217,7 @@ public sealed class AgentTaskInputFallbackTests
         });
         await db.SaveChangesAsync();
         var input = await db.AgentTaskEvents.SingleAsync(e => e.Type == AgentTaskEventType.Refined);
-        await using var host = new TaskInputWebAppFactory(f.ConnectionString);
+        await using var host = await TaskInputHttpHost.StartAsync(f.ConnectionString);
         using var client = host.CreateClient();
         var route = AgentTaskInputService.Route(f.TaskId, input.Id);
         using var correct = new HttpRequestMessage(HttpMethod.Get, route);
@@ -306,7 +316,7 @@ public sealed class AgentTaskInputFallbackTests
         const string token = "c965-private-input-test-token";
         (await db.AgentTasks.SingleAsync()).TokenHash = AgentTaskService.HashToken(token);
         await db.SaveChangesAsync();
-        await using var host = new TaskInputWebAppFactory(f.ConnectionString, logs);
+        await using var host = await TaskInputHttpHost.StartAsync(f.ConnectionString, logs);
         using var client = host.CreateClient();
         using var publicResponse = await client.GetAsync($"/api/agent-tasks/{f.TaskId:D}");
         publicResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -383,13 +393,65 @@ public sealed class AgentTaskInputFallbackTests
         return await db.SessionQueuedMessages.AsNoTracking().SingleAsync();
     }
 
-    private sealed class TaskInputWebAppFactory(string connectionString,
-        CapturingLoggerProvider? logs = null) : AntiphonWebAppFactory
+    private sealed class TaskInputHttpHost(WebApplication app) : IAsyncDisposable
     {
-        protected override string ConnectionString => connectionString;
-        protected override void ApplyTestOverrides(IServiceCollection services)
+        public IServiceProvider Services => app.Services;
+        public HttpClient CreateClient() => new() { BaseAddress = new Uri(app.Urls.Single()) };
+        public ValueTask DisposeAsync() => app.DisposeAsync();
+
+        public static async Task<TaskInputHttpHost> StartAsync(string connectionString,
+            CapturingLoggerProvider? logs = null)
         {
-            if (logs is not null) services.AddLogging(b => b.AddProvider(logs));
+            var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
+            builder.WebHost.ConfigureKestrel(o => o.Listen(IPAddress.Loopback, 0));
+            builder.Logging.ClearProviders();
+            if (logs is not null) builder.Logging.AddProvider(logs);
+            // Let the real endpoint mapper identify its service parameters while constructing
+            // metadata. Unmounted handlers may never resolve any of these placeholders.
+            foreach (var type in typeof(AgentTaskService).Assembly.GetTypes().Where(t =>
+                !t.IsGenericTypeDefinition && !t.IsAbstract
+                && t.Namespace == typeof(AgentTaskService).Namespace))
+                builder.Services.AddScoped(type, _ => throw new InvalidOperationException(
+                    $"Unmounted endpoint attempted to resolve {type.Name}."));
+            builder.Services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString));
+            builder.Services.AddSingleton<DelegationWorkspaceResolver>();
+            builder.Services.AddSingleton<IEventBus, MockEventBus>();
+            builder.Services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
+            builder.Services.AddSingleton(TimeProvider.System);
+            builder.Services.AddSingleton(Options.Create(new DelegationSettings()));
+            builder.Services.AddScoped(sp => new AgentTaskService(
+                sp.GetRequiredService<AppDbContext>(), sp.GetRequiredService<DelegationWorkspaceResolver>(),
+                sp.GetRequiredService<IOptions<DelegationSettings>>(), sp.GetRequiredService<IEventBus>(),
+                sp.GetRequiredService<IDelegateSessionStopper>(), sp.GetRequiredService<TimeProvider>(),
+                sp.GetRequiredService<ILogger<AgentTaskService>>()));
+            builder.Services.AddScoped<AgentTaskInputService>();
+            var app = builder.Build();
+            try
+            {
+                app.UseMiddleware<ExceptionMiddleware>();
+                app.MapAgentTaskEndpoints();
+                var sources = ((IEndpointRouteBuilder)app).DataSources;
+                var relevant = sources.SelectMany(s => s.Endpoints).OfType<RouteEndpoint>()
+                    .Where(e => e.RoutePattern.RawText is "/api/agent-tasks/{id}"
+                        or "/api/agent-tasks/{id:guid}/inputs/{eventId:guid}")
+                    .Cast<Endpoint>().ToArray();
+                relevant.Length.ShouldBe(2, "real-http-endpoint-count=2");
+                sources.Clear();
+                sources.Add(new InputEndpoints(relevant));
+                await app.StartAsync();
+                return new TaskInputHttpHost(app);
+            }
+            catch
+            {
+                await app.DisposeAsync();
+                throw;
+            }
+        }
+
+        private sealed class InputEndpoints(IReadOnlyList<Endpoint> endpoints) : EndpointDataSource
+        {
+            public override IReadOnlyList<Endpoint> Endpoints => endpoints;
+            public override IChangeToken GetChangeToken() => NullChangeToken.Singleton;
         }
     }
 
