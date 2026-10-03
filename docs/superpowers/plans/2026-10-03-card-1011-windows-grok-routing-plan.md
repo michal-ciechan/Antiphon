@@ -773,7 +773,9 @@ Backend experiment configuration is fixed as `SessionRunner:PtyBackend=inbox`
 then `modern`, 120x30, PtyHost (not Herdr). Default to an already provisioned
 isolated Windows stack with its own database, loopback ports, runner manifest/log
 roots and supported provider session; its server uses the matching backend
-ceiling. If unavailable, the caller must commission the canonical configuration
+ceiling. Seed/read back the approved Human Required Review pair in that isolated
+database and record its own pin identity; never reuse the production pin GUID as
+proof of an isolated stack's configuration. If unavailable, the caller must commission the canonical configuration
 window described in S0: save only the relevant setting, stop new affected
 dispatches, inspect lock ownership and occupancy, change that setting through
 the runner's configured override, use canonical restart scripts, then verify
@@ -785,7 +787,8 @@ kill unrelated sessions. This freeze grants no canonical settings mutation.
 WQ-3 needs input observation absent from the existing adapter fake. Implement
 `RunnerGrokAdapterReadyTestsPty.C1011_real_fresh_worktree_trust` as a Windows-only
 Explicit test, enabled only by `ANTIPHON_HEADED_TESTS=1` and an explicit method
-filter. Use a new task-owned git worktree/cwd, the installed real grok executable
+filter, with method-level `NotInParallel("Headed")` and the class's existing
+process limiter. Use a new task-owned git worktree/cwd, the installed real grok executable
 and its already authorized provider session; do not copy/read auth stores or run
 login. Use DirectSessionRunnerClient with `ptyBackend: "modern"`, the real
 RunnerGrokAdapter at normal settings, 120x30 and a test-local forwarding
