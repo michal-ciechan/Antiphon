@@ -372,14 +372,14 @@ public class GrokLinuxBlockingPromptTests
         var ready = GrokLinuxStartupFixture.Screen("1.0.41");
         var persistent = await DriveWaitAsync(_ => trust);
         persistent.Ready.ShouldBeFalse("persistentTrustReady");
-        persistent.Inputs.ShouldBe(new[] { "y" }, customMessage: "persistentTrustInputs");
+        persistent.Inputs.ShouldBe(new[] { "y" }, Case.Sensitive, "persistentTrustInputs");
         persistent.Failure.ShouldNotBeNull();
         persistent.Failure.Outcome.ShouldBe(GrokStartupReason.Trust);
         persistent.Failure.LastReason.ShouldBe(GrokStartupReason.Trust);
         persistent.Failure.Elapsed.ShouldBe(TimeSpan.FromMilliseconds(1000));
         var cleared = await DriveWaitAsync(ms => ms < 100 ? trust : ready, assertAt1050: true);
         cleared.Ready.ShouldBeTrue("clearedTrustReady");
-        cleared.Inputs.ShouldBe(new[] { "y" }, customMessage: "clearedTrustInputs");
+        cleared.Inputs.ShouldBe(new[] { "y" }, Case.Sensitive, "clearedTrustInputs");
         cleared.Elapsed.ShouldBe(TimeSpan.FromMilliseconds(1100));
         cleared.Failure.ShouldBeNull();
     }
