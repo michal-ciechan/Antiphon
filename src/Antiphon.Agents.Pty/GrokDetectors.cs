@@ -69,11 +69,10 @@ public static class GrokSignInPromptDetector
     /// The durable launch-block reason: names the store and the <c>grok login</c> remedy.
     /// </summary>
     public static string BlockReason(string grokHome) =>
-        "ProviderSignInRequired: Grok opened on its sign-in screen (\"Approve in your browser to finish "
-        + "signing in\" / \"Paste your token here\") — the credential store "
+        "ProviderSignInRequired: Grok opened on its sign-in screen. The credential store "
         + Path.Combine(grokHome, "auth.json")
         + " has no usable session. Nothing was typed into it. Run `grok login` (or "
-        + "`grok login --device-auth` on a headless host) as the Windows user that runs the "
-        + "session-runner, then re-dispatch. Every Grok pool launch on this machine will fail "
-        + "the same way until then.";
+        + "`grok login --device-auth` on a headless host) as the user that runs the session-runner, "
+        + "using that runner user's GROK_HOME, then re-dispatch. Every Grok pool launch using "
+        + "that GROK_HOME will fail the same way until then.";
 }

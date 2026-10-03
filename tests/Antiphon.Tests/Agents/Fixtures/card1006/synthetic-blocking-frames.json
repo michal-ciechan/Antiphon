@@ -1,0 +1,214 @@
+{
+  "schemaVersion": 1,
+  "probes": [
+    {
+      "probeId": "P-01",
+      "label": "synthetic-derived",
+      "source": "tests/Antiphon.Tests/Agents/GrokTrustPromptDetectorTests.cs#GrokTrustScreen",
+      "transformation": "Patch(B,T)",
+      "expectedReason": "Trust",
+      "cols": 120,
+      "rows": 30,
+      "screen": "\n\n\n\n\n  Do you trust the contents of this directory?\n\n  \u276f Yes, proceed y\n  No, quit n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+      "sha256": "f66b2fea1ba97e618925e2e0bcdfdfc63af78d55f7b23c04d10945546d50212c"
+    },
+    {
+      "probeId": "P-02",
+      "label": "synthetic-derived",
+      "source": "docs/investigations/2026-10-03-card-1006-linux-grok-frames.json#C1-sign-in",
+      "transformation": "Patch(Patch(B,A),{7:\"  \\u276f Sign in\",8:\"  Exit\"})",
+      "expectedReason": "SignIn",
+      "cols": 120,
+      "rows": 30,
+      "screen": "\n\n\n  Approve in your browser to finish signing in.\n  Make sure your browser shows this code.\n  Waiting for approval...\n\n  \u276f Sign in\n  Exit\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+      "sha256": "4418ebab3c1ece20cbd1b7d91658c01ceed11a533f83415def04949d31a75544"
+    },
+    {
+      "probeId": "P-03",
+      "label": "synthetic-derived",
+      "source": "tests/Antiphon.Tests/Agents/Fixtures/card1004/linux-startup-frames.json#1.0.41",
+      "transformation": "Patch(Patch(L,T),{22:\"  Working...\"})",
+      "expectedReason": "Trust",
+      "cols": 120,
+      "rows": 30,
+      "screen": "\n  feat/card-task-6a98e94f worktree /w/worktrees/task-6a98e94f                                2.9K / 256K \u2502 [Dashboard]\n\n\n\n  Do you trust the contents of this directory?\n\n  \u276f Yes, proceed y\n  No, quit n\n\n\n\n\n\n\n\n\n\n\n\n\n\n  Working...\n\n  \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\n  \u2502 \u276f                                                                                                                \u2502\n  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Grok 4.7 (high) \u00b7 always-approve \u2500\u256f\n\n  Shift+Tab:mode  \u2502  Ctrl+x:shortcuts\n",
+      "sha256": "97d11cc8559d13659a638d2daf20e59871f410d99d096471791304be66ebe86a"
+    },
+    {
+      "probeId": "P-04",
+      "label": "synthetic-derived",
+      "source": "tests/Antiphon.Tests/Agents/Fixtures/card1004/linux-startup-frames.json#1.0.41",
+      "transformation": "Patch(Patch(L,A),{22:\"  Working...\"})",
+      "expectedReason": "SignIn",
+      "cols": 120,
+      "rows": 30,
+      "screen": "\n  feat/card-task-6a98e94f worktree /w/worktrees/task-6a98e94f                                2.9K / 256K \u2502 [Dashboard]\n\n  Approve in your browser to finish signing in.\n  Make sure your browser shows this code.\n  Waiting for approval...\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n  Working...\n\n  \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\n  \u2502 \u276f                                                                                                                \u2502\n  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Grok 4.7 (high) \u00b7 always-approve \u2500\u256f\n\n  Shift+Tab:mode  \u2502  Ctrl+x:shortcuts\n",
+      "sha256": "b9c1f1acb87c8a03ca0a92f3b342c08039a50058b26094c47c0b5a6759f0a4c7"
+    },
+    {
+      "probeId": "P-05",
+      "label": "synthetic-derived",
+      "source": "tests/Antiphon.Tests/Agents/Fixtures/card1004/linux-startup-frames.json#1.0.41",
+      "transformation": "Patch(L,A)",
+      "expectedReason": "SignIn",
+      "cols": 120,
+      "rows": 30,
+      "screen": "\n  feat/card-task-6a98e94f worktree /w/worktrees/task-6a98e94f                                2.9K / 256K \u2502 [Dashboard]\n\n  Approve in your browser to finish signing in.\n  Make sure your browser shows this code.\n  Waiting for approval...\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n  \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\n  \u2502 \u276f                                                                                                                \u2502\n  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Grok 4.7 (high) \u00b7 always-approve \u2500\u256f\n\n  Shift+Tab:mode  \u2502  Ctrl+x:shortcuts\n",
+      "sha256": "923d4c79b2f2c688ffb80cc5f2ed5766a983fff18bcc95c62715351d21f1fe7b"
+    },
+    {
+      "probeId": "P-06",
+      "label": "synthetic-derived",
+      "source": "CARD-1006#synthetic-blank-canvas",
+      "transformation": "Patch(B,{5:\"  Update available\",7:\"  \\u276f 1. Update now\",8:\"  2. Later\"})",
+      "expectedReason": "Unknown",
+      "cols": 120,
+      "rows": 30,
+      "screen": "\n\n\n\n\n  Update available\n\n  \u276f 1. Update now\n  2. Later\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+      "sha256": "2b37f534e6fcc26fd6b3929350928ccea9d43f68f53d10e3416cf79705c57d74"
+    },
+    {
+      "probeId": "P-07",
+      "label": "synthetic-derived",
+      "source": "CARD-1006#synthetic-blank-canvas",
+      "transformation": "Patch(B,{9:\"  \\u256d\"+repeat(\"\\u2500\",58)+\"\\u256e\",10:\"  \\u2502 \"+PadRight(\"A new version is available\",57)+\"\\u2502\",11:\"  \\u2502 \"+PadRight(\"Press Enter to update\",57)+\"\\u2502\",12:\"  \\u2570\"+repeat(\"\\u2500\",58)+\"\\u256f\"})",
+      "expectedReason": "Unknown",
+      "cols": 120,
+      "rows": 30,
+      "screen": "\n\n\n\n\n\n\n\n\n  \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\n  \u2502 A new version is available                               \u2502\n  \u2502 Press Enter to update                                    \u2502\n  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+      "sha256": "205dff66669ae99acdab778a9aefdd5c0662cb487765b31cc07260b95a53addb"
+    },
+    {
+      "probeId": "P-08",
+      "label": "synthetic-derived",
+      "source": "tests/Antiphon.Tests/Agents/Fixtures/card1004/linux-startup-frames.json#1.0.41",
+      "transformation": "Patch(L,{25:I(\"\\u276f 1. Yes\")})",
+      "expectedReason": "ComposerUnavailable",
+      "cols": 120,
+      "rows": 30,
+      "screen": "\n  feat/card-task-6a98e94f worktree /w/worktrees/task-6a98e94f                                2.9K / 256K \u2502 [Dashboard]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n  \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\n  \u2502 \u276f 1. Yes                                                                                                         \u2502\n  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Grok 4.7 (high) \u00b7 always-approve \u2500\u256f\n\n  Shift+Tab:mode  \u2502  Ctrl+x:shortcuts\n",
+      "sha256": "e1323daca816ab8c4da430ee88dff35429c4202271b4084d749c4d492ff952d1"
+    },
+    {
+      "probeId": "P-09",
+      "label": "synthetic-derived",
+      "source": "CARD-1006#synthetic-blank-canvas",
+      "transformation": "Patch(B,{9:U,10:I(\"\\u276f\"),11:D})",
+      "expectedReason": "Unknown",
+      "cols": 120,
+      "rows": 30,
+      "screen": "\n\n\n\n\n\n\n\n\n  \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\n  \u2502 \u276f                                                                                                                \u2502\n  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+      "sha256": "d44437ad4d8458fc44208507451b7ac65a255be4d928d6efaacaefa91fa795a6"
+    },
+    {
+      "probeId": "P-10",
+      "label": "synthetic-derived",
+      "source": "CARD-1006#synthetic-blank-canvas",
+      "transformation": "Patch(B,{11:U,12:I(\"\\u276f\"),13:D})",
+      "expectedReason": "Unknown",
+      "cols": 120,
+      "rows": 30,
+      "screen": "\n\n\n\n\n\n\n\n\n\n\n  \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\n  \u2502 \u276f                                                                                                                \u2502\n  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+      "sha256": "e220881f8aa44b658d08fce841320d43bfb0a9316396d3fad682112c2e6a9ee3"
+    },
+    {
+      "probeId": "P-11",
+      "label": "synthetic-derived",
+      "source": "CARD-1006#synthetic-blank-canvas",
+      "transformation": "Patch(B,{20:\"  \\u276f\"})",
+      "expectedReason": "Unknown",
+      "cols": 120,
+      "rows": 30,
+      "screen": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n  \u276f\n\n\n\n\n\n\n\n\n",
+      "sha256": "725b420cec04e6a64cc41168699f49f86d23772b23580ecd326fe8cb56ae3d33"
+    },
+    {
+      "probeId": "P-12",
+      "label": "synthetic-derived",
+      "source": "CARD-1006#synthetic-blank-canvas",
+      "transformation": "Patch(B,{25:\"    \\u276f\"})",
+      "expectedReason": "Unknown",
+      "cols": 120,
+      "rows": 30,
+      "screen": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n    \u276f\n\n\n\n",
+      "sha256": "5080a26557c91e2960b1aec7ecca46f6c802a74553d9cec5cf5a4c9b0f1a3014"
+    },
+    {
+      "probeId": "P-13",
+      "label": "synthetic-derived",
+      "source": "tests/Antiphon.Tests/Agents/Fixtures/card1004/linux-startup-frames.json#1.0.41",
+      "transformation": "Patch(L,{25:I(\"\\u276f typed text\")})",
+      "expectedReason": "ComposerUnavailable",
+      "cols": 120,
+      "rows": 30,
+      "screen": "\n  feat/card-task-6a98e94f worktree /w/worktrees/task-6a98e94f                                2.9K / 256K \u2502 [Dashboard]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n  \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\n  \u2502 \u276f typed text                                                                                                     \u2502\n  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Grok 4.7 (high) \u00b7 always-approve \u2500\u256f\n\n  Shift+Tab:mode  \u2502  Ctrl+x:shortcuts\n",
+      "sha256": "a66c40b80ec6ff4d219a2e042f735a57b0c28793350bb1d548d7c8bcef1cc3c1"
+    },
+    {
+      "probeId": "P-14",
+      "label": "synthetic-derived",
+      "source": "tests/Antiphon.Tests/Agents/Fixtures/card1004/linux-startup-frames.json#1.0.41",
+      "transformation": "Patch(L,{25:I(\">\\u276f\")})",
+      "expectedReason": "ComposerUnavailable",
+      "cols": 120,
+      "rows": 30,
+      "screen": "\n  feat/card-task-6a98e94f worktree /w/worktrees/task-6a98e94f                                2.9K / 256K \u2502 [Dashboard]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n  \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\n  \u2502 >\u276f                                                                                                               \u2502\n  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Grok 4.7 (high) \u00b7 always-approve \u2500\u256f\n\n  Shift+Tab:mode  \u2502  Ctrl+x:shortcuts\n",
+      "sha256": "0b2c173e1941f51dc5707b231311776afd9fb77d43f3dcf979ca236ae3455bae"
+    },
+    {
+      "probeId": "P-15",
+      "label": "synthetic-derived",
+      "source": "tests/Antiphon.Tests/Agents/Fixtures/card1004/linux-startup-frames.json#1.0.41",
+      "transformation": "Patch(L,{25:I(\"\\u276f\\u276f\")})",
+      "expectedReason": "ComposerUnavailable",
+      "cols": 120,
+      "rows": 30,
+      "screen": "\n  feat/card-task-6a98e94f worktree /w/worktrees/task-6a98e94f                                2.9K / 256K \u2502 [Dashboard]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n  \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\n  \u2502 \u276f\u276f                                                                                                               \u2502\n  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Grok 4.7 (high) \u00b7 always-approve \u2500\u256f\n\n  Shift+Tab:mode  \u2502  Ctrl+x:shortcuts\n",
+      "sha256": "b7c5f4c1fd591bee881f8e7e0b8be1681fc271f45fa03d509d840766930c27e1"
+    },
+    {
+      "probeId": "P-16",
+      "label": "synthetic-derived",
+      "source": "tests/Antiphon.Tests/Agents/Fixtures/card1004/linux-startup-frames.json#1.0.41",
+      "transformation": "Patch(L,{28:\"\"})",
+      "expectedReason": "Unknown",
+      "cols": 120,
+      "rows": 30,
+      "screen": "\n  feat/card-task-6a98e94f worktree /w/worktrees/task-6a98e94f                                2.9K / 256K \u2502 [Dashboard]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n  \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\n  \u2502 \u276f                                                                                                                \u2502\n  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Grok 4.7 (high) \u00b7 always-approve \u2500\u256f\n\n\n",
+      "sha256": "bd37147536b6b6e8f486fa6de369ade22257fc0930090c0f5031c4794d3e4c35"
+    },
+    {
+      "probeId": "P-17",
+      "label": "synthetic-derived",
+      "source": "tests/Antiphon.Tests/Agents/Fixtures/card1004/linux-startup-frames.json#1.0.41",
+      "transformation": "Patch(L,{22:\"  Working...\"})",
+      "expectedReason": "Working",
+      "cols": 120,
+      "rows": 30,
+      "screen": "\n  feat/card-task-6a98e94f worktree /w/worktrees/task-6a98e94f                                2.9K / 256K \u2502 [Dashboard]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n  Working...\n\n  \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\n  \u2502 \u276f                                                                                                                \u2502\n  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Grok 4.7 (high) \u00b7 always-approve \u2500\u256f\n\n  Shift+Tab:mode  \u2502  Ctrl+x:shortcuts\n",
+      "sha256": "a6a585d8e37768bb383509566583860176d3200eabda780f8ed2c834b993be42"
+    },
+    {
+      "probeId": "P-18",
+      "label": "synthetic-derived",
+      "source": "tests/Antiphon.Tests/Agents/Fixtures/card1004/linux-startup-frames.json#1.0.41",
+      "transformation": "Patch(L,{26:\"\"})",
+      "expectedReason": "ComposerUnavailable",
+      "cols": 120,
+      "rows": 30,
+      "screen": "\n  feat/card-task-6a98e94f worktree /w/worktrees/task-6a98e94f                                2.9K / 256K \u2502 [Dashboard]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n  \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\n  \u2502 \u276f                                                                                                                \u2502\n\n\n  Shift+Tab:mode  \u2502  Ctrl+x:shortcuts\n",
+      "sha256": "500edace876383c5ce7200c4f07c444eb41530ee9d74ff487ab467e332048f28"
+    },
+    {
+      "probeId": "P-19",
+      "label": "synthetic-derived",
+      "source": "tests/Antiphon.Tests/Agents/Fixtures/card1004/linux-startup-frames.json#1.0.41",
+      "transformation": "L.Take(29)",
+      "expectedReason": "Unknown",
+      "cols": 120,
+      "rows": 29,
+      "screen": "\n  feat/card-task-6a98e94f worktree /w/worktrees/task-6a98e94f                                2.9K / 256K \u2502 [Dashboard]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n  \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\n  \u2502 \u276f                                                                                                                \u2502\n  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Grok 4.7 (high) \u00b7 always-approve \u2500\u256f\n\n  Shift+Tab:mode  \u2502  Ctrl+x:shortcuts",
+      "sha256": "adbbfa427a081bd2ff1d39eeede70ba02c04e23ce8d425eba62c06a84f2a3358"
+    }
+  ]
+}

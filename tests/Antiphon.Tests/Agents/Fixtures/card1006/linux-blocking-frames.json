@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "captures": [
+    {
+      "captureId": "C1-connecting",
+      "label": "real-rendered",
+      "source": "docs/investigations/2026-10-03-card-1006-linux-grok-frames.json#C1-connecting",
+      "cliVersion": "1.0.41",
+      "host": "Linux runner container (Debian 12)",
+      "session": null,
+      "cols": 120,
+      "rows": 30,
+      "screen": "\n  /t/antiphon-card1006-jowC56X6/C-1-cwd\n\n\n                                                     \u2800\u2800\u2800\u2800\u2800\u2800\u28c0\u28c0\u2840\u2800\u2800\u2800\u2880\u2804\n                                                     \u2800\u2800\u2800\u28e0\u28fe\u283f\u281b\u281b\u281b\u281b\u2880\u2874\u2801\u2800\n                                                     \u2800\u2800\u28fc\u285f\u2801\u2800\u2800\u2800\u2880\u2874\u283b\u28ff\u2840\u2800\n                                                     \u2800\u2800\u28ff\u2847\u2800\u2800\u2800\u2814\u2801\u2800\u2800\u28ff\u2847\u2800\n                                                     \u2800\u2800\u28b9\u28f7\u2800\u2800\u2800\u2800\u2800\u2880\u28f4\u287f\u2800\u2800\n                                                     \u2800\u2880\u281e\u2801\u2820\u28b6\u28f6\u28f6\u28f6\u283f\u280b\u2800\u2800\u2800\n                                                     \u2810\u2801\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\n\n\n                                                      Connecting...\n\n\n\n\n\n\n\n\n                                                      ctrl+q  quit\n\n\n\n\n\n\n",
+      "sha256": "beb362aeb8dfa6bbb1a2c95eff5e6fcc49527d0acf67c941653d40172fb2b277",
+      "redactions": []
+    },
+    {
+      "captureId": "C1-sign-in",
+      "label": "real-rendered-redacted",
+      "source": "docs/investigations/2026-10-03-card-1006-linux-grok-frames.json#C1-sign-in",
+      "cliVersion": "1.0.41",
+      "host": "Linux runner container (Debian 12)",
+      "session": null,
+      "cols": 120,
+      "rows": 30,
+      "screen": "\n  /t/antiphon-card1006-jowC56X6/C-1-cwd\n\n\n                                                     \u2800\u2800\u2800\u2800\u2800\u2800\u28c0\u28c0\u2840\u2800\u2800\u2800\u2880\u2804\n                                                     \u2800\u2800\u2800\u28e0\u28fe\u283f\u281b\u281b\u281b\u281b\u2880\u2874\u2801\u2800\n                                                     \u2800\u2800\u28fc\u285f\u2801\u2800\u2800\u2800\u2880\u2874\u283b\u28ff\u2840\u2800\n                                                     \u2800\u2800\u28ff\u2847\u2800\u2800\u2800\u2814\u2801\u2800\u2800\u28ff\u2847\u2800\n                                                     \u2800\u2800\u28b9\u28f7\u2800\u2800\u2800\u2800\u2800\u2880\u28f4\u287f\u2800\u2800\n                                                     \u2800\u2880\u281e\u2801\u2820\u28b6\u28f6\u28f6\u28f6\u283f\u280b\u2800\u2800\u2800\n                                                     \u2810\u2801\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\n\n\n                                      Approve in your browser to finish signing in.\n\n                                                        <CODE-9> \n\n                                         Make sure your browser shows this code.\n\n                                         If it doesn't open, click here to copy.\n\n\n\n                                    Copying not working? Click here to show full URL.\n\n                                                 Waiting for approval...\n\n                                                      ctrl+q  quit\n\n",
+      "sha256": "e70a9a5d6630171b164c3bfa3a660e04a590514a0635c4044dd82db25dfb6d06",
+      "redactions": [
+        {
+          "category": "device-code",
+          "row": 15,
+          "column": 56,
+          "length": 9,
+          "replacement": "<CODE-9> "
+        }
+      ]
+    },
+    {
+      "captureId": "C2-sign-in",
+      "label": "real-rendered-redacted",
+      "source": "docs/investigations/2026-10-03-card-1006-linux-grok-frames.json#C2-sign-in",
+      "cliVersion": "1.0.41",
+      "host": "Linux runner container (Debian 12)",
+      "session": null,
+      "cols": 120,
+      "rows": 30,
+      "screen": "\n  /t/antiphon-card1006-jowC56X6/C-2-cwd\n\n\n                                                     \u2800\u2800\u2800\u2800\u2800\u2800\u28c0\u28c0\u2840\u2800\u2800\u2800\u2880\u2804\n                                                     \u2800\u2800\u2800\u28e0\u28fe\u283f\u281b\u281b\u281b\u281b\u2880\u2874\u2801\u2800\n                                                     \u2800\u2800\u28fc\u285f\u2801\u2800\u2800\u2800\u2880\u2874\u283b\u28ff\u2840\u2800\n                                                     \u2800\u2800\u28ff\u2847\u2800\u2800\u2800\u2814\u2801\u2800\u2800\u28ff\u2847\u2800\n                                                     \u2800\u2800\u28b9\u28f7\u2800\u2800\u2800\u2800\u2800\u2880\u28f4\u287f\u2800\u2800\n                                                     \u2800\u2880\u281e\u2801\u2820\u28b6\u28f6\u28f6\u28f6\u283f\u280b\u2800\u2800\u2800\n                                                     \u2810\u2801\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\u2800\n\n\n                                      Approve in your browser to finish signing in.\n\n                                                        <CODE-9> \n\n                                         Make sure your browser shows this code.\n\n                                         If it doesn't open, click here to copy.\n\n\n\n                                    Copying not working? Click here to show full URL.\n\n                                                 Waiting for approval...\n\n                                                      ctrl+q  quit\n\n",
+      "sha256": "9a5793ae8bd3e74c1ef60c9125b516817ae59133b276f6b8aff2f43850707f52",
+      "redactions": [
+        {
+          "category": "device-code",
+          "row": 15,
+          "column": 56,
+          "length": 9,
+          "replacement": "<CODE-9> "
+        }
+      ]
+    }
+  ],
+  "realUpdate": {
+    "status": "not-observed",
+    "captureIds": []
+  },
+  "provenance": {
+    "sourceTask": "1e39a459",
+    "sourcePath": "docs/investigations/2026-10-03-card-1006-linux-grok-frames.json",
+    "sourceSha": "8d3148dcf6d0040ef1a69b0e2fceb38ce1a77b18",
+    "cliVersionOutput": "1.0.41 (4220f3b224a6)",
+    "runnerBuild": "4358939ecd85d6e7ff0941f970879499cb930e3d",
+    "backend": "InboxConhost",
+    "inputCalls": 0,
+    "inputBytes": 0,
+    "isolation": "local-runner-in-existing-container",
+    "rawAnsiLogCustody": "temporary-scratch-deleted-not-tmpfs-qualified",
+    "imageTag": null,
+    "imageDigest": null,
+    "imageIdentityStatus": "unavailable",
+    "sessionIdentityStatus": "not-retained"
+  }
+}
