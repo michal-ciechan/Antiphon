@@ -361,22 +361,56 @@ public sealed class AgentTaskInputFallbackTests
     }
 
     [Test]
-    public async Task Ordinary_spill_errors_keep_their_existing_delivery_behavior()
+    [Arguments("send-now")]
+    [Arguments("flush")]
+    [Arguments("enqueue-now")]
+    public async Task Ordinary_spill_errors_keep_their_existing_delivery_behavior(string path)
     {
         await using var f = await TaskInputDeliveryFixture.CreateAsync();
-        await f.Queue.EnqueueAsync(f.SessionId, "ordinary body", MessageSendMode.WhenIdle,
+        const string body = "ordinary body private-tail-1014";
+        await f.Queue.EnqueueAsync(f.SessionId, body, MessageSendMode.WhenIdle,
             CancellationToken.None, QueuedMessageOrigin.Ui);
         var row = await RowAsync(f);
         f.Adapter.BeforeInput = (_, _) => throw new RunnerSpillWriteException();
-        await Should.ThrowAsync<ConflictException>(() =>
-            f.Queue.SendNowAsync(f.SessionId, row.Id, CancellationToken.None));
+        if (path == "flush")
+        {
+            await f.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd);
+            await f.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
+        }
+        else if (path == "enqueue-now")
+        {
+            await using (var setup = f.Db())
+                await setup.SessionQueuedMessages.ExecuteDeleteAsync();
+            await Should.ThrowAsync<ConflictException>(() =>
+                f.Queue.EnqueueDeliveringNowAsync(f.SessionId, body, CancellationToken.None,
+                    QueuedMessageOrigin.Ui));
+        }
+        else
+            await Should.ThrowAsync<ConflictException>(() =>
+                f.Queue.SendNowAsync(f.SessionId, row.Id, CancellationToken.None));
         await using var db = f.Db();
         var reverted = await db.SessionQueuedMessages.SingleAsync();
         reverted.Body.ShouldBe(row.Body);
+        if (path != "enqueue-now") reverted.Id.ShouldBe(row.Id, "ordinary-spill-same-row");
         reverted.Status.ShouldBe(QueuedMessageStatus.Pending, "ordinary-spill-stays-pending");
         reverted.DeliveryAttempts.ShouldBe(1, "ordinary-spill-attempt-retained");
+        f.Adapter.Inputs.ShouldBeEmpty("ordinary-spill-input-count=0");
         (await db.AgentTaskEvents.CountAsync(e => e.Type == AgentTaskEventType.Warning))
             .ShouldBe(0, "unowned-fallback-warning-count=0");
+        var agent = await db.Agents.SingleAsync(a => a.PersistentSessionId == f.SessionId.ToString("D"));
+        var incidents = await db.AgentIncidents.AsNoTracking()
+            .Where(i => i.AgentId == agent.Id && i.SessionId == f.SessionId).ToListAsync();
+        incidents.Count.ShouldBe(1, $"ordinary-spill-incident-count=1:{path}");
+        var incident = incidents.Single();
+        incident.Kind.ShouldBe(AgentIncidentKind.DeliveryTransportFailed,
+            $"ordinary-spill-transport-kind:{path}");
+        incident.Severity.ShouldBe(AlertSeverity.Error);
+        incident.Message.ShouldBe(
+            "Message delivery failed in transport before the terminal accepted it: "
+            + "Runner spill write failed before input. "
+            + "The message has been returned to the queue for redelivery.",
+            $"ordinary-spill-transport-text:{path}");
+        incident.Message.ShouldNotContain("private-tail-1014", customMessage: "ordinary-spill-private-tail-absent");
     }
 
     [Test]
