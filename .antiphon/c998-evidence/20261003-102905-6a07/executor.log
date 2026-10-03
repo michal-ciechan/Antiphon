@@ -1,0 +1,9 @@
+2026-10-03T10:29:07.2771990+00:00 execute rows=1 width=2 total=30m
+2026-10-03T10:29:07.5372456+00:00 BUILD SLOT operation=probe status=200 reason=enabled maxcpucount=6 elapsed=0s
+2026-10-03T10:29:07.6141704+00:00 BUILD SLOT granted lease=352de452-c9cf-47db-92fe-f2c54ccef40b label="build:bin-c998-tests-red" waited=0s maxcpucount=6
+2026-10-03T10:35:59.0854764+00:00 BUILD SLOT released lease=352de452-c9cf-47db-92fe-f2c54ccef40b label="build:bin-c998-tests-red"
+2026-10-03T10:35:59.3805934+00:00 BUILD SLOT label="CP-1@bin-c998-tests-red" operation=acquire status=409 reason=build_slot_busy elapsed=0s detail="{\u0022type\u0022:\u0022build_slot_busy\u0022,\u0022title\u0022:\u0022build_slot_busy\u0022,\u0022status\u0022:409,\u0022occupied\u0022:3,\u0022budget\u0022:4,\u0022queuePosition\u0022:2,\u0022retryAfterMs\u0022:15000}"
+2026-10-03T10:35:59.3810095+00:00 BUILD SLOT waiting label="CP-1@bin-c998-tests-red" reason=build_slot_busy elapsed=0m
+2026-10-03T10:36:14.3825398+00:00 BUILD SLOT granted lease=02fbc39a-ea0a-48e1-bcc4-714c81f3cc25 label="CP-1@bin-c998-tests-red" waited=15s maxcpucount=6
+2026-10-03T10:36:19.5330515+00:00 BUILD SLOT released lease=02fbc39a-ea0a-48e1-bcc4-714c81f3cc25 label="CP-1@bin-c998-tests-red"
+2026-10-03T10:36:19.9583318+00:00 done exit=3

@@ -1,0 +1,418 @@
+[
+  {
+    "className": "Antiphon.Tests.Agents.AgentRegistrySettingsTests",
+    "method": "The_shipped_codex_definition_resolves_to_a_real_executable_on_this_machine",
+    "displayName": "The_shipped_codex_definition_resolves_to_a_real_executable_on_this_machine",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentExecutableResolverTests",
+    "method": "Resolves_sibling_flavor_when_configured_one_is_gone",
+    "displayName": "Resolves_sibling_flavor_when_configured_one_is_gone",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentPinPathTests",
+    "method": "V01_canonical_cwd_uses_windows_separators_and_drops_trailing_slash",
+    "displayName": "V01_canonical_cwd_uses_windows_separators_and_drops_trailing_slash",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.ClaudeRemoteControlLaunchArgsTests",
+    "method": "Off_settings_path_round_trips_through_LaunchArgvGuard",
+    "displayName": "Off_settings_path_round_trips_through_LaunchArgvGuard",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "reported_repository_paths_normalize_relative_and_absolute_windows_forms",
+    "displayName": "reported_repository_paths_normalize_relative_and_absolute_windows_forms",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.DirectoryBrowseServiceTests",
+    "method": "partial_leaf_matches_substring_within_child_name",
+    "displayName": "partial_leaf_matches_substring_within_child_name",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.DirectoryBrowseServiceTests",
+    "method": "existing_path_reports_exists_true",
+    "displayName": "existing_path_reports_exists_true",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.DirectoryBrowseServiceTests",
+    "method": "trailing_slash_lists_children_of_that_directory",
+    "displayName": "trailing_slash_lists_children_of_that_directory",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.DirectoryBrowseServiceTests",
+    "method": "prefix_returns_matching_child_directories",
+    "displayName": "prefix_returns_matching_child_directories",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.DirectoryBrowseServiceTests",
+    "method": "caches_within_ttl_and_refreshes_after",
+    "displayName": "caches_within_ttl_and_refreshes_after",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests",
+    "method": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls",
+    "displayName": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls(lf)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests",
+    "method": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls",
+    "displayName": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls(duplicate_first)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests",
+    "method": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls",
+    "displayName": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls(nul)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests",
+    "method": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls",
+    "displayName": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls(env_flag)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests",
+    "method": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls",
+    "displayName": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls(braced_env)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests",
+    "method": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls",
+    "displayName": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls(duplicate_second)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests",
+    "method": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls",
+    "displayName": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls(alias)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests",
+    "method": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls",
+    "displayName": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls(equals)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests",
+    "method": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls",
+    "displayName": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls(cr)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests",
+    "method": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls",
+    "displayName": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls(env)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests",
+    "method": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls",
+    "displayName": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls(crlf)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests",
+    "method": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls",
+    "displayName": "Unsafe_raw_rules_are_refused_server_side_before_runner_calls(missing)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.PtyDeliveryCeilingsTests",
+    "method": "A_runner_on_the_modern_backend_confirms_the_raised_ceilings",
+    "displayName": "A_runner_on_the_modern_backend_confirms_the_raised_ceilings",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.PtyDeliveryCeilingsTests",
+    "method": "A_runner_on_the_inbox_conhost_downgrades_a_modern_server",
+    "displayName": "A_runner_on_the_inbox_conhost_downgrades_a_modern_server",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.PtyDeliveryCeilingsTests",
+    "method": "A_silent_runner_leaves_this_processes_own_decision_standing",
+    "displayName": "A_silent_runner_leaves_this_processes_own_decision_standing",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.SessionDeliveryProfileTests",
+    "method": "Phone_home_Claude_keeps_the_inbox_ceiling_for_its_own_kind",
+    "displayName": "Phone_home_Claude_keeps_the_inbox_ceiling_for_its_own_kind",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Application.SessionDeliveryProfileTests",
+    "method": "Phone_home_Grok_never_uses_local_modern_evidence",
+    "displayName": "Phone_home_Grok_never_uses_local_modern_evidence",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Infrastructure.LandingRemovalPolicyControlTests",
+    "method": "C665_LockedFileMidDeleteResumesOnLaterPass",
+    "displayName": "C665_LockedFileMidDeleteResumesOnLaterPass",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Infrastructure.LandingRemovalPolicyControlTests",
+    "method": "C721_HeldHandleDuringCleanupStaysRegisteredOrRecorded",
+    "displayName": "C721_HeldHandleDuringCleanupStaysRegisteredOrRecorded",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Checkpoints.TimeoutTests",
+    "method": "windows_quick_row_finishes_beside_a_slow_row",
+    "displayName": "windows_quick_row_finishes_beside_a_slow_row",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Checkpoints.TimeoutTests",
+    "method": "windows_row_arguments_round_trip_intact",
+    "displayName": "windows_row_arguments_round_trip_intact",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Checkpoints.TimeoutTests",
+    "method": "windows_chatty_row_drains_interleaved_stdout_and_stderr",
+    "displayName": "windows_chatty_row_drains_interleaved_stdout_and_stderr",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Checkpoints.TimeoutTests",
+    "method": "windows_row_timeout_kills_the_start_b_grandchild",
+    "displayName": "windows_row_timeout_kills_the_start_b_grandchild",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Scripts.RemoteScriptContractTests",
+    "method": "C973_Prune_and_saved_donor_still_require_full_after_seed_image_prune",
+    "displayName": "C973_Prune_and_saved_donor_still_require_full_after_seed_image_prune",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Scripts.RemoteScriptContractTests",
+    "method": "C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune",
+    "displayName": "C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune(runner-cache-reset)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Scripts.RemoteScriptContractTests",
+    "method": "C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune",
+    "displayName": "C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune(runner-cache-prune-preview)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Scripts.RemoteScriptContractTests",
+    "method": "C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune",
+    "displayName": "C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune(runner-cache-fixture)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Scripts.RemoteScriptContractTests",
+    "method": "C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune",
+    "displayName": "C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune(runner-cache-inventory)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Scripts.RemoteScriptContractTests",
+    "method": "C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune",
+    "displayName": "C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune(runner-cache-seed)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Scripts.RemoteScriptContractTests",
+    "method": "C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers",
+    "displayName": "C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(case_verify_runner_caches_retired)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Scripts.RemoteScriptContractTests",
+    "method": "C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers",
+    "displayName": "C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(case_verify_runner_caches)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Scripts.RemoteScriptContractTests",
+    "method": "C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers",
+    "displayName": "C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(case_deploy_temp_runner)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Scripts.RemoteScriptContractTests",
+    "method": "C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers",
+    "displayName": "C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(case_retire_temp_runner)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Scripts.RemoteScriptContractTests",
+    "method": "C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers",
+    "displayName": "C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(case_deploy_parent)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Scripts.RemoteScriptContractTests",
+    "method": "C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers",
+    "displayName": "C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(c849_seed)",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Scripts.RemoteScriptContractTests",
+    "method": "C912_Cold_marker_has_distinct_validation_and_full_context_refusal",
+    "displayName": "C912_Cold_marker_has_distinct_validation_and_full_context_refusal",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Scripts.RemoteScriptContractTests",
+    "method": "C912_Cold_cache_probe_requires_uid_writes_cleanup_and_bounded_exit",
+    "displayName": "C912_Cold_cache_probe_requires_uid_writes_cleanup_and_bounded_exit",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Scripts.RemoteScriptContractTests",
+    "method": "C912_Cold_volumes_seed_rechecks_initialization_and_probe_boundaries",
+    "displayName": "C912_Cold_volumes_seed_rechecks_initialization_and_probe_boundaries",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Scripts.RemoteScriptContractTests",
+    "method": "C912_Cold_volumes_seed_refuses_unknown_mounted_or_populated_targets",
+    "displayName": "C912_Cold_volumes_seed_refuses_unknown_mounted_or_populated_targets",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Scripts.RemoteScriptContractTests",
+    "method": "C912_Cold_volumes_seed_accepts_busy_main_without_packages",
+    "displayName": "C912_Cold_volumes_seed_accepts_busy_main_without_packages",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Scripts.RemoteScriptContractTests",
+    "method": "C912_Cold_seed_refuses_when_created_volume_disappears_before_init",
+    "displayName": "C912_Cold_seed_refuses_when_created_volume_disappears_before_init",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  },
+  {
+    "className": "Antiphon.Tests.Scripts.RemoteScriptContractTests",
+    "method": "C912_Cold_seed_with_unrelated_bind_initializes_only_three_labelled_roots",
+    "displayName": "C912_Cold_seed_with_unrelated_bind_initializes_only_three_labelled_roots",
+    "outcome": "NotExecuted",
+    "message": null,
+    "stdout": null
+  }
+]
