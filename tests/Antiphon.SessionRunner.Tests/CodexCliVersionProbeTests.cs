@@ -68,6 +68,7 @@ public sealed class CodexCliVersionProbeTests
     }
 
     [Test]
+    [NotInParallel]
     public async Task C959_Probe_is_version_only_and_auth_free()
     {
         using var kit = new CodexCliVersionTestFixture { Mode = "stdin" };
@@ -110,7 +111,20 @@ public sealed class CodexCliVersionProbeTests
         var explicitB = await kit.Attempt(secondExe, path: pathA);
         CodexCliVersionTestFixture.Text(explicitB, "codexCliVersion").ShouldBe("0.156.1", "C959-v02-absolute-ignores-PATH");
         foreach (var evidence in new[] { first, second, explicitB })
-            evidence.GetRawText().Contains("C959-env-canary", StringComparison.Ordinal).ShouldBeFalse("C959-pc-026");
+            evidence.GetRawText().Contains("C959-env-canary", StringComparison.Ordinal).ShouldBeFalse("C959-pc-199");
+        using var diagnostic = new CodexCliVersionTestFixture { Mode = "diagnostic" };
+        var previousError = Console.Error;
+        using var captured = new StringWriter();
+        JsonElement failed;
+        try
+        {
+            Console.SetError(captured);
+            failed = await diagnostic.Attempt();
+        }
+        finally { Console.SetError(previousError); }
+        captured.ToString().ShouldNotContain("C959-diagnostic-sentinel", customMessage: "C959-pc-026");
+        failed.GetRawText().ShouldNotContain("C959-diagnostic-sentinel", customMessage: "C959-pc-199");
+        CodexCliVersionTestFixture.Text(failed, "codexCliVersionError").ShouldBe("stderr_output");
     }
 
     [Test]
@@ -179,6 +193,29 @@ public sealed class CodexCliVersionProbeTests
             probe.OwnedCleanupCount.ShouldBe(0, "C959-v03-reaper");
             held.ReceiptIsAlive("leaf").ShouldBeFalse("C959-v03-cleanup-release");
         }
+        // The parent really exits while its descendant still owns redirected pipes.
+        // Use the production clock here so both deadline continuations are independently armed.
+        using (var exitedParent = new CodexCliVersionTestFixture(TimeProvider.System) { Mode = "parent-exits" })
+        {
+            var pending = exitedParent.Attempt();
+            await exitedParent.WaitForReceiptAsync("leaf");
+            await exitedParent.Children.Single().WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            pending.IsCompleted.ShouldBeFalse("C959-parent-exit-is-not-pipe-completion");
+            var unresolved = await pending.WaitAsync(TimeSpan.FromSeconds(10));
+            CodexCliVersionTestFixture.Text(unresolved, "codexCliVersion").ShouldBeNull("C959-pc-035 exited-parent");
+            CodexCliVersionTestFixture.Text(unresolved, "codexCliVersionError").ShouldBe("cleanup_unconfirmed", "C959-pc-034 exited-parent");
+            var probe = (CodexCliVersionProbe)exitedParent.Probe!;
+            probe.OwnedCleanupCount.ShouldBe(1, "C959-pc-036 exited-parent retains ownership");
+            exitedParent.ReceiptIsAlive("leaf").ShouldBeTrue("C959-parent-exit-real-unresolved-child");
+            exitedParent.RescueLeaves();
+            var deadline = Stopwatch.StartNew();
+            while (probe.OwnedCleanupCount != 0 && deadline.Elapsed < TimeSpan.FromSeconds(5))
+            {
+                await probe.ReapAsync();
+                await Task.Delay(10);
+            }
+            probe.OwnedCleanupCount.ShouldBe(0, "C959-parent-exit-cleanup-completed");
+        }
     }
 
     [Test]
@@ -201,6 +238,12 @@ public sealed class CodexCliVersionProbeTests
         kit.Starts.Count.ShouldBe(2, "C959-pc-043");
         samples.All(s => CodexCliVersionTestFixture.Text(s, "codexCliVersion") is null).ShouldBeTrue("C959-v04-single-flight");
 
+        using (var reboot = new CodexCliVersionTestFixture())
+        {
+            var sameInstallation = await reboot.Attempt(kit.Executable, resolutionCwd: kit.Root);
+            CodexCliVersionTestFixture.Text(sameInstallation, "codexCliLauncherFingerprint")
+                .ShouldNotBe(CodexCliVersionTestFixture.Text(samples[0], "codexCliLauncherFingerprint"), "C959-pc-049 same installation, new boot");
+        }
         var oldFingerprint = CodexCliVersionTestFixture.Text(samples[0], "codexCliLauncherFingerprint");
         File.SetLastWriteTimeUtc(kit.Executable, File.GetLastWriteTimeUtc(kit.Executable).AddSeconds(1));
         var changed = await kit.Attempt(force: false);

@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('success','nonzero','stderr','stdout-flood','stderr-flood','stdin','timeout','tree','leaf')]
+    [ValidateSet('success','nonzero','stderr','stdout-flood','stderr-flood','stdin','timeout','tree','parent-exits','leaf','diagnostic')]
     [string]$Mode = 'success',
     [Parameter(Mandatory=$true)][string]$ReceiptRoot
 )
@@ -16,7 +16,7 @@ if ($Mode -eq 'leaf' -or $Mode -eq 'timeout') {
     [Threading.Thread]::Sleep(20000)
     exit 0
 }
-if ($Mode -eq 'tree') {
+if ($Mode -eq 'tree' -or $Mode -eq 'parent-exits') {
     $shellName = if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' }
     $start = [Diagnostics.ProcessStartInfo]::new((Join-Path $PSHOME $shellName))
     $start.UseShellExecute = $false
@@ -34,11 +34,13 @@ if ($Mode -eq 'tree') {
         if (-not [IO.File]::Exists($readyPath)) { throw 'leaf did not become ready' }
         [IO.File]::WriteAllText((Join-Path $ReceiptRoot 'ready'), 'ready')
         [Console]::Out.WriteLine('codex-cli 0.160.0')
-        $leaf.WaitForExit()
+        if ($Mode -ne 'parent-exits') { $leaf.WaitForExit() }
     }
     finally {
-        if (-not $leaf.HasExited) { $leaf.Kill($true) }
-        $leaf.WaitForExit()
+        if ($Mode -ne 'parent-exits') {
+            if (-not $leaf.HasExited) { $leaf.Kill($true) }
+            $leaf.WaitForExit()
+        }
         $leaf.Dispose()
     }
     exit 0
@@ -52,5 +54,6 @@ if ($Mode -eq 'stdin') {
 }
 [Console]::Out.WriteLine('codex-cli 0.160.0')
 if ($Mode -eq 'stderr') { [Console]::Error.Write('E') }
+if ($Mode -eq 'diagnostic') { [Console]::Error.Write('C959-diagnostic-sentinel') }
 if ($Mode -eq 'nonzero') { exit 1 }
 exit 0

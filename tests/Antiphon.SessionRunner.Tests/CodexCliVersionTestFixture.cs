@@ -26,7 +26,7 @@ internal sealed class CodexCliVersionTestFixture : IDisposable
     public int AuthOpens { get; private set; }
     public List<bool> EmptyHomes { get; } = [];
 
-    public CodexCliVersionTestFixture()
+    public CodexCliVersionTestFixture(TimeProvider? probeClock = null)
     {
         Directory.CreateDirectory(Root);
         Executable = Path.Combine(Root, OperatingSystem.IsWindows() ? "codex.exe" : "codex");
@@ -41,7 +41,7 @@ internal sealed class CodexCliVersionTestFixture : IDisposable
         settingsType.GetProperty("Executable")!.SetValue(settings, Executable);
         settingsType.GetProperty("ResolutionCwd")!.SetValue(settings, Root);
         var options = typeof(Options).GetMethod("Create")!.MakeGenericMethod(settingsType).Invoke(null, [settings]);
-        Probe = Activator.CreateInstance(probeType, Clock, new PhoneHomeProcessIdentity(), options,
+        Probe = Activator.CreateInstance(probeType, probeClock ?? Clock, new PhoneHomeProcessIdentity(), options,
             (Func<ProcessStartInfo, Process>)Start,
             (Func<string, int, byte[]>)Read);
         typeof(SessionRunnerRuntime).GetProperty("CodexCliProbe", BindingFlags.Instance | BindingFlags.NonPublic)!
@@ -151,7 +151,7 @@ internal sealed class CodexCliVersionTestFixture : IDisposable
         throw new InvalidOperationException("missing owned child fixture");
     }
 
-    public void Dispose()
+    public void RescueLeaves()
     {
         // Independent rescue owner, including grandchildren left alive by product cleanup defects.
         foreach (var receipt in Directory.EnumerateFiles(Root, "*.json", SearchOption.AllDirectories))
@@ -166,6 +166,11 @@ internal sealed class CodexCliVersionTestFixture : IDisposable
             }
             catch (ArgumentException) { }
         }
+    }
+
+    public void Dispose()
+    {
+        RescueLeaves();
         foreach (var process in Children)
         {
             if (!process.HasExited) { process.Kill(true); process.WaitForExit(5000); }
