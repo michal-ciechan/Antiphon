@@ -1,0 +1,56 @@
+BUILD SLOT granted lease=22e84623-c082-4c32-9783-05708791f693 waited=0s maxcpucount=6
+
+████████╗██╗   ██╗███╗   ██╗██╗████████╗
+╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝
+   ██║   ██║   ██║██╔██╗ ██║██║   ██║
+   ██║   ██║   ██║██║╚██╗██║██║   ██║
+   ██║   ╚██████╔╝██║ ╚████║██║   ██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝
+
+   TUnit v1.44.0.0 | 64-bit | Debian GNU/Linux 12 (bookworm) | linux-x64 | .NET 9.0.20 | Microsoft Testing Platform v2.2.2
+
+   Engine Mode: SourceGenerated
+
+failed Temp_retire_requires_the_retired_receipt_and_downs_only_temp_volumes (304ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: retire
+      should contain (case insensitive comparison)
+  "TempRunnerNotRetired"
+      but was actually
+  "case_retire_temp_runner() {
+      require_lane host
+      if [ ! -s "$SERVER2_TEMP_ENV" ]; then write_re..."
+    at Antiphon.Tests.Scripts.RemoteScriptContractTests.Temp_retire_requires_the_retired_receipt_and_downs_only_temp_volumes() in /work/worktrees/c1008-3-base/tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs:1318
+    at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+    at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+    at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+    at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+    at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+    at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+    at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+    at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+    at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  Standard output
+    [CARD-0204] SessionRunner__BaseUrl=http://127.0.0.1:1, Delegation__CheckInterpreterEnabled=false, Delegation__DiagnoseEnabled=false and Delegation__OutputDistillerEnabled=false for every Program boot in this assembly (inherited SessionRunner__BaseUrl='<unset>') - test hosts never launch on the production session-runner.
+    [CARD-0298] Hangfire__ServerEnabled=false for every Program boot in this assembly - test hosts never start a Hangfire worker (no WMI census, no production-runner list).
+    [CARD-0045] cleared inherited ANTIPHON_PTY_BACKEND='inbox' — pty tests declare their backend; the suite means the same thing whoever launched it.
+    
+HTML test report written to: /work/worktrees/c1008-3-base/.antiphon/c1008-base-qualified/BASE-old-contracts-20261003-180009-5c8d/Antiphon.Tests-linux-net9.0-report.html
+
+  In process file artifacts produced:
+    - /work/worktrees/c1008-3-base/.antiphon/c1008-base-qualified/BASE-old-contracts-20261003-180009-5c8d/Antiphon.Tests-linux-net9.0-report.html
+    - /work/worktrees/c1008-3-base/.antiphon/c1008-base-qualified/BASE-old-contracts-20261003-180009-5c8d/run.trx
+
+Test run summary: Failed! - /work/worktrees/c1008-3-base/tests/Antiphon.Tests/bin-c1008-base/Antiphon.Tests.dll (net9.0|x64)
+  total: 2
+  failed: 1
+  succeeded: 1
+  skipped: 0
+  duration: 5s 412ms
+BUILD SLOT released lease=22e84623-c082-4c32-9783-05708791f693 held=10s
+MSBUILD PROPERTY UseAppHost=false
+FAILED Antiphon.Tests.Scripts.RemoteScriptContractTests.Temp_retire_requires_the_retired_receipt_and_downs_only_temp_volumes
+EXECUTED Antiphon.Tests.Scripts.RemoteScriptContractTests.Temp_retire_requires_the_retired_receipt_and_downs_only_temp_volumes
+EXECUTED Antiphon.Tests.Scripts.RemoteScriptContractTests.Deploy_parent_seeds_a_fresh_runner_checkout_before_starting_the_runner
+CHECKPOINT BASE-old-contracts commit=c3367b88191de1ec4a62c7fe1675ba8d6c0939dd build=reused filter=/*/*/RemoteScriptContractTests*/(Temp_retire_requires_the_retired_receipt_and_downs_only_temp_volumes*)|(Deploy_parent_seeds_a_fresh_runner_checkout_before_starting_the_runner*) executed=2 passed=1 failed=1 skipped=0 trx=/work/worktrees/c1008-3-base/.antiphon/c1008-base-qualified/BASE-old-contracts-20261003-180009-5c8d/run.trx slot=granted waited=0s dirty=0 source=c3367b88191de1ec4a62c7fe1675ba8d6c0939dd sourceState=clean buildSource=verified
+CHECKPOINT BASE-old-contracts EXIT CODE: 1
