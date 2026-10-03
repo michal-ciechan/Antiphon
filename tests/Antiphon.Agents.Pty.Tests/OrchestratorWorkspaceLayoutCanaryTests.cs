@@ -16,7 +16,7 @@ namespace Antiphon.Agents.Pty.Tests;
 ///
 /// <para>The two Claude probes spend a Haiku turn and are headed/<c>[Explicit]</c>. Codex
 /// <c>debug prompt-input</c> and Grok <c>inspect --json</c> are offline oracles and run
-/// whenever the CLI is on the machine.</para>
+/// only when <c>ANTIPHON_PTY_PROVIDER_ORACLES=1</c> and the CLI is on the machine.</para>
 /// </summary>
 [Category("Card0251")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -103,6 +103,7 @@ public class OrchestratorWorkspaceLayoutCanaryTests
     [Test]
     public async Task Codex_prompt_input_is_bounded_at_the_nested_checkout_git_root()
     {
+        ProviderOracleGate.SkipIfNotEnabled();
         var exe = ResolveCodexExe();
         if (exe is null)
             throw new SkipTestException("codex.exe / npm shim not found; cannot run the offline Codex oracle");
@@ -129,6 +130,7 @@ public class OrchestratorWorkspaceLayoutCanaryTests
     [Test]
     public async Task Grok_inspect_is_bounded_at_the_nested_checkout_git_root()
     {
+        ProviderOracleGate.SkipIfNotEnabled();
         if (!File.Exists(GkSession.GrokExePath))
             throw new SkipTestException($"grok.exe not found at {GkSession.GrokExePath}");
 
