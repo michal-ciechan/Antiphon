@@ -1,0 +1,24 @@
+
+████████╗██╗   ██╗███╗   ██╗██╗████████╗
+╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝
+   ██║   ██║   ██║██╔██╗ ██║██║   ██║
+   ██║   ██║   ██║██║╚██╗██║██║   ██║
+   ██║   ╚██████╔╝██║ ╚████║██║   ██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝
+
+   TUnit v1.44.0.0 | 64-bit | Debian GNU/Linux 12 (bookworm) | linux-x64 | .NET 9.0.20 | Microsoft Testing Platform v2.2.2
+
+   Engine Mode: SourceGenerated
+
+HTML test report written to: /work/worktrees/task-b3777342/.antiphon/c1008-checkpoints/20261003-150221-6927/rows/CP-3/Antiphon.Tests-linux-net9.0-report.html
+
+  In process file artifacts produced:
+    - /work/worktrees/task-b3777342/.antiphon/c1008-checkpoints/20261003-150221-6927/rows/CP-3/Antiphon.Tests-linux-net9.0-report.html
+    - /work/worktrees/task-b3777342/.antiphon/c1008-checkpoints/20261003-150221-6927/rows/CP-3/run.trx
+
+Test run summary: Passed! - /work/worktrees/task-b3777342/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll (net9.0|x64)
+  total: 54
+  failed: 0
+  succeeded: 54
+  skipped: 0
+  duration: 2m 12s 064ms
