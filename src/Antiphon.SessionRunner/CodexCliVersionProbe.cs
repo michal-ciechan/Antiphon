@@ -327,6 +327,13 @@ public sealed class CodexCliVersionProbe : IDisposable
 /// <summary>Same production POST mapping is used by random-port isolated test hosts.</summary>
 public static class CodexCliVersionRoutes
 {
+    public static async Task PrepareAdvertisementAsync(CodexCliVersionProbe probe,
+        IPhoneHomeAdoptionGate adoption, CancellationToken ct)
+    {
+        await probe.RefreshDefaultAsync(ct);
+        adoption.SignalReady();
+    }
+
     public static IEndpointRouteBuilder MapCodexCliVersionRoutes(this IEndpointRouteBuilder app)
     {
         app.MapPost("/capabilities/codex-cli-version", async (
