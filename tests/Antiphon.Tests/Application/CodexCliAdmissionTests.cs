@@ -398,21 +398,120 @@ public sealed class CodexCliAdmissionTests
     [Test]
     public async Task C959_Retry_and_cancellation_recheck()
     {
+        foreach (var version in new[] { "0.159.1", "0.160.0" })
+        foreach (var busy in new[] { false, true })
+        foreach (var worktree in new[] { false, true })
+        {
+            var vector = $"lost-claim/{version}/busy={busy}/worktree={worktree}";
+            await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            using var git = worktree ? new ScratchGitRepo("c959-recovery") : null;
+            if (git is not null) await git.CommitFileAsync("seed.txt", "C959 isolated recovery\n");
+            using var crash = new CancellationTokenSource();
+            var clock = new RecoveryClock();
+            var roots = new List<string>();
+            try
+            {
+                Guid taskId, lostSession, helperSession, helperAgent;
+                await using (var lost = await DispatchKit.BuildAsync(git, schema: schema, clock: clock,
+                    preserve: true, cancelAfterClaim: crash))
+                {
+                    roots.Add(lost.Harness.TempRoot);
+                    taskId = (await lost.CreateAsync()).Id;
+                    await Should.ThrowAsync<OperationCanceledException>(() => lost.TickAsync(crash.Token));
+                    await using var db = lost.Context();
+                    var claimed = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+                    claimed.Status.ShouldBe(AgentTaskStatus.Dispatched, "C959-v22-lost-committed " + vector);
+                    lostSession = claimed.AgentSessionId!.Value;
+                    lost.Factory.Created.ShouldBeEmpty("C959-v22-no-volatile-launch " + vector);
+                    (await db.SessionQueuedMessages.CountAsync(q => q.ExecutionTaskId == taskId)).ShouldBe(0);
+                    (await db.TranscriptEntries.CountAsync(e => e.AgentSessionId == lostSession)).ShouldBe(0,
+                        "C959-pc-191 " + vector);
+                    helperSession = lost.Harness.SessionId;
+                    helperAgent = lost.Harness.AgentId;
+                }
+                // The first provider is disposed. Only durable database facts cross this boundary.
+                await using var recovered = await DispatchKit.BuildAsync(git, busy: busy, schema: schema,
+                    clock: clock, preserve: true, attachSession: helperSession, attachAgent: helperAgent);
+                roots.Add(recovered.Harness.TempRoot);
+                clock.Advance(TimeSpan.FromMinutes(recovered.Harness.Delegation.DeliveryFailTimeoutMinutes + 1));
+                using (var scope = recovered.Harness.Provider.CreateScope())
+                    (await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().FailNeverStartedAsync(CancellationToken.None))
+                        .ShouldBe(1, "C959-pc-221 " + vector);
+                await using (var db = recovered.Context())
+                {
+                    var failed = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+                    failed.Status.ShouldBe(AgentTaskStatus.Failed, "C959-pc-221 durable " + vector);
+                    failed.FailureReason.ShouldContain("Boot prompt was never delivered", customMessage: "C959-pc-221 reason " + vector);
+                    (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Failed))
+                        .ShouldBe(1, "C959-pc-221 event " + vector);
+                }
+                async Task<AgentTaskSummaryDto> Retry()
+                {
+                    using var scope = recovered.Harness.Provider.CreateScope();
+                    return await scope.ServiceProvider.GetRequiredService<AgentTaskService>().RetryAsync(taskId, CancellationToken.None);
+                }
+                foreach (var (sample, code) in new (RunnerCodexCliVersionDto?, string)[]
+                {
+                    (new("0.156.1", clock.GetUtcNow(), null, new string('a',64)), "codex_cli_version_too_old"),
+                    (new("0.160.0", clock.GetUtcNow().AddMinutes(-16), null, new string('a',64)), "codex_cli_version_stale"),
+                    (null, "codex_cli_version_unknown"),
+                })
+                {
+                    recovered.Client.Sample = sample;
+                    (await CodeAsync(() => Retry())).ShouldBe(code, "C959-pc-193/C959-pc-198 " + vector);
+                    await using var db = recovered.Context();
+                    (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId)).Status
+                        .ShouldBe(AgentTaskStatus.Failed, "C959-v22-state " + vector);
+                    (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Retried)).ShouldBe(0);
+                    recovered.Factory.Created.ShouldBeEmpty();
+                }
+                recovered.Client.Sample = new("0.156.1", clock.GetUtcNow(), null, new string('a',64));
+                recovered.Harness.Delegation.CodexCliVersionOverrides = [new()
+                {
+                    RunnerId = "desktop", Model = "gpt-6.1-sol", AllowedRefusalCodes = ["codex_cli_version_too_old"],
+                    Reason = "C959 expired retry qualification", ExpiresAtUtc = clock.GetUtcNow(),
+                }];
+                (await CodeAsync(() => Retry())).ShouldBe("codex_cli_version_too_old", "C959-pc-197 " + vector);
+                recovered.Harness.Delegation.CodexCliVersionOverrides.Clear();
+                recovered.Client.Sample = new(version, clock.GetUtcNow(), null, new string('a',64));
+                (await Retry()).Status.ShouldBe(AgentTaskStatus.Queued, "C959-v22-explicit-retry " + vector);
+                await recovered.TickAsync();
+                recovered.Factory.ReadyHold?.TrySetResult(true);
+                await recovered.Harness.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+                await using var finalDb = recovered.Context();
+                var row = await finalDb.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+                row.AgentSessionId.ShouldNotBe(lostSession, "C959-pc-192 " + vector);
+                var adapter = recovered.Factory.Created.Single();
+                if (busy)
+                {
+                    adapter.SubmittedBodies.ShouldBeEmpty("C959-v22-busy " + vector);
+                    await recovered.Harness.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn", sessionId: row.AgentSessionId);
+                    await recovered.Harness.Queue.FlushSessionAsync(row.AgentSessionId!.Value, CancellationToken.None);
+                }
+                var frozen = recovered.Boundary.Briefs[taskId];
+                frozen.Full.ShouldContain(Body, customMessage: "C959-v22-literal " + vector);
+                frozen.Full.ShouldNotContain("\r");
+                (await File.ReadAllBytesAsync(frozen.Path!)).ShouldBe(Encoding.UTF8.GetBytes(frozen.Full), "C959-pc-194 spill " + vector);
+                adapter.StartedArgs.ShouldContain("--model gpt-6.1-sol", customMessage: "C959-v22-model " + vector);
+                adapter.SubmittedBodies.Single().ShouldBe(frozen.Wire, "C959-pc-194 recipient " + vector);
+                var queued = await finalDb.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.ExecutionTaskId == taskId);
+                var session = await finalDb.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == row.AgentSessionId);
+                queued.LastDeliveryGeneration.ShouldBe(SessionGeneration.Normalize(session.StartedAt), "C959-v22-generation " + vector);
+                var receipts = await finalDb.TranscriptEntries.AsNoTracking().Where(e => e.AgentSessionId == row.AgentSessionId && e.Kind == TranscriptKinds.UserPrompt).ToListAsync();
+                receipts.Count.ShouldBe(1, "C959-v22-no-duplicate " + vector);
+                receipts.Single().Text.ShouldBe(frozen.Wire, "C959-pc-194 receipt " + vector);
+                receipts.Single().Sequence.ShouldBeGreaterThan(queued.LastDeliveryBaselineSequence ?? 0, "C959-v22-baseline " + vector);
+                (await finalDb.TranscriptEntries.CountAsync(e => e.AgentSessionId == lostSession && e.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0,
+                    "C959-pc-192 old-session " + vector);
+                (await finalDb.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Retried)).ShouldBe(1);
+            }
+            finally
+            {
+                foreach (var root in roots)
+                    if (System.IO.Directory.Exists(root)) System.IO.Directory.Delete(root, recursive: true);
+            }
+        }
         await using var k = await Kit.CreateAsync();
-        var created = await k.Service.CreateAsync(k.Request(false), k.Caller, CancellationToken.None);
-        var task = await k.Db.AgentTasks.SingleAsync(t => t.Id == created.Id);
-        task.Status = AgentTaskStatus.Failed;
-        await k.Db.SaveChangesAsync();
-        k.Local.Sample = new("0.156.1", T, null, new string('a',64));
-        (await CodeAsync(() => k.Service.RetryAsync(task.Id, CancellationToken.None)))
-            .ShouldBe("codex_cli_version_too_old", "C959-pc-193");
-        task.Status.ShouldBe(AgentTaskStatus.Failed, "C959-v22-state");
-        (await k.Db.AgentTaskEvents.CountAsync(e => e.Type == AgentTaskEventType.Retried)).ShouldBe(0);
-        k.Local.Sample = null;
-        (await CodeAsync(() => k.Service.RetryAsync(task.Id, CancellationToken.None)))
-            .ShouldBe("codex_cli_version_unknown", "C959-pc-198");
-        k.Local.Sample = new("0.159.1", T, null, new string('a',64));
-        (await k.Service.RetryAsync(task.Id, CancellationToken.None)).Status.ShouldBe(AgentTaskStatus.Queued);
         await using (var bounded = await Kit.CreateAsync())
         {
             var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -426,7 +525,7 @@ public sealed class CodexCliAdmissionTests
         using var cancel = new CancellationTokenSource();
         k.Local.Probe = async ct => { cancel.Cancel(); await Task.Delay(Timeout.Infinite, ct); return null; };
         await Should.ThrowAsync<OperationCanceledException>(() => k.Service.CreateAsync(k.Request(false), k.Caller, cancel.Token));
-        (await k.Db.AgentTasks.CountAsync()).ShouldBe(1, "C959-pc-195");
+        (await k.Db.AgentTasks.CountAsync()).ShouldBe(0, "C959-pc-195");
     }
 
     private static async Task<string?> CodeAsync(Func<Task> call) => (await FailureAsync(call))?.Code;
@@ -486,23 +585,30 @@ public sealed class CodexCliAdmissionTests
         public ScratchGitRepo? Git { get; init; }
         public AgentKind Kind { get; init; } = AgentKind.Codex;
         public required BriefBoundary Boundary { get; init; }
+        public bool OwnsSchema { get; init; } = true;
         public AppDbContext Context() => new(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
-        public static async Task<DispatchKit> BuildAsync(ScratchGitRepo? git = null, AgentKind kind = AgentKind.Codex, bool busy = false)
+        public static async Task<DispatchKit> BuildAsync(ScratchGitRepo? git = null, AgentKind kind = AgentKind.Codex, bool busy = false,
+            IsolatedTestSchema? schema = null, TimeProvider? clock = null, bool preserve = false,
+            CancellationTokenSource? cancelAfterClaim = null, Guid? attachSession = null, Guid? attachAgent = null)
         {
-            var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-            var client = new Client { Sample = new("0.160.0", DateTimeOffset.UtcNow, null, new string('a',64)) };
+            var ownsSchema = schema is null;
+            schema ??= await TestDbFixture.CreateIsolatedSchemaAsync();
+            clock ??= TimeProvider.System;
+            var client = new Client { Sample = new("0.160.0", clock.GetUtcNow(), null, new string('a',64)) };
             Factory? factory = null;
-            var boundary = new BriefBoundary(schema.ConnectionString, busy);
+            var boundary = new BriefBoundary(schema.ConnectionString) { CancelAfterClaim = cancelAfterClaim };
             var h = await BridgeQueueHarness.CreateAsync(new()
             {
                 AlwaysOn = false, ConnectionString = schema.ConnectionString,
+                TimeProvider = clock, PreserveDatabaseOnDispose = preserve,
+                AttachSessionId = attachSession, AttachAgentId = attachAgent,
                 Delegation = new() { DefaultWorkerWorkspace = WorkspaceMode.Shared, MaxConcurrentTasks = 20, RolePolicy = new(), PoolIdleRetireMinutes = 525600 },
                 ConfigureServices = services =>
                 {
                     services.AddSingleton<ISessionRunnerDirectory>(new Directory(client, new Client()));
                     services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new BridgeQueueHarness.OptionsMonitorStub<AgentRegistrySettings>(Registry()));
                     services.AddSingleton<IOptions<AgentRegistrySettings>>(Options.Create(Registry()));
-                    services.AddSingleton<IAgentProtocolAdapterFactory>(sp => factory = new(sp.GetRequiredService<AgentSessionRuntime>(), schema.ConnectionString)
+                    services.AddSingleton<IAgentProtocolAdapterFactory>(sp => factory = new(sp.GetRequiredService<AgentSessionRuntime>(), schema.ConnectionString, clock)
                     { ReadyHold = busy ? new(TaskCreationOptions.RunContinuationsAsynchronously) : null });
                     services.AddSingleton<LandDeliveryBoundary>(boundary);
                     if (busy) services.AddSingleton<IEventBus>(sp => new BusyEventBus(
@@ -526,7 +632,7 @@ public sealed class CodexCliAdmissionTests
                     services.AddScoped<AgentTaskDispatcher>();
                 },
             });
-            return new() { Schema = schema, Harness = h, Client = client, Factory = (Factory)h.Provider.GetRequiredService<IAgentProtocolAdapterFactory>(), Git = git, Kind = kind, Boundary = boundary };
+            return new() { Schema = schema, OwnsSchema = ownsSchema, Harness = h, Client = client, Factory = (Factory)h.Provider.GetRequiredService<IAgentProtocolAdapterFactory>(), Git = git, Kind = kind, Boundary = boundary };
         }
         public async Task<AgentTaskCreatedDto> CreateAsync()
         {
@@ -535,19 +641,20 @@ public sealed class CodexCliAdmissionTests
                 AgentKind: Kind, ModelLevel: AgentModelLevel.High, Workspace: Git is null ? WorkspaceMode.Shared : WorkspaceMode.Worktree, RunnerId: "local"),
                 new(null, null, Git?.Path ?? Path.Combine(Harness.TempRoot, "workspace")), CancellationToken.None);
         }
-        public async Task TickAsync()
+        public async Task TickAsync(CancellationToken ct = default)
         {
             using var scope = Harness.Provider.CreateScope();
-            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
         }
-        public async ValueTask DisposeAsync() { await Harness.DisposeAsync(); await Schema.DisposeAsync(); }
+        public async ValueTask DisposeAsync() { await Harness.DisposeAsync(); if (OwnsSchema) await Schema.DisposeAsync(); }
     }
     private sealed record FrozenBrief(string Full, string Wire, string? Path);
 
     // Freeze committed producer inputs before launch scheduling or queue handoff.
     // Neither queued.Body, the file nor a transcript supplies the oracle.
-    private sealed class BriefBoundary(string connection, bool busy) : LandDeliveryBoundary
+    private sealed class BriefBoundary(string connection) : LandDeliveryBoundary
     {
+        public CancellationTokenSource? CancelAfterClaim { get; init; }
         public DelegationSettings Settings { get; set; } = new();
         public PtyDeliveryCeilings Ceilings { get; set; } = null!;
         public Dictionary<Guid, FrozenBrief> Briefs { get; } = [];
@@ -563,7 +670,20 @@ public sealed class CodexCliAdmissionTests
             var wire = path is null ? full.TrimEnd() : DelegationReportFormatter.BuildBriefPointer(task, Settings,
                 path, full.Length, task.AgentKind).TrimEnd();
             Briefs.Add(taskId, new(full, wire, path));
+            if (CancelAfterClaim is not null)
+            {
+                CancelAfterClaim.Cancel();
+                ct.ThrowIfCancellationRequested();
+            }
         }
+    }
+
+    // Shift durable watchdog time while retaining real queue/launch timers.
+    private sealed class RecoveryClock : TimeProvider
+    {
+        private TimeSpan _offset;
+        public override DateTimeOffset GetUtcNow() => DateTimeOffset.UtcNow + _offset;
+        public void Advance(TimeSpan delta) => _offset += delta;
     }
 
     // A cold launch writes its own restart boundary. Mark activity AFTER that boundary,
@@ -586,7 +706,7 @@ public sealed class CodexCliAdmissionTests
         }
     }
 
-    private sealed class Factory(AgentSessionRuntime runtime, string connection) : IAgentProtocolAdapterFactory
+    private sealed class Factory(AgentSessionRuntime runtime, string connection, TimeProvider clock) : IAgentProtocolAdapterFactory
     {
         public TaskCompletionSource<bool>? ReadyHold { get; init; }
         public List<FakeAgentProtocolAdapter> Created { get; } = [];
@@ -596,7 +716,7 @@ public sealed class CodexCliAdmissionTests
             adapter.OnSubmitted = async text =>
             {
                 await BridgeQueueHarness.InsertEntryAsync(adapter.StartedSessionId!.Value, TranscriptKinds.UserPrompt, text,
-                    timestamp: DateTime.UtcNow, connectionString: connection, createdAtUtc: DateTime.UtcNow);
+                    timestamp: clock.GetUtcNow().UtcDateTime, connectionString: connection, createdAtUtc: clock.GetUtcNow().UtcDateTime);
                 await BridgeQueueHarness.InsertEntryAsync(adapter.StartedSessionId.Value, TranscriptKinds.TurnEnd,
                     stopReason: "end_turn", connectionString: connection);
             };
