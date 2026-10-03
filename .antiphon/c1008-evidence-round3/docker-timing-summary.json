@@ -1,0 +1,860 @@
+{
+  "source": "cc6a8914e385c80b62c9f457dd716354006cddfb",
+  "elapsedSeconds": 531.0555904989999,
+  "commands": [
+    [
+      "run --rm",
+      {
+        "calls": 135,
+        "milliseconds": 96034.303965
+      }
+    ],
+    [
+      "compose -p",
+      {
+        "calls": 30,
+        "milliseconds": 53277.714581000255
+      }
+    ],
+    [
+      "run -d",
+      {
+        "calls": 39,
+        "milliseconds": 27927.142459999886
+      }
+    ],
+    [
+      "build -t",
+      {
+        "calls": 1,
+        "milliseconds": 23171.768674
+      }
+    ],
+    [
+      "volume create",
+      {
+        "calls": 451,
+        "milliseconds": 12727.413472000004
+      }
+    ],
+    [
+      "rm -f",
+      {
+        "calls": 30,
+        "milliseconds": 11748.694524000068
+      }
+    ],
+    [
+      "network rm",
+      {
+        "calls": 30,
+        "milliseconds": 5496.874329000162
+      }
+    ],
+    [
+      "ps -aq",
+      {
+        "calls": 154,
+        "milliseconds": 4414.666183999689
+      }
+    ],
+    [
+      "volume inspect",
+      {
+        "calls": 62,
+        "milliseconds": 2290.8357659997637
+      }
+    ],
+    [
+      "volume rm",
+      {
+        "calls": 34,
+        "milliseconds": 1602.0987430000823
+      }
+    ],
+    [
+      "image inspect",
+      {
+        "calls": 35,
+        "milliseconds": 1161.5943869999974
+      }
+    ],
+    [
+      "network ls",
+      {
+        "calls": 31,
+        "milliseconds": 1155.3339929998729
+      }
+    ],
+    [
+      "volume ls",
+      {
+        "calls": 39,
+        "milliseconds": 1120.121441999956
+      }
+    ],
+    [
+      "network inspect",
+      {
+        "calls": 30,
+        "milliseconds": 1043.9986590000408
+      }
+    ],
+    [
+      "stop --time",
+      {
+        "calls": 4,
+        "milliseconds": 949.0307540000067
+      }
+    ],
+    [
+      "inspect a0875db09e118b14f29fe140b3b3dc73f128ebbca80d8299af10506c36d2e074",
+      {
+        "calls": 14,
+        "milliseconds": 384.8318479998852
+      }
+    ],
+    [
+      "inspect 11aa4bd401899c762551a2c24d15c775767680414eb32a2691726108b4212a67",
+      {
+        "calls": 13,
+        "milliseconds": 358.99216000002343
+      }
+    ],
+    [
+      "inspect 0c04a77450f1f7018b09acf227cd35710ea7667b37eac7f34a6e20193f8bddf2",
+      {
+        "calls": 9,
+        "milliseconds": 355.1501360000693
+      }
+    ],
+    [
+      "inspect 15929ce7efbb9d034c5fb012ba95f855cf63241c112f2ec738672285b01287e2",
+      {
+        "calls": 3,
+        "milliseconds": 316.39639699997497
+      }
+    ],
+    [
+      "inspect 2155a439a8092c66a8bf28682b8ecc49a5f4856c18bed8789e9552749eb2d955",
+      {
+        "calls": 9,
+        "milliseconds": 313.463931000093
+      }
+    ],
+    [
+      "inspect 2505a4ab8f33d225a59a91641339d3d306ef977f976a8276624381960a850afb",
+      {
+        "calls": 4,
+        "milliseconds": 303.10845300002256
+      }
+    ],
+    [
+      "inspect e232fce089c0b43944a74b2107d31cdcee7bac7b87573218cdc60c481d144a74",
+      {
+        "calls": 5,
+        "milliseconds": 298.34682300005807
+      }
+    ],
+    [
+      "inspect f9184bc8a65692d2b539762226d81dfac57e5e0bb75881c706002d518d4fcce7",
+      {
+        "calls": 3,
+        "milliseconds": 294.9865600000194
+      }
+    ],
+    [
+      "inspect cd43440ca0049b86d125d41589f1015e76d6886bebd48f47c1fa1bc19b881cde",
+      {
+        "calls": 1,
+        "milliseconds": 247.8537570000044
+      }
+    ],
+    [
+      "inspect 63828eb93a8427f3faa1114b2c0d0438d0c4720914f23cff1f7c5544b37bcfe9",
+      {
+        "calls": 9,
+        "milliseconds": 230.41363899991848
+      }
+    ],
+    [
+      "inspect 52ea3204d5a3de1f8a1ee1503e857de4008b036b91604f726aef98fbfeb148ad",
+      {
+        "calls": 7,
+        "milliseconds": 211.7240579999998
+      }
+    ],
+    [
+      "inspect c491e9daa079bd44232dd2b2f0b44a0338fb49ef5eb9507ae1c09f230c08db71",
+      {
+        "calls": 9,
+        "milliseconds": 208.3596050000633
+      }
+    ],
+    [
+      "inspect e05d914ed4b6ae10aac5459a39d08d0fdfbc4c3a9ea964b007214456389c4422",
+      {
+        "calls": 7,
+        "milliseconds": 195.55561500004842
+      }
+    ],
+    [
+      "inspect e5a6a56c8c41380d8d6ba7659b4f2f7f19d828078a6993b9c295d7a21fe28e25",
+      {
+        "calls": 1,
+        "milliseconds": 194.11266100000648
+      }
+    ],
+    [
+      "image rm",
+      {
+        "calls": 1,
+        "milliseconds": 180.07972300006077
+      }
+    ],
+    [
+      "inspect b39de68e7360b6aafd9ea43f89b918816e257cdd06a7a9e952e134cce4c59549",
+      {
+        "calls": 3,
+        "milliseconds": 174.5975820000167
+      }
+    ],
+    [
+      "inspect c75f4ba126a276ef218cb7504f1f8ecfe8e9905fdbedd92b39aa9dee93a4bb3b",
+      {
+        "calls": 2,
+        "milliseconds": 169.8795880000107
+      }
+    ],
+    [
+      "inspect f54eb5cb6c94f42002dd22b4f759f77dd0e6c45ba20b27c09e968f5c842b527b",
+      {
+        "calls": 7,
+        "milliseconds": 163.8601379999891
+      }
+    ],
+    [
+      "inspect 0a66e0b120bf3e6ba7a5c73cb4e84f8bd09e13a1c73912b15e90b0c894a984c0",
+      {
+        "calls": 1,
+        "milliseconds": 161.52695700002369
+      }
+    ],
+    [
+      "exec a85664eba774f9e40e561d48c735902ff4445fcd037546658ba3ac1cffa56e86",
+      {
+        "calls": 2,
+        "milliseconds": 157.00224099999832
+      }
+    ],
+    [
+      "inspect 51071ea3fedcfb11e71ec818b1f9d005f8919dec7e141a855c8780ad4eba2976",
+      {
+        "calls": 5,
+        "milliseconds": 152.9168260000297
+      }
+    ],
+    [
+      "inspect 460d4ea125527c41d54726844abe6917974247b47e0962ab681f7f873a15a502",
+      {
+        "calls": 1,
+        "milliseconds": 147.73118199999954
+      }
+    ],
+    [
+      "inspect b8383502bd30df6fc8a8aa373ce1814648195b6ef28abe22e0c99fddf2c3760b",
+      {
+        "calls": 5,
+        "milliseconds": 146.96988699998474
+      }
+    ],
+    [
+      "inspect bd561c2e9375fdeaa3a88c11e7c68d9f0fa70b2f4bb2ebc01f685ab953b599bc",
+      {
+        "calls": 5,
+        "milliseconds": 146.45510600000853
+      }
+    ],
+    [
+      "inspect 943c6edd7e022e80557c1ee53d8713240c3dd8883b74c5e37a465f4045ae46e2",
+      {
+        "calls": 5,
+        "milliseconds": 146.33912300001248
+      }
+    ],
+    [
+      "inspect f8ced8d1ebca75dfea84ca0cbc25574a1ba3acd7f28a3538d32d798df3ef385b",
+      {
+        "calls": 5,
+        "milliseconds": 142.77579799998784
+      }
+    ],
+    [
+      "info --format",
+      {
+        "calls": 2,
+        "milliseconds": 141.9790980000019
+      }
+    ],
+    [
+      "inspect cf624355533149962f28e7e130be6991f7784e110f1006ce5d8a5a54944b6ab3",
+      {
+        "calls": 5,
+        "milliseconds": 141.05327299999772
+      }
+    ],
+    [
+      "inspect 38ba8f8a06ecf355d0994b4f51d99e5ecf1b3b097ca5f5dc1ae2a2ad5a8c959a",
+      {
+        "calls": 5,
+        "milliseconds": 139.76860800001305
+      }
+    ],
+    [
+      "inspect 17ea3a3c055c56233e628cf368b182e92cdddbe1d061b065e9822fe34c7e84d5",
+      {
+        "calls": 5,
+        "milliseconds": 138.8697519999696
+      }
+    ],
+    [
+      "inspect c74b1ed2f740329d967db40a5f6d61889a1253b2eb6123da281e5bd2b51f3ded",
+      {
+        "calls": 5,
+        "milliseconds": 137.7712099999917
+      }
+    ],
+    [
+      "inspect de18efd96025ec6f7a6603ddc4a06c6b4c663ce814c04eecdc8271d9f7099cab",
+      {
+        "calls": 5,
+        "milliseconds": 137.04998900002101
+      }
+    ],
+    [
+      "inspect a5295c843b7e83888ea0e3720f9a5bb77b6756f5024e54c0f8345c0544d314ca",
+      {
+        "calls": 3,
+        "milliseconds": 128.69289400003618
+      }
+    ],
+    [
+      "inspect c54a0991bddddec7d0ef5974e43f559cfa9523a0f599b2b02aca97c1f66ac563",
+      {
+        "calls": 5,
+        "milliseconds": 122.67443499999354
+      }
+    ],
+    [
+      "exec -u",
+      {
+        "calls": 1,
+        "milliseconds": 121.53539799999999
+      }
+    ],
+    [
+      "inspect be616984e476d539111ee7c315dfbf84f42012d3b900c90de4ce88b16bf39c93",
+      {
+        "calls": 5,
+        "milliseconds": 120.86310099999537
+      }
+    ],
+    [
+      "inspect cbcd440be3198da29c8ab8f16d479ba41492e66c0abdf66e83d4954e05e1cd5c",
+      {
+        "calls": 5,
+        "milliseconds": 119.24766299998737
+      }
+    ],
+    [
+      "exec e9fb2982135c1125dfc30fe6268397621dbd890def99b2f8d50951a094ad87be",
+      {
+        "calls": 1,
+        "milliseconds": 115.72940399999788
+      }
+    ],
+    [
+      "inspect 7215539fd597b1c14f983ee29dcd85e3e73e1ac6ea82645a0edee862a90ba6b5",
+      {
+        "calls": 4,
+        "milliseconds": 115.35408099999768
+      }
+    ],
+    [
+      "inspect e8c43bf7709fdfccb3590983d3c7d6a85d3922ff1a8051404035ea7a225f58e3",
+      {
+        "calls": 4,
+        "milliseconds": 114.2960890000104
+      }
+    ],
+    [
+      "inspect ad503dadf17f61261611a613aaa4c547b804b9f9917235a747560640d5ac6b08",
+      {
+        "calls": 5,
+        "milliseconds": 112.65430300007574
+      }
+    ],
+    [
+      "inspect b393bd58399714d9e71ef1e7911afc3dd92d9fd5ff8e0e8c527ed4d0929ddcc6",
+      {
+        "calls": 4,
+        "milliseconds": 111.80073600000469
+      }
+    ],
+    [
+      "inspect 9b378dcd906b2601c56763df74affe436c0a2eb50b47a48a18df1c660e82fad0",
+      {
+        "calls": 5,
+        "milliseconds": 110.28976400001557
+      }
+    ],
+    [
+      "inspect cb21e9ee325b76fa581557aba50a89015f932f622f5e5fe0d1b9f19e6e3c84ad",
+      {
+        "calls": 5,
+        "milliseconds": 110.17209300000104
+      }
+    ],
+    [
+      "inspect b545cfeef8ca249b78c5fcf2a1f8a0f6e1e4fccffb47bb5cba13d0d0a7bbecd7",
+      {
+        "calls": 5,
+        "milliseconds": 108.69047100003809
+      }
+    ],
+    [
+      "inspect 3144d034aadef8ccd36ba599517524accd599e740e1565e81f102c3280394e1f",
+      {
+        "calls": 5,
+        "milliseconds": 104.87192899998627
+      }
+    ],
+    [
+      "inspect ee6dc3aac5d874c59aa748be03642329bb55150a9cfacb1ba53b058629cdd8b5",
+      {
+        "calls": 4,
+        "milliseconds": 104.32408999998006
+      }
+    ],
+    [
+      "inspect ca54ae14df47eeddaf4d325b897738f798c0345d61a148a38906766021655958",
+      {
+        "calls": 4,
+        "milliseconds": 85.40746600003331
+      }
+    ],
+    [
+      "inspect 92f7e67dbcd7fa92f5510e8ab79267ce1325b2773c5ddb8c402908d896a0893b",
+      {
+        "calls": 3,
+        "milliseconds": 84.63079299998935
+      }
+    ],
+    [
+      "inspect 1faadb640ada700753f0e4c405945977e8dadf093094b5c96a25dc34925dc5eb",
+      {
+        "calls": 4,
+        "milliseconds": 83.12804399998276
+      }
+    ],
+    [
+      "inspect 46860709d39c3eaa18cfcc2db3eeb14164ecd39aeec56ba584fe9c4d65c1b77f",
+      {
+        "calls": 3,
+        "milliseconds": 82.41721899999538
+      }
+    ],
+    [
+      "inspect dfe68bd681750994735fd95aed57e5f3a3c184ae262175562405059315f48fb9",
+      {
+        "calls": 4,
+        "milliseconds": 79.27807600001688
+      }
+    ],
+    [
+      "inspect 2802af842c1e8e60199c1650325b822abac648cdf03eda52e91cdf56ba9b13f5",
+      {
+        "calls": 3,
+        "milliseconds": 78.84735400001227
+      }
+    ],
+    [
+      "compose version",
+      {
+        "calls": 1,
+        "milliseconds": 74.72512399998959
+      }
+    ],
+    [
+      "inspect b69b8c4d68f5f3a86da94a3d71f9dc7c7b5516efe4b0419c15a1b7e7016b453b",
+      {
+        "calls": 3,
+        "milliseconds": 74.63497399998596
+      }
+    ],
+    [
+      "inspect b97bf61436bd502a25d72612d8289363c2c1f692e3518c73020260d9cde3d2fb",
+      {
+        "calls": 3,
+        "milliseconds": 67.62177399997017
+      }
+    ],
+    [
+      "inspect 494c4c9174ba1e810515cdf49f8023a1000c2b699121199191c81a13cd244118",
+      {
+        "calls": 3,
+        "milliseconds": 61.365277000004426
+      }
+    ],
+    [
+      "inspect c33403c9523be645602c8add882b61b774ce482a9a9ea4cf795cd1c6a97715a6",
+      {
+        "calls": 3,
+        "milliseconds": 61.19579899997916
+      }
+    ],
+    [
+      "inspect e9fb2982135c1125dfc30fe6268397621dbd890def99b2f8d50951a094ad87be",
+      {
+        "calls": 2,
+        "milliseconds": 60.67217800000071
+      }
+    ],
+    [
+      "inspect d5c24a73c23ad28906cdd2678ac65a4189a6bf7ccfb5e5c0cfb40b3317c0c03e",
+      {
+        "calls": 2,
+        "milliseconds": 59.05456299998332
+      }
+    ],
+    [
+      "inspect d9649c9cb85b1c0c6de11fabf8d8fd07e92b677453ab420ddce4b80c55a7910d",
+      {
+        "calls": 2,
+        "milliseconds": 55.92020100002992
+      }
+    ],
+    [
+      "inspect 5d490551aec2674e860691c8a138729ec2f78f69ab18650abb7e9f70e9c90913",
+      {
+        "calls": 2,
+        "milliseconds": 55.88852500001667
+      }
+    ],
+    [
+      "inspect 412acb9eef9764c774da57f70f7165d55029665c6ff1b60b43f2b0db3daf0a15",
+      {
+        "calls": 2,
+        "milliseconds": 55.51860399998259
+      }
+    ],
+    [
+      "inspect 6b49fc813431f235a288b413a5c93b07aef79e8553143ae9f23b7834154eaf37",
+      {
+        "calls": 2,
+        "milliseconds": 55.1371119999676
+      }
+    ],
+    [
+      "inspect 182f2445ecd8b9483bb121dfd3ddc704a7193fce2c99475ba7dfa356dfbd4f32",
+      {
+        "calls": 2,
+        "milliseconds": 55.11969099997077
+      }
+    ],
+    [
+      "inspect adad40c641602d52580195b3ac9942c8526c54efd2dfec7bd5917467e44f6779",
+      {
+        "calls": 2,
+        "milliseconds": 54.18496799999775
+      }
+    ],
+    [
+      "inspect 567abbcbe9ca6da2deb8e2ff153c445e22946a2d7ab8cd8e00075e053f6e9c2c",
+      {
+        "calls": 2,
+        "milliseconds": 52.03499000001466
+      }
+    ],
+    [
+      "inspect 514b2ec5fe7f5c294bd21fbcba60e5df11fe632ea47be0a312aa167ae04a1bae",
+      {
+        "calls": 2,
+        "milliseconds": 49.42547800001921
+      }
+    ],
+    [
+      "inspect 8dd26622c2fa47533fac5bb0c2b281ac2d18bf4fbcd09fb1513b3d066092d8ad",
+      {
+        "calls": 2,
+        "milliseconds": 48.619442999995954
+      }
+    ],
+    [
+      "inspect 2defd822aa70b7dd61aacd946f1ffa6a1c5c3b3777488c548f52899d53891dc4",
+      {
+        "calls": 2,
+        "milliseconds": 46.778613000002224
+      }
+    ],
+    [
+      "inspect 2db332e0f82622f0edf3f8d88763beaee3da9d8993525eb961104bc09e7496bc",
+      {
+        "calls": 2,
+        "milliseconds": 44.64609299998847
+      }
+    ],
+    [
+      "inspect 40b36445611f773ea7941693f6ce18d00559dfb74be047b13ff007a9b8c24f7d",
+      {
+        "calls": 2,
+        "milliseconds": 42.902066000009654
+      }
+    ],
+    [
+      "inspect df9f4b3bcdec6cf50a7b6d8aafc6855d8afeb0bd602293ac8c8872d80fd7fabe",
+      {
+        "calls": 2,
+        "milliseconds": 41.00491600000532
+      }
+    ],
+    [
+      "rm --",
+      {
+        "calls": 1,
+        "milliseconds": 39.97486000001663
+      }
+    ],
+    [
+      "inspect 7cab161b3135865971ef319f488ef2f53a41adb6f30eadf61ec4a589f02c01e7",
+      {
+        "calls": 2,
+        "milliseconds": 38.925190000009025
+      }
+    ],
+    [
+      "inspect 92feef8f498f64d6067ec3d9d699c9692704070c6c3a7a78c7aa3571b7b4e37e",
+      {
+        "calls": 2,
+        "milliseconds": 38.237760000047274
+      }
+    ],
+    [
+      "inspect 880a021b47a0d5c9089d8113cd2c9d89977889e0c5b0855bf899d5e37c1225b8",
+      {
+        "calls": 2,
+        "milliseconds": 36.959434999967925
+      }
+    ],
+    [
+      "version --format",
+      {
+        "calls": 1,
+        "milliseconds": 33.30709100002423
+      }
+    ],
+    [
+      "inspect 658c02228ff7dd6a5bb777fdb3b2daac0909105c04c833d8e63836a835cd0558",
+      {
+        "calls": 1,
+        "milliseconds": 33.28164499998093
+      }
+    ],
+    [
+      "inspect 766728e848231829c9d5c6761ff0aad2c4b827923429dcca85937c760624379d",
+      {
+        "calls": 1,
+        "milliseconds": 32.026471000004676
+      }
+    ],
+    [
+      "inspect 5f322ee4a77192da3f22ed27cd4c6eda43981ada2d393c12b9a4a1ea50b039b1",
+      {
+        "calls": 1,
+        "milliseconds": 31.949605999994674
+      }
+    ],
+    [
+      "inspect 1838483b93ca181ab4a18105f7ebfec6cb0b994b63107e1a7062b94fe633874e",
+      {
+        "calls": 1,
+        "milliseconds": 31.761542000007466
+      }
+    ],
+    [
+      "inspect 42e1bab6d3c81101638a521a088a2adafddbe9cbdd8c1130fa922a78343f5e01",
+      {
+        "calls": 1,
+        "milliseconds": 31.492011000053026
+      }
+    ],
+    [
+      "inspect e4d0b4baed25f0276aa95267c3c6c16a9ecca35b8e3db486bd782bb3a5b3fa60",
+      {
+        "calls": 1,
+        "milliseconds": 31.448059000016656
+      }
+    ],
+    [
+      "inspect e2c7917e398b21e28c90b88eed349ef50a316f46a623bd56751b2d7951359a66",
+      {
+        "calls": 1,
+        "milliseconds": 30.637928999996802
+      }
+    ],
+    [
+      "inspect 84cb3260b5dfb0f0037f8b087e8928833c6571a30d348323ef9df6da0d5e317a",
+      {
+        "calls": 1,
+        "milliseconds": 29.532014999946114
+      }
+    ],
+    [
+      "inspect 0e69cfac8fc5aaefb8d73c0752869d387642f30a912ce1841cfe0da305192926",
+      {
+        "calls": 1,
+        "milliseconds": 29.18004499998642
+      }
+    ],
+    [
+      "inspect 11ef8edde6ff26cf81ee105e81747cfa242b804b6f515af966228e7c94ca79d6",
+      {
+        "calls": 1,
+        "milliseconds": 28.787192999996478
+      }
+    ],
+    [
+      "inspect e18668bfd064522af9a41ca6db21ef7f3e36bb2c7939bf81682cd5918dfa5b65",
+      {
+        "calls": 1,
+        "milliseconds": 28.77639800000179
+      }
+    ],
+    [
+      "inspect 73d099dab9cf67e08883b46e9c91a57cbc9983e511d352c3be616b19db7673db",
+      {
+        "calls": 1,
+        "milliseconds": 28.630934000000707
+      }
+    ],
+    [
+      "inspect 36ad7158943d63f0a9fd05595b5ee5d38270ea579d907700710cf4e869917c16",
+      {
+        "calls": 1,
+        "milliseconds": 28.445421999989776
+      }
+    ],
+    [
+      "inspect 804b306988fd25c56d01db83d0818c37d2d7632a3581ccf0bf31610d777c3e14",
+      {
+        "calls": 1,
+        "milliseconds": 28.087916999997105
+      }
+    ],
+    [
+      "inspect 7eb94f67a71a523d02d7a254aa75cf06b6bbfcb2e7a6c9b34e601f436c4ec5a3",
+      {
+        "calls": 1,
+        "milliseconds": 28.038662000006298
+      }
+    ],
+    [
+      "inspect 13abb3a741d15ad1c62b4e0478de1a0de496ce9bc388e38b633f049528e8d763",
+      {
+        "calls": 1,
+        "milliseconds": 27.866958999999042
+      }
+    ],
+    [
+      "inspect 85bae65e4c8adae9dcad01176818f22ab7fe682cde1189ad28ba880869418c76",
+      {
+        "calls": 1,
+        "milliseconds": 27.76129399999627
+      }
+    ],
+    [
+      "inspect e8d9cddbabea029b97945294376f31e8cfe46ef5f598083cef2c880839c54c0a",
+      {
+        "calls": 1,
+        "milliseconds": 27.7195209999918
+      }
+    ],
+    [
+      "inspect c9694267d0d6a58bb5684e78b3b55464fd96f32e87f85f6198816062ff40a052",
+      {
+        "calls": 1,
+        "milliseconds": 27.68919200001983
+      }
+    ],
+    [
+      "inspect 302e9fb42060f0b29083548bab47289a490eecd886fcc614a4840524ec1d24c1",
+      {
+        "calls": 1,
+        "milliseconds": 27.56186099999468
+      }
+    ],
+    [
+      "inspect aeb8c2e411e1ac92bdcc082ecf56a3feb5b15df25f3b75c27e77b21f42caffae",
+      {
+        "calls": 1,
+        "milliseconds": 27.452107000004617
+      }
+    ],
+    [
+      "inspect 8f52214dc3d65e4366970696138abedd62f837b7c88960d56b2407e05b467d85",
+      {
+        "calls": 1,
+        "milliseconds": 26.86438800000178
+      }
+    ],
+    [
+      "inspect 22c5918f996a211441806792aac4c48e4ccfe25dcb2bfca805da4971d8dfa0d4",
+      {
+        "calls": 1,
+        "milliseconds": 26.28212099999655
+      }
+    ],
+    [
+      "inspect fc69b9a32edd2fc2979288baf05da712011cf3ea616eac1f694ae3c2c2037396",
+      {
+        "calls": 1,
+        "milliseconds": 24.191331000009086
+      }
+    ],
+    [
+      "inspect 7dda946867ae8ab74e3ad723b27cedf1a8269e1ee860d204939d7e95bc1af9e5",
+      {
+        "calls": 1,
+        "milliseconds": 23.471397999994224
+      }
+    ],
+    [
+      "inspect 2268149be4ff404aed1df9efd03798721c5f57dc09028be52f259a45434ba8b1",
+      {
+        "calls": 1,
+        "milliseconds": 19.397208999987924
+      }
+    ],
+    [
+      "inspect 74e421a0f92ecbb9bf0795da1115cd414933f712d48668eb38f87ca0fe9ee76d",
+      {
+        "calls": 1,
+        "milliseconds": 19.250995000009425
+      }
+    ],
+    [
+      "inspect 463662088d623c3b98ec846623254cd32c25f8c633d1c85b07dbcaba4ddad7ef",
+      {
+        "calls": 1,
+        "milliseconds": 16.641712000011466
+      }
+    ],
+    [
+      "inspect 4dda733ef6af8a916ec7ffce1fc274d4dfe6ae0a43aaeb273be1f1904da14a49",
+      {
+        "calls": 1,
+        "milliseconds": 16.47309599997243
+      }
+    ]
+  ]
+}
