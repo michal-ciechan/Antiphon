@@ -1,4 +1,0 @@
-BUILD SLOT granted lease=7396269b-f25a-43e9-9d24-f878abb19dd7 waited=0s maxcpucount=6
-You can invoke the tool using the following command: dotnet-stack
-Tool 'dotnet-stack' (version '10.0.745401') was successfully installed.
-BUILD SLOT released lease=7396269b-f25a-43e9-9d24-f878abb19dd7 held=4s

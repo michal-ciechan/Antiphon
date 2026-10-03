@@ -1,3 +1,0 @@
-Initial CP-2: exit=0 CHECKPOINT SOURCE VALID source=01cc6fb776b96b8670a751422ce781adabd8abb2 rows=1
-Final CP-1,CP-2,CP-3,CP-7: exit=0 CHECKPOINT SOURCE VALID source=6c50fb9c4b5c63eab445a9c702d970b8049b58c4 rows=4
-Final CP-6: exit=2 CHECKPOINT SOURCE INVALID reason=row_failed (52 inherited skips; failed=0, dirty=0, sourceState=clean, buildSource=verified)

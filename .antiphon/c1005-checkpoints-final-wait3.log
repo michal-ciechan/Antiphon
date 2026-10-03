@@ -1,3 +1,0 @@
-HEARTBEAT run=20261003-165835-e5ba elapsed=5m07s | CP-1 queued | CP-2 queued | CP-3 green 1m27s | bin-c1005-final building 3m39s | bin-c1005-unit queued
-HEARTBEAT run=20261003-165835-e5ba elapsed=5m57s | CP-1 queued | CP-2 queued | CP-3 green 1m27s | bin-c1005-final building 4m29s | bin-c1005-unit queued
-STILL RUNNING exit=75

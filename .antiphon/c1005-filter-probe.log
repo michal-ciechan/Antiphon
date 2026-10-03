@@ -1,6 +1,0 @@
-BUILD SLOT granted lease=6c0f83f0-283f-488e-890a-ec3937898d9a waited=0s maxcpucount=6
-.antiphon/c1005-filter-probe/old.txt: identities=2771, cases=4000, mismatches=0, elapsed=0.284s
-100 TUnit-style reconstructions: 4.040s
-.antiphon/c1005-filter-probe/new.txt: identities=2771, cases=4000, mismatches=0, elapsed=0.030s
-100 TUnit-style reconstructions: 0.882s
-BUILD SLOT released lease=6c0f83f0-283f-488e-890a-ec3937898d9a held=6s

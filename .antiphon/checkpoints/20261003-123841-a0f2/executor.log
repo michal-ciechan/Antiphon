@@ -1,3 +1,0 @@
-2026-10-03T12:38:43.6383066+00:00 execute rows=4 width=2 total=36m
-2026-10-03T12:38:43.9590626+00:00 BUILD SLOT operation=probe status=200 reason=enabled maxcpucount=6 elapsed=0s
-2026-10-03T12:38:44.0323133+00:00 BUILD SLOT granted lease=b08cc804-2192-4f6e-a2cb-d573ddea8cce label="build:bin-c965-qualified" waited=0s maxcpucount=6

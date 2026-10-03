@@ -1,3 +1,0 @@
-RUN 20261003-173725-dda8 started rows=1 executor=12898
-HEARTBEAT run=20261003-173725-dda8 elapsed=0m48s | CP-2 queued | bin-c1005-unit building 0m47s
-STILL RUNNING exit=75

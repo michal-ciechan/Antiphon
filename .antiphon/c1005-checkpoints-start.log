@@ -1,3 +1,0 @@
-RUN 20261003-162835-0116 started rows=3 executor=4878
-HEARTBEAT run=20261003-162835-0116 elapsed=0m47s | CP-1 queued | CP-2 queued | CP-3 running 0m46s last-output 0m46s ago | bin-c1005-final queued | bin-c1005-unit queued
-STILL RUNNING exit=75
