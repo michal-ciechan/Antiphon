@@ -53,8 +53,9 @@ public class InstructionBundleTests
     {
         var owner = C1011Owner();
         owner.ShouldContain("Review and Debug on every platform, including Linux", customMessage: "all-platforms");
-        owner.ShouldContain("Required", customMessage: "required-strength");
-        owner.ShouldContain("Human", customMessage: "human-provenance");
+        var policy = System.Text.RegularExpressions.Regex.Match(owner, @"Policy on release: ([^.]+)").Groups[1].Value;
+        policy.ShouldContain("Required", customMessage: "required-strength");
+        policy.ShouldContain("Human", customMessage: "human-provenance");
         owner.ShouldContain("Human Required");
         owner.ShouldContain("Grok/High then ClaudeCode/High", customMessage: "required-pair");
         owner.ShouldContain("grok-4.7");
