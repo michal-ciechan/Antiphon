@@ -12,7 +12,7 @@ if ($Path) {
         exit 0
     }
     if ($state.taskError) { [Console]::Error.WriteLine([string]$state.taskError); exit 2 }
-    if ($Path -like '/api/agent-tasks?*') {
+    if ($Path.StartsWith('/api/agent-tasks?', [StringComparison]::Ordinal)) {
         $scopeId = ([regex]::Match($Path, 'projectId=([^&]+)')).Groups[1].Value
         if ($state.taskScopes -and $state.taskScopes.PSObject.Properties.Name -contains $scopeId) { $state.taskScopes.$scopeId | ConvertTo-Json -Compress -Depth 20 }
         elseif ($state.tasks) { $state.tasks | ConvertTo-Json -Compress -Depth 20 }

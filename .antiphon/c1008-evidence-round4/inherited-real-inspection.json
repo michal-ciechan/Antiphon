@@ -1,0 +1,543 @@
+{
+  "source": "cc6a8914e385c80b62c9f457dd716354006cddfb",
+  "currentScriptDigest": "199b3a523e00c8278c5da5866eec7ab54396b3b76275ca050410bdca094e0378",
+  "outcomes": [
+    {
+      "name": "B-default",
+      "exit": 0,
+      "diagnosis": ""
+    },
+    {
+      "name": "C-default",
+      "exit": 0,
+      "diagnosis": ""
+    },
+    {
+      "name": "B-null-session-runner",
+      "exit": 2,
+      "diagnosis": "TempRunnerNotIdle"
+    },
+    {
+      "name": "C-null-session-runner",
+      "exit": 2,
+      "diagnosis": "RunnerCounterUnknown"
+    },
+    {
+      "name": "B-null-state-init",
+      "exit": 2,
+      "diagnosis": "TempRunnerNotIdle"
+    },
+    {
+      "name": "C-null-state-init",
+      "exit": 2,
+      "diagnosis": "RunnerCounterUnknown"
+    },
+    {
+      "name": "B-absent-null",
+      "exit": 2,
+      "diagnosis": "TempRunnerNotIdle"
+    },
+    {
+      "name": "C-absent-null",
+      "exit": 0,
+      "diagnosis": ""
+    },
+    {
+      "name": "C-four-alreadyAbsent",
+      "exit": 0,
+      "diagnosis": ""
+    },
+    {
+      "name": "C-foreign-running",
+      "exit": 2,
+      "diagnosis": "RecycleVolumeInUse"
+    },
+    {
+      "name": "C-foreign-stopped",
+      "exit": 2,
+      "diagnosis": "RecycleVolumeInUse"
+    },
+    {
+      "name": "C-prefix-neighbours",
+      "exit": 0,
+      "diagnosis": ""
+    },
+    {
+      "name": "C-git-linked",
+      "exit": 2,
+      "diagnosis": "RecycleUnpublishedWork"
+    },
+    {
+      "name": "C-git-detached",
+      "exit": 2,
+      "diagnosis": "RecycleUnpublishedWork"
+    },
+    {
+      "name": "C-git-branch",
+      "exit": 2,
+      "diagnosis": "RecycleUnpublishedWork"
+    },
+    {
+      "name": "C-git-bare",
+      "exit": 2,
+      "diagnosis": "RecycleUnpublishedWork"
+    },
+    {
+      "name": "C-git-tag",
+      "exit": 2,
+      "diagnosis": "RecycleUnpublishedWork"
+    },
+    {
+      "name": "C-git-dirty",
+      "exit": 2,
+      "diagnosis": "RecycleWorktreeDirty"
+    },
+    {
+      "name": "C-git-uid0",
+      "exit": 2,
+      "diagnosis": "RecycleGitAuditUnknown"
+    },
+    {
+      "name": "C-git-published",
+      "exit": 0,
+      "diagnosis": ""
+    },
+    {
+      "name": "C-partial-1",
+      "exit": 2,
+      "diagnosis": "RecycleVolumeInUse"
+    },
+    {
+      "name": "C-resume-1",
+      "exit": 0,
+      "diagnosis": ""
+    },
+    {
+      "name": "C-partial-2",
+      "exit": 2,
+      "diagnosis": "RecycleVolumeInUse"
+    },
+    {
+      "name": "C-resume-2",
+      "exit": 0,
+      "diagnosis": ""
+    },
+    {
+      "name": "C-recreated-volume-intrusion",
+      "exit": 2,
+      "diagnosis": "RecycleResumeMismatch"
+    },
+    {
+      "name": "C-recorded-partial-up",
+      "exit": 0,
+      "diagnosis": ""
+    },
+    {
+      "name": "C-foreign-recreated-container",
+      "exit": 2,
+      "diagnosis": "RecycleResumeMismatch"
+    },
+    {
+      "name": "C-wrapper-absent-host-present",
+      "exit": 2,
+      "diagnosis": "RunnerCounterUnknown"
+    },
+    {
+      "name": "C-census-error-empty",
+      "exit": 2,
+      "diagnosis": "RecycleVolumeCensusUnknown"
+    },
+    {
+      "name": "B-low-disk-retire",
+      "exit": 2,
+      "diagnosis": "CacheDiskLow"
+    },
+    {
+      "name": "C-low-disk-retire",
+      "exit": 0,
+      "diagnosis": ""
+    },
+    {
+      "name": "C-main-reclaim-low-budget",
+      "exit": 2,
+      "diagnosis": "CacheDiskLow"
+    }
+  ],
+  "cleanup": "all recorded containers, volumes, networks and fixture image absent",
+  "failure": null,
+  "shims": [
+    "lane/root relocation",
+    "private HTTP status/task endpoint",
+    "sudo through owned nested-root namespace helper",
+    "fixed helper-image pin and origin fixture mount",
+    "expensive build/provider startup boundary with real Compose up",
+    "controlled rm/ps faults",
+    "df capacity only for RD-12"
+  ],
+  "realDf": "Filesystem                        1024-blocks      Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv   738901176 189960344 518852032      27% /var/lib/docker",
+  "journals": [
+    {
+      "outcome": "C-default",
+      "phase": "recreating",
+      "diagnosis": "",
+      "volumeOutcomes": [
+        "removed",
+        "removed",
+        "removed"
+      ],
+      "before": {
+        "raw": "Filesystem                        1024-blocks      Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv   738901176 189966240 518846136      27% /var/lib/docker",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "/dev/mapper/ubuntu--vg-ubuntu--lv",
+        "bytes": 531298443264
+      },
+      "after": {
+        "raw": "Filesystem                        1024-blocks      Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv   738901176 189967596 518844780      27% /var/lib/docker",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "/dev/mapper/ubuntu--vg-ubuntu--lv",
+        "bytes": 531297054720
+      }
+    },
+    {
+      "outcome": "C-absent-null",
+      "phase": "volumesRemoved",
+      "diagnosis": "",
+      "volumeOutcomes": [
+        "removed",
+        "removed",
+        "removed",
+        "removed"
+      ],
+      "before": {
+        "raw": "Filesystem                        1024-blocks      Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv   738901176 190006856 518805520      27% /var/lib/docker",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "/dev/mapper/ubuntu--vg-ubuntu--lv",
+        "bytes": 531256852480
+      },
+      "after": {
+        "raw": "Filesystem                        1024-blocks      Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv   738901176 190027984 518784392      27% /var/lib/docker",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "/dev/mapper/ubuntu--vg-ubuntu--lv",
+        "bytes": 531235217408
+      }
+    },
+    {
+      "outcome": "C-four-alreadyAbsent",
+      "phase": "volumesRemoved",
+      "diagnosis": "",
+      "volumeOutcomes": [
+        "alreadyAbsent",
+        "alreadyAbsent",
+        "alreadyAbsent",
+        "alreadyAbsent"
+      ],
+      "before": {
+        "raw": "Filesystem                        1024-blocks      Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv   738901176 190029456 518782920      27% /var/lib/docker",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "/dev/mapper/ubuntu--vg-ubuntu--lv",
+        "bytes": 531233710080
+      },
+      "after": {
+        "raw": "Filesystem                        1024-blocks      Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv   738901176 190030524 518781852      27% /var/lib/docker",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "/dev/mapper/ubuntu--vg-ubuntu--lv",
+        "bytes": 531232616448
+      }
+    },
+    {
+      "outcome": "C-prefix-neighbours",
+      "phase": "recreating",
+      "diagnosis": "",
+      "volumeOutcomes": [
+        "removed",
+        "removed",
+        "removed"
+      ],
+      "before": {
+        "raw": "Filesystem                        1024-blocks      Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv   738901176 190034652 518777724      27% /var/lib/docker",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "/dev/mapper/ubuntu--vg-ubuntu--lv",
+        "bytes": 531228389376
+      },
+      "after": {
+        "raw": "Filesystem                        1024-blocks      Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv   738901176 190035552 518776824      27% /var/lib/docker",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "/dev/mapper/ubuntu--vg-ubuntu--lv",
+        "bytes": 531227467776
+      }
+    },
+    {
+      "outcome": "C-git-linked",
+      "phase": "preflight",
+      "diagnosis": "RecycleUnpublishedWork",
+      "volumeOutcomes": [
+        "pending",
+        "pending",
+        "pending"
+      ]
+    },
+    {
+      "outcome": "C-git-detached",
+      "phase": "preflight",
+      "diagnosis": "RecycleUnpublishedWork",
+      "volumeOutcomes": [
+        "pending",
+        "pending",
+        "pending"
+      ]
+    },
+    {
+      "outcome": "C-git-branch",
+      "phase": "preflight",
+      "diagnosis": "RecycleUnpublishedWork",
+      "volumeOutcomes": [
+        "pending",
+        "pending",
+        "pending"
+      ]
+    },
+    {
+      "outcome": "C-git-bare",
+      "phase": "preflight",
+      "diagnosis": "RecycleUnpublishedWork",
+      "volumeOutcomes": [
+        "pending",
+        "pending",
+        "pending"
+      ]
+    },
+    {
+      "outcome": "C-git-tag",
+      "phase": "preflight",
+      "diagnosis": "RecycleUnpublishedWork",
+      "volumeOutcomes": [
+        "pending",
+        "pending",
+        "pending"
+      ]
+    },
+    {
+      "outcome": "C-git-dirty",
+      "phase": "preflight",
+      "diagnosis": "RecycleWorktreeDirty",
+      "volumeOutcomes": [
+        "pending",
+        "pending",
+        "pending"
+      ]
+    },
+    {
+      "outcome": "C-git-uid0",
+      "phase": "preflight",
+      "diagnosis": "RecycleGitAuditUnknown",
+      "volumeOutcomes": [
+        "pending",
+        "pending",
+        "pending"
+      ]
+    },
+    {
+      "outcome": "C-git-published",
+      "phase": "recreating",
+      "diagnosis": "",
+      "volumeOutcomes": [
+        "removed",
+        "removed",
+        "removed"
+      ],
+      "before": {
+        "raw": "Filesystem                        1024-blocks      Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv   738901176 190016476 518795900      27% /var/lib/docker",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "/dev/mapper/ubuntu--vg-ubuntu--lv",
+        "bytes": 531247001600
+      },
+      "after": {
+        "raw": "Filesystem                        1024-blocks      Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv   738901176 190016608 518795768      27% /var/lib/docker",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "/dev/mapper/ubuntu--vg-ubuntu--lv",
+        "bytes": 531246866432
+      }
+    },
+    {
+      "outcome": "C-partial-1",
+      "phase": "removing",
+      "diagnosis": "RecycleVolumeInUse",
+      "volumeOutcomes": [
+        "removed",
+        "pending",
+        "pending"
+      ],
+      "before": {
+        "raw": "Filesystem                        1024-blocks      Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv   738901176 190072888 518739488      27% /var/lib/docker",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "/dev/mapper/ubuntu--vg-ubuntu--lv",
+        "bytes": 531189235712
+      }
+    },
+    {
+      "outcome": "C-resume-1",
+      "phase": "recreating",
+      "diagnosis": "",
+      "volumeOutcomes": [
+        "removed",
+        "removed",
+        "removed"
+      ],
+      "before": {
+        "raw": "Filesystem                        1024-blocks      Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv   738901176 190074992 518737384      27% /var/lib/docker",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "/dev/mapper/ubuntu--vg-ubuntu--lv",
+        "bytes": 531187081216
+      },
+      "after": {
+        "raw": "Filesystem                        1024-blocks      Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv   738901176 190075780 518736596      27% /var/lib/docker",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "/dev/mapper/ubuntu--vg-ubuntu--lv",
+        "bytes": 531186274304
+      }
+    },
+    {
+      "outcome": "C-partial-2",
+      "phase": "removing",
+      "diagnosis": "RecycleVolumeInUse",
+      "volumeOutcomes": [
+        "removed",
+        "removed",
+        "pending"
+      ],
+      "before": {
+        "raw": "Filesystem                        1024-blocks      Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv   738901176 190078560 518733816      27% /var/lib/docker",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "/dev/mapper/ubuntu--vg-ubuntu--lv",
+        "bytes": 531183427584
+      }
+    },
+    {
+      "outcome": "C-resume-2",
+      "phase": "recreating",
+      "diagnosis": "",
+      "volumeOutcomes": [
+        "removed",
+        "removed",
+        "removed"
+      ],
+      "before": {
+        "raw": "Filesystem                        1024-blocks      Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv   738901176 190081276 518731100      27% /var/lib/docker",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "/dev/mapper/ubuntu--vg-ubuntu--lv",
+        "bytes": 531180646400
+      },
+      "after": {
+        "raw": "Filesystem                        1024-blocks      Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv   738901176 190049268 518763108      27% /var/lib/docker",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "/dev/mapper/ubuntu--vg-ubuntu--lv",
+        "bytes": 531213422592
+      }
+    },
+    {
+      "outcome": "C-recreated-volume-intrusion",
+      "phase": "removing",
+      "diagnosis": "RecycleResumeMismatch",
+      "volumeOutcomes": [
+        "removed",
+        "pending",
+        "pending"
+      ],
+      "before": {
+        "raw": "Filesystem                        1024-blocks      Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv   738901176 190052276 518760100      27% /var/lib/docker",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "/dev/mapper/ubuntu--vg-ubuntu--lv",
+        "bytes": 531210342400
+      }
+    },
+    {
+      "outcome": "C-recorded-partial-up",
+      "phase": "recreating",
+      "diagnosis": "",
+      "volumeOutcomes": [
+        "removed",
+        "removed",
+        "removed"
+      ],
+      "before": {
+        "raw": "Filesystem                        1024-blocks      Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv   738901176 190118888 518693488      27% /var/lib/docker",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "/dev/mapper/ubuntu--vg-ubuntu--lv",
+        "bytes": 531142131712
+      },
+      "after": {
+        "raw": "Filesystem                        1024-blocks      Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv   738901176 190148172 518664204      27% /var/lib/docker",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "/dev/mapper/ubuntu--vg-ubuntu--lv",
+        "bytes": 531112144896
+      }
+    },
+    {
+      "outcome": "C-foreign-recreated-container",
+      "phase": "recreating",
+      "diagnosis": "RecycleResumeMismatch",
+      "volumeOutcomes": [
+        "removed",
+        "removed",
+        "removed"
+      ],
+      "before": {
+        "raw": "Filesystem                        1024-blocks      Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv   738901176 190261264 518551112      27% /var/lib/docker",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "/dev/mapper/ubuntu--vg-ubuntu--lv",
+        "bytes": 530996338688
+      },
+      "after": {
+        "raw": "Filesystem                        1024-blocks      Used Available Capacity Mounted on\n/dev/mapper/ubuntu--vg-ubuntu--lv   738901176 190262156 518550220      27% /var/lib/docker",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "/dev/mapper/ubuntu--vg-ubuntu--lv",
+        "bytes": 530995425280
+      }
+    },
+    {
+      "outcome": "C-low-disk-retire",
+      "phase": "volumesRemoved",
+      "diagnosis": "",
+      "volumeOutcomes": [
+        "removed",
+        "removed",
+        "removed",
+        "removed"
+      ],
+      "before": {
+        "raw": "Filesystem 1024-blocks Used Available Capacity Mounted on\nfixture 10000000 1 1000 99% /fixture",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "fixture",
+        "bytes": 1024000
+      },
+      "after": {
+        "raw": "Filesystem 1024-blocks Used Available Capacity Mounted on\nfixture 10000000 1 1000 99% /fixture",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "fixture",
+        "bytes": 1024000
+      }
+    },
+    {
+      "outcome": "C-main-reclaim-low-budget",
+      "phase": "volumesRemoved",
+      "diagnosis": "CacheDiskLow",
+      "volumeOutcomes": [
+        "removed",
+        "removed",
+        "removed"
+      ],
+      "before": {
+        "raw": "Filesystem 1024-blocks Used Available Capacity Mounted on\nfixture 10000000 1 1000 99% /fixture",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "fixture",
+        "bytes": 1024000
+      },
+      "after": {
+        "raw": "Filesystem 1024-blocks Used Available Capacity Mounted on\nfixture 10000000 1 1000 99% /fixture",
+        "dataRoot": "/var/lib/docker",
+        "filesystem": "fixture",
+        "bytes": 1024000
+      }
+    }
+  ]
+}
