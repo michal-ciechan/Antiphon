@@ -31,7 +31,8 @@ public sealed class AgentTaskInputFallbackTests
     [Arguments("enqueue-now")]
     public async Task Runner_write_failure_types_only_the_durable_api_pointer(string path)
     {
-        await using var f = await TaskInputDeliveryFixture.CreateAsync();
+        var ownership = new AdmittedInputOwnership();
+        await using var f = await TaskInputDeliveryFixture.CreateAsync(o => o.AddInterceptors(ownership));
         await f.Replies.RefineAsync(f.TaskId, new string('a', 4200) + "fallback-tail-888",
             CancellationToken.None);
         var initial = await RowAsync(f);
@@ -45,7 +46,8 @@ public sealed class AgentTaskInputFallbackTests
             CapacityStatePath = Path.Combine(Path.GetDirectoryName(f.RunnerCwd)!, "capacity"),
         });
         var ready = new RunnerReadySignal();
-        await using var transport = await PhoneHomeTestHost.StartAsync(observer: ready);
+        await using var transport = await PhoneHomeTestHost.StartAsync(observer: ready,
+            configureServices: services => services.AddLogging(b => b.AddProvider(ready)));
         ready.Directory = transport.Directory;
         var ticket = await transport.RegisterAsync();
         await using var peer = new PhoneHomeScriptedPeer();
@@ -77,6 +79,7 @@ public sealed class AgentTaskInputFallbackTests
             // for ordinary question overlays, which intentionally have no task-input key.
             await using (var setup = f.Db())
                 await setup.SessionQueuedMessages.ExecuteDeleteAsync();
+            ownership.Key = initial.ConversationKey;
             f.Provider.GetRequiredService<RemoteSpillCourier>().Stage(f.SessionId, f.RunnerCwd,
                 new PhoneHomeInputSpill(initial.RemoteSpillRelativePath!, initial.RemoteSpillBody!));
             await Should.ThrowAsync<ConflictException>(() =>
@@ -93,6 +96,7 @@ public sealed class AgentTaskInputFallbackTests
         await using var db = f.Db();
         var changed = await db.SessionQueuedMessages.AsNoTracking().SingleAsync();
         if (path != "enqueue-now") changed.Id.ShouldBe(initial.Id);
+        else changed.Id.ShouldBe(ownership.RowId, "enqueue-fallback-same-persisted-row");
         changed.ConversationKey.ShouldBe(initial.ConversationKey, "fallback-owned-key");
         changed.Status.ShouldBe(QueuedMessageStatus.Pending);
         changed.Body.ShouldContain("/api/agent-tasks/", customMessage: "api-only-persisted-pointer");
@@ -404,15 +408,51 @@ public sealed class AgentTaskInputFallbackTests
         public Task<RunnerKillGenerationResult> KillGenerationAsync(Guid id, DateTime startedAt, CancellationToken ct) => throw new NotSupportedException();
     }
 
-    private sealed class RunnerReadySignal : IRunnerEligibilityObserver
+    private sealed class AdmittedInputOwnership : SaveChangesInterceptor
+    {
+        public string? Key { get; set; }
+        public Guid? RowId { get; private set; }
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData data, InterceptionResult<int> result, CancellationToken ct = default)
+        {
+            if (Key is not null && data.Context is { } db)
+                foreach (var entry in db.ChangeTracker.Entries<SessionQueuedMessage>()
+                    .Where(e => e.State == EntityState.Added))
+                {
+                    entry.Entity.ConversationKey = Key;
+                    RowId = entry.Entity.Id;
+                }
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    private sealed class RunnerReadySignal : IRunnerEligibilityObserver, ILoggerProvider, ILogger
     {
         public PhoneHomeRunnerDirectory? Directory { get; set; }
         public TaskCompletionSource<PhoneHomeLiveConnection> Live { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public void Changed(string runnerId)
         {
-            if (Directory?.SnapshotLive(runnerId) is { } live)
+            if (Directory?.SnapshotLive(runnerId) is { DispatchEligible: true } live)
                 Live.TrySetResult(live);
+        }
+        public ILogger CreateLogger(string categoryName) => this;
+        public void Dispose() { }
+        public bool IsEnabled(LogLevel level) => level == LogLevel.Information;
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public void Log<TState>(LogLevel level, EventId id, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            // This lightweight host has no recovery worker. Observe the real endpoint's
+            // accepted-connection event, then admit this synthetic empty runner explicitly.
+            if (state is IEnumerable<KeyValuePair<string, object?>> properties
+                && properties.Any(p => p.Key == "{OriginalFormat}" && p.Value is string template
+                    && template.StartsWith("Phone-home connection {RunnerId} epoch {Epoch} accepted:",
+                        StringComparison.Ordinal)))
+            {
+                var runnerId = properties.Single(p => p.Key == "RunnerId").Value as string;
+                Directory!.MarkRecovered(Directory.SnapshotLive(runnerId));
+            }
         }
     }
 }
