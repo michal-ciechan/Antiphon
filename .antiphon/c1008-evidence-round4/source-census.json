@@ -1,0 +1,1537 @@
+{
+  "kind": "source attribute census; execution requires fresh TRX",
+  "summaries": [
+    {
+      "path": "tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs",
+      "methods": 77,
+      "results": 95,
+      "cacheMethods": 36,
+      "cacheResults": 54,
+      "methodRoster": [
+        {
+          "name": "C1008_Recycle_exact_default_volumes",
+          "line": 23,
+          "results": 1
+        },
+        {
+          "name": "C1008_Recycle_refuses_references_and_unknown_census",
+          "line": 94,
+          "results": 1
+        },
+        {
+          "name": "C1008_Recycle_audits_work_as_1654",
+          "line": 246,
+          "results": 1
+        },
+        {
+          "name": "C1008_Recycle_refuses_unpublished_and_dirty_work",
+          "line": 266,
+          "results": 1
+        },
+        {
+          "name": "C1008_Recycle_refuses_uninspectable_git",
+          "line": 289,
+          "results": 1
+        },
+        {
+          "name": "C1008_Recycle_preserves_tmp_copyup",
+          "line": 332,
+          "results": 1
+        },
+        {
+          "name": "C1008_Recycle_resume_requires_matching_receipt",
+          "line": 351,
+          "results": 1
+        },
+        {
+          "name": "C1008_Recycle_receipt_records_disk_and_partial_failure",
+          "line": 438,
+          "results": 1
+        },
+        {
+          "name": "C1008_Retire_temp_rechecks_absence_and_retirement",
+          "line": 557,
+          "results": 1
+        },
+        {
+          "name": "C1008_Retire_temp_reclaims_below_cache_disk_gate",
+          "line": 597,
+          "results": 1
+        },
+        {
+          "name": "C1008_Recycle_dry_run_never_mutates",
+          "line": 607,
+          "results": 1
+        },
+        {
+          "name": "C944_All_cache_loop_variables_are_local",
+          "line": 659,
+          "results": 1
+        },
+        {
+          "name": "C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo",
+          "line": 696,
+          "results": 8
+        },
+        {
+          "name": "C976_Missing_helper_image_preserves_final_receipt_diagnosis",
+          "line": 748,
+          "results": 1
+        },
+        {
+          "name": "C946_Rolling_harness_cleans_only_its_owned_success_root",
+          "line": 779,
+          "results": 1
+        },
+        {
+          "name": "C957_Scratch_mutation_controls_go_red_and_restore",
+          "line": 794,
+          "results": 3
+        },
+        {
+          "name": "C946_Green_harness_removes_root_and_failed_keep_run_retains_evidence",
+          "line": 833,
+          "results": 1
+        },
+        {
+          "name": "C905_Missing_linux_pwsh_skips_all_five_cases_before_a_script_block",
+          "line": 894,
+          "results": 1
+        },
+        {
+          "name": "C905_Linux_shell_finds_pwsh_when_installed",
+          "line": 925,
+          "results": 1
+        },
+        {
+          "name": "C849_front_door_passes_every_full_case_name_to_the_invoker",
+          "line": 933,
+          "results": 1
+        },
+        {
+          "name": "Nested_lane_never_uses_sudo_or_python",
+          "line": 1073,
+          "results": 1
+        },
+        {
+          "name": "Testing_payload_expects_linux_backend_never_windows",
+          "line": 1175,
+          "results": 1
+        },
+        {
+          "name": "Custody_containment_case_measures_the_v1_path_as_the_app_uid",
+          "line": 1202,
+          "results": 1
+        },
+        {
+          "name": "Custody_residue_counts_subdirectories_only",
+          "line": 1222,
+          "results": 1
+        },
+        {
+          "name": "Custody_containment_is_routed_to_the_remote_and_not_left_pending",
+          "line": 1238,
+          "results": 1
+        },
+        {
+          "name": "Linux_custody_case_requires_the_linux_backend",
+          "line": 1262,
+          "results": 1
+        },
+        {
+          "name": "Scrub_covers_github_token_prefixes",
+          "line": 1275,
+          "results": 1
+        },
+        {
+          "name": "Smoke_deletes_its_branch",
+          "line": 1286,
+          "results": 1
+        },
+        {
+          "name": "Child_project_is_run_scoped_and_distinct",
+          "line": 1303,
+          "results": 1
+        },
+        {
+          "name": "Host_compose_uses_the_deployed_tag_not_this_runs_sha",
+          "line": 1337,
+          "results": 1
+        },
+        {
+          "name": "Retirement_is_anchored_on_the_run_scoped_prefix",
+          "line": 1365,
+          "results": 1
+        },
+        {
+          "name": "Host_daemon_is_never_pruned",
+          "line": 1381,
+          "results": 1
+        },
+        {
+          "name": "Lane_detection_separates_a_bare_host_from_the_runner",
+          "line": 1397,
+          "results": 1
+        },
+        {
+          "name": "Every_case_declares_a_lane",
+          "line": 1414,
+          "results": 1
+        },
+        {
+          "name": "Deploy_parent_probes_the_phone_home_secret_as_the_app_uid",
+          "line": 1449,
+          "results": 1
+        },
+        {
+          "name": "Deploy_parent_phone_home_grep_matches_the_runners_registration_failure_template",
+          "line": 1468,
+          "results": 1
+        },
+        {
+          "name": "Deploy_parent_refuses_a_runner_whose_phone_home_keeps_failing",
+          "line": 1482,
+          "results": 1
+        },
+        {
+          "name": "Deploy_parent_retires_its_own_superseded_images",
+          "line": 1525,
+          "results": 1
+        },
+        {
+          "name": "Temp_deploy_uses_its_own_project_and_the_inspected_grok_store",
+          "line": 1546,
+          "results": 1
+        },
+        {
+          "name": "Temp_retire_requires_the_retired_receipt_and_downs_only_temp_volumes",
+          "line": 1565,
+          "results": 1
+        },
+        {
+          "name": "Deploy_parent_creates_the_git_identity_file_without_overwriting",
+          "line": 1589,
+          "results": 1
+        },
+        {
+          "name": "Deploy_parent_seeds_or_verifies_runner_checkout",
+          "line": 1661,
+          "results": 1
+        },
+        {
+          "name": "Deploy_parent_seeds_a_fresh_runner_checkout_before_starting_the_runner",
+          "line": 1723,
+          "results": 1
+        },
+        {
+          "name": "Persistent_restart_ensures_the_identity_file_before_stopping_an_older_runner",
+          "line": 1791,
+          "results": 1
+        },
+        {
+          "name": "Deploy_parent_refuses_a_git_identity_symlink_and_leaves_its_target_mode",
+          "line": 1846,
+          "results": 1
+        },
+        {
+          "name": "Deploy_parent_creates_the_codex_home_directory_without_reading_it",
+          "line": 1890,
+          "results": 1
+        },
+        {
+          "name": "Deploy_parent_codex_home_refuses_a_symlink_or_file_and_keeps_contents",
+          "line": 1947,
+          "results": 1
+        },
+        {
+          "name": "Host_lane_ownership_reset_never_enters_the_codex_home",
+          "line": 2015,
+          "results": 1
+        },
+        {
+          "name": "C849_Cache_cases_use_only_the_validated_host_lane",
+          "line": 2043,
+          "results": 1
+        },
+        {
+          "name": "C849_Cache_prepare_is_idempotent_and_preserves_payloads",
+          "line": 2068,
+          "results": 1
+        },
+        {
+          "name": "C849_Cache_prepare_refuses_foreign_or_unsafe_roots",
+          "line": 2096,
+          "results": 1
+        },
+        {
+          "name": "C849_Prune_refuses_stale_or_busy_authority",
+          "line": 2127,
+          "results": 1
+        },
+        {
+          "name": "C849_Seed_publishes_complete_payloads_before_its_marker",
+          "line": 2227,
+          "results": 1
+        },
+        {
+          "name": "C849_Seed_refuses_invalid_donors_and_partial_payloads",
+          "line": 2333,
+          "results": 1
+        },
+        {
+          "name": "C849_Saved_donor_archive_is_checked_and_imported_without_a_container",
+          "line": 2426,
+          "results": 1
+        },
+        {
+          "name": "C849_Saved_donor_rejects_unsafe_archives_missing_pack_and_busy_counters",
+          "line": 2548,
+          "results": 1
+        },
+        {
+          "name": "C849_Saved_donor_rejects_declared_size_bomb_before_writing",
+          "line": 2647,
+          "results": 1
+        },
+        {
+          "name": "C849_Retired_guard_refuses_docker_ps_errors",
+          "line": 2679,
+          "results": 1
+        },
+        {
+          "name": "C849_Deploy_temp_names_saved_import_when_seed_is_missing",
+          "line": 2694,
+          "results": 1
+        },
+        {
+          "name": "C849_Deploy_prepares_and_verifies_before_acceptance",
+          "line": 2723,
+          "results": 1
+        },
+        {
+          "name": "C849_Deploy_temp_observes_inaccessible_docker_mountpoints_with_sudo",
+          "line": 2835,
+          "results": 1
+        },
+        {
+          "name": "C849_Docker_volume_paths_have_no_bare_host_reads",
+          "line": 2930,
+          "results": 1
+        },
+        {
+          "name": "C849_Prune_preview_is_read_only_and_bounded",
+          "line": 2959,
+          "results": 1
+        },
+        {
+          "name": "C849_Prune_and_rollback_retain_roots_and_recovery",
+          "line": 2980,
+          "results": 1
+        },
+        {
+          "name": "C849_Cache_receipts_exclude_credentials_and_payloads",
+          "line": 3033,
+          "results": 1
+        },
+        {
+          "name": "C912_Cold_seed_with_unrelated_bind_initializes_only_three_labelled_roots",
+          "line": 3209,
+          "results": 1
+        },
+        {
+          "name": "C912_Cold_seed_refuses_when_created_volume_disappears_before_init",
+          "line": 3241,
+          "results": 1
+        },
+        {
+          "name": "C912_Cold_volumes_seed_accepts_busy_main_without_packages",
+          "line": 3260,
+          "results": 1
+        },
+        {
+          "name": "C912_Cold_volumes_seed_refuses_unknown_mounted_or_populated_targets",
+          "line": 3294,
+          "results": 1
+        },
+        {
+          "name": "C912_Cold_volumes_seed_rechecks_initialization_and_probe_boundaries",
+          "line": 3338,
+          "results": 1
+        },
+        {
+          "name": "C912_Cold_cache_probe_requires_uid_writes_cleanup_and_bounded_exit",
+          "line": 3365,
+          "results": 1
+        },
+        {
+          "name": "C912_Cold_marker_has_distinct_validation_and_full_context_refusal",
+          "line": 3404,
+          "results": 1
+        },
+        {
+          "name": "C912_Cold_runner_verification_uses_mounts_and_writability_not_payloads",
+          "line": 3494,
+          "results": 1
+        },
+        {
+          "name": "C912_Cold_exception_never_weakens_maintenance_or_donor_gates",
+          "line": 3570,
+          "results": 1
+        },
+        {
+          "name": "C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers",
+          "line": 3626,
+          "results": 6
+        },
+        {
+          "name": "C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune",
+          "line": 3673,
+          "results": 5
+        },
+        {
+          "name": "C973_Prune_and_saved_donor_still_require_full_after_seed_image_prune",
+          "line": 3692,
+          "results": 1
+        }
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/RollingVolumeRecycleScriptTests.cs",
+      "methods": 8,
+      "results": 8,
+      "cacheMethods": 0,
+      "cacheResults": 0,
+      "methodRoster": [
+        {
+          "name": "C1008_Present_or_unknown_temp_keeps_null_refusal",
+          "line": 16,
+          "results": 1
+        },
+        {
+          "name": "C1008_Busy_routed_and_land_in_flight_refuse",
+          "line": 56,
+          "results": 1
+        },
+        {
+          "name": "C1008_Same_sha_and_partial_retries_are_safe",
+          "line": 157,
+          "results": 1
+        },
+        {
+          "name": "C1008_Option_manifest_is_strict",
+          "line": 204,
+          "results": 1
+        },
+        {
+          "name": "C1008_Legacy_rolling_and_jq_rosters_remain",
+          "line": 268,
+          "results": 1
+        },
+        {
+          "name": "C1008_Documentation_and_transport_pins_match",
+          "line": 282,
+          "results": 1
+        },
+        {
+          "name": "C1008_Refusal_receipts_do_not_leak_secrets",
+          "line": 295,
+          "results": 1
+        },
+        {
+          "name": "C1008_Retired_absent_null_is_accepted",
+          "line": 345,
+          "results": 1
+        }
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Infrastructure/DockerStackContractTests.cs",
+      "methods": 112,
+      "results": 112,
+      "cacheMethods": 2,
+      "cacheResults": 2,
+      "methodRoster": [
+        {
+          "name": "Server_project_graph_is_available",
+          "line": 11,
+          "results": 1
+        },
+        {
+          "name": "Runtime_contains_built_client",
+          "line": 21,
+          "results": 1
+        },
+        {
+          "name": "Runtime_contains_instruction_bundles",
+          "line": 29,
+          "results": 1
+        },
+        {
+          "name": "Sdk_satisfies_repository_pin",
+          "line": 36,
+          "results": 1
+        },
+        {
+          "name": "Runtime_and_rid_match_linux_amd64",
+          "line": 43,
+          "results": 1
+        },
+        {
+          "name": "Runner_contains_linux_host",
+          "line": 50,
+          "results": 1
+        },
+        {
+          "name": "Runner_contains_porta_library",
+          "line": 55,
+          "results": 1
+        },
+        {
+          "name": "Runner_contains_host_runtime_payload",
+          "line": 60,
+          "results": 1
+        },
+        {
+          "name": "Runner_requires_executable_host",
+          "line": 65,
+          "results": 1
+        },
+        {
+          "name": "Server_publish_has_revision",
+          "line": 70,
+          "results": 1
+        },
+        {
+          "name": "Runner_publish_has_revision",
+          "line": 74,
+          "results": 1
+        },
+        {
+          "name": "Fixture_publish_has_revision",
+          "line": 78,
+          "results": 1
+        },
+        {
+          "name": "Runner_route_is_internal",
+          "line": 82,
+          "results": 1
+        },
+        {
+          "name": "Database_route_is_internal",
+          "line": 86,
+          "results": 1
+        },
+        {
+          "name": "antiphon_phone_home_is_disabled",
+          "line": 94,
+          "results": 1
+        },
+        {
+          "name": "session_runner_phone_home_is_disabled",
+          "line": 98,
+          "results": 1
+        },
+        {
+          "name": "session_runner_port_is_private",
+          "line": 102,
+          "results": 1
+        },
+        {
+          "name": "postgres_port_is_private",
+          "line": 106,
+          "results": 1
+        },
+        {
+          "name": "Default_server_bind_is_loopback",
+          "line": 110,
+          "results": 1
+        },
+        {
+          "name": "postgres_must_be_healthy",
+          "line": 119,
+          "results": 1
+        },
+        {
+          "name": "session_runner_must_be_healthy",
+          "line": 123,
+          "results": 1
+        },
+        {
+          "name": "antiphon_health_probe_exists",
+          "line": 127,
+          "results": 1
+        },
+        {
+          "name": "session_runner_health_probe_exists",
+          "line": 131,
+          "results": 1
+        },
+        {
+          "name": "antiphon_base_has_no_socket",
+          "line": 135,
+          "results": 1
+        },
+        {
+          "name": "session_runner_base_has_no_socket",
+          "line": 139,
+          "results": 1
+        },
+        {
+          "name": "Server2_runner_owns_its_daemon",
+          "line": 143,
+          "results": 1
+        },
+        {
+          "name": "Only_the_server2_runner_is_privileged",
+          "line": 156,
+          "results": 1
+        },
+        {
+          "name": "Server2_runner_starts_as_root_and_drops",
+          "line": 167,
+          "results": 1
+        },
+        {
+          "name": "Deploy_key_secret_is_required",
+          "line": 176,
+          "results": 1
+        },
+        {
+          "name": "Server2_runner_capacity_is_ten",
+          "line": 183,
+          "results": 1
+        },
+        {
+          "name": "Server2_runner_requires_phone_home_origin_and_secret",
+          "line": 196,
+          "results": 1
+        },
+        {
+          "name": "Server2_runner_has_nested_store_volume",
+          "line": 210,
+          "results": 1
+        },
+        {
+          "name": "Server2_services_name_their_images",
+          "line": 219,
+          "results": 1
+        },
+        {
+          "name": "Server2_runner_restarts_unless_stopped",
+          "line": 234,
+          "results": 1
+        },
+        {
+          "name": "Server2_file_defines_runner_state_init_and_profiled_broker",
+          "line": 238,
+          "results": 1
+        },
+        {
+          "name": "Temp_runner_override_keeps_project_state_separate",
+          "line": 253,
+          "results": 1
+        },
+        {
+          "name": "C849_Cache_volumes_are_external_narrow_and_nocopy",
+          "line": 266,
+          "results": 1
+        },
+        {
+          "name": "C849_Temp_inherits_caches_and_keeps_private_state",
+          "line": 288,
+          "results": 1
+        },
+        {
+          "name": "Server2_broker_is_unprivileged_and_pinned_separately",
+          "line": 334,
+          "results": 1
+        },
+        {
+          "name": "Stack_env_example_has_no_socket_gid",
+          "line": 351,
+          "results": 1
+        },
+        {
+          "name": "Base_compose_keeps_phone_home_disabled",
+          "line": 361,
+          "results": 1
+        },
+        {
+          "name": "Testing_stage_ships_the_engine",
+          "line": 368,
+          "results": 1
+        },
+        {
+          "name": "Testing_stage_pins_legacy_iptables",
+          "line": 384,
+          "results": 1
+        },
+        {
+          "name": "Testing_stage_has_build_toolchain",
+          "line": 393,
+          "results": 1
+        },
+        {
+          "name": "Testing_stage_entrypoint_is_the_dind_script",
+          "line": 407,
+          "results": 1
+        },
+        {
+          "name": "Testing_stage_creates_docker_nested_group",
+          "line": 417,
+          "results": 1
+        },
+        {
+          "name": "Testing_services_are_unprivileged",
+          "line": 425,
+          "results": 1
+        },
+        {
+          "name": "Applications_share_nonroot_identity",
+          "line": 429,
+          "results": 1
+        },
+        {
+          "name": "State_paths_are_linux_absolute",
+          "line": 438,
+          "results": 1
+        },
+        {
+          "name": "Workspace_mount_paths_match",
+          "line": 448,
+          "results": 1
+        },
+        {
+          "name": "Reusable_state_has_named_volumes",
+          "line": 455,
+          "results": 1
+        },
+        {
+          "name": "Linux_backend_is_inbox",
+          "line": 459,
+          "results": 1
+        },
+        {
+          "name": "Linux_herdr_is_disabled",
+          "line": 466,
+          "results": 1
+        },
+        {
+          "name": "Fresh_stack_is_inactive",
+          "line": 470,
+          "results": 1
+        },
+        {
+          "name": "Keyring_is_private_external_state",
+          "line": 474,
+          "results": 1
+        },
+        {
+          "name": "Runtime_context_denies_GitPointer",
+          "line": 477,
+          "results": 1
+        },
+        {
+          "name": "Runtime_context_denies_AgentState",
+          "line": 478,
+          "results": 1
+        },
+        {
+          "name": "Runtime_context_denies_Environment",
+          "line": 479,
+          "results": 1
+        },
+        {
+          "name": "Runtime_context_denies_Auth",
+          "line": 480,
+          "results": 1
+        },
+        {
+          "name": "Runtime_context_denies_ProviderHome",
+          "line": 481,
+          "results": 1
+        },
+        {
+          "name": "Runtime_context_denies_Certificate",
+          "line": 482,
+          "results": 1
+        },
+        {
+          "name": "Runtime_context_denies_Bin",
+          "line": 483,
+          "results": 1
+        },
+        {
+          "name": "Runtime_context_denies_AlternateBin",
+          "line": 484,
+          "results": 1
+        },
+        {
+          "name": "Runtime_context_denies_Obj",
+          "line": 485,
+          "results": 1
+        },
+        {
+          "name": "Runtime_context_denies_NodeModules",
+          "line": 486,
+          "results": 1
+        },
+        {
+          "name": "Runtime_context_denies_Workspace",
+          "line": 487,
+          "results": 1
+        },
+        {
+          "name": "Runtime_context_denies_Logs",
+          "line": 488,
+          "results": 1
+        },
+        {
+          "name": "Runtime_context_denies_Pem",
+          "line": 489,
+          "results": 1
+        },
+        {
+          "name": "Tests_context_denies_GitPointer",
+          "line": 491,
+          "results": 1
+        },
+        {
+          "name": "Tests_context_denies_AgentState",
+          "line": 492,
+          "results": 1
+        },
+        {
+          "name": "Tests_context_denies_Environment",
+          "line": 493,
+          "results": 1
+        },
+        {
+          "name": "Tests_context_denies_Auth",
+          "line": 494,
+          "results": 1
+        },
+        {
+          "name": "Tests_context_denies_ProviderHome",
+          "line": 495,
+          "results": 1
+        },
+        {
+          "name": "Tests_context_denies_Certificate",
+          "line": 496,
+          "results": 1
+        },
+        {
+          "name": "Tests_context_denies_Bin",
+          "line": 497,
+          "results": 1
+        },
+        {
+          "name": "Tests_context_denies_AlternateBin",
+          "line": 498,
+          "results": 1
+        },
+        {
+          "name": "Tests_context_denies_Obj",
+          "line": 499,
+          "results": 1
+        },
+        {
+          "name": "Tests_context_denies_NodeModules",
+          "line": 500,
+          "results": 1
+        },
+        {
+          "name": "Tests_context_denies_Workspace",
+          "line": 501,
+          "results": 1
+        },
+        {
+          "name": "Tests_context_denies_Logs",
+          "line": 502,
+          "results": 1
+        },
+        {
+          "name": "Tests_context_denies_Pem",
+          "line": 503,
+          "results": 1
+        },
+        {
+          "name": "Runtime_context_denies_ClaudeHome",
+          "line": 506,
+          "results": 1
+        },
+        {
+          "name": "Runtime_context_denies_ClaudeCredentials",
+          "line": 507,
+          "results": 1
+        },
+        {
+          "name": "Tests_context_denies_ClaudeHome",
+          "line": 508,
+          "results": 1
+        },
+        {
+          "name": "Tests_context_denies_ClaudeCredentials",
+          "line": 509,
+          "results": 1
+        },
+        {
+          "name": "Tests_context_retains_claude_skill_docs_only",
+          "line": 512,
+          "results": 1
+        },
+        {
+          "name": "Runner_pins_claude_by_version_and_digest",
+          "line": 525,
+          "results": 1
+        },
+        {
+          "name": "Runner_image_ships_the_off_settings_file_at_the_server_constant",
+          "line": 547,
+          "results": 1
+        },
+        {
+          "name": "Testing_stage_asserts_claude_after_node_merge",
+          "line": 559,
+          "results": 1
+        },
+        {
+          "name": "Server2_compose_projects_claude_config_dir",
+          "line": 571,
+          "results": 1
+        },
+        {
+          "name": "Compose_never_lists_the_claude_token_under_environment",
+          "line": 602,
+          "results": 1
+        },
+        {
+          "name": "Server2_deploy_streams_the_claude_token_file",
+          "line": 634,
+          "results": 1
+        },
+        {
+          "name": "Test_context_retains_linked_sources",
+          "line": 670,
+          "results": 1
+        },
+        {
+          "name": "Test_target_has_supported_tools",
+          "line": 677,
+          "results": 1
+        },
+        {
+          "name": "Http_test_factory_keeps_refusing_client",
+          "line": 688,
+          "results": 1
+        },
+        {
+          "name": "Default_runtime_excludes_test_payload",
+          "line": 696,
+          "results": 1
+        },
+        {
+          "name": "Default_runtime_excludes_custody_helpers",
+          "line": 713,
+          "results": 1
+        },
+        {
+          "name": "Runner_git_meets_the_declared_minimum",
+          "line": 736,
+          "results": 1
+        },
+        {
+          "name": "Stock_server_excludes_fixture",
+          "line": 770,
+          "results": 1
+        },
+        {
+          "name": "Receipt_stack_is_socket_free",
+          "line": 778,
+          "results": 1
+        },
+        {
+          "name": "Receipt_runner_has_no_docker_tools",
+          "line": 785,
+          "results": 1
+        },
+        {
+          "name": "Fixture_restart_policy_is_disabled",
+          "line": 796,
+          "results": 1
+        },
+        {
+          "name": "Fresh_Delegation__DiagnoseEnabled_is_disabled",
+          "line": 800,
+          "results": 1
+        },
+        {
+          "name": "Fresh_Delegation__OutputDistillerEnabled_is_disabled",
+          "line": 801,
+          "results": 1
+        },
+        {
+          "name": "Fresh_Hangfire__ServerEnabled_is_disabled",
+          "line": 802,
+          "results": 1
+        },
+        {
+          "name": "Fresh_ZombieCensus__Enabled_is_disabled",
+          "line": 803,
+          "results": 1
+        },
+        {
+          "name": "Fresh_WorktreeResidue__Enabled_is_disabled",
+          "line": 804,
+          "results": 1
+        },
+        {
+          "name": "Fresh_Schedules__Enabled_is_disabled",
+          "line": 805,
+          "results": 1
+        },
+        {
+          "name": "Fresh_ChannelBridge__Enabled_is_disabled",
+          "line": 806,
+          "results": 1
+        },
+        {
+          "name": "Fresh_Digest__Enabled_is_disabled",
+          "line": 807,
+          "results": 1
+        },
+        {
+          "name": "Receipt_server_has_no_socket",
+          "line": 810,
+          "results": 1
+        },
+        {
+          "name": "Receipt_runner_has_no_socket",
+          "line": 815,
+          "results": 1
+        }
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Infrastructure/DindRunnerContractTests.cs",
+      "methods": 23,
+      "results": 23,
+      "cacheMethods": 0,
+      "cacheResults": 0,
+      "methodRoster": [
+        {
+          "name": "Entrypoint_refuses_missing_deploy_key",
+          "line": 17,
+          "results": 1
+        },
+        {
+          "name": "Entrypoint_refuses_missing_phone_home_secret",
+          "line": 26,
+          "results": 1
+        },
+        {
+          "name": "Entrypoint_stages_the_phone_home_secret_for_the_app_uid",
+          "line": 40,
+          "results": 1
+        },
+        {
+          "name": "Entrypoint_proves_the_app_uid_can_read_the_staged_secret",
+          "line": 63,
+          "results": 1
+        },
+        {
+          "name": "Server2_compose_reads_the_staged_phone_home_secret",
+          "line": 77,
+          "results": 1
+        },
+        {
+          "name": "Server2_healthcheck_covers_phone_home_secret_readability",
+          "line": 89,
+          "results": 1
+        },
+        {
+          "name": "Temp_override_keeps_the_base_healthcheck_and_secret_path",
+          "line": 103,
+          "results": 1
+        },
+        {
+          "name": "Entrypoint_drops_to_app_uid",
+          "line": 117,
+          "results": 1
+        },
+        {
+          "name": "Entrypoint_exports_the_claude_token_from_the_mounted_file",
+          "line": 131,
+          "results": 1
+        },
+        {
+          "name": "Entrypoint_exits_when_either_process_exits",
+          "line": 147,
+          "results": 1
+        },
+        {
+          "name": "Entrypoint_checks_iptables_before_dockerd",
+          "line": 161,
+          "results": 1
+        },
+        {
+          "name": "Entrypoint_never_prints_the_key",
+          "line": 170,
+          "results": 1
+        },
+        {
+          "name": "Entrypoint_prepares_custody_root_on_both_cgroup_versions",
+          "line": 195,
+          "results": 1
+        },
+        {
+          "name": "Nested_daemon_uses_private_address_pools",
+          "line": 213,
+          "results": 1
+        },
+        {
+          "name": "Nested_daemon_socket_group_is_docker_nested",
+          "line": 225,
+          "results": 1
+        },
+        {
+          "name": "Ssh_config_pins_identity_and_known_hosts",
+          "line": 235,
+          "results": 1
+        },
+        {
+          "name": "Ssh_config_uses_port_443",
+          "line": 246,
+          "results": 1
+        },
+        {
+          "name": "Gitconfig_pushes_over_ssh_only",
+          "line": 255,
+          "results": 1
+        },
+        {
+          "name": "Gitconfig_sets_runner_identity_from_the_mounted_file",
+          "line": 269,
+          "results": 1
+        },
+        {
+          "name": "Known_hosts_carry_github_keys",
+          "line": 306,
+          "results": 1
+        },
+        {
+          "name": "Init_state_creates_the_claude_home",
+          "line": 323,
+          "results": 1
+        },
+        {
+          "name": "Entrypoint_seeds_claude_onboarding_before_dockerd",
+          "line": 335,
+          "results": 1
+        },
+        {
+          "name": "Seed_script_merges_onboarding_and_trust_and_keeps_credentials",
+          "line": 360,
+          "results": 1
+        }
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/DockerStackSmokeCommandTests.cs",
+      "methods": 35,
+      "results": 35,
+      "cacheMethods": 0,
+      "cacheResults": 0,
+      "methodRoster": [
+        {
+          "name": "Wrong_live_revision_is_refused",
+          "line": 13,
+          "results": 1
+        },
+        {
+          "name": "Foreign_state_owner_refuses",
+          "line": 21,
+          "results": 1
+        },
+        {
+          "name": "Auto_keyring_without_protector_is_unavailable",
+          "line": 29,
+          "results": 1
+        },
+        {
+          "name": "Parent_as_child_is_refused",
+          "line": 36,
+          "results": 1
+        },
+        {
+          "name": "Manifest_precedes_create",
+          "line": 43,
+          "results": 1
+        },
+        {
+          "name": "Wrong_context_source_is_refused",
+          "line": 51,
+          "results": 1
+        },
+        {
+          "name": "Runner_local_bind_source_is_refused",
+          "line": 59,
+          "results": 1
+        },
+        {
+          "name": "Foreign_resource_id_is_refused",
+          "line": 66,
+          "results": 1
+        },
+        {
+          "name": "Foreign_resource_label_is_refused",
+          "line": 73,
+          "results": 1
+        },
+        {
+          "name": "Normal_down_retains_volumes",
+          "line": 80,
+          "results": 1
+        },
+        {
+          "name": "Global_cleanup_is_forbidden",
+          "line": 89,
+          "results": 1
+        },
+        {
+          "name": "Raw_challenge_is_required",
+          "line": 96,
+          "results": 1
+        },
+        {
+          "name": "Raw_exit_is_required",
+          "line": 104,
+          "results": 1
+        },
+        {
+          "name": "Session_created_run_is_required",
+          "line": 111,
+          "results": 1
+        },
+        {
+          "name": "Child_probe_cannot_launch_parent",
+          "line": 118,
+          "results": 1
+        },
+        {
+          "name": "Linux_custody_advertisement_is_refused",
+          "line": 125,
+          "results": 1
+        },
+        {
+          "name": "Missing_deploy_key_refuses_deploy",
+          "line": 135,
+          "results": 1
+        },
+        {
+          "name": "Missing_phone_home_secret_refuses_deploy",
+          "line": 143,
+          "results": 1
+        },
+        {
+          "name": "Non_persistent_policy_refuses_deploy",
+          "line": 151,
+          "results": 1
+        },
+        {
+          "name": "Sibling_daemon_refuses_deploy",
+          "line": 159,
+          "results": 1
+        },
+        {
+          "name": "Not_dispatch_eligible_refuses_nested_stack_case",
+          "line": 167,
+          "results": 1
+        },
+        {
+          "name": "Session_origin_is_required_for_nested_stack",
+          "line": 175,
+          "results": 1
+        },
+        {
+          "name": "Host_residue_refuses_nested_stack_case",
+          "line": 182,
+          "results": 1
+        },
+        {
+          "name": "Nested_residue_refuses_nested_stack_case",
+          "line": 189,
+          "results": 1
+        },
+        {
+          "name": "Still_running_session_is_not_a_result",
+          "line": 196,
+          "results": 1
+        },
+        {
+          "name": "Dead_session_without_marker_is_incomplete",
+          "line": 204,
+          "results": 1
+        },
+        {
+          "name": "Subordinate_failure_refuses_acceptance",
+          "line": 215,
+          "results": 1
+        },
+        {
+          "name": "Lost_nested_store_refuses_restart_case",
+          "line": 227,
+          "results": 1
+        },
+        {
+          "name": "Changed_store_id_refuses_restart_case",
+          "line": 234,
+          "results": 1
+        },
+        {
+          "name": "Undeleted_smoke_branch_is_refused",
+          "line": 242,
+          "results": 1
+        },
+        {
+          "name": "Containment_refuses_a_runner_that_does_not_advertise_the_linux_backend",
+          "line": 257,
+          "results": 1
+        },
+        {
+          "name": "Containment_refuses_helpers_that_are_not_root_owned",
+          "line": 265,
+          "results": 1
+        },
+        {
+          "name": "Containment_refuses_a_v2_reading_on_the_server2_row",
+          "line": 275,
+          "results": 1
+        },
+        {
+          "name": "Containment_refuses_a_surviving_cgroup",
+          "line": 283,
+          "results": 1
+        },
+        {
+          "name": "Containment_accepts_a_measured_v1_run",
+          "line": 291,
+          "results": 1
+        }
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocumentationTests.cs",
+      "methods": 11,
+      "results": 11,
+      "cacheMethods": 0,
+      "cacheResults": 0,
+      "methodRoster": [
+        {
+          "name": "Main_volume_recycling_is_scripted_only",
+          "line": 12,
+          "results": 1
+        },
+        {
+          "name": "Docker_stack_doc_names_the_nested_daemon",
+          "line": 30,
+          "results": 1
+        },
+        {
+          "name": "Docs_name_linux_cgroup_backend",
+          "line": 61,
+          "results": 1
+        },
+        {
+          "name": "Orchestration_loop_names_server2_producer",
+          "line": 88,
+          "results": 1
+        },
+        {
+          "name": "Credentials_doc_names_the_deploy_key_custody",
+          "line": 99,
+          "results": 1
+        },
+        {
+          "name": "Card_0590_D6_is_annotated_superseded",
+          "line": 118,
+          "results": 1
+        },
+        {
+          "name": "Ops_http_names_runner_status_and_runner_id",
+          "line": 132,
+          "results": 1
+        },
+        {
+          "name": "Testing_doc_names_the_production_enablement_steps",
+          "line": 143,
+          "results": 1
+        },
+        {
+          "name": "Agent_kinds_doc_names_the_raw_allow_list",
+          "line": 158,
+          "results": 1
+        },
+        {
+          "name": "Credentials_doc_names_the_claude_login",
+          "line": 176,
+          "results": 1
+        },
+        {
+          "name": "Ops_http_names_provider_auth",
+          "line": 201,
+          "results": 1
+        }
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+      "methods": 20,
+      "results": 20,
+      "cacheMethods": 0,
+      "cacheResults": 0,
+      "methodRoster": [
+        {
+          "name": "imports_the_card_0688_table",
+          "line": 11,
+          "results": 1
+        },
+        {
+          "name": "unescapes_pipes_in_filters",
+          "line": 28,
+          "results": 1
+        },
+        {
+          "name": "maps_cp_reuse_to_the_same_build",
+          "line": 37,
+          "results": 1
+        },
+        {
+          "name": "command_rows_become_command_checkpoints",
+          "line": 46,
+          "results": 1
+        },
+        {
+          "name": "derives_roster_tokens_from_the_filter",
+          "line": 57,
+          "results": 1
+        },
+        {
+          "name": "refuses_the_legacy_eight_column_table",
+          "line": 67,
+          "results": 1
+        },
+        {
+          "name": "warns_when_estimate_exceeds_row_timeout",
+          "line": 76,
+          "results": 1
+        },
+        {
+          "name": "imports_the_card_0723_table",
+          "line": 92,
+          "results": 1
+        },
+        {
+          "name": "serial_import_round_trips_and_excludes_other_rows",
+          "line": 135,
+          "results": 1
+        },
+        {
+          "name": "environment_map_round_trips_without_changing_serial",
+          "line": 167,
+          "results": 1
+        },
+        {
+          "name": "environment_reaches_only_its_row_and_its_reruns",
+          "line": 188,
+          "results": 1
+        },
+        {
+          "name": "scheduler_passes_test_parallel_limit_only_to_serial_rows_process",
+          "line": 227,
+          "results": 1
+        },
+        {
+          "name": "invalid_serial_is_refused_before_execution",
+          "line": 254,
+          "results": 1
+        },
+        {
+          "name": "unknown_duplicate_and_malformed_columns_are_refused",
+          "line": 266,
+          "results": 1
+        },
+        {
+          "name": "invalid_environment_names_and_duplicates_are_refused",
+          "line": 286,
+          "results": 1
+        },
+        {
+          "name": "annotated_reuse_resolves_only_an_earlier_filter_build",
+          "line": 304,
+          "results": 1
+        },
+        {
+          "name": "filter_shorthand_and_trailing_environment_prose_are_refused",
+          "line": 317,
+          "results": 1
+        },
+        {
+          "name": "cross_after_reuse_is_refused_without_a_relaxation_flag",
+          "line": 331,
+          "results": 1
+        },
+        {
+          "name": "conflicting_projects_cannot_share_an_output_identity",
+          "line": 345,
+          "results": 1
+        },
+        {
+          "name": "run_plan_and_import_resolve_the_committed_table_identically",
+          "line": 356,
+          "results": 1
+        }
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Checkpoints/CheckpointManifestTests.cs",
+      "methods": 6,
+      "results": 6,
+      "cacheMethods": 0,
+      "cacheResults": 0,
+      "methodRoster": [
+        {
+          "name": "parses_yaml_and_defaults",
+          "line": 11,
+          "results": 1
+        },
+        {
+          "name": "rejects_backslash_or_trailing_space_output_path",
+          "line": 30,
+          "results": 1
+        },
+        {
+          "name": "rejects_duplicate_or_unknown_build_ids",
+          "line": 44,
+          "results": 1
+        },
+        {
+          "name": "rejects_reuse_across_different_after",
+          "line": 61,
+          "results": 1
+        },
+        {
+          "name": "after_selector_parses_ranges_and_all",
+          "line": 78,
+          "results": 1
+        },
+        {
+          "name": "results_root_must_be_under_worktree",
+          "line": 91,
+          "results": 1
+        }
+      ]
+    }
+  ]
+}

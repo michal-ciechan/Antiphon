@@ -295,7 +295,7 @@ public sealed class RemoteScriptContractTests
         }
         foreach (var fault in new[] { "exit128", "timeout", "empty", "nonnumeric", "negative", "shallow", "partial", "stale", "deleted", "missing", "broken-gitdir", "escaping-link", "missing-object", "origin-failed" })
         {
-            using var bad = new C1008HostFixture(); await C1008GitGraph(bad);
+            using var bad = new C1008HostFixture(); await C1008GitGraph(bad, fault == "origin-failed" ? fault : "");
             var repo = Path.Combine(bad.Root, "work/repo");
             if (fault is "exit128" or "timeout" or "empty" or "nonnumeric" or "negative") bad.Docker["gitFault"] = fault;
             else if (fault == "shallow") File.WriteAllText(Path.Combine(repo, ".git/shallow"), File.ReadAllText(Path.Combine(repo, ".git/refs/heads/master")));
@@ -305,7 +305,6 @@ public sealed class RemoteScriptContractTests
             else if (fault == "broken-gitdir") File.WriteAllText(Path.Combine(bad.Root, "work/.git"), "gitdir: /missing\n");
             else if (fault == "escaping-link") Directory.CreateSymbolicLink(Path.Combine(bad.Root, "work/escape"), bad.Root);
             else if (fault == "missing-object") Directory.Delete(Path.Combine(repo, ".git/objects"), true);
-            else File.AppendAllText(Path.Combine(repo, ".git/config"), "\n[remote \"origin\"]\nurl = /missing-origin\n");
             var refused = await bad.Run(); bad.Removed.ShouldBeEmpty("recycle-git-unknown-refuses: " + fault);
             refused.Output.ShouldContain("RecycleGitAuditUnknown");
         }
@@ -637,6 +636,7 @@ public sealed class RemoteScriptContractTests
             git -C '{{root}}/work/repo' commit -qm A
             git -C '{{root}}/work/repo' push -q origin master
             """;
+        if (fault == "origin-failed") script += $"\ngit -C '{root}/work/repo' remote set-url origin '{root}/missing-origin'\n";
         if (fault is "head" or "branch" or "tag" or "second-remote" or "linked" or "detached" or "bare") script += $$"""
 
             git -C '{{root}}/work/repo' commit -qm B --allow-empty

@@ -1,0 +1,31 @@
+BUILD SLOT granted lease=f15fb30a-b061-4958-89c3-859a9598f80b waited=0s maxcpucount=6
+
+████████╗██╗   ██╗███╗   ██╗██╗████████╗
+╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝
+   ██║   ██║   ██║██╔██╗ ██║██║   ██║
+   ██║   ██║   ██║██║╚██╗██║██║   ██║
+   ██║   ╚██████╔╝██║ ╚████║██║   ██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝
+
+   TUnit v1.44.0.0 | 64-bit | Debian GNU/Linux 12 (bookworm) | linux-x64 | .NET 9.0.20 | Microsoft Testing Platform v2.2.2
+
+   Engine Mode: SourceGenerated
+
+HTML test report written to: /work/worktrees/task-52bffc69/.antiphon/c1008-evidence-round4/old-contracts/CURRENT-old-contracts-20261003-191006-e376/Antiphon.Tests-linux-net9.0-report.html
+
+  In process file artifacts produced:
+    - /work/worktrees/task-52bffc69/.antiphon/c1008-evidence-round4/old-contracts/CURRENT-old-contracts-20261003-191006-e376/Antiphon.Tests-linux-net9.0-report.html
+    - /work/worktrees/task-52bffc69/.antiphon/c1008-evidence-round4/old-contracts/CURRENT-old-contracts-20261003-191006-e376/run.trx
+
+Test run summary: Passed! - /work/worktrees/task-52bffc69/tests/Antiphon.Tests/bin-c1008-scripts/Antiphon.Tests.dll (net9.0|x64)
+  total: 2
+  failed: 0
+  succeeded: 2
+  skipped: 0
+  duration: 2s 165ms
+BUILD SLOT released lease=f15fb30a-b061-4958-89c3-859a9598f80b held=6s
+MSBUILD PROPERTY UseAppHost=false
+EXECUTED Antiphon.Tests.Scripts.RemoteScriptContractTests.Temp_retire_requires_the_retired_receipt_and_downs_only_temp_volumes
+EXECUTED Antiphon.Tests.Scripts.RemoteScriptContractTests.Deploy_parent_seeds_a_fresh_runner_checkout_before_starting_the_runner
+CHECKPOINT CURRENT-old-contracts commit=b6e671ae7861d17530a829862d54b60c8b0e7378 build=reused filter=/*/*/RemoteScriptContractTests*/(Temp_retire_requires_the_retired_receipt_and_downs_only_temp_volumes*)|(Deploy_parent_seeds_a_fresh_runner_checkout_before_starting_the_runner*) executed=2 passed=2 failed=0 skipped=0 trx=/work/worktrees/task-52bffc69/.antiphon/c1008-evidence-round4/old-contracts/CURRENT-old-contracts-20261003-191006-e376/run.trx slot=granted waited=0s dirty=0 source=b6e671ae7861d17530a829862d54b60c8b0e7378 sourceState=clean buildSource=verified
+CHECKPOINT CURRENT-old-contracts EXIT CODE: 0

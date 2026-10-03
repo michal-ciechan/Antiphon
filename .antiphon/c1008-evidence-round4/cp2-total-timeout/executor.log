@@ -1,0 +1,9 @@
+2026-10-03T18:27:11.8276886+00:00 execute rows=1 width=1 total=40m
+2026-10-03T18:27:12.1955627+00:00 BUILD SLOT operation=probe status=200 reason=enabled maxcpucount=6 elapsed=0s
+2026-10-03T18:27:12.2878714+00:00 BUILD SLOT granted lease=e4d65fc3-2f1d-4a6d-948e-b29f2c633b12 label="build:bin-c1008-scripts" waited=0s maxcpucount=6
+2026-10-03T18:29:50.3876098+00:00 owner read failed: http 502
+2026-10-03T18:30:31.7459313+00:00 BUILD SLOT released lease=e4d65fc3-2f1d-4a6d-948e-b29f2c633b12 label="build:bin-c1008-scripts"
+2026-10-03T18:30:31.9807075+00:00 BUILD SLOT granted lease=ce4c2b82-50f2-474e-b5d9-8799891e0e05 label="CP-2@bin-c1008-scripts" waited=0s maxcpucount=6
+2026-10-03T18:47:04.5760057+00:00 owner read failed: http 502
+2026-10-03T19:07:12.4845590+00:00 BUILD SLOT released lease=ce4c2b82-50f2-474e-b5d9-8799891e0e05 label="CP-2@bin-c1008-scripts"
+2026-10-03T19:07:12.8662033+00:00 done exit=5
