@@ -5,6 +5,11 @@ Start: `c6d5d56b5b4c565d36157e21de9c85029cc45b53`.
 Branch: `feat/card-task-b630f3bf`; worktree: `/work/worktrees/task-b630f3bf`.
 Parent design: `2026-10-01-card-0888-runner-bound-refinement-spill-plan.md`.
 
+Continuation Code and current landing owner: `4c1697dc-d944-46ad-ae9e-085276be1663`.
+Branch `feat/card-task-4c1697dc`, worktree `/work/worktrees/task-4c1697dc`,
+fast-forward continuation of `02e97b63c48ab170715d2d0edbed83f90ae74405`.
+The previous owner's partial commits are included in this branch.
+
 This test-only repair closes V-16, V-20, V-22, V-29, V-32 and adds malformed
 task-input sweep and seeded pre-upgrade event coverage. The fixture opts into a
 large injected desktop PtyDeliveryProfile; normal fixture defaults stay intact.
@@ -26,6 +31,26 @@ formatted and structured log state, and authorized whole-body HTTP response.
 V-29: both polls observe identical task/session/message/key/time; intercept actual
 database writes and runner input calls. V-32: complaint exists before settlement,
 disappears after, and an independent blocked-question condition remains.
+
+S2 completes V-16 as three parameterized fresh-database cases: SendNow, idle flush,
+and immediate persisted enqueue. For immediate enqueue a SaveChanges interceptor
+seeds an admitted task/event conversation key on the new row and records its ID;
+ordinary question overlays intentionally have no input key. This isolates the
+internal fallback branch without changing that public API or any production file.
+Phone-home readiness uses the endpoint's accepted-connection log as a completion
+signal, calls MarkRecovered for this synthetic empty runner, and awaits the injected
+IRunnerEligibilityObserver's expected live-connection signal. No wall-clock poll.
+It does not claim production catch-up-worker coverage. V-29 injects a fixed poll
+clock, advances one minute, requires the exact complaint timestamp, and compares
+fresh persisted queue/task/session snapshots before and after both polls.
+
+Ordinary diagnostic strength checks for V-16/20/22/29/32 select only their precise
+methods and temporarily suppress fallback, allow a foreign task principal, log the
+body, reset episode time to poll time, or include terminal tasks respectively.
+These already-implemented behaviors are baseline-compatible: baseline green is
+reported honestly, not described as unchanged-production red. Only named assertion
+failures from diagnostic defects count as strength evidence. All bytes are restored
+exactly before final clean qualification; these do not discharge any PC.
 
 New sweep test: malformed length, uppercase GUID and non-GUID segment stay Pending;
 valid keyed machine row is canceled in the same sweep. Migration test inserts a
@@ -49,7 +74,7 @@ named integration selections exercise this input feature's delivery/persistence.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c965-input/` | task-input | `/*/*/(AgentTaskInputSpillTests*)\|(AgentTaskRefineTests*)\|(AgentTaskReplyOverlayTests*)/*` | V-1..V-15, R-1, R-2 | AgentTaskInputSpillTests,AgentTaskRefineTests,AgentTaskReplyOverlayTests | 31 | 10 | true | `C804_ORPHAN_SWEEP_ROOT=c965-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-2 | S1 | `tests/Antiphon.Tests -> bin-c965-fallback/` | fallback | `/*/*/(AgentTaskInputFallbackTests*)\|(PhoneHomeSpillTests*)\|(PhoneHomeSpillTransportTests*)\|(DurableRunnerSpillReceiptTests*)/*` | V-16..V-24, R-3 | AgentTaskInputFallbackTests,PhoneHomeSpillTests,PhoneHomeSpillTransportTests,DurableRunnerSpillReceiptTests | 27 | 10 | true | `C804_ORPHAN_SWEEP_ROOT=c965-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-2 | S1 | `tests/Antiphon.Tests -> bin-c965-fallback/` | fallback | `/*/*/(AgentTaskInputFallbackTests*)\|(PhoneHomeSpillTests*)\|(PhoneHomeSpillTransportTests*)\|(DurableRunnerSpillReceiptTests*)/*` | V-16..V-24, R-3 | AgentTaskInputFallbackTests,PhoneHomeSpillTests,PhoneHomeSpillTransportTests,DurableRunnerSpillReceiptTests | 29 | 10 | true | `C804_ORPHAN_SWEEP_ROOT=c965-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-3 | S1 | `tests/Antiphon.Tests -> bin-c965-attention/` | attention | `/*/*/TaskInputReadFailureTests*/*` | V-25..V-32 | TaskInputReadFailureTests | 8 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c965-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-4 | S1 | n/a | client | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/attention/attentionVisuals.test.ts` | V-33 | 24 Vitest results, no failed/skipped | n/a | 2 | true | n/a |
 | CP-6 | S1 | `tests/Antiphon.Tests -> bin-c965-unit/` | unit | `/*/*/*/*[Category=Unit]` | Final Unit | nonzero Unit results | 1 | 4 | true | `C804_ORPHAN_SWEEP_ROOT=c965-disabled` |
