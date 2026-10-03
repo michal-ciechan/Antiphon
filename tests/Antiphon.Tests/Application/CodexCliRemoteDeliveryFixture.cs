@@ -66,7 +66,7 @@ internal static class CodexCliRemoteDeliveryFixture
             await using var peer = await host.ConnectPeerAsync(capabilities: runtime.Capabilities());
             peer.Reply = request => dispatcher.DispatchAsync(request, CancellationToken.None).GetAwaiter().GetResult();
             host.Directory.MarkRecovered(await host.WaitLiveAsync());
-            var registry = CodexCliAdmissionTests.Registry();
+            var registry = CodexCliObservationTests.Registry();
             var freeze = new Freeze(schema.ConnectionString);
             var launches = new HeldLaunches();
             await using var h = await BridgeQueueHarness.CreateAsync(new()

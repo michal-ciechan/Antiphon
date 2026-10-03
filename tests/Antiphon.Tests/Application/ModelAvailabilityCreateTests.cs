@@ -364,8 +364,8 @@ public class ModelAvailabilityCreateTests
             TimeProvider.System,
             NullLogger<AgentTaskService>.Instance,
             modelAvailability: Service(db),
-            registrySettings: Options.Create(CodexCliAdmissionTests.Registry()),
-            runners: CodexCliAdmissionTests.CurrentLocalRunnerFixture());
+            registrySettings: Options.Create(CodexCliObservationTests.Registry()),
+            runners: CodexCliObservationTests.CurrentLocalRunnerFixture());
     }
 
     private static ModelAvailability Service(AppDbContext db) =>
