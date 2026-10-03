@@ -16,6 +16,38 @@ namespace Antiphon.Tests.Application;
 public class CapacityRecoveryCompatibilityTests
 {
     [Test]
+    public async Task Input_body_upgrade_preserves_a_preexisting_event_with_null_body()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CapacityRecoveryTestSupport.CreateContext(schema);
+        var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
+        var position = Array.FindIndex(migrations,
+            m => m.EndsWith("_AddAgentTaskEventInputBody", StringComparison.Ordinal));
+        position.ShouldBeGreaterThan(0);
+        var taskId = Guid.NewGuid();
+        var eventId = Guid.NewGuid();
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = taskId, RootTaskId = taskId, Title = "legacy input", Goal = "legacy",
+            Status = AgentTaskStatus.Failed, CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+        var migrator = db.GetService<IMigrator>();
+        await migrator.MigrateAsync(migrations[position - 1]);
+        // Insert against the actual pre-upgrade schema, which has no InputBody column.
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "AgentTaskEvents" ("Id", "AgentTaskId", "Type", "Detail", "At")
+            VALUES ({eventId}, {taskId}, {(int)AgentTaskEventType.Refined}, {"legacy-detail-965"}, {DateTime.UtcNow})
+            """);
+        await migrator.MigrateAsync();
+        db.ChangeTracker.Clear();
+        var legacy = await db.AgentTaskEvents.SingleAsync(e => e.Id == eventId);
+        legacy.AgentTaskId.ShouldBe(taskId, "legacy-event-owner-preserved");
+        legacy.Detail.ShouldBe("legacy-detail-965", "legacy-event-detail-preserved");
+        legacy.InputBody.ShouldBeNull("legacy-event-input-body-null");
+    }
+
+    [Test]
     public async Task Card0412_V22_migrate_forward_preserves_legacy_holds()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();

@@ -88,7 +88,10 @@ public sealed class AgentTaskInputSpillTests
     [Test]
     public async Task Runner_ceiling_ignores_the_modern_desktop_profile()
     {
-        await using var f = await TaskInputSpillFixture.CreateAsync(AgentKind.ClaudeCode);
+        await using var f = await TaskInputSpillFixture.CreateAsync(AgentKind.ClaudeCode,
+            largeDesktopProfile: true);
+        (await f.DesktopProfile.RefreshAsync(CancellationToken.None)).BriefInlineMaxBytes
+            .ShouldBe(43_200, "large-desktop-profile-injected");
         await f.Replies.RefineAsync(f.TaskId, new string('z', 1800), CancellationToken.None);
         await using var db = f.Db();
         var row = await db.SessionQueuedMessages.SingleAsync();

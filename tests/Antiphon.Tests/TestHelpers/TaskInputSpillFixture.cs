@@ -7,6 +7,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Tests.TestHelpers;
@@ -25,6 +26,7 @@ internal sealed class TaskInputSpillFixture : IAsyncDisposable
     public SessionMessageQueueService Queue => _provider.GetRequiredService<SessionMessageQueueService>();
     public RemoteSpillCourier Courier => _provider.GetRequiredService<RemoteSpillCourier>();
     public string ConnectionString => _schema.ConnectionString;
+    public PtyDeliveryProfile DesktopProfile => _provider.GetRequiredService<PtyDeliveryProfile>();
 
     private TaskInputSpillFixture(IsolatedTestSchema schema, ServiceProvider provider,
         string serverRoot, string runnerParent, string runnerRoot, Guid sessionId, Guid taskId)
@@ -42,7 +44,8 @@ internal sealed class TaskInputSpillFixture : IAsyncDisposable
 
     public static async Task<TaskInputSpillFixture> CreateAsync(
         AgentKind kind = AgentKind.Codex, bool remote = true,
-        AgentTaskStatus status = AgentTaskStatus.Working)
+        AgentTaskStatus status = AgentTaskStatus.Working, bool largeDesktopProfile = false,
+        CapturingLoggerProvider? logs = null)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var serverRoot = Directory.CreateTempSubdirectory("c888-server-").FullName;
@@ -79,12 +82,26 @@ internal sealed class TaskInputSpillFixture : IAsyncDisposable
         }
 
         var services = new ServiceCollection();
-        services.AddLogging();
+        services.AddLogging(b =>
+        {
+            if (logs is not null) b.AddProvider(logs);
+        });
         services.AddDbContext<AppDbContext>(o => o.UseNpgsql(schema.ConnectionString));
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(Options.Create(new SupervisionSettings()));
         services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
         services.AddSingleton(Options.Create(new DelegationSettings()));
+        if (largeDesktopProfile)
+            services.AddSingleton(sp => new PtyDeliveryProfile(
+                sp.GetRequiredService<IServiceScopeFactory>(),
+                NullLogger<PtyDeliveryProfile>.Instance,
+                Options.Create(new DelegationSettings
+                {
+                    // A modern-size profile remains large on Linux's backend fallback too.
+                    BriefInlineMaxBytes = 43_200, PtySingleChunkBytes = 86_400,
+                    ModernPtyBriefInlineMaxBytes = 43_200,
+                    ModernPtySingleWriteMaxBytes = 86_400,
+                }), backendOverride: "modern"));
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<RemoteSpillCourier>();
         services.AddSingleton<AgentSessionRuntime>();

@@ -11,6 +11,9 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging;
 using Shouldly;
 using TUnit.Core;
 
@@ -26,11 +29,34 @@ public sealed class AgentTaskInputFallbackTests
         await using var f = await TaskInputDeliveryFixture.CreateAsync();
         await f.Replies.RefineAsync(f.TaskId, new string('a', 4200) + "fallback-tail-888",
             CancellationToken.None);
-        f.Adapter.BeforeInput = (_, _) => throw new RunnerSpillWriteException();
         var initial = await RowAsync(f);
+        // An ordinary file blocks the required directory on every OS, including root.
+        await File.WriteAllTextAsync(Path.Combine(f.RunnerCwd, ".antiphon"), "directory blocker");
+        var runtime = new RecordingInputRuntime();
+        var dispatcher = new PhoneHomeCommandDispatcher(runtime, new PhoneHomeSettings
+        {
+            AllowedCwd = Path.GetDirectoryName(Path.GetDirectoryName(f.RunnerCwd))!,
+            RunnerRepository = Path.Combine(Path.GetDirectoryName(f.RunnerCwd)!, "repo"),
+            CapacityStatePath = Path.Combine(Path.GetDirectoryName(f.RunnerCwd)!, "capacity"),
+        });
+        f.Adapter.BeforeInput = async (text, _) =>
+        {
+            var frame = new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(),
+                PhoneHomeOperation.Input,
+                Payload: JsonSerializer.SerializeToElement(new
+                {
+                    sessionId = f.SessionId, input = text, runnerCwd = f.RunnerCwd,
+                    spill = new PhoneHomeInputSpill(initial.RemoteSpillRelativePath!, initial.RemoteSpillBody!),
+                }, PhoneHomeFraming.Json));
+            var reply = await dispatcher.DispatchAsync(frame, CancellationToken.None);
+            reply.ErrorCode.ShouldBe(PhoneHomeProblemTypes.SpillWriteFailedBeforeInput,
+                "real-writer-before-input-code");
+            throw new RunnerSpillWriteException();
+        };
         await Should.ThrowAsync<ConflictException>(() =>
             f.Queue.SendNowAsync(f.SessionId, initial.Id, CancellationToken.None));
         f.Adapter.Inputs.ShouldBeEmpty("file-pointer-input-count=0");
+        runtime.Inputs.ShouldBeEmpty("real-runtime-input-count=0");
         await using var db = f.Db();
         var changed = await db.SessionQueuedMessages.AsNoTracking().SingleAsync();
         changed.Id.ShouldBe(initial.Id);
@@ -43,6 +69,17 @@ public sealed class AgentTaskInputFallbackTests
         f.Adapter.BeforeInput = null;
         await f.Queue.SendNowAsync(f.SessionId, changed.Id, CancellationToken.None);
         f.Adapter.SubmittedBodies.ShouldContain(changed.Body, customMessage: "api-only-typed-pointer");
+        var input = await db.AgentTaskEvents.SingleAsync(e => e.Type == AgentTaskEventType.Refined);
+        const string token = "c965-writer-fallback-test-token";
+        (await db.AgentTasks.SingleAsync()).TokenHash = AgentTaskService.HashToken(token);
+        await db.SaveChangesAsync();
+        await using var host = new TaskInputWebAppFactory(db.Database.GetConnectionString()!);
+        using var client = host.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, AgentTaskInputService.Route(f.TaskId, input.Id));
+        request.Headers.Add("X-Antiphon-Task-Token", token);
+        using var response = await client.SendAsync(request);
+        (await response.Content.ReadAsStringAsync()).ShouldBe(input.InputBody, "fallback-authorized-whole-body");
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
     }
 
     [Test]
@@ -140,6 +177,8 @@ public sealed class AgentTaskInputFallbackTests
         response.Content.Headers.ContentType?.ToString().ShouldBe("text/plain; charset=utf-8");
         response.Headers.CacheControl?.NoStore.ShouldBeTrue("private-body-no-store");
         using var missing = await client.GetAsync(route);
+        (await missing.Content.ReadAsStringAsync()).ShouldNotContain("exact " + new string('d', 1800),
+            customMessage: "missing-token-body-absent");
         missing.StatusCode.ShouldBe(HttpStatusCode.Forbidden, "missing-token-403");
         using var staleRequest = new HttpRequestMessage(HttpMethod.Get, route);
         staleRequest.Headers.Add("X-Antiphon-Task-Token", "stale-c888-test-token");
@@ -151,6 +190,25 @@ public sealed class AgentTaskInputFallbackTests
         using var other = await client.SendAsync(otherRequest);
         other.StatusCode.ShouldBe(HttpStatusCode.Forbidden, "other-task-token-403");
         (await other.Content.ReadAsStringAsync()).ShouldNotContain(input.InputBody!);
+        const string capabilityToken = "c965-valid-capability-test-token";
+        db.DelegationCapabilities.Add(new DelegationCapability
+        {
+            Id = Guid.NewGuid(), Name = "input-capability", CreatedAt = DateTime.UtcNow,
+            TokenHash = AgentTaskService.HashToken(capabilityToken),
+            RootsJson = JsonSerializer.Serialize(new[] { f.ServerRoot }),
+        });
+        await db.SaveChangesAsync();
+        // Prove this is a valid capability, rather than another stale bearer.
+        using (var scope = host.Services.CreateScope())
+            (await scope.ServiceProvider.GetRequiredService<AgentTaskService>()
+                .AuthenticateAsync(capabilityToken, CancellationToken.None)).CapabilityId
+                .ShouldNotBeNull("capability-positive-control");
+        using var capRequest = new HttpRequestMessage(HttpMethod.Get, route);
+        capRequest.Headers.Add("X-Antiphon-Task-Token", capabilityToken);
+        using var capResponse = await client.SendAsync(capRequest);
+        (await capResponse.Content.ReadAsStringAsync()).ShouldNotContain(input.InputBody!,
+            customMessage: "capability-token-body-absent");
+        capResponse.StatusCode.ShouldBe(HttpStatusCode.Forbidden, "capability-token-403");
     }
 
     [Test]
@@ -193,7 +251,8 @@ public sealed class AgentTaskInputFallbackTests
     [Test]
     public async Task Input_body_is_absent_from_task_summary_events_and_logs()
     {
-        await using var f = await TaskInputSpillFixture.CreateAsync();
+        var logs = new CapturingLoggerProvider();
+        await using var f = await TaskInputSpillFixture.CreateAsync(logs: logs);
         var summary = await f.Replies.RefineAsync(f.TaskId,
             new string('f', 4300) + "private-tail-888", CancellationToken.None);
         JsonSerializer.Serialize(summary).ShouldNotContain("private-tail-888",
@@ -202,6 +261,27 @@ public sealed class AgentTaskInputFallbackTests
         var input = await db.AgentTaskEvents.SingleAsync(e => e.Type == AgentTaskEventType.Refined);
         input.Detail.ShouldNotContain("private-tail-888");
         input.InputBody.ShouldContain("private-tail-888", customMessage: "exact-body-tail-retained");
+        const string token = "c965-private-input-test-token";
+        (await db.AgentTasks.SingleAsync()).TokenHash = AgentTaskService.HashToken(token);
+        await db.SaveChangesAsync();
+        await using var host = new TaskInputWebAppFactory(f.ConnectionString, logs);
+        using var client = host.CreateClient();
+        using var publicResponse = await client.GetAsync($"/api/agent-tasks/{f.TaskId:D}");
+        publicResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await publicResponse.Content.ReadAsStringAsync()).ShouldNotContain("private-tail-888",
+            customMessage: "public-events-tail-absent");
+        using var request = new HttpRequestMessage(HttpMethod.Get, AgentTaskInputService.Route(f.TaskId, input.Id));
+        request.Headers.Add("X-Antiphon-Task-Token", token);
+        using var authorized = await client.SendAsync(request);
+        (await authorized.Content.ReadAsStringAsync()).ShouldBe(input.InputBody,
+            "authorized-private-tail-exact");
+        logs.Entries.ShouldNotBeEmpty("log-capture-active");
+        foreach (var entry in logs.Entries)
+        {
+            entry.Message.ShouldNotContain("private-tail-888", customMessage: "log-tail-absent");
+            JsonSerializer.Serialize(entry.Properties).ShouldNotContain("private-tail-888",
+                customMessage: "structured-log-tail-absent");
+        }
     }
 
     [Test]
@@ -258,8 +338,32 @@ public sealed class AgentTaskInputFallbackTests
         return await db.SessionQueuedMessages.AsNoTracking().SingleAsync();
     }
 
-    private sealed class TaskInputWebAppFactory(string connectionString) : AntiphonWebAppFactory
+    private sealed class TaskInputWebAppFactory(string connectionString,
+        CapturingLoggerProvider? logs = null) : AntiphonWebAppFactory
     {
         protected override string ConnectionString => connectionString;
+        protected override void ApplyTestOverrides(IServiceCollection services)
+        {
+            if (logs is not null) services.AddLogging(b => b.AddProvider(logs));
+        }
+    }
+
+    private sealed class RecordingInputRuntime : IPhoneHomeRuntimeSurface
+    {
+        public List<string> Inputs { get; } = [];
+        public RunnerCapabilitiesDto Capabilities() => new("InboxConhost", "inbox", "test", false, Features: []);
+        public string Health() => "Healthy";
+        public IReadOnlyList<RunnerSessionDto> List() => [];
+        public int OwnedSessionCount => 0;
+        public Task SendInputAsync(Guid id, string input, CancellationToken ct) { Inputs.Add(input); return Task.CompletedTask; }
+        public Task<RunnerSessionDto> GetAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
+        public Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct) => throw new NotSupportedException();
+        public RunnerBufferDto GetBuffer(Guid id) => throw new NotSupportedException();
+        public RunnerSnapshotDto GetSnapshot(Guid id) => throw new NotSupportedException();
+        public RunnerTranscriptDto GetTranscript(Guid id) => throw new NotSupportedException();
+        public Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid id, RunnerConditionalInputRequest request, CancellationToken ct) => throw new NotSupportedException();
+        public Task ClearLiveBufferAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
+        public Task ResizeAsync(Guid id, int cols, int rows, CancellationToken ct) => throw new NotSupportedException();
+        public Task<RunnerKillGenerationResult> KillGenerationAsync(Guid id, DateTime startedAt, CancellationToken ct) => throw new NotSupportedException();
     }
 }
