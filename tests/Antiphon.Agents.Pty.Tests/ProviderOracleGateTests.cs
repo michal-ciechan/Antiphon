@@ -38,13 +38,22 @@ public sealed class ProviderOracleGateTests
     {
         var gate = ResolveGate();
         var calls = 0;
-        gate(name =>
+        SkipTestException? blocked = null;
+        try
         {
-            name.ShouldBe("ANTIPHON_PTY_PROVIDER_ORACLES");
-            return "1";
-        });
-        calls++;
+            gate(name =>
+            {
+                name.ShouldBe("ANTIPHON_PTY_PROVIDER_ORACLES");
+                return "1";
+            });
+            calls++;
+        }
+        catch (SkipTestException skip)
+        {
+            blocked = skip;
+        }
 
+        blocked.ShouldBeNull("explicit opt-in must admit the oracle body, not skip it");
         calls.ShouldBe(1, "explicit opt-in must reach the oracle body");
     }
 
