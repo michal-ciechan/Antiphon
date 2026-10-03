@@ -104,7 +104,7 @@ public sealed class AgentTaskInputFallbackTests
         changed.ConversationKey.ShouldBe(initial.ConversationKey, "fallback-owned-key");
         changed.Status.ShouldBe(QueuedMessageStatus.Pending);
         changed.Body.ShouldContain("/api/agent-tasks/", customMessage: "api-only-persisted-pointer");
-        changed.Body.ShouldNotContain(".antiphon/inbox/");
+        changed.Body.ShouldNotContain(".antiphon/inbox/", customMessage: "fallback-file-pointer-absent");
         changed.RemoteSpillBody.ShouldContain("fallback-tail-888");
         (await db.AgentTaskEvents.CountAsync(e => e.Type == AgentTaskEventType.Warning)).ShouldBe(1,
             "fallback-warning-count=1");
