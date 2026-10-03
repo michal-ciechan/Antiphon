@@ -534,7 +534,7 @@ public sealed class RemoteScriptContractTests
                 }
                 $manifest=[pscustomobject]@{evidenceRoot='{{bridgeRoot}}';sourceSha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';runId='c1008copy';
                   recycle=[pscustomobject]@{version=1;project='antiphon-runner';operationId='c100800000000000000000000000000001';
-                    dryRun=$false;resume=$true;projectId='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1'}}
+                    dryRun=$false;resume=$true;projectId='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1'} }
                 Invoke-C590LiveCase -Case deploy-parent -Manifest $manifest
                 """);
             using var child = Process.Start(psi)!;
