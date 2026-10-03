@@ -985,7 +985,10 @@ public sealed partial class SessionMessageQueueService
             if (outcome.SpillWriteFailedBeforeInput)
             {
                 if (!await TryCommitTaskInputFallbackAsync(db, sessionId, row, ct))
+                {
                     await RevertRunAsync(db, [row]);
+                    await RecordTransportFailureAsync(sessionId, new RunnerSpillWriteException(), ct);
+                }
                 throw new ConflictException(
                     "Runner could not write the input spill before typing; queued delivery was deferred.",
                     PhoneHomeProblemTypes.SpillWriteFailedBeforeInput);
@@ -1410,7 +1413,10 @@ public sealed partial class SessionMessageQueueService
             if (outcome.SpillWriteFailedBeforeInput)
             {
                 if (!await TryCommitTaskInputFallbackAsync(db, sessionId, message, ct))
+                {
                     await RevertRunAsync(db, [message]);
+                    await RecordTransportFailureAsync(sessionId, new RunnerSpillWriteException(), ct);
+                }
                 throw new ConflictException(
                     "Runner could not write the input spill before typing; queued delivery was deferred.",
                     PhoneHomeProblemTypes.SpillWriteFailedBeforeInput);
@@ -2456,7 +2462,10 @@ public sealed partial class SessionMessageQueueService
         {
             if (run.Count != 1
                 || !await TryCommitTaskInputFallbackAsync(db, sessionId, run[0], ct))
+            {
                 await RevertRunAsync(db, run);
+                await RecordTransportFailureAsync(sessionId, new RunnerSpillWriteException(), ct);
+            }
             return FlushResult.Failed;
         }
 
