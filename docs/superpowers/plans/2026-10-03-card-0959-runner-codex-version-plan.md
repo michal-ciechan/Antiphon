@@ -393,7 +393,8 @@ minimum in TestDesign if parameterized. Each vector must assert its own outcome,
 not merely that setup completed. Use isolated DB schemas and injected clocks.
 Process-spawning classes require their assembly's ParallelLimiter<ProcessSpawnLimit>.
 No real auth store, provider login, network model request, production runner,
-Docker rollout or whole Unit/full-assembly run is part of ordinary verification.
+Docker rollout or full-assembly run is part of ordinary verification. The Final
+continuation also runs the whole Unit lane as CP-8 below.
 
 | V | Proposed exact method | Required vectors and observable result |
 |---|---|---|
@@ -507,6 +508,120 @@ files already listed. No BridgeQueueHarness, PhoneHomeTestHost, task-input or
 attention helper edit is needed. Both test projects already reference SessionRunner;
 Antiphon.Tests already references the checkpoint tool.
 
+#### TestDesign amendment ee18a226: V-21/V-22 delivery representation
+
+2026-10-03; inspected implementation start ref
+`49ae666d1dfec4069f3dbe4325c61e06685eb51f`. This amendment changes verification
+only. D-1..D-10, S1..S4, all 22 method names and every unrelated frozen vector
+remain binding. It supersedes the demand that a Codex recipient's UserPrompt
+contain the inline LF goal. It authorizes no spill, queue, composer, ceiling,
+readiness or provider-policy implementation change.
+
+Additional bodies read for this amendment (the preceding inspection records
+the original freeze, not a re-reading of all those files today):
+
+| Bodies read | Boundaries -> coverage or exclusion |
+|---|---|
+| Entire CodexCliAdmissionTests, including V-21/V-22 and all nested kits, factories, clients and registry | V-21/V-22; local-only delivery, LF assertion on a pointer, admission-only retry; missing setup below |
+| BridgeQueueHarness.CreateAsync, HarnessOptions, InsertEntryAsync, DisposeAsync; FakeAgentProtocolAdapter.StartAsync, SendInputAsync, conditional input and submission/Inputs properties | Real queues, actual recipient callback and retained DB -> V-21/V-22; G-186..192, G-214..220 |
+| PhoneHomeTestHost.StartAsync and PhoneHomeScriptedPeer receive/reply/transcript/disposal bodies; RunnerCodexCliEvidenceTests.C959_Exact_probe_transport_is_bound actual-dispatch fixture | Real framed operations and transcript pull -> remote V-21/V-22; default Input ack is not receipt |
+| DurableRunnerSpillReceiptTests.Dispatcher_pointer_survives_queue_binding_and_reaches_a_complete_UserPrompt, Queued_brief_is_written_by_the_runner_when_a_busy_recipient_becomes_eligible, Screen_only_delivery_keeps_spill_bytes_and_a_retry_writes_the_same_body, BindRunnerAsync | Nearest spill fixtures -> V-21/V-22; their direct enqueue and write-at-OnSubmitted shortcut cannot prove producer-to-recipient or write-before-input |
+| AgentTaskDispatcher.FitBriefForTyping/CeilingsForBrief/FitBriefForSession and FailNeverStartedAsync entry/pull/brief-state branches; LandDeliveryBoundary; DelegationReportFormatter.BuildBrief/BuildBriefPointer/FlattenForJoiningComposer; PtyDeliveryCeilings; PtyInputEncoding | Logical versus wire representation -> PC-187/209..215; watchdog -> PC-221 |
+| SessionMessageQueueService.BindStagedSpill, attempt metadata, DeliverAsync encoding/submission, late-confirm/transcript queries, AcceptedByCompleteUserPrompt/StampAttemptVerdict; RemoteSpillCourier.FindDurableAsync/HasCompleteMatchingUserPromptAsync; PromptSubmissionMatch | Persistence, complete receipt, session/sequence fences and replay -> PC-216/218..224 |
+| PhoneHomeCommandDispatcher.Input/WriteSpillIfPresentAsync; RunnerWorkspaceService.WriteSpillAsync; RunnerCodexAdapter.SendInputAsync | Runner file precedes terminal input -> PC-217; path and bytes -> PC-211/213 |
+| session-runtime-invariants CARD-0353/0312, CARD-0647/0649 and multiline-input rules; testing-and-build Final recipe/manifest/gate/Mutation; Code report 1a73906f V table, remaining work and unedited receipts | Contract correction, pending evidence and counts; no new execution claim |
+
+Inherited evidence: the full portable run at
+`e6a7e365a577b1ffb496c561ee51de179fc3fdb8` executed 137: 136 passed, V-21
+failed at `C959-pc-187`, zero skipped. Latest CP-3 at
+`b8f12606294e57532a3d7eb759295f9926236e29` passed 5. Whole Unit at
+`c443a6e1e150d85ae828c933e822c15f6a83d0f3` executed/passed 3942, with 52
+skips. The raw Unit run.log refines the report's "platform" summary: **33 are
+Windows-only; 19 lack jq**, a missing setup prerequisite, not an OS exclusion.
+Windows CP-2 was not run. These receipts were read from
+`/work/worktrees/task-1a73906f/.antiphon/task-1a73906f.md`; they do not verify
+this amendment or the next Code SHA. V-22's passing admission assertions do
+not qualify recovery: its fixture manually sets Failed.
+
+**Expected values.** Preserve the literal goal
+`B = "C959 delivery α\nsecond line\nEND-C959"`. Freeze final producer inputs
+after workspace/refocus resolution and before handoff. Independently compose
+`E = DelegationReportFormatter.BuildBrief(frozenTask, settings, resolvedReplyLimit, refocus)`;
+assert E contains B ordinally and has LF-only line endings. E includes the entire
+task framing and reporting contract. Never derive E from queued.Body, a spill
+or a transcript. Inline `W = E.TrimEnd()` follows existing queue normalization;
+internal LF, Unicode and suffix stay exact. For a spill, derive expected P using
+BuildBriefPointer with E.Length, kind, the applicable measured ceiling and path,
+then apply only the known message-owned path substitution; `W = P.TrimEnd()`.
+Do not use FitBriefForTyping or its output as the oracle. Literal B, path and
+encoding assertions independently protect what the shared framing formatter
+cannot prove about itself.
+
+| Case inside existing V-21 | Exact assertions; append vector key to each Shouldly message |
+|---|---|
+| ClaudeCode (all Claude tiers share this enum), local measured ModernConPty profile, E within existing ceiling, eligible/busy | `submitted.ShouldBe(W, "C959-pc-187")`; `submitted.ShouldContain(B, customMessage: "C959-v21-claude-lf")`; task-body write equals `"\u001b[200~" + W + "\u001b[201~"` (`C959-pc-214`); next task submit is a distinct `"\r"` write (`C959-pc-215`); `receipt.Text.ShouldBe(W, "C959-v21-receipt")`. No spill pointer. |
+| Codex local, floor/current x Shared/Worktree x eligible/busy | `ForAgentKind(Codex).BriefInlineMaxBytes.ShouldBe(0, "C959-pc-209")`; bytes read from actual pointer-named file equal `Encoding.UTF8.GetBytes(E)` (`C959-pc-210`); decoded file contains B exactly (`C959-pc-187`); `submitted.ShouldBe(W, "C959-v21-pointer")`; LF and CR each absent (`C959-pc-212`); `receipt.Text.ShouldBe(W, "C959-v21-receipt")`. Retain one model=6.1, selected runner, zero CLI Warning/probe-auth assertions. |
+| Codex remote, floor/current x eligible/busy, real runner-bound worktree | Before first terminal input, queue `RemoteSpillBody.ShouldBe(E, "C959-pc-216")`; actual runner file bytes equal UTF-8 E (`C959-pc-211`); `RemoteSpillRelativePath.ShouldBe($".antiphon/inbox/{queueId:D}.md", "C959-pc-213")`; pointer names that exact file under selected RunnerCwd. Same complete single-line W/UserPrompt and model assertions; runner/store/session remain the selected binding. |
+| Grok local/remote x eligible/busy, after its existing rules-ready condition | Same zero ceiling, exact file E/B, single-line W, file-before-input and complete UserPrompt assertions as non-Claude Codex, using Grok kind. Zero Codex version queries, no invented 6.1 argument or CLI Warning. Do not bypass Grok initialization. |
+
+Claude inline is conditional on its **existing** ceiling. The explicit local
+profile models the measured modern backend at its shipped limit, as in the
+inspected fixture; it is not a real PTY run. Runner-bound Claude uses the inbox
+ceiling and spills if E exceeds it; its pointer may remain multiline and must
+use bracketed paste plus separate Enter. Include a remote eligible/busy spill
+pair with exact file E and complete W receipt; single-line PC-212 applies only
+to non-Claude. Never widen the remote ceiling or shorten the real reporting
+contract to force Claude inline. Claude/Grok tier x CLI-version permutations
+are excluded because D-1 gates only Codex. Raw/new kinds share default-deny but
+unsupported launches are not invented; specialist full-inline Check policy is
+outside this amendment. Keep the complete Codex desktop/remote x floor/current
+x eligible/busy matrix.
+
+For every case, join TaskId/ExecutionTaskId -> queue Id -> selected runner/store
+-> session Id + accepted generation -> original attempt baseline. Require one
+complete recipient UserPrompt above the sequence floor (or original timestamp
+floor if unobservable), the expected session/generation, and ordinal equality
+of **whole** receipt.Text to W. Record E/W before delivery. Contains(B), a marker,
+normalized whitespace, Sent, an Input ack or file existence alone cannot pass.
+Normalization only removes framing line-ending differences and trailing whitespace;
+never flatten E or normalize away LF inside B.
+
+Exact file E plus complete pointer UserPrompt proves the brief was made available
+in the recipient workspace and its pointer submitted. It cannot prove the
+provider read the file or replied. Under CARD-0353, no assistant response after
+a confirmed pointer is a provider stall, never permission to retype the brief.
+Do not require or fabricate an inline E transcript for the non-Claude cases.
+
+Missing setup for Code: extend only A's nested kit/factory for kind/runner,
+retained schema/workspace, the existing modern Claude profile, RemoteSpillCourier,
+attempt/generation baselines and busy activity after TurnEnd. Extend the test-local
+remote adapter through the real phone-home client, framed peer and
+PhoneHomeCommandDispatcher Input branch, with RunnerWorkspaceService rooted in
+a temporary mirror. The peer's bare `{ok:true}` default is insufficient. A
+test-local IPhoneHomeRuntimeSurface may model composer, launch/snapshot and transcript;
+its UserPrompt is generated only by actually submitted input. Read the file in
+its input callback **before** accepting pointer bytes; never write the file in
+OnSubmitted. Pull that transcript through the real Transcript operation/catch-up.
+Do not prepopulate expected E/W as successful receipts. Keep shared helpers and
+production spill/queue files unchanged. V-21/V-22 stay two single [Test] methods
+with internal vectors; no additional TUnit results.
+
+Assertion order is part of the executable freeze. Run the Claude inline vector
+first: check CR absence/separate Enter (PC-215), then full submitted W (PC-187),
+then bracketed wrapper (PC-214). In local spill vectors check file bytes (PC-210)
+before the duplicate literal-B assertion. At remote first input check file
+**existence** (PC-217) before exact bytes (PC-211); a missing file is a recorded
+false result, never an unlabelled IO exception. Check busy persisted path/bytes
+(PC-213/216) before releasing delivery. Place the kind-ceiling (PC-209) and
+pointer line-shape (PC-212) assertions before incidental output comparisons.
+In PC-218/222/223/224 negative vectors the decisive stored-state assertion is
+`row.RemoteSpillBody.ShouldBe(E, "C959-pc-NNN")`, followed by zero qualifying
+receipt; a screen-only Sent/Delivered flag alone is deliberately inconclusive.
+These orders keep each compiling defect red at its named assertion rather than
+at a shared earlier assertion or fixture exception. PCs that temporarily mutate
+excluded queue/spill code do so only in commissioned post-land Mutation; they
+do not authorize Code to edit those owner areas.
+
 ### Delivery inventory
 
 Capability evidence is memory-only by D-3: **no durable sample or probe outbox**
@@ -520,7 +635,7 @@ durable successful sample would be a defect.
 | Hosted probe -> singleton -> local GET and registration producer | Completed attempt replaces memory atomically; same boot/fingerprint/time on both producers | V-4/V-5 hold startup attempt, fail it, restart singleton; actual deserialized capability fields become unknown then fresh. GET starts zero children. |
 | Snapshot -> PhoneHomeConnectionService -> real PhoneHomeConnectionWriter -> server live directory -> catalogue/status | Writer send is volatile; accepted generation owns server memory; no DB capability persistence | V-9 uses real writer, framed socket and server receive path with an already writable and a busy writer. Fail before send, after frame accepted/before sender observes completion, and disconnect before projection. Repeat the sample or reconnect; recipient fields must equal its original checkedAt. V-11 rejects old epoch after reconnect; accepted legacy registration clears it. |
 | Admission helper -> selected local HTTP client or phone-home operation -> runner probe -> matching caller | No task claim/DB transaction during eight-second request; connection/request/descriptor/profile identity binds response | V-13 drives production HTTP mapping and PhoneHomeCommandDispatcher. Busy writer/eligible writer, failed request enqueue, lost response, cancelled request and reconnect between request/response must return unknown/cancellation, never borrowed evidence. A fresh explicit request after repair returns the actual requested runner's sample. No automatic retry. |
-| Create/retry -> durable Queued task -> dispatcher -> launch queue or reused-session message queue -> recipient | TaskId -> AgentSessionId + accepted session generation -> SessionQueuedMessage.Id/ExecutionTaskId + full body and transcript baseline; task/queue rows persist, launch work item is volatile | V-17 proves refusal before claim/prep/input. V-21/V-22 use real AgentSessionLaunchQueue and SessionMessageQueueService, then read the recipient's complete matching UserPrompt from the isolated DB (and remote transcript pull). Queue insertion, Dispatched, Sent, StartedArgs and ack alone are insufficient. |
+| Create/retry -> durable Queued task -> dispatcher -> launch queue or reused-session message queue -> recipient | TaskId -> AgentSessionId + accepted generation -> SessionQueuedMessage.Id/ExecutionTaskId + E/W, spill path/bytes and transcript baseline; task/queue rows persist, launch work item is volatile | V-17 proves refusal before claim/prep/input. V-21/V-22 use real AgentSessionLaunchQueue and SessionMessageQueueService, then require complete matching W UserPrompt in the isolated DB (remote transcript pull), plus actual file bytes E for spilled input. Queue insertion, Dispatched, Sent, StartedArgs and ack alone are insufficient. |
 
 Freeze the V-21/V-22 handoff fault vectors as follows. Each starts through
 CreateAsync or RetryAsync, never by inserting the queue row being proved.
@@ -550,13 +665,33 @@ dispatch briefs here are joined through ExecutionTaskId and their full task mark
 
 For enqueue failure, no recipient receipt is allowed before explicit recovery.
 For a crash after input but before confirmation, seed no receipt on the producer:
-the recipient callback/pull must persist the actual full received body; recovery
-finds that receipt without duplicate submission. Match task marker, complete body,
-session, generation and a sequence above the attempt baseline. The expected body
-contains LF, Unicode and a suffix sentinel:
-"C959 delivery α\nsecond line\nEND-C959"; task framing is composed by the real
-producer. Compare the whole composed body, not merely the nonce or suffix.
-A clipped/wrong-session/old-generation transcript cannot satisfy this assertion.
+the recipient callback/pull persists actual complete W; recovery finds that
+receipt without duplicate submission. Match whole W, task marker, session,
+generation and sequence above the attempt baseline. E keeps literal LF/Unicode/
+suffix B. Inline W carries E; non-Claude W is the single-line pointer to exact E.
+A clipped/wrong-session/old-generation transcript cannot satisfy the assertion.
+The ee18a226 table supersedes the inline-only LF demand, including PC-187/194.
+
+Additional spill handoffs: staged E -> persisted queue-owned E/path -> runner
+file -> terminal W -> complete UserPrompt -> release queue spill bytes. Fault
+before and after each handoff. Before queue persistence, use the existing claim/
+backstop/explicit RetryAsync rule. After persistence, discard the staging courier
+by recreating DI and recover E from the row. An ack or screen-only Delivered
+retains E until complete W UserPrompt. On runner write failure require zero input
+and no receipt; after file write/before input, restart and rewrite identical bytes
+to the same owned path. After input/before status-save, pull the actual transcript
+and late-confirm with zero further body submissions. File contents remain E after
+RemoteSpillBody is cleared. Manual Failed assignment and inserted queue rows
+cannot substitute for recovery. PC-216..224 cover these independent guards.
+
+Run before/after handoff faults on desktop and remote Codex with floor/current
+evidence and eligible/busy recipients, retaining Shared/Worktree success coverage.
+Repeat new/explicit retry admission after downgrade/expiry with zero new input
+(V-17/V-22); no new per-flush gate. Claude/Grok success vectors cover their
+distinct encoding; do not multiply the shared persistence/replay fault matrix by
+ungated kinds. Grok initialization failures, filesystem containment attacks and
+specialist input remain separate owners; their unmet prerequisites confer no
+success. Every recovery receipt uses this same E/W contract.
 
 Substitutes: the adapter models a recipient and records only bytes it actually
 submits; it proves service-to-recipient queue behavior, not a vendor CLI accepting
@@ -606,8 +741,8 @@ selection; a method filter is /*/*/ClassName/ExactMethod, MinExecuted 1.
 | V-18 | A / C959_Exact_profile_model_wins | Low/Frontier exact 6.1 gated; High exact retired not gated; empty ModelId uses ladder; blank ModelArgumentName + exact id keeps model_argument_unsupported, blank/blank wrapper semantics; specialist/live model and revision drift recheck | C959-v18-model |
 | V-19 | A / C959_Profile_launcher_uses_its_own_evidence | Default new/selected old refuses; default old/selected new admits; changed PATH/PATHEXT/cwd/js/executable/metadata/boot invalidates; unknown future cwd and wrapper refuse; validation RunnerVersion=Codex 0.160.0 cannot authorize | C959-v19-selected |
 | V-20 | A / C959_Override_is_scoped_expiring_and_audited | Config validation and Create/Tick: scope/expiry/code/reason/lifetime vectors below; matching exception only, Warning with exact facts at each use; evidence unchanged; hold/auth/platform/drain/retirement/capacity/launch/profile refusals retained | C959-v20-scope |
-| V-21 | A / C959_Compatible_launch_keeps_model_and_runner | Real producer/launch/message queues to recipient transcript; desktop/remote x floor/current x eligible/busy, recovery boundaries above; one model argument=6.1, original runner, complete full-body receipt, no Warning/probe auth | C959-v21-receipt |
-| V-22 | A / C959_Retry_and_cancellation_recheck | Real RetryAsync after repair plus full queue receipt; wrong/stale/old evidence leaves status/event rows unchanged; expired override no permission; caller cancellation during probe leaves no task/claim/session, owned deadline is unknown; recovery reruns admission | C959-v22-state |
+| V-21 | A / C959_Compatible_launch_keeps_model_and_runner | Real producer/launch/message queues; desktop/remote x floor/current x eligible/busy and recovery boundaries; Codex one model=6.1 and original runner; Claude inline LF or exact spill E plus complete pointer W receipt per amendment; no Warning/probe auth | C959-v21-receipt |
+| V-22 | A / C959_Retry_and_cancellation_recheck | Real RetryAsync after durable recovery plus amended E/W recipient receipt; wrong/stale/old evidence leaves status/event rows unchanged; expired override no permission; caller cancellation leaves no task/claim/session, deadline is unknown; recovery reruns admission | C959-v22-state |
 
 #### Literal evidence and exact-launch fixtures
 
@@ -841,8 +976,13 @@ in the table order). No test execution is claimed.
 Checkpoint roster freeze: CP-1=V-1..5 (5), CP-2=V-6..8+R-4 (29),
 CP-3=V-9..13 (5), CP-4=V-14..22 (9), CP-5=R-1 (22),
 CP-6=R-2 (20), CP-7=R-3 (76). Sum=166 results (22 new, 144 existing).
-The exact seven filters/build paths/minima/time estimates below are unchanged:
-**delta 0 methods, 0 results, 0 checkpoint rows, 0 ordinary minutes**.
+The amendment keeps those seven filters/build paths/minima: **delta 0 feature
+methods and 0 feature results**. CP-4's estimate grows 10 -> 14 minutes for
+encoding/file/receipt and recovery vectors. CP-8 explicitly carries the Code
+report's required Final whole Unit lane: 3942 executed results plus 19 restored
+jq-dependent cases = **3961**; the 33 Windows-only cases are separate exclusions.
+Current Final total floor is **4127 executions = 166 + 3961**.
+The added Unit row does not alter any frozen V/R method or discharge V/R by Unit.
 Keep the single-result vector layout; any Code parameterization requires a
 documented recount and importer receipt rather than silently inflating the floor.
 
@@ -1042,8 +1182,8 @@ are additional internal cases of the same V method, not additional TUnit results
 | G-183 | D-6; Exact minimum accepted | PC-183 |
 | G-184 | D-6; No model downgrade | PC-184 |
 | G-185 | D-6; Selected runner retained | PC-185 |
-| G-186 | D-6; Producer actually enqueues full brief | PC-186 |
-| G-187 | D-6; Brief body not truncated | PC-187 |
+| G-186 | D-6; Producer actually enqueues the correct wire representation | PC-186 |
+| G-187 | D-6; Whole logical brief survives fitting, inline or spilled | PC-187 |
 | G-188 | D-6; Busy recipient preserves work | PC-188 |
 | G-189 | D-6; No spurious override audit | PC-189 |
 | G-190 | D-6; Launch handoff actually occurs | PC-190 |
@@ -1065,10 +1205,26 @@ are additional internal cases of the same V method, not additional TUnit results
 | G-206 | D-4; Selected node package owns identity and probe | PC-206 |
 | G-207 | D-3; Store replacement waits a full lease after disconnect | PC-207 |
 | G-208 | D-3; Store replacement requires explicit retirement clear | PC-208 |
+| G-209 | D-6 delivery preservation; Non-Claude inline ceiling remains zero | PC-209 |
+| G-210 | D-6 delivery preservation; Local spill keeps exact logical bytes | PC-210 |
+| G-211 | D-6 delivery preservation; Runner spill keeps exact logical bytes | PC-211 |
+| G-212 | D-6 delivery preservation; Non-Claude pointer is single-line | PC-212 |
+| G-213 | D-6 delivery preservation; Pointer binds the message-owned runner path | PC-213 |
+| G-214 | D-6 delivery preservation; Inline multiline body retains bracketed-paste wrapper | PC-214 |
+| G-215 | D-6 delivery preservation; Submit Enter is a separate write | PC-215 |
+| G-216 | D-6 recovery; Remote spill bytes persist before input | PC-216 |
+| G-217 | D-6 recovery; Runner writes spill before accepting pointer input | PC-217 |
+| G-218 | D-6 recovery; Screen/ack alone cannot release durable spill bytes | PC-218 |
+| G-219 | D-6 recovery; Restart retrieves exact spill from the durable queue row | PC-219 |
+| G-220 | D-6 recovery; Complete receipt prevents duplicate body submission | PC-220 |
+| G-221 | D-6 recovery; Lost committed launch reaches real durable failure before explicit retry | PC-221 |
+| G-222 | D-6 receipt; Head-only pointer transcript is not complete delivery | PC-222 |
+| G-223 | D-6 receipt; Prior-attempt sequence cannot confirm current delivery | PC-223 |
+| G-224 | D-6 receipt; Other session's complete transcript cannot confirm delivery | PC-224 |
 
 ### Positive controls
 
-**208 independent variants in 22 families.** Each row changes production behavior
+**224 independent variants in 22 families.** Each row changes production behavior
 by one compiling defect, leaves the other guards intact, and selects exactly the
 named method with /*/*/Class/Method (MinExecuted=1). A label below must be attached
 to the direct outcome assertion inside that method. Preserve the correct fixture
@@ -1276,18 +1432,18 @@ repair or shared-helper rewrite is authorized by this matrix.
 | PC-180 | F-20; CodexCliAdmissionTests/C959_Override_is_scoped_expiring_and_audited | Skip capacity predicate when override exists. Input: occupied runner plus matching override. **C959-pc-180**: no claim/new session. |
 | PC-181 | F-20; CodexCliAdmissionTests/C959_Override_is_scoped_expiring_and_audited | Swallow launcher rejection when override exists. Input: unsupported actual launcher plus matching override. **C959-pc-181**: existing launch refusal, starts 0. |
 | PC-182 | F-20; CodexCliAdmissionTests/C959_Override_is_scoped_expiring_and_audited | Drop model_argument_unsupported when override exists. Input: blank model argument with exact model. **C959-pc-182**: model_argument_unsupported. |
-| PC-183 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | Change version >= floor to > floor. Input: F-floor desktop/remote. **C959-pc-183**: complete matching UserPrompt. |
+| PC-183 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | Change version >= floor to > floor. Input: Codex F-floor desktop/remote. **C959-pc-183**: complete W UserPrompt plus exact E spill bytes. |
 | PC-184 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | Replace final 6.1 model argument with gpt-6-sol. Input: F-current selected task. **C959-pc-184**: one model argument exactly gpt-6.1-sol. |
 | PC-185 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | Rewrite final launch target to desktop. Input: remote F-current. **C959-pc-185**: recipient transcript belongs to selected remote session. |
-| PC-186 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | Remove Dispatcher queue enqueue for compatible task. Input: eligible and busy vectors. **C959-pc-186**: full matching UserPrompt after release. |
-| PC-187 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | Slice composed brief before Dispatcher EnqueueAsync. Input: multiline body with suffix sentinel. **C959-pc-187**: whole recipient body equals whole producer body. |
-| PC-188 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | Drop dispatch handoff when session currently busy. Input: busy then TurnEnd. **C959-pc-188**: one full recipient prompt after becoming eligible. |
+| PC-186 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | Remove Dispatcher queue enqueue for compatible task. Input: eligible/busy. **C959-pc-186**: complete matching W UserPrompt after release and exact E file when spilled. |
+| PC-187 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | In FitBriefForTyping, after BuildBrief returns, replace literal `END-C959` with empty text before either inline/spill branch. Input: B in Claude inline first, then Codex/Grok spill vectors. **C959-pc-187**: ordinal whole submitted W equals independent E.TrimEnd() for Claude; whole spill equals E and includes B for non-Claude. Never demand B inside a non-Claude pointer. Assert this before exact wrapped-payload equality. |
+| PC-188 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | Drop dispatch handoff when session busy. Input: busy then TurnEnd. **C959-pc-188**: exactly one complete W UserPrompt after eligibility, with E file if spilled. |
 | PC-189 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | Emit CLI override Warning on ordinary compatible success. Input: F-current without exception. **C959-pc-189**: CLI Warning count 0. |
-| PC-190 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | Remove Dispatcher launch enqueue while retaining message enqueue. Input: fresh compatible task. **C959-pc-190**: recipient adapter starts and full prompt arrives. |
+| PC-190 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | Remove Dispatcher launch enqueue while retaining message enqueue. Input: fresh compatible task. **C959-pc-190**: adapter starts and complete W UserPrompt arrives, with exact E file if spilled. |
 | PC-191 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | In the Dispatcher enqueue-exception catch, set claimed.Status to Working and save it. Input: enqueue fault before persistence. **C959-pc-191**: task is not Working and has no recipient receipt until recovery. |
 | PC-192 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | Reuse old session id for retry queue handoff. Input: restart and retry with new session generation. **C959-pc-192**: receipt on retry session/generation only. |
 | PC-193 | F-22; CodexCliAdmissionTests/C959_Retry_and_cancellation_recheck | Remove retry CLI gate. Input: failed task on old/unknown/stale runner. **C959-pc-193**: status unchanged and Retried count 0. |
-| PC-194 | F-22; CodexCliAdmissionTests/C959_Retry_and_cancellation_recheck | Return Queued without persisting retry transition. Input: failed old task repaired to floor. **C959-pc-194**: real queue full UserPrompt. |
+| PC-194 | F-22; CodexCliAdmissionTests/C959_Retry_and_cancellation_recheck | Return Queued without persisting retry transition. Input: real watchdog-failed task repaired to floor, explicit RetryAsync. **C959-pc-194**: real queues yield complete W UserPrompt plus exact E file on retry session/generation; no manually Failed setup qualifies this vector. |
 | PC-195 | F-22; CodexCliAdmissionTests/C959_Retry_and_cancellation_recheck | Swallow caller cancellation at create and continue SaveChanges. Input: cancelled exact probe. **C959-pc-195**: no new task/session/claim. |
 | PC-196 | F-22; CodexCliAdmissionTests/C959_Retry_and_cancellation_recheck | On owned deadline return admitted. Input: silent exact probe. **C959-pc-196**: codex_cli_version_unknown. |
 | PC-197 | F-22; CodexCliAdmissionTests/C959_Retry_and_cancellation_recheck | Reuse previous override admission on retry. Input: same task after expiry. **C959-pc-197**: refused, no Retried event. |
@@ -1302,22 +1458,36 @@ repair or shared-helper rewrite is authorized by this matrix.
 | PC-206 | F-19; CodexCliAdmissionTests/C959_Profile_launcher_uses_its_own_evidence | Substitute default package A codex.js before both resolution and probing. Input: same node with explicitly selected package B old, default A current. **C959-pc-206**: captured js prefix is B and selected B is refused. |
 | PC-207 | F-11; RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Delete only the LastDisconnect plus lease disjunct from store replacement. Input: expired registration lease, retirement cleared, same boot, recent heartbeat then disconnect, new store after 89 of 90 seconds from disconnect. **C959-pc-207**: phone_home_store_mismatch and old identity unchanged. |
 | PC-208 | F-11; RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Delete only !slot.StoreReplacementAuthorized from store replacement. Input: same boot, no socket, expired registration/disconnect leases, no retirement clear, different store. **C959-pc-208**: phone_home_store_mismatch and old identity unchanged. |
+| PC-209 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | In PtyDeliveryCeilings.ForAgentKind set the non-Claude BriefInlineMaxBytes to the unmodified instance value. Codex/Grok with measured modern profile. **C959-pc-209**: effective ceiling equals 0, followed by spill+pointer receipt. |
+| PC-210 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | In FitBriefForTyping's local File.WriteAllText only, write `brief.Replace("\n", " ")`. **C959-pc-210**: actual pointer-named file bytes equal UTF-8 E, including LF B. Place before aggregate receipt assertion. |
+| PC-211 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | In RunnerWorkspaceService.WriteSpillAsync's final write only, replace LF in spill.Body with a space. **C959-pc-211**: runner file bytes equal UTF-8 E at first input callback; pointer ack alone cannot pass. |
+| PC-212 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | In BuildBriefPointer force local `joins = false`. Non-Claude short-title pointer fixtures use explanatory form. **C959-pc-212**: submitted pointer contains neither LF nor CR, before whole-W equality. |
+| PC-213 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | In BindStagedSpill omit only row.Body path replacement; retain owned path/body. Hold busy recipient. **C959-pc-213**: persisted pointer contains exact `.antiphon/inbox/{row.Id:D}.md`, before allowing input. |
+| PC-214 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | In DeliverAsync replace WrapIfMultiline(trimmed) with trimmed. Claude inline LF. **C959-pc-214**: recorded task-body write equals ESC[200~ + W + ESC[201~; harmless fake still submits exact W, so PC-187 passes and this wrapper assertion fails. |
+| PC-215 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | In DeliverAsync append `"\r"` to payload in the body SendInputAsync call, leaving later submit untouched. **C959-pc-215**: body write contains no CR and next submit is a separate exactly-CR write; inspect ordered task writes before whole-body equality. |
+| PC-216 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | In BindStagedSpill assign row.RemoteSpillBody=null instead of staged.Spill.Body. **C959-pc-216**: a fresh DB context sees E before recipient input, with staging still alive so no setup error masks the loss. |
+| PC-217 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | In PhoneHomeCommandDispatcher.Input swap awaited SendInputAsync and WriteSpillIfPresentAsync. **C959-pc-217**: recipient's first input callback observes file existence before the separate PC-211 byte equality; also a forced write failure records zero pointer input. Capture absence as false, not FileNotFoundException. |
+| PC-218 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | Make AcceptedByCompleteUserPrompt return true for every outcome. Suppress recipient transcript but keep screen advance/ack. **C959-pc-218**: queue RemoteSpillBody still equals E and receipt count is zero; eventual genuine W UserPrompt releases bytes. |
+| PC-219 | F-22; CodexCliAdmissionTests/C959_Retry_and_cancellation_recheck | In RemoteSpillCourier.FindDurableAsync return null when row.RemoteSpillBody is nonempty. After persisted enqueue, recreate DI, remove only the test-owned recipient file, retain DB. **C959-pc-219**: bounded recovery produces exact E at original message-owned path before pointer input and complete W receipt; absent durable lookup is red, not a fake restage. |
+| PC-220 | F-22; CodexCliAdmissionTests/C959_Retry_and_cancellation_recheck | Make LateConfirmAttemptedMessagesAsync return LateConfirmCounts.Empty at entry. Crash after actual submission before status save, recreate DI and pull actual transcript. **C959-pc-220**: body submission count across both graphs remains 1 while queue settles against complete W, not a second submit. |
+| PC-221 | F-22; CodexCliAdmissionTests/C959_Retry_and_cancellation_recheck | Make FailNeverStartedAsync return 0 at entry. Drop launch after committed claim, retain DB, recreate DI and advance existing clock past delivery timeout. **C959-pc-221**: task durably Failed with recorded failure before explicit RetryAsync; then PC-194's E/W receipt. Do not manufacture failure in fixture. |
+| PC-222 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | Make PromptSubmissionMatch.IsCompleteIn return IsConfirmedBy(body, recordText). Recipient records only first 200 characters of non-Claude W. **C959-pc-222**: no transcript-confirmed verdict and spill E retained; observed head-only UserPrompt never passes complete receipt assertion. |
+| PC-223 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | Remove only `t.Sequence > baselineSequence` in TryFindConfirmingRecordAsync. Inject identical whole W at sequence equal to baseline, withhold current receipt. **C959-pc-223**: no transcript-confirmed verdict and E retained; release actual new W above floor to finish green. |
+| PC-224 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | Remove only `t.AgentSessionId == sessionId` in TryFindConfirmingRecordAsync. Other isolated session holds whole W at sequence above baseline; selected recipient withholds receipt. **C959-pc-224**: selected row remains unconfirmed with E retained, until selected session's actual receipt. |
 
-Audit: bodies read as listed; **guards=208, mapped=208, missing=0,
-duplicate PC maps=0**. All 208 have one exact method, one concrete injected
+Audit after ee18a226 amendment: bodies read as listed; **guards=224, mapped=224, missing=0,
+duplicate PC maps=0**. All 224 have one exact method, one concrete injected
 defect, one fixture and one first detecting label; executable after S1-S4 supplies
 the frozen methods/setup. None was executed in TestDesign. A new implementation
 guard or an unexecutable control returns for an explicit freeze amendment; it is
 not silently discarded. There is no claim that the current baseline already
 contains the new tests.
 
-Read-only final document audit passed: unchanged D-1..D-10 and implementation
-slices; seven byte-identical checkpoint rows with eleven fields each; 166 ordinary
-results and 55 estimated minutes; complete G/PC sequences 1..208 with unique
-one-to-one maps and a labelled assertion on every control; 22 exact method filters;
-family counts and the 1833-minute PC floor reconcile. The literal harmless-child
-PowerShell parsed with zero syntax errors; it was not executed. These checks
-validate document structure and arithmetic, not product behavior or importer output.
+The original freeze's read-only audit covered 208 controls, seven CP rows and
+166 results; its harmless-child parse was not execution. This amendment's read-only
+audit passed: 224 unique G/PC pairs, unchanged 22 method bindings, eight CP
+rows, 4127 minimum executions, 74 ordinary minutes and the Cost below. These
+are document checks, not product behavior, importer admission or PC results.
 
 ### Out of scope
 
@@ -1334,6 +1504,13 @@ validate document structure and arithmetic, not product behavior or importer out
   the existing delivery contract and does not acquire a per-write CLI gate.
 - All-model version gating and UI redesign: only known resolved gpt-6.1-sol is
   newly gated. Historical model aliases retain their behavior.
+- The delivery matrix uses writable owned local/runner workspaces. Local spill
+  IO-denial/API-pointer fallback and a runner binding with no RunnerCwd remain
+  their existing owners' scope, not new CLI-gate behavior. Local file handoff
+  faults here are crash cuts around a successful write; only the remote
+  write-before-input guard gets the explicit writer-failure vector. Do not
+  assert that all possible fallback paths require a file, or count a fallback
+  pointer as passing the exact-file vector.
 
 ### Code admission, overlap and rollout freeze
 
@@ -1366,7 +1543,7 @@ rebase/reset or widening into excluded areas is authorized.
 **Code start condition:** this committed freeze is the dispatch artifact; current
 base contains D-1..D-10; caller checks current pipeline/runner defaults/host capacity
 and no active same-source collision; Code repeats the source census with deltas;
-then bootstraps/imports the actual seven-row manifest before implementation.
+then bootstraps/imports the amended eight-row manifest before implementation.
 Native Windows CP-2 is scheduled at the same implementation source SHA.
 Missing test helpers listed above are normal S1-S3 work, not missing evidence
 to be invented. There is no unresolved human product choice or TestDesign BLOCKER.
@@ -1384,11 +1561,12 @@ through scripts/build-slot.ps1 build only tools/Antiphon.Checkpoints with
 OutputPath=bin-c959-tool/ (forward slash), then run its built dll's
 import --plan docs/superpowers/plans/2026-10-03-card-0959-runner-codex-version-plan.md
 --out .antiphon/c959-code-import.yml, with no second build. Require exit 0 and all
-seven exact filters/counts; use this built tool for the owner-bound checkpoint
+eight exact filters/counts; use this built tool for the owner-bound checkpoint
 run/wait calls. Exit 4 means bootstrap not run. Remove only owned alternate outputs
 after completion. No DOCS-0959 build/test run was performed by this freeze; the
 earlier plan-stage documentation command remains historical, outside Code's
-ordinary seven-row selection.
+ordinary selection. The original seven-row importer inspection above is historical;
+ee18a226 adds the Final Unit row without executing the importer.
 
 Runner-first ordering fixtures (internal V-5/V-11/V-13/V-15 vectors):
 1. Old server JSON reader + new runner fields/feature: ignores additions and still
@@ -1414,20 +1592,87 @@ execution is claimed from source fixtures.
 ### Checkpoints
 
 Group names name the lane. CP-2 requires Windows; all other rows are portable
-and normally run on the automatically selected Linux lane. The table is a closed
-ordinary Code/Review list, pending the TestDesign method/count freeze. Import
-validity does not establish that proposed tests already exist. CP-3 runs after
-S2-S4 together so its API projection tests have their implementation.
+and normally run on the automatically selected Linux lane. This amended table
+is the closed Final ordinary Code/Review list. Import validity is not execution.
+CP-3 runs after S2-S4; CP-8 carries the Final whole Unit requirement from the
+continuation report and owner recipe. CP-1..7 minima remain 5/29/5/9/22/20/76.
+CP-8's 3961 floor is the inherited 3942 Linux executions plus the 19 jq cases
+that must run after restoring that prerequisite. Record the 33 Windows-only
+exclusions separately; no new skip/failure or census drift permits silent lowering.
+CP-2 is a separately commissioned **Debug on native Windows at the final Code
+SHA**, 29 executed, zero skipped. Linux Unit skips cannot substitute for it.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c959-probe/` | portable-runner-probe | `/*/*/CodexCliVersionProbeTests*/C959_*` | V-1..V-5 | 5 proposed single-result methods; 0 failed/skipped | 5 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-2 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c959-windows/` | windows-native-launcher | `/*/*/(CodexCliVersionWindowsTests*)\|(CodexWindowsLaunchPolicyTests*)/*` | V-6..V-8, R-4 | 3 proposed plus 26 source-derived regression results; 0 failed/skipped | 29 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-3 | S2-S4 | `tests/Antiphon.Tests -> bin-c959-evidence/` | portable-capability-wire | `/*/*/RunnerCodexCliEvidenceTests*/C959_*` | V-9..V-13 | 5 proposed single-result methods; 0 failed/skipped | 5 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c959-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-4 | S3 | `tests/Antiphon.Tests -> bin-c959-admission/` | portable-admission-db | `/*/*/CodexCliAdmissionTests*/C959_*` | V-14..V-22 | 9 proposed single-result methods; 0 failed/skipped | 9 | 10 | true | `C804_ORPHAN_SWEEP_ROOT=c959-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-4 | S3 | `tests/Antiphon.Tests -> bin-c959-admission/` | portable-admission-db | `/*/*/CodexCliAdmissionTests*/C959_*` | V-14..V-22 | 9 single-result methods, amended E/W delivery and recovery vectors; 0 failed/skipped | 9 | 14 | true | `C804_ORPHAN_SWEEP_ROOT=c959-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-5 | S3 | `tests/Antiphon.Tests -> bin-c959-auth/` | portable-existing-refusals | `/*/*/(CodexPhoneHomeCreateTests*)\|(PinnedCodexProfileDispatchLaunchTests*)\|(ModelAvailabilityCreateTests*)\|(ModelAvailabilityDispatcherTests*)/*` | R-1 | 22 source-derived expanded results; 0 failed/skipped | 22 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c959-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-6 | S2-S4 | `tests/Antiphon.Tests -> bin-c959-directory/` | portable-directory-regression | `/*/*/(RunnerCatalogueTests*)\|(PhoneHomeDirectoryTests*)\|(PhoneHomeRunnerRetirementIdentityTests*)/*` | R-2 | 20 source-derived expanded results; 0 failed/skipped | 20 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c959-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-7 | S3 | `tests/Antiphon.Tests -> bin-c959-models/` | portable-model-regression | `/*/*/ModelAliasTests*/*` | R-3 | 76 source-derived expanded results; 0 failed/skipped | 76 | 5 | true | `C804_ORPHAN_SWEEP_ROOT=c959-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-8 | Final S1-S4 | `tests/Antiphon.Tests -> bin-c959-unit/` | portable-final-unit | `/*/*/*/*[Category=Unit]` | Final whole Unit regression | At least 3961 executed; 0 failed; only the 33 documented Windows-only exclusions, no missing-jq skips and none substitutes for V/R | 3961 | 15 | true | `C804_ORPHAN_SWEEP_ROOT=c959-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+
+The inherited Unit log is
+`/work/worktrees/task-1a73906f/.antiphon/c959-cont-unit/C959-UNIT-20261003-172357-0347/run.log`.
+Its 19 missing-jq cases are C973 cold-marker readers (6), cold-helper readers (5),
+prune/saved-donor (1), and the seven C912 cold-seed/cache/marker methods (7).
+Provide jq on the chosen test host's shell PATH before CP-8; estimate two minutes
+of environment setup, no excluded deployment/tool source change. A missing
+prerequisite is incomplete, not permission to count these as passed.
+The 33 existing Windows-only exclusions comprise executable/npm resolution (2),
+canonical cwd/argv/reported paths (3), drive-letter directory listing (5), Grok
+raw-rules argv (12), ConPTY delivery profiles (5), Windows checkpoint process
+pipes/argv/descendants/concurrency (4), and sharing-mode filesystem locks (2).
+These reasons are recorded in that log and cannot qualify native Windows
+behavior. CP-2 independently owns this card's 29 required Windows results.
+
+#### Next Code continuation, mandatory order
+
+Start from this amendment's pushed tip, reported as the exact full SHA in the
+ee18a226 completion. Retain original landing owner
+`1a73906f-2dd0-451e-95be-7dd459c882ad`; this docs-only task is not a new Code
+landing owner. Import the current **eight-row** table after the listed four-minute
+isolated tool bootstrap. Earlier seven-row importer notes are historical.
+
+1. Implement amended V-21 and dependent V-22 E/W assertions, including Claude
+   LF inline and Codex/Grok exact-file plus complete single-line pointer receipt.
+   Preserve every other frozen method, vector and decision. Do not repair the
+   failed assertion by raising a ceiling or changing production spill behavior.
+2. Finish remote/busy delivery and durable recovery at every listed handoff:
+   real producer, real queues, retained schema, recreated DI, actual transcript
+   pull, real FailNeverStartedAsync then explicit RetryAsync when terminalized,
+   exact file bytes, original attempt/generation fences and zero duplicate body
+   submits. The present admission-only V-22 pass does not satisfy this item.
+3. Complete remaining launcher/transport/profile/override guards identified by
+   the Code report: V-2/3/4 identity and owned-child lifecycle, including parent
+   exit before descendant EOF; V-9/11 reconnect/stale frames; V-13 wrong-runner/
+   fingerprint correlation; V-17 redirect/chain/warm drift; V-18 specialist/live
+   model/revision drift; V-19 package/metadata/boot/future-relative-cwd and cached
+   validation exclusion; V-20 Tick audit and hold/auth/platform/drain/retirement/
+   capacity/launch/profile variants, null/malformed config and kind-canonical model.
+   Fingerprint shape alone is not request correlation. If the existing exact-
+   launcher seam cannot verify the frozen claim, return next: plan with concrete
+   evidence; do not invent a successful sample or relax the freeze.
+4. Complete manual strength/guard qualification: inspect the production line and
+   detecting assertion for every independent PC (all 224 remain pending for
+   post-land Mutation); document receipt provenance, fault recovery, cleanup
+   ownership and substitutes' limits. No deliberate mutant or live provider
+   canary is authorized in Code by this amendment. The prior Coverage command
+   was INVALID; fix no excluded Coverage-tool source and claim no coverage pass.
+5. Commit final repairs, then complete fresh Final ordinary verification: whole
+   Unit CP-8, every named full affected integration class and all V/R in CP-1..7,
+   plus manual qualification. Schedule Windows CP-2 as separate Debug at that
+   exact final SHA, minimum 29, zero failed/skipped. Record counts, source and
+   unedited receipts. Then ordinary **Review**, not land; caller land and later
+   SourceLanding Mutation remain separate. Eventual activation: runners first,
+   server enforcement second; no restart/deploy in this continuation.
+
+Pending ordinary qualifications carried forward: V-2/3/4/6/7/8/9/11/13/17/18/
+19/20/21/22 and R-4 plus the manual items. Historical green methods do not
+discharge missing internal vectors. This amendment itself runs no repository
+build, tests, importer or PC; its only validation is read-only document/source
+census, diff and arithmetic. No human product choice is outstanding.
 
 ## Verification execution and TestDesign handoff
 
@@ -1482,20 +1727,22 @@ Do not claim runtime tests or PCs passed from this documentation-only check.
 
 ### Cost
 
-All figures here are **estimated**, none measured. Ordinary Code V/R remains
-**55 minutes**, the sum of unchanged CP-1..CP-7: 8+8+8+10+8+8+5, including
-their seven isolated builds, with **166 executions** (22 new + 144 regression).
-Code's separately named bin-c959-tool bootstrap/import setup is **4 minutes**:
-total ordinary Code verification/admission floor **59 minutes**, excluding
-authoring and slot queue wait. Review repeating the affected rows adds 55 minutes.
+All costs below are **estimated**, not execution receipts. Ordinary Code V/R is
+**74 minutes**, the sum of CP-1..CP-8: 8+8+8+14+8+8+5+15, including
+eight isolated builds. CP-1..7 retain **166 executions** (22 new + 144 regression);
+Final Unit adds 3961, giving a **4127 executed-result floor**.
+Code setup is **6 minutes**: bin-c959-tool bootstrap/import 4 plus jq prerequisite
+2. Total ordinary Code verification/admission floor **80 minutes**, excluding
+authoring and slot queue wait. Review repeating the complete rows adds 74 minutes.
 There is no TestDesign build/test cost receipt; read-only inspection did not
 execute any checkpoint.
 
-Mutation now has **208** independent controls, replacing the unfrozen 22-family,
-300-minute planning envelope. Cost each exact method's baseline at four minutes
-(portable) or five (Windows), including its isolated build. Each PC then costs
-four-minute red build/run + 0.25-minute restoration/check + four-minute green
-build/run (8.25 total); Windows costs five + 0.25 + five (10.25).
+Mutation now has **224** independent controls (208 retained/retargeted plus 16
+delivery/recovery controls). Cost each baseline at four minutes portable, five
+Windows, or six for amended V-21/V-22, including isolated build. Each PC costs
+red build/run + 0.25-minute restoration/check + green build/run: 8.25 portable,
+10.25 Windows and 12.25 for V-21/V-22. The added time funds full internal delivery
+vectors, not a wider method selection. No mutation is executed by this amendment.
 Each row below names an exact filter and its control count, with MinExecuted=1
 per invocation. Baseline and both mutant/restored phases stay method-scoped.
 
@@ -1521,24 +1768,24 @@ per invocation. Baseline and both mutant/restored phases stay method-scoped.
 | F-18; /*/*/CodexCliAdmissionTests/C959_Exact_profile_model_wins | 6 | 4 | 8.25 | 53.5 |
 | F-19; /*/*/CodexCliAdmissionTests/C959_Profile_launcher_uses_its_own_evidence | 9 | 4 | 8.25 | 78.25 |
 | F-20; /*/*/CodexCliAdmissionTests/C959_Override_is_scoped_expiring_and_audited | 23 | 4 | 8.25 | 193.75 |
-| F-21; /*/*/CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | 10 | 4 | 8.25 | 86.5 |
-| F-22; /*/*/CodexCliAdmissionTests/C959_Retry_and_cancellation_recheck | 6 | 4 | 8.25 | 53.5 |
+| F-21; /*/*/CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | 23 | 6 | 12.25 | 287.75 |
+| F-22; /*/*/CodexCliAdmissionTests/C959_Retry_and_cancellation_recheck | 9 | 6 | 12.25 | 116.25 |
 
-The **Mutation PC floor is 1833 minutes** (91 baseline + 1742 red/restore/green),
-plus **4 minutes** for inherited-driver/evidence setup = **1837 minutes**.
-The combined setup/build + ordinary V/R + all PC floor is **1896 minutes**:
-4 Code bootstrap + 55 CP ordinary + 4 Mutation setup + 91 method baselines +
-1742 PC cycles. A separate full ordinary Review makes **1951 minutes**.
+The **Mutation PC floor is 2097 minutes** (95 baseline + 2002 red/restore/green),
+plus **4 minutes** inherited-driver/evidence setup = **2101 minutes**.
+Combined setup/build + ordinary V/R + all PC floor is **2181 minutes**:
+6 Code setup + 74 CP ordinary + 4 Mutation setup + 95 method baselines +
+2002 PC cycles. A separate full ordinary Review makes **2255 minutes**.
 Authoring, native Windows scheduling, slot waits and findings/repairs are additional.
 
 No broad suite substitutes for a named method. Reuse the known clean baseline
 for the same method/source after exact restoration; retain every red/green
 receipt independently. Relative to repeating an extra baseline for every variant,
-22 method baselines instead of 208 save an estimated **754 minutes**
-(176 redundant portable baselines x4 + 10 redundant Windows baselines x5).
-Measured savings=0: no execution occurred. There are **438** method executions
-in the PC estimate (22 baselines + 208 red + 208 green), separate from the
-166 ordinary executions. The larger floor is the consequence of independently
+22 method baselines instead of 224 save an estimated **878 minutes**
+(162 redundant four-minute + 30 redundant six-minute + 10 redundant five-minute
+baselines). Measured savings=0: no execution occurred here. There are **470**
+method executions in the PC estimate (22 baselines + 224 red + 224 green),
+separate from the 4127 ordinary floor. The larger floor follows independently
 testing the guards; it is not a claim of measured runtime or permission to batch
 controls sharing a method/file.
 
@@ -1577,5 +1824,5 @@ No unrelated structural defect was established in this Plan dispatch.
 
 --- next stage ---
 next: code
-handoff: Implement frozen CARD-0959 S1-S4 after current-base census, active-footprint collision check and real seven-row importer admission; 22 new methods, 166 ordinary results, 208 post-land PCs. Keep excluded queue/attention/deploy/Grok/Coverage files untouched; schedule Windows CP-2 at the same implementation SHA and activate runners before server enforcement.
+handoff: Continue from pushed ee18a226 amendment tip: implement V-21/V-22 E/W contract, remote/busy/durable recovery, launcher/transport/profile/override guards and manual qualification; run Final CP-1..8 with jq, separate Windows Debug CP-2 at final SHA, then Review. 22 feature methods/166 results, Unit floor 3961, 224 post-land PCs; preserve excluded source areas.
 artifact: docs/superpowers/plans/2026-10-03-card-0959-runner-codex-version-plan.md
