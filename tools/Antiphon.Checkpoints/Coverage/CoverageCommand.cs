@@ -15,7 +15,7 @@ public sealed class CoverageCommand
         {
             if (format is not ("text" or "json")) throw new InvalidDataException("unsupported format");
             root = CanonicalRoot(root);
-            var contents = new Dictionary<string, string>(PathComparer());
+            var contents = new Dictionary<string, (string Text, int Bytes)>(PathComparer());
             var planPath = SelectPath(plan); var planText = Read(planPath, ConfinedFileReader.DocumentLimit);
             report.Plan = Relative(root, planPath); report.PlanSha256 = PlanCoverageReport.Hash(planText);
             var imported = PlanTableImporter.ImportMarkdown(planText, planPath);
@@ -86,12 +86,14 @@ public sealed class CoverageCommand
             string Read(string path, int limit)
             {
                 inputPath = Relative(root, path);
-                if (!contents.TryGetValue(path, out var text))
+                if (!contents.TryGetValue(path, out var content))
                 {
-                    text = ConfinedFileReader.Read(root, path, limit);
-                    contents.Add(path, text);
+                    var text = ConfinedFileReader.Read(root, path, limit, out var bytes);
+                    content = (text, bytes);
+                    contents.Add(path, content);
                 }
-                return text;
+                if (content.Bytes > limit) throw new InvalidDataException("selected file exceeds size limit");
+                return content.Text;
             }
             string SelectPath(string path, bool directoryAllowed = false)
             {

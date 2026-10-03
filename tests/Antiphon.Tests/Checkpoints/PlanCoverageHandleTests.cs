@@ -97,6 +97,18 @@ public sealed class PlanCoverageHandleTests : CheckpointTestBase
         content.ShouldBe("verified bytes", "coverage-read-from-verified-handle");
         File.ReadAllText(path).ShouldBe("replacement bytes", "coverage-path-replacement-exercised");
     }
+    [Test]
+    public void cached_plan_bytes_still_obey_the_source_limit()
+    {
+        var root = TempDir(); var world = PlanCoverageFixture.WriteWorld(root);
+        // A raw string makes this file both valid C# and a valid imported Markdown plan.
+        var text = "class PlanText { const string Value = \"\"\"\n" + PlanCoverageFixture.Plan()
+            + "\n\"\"\"; }\nclass Demo { void Check() { value.ShouldBe(1, \"target-label\"); } }\n";
+        File.WriteAllText(world.Source, text + new string(' ', ConfinedFileReader.SourceLimit));
+        var output = new StringWriter();
+        new CoverageCommand().Run(root, world.Source, output: output).ShouldBe(2, "coverage-cached-source-limit-refused");
+        output.ToString().ShouldContain("selected file exceeds size limit", Case.Sensitive, "coverage-cached-source-limit-finding");
+    }
     private static string SelectedPath(string kind, string root, (string Plan, string Source) world)
     {
         if (kind == "source") return world.Source;

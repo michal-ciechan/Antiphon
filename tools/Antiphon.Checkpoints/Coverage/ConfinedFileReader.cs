@@ -21,8 +21,12 @@ public static class ConfinedFileReader
     }
 
     // The optional hook is a deterministic test seam at the verification/read boundary.
-    public static string Read(string root, string path, int limit, Action? afterVerification = null)
+    public static string Read(string root, string path, int limit, Action? afterVerification = null) =>
+        Read(root, path, limit, out _, afterVerification);
+
+    public static string Read(string root, string path, int limit, out int byteCount, Action? afterVerification = null)
     {
+        byteCount = 0;
         using var handle = OperatingSystem.IsLinux() ? OpenLinux(path) : OperatingSystem.IsWindows() ? OpenWindows(path)
             : throw new InvalidDataException("opened-handle verification unsupported on this platform");
         var metadata = OperatingSystem.IsLinux() ? InspectLinux(handle) : InspectWindows(handle);
@@ -39,6 +43,7 @@ public static class ConfinedFileReader
             if (content.Length + count > limit) throw new InvalidDataException("selected file exceeds size limit");
             content.Write(buffer, 0, count);
         }
+        byteCount = (int)content.Length;
         content.Position = 0;
         using var reader = new StreamReader(content, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
         return reader.ReadToEnd();
