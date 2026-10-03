@@ -14,6 +14,7 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
         RunnerCapabilityFeatures.CompactionContinuationStopV1,
         RunnerCapabilityFeatures.WorkspaceRepositoryV1,
         RunnerCapabilityFeatures.WorkspacePublishV1,
+        CodexCliVersionProbe.Capability,
     ];
     private readonly SessionRunnerRuntime _runtime;
     private readonly RunnerBuildDto _build;
@@ -43,13 +44,18 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
         if (custody is not null)
             features = [.. features, RunnerCapabilityFeatures.VerificationCustodyV1];
         features = [.. features, RunnerCapabilityFeatures.RequiredPlatformV1];
+        var cli = _runtime.CodexCliProbe?.Snapshot;
         return new RunnerCapabilitiesDto(
             decision.Backend.ToString(), decision.Requested, decision.Reason, decision.FellBack,
             SessionRunnerRuntime.SupportedTranscriptFormats, _build, backends,
             Version: _build.CommitSha ?? "unknown",
             Features: features, VerificationCustodyBackend: custody,
             RunnerStoreId: _runtime.RunnerStoreId,
-            Platform: RunnerPlatformWire.FromOperatingSystem());
+            Platform: RunnerPlatformWire.FromOperatingSystem(),
+            CodexCliVersion: cli?.CodexCliVersion,
+            CodexCliVersionCheckedAtUtc: cli?.CodexCliVersionCheckedAtUtc,
+            CodexCliVersionError: cli?.CodexCliVersionError,
+            CodexCliLauncherFingerprint: cli?.CodexCliLauncherFingerprint);
     }
 
     public string? VerificationCustodyBackend =>

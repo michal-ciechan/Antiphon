@@ -54,6 +54,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// </summary>
     public string? VerificationCustodyBackend => _custodyBackend.Value;
 
+    // The DI singleton owns samples. Reads never launch a child.
+    internal CodexCliVersionProbe? CodexCliProbe { get; set; }
+
     private string? DetectCustodyBackend() => OperatingSystem.IsWindows()
         ? PtyBackendPolicy.Resolve(_settings.PtyBackend).Backend == PtyBackend.ModernConPty
             ? VerificationCustodyBackends.WindowsJob : null
@@ -114,9 +117,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         HerdrClient? herdrClient = null,
         IProcessLivenessProbe? processLiveness = null,
         RunnerStartupDiagnostics? startupDiagnostics = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        CodexCliVersionProbe? codexCliProbe = null)
     {
         _settings = settings.Value;
+        CodexCliProbe = codexCliProbe;
         _custody = new(() => new RunnerCustodyLedger(Path.Combine(_settings.SessionLogPath, "verification-custody")));
         _custodyBackend = new(DetectCustodyBackend);
         _logger = logger;
@@ -745,6 +750,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         var advertised = features.Contains(RunnerCapabilityFeatures.RequiredPlatformV1)
             ? features
             : features.Append(RunnerCapabilityFeatures.RequiredPlatformV1).ToArray();
+        advertised = advertised.Contains(CodexCliVersionProbe.Capability)
+            ? advertised : advertised.Append(CodexCliVersionProbe.Capability).ToArray();
+        var cli = CodexCliProbe?.Snapshot;
         return new RunnerCapabilitiesDto(
             decision.Backend.ToString(), decision.Requested, decision.Reason, decision.FellBack,
             SupportedTranscriptFormats, build, sessionBackends,
@@ -752,7 +760,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             Features: advertised,
             VerificationCustodyBackend: VerificationCustodyBackend,
             RunnerStoreId: RunnerStoreId,
-            Platform: RunnerPlatformWire.FromOperatingSystem());
+            Platform: RunnerPlatformWire.FromOperatingSystem(),
+            CodexCliVersion: cli?.CodexCliVersion,
+            CodexCliVersionCheckedAtUtc: cli?.CodexCliVersionCheckedAtUtc,
+            CodexCliVersionError: cli?.CodexCliVersionError,
+            CodexCliLauncherFingerprint: cli?.CodexCliLauncherFingerprint);
     }
 
     public RunnerSessionDto Get(Guid sessionId) => GetSession(sessionId).ToDto();
