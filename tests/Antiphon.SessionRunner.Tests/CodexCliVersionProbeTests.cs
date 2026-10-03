@@ -71,6 +71,7 @@ public sealed class CodexCliVersionProbeTests
     public async Task C959_Probe_is_version_only_and_auth_free()
     {
         using var kit = new CodexCliVersionTestFixture { Mode = "stdin" };
+        using var inherited = new SyntheticProbeEnvironment(kit.Root);
         var sample = await kit.Attempt();
         CodexCliVersionTestFixture.Text(sample, "codexCliVersion").ShouldBe("0.160.0", "C959-v02-argv");
         var start = kit.Starts.Single();
@@ -88,6 +89,28 @@ public sealed class CodexCliVersionProbeTests
         CodexCliVersionTestFixture.Text(sample, "codexCliVersionError").ShouldBeNull("C959-pc-199");
         var absolute = await kit.Attempt(kit.Executable);
         CodexCliVersionTestFixture.Text(absolute, "codexCliVersion").ShouldBe("0.160.0", "C959-v02-native");
+        var a = Path.Combine(kit.Root, "A");
+        var b = Path.Combine(kit.Root, "B");
+        Directory.CreateDirectory(a); Directory.CreateDirectory(b);
+        var name = OperatingSystem.IsWindows() ? "codex.exe" : "codex";
+        var firstExe = Path.Combine(a, name);
+        var secondExe = Path.Combine(b, name);
+        File.Copy(kit.Executable, firstExe); File.Copy(kit.Executable, secondExe);
+        kit.ChildMode = info => info.FileName == secondExe ? "version-old" : "success";
+        var pathA = a + Path.PathSeparator + b;
+        var pathB = b + Path.PathSeparator + a;
+        var first = await kit.Attempt(name, path: pathA);
+        CodexCliVersionTestFixture.Text(first, "codexCliVersion").ShouldBe("0.160.0", "C959-v02-path-A");
+        kit.Starts.Last().FileName.ShouldBe(firstExe, "C959-v02-selected-A");
+        var second = await kit.Attempt(name, path: pathB);
+        CodexCliVersionTestFixture.Text(second, "codexCliVersion").ShouldBe("0.156.1", "C959-v02-path-B");
+        kit.Starts.Last().FileName.ShouldBe(secondExe, "C959-v02-selected-B");
+        CodexCliVersionTestFixture.Text(second, "codexCliLauncherFingerprint")
+            .ShouldNotBe(CodexCliVersionTestFixture.Text(first, "codexCliLauncherFingerprint"), "C959-v02-path-invalidates");
+        var explicitB = await kit.Attempt(secondExe, path: pathA);
+        CodexCliVersionTestFixture.Text(explicitB, "codexCliVersion").ShouldBe("0.156.1", "C959-v02-absolute-ignores-PATH");
+        foreach (var evidence in new[] { first, second, explicitB })
+            evidence.GetRawText().Contains("C959-env-canary", StringComparison.Ordinal).ShouldBeFalse("C959-pc-026");
     }
 
     [Test]
@@ -289,5 +312,25 @@ public sealed class CodexCliVersionProbeTests
     {
         try { await task.WaitAsync(timeout); return true; }
         catch (TimeoutException) { return false; }
+    }
+
+    private sealed class SyntheticProbeEnvironment : IDisposable
+    {
+        private readonly Dictionary<string, string?> _previous = [];
+        public SyntheticProbeEnvironment(string root)
+        {
+            foreach (var key in new[] { "OPENAI_API_KEY", "ANTIPHON_TASK_TOKEN", "HTTP_PROXY", "HTTPS_PROXY",
+                         "NODE_OPTIONS", "NODE_PATH", "BASH_ENV", "ENV", "DOTNET_STARTUP_HOOKS", "CODEX_HOME" })
+            {
+                _previous[key] = Environment.GetEnvironmentVariable(key);
+                Environment.SetEnvironmentVariable(key, key == "CODEX_HOME" ? Path.Combine(root, "parent-home") : "C959-env-canary");
+            }
+            Directory.CreateDirectory(Path.Combine(root, "parent-home"));
+            File.WriteAllText(Path.Combine(root, "parent-home", "auth.json"), "C959-env-canary");
+        }
+        public void Dispose()
+        {
+            foreach (var pair in _previous) Environment.SetEnvironmentVariable(pair.Key, pair.Value);
+        }
     }
 }
