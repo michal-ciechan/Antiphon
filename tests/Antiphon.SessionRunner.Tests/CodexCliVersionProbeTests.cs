@@ -92,17 +92,17 @@ public sealed class CodexCliVersionProbeTests
         var a = Path.Combine(kit.Root, "A");
         var b = Path.Combine(kit.Root, "B");
         Directory.CreateDirectory(a); Directory.CreateDirectory(b);
-        var name = OperatingSystem.IsWindows() ? "codex.exe" : "codex";
-        var firstExe = Path.Combine(a, name);
-        var secondExe = Path.Combine(b, name);
+        var executableName = OperatingSystem.IsWindows() ? "codex.exe" : "codex";
+        var firstExe = Path.Combine(a, executableName);
+        var secondExe = Path.Combine(b, executableName);
         File.Copy(kit.Executable, firstExe); File.Copy(kit.Executable, secondExe);
         kit.ChildMode = info => info.FileName == secondExe ? "version-old" : "success";
         var pathA = a + Path.PathSeparator + b;
         var pathB = b + Path.PathSeparator + a;
-        var first = await kit.Attempt(name, path: pathA);
+        var first = await kit.Attempt(executableName, path: pathA);
         CodexCliVersionTestFixture.Text(first, "codexCliVersion").ShouldBe("0.160.0", "C959-v02-path-A");
         kit.Starts.Last().FileName.ShouldBe(firstExe, "C959-v02-selected-A");
-        var second = await kit.Attempt(name, path: pathB);
+        var second = await kit.Attempt(executableName, path: pathB);
         CodexCliVersionTestFixture.Text(second, "codexCliVersion").ShouldBe("0.156.1", "C959-v02-path-B");
         kit.Starts.Last().FileName.ShouldBe(secondExe, "C959-v02-selected-B");
         CodexCliVersionTestFixture.Text(second, "codexCliLauncherFingerprint")
