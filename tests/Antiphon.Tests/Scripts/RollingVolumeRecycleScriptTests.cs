@@ -55,6 +55,31 @@ public sealed class RollingVolumeRecycleScriptTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Busy_routed_and_land_in_flight_refuse()
     {
+        foreach (var vector in new[] { "closed", "active-excluded", "unscoped", "withheld", "wrong-count", "inconsistent" })
+        {
+            using var scoped = new C1008WrapperFixture();
+            var root = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1";
+            var other = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb2";
+            var id = "22222222-2222-2222-2222-222222222222";
+            var first = scoped.State["tasks"]!.DeepClone();
+            var second = first.DeepClone(); second["scope"]!["projectId"] = other;
+            var row = new JsonObject { ["id"] = id, ["status"] = vector is "active-excluded" or "unscoped" ? "Queued" : "Succeeded",
+                ["runnerId"] = "server2-temp", ["projectId"] = vector == "unscoped" ? null : other,
+                ["scopeSource"] = vector == "unscoped" ? "None" : "Task", ["landRequestedAt"] = null, ["landStartedAt"] = null };
+            if (vector == "unscoped") first["items"]!.AsArray().Add(row.DeepClone());
+            else {
+                first["excluded"]!["total"] = vector == "wrong-count" ? 2 : 1;
+                first["excluded"]!["byProject"]!.AsArray().Add(new JsonObject { ["projectId"] = other, ["count"] = 1 });
+                if (vector != "withheld") second["items"]!.AsArray().Add(row.DeepClone());
+                if (vector == "inconsistent") first["items"]!.AsArray().Add(new JsonObject { ["id"] = id, ["status"] = "Succeeded",
+                    ["runnerId"] = "other", ["projectId"] = null, ["scopeSource"] = "None", ["landRequestedAt"] = null, ["landStartedAt"] = null });
+            }
+            scoped.State["taskScopes"] = new JsonObject { [root] = first, [other] = second };
+            scoped.State["details"] = new JsonObject { [id] = new JsonObject { ["summary"] = row.DeepClone(), ["landRequest"] = null } };
+            var result = await scoped.Run("retire-temp");
+            result.Exit.ShouldBe(vector == "closed" ? 0 : 2, "recycle-work-gates: actual scoped closure " + vector + "; " + result.Output);
+            if (vector != "closed") result.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse();
+        }
         using (var held = new C1008WrapperFixture())
         {
             held.State["statuses"]!["server2"]!["draining"] = true;
@@ -176,6 +201,13 @@ public sealed class RollingVolumeRecycleScriptTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Option_manifest_is_strict()
     {
+        using (var legacy = new C1008HostFixture())
+        {
+            var direct = await legacy.Run(extra: "C1008_CONTEXT=''");
+            direct.Exit.ShouldBe(0, "recycle-manifest-strict: direct deploy-parent remains available; " + direct.Output);
+            legacy.Removed.ShouldBeEmpty("recycle-manifest-strict: no context cannot authorize volume removal");
+            legacy.Trace.Any(a => a[0] == "stop" || a[0] == "rm").ShouldBeFalse();
+        }
         using (var good = new C1008WrapperFixture())
         {
             var run = await good.Run("retire-temp", "-DryRun");
@@ -260,6 +292,22 @@ public sealed class RollingVolumeRecycleScriptTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Refusal_receipts_do_not_leak_secrets()
     {
+        using (var git = new C1008HostFixture())
+        {
+            Directory.CreateDirectory(Path.Combine(git.Root, "work", "SENTINEL_C1008_FILENAME_CREDENTIAL.git"));
+            git.Docker["gitStderr"] = "SENTINEL_C1008_GIT_CREDENTIAL";
+            var refused = await git.Run();
+            refused.Exit.ShouldBe(2, "recycle-receipt-custody: malformed Git is refused");
+            refused.Output.ShouldContain("RecycleGitAuditUnknown");
+            refused.Output.ShouldNotContain("UnhandledExit");
+            foreach (var publicText in new[] { refused.Output,
+                File.ReadAllText(Path.Combine(git.Root, "server/recycle/c100800000000000000000000000000001.json")) })
+            {
+                publicText.ShouldNotContain("SENTINEL_C1008_FILENAME_CREDENTIAL");
+                publicText.ShouldNotContain("SENTINEL_C1008_GIT_CREDENTIAL");
+            }
+            git.Removed.ShouldBeEmpty();
+        }
         using (var host = new C1008HostFixture())
         {
             host.Docker["containers"]![0]!["Config"]!["Env"] = new JsonArray("SENTINEL_C1008_DOCKER_CREDENTIAL");

@@ -536,6 +536,11 @@ public sealed class RemoteScriptContractTests
             f.Removed.ShouldBeEmpty("recycle-preview-readonly: no selected removal");
             f.Trace.Any(a => new[] { "stop", "rm", "create", "start", "run" }.Contains(a[0]) || a.Take(2).SequenceEqual(new[] { "volume", "rm" })).ShouldBeFalse();
             run.Output.ShouldContain("auditPending=true");
+            f.Statuses[main ? "server2" : "server2-temp"]!["sessions"] = 1;
+            var apply = await f.Run(main ? "deploy-parent" : "retire-temp-runner");
+            apply.Exit.ShouldBe(2, "recycle-preview-readonly: apply rechecks changed facts");
+            apply.Output.ShouldContain("RunnerBusy");
+            f.Removed.ShouldBeEmpty();
         }
     }
 

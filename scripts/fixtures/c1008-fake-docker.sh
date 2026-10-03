@@ -86,6 +86,7 @@ else if(args[0]==='volume'&&args[1]==='inspect') {
  // Remap the mount path, preserving unrelated scratch filenames such as /worktrees.
  let program=state.auditProgram.replace(/\/work(?=[\/\s"')]|$)/g,path.join(root,'work'));
  if(state.gitFault)program='git() { case " $* " in *" rev-list "*) '+(state.gitFault==='exit128'?'return 128':state.gitFault==='timeout'?'return 124':state.gitFault==='empty'?'return 0':state.gitFault==='nonnumeric'?'echo unknown; return 0':'echo -1; return 0')+' ;; esac; command git "$@"; }; '+program;
+ if(state.gitStderr)process.stderr.write(state.gitStderr+'\n');
  const run=cp.spawnSync('bash',['-c',program],{env:{...process.env},encoding:'utf8',timeout:15000});out(run.stdout||'');c.State={Running:false,Status:'exited'};save();process.exit(run.status??2);
 } else if(args[0]==='cp') {
  // The pinned audit helper receives only the test-materialized production program.

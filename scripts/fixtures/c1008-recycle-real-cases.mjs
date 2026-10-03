@@ -15,6 +15,7 @@ console.log('C1008_REAL_ROOT=' + root);
 const prefix = 'c1008rd' + crypto.randomBytes(8).toString('hex');
 const label = 'io.antiphon.c1008-real';
 const source = cp.execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
+fs.writeFileSync(root+'/ownership.json',JSON.stringify({schema:1,prefix,source}));
 const base = 'c6d5d56b5b4c565d36157e21de9c85029cc45b53';
 const scripts = {B:cp.execFileSync('git',['show',base+':scripts/c590-remote.sh'],{encoding:'utf8'}), C:fs.readFileSync('scripts/c590-remote.sh','utf8')};
 const roles = ['work','runner-tmp','dind-data','runner-state'];
@@ -73,7 +74,8 @@ function cleanupCase(f) {
     const fact=JSON.parse(docker('inspect',id))[0];
     if (fact.Name.startsWith('/'+f.prefix)) {objects.containers.add(id); runDocker('rm','-f','--',id);}
   }
-  for(const n of [...f.names,f.origin]) if(allVolumes().includes(n)) runDocker('volume','rm','--',guard(n));
+  const present=new Set(allVolumes());
+  for(const n of [...f.names,f.origin]) if(present.has(n)) runDocker('volume','rm','--',guard(n));
 }
 function fixture(mainReplacement=true) {
   cleanupCase(active);
@@ -97,7 +99,7 @@ function fixture(mainReplacement=true) {
   f.names.slice(11).forEach(n=>createVolume(n,[])); createVolume(f.origin,[]);
   const args=f.names.flatMap((n,i)=>['--mount','type=volume,source='+guard(n)+',target=/v'+i]);
   runDocker('run','--rm','--network','none','--label',label+'='+prefix,...args,image,'bash','-c',f.names.map((n,i)=>`printf 'sentinel:${n}:old\\n' > /v${i}/sentinel; chown 1654:1654 /v${i}; chmod 0700 /v${i}`).join('; '));
-  f.before=Object.fromEntries(f.names.map(n=>[n,volumeFacts(n)]));
+  f.before=Object.fromEntries(JSON.parse(runDocker('volume','inspect',...f.names.map(guard))).map(v=>[v.Name,v]));
   f.marker=fs.readFileSync(f.root+'/server/cache/seed-accepted','utf8');
   runDocker('compose','-p',f.main,'-f',f.root+'/'+f.main+'.json','up','-d');
   f.originalRunner=containers(f.main).find(id=>JSON.parse(docker('inspect',id))[0].Config.Labels['com.docker.compose.service']==='session-runner');
@@ -110,7 +112,12 @@ function payload(f,name,expected=true) {
 }
 function preservation(f) {
   const retained=[f.main+'_runner-state',...f.caches,...f.names.slice(11)];
-  for (const n of retained) {if (JSON.stringify(volumeFacts(n))!==JSON.stringify(f.before[n])) throw Error('GenerationChanged:'+n); payload(f,n);}
+  const observed=JSON.parse(runDocker('volume','inspect',...retained.map(guard)));
+  for (const n of retained) {if (JSON.stringify(observed.find(v=>v.Name===n))!==JSON.stringify(f.before[n])) throw Error('GenerationChanged:'+n);}
+  const values=runDocker('run','--rm','--network','none','--label',label+'='+prefix,'--user','1654:1654',
+    ...retained.flatMap((n,i)=>['--mount','type=volume,source='+guard(n)+',target=/v'+i+',readonly']),image,'bash','-c',
+    retained.map((n,i)=>'cat /v'+i+'/sentinel').join('; ')).split('\n');
+  if (values.length!==retained.length || values.some((v,i)=>v!==`sentinel:${retained[i]}:old`)) throw Error('PreservedPayloadChanged');
   if (fs.readFileSync(f.root+'/server/cache/seed-accepted','utf8')!==f.marker) throw Error('MarkerChanged');
   if (!JSON.parse(runDocker('inspect',f.broker))[0].State.Running) throw Error('BrokerStopped');
 }
@@ -193,7 +200,7 @@ function gitGraph(f,variant) {
   args[args.indexOf('0:0')]='1654:1654'; runDocker(...args,graph+fault);
 }
 try {
-  fs.writeFileSync(root+'/Dockerfile','FROM debian:trixie-slim\nRUN apt-get update && apt-get install -y --no-install-recommends bash git coreutils findutils util-linux ca-certificates && rm -r /var/lib/apt/lists/* && mkdir -p /tmp/antiphon-pty-hosts && chmod 1777 /tmp && printf image-asset > /tmp/antiphon-pty-hosts/fixture\n');
+  fs.writeFileSync(root+'/Dockerfile','FROM debian:trixie-slim\nLABEL io.antiphon.c1008-real='+prefix+'\nRUN apt-get update && apt-get install -y --no-install-recommends bash git coreutils findutils util-linux ca-certificates && rm -r /var/lib/apt/lists/* && mkdir -p /tmp/antiphon-pty-hosts && chmod 1777 /tmp && printf image-asset > /tmp/antiphon-pty-hosts/fixture\n');
   objects.images.add(image); runDocker('build','-t',image,root);
   helper=runDocker('run','-d','--privileged','--pid','host','--network','none','--name',guard(prefix+'-root'),'--label',label+'='+prefix,image,'sleep','infinity'); objects.containers.add(helper);
   shellRoot('test','-d',root);
@@ -255,14 +262,17 @@ finally {
   for(const id of runDocker('ps','-aq','--no-trunc','--filter','label='+label+'='+prefix).split('\n').filter(Boolean)) {
     if(JSON.parse(docker('inspect',id))[0].Config.Labels[label]!==prefix)throw Error('CleanupOwnershipMismatch'); objects.containers.add(id);
   }
-  for(const id of objects.containers) if(runDocker('ps','-aq','--no-trunc').split('\n').includes(id))runDocker('rm','-f','--',id);
-  for(const n of objects.volumes)if(allVolumes().includes(n))runDocker('volume','rm','--',guard(n));
+  const presentContainers=new Set(runDocker('ps','-aq','--no-trunc').split('\n'));
+  for(const id of objects.containers) if(presentContainers.has(id))runDocker('rm','-f','--',id);
+  const presentVolumes=new Set(allVolumes());
+  for(const n of objects.volumes)if(presentVolumes.has(n))runDocker('volume','rm','--',guard(n));
   for(const id of runDocker('network','ls','-q','--filter','label=com.docker.compose.project').split('\n').filter(Boolean)) {
     const facts=JSON.parse(docker('network','inspect',id))[0]; if(facts.Labels?.['com.docker.compose.project']?.startsWith(prefix)){objects.networks.add(id);runDocker('network','rm',id);}
   }
   for(const n of objects.images)if(cp.spawnSync('docker',['image','inspect',guard(n)],{encoding:'utf8'}).status===0)runDocker('image','rm',guard(n));
   const remaining=runDocker('ps','-aq','--no-trunc','--filter','label='+label+'='+prefix);
-  if(remaining||[...objects.volumes].some(n=>allVolumes().includes(n))||[...objects.images].some(n=>cp.spawnSync('docker',['image','inspect',n],{encoding:'utf8'}).status===0))throw Error('FixtureResidue');
+  const finalVolumes=new Set(allVolumes());
+  if(remaining||[...objects.volumes].some(n=>finalVolumes.has(n))||[...objects.images].some(n=>cp.spawnSync('docker',['image','inspect',n],{encoding:'utf8'}).status===0))throw Error('FixtureResidue');
   await new Promise(resolve=>endpoint.close(resolve));
   fs.writeFileSync(root+'/evidence.json',JSON.stringify({source,base,scriptDigests:{base:hash(scripts.B),changed:hash(scripts.C)},docker:docker('version','--format','{{.Server.Version}}'),compose:docker('compose','version','--short'),prefix,results,failure:failure?.message||null,cleanup:'all recorded containers, volumes, networks and fixture image absent',objects:Object.fromEntries(Object.entries(objects).map(([k,v])=>[k,[...v]])),commands,shims:['lane/root relocation','private HTTP status/task endpoint','sudo through owned nested-root namespace helper','fixed helper-image pin and origin fixture mount','expensive build/provider startup boundary with real Compose up','controlled rm/ps faults','df capacity only for RD-12'],realDf},null,2));
   console.log('C1008_REAL cases='+results.length+' base='+results.filter(r=>r.version==='B').length+' changed='+results.filter(r=>r.version==='C').length+' failures='+(failure?1:0)+' cleanup=absent evidence='+root+'/evidence.json');
