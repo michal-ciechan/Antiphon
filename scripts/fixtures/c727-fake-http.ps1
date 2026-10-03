@@ -6,6 +6,15 @@ $body = if ($BodyJson) { $BodyJson | ConvertFrom-Json } else { $null }
 $trace = [ordered]@{ kind = 'http'; method = $Method; runnerId = $RunnerId; suffix = $Suffix; body = $body }
 Add-Content -LiteralPath $env:C727_TEST_TRACE -Value ($trace | ConvertTo-Json -Compress -Depth 5)
 
+if ($state.scenario -eq 'c1008') {
+    if ($Method -ne 'GET') { exit 2 }
+    if ($Suffix -eq '/status' -and $state.statuses.PSObject.Properties.Name -contains $RunnerId) {
+        $state.statuses.$RunnerId | ConvertTo-Json -Compress -Depth 20
+        exit 0
+    }
+    exit 2
+}
+
 if ($Method -eq 'POST') {
     if ($Suffix -notin @('/drain', '/drain/clear') -or $RunnerId -notin @('server2', 'server2-temp')) { exit 2 }
     if ($RunnerId -eq 'server2' -and $Suffix -eq '/drain') { $state.oldDraining = $true }
