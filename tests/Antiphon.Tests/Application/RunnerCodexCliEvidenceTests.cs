@@ -347,6 +347,51 @@ public sealed class RunnerCodexCliEvidenceTests
     [Test]
     public async Task C959_Exact_probe_transport_is_bound()
     {
+        foreach (var variant in new[] { "request-id", "epoch", "operation", "503", "cancel" })
+        {
+            var correlationClock = new FakeTimeProvider(T);
+            await using var correlationHost = await PhoneHomeTestHost.StartAsync(correlationClock);
+            await using var correlationPeer = await correlationHost.ConnectPeerAsync(capabilities: Caps("0.160.0", T));
+            correlationHost.Directory.MarkRecovered(await correlationHost.WaitLiveAsync());
+            correlationPeer.AutoReply = false;
+            using var caller = new CancellationTokenSource();
+            var selected = new RunnerScopedSessionRunnerClient(correlationHost.Directory, correlationHost.AllowedRunnerId);
+            var pending = selected.GetCodexCliVersionAsync(new("/isolated/codex", "/isolated"), caller.Token);
+            var sent = await correlationPeer.WaitForAsync((PhoneHomeOperation)33);
+            try
+            {
+                if (variant == "cancel")
+                {
+                    caller.Cancel();
+                    await Should.ThrowAsync<OperationCanceledException>(() => pending);
+                }
+                else
+                {
+                    await correlationPeer.EmitAsync(variant == "503"
+                        ? new(PhoneHomeFrameKind.Error, sent.Epoch, sent.RequestId, sent.Operation,
+                            ErrorCode: "unavailable", StatusCode: 503)
+                        : new(PhoneHomeFrameKind.Result, variant == "epoch" ? sent.Epoch - 1 : sent.Epoch,
+                            variant == "request-id" ? Guid.NewGuid() : sent.RequestId,
+                            variant == "operation" ? PhoneHomeOperation.Health : sent.Operation,
+                            Shape(Sample("0.160.0", T))));
+                    correlationPeer.AutoReply = true;
+                    await selected.GetHealthAsync(CancellationToken.None);
+                    if (variant is "request-id" or "epoch")
+                    {
+                        pending.IsCompleted.ShouldBeFalse("C959-v13-unmatched-reply " + variant);
+                        correlationClock.Advance(TimeSpan.FromSeconds(8));
+                    }
+                    (await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+                        .ShouldBeNull("C959-v13-refused-reply " + variant);
+                }
+                correlationPeer.RequestCount((PhoneHomeOperation)33).ShouldBe(1, "C959-v13-no-retry " + variant);
+            }
+            finally
+            {
+                caller.Cancel();
+                try { await pending; } catch (OperationCanceledException) { }
+            }
+        }
         await using var host = await PhoneHomeTestHost.StartAsync(new FakeTimeProvider(T));
         await using var peer = await host.ConnectPeerAsync(capabilities: Caps("0.160.0", T));
         host.Directory.MarkRecovered(await host.WaitLiveAsync());
