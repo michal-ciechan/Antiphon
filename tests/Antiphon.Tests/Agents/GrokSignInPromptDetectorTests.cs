@@ -152,6 +152,21 @@ public class GrokSignInPromptDetectorTests
     }
 
     [Test]
+    public void C1006_Block_reason_is_platform_neutral()
+    {
+        foreach (var home in new[] { "/tmp/c1006-runner-home", @"C:\Antiphon\c1006-runner-home" })
+        {
+            var expected = "ProviderSignInRequired: Grok opened on its sign-in screen. The credential store "
+                + Path.Combine(home, "auth.json")
+                + " has no usable session. Nothing was typed into it. Run `grok login` (or "
+                + "`grok login --device-auth` on a headless host) as the user that runs the session-runner, "
+                + "using that runner user's GROK_HOME, then re-dispatch. Every Grok pool launch using "
+                + "that GROK_HOME will fail the same way until then.";
+            GrokSignInPromptDetector.BlockReason(home).ShouldBe(expected, "blockReasonExact");
+        }
+    }
+
+    [Test]
     public void BlockReason_names_GROK_HOME_and_grok_login()
     {
         var home = @"C:\Users\mike\.grok";
