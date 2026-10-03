@@ -310,16 +310,39 @@ public sealed class CodexCliObservationTests
             Exception? failure = null;
             try { result = await create.Service.CreateAsync(create.Request(remote), create.Caller, CancellationToken.None); }
             catch (Exception ex) { failure = ex; }
-            failure.ShouldBeNull($"C959-pc-{guard} create/{remote}/{vector}");
+            failure.ShouldBeNull((guard switch { 225 => "C959-pc-225", 228 => "C959-pc-228", 231 => "C959-pc-231", _ => "C959-pc-234" })
+                + $" create/{remote}/{vector}");
             var row = await create.Db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == result!.Id);
             row.Status.ShouldBe(AgentTaskStatus.Queued, $"C959-pc-{guard} persisted/{vector}");
             row.RunnerId.ShouldBe(remote ? "runner-a" : null, $"C959-pc-185 create/{vector}");
             selected.Requests.ShouldBeEmpty($"C959-pc-237 create/{vector}");
             var advertised = await selected.GetCapabilitiesAsync(CancellationToken.None);
             advertised!.CodexCliVersion.ShouldBe(selected.Sample?.CodexCliVersion, $"C959-advertised-sample/{vector}");
+            await using var observed = await PhoneHomeTestHost.StartAsync(create.Clock);
+            observed.Local.Capabilities = advertised;
+            await using var peer = await observed.ConnectPeerAsync(capabilities: advertised);
+            observed.Directory.MarkRecovered(await observed.WaitLiveAsync());
+            using var list = await observed.Http.GetAsync("/api/session-runners");
+            list.EnsureSuccessStatusCode();
+            var rows = JsonDocument.Parse(await list.Content.ReadAsStringAsync()).RootElement;
+            var status = JsonSerializer.SerializeToElement(observed.Directory.Status(observed.AllowedRunnerId),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            var error = guard == 225 ? vector : vector == "fingerprint" ? "launcher_mismatch"
+                : vector == "clock-skew" ? "clock_skew" : null;
+            bool? stale = guard == 228 ? true : guard == 234 ? false : null;
+            foreach (var shape in rows.EnumerateArray().Append(status))
+            {
+                shape.GetProperty("codexCliVersion").GetString().ShouldBe(selected.Sample?.CodexCliVersion, "C959-observed-version " + vector);
+                shape.GetProperty("codexCliVersionError").GetString().ShouldBe(error, "C959-observed-error " + vector);
+                var staleValue = shape.GetProperty("codexCliVersionStale");
+                (staleValue.ValueKind == JsonValueKind.Null ? (bool?)null : staleValue.GetBoolean())
+                    .ShouldBe(stale, "C959-observed-freshness " + vector);
+            }
         }
         // A separate schema for cold dispatch: change the observation after create.
-        await using (var dispatch = await DispatchKit.BuildAsync())
+        using var coldGit = guard == 234 ? new ScratchGitRepo("c959-old-cold") : null;
+        if (coldGit is not null) await coldGit.CommitFileAsync("seed.txt", "C959 old observation, cold worktree\n");
+        await using (var dispatch = await DispatchKit.BuildAsync(coldGit))
         {
             var created = await dispatch.CreateAsync();
             dispatch.Client.Requests.Clear();
@@ -327,8 +350,14 @@ public sealed class CodexCliObservationTests
             Exception? failure = null;
             try { await dispatch.TickAsync(); } catch (Exception ex) { failure = ex; }
             failure.ShouldBeNull($"C959-pc-{guard + 2} dispatch/{vector}");
-            await AssertDeliveryAsync(dispatch, created.Id, $"C959-pc-{guard + 2}/{vector}");
+            await AssertDeliveryAsync(dispatch, created.Id,
+                (guard switch { 225 => "C959-pc-227", 228 => "C959-pc-230", 231 => "C959-pc-233", _ => "C959-pc-236" }) + "/" + vector);
             dispatch.Client.Requests.ShouldBeEmpty($"C959-pc-239 cold and C959-pc-253 final/{vector}");
+            if (coldGit is not null)
+            {
+                dispatch.Factory.Created.Single().StartedCwd.ShouldNotBe(coldGit.Path, "C959-pc-253 final cwd changed");
+                System.IO.Directory.Exists(dispatch.Factory.Created.Single().StartedCwd).ShouldBeTrue("C959-pc-253 actual worktree");
+            }
         }
         // The failed task comes from the actual watchdog after a committed, lost launch.
         var clock = new RecoveryClock();
@@ -353,7 +382,8 @@ public sealed class CodexCliObservationTests
             await scope.ServiceProvider.GetRequiredService<AgentTaskService>().RetryAsync(first.Id, CancellationToken.None);
         }
         catch (Exception ex) { retryFailure = ex; }
-        retryFailure.ShouldBeNull($"C959-pc-{guard + 1} retry/{vector}");
+        retryFailure.ShouldBeNull((guard switch { 225 => "C959-pc-226", 228 => "C959-pc-229", 231 => "C959-pc-232", _ => "C959-pc-235" })
+            + $" retry/{vector}");
         await using (var db = retry.Context())
         {
             (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == first.Id)).Status

@@ -352,7 +352,7 @@ public sealed class RunnerCodexCliEvidenceTests
     [Test]
     public async Task C959_Exact_probe_transport_is_bound()
     {
-        foreach (var variant in new[] { "request-id", "epoch", "operation", "503", "cancel" })
+        foreach (var variant in new[] { "request-id", "epoch", "operation", "503", "error-payload", "cancel" })
         {
             var correlationClock = new FakeTimeProvider(T);
             await using var correlationHost = await PhoneHomeTestHost.StartAsync(correlationClock);
@@ -372,8 +372,9 @@ public sealed class RunnerCodexCliEvidenceTests
                 }
                 else
                 {
-                    await correlationPeer.EmitAsync(variant == "503"
+                    await correlationPeer.EmitAsync(variant is "503" or "error-payload"
                         ? new(PhoneHomeFrameKind.Error, sent.Epoch, sent.RequestId, sent.Operation,
+                            Payload: variant == "error-payload" ? Shape(Sample("0.160.0", T)) : null,
                             ErrorCode: "unavailable", StatusCode: 503)
                         : new(PhoneHomeFrameKind.Result, variant == "epoch" ? sent.Epoch - 1 : sent.Epoch,
                             variant == "request-id" ? Guid.NewGuid() : sent.RequestId,
@@ -386,8 +387,12 @@ public sealed class RunnerCodexCliEvidenceTests
                         pending.IsCompleted.ShouldBeFalse("C959-v13-unmatched-reply " + variant);
                         correlationClock.Advance(TimeSpan.FromSeconds(8));
                     }
-                    (await pending.WaitAsync(TimeSpan.FromSeconds(5)))
-                        .ShouldBeNull("C959-v13-refused-reply " + variant);
+                    RunnerCodexCliVersionDto? observed = null;
+                    Exception? failure = null;
+                    try { observed = await pending.WaitAsync(TimeSpan.FromSeconds(5)); }
+                    catch (Exception ex) { failure = ex; }
+                    failure.ShouldBeNull("C959-pc-248 diagnostic errors do not throw " + variant);
+                    observed.ShouldBeNull(variant == "operation" ? "C959-pc-247" : "C959-v13-refused-reply " + variant);
                 }
                 correlationPeer.RequestCount((PhoneHomeOperation)33).ShouldBe(1, "C959-v13-no-retry " + variant);
             }
@@ -396,6 +401,26 @@ public sealed class RunnerCodexCliEvidenceTests
                 caller.Cancel();
                 try { await pending; } catch (OperationCanceledException) { }
             }
+        }
+        foreach (var replace in new[] { false, true })
+        {
+            await using var closingHost = await PhoneHomeTestHost.StartAsync(new FakeTimeProvider(T));
+            await using var closingPeer = await closingHost.ConnectPeerAsync(capabilities: Caps("0.160.0", T));
+            var live = await closingHost.WaitLiveAsync();
+            closingHost.Directory.MarkRecovered(live);
+            closingPeer.Reply = request => request.Operation == PhoneHomeOperation.CodexCliVersion
+                ? new(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation, Shape(Sample("0.160.0", T))) : null;
+            var checks = 0;
+            var closingClient = new PhoneHomeRunnerClient(live, isCurrent: () =>
+            {
+                if (++checks != 2) return true;
+                if (replace) return false;
+                live.DisposeAsync("C959 closed before projection").AsTask().GetAwaiter().GetResult();
+                return true;
+            });
+            (await closingClient.GetCodexCliVersionAsync(new("/isolated/codex", "/isolated"), CancellationToken.None))
+                .ShouldBeNull(replace ? "C959-pc-097 replaced connection" : "C959-pc-249 closed socket");
+            checks.ShouldBe(2, "C959-projection-cut-after-correlated-reply");
         }
         await using var host = await PhoneHomeTestHost.StartAsync(new FakeTimeProvider(T));
         await using var peer = await host.ConnectPeerAsync(capabilities: Caps("0.160.0", T));
@@ -460,10 +485,12 @@ public sealed class RunnerCodexCliEvidenceTests
             exact with { Path = new string('X', 65537) }, exact with { ResolutionCwd = "${secret:C959}" },
             exact with { Path = "${secret:C959}" }, exact with { Executable = "codex\0" },
             exact with { Path = new string('X', CodexCliVersionProbe.DescriptorFieldLimit + 1) },
+            exact with { Path = "NUL\0sentinel" }, exact with { Path = "{{key:C959}}" },
         })
         {
             var unknown = await (Task<RunnerCodexCliVersionDto?>)method.Invoke(localClient, [invalid, CancellationToken.None])!;
-            (unknown?.CodexCliVersionError).ShouldBe("launcher_unverified", "C959-pc-117/118");
+            (unknown?.CodexCliVersionError).ShouldBe("launcher_unverified", invalid.Path == "NUL\0sentinel"
+                ? "C959-pc-244" : invalid.Path == "{{key:C959}}" ? "C959-pc-245" : "C959-pc-117/118");
             io.Starts.Count.ShouldBe(1, "C959-v13-invalid-no-child");
         }
         var atLimit = exact with { Path = new string('X', CodexCliVersionProbe.DescriptorFieldLimit) };

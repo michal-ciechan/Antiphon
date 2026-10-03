@@ -271,7 +271,7 @@ public class ModelAvailabilityCreateTests
                 CreateService(db).CreateAsync(
                     new CreateAgentTaskRequest("plan the work", Role: AgentTaskRole.Plan, Workspace: WorkspaceMode.Shared),
                     new AgentTaskService.Caller(null, null, workspace.Path),
-                    CancellationToken.None));
+                    CancellationToken.None), "C959-pc-241");
             ex.Code.ShouldBe("model_disabled");
         }
         finally
