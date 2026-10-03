@@ -66,7 +66,8 @@ else if(args[0]==='volume'&&args[1]==='inspect') {
  const id='6'.repeat(64);state.auditProgram=args[args.indexOf('-c')+1];state.containers.push({Id:id,Image:'sha256:'+'a'.repeat(64),State:{Running:false,Status:'created'},Config:{Labels:{'io.antiphon.audit':'true'}},Mounts:[{Type:'volume',Name:vol,Source:state.volumes[vol].Mountpoint,Destination:'/work'}]});save();out(id+'\n');
 } else if(args[0]==='start') {
  const id=args.at(-1),c=state.containers.find(c=>c.Id===id);if(!c)fail();
- const program=state.auditProgram.replaceAll('/work',path.join(root,'work'));
+ // Remap the mount path, preserving unrelated scratch filenames such as /worktrees.
+ const program=state.auditProgram.replace(/\/work(?=[\/\s"')]|$)/g,path.join(root,'work'));
  const run=cp.spawnSync('bash',['-c',program],{env:{...process.env},encoding:'utf8',timeout:15000});out(run.stdout||'');c.State={Running:false,Status:'exited'};save();process.exit(run.status??2);
 } else if(args[0]==='cp') {
  // The pinned audit helper receives only the test-materialized production program.
