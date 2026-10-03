@@ -33,7 +33,6 @@ all PC-1..PC-36 variants remain pending for SourceLanding Mutation.
 | CP-2 | Q1 | CP-1 (-NoBuild) | fallback | `/*/*/(AgentTaskInputFallbackTests*)\|(PhoneHomeSpillTests*)\|(PhoneHomeSpillTransportTests*)\|(DurableRunnerSpillReceiptTests*)/*` | V-16..V-24, R-3 | AgentTaskInputFallbackTests,PhoneHomeSpillTests,PhoneHomeSpillTransportTests,DurableRunnerSpillReceiptTests | 29 | 4 | true | `C804_ORPHAN_SWEEP_ROOT=c965-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-3 | Q1 | CP-1 (-NoBuild) | attention | `/*/*/TaskInputReadFailureTests*/*` | V-25..V-32 | TaskInputReadFailureTests | 8 | 2 | true | `C804_ORPHAN_SWEEP_ROOT=c965-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-7 | Q1 | CP-1 (-NoBuild) | compatibility | `/*/*/(ParkedMessageSweepServiceTests*)\|(CapacityRecoveryCompatibilityTests*)/*` | malformed-key, seeded migration | ParkedMessageSweepServiceTests,CapacityRecoveryCompatibilityTests | 18 | 2 | true | `C804_ORPHAN_SWEEP_ROOT=c965-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-
 | CP-6 | Q1 | CP-1 (-NoBuild) | unit | `/*/*/*/*[Category=Unit]` | Final Unit | nonzero Unit results | 1 | 4 | true | `C804_ORPHAN_SWEEP_ROOT=c965-disabled` |
 
 ### Cost
@@ -44,3 +43,8 @@ commissioned repair-confirmation run. No normal repetitions after qualification
 green; no full assembly run or unbounded class impact. No live manual activation
 is required. V-33/CP-4 is credited from the preceding Code task (29/29 Vitest);
 Windows CP-5 remains separate CARD-0960 evidence and is not claimed on Linux.
+
+The first continuation qualification launcher (20261003-123841-a0f2) was
+stopped and joined before any row executed: a blank line accidentally excluded
+CP-6 from the imported table. Its incomplete build is not green/red evidence.
+The corrected contiguous table runs all five rows once.
