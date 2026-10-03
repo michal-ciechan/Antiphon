@@ -177,7 +177,13 @@ function Invoke-RecycleRead {
     param([string]$Path)
     try {
         if ($env:C727_TEST_HTTP_STUB) {
-            $raw = & $env:C727_TEST_HTTP_STUB -Method GET -Path $Path 2>$null
+            # Script-scope calls share Console.Error; preserve the subprocess
+            # boundary's stderr suppression for fixtures using WriteLine directly.
+            $stderr = [Console]::Error
+            try {
+                [Console]::SetError([System.IO.TextWriter]::Null)
+                $raw = & $env:C727_TEST_HTTP_STUB -Method GET -Path $Path 2>$null
+            } finally { [Console]::SetError($stderr) }
             if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace([string]$raw)) { throw 'read failed' }
             return ([string]$raw | ConvertFrom-Json)
         }
