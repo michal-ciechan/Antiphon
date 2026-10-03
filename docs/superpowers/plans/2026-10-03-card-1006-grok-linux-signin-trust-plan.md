@@ -1,27 +1,34 @@
 # CARD-1006: Grok Linux sign-in and trust qualification
 
-Date: 2026-10-03. Plan task: `e6f1295a`. Baseline:
-`f0fadc61635e3d977f045876d65e1e09ef06b17a`. This is a documentation-only dispatch.
-CARD-1006's three items and Acceptance were read through `card.ps1 get`.
+Date: 2026-10-03. Original Plan task: `e6f1295a`; evidence amendment: `3fdafc77`.
+Amendment baseline: `8d3148dcf6d0040ef1a69b0e2fceb38ce1a77b18`, Investigate
+task `1e39a459` atop the original landed plan at `374fefe1`. This dispatch edits
+only this plan. CARD-1006's three items and Acceptance were re-read through
+`card.ps1 get`; the amendment brief expressly permits synthetic trust coverage.
 
 ## Outcome and admission
 
-Make the sign-in remedy platform-neutral, qualify real Linux blocking screens,
-and preserve the rule that a blocking screen never becomes Ready. This plan
-includes verification design as commissioned. It does not claim captures or
-implementation have been executed.
+Make the sign-in remedy platform-neutral, regress the two real Linux SignIn
+frames, and preserve the rule that a blocking screen never becomes Ready.
+Trust coverage is now explicitly SYNTHETIC; it qualifies the existing predicate
+and waiter, not the appearance or action keys of a real Linux trust screen.
 
-There is a material premise conflict to resolve before Code: the brief assumes
-an empty `GROK_HOME` plus a fresh cwd can expose both sign-in and trust without
-credentials. The repository's measured contract says sign-in gates trust
-(`docs/agent-kinds.md:408`). That measurement is 1.0.13; the Linux 1.0.41 order is
-unqualified. A fresh cwd alone does not prove that trust is reachable under the
-brief's credential prohibition. **Next is Investigate**, using the bounded Debug
-capture procedure below to measure that order. Do not silently use a signed-in
-home, seed authentication, or substitute a synthetic trust screen for acceptance.
-If Linux has the same gate, return the observed obstruction to the caller for a
-separate authorization or acceptance decision. This plan remains a usable design;
-its Code admission condition is deliberately not marked satisfied.
+[The investigation](../../investigations/2026-10-03-card-1006-linux-grok-signin-trust-capture.md)
+and its [immutable frames JSON](../../investigations/2026-10-03-card-1006-linux-grok-frames.json)
+confirm sign-in-first for Grok 1.0.41 in both credential-free, zero-input probes.
+No trust, updater or Ready screen appeared in either 15-second window. Installed
+production classification of both approval frames was SignIn/false. This is
+bounded evidence, not a universal claim about all versions or network conditions.
+A real credential-free trust capture is unavailable under this procedure; no
+additional identical trust probe or authentication workaround is planned.
+
+**Next is TestDesign**, as required by this dispatch's Plan -> TestDesign -> Code
+pipeline. The inherited verification design remains below for that stage to
+audit: revised fixture provenance, method names and anchor placement need its
+explicit sign-off. S-0 lists owned Code-admission gates; the exact-image
+throwaway-container receipt is still missing. Neither this amendment nor the
+historical capture claims that gate passed. No implementation or runtime test
+has been executed by this Plan task.
 
 Owners consulted: `docs/project-context.md`, `docs/ops-http.md`,
 `docs/antiphon-api.md`, `docs/orchestration-loop.md`,
@@ -40,18 +47,20 @@ References are relative to this baseline, not moving line numbers at execution.
 | Card assumption / requirement | What the code or evidence actually does | Consequence |
 |---|---|---|
 | The remedy should apply to a Linux runner. | `src/Antiphon.Agents.Pty/GrokDetectors.cs:71` names a Windows user and says every pool launch on the machine fails. The store is selected per launch/home. | Replace the complete remedy with D-1 and pin it exactly, including its home-specific scope. |
-| Linux sign-in and trust are qualified. | `tests/Antiphon.Tests/Agents/GrokSignInPromptDetectorTests.cs:14` and `GrokTrustPromptDetectorTests.cs:15` contain 1.0.13 Windows examples. `Fixtures/card1004/provenance.md:3` records only Linux ready dashboards. | Add independent real Linux captures; changing a path in an old fixture is not a capture. |
-| Both modals precede any prompt, so both are accessible without auth. | `docs/agent-kinds.md:408` says missing auth paints sign-in before trust. `GrokSignInCanaryTests.cs:29` in `tests/Antiphon.Agents.Pty.Tests` uses a fresh home for sign-in only. | Measure Linux ordering without entering anything. Trust acceptance stays pending if sign-in blocks it. |
+| Linux sign-in and trust are qualified. | Existing tests contain 1.0.13 Windows examples; CARD-1004 stores Linux ready dashboards. Investigate now supplies two real redacted Linux 1.0.41 approval frames, but no trust frame. | Copy both real SignIn frames unchanged into new fixtures. Use labelled synthetic trust; do not claim real Linux trust qualification. |
+| Both modals are accessible without auth. | Both independent fresh-home/cwd launches reached OAuth approval first and stayed there until the 15-second deadline, with zero input. This agrees with `docs/agent-kinds.md:408` and classifier order. | Retain sign-in-before-trust. D-3 explicitly revises the trust coverage basis; real trust requires a human-gated signed-in follow-up note only. |
 | The existing capture store can supply sign-in text. | `server/Infrastructure/Agents/SessionRunner/GrokStartupCaptureStore.cs:45` suppresses all content after sign-in; otherwise it stores rendered text **and raw tail** at lines 56-65. | Preserve suppression. For this isolated measurement, extract only the rendered screen from the existing runner snapshot seam. Do not call the formatter with a false sign-in flag. |
 | The server has a terminal snapshot route. | `docs/ops-http.md:233` says snapshot is runner-only. `src/Antiphon.SessionRunner.Contracts/SessionRunnerContracts.cs:252` separates `RawOutput` from `RenderedScreen`. | Use the isolated runner's `GET /sessions/{id}/snapshot`, never an invented `/api/.../snapshot`, and never serialize the whole response. |
-| A fresh home isolates the CLI. | CARD-0857 records ambient MCP servers loaded outside `GROK_HOME`. `PtySessionAudit.cs:23` in `src/Antiphon.Agents.Pty` enables raw audit through the helper process environment. | Use a throwaway container of the selected runner image with no production state/home/project mounts, a clean environment and audit disabled before process startup. |
-| A recognized modal cannot be Ready. | `GrokStartupReadiness.cs:29` checks sign-in, then trust, before geometry/composer. Lines 32-67 require 30 rows, at most 120 columns, exact borders, an empty `>`/U+276F interior, blank status rows and exact hint. | Preserve precedence and the whole composer predicate. Test authentic modal content over otherwise-valid composers. |
+| The capture used the exact production image in a throwaway container. | It used a local owned runner inside the running container. Production tag/digest is unavailable. A cached image with no RepoDigests proved binary equality only and lacked the selected runner executable. | A-1/A-2 remain owned admission gates; no invented digest, cached-image substitution or claim of container isolation. |
+| Fresh homes and audit-off prevent persistence. | CARD-0857 owns ambient MCP isolation. `SessionRunnerRuntime.cs:2266` supplies an ordinary `.ansi.log`; `HostSession.cs:356` appends raw bytes despite audit-off and disabled transcripts. Raw logs lived in deleted scratch, not in committed evidence. | D-2 requires verified tmpfs custody for all writable capture paths, including ordinary logs; no logging code change in this card. |
+| No input means no network. | Owned CLI/child outbound TCP 443 connections were observed, first at 57 ms in C-1; approval appeared around 2.5 seconds. Socket samples do not establish request purpose or offline renderability. | D-2 defines bounded network-enabled capture. Fixture replay needs no network; do not assert that OAuth capture works with `--network none`. |
+| A recognized modal cannot be Ready. | `GrokStartupReadiness.cs:29` checks sign-in, then trust, before geometry/composer. Lines 32-67 require 30 rows, at most 120 columns, exact borders, an empty `>`/U+276F interior, blank status rows and exact hint. | Preserve precedence and the whole composer predicate. Test real approval anchors and synthetic trust over otherwise-valid composers. |
 | Returning to Ready after a modal may reuse settlement. | `GrokStartupReadiness.cs:85` resets the tracker on every negative observation; lines 183-214 fail sign-in without input and answer trust at most once. | Pin reset, sign-in-before-trust, and trust-clearing behavior with controlled time. |
 | An update modal has a detector. | `GrokDetectors.cs` has only trust/sign-in; `GrokStartupReason` has no update value. | D-4 reserves a real negative-fixture slot and retains explicitly synthetic update probes. No unmeasured update detector or new runtime state. |
 | Windows has 99 recorded frames. | `Fixtures/card0778/startup-frames.json` has **114** captured checkpoints, counted at this baseline. `GrokStartupReadinessTests.cs:72` already checks their recorded reasons. | Keep fixture bytes unchanged and assert all 114 results. Separate replay from native Windows ConPTY evidence. |
 | A runner rollout activates the classifier. | `server/Infrastructure/Agents/SessionRunner/RunnerGrokAdapter.cs:181` is the production readiness caller; its snapshot comes from the runner. | Server/AppHost activation after land is sufficient for the proposed source changes. No runner image or rollout-script change. |
 
-Placement observation at 2026-10-03 12:24 UTC: GET `/api/runner-defaults`
+Placement rechecked at 2026-10-03 13:00 UTC: GET `/api/runner-defaults`
 returned revision 2 with a Linux default and no per-kind overrides; GET
 `/api/session-runners` showed eligible Linux and Windows lanes and an unavailable
 retired entry. This is evidence of available platforms, not an embedded fleet
@@ -81,110 +90,164 @@ Rejected: OS branching, “container user” only, leaving the home unspecified,
 and a substring-only test that would miss the existing incorrect sentence.
 The message is operator guidance; this card never executes its login command.
 
-### D-2: capture is a bounded Debug measurement using existing PTY machinery
+### D-2: exact-image capture, network and temporary-log custody
 
-The **caller commissions one Debug helper** on the Linux lane for C-1/C-2 below;
-this Plan delegate does not sub-delegate. The helper runs version commands and
-the existing runner terminal-snapshot mechanism only. No model prompt, login,
-trust response, updater confirmation, browser approval, or unrelated canary.
+Owner: the caller/orchestrator supplies the image identity; a separately
+commissioned Linux Debug helper owns execution and cleanup. This Plan runs no
+CLI capture. C-1/C-2 are completed historical observations, not future trust
+targets. One additional SignIn-only capture is the S-0 isolation receipt; it
+does not replace or rewrite the investigation files.
 
-1. Resolve the eligible Linux runner and its running image digest at execution.
-   Launch a throwaway container from that same digest, with a unique task-owned
-   name and no production state, credential home, project, host Docker socket or
-   agent-profile mounts. Reuse the image's runner executable in isolated local
-   mode, without phone-home registration. Its runner state/logs and fresh cwd live
-   under the one disposable root. Do not edit Compose or deployment scripts.
-   If this isolated launch cannot be established with the existing machinery,
-   report it; do not fall back to a production session or authenticated home.
-2. Give the isolated runner/helper a clean environment **before** starting it:
-   `ANTIPHON_PTY_AUDIT=0`, fresh `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, and
-   `GROK_HOME`; no inherited provider/proxy/auth variables or browser integration.
-   In the child launch use `/usr/bin/env -i` with an explicit nonsecret PATH,
-   those scratch paths, `TERM=xterm-256color` and `BROWSER=/bin/false`. This avoids
-   an overlay accidentally retaining `XAI_API_KEY`, `GROK_CODE_XAI_API_KEY`,
-   `GROK_AUTH_PATH`, or MCP configuration. Never enumerate or print the parent
-   environment. The cwd must be outside the checkout and contain no project
-   instructions/configuration. Do not read any real or scratch auth-file content.
-3. Record `grok --version`, the actual image digest and OS/backend metadata under
-   that same sanitized environment. No CLI install, upgrade or downgrade. Ask the
-   isolated runner to start `grok --no-alt-screen --session-id <new-guid>` with
-   `Cols=120`, `Rows=30`, `TranscriptEnabled=false`, and no prompt/rules/resume
-   arguments. `RunnerLaunchRequest` at `SessionRunnerContracts.cs:3` is the
-   existing contract. There is no server adapter waiting for Ready, so nothing
-   can auto-answer trust or type a task brief.
-4. Read `GET /sessions/{owned-id}/snapshot` only from that isolated runner. Select
-   `RenderedScreen` in memory and discard `RawOutput`. Poll at most every 200 ms,
-   for at most 15 seconds per launch, retaining only modal candidates; terminate
-   early once a stable target is seen twice. Recognize candidates by visual text
-   inspection after privacy filtering, not solely the detector under test. The
-   observation count is metadata, not a Ready verdict. A missing target is a
-   measured miss, not a reason to enter input.
-5. C-1: launch in fresh home A/cwd A for sign-in. C-2: independently launch in
-   fresh home B/cwd B for trust. Both launches send **zero input bytes**. C-2 is
-   expressly an ordering probe: if it only paints sign-in, record “trust blocked
-   by sign-in,” stop, and retain no fake substitute. Never reuse the live runner's
-   home, copy or mount `auth.json`, generate/enter a token, use stub credentials,
-   or invoke `grok login`. The existing real-CLI stub-proxy tests are not this
-   capture procedure: they inject keys and submit turns.
-6. Keep updater behavior at the installed binary's ordinary setting; record it.
-   If an update/notice modal appears spontaneously before input, capture it by
-   the same rules. Do not force an old version, run update, confirm, or keep
-   retrying to manufacture the screen. It may prevent another target; record that
-   outcome. This card does not qualify a self-updated version by accident.
-7. In a `finally`, kill only the two owned capture sessions (the individual
-   `/sessions/{id}/kill` route), await exit/disposal and remove the exact owned
-   throwaway container. Never use `kill-all`. Delete only the created scratch
-   root after checking its nonempty canonical path and ownership marker; never
-   archive its home. Report session/container cleanup and zero inputs.
+1. **Image gate A-1:** before launch record the selected production runner's
+   literal repository:tag AND immutable `sha256:` RepoDigest, matched to that
+   running container and platform. Both values are currently **unavailable**.
+   The caller must supply them in the capture brief/receipt; this plan cannot
+   honestly name an exact tag/digest today. Launch exactly
+   `<verified-repository>:<verified-tag>@sha256:<verified-digest>` (an unfilled
+   template is not executable admission). A local image ID, binary hash, mutable
+   tag alone or the cached investigation image is insufficient. Verify that
+   this digest contains the selected runner executable and Grok; record their
+   versions/hashes. No fetch/build of a substitute or CLI upgrade/downgrade.
+2. Use `docker run --rm` with a unique owned name, `--read-only`, `--init`,
+   `--log-driver none`, no published ports and no production state, credential,
+   project, profile or Docker-socket mounts. Run the existing runner executable
+   in local mode with phone-home, Herdr and server adapters disabled. Its dynamic
+   loopback snapshot address is private to the helper, never a fleet constant.
+   If the chosen image cannot run this way, A-2 fails; no in-runner fallback.
+3. **Network decision:** replaying retained SignIn fixtures needs no network.
+   A new OAuth startup capture has NOT been shown to render offline: network
+   was observed before approval, without proving which request was necessary.
+   Do not require or claim `--network none` for the capture. Use an ephemeral
+   isolated bridge with no inbound publication and enforced outbound access
+   limited to DNS resolution through its configured resolver and public TCP
+   443; deny other egress and access to private production services. The Debug
+   owner must verify that policy before startup, recording rules, not packets
+   or payloads. Do not infer hostnames from the observed IPs. If that policy
+   cannot be provided, report A-2 unmet rather than use unrestricted/host
+   networking. A separate offline experiment is unnecessary for admission.
+4. **Raw-log custody:** mount a task-owned tmpfs at the disposable scratch root
+   and `/tmp`; redirect HOME, GROK_HOME, XDG config/cache, TMPDIR, runner state,
+   session/ANSI logs, PTY host logs/manifests and audit roots there. Verify all
+   resolved writable paths, restrictive permissions and memory-backed storage
+   before launch. tmpfs must not spill to persistent swap (verify host policy
+   or an effective supported noswap mount); otherwise stop. No disk-backed
+   scratch fallback, Docker stdout log, core dump, archive or log attachment.
+   Ordinary `.ansi.log` writes still occur; this procedure confines and deletes
+   them rather than claiming `ANTIPHON_PTY_AUDIT=0` suppresses them. Only the
+   privacy-reviewed rendered JSON/provenance may leave tmpfs.
+5. Start both runner and CLI through `/usr/bin/env -i` with explicit nonsecret
+   PATH, the scratch paths, `TERM=xterm-256color`, `BROWSER=/bin/false`, and
+   `ANTIPHON_PTY_AUDIT=0`. No inherited provider/proxy/auth variables. Never dump
+   the parent environment or inspect auth-file content. Audit image-level MCP
+   isolation from deployment/configuration metadata (CARD-0857), without reading
+   secrets; absence of MCP UI is not proof. Use fresh cwd with no instructions.
+   Launch `grok --no-alt-screen --session-id <new-guid>`, 120x30,
+   `TranscriptEnabled=false`, no prompt/rules/resume arguments and no waiting
+   server adapter. No login, token, browser approval, trust answer or model turn.
+6. Read only the owned runner's `GET /sessions/{id}/snapshot`. Select
+   `RenderedScreen` in memory; never serialize the full response or RawOutput.
+   Poll no faster than once per 200 ms. Start a hard 15-second observation and
+   network budget at process launch (not at first HTTP response); end early
+   after the sanitized target is stable twice. An external owned deadline
+   supervisor cuts container egress and stops the process at the deadline even
+   if polling stalls. Allow up to 5 seconds for awaited cleanup, with no further
+   network or observation. Record a miss without retries/input. Leave the
+   installed updater setting unchanged; capture a spontaneous notice under the
+   same deadline, never force/update/confirm one. Record version/hash afterward.
+7. In `finally`, cut egress, individually kill the owned session through
+   `/sessions/{id}/kill`, await runner/child exits, and stop/remove only this
+   named container if necessary. Verify zero owned processes and container
+   absence; remove the owned bridge/rules and tmpfs. Check nonempty canonical
+   scratch path plus ownership marker before deletion. No `kill-all`, broad
+   command-text process matching or home archive. Receipt includes zero input
+   calls/bytes, actual network window and scratch/log deletion on every exit.
 
-The existing `PtyAgentRunner.StartAsync` / `SnapshotScreen` / `KillAsync` seam
-(`src/Antiphon.Agents.Pty/PtyAgentRunner.cs:81`, `:345`) is the implementation
-behind the terminal capture, and the sign-in canary demonstrates its no-submit
-lifecycle. Reuse those primitives if the isolated local harness is already
-available; do not introduce a new production capture tool or new API. Do not run
-the Windows headed canary wholesale: it logs a raw screen and uses different
-eligibility/environment assumptions. The runner route above is the selected
-transport. Its local address is discovered by the helper, never a fleet constant.
+Rejected: pretending the original local-runner capture proves exact-image
+isolation; inferring offline feasibility from zero input; retrying trust behind
+sign-in; treating audit-off as log suppression; persistent raw logs followed by
+a claim that nothing was ever written. The existing snapshot/PTY machinery
+remains the transport; no new production tool, API or deployment change.
 
-This design protects the credential boundary, but cannot make a gated trust
-screen reachable. That empirical dependency is why the next stage is Investigate.
-The specific measurements are CLI version, ordered rendered states, whether trust
-appears with no auth/input, any preceding update modal, geometry and cleanup.
+No raw-logging code change is needed for this tmpfs procedure. If a future
+capture must work without memory-backed storage, the session-runtime owner must
+separately commission an explicit capture-only no-ANSI-log policy through
+`SessionRunnerRuntime.cs` and `HostSession.cs`, with tests proving the null-log
+path while preserving ordinary production logs. That is a follow-up note, not
+an added CARD-1006 implementation slice or a defect claim about normal logging.
 
-### D-3: real-frame custody and privacy
+### D-3: real SignIn fixtures and explicitly synthetic trust
 
-Debug transfers only sanitized rendered-frame JSON plus provenance from
-`.antiphon/card1006-capture/`; Code commits it under
-`tests/Antiphon.Tests/Agents/Fixtures/card1006/`, beside `card1004/`.
-Use `linux-blocking-frames.json`, `synthetic-blocking-frames.json`, and
-`provenance.md`. Existing fixture glob copying already includes this directory
-(`tests/Antiphon.Tests/Antiphon.Tests.csproj:32`); no project-file change is needed.
+Owner: TestDesign freezes this provenance contract; Code implements it under
+`tests/Antiphon.Tests/Agents/Fixtures/card1006/`. The three planned files remain
+`linux-blocking-frames.json`, `synthetic-blocking-frames.json`, `provenance.md`.
+The existing fixture glob copies them; no project-file edit is needed. Preserve
+both investigation files byte-for-byte at `8d3148dc` and link them as source.
 
-Before console output or disk writes, scan the rendered text in memory for
-account/email/user identifiers, bearer/JWT/key-like material, OAuth URLs/query
-values, one-time device codes and unexpected absolute paths. Do not retain raw
-response JSON or ANSI output. Prefer a blank sign-in/welcome frame with no such
-material. If redaction is needed, replace only sensitive cells with equal-width
-placeholders and record row/column/category, never original values. Preserve
-detector anchors and geometry. A redaction touching an anchor disqualifies that
-frame; acquire another safe frame or report the capture unavailable. Review the
-sanitized frame and scanner result before committing. The runtime store's
-`content: suppressed after sign-in` behavior remains unchanged.
+Copy the three decoded screens from the investigation JSON, without trimming
+or rewriting headers. `linux-blocking-frames.json` uses a `captures` array:
 
-Follow CARD-1004's ASCII-escaped JSON method: retain all 30 LF-separated rows,
-escape non-ASCII/control characters as JSON `\uXXXX`, decode and assert exact
-round-trip equality, and pin SHA-256 of UTF-8 **sanitized decoded screen** bytes.
-Do not assert a maximum width of 118 for a modal without measuring it: 118 was
-the ready-dashboard content width; the terminal is 120x30. Record actual width,
-cursor/menu glyph positions, terminal dimensions, capture UTC, CLI/build version,
-image digest, backend, source task/session identity, launch args, sanitized env
-names/values, zero-input assertion, redaction metadata and exited cleanup receipt.
-All paths in these records must be task-generated, not operator identities.
+| Capture ID | Label | Expected reason / Ready | Rows / maximum width | Pinned decoded UTF-8 SHA-256 |
+|---|---|---|---|---|
+| C1-connecting | `real-rendered` | Unknown / false | 30 / 67 | `beb362aeb8dfa6bbb1a2c95eff5e6fcc49527d0acf67c941653d40172fb2b277` |
+| C1-sign-in | `real-rendered-redacted` | SignIn / false | 30 / 85 | `e70a9a5d6630171b164c3bfa3a660e04a590514a0635c4044dd82db25dfb6d06` |
+| C2-sign-in | `real-rendered-redacted` | SignIn / false | 30 / 85 | `9a5793ae8bd3e74c1ef60c9125b516817ae59133b276f6b8aff2f43850707f52` |
 
-Label captures `real-rendered` or `real-rendered-redacted`, and compositions
-`synthetic-derived`; never call a constructed or path-rewritten frame real.
-Pin the screen digest independently in the test, not only next to editable data.
-Missing real sign-in **or** trust is an unmet acceptance condition, never a skip.
+Both approval frames have exactly `<CODE-9> ` (including the trailing space)
+at zero-based row 15, columns 56..64: nine cells replacing an `AAAA-BBBB`-shaped
+device code. Record category `device-code`, row 15, column 56, length 9; never
+retain the original. The approval text at row 13, browser-code hint at 17 and
+waiting text at 25 are unmodified detector anchors. `GrokSignInPromptDetector`
+matches those text phrases, not code characters or `<CODE-9>`. V-2 checks both
+original sanitized frames and in-memory nine-cell blank/`XXXXXXXXX` substitutions
+to pin that independence. Such substitutions are synthetic controls, not new
+real captures. No menu, selection cursor or box exists in either approval frame.
+
+Follow CARD-1004's actual convention: `captures` records contain `screen`,
+`cols`, `rows`, `cliVersion`, `session`, `host`, `sha256`; adjacent `provenance.md`
+states source, capture time, decoding/reconstruction and evidence limits. That
+JSON has **no label field and no synthetic captures**; do not invent a historical
+CARD-1004 synthetic label. Its tests construct synthetic overlays separately.
+For CARD-1006 extend this schema explicitly with `captureId`, `label` and
+`source`; retain ASCII-escaped non-ASCII/control JSON, exact LF rows and decoded
+UTF-8 hashes. Record source task `1e39a459`, CLI `1.0.41 (4220f3b224a6)`, runner
+build `4358939ecd85d6e7ff0941f970879499cb930e3d`, Linux/Debian 12, literal reported
+backend `InboxConhost`, window times, args/environment and zero-input cleanup.
+Use `session: null` with `not-retained`, generic host description and
+`imageTag: null`, `imageDigest: null` with `unavailable`; do not substitute the
+later A-2 receipt or infer Windows ConPTY from that backend label.
+
+Use the exact new machine label `synthetic-derived` and a **SYNTHETIC** heading
+in provenance for every P-01..P-19 base and every composed/transformed control.
+Each record/definition names `probeId`, source fixture/test anchor, transformation,
+expected reason, and decoded hash for stored screens. No invented session/time
+or claimed real Linux trust version. P-01 is the synthetic trust fixture: place
+`Do you trust the contents of this directory?`, `U+276F Yes, proceed y`, and
+`No, quit n` on rows 5/7/8 of a blank 120x30 screen (U+276F decoded, at column 2).
+The question/choices derive from the existing 1.0.13 trust test and CARD-1004's
+`Sign_in_and_trust_override_a_linux_composer` overlay, not Linux observation.
+P-02 sign-in-menu and P-06/P-07 updater compositions are also SYNTHETIC.
+
+V-4 pins real hashes independently in test source and asserts exact label/source
+separation, redaction cells, round-trip equality and geometry. A missing required
+fixture fails, never skips. This brief replaces the original two-real-modal
+acceptance with two real SignIn frames plus synthetic trust behavioral coverage;
+the orchestrator records that distinction on the card, not a claim that trust
+was captured. Real trust remains unqualified.
+
+Future replacement evidence would need a separately human-authorized SIGNED-IN
+Linux session, a fresh untrusted cwd, verified tag/digest, sanitized rendered
+trust screen, actual choices/keys, ordered states and cleanup provenance. Owner:
+caller/human plus session-runtime maintainer. This is only an out-of-scope
+follow-up note, not a task, credential exception or prerequisite for these
+synthetic tests. Retain synthetic regression IDs even if real evidence is later
+added; do not silently relabel them.
+
+For additional captures, scan rendered text in memory before console/export for
+account/email identifiers, bearer/key material, OAuth URLs and codes, and
+unexpected paths. Preserve anchors and equal-width geometry; redact before any
+durable output. Review scanner output and sanitized bytes before committing.
+Raw temporary custody follows D-2; it is distinct from export sanitization.
+`GrokStartupCaptureStore` sign-in suppression stays unchanged.
 
 ### D-4: conditional update evidence, explicit deferral
 
@@ -208,8 +271,8 @@ positive controls before Code. Synthetic evidence cannot choose vendor anchors.
 
 Retain sign-in before trust, rendered-screen-only readiness, the exact two
 composer glyphs, current geometry, hint/status checks and settlement semantics.
-Add measured Linux anchors only if existing detectors fail real captures. Preserve
-all existing 1.0.13 matches and Codex nonmatches. Do not infer trust from a menu
+The existing sign-in anchors match both real frames; no predicate change is
+justified. Preserve all existing 1.0.13 matches and Codex nonmatches. Do not infer trust from a menu
 cursor or authorize `y` from a generic question. A changed trust action/menu
 contract requires measurement and plan revision; this card does not guess keys.
 
@@ -224,10 +287,18 @@ Only this plan file changes in Plan. Future implementation allowlist:
 
 | Slice | Files and work | Tests / completion gate |
 |---|---|---|
-| S-0 capture admission | Debug evidence only; Code receives reviewed frames and provenance, then records capture admission in this plan. | Both real modal captures and D-2 cleanup; if absent, stop before claiming Code-ready. No credential workaround. |
+| S-0 admission | Caller owns A-1 image identity and the card acceptance record; separately commissioned Linux Debug owns A-2 isolated SignIn-only receipt; TestDesign owns A-3 fixture/probe review below. Evidence is linked from this plan and future `Fixtures/card1006/provenance.md`. | A-1/A-2 pending; A-3 is next. No real trust capture gate remains. Do not claim Code-ready until all three close. |
 | S-1 wording regression | `tests/Antiphon.Tests/Agents/GrokSignInPromptDetectorTests.cs`: add the exact D-1 test against unchanged production. | Commit/push; CP-1 must fail at the message assertion, not build/setup. |
-| S-2 wording and Linux evidence | `src/Antiphon.Agents.Pty/GrokDetectors.cs`; `tests/Antiphon.Tests/Agents/GrokLinuxBlockingPromptTests.cs` (new, includes its local fixture reader); `tests/Antiphon.Tests/Agents/Fixtures/card1006/{linux-blocking-frames.json,synthetic-blocking-frames.json,provenance.md}`. Add only measured detector adjustments. | V-1..V-12; commit/push; CP-2. Optional real update follows D-4, not an invented capture. |
-| S-3 integration/regression closure | `src/Antiphon.Agents.Pty/GrokStartupReadiness.cs` only if capture-derived precedence/update handling requires it; the new Grok test class and same plan for final provenance/receipts. No gratuitous tracker refactor. | Commit/push; CP-3/CP-4 and separate Windows CP-5 at the final implementation SHA. |
+| S-2 wording and Linux evidence | `src/Antiphon.Agents.Pty/GrokDetectors.cs` (D-1 wording only); `tests/Antiphon.Tests/Agents/GrokLinuxBlockingPromptTests.cs` (new, local fixture reader); `tests/Antiphon.Tests/Agents/Fixtures/card1006/{linux-blocking-frames.json,synthetic-blocking-frames.json,provenance.md}`. Use both real approval frames, Connecting and labelled synthetic definitions. | V-1..V-12; commit/push; CP-2. No sign-in/trust predicate change indicated; an observed updater follows D-4 revision before Code. |
+| S-3 integration/regression closure | New Grok test class and this plan for receipts. `src/Antiphon.Agents.Pty/GrokStartupReadiness.cs` remains read-only under current evidence; any production change requires a revised design. | Commit/push; CP-3/CP-4 and separate Windows CP-5 at final implementation SHA. |
+
+S-0 is explicit Code admission, not a reason to repeat Plan or postpone TestDesign:
+
+| Admission | Owner | Required receipt / current state |
+|---|---|---|
+| A-1 exact image | Caller/orchestrator with production image visibility | Verified literal tag AND RepoDigest in the commissioned capture brief, tied to the selected running Linux container; currently unavailable. Record the amended synthetic-trust acceptance on CARD-1006 before Code. |
+| A-2 isolation/custody | Caller-commissioned Linux Debug helper | One bounded SignIn-only throwaway-container run under D-2, verified network policy, tmpfs/no-persistent-swap custody, image-level configuration isolation and exited/deleted receipt. Historical local-runner evidence does not close this. A miss is reported, not bypassed. |
+| A-3 executable verification | TestDesign | Audit immutable frames and labels, freeze all transformations and V methods, review A-1/A-2 receipts, import five CP rows and confirm minima. If A-1/A-2 are still absent, identify those owned gates before handing to Code; do not silently waive them. |
 
 Read-only regression files: `GrokStartupReadinessTests.cs`,
 `GrokLinuxStartupReadinessTests.cs`, `GrokTrustPromptDetectorTests.cs`,
@@ -236,13 +307,22 @@ Read-only regression files: `GrokStartupReadinessTests.cs`,
 `RunnerGrokAdapterTrustPromptTests.cs`, all under `tests/Antiphon.Tests/Agents/`.
 Preserve both `Fixtures/card0778/` and `Fixtures/card1004/` byte-for-byte.
 
-No overlap with CARD-1008's `scripts/c590-remote.sh`,
-`scripts/deploy-server2.ps1`, `RemoteScriptContractTests` or Docker harness;
-CARD-0965's server attention/hold files; or CARD-1001's
-`tools/Antiphon.Checkpoints/Coverage`. Reading/importing with the checkpoint tool
-does not authorize changing it. No image, runner, server adapter, auth, lifecycle,
-delivery, routing, generated `docs/cards/`, or deployment-script edits. If new
-evidence needs one, return the scope change to the caller.
+### Landing order and overlap
+
+The caller owns landing serialization. CARD-1006's only current source edit is
+Grok wording plus its tests/fixtures; the following are read-only dependencies,
+not permission to broaden into runner, attention or deployment work.
+
+| Card | Files/area versus CARD-1006 | Who lands first / coordination |
+|---|---|---|
+| CARD-1008 | `scripts/c590-remote.sh`, `scripts/deploy-server2.ps1`, Docker harness, `tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs`; its documentation checks also touch `DockerStackDocumentationTests.cs` which this Plan only runs. No write overlap. | This docs amendment may land first. CARD-1008 owns and lands any deployment/script changes first; CARD-1006 never edits them. Finish any rollout before selecting A-1's image and keep that image fixed through A-2. Recount docs tests if integrating a changed baseline. |
+| CARD-0965 | Server attention/hold/input work, including `server/Application/Services/AttentionService.TaskInputs.cs`, `AgentTaskReplyService.cs`, `ParkedMessageSweepService.cs` and related tests; outside this allowlist. | No source dependency; either independent change may land first. If a proposed blocker remedy expands into attention/hold, CARD-0965 lands first and this card requires replanning; keep D-1 text-only now. |
+| CARD-1001 | `tools/Antiphon.Checkpoints/Coverage/CoverageCommand.cs` and coverage tests. CARD-1006 invokes `import`, not the coverage verb, and edits none of these. | Either independent change may land first; any shared tool repair belongs to CARD-1001 and lands first, then re-import the plan. No tool fork in this card. |
+| CARD-0959 | Runner capabilities/phone-home contracts, CLI-version advertisement and dispatch admission (`src/Antiphon.SessionRunner*`, `server/Infrastructure/Agents/SessionRunner/*` and related tests). No write overlap. | Either docs/source change may land first. A CARD-0959 runner rollout must complete before A-1 image selection; if it changes the selected image during capture, restart A-1/A-2 qualification. Do not infer Grok/Codex versions from image/build equality. |
+
+No auth, delivery, routing, generated `docs/cards/` or deployment-script edits.
+Read/import use of a tool does not authorize modifying it. No rebase, merge of
+master or fetch in this amendment; the landing service performs integration.
 
 ## Verification design
 
@@ -256,15 +336,15 @@ existing sign-in class; V-2..V-12 live in `GrokLinuxBlockingPromptTests`.
 | ID | Method | Inputs and observable assertions |
 |---|---|---|
 | V-1 | `GrokSignInPromptDetectorTests.C1006_Block_reason_is_platform_neutral` | Two home styles; exact full D-1 message from production. |
-| V-2 | `GrokLinuxBlockingPromptTests.C1006_Real_sign_in_is_not_ready` | Require real sign-in capture; production sign-in detector true, trust false for an unambiguous frame; classifier Reason=SignIn, IsReady=false. |
-| V-3 | `GrokLinuxBlockingPromptTests.C1006_Real_trust_is_not_ready` | Require real trust capture; trust detector true, sign-in false; classifier Reason=Trust, IsReady=false. |
-| V-4 | `GrokLinuxBlockingPromptTests.C1006_Fixture_bytes_and_provenance_are_pinned` | Require the two real kinds, expected literal sanitized digests, actual geometry/version/zero-input provenance, valid label/redaction schema and exact JSON decode/re-encode/decode equality. Missing data fails, never skips. |
-| V-5 | `GrokLinuxBlockingPromptTests.C1006_Real_blockers_override_valid_composers` | Preserve each capture's complete modal anchors over separately valid Windows `>` and Linux U+276F dashboards. First prove each base Ready; composed frames keep the modal reason and IsReady=false. Do not leave busy status as a second accidental blocker. |
-| V-6 | `GrokLinuxBlockingPromptTests.C1006_Current_frame_overrides_raw_history` | Real modal current + stale ready raw remains its modal reason. Real ready current + stale sign-in/trust raw remains Ready. Raw history cannot override current rendered evidence. |
-| V-7 | `GrokLinuxBlockingPromptTests.C1006_All_19_fail_open_shapes_stay_closed` | Exact P-01..P-19 inventory below, then each shape composed with each real modal's complete anchors. Assert not Ready for all; assert SignIn/Trust for modal-derived cases. Name every variant on failure. |
-| V-8 | `GrokLinuxBlockingPromptTests.C1006_Blocker_resets_readiness_settlement` | For each real blocker: Ready at 0 ms=false, blocker at 900=false/count 0, Ready at 950=false/count 1, Ready at 1000=false, Ready at 1950=true. One-second settle cannot reuse pre-blocker time. |
-| V-9 | `GrokLinuxBlockingPromptTests.C1006_Sign_in_precedes_trust_and_types_nothing` | Script real sign-in, and combined real sign-in/trust anchors over a valid composer, into production WaitAsync. Both fail with SignIn, fire OnSignIn, and record exactly zero input calls; combined classifier reason is checked first. |
-| V-10 | `GrokLinuxBlockingPromptTests.C1006_Trust_remains_blocked_until_cleared` | Real trust repeated to controlled deadline returns false/Trust with exactly one `y`; real trust then two settled ready snapshots returns true with one `y`. Never call a real CLI. Pin reason/inputs before the success path. |
+| V-2 | `GrokLinuxBlockingPromptTests.C1006_Real_sign_in_is_not_ready` | Require both C1/C2 SignIn frames; detector true, trust false, Reason=SignIn, IsReady=false. Repeat with D-3's in-memory nine-cell substitutions to prove redaction independence. Also require C1-connecting Unknown/false and neither detector. One result, internal loops. |
+| V-3 | `GrokLinuxBlockingPromptTests.C1006_Synthetic_trust_is_not_ready` | Require SYNTHETIC P-01, label/source assertion then production trust detector true, sign-in false; Reason=Trust, IsReady=false. This asserts existing predicate behavior, not real Linux trust qualification. |
+| V-4 | `GrokLinuxBlockingPromptTests.C1006_Fixture_bytes_and_provenance_are_pinned` | Pin all three D-3 real hashes and exact redaction cells; verify 120x30, widths 67/85/85, version/zero-input/limited-isolation provenance and JSON round trip. Require 19 distinct synthetic base definitions, their sources/labels and no synthetic capture masquerading as real. Missing data fails. |
+| V-5 | `GrokLinuxBlockingPromptTests.C1006_Blockers_override_valid_composers` | Preserve all approval anchors from both real frames and, separately, P-01's synthetic trust anchors over valid Windows `>` and Linux U+276F dashboards. Prove base Ready first; each SYNTHETIC composition retains its modal reason/false. No accidental busy-status blocker. |
+| V-6 | `GrokLinuxBlockingPromptTests.C1006_Current_frame_overrides_raw_history` | Current real approval or synthetic trust + stale ready raw remains its modal reason. Real ready current + stale sign-in/trust raw remains Ready. Raw history cannot override current rendered evidence. |
+| V-7 | `GrokLinuxBlockingPromptTests.C1006_All_19_fail_open_shapes_stay_closed` | P-01..P-19, then each layout with real approval anchors and separately synthetic trust anchors. Exactly 57 cases; not Ready for all, SignIn/Trust for derived cases. Name each variant and provenance on failure. |
+| V-8 | `GrokLinuxBlockingPromptTests.C1006_Blocker_resets_readiness_settlement` | For each real approval frame and synthetic trust: Ready at 0 ms=false, blocker at 900=false/count 0, Ready at 950=false/count 1, Ready at 1000=false, Ready at 1950=true. Settlement cannot reuse pre-blocker time. |
+| V-9 | `GrokLinuxBlockingPromptTests.C1006_Sign_in_precedes_trust_and_types_nothing` | Script both real approval frames and a SYNTHETIC mix of approval/trust anchors over valid composer into production WaitAsync. All fail SignIn, fire OnSignIn and record zero input calls; combined classifier reason checked first. |
+| V-10 | `GrokLinuxBlockingPromptTests.C1006_Trust_remains_blocked_until_cleared` | SYNTHETIC P-01 repeated to controlled deadline returns false/Trust with exactly one `y`; P-01 then two settled ready frames returns true with one `y`. This pins the existing action only; never call a real CLI. |
 | V-11 | `GrokLinuxBlockingPromptTests.C1006_Update_fixture_policy_and_negatives` | P-06/P-07 must be labelled synthetic and not Ready. A captured realUpdate slot requires at least one real-labelled frame and every referenced frame not Ready. not-observed means no real-update claim, not a synthetic substitute. |
 | V-12 | `GrokLinuxBlockingPromptTests.C1006_Windows_fixture_results_are_unchanged` | Iterate exactly all 114 captured Windows checkpoints; compare Reason and IsReady with recorded results. No fixture rewriting. |
 
@@ -272,21 +352,34 @@ V-4 is artifact integrity, not independently sufficient behavior coverage. V-2,
 V-3 and V-5 call the production detector/classifier, and V-8..V-10 call the actual
 tracker/waiter. No test compares only a test helper to its own constants.
 
+V/guard IDs remain V-1..V-12; P-01..P-19, R-1..R-3, CP-1..CP-5 and
+PC-1..PC-14 (including PC-5a/PC-5b) retain their IDs. No numbered row is retired
+or renumbered. The proposed, never-implemented method names
+`C1006_Real_trust_is_not_ready` (V-3/PC-4) and
+`C1006_Real_blockers_override_valid_composers` (V-5/PC-5a/b) are retired in favor
+of the honest names above; every method reference below uses the replacements.
+No additional V method: still 12 single-result methods, 11 in the new class.
+Fixture roster: three files, three retained real screens (two approval, one
+Connecting), 19 synthetic base definitions; 38 V-7 derived cases constructed in
+memory. Later A-2 evidence is separate provenance unless TestDesign explicitly
+adds a new fixture and recounts internal cases; it does not overwrite C1/C2.
+
 ### Durable 19-shape inventory
 
 These shapes reproduce the named Review inventory, with explicit construction
 rules. Store synthetic base screens/definitions separately from real captures.
 Start composer variations from CARD-1004's 1.0.41 dashboard (30 rows; composer
 top/input/bottom at 24/25/26; enabled hint at 28). Preserve every unchanged row.
-Modal base shapes use the relevant captured anchors once S-0 is satisfied.
+Approval bases use D-3's real anchors; trust bases use SYNTHETIC P-01. All
+compositions, including the sign-in menu and updater shapes, are synthetic.
 
 | Probe | Exact shape / transformation | Base expectation |
 |---|---|---|
-| P-01 | Real trust choices with U+276F before the affirmative choice. | Trust / false |
-| P-02 | Real sign-in menu with a U+276F selection cursor. | SignIn / false |
-| P-03 | Trust anchors over dashboard with row 22 `  Working...`. | Trust / false |
-| P-04 | Sign-in anchors over the same working dashboard. | SignIn / false |
-| P-05 | Sign-in anchors plus a complete composer-shaped box whose interior is bare U+276F. | SignIn / false |
+| P-01 | SYNTHETIC trust question/choices at D-3's rows 5/7/8, U+276F before affirmative. | Trust / false |
+| P-02 | SYNTHETIC sign-in menu: approval anchors at rows 3/4/5, row 7 `  U+276F Sign in`, row 8 `  Exit`; blank elsewhere, no enabled composer. Not an observed menu. | SignIn / false |
+| P-03 | SYNTHETIC trust anchors over dashboard with row 22 `  Working...`. | Trust / false |
+| P-04 | SYNTHETIC approval-anchor overlay over the same working dashboard. | SignIn / false |
+| P-05 | SYNTHETIC approval-anchor overlay plus a complete composer-shaped box whose interior is bare U+276F. | SignIn / false |
 | P-06 | Synthetic `Update available` menu, `U+276F 1. Update now`, `2. Later`; no enabled composer/hint. | not Ready |
 | P-07 | Synthetic boxed `A new version is available` / `Press Enter to update` dialog; no enabled composer/hint. | not Ready |
 | P-08 | Valid composer geometry, interior `U+276F 1. Yes`. | ComposerUnavailable / false |
@@ -304,14 +397,17 @@ Modal base shapes use the relevant captured anchors once S-0 is satisfied.
 
 `U+276F` above denotes one actual decoded character, never those six literal ASCII
 characters. V-7 checks 19 base shapes plus 19 sign-in-derived and 19 trust-derived
-shapes: **57 internal cases, one TUnit result**. For a derived case preserve the
-real modal's complete anchors outside the changed composer/status rows; assert
-that construction did not erase them. Transfer each probe's layout/glyph change,
+shapes: **57 internal cases, one TUnit result**. Freeze approval anchors (the
+three exact D-3 phrases from C1; C2 has identical anchors) at rows 3/4/5,
+column 2, and trust question/choices at rows 5/7/8, column 2. V-5 uses the same
+placements; its mixed V-9 control puts approval at 3/4/5 and trust at 7/8/9.
+These placements preserve composer/status rows and every probe's changed glyph.
+Assert construction kept the complete respective anchor set. Transfer each probe's layout/glyph change,
 not a different modal's text: the sign-in-derived and trust-derived sets retain
 their respective reasons. The deliberate mixed-anchor case is V-9 and must
-classify SignIn. If a capture cannot be composed without
-erasing an anchor, freeze a different explicit placement before Code; do not
-drop the variant. V-5 is the stronger ready-composer precedence control, so a
+classify SignIn. Only V-9 intentionally mixes modal anchors. TestDesign verifies
+these placements for every shape before Code; do not drop a variant.
+V-5 is the stronger ready-composer precedence control, so a
 second broken layout cannot hide a missed modal detector.
 
 ### Regression and lane obligations
@@ -383,14 +479,14 @@ the caller-assigned external evidence root. Repairs require a separate Code task
 | PC-1 | Restore “as the Windows user” in BlockReason. | `GrokSignInPromptDetectorTests.C1006_Block_reason_is_platform_neutral` | Full message equality for POSIX home. |
 | PC-2 | Replace per-GROK_HOME launch scope with the old machine-wide statement. | `GrokSignInPromptDetectorTests.C1006_Block_reason_is_platform_neutral` | Full message equality. |
 | PC-3 | Make sign-in IsVisibleOnScreen return false. | `GrokLinuxBlockingPromptTests.C1006_Real_sign_in_is_not_ready` | Detector true on real sign-in. |
-| PC-4 | Make trust IsVisibleOnScreen return false. | `GrokLinuxBlockingPromptTests.C1006_Real_trust_is_not_ready` | Detector true on real trust. |
-| PC-5a / PC-5b | Move respectively sign-in or trust classification after successful composer return. | `GrokLinuxBlockingPromptTests.C1006_Real_blockers_override_valid_composers` | Expected SignIn/Trust on otherwise-ready composer becomes Ready. |
+| PC-4 | Make trust IsVisibleOnScreen return false. | `GrokLinuxBlockingPromptTests.C1006_Synthetic_trust_is_not_ready` | Detector true on labelled synthetic P-01 trust. |
+| PC-5a / PC-5b | Move respectively sign-in or trust classification after successful composer return. | `GrokLinuxBlockingPromptTests.C1006_Blockers_override_valid_composers` | Expected SignIn/Trust on otherwise-ready composer becomes Ready. |
 | PC-6 | Check trust before sign-in in Classify. | `GrokLinuxBlockingPromptTests.C1006_Sign_in_precedes_trust_and_types_nothing` | Combined frame Reason=SignIn fails. |
 | PC-7 | Replace exact composer interior match with Contains(U+276F). | `GrokLinuxBlockingPromptTests.C1006_All_19_fail_open_shapes_stay_closed` | P-08 not-ready fails (also P-13..P-15). |
 | PC-8 | Remove enabled-hint rejection. | `GrokLinuxBlockingPromptTests.C1006_All_19_fail_open_shapes_stay_closed` | P-16 not-ready fails. |
 | PC-9 | Before bottom validation, replace an empty bottom with `"  ╰" + new string('─', 114) + "╯"`, thereby accepting a missing border. | `GrokLinuxBlockingPromptTests.C1006_All_19_fail_open_shapes_stay_closed` | P-18 not-ready fails at an outcome assertion, without an indexing exception. |
 | PC-10 | Permit 29 rows by removing only the row-count rejection. | `GrokLinuxBlockingPromptTests.C1006_All_19_fail_open_shapes_stay_closed` | P-19 not-ready fails. |
-| PC-11 | Retain the old tracker region/time on a negative observation. | `GrokLinuxBlockingPromptTests.C1006_Blocker_resets_readiness_settlement` | PositiveObservations=0 after the real blocker fails; without that assertion, Ready at 1000 must fail. |
+| PC-11 | Retain the old tracker region/time on a negative observation. | `GrokLinuxBlockingPromptTests.C1006_Blocker_resets_readiness_settlement` | PositiveObservations=0 after real approval or synthetic trust fails; without that assertion, Ready at 1000 must fail. |
 | PC-12 | Write affirmative key in WaitAsync's sign-in branch before failing. | `GrokLinuxBlockingPromptTests.C1006_Sign_in_precedes_trust_and_types_nothing` | Zero inputs fails on real sign-in. |
 | PC-13 | Treat an uncleared trust frame as Ready after the affirmative write. | `GrokLinuxBlockingPromptTests.C1006_Trust_remains_blocked_until_cleared` | Persistent trust must return false/Trust. |
 | PC-14 | Allow first ready observation immediately. | `GrokLinuxBlockingPromptTests.C1006_Blocker_resets_readiness_settlement` | First observation at 0 ms must be false. |
@@ -403,7 +499,7 @@ unobserved vendor modal. Keep the unchanged privacy regression in ordinary R-2.
 ### Cost
 
 Ordinary Code checkpoint floor: **35 minutes** (6+6+7+8+8), plus authoring and the
-separately commissioned bounded capture investigation. Windows dispatch capacity
+separately commissioned S-0 isolation receipt. Windows dispatch capacity
 is an external lane dependency. Plan verification is one docs checkpoint plus
 actual import; no classifier, native, provider or PC runs in this dispatch.
 
@@ -430,11 +526,16 @@ Import is a foreground metadata command, not another build/test. It must accept
 all five CP rows, retain their counts/filters/slices and serial flags, and decode
 literal pipes. Validate the checkpoint source receipt against the tested SHA.
 Remove only task-owned `bin-c1006-plan/` outputs after all commands are finished;
-retain `.antiphon` receipts. Record actual outcomes in a subsequent evidence
-amendment, without claiming the amendment itself was the tested source. If only
-evidence prose changes, re-import at the final SHA; no duplicate docs run is needed.
+retain `.antiphon` receipts. For amendment task `3fdafc77`, commit/push the complete
+plan first, then run this documentation checkpoint **once at the final SHA**
+and import at that same SHA. Report actual outcomes and source-receipt location
+in the task report; do not make a later prose-only commit that would move the
+final SHA beyond its test. The direct script self-leases; do not double-wrap or
+use the owner-verified checkpoint execution tool for this Plan task (CARD-0853).
+No extra build beyond this checkpoint. Grep stale real-trust/next-stage references,
+compare numbered rosters and verify the investigation files are unchanged.
 
-### Plan verification receipt (2026-10-03)
+### Historical plan verification receipt (original task e6f1295a, 2026-10-03)
 
 DOCS-1006 ran at committed source
 `4b168744303a93afab6bacc00127fb0b609e6bdb`: **37 executed, 37 passed, 0 failed,
@@ -452,27 +553,27 @@ Evidence root: `.antiphon/c1006-plan-checkpoints/`; imported manifest:
 `imported.yml`; source receipt:
 `DOCS-1006-20261003-123243-0690/source.json`.
 
-The final amendment records these results and clarifies that the 57 derived
-probe cases transfer layout without importing a foreign modal's anchors; V-9
-owns deliberate mixed-modal precedence. It does not change the checkpoint table,
-production code or tests. The docs test receipt remains attributed to the SHA
-above, not retrospectively to this amendment. Re-import the unchanged table at
-the final committed SHA before cleanup. This verifies plan syntax and the
-existing documentation contracts; all future captures, V/R and PCs remain pending.
+Those receipts belong to the original Plan task, whose final `374fefe1` import
+accepted five rows. They are not evidence that the present amendment passed.
+This amendment keeps the checkpoint table/minima unchanged and changes fixture
+provenance and coverage claims as described above. Its own final-SHA test/import
+receipts are delivered with task `3fdafc77`. Runtime V/R and all PCs remain pending.
 
 ## Risks, landing order and follow-ups
 
-1. Capture feasibility is an admission dependency, not an auth exception.
-   Investigate C-1/C-2 first. A blocked trust screen cannot be bypassed within this
-   brief. The caller may commission a revised, separately authorized method;
-   this plan grants none. Fresh-home isolation must also account for CARD-0857.
+1. S-0's A-1/A-2 exact-image and custody receipt remains pending, owned by the
+   caller and Linux Debug helper; TestDesign can work from the committed real
+   frames now. No further credential-free trust trial is required or represented
+   as likely to succeed. The synthetic-trust decision is explicit; any signed-in
+   real-trust follow-up is human-gated, outside scope and only a note here.
 2. Real UI wording, menu keys or geometry may differ from 1.0.13. Return novel
    anchors/actions to TestDesign, amend/import this plan, then implement. Never
    broaden Ready to accommodate a modal. Redaction must not invent the anchors.
 3. Updater qualification is conditional and explicitly pending when not observed;
    the two synthetic shapes are limited evidence. Capture any encountered real
    frame before deciding whether production needs a detector.
-4. Publish this plan, perform capture investigation, resolve admission, then Code,
+4. Publish this plan and its inherited investigation evidence, then TestDesign;
+   close A-1/A-2/A-3 before Code. Follow with
    separate Final Review, durable post-land companion, confirmed Code publication
    and server activation. The orchestrator activates from the canonical checkout
    through its AppHost restart policy and verifies `/api/version` equals the
@@ -483,16 +584,17 @@ existing documentation contracts; all future captures, V/R and PCs remain pendin
    retain external restoration evidence. An implementation may be Done with the
    explicitly linked pending obligation; never claim PC-clean before it runs.
 
-FOLLOW-UPS (board searched before proposing any new card): `card.ps1 search Grok
--Board Antiphon -All` completed, and the narrower `Grok updater` search returned
-CARD-1006 itself. The capture-order finding and conditional update slot belong to
-this card, so no duplicate is created. CARD-0857 owns ambient MCP isolation;
-CARD-0988 owns the loaded trust timing failure; CARD-0861 owns other terminal
-sizes; CARD-1011 owns real Windows canaries/routing. Those cards do not relax the
-capture prerequisites or substitute for CP-5. No new structural defect outside
-these existing obligations was established by this Plan dispatch.
+FOLLOW-UPS: the original Plan and Investigate tasks record completed board
+searches; Investigate's `ANSI log` search found five matches and treats ordinary
+raw-log custody as this card's admission issue, not a production logging defect.
+This amendment creates no task/card. CARD-0857 owns ambient MCP isolation;
+CARD-0988 owns loaded trust timing; CARD-0861 owns terminal sizes; CARD-1011 owns
+real Windows canaries/routing. None substitutes for CP-5. The caller/human owns
+the signed-in trust follow-up note; the session-runtime maintainer owns any
+separately commissioned capture-only no-log policy (D-2). Neither widens this
+card or authorizes credentials. Landing coordination is the explicit table above.
 
 --- next stage ---
-next: investigate
-handoff: Commission a Linux Debug capture using D-2's isolated runner snapshot route; measure whether credential-free fresh-home launches can expose real sign-in and trust, retain only sanitized frames, and resolve the documented sign-in-before-trust conflict before admitting Code. No login, tokens, auth-store access or model turn.
+next: test-design
+handoff: Audit real SignIn/redaction provenance and explicitly synthetic trust/menu/updater controls; preserve all 19 probes, five checkpoints and 15 PCs. Freeze methods/anchor placements and import counts. Review caller-owned A-1 image identity and Debug-owned A-2 throwaway/tmpfs/network receipt before Code; no credential-free trust retry or login.
 artifact: docs/superpowers/plans/2026-10-03-card-1006-grok-linux-signin-trust-plan.md
