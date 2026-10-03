@@ -262,8 +262,21 @@ Three things worth knowing about that table:
   existing hold text. Frontier requires codex-cli 0.153.4+ and `gpt-6.1-sol` requires 0.159.1+.
   CARD-0959 adds runner-owned CLI observations and immutable floor metadata. The catalogue's
   observation describes the default installed launcher; an exact profile needs evidence from
-  its selected launcher. Observation support alone does not enable admission enforcement;
-  create/retry/dispatch enforcement remains pending in the CARD-0959 Code continuation.
+  its selected launcher. CARD-0959's source now checks create, explicit retry and dispatch
+  before claim against the selected launch descriptor. Missing, failed, stale or older evidence
+  refuses with codex_cli_version_unknown, codex_cli_version_stale or
+  codex_cli_version_too_old; the synchronous response is HTTP 409. A queued refusal becomes
+  Blocked. Profileless cold launches use the tier model; an exact managed-profile model and
+  an accepted running session keep their existing model semantics. Qualification is still
+  pending: source implementation is not an activation receipt.
+  Delegation:CodexCliVersionMaxAgeMinutes defaults to 15 (allowed 1..60).
+  Delegation:CodexCliVersionOverrides defaults to an empty list and is operator configuration,
+  never a delegate request flag. Each entry requires an exact RunnerId and canonical Model,
+  nonempty Reason of at most 1000 characters, ExpiresAtUtc in UTC within 24 hours, and a
+  nonempty AllowedRefusalCodes subset of the three CLI codes above. Wildcards and duplicate
+  runner/model pairs are invalid. Expiry is checked on each use without a settings reload.
+  Each use records a Warning with runner, model, refusal code, expiry and reason; it changes
+  no observed evidence and grants no provider-auth, model-hold or placement exception.
   **Before activating enforcement, every Codex-serving runner must be at least 0.159.1.**
   Update runners first, verify successful completed observations across two five-minute refresh
   periods and qualify exact profiles, then restart the canonical AppHost with the reviewed gate.
