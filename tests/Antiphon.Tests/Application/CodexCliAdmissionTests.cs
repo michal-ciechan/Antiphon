@@ -393,6 +393,9 @@ public sealed class CodexCliAdmissionTests
             receipts.Single().Sequence.ShouldBeGreaterThan(queued.LastDeliveryBaselineSequence ?? 0, "C959-v21-baseline " + vector);
             (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning && e.Detail!.Contains("codex_cli_version"))).ShouldBe(0, "C959-pc-189 " + vector);
         }
+        foreach (var version in new[] { "0.159.1", "0.160.0" })
+        foreach (var busy in new[] { false, true })
+            await CodexCliRemoteDeliveryFixture.RunAsync(Body, version, busy);
     }
 
     [Test]
