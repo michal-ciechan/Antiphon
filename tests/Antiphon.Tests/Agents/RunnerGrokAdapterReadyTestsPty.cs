@@ -14,6 +14,9 @@ using TUnit.Core;
 using TUnit.Core.Exceptions;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Reflection;
+using Antiphon.PtyHost.Protocol;
 
 namespace Antiphon.Tests.Agents;
 
@@ -75,21 +78,17 @@ public class RunnerGrokAdapterReadyTestsPty
     [Explicit]
     [NotInParallel("Headed")]
     [Timeout(600_000)]
-    public async Task C1011_real_fresh_worktree_trust(CancellationToken cancellationToken)
+    public async Task C1011_real_fresh_worktree_ready_and_one_turn(CancellationToken cancellationToken)
     {
         if (!OperatingSystem.IsWindows() || Environment.GetEnvironmentVariable("ANTIPHON_HEADED_TESTS") != "1")
-            throw new SkipTestException("Requires Windows and ANTIPHON_HEADED_TESTS=1 under an explicit S0 commission");
+            throw new SkipTestException("Requires Windows and ANTIPHON_HEADED_TESTS=1 under an explicit WQ-3 commission");
         var exe = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".grok", "bin", "grok.exe");
-        File.Exists(exe).ShouldBeTrue("The commissioned real Grok CLI must be installed; missing setup is incomplete qualification");
-        var root = Path.Combine(Path.GetTempPath(), "c1011-real-trust-" + Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(Path.GetTempPath(), "c1011-real-fresh-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         var cwd = Path.Combine(root, "worktree");
+        var sessionId = Guid.NewGuid();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromMinutes(10));
-        var source = (await GitAsync(DelegateScriptRunner.RepoRoot, ["rev-parse", "HEAD"], deadline.Token)).Trim();
-        var version = (await RunAsync(exe, ["--version"], DelegateScriptRunner.RepoRoot, deadline.Token)).Trim();
-        await GitAsync(DelegateScriptRunner.RepoRoot, ["worktree", "add", "--detach", cwd, source], deadline.Token);
-        var sessionId = Guid.NewGuid();
         await using var client = new DirectSessionRunnerClient(Path.Combine(root, "logs"), ptyBackend: "modern");
         var observer = new C1011GrokQualification.Observer(client);
         await using var adapter = new RunnerGrokAdapter(observer, Options.Create(new AgentRegistrySettings
@@ -97,32 +96,61 @@ public class RunnerGrokAdapterReadyTestsPty
             GrokStartupCaptureDirectory = Path.Combine(root, "startup"),
         }));
         Process? ownedChild = null;
+        var worktreeCreated = false;
         var started = false;
         var releaseConfirmed = false;
+        var turnAccepted = false;
+        var source = "";
+        var version = "";
+        var backendLine = "";
+        var hostLogSha256 = "";
+        var hostLogPath = Path.Combine(Path.GetDirectoryName(client.PtyHostManifestDir)!, "logs", sessionId.ToString("N") + ".log");
+        object? buildProvenance = null;
+        string? failure = null;
+        var phase = "setup";
+        var nonce = "C1011-FRESH-" + Guid.NewGuid().ToString("N");
+        var body = $"Reply exactly {nonce}. Do not use tools or change files.";
+        SessionRunnerTranscriptDto transcript = new(sessionId, [], 0);
         try
         {
+            File.Exists(exe).ShouldBeTrue("The real Grok CLI must be installed; missing setup is incomplete qualification");
+            source = (await GitAsync(DelegateScriptRunner.RepoRoot, ["rev-parse", "HEAD"], deadline.Token)).Trim();
+            await GitAsync(DelegateScriptRunner.RepoRoot, ["worktree", "add", "--detach", cwd, source], deadline.Token);
+            worktreeCreated = true;
+            // Immediately before this single launch; retain complete build/channel output.
+            version = await RunAsync(exe, ["--version"], DelegateScriptRunner.RepoRoot, deadline.Token);
+            version.ShouldNotBeNullOrWhiteSpace("cli-version");
+            phase = "launch";
             await adapter.StartAsync(new AgentLaunchSpec("grok", AgentKind.Grok, exe,
                 ["--always-approve", "--no-alt-screen", "--model", "grok-4.7", "--session-id", sessionId.ToString("D")],
                 new Dictionary<string, string>(), cwd, 120, 30, SessionId: sessionId), deadline.Token);
             started = true;
             adapter.Pid.ShouldNotBeNull();
             ownedChild = Process.GetProcessById(adapter.Pid.Value);
+            // Record actual backend before any readiness/prompt assertion can reject the launch.
+            var hostLog = await ReadHostLogAsync(client, sessionId, deadline.Token);
+            hostLogSha256 = Convert.ToHexStringLower(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(hostLog)));
+            backendLine = hostLog.Split('\n')
+                .SingleOrDefault(x => x.Contains("pty backend:", StringComparison.Ordinal))?.TrimEnd('\r') ?? "";
+            await WriteObservationsAsync();
+            backendLine.ShouldContain("pty backend: ModernConPty (requested 'modern')", customMessage: "backend-line");
+            buildProvenance = CaptureBuildProvenance(client, sessionId, ownedChild, hostLogPath, hostLogSha256);
+            phase = "startup";
             var adapterReady = await adapter.WaitForReadyAsync(deadline.Token);
             adapterReady.ShouldBeTrue();
             var ready = await observer.GetSnapshotAsync(sessionId, deadline.Token);
             GrokStartupScreen.Classify(ready.RenderedScreen).Reason.ShouldBe(GrokStartupReason.Ready);
+            ready.RenderedScreen.Split('\n')[25][4].ShouldBe('>');
             GrokTrustPromptDetector.IsVisibleOnScreen(ready.RenderedScreen).ShouldBeFalse();
             var prePrompt = await observer.GetTranscriptAsync(sessionId, deadline.Token);
+            prePrompt.Entries.ShouldNotContain(x => x.Kind == TranscriptKinds.UserPrompt);
             C1011GrokQualification.StartupVerdict(adapterReady, ready.RenderedScreen,
                 observer.TrustBeforeFirstInput, observer.StartupInputs, prePrompt)
                 .ShouldBe(C1011GrokQualification.Verdict.Accepted, "startup-accepted");
-            (await ReadHostLogAsync(client, sessionId, deadline.Token))
-                .ShouldContain("pty backend: ModernConPty (requested 'modern')");
             observer.StartupComplete = true;
-            var nonce = "C1011 TRUST " + Guid.NewGuid().ToString("N");
-            var body = $"Reply exactly {nonce}. Do not use tools or change files.";
+            phase = "one-paid-turn";
             await adapter.SendPromptAsync(body, deadline.Token);
-            var transcript = await WaitForPromptAsync(client, sessionId, deadline.Token);
+            transcript = await WaitForPromptAsync(client, sessionId, deadline.Token);
             var prompt = transcript.Entries.Single(x => x.Kind == TranscriptKinds.UserPrompt);
             prompt.Text.ShouldBe(body);
             do
@@ -131,13 +159,16 @@ public class RunnerGrokAdapterReadyTestsPty
                 if (transcript.Entries.Any(x => x.Kind == TranscriptKinds.TurnEnd && x.Sequence > prompt.Sequence)) break;
                 await Task.Delay(250, deadline.Token);
             } while (true);
-            transcript.Entries.ShouldContain(x => x.Kind == TranscriptKinds.AssistantText
-                && x.Sequence > prompt.Sequence && x.Text != null && x.Text.Contains(nonce));
-            await File.WriteAllTextAsync(Path.Combine(root, "receipt.json"), JsonSerializer.Serialize(new
-            {
-                source, version, sessionId, cwd, cols = 120, rows = 30,
-                prompt.Text, prompt.Sequence, response = transcript.Entries.Where(x => x.Sequence > prompt.Sequence),
-            }), deadline.Token);
+            C1011GrokQualification.TurnVerdict(transcript, body, nonce)
+                .ShouldBe(C1011GrokQualification.Verdict.Accepted, "turn-rejection");
+            transcript.Entries.ShouldContain(x => !string.IsNullOrWhiteSpace(x.Model), "transcript-model");
+            turnAccepted = true;
+            phase = "release";
+        }
+        catch (Exception ex)
+        {
+            failure = ex.GetType().Name; // No arbitrary diagnostics or provider screen content.
+            throw;
         }
         finally
         {
@@ -153,18 +184,33 @@ public class RunnerGrokAdapterReadyTestsPty
                         ownedChild.HasExited.ShouldBeTrue();
                         releaseConfirmed = true;
                     }
+                    if (turnAccepted)
+                    {
+                        // Examine the final post-release transcript, including any late duplicates.
+                        transcript = await client.GetTranscriptAsync(sessionId, cleanup.Token);
+                        C1011GrokQualification.TurnVerdict(transcript, body, nonce)
+                            .ShouldBe(C1011GrokQualification.Verdict.Accepted, "turn-rejection");
+                        releaseConfirmed.ShouldBeTrue("release-owner");
+                        var measured = new C1011GrokQualification.Measurements(source, version, backendLine,
+                            sessionId, cwd, "grok-4.7", body, nonce, buildProvenance!, observer.SessionBannerVersions);
+                        await File.WriteAllTextAsync(Path.Combine(root, "receipt.json"),
+                            C1011GrokQualification.SerializeReceipt(measured, observer, transcript, releaseConfirmed),
+                            CancellationToken.None);
+                        phase = "accepted";
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                failure = ex.GetType().Name;
+                throw;
             }
             finally
             {
                 ownedChild?.Dispose();
-                await File.WriteAllTextAsync(Path.Combine(root, "observations.json"), JsonSerializer.Serialize(new
-                {
-                    source, version, sessionId, observer.TrustBeforeFirstInput, observer.StartupInputs,
-                    observer.Observations, releaseConfirmed,
-                }), CancellationToken.None);
-                // Remove only this exact owned worktree, after confirmed child exit. No force.
-                if (!started || releaseConfirmed)
+                // On setup/launch/startup/input/turn/release failure, retain the measured facts too.
+                await WriteObservationsAsync();
+                if (worktreeCreated && (!started || releaseConfirmed))
                 {
                     using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
                     await GitAsync(DelegateScriptRunner.RepoRoot, ["worktree", "remove", cwd], cleanup.Token);
@@ -172,6 +218,51 @@ public class RunnerGrokAdapterReadyTestsPty
                 Console.WriteLine($"C1011 WQ-3 session={sessionId:D} evidence={root} releaseConfirmed={releaseConfirmed}");
             }
         }
+
+        Task WriteObservationsAsync() => File.WriteAllTextAsync(Path.Combine(root, "observations.json"),
+            JsonSerializer.Serialize(new
+            {
+                source, version, backendLine, hostLogPath, hostLogSha256, sessionId, cwd, cols = 120, rows = 30, requestedModel = "grok-4.7",
+                buildProvenance, observer.TrustBeforeFirstInput, observer.StartupInputs, observer.Observations,
+                observer.SessionBannerVersions, body, nonce, transcript, releaseConfirmed, phase, failure,
+            }), CancellationToken.None);
+    }
+
+    private static object CaptureBuildProvenance(DirectSessionRunnerClient client, Guid sessionId, Process child,
+        string hostLogPath, string hostLogSha256)
+    {
+        var manifestPath = PtyHostManifest.PathFor(client.PtyHostManifestDir, sessionId);
+        var manifest = PtyHostManifest.TryLoad(manifestPath);
+        manifest.ShouldNotBeNull("owned host manifest is mandatory build evidence");
+        manifest.SessionId.ShouldBe(sessionId);
+        manifest.ChildPid.ShouldBe(child.Id);
+        manifest.Cols.ShouldBe(120);
+        manifest.Rows.ShouldBe(30);
+        using var host = Process.GetProcessById(manifest.HostPid);
+        var hostImage = host.MainModule!.FileName;
+        var loadedConPty = host.Modules.Cast<ProcessModule>().Single(x =>
+            string.Equals(x.ModuleName, ConPtyRedistributable.DllName, StringComparison.OrdinalIgnoreCase)).FileName;
+        var consolePath = Path.Combine(Path.GetDirectoryName(loadedConPty)!, ConPtyRedistributable.ConsoleHostName);
+        ConPtyRedistributable.VerifyShippedHashes(loadedConPty).Ok.ShouldBeTrue("modern-package-provenance");
+        var runnerAssembly = typeof(Antiphon.SessionRunner.SessionRunnerRuntime).Assembly;
+        return new
+        {
+            hostLogPath, hostLogSha256, hostLogHashScope = "UTF-8 launch-log snapshot before readiness",
+            manifestPath, manifest.HostPid, manifest.HostStartTimeUtc, manifest.ChildPid, manifest.ChildStartTimeUtc,
+            hostImage = Binary(hostImage), hostBuild = Binary(Path.Combine(Path.GetDirectoryName(hostImage)!, "Antiphon.PtyHost.dll")),
+            runnerBuild = Binary(runnerAssembly.Location),
+            runnerVersion = runnerAssembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion,
+            harnessBuild = Binary(typeof(RunnerGrokAdapterReadyTestsPty).Assembly.Location),
+            package = ConPtyRedistributable.PackageId, packageVersion = ConPtyRedistributable.PackageVersion,
+            conpty = Binary(loadedConPty), openConsole = Binary(consolePath),
+        };
+    }
+
+    private static object Binary(string path)
+    {
+        using var stream = File.OpenRead(path);
+        var version = FileVersionInfo.GetVersionInfo(path);
+        return new { path, sha256 = Convert.ToHexStringLower(SHA256.HashData(stream)), version.FileVersion, version.ProductVersion };
     }
 
     private static async Task<string> ReadHostLogAsync(DirectSessionRunnerClient client, Guid sessionId, CancellationToken ct)

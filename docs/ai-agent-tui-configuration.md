@@ -71,18 +71,18 @@ trust screens cannot authorize a first prompt. The ready region must still settl
 | 1.0.40 | Linux server2 container | 120x30 | U+276F `❯` | CARD-1004 matching real startup frame; this does not change the image pin |
 
 **CARD-1011 Windows routing gate: pending.** The accepted real `d6e4138e`
-canary proves its complete task UserPrompt and returned report, not both hosts
-or fresh trust. The proposed Debug policy is inactive until the
+canary proves its complete task UserPrompt and returned report. WQ-1 is
+operator-excluded for CARD-1022; modern Review and amended WQ-3 remain the gates. The proposed Debug policy is inactive until the
 [owner's gates](orchestration-loop.md#windows-review-and-debug-routing) pass.
 
 | CLI/build | Actual backend | Geometry/marker | Trust | Task/session/SHA | Receipt/release |
 |---|---|---|---|---|---|
 | 1.0.41 / `4220f3b224a6` (reported) | Unknown; attribution pending | 120x30 / `>` to confirm | Not observed | `d6e4138e` / `26d8a18c` / `5f214b0c` | UserPrompt/report accepted; runner release ownership pending |
-| Same tuple to verify | InboxConhost (WQ-1) and ModernConPty (WQ-2), each pending | 120x30 / `>` | Visible trust, one y, cleared trust/Ready required (WQ-3) | See full identities in [ledger](investigations/2026-10-03-card-1011-windows-grok-qualification.md) | Whole transcript and release required; modern needs loaded binary paths/hashes |
+| 1.0.46 / `2765805b9442` [stable] (caller-reported) | ModernConPty 1.24.260710001; WQ-2 reported met, WQ-1 operator-excluded | 120x30 / `>` | Record trust presence/absence; [] or one y accordingly, cleared trust/Ready, one nonce turn required (WQ-3) | `02e5b9b7`; full identities/receipts in [ledger](investigations/2026-10-03-card-1011-windows-grok-qualification.md) pending reconciliation | Whole transcript and release required; modern needs loaded binary paths/hashes |
 
 Backend requests and advertised capabilities do not establish actual execution;
 use each session's host log and reject modern fallback. Restore and verify any
-temporary backend configuration before accepting WQ-1/2/3. Diagnose failures
+temporary backend configuration before accepting WQ-2/3. Diagnose failures
 with server-log `screenReason` and the named
 `%TEMP%\antiphon-grok-startup\grok-startup-*.txt` (or configured capture directory):
 the file keys are `outcome`/`lastScreenReason`. Sign-in content stays suppressed;

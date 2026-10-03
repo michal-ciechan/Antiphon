@@ -11,7 +11,7 @@ internal static class C1011GrokQualification
 {
     internal enum Verdict
     {
-        Accepted, TrustNotObserved, NotReady, VisibleTrust, StartupInputMismatch,
+        Accepted, NotReady, VisibleTrust, StartupInputMismatch,
         PrePromptReceipt, PromptMultiplicity, PromptBodyMismatch, AssistantReplyMismatch, MissingTurnEnd,
     }
 
@@ -21,9 +21,7 @@ internal static class C1011GrokQualification
         if (!adapterReady || GrokStartupScreen.Classify(currentScreen).Reason != GrokStartupReason.Ready)
             return Verdict.NotReady;
         if (GrokTrustPromptDetector.IsVisibleOnScreen(currentScreen)) return Verdict.VisibleTrust;
-        // Legacy oracle retained for the commissioned assertion-red proof before correction.
-        if (!trustBeforeFirstInput) return Verdict.TrustNotObserved;
-        var expectedInputs = new[] { "y" };
+        var expectedInputs = trustBeforeFirstInput ? new[] { "y" } : Array.Empty<string>();
         if (!startupInputs.SequenceEqual(expectedInputs)) return Verdict.StartupInputMismatch;
         if (prePrompt.Entries.Any(x => x.Kind == TranscriptKinds.UserPrompt)) return Verdict.PrePromptReceipt;
         return Verdict.Accepted;
@@ -71,6 +69,7 @@ internal static class C1011GrokQualification
         public bool TrustBeforeFirstInput { get; private set; }
         public List<string> StartupInputs { get; } = [];
         public List<object> Observations { get; } = [];
+        public List<string> SessionBannerVersions { get; } = [];
         public async Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid id, CancellationToken ct)
         {
             var snapshot = await inner.GetSnapshotAsync(id, ct);
@@ -78,6 +77,17 @@ internal static class C1011GrokQualification
             if (!StartupComplete)
             {
                 if (reason == GrokStartupReason.Trust && StartupInputs.Count == 0) TrustBeforeFirstInput = true;
+                // Capture only Grok version tokens, never a sign-in screen or other contents.
+                if (reason != GrokStartupReason.SignIn && SessionBannerVersions.Count < 8)
+                {
+                    foreach (var line in snapshot.RenderedScreen.Split('\n').Where(x => x.Contains("Grok", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        var match = System.Text.RegularExpressions.Regex.Match(line, @"\b\d+\.\d+\.\d+(?:\s+\([0-9a-f]+\))?(?:\s+\[[a-z]+\])?",
+                            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                        if (match.Success && !SessionBannerVersions.Contains(match.Value) && SessionBannerVersions.Count < 8)
+                            SessionBannerVersions.Add(match.Value);
+                    }
+                }
                 // Metadata only: suppress sign-in contents and all unrelated screen text.
                 if (Observations.Count < 4096) Observations.Add(new { snapshot.LastSequence, reason = reason.ToString(), at = DateTime.UtcNow });
             }

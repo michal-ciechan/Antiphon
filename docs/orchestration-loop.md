@@ -610,11 +610,11 @@ Tests seed this proposed policy only in isolated databases, never production.
 
 ### Evidence gates
 
-Both actual InboxConhost and ModernConPty require real Review evidence.
-A fresh worktree must visibly show trust, receive one y, clear trust, and reach Ready.
+Actual ModernConPty requires real Review evidence; WQ-1 is excluded by the operator for CARD-1022.
+A fresh worktree must reach Ready. Record whether trust appeared; send no startup input without observed trust, or exactly one y if it appeared, then require cleared trust and Ready.
 Delivery requires a matching complete UserPrompt transcript.
 Settlement requires a final report and confirmed release ownership.
-WQ-1, WQ-2 and WQ-3 gate prompt landing and Debug pin activation.
+WQ-2 and WQ-3 gate prompt landing and Debug pin activation; WQ-1 is operator-excluded.
 The [qualification ledger](investigations/2026-10-03-card-1011-windows-grok-qualification.md)
 records pending rows and full canary identities. Backend configuration must be
 restored and the actual restored host verified. Configured modern with inbox
