@@ -372,14 +372,14 @@ public class GrokLinuxBlockingPromptTests
         var ready = GrokLinuxStartupFixture.Screen("1.0.41");
         var persistent = await DriveWaitAsync(_ => trust);
         persistent.Ready.ShouldBeFalse("persistentTrustReady");
-        persistent.Inputs.ShouldBe(new[] { "y" }, "persistentTrustInputs");
+        persistent.Inputs.ShouldBe(new[] { "y" }, customMessage: "persistentTrustInputs");
         persistent.Failure.ShouldNotBeNull();
         persistent.Failure.Outcome.ShouldBe(GrokStartupReason.Trust);
         persistent.Failure.LastReason.ShouldBe(GrokStartupReason.Trust);
         persistent.Failure.Elapsed.ShouldBe(TimeSpan.FromMilliseconds(1000));
         var cleared = await DriveWaitAsync(ms => ms < 100 ? trust : ready, assertAt1050: true);
         cleared.Ready.ShouldBeTrue("clearedTrustReady");
-        cleared.Inputs.ShouldBe(new[] { "y" }, "clearedTrustInputs");
+        cleared.Inputs.ShouldBe(new[] { "y" }, customMessage: "clearedTrustInputs");
         cleared.Elapsed.ShouldBe(TimeSpan.FromMilliseconds(1100));
         cleared.Failure.ShouldBeNull();
     }
@@ -456,7 +456,7 @@ public class GrokLinuxBlockingPromptTests
     }
     private static void RequireApproval(string screen)
     {
-        foreach (var phrase in new[] { Approval, BrowserCode, Waiting }) screen.ShouldContain(phrase, "synthetic-derived or real approval anchor");
+        foreach (var phrase in new[] { Approval, BrowserCode, Waiting }) screen.ShouldContain(phrase, customMessage: "synthetic-derived or real approval anchor");
     }
     private static void RequireMeasuredApproval(string screen)
     {
@@ -467,7 +467,7 @@ public class GrokLinuxBlockingPromptTests
     }
     private static void RequireTrust(string screen)
     {
-        foreach (var phrase in new[] { Question, Yes, No }) screen.ShouldContain(phrase, "synthetic-derived trust anchor");
+        foreach (var phrase in new[] { Question, Yes, No }) screen.ShouldContain(phrase, customMessage: "synthetic-derived trust anchor");
     }
     private static void AssertObservation(string screen, GrokStartupReason reason, string id)
     {
