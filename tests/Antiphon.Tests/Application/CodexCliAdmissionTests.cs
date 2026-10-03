@@ -492,7 +492,9 @@ public sealed class CodexCliAdmissionTests
                 frozen.Full.ShouldContain(Body, customMessage: "C959-v22-literal " + vector);
                 frozen.Full.ShouldNotContain("\r");
                 (await File.ReadAllBytesAsync(frozen.Path!)).ShouldBe(Encoding.UTF8.GetBytes(frozen.Full), "C959-pc-194 spill " + vector);
-                adapter.StartedArgs.ShouldContain("--model gpt-6.1-sol", customMessage: "C959-v22-model " + vector);
+                var args = adapter.StartedArgs.ToList();
+                args.Count(a => a == "--model").ShouldBe(1, "C959-v22-model " + vector);
+                args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.1-sol", "C959-v22-model " + vector);
                 adapter.SubmittedBodies.Single().ShouldBe(frozen.Wire, "C959-pc-194 recipient " + vector);
                 var queued = await finalDb.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.ExecutionTaskId == taskId);
                 var session = await finalDb.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == row.AgentSessionId);
