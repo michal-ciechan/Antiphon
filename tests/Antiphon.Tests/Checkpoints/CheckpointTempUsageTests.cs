@@ -120,6 +120,7 @@ public sealed class CheckpointTempUsageTests : CheckpointTestBase
     }
 
     [Test]
+    [Category("Unit")]
     public async Task namespace_census_matches_compiled_checkpoint_cases()
     {
         var dir = TempDir();
@@ -137,6 +138,43 @@ public sealed class CheckpointTempUsageTests : CheckpointTestBase
         result.RootElement.GetProperty("selected").GetInt32().ShouldBe(names.Length,
             "scripts/lib/checkpoint-usage.ps1 Get-NamespaceCensus is stale against the compiled checkpoint cases");
         result.RootElement.GetProperty("unmatched").GetString().ShouldBeEmpty("every declared OS skip must name a compiled checkpoint case");
+    }
+
+    [Test]
+    public async Task full_suite_checkpoint_floor_uses_the_current_census()
+    {
+        var dir = TempDir();
+        var names = CompiledCheckpointNames();
+        var namesFile = Path.Combine(dir, "names.json");
+        await File.WriteAllTextAsync(namesFile, JsonSerializer.Serialize(names));
+        using var declared = await UsageLibrary.RunAsync(RegisterCheckpointChild, dir, $$"""
+            $census = Get-NamespaceCensus
+            ConvertTo-Json -InputObject @(Get-Content -LiteralPath {{UsageLibrary.Quote(namesFile)}} -Raw | ConvertFrom-Json |
+                Where-Object { Test-DeclaredOsSkip $_ $census })
+            """);
+        var skips = declared.RootElement.EnumerateArray().Select(name => name.GetString()!).ToHashSet(StringComparer.Ordinal);
+        var ordinary = Enumerable.Range(0, 1000).Select(i => "Other.Tests.C.case_" + i).ToArray();
+        var all = names.Concat(ordinary).ToArray();
+        var omitted = names.First(name => !skips.Contains(name));
+        var shortNames = all.Where(name => name != omitted).ToArray();
+        var events = UsageLibrary.WriteEvents(dir, complete: true);
+        var roster = UsageLibrary.WriteRoster(dir, all);
+        var shortRoster = UsageLibrary.WriteRoster(dir, shortNames);
+        var native = Trx(dir, all, name => skips.Contains(name) ? "NotExecuted" : "Passed");
+        var missingExecution = Trx(dir, all, name => skips.Contains(name) || name == omitted ? "NotExecuted" : "Passed");
+        var shortTrx = Trx(dir, shortNames, name => skips.Contains(name) ? "NotExecuted" : "Passed");
+        using var result = await UsageLibrary.RunAsync(RegisterCheckpointChild, dir, $$"""
+            @{
+              native = Test-UsageEvidence -Phase Full -RosterPath {{UsageLibrary.Quote(roster)}} -TrxPath {{UsageLibrary.Quote(native)}} -EventsPath {{UsageLibrary.Quote(events)}}
+              missingExecution = Test-UsageEvidence -Phase Full -RosterPath {{UsageLibrary.Quote(roster)}} -TrxPath {{UsageLibrary.Quote(missingExecution)}} -EventsPath {{UsageLibrary.Quote(events)}}
+              short = Test-UsageEvidence -Phase Full -RosterPath {{UsageLibrary.Quote(shortRoster)}} -TrxPath {{UsageLibrary.Quote(shortTrx)}} -EventsPath {{UsageLibrary.Quote(events)}}
+            } | ConvertTo-Json -Depth 8
+            """);
+        UsageLibrary.Errors(result.RootElement, "native").ShouldBeEmpty("the current compiled checkpoint roster clears the Full census and floor");
+        result.RootElement.GetProperty("native").GetProperty("executed").GetInt32().ShouldBe(all.Length - skips.Count);
+        UsageLibrary.Errors(result.RootElement, "missingExecution").ShouldBe(["full suite omitted checkpoint executions"]);
+        UsageLibrary.Errors(result.RootElement, "short").ShouldContain($"full roster checkpoint cases={names.Length - 1} expected={names.Length}");
+        UsageLibrary.Errors(result.RootElement, "short").ShouldContain("full suite omitted checkpoint executions");
     }
 
     [Test]
