@@ -22,7 +22,14 @@ public sealed class EvidenceDiffGuardTests
         {
             var head = await f.AddCommitAsync(f.Base, path, Text());
             var r = await f.HistoryAsync(f.Base, head);
-            r.Exit.ShouldBe(1, "c1015-" + label);
+            switch (label)
+            {
+                case "checkpoint": r.Exit.ShouldBe(1, "c1015-checkpoint"); break;
+                case "nested-checkpoint": r.Exit.ShouldBe(1, "c1015-nested-checkpoint"); break;
+                case "prefixed-checkpoint": r.Exit.ShouldBe(1, "c1015-prefixed-checkpoint"); break;
+                case "checkpoint-case": r.Exit.ShouldBe(1, "c1015-checkpoint-case"); break;
+                default: throw new InvalidOperationException("unknown fixture label");
+            }
             r.Output.ShouldContain(head);
             r.Output.ShouldContain(path);
         }
@@ -203,7 +210,13 @@ public sealed class EvidenceDiffGuardTests
             var r = await f.HistoryAsync(f.Base, head);
             File.Exists(canary).ShouldBeFalse("c1015-no-path-execution");
             r.Output.ShouldNotContain("PAYLOAD-C1015-PRIVATE-CANARY", customMessage: "c1015-no-payload");
-            r.Exit.ShouldBe(1, "c1015-" + label);
+            switch (label)
+            {
+                case "root-case": r.Exit.ShouldBe(1, "c1015-root-case"); break;
+                case "literal-newline": r.Exit.ShouldBe(1, "c1015-literal-newline"); break;
+                case "no-path-execution": r.Exit.ShouldBe(1, "c1015-no-path-execution"); break;
+                default: throw new InvalidOperationException("unknown fixture label");
+            }
             var line = r.Output.Split('\n').Single(x => x.StartsWith("EVIDENCE violation ", StringComparison.Ordinal));
             var encoded = line[(line.IndexOf("path=", StringComparison.Ordinal) + 5)..line.IndexOf(" bytes=", StringComparison.Ordinal)];
             JsonSerializer.Deserialize<string>(encoded).ShouldBe(path, "c1015-escaped-path");
@@ -256,7 +269,23 @@ public sealed class EvidenceDiffGuardTests
                 "if (" + condition + ") { Write-Host 'FAULT-HIT'; $s=[Text.Encoding]::UTF8.GetString($r.Bytes); " + alteration + " }; return $r }";
             var r = await f.HistoryAsync(f.Base, head, hook);
             r.Output.Split("FAULT-HIT", StringSplitOptions.None).Length.ShouldBe(2, "fault cut hit exactly once");
-            r.Exit.ShouldBe(2, "c1015-" + label);
+            switch (label)
+            {
+                case "git-exit": r.Exit.ShouldBe(2, "c1015-git-exit"); break;
+                case "git-exit-ref": r.Exit.ShouldBe(2, "c1015-git-exit-ref"); break;
+                case "git-exit-ancestry": r.Exit.ShouldBe(2, "c1015-git-exit-ancestry"); break;
+                case "git-exit-diff": r.Exit.ShouldBe(2, "c1015-git-exit-diff"); break;
+                case "git-exit-size": r.Exit.ShouldBe(2, "c1015-git-exit-size"); break;
+                case "raw-fields": r.Exit.ShouldBe(2, "c1015-raw-fields"); break;
+                case "raw-terminator": r.Exit.ShouldBe(2, "c1015-raw-terminator"); break;
+                case "raw-status": r.Exit.ShouldBe(2, "c1015-raw-status"); break;
+                case "raw-mode": r.Exit.ShouldBe(2, "c1015-raw-mode"); break;
+                case "raw-object-id": r.Exit.ShouldBe(2, "c1015-raw-object-id"); break;
+                case "invalid-size": r.Exit.ShouldBe(2, "c1015-invalid-size"); break;
+                case "invalid-size-empty": r.Exit.ShouldBe(2, "c1015-invalid-size-empty"); break;
+                case "raw-encoding": r.Exit.ShouldBe(2, "c1015-raw-encoding"); break;
+                default: throw new InvalidOperationException("unknown fixture label");
+            }
             r.Output.ShouldNotContain("EVIDENCE result");
         }
     }
