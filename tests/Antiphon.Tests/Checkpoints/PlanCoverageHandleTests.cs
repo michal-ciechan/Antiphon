@@ -71,6 +71,32 @@ public sealed class PlanCoverageHandleTests : CheckpointTestBase
         finally { if (!process.HasExited) { process.Kill(true); await process.WaitForExitAsync(); } }
     }
 
+    [Test]
+    [Arguments(true, 1, "inside", null)]
+    [Arguments(false, 1, "inside", "selected file is not regular")]
+    [Arguments(true, 2, "inside", "selected file has multiple links")]
+    [Arguments(true, 0, "inside", "selected file has multiple links")]
+    [Arguments(true, 1, "outside", "opened file is outside root")]
+    public void opened_metadata_decision_table(bool regular, int links, string location, string? refusal)
+    {
+        var root = TempDir();
+        var path = location == "inside" ? Path.Combine(root, "file.cs") : Path.Combine(root + "-sibling", "file.cs");
+        ConfinedFileReader.Refusal(regular, (ulong)links, path, root).ShouldBe(refusal, "coverage-opened-metadata-decision");
+    }
+
+    [Test]
+    public void read_uses_the_verified_handle_after_path_replacement()
+    {
+        var root = TempDir(); var path = Path.Combine(root, "file.cs");
+        File.WriteAllText(path, "verified bytes");
+        var content = ConfinedFileReader.Read(root, path, 1024, afterVerification: () =>
+        {
+            File.Move(path, Path.Combine(root, "original.cs"));
+            File.WriteAllText(path, "replacement bytes");
+        });
+        content.ShouldBe("verified bytes", "coverage-read-from-verified-handle");
+        File.ReadAllText(path).ShouldBe("replacement bytes", "coverage-path-replacement-exercised");
+    }
     private static string SelectedPath(string kind, string root, (string Plan, string Source) world)
     {
         if (kind == "source") return world.Source;
