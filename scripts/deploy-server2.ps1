@@ -263,7 +263,9 @@ function Assert-RecycleTaskCensus {
                     if ([string]$detail.landRequest.state -cnotin @('Completed','Superseded','Canceled') -or
                         [string]$detail.landRequest.terminalEventId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { throw 'RecycleLandUnknown' }
                 }
-                $proof = [ordered]@{ state=$detail.landRequest.state; terminalEventId=$detail.landRequest.terminalEventId } | ConvertTo-Json -Compress
+                $proof = if ($null -eq $detail.landRequest) { 'null' } else {
+                    [ordered]@{ state=$detail.landRequest.state; terminalEventId=$detail.landRequest.terminalEventId } | ConvertTo-Json -Compress
+                }
                 if ($landEvidence.ContainsKey($id) -and $landEvidence[$id] -cne $proof) { throw 'RecycleLandUnknown' }
                 $landEvidence[$id] = $proof
             }

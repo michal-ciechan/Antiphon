@@ -3704,8 +3704,8 @@ c1008_status_proof() {
                 any($saved.stopReceipts[]; .==$id) and ($phase=="stopped" or any($saved.removeReceipts[]; .==$id)))' >/dev/null 2>&1 \
                 || c1008_refuse RecycleResumeMismatch
             if [ "$saved" = recreating ] || [ "$saved" = verified ]; then
-                [ "$(printf '%s' "$ids" | jq -Sc '[.[]|select(.Config.Labels["com.docker.compose.service"]!="build-slots")|{Id,Image,Mounts}]|sort_by(.Id)')" = \
-                  "$(printf '%s' "$C1008_RECORD" | jq -Sc '[.recreated.owned[]|{Id,Image,Mounts}]|sort_by(.Id)')" ] || c1008_refuse RecycleResumeMismatch
+                [ "$(printf '%s' "$ids" | jq -Sc '[.[]|select(.Config.Labels["com.docker.compose.service"]!="build-slots")|{Id,Image,Mounts:(.Mounts|sort_by(.Destination))}]|sort_by(.Id)')" = \
+                  "$(printf '%s' "$C1008_RECORD" | jq -Sc '[.recreated.owned[]|{Id,Image,Mounts:(.Mounts|sort_by(.Destination))}]|sort_by(.Id)')" ] || c1008_refuse RecycleResumeMismatch
             elif [ "$saved" = stopped ]; then
                 printf '%s' "$ids" | jq -e --argjson saved "$C1008_RECORD" 'all(.[];
                     .Config.Labels["com.docker.compose.service"]=="build-slots" or
@@ -3909,7 +3909,15 @@ c1008_audit_checked() {
     if [ "${C1008_RESUME:-0}" = 1 ] && { [ "$work_state" = removed ] ||
         { [ "$work_state" = pending ] && [ "$(printf '%s' "$C1008_RECORD" | jq -r .phase)" = removing ]; }; }; then
         if [ "$(c1008_volume "${C1008_PROJECT}_work")" = null ]; then
+            printf '%s' "$C1008_RECORD" | jq -e '(.audit|type)=="string"' >/dev/null \
+                || c1008_refuse RecycleGitAuditUnknown
             C1008_AUDIT="$(printf '%s' "$C1008_RECORD" | jq -r .audit)"
+            if [ "$work_state" = pending ]; then
+                # Persist absence under the saved removing intent before later
+                # stop/container phases overwrite that intent.
+                C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg name "${C1008_PROJECT}_work" '.volumes[$name].outcome="removed"')"
+                c1008_save || c1008_refuse RecycleReceiptUnavailable
+            fi
             return 0
         fi
     fi
@@ -4049,8 +4057,8 @@ c1008_recycle() {
             [ "$(printf '%s' "$facts" | jq -Sc .)" = "$(printf '%s' "$C1008_RECORD" | jq -Sc --arg name "$name" 'if .recreated.volumes|has($name) then .recreated.volumes[$name] else .preserved[$name] end')" ] \
                 || c1008_refuse RecycleResumeMismatch
         done
-        owned="$(printf '%s' "$C1008_CENSUS" | jq -Sc --arg project "$C1008_PROJECT" '[.[]|select(.Config.Labels["com.docker.compose.project"]==$project and .Config.Labels["com.docker.compose.service"]!="build-slots")|{Id,Image,Mounts}]|sort_by(.Id)')"
-        [ "$owned" = "$(printf '%s' "$C1008_RECORD" | jq -Sc '[.recreated.owned[]|{Id,Image,Mounts}]|sort_by(.Id)')" ] || c1008_refuse RecycleResumeMismatch
+        owned="$(printf '%s' "$C1008_CENSUS" | jq -Sc --arg project "$C1008_PROJECT" '[.[]|select(.Config.Labels["com.docker.compose.project"]==$project and .Config.Labels["com.docker.compose.service"]!="build-slots")|{Id,Image,Mounts:(.Mounts|sort_by(.Destination))}]|sort_by(.Id)')"
+        [ "$owned" = "$(printf '%s' "$C1008_RECORD" | jq -Sc '[.recreated.owned[]|{Id,Image,Mounts:(.Mounts|sort_by(.Destination))}]|sort_by(.Id)')" ] || c1008_refuse RecycleResumeMismatch
         c1008_references "$C1008_CENSUS" "$(printf '%s' "$owned" | jq '[.[].Id]')"
         C1008_ACTIVE=1
         return 0
