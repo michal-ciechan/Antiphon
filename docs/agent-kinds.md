@@ -347,6 +347,24 @@ Linux screen qualification still needs the orchestrator's post-rollout unpinned
 server2-temp real first-prompt canary with a complete matching `UserPrompt` receipt.
 CARD-0861 size qualification and the 1.0.41 runner-image pin remain separate.
 
+**Windows routing qualification (CARD-1011, pending).** The approved future
+role-wide Debug policy is gated; it is not activated by this documentation.
+See [the routing owner](orchestration-loop.md#windows-review-and-debug-routing)
+and [the evidence ledger](investigations/2026-10-03-card-1011-windows-grok-qualification.md).
+
+| CLI/build | Actual host | Geometry/marker | Trust | Task/session/source | Receipt/release |
+|---|---|---|---|---|---|
+| 1.0.41 / `4220f3b224a6` (reported) | Unknown; WQ-1/2 attribution pending | 120x30 / ASCII `>` to confirm | Not observed | `d6e4138e` / `26d8a18c` / `5f214b0c` | Complete task UserPrompt/report accepted; runner release ownership pending |
+| Same tuple to verify | InboxConhost, WQ-1 pending | 120x30 / ASCII `>` | WQ-3 pending | New or attributable run required | Complete transcript and release required |
+| Same tuple to verify | ModernConPty, WQ-2 pending; no fallback | 120x30 / ASCII `>` | WQ-3 pending | New or attributable run required | Complete transcript, binary provenance and release required |
+
+Existing captures and FakeGrok cases are fixture evidence. Other sizes remain
+unqualified. Diagnose Windows startup failures using the session's server-log
+`screenReason` and named `%TEMP%\antiphon-grok-startup\grok-startup-*.txt`
+(`Agents:GrokStartupCaptureDirectory` overrides it); capture keys are `outcome`
+and `lastScreenReason`. Sign-in contents are suppressed. Preserve the failed
+task and use the owner's authorized same-platform Opus recovery, without a pin bypass.
+
 **Launch.** `grok.exe --always-approve --no-alt-screen [--model grok-4.7] [--rules <text>]
 (--session-id <guid> | --resume <guid>)` — decided from the on-disk session directory
 (`GROK_HOME/sessions/*/{id}/`), never from the row (CARD-0383).
