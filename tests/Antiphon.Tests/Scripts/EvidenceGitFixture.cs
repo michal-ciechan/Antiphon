@@ -152,7 +152,7 @@ internal sealed class EvidenceGitFixture : IAsyncDisposable
             return await RunAsync("pwsh", new[] { "-NoProfile", "-NonInteractive", "-File", path, "-Repository", Repo }.Concat(args));
         var body = ". " + Quote(Path.Combine(Source, "scripts", "lib", "evidence-policy.ps1")) + "\n" + hook + "\n" +
             "$code = " + entry + " -Repository " + Quote(Repo) + " " + string.Join(" ", args.Select((v, i) => i % 2 == 0 ? v : Quote(v))) + "\nexit $code\n";
-        return await RunAsync("pwsh", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(body))]);
+        return await RunAsync("pwsh", ["-NoProfile", "-NonInteractive", "-OutputFormat", "Text", "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(body))]);
     }
     internal async Task<Entry[]> TreeAsync(string commit)
     {

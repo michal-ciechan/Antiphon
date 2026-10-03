@@ -555,7 +555,7 @@ The full Unit row selects Linux (no host pin) because its six Windows exclusions
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1015/` | linux-unit | `/*/*/*/(!windows_quick_row_finishes_beside_a_slow_row)&(!windows_row_arguments_round_trip_intact)&(!windows_chatty_row_drains_interleaved_stdout_and_stderr)&(!windows_row_timeout_kills_the_start_b_grandchild)&(!C665_LockedFileMidDeleteResumesOnLaterPass)&(!C721_HeldHandleDuringCleanupStaysRegisteredOrRecorded)[Category=Unit]` | V-19, V-20, V-25, R-1, R-6, R-7 | all eligible Unit names; >=4020 executed; 0 failed/skipped; new bundle 4 and workflow 4 all present | 4020 | 15 | true | `C804_ORPHAN_SWEEP_ROOT=c1015-disabled;TUNIT_MAX_PARALLEL_TESTS=4` |
+| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1015/` | linux-unit | `/*[Category=Unit]/*/*/(!windows_quick_row_finishes_beside_a_slow_row*)&(!windows_row_arguments_round_trip_intact*)&(!windows_chatty_row_drains_interleaved_stdout_and_stderr*)&(!windows_row_timeout_kills_the_start_b_grandchild*)&(!C665_LockedFileMidDeleteResumesOnLaterPass*)&(!C721_HeldHandleDuringCleanupStaysRegisteredOrRecorded*)` | V-19, V-20, V-25, R-1, R-6, R-7 | all eligible Unit names; >=4020 executed; 0 failed/skipped; new bundle 4 and workflow 4 all present | 4020 | 15 | true | `C804_ORPHAN_SWEEP_ROOT=c1015-disabled;TUNIT_MAX_PARALLEL_TESTS=4` |
 | CP-2 | S1-S3 | CP-1 | evidence-history | `/*/*/EvidenceDiffGuardTests/*` | V-1..V-18, R-2, R-3, R-4 | all 18 exact methods; 0 failed/skipped | 18 | 5 | true | `C804_ORPHAN_SWEEP_ROOT=c1015-disabled` |
 | CP-3 | S1-S3 | CP-1 | exact-deletion | `/*/*/EvidenceDeletionGuardTests/*` | V-21, R-5 | all 6 exact methods and rule/anchor/preservation vectors; 0 failed/skipped | 6 | 5 | true | `C804_ORPHAN_SWEEP_ROOT=c1015-disabled` |
 | CP-4 | S1-S3 | CP-1 | land-ignored-smoke | `/*/*/LandingGitTests/C642_IdentityAndStatusScopeSkipsIgnoredListing` | V-22, R-2 | exact method; 0 failed/skipped | 1 | 1 | true | `C804_ORPHAN_SWEEP_ROOT=c1015-disabled` |
@@ -676,3 +676,14 @@ Documentation validation consists of read-only Git metadata, Markdown/table/ID/c
 next: land
 handoff: Land this amended plan doc-only, with no implementation Review evidence; then dispatch fresh Code from current master containing the plan and CARD-1005. Keep D-1: compute D(B), preserve permitted Markdown, anchor original 108 as 88 delete/20 keep. Implement S1/S2/S2b/S3, run seven CP rows (4046 results), leave 101 PCs pending and return next: review. Cleanup remains CARD-1017.
 artifact: docs/superpowers/plans/2026-10-03-card-1015-evidence-git-policy-plan.md
+
+### Code checkpoint filter repair (bc463e02)
+
+The actual importer accepted all seven frozen rows, but MTP 2.2.2 rejected
+CP-1 before executing any tests: a property predicate cannot attach to a
+grouped Boolean expression. Apply the already-landed CARD-1005 continuation
+filter repair: put `[Category=Unit]` on the assembly wildcard and retain the
+same six method negations with trailing stars for result-name suffixes.
+The selected lane, six exclusions, count floor, assertions, timeouts and
+environment are unchanged. Run 20261003-203943-2d3d records the parser refusal
+and no Unit TRX; the repaired run is the first actual whole-Unit execution.
