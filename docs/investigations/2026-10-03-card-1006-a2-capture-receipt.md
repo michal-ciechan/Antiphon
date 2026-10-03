@@ -163,3 +163,59 @@ capture only.
 next: code
 handoff: A-2 MET with the caveats above (A-1 digest wording is the caller's call; deviations 3a/3b; host-wide swap-off 12.9 s). Admission still needs A-3 and A-4 and the plan's trust-evidence decision (no real trust frame exists). Reuse these frames only as a third live reproduction; the committed investigation frames remain the fixtures.
 artifact: docs/investigations/2026-10-03-card-1006-a2-capture-receipt.md
+
+## Deadline enforcement (addendum, answers the Code admission question on D-2.6)
+
+**D-2.6 as written is NOT satisfied.** D-2.6 requires an external supervisor
+that cuts egress and stops the process 15 seconds after CLI launch even if
+polling stalls. What I built and ran was weaker; the Verdict section above
+should be read as qualified by this addendum (A-2 is not met for D-2.6; the
+other D-2 custody and isolation points stand as recorded). Nothing below was
+re-measured: it is read from the scripts and the three run logs.
+
+1. **What enforced which deadline.**
+   - *In-process 15 s limit (not external).* The helper inside the container
+     loops `while (Date.now() - launchT < 15000)` (`cap.js`). `launchT` is taken
+     immediately before the launch request is sent to the owned runner, so the
+     origin is the launch request (the CLI spawns inside that request; run 3's
+     request took 1,043 ms), not the CLI process spawn and not the first output.
+   - *Egress cut on the helper's end marker (external action, helper-triggered).*
+     The host script reads the container's attached output and, when the helper
+     prints `CAPTURE-END`, inserts a drop-all rule at the top of chain `A2CAP`.
+     In run 3 this cut egress at 16:09:07.662Z, 4.24 s after `CAPTURE-BEGIN`
+     (16:09:03.422Z). That cut depends on the helper reaching its end marker.
+   - *Independent external backstop, 55 s / 60 s.* A host-side subshell,
+     started just before `docker run`, runs `sleep 55`, inserts the drop-all
+     rule, runs `sleep 5`, then `docker kill a2cap-capture`. Its origin is the
+     host's container launch (16:08:57.311Z in run 3), not CLI launch.
+2. **What 55 and 60 are.** Fixed host sleeps of 55 s (egress cut) and 60 s
+   (container kill) from the supervisor's start. In run 3 the CLI launch
+   request began 6.11 s after container launch, so the backstop would have cut
+   egress about 48.9 s after the launch request and killed the container about
+   53.9 s after it. They were chosen as slack over startup, the 15 s window and
+   5 s cleanup; they are not a 15 s-from-launch deadline.
+3. **Would a stalled capture (no output) have been stopped within 15 s of CLI
+   launch?** Only conditionally, and the evidence is the code, not a run.
+   - Grok silent but the helper healthy: the helper loop exits at 15 s from the
+     launch request (worst case roughly 19.8 s, because an in-flight snapshot
+     poll can wait 1.5 s, a connection sample 3 s and the loop sleeps 0.25 s),
+     prints `CAPTURE-END`, and the host then cuts egress and the helper kills the
+     session. This path was never exercised: run 3 ended by `stable-twice`, run 2
+     by a failed launch, run 1 before the helper started. No run ended by the
+     15 s deadline.
+   - The helper itself stalled (event loop blocked, or any hang that outlasts its
+     own request timeouts, with no end marker): nothing acts at 15 s. The first
+     independent stop is the 55 s egress cut (about 48.9 s after the launch
+     request) and the 60 s container kill. The log shows the backstop never
+     fired in any run (no `HOST watchdog-cut` line in the three logs; the
+     `Terminated` lines are the subshell being stopped after a normal exit).
+4. **Plain statement.** The external, independent, 15-second-from-CLI-launch
+   deadline that D-2.6 describes was not implemented. The earlier sentence in
+   item 5 ("An external supervisor cut egress with a drop rule at the end
+   marker (and would have cut at 55 s and killed the container at 60 s)")
+   conflated the helper-triggered cut with an independent timer; read it with
+   this addendum. Meeting D-2.6 would need a host-side timer started at the
+   helper's `CAPTURE-BEGIN` marker (or at the CLI spawn event) that cuts egress
+   and kills the named container at begin + 15 s regardless of helper state,
+   tested with a deliberately stalled launch; that is a new capture and host
+   changes, which were not done here.
