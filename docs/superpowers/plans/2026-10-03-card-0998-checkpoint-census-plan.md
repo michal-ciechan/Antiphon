@@ -27,7 +27,7 @@ R-2 Whole Category=Unit lane, required by commissioned Final profile; verify V-1
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c998-tests-red/` | guards-red | `/*/*/CheckpointTempUsageTests*/*census*` | V-1,V-2,V-3 | exactly 3 executed; expected red on stale census | 3 | 5 | true |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c998-tests-red/` | guards-red | `/*/*/CheckpointTempUsageTests*/*census*` | V-1,V-2,V-3 | exactly 3 executed; red at S1, rerun green after S2 | 3 | 5 | true |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c998-final/` | affected-class | `/*/*/CheckpointTempUsageTests*/*` | V-1,V-2,V-3,R-1 | exactly 9 executed, 0 failed/skipped | 9 | 5 | true |
 | CP-3 | S2 | `tests/Antiphon.Tests -> bin-c998-unit/` | unit | `/*/*/*/*[Category=Unit]` | R-2 | nonzero Unit lane, compiled guard present, 0 failed | 1000 | 6 | true |
 

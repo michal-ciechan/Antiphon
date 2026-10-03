@@ -830,3 +830,12 @@ evidence. The sampler and the roster/TRX/event gates live in
 supplied inputs. CP-13 uses a separate owner-death sandbox and preserves protected
 live, uncertain and unmarked fixtures until its bounded sweep checks finish. These
 reports do not replace the method-scoped SourceLanding Mutation PCs.
+
+`Get-NamespaceCensus` deliberately keeps an independent literal count of compiled,
+non-explicit `Antiphon.Tests.Checkpoints` cases with argument rows expanded. Both
+Namespace admission and the Full checkpoint execution floor use it; do not derive
+it from the selected roster being checked. When adding or removing a checkpoint
+case, update this count and run
+`CheckpointTempUsageTests.namespace_census_matches_compiled_checkpoint_cases`.
+That method also carries `Category=Unit`, so the ordinary Unit lane catches census
+drift while the rest of `CheckpointTempUsageTests` remains in Integration.

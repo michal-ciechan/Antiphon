@@ -105,12 +105,13 @@ function Get-Snapshot([string]$temp) {
 }
 
 # The Antiphon.Tests.Checkpoints census: every compiled non-explicit case, argument rows expanded.
-# CheckpointTempUsageTests checks selected and every skip name against the compiled test list, so
+# Keep this independent of the selected roster: an incomplete roster must fail admission.
+# The Unit-lane CheckpointTempUsageTests guard checks selected and every skip name against the compiled test list, so
 # adding a checkpoint test fails that guard until this census moves with it. Each OS skips the
 # other OS's native cases; the skip set is matched by name against the actual roster.
 function Get-NamespaceCensus {
     [ordered]@{
-        selected = 290
+        selected = 349
         windowsSkips = @(
             'Antiphon.Tests.Checkpoints.CheckpointRecoveryLinuxTests.*'
             'Antiphon.Tests.Checkpoints.DetachedLauncherTests.executor_survives_its_starter'
