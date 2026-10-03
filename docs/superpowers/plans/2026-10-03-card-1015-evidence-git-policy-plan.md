@@ -206,13 +206,377 @@ S1 and S2 retain their original purposes. S1 documents the accepted policy and t
 The inventory is the output bytes of:
 
 ```text
-git ls-tree -r -z --full-tree --name-only 496bd2abafbbc7fb7040610e13938682fdf161f0 -- .antiphon/
+git ls-tree -r -z --full-tree --name-only bb5fa774cd56f85ee6f0b1122c198192427e5ddf -- .antiphon/
 ```
 
 This exact NUL-delimited Git-order list contains **108 paths**, SHA-256 **356edf4a223e53669d4137631e40c0f5f7d19127c2568fdd0608fa4364e5ac9c**; the corresponding blobs total **17,775,541 bytes**. This is an immutable derivation, not a glob against whatever HEAD happens to contain. Include Markdown in this deletion inventory: the owner asked to remove all existing 108, not only files that D-1 would reject. Do not read payloads, secrets or private notes to derive it. Files remain reachable at that inventory commit.
 
 Before S3, independently verify the list digest/count and each current path's mode/object identity against that inventory. A missing or changed entry is a visible conflict, not permission to broaden or silently shrink the list. Stage only those literal paths through Git's NUL pathspec input and literal-pathspec mode; never a directory-wide force-add or broad filesystem delete. Assert the staged raw diff against S3's parent is exactly 108 D records with the frozen paths/old objects and no other change, then create the deletion-only commit. Source/tests/docs belong in earlier slices. Later fixes must not be mixed into S3 or rewrite it.
 
-`check-evidence-deletion.ps1` accepts Repository, InventoryRef, InventoryPathSha256, InventoryCount and HeadRef. All are resolved/validated before inspection. It locates **exactly one** commit with the exact trailer in InventoryRef..HeadRef, requires a single parent and validates its complete unfiltered, no-renames raw diff. Every record must be D; the ordinal path set must equal the frozen inventory (missing and extra paths fail independently); old mode/object identities must match; those original paths must remain absent at HeadRef. Require InventoryRef ancestry of the deletion parent and deletion ancestry of HeadRef. Validate every original blob with `cat-file -e` without printing contents. Count/digest assertions are independent, never recomputed from the candidate deletions. Exit 0 = exact deletion proven, 1 = mismatched deletion policy, 2 = unknown/ref/Git/parse failure. Report inventory/deletion/head SHAs, digest, path count and recoverability verdict. The same validator is called by fixture tests and CP-7, not a prose-only manual checklist.
+`check-evidence-deletion.ps1` accepts Repository, InventoryRef, InventoryPathSha256, InventoryCount and HeadRef. All are resolved/validated before inspection. It locates **exactly one** commit with the exact trailer in InventoryRef..HeadRef, requires a single parent and validates its complete unfiltered, no-renames raw diff. Every record must be D; the ordinal path set must equal the frozen inventory (missing and extra paths fail independently); old mode/object identities must match; those original paths must remain absent at HeadRef. Require InventoryRef ancestry of the deletion parent and deletion ancestry of HeadRef. Validate every original blob with `cat-file -e` without printing contents. Count/digest assertions are independent, never recomputed from the candidate deletions. Exact-set admission uses both directional set differences; do not add a redundant candidate-count refusal that masks the independently exercised missing/extra-path decisions. The displayed deletion count is derived after successful set equality. Exit 0 = exact deletion proven, 1 = mismatched deletion policy, 2 = unknown/ref/Git/parse failure. Report inventory/deletion/head SHAs, digest, path count and recoverability verdict. The same validator is called by fixture tests and CP-7, not a prose-only manual checklist.
 
 After reviewed land, the caller repeats CP-6/CP-7 against the actual master tip (landing may change S3's SHA) and records the deletion SHA there. This proves a normal deletion reached master; it does not claim any reduction in Git history size. Original inventory SHA remains reachable because it is an ancestor. A follow-up qualifying commit is allowed; the exact deletion commit must still be discoverable and unchanged in meaning.
+
+## Verification design
+
+This is the TestDesign freeze for the amended scope, not an execution report. It supersedes the earlier proposed V/R names, initial manifest and 17-minute estimate. Inspected checkout: `496bd2abafbbc7fb7040610e13938682fdf161f0`; production/test and inventory ancestor: `bb5fa774cd56f85ee6f0b1122c198192427e5ddf`. The first amendment commit is `f301c8c64e`. D-1/D-3/D-4/D-6's fix design is preserved; the additional deletion validator makes the authorized D-2 change reviewable. No production source, test, fixture, bundle or workflow was changed in this dispatch.
+
+### Inspection
+
+| Bodies read | Boundaries -> V/R IDs or exclusion |
+|---|---|
+| Entire `InstructionBundleTests`, `InstructionBundles.ForDelegate`, SourceLanding part of `DelegationReportFormatter.BuildBrief`; current basics/Code/Review bundle bodies | V-19, R-1; real composed Code/Review/Debug/Docs, stricter SourceLanding exception, stage ASCII/caps and command-line budget |
+| `Scripts/ScriptHarness`, entire `Application/DelegateScriptRunner`, nearest real-script class `RunCheckpointSourceScriptTests` admission methods; `LandingGitFixture` including process configuration/disposal | V-1..V-18, V-21; argument vectors, fixture-owned Git configuration/remotes, actual CLI results; missing byte/fault fixture specified below |
+| `AppHostBrokerSourceGuardTests` including root locator; CI workflow; transitive YamlDotNet reference through Checkpoints project | V-20; inspect actual YAML nodes and executable run body, not comments or a second fixture workflow |
+| `LandingGitTests.C642_IdentityAndStatusScopeSkipsIgnoredListing` and its real Git fixture; entire `CheckpointSourceStateTests` including private Git fixture; `GitFixtureCleanup` | V-22, R-2; ignored output does not dirty source, tracked output does; no cleanup authority inferred |
+| `WorktreeIgnoredContentClassifierTests`; `LandingRemovalPolicyControlTests.C665_RetentionRefusalPreservesTree`; cleanup/retirement/runner bodies listed in the amendment | Existing Unit regressions only, V-25/R-7. D-5 runtime implementation is excluded; retention double is not production retention proof |
+| `CheckpointNamespaceCensusUsageTests.namespace_census_matches_compiled_checkpoint_cases`, `UsageLibrary`, `CheckpointRoster.CompiledCases`, entire `CheckpointTestScope`/`CheckpointTestBase`, independent `Get-NamespaceCensus` literal | V-25, R-6; compiled census versus independent literal; zero new Checkpoints namespace cases here |
+| `TestLaneCategoryGuardTests`, shared `TestClassificationGuardTests`, `TestClassificationMetadata`; linked compile entries; Timeout Windows method bodies, two Windows removal bodies, RemoteScript prerequisite helpers and `DispatchHoldLedgerTests.HoldSentences` | V-25/R-7; categories, six deterministic Linux exclusions, 18 data rows, prerequisites rather than skip waivers |
+| CARD-0959 and fetched CARD-1005 verification freezes, testing owner manifest/coverage/Mutation sections, orchestration stage/cleanup/report owners | Named method PCs, receipt qualification, independent census, ordinary/Mutation costs and staged handoff |
+
+Read-only census: `rg -c '^    \[Test\]'` over `InstructionBundleTests.cs` gives 42 methods; 25 Arguments over five methods give **62 executions**. Four new non-parameterized methods make **66**. Checkpoints `*.cs` (exclude inert `*.cs.txt` fixtures) has **346 Test methods**, 24 Arguments over five methods: **365 executions**. Raw grep including text fixtures incorrectly gives 375/34 and is not the compiled census. No test is counted from a comment/string fixture.
+
+CARD-1005's source census was inspected at `origin/feat/card-task-b288ec96` (`047f3ce3e6e115d1057e4772667f8f291d66dfc1` when fetched). Its freeze base `46e35eded4b6170418e91f6ea04eccbc290cf252` and this start ref have **no diff** in `tests/Antiphon.Tests`, `tests/Shared` or the census library. Thus its independently expanded source inventory applies here: 2,765 Unit methods, 252 argument methods/1,464 rows, plus 18 yielded HoldSentences replacing one placeholder = **3,994 Unit executions**. CARD-1005 adds twelve Unit/Checkpoints methods and changes the literal 365 -> **377**; the fetched implementation has exactly that test/census diff.
+
+**Sequence:** finish/land CARD-1005 Code task `b288ec96` and its census change first; then commission CARD-1015 Code from a fresh start ref containing that reviewed landing and this plan. Do not merge or rebase an active runner task branch to achieve this. CARD-1015 adds **32 methods/results**: 18 history Integration + 6 deletion Integration + 4 workflow Unit + 4 bundle Unit. None belongs in `Antiphon.Tests.Checkpoints`; this card must not edit `scripts/lib/checkpoint-usage.ps1`. Starting after CARD-1005 yields 4,006 + 8 = **4,014 Unit selections**, minus the six named Windows-only methods = **4,008 Linux executions**. CP-1 includes the independent census test (one result) and existing category/registry tests, not extra counts on top. Reconcile any intervening source drift read-only before implementation and record the new source roster/floor in this plan before checkpoints; do not copy 365 over 377 or derive the literal from the selected roster.
+
+Missing setup to implement in S2/S2b:
+
+- New Integration classes carry `[ParallelLimiter<ProcessSpawnLimit>]`. Use a private/shared `EvidenceGitFixture` under `tests/Antiphon.Tests/Scripts/` (not Checkpoints), fixture-owned local repository/bare remote/temp root, deterministic identity, disabled signing/hooks/credentials and literal `ProcessStartInfo.ArgumentList`. Read-only invocations must not contact a remote server. Await/drain every owned child, bound its lifetime, join a killed child on timeout, and fail teardown if the owned root cannot be removed. Existing ScriptHarness/GitFixtureCleanup do not supply all of these guarantees; do not copy their swallowed-delete or unjoined-timeout behavior.
+- Create byte-exact blobs/trees/index records with `hash-object`, `mktree -z`, `commit-tree` or NUL `update-index --index-info`. This supplies newline/tab/non-ASCII/shell-text paths, 120000 symlinks and 160000 gitlinks without Windows symlink privileges or illegal checkout names. The accepted 100644/100755 modes and 1,048,575/1,048,576/1,048,577-byte boundaries are explicit. Do not infer bytes from decoded text. No shell interpolation of a path, no human-quoted `git diff` parser.
+- Shared `scripts/lib/evidence-policy.ps1` owns byte-oriented Git execution and checked result parsing plus callable history/deletion entry functions returning the documented exit verdict. Each CLI wrapper only loads it, binds validated inputs, invokes the entry and exits with its verdict. Ordinary tests invoke the actual wrappers. For deterministic nonzero/truncated/malformed Git-output and ref-movement cuts, a fixture child dot-sources that same library and substitutes **only its low-level Git result provider**, forwarding other calls to real Git. This is not a second policy implementation. Counters prove the cut ran. The substitute proves failure handling, not that native Git emits malformed output; real missing/corrupt-object cases exercise the native path too. No production bypass/size override is added. The history checker explicitly refuses a shallow repository rather than certifying an incomplete reachable-commit walk. For parser-guard cuts, downstream fixture replies stay valid/permissive so a second native Git failure cannot hide the removed parser check.
+- New Unit `EvidencePolicyWorkflowTests` reads the actual YAML via YamlDotNet, asserts structural trigger/checkout/permission fields, and inspects the real guard step's PowerShell AST. The CI run block should be a small fixed command and explicit exit propagation, so an exact AST/argument contract is reviewable. A fake workflow or string in a comment cannot satisfy it. Its four tests are single-result methods. For AST parsing, use the installed pwsh Parser.ParseInput API in an owned/drained child through the same bounded process helper; never execute the workflow body. Add the process limiter to this Unit class too. No System.Management.Automation package or project-file change is required.
+- Deletion fixtures supply an independently authored path list/hash/count and tiny legacy blobs; they need not generate 17.7 MB. Include a legal small Markdown legacy entry, a forbidden artifact, and an unrelated sentinel outside `.antiphon/`. Snapshot all refs, HEAD, index bytes and worktree content around both validators. No test rewrites/deletes the real 108 paths.
+
+### Delivery inventory
+
+**No new or changed asynchronous application delivery path remains in scope.** S1 changes instruction text, S2 runs a synchronous read-only Git checker in CLI/CI, S2b validates deletion and S3 changes a Git tree. Producers/destinations are the local CLI process and its caller/CI job; their identity is resolved base/head plus the inspected commit, not an application queue ID. Persistence is committed source plus raw checkpoint/CI receipts; rerun against the same resolved commits recovers an interrupted invocation. Observable completion is the process exit and complete result/counts, not a claim that a session received input.
+
+No SessionMessageQueueService, notification, settlement or card-Done cleanup implementation is changed. Busy/already-eligible recipient and crash/enqueue handoff tests are therefore excluded, not replaced by a queue insert or ack. If Code adds an async cleanup/notification path, this freeze no longer covers it: return to Plan/TestDesign for durable producer-to-recipient recovery tests and matching complete UserPrompt transcript evidence. Bundle text assertions prove composed instructions contain the rule; they do not prove agent obedience or input delivery. YAML tests prove wiring, not a hosted Actions execution; caller acceptance separately inspects the actual SHA-bound Actions result. No raw-evidence storage or post-Done deletion receipt is claimed.
+
+### Proves it works now
+
+Every named new method is non-parameterized, one TUnit result. Internal vectors below are mandatory assertions, not extra executions. Prefix `EvidenceDiffGuardTests.` applies to V-1..V-18; all run the actual PowerShell entry points except the declared low-level fault substitutions. Stable assertion labels used by PCs must exist on the decisive assertion in that exact method; assert outcomes before diagnostic detail so mutation reds are attributable.
+
+| ID | Behavior / exact method | Layer and expected result |
+|---|---|---|
+| V-1 | `EvidenceDiffGuardTests.Rejects_checkpoint_paths` | Real Git/CLI: tiny `.md` under root/nested `checkpoints`, `c1015-checkpoints`, mixed-case components fails 1, introducing SHA and escaped path present. A file named `checkpoints.md` outside such a directory is allowed. |
+| V-2 | `EvidenceDiffGuardTests.Rejects_non_markdown_outputs` | Tiny `.trx`, `.trx.gz`, `.json`, `.log`, `.zip`, `.tar.gz`, extensionless and `.md.exe` each fail 1 outside checkpoint directories. Uppercase `.MD` is accepted. |
+| V-3 | `EvidenceDiffGuardTests.Rejects_non_regular_modes` | 120000 symlink (small `.md` target string) and 160000 gitlink fail 1; 100644 and 100755 Markdown pass. No link target is followed. |
+| V-4 | `EvidenceDiffGuardTests.Enforces_one_mib_blob_limit` | 1 MiB-1 and exactly 1 MiB pass; 1 MiB+1 fails 1. A multibyte UTF-8 blob exceeding the byte cap but below the character cap fails; huge non-Markdown also fails without depending on size. |
+| V-5 | `EvidenceDiffGuardTests.Allows_small_markdown_and_other_source` | Empty/small report/provenance `.md` pass; large source outside root `.antiphon/`, `.antiphon-other/` and nested `x/.antiphon/` are outside D-3's guard. Scope is literal root component, not a substring anywhere. |
+| V-6 | `EvidenceDiffGuardTests.Grandfathers_unchanged_legacy_and_allows_deletion` | Base contains forbidden legacy files; unchanged entries and pure deletions pass 0. Equal base/head gives explicit zero-commit/zero-entry success; unrelated normal commit gives nonzero commits/zero inspected entries. |
+| V-7 | `EvidenceDiffGuardTests.Rechecks_modified_and_renamed_legacy_paths` | Change an existing forbidden blob; rename a small raw artifact; copy/rename source into `.antiphon/x.json`; change a Markdown file's mode: each fails. Rename into a permitted small `.md` passes if all introduced records comply. |
+| V-8 | `EvidenceDiffGuardTests.Checks_intermediate_commits_even_when_tip_is_clean` | Introduce forbidden blob then delete it before head; fail 1 and name the introducing commit although net diff is clean. |
+| V-9 | `EvidenceDiffGuardTests.Checks_merge_side_history` | Side branch adds then deletes forbidden blob before merge; fail on side SHA even with clean merge result. Separately, a merge resolution introduces a forbidden path absent from both parents; fail on the merge SHA's first-parent diff. |
+| V-10 | `EvidenceDiffGuardTests.Reads_pinned_git_objects_not_index_or_worktree` | Committed oversize Markdown with staged/working small bytes fails; committed small Markdown with staged/untracked oversize bytes passes. Assert the exact committed object size/identity. |
+| V-11 | `EvidenceDiffGuardTests.Handles_literal_paths_and_case_variants` | Root `.ANTIPHON`, directory case, spaces, tabs, LF, non-ASCII and shell-text path vectors cannot hide a violation. Literal sentinel expression never executes; decoded reported path matches the object path and the output remains safely escaped. Payload sentinel never appears in stdout/stderr. |
+| V-12 | `EvidenceDiffGuardTests.Refuses_unverifiable_ranges_and_objects` | Missing base, missing head, blob/tag-to-blob ref, unrelated histories, and removed loose object fail 2; valid annotated commit tag and equal range pass. Assert no clean verdict/count certificate on error. |
+| V-13 | `EvidenceDiffGuardTests.Refuses_failed_or_malformed_git_results` | At ref resolution, ancestry, rev-list, raw diff and cat-file cuts, nonzero exit is 2 even with plausible stdout; truncated/malformed IDs/modes/status/NUL records, invalid UTF-8 path bytes and invalid size are 2. Strict UTF-8 decoding refuses undecodable names rather than substituting replacement characters. Each cut has a hit counter and a neighboring valid result. |
+| V-14 | `EvidenceDiffGuardTests.Resolves_refs_once_and_stays_read_only` | Move mutable base/head refs after initial resolution through the low-level observation cut; all later calls and reported range use captured OIDs. Independently verify unchanged refs, index/worktree bytes and HEAD for unhooked success/failure calls; spy disallows fetch/stage/config/checkout/delete. |
+| V-15 | `EvidenceDiffGuardTests.Ci_selects_cumulative_feature_push_range` | Local origin/master fixture: first feature push (zero before allowed), later push with bad earlier unlanded commit, and default-branch advance choose merge-base(default,event head)..event head; do not use event before. |
+| V-16 | `EvidenceDiffGuardTests.Ci_selects_complete_default_branch_push_range` | Default push before..event head contains multiple commits and an intermediate violation. Checkout HEAD is deliberately different; event after controls head. Assert exact range, not only rejection. |
+| V-17 | `EvidenceDiffGuardTests.Ci_requires_valid_manual_range` | Valid explicit manual base/head use same policy; missing/blank/unresolvable base fails 2, no guessed default. Head may be an explicit selected commit/tag-to-commit. |
+| V-18 | `EvidenceDiffGuardTests.Ci_refuses_invalid_events_and_missing_history` | Unknown event, malformed JSON, missing/wrong-typed required fields, missing remote default ref, default push zero before, shallow/missing history and unrelated inputs fail 2. Only actual deleted=true branch event is explicitly excluded; string `"false"` cannot skip enforcement. |
+| V-19 | `InstructionBundleTests.C1015_Composed_workers_keep_generated_evidence_untracked`; `InstructionBundleTests.C1015_Code_keeps_range_guard_and_exact_source`; `InstructionBundleTests.C1015_Review_remains_read_only_and_checks_history`; `InstructionBundleTests.C1015_SourceLanding_keeps_its_external_evidence_exception` | Real composition for Code/Review/Debug/Docs, common rule, full task-base guard, unchanged CP lines/tested SHA, Review no writes, external-only SourceLanding exception. Existing cap/budget/ASCII tests run. |
+| V-20 | `EvidencePolicyWorkflowTests.Workflow_selects_every_required_event`; `EvidencePolicyWorkflowTests.Workflow_pins_full_history_and_event_head`; `EvidencePolicyWorkflowTests.Workflow_calls_real_guard_and_propagates_failure`; `EvidencePolicyWorkflowTests.Workflow_uses_data_arguments_and_no_write_permissions` | Actual YAML/AST: master + feat/** push and manual triggers, no narrowing paths/condition, full checkout at event head, fixed script call, failed exit propagates, env-backed event/manual inputs and contents: read. |
+| V-21 | `EvidenceDeletionGuardTests.Verifies_exact_legacy_deletion`; `EvidenceDeletionGuardTests.Rejects_wrong_inventory`; `EvidenceDeletionGuardTests.Rejects_ambiguous_or_merge_deletion`; `EvidenceDeletionGuardTests.Rejects_missing_extra_or_non_deletions`; `EvidenceDeletionGuardTests.Rejects_changed_legacy_or_resurrected_paths`; `EvidenceDeletionGuardTests.Refuses_unverifiable_deletion_history` | Real Git/CLI: exact deletion succeeds, all individually invalid boundary vectors fail with 1/2 as specified below; original blobs recoverable and unrelated tree unchanged. |
+| V-22 | `LandingGitTests.C642_IdentityAndStatusScopeSkipsIgnoredListing`; `CheckpointSourceStateTests.clean_and_ignored_outputs_match_head` | Existing real-Git smoke: ignored content has stable clean identity, tracked output edits count dirty; no production changes to these seams. |
+| V-23 | CP-6 actual candidate range | Real script returns 0 on full fixed base..committed HEAD with resolved SHAs, commit/entry counts, zero violations, no altered source. Rerun after any subsequent report-only commit. |
+| V-24 | CP-7 actual S3 deletion | Real validator reports exactly frozen 108 deletions and recoverable original objects, no additional changes in S3, none of those paths at final tip. Caller repeats after landing onto master. |
+| V-25 | CP-1 complete eligible Unit filter | All selected results executed with zero failed/skipped, including changed bundle/workflow tests, existing source/retention/classification contracts and namespace census = 377 after CARD-1005. |
+
+### Guards the regression
+
+- R-1: V-19/V-20 keep the common evidence rule on all four roles, preserve Review/SourceLanding authority and ship an enforceable CI invocation. Existing bundle caps/budgets remain unchanged in strength.
+- R-2: V-10/V-14/V-22 keep ignored output out of clean-source identity while modified tracked output remains dirty; exact Git objects decide the guard. Any write made by a validator fails the before/after oracle.
+- R-3: V-1..V-9/V-11 prevent extension, case, checkpoint-directory, mode, byte-size, legacy, rename and intermediate/merge-history bypasses. Every rejection fixture has otherwise valid inputs and an adjacent permitted fixture.
+- R-4: V-12/V-13/V-15..V-18 fail unknown comparisons closed, distinguish explicit empty from failed enumeration, and select the intended cumulative range rather than a convenient HEAD/net diff.
+- R-5: V-21/V-24 verify the exact deletion. Wrong hash with correct count and wrong count with correct hash fail separately. Zero/two marker commits and a marked merge fail. One omitted path, one extra deletion, one addition and one modification each fail independently. Changed old object, resurrected original path, missing historical blob, unrelated inventory, deletion outside selected head and malformed/native Git failure each have a fixture. To isolate inventory-to-parent ancestry, head merges the inventory lineage and a separately rooted exact-deletion lineage: inventory-to-head ancestry is valid but inventory-to-deletion-parent ancestry is not. The out-of-head deletion cut supplies a valid marked sibling commit through the low-level enumeration seam, then requires the separate containment check to reject it. No count-only equality or filtered diff can pass.
+- R-6: `CheckpointNamespaceCensusUsageTests.namespace_census_matches_compiled_checkpoint_cases` compares the independently maintained literal with expanded compiled cases; 377 is inherited from CARD-1005, never authored by this card. Adding a test to that namespace would invalidate the freeze and require a separately reconciled census change.
+- R-7: complete eligible Unit regression coverage stays in ordinary scope. Six Windows-only methods are excluded explicitly on Linux; historical 52 skipped results are not a waiver. Require bash, jq, pwsh and working links before the run; unexpected skips or inherited failures remain failed qualification and need targeted baseline confirmation.
+
+### Guard inventory
+
+The inventory covers every safety-critical invariant added/relied on by the changed policy, CLI/CI wiring, instruction text and exact deletion. Independent decisions are split even when one method exercises several. Broad existing Unit regressions do not make unrelated, unchanged application guards part of this card's PC scope. The unchanged cleanup implementation is explicitly excluded above; it is not an untested CARD-1015 guard.
+
+| Guard | Plan reference + safety-critical invariant | Positive control |
+|---|---|---|
+| G-1 | D-3; Root .antiphon matching is case-insensitive | PC-1 |
+| G-2 | D-3; Inspect every descendant directory component | PC-2 |
+| G-3 | D-3; Checkpoint substring covers cNNN-checkpoints | PC-3 |
+| G-4 | D-3; Checkpoint directory comparison is case-insensitive | PC-4 |
+| G-5 | D-1; Only the final .md extension is permitted | PC-5 |
+| G-6 | D-1; Only regular modes 100644/100755 are permitted | PC-6 |
+| G-7 | D-1; Blobs above 1048576 bytes are refused | PC-7 |
+| G-8 | D-1/D-3; Size is committed bytes, not decoded characters | PC-8 |
+| G-9 | D-3; Unchanged legacy entries are not re-admitted as new | PC-9 |
+| G-10 | D-3; Deletion records require no destination blob | PC-10 |
+| G-11 | D-3; Modified tracked legacy blobs are inspected | PC-11 |
+| G-12 | D-3; Rename/copy destinations receive no legacy exemption | PC-12 |
+| G-13 | D-3; Every introduced commit is inspected, including later-deleted payloads | PC-13 |
+| G-14 | D-3; Reachability enumeration includes non-first-parent side commits | PC-14 |
+| G-15 | D-3; A merge commit itself is diffed against its first parent | PC-15 |
+| G-16 | D-3; The raw new OID selects the size/object, not current file bytes | PC-16 |
+| G-17 | D-3; Raw paths are NUL-delimited literal records | PC-17 |
+| G-18 | D-3; Git path text cannot execute shell expressions | PC-18 |
+| G-19 | D-3; Control characters are escaped in diagnostics | PC-19 |
+| G-20 | D-1/D-3; Diagnostics never print payload content | PC-20 |
+| G-21 | D-3; Base must resolve to a commit | PC-21 |
+| G-22 | D-3; Head must resolve to a commit | PC-22 |
+| G-23 | D-3; Base must be an ancestor of head | PC-23 |
+| G-24 | D-3/S2b; All Git calls pass through one checked nonzero-exit gate | PC-24 |
+| G-25 | D-3; Raw records require the exact header/path field cardinality | PC-25 |
+| G-26 | D-3; Missing/invalid blob-size results are unknown, not zero bytes | PC-26 |
+| G-27 | D-3; Resolved refs are pinned for the complete invocation | PC-27 |
+| G-28 | D-3; History checker has no write side effects | PC-28 |
+| G-29 | D-4; Feature pushes recheck merge-base(default,event-head) through head | PC-29 |
+| G-30 | D-4; Default-branch pushes check every commit since event before | PC-30 |
+| G-31 | D-4; Event after is the inspected head, independent of checkout HEAD | PC-31 |
+| G-32 | D-4; Manual dispatch requires an explicit base | PC-32 |
+| G-33 | D-4; Unknown event kinds fail closed | PC-33 |
+| G-34 | D-4; Event JSON requires correctly typed mandatory fields | PC-34 |
+| G-35 | D-4; Missing remote default-branch object never falls back to event before | PC-35 |
+| G-36 | D-4; Zero before on a default-branch push is refused | PC-36 |
+| G-37 | D-3/D-4; Truncated/shallow history cannot be certified complete | PC-37 |
+| G-38 | D-4; Only boolean deleted=true authorizes branch-deletion exclusion | PC-38 |
+| G-39 | D-4; CI triggers cover default, feature and manual entry | PC-39 |
+| G-40 | D-4; CI has no path/conditional filter hiding a candidate range | PC-40 |
+| G-41 | D-4; Checkout supplies full history | PC-41 |
+| G-42 | D-4; Checkout and guard identify the event commit | PC-42 |
+| G-43 | D-4; CI invokes the real checker with the required arguments | PC-43 |
+| G-44 | D-4; Guard nonzero process status propagates to CI | PC-44 |
+| G-45 | D-4; Workflow cannot waive a failing guard | PC-45 |
+| G-46 | D-4; Event/manual fields enter as data, not interpolated shell source | PC-46 |
+| G-47 | D-4; Workflow Git access is read-only | PC-47 |
+| G-48 | D-1/S1; Common contract excludes generated evidence from commit instructions | PC-48 |
+| G-49 | D-1/S1; Optional committed reports retain the one-MiB cap | PC-49 |
+| G-50 | D-4/S1; Code is told to inspect the complete task range | PC-50 |
+| G-51 | D-6/S1; Code preserves actual tested source identity | PC-51 |
+| G-52 | D-4/S1; Review stays read-only | PC-52 |
+| G-53 | D-4/S1; Review audits the entire candidate evidence history | PC-53 |
+| G-54 | D-6/S1; SourceLanding evidence stays outside its snapshot | PC-54 |
+| G-55 | D-6/S1; SourceLanding exception still forbids commit/push | PC-55 |
+| G-56 | S1; Edited stage text still fits its 2500-character transport cap | PC-56 |
+| G-57 | S1; Edited stage bundles remain ASCII-safe | PC-57 |
+| G-58 | S1; The default full composition stays within command-line budget | PC-58 |
+| G-59 | D-2/S2b; Frozen inventory count is independently checked | PC-59 |
+| G-60 | D-2/S2b; Frozen NUL-list digest is independently checked | PC-60 |
+| G-61 | D-2/S2b; Exactly one exact deletion trailer is required | PC-61 |
+| G-62 | D-2/S2b; Deletion commit is an ordinary single-parent commit | PC-62 |
+| G-63 | D-2/S2b; Inventory must precede the deletion parent | PC-63 |
+| G-64 | D-2/S2b; Deletion must belong to the selected head history | PC-64 |
+| G-65 | D-2/S2b; Every change in S3 is a deletion | PC-65 |
+| G-66 | D-2/S2b; No frozen path may be omitted | PC-66 |
+| G-67 | D-2/S2b; No extra path may be deleted | PC-67 |
+| G-68 | D-2/S2b; Deleted blobs must equal the frozen old objects | PC-68 |
+| G-69 | D-2/S2b; Deleted modes must equal the frozen old modes | PC-69 |
+| G-70 | D-2/S2b; Original inventory paths remain absent at selected head | PC-70 |
+| G-71 | D-2/S2b; Every original blob is still retrievable from history | PC-71 |
+| G-72 | D-2/S2b; Deletion validator itself is read-only | PC-72 |
+| G-73 | D-3; Guard scope is the exact root path component | PC-73 |
+| G-74 | D-3; Checkpoint matching applies to directories, not the filename | PC-74 |
+| G-75 | D-3; A truncated final NUL record is not accepted as complete | PC-75 |
+| G-76 | D-3; Raw change status is validated | PC-76 |
+| G-77 | D-3; Raw object IDs have the full validated object-id shape | PC-77 |
+| G-78 | D-3; Raw file-mode fields are syntactically validated | PC-78 |
+| G-79 | D-4; CI still runs on default-branch pushes | PC-79 |
+| G-80 | D-4; CI still offers explicit manual dispatch | PC-80 |
+| G-81 | D-4; CI passes the event JSON path to the checker | PC-81 |
+| G-82 | D-4; CI passes the event kind to the checker | PC-82 |
+| G-83 | D-4; CI passes the explicit manual base through to the checker | PC-83 |
+| G-84 | D-1/S1; Common instructions permit only individual report-path commits | PC-84 |
+| G-85 | D-1/S1; Common Markdown allowance excludes checkpoint directories | PC-85 |
+| G-86 | D-6/S1; Checkpoint report lines remain verbatim | PC-86 |
+| G-87 | D-2/S2b; Deletion marker is an exact complete trailer, not a substring | PC-87 |
+
+| G-88 | D-3; Raw path bytes must decode losslessly, never through UTF-8 replacement fallback | PC-88 |
+
+### Positive controls
+
+Each row means: **break its same-numbered G-n using the stated syntactically valid/compiling defect, run only the named exact method, require red at the stated assertion, restore exact bytes, rebuild as needed, and require that method green**. Assertions whose shorthand label is `x` below use the literal message `c1015-x`. New methods must assert that label on the actual outcome; never mutate the oracle or return a canned failing value. Existing bundle methods retain their current assertions.
+
+Mutation runs these cycles only after reviewed land, on the SourceLanding snapshot with inherited local children and external evidence. Code runs ordinary V/R; Review judges the pending PC design before land. A parse/compiler/fixture error, timeout before the assertion, or zero selected tests is not red. All CLI verdict assertions are made after successful fixture setup and fault-hit checks; the deliberate native missing-blob case removes only its own isolated loose object. Each PC alters one predicate/operation, not multiple guards. Do not combine mutations sharing a file or method. No plan/evidence commit is made from the snapshot.
+
+Method filter = `/*/*/ClassName/ExactTestMethod` for the class-qualified method below. The existing six-argument bundle-cap method uses its exact method-name prefix plus `*` to include TUnit's argument suffixes, with MinExecuted=6 and the named Code/Review argument inspected; all other PC filters are exact single-result names, MinExecuted=1. These are still method-scoped, never whole-class controls.
+
+| PC / guard | Compiling defect | Exact method expected red | Decisive assertion |
+|---|---|---|---|
+| PC-1 / G-1 | make only the root comparison ordinal/case-sensitive | `EvidenceDiffGuardTests.Handles_literal_paths_and_case_variants` | root-case: ExitCode == 1 |
+| PC-2 / G-2 | inspect only the first directory below .antiphon | `EvidenceDiffGuardTests.Rejects_checkpoint_paths` | nested-checkpoint: ExitCode == 1 |
+| PC-3 / G-3 | replace component Contains(checkpoints) with exact equality | `EvidenceDiffGuardTests.Rejects_checkpoint_paths` | prefixed-checkpoint: ExitCode == 1 |
+| PC-4 / G-4 | use ordinal case-sensitive checkpoint comparison | `EvidenceDiffGuardTests.Rejects_checkpoint_paths` | checkpoint-case: ExitCode == 1 |
+| PC-5 / G-5 | replace the extension refusal predicate with false | `EvidenceDiffGuardTests.Rejects_non_markdown_outputs` | format: ExitCode == 1 for tiny .trx.gz |
+| PC-6 / G-6 | add 120000 and 160000 to the permitted mode set | `EvidenceDiffGuardTests.Rejects_non_regular_modes` | mode: ExitCode == 1 for the symlink; separately assert gitlink vector in ordinary run |
+| PC-7 / G-7 | raise the constant from 1048576 to 1048577 | `EvidenceDiffGuardTests.Enforces_one_mib_blob_limit` | oversize: ExitCode == 1 at 1048577 |
+| PC-8 / G-8 | use decoded UTF-8 string Length for the blob size comparison | `EvidenceDiffGuardTests.Enforces_one_mib_blob_limit` | utf8-bytes: ExitCode == 1 for multibyte oversize blob |
+| PC-9 / G-9 | enumerate all head-tree paths instead of changed destination records | `EvidenceDiffGuardTests.Grandfathers_unchanged_legacy_and_allows_deletion` | legacy-unchanged: ExitCode == 0 |
+| PC-10 / G-10 | remove the D-record bypass and validate its old forbidden path as a destination | `EvidenceDiffGuardTests.Grandfathers_unchanged_legacy_and_allows_deletion` | legacy-delete: ExitCode == 0 |
+| PC-11 / G-11 | skip M raw records | `EvidenceDiffGuardTests.Rechecks_modified_and_renamed_legacy_paths` | legacy-modified: ExitCode == 1 |
+| PC-12 / G-12 | exempt a new destination when its new OID exists anywhere in the comparison base | `EvidenceDiffGuardTests.Rechecks_modified_and_renamed_legacy_paths` | rename-destination: ExitCode == 1 |
+| PC-13 / G-13 | replace the commit loop with one net base-to-head diff | `EvidenceDiffGuardTests.Checks_intermediate_commits_even_when_tip_is_clean` | intermediate: ExitCode == 1 |
+| PC-14 / G-14 | add --first-parent to rev-list | `EvidenceDiffGuardTests.Checks_merge_side_history` | side-history: ExitCode == 1 |
+| PC-15 / G-15 | skip commits with more than one parent | `EvidenceDiffGuardTests.Checks_merge_side_history` | merge-resolution: ExitCode == 1 |
+| PC-16 / G-16 | replace cat-file size with current worktree file Length | `EvidenceDiffGuardTests.Reads_pinned_git_objects_not_index_or_worktree` | committed-object: ExitCode == 1 with staged/working small bytes |
+| PC-17 / G-17 | split raw path records on LF and silently drop unmatched fragments | `EvidenceDiffGuardTests.Handles_literal_paths_and_case_variants` | literal-newline: ExitCode == 1 with the full escaped path |
+| PC-18 / G-18 | expand a captured path through PowerShell ExpandString before using it; fixture path contains only a fixture-owned canary expression | `EvidenceDiffGuardTests.Handles_literal_paths_and_case_variants` | no-path-execution: canary file absent, checked before verdict details |
+| PC-19 / G-19 | write the raw path instead of its JSON/control-escaped representation | `EvidenceDiffGuardTests.Handles_literal_paths_and_case_variants` | escaped-path: serialized diagnostic contains escaped LF, no injected physical diagnostic line |
+| PC-20 / G-20 | append decoded cat-file blob content to a violation diagnostic | `EvidenceDiffGuardTests.Handles_literal_paths_and_case_variants` | no-payload: output excludes fixture payload sentinel |
+| PC-21 / G-21 | on failed base resolution substitute head and continue | `EvidenceDiffGuardTests.Refuses_unverifiable_ranges_and_objects` | base-unresolved: ExitCode == 2 |
+| PC-22 / G-22 | on failed head resolution substitute base and continue | `EvidenceDiffGuardTests.Refuses_unverifiable_ranges_and_objects` | head-unresolved: ExitCode == 2 |
+| PC-23 / G-23 | ignore ancestry exit 1 and continue with otherwise clean unrelated histories | `EvidenceDiffGuardTests.Refuses_unverifiable_ranges_and_objects` | unrelated: ExitCode == 2 |
+| PC-24 / G-24 | ignore ExitCode in the shared checked-result helper; rev-list cut returns plausible empty stdout plus exit 1 | `EvidenceDiffGuardTests.Refuses_failed_or_malformed_git_results` | git-exit: ExitCode == 2 and fault hit == 1 |
+| PC-25 / G-25 | ignore an extra raw header token and accept the remaining valid fields | `EvidenceDiffGuardTests.Refuses_failed_or_malformed_git_results` | raw-fields: ExitCode == 2 for an extra header token |
+| PC-26 / G-26 | coerce a successful-but-empty/non-numeric cat-file size reply to zero | `EvidenceDiffGuardTests.Refuses_failed_or_malformed_git_results` | invalid-size: ExitCode == 2 |
+| PC-27 / G-27 | pass original mutable HeadRef to the commit walk after the ref-movement cut | `EvidenceDiffGuardTests.Resolves_refs_once_and_stays_read_only` | pinned-head: reported/inspected head equals the first resolved OID |
+| PC-28 / G-28 | stage the fixture changed sentinel through git add before returning | `EvidenceDiffGuardTests.Resolves_refs_once_and_stays_read_only` | read-only: index bytes equal the independent before snapshot |
+| PC-29 / G-29 | use event before as the feature base | `EvidenceDiffGuardTests.Ci_selects_cumulative_feature_push_range` | feature-cumulative: ExitCode == 1 for earlier unlanded bad commit |
+| PC-30 / G-30 | use event head parent as the default push base | `EvidenceDiffGuardTests.Ci_selects_complete_default_branch_push_range` | default-whole-push: ExitCode == 1 for earlier bad commit |
+| PC-31 / G-31 | resolve literal HEAD instead of event after | `EvidenceDiffGuardTests.Ci_selects_complete_default_branch_push_range` | event-head: resolved head equals fixture event after |
+| PC-32 / G-32 | default a missing manual base to selected head | `EvidenceDiffGuardTests.Ci_requires_valid_manual_range` | manual-base-required: ExitCode == 2 |
+| PC-33 / G-33 | treat unknown event as an empty successful range | `EvidenceDiffGuardTests.Ci_refuses_invalid_events_and_missing_history` | unknown-event: ExitCode == 2 |
+| PC-34 / G-34 | convert a missing/array after field to current HEAD instead of rejecting it | `EvidenceDiffGuardTests.Ci_refuses_invalid_events_and_missing_history` | event-shape: ExitCode == 2 |
+| PC-35 / G-35 | on absent origin/default resolve event before instead | `EvidenceDiffGuardTests.Ci_refuses_invalid_events_and_missing_history` | remote-base-missing: ExitCode == 2 |
+| PC-36 / G-36 | replace zero before with event head on the default branch | `EvidenceDiffGuardTests.Ci_refuses_invalid_events_and_missing_history` | default-zero: ExitCode == 2 |
+| PC-37 / G-37 | remove the shallow-history refusal while all referenced endpoints remain present in a deliberately depth-truncated fixture | `EvidenceDiffGuardTests.Ci_refuses_invalid_events_and_missing_history` | shallow-history: ExitCode == 2 |
+| PC-38 / G-38 | cast the deleted field to bool before validating its JSON type | `EvidenceDiffGuardTests.Ci_refuses_invalid_events_and_missing_history` | deleted-type: ExitCode == 2 for string false |
+| PC-39 / G-39 | remove feat/** from push branches in the actual workflow | `EvidencePolicyWorkflowTests.Workflow_selects_every_required_event` | trigger-feature: branch patterns contain feat/** |
+| PC-40 / G-40 | add paths: [docs/**] under the push event | `EvidencePolicyWorkflowTests.Workflow_selects_every_required_event` | no-path-filter: push paths/paths-ignore absent |
+| PC-41 / G-41 | change actual checkout fetch-depth from 0 to 1 | `EvidencePolicyWorkflowTests.Workflow_pins_full_history_and_event_head` | full-history: fetch-depth == 0 |
+| PC-42 / G-42 | replace checkout ref expression with master | `EvidencePolicyWorkflowTests.Workflow_pins_full_history_and_event_head` | checkout-head: ref equals expected event/selected-head expression |
+| PC-43 / G-43 | replace executable script path with a valid Write-Host no-op | `EvidencePolicyWorkflowTests.Workflow_calls_real_guard_and_propagates_failure` | real-guard-call: AST invokes scripts/check-evidence-diff.ps1 with event path/name inputs |
+| PC-44 / G-44 | replace the explicit exit $LASTEXITCODE statement with exit 0 | `EvidencePolicyWorkflowTests.Workflow_calls_real_guard_and_propagates_failure` | exit-propagation: exit AST uses LASTEXITCODE |
+| PC-45 / G-45 | set continue-on-error: true on the guard step | `EvidencePolicyWorkflowTests.Workflow_calls_real_guard_and_propagates_failure` | no-error-waiver: neither job nor step enables continue-on-error |
+| PC-46 / G-46 | inline a github.event field expression in the run block instead of its environment variable | `EvidencePolicyWorkflowTests.Workflow_uses_data_arguments_and_no_write_permissions` | no-event-shell: run AST/source contains no GitHub expression interpolation |
+| PC-47 / G-47 | change contents permission from read to write | `EvidencePolicyWorkflowTests.Workflow_uses_data_arguments_and_no_write_permissions` | read-permission: contents == read |
+| PC-48 / G-48 | delete the generated-evidence gitignored sentence from delegate-basics | `InstructionBundleTests.C1015_Composed_workers_keep_generated_evidence_untracked` | common-ignored: all four compositions contain the ignored-evidence rule |
+| PC-49 / G-49 | change the common 1048576-byte Markdown allowance to unlimited | `InstructionBundleTests.C1015_Composed_workers_keep_generated_evidence_untracked` | common-cap: all four compositions contain the 1048576-byte cap |
+| PC-50 / G-50 | remove the full task-base-through-head guard clause from stage-code | `InstructionBundleTests.C1015_Code_keeps_range_guard_and_exact_source` | code-range: stage Code and its composition name check-evidence-diff.ps1 and full task range |
+| PC-51 / G-51 | replace only actual tested SHA instruction with permission to relabel receipts at report HEAD | `InstructionBundleTests.C1015_Code_keeps_range_guard_and_exact_source` | code-source: stage Code contains actual tested SHA requirement |
+| PC-52 / G-52 | replace Read-only/Do not fix anything with permission to commit reports in stage-review | `InstructionBundleTests.C1015_Review_remains_read_only_and_checks_history` | review-read-only: composed Review contains both prohibitions |
+| PC-53 / G-53 | delete the new full-range evidence guard instruction from stage-review | `InstructionBundleTests.C1015_Review_remains_read_only_and_checks_history` | review-range: stage Review names checker and complete candidate range |
+| PC-54 / G-54 | remove the external evidence-root requirement from delegate-basics SourceLanding exception | `InstructionBundleTests.C1015_SourceLanding_keeps_its_external_evidence_exception` | source-external: composed Mutation contains assigned external evidence root requirement |
+| PC-55 / G-55 | replace never commit/push in the common SourceLanding exception with may commit/push | `InstructionBundleTests.C1015_SourceLanding_keeps_its_external_evidence_exception` | source-no-commit: exception text within composed basics contains never commit/push |
+| PC-56 / G-56 | append ASCII to stage-code until its normalized trimmed text is 2501 characters | `InstructionBundleTests.each_stage_bundle_is_ascii_and_under_the_size_cap` | existing stage Length.ShouldBeLessThanOrEqualTo(2500), Code argument result |
+| PC-57 / G-57 | replace one ASCII character in stage-review with U+00E9 without increasing length | `InstructionBundleTests.each_stage_bundle_is_ascii_and_under_the_size_cap` | existing character code ShouldBeLessThan(128), Review argument result |
+| PC-58 / G-58 | append enough ASCII to delegate-basics to exceed the existing configured composition budget | `InstructionBundleTests.the_worst_case_composition_measured_sits_far_under_the_budget` | existing composed.Text.Length.ShouldBeLessThan(budget) |
+| PC-59 / G-59 | omit the InventoryCount comparison | `EvidenceDeletionGuardTests.Rejects_wrong_inventory` | inventory-count: ExitCode == 1 with correct digest but wrong count |
+| PC-60 / G-60 | omit the InventoryPathSha256 comparison | `EvidenceDeletionGuardTests.Rejects_wrong_inventory` | inventory-digest: ExitCode == 1 with correct count but wrong digest |
+| PC-61 / G-61 | accept the first matching marker when two exist | `EvidenceDeletionGuardTests.Rejects_ambiguous_or_merge_deletion` | deletion-unique: ExitCode == 1 with two candidates |
+| PC-62 / G-62 | accept a marked merge and use its first parent | `EvidenceDeletionGuardTests.Rejects_ambiguous_or_merge_deletion` | deletion-parent: ExitCode == 1 for a marked merge with otherwise exact deletions |
+| PC-63 / G-63 | skip inventory-to-parent ancestry check | `EvidenceDeletionGuardTests.Refuses_unverifiable_deletion_history` | inventory-ancestry: ExitCode == 2 for a graft-free unrelated inventory with identical entries |
+| PC-64 / G-64 | skip deletion-to-head ancestry check; low-level marker-enumeration cut supplies a valid marked commit from a sibling branch | `EvidenceDeletionGuardTests.Refuses_unverifiable_deletion_history` | deletion-ancestry: ExitCode == 2; cut hit == 1 |
+| PC-65 / G-65 | filter raw records to D before validation, discarding an added source sentinel | `EvidenceDeletionGuardTests.Rejects_missing_extra_or_non_deletions` | deletion-only: ExitCode == 1 for exact required deletions plus one addition |
+| PC-66 / G-66 | remove expected-minus-actual set check | `EvidenceDeletionGuardTests.Rejects_missing_extra_or_non_deletions` | deletion-missing: ExitCode == 1 with one required path left |
+| PC-67 / G-67 | remove actual-minus-expected set check | `EvidenceDeletionGuardTests.Rejects_missing_extra_or_non_deletions` | deletion-extra: ExitCode == 1 for all required paths plus outside sentinel deletion |
+| PC-68 / G-68 | skip old-OID equality | `EvidenceDeletionGuardTests.Rejects_changed_legacy_or_resurrected_paths` | deletion-old-oid: ExitCode == 1 after editing a legacy blob before deletion |
+| PC-69 / G-69 | skip old-mode equality | `EvidenceDeletionGuardTests.Rejects_changed_legacy_or_resurrected_paths` | deletion-old-mode: ExitCode == 1 after 100644 to 100755 change with identical blob |
+| PC-70 / G-70 | omit final-head absence check | `EvidenceDeletionGuardTests.Rejects_changed_legacy_or_resurrected_paths` | deletion-resurrection: ExitCode == 1 after reintroducing an original small Markdown path |
+| PC-71 / G-71 | skip the historical cat-file existence loop | `EvidenceDeletionGuardTests.Refuses_unverifiable_deletion_history` | deletion-recoverable: ExitCode == 2 with one fixture-owned loose historical blob absent |
+| PC-72 / G-72 | write a temporary tracked sentinel through git update-index before returning success | `EvidenceDeletionGuardTests.Verifies_exact_legacy_deletion` | deletion-read-only: index digest equals independent before snapshot |
+| PC-73 / G-73 | replace root-component matching with substring Contains(.antiphon) | `EvidenceDiffGuardTests.Allows_small_markdown_and_other_source` | root-scope: ExitCode == 0 for .antiphon-other and nested x/.antiphon |
+| PC-74 / G-74 | include the leaf filename in the checkpoint-component scan | `EvidenceDiffGuardTests.Rejects_checkpoint_paths` | checkpoint-leaf: ExitCode == 0 for .antiphon/checkpoints.md |
+| PC-75 / G-75 | accept the final unterminated record in the parser | `EvidenceDiffGuardTests.Refuses_failed_or_malformed_git_results` | raw-terminator: ExitCode == 2 with otherwise valid tiny Markdown record |
+| PC-76 / G-76 | normalize an unknown Q status to M | `EvidenceDiffGuardTests.Refuses_failed_or_malformed_git_results` | raw-status: ExitCode == 2 for malformed status |
+| PC-77 / G-77 | skip object-id shape validation; downstream low-level fixture replies remain permissive and valid | `EvidenceDiffGuardTests.Refuses_failed_or_malformed_git_results` | raw-object-id: ExitCode == 2 before object lookup |
+| PC-78 / G-78 | normalize malformed mode 10064x to 100644 | `EvidenceDiffGuardTests.Refuses_failed_or_malformed_git_results` | raw-mode: ExitCode == 2 |
+| PC-79 / G-79 | remove master from actual push branches | `EvidencePolicyWorkflowTests.Workflow_selects_every_required_event` | trigger-master: branch patterns contain master |
+| PC-80 / G-80 | remove workflow_dispatch from the actual workflow | `EvidencePolicyWorkflowTests.Workflow_selects_every_required_event` | trigger-manual: workflow_dispatch node exists |
+| PC-81 / G-81 | replace the EventPath argument value with an unrelated constant path | `EvidencePolicyWorkflowTests.Workflow_calls_real_guard_and_propagates_failure` | event-path-binding: AST EventPath argument uses the expected environment-backed path |
+| PC-82 / G-82 | replace EventName value with literal push | `EvidencePolicyWorkflowTests.Workflow_calls_real_guard_and_propagates_failure` | event-name-binding: AST EventName argument uses the event-name environment variable |
+| PC-83 / G-83 | replace the manual-base environment expression with an empty literal | `EvidencePolicyWorkflowTests.Workflow_uses_data_arguments_and_no_write_permissions` | manual-base-binding: YAML env and AST argument preserve the explicit input |
+| PC-84 / G-84 | replace individually with directory-wide force-add in the common allowance | `InstructionBundleTests.C1015_Composed_workers_keep_generated_evidence_untracked` | common-individual: composed common allowance requires individual report paths |
+| PC-85 / G-85 | delete only the outside-checkpoint-directories clause from the common allowance | `InstructionBundleTests.C1015_Composed_workers_keep_generated_evidence_untracked` | common-directory: composed common allowance excludes checkpoint directories |
+| PC-86 / G-86 | replace only the unedited CHECKPOINT-line requirement with permission to paraphrase | `InstructionBundleTests.C1015_Code_keeps_range_guard_and_exact_source` | code-verbatim: stage Code requires unedited CHECKPOINT lines |
+| PC-87 / G-87 | use Contains instead of exact complete trailer-line equality | `EvidenceDeletionGuardTests.Rejects_ambiguous_or_merge_deletion` | deletion-trailer: ExitCode == 1 with only a CARD-10150 near-match marker |
+
+| PC-88 / G-88 | change the strict UTF-8 path decoder to replacement fallback, keeping all other raw fields valid | `EvidenceDiffGuardTests.Refuses_failed_or_malformed_git_results` | raw-encoding: ExitCode == 2 for an invalid-byte tiny Markdown path |
+
+### Out of scope
+
+- D-5's card-Done deletion, raw-artifact retention service, remote cleanup recovery and new notification delivery: separate follow-up with the components/reasons above. Current Unit coverage is only a regression witness.
+- Git history rewriting or size reclamation: expressly forbidden. S3 removes paths from the current tree; historical blobs remain recoverable. No blanket deletion of other tracked or ignored files.
+- Root commits in the proposed range: explicit commit base + required base ancestry means a newly introduced root cannot occur in a valid range; unrelated-root inputs fail 2. Root-against-empty-tree handling may remain defensive code but is not used to waive ancestry.
+- Semantic inspection of Markdown content, artifacts disguised as Markdown, arbitrary generated payloads moved outside root `.antiphon/`, and branch-protection administration: beyond the specified path/mode/size guard. Review enforces the anti-evasion instruction; extension checking does not prove a file is a human report.
+- Whole-assembly, database, live provider/session, client/browser and Windows native qualification: no changed runtime path requires them. Full eligible Unit plus named Git integrations remains mandatory. Six explicitly Windows-only Unit methods are outside the selected Linux lane, not waived skips.
+- Hosted Actions execution and active server bundle adoption are caller acceptance observations after push/activation; local fixtures do not prove them. The existing restart: server / runner: none requirement remains.
+
+### Checkpoints
+
+One committed group **S1-S3** includes S2b. Ordinary execution runs after all slices are pushed, including the deletion-only S3. CP-1 owns the isolated build; CP-2..CP-5 reuse it at unchanged source. CP-6/CP-7 are read-only non-TUnit commands. These seven rows are the whole ordinary scope, with **4,034 TUnit results** at the sequenced base: 4,008 + 18 + 6 + 1 + 1. No dynamic discovery or test invocation was used for this freeze.
+
+The full Unit row selects Linux (no host pin) because its six Windows exclusions are explicit and it needs the existing bash/jq fixtures. This supersedes the draft's Any-lane claim for CP-1. The new Git tests themselves remain portable; test unusual paths/modes through Git objects, not platform skips. All selected tests require zero skipped/failed. Supply `--expected-source-sha` and validate clean-source/build receipts at the exact committed tip. `C804_ORPHAN_SWEEP_ROOT=c1015-disabled` keeps the Unit test-hook sweep away from unrelated temp roots.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
+|---|---|---|---|---|---|---|---:|---:|---|---|
+| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1015/` | linux-unit | `/*/*/*/(!windows_quick_row_finishes_beside_a_slow_row)&(!windows_row_arguments_round_trip_intact)&(!windows_chatty_row_drains_interleaved_stdout_and_stderr)&(!windows_row_timeout_kills_the_start_b_grandchild)&(!C665_LockedFileMidDeleteResumesOnLaterPass)&(!C721_HeldHandleDuringCleanupStaysRegisteredOrRecorded)[Category=Unit]` | V-19, V-20, V-25, R-1, R-6, R-7 | all eligible Unit names; >=4008 executed; 0 failed/skipped; new bundle 4 and workflow 4 all present | 4008 | 15 | true | `C804_ORPHAN_SWEEP_ROOT=c1015-disabled;TUNIT_MAX_PARALLEL_TESTS=4` |
+| CP-2 | S1-S3 | CP-1 | evidence-history | `/*/*/EvidenceDiffGuardTests/*` | V-1..V-18, R-2, R-3, R-4 | all 18 exact methods; 0 failed/skipped | 18 | 5 | true | `C804_ORPHAN_SWEEP_ROOT=c1015-disabled` |
+| CP-3 | S1-S3 | CP-1 | exact-deletion | `/*/*/EvidenceDeletionGuardTests/*` | V-21, R-5 | all 6 exact methods; 0 failed/skipped | 6 | 3 | true | `C804_ORPHAN_SWEEP_ROOT=c1015-disabled` |
+| CP-4 | S1-S3 | CP-1 | land-ignored-smoke | `/*/*/LandingGitTests/C642_IdentityAndStatusScopeSkipsIgnoredListing` | V-22, R-2 | exact method; 0 failed/skipped | 1 | 1 | true | `C804_ORPHAN_SWEEP_ROOT=c1015-disabled` |
+| CP-5 | S1-S3 | CP-1 | source-ignored-smoke | `/*/*/CheckpointSourceStateTests/clean_and_ignored_outputs_match_head` | V-22, R-2 | exact method; 0 failed/skipped | 1 | 1 | true | `C804_ORPHAN_SWEEP_ROOT=c1015-disabled` |
+| CP-6 | S1-S3 | n/a | candidate-history | `pwsh -NoProfile -File scripts/check-evidence-diff.ps1 -BaseRef bb5fa774cd56f85ee6f0b1122c198192427e5ddf -HeadRef HEAD` | V-23, R-3, R-4 | exit 0; resolved SHAs and counts; 0 violations | n/a | 1 | true | n/a |
+| CP-7 | S1-S3 | n/a | legacy-deletion | `pwsh -NoProfile -File scripts/check-evidence-deletion.ps1 -InventoryRef bb5fa774cd56f85ee6f0b1122c198192427e5ddf -InventoryPathSha256 356edf4a223e53669d4137631e40c0f5f7d19127c2568fdd0608fa4364e5ac9c -InventoryCount 108 -HeadRef HEAD` | V-24, R-5 | exit 0; one marked ordinary commit; exactly 108 D records; no extra changes; original blobs retrievable | n/a | 1 | true | n/a |
+
+Code/Review bootstrap the checkpoint tool once through `scripts/build-slot.ps1` into `bin-c1015-tool/`. Import the real seven-row table, compare filters/minima/build reuse to this manifest, and run the owner's read-only coverage lint with explicit files for the three new classes and InstructionBundleTests plus the two smoke/census files. New labels must bind to real assertions; reconcile static diagnostics without treating syntax success as runtime proof. Use the built DLL for importer/lint so those calls introduce no implicit build. Run the checkpoint tool for this plan with `--after S1-S3 --expected-source-sha` set to the actual full source SHA and wait until exit is not 75. Any slot timeout is not-run, never a reason to bypass the gate. No tests run while source is changing.
+
+CP-6 and the deletion inventory both use the original plan's immutable production ancestor bb5fa..., already contained in master and CARD-1005's branch. Do not use the initial unlanded plan commit as an ancestry requirement: plan landing can rebase that documentation commit. Code must also report its actual dispatch base and final tip; if its task introduces earlier commits outside the frozen-base range, inspect the union rather than omit them. Starting from an unrelated history fails admission. A new concurrent artifact in master is a policy finding, not grounds to shrink CP-6's range or quietly enlarge S3's inventory.
+
+### Cost
+
+All figures below are **estimated**, not measured. Ordinary V/R floor (Code) = **27 minutes**, the CP EstimatedMinutes sum **15+5+3+1+1+1+1**, including one isolated test-project build. Gated tool bootstrap plus importer/coverage preparation = **3 minutes**; ordinary Code setup/build + V/R = **30 minutes**, excluding authoring, queue waits and repairs. Review repeats the same setup and all seven rows: another **30 minutes**. Post-land caller CP-6/CP-7 acceptance adds **2 minutes**; server restart/loaded-bundle/hosted Actions observation is separately scheduled operational work, not a substitute for a test.
+
+Mutation takes one four-minute baseline per distinct exact method at the landed source. Every PC costs **4-minute isolated red build/run + 0.25-minute exact restoration/check + 4-minute isolated green build/run = 8.25 minutes**. These conservative figures include rebuilds even for script/YAML controls, avoiding a promise of unproven build reuse. The inherited driver/external evidence setup adds **4 minutes**. Names/minima/family costs:
+
+| Exact method filter | Controls | MinExecuted | Baseline minutes | Red/restore/green minutes | Family floor minutes |
+|---|---|---:|---:|---:|---:|
+| `/*/*/EvidenceDiffGuardTests/Handles_literal_paths_and_case_variants` | PC-1, PC-17, PC-18, PC-19, PC-20 | 1 | 4 | 5 x 8.25 = 41.25 | 45.25 |
+| `/*/*/EvidenceDiffGuardTests/Rejects_checkpoint_paths` | PC-2, PC-3, PC-4, PC-74 | 1 | 4 | 4 x 8.25 = 33 | 37 |
+| `/*/*/EvidenceDiffGuardTests/Rejects_non_markdown_outputs` | PC-5 | 1 | 4 | 1 x 8.25 = 8.25 | 12.25 |
+| `/*/*/EvidenceDiffGuardTests/Rejects_non_regular_modes` | PC-6 | 1 | 4 | 1 x 8.25 = 8.25 | 12.25 |
+| `/*/*/EvidenceDiffGuardTests/Enforces_one_mib_blob_limit` | PC-7, PC-8 | 1 | 4 | 2 x 8.25 = 16.5 | 20.5 |
+| `/*/*/EvidenceDiffGuardTests/Grandfathers_unchanged_legacy_and_allows_deletion` | PC-9, PC-10 | 1 | 4 | 2 x 8.25 = 16.5 | 20.5 |
+| `/*/*/EvidenceDiffGuardTests/Rechecks_modified_and_renamed_legacy_paths` | PC-11, PC-12 | 1 | 4 | 2 x 8.25 = 16.5 | 20.5 |
+| `/*/*/EvidenceDiffGuardTests/Checks_intermediate_commits_even_when_tip_is_clean` | PC-13 | 1 | 4 | 1 x 8.25 = 8.25 | 12.25 |
+| `/*/*/EvidenceDiffGuardTests/Checks_merge_side_history` | PC-14, PC-15 | 1 | 4 | 2 x 8.25 = 16.5 | 20.5 |
+| `/*/*/EvidenceDiffGuardTests/Reads_pinned_git_objects_not_index_or_worktree` | PC-16 | 1 | 4 | 1 x 8.25 = 8.25 | 12.25 |
+| `/*/*/EvidenceDiffGuardTests/Refuses_unverifiable_ranges_and_objects` | PC-21, PC-22, PC-23 | 1 | 4 | 3 x 8.25 = 24.75 | 28.75 |
+| `/*/*/EvidenceDiffGuardTests/Refuses_failed_or_malformed_git_results` | PC-24, PC-25, PC-26, PC-75, PC-76, PC-77, PC-78, PC-88 | 1 | 4 | 8 x 8.25 = 66 | 70 |
+| `/*/*/EvidenceDiffGuardTests/Resolves_refs_once_and_stays_read_only` | PC-27, PC-28 | 1 | 4 | 2 x 8.25 = 16.5 | 20.5 |
+| `/*/*/EvidenceDiffGuardTests/Ci_selects_cumulative_feature_push_range` | PC-29 | 1 | 4 | 1 x 8.25 = 8.25 | 12.25 |
+| `/*/*/EvidenceDiffGuardTests/Ci_selects_complete_default_branch_push_range` | PC-30, PC-31 | 1 | 4 | 2 x 8.25 = 16.5 | 20.5 |
+| `/*/*/EvidenceDiffGuardTests/Ci_requires_valid_manual_range` | PC-32 | 1 | 4 | 1 x 8.25 = 8.25 | 12.25 |
+| `/*/*/EvidenceDiffGuardTests/Ci_refuses_invalid_events_and_missing_history` | PC-33, PC-34, PC-35, PC-36, PC-37, PC-38 | 1 | 4 | 6 x 8.25 = 49.5 | 53.5 |
+| `/*/*/EvidencePolicyWorkflowTests/Workflow_selects_every_required_event` | PC-39, PC-40, PC-79, PC-80 | 1 | 4 | 4 x 8.25 = 33 | 37 |
+| `/*/*/EvidencePolicyWorkflowTests/Workflow_pins_full_history_and_event_head` | PC-41, PC-42 | 1 | 4 | 2 x 8.25 = 16.5 | 20.5 |
+| `/*/*/EvidencePolicyWorkflowTests/Workflow_calls_real_guard_and_propagates_failure` | PC-43, PC-44, PC-45, PC-81, PC-82 | 1 | 4 | 5 x 8.25 = 41.25 | 45.25 |
+| `/*/*/EvidencePolicyWorkflowTests/Workflow_uses_data_arguments_and_no_write_permissions` | PC-46, PC-47, PC-83 | 1 | 4 | 3 x 8.25 = 24.75 | 28.75 |
+| `/*/*/InstructionBundleTests/C1015_Composed_workers_keep_generated_evidence_untracked` | PC-48, PC-49, PC-84, PC-85 | 1 | 4 | 4 x 8.25 = 33 | 37 |
+| `/*/*/InstructionBundleTests/C1015_Code_keeps_range_guard_and_exact_source` | PC-50, PC-51, PC-86 | 1 | 4 | 3 x 8.25 = 24.75 | 28.75 |
+| `/*/*/InstructionBundleTests/C1015_Review_remains_read_only_and_checks_history` | PC-52, PC-53 | 1 | 4 | 2 x 8.25 = 16.5 | 20.5 |
+| `/*/*/InstructionBundleTests/C1015_SourceLanding_keeps_its_external_evidence_exception` | PC-54, PC-55 | 1 | 4 | 2 x 8.25 = 16.5 | 20.5 |
+| `/*/*/InstructionBundleTests/each_stage_bundle_is_ascii_and_under_the_size_cap*` | PC-56, PC-57 | 6 | 4 | 2 x 8.25 = 16.5 | 20.5 |
+| `/*/*/InstructionBundleTests/the_worst_case_composition_measured_sits_far_under_the_budget` | PC-58 | 1 | 4 | 1 x 8.25 = 8.25 | 12.25 |
+| `/*/*/EvidenceDeletionGuardTests/Rejects_wrong_inventory` | PC-59, PC-60 | 1 | 4 | 2 x 8.25 = 16.5 | 20.5 |
+| `/*/*/EvidenceDeletionGuardTests/Rejects_ambiguous_or_merge_deletion` | PC-61, PC-62, PC-87 | 1 | 4 | 3 x 8.25 = 24.75 | 28.75 |
+| `/*/*/EvidenceDeletionGuardTests/Refuses_unverifiable_deletion_history` | PC-63, PC-64, PC-71 | 1 | 4 | 3 x 8.25 = 24.75 | 28.75 |
+| `/*/*/EvidenceDeletionGuardTests/Rejects_missing_extra_or_non_deletions` | PC-65, PC-66, PC-67 | 1 | 4 | 3 x 8.25 = 24.75 | 28.75 |
+| `/*/*/EvidenceDeletionGuardTests/Rejects_changed_legacy_or_resurrected_paths` | PC-68, PC-69, PC-70 | 1 | 4 | 3 x 8.25 = 24.75 | 28.75 |
+| `/*/*/EvidenceDeletionGuardTests/Verifies_exact_legacy_deletion` | PC-72 | 1 | 4 | 1 x 8.25 = 8.25 | 12.25 |
+| `/*/*/EvidenceDiffGuardTests/Allows_small_markdown_and_other_source` | PC-73 | 1 | 4 | 1 x 8.25 = 8.25 | 12.25 |
+
+PC floor (Mutation) = **862 minutes**: 34 method baselines x4 = 136, plus 88 independent red/restore/green cycles x8.25 = 726. With external setup, Mutation admission + PC floor = **866 minutes**. Combined Code + Mutation floor = **896 minutes = 3 + 27 + 4 + 136 + 726**. Including separate ordinary Review and the caller's two actual-master guard commands gives **928 minutes**. No execution cost is claimed measured; this dispatch ran zero builds/tests/PCs. The PC schedule has **235 TUnit result executions** including the six-argument cap method, separate from ordinary 4,034.
+
+One baseline per method instead of one per PC saves **216 estimated minutes** ((88-34)x4) after exact same-source restoration. One CP build reused by four integration rows saves **12 estimated minutes** versus four redundant three-minute builds. Measured savings = 0. No savings are assumed from broadening PC filters or batching same-file controls. Authoring, slot waits and findings are additional; the freeze does not authorize omitting controls to meet an estimate.
+
+## TestDesign validation and handoff
+
+Bodies read before naming cases; **guards=88, mapped=88, missing=0, duplicate PC maps=0**. Every PC names an executable method after the explicit S2/S2b fixture setup; the fault substitutions and their limits are declared. 34 distinct PC filters, 32 new ordinary methods, seven CP rows, 4,034 ordinary TUnit executions, 27-minute ordinary floor and 862-minute PC floor. No placeholder/TBD cases remain. The documentation-only checks are source inventory, Markdown/table/ID/count arithmetic and `git diff --check`; they are not a compiled importer or test receipt.
+
+Code's precise start condition: CARD-1005 task b288ec96's reviewed Code/census landing is in the fresh dispatch start ref; that ref also contains this freeze and the pinned inventory ancestor; the read-only inventory still matches all 108 original path/object entries; the current namespace census is reconciled without CARD-1015 editing it; and the real seven-row importer admits the plan before ordinary execution. Unexpected legacy changes require a revised exact deletion inventory decision, not an automatic broad deletion. This is a sequencing condition, not an unresolved owner choice. Code implements S1/S2/S2b/S3, pushes each slice, runs ordinary V/R, leaves every PC pending and returns next: review.
+
+After reviewed land, caller records actual master deletion evidence, activates the server bundles under the existing owner runbook, observes loaded bundle hashes and the SHA-bound Actions guard result, and commissions SourceLanding Mutation. Commission the separately recommended card-Done cleanup follow-up; do not count it as implemented by CARD-1015.
+
+--- next stage ---
+next: code
+handoff: Start fresh after CARD-1005 b288ec96 reviewed Code/census land with this freeze and intact 108-path inventory. Implement S1/S2/S2b plus deletion-only S3; run seven CP rows (4034 ordinary results), keep 88 PCs pending for post-land Mutation. Do not change cleanup runtime or checkpoint census; return next: review.
+artifact: docs/superpowers/plans/2026-10-03-card-1015-evidence-git-policy-plan.md
