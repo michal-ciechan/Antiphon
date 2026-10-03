@@ -43,6 +43,7 @@ if ($state.scenario -eq 'c1008' -and $Case -eq 'deploy-parent') {
     $state.statuses.server2.dispatchEligible = $true
     $state.statuses.server2.runnerSessions = 0
     $state.statuses.server2.buildVersion = $state.sha
+    if ($state.wrongDeploySha) { $state.statuses.server2.buildVersion = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' }
 }
 if ($Case -eq 'runner-cache-seed' -and $state.tempContainer -and $state.tempOffline) { exit 1 }
 if ($state.PSObject.Properties.Name -contains 'markerPath' -and $Case -in @('deploy-parent', 'verify-runner-caches')) {

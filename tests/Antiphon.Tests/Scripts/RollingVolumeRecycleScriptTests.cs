@@ -172,7 +172,7 @@ public sealed class RollingVolumeRecycleScriptTests
             refused.Trace.Any(x => x["method"]?.GetValue<string>() == "POST").ShouldBeFalse("recycle-wrapper-resume: healthy same SHA cannot hide an incomplete journal");
             refused.Output.ShouldContain("RecycleResumeRequired");
         }
-        foreach (var fail in new[] { "", "deploy", "cache", "no-resume" })
+        foreach (var fail in new[] { "", "deploy", "cache", "wrong-sha", "no-resume" })
         {
             using var partial = new C1008WrapperFixture();
             partial.State["statuses"]!["server2"]!["draining"] = true;
@@ -185,6 +185,7 @@ public sealed class RollingVolumeRecycleScriptTests
                 DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1008-recycle-cases.json")))!["tempAccepting"]!.DeepClone();
             partial.State["allowClear"] = true;
             partial.State["failDeploy"] = fail == "deploy";
+            partial.State["wrongDeploySha"] = fail == "wrong-sha";
             partial.State["failVerify"] = fail == "cache" ? "server2" : "";
             var recovered = fail == "no-resume" ? await partial.Run("redeploy-old") :
                 await partial.Run("redeploy-old", "-ResumeRecycle", "c100800000000000000000000000000000001");
