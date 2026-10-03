@@ -93,7 +93,8 @@ internal sealed class CodexCliVersionTestFixture : IDisposable
         foreach (var arg in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-File",
                      ChildScript(), "-Mode", Mode, "-ReceiptRoot", receipts }) child.ArgumentList.Add(arg);
         var process = Process.Start(child)!;
-        Children.Add(process);
+        // Keep an independent observation/rescue handle; the product owns and disposes its handle.
+        Children.Add(Process.GetProcessById(process.Id));
         return process;
     }
 
