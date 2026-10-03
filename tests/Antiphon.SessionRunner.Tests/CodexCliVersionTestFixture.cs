@@ -23,6 +23,7 @@ internal sealed class CodexCliVersionTestFixture : IDisposable
     public SessionRunnerRuntime Runtime { get; }
     public RunnerBuildDto Build { get; } = new("test", "d40c1670", T.UtcDateTime, T.UtcDateTime);
     public int AuthOpens { get; private set; }
+    public List<bool> EmptyHomes { get; } = [];
 
     public CodexCliVersionTestFixture()
     {
@@ -65,6 +66,35 @@ internal sealed class CodexCliVersionTestFixture : IDisposable
             await (Task)Probe.GetType().GetMethod("RefreshDefaultAsync")!.Invoke(Probe, [ct])!;
     }
 
+    public async Task WaitForReceiptAsync(string mode, int? ordinal = null)
+    {
+        var receipt = Path.Combine(Root, "receipts-" + (ordinal ?? Starts.Count), mode + ".json");
+        var limit = Stopwatch.StartNew();
+        while (!File.Exists(receipt) && limit.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(10);
+        if (!File.Exists(receipt)) throw new InvalidOperationException("owned child did not become ready");
+    }
+
+    public bool ReceiptIsAlive(string mode, int? ordinal = null)
+    {
+        var path = Path.Combine(Root, "receipts-" + (ordinal ?? Starts.Count), mode + ".json");
+        var receipt = JsonDocument.Parse(File.ReadAllText(path)).RootElement;
+        var pid = receipt.GetProperty("pid").GetInt32();
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            if (process.HasExited || process.StartTime.ToUniversalTime()
+                != receipt.GetProperty("startedUtc").GetDateTime().ToUniversalTime()) return false;
+            // A killed grandchild may await the container init's waitpid; it has no live code or pipe.
+            if (!OperatingSystem.IsWindows() && File.Exists($"/proc/{pid}/stat"))
+            {
+                var stat = File.ReadAllText($"/proc/{pid}/stat");
+                if (stat[(stat.LastIndexOf(')') + 2)..].StartsWith('Z')) return false;
+            }
+            return true;
+        }
+        catch (ArgumentException) { return false; }
+    }
+
     public static string? Text(JsonElement value, string field) =>
         value.TryGetProperty(field, out var member) && member.ValueKind != JsonValueKind.Null ? member.GetString() : null;
 
@@ -81,6 +111,8 @@ internal sealed class CodexCliVersionTestFixture : IDisposable
     private Process Start(ProcessStartInfo actual)
     {
         Starts.Add(actual);
+        EmptyHomes.Add(Directory.Exists(actual.Environment["CODEX_HOME"]!)
+            && !Directory.EnumerateFileSystemEntries(actual.Environment["CODEX_HOME"]!).Any());
         var receipts = Path.Combine(Root, "receipts-" + Starts.Count);
         Directory.CreateDirectory(receipts);
         var child = new ProcessStartInfo("pwsh")

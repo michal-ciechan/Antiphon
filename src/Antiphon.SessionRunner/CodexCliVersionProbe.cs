@@ -41,6 +41,8 @@ public sealed class CodexCliVersionProbe : IDisposable
     public RunnerCodexCliVersionDto Snapshot { get { lock (_gate) return _snapshot; } }
     internal int CacheCount { get { lock (_gate) return _cache.Count; } }
     internal int OwnedCleanupCount { get { lock (_gate) return _cleanup.Count; } }
+    /// <summary>Process-I/O seam for primary cleanup refusal. Retained children use independent reaping.</summary>
+    internal Func<Process, CancellationToken, Task<bool>>? StopTreeAsync { get; set; }
 
     public async Task RefreshDefaultAsync(CancellationToken ct)
     {
@@ -139,8 +141,14 @@ public sealed class CodexCliVersionProbe : IDisposable
             catch (OperationCanceledException) { error = "cancelled"; }
             if (error is not null)
             {
-                KillTree(process);
-                try { await completion.WaitAsync(TimeSpan.FromSeconds(2), _clock, CancellationToken.None); }
+                using var cleanupBudget = new CancellationTokenSource(TimeSpan.FromSeconds(2), _clock);
+                try
+                {
+                    var confirmed = StopTreeAsync is null ? KillTree(process)
+                        : await StopTreeAsync(process, cleanupBudget.Token).WaitAsync(cleanupBudget.Token);
+                    if (!confirmed) throw new IOException("Cleanup is unconfirmed.");
+                    await completion.WaitAsync(cleanupBudget.Token);
+                }
                 catch (Exception)
                 {
                     lock (_gate) _cleanup.Add((process, completion, scratch));
@@ -289,10 +297,15 @@ public sealed class CodexCliVersionProbe : IDisposable
         return bytes;
     }
 
-    private static void KillTree(Process process)
+    private static bool KillTree(Process process)
     {
-        try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
-        catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { }
+        try
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            return true;
+        }
+        catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+        { return false; }
     }
 
     private static void TryDeleteScratch(string path)

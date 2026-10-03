@@ -1,5 +1,7 @@
 using System.Reflection;
+using System.Diagnostics;
 using System.Text.Json;
+using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
@@ -78,6 +80,7 @@ public sealed class CodexCliVersionProbeTests
                      ("BASH_ENV", 21), ("ENV", 21), ("DOTNET_STARTUP_HOOKS", 21) })
             start.Environment.ContainsKey(name).ShouldBeFalse($"C959-pc-{label:000} {name}");
         start.Environment["CODEX_HOME"].ShouldNotBe(Environment.GetEnvironmentVariable("CODEX_HOME"), "C959-pc-022");
+        kit.EmptyHomes.Single().ShouldBeTrue("C959-pc-022 empty");
         start.WorkingDirectory.ShouldNotBe(kit.Root, "C959-pc-023");
         File.Exists(Path.Combine(kit.Root, "receipts-1", "stdin-eof")).ShouldBeTrue("C959-pc-024");
         kit.AuthOpens.ShouldBe(0, "C959-pc-025");
@@ -102,6 +105,51 @@ public sealed class CodexCliVersionProbeTests
         }
         var missing = await kit.Attempt(Path.Combine(kit.Root, "missing"));
         CodexCliVersionTestFixture.Text(missing, "codexCliVersionError").ShouldBe("executable_missing", "C959-pc-027");
+
+        foreach (var mode in new[] { "timeout", "tree" })
+        {
+            using var held = new CodexCliVersionTestFixture { Mode = mode };
+            var pending = held.Attempt();
+            await held.WaitForReceiptAsync(mode == "tree" ? "leaf" : "timeout");
+            pending.IsCompleted.ShouldBeFalse("C959-v03-held");
+            held.Clock.Advance(TimeSpan.FromSeconds(5));
+            var timedOut = await pending.WaitAsync(TimeSpan.FromSeconds(10));
+            CodexCliVersionTestFixture.Text(timedOut, "codexCliVersionError").ShouldBe("timeout", "C959-pc-032");
+            CodexCliVersionTestFixture.Text(timedOut, "codexCliVersion").ShouldBeNull("C959-v03-timeout");
+            held.ReceiptIsAlive(mode).ShouldBeFalse("C959-v03-parent");
+            if (mode == "tree") held.ReceiptIsAlive("leaf").ShouldBeFalse("C959-pc-033");
+        }
+        using (var held = new CodexCliVersionTestFixture { Mode = "tree" })
+        {
+            using var caller = new CancellationTokenSource();
+            var pending = held.Attempt(ct: caller.Token);
+            await held.WaitForReceiptAsync("leaf");
+            caller.Cancel();
+            await Should.ThrowAsync<OperationCanceledException>(async () => await pending, "C959-pc-037");
+            held.ReceiptIsAlive("leaf").ShouldBeFalse("C959-v03-cancel-reaped");
+        }
+        using (var held = new CodexCliVersionTestFixture { Mode = "timeout" })
+        {
+            var probe = (CodexCliVersionProbe)held.Probe!;
+            var cleanupEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            probe.StopTreeAsync = (_, _) => { cleanupEntered.TrySetResult(); return release.Task; };
+            var pending = held.Attempt();
+            await held.WaitForReceiptAsync("timeout");
+            held.Clock.Advance(TimeSpan.FromSeconds(5));
+            await cleanupEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            held.Clock.Advance(TimeSpan.FromSeconds(2));
+            var unknown = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+            CodexCliVersionTestFixture.Text(unknown, "codexCliVersionError").ShouldBe("cleanup_unconfirmed", "C959-pc-034");
+            CodexCliVersionTestFixture.Text(unknown, "codexCliVersion").ShouldBeNull("C959-pc-035");
+            probe.OwnedCleanupCount.ShouldBe(1, "C959-pc-036");
+            release.TrySetResult(false);
+            await probe.ReapAsync();
+            await Task.Delay(100);
+            await probe.ReapAsync();
+            probe.OwnedCleanupCount.ShouldBe(0, "C959-v03-reaper");
+            held.ReceiptIsAlive("timeout").ShouldBeFalse("C959-v03-cleanup-release");
+        }
     }
 
     [Test]
@@ -123,6 +171,36 @@ public sealed class CodexCliVersionProbeTests
         var samples = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => kit.Attempt(force: false)));
         kit.Starts.Count.ShouldBe(2, "C959-pc-043");
         samples.All(s => CodexCliVersionTestFixture.Text(s, "codexCliVersion") is null).ShouldBeTrue("C959-v04-single-flight");
+
+        var oldFingerprint = CodexCliVersionTestFixture.Text(samples[0], "codexCliLauncherFingerprint");
+        File.SetLastWriteTimeUtc(kit.Executable, File.GetLastWriteTimeUtc(kit.Executable).AddSeconds(1));
+        var changed = await kit.Attempt(force: false);
+        kit.Starts.Count.ShouldBe(3, "C959-pc-048");
+        CodexCliVersionTestFixture.Text(changed, "codexCliLauncherFingerprint").ShouldNotBe(oldFingerprint, "C959-v04-mtime");
+        using (var append = File.Open(kit.Executable, FileMode.Append)) append.WriteByte(0);
+        await kit.Attempt(force: false);
+        kit.Starts.Count.ShouldBe(4, "C959-pc-047");
+
+        using (var many = new CodexCliVersionTestFixture { Mode = "timeout" })
+        {
+            using var caller = new CancellationTokenSource();
+            var probe = (CodexCliVersionProbe)many.Probe!;
+            var first = many.Attempt(force: false, ct: caller.Token);
+            await many.WaitForReceiptAsync("timeout");
+            var same = Enumerable.Range(0, 19).Select(_ => many.Attempt(force: false, ct: caller.Token)).ToArray();
+            many.Starts.Count.ShouldBe(1, "C959-pc-043 simultaneous");
+            var secondPath = Path.Combine(many.Root, "codex-second");
+            File.Copy(many.Executable, secondPath);
+            var second = many.Attempt(secondPath, ct: caller.Token);
+            many.Clock.Advance(TimeSpan.FromSeconds(1));
+            var busy = await second.WaitAsync(TimeSpan.FromSeconds(5));
+            CodexCliVersionTestFixture.Text(busy, "codexCliVersionError").ShouldBe("probe_busy", "C959-pc-046");
+            many.Starts.Count.ShouldBe(1, "C959-pc-044");
+            caller.Cancel();
+            foreach (var wait in new[] { first }.Concat(same))
+                await Should.ThrowAsync<OperationCanceledException>(async () => await wait);
+            probe.CacheCount.ShouldBeLessThanOrEqualTo(32, "C959-pc-045");
+        }
     }
 
     [Test]
