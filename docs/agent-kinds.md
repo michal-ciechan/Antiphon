@@ -260,27 +260,18 @@ Three things worth knowing about that table:
   High→Frontier change models. Earlier `gpt-6-sol` and `gpt-5.6-terra` stay selectable profile
   model ids and recognized historical aliases; bare `sol` still normalizes to `gpt-6-sol` for
   existing hold text. Frontier requires codex-cli 0.153.4+ and `gpt-6.1-sol` requires 0.159.1+.
-  CARD-0959 adds runner-owned CLI observations and immutable floor metadata. The catalogue's
-  observation describes the default installed launcher; an exact profile needs evidence from
-  its selected launcher. CARD-0959's source now checks create, explicit retry and dispatch
-  before claim against the selected launch descriptor. Missing, failed, stale or older evidence
-  refuses with codex_cli_version_unknown, codex_cli_version_stale or
-  codex_cli_version_too_old; the synchronous response is HTTP 409. A queued refusal becomes
-  Blocked. Profileless cold launches use the tier model; an exact managed-profile model and
-  an accepted running session keep their existing model semantics. Qualification is still
-  pending: source implementation is not an activation receipt.
-  Delegation:CodexCliVersionMaxAgeMinutes defaults to 15 (allowed 1..60).
-  Delegation:CodexCliVersionOverrides defaults to an empty list and is operator configuration,
-  never a delegate request flag. Each entry requires an exact RunnerId and canonical Model,
-  nonempty Reason of at most 1000 characters, ExpiresAtUtc in UTC within 24 hours, and a
-  nonempty AllowedRefusalCodes subset of the three CLI codes above. Wildcards and duplicate
-  runner/model pairs are invalid. Expiry is checked on each use without a settings reload.
-  Each use records a Warning with runner, model, refusal code, expiry and reason; it changes
-  no observed evidence and grants no provider-auth, model-hold or placement exception.
-  **Before activating enforcement, every Codex-serving runner must be at least 0.159.1.**
-  Update runners first, verify successful completed observations across two five-minute refresh
-  periods and qualify exact profiles, then restart the canonical AppHost with the reviewed gate.
-  The live 6.1 canary is a separate commissioned action.
+  CARD-0959 reports runner-owned CLI observations and retains the 0.159.1 floor as model
+  metadata only. Failed, stale, missing, malformed, clock-skewed and older observations
+  never refuse create, retry, dispatch, warm reuse or final launch, and those paths start
+  no CLI version probe. Existing provider-auth, model-hold and placement rules still apply.
+  Catalogue/status fields describe the default launcher independently of the runner build.
+  Freshness uses a fixed fifteen-minute display threshold; missing or invalid evidence has
+  null freshness. Explicit launcher diagnostics are observations, not placement permission.
+  Activate reporting runners first and verify their completed observations over two refresh
+  periods, then activate server readers. Older runners display unknown and remain subject
+  to existing placement rules. No CLI upgrade is required by this reporting feature.
+  CARD-1023 owns any future compatibility matrix and evidence-backed known-broken refusal.
+  Production activation remains a separate commissioned action.
 
 `ModelLevelAliases.For(kind, level)` is what every *human-facing* string goes through — task
 events, escalation notes, the check digest, completion-note headers. Launch arguments deliberately

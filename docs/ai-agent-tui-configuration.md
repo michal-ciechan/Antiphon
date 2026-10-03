@@ -25,12 +25,14 @@ Configure terminal AI runners (Claude Code, Codex, OpenCode, Grok Build TUI) thr
 
 Windows Codex profiles that still name `codex.cmd` (the default in `Agents:Definitions:codex`) do not need a profile migration: the session runner rewrites a recognized npm shim to `node.exe` plus the installed `codex.js` and refuses with 409 `codex_command_line_too_long` / `codex_launcher_unavailable` / `codex_launcher_unsupported` when the fully quoted line, including the longer Node-to-native hop, would overflow. Custom wrappers are not rewritten. See [agent-kinds.md](agent-kinds.md).
 
-CARD-0959's CLI observation on a runner row covers its default launcher. A profile selecting
-another native installation or recognized Node/Codex package needs its own descriptor-specific
-observation. The version-only probe never executes profile `VersionArguments` or opens auth;
-profile validation's `RunnerVersion` is a separate diagnostic and cannot certify CLI admission.
-Unknown wrappers remain unverified. Admission enforcement and operator exceptions are pending
-the remaining [CARD-0959 implementation](superpowers/plans/2026-10-03-card-0959-runner-codex-version-plan.md).
+CARD-0959's CLI observation on a runner row covers its default launcher. An explicit
+launcher diagnostic can observe another native installation or recognized Node/Codex
+package through a descriptor-specific probe. It never executes profile `VersionArguments`
+or opens authentication files. Profile validation's `RunnerVersion` remains a separate
+diagnostic. Unknown wrappers stay unverified; no version observation blocks create,
+retry, reuse or dispatch, and those paths start no CLI probe. Existing launcher safety
+and authentication rules remain in force. The [CARD-0959 plan](superpowers/plans/2026-10-03-card-0959-runner-codex-version-plan.md)
+defines reporting-only rollout; future compatibility enforcement belongs to CARD-1023.
 
 ## UI
 
