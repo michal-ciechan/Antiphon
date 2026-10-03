@@ -603,7 +603,9 @@ OS placement is independent of the provider pair. A Windows requirement uses
 defaults/inventory. `-Platform Any` removes an inherited platform constraint.
 Normally omit `-Kind` and `-Level` to preserve ordered availability walking.
 OS needs do not authorize `-IgnoreRoutingPin`. A held/unavailable Grok candidate
-can walk to the listed Opus candidate; an exhausted Required list stays Blocked.
+can walk to the listed Opus candidate. An exhausted Required list persists Blocked
+when the local descriptor satisfies the required platform; otherwise placement
+refuses before task insertion (for example, Linux with a Windows-only local descriptor).
 Tests seed this proposed policy only in isolated databases, never production.
 
 ### Evidence gates
@@ -655,7 +657,8 @@ Preserve task/session/failure-code and the bounded named startup capture before
 recovering. The authorized recipe keeps `-Role Review` or `-Role Debug`,
 `-Platform Windows`, `-Kind ClaudeCode -Level High`, and no -IgnoreRoutingPin.
 Explicit kind narrows to that already-listed fallback; a conflicting card pin
-needs an operator decision and exhausted availability stays Blocked. Startup
+needs an operator decision. Exhausted availability produces local Blocked or
+pre-insert placement refusal as described above. Startup
 failure does not promise a new automatic retry or authorize login/settings changes.
 See [agent kinds](agent-kinds.md#5-grok-xai-grok-build-tui) for `screenReason` and
 capture diagnosis; captures and screen redraws do not prove recipient delivery.

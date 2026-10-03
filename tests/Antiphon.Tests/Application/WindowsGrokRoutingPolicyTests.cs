@@ -71,70 +71,92 @@ public sealed class WindowsGrokRoutingPolicyTests
         await using var db = kit.Context();
         var defaults = new RunnerDefaultSettingsService(db, Options.Create(kit.Settings), TimeProvider.System, new MockEventBus());
         await defaults.EnsureInitializedAsync(CancellationToken.None);
-        var created = await kit.Service(db, defaults, withRouting: true).CreateAsync(
+        var service = kit.Service(db, defaults, withRouting: true);
+        Task<AgentTaskCreatedDto> CreateAsync() => service.CreateAsync(
             new CreateAgentTaskRequest("C1011 route and preserve OS", Role: role,
                 Workspace: WorkspaceMode.Worktree, RequiredPlatform: platform),
             kit.Caller, CancellationToken.None);
-        var saved = await kit.ReadAsync(created.Id);
-        saved.Task.RoutingPinId.ShouldBe(pinId);
-        saved.Task.ModelLevel.ShouldBe(AgentModelLevel.High);
-        saved.Task.Role.ShouldBe(role);
-        saved.Task.RequiredPlatform.ShouldBe(platform);
-        saved.Task.ExplicitAgentKind.ShouldBeNull();
-        saved.Task.ExplicitModelLevel.ShouldBeNull();
-        var expectedPlatform = platform == RequiredPlatform.Windows ? "windows" : "linux";
-        saved.Task.ObservedPlatform.ShouldBe(expectedPlatform);
-        var descriptor = await directory.DescribeAsync(saved.Task.RunnerId, CancellationToken.None);
-        descriptor.ShouldNotBeNull();
-        descriptor.Platform.ShouldBe(expectedPlatform);
-        saved.Created.ShouldContain($"the human required stage-wide {role} routing pin");
-        var routing = created.Routing;
-        routing.ShouldNotBeNull();
-        routing.Walked.ShouldBeTrue();
-        routing.Role.ShouldBe(role);
-        routing.Source.ShouldBe($"pin:stage {role}");
-        routing.Candidates.Count.ShouldBe(2);
-        routing.Candidates.Select(x => x.AgentKind).ShouldBe([AgentKind.Grok, AgentKind.ClaudeCode]);
-        routing.Candidates.Select(x => x.ModelLevel).ShouldBe([AgentModelLevel.High, AgentModelLevel.High]);
-        routing.Candidates.Select(x => x.Alias).ShouldBe(["grok-4.7", "opus"]);
-        routing.Candidates.ShouldAllBe(x => x.Origin == RoutingCandidates.OriginPin);
 
-        if (held == 2)
+        if (held == 2 && platform == RequiredPlatform.Linux)
         {
-            created.Status.ShouldBe(AgentTaskStatus.Blocked);
-            saved.Task.Status.ShouldBe(AgentTaskStatus.Blocked);
-            saved.Task.FailureReason.ShouldContain(ComplexityRoutingService.RoutingExhaustedPrefix);
-            saved.Task.FailureReason.ShouldContain($"stage {role} pin (human, required)");
-            saved.Created.ShouldContain("exhausted");
-            routing.Candidates.ShouldAllBe(x => x.Outcome == "skipped");
-            routing.Candidates.ShouldAllBe(x => x.Reason == "held (manual, no re-enable time)");
-            routing.Candidates.ShouldNotContain(x => x.Outcome == "chosen");
+            await using var before = kit.Context();
+            var taskIds = await before.AgentTasks.AsNoTracking().OrderBy(x => x.Id).Select(x => x.Id).ToArrayAsync();
+            var eventIds = await before.AgentTaskEvents.AsNoTracking().OrderBy(x => x.Id).Select(x => x.Id).ToArrayAsync();
+            var refused = await Should.ThrowAsync<ConflictException>(() => CreateAsync(), "remote-exhaustion-refusal");
+            refused.StatusCode.ShouldBe(409);
+            refused.Code.ShouldBe("runner_platform_unavailable");
+            refused.Message.ShouldBe("No eligible runner can run a Linux task.");
+            await using var after = kit.Context();
+            (await after.AgentTasks.AsNoTracking().OrderBy(x => x.Id).Select(x => x.Id).ToArrayAsync())
+                .ShouldBe(taskIds, "remote-refusal-no-task");
+            (await after.AgentTaskEvents.AsNoTracking().OrderBy(x => x.Id).Select(x => x.Id).ToArrayAsync())
+                .ShouldBe(eventIds, "remote-refusal-no-event");
         }
         else
         {
-            var expectedKind = held == 0 ? AgentKind.Grok : AgentKind.ClaudeCode;
-            var expectedAlias = held == 0 ? "grok-4.7" : "opus";
-            created.Status.ShouldBe(AgentTaskStatus.Queued);
-            saved.Task.Status.ShouldBe(AgentTaskStatus.Queued);
-            created.AgentKind.ShouldBe(expectedKind);
-            saved.Task.AgentKind.ShouldBe(expectedKind);
-            var chosen = routing.Candidates.Single(x => x.Outcome == "chosen");
-            chosen.AgentKind.ShouldBe(expectedKind);
-            chosen.Alias.ShouldBe(expectedAlias);
-            chosen.Reason.ShouldBeNull();
-            saved.Created.ShouldContain($"candidate {held + 1}/2 {expectedAlias}");
-            if (held == 1)
+            var created = await CreateAsync();
+            var saved = await kit.ReadAsync(created.Id);
+            saved.Task.RoutingPinId.ShouldBe(pinId);
+            saved.Task.ModelLevel.ShouldBe(AgentModelLevel.High);
+            saved.Task.Role.ShouldBe(role);
+            saved.Task.RequiredPlatform.ShouldBe(platform);
+            saved.Task.ExplicitAgentKind.ShouldBeNull();
+            saved.Task.ExplicitModelLevel.ShouldBeNull();
+            var expectedPlatform = platform == RequiredPlatform.Windows ? "windows" : "linux";
+            saved.Task.ObservedPlatform.ShouldBe(expectedPlatform);
+            var descriptor = await directory.DescribeAsync(saved.Task.RunnerId, CancellationToken.None);
+            descriptor.ShouldNotBeNull();
+            descriptor.Platform.ShouldBe(expectedPlatform);
+            saved.Created.ShouldContain($"the human required stage-wide {role} routing pin");
+            var routing = created.Routing;
+            routing.ShouldNotBeNull();
+            routing.Walked.ShouldBeTrue();
+            routing.Role.ShouldBe(role);
+            routing.Source.ShouldBe($"pin:stage {role}");
+            routing.Candidates.Count.ShouldBe(2);
+            routing.Candidates.Select(x => x.AgentKind).ShouldBe([AgentKind.Grok, AgentKind.ClaudeCode]);
+            routing.Candidates.Select(x => x.ModelLevel).ShouldBe([AgentModelLevel.High, AgentModelLevel.High]);
+            routing.Candidates.Select(x => x.Alias).ShouldBe(["grok-4.7", "opus"]);
+            routing.Candidates.ShouldAllBe(x => x.Origin == RoutingCandidates.OriginPin);
+
+            if (held == 2)
             {
-                routing.Candidates[0].Outcome.ShouldBe("skipped");
-                routing.Candidates[0].Reason.ShouldBe("held (manual, no re-enable time)");
-                created.Warning.ShouldContain("grok-4.7");
-                created.Warning.ShouldContain("held");
+                created.Status.ShouldBe(AgentTaskStatus.Blocked);
+                saved.Task.Status.ShouldBe(AgentTaskStatus.Blocked);
+                saved.Task.FailureReason.ShouldContain(ComplexityRoutingService.RoutingExhaustedPrefix);
+                saved.Task.FailureReason.ShouldContain($"stage {role} pin (human, required)");
+                saved.Created.ShouldContain("exhausted");
+                routing.Candidates.ShouldAllBe(x => x.Outcome == "skipped");
+                routing.Candidates.ShouldAllBe(x => x.Reason == "held (manual, no re-enable time)");
+                routing.Candidates.ShouldNotContain(x => x.Outcome == "chosen");
             }
             else
             {
-                routing.Candidates[1].Outcome.ShouldBe("skipped");
-                routing.Candidates[1].Reason.ShouldBe("already chose an earlier candidate");
+                var expectedKind = held == 0 ? AgentKind.Grok : AgentKind.ClaudeCode;
+                var expectedAlias = held == 0 ? "grok-4.7" : "opus";
+                created.Status.ShouldBe(AgentTaskStatus.Queued);
+                saved.Task.Status.ShouldBe(AgentTaskStatus.Queued);
+                created.AgentKind.ShouldBe(expectedKind);
+                saved.Task.AgentKind.ShouldBe(expectedKind);
+                var chosen = routing.Candidates.Single(x => x.Outcome == "chosen");
+                chosen.AgentKind.ShouldBe(expectedKind);
+                chosen.Alias.ShouldBe(expectedAlias);
+                chosen.Reason.ShouldBeNull();
+                saved.Created.ShouldContain($"candidate {held + 1}/2 {expectedAlias}");
+                if (held == 1)
+                {
+                    routing.Candidates[0].Outcome.ShouldBe("skipped");
+                    routing.Candidates[0].Reason.ShouldBe("held (manual, no re-enable time)");
+                    created.Warning.ShouldContain("grok-4.7");
+                    created.Warning.ShouldContain("held");
+                }
+                else
+                {
+                    routing.Candidates[1].Outcome.ShouldBe("skipped");
+                    routing.Candidates[1].Reason.ShouldBe("already chose an earlier candidate");
+                }
             }
+
         }
 
         await using var verify = kit.Context();

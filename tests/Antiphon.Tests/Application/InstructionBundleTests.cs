@@ -132,6 +132,8 @@ public class InstructionBundleTests
         owner.ShouldContain("Delivery requires a matching complete UserPrompt transcript.", customMessage: "whole-receipt");
         owner.ShouldContain("Settlement requires a final report and confirmed release ownership.", customMessage: "release-owner");
         owner.ShouldContain("WQ-1, WQ-2 and WQ-3 gate prompt landing and Debug pin activation.", customMessage: "preland-gate");
+        owner.ShouldContain("Backend configuration must be restored and the actual restored host verified.", customMessage: "backend-restored");
+        owner.ShouldContain("### Activation after qualification and independent Final/Full Review", customMessage: "final-full-review");
     }
 
     [Test]
@@ -140,6 +142,12 @@ public class InstructionBundleTests
         var owner = C1011Owner();
         var land = owner.IndexOf("confirmed land", StringComparison.Ordinal);
         var restart = owner.IndexOf("canonical restart and /api/version", StringComparison.Ordinal);
+        var normalizedOwner = owner.Replace("`", "", StringComparison.Ordinal);
+        var freshState = normalizedOwner.IndexOf(
+            "Serialize affected dispatches; re-read role/card pins, /api/runner-defaults, /api/session-runners, pipeline and host occupancy.",
+            StringComparison.Ordinal);
+        var freshRestart = normalizedOwner.IndexOf("canonical restart and /api/version", StringComparison.Ordinal);
+        var freshPin = normalizedOwner.IndexOf("pin write and readback", StringComparison.Ordinal);
         var pin = owner.IndexOf("pin write and readback", StringComparison.Ordinal);
         var refresh = owner.IndexOf("bundle stamp and idle-gated refresh", StringComparison.Ordinal);
         var debug = owner.IndexOf("WQ-4 complete receipt and release", StringComparison.Ordinal);
@@ -148,10 +156,13 @@ public class InstructionBundleTests
         pin.ShouldBeGreaterThanOrEqualTo(0, "pin-readback");
         refresh.ShouldBeGreaterThanOrEqualTo(0, "refresh-before-canary");
         debug.ShouldBeGreaterThanOrEqualTo(0, "debug-confirmation");
+        freshState.ShouldBeGreaterThanOrEqualTo(0, "fresh-state");
         restart.ShouldBeGreaterThan(land);
         pin.ShouldBeGreaterThan(restart, "canonical-before-pin");
         refresh.ShouldBeGreaterThan(pin);
         debug.ShouldBeGreaterThan(refresh);
+        freshState.ShouldBeGreaterThan(freshRestart, "fresh-state-after-restart");
+        freshState.ShouldBeLessThan(freshPin, "fresh-state-before-pin");
         owner.ShouldContain("Preserve unrelated Human card exceptions.", customMessage: "preserve-exceptions");
         owner.ShouldContain("Queued tasks retain their recorded selection.", customMessage: "queued-selection");
     }
