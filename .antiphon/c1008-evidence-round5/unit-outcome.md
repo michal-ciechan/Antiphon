@@ -1,0 +1,13 @@
+# Whole Unit and failure-driven triage
+
+Source78dc9321ceb990f30238319f3b5fa0a3af68f434; one uninterrupted whole-Unit run. Build95.275s; host2310.601s; driver held granted slot2407s, waited0s. Raw3983 total:3950 executed,3949 passed,1 failed,33 skipped. The strict zero-failure/skip receipt is not green.
+
+Fresh TRX parsed by TestDefinitions/TestMethod identity (including self-closing successful results): Remote95/95 in77 methods, Rolling8/8, DockerStackContract112/112, Dind23/23, documentation11/11, CheckpointImport20/20, CheckpointManifest6/6. Every source method and argument expansion matches; zero failures/skips in these affected classes. All19 C1008 methods passed, including V20 after Console stderr repair. Cache R1's36 methods/54 results are contained in the full Remote roster. DockerStackSmokeCommandTests35 are Integration and require the next closure run.
+
+Whole-Unit failure: CheckpointRunOwnershipTests.current_executor_image_is_always_retained passed its guarded assertions but After(Test) failed deleting /tmp/c723-01a103c84125781d834a36f521400fda (Directory not empty). Exact method passed1/1 on assigned base d8343f3b8c3a55dbca59aca6ff3646379bf994a1 and current repaired source in isolation. This is an observed whole-lane teardown failure with isolated greens, not a certified inherited-red baseline or a clean whole-Unit pass. Its source and checkpoint cleanup production are untouched. No retry, timeout or assertion was added. No repeat-budget exception or Review-demonstrated flake is claimed.
+
+CP2 original exact row completed19 results in35m46s at9c4077e76237baa913dc08e60ff8a92e4ae5c045:18 passed,1 custody assertion failed,0 skipped. Its fresh method timings are retained. The introduced defect was confirmed by the base custody1/1 green, then repaired at78dc. The same full19 methods subsequently passed within whole Unit, and the exact failed custody method passed1/1 in a focused NoBuild receipt. The original exact-filter CP2 line remains red; do not rewrite it as a current full-row green certificate. Focused runs are unlisted failure-driven triage, with granted slots and0s waits. No full CP2 repetition after the brief's commissioned single run is claimed.
+
+All33 skip names/reasons remain in unit-inspection.json and the raw TRX/log. They are environment/platform qualification skips in untouched source, separate from the one real teardown failure. The brief accepts disclosed inherited skips, not an invented zero-skip result.
+
+The next closed CP4 run completes all207 R2 results, including35 integration methods. CP5's qualified unchanged source/fixture and32 outcomes remain inherited, pending current digest/receipt revalidation. All125 PCs and every variant stay pending post-land Mutation.
