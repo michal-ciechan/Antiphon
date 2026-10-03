@@ -132,46 +132,41 @@ public sealed class RunnerCodexCliEvidenceTests
     [Test]
     public async Task C959_Freshness_boundaries()
     {
-        foreach (var (completed, code, reason) in new (DateTimeOffset?, string?, string?)[]
+        foreach (var (caps, stale, error, label) in new (RunnerCapabilitiesDto, bool?, string?, string)[]
         {
-            (T.AddMinutes(-15), null, null), (T.AddMinutes(-15).AddTicks(-1), "codex_cli_version_stale", "evidence_expired"),
-            (null, "codex_cli_version_unknown", "evidence_missing"), (T.AddMinutes(1), null, null),
-            (T.AddMinutes(1).AddTicks(1), "codex_cli_version_unknown", "clock_skew"),
+            (Caps("0.160.0", T.AddMinutes(-15)), false, null, "C959-pc-200"),
+            (Caps("0.160.0", T.AddMinutes(-15).AddTicks(-1)), true, null, "C959-pc-081"),
+            (Caps("0.160.0", null), null, null, "C959-pc-082"),
+            (Caps("0.160.0", T.AddMinutes(1)), false, null, "C959-pc-084"),
+            (Caps("0.160.0", T.AddMinutes(1).AddTicks(1)), null, "clock_skew", "C959-pc-250"),
+            (Caps("0.160.0", T) with { CodexCliLauncherFingerprint = "bad" }, null, "launcher_mismatch", "C959-pc-251"),
+            (Caps("0.160.0", T) with { CodexCliLauncherFingerprint = null }, false, null, "C959-legacy-fingerprint"),
+            (Caps("0.160.0", T, "timeout"), null, "timeout", "C959-pc-091"),
+            (Caps("banana", T), null, null, "C959-invalid-version"),
         })
         {
-            var refusal = CodexCliAdmissionPolicy.Evaluate("desktop", "gpt-6.1-sol", "0.159.1",
-                new("0.160.0", completed, null, new string('a',64)), T, 15);
-            (refusal?.Code).ShouldBe(code, "C959-v10-admission-age " + completed);
-            if (reason is not null) refusal!.Extensions!["reason"].ShouldBe(reason, "C959-v10-admission-reason");
+            await using var projection = await PhoneHomeTestHost.StartAsync(new FakeTimeProvider(T));
+            projection.Local.Capabilities = caps;
+            await using var remote = await projection.ConnectPeerAsync(capabilities: caps);
+            projection.Directory.MarkRecovered(await projection.WaitLiveAsync());
+            using var response = await projection.Http.GetAsync("/api/session-runners");
+            response.EnsureSuccessStatusCode();
+            var rows = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+            var status = Shape(projection.Directory.Status(projection.AllowedRunnerId));
+            foreach (var shape in rows.EnumerateArray().Append(status))
+            {
+                Text(shape, "codexCliVersionError").ShouldBe(error, label);
+                Flag(shape, "codexCliVersionStale").ShouldBe(stale, label + " freshness");
+                Text(shape, "codexCliVersion").ShouldBe(caps.CodexCliVersion, label + " original version");
+            }
         }
-        foreach (var maxAge in new[] { 0, 1, 15, 60, 61 })
+        foreach (var (settings, label) in new[]
         {
-            var settings = new DelegationSettings { CodexCliVersionMaxAgeMinutes = maxAge };
-            new DelegationSettingsValidator(new FakeTimeProvider(T)).Validate(null, settings).Failed
-                .ShouldBe(maxAge is 0 or 61, "C959-v10-server-age-config " + maxAge);
-        }
-        Should.Throw<InvalidOperationException>(() => new CodexCliVersionSettings { MaxAgeMinutes = 1, RefreshIntervalMinutes = 1 }.Validate());
-        using (var io = new ProbeIo())
-        {
-            await using var probeHost = await PhoneHomeTestHost.StartAsync(io.Clock,
-                configureServices: services => services.AddSingleton(io.Probe),
-                mapEndpoints: app => app.MapCodexCliVersionRoutes());
-            using var http = new HttpClient();
-            var local = new SessionRunnerHttpClient(http, new UnusedHttpFactory(),
-                Options.Create(new Antiphon.Server.Application.Settings.SessionRunnerSettings
-                { BaseUrl = probeHost.Http.BaseAddress!.ToString() }), time: io.Clock);
-            var descriptor = new CodexCliProbeDescriptor("desktop", "gpt-6.1-sol", null,
-                new(io.Executable, io.Root));
-            var settings = new DelegationSettings();
-            var admitted = await CodexCliAdmissionPolicy.RequireAsync(descriptor, new SingleRunnerDirectory(local), settings, io.Clock, CancellationToken.None);
-            admitted!.Sample!.CodexCliVersion.ShouldBe("0.160.0", "C959-v10-actual-refresh");
-            io.Mode = "nonzero";
-            io.Clock.Advance(TimeSpan.FromMinutes(5));
-            var refused = await Should.ThrowAsync<CodexCliVersionRequiredException>(() =>
-                CodexCliAdmissionPolicy.RequireAsync(descriptor, new SingleRunnerDirectory(local), settings, io.Clock, CancellationToken.None));
-            refused.Code.ShouldBe("codex_cli_version_unknown", "C959-v10-failed-refresh-refuses");
-            io.Starts.Count.ShouldBe(2, "C959-v10-bounded-refresh-count");
-        }
+            (new CodexCliVersionSettings { MaxAgeMinutes = 61 }, "C959-pc-089"),
+            (new CodexCliVersionSettings { MaxAgeMinutes = 1, RefreshIntervalMinutes = 1 }, "C959-pc-090"),
+            (new CodexCliVersionSettings { RefreshIntervalMinutes = 0 }, "C959-pc-254"),
+            (new CodexCliVersionSettings { RefreshIntervalMinutes = double.NaN }, "C959-pc-255"),
+        }) Should.Throw<InvalidOperationException>(() => settings.Validate(), label);
         var clock = new FakeTimeProvider(T);
         await using var host = await PhoneHomeTestHost.StartAsync(clock);
         await using var peer = await host.ConnectPeerAsync(capabilities: Caps("0.160.0", T));
@@ -342,6 +337,16 @@ public sealed class RunnerCodexCliEvidenceTests
         var unavailable = Shape(many.Directory.Status("runner-b"));
         Text(unavailable, "codexCliVersion").ShouldBe("0.156.1", "C959-v12-retained-display");
         unavailable.GetProperty("dispatchEligible").GetBoolean().ShouldBeFalse("C959-v12-disconnected-not-admitted");
+        await Heartbeat(host, peer, 1, Sample(null, clock.GetUtcNow(), "C959-diagnostic-sentinel"));
+        using var sanitized = await host.Http.GetAsync("/api/session-runners");
+        var sanitizedRows = JsonDocument.Parse(await sanitized.Content.ReadAsStringAsync()).RootElement;
+        var sanitizedStatus = Shape(host.Directory.Status(host.AllowedRunnerId));
+        foreach (var shape in new[] { sanitizedRows.EnumerateArray().Single(row => Text(row, "runnerId") == host.AllowedRunnerId), sanitizedStatus })
+        {
+            Text(shape, "codexCliVersionError").ShouldBe("probe_unavailable", "C959-pc-252");
+            shape.GetRawText().ShouldNotContain("C959-diagnostic-sentinel", customMessage: "C959-pc-252 no raw diagnostic");
+            Flag(shape, "codexCliVersionStale").ShouldBeNull("C959-pc-091 unverified");
+        }
     }
 
     [Test]
