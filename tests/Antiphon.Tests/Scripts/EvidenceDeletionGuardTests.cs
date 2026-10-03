@@ -111,7 +111,7 @@ public sealed class EvidenceDeletionGuardTests
             "$old=" + EvidenceGitFixture.Quote(anchorKeep.Mode + " blob " + anchorKeep.Oid) + "; " +
             "$s=[regex]::Replace($s,[regex]::Escape($old)+' +[0-9]+'+[char]9,$old+' 1048577'+[char]9); $r.Bytes=[Text.Encoding]::UTF8.GetBytes($s); Write-Host 'FAULT-HIT' }; return $r }";
         var classifier = await f.InventoryOnlyAsync(b, hook);
-        classifier.Output.ShouldContain("FAULT-HIT");
+        classifier.Output.Split("FAULT-HIT", StringSplitOptions.None).Length.ShouldBe(2, "fault cut hit exactly once");
         classifier.Exit.ShouldBe(1, "c1015-anchor-classification");
         foreach (var (count, digest, bytes) in new[] { ("", inv.Digest, inv.Bytes.ToString()), ("-1", inv.Digest, inv.Bytes.ToString()), ("0", "invalid", "0"), ("0", inv.Digest, "NaN") })
             (await f.DeletionAsync(b, deletion, inv, count, digest, bytes)).Exit.ShouldBe(2);
@@ -219,22 +219,22 @@ public sealed class EvidenceDeletionGuardTests
             "if ($Arguments[0] -eq 'rev-list' -and $Arguments -contains '--reverse') { $r.Bytes=[Text.Encoding]::UTF8.GetBytes('" + deletion + "'+[char]10); Write-Host 'FAULT-HIT' }; return $r }";
         var sibling = await f.AddCommitAsync(b, "normal.txt", Text("sibling"));
         var outOfHead = await f.DeletionAsync(b, sibling, inv, hook: siblingHook);
-        outOfHead.Output.ShouldContain("FAULT-HIT");
+        outOfHead.Output.Split("FAULT-HIT", StringSplitOptions.None).Length.ShouldBe(2, "fault cut hit exactly once");
         outOfHead.Exit.ShouldBe(2, "c1015-deletion-ancestry");
         var fieldsHook = "function Get-EvidenceGitResult { param($Repository,$Arguments) $r=Invoke-EvidenceNativeGit $Repository $Arguments; " +
             "if ($Arguments[0] -eq 'ls-tree' -and $Arguments[-1] -eq '" + b + "') { $s=[Text.Encoding]::UTF8.GetString($r.Bytes); $at=$s.IndexOf([char]9); $s=$s.Insert($at,' extra'); $r.Bytes=[Text.Encoding]::UTF8.GetBytes($s); Write-Host 'FAULT-HIT' }; return $r }";
         var malformed = await f.InventoryOnlyAsync(b, fieldsHook);
-        malformed.Output.ShouldContain("FAULT-HIT");
+        malformed.Output.Split("FAULT-HIT", StringSplitOptions.None).Length.ShouldBe(2, "fault cut hit exactly once");
         malformed.Exit.ShouldBe(2, "c1015-tree-fields");
         var failureHook = "function Get-EvidenceGitResult { param($Repository,$Arguments) $r=Invoke-EvidenceNativeGit $Repository $Arguments; if ($Arguments[0] -eq 'ls-tree') { $r.ExitCode=1; Write-Host 'FAULT-HIT' }; return $r }";
-        var failed = await f.InventoryOnlyAsync(b, failureHook); failed.Output.ShouldContain("FAULT-HIT"); failed.Exit.ShouldBe(2);
+        var failed = await f.InventoryOnlyAsync(b, failureHook); failed.Output.Split("FAULT-HIT", StringSplitOptions.None).Length.ShouldBe(2, "fault cut hit exactly once"); failed.Exit.ShouldBe(2);
         var missingBlob = inv.Delete.Single(x => x.Path == ".antiphon/newer-pre-base.log");
         var ownedBlob = Path.Combine(f.Repo, ".git", "objects", missingBlob.Oid[..2], missingBlob.Oid[2..]);
         File.Exists(ownedBlob).ShouldBeTrue("fixture-owned loose blob exists, never delete borrowed objects");
         var recoveryHook = "function Get-EvidenceGitResult { param($Repository,$Arguments) $r=Invoke-EvidenceNativeGit $Repository $Arguments; " +
             "if ($Arguments[0] -eq 'ls-tree' -and $Arguments[-1] -eq '" + deletion + "') { [IO.File]::Delete(" + EvidenceGitFixture.Quote(ownedBlob) + "); Write-Host 'FAULT-HIT' }; return $r }";
         var recovery = await f.DeletionAsync(b, deletion, inv, hook: recoveryHook);
-        recovery.Output.ShouldContain("FAULT-HIT");
+        recovery.Output.Split("FAULT-HIT", StringSplitOptions.None).Length.ShouldBe(2, "fault cut hit exactly once");
         recovery.Exit.ShouldBe(2, "c1015-deletion-recoverable");
         File.Exists(ownedBlob).ShouldBeFalse();
     }
