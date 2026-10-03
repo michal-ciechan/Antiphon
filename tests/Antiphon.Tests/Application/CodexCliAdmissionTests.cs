@@ -354,7 +354,7 @@ public sealed class CodexCliAdmissionTests
                 adapter.SubmittedBodies.ShouldBeEmpty("C959-pc-188 busy recipient " + vector);
                 queued.Status.ShouldBe(QueuedMessageStatus.Pending, "C959-v21-busy-persisted " + vector);
                 await k.Harness.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn", sessionId: row.AgentSessionId);
-                await k.Harness.Queue.FlushAsync(row.AgentSessionId!.Value, CancellationToken.None);
+                await k.Harness.Queue.FlushSessionAsync(row.AgentSessionId!.Value, CancellationToken.None);
             }
             if (kind == AgentKind.ClaudeCode)
             {
