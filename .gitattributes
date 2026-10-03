@@ -8,6 +8,12 @@ server/Bundles/*.md text eol=lf
 tests/Antiphon.SessionRunner.Tests/Fixtures/grok-1.0.13-auto-compaction.jsonl text eol=lf
 tests/Antiphon.Tests/Agents/Fixtures/grok-rules-live-inline-1.0.13.json text eol=lf
 
+# CARD-1006: preserve pinned fixture bytes and provenance on Windows checkouts.
+tests/Antiphon.Tests/Agents/Fixtures/card0778/startup-frames.json text eol=lf
+tests/Antiphon.Tests/Agents/Fixtures/card1006/linux-blocking-frames.json text eol=lf
+tests/Antiphon.Tests/Agents/Fixtures/card1006/synthetic-blocking-frames.json text eol=lf
+tests/Antiphon.Tests/Agents/Fixtures/card1006/provenance.md text eol=lf
+
 # CARD-0490 guest scripts: packaging must preserve LF working-file bytes.
 tests/fixtures/card0490-linux/*.sh text eol=lf
 docker/session-runner-grok/Dockerfile text eol=lf
