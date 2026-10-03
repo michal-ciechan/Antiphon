@@ -1567,8 +1567,10 @@ public sealed class RemoteScriptContractTests
         var text = Remote();
         var retire = Block(text, "case_retire_temp_runner");
         retire.ShouldContain("C590_TEMP_RETIRED_AT");
-        retire.ShouldContain("TempRunnerNotRetired");
-        retire.ShouldContain("compose_temp down -v");
+        retire.ShouldContain("c1008_recycle \"$TEMP_PROJECT\"");
+        Block(text, "c1008_recycle").ShouldContain("c1008_status_proof");
+        Block(text, "c1008_status_proof").ShouldContain("TempRunnerNotRetired");
+        Block(text, "c1008_recycle").ShouldContain("compose_temp down -v");
         retire.ShouldContain("temp-down.txt");
         retire.ShouldNotContain("docker image rm");
         Block(text, "compose_temp").ShouldContain("-p \"$TEMP_PROJECT\"");
@@ -1726,14 +1728,17 @@ public sealed class RemoteScriptContractTests
 
         // state-init owns the fresh volume for uid 1654 first, then a one-off of the runner image.
         var init = commands.Single(line => line.Contains("run --rm --no-deps -T state-init", StringComparison.Ordinal));
-        init.ShouldContain("|| write_result false StateInitFailed 2");
+        init.ShouldContain("|| seed_code=$?");
+        seed.ShouldContain("[ \"$seed_code\" = 0 ] || write_result false StateInitFailed 2");
+        Order(seed, "StateInitFailed 2", "--user 1654:1654").ShouldBeTrue("state-init failure refuses before the clone");
         var oneOff = commands.Single(line => line.StartsWith("\"$compose\" run --rm --no-deps -T --user ", StringComparison.Ordinal));
         oneOff.ShouldBe("\"$compose\" run --rm --no-deps -T --user 1654:1654 -e GIT_TERMINAL_PROMPT=0 --entrypoint /bin/sh session-runner -c '");
         commands.IndexOf(init).ShouldBeLessThan(commands.IndexOf(oneOff));
         Order(seed, "--user 1654:1654", "git clone").ShouldBeTrue("the clone runs inside the uid-1654 one-off");
         seed.ShouldContain("git clone --filter=blob:none --no-checkout \"$2\" \"$repo\"");
         seed.ShouldContain("antiphon-seed \"$RUNNER_CHECKOUT_DEFAULT\" \"$RUNNER_CHECKOUT_ORIGIN\"");
-        seed.ShouldContain("|| write_result false RunnerCheckoutSeedFailed 2");
+        seed.ShouldContain("[ \"$seed_code\" = 0 ] || write_result false RunnerCheckoutSeedFailed 2");
+        Order(seed, "antiphon-seed \"$RUNNER_CHECKOUT_DEFAULT\"", "RunnerCheckoutSeedFailed 2").ShouldBeTrue();
         // Never the host's checkout, never a credential.
         seed.ShouldNotContain("$CHECKOUT");
         seed.ShouldNotContain("ssh");
