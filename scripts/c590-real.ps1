@@ -253,7 +253,7 @@ function Assert-C1008BridgeContext {
         [string]$Context.project -cne $project -or [string]$Context.operationId -cnotmatch '^c1008[0-9a-f]{32}$' -or
         $Context.dryRun -isnot [bool] -or $Context.resume -isnot [bool] -or
         [string]$Context.projectId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or
-        $Context.dryRun -and $Context.resume) { throw 'RecycleContextInvalid' }
+        ($Context.dryRun -and $Context.resume)) { throw 'RecycleContextInvalid' }
 }
 
 function Invoke-C590LiveCase {
