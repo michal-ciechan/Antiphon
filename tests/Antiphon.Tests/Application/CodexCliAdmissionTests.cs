@@ -1,4 +1,6 @@
 using System.Net;
+using System.Text;
+using Antiphon.Agents.Pty;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -324,30 +326,71 @@ public sealed class CodexCliAdmissionTests
             refused.Client.Sample = new("0.159.0", T, null, new string('a',64));
             (await CodeAsync(() => refused.CreateAsync())).ShouldNotBeNull("C959-v21-admission-before-delivery");
         }
-        foreach (var worktree in new[] { true, false })
-        foreach (var version in new[] { "0.159.1", "0.160.0" })
+        // Claude is first: its measured paste path must retain the literal LF body.
+        foreach (var kind in new[] { AgentKind.ClaudeCode, AgentKind.Codex })
+        foreach (var busy in new[] { false, true })
+        foreach (var worktree in kind == AgentKind.Codex ? new[] { true, false } : new[] { false })
+        foreach (var version in kind == AgentKind.Codex ? new[] { "0.159.1", "0.160.0" } : new[] { "0.160.0" })
         {
+            var vector = $"{kind}/busy={busy}/worktree={worktree}/{version}";
             using var git = worktree ? new ScratchGitRepo("c959-launch") : null;
             if (git is not null) await git.CommitFileAsync("seed.txt", "C959 isolated worktree\n");
-            await using var k = await DispatchKit.BuildAsync(git);
+            await using var k = await DispatchKit.BuildAsync(git, kind, busy);
             k.Client.Sample = new(version, DateTimeOffset.UtcNow, null, new string('a',64));
             var task = await k.CreateAsync();
             await k.TickAsync();
             await k.Harness.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
             k.Factory.Created.Count.ShouldBe(1, "C959-pc-190");
             var adapter = k.Factory.Created.Single();
-            var args = adapter.StartedArgs.ToList();
-            args.Count(a => a == "--model").ShouldBe(1, "C959-pc-184");
-            args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.1-sol");
             await using var db = k.Context();
             var row = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
-            row.RunnerId.ShouldBeNull("C959-pc-185");
             var queued = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.ExecutionTaskId == task.Id);
-            var receipt = await db.TranscriptEntries.AsNoTracking().SingleOrDefaultAsync(e => e.AgentSessionId == row.AgentSessionId && e.Kind == TranscriptKinds.UserPrompt && e.Text == queued.Body);
-            receipt.ShouldNotBeNull("C959-v21-receipt");
-            queued.Body.ShouldContain(Body, customMessage: "C959-pc-187");
-            queued.Body.ShouldContain("[antiphon-task:" + task.Id.ToString("N")[..8]);
-            (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning && e.Detail!.Contains("codex_cli_version"))).ShouldBe(0, "C959-pc-189");
+            var frozen = k.Boundary.Briefs[task.Id];
+            frozen.Full.ShouldContain(Body, customMessage: "C959-v21-oracle-literal " + vector);
+            frozen.Full.ShouldNotContain("\r", customMessage: "C959-v21-oracle-LF " + vector);
+            var expected = frozen.Wire;
+            if (busy)
+            {
+                adapter.SubmittedBodies.ShouldBeEmpty("C959-pc-188 busy recipient " + vector);
+                queued.Status.ShouldBe(QueuedMessageStatus.Pending, "C959-v21-busy-persisted " + vector);
+                await k.Harness.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn", sessionId: row.AgentSessionId);
+                await k.Harness.Queue.FlushAsync(row.AgentSessionId!.Value, CancellationToken.None);
+            }
+            if (kind == AgentKind.ClaudeCode)
+            {
+                var bodyWrite = adapter.Inputs.Single(i => i.Contains("[antiphon-task:"));
+                bodyWrite.ShouldNotContain("\r", customMessage: "C959-pc-215 " + vector);
+                var index = adapter.Inputs.ToList().IndexOf(bodyWrite);
+                adapter.Inputs[index + 1].ShouldBe("\r", "C959-pc-215 " + vector);
+                adapter.SubmittedBodies.Single().ShouldBe(expected, "C959-pc-187 " + vector);
+                bodyWrite.ShouldBe("\u001b[200~" + expected + "\u001b[201~", "C959-pc-214 " + vector);
+                adapter.SubmittedBodies.Single().ShouldContain(Body, customMessage: "C959-v21-claude-lf " + vector);
+                k.Client.Requests.ShouldBeEmpty("C959-v21-ungated-kind " + vector);
+            }
+            else
+            {
+                k.Harness.Provider.GetRequiredService<PtyDeliveryProfile>().Ceilings.ForAgentKind(kind)
+                    .BriefInlineMaxBytes.ShouldBe(0, "C959-pc-209 " + vector);
+                var bytes = await File.ReadAllBytesAsync(frozen.Path!);
+                bytes.ShouldBe(Encoding.UTF8.GetBytes(frozen.Full), "C959-pc-210 " + vector);
+                Encoding.UTF8.GetString(bytes).ShouldContain(Body, customMessage: "C959-pc-187 " + vector);
+                expected.ShouldNotContain("\n", customMessage: "C959-pc-212 " + vector);
+                expected.ShouldNotContain("\r", customMessage: "C959-pc-212 " + vector);
+                adapter.SubmittedBodies.Single().ShouldBe(expected, "C959-v21-pointer " + vector);
+                var args = adapter.StartedArgs.ToList();
+                args.Count(a => a == "--model").ShouldBe(1, "C959-pc-184 " + vector);
+                args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.1-sol", "C959-pc-184 " + vector);
+            }
+            row.RunnerId.ShouldBeNull("C959-pc-185 " + vector);
+            queued.Body.ShouldBe(expected, "C959-pc-186 " + vector);
+            var session = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == row.AgentSessionId);
+            queued = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == queued.Id);
+            queued.LastDeliveryGeneration.ShouldBe(SessionGeneration.Normalize(session.StartedAt), "C959-v21-generation " + vector);
+            var receipts = await db.TranscriptEntries.AsNoTracking().Where(e => e.AgentSessionId == row.AgentSessionId && e.Kind == TranscriptKinds.UserPrompt).ToListAsync();
+            receipts.Count.ShouldBe(1, "C959-v21-no-duplicate " + vector);
+            receipts.Single().Text.ShouldBe(expected, "C959-v21-receipt " + vector);
+            receipts.Single().Sequence.ShouldBeGreaterThan(queued.LastDeliveryBaselineSequence ?? 0, "C959-v21-baseline " + vector);
+            (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning && e.Detail!.Contains("codex_cli_version"))).ShouldBe(0, "C959-pc-189 " + vector);
         }
     }
 
@@ -440,12 +483,15 @@ public sealed class CodexCliAdmissionTests
         public required Client Client { get; init; }
         public required Factory Factory { get; init; }
         public ScratchGitRepo? Git { get; init; }
+        public AgentKind Kind { get; init; } = AgentKind.Codex;
+        public required BriefBoundary Boundary { get; init; }
         public AppDbContext Context() => new(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
-        public static async Task<DispatchKit> BuildAsync(ScratchGitRepo? git = null)
+        public static async Task<DispatchKit> BuildAsync(ScratchGitRepo? git = null, AgentKind kind = AgentKind.Codex, bool busy = false)
         {
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             var client = new Client { Sample = new("0.160.0", DateTimeOffset.UtcNow, null, new string('a',64)) };
             Factory? factory = null;
+            var boundary = new BriefBoundary(schema.ConnectionString, busy);
             var h = await BridgeQueueHarness.CreateAsync(new()
             {
                 AlwaysOn = false, ConnectionString = schema.ConnectionString,
@@ -456,6 +502,18 @@ public sealed class CodexCliAdmissionTests
                     services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new BridgeQueueHarness.OptionsMonitorStub<AgentRegistrySettings>(Registry()));
                     services.AddSingleton<IOptions<AgentRegistrySettings>>(Options.Create(Registry()));
                     services.AddSingleton<IAgentProtocolAdapterFactory>(sp => factory = new(sp.GetRequiredService<AgentSessionRuntime>(), schema.ConnectionString));
+                    services.AddSingleton<LandDeliveryBoundary>(boundary);
+                    services.AddSingleton(sp =>
+                    {
+                        var settings = sp.GetRequiredService<IOptions<DelegationSettings>>().Value;
+                        boundary.Settings = settings;
+                        boundary.Ceilings = settings.CeilingsFor(PtyBackend.ModernConPty, "existing measured modern profile for attached fake");
+                        var profile = new PtyDeliveryProfile(sp.GetRequiredService<IServiceScopeFactory>(),
+                            NullLogger<PtyDeliveryProfile>.Instance, Options.Create(settings), backendOverride: "inbox");
+                        typeof(PtyDeliveryProfile).GetField("_ceilings", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(profile, boundary.Ceilings);
+                        return profile;
+                    });
+                    services.AddSingleton<SessionDeliveryProfile>();
                     services.AddSingleton<DelegationWorkspaceResolver>();
                     if (git is not null) services.RemoveAll<IWorktreeManager>();
                     services.AddDelegationWorktreeGraph(new GitSettings { WorktreeBasePath = git?.WorktreeRoot ?? Path.Combine(Path.GetTempPath(), "c959-unused") });
@@ -464,13 +522,13 @@ public sealed class CodexCliAdmissionTests
                     services.AddScoped<AgentTaskDispatcher>();
                 },
             });
-            return new() { Schema = schema, Harness = h, Client = client, Factory = (Factory)h.Provider.GetRequiredService<IAgentProtocolAdapterFactory>(), Git = git };
+            return new() { Schema = schema, Harness = h, Client = client, Factory = (Factory)h.Provider.GetRequiredService<IAgentProtocolAdapterFactory>(), Git = git, Kind = kind, Boundary = boundary };
         }
         public async Task<AgentTaskCreatedDto> CreateAsync()
         {
             using var scope = Harness.Provider.CreateScope();
             return await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CreateAsync(new(Body, Title: Body, Role: AgentTaskRole.Docs,
-                AgentKind: AgentKind.Codex, ModelLevel: AgentModelLevel.High, Workspace: Git is null ? WorkspaceMode.Shared : WorkspaceMode.Worktree, RunnerId: "local"),
+                AgentKind: Kind, ModelLevel: AgentModelLevel.High, Workspace: Git is null ? WorkspaceMode.Shared : WorkspaceMode.Worktree, RunnerId: "local"),
                 new(null, null, Git?.Path ?? Path.Combine(Harness.TempRoot, "workspace")), CancellationToken.None);
         }
         public async Task TickAsync()
@@ -480,6 +538,37 @@ public sealed class CodexCliAdmissionTests
         }
         public async ValueTask DisposeAsync() { await Harness.DisposeAsync(); await Schema.DisposeAsync(); }
     }
+    private sealed record FrozenBrief(string Full, string Wire, string? Path);
+
+    // Freeze committed producer inputs before launch scheduling or queue handoff.
+    // Neither queued.Body, the file nor a transcript supplies the oracle.
+    private sealed class BriefBoundary(string connection, bool busy) : LandDeliveryBoundary
+    {
+        public DelegationSettings Settings { get; set; } = new();
+        public PtyDeliveryCeilings Ceilings { get; set; } = null!;
+        public Dictionary<Guid, FrozenBrief> Briefs { get; } = [];
+        public override async Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
+        {
+            if (boundary != "dispatch-warning-claim-committed") return;
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
+            var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId, ct);
+            var limits = Ceilings.ForAgentKind(task.AgentKind);
+            var full = DelegationReportFormatter.BuildBrief(task, Settings, limits.ReplyInlineMaxChars, refocus: false);
+            var path = task.AgentKind == AgentKind.ClaudeCode ? null : Path.Combine(task.WorkingDirectory,
+                ".antiphon", $"task-{DelegationReportFormatter.Short(task.Id)}-brief.md");
+            var wire = path is null ? full.TrimEnd() : DelegationReportFormatter.BuildBriefPointer(task, Settings,
+                path, full.Length, task.AgentKind).TrimEnd();
+            Briefs.Add(taskId, new(full, wire, path));
+            if (busy)
+            {
+                await BridgeQueueHarness.InsertEntryAsync(task.AgentSessionId!.Value, TranscriptKinds.TurnEnd,
+                    stopReason: "end_turn", connectionString: connection);
+                await BridgeQueueHarness.InsertEntryAsync(task.AgentSessionId.Value, TranscriptKinds.AssistantText,
+                    "C959 activity after TurnEnd", connectionString: connection);
+            }
+        }
+    }
+
     private sealed class Factory(AgentSessionRuntime runtime, string connection) : IAgentProtocolAdapterFactory
     {
         public List<FakeAgentProtocolAdapter> Created { get; } = [];
