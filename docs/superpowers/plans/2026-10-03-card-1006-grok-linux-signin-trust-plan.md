@@ -434,6 +434,282 @@ They are derived from this baseline and the fixed new-method inventory; TestDesi
 must recount/import if capture discoveries change the method roster. No whole
 Unit/assembly run is required for this narrow card.
 
+### Inspection
+
+TestDesign task `1b43dce9`, 2026-10-03, source
+`edb96aecd93cbe90fe8887c1a8d1523527bd49d9`. This freeze supplements the landed
+verification design; D-1..D-5 and the implementation allowlist remain unchanged.
+The earlier instruction to send this artifact to TestDesign is historical.
+All runtime results and mutation outcomes below are requirements, not receipts.
+
+| Bodies read | Boundaries -> coverage |
+|---|---|
+| `GrokDetectors.cs`, both detector bodies and BlockReason; entire `GrokStartupReadiness.cs`, including Classify, Observe, WaitAsync and Bounded | D-1 wording V-1; modal predicates V-2/V-3; precedence V-5/V-9; geometry V-7; settlement V-8/V-10 |
+| Entire `GrokSignInPromptDetectorTests.cs`, `GrokTrustPromptDetectorTests.cs`, `GrokStartupReadinessTests.cs`, `GrokLinuxStartupReadinessTests.cs`, including their fixture readers | Existing examples/nonmatches and argument expansion R-1; independent immutable input and hash checks V-2/V-4/V-12 |
+| Entire `RunnerGrokAdapterReadyTests.cs`, including ScriptedClient, JumpClock, PollGateClock, UtcJumpClock and timer-registration helpers | Current/raw separation V-6; deterministic waiter setup V-9/V-10; cancellation, deadline, minimum age and failure diagnostics R-2 |
+| Entire `RunnerGrokAdapterReadyTestsPty.cs`, `RunnerGrokAdapterSignInPromptTests.cs`, `RunnerGrokAdapterTrustPromptTests.cs`, `GrokStartupCaptureStoreTests.cs`; production capture formatter and adapter WaitForReadyAsync | Sign-in write suppression, unchanged trust action, privacy R-2; native fake-provider transcript R-2/R-3 |
+| `DirectSessionRunnerClient` constructor/StartAsync, snapshot, transcript, input and disposal bodies; test project fixture-copy and FakeGrok staging targets | Isolated native substitute, session identity and child ownership; no queue or live-provider claim |
+| CARD-1004 JSON and provenance; CARD-0778 114 decoded checkpoints (117 distinct nonempty rendered rows, complete expected-reason roster), synthetic records and ReadyScreen selector; both CARD-1006 investigation files | Exact source bytes, canvas versus rendered width, copied frame limits and anchor positions; V-2/V-4/V-5/V-12 |
+| Orchestration TestDesign/Mutation rules, testing checkpoint/import/slot/delivery rules, session startup/delivery owner, project conventions, CARD-0959 freeze, importer ExtractSection/SplitRow | Closed five-row scope, source census, post-land mutation separation, external Code-admission gates |
+
+Missing setup is implementation work, not hidden evidence: new local card1006
+fixture reader, three fixture/provenance files, eleven new class methods, one
+wording method, and a local controlled-clock helper. Existing PollGateClock is
+**private**; do not pretend the new class can access it. Implement a private
+clock wrapper in the new class, forwarding GetTimestamp/TimestampFrequency/
+CreateTimer to FakeTimeProvider and signaling each installed 50-ms poll timer.
+Wait for timer installation before Advance, race installation against waiter
+completion, and cancel/await in finally. Wall-clock WaitAsync is only a harness
+watchdog; it must never decide the simulated readiness result. No shared helper
+or old test-file edit is needed.
+
+### Delivery inventory
+
+**New or changed asynchronous delivery paths: zero.** The sole production edit
+is a synchronous diagnostic string. There is no new producer, queue insertion,
+durable message, retry policy or recipient handoff to commission. Busy-recipient,
+already-eligible and crash/enqueue-failure queue matrices are therefore excluded
+from this text/fixture change; an implementation that changes those paths must
+return to Plan for real-queue tests and complete recipient evidence.
+
+| Existing path exercised | Identity / persistence / recovery / observable receipt and limit |
+|---|---|
+| WaitAsync snapshot producer -> classifier/tracker -> readiness caller | A scripted snapshot's Sequence and CapturedAt identify the observation; state is in memory, no durable delivery. V-8 proves reset and V-9/V-10 prove ordered decisions. A false result plus zero write calls proves refusal at this seam, not downstream queue recovery. |
+| Existing trust branch -> writeAsync -> scripted trust recipient | The test's explicit frame index and ordered writes identify the action; V-10 observes subsequent current frames. One `y` or callback completion is not delivery proof and is never reported as such. The fake cannot qualify a real Linux trust key. |
+| Existing RunnerGrokAdapter.SendPromptAsync -> DirectSessionRunnerClient -> native PTY/FakeGrok -> Grok transcript tailer | Isolated SessionId joins launch and transcript; FakeGrok's session transcript is the persistent receipt. R-2/R-3 require exactly one complete UserPrompt with the exact `C1004 complete first prompt HEAD and TAIL` body, after an empty pre-send prompt roster. This is actual recipient evidence for the fake, but bypasses the server queue, production network, real Grok, multiline paste, and crash recovery. |
+| BlockReason -> adapter LaunchBlock -> caller | R-2 checks ProviderSignInRequired, home and remedy on the same adapter instance; no user notification, Sent flag, event or ack is substituted for recipient evidence. This card makes no notification-delivery claim. |
+
+### Literal fixture freeze
+
+All row and column indices below are zero-based. Canvas metadata is **120x30**;
+ready frames have maximum rendered width **118**, not 118 configured columns.
+Do not pad rows to 120, trim spaces, normalize LF to CRLF, or remove the final
+empty row. P-19 deliberately has 29 rows. C1/C2 approval widths are 85, not 118.
+
+REAL source authority is the entire literal, ASCII-escaped JSON object in
+`docs/investigations/2026-10-03-card-1006-linux-grok-frames.json` at the frozen
+source SHA. Copy each decoded value byte-for-byte into the new captures array;
+its complete literal text is reproduced in the immutable investigation. D-3's
+three independently pinned decoded SHA-256 values were recomputed and match.
+A fixture's own `sha256` field is not its expected oracle: V-4 has the three
+literal digests in C# source and checks both declared hash and computed hash.
+Likewise its expected capture IDs, labels, source task, sizes and redactions are
+literal test data, not read back from the same document as expectations.
+
+The REAL approval anchors, including punctuation, are:
+
+```json
+{"13":{"column":38,"text":"Approve in your browser to finish signing in."},"15":{"column":56,"text":"<CODE-9> "},"17":{"column":41,"text":"Make sure your browser shows this code."},"19":{"column":41,"text":"If it doesn't open, click here to copy."},"23":{"column":36,"text":"Copying not working? Click here to show full URL."},"25":{"column":49,"text":"Waiting for approval..."},"27":{"column":54,"text":"ctrl+q  quit"}}
+```
+
+`<CODE-9>` is eight characters; **one trailing U+0020 makes nine cells**.
+V-4 requires row 15 length 65, 56 leading spaces and those exact nine cells in
+each approval frame, and no placeholder in Connecting. Logo rows 4..10 occupy
+columns 53..66 and remain unchanged. V-2 independently copies each approval row
+array and replaces precisely [15][56..65) with nine spaces, then `XXXXXXXXX`;
+it asserts unchanged other rows, unchanged length and the three literal phrases
+before calling production. Neither expected text nor input generation may call
+a redactor, GrokStartupCaptureStore, detector or classifier. No redaction code
+is being implemented here; this contract tests classification independence from
+the already-sanitized nine cells, not the historical sanitizer's privacy.
+Do not synthesize an original credential or reverse the redaction.
+
+The CARD-1004 schema actually has no synthetic label field. Preserve its source
+labels/provenance; CARD-1006 explicitly adds `label`, `captureId` and `source`.
+REAL rows use `real-rendered`/`real-rendered-redacted`; every definition below,
+overlay, raw-history pair and redaction substitution is **SYNTHETIC**, with
+`label: "synthetic-derived"`. Synthetic source objects name the source path,
+capture selector, probeId and transformation, never a fabricated session/time.
+`realUpdate` is exactly `{"status":"not-observed","captureIds":[]}` in this
+freeze; encountering a real updater invokes D-4 before implementation.
+
+Canonical SYNTHETIC row construction follows. JSON strings use actual decoded
+Unicode escapes, not the literal six-character notation. `B` is 30 empty strings;
+`L` is CARD-1004 cliVersion `1.0.41`, independently pinned to decoded hash
+`f2155460374433c4cd5da3849afc466541604d2d8faf9c9b1c71c93d02c6c1ec`.
+Clone arrays; never mutate the shared fixture. `W` is CARD-0778 idle capture,
+afterChunk 40, decoded hash
+`708f5423814ba83ecce9769207051e30d69d7e1b15ab7483aa1d6ca34fe718e3`.
+Both have borders at columns 2/117 on rows 24/25/26, composer marker at [25][4],
+blank status rows 22/23, and the literal hint at row 28.
+
+```text
+A = {3: "  Approve in your browser to finish signing in.",
+     4: "  Make sure your browser shows this code.",
+     5: "  Waiting for approval..."}
+T = {5: "  Do you trust the contents of this directory?",
+     7: "  \u276f Yes, proceed y", 8: "  No, quit n"}
+U = "  \u256d" + repeat("\u2500",114) + "\u256e"
+I(s) = "  \u2502 " + PadRight(s,113,U+0020) + "\u2502"
+D = "  \u2570" + repeat("\u2500",114) + "\u256f"
+H = "  Shift+Tab:mode  \u2502  Ctrl+x:shortcuts"
+```
+
+`Patch(base,map)` replaces exactly the listed rows; Join uses one LF between
+rows and no extra terminator. Applying A or T means Patch with the literal map.
+P-05 uses the complete existing L composer, so the preserved footer is allowed.
+P-09/P-10 intentionally have a full-width box away from row 24 and no hint;
+they are Unknown. P-07's narrow box is not qualified composer geometry.
+
+| Probe (all SYNTHETIC) | Literal construction | Expected reason / Ready | Decoded UTF-8 SHA-256 |
+|---|---|---|---|
+| P-01 | `Patch(B,T)` | Trust / false | `f66b2fea1ba97e618925e2e0bcdfdfc63af78d55f7b23c04d10945546d50212c` |
+| P-02 | `Patch(Patch(B,A),{7:"  \u276f Sign in",8:"  Exit"})` | SignIn / false | `4418ebab3c1ece20cbd1b7d91658c01ceed11a533f83415def04949d31a75544` |
+| P-03 | `Patch(Patch(L,T),{22:"  Working..."})` | Trust / false | `97d11cc8559d13659a638d2daf20e59871f410d99d096471791304be66ebe86a` |
+| P-04 | `Patch(Patch(L,A),{22:"  Working..."})` | SignIn / false | `b9c1f1acb87c8a03ca0a92f3b342c08039a50058b26094c47c0b5a6759f0a4c7` |
+| P-05 | `Patch(L,A)` | SignIn / false | `923d4c79b2f2c688ffb80cc5f2ed5766a983fff18bcc95c62715351d21f1fe7b` |
+| P-06 | `Patch(B,{5:"  Update available",7:"  \u276f 1. Update now",8:"  2. Later"})` | Unknown / false | `2b37f534e6fcc26fd6b3929350928ccea9d43f68f53d10e3416cf79705c57d74` |
+| P-07 | `Patch(B,{9:"  \u256d"+repeat("\u2500",58)+"\u256e",10:"  \u2502 "+PadRight("A new version is available",57)+"\u2502",11:"  \u2502 "+PadRight("Press Enter to update",57)+"\u2502",12:"  \u2570"+repeat("\u2500",58)+"\u256f"})` | Unknown / false | `205dff66669ae99acdab778a9aefdd5c0662cb487765b31cc07260b95a53addb` |
+| P-08 | `Patch(L,{25:I("\u276f 1. Yes")})` | ComposerUnavailable / false | `e1323daca816ab8c4da430ee88dff35429c4202271b4084d749c4d492ff952d1` |
+| P-09 | `Patch(B,{9:U,10:I("\u276f"),11:D})` | Unknown / false | `d44437ad4d8458fc44208507451b7ac65a255be4d928d6efaacaefa91fa795a6` |
+| P-10 | `Patch(B,{11:U,12:I("\u276f"),13:D})` | Unknown / false | `e220881f8aa44b658d08fce841320d43bfb0a9316396d3fad682112c2e6a9ee3` |
+| P-11 | `Patch(B,{20:"  \u276f"})` | Unknown / false | `725b420cec04e6a64cc41168699f49f86d23772b23580ecd326fe8cb56ae3d33` |
+| P-12 | `Patch(B,{25:"    \u276f"})` | Unknown / false | `5080a26557c91e2960b1aec7ecca46f6c802a74553d9cec5cf5a4c9b0f1a3014` |
+| P-13 | `Patch(L,{25:I("\u276f typed text")})` | ComposerUnavailable / false | `a66c40b80ec6ff4d219a2e042f735a57b0c28793350bb1d548d7c8bcef1cc3c1` |
+| P-14 | `Patch(L,{25:I(">\u276f")})` | ComposerUnavailable / false | `0b2c173e1941f51dc5707b231311776afd9fb77d43f3dcf979ca236ae3455bae` |
+| P-15 | `Patch(L,{25:I("\u276f\u276f")})` | ComposerUnavailable / false | `b7c5f4c1fd591bee881f8e7e0b8be1681fc271f45fa03d509d840766930c27e1` |
+| P-16 | `Patch(L,{28:""})` | Unknown / false | `bd37147536b6b6e8f486fa6de369ade22257fc0930090c0f5031c4794d3e4c35` |
+| P-17 | `Patch(L,{22:"  Working..."})` | Working / false | `a6a585d8e37768bb383509566583860176d3200eabda780f8ed2c834b993be42` |
+| P-18 | `Patch(L,{26:""})` | ComposerUnavailable / false | `500edace876383c5ce7200c4f07c444eb41530ee9d74ff487ab467e332048f28` |
+| P-19 | `L.Take(29)` | Unknown / false | `adbbfa427a081bd2ff1d39eeede70ba02c04e23ce8d425eba62c06a84f2a3358` |
+
+For V-7 derived cases, first remove only the opposite modal's text from the
+probe layout. The literal layout sources for P-01/P-02 are B with row 7
+`"  \u276f"`; for P-03, L with row 7 `"  \u276f"` and row 22
+`"  Working..."`; for P-04, L with row 22 `"  Working..."`; for P-05, L.
+All other layout sources are their base screens above. This explicit extraction
+prevents trust text surviving into a sign-in-derived case or sign-in text
+surviving into a trust-derived case. Apply A or T to those sources. Updater text
+remains in P-06/P-07; it is not an authentication anchor. P-11's lone marker
+is deliberately at row 20 so neither overlay deletes it. No overlay touches
+rows 22..28 or P-09/P-10's box rows. Assert source/overlay row counts and all
+unassigned rows byte-for-byte, then detector anchor presence, then production
+Reason/IsReady. Thus exactly 19 base + 19 sign-in + 19 trust cases survive;
+only V-9 deliberately combines sign-in and trust. These explicit recipes resolve
+the earlier ambiguous instruction to transfer a layout without another modal.
+
+V-5 relocates all three literal approval phrases from each real frame to A's
+rows, rather than pasting whole rows 23/25 over the composer/status. Check each
+source contains the literal phrases at its measured coordinates first. Use T
+separately. For W and L, assert Ready before overlay, unchanged composer rows
+24/25/26, empty rows 22/23, H at 28, and modal Reason/false afterward. There are
+six modal overlays (two approval sources plus synthetic trust, each over W/L).
+The two mixed V-9 compositions instead use A at 3/4/5 and trust question/yes/no
+at 7/8/9, all column 2. Both classify SignIn before any WaitAsync invocation.
+
+V-4 also pins the unchanged Windows fixture **file** SHA-256 to
+`6990d5910e3983005afc6f7dd1eec002f8c59686613c80d081e0d3953394dbee`.
+V-12 requires exactly 68 idle + 44 startup + 2 sign-in = **114** checkpoints;
+the incident metadata object is not a frame. This does not add or relabel any
+Windows rows. Preserve both source fixture directories byte-for-byte.
+
+### Proves it works now
+
+All twelve existing V method names above are frozen, not placeholders. Namespace
+is `Antiphon.Tests.Agents`; each is one `[Test]`, no `[Arguments]`. The file for
+V-1 is `tests/Antiphon.Tests/Agents/GrokSignInPromptDetectorTests.cs`; V-2..V-12
+share the new `tests/Antiphon.Tests/Agents/GrokLinuxBlockingPromptTests.cs`.
+The following freezes decisive assertions and boundary combinations in addition
+to the earlier method roster. CP-2 is the ordinary command selection for all V;
+CP-1 first demonstrates the wording regression against unchanged production.
+
+| ID | Layer / fixed input order | Decisive assertion |
+|---|---|---|
+| V-1 | Pure production BlockReason; `/tmp/c1006-runner-home`, then `C:\Antiphon\c1006-runner-home` | `blockReasonExact` compares the complete D-1 sentence, with only Path.Combine(home,"auth.json") interpolated; no OS branch or substring oracle. |
+| V-2 | Detector + classifier; C1-sign-in, C2-sign-in, then Connecting; each approval original, nine-space, nine-X | `realSignInDetector:<id>:<variant>` is true before classifier calls; trust false, Reason SignIn and IsReady false; Connecting is neither detector and Unknown/false. |
+| V-3 | Detector + classifier; literal P-01 | `syntheticTrustDetector:P-01` is true after exact label/source check; sign-in false, Reason Trust and IsReady false. |
+| V-4 | Artifact integrity; fixed ID/hash/source/row maps above | `realHash:<id>` and `redactionCells:<id>` match independently pinned constants; all 19 synthetic hashes/recipes/labels match; parse/serialize/parse preserves strings and metadata; absence is failure, never skip. |
+| V-5 | Classifier; W then L, each C1/C2 approval plus T | First prove Ready on both bases; `modalReason:<base>:<id>` is SignIn/Trust before `modalReady` false, with untouched composer/status/hint assertions. |
+| V-6 | Classifier; each C1/C2 approval and P-01 current with L raw, then W/L current with each blocker raw | `currentReason:<current>:<raw>` follows current rendered screen and never raw history; assert both reason and IsReady. |
+| V-7 | Classifier; all 19 bases in numeric order, then their 19 A and 19 T derivatives | `probeReady:<probe>:<base-or-A-or-T>` is false **before** reason equality; preserve exactly 57 named probe cases and the full anchor/layout checks above. |
+| V-8 | Production tracker, each blocker C1/C2/P-01; settle=1000ms | Ready at 0=false/count1; blocker at 900=false/count0 (`resetCount:<id>`); Ready at 950=false/count1; 1000=false; 1949=false; 1950=true. First assertion `firstReadyObservation` is false. |
+| V-9 | Production waiter; two actual approval screens then two synthetic mixed screens, fixed MaxWait=2000ms, settle=1000ms, poll=50ms | Mixed classifier `mixedReason` is SignIn before waiter; each wait returns false/SignIn, OnSignIn receives the same complete frame exactly once, failure records last reason SignIn/count0/signInSeen=true, `signInInputs` is an empty list. |
+| V-10 | Production waiter, synthetic P-01 and L; MaxWait=2000ms, TrustSettle=1000ms, settle=1000ms, poll=50ms, minimum age=0 | Persistent P-01 reads every 50ms: false/Trust at 1000ms and writes exactly `["y"]`; P-01 at 0/50ms then L from 100ms: incomplete at 1050ms and true at 1100ms, exactly one `y`; `persistentTrustReady` is first outcome assertion. |
+| V-11 | Fixture policy + classifier; P-06/P-07 | Both synthetic labels and exact Unknown/false outcomes; frozen realUpdate is not-observed/empty. Unknown status or captured/empty is rejected by fixture policy. A newly observed real updater returns to D-4, never silently enters this test as guessed text. |
+| V-12 | Classifier over unchanged Windows capture records | `windowsCount`=114 and every `windowsReason:<capture>:<afterChunk>` and readiness agrees with the recorded result; counts are internal iterations, not 114 TUnit results. |
+
+Boundary coverage: both composer glyphs, both home syntaxes on each executing OS,
+two independent REAL approval frames and independent redaction substitutions,
+modal/current versus stale raw in both directions, single versus mixed blockers,
+valid versus invalid composer layouts, before/at settlement and trust expiry,
+and native Linux versus Windows receipt. Arbitrary sizes/versions, unknown vendor
+modals above an intact composer, real post-login trust, provider authentication,
+queue persistence and production transport recovery remain explicit exclusions.
+No assertion claims every arbitrary non-composer screen is recognized; the
+fail-closed claim is bounded to the frozen shapes and measured anchors.
+
+### Guards the regression
+
+The read-only source census at the frozen SHA is:
+
+| Class under tests/Antiphon.Tests/Agents | Existing methods | Existing TUnit results | New results | Checkpoints selecting it |
+|---|---:|---:|---:|---|
+| GrokSignInPromptDetectorTests | 16 | 16 | 1 | CP-1 new method only; CP-2 new method only; CP-3/CP-5 all 17 |
+| GrokLinuxBlockingPromptTests (new) | 0 | 0 | 11 | CP-2/CP-5 |
+| GrokTrustPromptDetectorTests | 4 | 4 | 0 | CP-3 |
+| GrokStartupReadinessTests | 5 | 5 | 0 | CP-3/CP-5 |
+| GrokLinuxStartupReadinessTests | 8 | 21 | 0 | CP-3 |
+| RunnerGrokAdapterReadyTests | 13 | 14 | 0 | CP-4 |
+| RunnerGrokAdapterReadyTestsPty | 1 | 2 | 0 | CP-4/CP-5 |
+| RunnerGrokAdapterSignInPromptTests | 3 | 3 | 0 | CP-4 |
+| RunnerGrokAdapterTrustPromptTests | 4 | 4 | 0 | CP-4 |
+| GrokStartupCaptureStoreTests | 2 | 2 | 0 | CP-4 |
+
+Census command is `rg -n '^\s*\[(Test|Arguments)|public (async Task|void) '`
+against those literal files, followed by inspecting the bodies and argument
+lists. Linux startup expansion is 2+2+3+3+4+3+2+2=21; ready adapter is
+2+12=14; native PTY is false/true=2. There are no dynamic data sources here.
+Thus CP-1..CP-5 remain **1/12/47/25/35**, or 120 result executions across rows
+(119 expected green and one deliberate CP-1 wording failure). Overlapping rows
+are intentional. The 114 Windows iterations, 57 probe cases and internal loops
+do not increase MinExecuted.
+
+- R-1: unchanged predicates and recorded classifications | CP-3; original eight
+  sign-in anchor matches and login-with-alone/Codex nonmatches remain, Ready
+  dashboards accept exactly their marker, status/hint/geometry negatives refuse.
+- R-2: waiter, adapter, privacy and native fake recipient | CP-4; zero writes on
+  sign-in, exactly one `y` on trust, trust must clear and settle, deadline/exit/
+  cancellation refuse, sign-in capture has no screen/raw content, and complete
+  native UserPrompt equals the sent body. No timeout widening for CARD-0988.
+- R-3: native Windows plus portable replay | CP-5 on the final implementation
+  SHA, all 35 executions with zero skips, modern backend explicitly selected;
+  Linux's 114-frame replay does not substitute for this receipt.
+
+### Code admission and landing freeze
+
+| Gate | Owner | Required evidence / state at this freeze |
+|---|---|---|
+| A-1 exact production image | Caller/orchestrator | Literal selected production tag and immutable RepoDigest tied to that Linux container, before **any** further capture; still unavailable. Record synthetic-trust acceptance on CARD-1006. |
+| A-2 isolated capture and raw-log custody | Separately commissioned Linux Debug task | D-2 throwaway-container/network/tmpfs/no-persistent-swap receipt; explicitly account for ordinary raw `.ansi.log` paths despite audit-off; verify owned children/container/network/scratch cleanup. Still absent; historical captures do not satisfy it. |
+| A-3 verification freeze | This TestDesign artifact | Literal fixtures, methods, anchor placements and read-only census above; implementation and mutation remain unexecuted. |
+| A-4 actual five-row importer | Code owner before S1 | No prebuilt Antiphon.Checkpoints.dll exists in this worktree or the runner canonical bare repository `/work/repos/antiphon`. No build/import was run. Other tasks' outputs are not borrowed. Bootstrap/import below is an explicit Code-admission item, not a TestDesign blocker. |
+
+A-4 bootstrap exception (four estimated minutes, separate from ordinary CPs):
+build only `tools/Antiphon.Checkpoints` through `scripts/build-slot.ps1` with
+`--property:OutputPath=bin-c1006-tool/`; invoke its built dll with
+`import --plan docs/superpowers/plans/2026-10-03-card-1006-grok-linux-signin-trust-plan.md --out .antiphon/c1006-code-import.yml`.
+Require exit 0, exactly **five** rows, minima 1/12/47/25/35, all filters unchanged
+and serial=true. The seven-row reference belongs to CARD-0959; do not import its
+table as CARD-1006 evidence. Static Markdown parsing cannot close A-4. Remove
+only owned alternate outputs after all children finish. No extra docs checkpoint
+is commissioned by this TestDesign; earlier Plan commands/receipts are historical.
+
+CARD-1004 is already landed; keep its classifier glyph support, two Linux frames
+and all 114 Windows rows. CARD-1001 owns checkpoint Coverage and related repairs;
+read/import is allowed, edits are not. CARD-0959 owns runner capability/version
+and admission changes; CARD-1008 owns rollout, deployment scripts and volume
+recycling. Either independent source change may land first, but any rollout must
+finish before A-1 selection and that image must stay fixed through A-2. Recheck
+current active file footprints; a real collision waits for the existing owner,
+not a same-file/different-method exemption. Preserve CARD-0965 and all earlier
+allowlist exclusions. No fetch/rebase/reset of this task branch is authorized.
+
+Landing sequence remains freeze -> owned admission receipts -> S1 expected-red
+wording test -> S2 implementation/fixtures -> S3 portable and Windows closure ->
+ordinary Review -> linked post-land companion -> publication/server activation ->
+separately commissioned SourceLanding Mutation. No provider turn, runner image
+edit, credentials or operational restart is performed by this TestDesign.
+
 ### Checkpoints
 
 Closed ordinary Code list after capture admission. Each row owns one isolated
