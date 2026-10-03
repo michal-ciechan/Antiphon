@@ -23,7 +23,9 @@ The smallest implementation uses the existing pin machinery and changes guidance
 tests, qualification documentation, and one live Debug pin. It does not require a
 model-alias, startup-classifier, database-schema, or runner-binary change.
 **That implementation also changes Linux Debug to Grok**, because existing pins
-have no OS dimension. D-1 is the caller decision before commissioning Code.
+have no OS dimension. D-1 was approved by the operator in the TestDesign brief:
+role-wide Debug uses Grok/High then ClaudeCode/High on every platform, including
+Linux. This approval does not waive Windows qualification or activation ordering.
 
 ## Ground truth
 
@@ -68,11 +70,12 @@ anything on its `next: land` suggestion or reuse its clean assertion for Code.
 
 ## Decisions
 
-- **D-1 — proposed default, requires caller scope decision:** use the existing
+- **D-1 — approved, TestDesign task 29fba8af, 2026-10-03:** use the existing
   stage-wide Human Required Debug pin with `[Grok/High, ClaudeCode/High]`, matching
   Review on every OS. Reason: this is the minimal durable policy change and makes
-  Windows obey exactly the same pin mechanism. The caller must accept the Linux
-  Debug change before implementation/activation. Rejected as implicit behavior:
+  Windows obey exactly the same pin mechanism. The operator explicitly accepted
+  the Linux Debug change (server2 Grok works since CARD-1004; desktop canary
+  d6e4138e passed on grok-4.7). Rejected as implicit behavior:
   silently expanding a Windows-only request to every platform. If Linux Debug
   must remain Codex, return to Plan for platform-scoped pin semantics; do not hide
   that difference in `-IgnoreRoutingPin` or ad hoc per-dispatch overrides. Per-card
@@ -247,7 +250,7 @@ add `## Verification design` before Code is commissioned.
   card pin precedence retain existing semantics.
 - R-3: Ready is followed by exact transcript receipt, not screen/queue inference.
 
-### Checkpoints
+### Historical checkpoint proposal (superseded by the freeze below)
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
@@ -348,9 +351,49 @@ historical accepted canary evidence and the new failure evidence separate.
 
 ## Handoff
 
-Plan is complete under D-1's proposed default; no implementation is authorized by
-the artifact alone. Caller decides whether role-wide Debug may move to Grok,
-including Linux. If yes, next dispatch is TestDesign on this plan, retaining the
-Windows qualification gate and finalizing the checkpoint/PC design. If no,
-commission Plan for platform-specific pin routing before Code. No decision is
-needed to preserve the existing Review Grok/Opus pin.
+The original Plan handoff is superseded by the TestDesign freeze below. D-1 is
+approved for every platform. Code admission and the Windows qualification gates
+are specified below; the existing Review Grok/Opus pin remains in force.
+
+## Verification design
+
+TestDesign freeze: task `29fba8af-3bb0-489b-a0cb-914e22a491c3`, 2026-10-03,
+source `0514484597439bc46cd1d2117ef1ceb92b7c59cd`. This appendix supersedes the
+historical checkpoint proposal and its V/R identifiers, not S0-S3 or D-2..D-6.
+No repository build, test, live dispatch, pin write or backend change was run by
+TestDesign. Counts below are source-derived or planned executions, never passes.
+
+The exact S1 prompt edit replaces the entire paragraph beginning `Model-tier
+names are` and ending `ModelLevelAliases.cs` with the following text. Preserve
+the surrounding blank lines and final file newline; make no other bundle edit:
+
+```text
+Model-tier names are **not AgentKind values**. `-Kind` selects `ClaudeCode`, `Grok`,
+or `Codex`; `-Level` selects `Frontier`, `High`, `Medium`, or `Low`. Never pass a
+model-tier name as either flag. Codex resolves to full model IDs, not bare family
+names. See [agent kinds and model levels](../../docs/agent-kinds.md#3-model-levels)
+and `server/Application/Services/ModelLevelAliases.cs`.
+
+Windows Review/Debug follows the effective required routing pin. OS needs do not
+authorize -IgnoreRoutingPin. Normally omit -Kind/-Level to preserve its ordered
+fallback; see docs/orchestration-loop.md#windows-review-and-debug-routing for
+policy and explicit startup-failure recovery.
+```
+
+Read-only UTF-16 string arithmetic after CRLF-to-LF normalization: current
+file **14,310**, replaced span **868**, replacement **674**, final **14,116**,
+headroom **194**. This is the raw file length including final LF, not the
+catalog's trimmed length. The existing 14,310 assertion and its LF/CRLF arguments
+stay unchanged. Keep the `Model-tier names are` anchor: the standing-pipeline
+documentation fixture uses it as a section boundary. No safety paragraph or
+platform instruction is shortened. If Code's base changes this span or count,
+reconcile the exact edit and census before building; do not raise the cap.
+
+**Publication gate:** this plan may land now. The new prompt and live Debug pin
+must not land/activate ahead of WQ-1, WQ-2 and WQ-3 evidence and restored backend
+configuration. Tests and qualification evidence can be prepared first. Separate
+Final/Full Review must then bind the implementation SHA. Activation remains:
+confirmed land -> canonical source advance/restart and `/api/version` -> fresh
+pin/default/runner reads -> approved Debug pin write and readback -> bundle stamp
+and idle-gated standing-policy refresh -> WQ-4 -> acceptance. A successful
+d6e4138e turn, queue status, or Notify acknowledgement cannot waive a missing gate.
