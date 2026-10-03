@@ -141,7 +141,7 @@ public sealed class PlanCoverageCensusTests : CheckpointTestBase
     [Test]
     public void census_compares_resolved_identities_not_counts()
     {
-        Census(Run(Make(roster: ["A.First", "A.Helper"]))).ShouldBe(["One.A.Second:selected method absent from checklist", "One.A.Helper:checklist method not selected"], "c1005-pc-14");
+        Census(Run(Make(roster: ["A.First", "A.Helper"]))).ShouldBe(["One.A.Helper:checklist method not selected", "One.A.Second:selected method absent from checklist"], "c1005-pc-14");
         var prose = Make(roster: ["A.First"]); File.WriteAllText(prose.Plan, File.ReadAllText(prose.Plan).Replace("Coverage", "`A.Second`"));
         Census(Run(prose)).ShouldBe(["One.A.Second:selected method absent from checklist"], "c1005-pc-15");
         var labels = Make(source: Two.Replace("void Second() {}", "void Second() { x.ShouldBe(1, \"witness\"); x.ShouldNotContain(\"canary\", \"exclude\"); }"), roster: ["A.First"]);
@@ -152,7 +152,7 @@ public sealed class PlanCoverageCensusTests : CheckpointTestBase
         var aliases = Make(roster: ["A.First", "One.A.First", "A.Second"]);
         Run(aliases).ExitCode.ShouldBe(0, "c1005-pc-18");
         var wrong = Make(source: "namespace One { class A { [Test] void Same() {} } } namespace Two { class A { [Test] void Same() {} } }", filter: "/*/One/A/*", roster: ["Two.A.Same"]);
-        Census(Run(wrong)).ShouldBe(["One.A.Same:selected method absent from checklist", "Two.A.Same:checklist method not selected"], "c1005-pc-19");
+        Census(Run(wrong)).ShouldBe(["Two.A.Same:checklist method not selected", "One.A.Same:selected method absent from checklist"], "c1005-pc-19");
         var pc = Make(); File.WriteAllText(pc.Checklist, Checklist([Item("A.First"), Item("A.Second", "PC-1")]));
         Run(pc).ExitCode.ShouldBe(0, "c1005-pc-92");
     }

@@ -51,6 +51,9 @@ internal sealed class ClassCensusSelection
     internal void Compare(PlanCoverageReport report, TestAssertionIndex index)
     {
         report.Diagnostics.AddRange(_unmapped);
+        // An unsupported row may select any roster member; do not invent set differences
+        // from an incomplete selection. The unmapped verdict already refuses certification.
+        if (_unmapped.Count > 0) return;
         // Successfully bound checklist methods, independent of requirement family or display alias.
         var roster = report.Obligations.Where(o => o.FromChecklist && o.Kind == "method" && o.Matches.Count > 0)
             .SelectMany(o => index.Resolve(o.Test).Select(m => (Method: m, Obligation: o)))
@@ -116,7 +119,7 @@ internal sealed class ClassCensusSelection
             var direct = c.Syntax.Members.OfType<MethodDeclarationSyntax>().ToArray();
             var attrs = Attributes(c.Syntax).Concat(direct.SelectMany(Attributes)).ToArray();
             var aliases = root.DescendantNodes().OfType<UsingDirectiveSyntax>().Where(u => u.Alias is not null).Select(u => u.Alias!.Name.Identifier.ValueText).ToHashSet(StringComparer.Ordinal);
-            if (attrs.Any(a => aliases.Contains(a.Name.ToString().Split('.')[0])) || aliases.Contains("Test") || aliases.Contains("TestAttribute")) return "ambiguous test attribute alias";
+            if (attrs.Any(a => aliases.Contains(a.Name.ToString().Split('.')[0]))) return "ambiguous test attribute alias";
             if (direct.Any(m => Attributes(m).Any(a => AttributeName(a) is "Test" or "TestAttribute")) && index.Declarations.Any(d =>
                     d.Syntax.Identifier.ValueText is "Test" or "TestAttribute" && d.Namespace == c.Namespace)) return "shadowed test attribute";
             if (c.Path.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase) || c.Path.EndsWith(".generated.cs", StringComparison.OrdinalIgnoreCase)
