@@ -339,6 +339,7 @@ public sealed class CodexCliAdmissionTests
             k.Client.Sample = new(version, DateTimeOffset.UtcNow, null, new string('a',64));
             var task = await k.CreateAsync();
             await k.TickAsync();
+            k.Factory.ReadyHold?.TrySetResult(true);
             await k.Harness.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
             k.Factory.Created.Count.ShouldBe(1, "C959-pc-190");
             var adapter = k.Factory.Created.Single();
@@ -501,7 +502,8 @@ public sealed class CodexCliAdmissionTests
                     services.AddSingleton<ISessionRunnerDirectory>(new Directory(client, new Client()));
                     services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new BridgeQueueHarness.OptionsMonitorStub<AgentRegistrySettings>(Registry()));
                     services.AddSingleton<IOptions<AgentRegistrySettings>>(Options.Create(Registry()));
-                    services.AddSingleton<IAgentProtocolAdapterFactory>(sp => factory = new(sp.GetRequiredService<AgentSessionRuntime>(), schema.ConnectionString));
+                    services.AddSingleton<IAgentProtocolAdapterFactory>(sp => factory = new(sp.GetRequiredService<AgentSessionRuntime>(), schema.ConnectionString)
+                    { ReadyHold = busy ? new(TaskCreationOptions.RunContinuationsAsynchronously) : null });
                     services.AddSingleton<LandDeliveryBoundary>(boundary);
                     if (busy) services.AddSingleton<IEventBus>(sp => new BusyEventBus(
                         sp.GetRequiredService<MockEventBus>(), schema.ConnectionString));
@@ -586,10 +588,11 @@ public sealed class CodexCliAdmissionTests
 
     private sealed class Factory(AgentSessionRuntime runtime, string connection) : IAgentProtocolAdapterFactory
     {
+        public TaskCompletionSource<bool>? ReadyHold { get; init; }
         public List<FakeAgentProtocolAdapter> Created { get; } = [];
         public IAgentProtocolAdapter Create(AgentKind kind)
         {
-            var adapter = new FakeAgentProtocolAdapter { RegisterOnStart = runtime };
+            var adapter = new FakeAgentProtocolAdapter { RegisterOnStart = runtime, ReadyHold = ReadyHold };
             adapter.OnSubmitted = async text =>
             {
                 await BridgeQueueHarness.InsertEntryAsync(adapter.StartedSessionId!.Value, TranscriptKinds.UserPrompt, text,
