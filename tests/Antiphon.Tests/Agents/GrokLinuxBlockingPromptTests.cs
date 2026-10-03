@@ -414,6 +414,11 @@ public class GrokLinuxBlockingPromptTests
         foreach (var capture in windows.RootElement.GetProperty("captures").EnumerateObject().Where(x => x.Value.TryGetProperty("checkpoints", out _)))
         {
             var frames = capture.Value.GetProperty("checkpoints").EnumerateArray().ToArray();
+            if (capture.Name == "incident-98f50651-ansi-log")
+            {
+                frames.ShouldBeEmpty("incident metadata is not a captured frame");
+                continue;
+            }
             counts.Add(frames.Length);
             foreach (var frame in frames)
             {
