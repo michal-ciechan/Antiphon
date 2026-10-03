@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "name": "RED-R1",
+  "start": {
+    "commit": "bb5fa774cd56f85ee6f0b1122c198192427e5ddf",
+    "dirtyFiles": 1,
+    "fingerprint": "a12674d883941ff8a66e9d663158e82f849e6e4b3177e4f60fe7e4a7f92b28ea",
+    "observedAtUtc": "2026-10-03T16:17:23.5129572+00:00",
+    "captureStatus": "known",
+    "errorCode": null
+  },
+  "end": null,
+  "state": "unknown",
+  "buildSource": "unknown",
+  "reason": "source_dirty",
+  "receipt": "CHECKPOINT RED-R1 commit=bb5fa774cd56f85ee6f0b1122c198192427e5ddf build=n/a filter=/*/*/PlanCoverageCensusTests/opt_out_preserves_legacy_reports_and_declared_counts executed=0 passed=0 failed=0 skipped=0 trx=n/a slot=skipped waited=0s dirty=1 source=bb5fa774cd56f85ee6f0b1122c198192427e5ddf+dirty:a12674d883941ff8a66e9d663158e82f849e6e4b3177e4f60fe7e4a7f92b28ea sourceState=unknown buildSource=unknown reason=source_dirty",
+  "exitCode": 2,
+  "executed": 0,
+  "passed": 0,
+  "failed": 0,
+  "skipped": 0,
+  "timings": null
+}

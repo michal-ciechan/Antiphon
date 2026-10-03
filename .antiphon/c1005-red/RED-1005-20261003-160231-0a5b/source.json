@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "name": "RED-1005",
+  "start": {
+    "commit": "00a786f0962d8b1c07bd53201b3bb84ad827a447",
+    "dirtyFiles": 0,
+    "fingerprint": "632047284e1bdee2922a1c711872dd41777be624fa7c9fed559fb54eda2d363c",
+    "observedAtUtc": "2026-10-03T16:02:32.2201963+00:00",
+    "captureStatus": "known",
+    "errorCode": null
+  },
+  "end": {
+    "commit": "00a786f0962d8b1c07bd53201b3bb84ad827a447",
+    "dirtyFiles": 0,
+    "fingerprint": "632047284e1bdee2922a1c711872dd41777be624fa7c9fed559fb54eda2d363c",
+    "observedAtUtc": "2026-10-03T16:03:47.7564321+00:00",
+    "captureStatus": "known",
+    "errorCode": null
+  },
+  "state": "clean",
+  "buildSource": "unknown",
+  "reason": null,
+  "receipt": "CHECKPOINT RED-1005 commit=00a786f0962d8b1c07bd53201b3bb84ad827a447 build=failed filter=/*/*/PlanCoverageCensusTests/* executed=0 passed=0 failed=0 skipped=0 trx=/work/worktrees/task-b288ec96/.antiphon/c1005-red/RED-1005-20261003-160231-0a5b/run.trx slot=granted waited=0s dirty=0 source=00a786f0962d8b1c07bd53201b3bb84ad827a447 sourceState=clean buildSource=unknown",
+  "exitCode": 2,
+  "executed": 0,
+  "passed": 0,
+  "failed": 0,
+  "skipped": 0,
+  "timings": null
+}

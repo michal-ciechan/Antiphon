@@ -1,0 +1,3 @@
+HEARTBEAT run=20261003-174048-d24f elapsed=1m20s | CP-1 queued | CP-3 running 1m19s last-output 1m19s ago | bin-c1005-final queued
+HEARTBEAT run=20261003-174048-d24f elapsed=2m10s | CP-1 queued | CP-3 green 2m03s | bin-c1005-final building 0m05s
+STILL RUNNING exit=75

@@ -1,0 +1,524 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="74a02e4c-f96a-4a5f-a859-c31689bd5a95" name="@5d9e09695ab3 2026-10-03 16:06:06.5235789" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-10-03T16:06:04.9087471Z" queuing="2026-10-03T16:06:04.9087471Z" start="2026-10-03T16:06:04.9087471Z" finish="2026-10-03T16:06:06.5249832Z" />
+  <TestSettings name="default" id="ac159bce-4853-4d1f-8772-ecee990228a0">
+    <Deployment runDeploymentRoot="_5d9e09695ab3_2026-10-03_16_06_06.5235789" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="722c2a5e-786e-4794-b0ff-5a18d5850efa" testId="37c181e4-49b1-4275-4e44-f5cb95b7ea93" testName="census_reports_new_or_omitted_selected_method" computerName="5d9e09695ab3" duration="00:00:00.6571365" startTime="2026-10-03T16:06:05.5533851+00:00" endTime="2026-10-03T16:06:06.2105216+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="722c2a5e-786e-4794-b0ff-5a18d5850efa">
+      <Output>
+        <ErrorInfo>
+          <Message>ShouldAssertException: Census(r)
+    should be
+["One.A.Third:selected method absent from checklist"]
+    but was (case sensitive comparison)
+[]
+    difference
+[*]
+
+Additional Info:
+    c1005-pc-11</Message>
+          <StackTrace>   at Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.census_reports_new_or_omitted_selected_method() in /work/worktrees/task-b288ec96/tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs:line 113
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="abe8c4d2-7a3e-4047-845d-7a3844c6186c" testId="2bb4b9cc-ea72-b4e1-850a-0eec9d30744c" testName="checklist_flag_accepts_true_false_and_absence" computerName="5d9e09695ab3" duration="00:00:00.6571519" startTime="2026-10-03T16:06:05.5534398+00:00" endTime="2026-10-03T16:06:06.2105917+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="abe8c4d2-7a3e-4047-845d-7a3844c6186c">
+      <Output>
+        <StdOut>CHECKPOINT TEMP examined=1 deleted=0 bytes=0 remainingEligible=0 retained=1 budget=False elapsedMs=219
+[CARD-0204] SessionRunner__BaseUrl=http://127.0.0.1:1, Delegation__CheckInterpreterEnabled=false, Delegation__DiagnoseEnabled=false and Delegation__OutputDistillerEnabled=false for every Program boot in this assembly (inherited SessionRunner__BaseUrl='&lt;unset&gt;') - test hosts never launch on the production session-runner.
+[CARD-0298] Hangfire__ServerEnabled=false for every Program boot in this assembly - test hosts never start a Hangfire worker (no WMI census, no production-runner list).
+[CARD-0045] cleared inherited ANTIPHON_PTY_BACKEND='inbox' — pty tests declare their backend; the suite means the same thing whoever launched it.
+</StdOut>
+        <ErrorInfo>
+          <Message>ShouldAssertException: Census(Run(Make(roster: ["A.First"], inline: true), true))
+    should be
+["One.A.Second:selected method absent from checklist"]
+    but was (case sensitive comparison)
+[]
+    difference
+[*]
+
+Additional Info:
+    c1005-pc-3</Message>
+          <StackTrace>   at Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.checklist_flag_accepts_true_false_and_absence() in /work/worktrees/task-b288ec96/tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs:line 63
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="ea83547f-cba9-47c5-8510-2a6e52d4390d" testId="52f89c2e-99b5-499b-98a3-8042c1ac467f" testName="census_reports_unmapped_selection_without_dynamic_discovery" computerName="5d9e09695ab3" duration="00:00:00.6571737" startTime="2026-10-03T16:06:05.5533189+00:00" endTime="2026-10-03T16:06:06.2104926+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="ea83547f-cba9-47c5-8510-2a6e52d4390d">
+      <Output>
+        <ErrorInfo>
+          <Message>ShouldAssertException: Run(command).Diagnostics
+    should contain an element satisfying the condition
+((d.Code == "CLASS_CENSUS_UNMAPPED") &amp;&amp; (d.Id == "CP-2"))
+    but does not
+
+Additional Info:
+    c1005-pc-43</Message>
+          <StackTrace>   at Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery() in /work/worktrees/task-b288ec96/tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs:line 230
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="2660615c-15b4-4bda-a0ee-492dbd0b3f44" testId="50df12d9-c122-7e09-ee77-39d8e296cdae" testName="census_tracks_filter_class_namespace_and_project" computerName="5d9e09695ab3" duration="00:00:00.6568546" startTime="2026-10-03T16:06:05.5534696+00:00" endTime="2026-10-03T16:06:06.2103242+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="2660615c-15b4-4bda-a0ee-492dbd0b3f44">
+      <Output>
+        <ErrorInfo>
+          <Message>ShouldAssertException: Census(Run(Make(source: source, roster: [])))
+    should be
+["One.A.First:selected method absent from checklist", "One.Child.A.ChildOnly:selected method absent from checklist", "Two.A.First:selected method absent from checklist"]
+    but was (case sensitive comparison)
+[]
+    difference
+[*, *, *]
+
+Additional Info:
+    c1005-pc-25</Message>
+          <StackTrace>   at Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project() in /work/worktrees/task-b288ec96/tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs:line 168
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="8652eca8-ff17-4cee-b370-de10570da95c" testId="a1de6a8d-7f84-b1ee-297c-cd6764564304" testName="census_excludes_helpers_and_counts_parameterized_method_once" computerName="5d9e09695ab3" duration="00:00:00.6570605" startTime="2026-10-03T16:06:05.5533925+00:00" endTime="2026-10-03T16:06:06.2104530+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="8652eca8-ff17-4cee-b370-de10570da95c">
+      <Output>
+        <ErrorInfo>
+          <Message>ShouldAssertException: Census(Run(Make(source: source, roster: roster.Where(s =&gt; s != "A.BareTest").ToArray())))
+    should be
+["One.A.BareTest:selected method absent from checklist"]
+    but was (case sensitive comparison)
+[]
+    difference
+[*]
+
+Additional Info:
+    c1005-pc-35</Message>
+          <StackTrace>   at Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once() in /work/worktrees/task-b288ec96/tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs:line 208
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="703d3df2-a12f-4606-9e57-d282e41c9b5a" testId="adfc1e2c-2017-d773-65e3-1a50fc134ada" testName="census_public_cli_is_deterministic_and_read_only" computerName="5d9e09695ab3" duration="00:00:00.6567993" startTime="2026-10-03T16:06:05.5535068+00:00" endTime="2026-10-03T16:06:06.2103061+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="703d3df2-a12f-4606-9e57-d282e41c9b5a">
+      <Output>
+        <ErrorInfo>
+          <Message>ShouldAssertException: r.Diagnostics.Select(d =&gt; (d.Test, d.TestLine, d.PlanLine, d.PlanColumn, d.Detail))
+    should be
+[(One.A.First, 3, 13, 3, selected method absent from checklist), (One.A.Second, 4, 13, 3, selected method absent from checklist)]
+    but was
+[(, 0, 0, 1, malformed, unsupported or stale checklist)]
+    difference
+[*(, 0, 0, 1, malformed, unsupported or stale checklist)*, *]
+
+Additional Info:
+    c1005-pc-63</Message>
+          <StackTrace>   at Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only() in /work/worktrees/task-b288ec96/tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs:line 265
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="8821ef2b-8943-4d8a-af60-a48d38f6aa14" testId="fe974ff4-fcc8-c09d-eadc-002660ae0742" testName="census_rejects_unselected_or_non_test_roster_methods" computerName="5d9e09695ab3" duration="00:00:00.6569511" startTime="2026-10-03T16:06:05.5533550+00:00" endTime="2026-10-03T16:06:06.2103061+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="8821ef2b-8943-4d8a-af60-a48d38f6aa14">
+      <Output>
+        <ErrorInfo>
+          <Message>ShouldAssertException: Census(r)
+    should be
+["Other.B.Extra:checklist method not selected"]
+    but was (case sensitive comparison)
+[]
+    difference
+[*]
+
+Additional Info:
+    c1005-pc-12</Message>
+          <StackTrace>   at Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.census_rejects_unselected_or_non_test_roster_methods() in /work/worktrees/task-b288ec96/tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs:line 129
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="4e909fe2-c4d9-42ec-9912-c4ae7f3b7a5c" testId="8d99c353-38d0-b819-0e34-3f10ac87791f" testName="census_matches_exact_checklist_roster" computerName="5d9e09695ab3" duration="00:00:00.6569511" startTime="2026-10-03T16:06:05.5534480+00:00" endTime="2026-10-03T16:06:06.2103991+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="4e909fe2-c4d9-42ec-9912-c4ae7f3b7a5c">
+      <Output>
+        <ErrorInfo>
+          <Message>ShouldAssertException: matched.Obligations.Select(o =&gt; (o.Id, o.Kind, o.Name))
+    should be
+[(V-1, method, A.First), (V-1, method, A.Second)]
+    but was
+[] (System.Linq.Enumerable+ListSelectIterator`2[Antiphon.Checkpoints.Coverage.CoverageObligation,System.ValueTuple`3[System.String,System.String,System.String]])
+    difference
+[*, *]
+
+Additional Info:
+    c1005-pc-72</Message>
+          <StackTrace>   at Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.census_matches_exact_checklist_roster() in /work/worktrees/task-b288ec96/tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs:line 102
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="f78b3520-6db7-4c5a-a6e9-173b838cca9e" testId="fb82a0c9-50ae-8f85-db68-60383944d8b8" testName="census_compares_resolved_identities_not_counts" computerName="5d9e09695ab3" duration="00:00:00.6573156" startTime="2026-10-03T16:06:05.5533191+00:00" endTime="2026-10-03T16:06:06.2106347+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="f78b3520-6db7-4c5a-a6e9-173b838cca9e">
+      <Output>
+        <ErrorInfo>
+          <Message>ShouldAssertException: Census(Run(Make(roster: ["A.First", "A.Helper"])))
+    should be
+["One.A.Second:selected method absent from checklist", "One.A.Helper:checklist method not selected"]
+    but was (case sensitive comparison)
+[]
+    difference
+[*, *]
+
+Additional Info:
+    c1005-pc-14</Message>
+          <StackTrace>   at Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.census_compares_resolved_identities_not_counts() in /work/worktrees/task-b288ec96/tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs:line 144
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="3aacc2bc-e8c6-4575-96b6-2ef4249a0d9e" testId="a70f04ca-cfba-7817-ffe3-c3e7d685959b" testName="opt_out_preserves_legacy_reports_and_declared_counts" computerName="5d9e09695ab3" duration="00:00:00.6572547" startTime="2026-10-03T16:06:05.5533205+00:00" endTime="2026-10-03T16:06:06.2105752+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="3aacc2bc-e8c6-4575-96b6-2ef4249a0d9e">
+      <Output>
+        <ErrorInfo>
+          <Message>ShouldAssertException: Run(scoped).Diagnostics
+    should be empty but had
+1
+    item and was
+[CoverageDiagnostic { Code = MISSING_METHOD, PlanLine = 5, PlanColumn = 10, Id = V-1, Test = A, Name = A, TestPath = , TestLine = 0, Detail = no selected method }]
+
+Additional Info:
+    c1005-pc-97</Message>
+          <StackTrace>   at Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts() in /work/worktrees/task-b288ec96/tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs:line 311
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="cf24207f-3da1-4393-8e70-8e668afd858f" testId="04b1cbd5-bc82-a7ed-adb5-5da9fa9e55de" testName="census_unions_overlapping_filters_and_partial_declarations" computerName="5d9e09695ab3" duration="00:00:00.6568128" startTime="2026-10-03T16:06:05.5534967+00:00" endTime="2026-10-03T16:06:06.2103095+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="cf24207f-3da1-4393-8e70-8e668afd858f">
+      <Output>
+        <ErrorInfo>
+          <Message>ShouldAssertException: Run(w); Census(r)
+    should be
+["One.A.Second:selected method absent from checklist"]
+    but was (case sensitive comparison)
+[]
+    difference
+[*]
+
+Additional Info:
+    c1005-pc-34</Message>
+          <StackTrace>   at Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.census_unions_overlapping_filters_and_partial_declarations() in /work/worktrees/task-b288ec96/tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs:line 188
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="e0e6adfc-dcfb-42e1-908f-2aff31f7778b" testId="7f288516-6847-caa7-1668-e628aa7c245b" testName="checklist_flag_rejects_invalid_or_conflicting_input" computerName="5d9e09695ab3" duration="00:00:00.6570142" startTime="2026-10-03T16:06:05.5533460+00:00" endTime="2026-10-03T16:06:06.2103602+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="e0e6adfc-dcfb-42e1-908f-2aff31f7778b">
+      <Output>
+        <ErrorInfo>
+          <Message>ShouldAssertException: Run(Make()).ExitCode
+    should be
+0
+    but was
+2
+
+Additional Info:
+    c1005-valid-boolean-control</Message>
+          <StackTrace>   at Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.checklist_flag_rejects_invalid_or_conflicting_input() in /work/worktrees/task-b288ec96/tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs:line 95
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="census_reports_new_or_omitted_selected_method" storage="/work/worktrees/task-b288ec96/tests/antiphon.tests/bin-c1005-red/antiphon.tests.dll" id="37c181e4-49b1-4275-4e44-f5cb95b7ea93">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="722c2a5e-786e-4794-b0ff-5a18d5850efa" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b288ec96/tests/Antiphon.Tests/bin-c1005-red/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Checkpoints.PlanCoverageCensusTests" name="census_reports_new_or_omitted_selected_method" />
+    </UnitTest>
+    <UnitTest name="checklist_flag_accepts_true_false_and_absence" storage="/work/worktrees/task-b288ec96/tests/antiphon.tests/bin-c1005-red/antiphon.tests.dll" id="2bb4b9cc-ea72-b4e1-850a-0eec9d30744c">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="abe8c4d2-7a3e-4047-845d-7a3844c6186c" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b288ec96/tests/Antiphon.Tests/bin-c1005-red/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Checkpoints.PlanCoverageCensusTests" name="checklist_flag_accepts_true_false_and_absence" />
+    </UnitTest>
+    <UnitTest name="census_reports_unmapped_selection_without_dynamic_discovery" storage="/work/worktrees/task-b288ec96/tests/antiphon.tests/bin-c1005-red/antiphon.tests.dll" id="52f89c2e-99b5-499b-98a3-8042c1ac467f">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="ea83547f-cba9-47c5-8510-2a6e52d4390d" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b288ec96/tests/Antiphon.Tests/bin-c1005-red/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Checkpoints.PlanCoverageCensusTests" name="census_reports_unmapped_selection_without_dynamic_discovery" />
+    </UnitTest>
+    <UnitTest name="census_tracks_filter_class_namespace_and_project" storage="/work/worktrees/task-b288ec96/tests/antiphon.tests/bin-c1005-red/antiphon.tests.dll" id="50df12d9-c122-7e09-ee77-39d8e296cdae">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="2660615c-15b4-4bda-a0ee-492dbd0b3f44" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b288ec96/tests/Antiphon.Tests/bin-c1005-red/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Checkpoints.PlanCoverageCensusTests" name="census_tracks_filter_class_namespace_and_project" />
+    </UnitTest>
+    <UnitTest name="census_excludes_helpers_and_counts_parameterized_method_once" storage="/work/worktrees/task-b288ec96/tests/antiphon.tests/bin-c1005-red/antiphon.tests.dll" id="a1de6a8d-7f84-b1ee-297c-cd6764564304">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="8652eca8-ff17-4cee-b370-de10570da95c" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b288ec96/tests/Antiphon.Tests/bin-c1005-red/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Checkpoints.PlanCoverageCensusTests" name="census_excludes_helpers_and_counts_parameterized_method_once" />
+    </UnitTest>
+    <UnitTest name="census_public_cli_is_deterministic_and_read_only" storage="/work/worktrees/task-b288ec96/tests/antiphon.tests/bin-c1005-red/antiphon.tests.dll" id="adfc1e2c-2017-d773-65e3-1a50fc134ada">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="703d3df2-a12f-4606-9e57-d282e41c9b5a" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b288ec96/tests/Antiphon.Tests/bin-c1005-red/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Checkpoints.PlanCoverageCensusTests" name="census_public_cli_is_deterministic_and_read_only" />
+    </UnitTest>
+    <UnitTest name="census_rejects_unselected_or_non_test_roster_methods" storage="/work/worktrees/task-b288ec96/tests/antiphon.tests/bin-c1005-red/antiphon.tests.dll" id="fe974ff4-fcc8-c09d-eadc-002660ae0742">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="8821ef2b-8943-4d8a-af60-a48d38f6aa14" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b288ec96/tests/Antiphon.Tests/bin-c1005-red/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Checkpoints.PlanCoverageCensusTests" name="census_rejects_unselected_or_non_test_roster_methods" />
+    </UnitTest>
+    <UnitTest name="census_matches_exact_checklist_roster" storage="/work/worktrees/task-b288ec96/tests/antiphon.tests/bin-c1005-red/antiphon.tests.dll" id="8d99c353-38d0-b819-0e34-3f10ac87791f">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="4e909fe2-c4d9-42ec-9912-c4ae7f3b7a5c" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b288ec96/tests/Antiphon.Tests/bin-c1005-red/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Checkpoints.PlanCoverageCensusTests" name="census_matches_exact_checklist_roster" />
+    </UnitTest>
+    <UnitTest name="census_compares_resolved_identities_not_counts" storage="/work/worktrees/task-b288ec96/tests/antiphon.tests/bin-c1005-red/antiphon.tests.dll" id="fb82a0c9-50ae-8f85-db68-60383944d8b8">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="f78b3520-6db7-4c5a-a6e9-173b838cca9e" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b288ec96/tests/Antiphon.Tests/bin-c1005-red/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Checkpoints.PlanCoverageCensusTests" name="census_compares_resolved_identities_not_counts" />
+    </UnitTest>
+    <UnitTest name="opt_out_preserves_legacy_reports_and_declared_counts" storage="/work/worktrees/task-b288ec96/tests/antiphon.tests/bin-c1005-red/antiphon.tests.dll" id="a70f04ca-cfba-7817-ffe3-c3e7d685959b">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="3aacc2bc-e8c6-4575-96b6-2ef4249a0d9e" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b288ec96/tests/Antiphon.Tests/bin-c1005-red/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Checkpoints.PlanCoverageCensusTests" name="opt_out_preserves_legacy_reports_and_declared_counts" />
+    </UnitTest>
+    <UnitTest name="census_unions_overlapping_filters_and_partial_declarations" storage="/work/worktrees/task-b288ec96/tests/antiphon.tests/bin-c1005-red/antiphon.tests.dll" id="04b1cbd5-bc82-a7ed-adb5-5da9fa9e55de">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="cf24207f-3da1-4393-8e70-8e668afd858f" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b288ec96/tests/Antiphon.Tests/bin-c1005-red/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Checkpoints.PlanCoverageCensusTests" name="census_unions_overlapping_filters_and_partial_declarations" />
+    </UnitTest>
+    <UnitTest name="checklist_flag_rejects_invalid_or_conflicting_input" storage="/work/worktrees/task-b288ec96/tests/antiphon.tests/bin-c1005-red/antiphon.tests.dll" id="7f288516-6847-caa7-1668-e628aa7c245b">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="e0e6adfc-dcfb-42e1-908f-2aff31f7778b" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-b288ec96/tests/Antiphon.Tests/bin-c1005-red/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Checkpoints.PlanCoverageCensusTests" name="checklist_flag_rejects_invalid_or_conflicting_input" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="37c181e4-49b1-4275-4e44-f5cb95b7ea93" executionId="722c2a5e-786e-4794-b0ff-5a18d5850efa" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="2bb4b9cc-ea72-b4e1-850a-0eec9d30744c" executionId="abe8c4d2-7a3e-4047-845d-7a3844c6186c" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="52f89c2e-99b5-499b-98a3-8042c1ac467f" executionId="ea83547f-cba9-47c5-8510-2a6e52d4390d" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="50df12d9-c122-7e09-ee77-39d8e296cdae" executionId="2660615c-15b4-4bda-a0ee-492dbd0b3f44" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="a1de6a8d-7f84-b1ee-297c-cd6764564304" executionId="8652eca8-ff17-4cee-b370-de10570da95c" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="adfc1e2c-2017-d773-65e3-1a50fc134ada" executionId="703d3df2-a12f-4606-9e57-d282e41c9b5a" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="fe974ff4-fcc8-c09d-eadc-002660ae0742" executionId="8821ef2b-8943-4d8a-af60-a48d38f6aa14" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="8d99c353-38d0-b819-0e34-3f10ac87791f" executionId="4e909fe2-c4d9-42ec-9912-c4ae7f3b7a5c" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="fb82a0c9-50ae-8f85-db68-60383944d8b8" executionId="f78b3520-6db7-4c5a-a6e9-173b838cca9e" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="a70f04ca-cfba-7817-ffe3-c3e7d685959b" executionId="3aacc2bc-e8c6-4575-96b6-2ef4249a0d9e" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="04b1cbd5-bc82-a7ed-adb5-5da9fa9e55de" executionId="cf24207f-3da1-4393-8e70-8e668afd858f" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="7f288516-6847-caa7-1668-e628aa7c245b" executionId="e0e6adfc-dcfb-42e1-908f-2aff31f7778b" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="12" executed="12" passed="0" failed="12" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <RunInfos>
+      <RunInfo computerName="5d9e09695ab3" outcome="Error" timestamp="2026-10-03T16:06:06.5608823">
+        <Text>Exit code indicates failure: '2'. Please refer to https://aka.ms/testingplatform/exitcodes for more information.</Text>
+      </RunInfo>
+    </RunInfos>
+    <CollectorDataEntries>
+      <Collector agentName="5d9e09695ab3" uri="datacollector://TUnitExtensionHtmlReporter/1.44.0.0" collectorDisplayName="TUnit">
+        <UriAttachments>
+          <UriAttachment>
+            <A href="5d9e09695ab3/Antiphon.Tests-linux-net9.0-report.html" />
+          </UriAttachment>
+        </UriAttachments>
+      </Collector>
+    </CollectorDataEntries>
+  </ResultSummary>
+</TestRun>

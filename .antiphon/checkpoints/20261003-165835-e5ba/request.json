@@ -1,0 +1,37 @@
+{
+  "rows": [
+    "CP-1",
+    "CP-2",
+    "CP-3"
+  ],
+  "repeat": null,
+  "baseline": null,
+  "knownFlaky": [],
+  "rowTimeoutMinutes": null,
+  "totalTimeoutMinutes": null,
+  "parallel": null,
+  "serial": false,
+  "slots": "auto",
+  "keepOutputs": false,
+  "cleanOnRed": false,
+  "repoRoot": "/work/worktrees/task-b288ec96",
+  "commit": "f42849b3b5b5c881530e9c977fb683097078a827",
+  "branch": "feat/card-task-b288ec96",
+  "expectedSourceSha": "f42849b3b5b5c881530e9c977fb683097078a827",
+  "source": {
+    "version": 1,
+    "start": {
+      "commit": "f42849b3b5b5c881530e9c977fb683097078a827",
+      "dirtyFiles": 0,
+      "fingerprint": "ef722e8a71bc42d8fac8b6324b8fb68199379ec7e620c8a60c781875e1872ca7",
+      "observedAtUtc": "2026-10-03T16:58:35.5196045+00:00",
+      "captureStatus": "known",
+      "errorCode": null
+    },
+    "end": null,
+    "state": "unknown",
+    "buildSource": "unknown"
+  },
+  "ownerTaskId": "b288ec96-abfb-4ef3-af5f-13b42bd2a194",
+  "ownerSessionId": "4a679694-6c6b-4cdd-a39f-668575cb1cbf"
+}

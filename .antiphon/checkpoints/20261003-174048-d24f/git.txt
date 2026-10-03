@@ -1,0 +1,24 @@
+HEAD=4653db9089b2519c0e9aac86848ebc2733c05cc6
+branch=feat/card-task-b288ec96
+status:
+
+log:
+4653db908 docs(card-1005): simplify equivalent Unit filter after discovery stall; Unit pending
+f42849b3b fix(checkpoints): isolate class trivia and admit equivalent Unit filter; verification pending
+37fda937b fix(card-1005): retain legacy analysis records for invalid checklists; verification pending
+047f3ce3e fix(card-1005): complete linked-source, eligibility and public CLI guard fixtures; ordinary verification pending
+cc5273dc1 fix(card-1005): retain coordinate ordering and refuse incomplete selection comparisons; verification pending
+diffstat:
+...026-10-03-card-1005-opt-in-class-census-plan.md | 898 +++++++++++++++++++++
+ docs/testing-and-build.md                          |  33 +-
+ scripts/lib/checkpoint-usage.ps1                   |   2 +-
+ .../Checkpoints/PlanCoverageCensusTests.cs         | 384 +++++++++
+ .../Coverage/ClassCensusSelection.cs               | 172 ++++
+ .../Coverage/CoverageCommand.cs                    |  22 +-
+ .../Coverage/PlanCoverageAnalyzer.cs               |   8 +
+ .../Coverage/PlanCoverageReader.cs                 |   7 +-
+ .../Coverage/PlanCoverageReport.cs                 |   1 +
+ .../Coverage/TestAssertionIndex.cs                 |   4 +
+ 10 files changed, 1521 insertions(+), 10 deletions(-)
+
+source=4653db9089b2519c0e9aac86848ebc2733c05cc6 sourceState=clean buildSource=verified

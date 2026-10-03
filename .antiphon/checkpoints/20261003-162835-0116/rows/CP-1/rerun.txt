@@ -1,0 +1,2 @@
+dotnet run --project tools/Antiphon.Checkpoints -- row --name CP-1 --project tests/Antiphon.Tests --output-path bin-c1005-final/ --filter "/*/*/PlanCoverageCensusTests/census_reports_unmapped_selection_without_dynamic_discovery" --no-build
+dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c1005-final/ -- --treenode-filter "/*/*/PlanCoverageCensusTests/census_reports_unmapped_selection_without_dynamic_discovery"

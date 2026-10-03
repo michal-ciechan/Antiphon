@@ -1,0 +1,6 @@
+os=Debian GNU/Linux 12 (bookworm)
+cores=24
+memAvailableMb=98878
+loadAvg=24.02 17.67 13.72 69/3591 4901
+dotnet=10.0.401
+buildSlots=http://build-slots:8080/build-slots

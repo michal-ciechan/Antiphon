@@ -1,0 +1,50 @@
+
+████████╗██╗   ██╗███╗   ██╗██╗████████╗
+╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝
+   ██║   ██║   ██║██╔██╗ ██║██║   ██║
+   ██║   ██║   ██║██║╚██╗██║██║   ██║
+   ██║   ╚██████╔╝██║ ╚████║██║   ██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝
+
+   TUnit v1.44.0.0 | 64-bit | Debian GNU/Linux 12 (bookworm) | linux-x64 | .NET 9.0.20 | Microsoft Testing Platform v2.2.2
+
+   Engine Mode: SourceGenerated
+
+failed opt_out_preserves_legacy_reports_and_declared_counts (456ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: Run(w).Diagnostics
+      should contain an element satisfying the condition
+  ((d.Code == "CHECKLIST_COUNT_MISMATCH") && (d.Detail == "results expected=3 actual=2"))
+      but does not
+  
+  Additional Info:
+      c1005-pc-73
+    at Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts() in /work/worktrees/task-b288ec96/.antiphon/c1005-baseline/tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs:299
+    at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+    at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+    at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+    at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+    at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+    at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+    at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+    at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+    at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  Standard output
+    CHECKPOINT TEMP examined=1 deleted=0 bytes=0 remainingEligible=0 retained=1 budget=False elapsedMs=116
+    [CARD-0204] SessionRunner__BaseUrl=http://127.0.0.1:1, Delegation__CheckInterpreterEnabled=false, Delegation__DiagnoseEnabled=false and Delegation__OutputDistillerEnabled=false for every Program boot in this assembly (inherited SessionRunner__BaseUrl='<unset>') - test hosts never launch on the production session-runner.
+    [CARD-0298] Hangfire__ServerEnabled=false for every Program boot in this assembly - test hosts never start a Hangfire worker (no WMI census, no production-runner list).
+    [CARD-0045] cleared inherited ANTIPHON_PTY_BACKEND='inbox' — pty tests declare their backend; the suite means the same thing whoever launched it.
+    
+HTML test report written to: /work/worktrees/task-b288ec96/.antiphon/c1005-baseline/.antiphon/c1005-red-r1/RED-R1-20261003-161843-870c/Antiphon.Tests-linux-net9.0-report.html
+
+  In process file artifacts produced:
+    - /work/worktrees/task-b288ec96/.antiphon/c1005-baseline/.antiphon/c1005-red-r1/RED-R1-20261003-161843-870c/Antiphon.Tests-linux-net9.0-report.html
+    - /work/worktrees/task-b288ec96/.antiphon/c1005-baseline/.antiphon/c1005-red-r1/RED-R1-20261003-161843-870c/run.trx
+
+Test run summary: Failed! - /work/worktrees/task-b288ec96/.antiphon/c1005-baseline/tests/Antiphon.Tests/bin-c1005-red-r1/Antiphon.Tests.dll (net9.0|x64)
+  total: 1
+  failed: 1
+  succeeded: 0
+  skipped: 0
+  duration: 1s 251ms
+DOTNET run EXIT CODE: 2

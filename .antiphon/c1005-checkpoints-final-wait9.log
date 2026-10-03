@@ -1,0 +1,3 @@
+HEARTBEAT run=20261003-165835-e5ba elapsed=19m04s | CP-1 green 0m28s | CP-2 running 9m12s last-output 9m12s ago | CP-3 green 1m27s
+HEARTBEAT run=20261003-165835-e5ba elapsed=19m54s | CP-1 green 0m28s | CP-2 running 10m02s last-output 10m02s ago | CP-3 green 1m27s
+STILL RUNNING exit=75
