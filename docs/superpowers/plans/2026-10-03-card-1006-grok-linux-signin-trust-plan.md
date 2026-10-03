@@ -306,7 +306,10 @@ Modal base shapes use the relevant captured anchors once S-0 is satisfied.
 characters. V-7 checks 19 base shapes plus 19 sign-in-derived and 19 trust-derived
 shapes: **57 internal cases, one TUnit result**. For a derived case preserve the
 real modal's complete anchors outside the changed composer/status rows; assert
-that construction did not erase them. If a capture cannot be composed without
+that construction did not erase them. Transfer each probe's layout/glyph change,
+not a different modal's text: the sign-in-derived and trust-derived sets retain
+their respective reasons. The deliberate mixed-anchor case is V-9 and must
+classify SignIn. If a capture cannot be composed without
 erasing an anchor, freeze a different explicit placement before Code; do not
 drop the variant. V-5 is the stronger ready-composer precedence control, so a
 second broken layout cannot hide a missed modal detector.
@@ -430,6 +433,32 @@ Remove only task-owned `bin-c1006-plan/` outputs after all commands are finished
 retain `.antiphon` receipts. Record actual outcomes in a subsequent evidence
 amendment, without claiming the amendment itself was the tested source. If only
 evidence prose changes, re-import at the final SHA; no duplicate docs run is needed.
+
+### Plan verification receipt (2026-10-03)
+
+DOCS-1006 ran at committed source
+`4b168744303a93afab6bacc00127fb0b609e6bdb`: **37 executed, 37 passed, 0 failed,
+0 skipped**. Isolated build: 0 errors (581 compiler/analyzer warnings in unchanged
+code). Slot granted after 60 seconds; held for 159 seconds. The source validator
+returned `CHECKPOINT SOURCE VALID`, one row, clean source and verified build.
+
+```text
+CHECKPOINT DOCS-1006 commit=4b168744303a93afab6bacc00127fb0b609e6bdb build=ok filter=/*/*/(DockerStackDocumentationTests*)|(CheckpointImportTests*)|(CheckpointManifestTests*)/* executed=37 passed=37 failed=0 skipped=0 trx=/work/worktrees/task-e6f1295a/.antiphon/c1006-plan-checkpoints/DOCS-1006-20261003-123243-0690/run.trx slot=granted waited=60s dirty=0 source=4b168744303a93afab6bacc00127fb0b609e6bdb sourceState=clean buildSource=verified
+```
+
+The actual importer exited 0 and accepted **5 rows**, with minima 1/12/47/25/35,
+all five independent output paths, literal pipe filters and `serial: true`.
+Evidence root: `.antiphon/c1006-plan-checkpoints/`; imported manifest:
+`imported.yml`; source receipt:
+`DOCS-1006-20261003-123243-0690/source.json`.
+
+The final amendment records these results and clarifies that the 57 derived
+probe cases transfer layout without importing a foreign modal's anchors; V-9
+owns deliberate mixed-modal precedence. It does not change the checkpoint table,
+production code or tests. The docs test receipt remains attributed to the SHA
+above, not retrospectively to this amendment. Re-import the unchanged table at
+the final committed SHA before cleanup. This verifies plan syntax and the
+existing documentation contracts; all future captures, V/R and PCs remain pending.
 
 ## Risks, landing order and follow-ups
 
