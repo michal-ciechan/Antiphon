@@ -16,6 +16,13 @@ $entry = [ordered]@{ kind = 'case'; name = $Case; runnerId = $request.runnerId; 
 if ($state.scenario -eq 'c1008') { $entry['recycle'] = $request.recycle; $entry['tempRetiredAt'] = $request.tempRetiredAt }
 Add-Content -LiteralPath $env:C727_TEST_TRACE -Value ($entry | ConvertTo-Json -Compress -Depth 20)
 if ($Case -eq 'verify-runner-caches' -and $state.failVerify -eq $request.runnerId) { exit 1 }
+if ($state.scenario -eq 'c1008' -and $Case -eq 'deploy-parent') {
+    if ($state.failDeploy) { exit 2 }
+    $state.statuses.server2.available = $true
+    $state.statuses.server2.dispatchEligible = $true
+    $state.statuses.server2.runnerSessions = 0
+    $state.statuses.server2.buildVersion = $state.sha
+}
 if ($Case -eq 'runner-cache-seed' -and $state.tempContainer -and $state.tempOffline) { exit 1 }
 if ($state.PSObject.Properties.Name -contains 'markerPath' -and $Case -in @('deploy-parent', 'verify-runner-caches')) {
     # Real cold reader + Docker boundary fake. deploy-parent retires the seed image

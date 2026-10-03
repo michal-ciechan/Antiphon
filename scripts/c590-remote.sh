@@ -3500,7 +3500,8 @@ c1008_volume() {
     fi
     printf '%s' "$raw" | jq -ce --arg name "$name" '
       if type=="array" and length==1 and .[0].Name==$name and .[0].Driver=="local" and
-         (.[0].Options | type)=="object" and (.[0].Options | length)==0 and
+         (.[0] | has("Options")) and (.[0].Options==null or
+           ((.[0].Options | type)=="object" and (.[0].Options | length)==0)) and
          (.[0].Labels | type)=="object" and (.[0].CreatedAt | type)=="string" and
          (.[0].Mountpoint | type)=="string" then .[0] else error("identity") end' || return 2
 }
@@ -3509,6 +3510,16 @@ c1008_compose_model() {
     local model role key expected
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then model="$(compose_temp config --format json 2>/dev/null)"
     else model="$(compose_host config --format json 2>/dev/null)"; fi || c1008_refuse RecycleComposeMismatch
+    printf '%s' "$model" | jq -e '
+        def mounted($service;$source;$target):
+          ([.services[$service].volumes[] | select(.type=="volume" and .source==$source and .target==$target and (.read_only // false)==false)]|length)==1;
+        mounted("session-runner";"work";"/work") and mounted("session-runner";"runner-state";"/state") and
+        mounted("session-runner";"runner-tmp";"/tmp") and mounted("session-runner";"dind-data";"/var/lib/docker") and
+        mounted("session-runner";"runner-nuget-packages";"/home/app/.nuget/packages") and
+        mounted("session-runner";"runner-nuget-scratch";"/var/cache/antiphon/nuget-scratch") and
+        mounted("session-runner";"runner-npm-content";"/home/app/.npm/_cacache") and
+        mounted("state-init";"work";"/work") and mounted("state-init";"runner-state";"/state")' >/dev/null \
+        || c1008_refuse RecycleComposeMismatch
     for role in work runner-tmp dind-data runner-state; do
         expected="${C1008_PROJECT}_$role"
         printf '%s' "$model" | jq -e --arg role "$role" --arg name "$expected" \
@@ -3560,9 +3571,9 @@ c1008_http() {
 }
 
 c1008_tasks() {
-    local pass scope envelope excluded id row detail previous='' snapshot scopes rows pending
+    local pass scope envelope excluded id row detail previous='' snapshot scopes rows pending counts land
     for pass in 1 2; do
-        scopes='[]'; rows='{}'; pending="$C1008_PROJECT_ID"; snapshot='{}'
+        scopes='[]'; rows='{}'; pending="$C1008_PROJECT_ID"; snapshot='{}'; counts='{}'; land='{}'
         while [ -n "$pending" ]; do
             scope="${pending%%$'\n'*}"; pending="${pending#"$scope"}"; pending="${pending#$'\n'}"
             printf '%s' "$scopes" | jq -e --arg scope "$scope" 'index($scope)!=null' >/dev/null && continue
@@ -3572,17 +3583,31 @@ c1008_tasks() {
             envelope="$(c1008_http "/api/agent-tasks?projectId=$scope&unscoped=include&includeChecks=true")" || return 2
             printf '%s' "$envelope" | jq -e --arg scope "$scope" '
                 (.items|type)=="array" and (.excluded.byProject|type)=="array" and
-                .scope.projectId==$scope and .scope.unscoped=="include"' >/dev/null || return 2
+                .scope.projectId==$scope and .scope.unscoped=="include" and
+                (.excluded.total|type)=="number" and .excluded.total>=0 and (.excluded.total|floor)==.excluded.total and
+                .excluded.unscoped==0 and (.excluded.unscoped|type)=="number" and
+                all(.excluded.byProject[]; (.projectId|type)=="string" and
+                  (.projectId|test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) and
+                  .projectId!=$scope and (.count|type)=="number" and .count>0 and (.count|floor)==.count) and
+                ([.excluded.byProject[].projectId]|length)==([.excluded.byProject[].projectId]|unique|length) and
+                ([.excluded.byProject[].count]|add // 0)==.excluded.total' >/dev/null || return 2
+            while IFS= read -r row; do
+                id="$(printf '%s' "$row" | jq -r .projectId)"
+                printf '%s' "$counts" | jq -e --arg id "$id" --argjson row "$row" 'has($id) and .[$id]!=$row.count' >/dev/null && return 2
+                counts="$(printf '%s' "$counts" | jq -c --arg id "$id" --argjson row "$row" '.[$id]=$row.count')" || return 2
+            done < <(printf '%s' "$envelope" | jq -c '.excluded.byProject[]')
             snapshot="$(printf '%s' "$snapshot" | jq -c --arg scope "$scope" --argjson envelope "$envelope" \
                 '.[$scope]={ids:($envelope.items|map(.id)|sort),excluded:$envelope.excluded}')"
             excluded="$(printf '%s' "$envelope" | jq -r '.excluded.byProject[] | .projectId')" || return 2
             if [ -n "$excluded" ]; then pending="${pending:+$pending$'\n'}$excluded"; fi
             while IFS= read -r row; do
                 [ -n "$row" ] || continue
-                printf '%s' "$row" | jq -e '
+                printf '%s' "$row" | jq -e --arg scope "$scope" '
                     has("id") and has("status") and has("runnerId") and has("projectId") and has("scopeSource") and
                     has("landRequestedAt") and has("landStartedAt") and (.id|type)=="string" and
-                    (.status as $s | ["Queued","Dispatched","Working","Blocked","Succeeded","Failed","Canceled"]|index($s)!=null)' >/dev/null || return 2
+                    (.status as $s | ["Queued","Dispatched","Working","Blocked","Succeeded","Failed","Canceled"]|index($s)!=null) and
+                    (.scopeSource as $s | ["Task","Card","None"]|index($s)!=null) and
+                    (if .scopeSource=="None" then .projectId==null else .projectId==$scope end)' >/dev/null || return 2
                 id="$(printf '%s' "$row" | jq -r .id)"; [[ "$id" =~ ^[0-9a-f-]{36}$ ]] || return 2
                 row="$(printf '%s' "$row" | jq -c '{id,status,runnerId,projectId,scopeSource,landRequestedAt,landStartedAt}')"
                 printf '%s' "$rows" | jq -e --arg id "$id" --argjson row "$row" \
@@ -3592,13 +3617,22 @@ c1008_tasks() {
                 printf '%s' "$row" | jq -e --arg runner "$C1008_RUNNER" \
                     '.runnerId==$runner and (.status as $s | ["Queued","Dispatched","Working","Blocked","Failed"] | index($s)!=null)' >/dev/null && return 4
                 detail="$(c1008_http "/api/agent-tasks/$id")" || return 2
-                printf '%s' "$detail" | jq -e --arg id "$id" 'has("landRequest") and .summary.id==$id' >/dev/null || return 2
+                printf '%s' "$detail" | jq -e --argjson row "$row" 'has("landRequest") and
+                  (.summary|{id,status,runnerId,projectId,scopeSource,landRequestedAt,landStartedAt})==$row and
+                  (.summary|has("id") and has("status") and has("runnerId") and has("projectId") and
+                    has("scopeSource") and has("landRequestedAt") and has("landStartedAt"))' >/dev/null || return 2
                 printf '%s' "$detail" | jq -e '.landRequest!=null and (.landRequest.state as $s | ["Queued","Held","Running","NeedsResolution"] | index($s)!=null)' >/dev/null && return 3
                 printf '%s' "$detail" | jq -e '.landRequest==null or
-                  ((.landRequest.state as $s | ["Completed","Superseded","Canceled"]|index($s)!=null) and .landRequest.terminalEventId!=null)' >/dev/null || return 2
+                  ((.landRequest.state as $s | ["Completed","Superseded","Canceled"]|index($s)!=null) and
+                    (.landRequest.terminalEventId|type)=="string" and
+                    (.landRequest.terminalEventId|test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")))' >/dev/null || return 2
+                detail="$(printf '%s' "$detail" | jq -c '.landRequest')" || return 2
+                printf '%s' "$land" | jq -e --arg id "$id" --argjson detail "$detail" 'has($id) and .[$id]!=$detail' >/dev/null && return 2
+                land="$(printf '%s' "$land" | jq -c --arg id "$id" --argjson detail "$detail" '.[$id]=$detail')" || return 2
             done < <(printf '%s' "$envelope" | jq -c '.items[]')
         done
-        snapshot="$(printf '%s' "$snapshot" | jq -Sc --argjson rows "$rows" '{scopes:.,tasks:$rows}')" || return 2
+        printf '%s' "$counts" | jq -e --argjson rows "$rows" 'to_entries|all(.[]; .key as $id | .value==([$rows[]|select(.projectId==$id)]|length))' >/dev/null || return 2
+        snapshot="$(printf '%s' "$snapshot" | jq -Sc --argjson rows "$rows" --argjson land "$land" '{scopes:.,tasks:$rows,land:$land}')" || return 2
         if [ "$pass" = 2 ] && [ "$snapshot" != "$previous" ]; then return 2; fi
         previous="$snapshot"
     done
@@ -3634,12 +3668,27 @@ c1008_status_proof() {
     else
         printf '%s' "$body" | jq -e '.draining==true and .retireWhenIdle==false and .redirectTo=="server2-temp" and .acceptingNewWork==false and .retiredAt==null' >/dev/null \
             || c1008_refuse RecycleRoutingActive
+        printf '%s' "$body" | jq -e '(.runnerStoreId|type)=="string" and
+            (.runnerStoreId|test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"))' >/dev/null \
+            || c1008_refuse RecycleContainerStateUnknown
+        if [ "${C1008_RESUME:-0}" = 1 ] || [ "${C1008_ACTIVE:-0}" = 1 ]; then
+            [ "$(printf '%s' "$body" | jq -r .runnerStoreId)" = "$(printf '%s' "$C1008_RECORD" | jq -r .liveZero.runnerStoreId)" ] \
+                || c1008_refuse RecycleResumeMismatch
+        fi
         if printf '%s' "$body" | jq -e 'has("runnerSessions") and .runnerSessions==null' >/dev/null; then
             saved="$(printf '%s' "$C1008_RECORD" | jq -r '.phase')"
-            case "$saved" in containersRemoved|removing|volumesRemoved) ;; *) c1008_refuse RunnerCounterUnknown ;; esac
+            case "$saved" in containersRemoved|removing|volumesRemoved|recreating|verified) ;; *) c1008_refuse RunnerCounterUnknown ;; esac
             printf '%s' "$C1008_RECORD" | jq -e '.liveZero.runnerSessions==0 and .liveZero.sessions==0 and .liveZero.queuedTasks==0 and .ownedRemoved==true' >/dev/null \
                 || c1008_refuse RecycleResumeMismatch
-            [ "$(printf '%s' "$ids" | jq '[.[]|select(.Config.Labels["com.docker.compose.service"]!="build-slots")]|length')" = 0 ] || c1008_refuse RecycleResumeMismatch
+            printf '%s' "$C1008_RECORD" | jq -e '. as $saved | all(.owned[]; .Id as $id |
+                any($saved.stopReceipts[]; .==$id) and any($saved.removeReceipts[]; .==$id))' >/dev/null 2>&1 \
+                || c1008_refuse RecycleResumeMismatch
+            if [ "$saved" = recreating ] || [ "$saved" = verified ]; then
+                [ "$(printf '%s' "$ids" | jq -Sc '[.[]|select(.Config.Labels["com.docker.compose.service"]!="build-slots")|{Id,Image,Mounts}]|sort_by(.Id)')" = \
+                  "$(printf '%s' "$C1008_RECORD" | jq -Sc '[.recreated.owned[]|{Id,Image,Mounts}]|sort_by(.Id)')" ] || c1008_refuse RecycleResumeMismatch
+            else
+                [ "$(printf '%s' "$ids" | jq '[.[]|select(.Config.Labels["com.docker.compose.service"]!="build-slots")]|length')" = 0 ] || c1008_refuse RecycleResumeMismatch
+            fi
             body="$(printf '%s' "$body" | jq '.runnerSessions=0')"
         fi
         c1008_zero "$body"
@@ -3677,8 +3726,13 @@ while IFS= read -r -d '' entry; do
     top="$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || unknown
     top="$(readlink -e "$top")" || unknown
     [[ "$top/" == "$root/"* ]] || unknown
-    for marker in index.lock MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply; do
-        [ ! -e "$top/$marker" ] || unknown
+    gitdir="$(git -C "$repo" rev-parse --absolute-git-dir 2>/dev/null)" || unknown
+    gitdir="$(readlink -e "$gitdir")" || unknown
+    [[ "$gitdir/" == "$root/"* ]] || unknown
+    for directory in "$top" "$gitdir"; do
+        for marker in index.lock MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply; do
+            [ ! -e "$directory/$marker" ] || unknown
+        done
     done
     [ "$(git -C "$repo" rev-parse --is-shallow-repository 2>/dev/null)" = false ] || unknown
     partial_status=0
@@ -3848,6 +3902,24 @@ c1008_disk() {
         --argjson bytes "$((free * 1024))" '{raw:$raw,filesystem:$filesystem,bytes:$bytes}'
 }
 
+# Persist generations created by this operation before any later verification can
+# fail. A resume may continue creation/verification, but cannot return to removal.
+c1008_record_recreated() {
+    [ "${C1008_ACTIVE:-0}" = 1 ] && [ "$C1008_PROJECT" = "$HOST_PROJECT" ] || return 0
+    local name facts volumes='{}' census owned
+    for name in "${C1008_TARGETS[@]}"; do
+        facts="$(c1008_volume "$name")" || c1008_refuse RecycleVolumeCensusUnknown
+        volumes="$(printf '%s' "$volumes" | jq -c --arg name "$name" --argjson facts "$facts" '.[$name]=$facts')"
+    done
+    census="$(c1008_container_census)" || c1008_refuse RecycleVolumeCensusUnknown
+    owned="$(printf '%s' "$census" | jq -c --arg project "$C1008_PROJECT" '[.[]|select(.Config.Labels["com.docker.compose.project"]==$project and .Config.Labels["com.docker.compose.service"]!="build-slots")]')"
+    printf '%s' "$owned" | jq -e 'all(.[]; .Config.Labels["com.docker.compose.service"]=="session-runner" or .Config.Labels["com.docker.compose.service"]=="state-init")' >/dev/null \
+        || c1008_refuse RecycleResumeMismatch
+    c1008_references "$census" "$(printf '%s' "$owned" | jq '[.[].Id]')"
+    C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --argjson volumes "$volumes" --argjson owned "$owned" '.recreated={volumes:$volumes,owned:$owned}|.phase="recreating"|.outcome="verificationPending"')"
+    c1008_save || c1008_refuse RecycleReceiptUnavailable
+}
+
 c1008_recycle() {
     C1008_PROJECT="$1"; C1008_RUNNER=server2
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1008_RUNNER=server2-temp; fi
@@ -3881,6 +3953,21 @@ c1008_recycle() {
     fi
     c1008_lock
     c1008_status_proof
+    if [ "${C1008_RESUME:-0}" = 1 ] && printf '%s' "$C1008_RECORD" | jq -e '.phase=="recreating" or .phase=="verified"' >/dev/null; then
+        [ "$C1008_PROJECT" = "$HOST_PROJECT" ] || c1008_refuse RecycleResumeMismatch
+        printf '%s' "$C1008_RECORD" | jq -e '.ownedRemoved==true and all(.volumes[]; .outcome=="removed" or .outcome=="alreadyAbsent") and (.recreated.volumes|type)=="object" and (.recreated.owned|type)=="array"' >/dev/null \
+            || c1008_refuse RecycleResumeMismatch
+        for name in "${C1008_TARGETS[@]}" "${HOST_PROJECT}_runner-state" "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+            facts="$(c1008_volume "$name")" || c1008_refuse RecycleVolumeCensusUnknown
+            [ "$(printf '%s' "$facts" | jq -Sc .)" = "$(printf '%s' "$C1008_RECORD" | jq -Sc --arg name "$name" 'if .recreated.volumes|has($name) then .recreated.volumes[$name] else .preserved[$name] end')" ] \
+                || c1008_refuse RecycleResumeMismatch
+        done
+        owned="$(printf '%s' "$C1008_CENSUS" | jq -Sc --arg project "$C1008_PROJECT" '[.[]|select(.Config.Labels["com.docker.compose.project"]==$project and .Config.Labels["com.docker.compose.service"]!="build-slots")|{Id,Image,Mounts}]|sort_by(.Id)')"
+        [ "$owned" = "$(printf '%s' "$C1008_RECORD" | jq -Sc '[.recreated.owned[]|{Id,Image,Mounts}]|sort_by(.Id)')" ] || c1008_refuse RecycleResumeMismatch
+        c1008_references "$C1008_CENSUS" "$(printf '%s' "$owned" | jq '[.[].Id]')"
+        C1008_ACTIVE=1
+        return 0
+    fi
     for name in "${C1008_TARGETS[@]}"; do
         facts="$(c1008_volume "$name")" || c1008_refuse RecycleVolumeCensusUnknown
         if [ "${C1008_RESUME:-0}" = 1 ]; then
@@ -3913,7 +4000,7 @@ c1008_recycle() {
         image="$(printf '%s' "$owned" | jq -r '[.[]|select(.Config.Labels["com.docker.compose.service"]=="session-runner")][0].Image // empty')"
         C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --argjson volumes "$originals" --argjson preserved "$preserved" \
             --argjson owned "$owned" --argjson live "$C1008_STATUS" --argjson tasks "$C1008_TASKS" --arg image "$image" \
-            --arg retiredAt "${C1008_RETIRED_AT:-}" '.volumes=$volumes|.preserved=$preserved|.owned=$owned|.liveZero=$live|.tasks=$tasks|.image=$image|.retiredAt=$retiredAt')"
+            --arg retiredAt "${C1008_RETIRED_AT:-}" '.volumes=$volumes|.preserved=$preserved|.owned=$owned|.liveZero=$live|.tasks=$tasks|.image=$image|.retiredAt=$retiredAt|.stopReceipts=[]|.removeReceipts=[]')"
     else
         [ "$(printf '%s' "$preserved" | jq -Sc .)" = "$(printf '%s' "$C1008_RECORD" | jq -Sc .preserved)" ] || c1008_refuse RecycleResumeMismatch
         printf '%s' "$C1008_RECORD" | jq -e --argjson owned "$owned" \
@@ -3939,11 +4026,17 @@ c1008_recycle() {
             current="$(docker inspect "$id" 2>/dev/null)" || c1008_refuse RecycleVolumeCensusUnknown
         fi
         printf '%s' "$current" | jq -e '.[0].State.Running==false and .[0].State.Status=="exited"' >/dev/null || c1008_refuse RecycleStopFailed
+        C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg id "$id" '.stopReceipts=((.stopReceipts + [$id])|unique)')"
+        c1008_save || c1008_refuse RecycleReceiptUnavailable
     done < <(printf '%s' "$owned" | jq -r '.[].Id')
     C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c '.phase="stopped"')"; c1008_save || c1008_refuse RecycleReceiptUnavailable
     while IFS= read -r id; do
         [ -n "$id" ] || continue
         docker rm -- "$id" >/dev/null 2>&1 || c1008_refuse RecycleRemoveFailed
+        current="$(c1008_container_census)" || c1008_refuse RecycleVolumeCensusUnknown
+        printf '%s' "$current" | jq -e --arg id "$id" 'all(.[]; .Id!=$id)' >/dev/null || c1008_refuse RecycleRemoveFailed
+        C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg id "$id" '.removeReceipts=((.removeReceipts + [$id])|unique)')"
+        c1008_save || c1008_refuse RecycleReceiptUnavailable
     done < <(printf '%s' "$owned" | jq -r '.[].Id')
     C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c '.phase="containersRemoved"|.ownedRemoved=true')"; c1008_save || c1008_refuse RecycleReceiptUnavailable
     c1008_audit_checked; after="$C1008_AUDIT"
@@ -3959,6 +4052,8 @@ c1008_recycle() {
         c1008_status_proof; c1008_references "$C1008_CENSUS" '[]'
         facts="$(c1008_volume "$name")" || c1008_refuse RecycleVolumeCensusUnknown
         if [ "$facts" != null ]; then
+            [ "$(printf '%s' "$facts" | jq -Sc .)" = "$(printf '%s' "$C1008_RECORD" | jq -Sc --arg name "$name" '.volumes[$name].original')" ] \
+                || c1008_refuse RecycleResumeMismatch
             [ "$C1008_PROJECT" != "$TEMP_PROJECT" ] || c1008_refuse RecycleRemoveFailed
             docker volume rm -- "$name" >/dev/null 2>&1 || c1008_refuse RecycleVolumeInUse
             [ "$(c1008_volume "$name")" = null ] || c1008_refuse RecycleRemoveFailed
@@ -3974,7 +4069,7 @@ c1008_recycle() {
         [ "$(printf '%s' "$facts" | jq -Sc .)" = "$(printf '%s' "$preserved" | jq -Sc --arg name "$name" '.[$name]')" ] || c1008_refuse RecycleVolumeIdentityMismatch
     done
     [ "$code" = 0 ] || c1008_refuse RecycleDiskUnknown
-    C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c '.outcome="completed"')"; c1008_save || c1008_refuse RecycleReceiptUnavailable
+    C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c '.outcome=(if .project=="antiphon-runner-temp" then "completed" else "reclaimed" end)')"; c1008_save || c1008_refuse RecycleReceiptUnavailable
     c1008_summary
 }
 
@@ -4016,10 +4111,13 @@ EOF
     # CARD-0631 D-10: a fresh work volume gets its checkout before the runner exists.
     seed_runner_checkout
 
-    compose_host up -d --no-build >> "$CASE_DIR/command.log" 2>&1 || {
+    local up_code=0
+    compose_host up -d --no-build >> "$CASE_DIR/command.log" 2>&1 || up_code=$?
+    c1008_record_recreated
+    if [ "$up_code" != 0 ]; then
         compose_host logs --no-color --tail 120 >> "$CASE_DIR/command.log" 2>&1 || true
         write_result false HostComposeFailed 2
-    }
+    fi
 
     local container i
     for i in $(seq 1 60); do
@@ -4143,6 +4241,15 @@ EOF
 
     # Dispatch eligibility is recorded, not asserted: CP-6a is what turns production on.
     curl -fsS "${C604_SERVER_ORIGIN:?}/api/session-runners/server2/status" > "$CASE_DIR/status.json" 2>&1 || true
+    if [ "${C1008_ACTIVE:-0}" = 1 ]; then
+        local registered
+        registered="$(c849_status_body server2)" || c1008_refuse RunnerStatusMissing
+        printf '%s' "$registered" | jq -e --arg sha "$SHA" --arg store "$(printf '%s' "$C1008_RECORD" | jq -r .liveZero.runnerStoreId)" \
+            '.buildVersion==$sha and .runnerStoreId==$store and .available==true and .dispatchEligible==true and .draining==true and .acceptingNewWork==false' >/dev/null \
+            || c1008_refuse RecycleRegistrationMismatch
+        C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c '.phase="verified"|.outcome="completed"')"
+        c1008_save || c1008_refuse RecycleReceiptUnavailable
+    fi
     write_result true '' 0
 }
 

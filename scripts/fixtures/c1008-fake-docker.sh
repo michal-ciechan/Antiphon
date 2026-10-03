@@ -37,15 +37,20 @@ else if (args[0] === 'ps') {
 } else if(args[0]==='rm') {
  if(args.some(a=>a==='-f'||a==='--force'||a==='-v'))fail();
  const c=state.containers.find(c=>c.Id===name);if(!c||c.State.Running||fault==='helper-rm-failed'&&c.Config.Labels['io.antiphon.audit'])fail();
+ if(fault==='owned-rm-failed'&&c.Config.Labels['com.docker.compose.service']==='session-runner')fail();
  state.containers=state.containers.filter(c=>c.Id!==name);save();out(name+'\n');
 } else if(args[0]==='volume'&&args[1]==='ls')out(Object.keys(state.volumes).join('\n')+'\n');
 else if(args[0]==='volume'&&args[1]==='inspect') {
+ if(fault==='generation-after-stop'&&!state.generationChanged&&name==='antiphon-runner_work'&&
+    !state.containers.some(c=>['session-runner','state-init'].includes(c.Config.Labels['com.docker.compose.service']))) {
+   state.volumes[name].CreatedAt='2026-10-03T10:00:00Z';state.generationChanged=true;save();
+ }
  if(fault==='volume-inspect-error')fail(); const v=state.volumes[name];if(!v){process.stderr.write('No such volume\n');process.exit(1);}
  out([v]);
 } else if(args[0]==='volume'&&args[1]==='rm') {
  if(args.length!==4||args[2]!=='--')fail();
  if(state.containers.some(c=>c.Mounts.some(m=>m.Name===name))){process.stderr.write('volume is in use\n');process.exit(1);}
- if(fault==='rm-second-failed'&&state.removed.length===1)fail();
+ if(fault==='rm-first-failed'&&state.removed.length===0||fault==='rm-second-failed'&&state.removed.length===1||fault==='rm-third-failed'&&state.removed.length===2)fail();
  if(!state.volumes[name])fail();delete state.volumes[name];state.removed.push(name);save();out(name+'\n');
 } else if(args[0]==='compose') {
  const project=args[args.indexOf('-p')+1];

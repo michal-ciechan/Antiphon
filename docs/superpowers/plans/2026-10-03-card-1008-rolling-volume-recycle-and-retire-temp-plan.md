@@ -1408,3 +1408,7 @@ duplicate card is needed. CARD-0980/0983 re-baseline after CARD-1008 lands.
 next: code
 handoff: Implement the retained freeze: default main recycle with its own stop, retired-absent temp acceptance and temp down -v; preview remains. 125 executable PCs, 20 V methods, 32 RD outcomes; CP minima 1/19/54/207-derived/1. B-2 import passed. Require policy land af6d03f1 and admission recount. CARD-1008 lands before 0980/0983 re-baseline and 1010 starts.
 artifact: docs/superpowers/plans/2026-10-03-card-1008-rolling-volume-recycle-and-retire-temp-plan.md
+
+### Continuation platform identity correction (b3777342)
+
+A plain local Docker volume reports `Options:null` on this nested daemon. The identity predicate accepts explicit null and an empty object; omitted, array, scalar and nonempty option values remain unknown. The new literal-null V-1 vector failed at its removal assertion on committed 9342aca57d79c4276b3251bbe04605f240f41937 (one executed/failed, successful build). This is ordinary defect qualification, not a deliberate Mutation cycle.
