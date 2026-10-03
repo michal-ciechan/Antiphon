@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Antiphon.Checkpoints.Coverage;
 using Shouldly;
 using TUnit.Core;
@@ -51,6 +53,43 @@ public sealed class PlanCoverageParserTests : CheckpointTestBase
         report.Diagnostics.ShouldNotContain(d => d.Name == "incarnation facts", "coverage-checklist-mapped");
         new PlanCoverageReader().Read("p", plan, checklist.Replace("\"version\":1", "\"version\":2")).Invalid.ShouldBeTrue("coverage-checklist-version");
         new PlanCoverageReader().Read("p", plan, checklist.Replace("incarnation facts", "stale clause")).Invalid.ShouldBeTrue("coverage-checklist-stale");
+
+        const string json = "{\n  \"version\": 1,\n  \"items\": []\n}\n";
+        const string lfHash = "da6fa0fb6dc64a3faf1f81f830b8696ccf02b9c654135111429090fa240870f8";
+        const string crlfHash = "79f2f76348e92b2903f7a7e371d28a1e951cf465a1ec68a1f1ee2221a871a200";
+        string RawHash(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+        foreach (var (payload, expectedHash, label) in new[]
+        {
+            (json, lfHash, "c1013-inline-lf"),
+            (json + "\n", "3ba91a5d353e5eaab71a23740fd938f42e9cd1996fe809aded37f4b2951bcc33", "c1013-inline-blank-line"),
+            (json.Replace("  \"version\"", "    \"version\""), "85c491e24a155122596d00155b48f01c095a8b8968b71985736a69155256feb1", "c1013-inline-whitespace"),
+        })
+        {
+            var lfPlan = PlanCoverageFixture.Plan() + "\n```plan-coverage-v1\n" + payload + "```\n";
+            var lf = new PlanCoverageReader().Read("plan.md", lfPlan);
+            var crlfPlan = lfPlan.Replace("\n", "\r\n");
+            var crlf = new PlanCoverageReader().Read("plan.md", crlfPlan);
+            foreach (var parsed in new[] { lf, crlf })
+            {
+                parsed.Invalid.ShouldBeFalse("c1013-inline-valid");
+                parsed.ChecklistSha256.ShouldBe(expectedHash, label);
+                parsed.Obligations.Select(o => (o.Id, o.Test, o.Kind, o.Name, o.PlanLine, o.PlanColumn))
+                    .ShouldBe([("V-1", "Demo.Check", "method", "Demo.Check", 5, 10),
+                        ("V-1", "Demo.Check", "label", "target-label", 5, 33)], "c1013-inline-coordinates");
+            }
+            lf.PlanSha256.ShouldBe(RawHash(lfPlan), "c1013-raw-plan");
+            crlf.PlanSha256.ShouldBe(RawHash(crlfPlan), "c1013-raw-plan");
+            crlf.PlanSha256.ShouldNotBe(lf.PlanSha256, "c1013-raw-plan");
+        }
+        foreach (var rawPlan in new[] { PlanCoverageFixture.Plan(), PlanCoverageFixture.Plan().Replace("\n", "\r\n") })
+        {
+            var externalLf = new PlanCoverageReader().Read("plan.md", rawPlan, json);
+            var externalCrlf = new PlanCoverageReader().Read("plan.md", rawPlan, json.Replace("\n", "\r\n"));
+            externalLf.Invalid.ShouldBeFalse("c1013-external-valid");
+            externalCrlf.Invalid.ShouldBeFalse("c1013-external-valid");
+            externalLf.ChecklistSha256.ShouldBe(lfHash, "c1013-external-lf");
+            externalCrlf.ChecklistSha256.ShouldBe(crlfHash, "c1013-external-crlf");
+        }
     }
 
     [Test]
