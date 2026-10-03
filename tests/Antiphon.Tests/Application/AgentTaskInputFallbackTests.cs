@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
@@ -39,22 +40,24 @@ public sealed class AgentTaskInputFallbackTests
             RunnerRepository = Path.Combine(Path.GetDirectoryName(f.RunnerCwd)!, "repo"),
             CapacityStatePath = Path.Combine(Path.GetDirectoryName(f.RunnerCwd)!, "capacity"),
         });
-        f.Adapter.BeforeInput = async (text, _) =>
+        await using var transport = await PhoneHomeTestHost.StartAsync();
+        await using var peer = await transport.ConnectPeerAsync();
+        var live = await transport.WaitLiveAsync();
+        live.DispatchEligible = true;
+        PhoneHomeFrame? writerReply = null;
+        peer.Reply = frame =>
         {
-            var frame = new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(),
-                PhoneHomeOperation.Input,
-                Payload: JsonSerializer.SerializeToElement(new
-                {
-                    sessionId = f.SessionId, input = text, runnerCwd = f.RunnerCwd,
-                    spill = new PhoneHomeInputSpill(initial.RemoteSpillRelativePath!, initial.RemoteSpillBody!),
-                }, PhoneHomeFraming.Json));
-            var reply = await dispatcher.DispatchAsync(frame, CancellationToken.None);
-            reply.ErrorCode.ShouldBe(PhoneHomeProblemTypes.SpillWriteFailedBeforeInput,
-                "real-writer-before-input-code");
-            throw new RunnerSpillWriteException();
+            if (frame.Operation != PhoneHomeOperation.Input) return null;
+            return writerReply = dispatcher.DispatchAsync(frame, CancellationToken.None)
+                .GetAwaiter().GetResult();
         };
+        var runnerClient = new PhoneHomeRunnerClient(live,
+            f.Provider.GetRequiredService<RemoteSpillCourier>());
+        f.Adapter.BeforeInput = (text, ct) => runnerClient.SendInputAsync(f.SessionId, text, ct);
         await Should.ThrowAsync<ConflictException>(() =>
             f.Queue.SendNowAsync(f.SessionId, initial.Id, CancellationToken.None));
+        writerReply?.ErrorCode.ShouldBe(PhoneHomeProblemTypes.SpillWriteFailedBeforeInput,
+            "real-writer-before-input-code");
         f.Adapter.Inputs.ShouldBeEmpty("file-pointer-input-count=0");
         runtime.Inputs.ShouldBeEmpty("real-runtime-input-count=0");
         await using var db = f.Db();
@@ -295,7 +298,10 @@ public sealed class AgentTaskInputFallbackTests
         await Should.ThrowAsync<ConflictException>(() =>
             f.Queue.SendNowAsync(f.SessionId, row.Id, CancellationToken.None));
         await using var db = f.Db();
-        (await db.SessionQueuedMessages.SingleAsync()).Body.ShouldBe(row.Body);
+        var reverted = await db.SessionQueuedMessages.SingleAsync();
+        reverted.Body.ShouldBe(row.Body);
+        reverted.Status.ShouldBe(QueuedMessageStatus.Pending, "ordinary-spill-stays-pending");
+        reverted.DeliveryAttempts.ShouldBe(1, "ordinary-spill-attempt-retained");
         (await db.AgentTaskEvents.CountAsync(e => e.Type == AgentTaskEventType.Warning))
             .ShouldBe(0, "unowned-fallback-warning-count=0");
     }
