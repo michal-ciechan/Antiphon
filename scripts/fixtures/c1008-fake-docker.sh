@@ -16,6 +16,7 @@ if (fault === 'ps-error' && args[0] === 'ps') fail();
 if (fault === 'inspect-error' && args[0] === 'inspect') fail();
 if (fault === 'volume-ls-error' && args[0] === 'volume' && args[1] === 'ls') fail();
 if (args[0] === 'info') { out(root+'\n'); }
+else if(args[0]==='image'&&args[1]==='inspect')out('sha256:'+'a'.repeat(64)+'\n');
 else if (args[0] === 'ps') {
  let items = state.containers;
  const filter = args[args.indexOf('--filter')+1];

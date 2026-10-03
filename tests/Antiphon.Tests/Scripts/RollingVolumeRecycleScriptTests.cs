@@ -261,8 +261,8 @@ internal sealed class C1008HostFixture : IDisposable
                 { ["com.docker.compose.project"] = project, ["com.docker.compose.volume"] = role });
                 model[role] = new JsonObject { ["name"] = name };
             }
-            foreach (var (role, key) in new[] { ("nuget-packages", "nuget-packages"),
-                         ("nuget-scratch", "nuget-scratch"), ("npm-content", "npm-content") })
+            foreach (var (role, key) in new[] { ("nuget-packages", "runner-nuget-packages"),
+                         ("nuget-scratch", "runner-nuget-scratch"), ("npm-content", "runner-npm-content") })
             {
                 var name = "antiphon-runner-cache-" + role;
                 if (!volumes.ContainsKey(name)) volumes[name] = Volume(name, new JsonObject
@@ -315,6 +315,7 @@ internal sealed class C1008HostFixture : IDisposable
             C1008_FIXTURE_ROOT='{{Root}}'; export C1008_FIXTURE_ROOT
             SERVER2_ROOT='{{Root}}/server'; ROOT='{{Root}}'; EVIDENCE_ROOT='{{Root}}/evidence'; CASE_DIR="$EVIDENCE_ROOT/$CASE"
             SERVER2_ENV='{{Root}}/main.env'; SERVER2_TEMP_ENV='{{Root}}/temp.env'; mkdir -p "$CASE_DIR"
+            RUNNER_GIT_USER_NAME=Fixture; RUNNER_GIT_USER_EMAIL=fixture@example.invalid
             C1008_OPERATION=c100800000000000000000000000000000001; C1008_CONTEXT=default; C1008_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1
             C1008_DRY_RUN={{(dryRun ? "1" : "0")}}; C590_TEMP_RETIRED_AT=2026-10-03T09:30:00Z
             docker() { bash '{{DelegateScriptRunner.RepoRoot}}/scripts/fixtures/c1008-fake-docker.sh' "$@"; }

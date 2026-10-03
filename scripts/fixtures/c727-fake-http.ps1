@@ -1,10 +1,29 @@
 # Offline CARD-0727 deploy wrapper fixture. No network or real server2 access.
-param([string]$Method, [string]$RunnerId, [string]$Suffix, [string]$BodyJson)
+param([string]$Method, [string]$RunnerId, [string]$Suffix, [string]$BodyJson, [string]$Path)
 $ErrorActionPreference = 'Stop'
 $state = Get-Content -Raw -LiteralPath $env:C727_TEST_STATE | ConvertFrom-Json
 $body = if ($BodyJson) { $BodyJson | ConvertFrom-Json } else { $null }
-$trace = [ordered]@{ kind = 'http'; method = $Method; runnerId = $RunnerId; suffix = $Suffix; body = $body }
+$trace = [ordered]@{ kind = 'http'; method = $Method; runnerId = $RunnerId; suffix = $Suffix; path = $Path; body = $body }
 Add-Content -LiteralPath $env:C727_TEST_TRACE -Value ($trace | ConvertTo-Json -Compress -Depth 5)
+
+if ($Path) {
+    if ($Path -eq '/api/projects?includeArchived=true') {
+        Write-Output '[{"id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1","gitRepositoryUrl":"https://github.com/michal-ciechan/Antiphon.git"}]'
+        exit 0
+    }
+    if ($state.taskError) { [Console]::Error.WriteLine([string]$state.taskError); exit 2 }
+    if ($Path -like '/api/agent-tasks?*') {
+        if ($state.tasks) { $state.tasks | ConvertTo-Json -Compress -Depth 20 }
+        else { Write-Output '{"items":[],"scope":{"projectId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1","unscoped":"include"},"excluded":{"total":0,"unscoped":0,"byProject":[]}}' }
+        exit 0
+    }
+    if ($Path -like '/api/agent-tasks/*') {
+        $id = $Path.Substring('/api/agent-tasks/'.Length)
+        @{ summary = @{ id = $id }; landRequest = $null } | ConvertTo-Json -Compress -Depth 5
+        exit 0
+    }
+    exit 2
+}
 
 if ($state.scenario -eq 'c1008') {
     if ($Method -eq 'POST' -and $state.allowClear -and $Suffix -eq '/drain/clear') {
