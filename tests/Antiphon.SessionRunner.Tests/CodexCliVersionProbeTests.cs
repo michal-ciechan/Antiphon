@@ -242,6 +242,7 @@ public sealed class CodexCliVersionProbeTests
             using var service = new CodexCliVersionRefreshService((CodexCliVersionProbe)periodic.Probe!, periodic.Clock,
                 Options.Create(new CodexCliVersionSettings()));
             await service.StartAsync(CancellationToken.None);
+            await service.Ready.WaitAsync(TimeSpan.FromSeconds(5));
             periodic.Mode = "nonzero";
             periodic.Clock.Advance(TimeSpan.FromMinutes(5));
             var limit = Stopwatch.StartNew();
