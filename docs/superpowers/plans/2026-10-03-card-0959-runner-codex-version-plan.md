@@ -2300,7 +2300,7 @@ No safety-critical guard is excused merely because its fixture still needs work.
 | G-245 | D-4 observation; key placeholders rejected before child | PC-245 |
 | G-246 | Inert delivery; null-sequence baseline still fences old timestamps | PC-246 |
 | G-247 | D-4 observation; response operation must match | PC-247 |
-| G-248 | D-4 observation; Error frame cannot be decoded as sample | PC-248 |
+| G-248 | D-4 observation; Error frame yields unknown without throwing | PC-248 |
 | G-249 | D-4 observation; closed socket observation rejected | PC-249 |
 | G-250 | D-8; excessive future observation reports clock skew | PC-250 |
 | G-251 | D-8; malformed launcher fingerprint reports mismatch only | PC-251 |
@@ -2393,6 +2393,14 @@ cannot execute. No source edits while a run is active. Restore and freshly build
 before green; retain per-PC source and assertion receipts outside a SourceLanding
 snapshot. Mutations of excluded queue/transport owners confer no repair authority.
 
+For PC-225..236 declare the selected advertised sample inside the mutant; use
+null-safe sample access and now=_timeProvider.GetUtcNow(). A null-reference
+error is not red. Capture resolution/transport failures as outcomes so the PC
+assertion detects its defect first. For PC-62, assert the nullable captured
+executable equals the expected node path before asserting successful version;
+selecting the shim can fail native-format validation. Add a literal diagnostic
+sentinel child mode for PC-26/199 and capture only synthetic test output.
+
 The active rows below replace their archival PC definitions, including retargeted
 observation cases. Where an unchanged historical row names a production responsibility
 rather than its symbol, the inspected source body named in Inspection is its site.
@@ -2469,7 +2477,7 @@ rather than its symbol, the inspected source body named in Inspection is its sit
 | PC-69 | CodexCliVersionWindowsTests/C959_Unverified_launcher_is_unknown | On node resolution failure return bare codex. Input: npm no sibling/no PATH node. **C959-pc-069**: unknown and child starts 0. |
 | PC-70 | CodexCliVersionWindowsTests/C959_Unverified_launcher_is_unknown | On missing js choose default native. Input: npm no js, good default. **C959-pc-070**: unknown and child starts 0. |
 | PC-71 | CodexCliVersionWindowsTests/C959_Unverified_launcher_is_unknown | Skip vendored package presence guard. Input: npm no native package. **C959-pc-071**: unknown and child starts 0. |
-| PC-72 | CodexCliVersionWindowsTests/C959_Unverified_launcher_is_unknown | Treat basename codex.cmd as stock. Input: StockNpmShimText plus echo line. **C959-pc-072**: unknown and child starts 0. |
+| PC-72 | CodexCliVersionWindowsTests/C959_Unverified_launcher_is_unknown | In shared CodexWindowsLaunchPolicy.IsStockNpmCodexShimText return true for stock text plus the fixture echo line. Both probe validation and Apply trust the modified wrapper; complete node/native fixture permits a child. Assert null observation and starts=0 at **C959-pc-072** before incidental assertions. Deleting only the probe check leaves Apply's recognizer intact. |
 | PC-73 | CodexCliObservationTests/C959_Launcher_descriptors_are_observations | Remove FromSpec's IsLoaderName early return. For NODE_OPTIONS, NODE_PATH, LD_PRELOAD, LD_LIBRARY_PATH and DOTNET_STARTUP_HOOKS separately, descriptor Request must be null and Error launcher_unverified at **C959-pc-073**. |
 | PC-74 | RunnerCodexCliEvidenceTests/C959_Heartbeat_updates_only_probe_evidence | Omit CodexCli member from outgoing heartbeat. Input: completed new probe. **C959-pc-074**: recipient version updated. |
 | PC-75 | RunnerCodexCliEvidenceTests/C959_Heartbeat_updates_only_probe_evidence | Assign receive-time to server checkedAt. Input: repeat at T+5m. **C959-pc-075**: recipient checkedAt T. |
@@ -2490,7 +2498,7 @@ rather than its symbol, the inspected source body named in Inspection is its sit
 | PC-94 | RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Copy CLI from retired old store into new slot. Input: authorized replacement without CLI. **C959-pc-094**: version null. |
 | PC-95 | RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Reuse old general capabilities CLI fields. Input: new registration Capabilities=null. **C959-pc-095**: version null. |
 | PC-96 | RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Remove CLI heartbeat epoch equality guard. Input: old success after new unknown generation. **C959-pc-096**: version null. |
-| PC-97 | RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Remove both before/after _isCurrent checks in PhoneHomeRunnerClient.GetCodexCliVersionAsync (one connection-ownership guard checked twice). Hold a reply, accept a new epoch, release old result while old socket remains open under the fixture; assert null at **C959-pc-097**. |
+| PC-97 | RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Remove both _isCurrent checks in PhoneHomeRunnerClient.GetCodexCliVersionAsync (one predicate checked twice). Use a real framed connection and controllable ownership callback; after request send set current=false while socket stays open, then release result. Assert null at **C959-pc-097**. This isolates the client predicate; V-11 real registrations separately prove directory ownership. |
 | PC-98 | RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Clear CLI before existing registration guards. Input: foreign store refused while current live. **C959-pc-098**: current sample unchanged. |
 | PC-99 | RunnerCodexCliEvidenceTests/C959_Catalogue_and_status_project_version | Project BuildVersion into CLI field. Input: build=d40c1670, CLI=0.160.0. **C959-pc-099**: CLI exactly 0.160.0. |
 | PC-100 | RunnerCodexCliEvidenceTests/C959_Catalogue_and_status_project_version | Use remote A snapshot for every remote row. Input: A current/B old. **C959-pc-100**: B version 0.156.1. |
@@ -2583,8 +2591,8 @@ rather than its symbol, the inspected source body named in Inspection is its sit
 | PC-245 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Remove only {{key: predicate in runner Resolve. Valid absolute executable with PATH="{{key:C959}}" must produce launcher_unverified with no child at **C959-pc-245**. |
 | PC-246 | CodexCliObservationTests/C959_Retry_and_cancellation_recheck | In TryFindUnobservableConfirmingRecordAsync remove the timestamp-floor predicate. Null sequence baseline; same-session complete W has original timestamp below the attempt floor minus existing tolerance, while current receipt is withheld. Durable E must remain, qualifying receipt count zero at **C959-pc-246**. |
 | PC-247 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Remove frame.Operation != PhoneHomeOperation.CodexCliVersion in client. Correlated Result with Health operation and valid sample must return null at **C959-pc-247**. |
-| PC-248 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Remove frame.Kind != PhoneHomeFrameKind.Result in client. Correct request/epoch/operation Error carrying a syntactically valid sample must return null at **C959-pc-248**. |
-| PC-249 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Remove !_connection.SocketOpen in client. Hold a valid correlated reply until socket closes before its client continuation; current-connection callback stays true. Result must be null at **C959-pc-249**. |
+| PC-248 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Remove frame.Kind != PhoneHomeFrameKind.Result in client. Correct request/epoch/operation Error with sample-shaped payload reaches Read/ThrowIfError. Capture exception as outcome and assert exception null at **C959-pc-248**, then result null. Read prevents successful decoding but does not preserve this diagnostic method's non-throwing unknown contract. |
+| PC-249 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Remove !_connection.SocketOpen in client. Construct real client with isCurrent callback that closes the owned socket on its second invocation (after valid correlated reply) and returns true. This deterministically cuts before projection without a production hook; assert result null at **C959-pc-249**. |
 | PC-250 | RunnerCodexCliEvidenceTests/C959_Freshness_boundaries | Make CodexCliObservation.DisplayError return null for completed time now+1m+tick. Catalogue/status codexCliVersionError must equal clock_skew at **C959-pc-250**. |
 | PC-251 | RunnerCodexCliEvidenceTests/C959_Freshness_boundaries | Remove malformed non-null fingerprint detection from DisplayError. Otherwise good sample with fingerprint "bad" must project launcher_mismatch at; V-25 separately proves placement still succeeds **C959-pc-251**. |
 | PC-252 | RunnerCodexCliEvidenceTests/C959_Catalogue_and_status_project_version | Return sample.CodexCliVersionError verbatim in DisplayError. Inject C959-diagnostic-sentinel; both public shapes must show probe_unavailable and exclude sentinel at **C959-pc-252**. |
