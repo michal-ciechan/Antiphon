@@ -260,11 +260,14 @@ Three things worth knowing about that table:
   High→Frontier change models. Earlier `gpt-6-sol` and `gpt-5.6-terra` stay selectable profile
   model ids and recognized historical aliases; bare `sol` still normalizes to `gpt-6-sol` for
   existing hold text. Frontier requires codex-cli 0.153.4+ and `gpt-6.1-sol` requires 0.159.1+.
-  Runner capabilities do not report the installed Codex CLI version, so there is no dispatch
-  version gate yet (CARD-0959). **Before activating this server change, every Codex-serving runner
-  must be at least 0.159.1.** Desktop and server2-temp are at 0.160.0; the draining standing
-  server2 runner remains at 0.156.1 until redeploy-old. Complete redeploy-old and verify its CLI
-  before the AppHost restart. The live 6.1 canary is a separate orchestrator action.
+  CARD-0959 adds runner-owned CLI observations and immutable floor metadata. The catalogue's
+  observation describes the default installed launcher; an exact profile needs evidence from
+  its selected launcher. Observation support alone does not enable admission enforcement;
+  create/retry/dispatch enforcement remains pending in the CARD-0959 Code continuation.
+  **Before activating enforcement, every Codex-serving runner must be at least 0.159.1.**
+  Update runners first, verify successful completed observations across two five-minute refresh
+  periods and qualify exact profiles, then restart the canonical AppHost with the reviewed gate.
+  The live 6.1 canary is a separate commissioned action.
 
 `ModelLevelAliases.For(kind, level)` is what every *human-facing* string goes through — task
 events, escalation notes, the check digest, completion-note headers. Launch arguments deliberately

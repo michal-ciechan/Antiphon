@@ -57,6 +57,28 @@ While Claude aliases are on a usage hold, a capability caller that wants to keep
 
 ## The jobs you have
 
+CARD-0959 adds nullable `codexCliVersion`, `codexCliVersionCheckedAtUtc`,
+`codexCliVersionError` and `codexCliVersionStale` to the existing runner catalogue
+and remote status responses. These describe the default installed Codex launcher,
+independently of build SHA, capacity and connection liveness. Checked-at is the
+completed probe attempt time; reads and heartbeats do not renew it. A successful
+observation is fresh through exactly `Delegation:CodexCliVersionMaxAgeMinutes`
+(default 15, valid 1..60). Stale is null without a valid successful observation,
+including a timestamp more than one minute in the future. Disconnect retains
+display evidence while dispatch eligibility follows the existing connection rules.
+An accepted registration clears CLI evidence from the previous epoch.
+
+The internal runner `POST /capabilities/codex-cli-version` accepts only executable,
+resolution cwd, PATH/PATHEXT and recognized `codex.js` prefix. It has a matching
+phone-home operation and performs a bounded, auth-free, version-only probe.
+Descriptor strings are limited to 32,768 characters each; invalid inputs return
+unknown evidence before process start. Default probes run before registration and
+every five minutes. `GET /capabilities` reads memory. Launcher fingerprints stay
+on internal capability/probe DTOs and are absent from catalogue/status projections.
+There is no new server public probe endpoint. Server admission refusals and expiring
+operator exceptions remain pending the CARD-0959 Code continuation; see the frozen
+[implementation and verification plan](superpowers/plans/2026-10-03-card-0959-runner-codex-version-plan.md).
+
 CARD-0415 adds `GET`/`PUT /api/agents/{id}/specialist-routing` and
 `POST /api/agents/{id}/specialist-routing/revalidate` for the configured standing Check owner.
 `scripts/specialist-routing.ps1 inspect|set|revalidate -Agent <guid>` uses these shapes and reads a
