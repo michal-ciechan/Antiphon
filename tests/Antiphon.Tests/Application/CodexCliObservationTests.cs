@@ -31,7 +31,7 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 [NotInParallel(["MessageQueue", "AgentQueue"])]
-public sealed class CodexCliAdmissionTests
+public sealed class CodexCliObservationTests
 {
     [Test]
     public void C959_Ladder_and_exact_models_share_floor()
@@ -62,178 +62,6 @@ public sealed class CodexCliAdmissionTests
     private const string Body = "C959 delivery α\nsecond line\nEND-C959";
 
     [Test]
-    public async Task C959_Create_refuses_bad_versions()
-    {
-        foreach (var remote in new[] { false, true })
-        foreach (var (version, error, age, code) in new (string?, string?, TimeSpan, string?)[]
-        {
-            ("0.156.1", null, TimeSpan.Zero, "codex_cli_version_too_old"),
-            ("0.159.0", null, TimeSpan.Zero, "codex_cli_version_too_old"),
-            (null, "invalid_output", TimeSpan.Zero, "codex_cli_version_unknown"),
-            ("banana", null, TimeSpan.Zero, "codex_cli_version_unknown"),
-            ("", null, TimeSpan.Zero, "codex_cli_version_unknown"),
-            (null, "timeout", TimeSpan.Zero, "codex_cli_version_unknown"),
-            ("0.160.0", null, TimeSpan.FromMinutes(15) + TimeSpan.FromTicks(1), "codex_cli_version_stale"),
-            ("0.160.0", "nonzero_exit", TimeSpan.Zero, "codex_cli_version_unknown"),
-            ("0.159.1", null, TimeSpan.Zero, null), ("0.160.0", null, TimeSpan.Zero, null),
-            ("0.160.0", null, TimeSpan.FromMinutes(15), null),
-            ("0.160.0", null, -TimeSpan.FromMinutes(1), null),
-            ("0.160.0", null, -TimeSpan.FromMinutes(1) - TimeSpan.FromTicks(1), "codex_cli_version_unknown"),
-            ("0.159.1-beta.1", null, TimeSpan.Zero, "codex_cli_version_too_old"),
-            ("0.160.0-beta.1", null, TimeSpan.Zero, null),
-        })
-        {
-            await using var k = await Kit.CreateAsync();
-            var selected = remote ? k.Remote : k.Local;
-            selected.Sample = new(version, T - age, error, new string('a', 64));
-            var request = k.Request(remote);
-            var failure = await FailureAsync(() => k.Service.CreateAsync(request, k.Caller, CancellationToken.None));
-            (failure?.Code).ShouldBe(code, "C959-v15-code " + remote + "/" + version + "/" + error);
-            if (code is not null)
-            {
-                failure!.StatusCode.ShouldBe(409, "C959-pc-128");
-                failure.Extensions!["runnerId"].ShouldBe(remote ? "runner-a" : "desktop", "C959-pc-132");
-                failure.Extensions["model"].ShouldBe("gpt-6.1-sol");
-                failure.Extensions["requiredVersion"].ShouldBe("0.159.1");
-                (await k.Db.AgentTasks.CountAsync()).ShouldBe(0, "C959-pc-131");
-                (await k.Db.AgentSessions.CountAsync()).ShouldBe(0);
-            }
-            (remote ? k.Local : k.Remote).Requests.ShouldBeEmpty("C959-pc-133");
-            selected.Requests.Count.ShouldBe(1, "C959-v15-one-probe");
-        }
-        await using (var httpKit = await Kit.CreateAsync())
-        {
-            httpKit.Local.Sample = new("0.156.1", T, null, new string('a', 64));
-            await using var host = await PhoneHomeTestHost.StartAsync(httpKit.Clock,
-                mapEndpoints: app => app.MapPost("/c959/create", async (CreateAgentTaskRequest request, CancellationToken ct) =>
-                    await httpKit.Service.CreateAsync(request, httpKit.Caller, ct)));
-            using var response = await host.Http.PostAsJsonAsync("/c959/create", httpKit.Request(false));
-            response.StatusCode.ShouldBe(HttpStatusCode.Conflict, "C959-v15-http-409");
-            var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
-            problem.GetProperty("code").GetString().ShouldBe("codex_cli_version_too_old", "C959-v15-http-code");
-            foreach (var (name, value) in new[] { ("runnerId", "desktop"), ("model", "gpt-6.1-sol"),
-                ("requiredVersion", "0.159.1"), ("observedVersion", "0.156.1"), ("reason", "below_floor") })
-                problem.GetProperty(name).GetString().ShouldBe(value, "C959-v15-http-extension " + name);
-            problem.GetProperty("maxAgeMinutes").GetInt32().ShouldBe(15);
-            (await httpKit.Db.AgentTasks.CountAsync()).ShouldBe(0, "C959-v15-http-no-insert");
-        }
-        await using var legacy = await Kit.CreateAsync();
-        legacy.Local.Sample = null;
-        (await CodeAsync(() => legacy.Service.CreateAsync(legacy.Request(false), legacy.Caller, CancellationToken.None))).ShouldBe("codex_cli_version_unknown", "C959-v15-omitted");
-    }
-
-    [Test]
-    public async Task C959_Existing_refusals_and_flags_keep_precedence()
-    {
-        await using var k = await Kit.CreateAsync();
-        k.Local.Sample = k.Remote.Sample = new("0.156.1", T, null, new string('a', 64));
-        var request = k.Request(true) with { AllowUnauthenticatedProvider = true };
-        (await CodeAsync(() => k.Service.CreateAsync(request, k.Caller, CancellationToken.None))).ShouldBe("codex_cli_version_too_old", "C959-pc-137");
-        k.Remote.AuthPresent = false;
-        (await CodeAsync(() => k.Service.CreateAsync(request with { AllowUnauthenticatedProvider = false }, k.Caller, CancellationToken.None))).ShouldBe("provider_sign_in_required", "C959-pc-135");
-        k.Remote.Requests.Clear();
-        k.Db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
-        {
-            Id = Guid.NewGuid(), Kind = AgentKind.Codex, ModelAlias = "gpt-6.1-sol",
-            Source = ModelAvailabilitySource.Manual, HitAt = T.UtcDateTime,
-        });
-        await k.Db.SaveChangesAsync();
-        (await CodeAsync(() => k.Service.CreateAsync(request, k.Caller, CancellationToken.None))).ShouldBe("model_disabled", "C959-pc-134");
-        k.Remote.Requests.ShouldBeEmpty("C959-v16-auth-hold-before-probe");
-        (await CodeAsync(() => k.Service.CreateAsync(request with { IgnoreModelDisabled = true }, k.Caller, CancellationToken.None))).ShouldBe("codex_cli_version_too_old", "C959-pc-138");
-        await k.Db.ModelAvailabilityHolds.ExecuteDeleteAsync();
-        k.Remote.AuthPresent = null;
-        k.Remote.Sample = new("0.160.0", T, null, new string('a', 64));
-        (await k.Service.CreateAsync(k.Request(true), k.Caller, CancellationToken.None)).Status
-            .ShouldBe(AgentTaskStatus.Queued, "C959-pc-136");
-    }
-
-    [Test]
-    public async Task C959_Queued_downgrade_blocks_before_claim()
-    {
-        using (var git = new ScratchGitRepo("c959-late-downgrade"))
-        {
-            await git.CommitFileAsync("seed.txt", "C959 late descriptor\n");
-            await using var late = await DispatchKit.BuildAsync(git);
-            late.Client.Probe = _ => Task.FromResult<RunnerCodexCliVersionDto?>(new(
-                late.Client.Requests.Last().ResolutionCwd == git.Path ? "0.160.0" : "0.156.1",
-                DateTimeOffset.UtcNow, null, new string('a',64)));
-            var created = await late.CreateAsync();
-            await late.TickAsync();
-            await using var db = late.Context();
-            var row = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
-            row.Status.ShouldBe(AgentTaskStatus.Blocked, "C959-v17-late-downgrade-blocked");
-            row.FailureReason.ShouldStartWith("codex_cli_version_too_old", customMessage: "C959-v17-late-descriptor-reprobe");
-            late.Client.Requests.Count.ShouldBe(3, "C959-v17-exact-cwd-preflight");
-            late.Factory.Created.ShouldBeEmpty("C959-v17-late-no-input");
-        }
-        foreach (var sample in new[]
-        {
-            new RunnerCodexCliVersionDto("0.156.1", T, null, new string('a',64)),
-            new RunnerCodexCliVersionDto(null, T, "nonzero_exit", new string('a',64)),
-            new RunnerCodexCliVersionDto("0.160.0", T.AddMinutes(-16), null, new string('a',64)),
-        })
-        {
-            await using var k = await DispatchKit.BuildAsync();
-            var created = await k.CreateAsync();
-            k.Client.Sample = sample;
-            await k.TickAsync();
-            await using var db = k.Context();
-            var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
-            task.Status.ShouldBe(AgentTaskStatus.Blocked, "C959-v17-blocked");
-            task.FailureReason.ShouldStartWith("codex_cli_version_", customMessage: "C959-pc-141");
-            task.AgentSessionId.ShouldBeNull("C959-pc-140");
-            k.Factory.Created.ShouldBeEmpty("C959-pc-139");
-            (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == created.Id && e.Type == AgentTaskEventType.Blocked)).ShouldBe(1);
-            var existing = await db.AgentSessions.SingleAsync(s => s.Id == k.Harness.SessionId);
-            existing.Status.ShouldBe(SessionStatus.Running, "C959-pc-143");
-            k.Client.Sample = new("0.160.0", T, null, new string('a',64));
-            await k.TickAsync();
-            k.Factory.Created.ShouldBeEmpty("C959-pc-142");
-        }
-    }
-
-    [Test]
-    public async Task C959_Exact_profile_model_wins()
-    {
-        await using var k = await Kit.CreateAsync();
-        k.Local.Sample = new("0.156.1", T, null, new string('a',64));
-        var id = await k.ProfileAgentAsync("gpt-6.1-sol", "/fixture/codex-b", "--model");
-        foreach (var level in new[] { AgentModelLevel.Low, AgentModelLevel.Frontier })
-        {
-            k.Db.ChangeTracker.Clear();
-            var agent = await k.Db.Agents.SingleAsync(a => a.Id == id);
-            agent.ModelLevel = level;
-            await k.Db.SaveChangesAsync();
-            (await CodeAsync(() => k.Service.CreateAsync(k.Request(false) with { AgentId = id }, k.Caller, CancellationToken.None))).ShouldBe("codex_cli_version_too_old", "C959-pc-147");
-        }
-        var pin = await k.Db.Agents.SingleAsync(a => a.Id == id);
-        pin.ModelId = "gpt-6-sol";
-        pin.ModelLevel = AgentModelLevel.High;
-        await k.Db.SaveChangesAsync();
-        (await k.Service.CreateAsync(k.Request(false) with { AgentId = id }, k.Caller, CancellationToken.None)).Status
-            .ShouldBe(AgentTaskStatus.Queued, "C959-pc-148");
-        var revision = await k.Db.AgentTuiProfileRevisions.SingleAsync();
-        revision.ModelArgumentName = "";
-        pin.ModelId = "gpt-6.1-sol";
-        await k.Db.SaveChangesAsync();
-        (await CodeAsync(() => k.Service.CreateAsync(k.Request(false) with { AgentId = id }, k.Caller, CancellationToken.None))).ShouldBe("model_argument_unsupported", "C959-pc-149");
-        pin.ModelId = null;
-        await k.Db.SaveChangesAsync();
-        k.Local.Requests.Clear();
-        (await k.Service.CreateAsync(k.Request(false) with { AgentId = id }, k.Caller, CancellationToken.None)).Status
-            .ShouldBe(AgentTaskStatus.Queued, "C959-pc-150");
-        k.Local.Requests.ShouldBeEmpty();
-        var profileless = id;
-        pin.ModelId = "gpt-6-sol";
-        pin.TuiProfileId = null;
-        await k.Db.SaveChangesAsync();
-        k.Local.Sample = new("0.156.1", T, null, new string('a',64));
-        (await CodeAsync(() => k.Service.CreateAsync(k.Request(false) with { AgentId = profileless }, k.Caller, CancellationToken.None)))
-            .ShouldBe("codex_cli_version_too_old", "C959-v18-profileless-actual-model");
-    }
-
-    [Test]
     public async Task C959_Profile_launcher_uses_its_own_evidence()
     {
         await using var k = await Kit.CreateAsync();
@@ -261,61 +89,6 @@ public sealed class CodexCliAdmissionTests
         await k.Db.SaveChangesAsync();
         k.Local.Sample = null;
         (await CodeAsync(() => k.Service.CreateAsync(k.Request(false) with { AgentId = id }, k.Caller, CancellationToken.None))).ShouldBe("codex_cli_version_unknown", "C959-pc-155");
-    }
-
-    [Test]
-    public async Task C959_Override_is_scoped_expiring_and_audited()
-    {
-        var member = typeof(DelegationSettings).GetProperty("CodexCliVersionOverrides");
-        member.ShouldNotBeNull("C959-v20-scope operator setting must exist");
-        await using var k = await Kit.CreateAsync();
-        k.Local.Sample = new("0.156.1", T, null, new string('a',64));
-        void Override(string runner = "desktop", string model = "gpt-6.1-sol", string code = "codex_cli_version_too_old", string reason = "C959 isolated qualification", DateTimeOffset? expiry = null)
-        {
-            var json = JsonSerializer.Serialize(new[] { new { RunnerId = runner, Model = model, AllowedRefusalCodes = new[] { code }, Reason = reason, ExpiresAtUtc = expiry ?? T.AddMinutes(5) } });
-            member!.SetValue(k.Settings, JsonSerializer.Deserialize(json, member.PropertyType));
-        }
-        foreach (var (runner, model, code) in new[]
-        {
-            ("runner-a", "gpt-6.1-sol", "codex_cli_version_too_old"),
-            ("desktop", "gpt-6-sol", "codex_cli_version_too_old"),
-            ("desktop", "gpt-6.1-sol", "codex_cli_version_unknown"),
-        })
-        {
-            Override(runner, model, code);
-            (await CodeAsync(() => k.Service.CreateAsync(k.Request(false), k.Caller, CancellationToken.None))).ShouldBe("codex_cli_version_too_old", "C959-v20-wrong-scope");
-        }
-        Override();
-        var task = await k.Service.CreateAsync(k.Request(false), k.Caller, CancellationToken.None);
-        var warning = await k.Db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning);
-        warning.Detail.ShouldContain("desktop", customMessage: "C959-pc-172");
-        warning.Detail.ShouldContain("gpt-6.1-sol");
-        warning.Detail.ShouldContain("codex_cli_version_too_old");
-        warning.Detail.ShouldContain("2026-10-03T12:05:00");
-        warning.Detail.ShouldContain("C959 isolated qualification");
-        k.Local.Sample.CodexCliVersion.ShouldBe("0.156.1", "C959-pc-174");
-        k.Clock.Advance(TimeSpan.FromMinutes(5));
-        (await CodeAsync(() => k.Service.CreateAsync(k.Request(false), k.Caller, CancellationToken.None))).ShouldBe("codex_cli_version_too_old", "C959-pc-163");
-        foreach (var invalid in new[] { "runner", "model", "code", "reason", "expiry", "lifetime", "offset", "long-reason" })
-        {
-            Override(invalid == "runner" ? "*" : "desktop", invalid == "model" ? "*" : "gpt-6.1-sol",
-                invalid == "code" ? "model_disabled" : "codex_cli_version_too_old", invalid == "reason" ? "" : invalid == "long-reason" ? new string('r',1001) : "reason",
-                invalid == "offset" ? k.Clock.GetUtcNow().AddMinutes(5).ToOffset(TimeSpan.FromHours(1)) : invalid == "expiry" ? default(DateTimeOffset) : invalid == "lifetime" ? k.Clock.GetUtcNow().AddHours(24).AddTicks(1) : k.Clock.GetUtcNow().AddMinutes(5));
-            new DelegationSettingsValidator(k.Clock).Validate(null, k.Settings).Failed.ShouldBeTrue("C959-v20-invalid " + invalid);
-        }
-        Override(expiry: k.Clock.GetUtcNow().AddHours(24));
-        new DelegationSettingsValidator(k.Clock).Validate(null, k.Settings).Failed.ShouldBeFalse("C959-pc-169");
-        k.Settings.CodexCliVersionOverrides.Add(k.Settings.CodexCliVersionOverrides.Single());
-        new DelegationSettingsValidator(k.Clock).Validate(null, k.Settings).Failed.ShouldBeTrue("C959-pc-170");
-        foreach (var code in new[] { "codex_cli_version_unknown", "codex_cli_version_stale" })
-        {
-            k.Local.Sample = code.EndsWith("unknown", StringComparison.Ordinal) ? null
-                : new("0.160.0", k.Clock.GetUtcNow().AddMinutes(-16), null, new string('a',64));
-            Override(code: code, expiry: k.Clock.GetUtcNow().AddMinutes(5));
-            var allowed = await k.Service.CreateAsync(k.Request(false), k.Caller, CancellationToken.None);
-            (await k.Db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == allowed.Id && e.Type == AgentTaskEventType.Warning))
-                .Detail.ShouldContain(code, customMessage: "C959-v20-distinct-code " + code);
-        }
     }
 
     [Test]
@@ -543,6 +316,132 @@ public sealed class CodexCliAdmissionTests
         (await k.Db.AgentTasks.CountAsync()).ShouldBe(0, "C959-pc-195");
     }
 
+    [Test]
+    public async Task C959_Probe_failure_never_refuses()
+    {
+        foreach (var error in new[] { "timeout", "nonzero_exit", "cleanup_unconfirmed" })
+            await NeverRefusesAsync(now => new(null, now, error, new string('a', 64)), 225, error);
+    }
+
+    [Test]
+    public async Task C959_Stale_sample_never_refuses()
+    {
+        foreach (var age in new[] { TimeSpan.FromMinutes(15) + TimeSpan.FromTicks(1), TimeSpan.FromMinutes(16) })
+            await NeverRefusesAsync(now => new("0.160.0", now - age, null, new string('a', 64)), 228, age.ToString());
+    }
+
+    [Test]
+    public async Task C959_Unknown_version_never_refuses()
+    {
+        foreach (var (name, sample) in new (string, Func<DateTimeOffset, RunnerCodexCliVersionDto?>)[]
+        {
+            ("legacy", _ => null),
+            ("null-version", now => new(null, now, null, new string('a', 64))),
+            ("malformed-version", now => new("banana", now, null, new string('a', 64))),
+            ("missing-time", _ => new("0.160.0", null, null, new string('a', 64))),
+            ("fingerprint", now => new("0.160.0", now, null, "bad")),
+            ("clock-skew", now => new("0.160.0", now.AddMinutes(2), null, new string('a', 64))),
+        }) await NeverRefusesAsync(sample, 231, name);
+    }
+
+    [Test]
+    public async Task C959_Old_version_with_floor_never_refuses()
+    {
+        foreach (var version in new[] { "0.156.1", "0.159.0", "0.159.1-beta.1" })
+            await NeverRefusesAsync(now => new(version, now, null, new string('a', 64)), 234, version);
+    }
+
+    private static async Task NeverRefusesAsync(Func<DateTimeOffset, RunnerCodexCliVersionDto?> sample, int guard, string vector)
+    {
+        foreach (var remote in new[] { false, true })
+        {
+            await using var create = await Kit.CreateAsync();
+            var selected = remote ? create.Remote : create.Local;
+            selected.Sample = sample(create.Clock.GetUtcNow());
+            AgentTaskCreatedDto? result = null;
+            Exception? failure = null;
+            try { result = await create.Service.CreateAsync(create.Request(remote), create.Caller, CancellationToken.None); }
+            catch (Exception ex) { failure = ex; }
+            failure.ShouldBeNull($"C959-pc-{guard} create/{remote}/{vector}");
+            var row = await create.Db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == result!.Id);
+            row.Status.ShouldBe(AgentTaskStatus.Queued, $"C959-pc-{guard} persisted/{vector}");
+            row.RunnerId.ShouldBe(remote ? "runner-a" : null, $"C959-pc-185 create/{vector}");
+            selected.Requests.ShouldBeEmpty($"C959-pc-237 create/{vector}");
+            var advertised = await selected.GetCapabilitiesAsync(CancellationToken.None);
+            advertised!.CodexCliVersion.ShouldBe(selected.Sample?.CodexCliVersion, $"C959-advertised-sample/{vector}");
+        }
+        // A separate schema for cold dispatch: change the observation after create.
+        await using (var dispatch = await DispatchKit.BuildAsync())
+        {
+            var created = await dispatch.CreateAsync();
+            dispatch.Client.Requests.Clear();
+            dispatch.Client.Sample = sample(DateTimeOffset.UtcNow);
+            Exception? failure = null;
+            try { await dispatch.TickAsync(); } catch (Exception ex) { failure = ex; }
+            failure.ShouldBeNull($"C959-pc-{guard + 2} dispatch/{vector}");
+            await AssertDeliveryAsync(dispatch, created.Id, $"C959-pc-{guard + 2}/{vector}");
+            dispatch.Client.Requests.ShouldBeEmpty($"C959-pc-239 cold and C959-pc-253 final/{vector}");
+        }
+        // The failed task comes from the actual watchdog after a committed, lost launch.
+        var clock = new RecoveryClock();
+        using var crash = new CancellationTokenSource();
+        await using var retry = await DispatchKit.BuildAsync(clock: clock, cancelAfterClaim: crash);
+        var first = await retry.CreateAsync();
+        await Should.ThrowAsync<OperationCanceledException>(() => retry.TickAsync(crash.Token));
+        clock.Advance(TimeSpan.FromMinutes(retry.Harness.Delegation.DeliveryFailTimeoutMinutes + 1));
+        using (var scope = retry.Harness.Provider.CreateScope())
+            (await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().FailNeverStartedAsync(CancellationToken.None))
+                .ShouldBe(1, $"C959-pc-221/{vector}");
+        await using (var db = retry.Context())
+            (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == first.Id)).Status.ShouldBe(AgentTaskStatus.Failed);
+        retry.Client.Sample = sample(clock.GetUtcNow());
+        retry.Client.Requests.Clear();
+        retry.Boundary.CancelAfterClaim = null;
+        retry.Boundary.Briefs.Clear();
+        Exception? retryFailure = null;
+        try
+        {
+            using var scope = retry.Harness.Provider.CreateScope();
+            await scope.ServiceProvider.GetRequiredService<AgentTaskService>().RetryAsync(first.Id, CancellationToken.None);
+        }
+        catch (Exception ex) { retryFailure = ex; }
+        retryFailure.ShouldBeNull($"C959-pc-{guard + 1} retry/{vector}");
+        await using (var db = retry.Context())
+        {
+            (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == first.Id)).Status
+                .ShouldBe(AgentTaskStatus.Queued, $"C959-pc-{guard + 1} durable/{vector}");
+            (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == first.Id && e.Type == AgentTaskEventType.Retried))
+                .ShouldBe(1, $"C959-pc-{guard + 1} event/{vector}");
+        }
+        retry.Client.Requests.ShouldBeEmpty($"C959-pc-238 retry/{vector}");
+        await retry.TickAsync();
+        await AssertDeliveryAsync(retry, first.Id, $"C959-pc-194 retry/{vector}");
+        retry.Client.Requests.ShouldBeEmpty($"C959-no-probe-after-retry/{vector}");
+    }
+
+    private static async Task AssertDeliveryAsync(DispatchKit kit, Guid taskId, string label)
+    {
+        await kit.Harness.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+        await using var db = kit.Context();
+        var row = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        var receipts = await db.TranscriptEntries.AsNoTracking().Where(e => e.AgentSessionId == row.AgentSessionId && e.Kind == TranscriptKinds.UserPrompt).ToListAsync();
+        receipts.Count.ShouldBe(1, label + " complete selected-session receipt");
+        var frozen = kit.Boundary.Briefs[taskId];
+        File.Exists(frozen.Path).ShouldBeTrue(label + " E exists");
+        (await File.ReadAllBytesAsync(frozen.Path!)).ShouldBe(Encoding.UTF8.GetBytes(frozen.Full), label + " E bytes");
+        frozen.Full.ShouldContain(Body, customMessage: label + " literal B");
+        receipts.Single().Text.ShouldBe(frozen.Wire, label + " complete W");
+        var queued = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.ExecutionTaskId == taskId);
+        receipts.Single().Sequence.ShouldBeGreaterThan(queued.LastDeliveryBaselineSequence ?? 0, label + " baseline");
+        var session = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == row.AgentSessionId);
+        queued.LastDeliveryGeneration.ShouldBe(SessionGeneration.Normalize(session.StartedAt), label + " generation");
+        row.RunnerId.ShouldBeNull(label + " selected desktop");
+        (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Blocked)).ShouldBe(0, label + " no block");
+        var args = kit.Factory.Created.Single().StartedArgs.ToList();
+        args.Count(a => a == "--model").ShouldBe(1, label + " single model");
+        args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.1-sol", label + " unchanged model");
+    }
+
     private static async Task<string?> CodeAsync(Func<Task> call) => (await FailureAsync(call))?.Code;
 
     private static async Task<HttpException?> FailureAsync(Func<Task> call)
@@ -672,7 +571,7 @@ public sealed class CodexCliAdmissionTests
     // Neither queued.Body, the file nor a transcript supplies the oracle.
     private sealed class BriefBoundary(string connection) : LandDeliveryBoundary
     {
-        public CancellationTokenSource? CancelAfterClaim { get; init; }
+        public CancellationTokenSource? CancelAfterClaim { get; set; }
         public DelegationSettings Settings { get; set; } = new();
         public PtyDeliveryCeilings Ceilings { get; set; } = null!;
         public Dictionary<Guid, FrozenBrief> Briefs { get; } = [];
@@ -775,7 +674,7 @@ public sealed class CodexCliAdmissionTests
         public Func<CancellationToken, Task<RunnerCodexCliVersionDto?>>? Probe { get; set; }
         public bool ConfirmAbsentProcess { get; init; }
         public List<RunnerCodexCliProbeRequest> Requests { get; } = [];
-        public Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct) => Task.FromResult<RunnerCapabilitiesDto?>(new("test", "test", "test", false, Version: "d40c1670", Platform: "linux", CodexCliVersion: "0.160.0", CodexCliVersionCheckedAtUtc: T, CodexCliLauncherFingerprint: new string('a',64)));
+        public Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct) => Task.FromResult<RunnerCapabilitiesDto?>(new("test", "test", "test", false, Version: "d40c1670", Platform: "linux", CodexCliVersion: Sample?.CodexCliVersion, CodexCliVersionCheckedAtUtc: Sample?.CodexCliVersionCheckedAtUtc, CodexCliVersionError: Sample?.CodexCliVersionError, CodexCliLauncherFingerprint: Sample?.CodexCliLauncherFingerprint));
         public Task<RunnerCodexCliVersionDto?> GetCodexCliVersionAsync(RunnerCodexCliProbeRequest request, CancellationToken ct)
         { Requests.Add(request); return Probe is null ? Task.FromResult(Sample) : Probe(ct); }
         public Task<RunnerProviderAuthDto?> GetProviderAuthAsync(string provider, CancellationToken ct) => Task.FromResult<RunnerProviderAuthDto?>(new(provider, AuthPresent, null, null, T, null));
