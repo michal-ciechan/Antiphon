@@ -533,7 +533,7 @@ public sealed class RemoteScriptContractTests
                     $global:LASTEXITCODE=0
                 }
                 $manifest=[pscustomobject]@{evidenceRoot='{{bridgeRoot}}';sourceSha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';runId='c1008copy';
-                  recycle=[pscustomobject]@{version=1;project='antiphon-runner';operationId='c100800000000000000000000000000001';
+                  recycle=[pscustomobject]@{version=1;project='antiphon-runner';operationId='c100800000000000000000000000000000001';
                     dryRun=$false;resume=$true;projectId='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1'} }
                 Invoke-C590LiveCase -Case deploy-parent -Manifest $manifest
                 """);
@@ -546,7 +546,7 @@ public sealed class RemoteScriptContractTests
             child.ExitCode.ShouldBe(failCopy ? 2 : 0, "recycle-receipt-facts: real bridge copy after host removal; " + output);
             if (failCopy) output.ShouldContain("RecycleReceiptUnavailable");
             copied.Removed.Length.ShouldBe(3, "recycle-receipt-facts: copy retry never removes a second generation");
-            var hostJournal = Path.Combine(copied.Root, "server/recycle/c100800000000000000000000000000001.json");
+            var hostJournal = Path.Combine(copied.Root, "server/recycle/c100800000000000000000000000000000001.json");
             File.Exists(hostJournal).ShouldBeTrue();
             if (!failCopy) File.ReadAllText(Path.Combine(bridgeRoot, "deploy-parent/recycle.json")).ShouldBe(File.ReadAllText(hostJournal));
         }
@@ -2689,10 +2689,10 @@ public sealed class RemoteScriptContractTests
     {
         var remote = Remote();
         var output = LinuxShell(Block(remote, "c849_require_ready") + "\n" +
-            Block(remote, "case_deploy_temp_runner") + "\n" + """
+            Block(remote, "c1008_rollout_lock") + "\n" + Block(remote, "case_deploy_temp_runner") + "\n" + """
             root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
             CASE_DIR="$root/case"; mkdir -p "$CASE_DIR" "$root/state/grok"
-            SERVER2_ROOT="$root/server2"; C849_READY="$SERVER2_ROOT/cache/seed-accepted"
+            SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/locks"; C849_READY="$SERVER2_ROOT/cache/seed-accepted"
             SERVER2_ENV="$root/main.env"; printf 'ready\n' > "$SERVER2_ENV"
             SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; RUN=red; LANE=host
             require_lane() { :; }; ensure_checkout() { :; }; ensure_runner_boot_files() { :; }
@@ -2702,6 +2702,7 @@ public sealed class RemoteScriptContractTests
             sudo() {
                 [ "$1" = -n ] && shift
                 if [ "$1" = test ]; then shift; test "$@"
+                elif [ "$1" = install ]; then mkdir -p "${@: -1}"
                 elif [ "$1" = df ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nstate 30000000 1 25000000 1%% /state\n'; fi
             }
             ( case_deploy_temp_runner ) > "$root/out" 2>&1
@@ -2764,9 +2765,10 @@ public sealed class RemoteScriptContractTests
             }
         }
         var deployments = LinuxShell(Block(remote, "case_deploy_parent") + "\n" +
-            Block(remote, "case_deploy_temp_runner") + "\n" + """
+            Block(remote, "c1008_rollout_lock") + "\n" + Block(remote, "case_deploy_temp_runner") + "\n" + """
             root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
             CASE_DIR="$root/case"; mkdir -p "$CASE_DIR" "$root/state/grok"
+            SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/locks"
             SERVER2_ENV="$root/main.env"; SERVER2_TEMP_ENV="$root/temp.env"
             SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             C604_SERVER_ORIGIN=https://example.invalid
@@ -2795,6 +2797,7 @@ public sealed class RemoteScriptContractTests
             sudo() {
                 [ "$1" = -n ] && shift
                 if [ "$1" = test ]; then shift; test "$@"
+                elif [ "$1" = install ]; then mkdir -p "${@: -1}"
                 elif [ "$1" = df ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nstate 30000000 1 25000000 1%% /state\n'
                 else return 1; fi
             }

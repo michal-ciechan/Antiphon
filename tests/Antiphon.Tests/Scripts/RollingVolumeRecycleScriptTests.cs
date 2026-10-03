@@ -303,7 +303,7 @@ public sealed class RollingVolumeRecycleScriptTests
             refused.Output.ShouldContain("RecycleGitAuditUnknown");
             refused.Output.ShouldNotContain("UnhandledExit");
             foreach (var publicText in new[] { refused.Output,
-                File.ReadAllText(Path.Combine(git.Root, "server/recycle/c100800000000000000000000000000001.json")) })
+                File.ReadAllText(Path.Combine(git.Root, "server/recycle/c100800000000000000000000000000000001.json")) })
             {
                 publicText.ShouldNotContain("SENTINEL_C1008_FILENAME_CREDENTIAL");
                 publicText.ShouldNotContain("SENTINEL_C1008_GIT_CREDENTIAL");
@@ -316,7 +316,7 @@ public sealed class RollingVolumeRecycleScriptTests
             host.Docker["containers"]![0]!["Config"]!["Labels"]!["foreign.secret"] = "SENTINEL_C1008_LABEL_CREDENTIAL";
             var accepted = await host.Run();
             accepted.Exit.ShouldBe(0);
-            var record = File.ReadAllText(Path.Combine(host.Root, "server/recycle/c100800000000000000000000000000001.json"));
+            var record = File.ReadAllText(Path.Combine(host.Root, "server/recycle/c100800000000000000000000000000000001.json"));
             record.ShouldNotContain("SENTINEL_C1008_DOCKER_CREDENTIAL", Case.Sensitive, "recycle-receipt-custody: approved inspection fields only");
             record.ShouldNotContain("SENTINEL_C1008_LABEL_CREDENTIAL");
         }

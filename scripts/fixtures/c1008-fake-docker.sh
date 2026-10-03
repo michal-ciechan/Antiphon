@@ -44,7 +44,7 @@ else if (args[0] === 'ps') {
  if(fault==='late-busy') { const p=path.join(root,'statuses.json'),s=JSON.parse(fs.readFileSync(p));s.server2.sessions=1;fs.writeFileSync(p,JSON.stringify(s)); }
  if(fault==='late-routing') { const p=path.join(root,'statuses.json'),s=JSON.parse(fs.readFileSync(p));s.server2.acceptingNewWork=true;fs.writeFileSync(p,JSON.stringify(s)); }
  if(fault==='late-land') { const p=path.join(root,'tasks.json'),s=JSON.parse(fs.readFileSync(p));s.scopes[Object.keys(s.scopes)[0]].items.push({id:'22222222-2222-2222-2222-222222222222',status:'Succeeded',runnerId:'server2',projectId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',scopeSource:'Task',landRequestedAt:'2026-10-03T09:00:00Z',landStartedAt:null});fs.writeFileSync(p,JSON.stringify(s)); }
- if(fault==='audit-drift') fs.writeFileSync(path.join(root,'work/new-work'), 'retained');
+ if(fault==='audit-drift') fs.writeFileSync(path.join(root,'work/repo/new-work'), 'retained');
  save();out(name+'\n');
 } else if(args[0]==='rm') {
  if(args.some(a=>a==='-f'||a==='--force'||a==='-v'))fail();
@@ -85,9 +85,17 @@ else if(args[0]==='volume'&&args[1]==='inspect') {
  const id=args.at(-1),c=state.containers.find(c=>c.Id===id);if(!c)fail();
  // Remap the mount path, preserving unrelated scratch filenames such as /worktrees.
  let program=state.auditProgram.replace(/\/work(?=[\/\s"')]|$)/g,path.join(root,'work'));
- if(state.gitFault)program='git() { case " $* " in *" rev-list "*) '+(state.gitFault==='exit128'?'return 128':state.gitFault==='timeout'?'return 124':state.gitFault==='empty'?'return 0':state.gitFault==='nonnumeric'?'echo unknown; return 0':'echo -1; return 0')+' ;; esac; command git "$@"; }; '+program;
+ let gitPath=process.env.PATH;
+ if(state.gitFault) {
+  // timeout execs Git directly; a shell function cannot receive that call.
+  const shim=path.join(root,'git-fault-bin');fs.mkdirSync(shim,{recursive:true});
+  const realGit=cp.execFileSync('which',['git'],{encoding:'utf8'}).trim();
+  const fault=state.gitFault==='exit128'?'exit 128':state.gitFault==='timeout'?'exit 124':state.gitFault==='empty'?'exit 0':state.gitFault==='nonnumeric'?'echo unknown; exit 0':'echo -1; exit 0';
+  fs.writeFileSync(path.join(shim,'git'),'#!/bin/bash\ncase " $* " in *" rev-list "*) '+fault+' ;; esac\nexec '+JSON.stringify(realGit)+' "$@"\n',{mode:0o755});
+  gitPath=shim+':'+gitPath;
+ }
  if(state.gitStderr)process.stderr.write(state.gitStderr+'\n');
- const run=cp.spawnSync('bash',['-c',program],{env:{...process.env},encoding:'utf8',timeout:15000});out(run.stdout||'');c.State={Running:false,Status:'exited'};save();process.exit(run.status??2);
+ const run=cp.spawnSync('bash',['-c',program],{env:{...process.env,PATH:gitPath},encoding:'utf8',timeout:15000});out(run.stdout||'');c.State={Running:false,Status:'exited'};save();process.exit(run.status??2);
 } else if(args[0]==='cp') {
  // The pinned audit helper receives only the test-materialized production program.
  const source=args[1];fs.copyFileSync(source,path.join(root,'audit.sh'));
