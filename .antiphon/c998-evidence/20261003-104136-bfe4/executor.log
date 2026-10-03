@@ -1,0 +1,17 @@
+2026-10-03T10:41:39.1149408+00:00 execute rows=3 width=2 total=42m
+2026-10-03T10:41:39.4061306+00:00 BUILD SLOT operation=probe status=200 reason=enabled maxcpucount=6 elapsed=0s
+2026-10-03T10:41:39.4787295+00:00 BUILD SLOT granted lease=dd706d92-9490-43e5-ac27-828e2b44f30c label="build:bin-c998-tests-red" waited=0s maxcpucount=6
+2026-10-03T10:43:39.9419729+00:00 BUILD SLOT released lease=dd706d92-9490-43e5-ac27-828e2b44f30c label="build:bin-c998-tests-red"
+2026-10-03T10:43:40.0916653+00:00 BUILD SLOT granted lease=5bb00c02-9c73-40ed-9574-7a2fe774e26d label="CP-1@bin-c998-tests-red" waited=0s maxcpucount=6
+2026-10-03T10:44:01.2719818+00:00 BUILD SLOT released lease=5bb00c02-9c73-40ed-9574-7a2fe774e26d label="CP-1@bin-c998-tests-red"
+2026-10-03T10:44:01.7195188+00:00 BUILD SLOT granted lease=d1c3e87f-1d98-448f-a04b-00ac6331d383 label="build:bin-c998-final" waited=0s maxcpucount=6
+2026-10-03T10:47:04.7686388+00:00 BUILD SLOT released lease=d1c3e87f-1d98-448f-a04b-00ac6331d383 label="build:bin-c998-final"
+2026-10-03T10:47:04.8141926+00:00 BUILD SLOT granted lease=905c3e7f-e3f5-4bd4-9aa2-8d1eb4fb098b label="CP-2@bin-c998-final" waited=0s maxcpucount=6
+2026-10-03T10:47:45.5307389+00:00 BUILD SLOT released lease=905c3e7f-e3f5-4bd4-9aa2-8d1eb4fb098b label="CP-2@bin-c998-final"
+2026-10-03T10:47:45.6952111+00:00 BUILD SLOT granted lease=b2173a7f-afad-438e-9375-a8fd31c04631 label="build:bin-c998-unit" waited=0s maxcpucount=6
+2026-10-03T10:50:00.0197372+00:00 BUILD SLOT released lease=b2173a7f-afad-438e-9375-a8fd31c04631 label="build:bin-c998-unit"
+2026-10-03T10:50:00.1338420+00:00 BUILD SLOT granted lease=2d428e1f-b46c-4228-a54e-36cb282c5000 label="CP-3@bin-c998-unit" waited=0s maxcpucount=6
+2026-10-03T10:54:17.0534787+00:00 owner read failed: timeout after 12s
+2026-10-03T10:54:21.3685202+00:00 BUILD SLOT released lease=2d428e1f-b46c-4228-a54e-36cb282c5000 label="CP-3@bin-c998-unit"
+2026-10-03T10:54:32.0554147+00:00 owner read failed: timeout after 12s
+2026-10-03T10:54:35.6082899+00:00 done exit=1

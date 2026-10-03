@@ -1,0 +1,11 @@
+2026-10-03T10:58:00.7481735+00:00 execute rows=2 width=2 total=30m
+2026-10-03T10:58:01.0336069+00:00 BUILD SLOT operation=probe status=200 reason=enabled maxcpucount=6 elapsed=0s
+2026-10-03T10:58:01.1032500+00:00 BUILD SLOT granted lease=163dbc8e-3133-4c04-bed9-6472b70c1602 label="build:bin-c998-repair" waited=0s maxcpucount=6
+2026-10-03T10:59:37.4314098+00:00 BUILD SLOT released lease=163dbc8e-3133-4c04-bed9-6472b70c1602 label="build:bin-c998-repair"
+2026-10-03T10:59:37.4962503+00:00 BUILD SLOT granted lease=db5412ca-707a-4478-979b-217eb75f56b0 label="CP-4@bin-c998-repair" waited=0s maxcpucount=6
+2026-10-03T11:00:01.4733052+00:00 BUILD SLOT released lease=db5412ca-707a-4478-979b-217eb75f56b0 label="CP-4@bin-c998-repair"
+2026-10-03T11:00:01.5779606+00:00 BUILD SLOT granted lease=7e6f9da4-50a4-477b-ae9c-cf732000bac7 label="build:bin-c998-unit-repair" waited=0s maxcpucount=6
+2026-10-03T11:02:33.3785598+00:00 BUILD SLOT released lease=7e6f9da4-50a4-477b-ae9c-cf732000bac7 label="build:bin-c998-unit-repair"
+2026-10-03T11:02:33.4156413+00:00 BUILD SLOT granted lease=75aef390-79c2-4e7b-a93a-086a46805a26 label="CP-5@bin-c998-unit-repair" waited=0s maxcpucount=6
+2026-10-03T11:06:43.3058823+00:00 BUILD SLOT released lease=75aef390-79c2-4e7b-a93a-086a46805a26 label="CP-5@bin-c998-unit-repair"
+2026-10-03T11:06:43.7823272+00:00 done exit=0

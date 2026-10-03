@@ -1,0 +1,38 @@
+{
+  "removedBaseOutputs": [
+    "/work/worktrees/task-3eceba1b/src/Antiphon.Agents.Pty/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/src/Antiphon.FakeClaude/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/src/Antiphon.FakeGrok/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/src/Antiphon.FakeLlmApi/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/src/Antiphon.HostCleanup/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/src/Antiphon.Messaging/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/src/Antiphon.Messaging.Client/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/src/Antiphon.Messaging.Client.Testing/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/src/Antiphon.Messaging.Gateway/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/src/Antiphon.Messaging.Slack/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/src/Antiphon.NightlyWatchdog/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/src/Antiphon.PtyHost/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/src/Antiphon.PtyHost.Client/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/src/Antiphon.PtyHost.Protocol/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/src/Antiphon.Resilience/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/src/Antiphon.SessionRunner/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/src/Antiphon.SessionRunner.Contracts/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/tests/Antiphon.ChannelOutbound.Probe/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/tests/Antiphon.Checkpoints.FilterHost/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/tests/Antiphon.Checkpoints.LifecycleHost/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/tests/Antiphon.Checkpoints.RepeatHost/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/tests/Antiphon.CustodyTestChild/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/tests/Antiphon.DockerStack.Fixture/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/tests/Antiphon.Tests/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/tools/Antiphon.Checkpoints/bin-c998-red",
+    "/work/worktrees/task-3eceba1b/server/bin-c998-red"
+  ],
+  "checkpointToolCleanedOutputs": [
+    "bin-c998-tests-red/",
+    "bin-c998-final/",
+    "bin-c998-unit/",
+    "bin-c998-repair/",
+    "bin-c998-unit-repair/"
+  ],
+  "allOwnedCommandsAwaited": true
+}

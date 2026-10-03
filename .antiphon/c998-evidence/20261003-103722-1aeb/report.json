@@ -1,0 +1,223 @@
+{
+  "schemaVersion": 2,
+  "source": {
+    "version": 1,
+    "start": {
+      "commit": "76d7cf19780bdfccae858d718290d440a18b69d2",
+      "dirtyFiles": 0,
+      "fingerprint": "ce655cfc14c1111b95f8a3ebef5d50d390be3cad63ce88513dc0cf2123923d00",
+      "observedAtUtc": "2026-10-03T10:37:22.8128832+00:00",
+      "captureStatus": "known",
+      "errorCode": null
+    },
+    "end": {
+      "commit": "76d7cf19780bdfccae858d718290d440a18b69d2",
+      "dirtyFiles": 0,
+      "fingerprint": "ce655cfc14c1111b95f8a3ebef5d50d390be3cad63ce88513dc0cf2123923d00",
+      "observedAtUtc": "2026-10-03T10:40:41.0153652+00:00",
+      "captureStatus": "known",
+      "errorCode": null
+    },
+    "state": "clean",
+    "buildSource": "verified"
+  },
+  "runId": "20261003-103722-1aeb",
+  "manifestPath": "/work/worktrees/task-3eceba1b/.antiphon/c998-checkpoints/20261003-103722-1aeb/manifest.resolved.yaml",
+  "manifestHash": "b3352ad2e518bfbc436d9fe298826cbc18126847217dc08f81e24ff31b9d1c63",
+  "commit": "76d7cf19780bdfccae858d718290d440a18b69d2",
+  "branch": "feat/card-task-3eceba1b",
+  "worktree": "/work/worktrees/task-3eceba1b",
+  "host": {
+    "os": "Debian GNU/Linux 12 (bookworm)",
+    "cores": 24,
+    "memAvailableMb": 97519,
+    "loadAvg": "46.40 41.64 29.18 6/3728 29149"
+  },
+  "startedAt": "2026-10-03T10:37:25.2983303+00:00",
+  "endedAt": "2026-10-03T10:40:41.0225133+00:00",
+  "wallSeconds": 195.724183,
+  "sequentialEquivalentSeconds": 19.203301,
+  "exitCode": 1,
+  "reason": null,
+  "verdict": "RED",
+  "builds": [
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": "76d7cf19780bdfccae858d718290d440a18b69d2",
+          "dirtyFiles": 0,
+          "fingerprint": "ce655cfc14c1111b95f8a3ebef5d50d390be3cad63ce88513dc0cf2123923d00",
+          "observedAtUtc": "2026-10-03T10:37:22.8128832+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "end": {
+          "commit": "76d7cf19780bdfccae858d718290d440a18b69d2",
+          "dirtyFiles": 0,
+          "fingerprint": "ce655cfc14c1111b95f8a3ebef5d50d390be3cad63ce88513dc0cf2123923d00",
+          "observedAtUtc": "2026-10-03T10:40:21.2254097+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "state": "clean",
+        "buildSource": "verified"
+      },
+      "id": "bin-c998-tests-red",
+      "project": "tests/Antiphon.Tests",
+      "state": "ok",
+      "seconds": 175.0261421,
+      "slot": "granted",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": null,
+          "dirtyFiles": null,
+          "fingerprint": null,
+          "observedAtUtc": "2026-10-03T10:37:25.9442841+00:00",
+          "captureStatus": "unknown",
+          "errorCode": "not_observed"
+        },
+        "end": null,
+        "state": "unknown",
+        "buildSource": "unknown"
+      },
+      "id": "bin-c998-final",
+      "project": "tests/Antiphon.Tests",
+      "state": "unused",
+      "seconds": 0,
+      "slot": "",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": null,
+          "dirtyFiles": null,
+          "fingerprint": null,
+          "observedAtUtc": "2026-10-03T10:37:25.9442849+00:00",
+          "captureStatus": "unknown",
+          "errorCode": "not_observed"
+        },
+        "end": null,
+        "state": "unknown",
+        "buildSource": "unknown"
+      },
+      "id": "bin-c998-unit",
+      "project": "tests/Antiphon.Tests",
+      "state": "unused",
+      "seconds": 0,
+      "slot": "",
+      "slotReason": null,
+      "waitedSeconds": 0
+    }
+  ],
+  "rows": [
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": "76d7cf19780bdfccae858d718290d440a18b69d2",
+          "dirtyFiles": 0,
+          "fingerprint": "ce655cfc14c1111b95f8a3ebef5d50d390be3cad63ce88513dc0cf2123923d00",
+          "observedAtUtc": "2026-10-03T10:37:22.8128832+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "end": {
+          "commit": "76d7cf19780bdfccae858d718290d440a18b69d2",
+          "dirtyFiles": 0,
+          "fingerprint": "ce655cfc14c1111b95f8a3ebef5d50d390be3cad63ce88513dc0cf2123923d00",
+          "observedAtUtc": "2026-10-03T10:40:40.3921974+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "state": "clean",
+        "buildSource": "verified"
+      },
+      "id": "CP-1",
+      "group": "guards-red",
+      "filter": "/*/*/CheckpointTempUsageTests*/*census*",
+      "command": null,
+      "build": "bin-c998-tests-red",
+      "state": "red",
+      "exitCode": 1,
+      "slot": "granted",
+      "slotReason": null,
+      "waitedSeconds": 0,
+      "executed": 3,
+      "passed": 0,
+      "failed": 3,
+      "skipped": 0,
+      "reruns": 0,
+      "trx": "/work/worktrees/task-3eceba1b/.antiphon/c998-checkpoints/20261003-103722-1aeb/rows/CP-1/run.trx",
+      "seconds": 19.203301,
+      "line": "CHECKPOINT CP-1 commit=76d7cf19780bdfccae858d718290d440a18b69d2 build=ok filter=/*/*/CheckpointTempUsageTests*/*census* executed=3 passed=0 failed=3 skipped=0 trx=/work/worktrees/task-3eceba1b/.antiphon/c998-checkpoints/20261003-103722-1aeb/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=76d7cf19780bdfccae858d718290d440a18b69d2 sourceState=clean buildSource=verified",
+      "failures": [
+        {
+          "name": "Antiphon.Tests.Checkpoints.CheckpointTempUsageTests.full_suite_checkpoint_floor_uses_the_current_census",
+          "message": "ShouldAssertException: UsageLibrary.Errors(result.RootElement, \u0022native\u0022)\n    should be empty but had\n1\n    item and was\n[\u0022full roster checkpoint cases=349 expected=290\u0022]\n\nAdditional Info:\n    the current compiled checkpoint roster clears the Full census and floor",
+          "stackTrace": "   at Antiphon.Tests.Checkpoints.CheckpointTempUsageTests.full_suite_checkpoint_floor_uses_the_current_census() in /work/worktrees/task-3eceba1b/tests/Antiphon.Tests/Checkpoints/CheckpointTempUsageTests.cs:line 173\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---",
+          "stdOut": "[CARD-0204] SessionRunner__BaseUrl=http://127.0.0.1:1, Delegation__CheckInterpreterEnabled=false, Delegation__DiagnoseEnabled=false and Delegation__OutputDistillerEnabled=false for every Program boot in this assembly (inherited SessionRunner__BaseUrl=\u0027\u003Cunset\u003E\u0027) - test hosts never launch on the production session-runner.\n[CARD-0298] Hangfire__ServerEnabled=false for every Program boot in this assembly - test hosts never start a Hangfire worker (no WMI census, no production-runner list).\n[CARD-0045] cleared inherited ANTIPHON_PTY_BACKEND=\u0027inbox\u0027 \u2014 pty tests declare their backend; the suite means the same thing whoever launched it.\n",
+          "baseline": null,
+          "durationSeconds": 5.02577
+        },
+        {
+          "name": "Antiphon.Tests.Checkpoints.CheckpointTempUsageTests.namespace_census_uses_the_native_execution_roster",
+          "message": "ShouldAssertException: UsageLibrary.Errors(result.RootElement, \u0022native\u0022)\n    should be empty but had\n1\n    item and was\n[\u0022namespace census selected=349 expected=290 executed=331 skipped=18\u0022]",
+          "stackTrace": "   at Antiphon.Tests.Checkpoints.CheckpointTempUsageTests.namespace_census_uses_the_native_execution_roster() in /work/worktrees/task-3eceba1b/tests/Antiphon.Tests/Checkpoints/CheckpointTempUsageTests.cs:line 113\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---",
+          "stdOut": "",
+          "baseline": null,
+          "durationSeconds": 6.0672184
+        },
+        {
+          "name": "Antiphon.Tests.Checkpoints.CheckpointTempUsageTests.namespace_census_matches_compiled_checkpoint_cases",
+          "message": "ShouldAssertException: result.RootElement.GetProperty(\u0022selected\u0022).GetInt32()\n    should be\n349\n    but was\n290\n\nAdditional Info:\n    scripts/lib/checkpoint-usage.ps1 Get-NamespaceCensus is stale against the compiled checkpoint cases",
+          "stackTrace": "   at Antiphon.Tests.Checkpoints.CheckpointTempUsageTests.namespace_census_matches_compiled_checkpoint_cases() in /work/worktrees/task-3eceba1b/tests/Antiphon.Tests/Checkpoints/CheckpointTempUsageTests.cs:line 138\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---",
+          "stdOut": "",
+          "baseline": null,
+          "durationSeconds": 2.190653
+        }
+      ],
+      "rerunLines": [],
+      "slowClasses": [
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointTempUsageTests",
+          "seconds": 13.2836414,
+          "tests": 3
+        }
+      ],
+      "attempt": 1,
+      "repeat": null,
+      "timings": {
+        "slotWaitSeconds": 0,
+        "buildSlotWaitSeconds": 0,
+        "rowSlotWaitSeconds": 0,
+        "buildSeconds": 175.0261421,
+        "producingBuild": "bin-c998-tests-red",
+        "startupSeconds": 3.5708528,
+        "testsWallSeconds": 13.3202915,
+        "teardownSeconds": 1.0713485,
+        "testHostWallSeconds": 17.962513,
+        "method": "utc-trx-and-monotonic-host",
+        "unavailableReason": null
+      }
+    }
+  ],
+  "unlisted": [],
+  "evidence": "/work/worktrees/task-3eceba1b/.antiphon/c998-checkpoints/20261003-103722-1aeb/report.md",
+  "cleanedOutputs": false,
+  "outputNames": [
+    "bin-c998-tests-red/",
+    "bin-c998-final/",
+    "bin-c998-unit/"
+  ],
+  "maxConcurrentRows": 1,
+  "maxConcurrentBuilds": 1
+}
