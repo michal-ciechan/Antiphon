@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "name": "C1008-Final-Unit",
+  "start": {
+    "commit": "78dc9321ceb990f30238319f3b5fa0a3af68f434",
+    "dirtyFiles": 0,
+    "fingerprint": "fd790d69a9f9c0365ac0b5d3ce0da11513fd08f5922bd1f89c48f676f0687e90",
+    "observedAtUtc": "2026-10-03T21:56:57.8625325+00:00",
+    "captureStatus": "known",
+    "errorCode": null
+  },
+  "end": {
+    "commit": "78dc9321ceb990f30238319f3b5fa0a3af68f434",
+    "dirtyFiles": 0,
+    "fingerprint": "fd790d69a9f9c0365ac0b5d3ce0da11513fd08f5922bd1f89c48f676f0687e90",
+    "observedAtUtc": "2026-10-03T22:37:05.3288655+00:00",
+    "captureStatus": "known",
+    "errorCode": null
+  },
+  "state": "clean",
+  "buildSource": "verified",
+  "reason": null,
+  "receipt": "CHECKPOINT C1008-Final-Unit commit=78dc9321ceb990f30238319f3b5fa0a3af68f434 build=ok filter=/*/*/*/*[Category=Unit] executed=3950 passed=3949 failed=1 skipped=33 trx=/work/worktrees/task-5fcba512/.antiphon/c1008-evidence-round5/unit/C1008-Final-Unit-20261003-215657-3d2c/run.trx slot=granted waited=0s dirty=0 source=78dc9321ceb990f30238319f3b5fa0a3af68f434 sourceState=clean buildSource=verified",
+  "exitCode": 1,
+  "executed": 3950,
+  "passed": 3949,
+  "failed": 1,
+  "skipped": 33,
+  "timings": {
+    "slotWaitSeconds": 0.0,
+    "buildSeconds": 95.2749646,
+    "startupSeconds": 89.9533606,
+    "testsWallSeconds": 2217.6971905,
+    "teardownSeconds": 2.950646,
+    "testHostWallSeconds": 2310.6011837,
+    "method": "utc-trx-and-monotonic-host",
+    "unavailableReason": null
+  }
+}

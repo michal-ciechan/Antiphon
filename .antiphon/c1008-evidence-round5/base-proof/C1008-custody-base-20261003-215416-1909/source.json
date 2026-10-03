@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "name": "C1008-custody-base",
+  "start": {
+    "commit": "d8343f3b8c3a55dbca59aca6ff3646379bf994a1",
+    "dirtyFiles": 0,
+    "fingerprint": "2493c98ca552e0f0afd2747e49c05a70ca1135699ca9dd38ed0592a9b38a73fc",
+    "observedAtUtc": "2026-10-03T21:54:17.4433982+00:00",
+    "captureStatus": "known",
+    "errorCode": null
+  },
+  "end": {
+    "commit": "d8343f3b8c3a55dbca59aca6ff3646379bf994a1",
+    "dirtyFiles": 0,
+    "fingerprint": "2493c98ca552e0f0afd2747e49c05a70ca1135699ca9dd38ed0592a9b38a73fc",
+    "observedAtUtc": "2026-10-03T21:56:35.4862389+00:00",
+    "captureStatus": "known",
+    "errorCode": null
+  },
+  "state": "clean",
+  "buildSource": "verified",
+  "reason": null,
+  "receipt": "CHECKPOINT C1008-custody-base commit=d8343f3b8c3a55dbca59aca6ff3646379bf994a1 build=ok filter=/*/*/RollingVolumeRecycleScriptTests/C1008_Refusal_receipts_do_not_leak_secrets executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-5fcba512/.antiphon/c1008-evidence-round5/base-proof/C1008-custody-base-20261003-215416-1909/run.trx slot=granted waited=0s dirty=0 source=d8343f3b8c3a55dbca59aca6ff3646379bf994a1 sourceState=clean buildSource=verified",
+  "exitCode": 0,
+  "executed": 1,
+  "passed": 1,
+  "failed": 0,
+  "skipped": 0,
+  "timings": {
+    "slotWaitSeconds": 0.0,
+    "buildSeconds": 104.0384196,
+    "startupSeconds": 3.2920458,
+    "testsWallSeconds": 28.5751271,
+    "teardownSeconds": 0.7462922,
+    "testHostWallSeconds": 32.6134533,
+    "method": "utc-trx-and-monotonic-host",
+    "unavailableReason": null
+  }
+}

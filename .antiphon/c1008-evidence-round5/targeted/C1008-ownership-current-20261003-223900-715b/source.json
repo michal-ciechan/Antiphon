@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "name": "C1008-ownership-current",
+  "start": {
+    "commit": "78dc9321ceb990f30238319f3b5fa0a3af68f434",
+    "dirtyFiles": 0,
+    "fingerprint": "fd790d69a9f9c0365ac0b5d3ce0da11513fd08f5922bd1f89c48f676f0687e90",
+    "observedAtUtc": "2026-10-03T22:39:01.5153378+00:00",
+    "captureStatus": "known",
+    "errorCode": null
+  },
+  "end": {
+    "commit": "78dc9321ceb990f30238319f3b5fa0a3af68f434",
+    "dirtyFiles": 0,
+    "fingerprint": "fd790d69a9f9c0365ac0b5d3ce0da11513fd08f5922bd1f89c48f676f0687e90",
+    "observedAtUtc": "2026-10-03T22:39:07.4925255+00:00",
+    "captureStatus": "known",
+    "errorCode": null
+  },
+  "state": "clean",
+  "buildSource": "verified",
+  "reason": null,
+  "receipt": "CHECKPOINT C1008-ownership-current commit=78dc9321ceb990f30238319f3b5fa0a3af68f434 build=reused filter=/*/*/CheckpointRunOwnershipTests/current_executor_image_is_always_retained executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-5fcba512/.antiphon/c1008-evidence-round5/targeted/C1008-ownership-current-20261003-223900-715b/run.trx slot=granted waited=0s dirty=0 source=78dc9321ceb990f30238319f3b5fa0a3af68f434 sourceState=clean buildSource=verified",
+  "exitCode": 0,
+  "executed": 1,
+  "passed": 1,
+  "failed": 0,
+  "skipped": 0,
+  "timings": {
+    "slotWaitSeconds": 0.0,
+    "buildSeconds": 0.0,
+    "startupSeconds": 3.7924621,
+    "testsWallSeconds": 0.2008683,
+    "teardownSeconds": 0.638481,
+    "testHostWallSeconds": 4.6317977,
+    "method": "utc-trx-and-monotonic-host",
+    "unavailableReason": null
+  }
+}
