@@ -70,6 +70,24 @@ trust screens cannot authorize a first prompt. The ready region must still settl
 | 1.0.41 | Linux server2-temp container | 120x30 | U+276F `❯` | CARD-1004 real startup frame; real first-prompt canary pending after server activation |
 | 1.0.40 | Linux server2 container | 120x30 | U+276F `❯` | CARD-1004 matching real startup frame; this does not change the image pin |
 
+**CARD-1011 Windows routing gate: pending.** The accepted real `d6e4138e`
+canary proves its complete task UserPrompt and returned report, not both hosts
+or fresh trust. The proposed Debug policy is inactive until the
+[owner's gates](orchestration-loop.md#windows-review-and-debug-routing) pass.
+
+| CLI/build | Actual backend | Geometry/marker | Trust | Task/session/SHA | Receipt/release |
+|---|---|---|---|---|---|
+| 1.0.41 / `4220f3b224a6` (reported) | Unknown; attribution pending | 120x30 / `>` to confirm | Not observed | `d6e4138e` / `26d8a18c` / `5f214b0c` | UserPrompt/report accepted; runner release ownership pending |
+| Same tuple to verify | InboxConhost (WQ-1) and ModernConPty (WQ-2), each pending | 120x30 / `>` | Visible trust, one y, cleared trust/Ready required (WQ-3) | See full identities in [ledger](investigations/2026-10-03-card-1011-windows-grok-qualification.md) | Whole transcript and release required; modern needs loaded binary paths/hashes |
+
+Backend requests and advertised capabilities do not establish actual execution;
+use each session's host log and reject modern fallback. Restore and verify any
+temporary backend configuration before accepting WQ-1/2/3. Diagnose failures
+with server-log `screenReason` and the named
+`%TEMP%\antiphon-grok-startup\grok-startup-*.txt` (or configured capture directory):
+the file keys are `outcome`/`lastScreenReason`. Sign-in content stays suppressed;
+captures are diagnostics, and complete UserPrompt transcripts own delivery.
+
 Windows captures live in `tests/Antiphon.Tests/Agents/Fixtures/card0778/`;
 the two decoded Linux frames and their dated provenance live in
 [`tests/Antiphon.Tests/Agents/Fixtures/card1004/`](../tests/Antiphon.Tests/Agents/Fixtures/card1004/provenance.md).
