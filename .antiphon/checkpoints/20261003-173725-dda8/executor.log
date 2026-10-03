@@ -1,0 +1,5 @@
+2026-10-03T17:37:27.7897284+00:00 execute rows=1 width=2 total=40m
+2026-10-03T17:37:28.1380694+00:00 BUILD SLOT operation=probe status=200 reason=enabled maxcpucount=6 elapsed=0s
+2026-10-03T17:37:28.2093974+00:00 BUILD SLOT granted lease=8c0bf3b3-3a32-4ab8-897d-49d7a1f25bea label="build:bin-c1005-unit" waited=0s maxcpucount=6
+2026-10-03T17:40:45.3571747+00:00 BUILD SLOT released lease=8c0bf3b3-3a32-4ab8-897d-49d7a1f25bea label="build:bin-c1005-unit"
+2026-10-03T17:40:45.4538918+00:00 BUILD SLOT granted lease=4430130c-60b6-4bbd-b525-67520aae9ab8 label="CP-2@bin-c1005-unit" waited=0s maxcpucount=6

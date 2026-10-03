@@ -1,0 +1,6594 @@
+{
+  "schemaVersion": 1,
+  "mode": "static",
+  "plan": "docs/superpowers/plans/2026-10-03-card-1005-opt-in-class-census-plan.md",
+  "planSha256": "1f380f152dc1e8cfb69833381a499a81311e308c0da49a3028e450bde5063ede",
+  "checklistSha256": "4038b619350fab5ec28b42b7108e2bc88ff3c1d8dd83dafe819b439d1bace26d",
+  "inputsSha256": "8c64f49312d3e840b55646e9971b597a880d47af19fcb4369978a6afda4da57d",
+  "sources": [
+    {
+      "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+      "sha256": "3f5e11a34fec9b41276408274ec45a4f79c96edbfad5dcbab9ee2041a1db93be",
+      "classes": [
+        "Antiphon.Tests.Checkpoints.CheckpointImportTests",
+        "Antiphon.Tests.Checkpoints.CheckpointImportTests.CapturingFactory",
+        "Antiphon.Tests.Checkpoints.CheckpointImportTests.ImmediateHandle"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Checkpoints/CheckpointManifestTests.cs",
+      "sha256": "d535bf9e953066598ac0ab9e5c713ebdb81a1231be70a47a828bd43072002b6a",
+      "classes": [
+        "Antiphon.Tests.Checkpoints.CheckpointManifestTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTempUsageTests.cs",
+      "sha256": "a866b57bd4c12e82181562607fa6123c86e0f6adb9c762f0006add7259707e02",
+      "classes": [
+        "Antiphon.Tests.Checkpoints.CheckpointNamespaceCensusUsageTests",
+        "Antiphon.Tests.Checkpoints.CheckpointTempUsageTests",
+        "Antiphon.Tests.Checkpoints.UsageLibrary"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageAssertionTests.cs",
+      "sha256": "2a572a4fb29f519a2411fcafae4799e066099dfa20491f418ffd973fb901db2a",
+      "classes": [
+        "Antiphon.Tests.Checkpoints.PlanCoverageAssertionTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "sha256": "b2e2febf16564ddbd4d827aca45ed36c928834d5c3229a682f9d1252f661d27b",
+      "classes": [
+        "Antiphon.Tests.Checkpoints.PlanCoverageCensusTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCommandTests.cs",
+      "sha256": "2f4100b1d0e61125adac4ee9c102f2a8544c26d8dcfb69a5c6d932810092069b",
+      "classes": [
+        "Antiphon.Tests.Checkpoints.PlanCoverageCommandTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageFixture.cs",
+      "sha256": "7bd233467b50d50692f02a55eadf9432575f4734dcaa15d77fe162cae6a91168",
+      "classes": [
+        "Antiphon.Tests.Checkpoints.PlanCoverageFixture"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageGoldenTests.cs",
+      "sha256": "2196b17d59beb293c995b1864cbd7bd1376b0611c7d40c4cbd51714c7bf2f006",
+      "classes": [
+        "Antiphon.Tests.Checkpoints.PlanCoverageGoldenTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageHandleTests.cs",
+      "sha256": "f32100631da2742af045151382b5e2d8d1c8a046e15e6c32bef4f9c2f9a3e6a5",
+      "classes": [
+        "Antiphon.Tests.Checkpoints.PlanCoverageHandleTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageParserTests.cs",
+      "sha256": "22618944fa2434a0ccfaaf9c260df973585cab5e14e85fef5c133f392db88c19",
+      "classes": [
+        "Antiphon.Tests.Checkpoints.PlanCoverageParserTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Checkpoints/PlanCoveragePcTests.cs",
+      "sha256": "b21cd720514cac0d6af002f4683590fc44fe557ca3a868b74c9e9067b5bb033b",
+      "classes": [
+        "Antiphon.Tests.Checkpoints.PlanCoveragePcTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/TestHelpers/TestLaneCategoryGuardTests.cs",
+      "sha256": "752b879c693cf0a76ef3fc65a208d27beed851059c60bc6cd8b4c5d6942cb4e7",
+      "classes": [
+        "Antiphon.Tests.TestHelpers.TestLaneCategoryGuardTests"
+      ]
+    },
+    {
+      "path": "tests/Shared/TestClassificationGuardTests.cs",
+      "sha256": "0538a760458def2f96db95d069db3b1a103bcb206f15a36679c8ab7fcd423d66",
+      "classes": [
+        "Antiphon.TestSupport.TestClassificationGuardTests"
+      ]
+    }
+  ],
+  "obligations": [
+    {
+      "id": "V-1",
+      "test": "PlanCoverageCensusTests.checklist_flag_accepts_true_false_and_absence",
+      "kind": "method",
+      "name": "PlanCoverageCensusTests.checklist_flag_accepts_true_false_and_absence",
+      "planLine": 228,
+      "planColumn": 10,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 228,
+          "column": 10
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 52
+        }
+      ]
+    },
+    {
+      "id": "V-2",
+      "test": "PlanCoverageCensusTests.checklist_flag_rejects_invalid_or_conflicting_input",
+      "kind": "method",
+      "name": "PlanCoverageCensusTests.checklist_flag_rejects_invalid_or_conflicting_input",
+      "planLine": 229,
+      "planColumn": 10,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 229,
+          "column": 10
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 70
+        }
+      ]
+    },
+    {
+      "id": "V-3",
+      "test": "PlanCoverageCensusTests.census_matches_exact_checklist_roster",
+      "kind": "method",
+      "name": "PlanCoverageCensusTests.census_matches_exact_checklist_roster",
+      "planLine": 230,
+      "planColumn": 10,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 230,
+          "column": 10
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 110
+        }
+      ]
+    },
+    {
+      "id": "V-4",
+      "test": "PlanCoverageCensusTests.census_reports_new_or_omitted_selected_method",
+      "kind": "method",
+      "name": "PlanCoverageCensusTests.census_reports_new_or_omitted_selected_method",
+      "planLine": 231,
+      "planColumn": 10,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 231,
+          "column": 10
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 121
+        }
+      ]
+    },
+    {
+      "id": "V-5",
+      "test": "PlanCoverageCensusTests.census_rejects_unselected_or_non_test_roster_methods",
+      "kind": "method",
+      "name": "PlanCoverageCensusTests.census_rejects_unselected_or_non_test_roster_methods",
+      "planLine": 232,
+      "planColumn": 10,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 232,
+          "column": 10
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 135
+        }
+      ]
+    },
+    {
+      "id": "V-6",
+      "test": "PlanCoverageCensusTests.census_compares_resolved_identities_not_counts",
+      "kind": "method",
+      "name": "PlanCoverageCensusTests.census_compares_resolved_identities_not_counts",
+      "planLine": 233,
+      "planColumn": 10,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 233,
+          "column": 10
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 153
+        }
+      ]
+    },
+    {
+      "id": "V-7",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "kind": "method",
+      "name": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "planLine": 234,
+      "planColumn": 10,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 234,
+          "column": 10
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 172
+        }
+      ]
+    },
+    {
+      "id": "V-8",
+      "test": "PlanCoverageCensusTests.census_unions_overlapping_filters_and_partial_declarations",
+      "kind": "method",
+      "name": "PlanCoverageCensusTests.census_unions_overlapping_filters_and_partial_declarations",
+      "planLine": 235,
+      "planColumn": 10,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 235,
+          "column": 10
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 199
+        }
+      ]
+    },
+    {
+      "id": "V-9",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "kind": "method",
+      "name": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "planLine": 236,
+      "planColumn": 10,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 236,
+          "column": 10
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 220
+        }
+      ]
+    },
+    {
+      "id": "V-10",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "kind": "method",
+      "name": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "planLine": 237,
+      "planColumn": 11,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 237,
+          "column": 11
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 243
+        }
+      ]
+    },
+    {
+      "id": "R-1",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "kind": "method",
+      "name": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "planLine": 243,
+      "planColumn": 10,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 243,
+          "column": 10
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 346
+        }
+      ]
+    },
+    {
+      "id": "R-2",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "kind": "method",
+      "name": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "planLine": 244,
+      "planColumn": 10,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 244,
+          "column": 10
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 294
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointImportTests.annotated_reuse_resolves_only_an_earlier_filter_build",
+      "kind": "method",
+      "name": "CheckpointImportTests.annotated_reuse_resolves_only_an_earlier_filter_build",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+          "line": 303
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointImportTests.command_rows_become_command_checkpoints",
+      "kind": "method",
+      "name": "CheckpointImportTests.command_rows_become_command_checkpoints",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+          "line": 45
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointImportTests.conflicting_projects_cannot_share_an_output_identity",
+      "kind": "method",
+      "name": "CheckpointImportTests.conflicting_projects_cannot_share_an_output_identity",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+          "line": 344
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointImportTests.cross_after_reuse_is_refused_without_a_relaxation_flag",
+      "kind": "method",
+      "name": "CheckpointImportTests.cross_after_reuse_is_refused_without_a_relaxation_flag",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+          "line": 330
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointImportTests.derives_roster_tokens_from_the_filter",
+      "kind": "method",
+      "name": "CheckpointImportTests.derives_roster_tokens_from_the_filter",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+          "line": 56
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointImportTests.environment_map_round_trips_without_changing_serial",
+      "kind": "method",
+      "name": "CheckpointImportTests.environment_map_round_trips_without_changing_serial",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+          "line": 166
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointImportTests.environment_reaches_only_its_row_and_its_reruns",
+      "kind": "method",
+      "name": "CheckpointImportTests.environment_reaches_only_its_row_and_its_reruns",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+          "line": 187
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointImportTests.filter_shorthand_and_trailing_environment_prose_are_refused",
+      "kind": "method",
+      "name": "CheckpointImportTests.filter_shorthand_and_trailing_environment_prose_are_refused",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+          "line": 316
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointImportTests.imports_the_card_0688_table",
+      "kind": "method",
+      "name": "CheckpointImportTests.imports_the_card_0688_table",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+          "line": 10
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointImportTests.imports_the_card_0723_table",
+      "kind": "method",
+      "name": "CheckpointImportTests.imports_the_card_0723_table",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+          "line": 91
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointImportTests.invalid_environment_names_and_duplicates_are_refused",
+      "kind": "method",
+      "name": "CheckpointImportTests.invalid_environment_names_and_duplicates_are_refused",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+          "line": 285
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointImportTests.invalid_serial_is_refused_before_execution",
+      "kind": "method",
+      "name": "CheckpointImportTests.invalid_serial_is_refused_before_execution",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+          "line": 253
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointImportTests.maps_cp_reuse_to_the_same_build",
+      "kind": "method",
+      "name": "CheckpointImportTests.maps_cp_reuse_to_the_same_build",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+          "line": 36
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointImportTests.refuses_the_legacy_eight_column_table",
+      "kind": "method",
+      "name": "CheckpointImportTests.refuses_the_legacy_eight_column_table",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+          "line": 66
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointImportTests.run_plan_and_import_resolve_the_committed_table_identically",
+      "kind": "method",
+      "name": "CheckpointImportTests.run_plan_and_import_resolve_the_committed_table_identically",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+          "line": 355
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointImportTests.scheduler_passes_test_parallel_limit_only_to_serial_rows_process",
+      "kind": "method",
+      "name": "CheckpointImportTests.scheduler_passes_test_parallel_limit_only_to_serial_rows_process",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+          "line": 226
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointImportTests.serial_import_round_trips_and_excludes_other_rows",
+      "kind": "method",
+      "name": "CheckpointImportTests.serial_import_round_trips_and_excludes_other_rows",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+          "line": 134
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointImportTests.unescapes_pipes_in_filters",
+      "kind": "method",
+      "name": "CheckpointImportTests.unescapes_pipes_in_filters",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+          "line": 27
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointImportTests.unknown_duplicate_and_malformed_columns_are_refused",
+      "kind": "method",
+      "name": "CheckpointImportTests.unknown_duplicate_and_malformed_columns_are_refused",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+          "line": 265
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointImportTests.warns_when_estimate_exceeds_row_timeout",
+      "kind": "method",
+      "name": "CheckpointImportTests.warns_when_estimate_exceeds_row_timeout",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+          "line": 75
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointManifestTests.after_selector_parses_ranges_and_all",
+      "kind": "method",
+      "name": "CheckpointManifestTests.after_selector_parses_ranges_and_all",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointManifestTests.cs",
+          "line": 77
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointManifestTests.parses_yaml_and_defaults",
+      "kind": "method",
+      "name": "CheckpointManifestTests.parses_yaml_and_defaults",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointManifestTests.cs",
+          "line": 10
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointManifestTests.rejects_backslash_or_trailing_space_output_path",
+      "kind": "method",
+      "name": "CheckpointManifestTests.rejects_backslash_or_trailing_space_output_path",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointManifestTests.cs",
+          "line": 29
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointManifestTests.rejects_duplicate_or_unknown_build_ids",
+      "kind": "method",
+      "name": "CheckpointManifestTests.rejects_duplicate_or_unknown_build_ids",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointManifestTests.cs",
+          "line": 43
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointManifestTests.rejects_reuse_across_different_after",
+      "kind": "method",
+      "name": "CheckpointManifestTests.rejects_reuse_across_different_after",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointManifestTests.cs",
+          "line": 60
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "CheckpointManifestTests.results_root_must_be_under_worktree",
+      "kind": "method",
+      "name": "CheckpointManifestTests.results_root_must_be_under_worktree",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointManifestTests.cs",
+          "line": 90
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageAssertionTests.reports_unmapped_prose_and_opaque_helpers",
+      "kind": "method",
+      "name": "PlanCoverageAssertionTests.reports_unmapped_prose_and_opaque_helpers",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageAssertionTests.cs",
+          "line": 37
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageAssertionTests.requires_canary_in_assertion_not_setup",
+      "kind": "method",
+      "name": "PlanCoverageAssertionTests.requires_canary_in_assertion_not_setup",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageAssertionTests.cs",
+          "line": 16
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageAssertionTests.requires_label_at_bound_assertion",
+      "kind": "method",
+      "name": "PlanCoverageAssertionTests.requires_label_at_bound_assertion",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageAssertionTests.cs",
+          "line": 8
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageAssertionTests.requires_members_and_collection_predicates",
+      "kind": "method",
+      "name": "PlanCoverageAssertionTests.requires_members_and_collection_predicates",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageAssertionTests.cs",
+          "line": 27
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageAssertionTests.tracks_literal_helper_arguments_without_executing_source",
+      "kind": "method",
+      "name": "PlanCoverageAssertionTests.tracks_literal_helper_arguments_without_executing_source",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageAssertionTests.cs",
+          "line": 46
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageCommandTests.class_only_frozen_result_count_has_no_findings",
+      "kind": "method",
+      "name": "PlanCoverageCommandTests.class_only_frozen_result_count_has_no_findings",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCommandTests.cs",
+          "line": 140
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageCommandTests.coverage_command_preserves_existing_import_contract",
+      "kind": "method",
+      "name": "PlanCoverageCommandTests.coverage_command_preserves_existing_import_contract",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCommandTests.cs",
+          "line": 11
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageCommandTests.coverage_never_starts_driver_or_writes_run_state",
+      "kind": "method",
+      "name": "PlanCoverageCommandTests.coverage_never_starts_driver_or_writes_run_state",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCommandTests.cs",
+          "line": 49
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageCommandTests.dropped_frozen_method_is_a_checklist_count_finding",
+      "kind": "method",
+      "name": "PlanCoverageCommandTests.dropped_frozen_method_is_a_checklist_count_finding",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCommandTests.cs",
+          "line": 156
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageCommandTests.existing_outside_project_is_refused_by_root_boundary",
+      "kind": "method",
+      "name": "PlanCoverageCommandTests.existing_outside_project_is_refused_by_root_boundary",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCommandTests.cs",
+          "line": 101
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageCommandTests.extra_frozen_method_is_a_checklist_count_finding",
+      "kind": "method",
+      "name": "PlanCoverageCommandTests.extra_frozen_method_is_a_checklist_count_finding",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCommandTests.cs",
+          "line": 171
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageCommandTests.frozen_checklist_preserves_all_72_obligations",
+      "kind": "method",
+      "name": "PlanCoverageCommandTests.frozen_checklist_preserves_all_72_obligations",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCommandTests.cs",
+          "line": 130
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageCommandTests.invalid_inputs_cannot_produce_clean_summary",
+      "kind": "method",
+      "name": "PlanCoverageCommandTests.invalid_inputs_cannot_produce_clean_summary",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCommandTests.cs",
+          "line": 37
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageCommandTests.outside_project_fifo_is_refused_without_opening",
+      "kind": "method",
+      "name": "PlanCoverageCommandTests.outside_project_fifo_is_refused_without_opening",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCommandTests.cs",
+          "line": 62
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageCommandTests.renders_stable_text_json_and_exit_codes",
+      "kind": "method",
+      "name": "PlanCoverageCommandTests.renders_stable_text_json_and_exit_codes",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCommandTests.cs",
+          "line": 20
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageGoldenTests.c780_class_only_regression_row_keeps_master_findings",
+      "kind": "method",
+      "name": "PlanCoverageGoldenTests.c780_class_only_regression_row_keeps_master_findings",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageGoldenTests.cs",
+          "line": 9
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageGoldenTests.c835_eight_pc_risks_are_visible",
+      "kind": "method",
+      "name": "PlanCoverageGoldenTests.c835_eight_pc_risks_are_visible",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageGoldenTests.cs",
+          "line": 45
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageGoldenTests.c866_fixed_checks_clear_same_obligations",
+      "kind": "method",
+      "name": "PlanCoverageGoldenTests.c866_fixed_checks_clear_same_obligations",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageGoldenTests.cs",
+          "line": 34
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageGoldenTests.c866_legacy_reports_v1_v4_v5",
+      "kind": "method",
+      "name": "PlanCoverageGoldenTests.c866_legacy_reports_v1_v4_v5",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageGoldenTests.cs",
+          "line": 23
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageHandleTests.cached_plan_bytes_still_obey_the_source_limit",
+      "kind": "method",
+      "name": "PlanCoverageHandleTests.cached_plan_bytes_still_obey_the_source_limit",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageHandleTests.cs",
+          "line": 100
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageHandleTests.hardlinked_selected_file_is_refused",
+      "kind": "method",
+      "name": "PlanCoverageHandleTests.hardlinked_selected_file_is_refused",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageHandleTests.cs",
+          "line": 14
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageHandleTests.in_repo_fifo_project_is_refused_within_15_seconds",
+      "kind": "method",
+      "name": "PlanCoverageHandleTests.in_repo_fifo_project_is_refused_within_15_seconds",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageHandleTests.cs",
+          "line": 49
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageHandleTests.opened_metadata_decision_table",
+      "kind": "method",
+      "name": "PlanCoverageHandleTests.opened_metadata_decision_table",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageHandleTests.cs",
+          "line": 74
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageHandleTests.oversized_selected_file_is_refused",
+      "kind": "method",
+      "name": "PlanCoverageHandleTests.oversized_selected_file_is_refused",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageHandleTests.cs",
+          "line": 33
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageHandleTests.read_uses_the_verified_handle_after_path_replacement",
+      "kind": "method",
+      "name": "PlanCoverageHandleTests.read_uses_the_verified_handle_after_path_replacement",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageHandleTests.cs",
+          "line": 87
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageParserTests.classifies_tokens_without_promoting_example_values",
+      "kind": "method",
+      "name": "PlanCoverageParserTests.classifies_tokens_without_promoting_example_values",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageParserTests.cs",
+          "line": 17
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageParserTests.declared_counts_keep_class_and_requirement_bindings",
+      "kind": "method",
+      "name": "PlanCoverageParserTests.declared_counts_keep_class_and_requirement_bindings",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageParserTests.cs",
+          "line": 82
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageParserTests.declared_results_expand_arguments_without_inventing_dynamic_counts",
+      "kind": "method",
+      "name": "PlanCoverageParserTests.declared_results_expand_arguments_without_inventing_dynamic_counts",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageParserTests.cs",
+          "line": 96
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageParserTests.declared_row_counts_reject_missing_and_extra_bound_methods",
+      "kind": "method",
+      "name": "PlanCoverageParserTests.declared_row_counts_reject_missing_and_extra_bound_methods",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageParserTests.cs",
+          "line": 65
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageParserTests.declared_total_still_rejects_zero_bound_methods",
+      "kind": "method",
+      "name": "PlanCoverageParserTests.declared_total_still_rejects_zero_bound_methods",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageParserTests.cs",
+          "line": 56
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageParserTests.extracts_verification_obligations_with_original_lines",
+      "kind": "method",
+      "name": "PlanCoverageParserTests.extracts_verification_obligations_with_original_lines",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageParserTests.cs",
+          "line": 8
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageParserTests.maps_checklist_without_erasing_legacy_requirements",
+      "kind": "method",
+      "name": "PlanCoverageParserTests.maps_checklist_without_erasing_legacy_requirements",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageParserTests.cs",
+          "line": 44
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoverageParserTests.resolves_closed_test_scope_and_rejects_ambiguity",
+      "kind": "method",
+      "name": "PlanCoverageParserTests.resolves_closed_test_scope_and_rejects_ambiguity",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageParserTests.cs",
+          "line": 25
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoveragePcTests.accepts_labeled_sequence_without_claiming_dynamic_proof",
+      "kind": "method",
+      "name": "PlanCoveragePcTests.accepts_labeled_sequence_without_claiming_dynamic_proof",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoveragePcTests.cs",
+          "line": 31
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoveragePcTests.rejects_label_in_other_method",
+      "kind": "method",
+      "name": "PlanCoveragePcTests.rejects_label_in_other_method",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoveragePcTests.cs",
+          "line": 16
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoveragePcTests.reports_earlier_different_label_as_unproven",
+      "kind": "method",
+      "name": "PlanCoveragePcTests.reports_earlier_different_label_as_unproven",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoveragePcTests.cs",
+          "line": 23
+        }
+      ]
+    },
+    {
+      "id": "R-4",
+      "test": "PlanCoveragePcTests.reports_unlabelled_predecessor_including_throw_async",
+      "kind": "method",
+      "name": "PlanCoveragePcTests.reports_unlabelled_predecessor_including_throw_async",
+      "planLine": 246,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 246,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoveragePcTests.cs",
+          "line": 9
+        }
+      ]
+    },
+    {
+      "id": "R-5",
+      "test": "CheckpointNamespaceCensusUsageTests.namespace_census_matches_compiled_checkpoint_cases",
+      "kind": "method",
+      "name": "CheckpointNamespaceCensusUsageTests.namespace_census_matches_compiled_checkpoint_cases",
+      "planLine": 247,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 247,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTempUsageTests.cs",
+          "line": 347
+        }
+      ]
+    },
+    {
+      "id": "R-5",
+      "test": "TestClassificationGuardTests.Registry_matches_compiled_metadata",
+      "kind": "method",
+      "name": "TestClassificationGuardTests.Registry_matches_compiled_metadata",
+      "planLine": 247,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 247,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Shared/TestClassificationGuardTests.cs",
+          "line": 10
+        }
+      ]
+    },
+    {
+      "id": "R-5",
+      "test": "TestLaneCategoryGuardTests.every_test_class_is_tagged_unit_xor_integration",
+      "kind": "method",
+      "name": "TestLaneCategoryGuardTests.every_test_class_is_tagged_unit_xor_integration",
+      "planLine": 247,
+      "planColumn": 1,
+      "maps": null,
+      "fromChecklist": true,
+      "locations": [
+        {
+          "line": 247,
+          "column": 1
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/TestHelpers/TestLaneCategoryGuardTests.cs",
+          "line": 13
+        }
+      ]
+    },
+    {
+      "id": "PC-1",
+      "test": "PlanCoverageCensusTests.checklist_flag_accepts_true_false_and_absence",
+      "kind": "label",
+      "name": "c1005-pc-1",
+      "planLine": 448,
+      "planColumn": 253,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 448,
+          "column": 253
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 59
+        }
+      ]
+    },
+    {
+      "id": "PC-2",
+      "test": "PlanCoverageCensusTests.checklist_flag_accepts_true_false_and_absence",
+      "kind": "label",
+      "name": "c1005-pc-2",
+      "planLine": 449,
+      "planColumn": 242,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 449,
+          "column": 242
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 60
+        }
+      ]
+    },
+    {
+      "id": "PC-3",
+      "test": "PlanCoverageCensusTests.checklist_flag_accepts_true_false_and_absence",
+      "kind": "label",
+      "name": "c1005-pc-3",
+      "planLine": 450,
+      "planColumn": 177,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 450,
+          "column": 177
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 63
+        }
+      ]
+    },
+    {
+      "id": "PC-4",
+      "test": "PlanCoverageCensusTests.checklist_flag_accepts_true_false_and_absence",
+      "kind": "label",
+      "name": "c1005-pc-4",
+      "planLine": 451,
+      "planColumn": 163,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 451,
+          "column": 163
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 64
+        }
+      ]
+    },
+    {
+      "id": "PC-5",
+      "test": "PlanCoverageCensusTests.checklist_flag_rejects_invalid_or_conflicting_input",
+      "kind": "label",
+      "name": "c1005-pc-5",
+      "planLine": 452,
+      "planColumn": 223,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 452,
+          "column": 223
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 77
+        }
+      ]
+    },
+    {
+      "id": "PC-6",
+      "test": "PlanCoverageCensusTests.checklist_flag_rejects_invalid_or_conflicting_input",
+      "kind": "label",
+      "name": "c1005-pc-6",
+      "planLine": 453,
+      "planColumn": 186,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 453,
+          "column": 186
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 83
+        }
+      ]
+    },
+    {
+      "id": "PC-7",
+      "test": "PlanCoverageCensusTests.checklist_flag_rejects_invalid_or_conflicting_input",
+      "kind": "label",
+      "name": "c1005-pc-7",
+      "planLine": 454,
+      "planColumn": 182,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 454,
+          "column": 182
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 89
+        }
+      ]
+    },
+    {
+      "id": "PC-8",
+      "test": "PlanCoverageCensusTests.checklist_flag_rejects_invalid_or_conflicting_input",
+      "kind": "label",
+      "name": "c1005-pc-8",
+      "planLine": 455,
+      "planColumn": 189,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 455,
+          "column": 189
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 95
+        }
+      ]
+    },
+    {
+      "id": "PC-9",
+      "test": "PlanCoverageCensusTests.checklist_flag_rejects_invalid_or_conflicting_input",
+      "kind": "label",
+      "name": "c1005-pc-9",
+      "planLine": 456,
+      "planColumn": 184,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 456,
+          "column": 184
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 99
+        }
+      ]
+    },
+    {
+      "id": "PC-10",
+      "test": "PlanCoverageCensusTests.checklist_flag_rejects_invalid_or_conflicting_input",
+      "kind": "label",
+      "name": "c1005-pc-10",
+      "planLine": 457,
+      "planColumn": 144,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 457,
+          "column": 144
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 105
+        }
+      ]
+    },
+    {
+      "id": "PC-11",
+      "test": "PlanCoverageCensusTests.census_reports_new_or_omitted_selected_method",
+      "kind": "label",
+      "name": "c1005-pc-11",
+      "planLine": 458,
+      "planColumn": 181,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 458,
+          "column": 181
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 125
+        }
+      ]
+    },
+    {
+      "id": "PC-12",
+      "test": "PlanCoverageCensusTests.census_rejects_unselected_or_non_test_roster_methods",
+      "kind": "label",
+      "name": "c1005-pc-12",
+      "planLine": 459,
+      "planColumn": 176,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 459,
+          "column": 176
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 141
+        }
+      ]
+    },
+    {
+      "id": "PC-13",
+      "test": "PlanCoverageCensusTests.census_matches_exact_checklist_roster",
+      "kind": "label",
+      "name": "c1005-pc-13",
+      "planLine": 460,
+      "planColumn": 139,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 460,
+          "column": 139
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 117
+        }
+      ]
+    },
+    {
+      "id": "PC-14",
+      "test": "PlanCoverageCensusTests.census_compares_resolved_identities_not_counts",
+      "kind": "label",
+      "name": "c1005-pc-14",
+      "planLine": 461,
+      "planColumn": 171,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 461,
+          "column": 171
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 156
+        }
+      ]
+    },
+    {
+      "id": "PC-15",
+      "test": "PlanCoverageCensusTests.census_compares_resolved_identities_not_counts",
+      "kind": "label",
+      "name": "c1005-pc-15",
+      "planLine": 462,
+      "planColumn": 178,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 462,
+          "column": 178
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 158
+        }
+      ]
+    },
+    {
+      "id": "PC-16",
+      "test": "PlanCoverageCensusTests.census_compares_resolved_identities_not_counts",
+      "kind": "label",
+      "name": "c1005-pc-16",
+      "planLine": 463,
+      "planColumn": 159,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 463,
+          "column": 159
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 161
+        }
+      ]
+    },
+    {
+      "id": "PC-17",
+      "test": "PlanCoverageCensusTests.census_compares_resolved_identities_not_counts",
+      "kind": "label",
+      "name": "c1005-pc-17",
+      "planLine": 464,
+      "planColumn": 162,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 464,
+          "column": 162
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 163
+        }
+      ]
+    },
+    {
+      "id": "PC-18",
+      "test": "PlanCoverageCensusTests.census_compares_resolved_identities_not_counts",
+      "kind": "label",
+      "name": "c1005-pc-18",
+      "planLine": 465,
+      "planColumn": 179,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 465,
+          "column": 179
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 165
+        }
+      ]
+    },
+    {
+      "id": "PC-19",
+      "test": "PlanCoverageCensusTests.census_compares_resolved_identities_not_counts",
+      "kind": "label",
+      "name": "c1005-pc-19",
+      "planLine": 466,
+      "planColumn": 193,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 466,
+          "column": 193
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 167
+        }
+      ]
+    },
+    {
+      "id": "PC-20",
+      "test": "PlanCoverageCensusTests.census_unions_overlapping_filters_and_partial_declarations",
+      "kind": "label",
+      "name": "c1005-pc-20",
+      "planLine": 467,
+      "planColumn": 229,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 467,
+          "column": 229
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 214
+        }
+      ]
+    },
+    {
+      "id": "PC-21",
+      "test": "PlanCoverageCensusTests.census_rejects_unselected_or_non_test_roster_methods",
+      "kind": "label",
+      "name": "c1005-pc-21",
+      "planLine": 468,
+      "planColumn": 180,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 468,
+          "column": 180
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 147
+        }
+      ]
+    },
+    {
+      "id": "PC-22",
+      "test": "PlanCoverageCensusTests.census_rejects_unselected_or_non_test_roster_methods",
+      "kind": "label",
+      "name": "c1005-pc-22",
+      "planLine": 469,
+      "planColumn": 184,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 469,
+          "column": 184
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 149
+        }
+      ]
+    },
+    {
+      "id": "PC-23",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "kind": "label",
+      "name": "c1005-pc-23",
+      "planLine": 470,
+      "planColumn": 204,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 470,
+          "column": 204
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 178
+        }
+      ]
+    },
+    {
+      "id": "PC-24",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "kind": "label",
+      "name": "c1005-pc-24",
+      "planLine": 471,
+      "planColumn": 169,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 471,
+          "column": 169
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 179
+        }
+      ]
+    },
+    {
+      "id": "PC-25",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "kind": "label",
+      "name": "c1005-pc-25",
+      "planLine": 472,
+      "planColumn": 157,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 472,
+          "column": 157
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 180
+        }
+      ]
+    },
+    {
+      "id": "PC-26",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "kind": "label",
+      "name": "c1005-pc-26",
+      "planLine": 473,
+      "planColumn": 163,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 473,
+          "column": 163
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 181
+        }
+      ]
+    },
+    {
+      "id": "PC-27",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "kind": "label",
+      "name": "c1005-pc-27",
+      "planLine": 474,
+      "planColumn": 168,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 474,
+          "column": 168
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 182
+        }
+      ]
+    },
+    {
+      "id": "PC-28",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "kind": "label",
+      "name": "c1005-pc-28",
+      "planLine": 475,
+      "planColumn": 153,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 475,
+          "column": 153
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 183
+        }
+      ]
+    },
+    {
+      "id": "PC-29",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "kind": "label",
+      "name": "c1005-pc-29",
+      "planLine": 476,
+      "planColumn": 152,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 476,
+          "column": 152
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 184
+        }
+      ]
+    },
+    {
+      "id": "PC-30",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "kind": "label",
+      "name": "c1005-pc-30",
+      "planLine": 477,
+      "planColumn": 166,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 477,
+          "column": 166
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 185
+        }
+      ]
+    },
+    {
+      "id": "PC-31",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "kind": "label",
+      "name": "c1005-pc-31",
+      "planLine": 478,
+      "planColumn": 189,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 478,
+          "column": 189
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 186
+        }
+      ]
+    },
+    {
+      "id": "PC-32",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "kind": "label",
+      "name": "c1005-pc-32",
+      "planLine": 479,
+      "planColumn": 164,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 479,
+          "column": 164
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 187
+        }
+      ]
+    },
+    {
+      "id": "PC-33",
+      "test": "PlanCoverageCensusTests.census_unions_overlapping_filters_and_partial_declarations",
+      "kind": "label",
+      "name": "c1005-pc-33",
+      "planLine": 480,
+      "planColumn": 165,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 480,
+          "column": 165
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 217
+        }
+      ]
+    },
+    {
+      "id": "PC-34",
+      "test": "PlanCoverageCensusTests.census_unions_overlapping_filters_and_partial_declarations",
+      "kind": "label",
+      "name": "c1005-pc-34",
+      "planLine": 481,
+      "planColumn": 179,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 481,
+          "column": 179
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 205
+        }
+      ]
+    },
+    {
+      "id": "PC-35",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "kind": "label",
+      "name": "c1005-pc-35",
+      "planLine": 482,
+      "planColumn": 187,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 482,
+          "column": 187
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 225
+        }
+      ]
+    },
+    {
+      "id": "PC-36",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "kind": "label",
+      "name": "c1005-pc-36",
+      "planLine": 483,
+      "planColumn": 167,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 483,
+          "column": 167
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 226
+        }
+      ]
+    },
+    {
+      "id": "PC-37",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "kind": "label",
+      "name": "c1005-pc-37",
+      "planLine": 484,
+      "planColumn": 212,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 484,
+          "column": 212
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 227
+        }
+      ]
+    },
+    {
+      "id": "PC-38",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "kind": "label",
+      "name": "c1005-pc-38",
+      "planLine": 485,
+      "planColumn": 184,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 485,
+          "column": 184
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 228
+        }
+      ]
+    },
+    {
+      "id": "PC-39",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "kind": "label",
+      "name": "c1005-pc-39",
+      "planLine": 486,
+      "planColumn": 179,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 486,
+          "column": 179
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 229
+        }
+      ]
+    },
+    {
+      "id": "PC-40",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "kind": "label",
+      "name": "c1005-pc-40",
+      "planLine": 487,
+      "planColumn": 199,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 487,
+          "column": 199
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 230
+        }
+      ]
+    },
+    {
+      "id": "PC-41",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "kind": "label",
+      "name": "c1005-pc-41",
+      "planLine": 488,
+      "planColumn": 173,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 488,
+          "column": 173
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 231
+        }
+      ]
+    },
+    {
+      "id": "PC-42",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "kind": "label",
+      "name": "c1005-pc-42",
+      "planLine": 489,
+      "planColumn": 161,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 489,
+          "column": 161
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 232
+        }
+      ]
+    },
+    {
+      "id": "PC-43",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "kind": "label",
+      "name": "c1005-pc-43",
+      "planLine": 490,
+      "planColumn": 243,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 490,
+          "column": 243
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 247
+        }
+      ]
+    },
+    {
+      "id": "PC-44",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "kind": "label",
+      "name": "c1005-pc-44",
+      "planLine": 491,
+      "planColumn": 183,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 491,
+          "column": 183
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 248
+        }
+      ]
+    },
+    {
+      "id": "PC-45",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "kind": "label",
+      "name": "c1005-pc-45",
+      "planLine": 492,
+      "planColumn": 163,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 492,
+          "column": 163
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 249
+        }
+      ]
+    },
+    {
+      "id": "PC-46",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "kind": "label",
+      "name": "c1005-pc-46",
+      "planLine": 493,
+      "planColumn": 169,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 493,
+          "column": 169
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 250
+        }
+      ]
+    },
+    {
+      "id": "PC-47",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "kind": "label",
+      "name": "c1005-pc-47",
+      "planLine": 494,
+      "planColumn": 163,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 494,
+          "column": 163
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 251
+        }
+      ]
+    },
+    {
+      "id": "PC-48",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "kind": "label",
+      "name": "c1005-pc-48",
+      "planLine": 495,
+      "planColumn": 245,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 495,
+          "column": 245
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 253
+        }
+      ]
+    },
+    {
+      "id": "PC-49",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "kind": "label",
+      "name": "c1005-pc-49",
+      "planLine": 496,
+      "planColumn": 191,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 496,
+          "column": 191
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 255
+        }
+      ]
+    },
+    {
+      "id": "PC-50",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "kind": "label",
+      "name": "c1005-pc-50",
+      "planLine": 497,
+      "planColumn": 209,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 497,
+          "column": 209
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 256
+        }
+      ]
+    },
+    {
+      "id": "PC-51",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "kind": "label",
+      "name": "c1005-pc-51",
+      "planLine": 498,
+      "planColumn": 175,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 498,
+          "column": 175
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 257
+        }
+      ]
+    },
+    {
+      "id": "PC-52",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "kind": "label",
+      "name": "c1005-pc-52",
+      "planLine": 499,
+      "planColumn": 204,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 499,
+          "column": 204
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 258
+        }
+      ]
+    },
+    {
+      "id": "PC-53",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "kind": "label",
+      "name": "c1005-pc-53",
+      "planLine": 500,
+      "planColumn": 173,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 500,
+          "column": 173
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 259
+        }
+      ]
+    },
+    {
+      "id": "PC-54",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "kind": "label",
+      "name": "c1005-pc-54",
+      "planLine": 501,
+      "planColumn": 170,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 501,
+          "column": 170
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 260
+        },
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 263
+        }
+      ]
+    },
+    {
+      "id": "PC-55",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "kind": "label",
+      "name": "c1005-pc-55",
+      "planLine": 502,
+      "planColumn": 186,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 502,
+          "column": 186
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 265
+        }
+      ]
+    },
+    {
+      "id": "PC-56",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "kind": "label",
+      "name": "c1005-pc-56",
+      "planLine": 503,
+      "planColumn": 204,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 503,
+          "column": 204
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 266
+        },
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 267
+        }
+      ]
+    },
+    {
+      "id": "PC-57",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "kind": "label",
+      "name": "c1005-pc-57",
+      "planLine": 504,
+      "planColumn": 159,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 504,
+          "column": 159
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 268
+        }
+      ]
+    },
+    {
+      "id": "PC-58",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "kind": "label",
+      "name": "c1005-pc-58",
+      "planLine": 505,
+      "planColumn": 250,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 505,
+          "column": 250
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 271
+        }
+      ]
+    },
+    {
+      "id": "PC-59",
+      "test": "PlanCoverageCensusTests.census_reports_new_or_omitted_selected_method",
+      "kind": "label",
+      "name": "c1005-pc-59",
+      "planLine": 506,
+      "planColumn": 210,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 506,
+          "column": 210
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 128
+        }
+      ]
+    },
+    {
+      "id": "PC-60",
+      "test": "PlanCoverageCensusTests.census_unions_overlapping_filters_and_partial_declarations",
+      "kind": "label",
+      "name": "c1005-pc-60",
+      "planLine": 507,
+      "planColumn": 191,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 507,
+          "column": 191
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 211
+        }
+      ]
+    },
+    {
+      "id": "PC-61",
+      "test": "PlanCoverageCensusTests.census_rejects_unselected_or_non_test_roster_methods",
+      "kind": "label",
+      "name": "c1005-pc-61",
+      "planLine": 508,
+      "planColumn": 203,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 508,
+          "column": 203
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 144
+        }
+      ]
+    },
+    {
+      "id": "PC-62",
+      "test": "PlanCoverageCensusTests.census_unions_overlapping_filters_and_partial_declarations",
+      "kind": "label",
+      "name": "c1005-pc-62",
+      "planLine": 509,
+      "planColumn": 198,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 509,
+          "column": 198
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 206
+        }
+      ]
+    },
+    {
+      "id": "PC-63",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "kind": "label",
+      "name": "c1005-pc-63",
+      "planLine": 510,
+      "planColumn": 151,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 510,
+          "column": 151
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 306
+        }
+      ]
+    },
+    {
+      "id": "PC-64",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "kind": "label",
+      "name": "c1005-pc-64",
+      "planLine": 511,
+      "planColumn": 178,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 511,
+          "column": 178
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 307
+        }
+      ]
+    },
+    {
+      "id": "PC-65",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "kind": "label",
+      "name": "c1005-pc-65",
+      "planLine": 512,
+      "planColumn": 178,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 512,
+          "column": 178
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 317
+        }
+      ]
+    },
+    {
+      "id": "PC-66",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "kind": "label",
+      "name": "c1005-pc-66",
+      "planLine": 513,
+      "planColumn": 158,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 513,
+          "column": 158
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 308
+        }
+      ]
+    },
+    {
+      "id": "PC-67",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "kind": "label",
+      "name": "c1005-pc-67",
+      "planLine": 514,
+      "planColumn": 186,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 514,
+          "column": 186
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 309
+        },
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 324
+        }
+      ]
+    },
+    {
+      "id": "PC-68",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "kind": "label",
+      "name": "c1005-pc-68",
+      "planLine": 515,
+      "planColumn": 219,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 515,
+          "column": 219
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 356
+        }
+      ]
+    },
+    {
+      "id": "PC-69",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "kind": "label",
+      "name": "c1005-pc-69",
+      "planLine": 516,
+      "planColumn": 146,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 516,
+          "column": 146
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 357
+        }
+      ]
+    },
+    {
+      "id": "PC-70",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "kind": "label",
+      "name": "c1005-pc-70",
+      "planLine": 517,
+      "planColumn": 178,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 517,
+          "column": 178
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 358
+        }
+      ]
+    },
+    {
+      "id": "PC-71",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "kind": "label",
+      "name": "c1005-pc-71",
+      "planLine": 518,
+      "planColumn": 184,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 518,
+          "column": 184
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 361
+        }
+      ]
+    },
+    {
+      "id": "PC-72",
+      "test": "PlanCoverageCensusTests.census_matches_exact_checklist_roster",
+      "kind": "label",
+      "name": "c1005-pc-72",
+      "planLine": 519,
+      "planColumn": 226,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 519,
+          "column": 226
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 114
+        }
+      ]
+    },
+    {
+      "id": "PC-73",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "kind": "label",
+      "name": "c1005-pc-73",
+      "planLine": 520,
+      "planColumn": 161,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 520,
+          "column": 161
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 365
+        }
+      ]
+    },
+    {
+      "id": "PC-74",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "kind": "label",
+      "name": "c1005-pc-74",
+      "planLine": 521,
+      "planColumn": 181,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 521,
+          "column": 181
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 367
+        }
+      ]
+    },
+    {
+      "id": "PC-75",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "kind": "label",
+      "name": "c1005-pc-75",
+      "planLine": 522,
+      "planColumn": 192,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 522,
+          "column": 192
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 369
+        }
+      ]
+    },
+    {
+      "id": "PC-76",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "kind": "label",
+      "name": "c1005-pc-76",
+      "planLine": 523,
+      "planColumn": 176,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 523,
+          "column": 176
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 372
+        }
+      ]
+    },
+    {
+      "id": "PC-77",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "kind": "label",
+      "name": "c1005-pc-77",
+      "planLine": 524,
+      "planColumn": 181,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 524,
+          "column": 181
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 235
+        }
+      ]
+    },
+    {
+      "id": "PC-78",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "kind": "label",
+      "name": "c1005-pc-78",
+      "planLine": 525,
+      "planColumn": 269,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 525,
+          "column": 269
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 311
+        }
+      ]
+    },
+    {
+      "id": "PC-79",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "kind": "label",
+      "name": "c1005-pc-79",
+      "planLine": 526,
+      "planColumn": 240,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 526,
+          "column": 240
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 310
+        }
+      ]
+    },
+    {
+      "id": "PC-80",
+      "test": "CheckpointNamespaceCensusUsageTests.namespace_census_matches_compiled_checkpoint_cases",
+      "kind": "label",
+      "name": "scripts/lib/checkpoint-usage.ps1 Get-NamespaceCensus is stale against the compiled checkpoint cases",
+      "planLine": 527,
+      "planColumn": 185,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 527,
+          "column": 185
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTempUsageTests.cs",
+          "line": 363
+        }
+      ]
+    },
+    {
+      "id": "PC-81",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "kind": "label",
+      "name": "c1005-pc-81",
+      "planLine": 528,
+      "planColumn": 202,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 528,
+          "column": 202
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 318
+        }
+      ]
+    },
+    {
+      "id": "PC-82",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "kind": "label",
+      "name": "c1005-pc-82",
+      "planLine": 529,
+      "planColumn": 216,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 529,
+          "column": 216
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 319
+        }
+      ]
+    },
+    {
+      "id": "PC-83",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "kind": "label",
+      "name": "c1005-pc-83",
+      "planLine": 530,
+      "planColumn": 187,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 530,
+          "column": 187
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 374
+        }
+      ]
+    },
+    {
+      "id": "PC-84",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "kind": "label",
+      "name": "c1005-pc-84",
+      "planLine": 531,
+      "planColumn": 210,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 531,
+          "column": 210
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 273
+        }
+      ]
+    },
+    {
+      "id": "PC-85",
+      "test": "PlanCoverageCommandTests.existing_outside_project_is_refused_by_root_boundary",
+      "kind": "label",
+      "name": "coverage-existing-outside-root-boundary",
+      "planLine": 532,
+      "planColumn": 199,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 532,
+          "column": 199
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCommandTests.cs",
+          "line": 113
+        }
+      ]
+    },
+    {
+      "id": "PC-86",
+      "test": "PlanCoverageHandleTests.opened_metadata_decision_table",
+      "kind": "label",
+      "name": "coverage-opened-metadata-decision",
+      "planLine": 533,
+      "planColumn": 148,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 533,
+          "column": 148
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageHandleTests.cs",
+          "line": 84
+        }
+      ]
+    },
+    {
+      "id": "PC-87",
+      "test": "PlanCoverageHandleTests.opened_metadata_decision_table",
+      "kind": "label",
+      "name": "coverage-opened-metadata-decision",
+      "planLine": 534,
+      "planColumn": 149,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 534,
+          "column": 149
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageHandleTests.cs",
+          "line": 84
+        }
+      ]
+    },
+    {
+      "id": "PC-88",
+      "test": "PlanCoverageHandleTests.opened_metadata_decision_table",
+      "kind": "label",
+      "name": "coverage-opened-metadata-decision",
+      "planLine": 535,
+      "planColumn": 158,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 535,
+          "column": 158
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageHandleTests.cs",
+          "line": 84
+        }
+      ]
+    },
+    {
+      "id": "PC-89",
+      "test": "PlanCoverageHandleTests.oversized_selected_file_is_refused",
+      "kind": "label",
+      "name": "coverage-size-limit-refused",
+      "planLine": 536,
+      "planColumn": 220,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 536,
+          "column": 220
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageHandleTests.cs",
+          "line": 45
+        }
+      ]
+    },
+    {
+      "id": "PC-90",
+      "test": "PlanCoverageHandleTests.cached_plan_bytes_still_obey_the_source_limit",
+      "kind": "label",
+      "name": "coverage-cached-source-limit-refused",
+      "planLine": 537,
+      "planColumn": 234,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 537,
+          "column": 234
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageHandleTests.cs",
+          "line": 109
+        }
+      ]
+    },
+    {
+      "id": "PC-91",
+      "test": "PlanCoverageHandleTests.read_uses_the_verified_handle_after_path_replacement",
+      "kind": "label",
+      "name": "coverage-read-from-verified-handle",
+      "planLine": 538,
+      "planColumn": 213,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 538,
+          "column": 213
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageHandleTests.cs",
+          "line": 97
+        }
+      ]
+    },
+    {
+      "id": "PC-92",
+      "test": "PlanCoverageCensusTests.census_compares_resolved_identities_not_counts",
+      "kind": "label",
+      "name": "c1005-pc-92",
+      "planLine": 539,
+      "planColumn": 162,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 539,
+          "column": 162
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 169
+        }
+      ]
+    },
+    {
+      "id": "PC-93",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "kind": "label",
+      "name": "c1005-pc-93",
+      "planLine": 540,
+      "planColumn": 212,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 540,
+          "column": 212
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 233
+        }
+      ]
+    },
+    {
+      "id": "PC-94",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "kind": "label",
+      "name": "c1005-pc-94",
+      "planLine": 541,
+      "planColumn": 207,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 541,
+          "column": 207
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 274
+        }
+      ]
+    },
+    {
+      "id": "PC-95",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "kind": "label",
+      "name": "c1005-pc-95",
+      "planLine": 542,
+      "planColumn": 200,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 542,
+          "column": 200
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 275
+        }
+      ]
+    },
+    {
+      "id": "PC-96",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "kind": "label",
+      "name": "c1005-pc-96",
+      "planLine": 543,
+      "planColumn": 205,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 543,
+          "column": 205
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 378
+        }
+      ]
+    },
+    {
+      "id": "PC-97",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "kind": "label",
+      "name": "c1005-pc-97",
+      "planLine": 544,
+      "planColumn": 192,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 544,
+          "column": 192
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 380
+        }
+      ]
+    },
+    {
+      "id": "PC-98",
+      "test": "PlanCoverageCensusTests.census_matches_exact_checklist_roster",
+      "kind": "label",
+      "name": "c1005-pc-98",
+      "planLine": 545,
+      "planColumn": 163,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 545,
+          "column": 163
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+          "line": 115
+        }
+      ]
+    },
+    {
+      "id": "PC-99",
+      "test": "PlanCoverageHandleTests.oversized_selected_file_is_refused",
+      "kind": "label",
+      "name": "coverage-size-limit-refused",
+      "planLine": 546,
+      "planColumn": 222,
+      "maps": null,
+      "fromChecklist": false,
+      "locations": [
+        {
+          "line": 546,
+          "column": 222
+        }
+      ],
+      "matches": [
+        {
+          "path": "tests/Antiphon.Tests/Checkpoints/PlanCoverageHandleTests.cs",
+          "line": 45
+        }
+      ]
+    }
+  ],
+  "exclusions": [
+    {
+      "code": "EXAMPLE",
+      "planLine": 777,
+      "planColumn": 4,
+      "id": "",
+      "test": "",
+      "name": "/*/*/PlanCoverageCensusTests/checklist_flag_accepts_true_false_and_absence",
+      "testPath": "",
+      "testLine": 0,
+      "detail": "input, display or non-verification table"
+    },
+    {
+      "code": "EXAMPLE",
+      "planLine": 778,
+      "planColumn": 4,
+      "id": "",
+      "test": "",
+      "name": "/*/*/PlanCoverageCensusTests/checklist_flag_rejects_invalid_or_conflicting_input",
+      "testPath": "",
+      "testLine": 0,
+      "detail": "input, display or non-verification table"
+    },
+    {
+      "code": "EXAMPLE",
+      "planLine": 779,
+      "planColumn": 4,
+      "id": "",
+      "test": "",
+      "name": "/*/*/PlanCoverageCensusTests/census_reports_new_or_omitted_selected_method",
+      "testPath": "",
+      "testLine": 0,
+      "detail": "input, display or non-verification table"
+    },
+    {
+      "code": "EXAMPLE",
+      "planLine": 780,
+      "planColumn": 4,
+      "id": "",
+      "test": "",
+      "name": "/*/*/PlanCoverageCensusTests/census_rejects_unselected_or_non_test_roster_methods",
+      "testPath": "",
+      "testLine": 0,
+      "detail": "input, display or non-verification table"
+    },
+    {
+      "code": "EXAMPLE",
+      "planLine": 781,
+      "planColumn": 4,
+      "id": "",
+      "test": "",
+      "name": "/*/*/PlanCoverageCensusTests/census_matches_exact_checklist_roster",
+      "testPath": "",
+      "testLine": 0,
+      "detail": "input, display or non-verification table"
+    },
+    {
+      "code": "EXAMPLE",
+      "planLine": 782,
+      "planColumn": 4,
+      "id": "",
+      "test": "",
+      "name": "/*/*/PlanCoverageCensusTests/census_compares_resolved_identities_not_counts",
+      "testPath": "",
+      "testLine": 0,
+      "detail": "input, display or non-verification table"
+    },
+    {
+      "code": "EXAMPLE",
+      "planLine": 783,
+      "planColumn": 4,
+      "id": "",
+      "test": "",
+      "name": "/*/*/PlanCoverageCensusTests/census_unions_overlapping_filters_and_partial_declarations",
+      "testPath": "",
+      "testLine": 0,
+      "detail": "input, display or non-verification table"
+    },
+    {
+      "code": "EXAMPLE",
+      "planLine": 784,
+      "planColumn": 4,
+      "id": "",
+      "test": "",
+      "name": "/*/*/PlanCoverageCensusTests/census_tracks_filter_class_namespace_and_project",
+      "testPath": "",
+      "testLine": 0,
+      "detail": "input, display or non-verification table"
+    },
+    {
+      "code": "EXAMPLE",
+      "planLine": 785,
+      "planColumn": 4,
+      "id": "",
+      "test": "",
+      "name": "/*/*/PlanCoverageCensusTests/census_excludes_helpers_and_counts_parameterized_method_once",
+      "testPath": "",
+      "testLine": 0,
+      "detail": "input, display or non-verification table"
+    },
+    {
+      "code": "EXAMPLE",
+      "planLine": 786,
+      "planColumn": 4,
+      "id": "",
+      "test": "",
+      "name": "/*/*/PlanCoverageCensusTests/census_reports_unmapped_selection_without_dynamic_discovery",
+      "testPath": "",
+      "testLine": 0,
+      "detail": "input, display or non-verification table"
+    },
+    {
+      "code": "EXAMPLE",
+      "planLine": 787,
+      "planColumn": 4,
+      "id": "",
+      "test": "",
+      "name": "/*/*/PlanCoverageCensusTests/census_public_cli_is_deterministic_and_read_only",
+      "testPath": "",
+      "testLine": 0,
+      "detail": "input, display or non-verification table"
+    },
+    {
+      "code": "EXAMPLE",
+      "planLine": 788,
+      "planColumn": 4,
+      "id": "",
+      "test": "",
+      "name": "/*/*/PlanCoverageCensusTests/opt_out_preserves_legacy_reports_and_declared_counts",
+      "testPath": "",
+      "testLine": 0,
+      "detail": "input, display or non-verification table"
+    },
+    {
+      "code": "EXAMPLE",
+      "planLine": 789,
+      "planColumn": 4,
+      "id": "",
+      "test": "",
+      "name": "/*/*/CheckpointNamespaceCensusUsageTests/namespace_census_matches_compiled_checkpoint_cases",
+      "testPath": "",
+      "testLine": 0,
+      "detail": "input, display or non-verification table"
+    },
+    {
+      "code": "EXAMPLE",
+      "planLine": 790,
+      "planColumn": 4,
+      "id": "",
+      "test": "",
+      "name": "/*/*/PlanCoverageCommandTests/existing_outside_project_is_refused_by_root_boundary",
+      "testPath": "",
+      "testLine": 0,
+      "detail": "input, display or non-verification table"
+    },
+    {
+      "code": "EXAMPLE",
+      "planLine": 791,
+      "planColumn": 4,
+      "id": "",
+      "test": "",
+      "name": "/*/*/PlanCoverageHandleTests/opened_metadata_decision_table*",
+      "testPath": "",
+      "testLine": 0,
+      "detail": "input, display or non-verification table"
+    },
+    {
+      "code": "EXAMPLE",
+      "planLine": 792,
+      "planColumn": 4,
+      "id": "",
+      "test": "",
+      "name": "/*/*/PlanCoverageHandleTests/oversized_selected_file_is_refused*",
+      "testPath": "",
+      "testLine": 0,
+      "detail": "input, display or non-verification table"
+    },
+    {
+      "code": "EXAMPLE",
+      "planLine": 793,
+      "planColumn": 4,
+      "id": "",
+      "test": "",
+      "name": "/*/*/PlanCoverageHandleTests/cached_plan_bytes_still_obey_the_source_limit",
+      "testPath": "",
+      "testLine": 0,
+      "detail": "input, display or non-verification table"
+    },
+    {
+      "code": "EXAMPLE",
+      "planLine": 794,
+      "planColumn": 4,
+      "id": "",
+      "test": "",
+      "name": "/*/*/PlanCoverageHandleTests/read_uses_the_verified_handle_after_path_replacement",
+      "testPath": "",
+      "testLine": 0,
+      "detail": "input, display or non-verification table"
+    }
+  ],
+  "diagnostics": [
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 449,
+      "planColumn": 242,
+      "id": "PC-2",
+      "test": "PlanCoverageCensusTests.checklist_flag_accepts_true_false_and_absence",
+      "name": "c1005-pc-2",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 59,
+      "detail": "earlier labels=[\u0022c1005-pc-1\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 450,
+      "planColumn": 177,
+      "id": "PC-3",
+      "test": "PlanCoverageCensusTests.checklist_flag_accepts_true_false_and_absence",
+      "name": "c1005-pc-3",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 59,
+      "detail": "earlier labels=[\u0022c1005-pc-1\u0022,\u0022c1005-pc-2\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 451,
+      "planColumn": 163,
+      "id": "PC-4",
+      "test": "PlanCoverageCensusTests.checklist_flag_accepts_true_false_and_absence",
+      "name": "c1005-pc-4",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 59,
+      "detail": "earlier labels=[\u0022c1005-pc-1\u0022,\u0022c1005-pc-2\u0022,\u0022c1005-pc-3\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 453,
+      "planColumn": 186,
+      "id": "PC-6",
+      "test": "PlanCoverageCensusTests.checklist_flag_rejects_invalid_or_conflicting_input",
+      "name": "c1005-pc-6",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 77,
+      "detail": "earlier labels=[\u0022c1005-pc-5\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 454,
+      "planColumn": 182,
+      "id": "PC-7",
+      "test": "PlanCoverageCensusTests.checklist_flag_rejects_invalid_or_conflicting_input",
+      "name": "c1005-pc-7",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 77,
+      "detail": "earlier labels=[\u0022c1005-pc-5\u0022,\u0022c1005-pc-6\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 455,
+      "planColumn": 189,
+      "id": "PC-8",
+      "test": "PlanCoverageCensusTests.checklist_flag_rejects_invalid_or_conflicting_input",
+      "name": "c1005-pc-8",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 77,
+      "detail": "earlier labels=[\u0022c1005-pc-5\u0022,\u0022c1005-pc-6\u0022,\u0022c1005-pc-7\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 456,
+      "planColumn": 184,
+      "id": "PC-9",
+      "test": "PlanCoverageCensusTests.checklist_flag_rejects_invalid_or_conflicting_input",
+      "name": "c1005-pc-9",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 77,
+      "detail": "earlier labels=[\u0022c1005-pc-5\u0022,\u0022c1005-pc-6\u0022,\u0022c1005-pc-7\u0022,\u0022c1005-pc-8\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 457,
+      "planColumn": 144,
+      "id": "PC-10",
+      "test": "PlanCoverageCensusTests.checklist_flag_rejects_invalid_or_conflicting_input",
+      "name": "c1005-pc-10",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 77,
+      "detail": "earlier labels=[\u0022c1005-pc-5\u0022,\u0022c1005-pc-6\u0022,\u0022c1005-pc-7\u0022,\u0022c1005-pc-8\u0022,\u0022c1005-pc-9\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 460,
+      "planColumn": 139,
+      "id": "PC-13",
+      "test": "PlanCoverageCensusTests.census_matches_exact_checklist_roster",
+      "name": "c1005-pc-13",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 114,
+      "detail": "earlier labels=[\u0022c1005-exact-roster\u0022,\u0022c1005-pc-72\u0022,\u0022c1005-pc-98\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 462,
+      "planColumn": 178,
+      "id": "PC-15",
+      "test": "PlanCoverageCensusTests.census_compares_resolved_identities_not_counts",
+      "name": "c1005-pc-15",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 156,
+      "detail": "earlier labels=[\u0022c1005-pc-14\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 463,
+      "planColumn": 159,
+      "id": "PC-16",
+      "test": "PlanCoverageCensusTests.census_compares_resolved_identities_not_counts",
+      "name": "c1005-pc-16",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 156,
+      "detail": "earlier labels=[\u0022c1005-pc-14\u0022,\u0022c1005-pc-15\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 464,
+      "planColumn": 162,
+      "id": "PC-17",
+      "test": "PlanCoverageCensusTests.census_compares_resolved_identities_not_counts",
+      "name": "c1005-pc-17",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 156,
+      "detail": "earlier labels=[\u0022c1005-pc-14\u0022,\u0022c1005-pc-15\u0022,\u0022c1005-pc-16\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 465,
+      "planColumn": 179,
+      "id": "PC-18",
+      "test": "PlanCoverageCensusTests.census_compares_resolved_identities_not_counts",
+      "name": "c1005-pc-18",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 156,
+      "detail": "earlier labels=[\u0022c1005-pc-14\u0022,\u0022c1005-pc-15\u0022,\u0022c1005-pc-16\u0022,\u0022c1005-pc-17\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 466,
+      "planColumn": 193,
+      "id": "PC-19",
+      "test": "PlanCoverageCensusTests.census_compares_resolved_identities_not_counts",
+      "name": "c1005-pc-19",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 156,
+      "detail": "earlier labels=[\u0022c1005-pc-14\u0022,\u0022c1005-pc-15\u0022,\u0022c1005-pc-16\u0022,\u0022c1005-pc-17\u0022,\u0022c1005-pc-18\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 467,
+      "planColumn": 229,
+      "id": "PC-20",
+      "test": "PlanCoverageCensusTests.census_unions_overlapping_filters_and_partial_declarations",
+      "name": "c1005-pc-20",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 205,
+      "detail": "earlier labels=[\u0022c1005-pc-34\u0022,\u0022c1005-pc-60\u0022,\u0022c1005-pc-62\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 468,
+      "planColumn": 180,
+      "id": "PC-21",
+      "test": "PlanCoverageCensusTests.census_rejects_unselected_or_non_test_roster_methods",
+      "name": "c1005-pc-21",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 141,
+      "detail": "earlier labels=[\u0022c1005-extra-helper\u0022,\u0022c1005-pc-12\u0022,\u0022c1005-pc-61\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 469,
+      "planColumn": 184,
+      "id": "PC-22",
+      "test": "PlanCoverageCensusTests.census_rejects_unselected_or_non_test_roster_methods",
+      "name": "c1005-pc-22",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 141,
+      "detail": "earlier labels=[\u0022c1005-extra-helper\u0022,\u0022c1005-pc-12\u0022,\u0022c1005-pc-21\u0022,\u0022c1005-pc-61\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 471,
+      "planColumn": 169,
+      "id": "PC-24",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "name": "c1005-pc-24",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 178,
+      "detail": "earlier labels=[\u0022c1005-pc-23\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 472,
+      "planColumn": 157,
+      "id": "PC-25",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "name": "c1005-pc-25",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 178,
+      "detail": "earlier labels=[\u0022c1005-pc-23\u0022,\u0022c1005-pc-24\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 473,
+      "planColumn": 163,
+      "id": "PC-26",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "name": "c1005-pc-26",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 178,
+      "detail": "earlier labels=[\u0022c1005-pc-23\u0022,\u0022c1005-pc-24\u0022,\u0022c1005-pc-25\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 474,
+      "planColumn": 168,
+      "id": "PC-27",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "name": "c1005-pc-27",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 178,
+      "detail": "earlier labels=[\u0022c1005-pc-23\u0022,\u0022c1005-pc-24\u0022,\u0022c1005-pc-25\u0022,\u0022c1005-pc-26\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 475,
+      "planColumn": 153,
+      "id": "PC-28",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "name": "c1005-pc-28",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 178,
+      "detail": "earlier labels=[\u0022c1005-pc-23\u0022,\u0022c1005-pc-24\u0022,\u0022c1005-pc-25\u0022,\u0022c1005-pc-26\u0022,\u0022c1005-pc-27\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 476,
+      "planColumn": 152,
+      "id": "PC-29",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "name": "c1005-pc-29",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 178,
+      "detail": "earlier labels=[\u0022c1005-pc-23\u0022,\u0022c1005-pc-24\u0022,\u0022c1005-pc-25\u0022,\u0022c1005-pc-26\u0022,\u0022c1005-pc-27\u0022,\u0022c1005-pc-28\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 477,
+      "planColumn": 166,
+      "id": "PC-30",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "name": "c1005-pc-30",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 178,
+      "detail": "earlier labels=[\u0022c1005-pc-23\u0022,\u0022c1005-pc-24\u0022,\u0022c1005-pc-25\u0022,\u0022c1005-pc-26\u0022,\u0022c1005-pc-27\u0022,\u0022c1005-pc-28\u0022,\u0022c1005-pc-29\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 478,
+      "planColumn": 189,
+      "id": "PC-31",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "name": "c1005-pc-31",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 178,
+      "detail": "earlier labels=[\u0022c1005-pc-23\u0022,\u0022c1005-pc-24\u0022,\u0022c1005-pc-25\u0022,\u0022c1005-pc-26\u0022,\u0022c1005-pc-27\u0022,\u0022c1005-pc-28\u0022,\u0022c1005-pc-29\u0022,\u0022c1005-pc-30\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 479,
+      "planColumn": 164,
+      "id": "PC-32",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "name": "c1005-pc-32",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 178,
+      "detail": "earlier labels=[\u0022c1005-pc-23\u0022,\u0022c1005-pc-24\u0022,\u0022c1005-pc-25\u0022,\u0022c1005-pc-26\u0022,\u0022c1005-pc-27\u0022,\u0022c1005-pc-28\u0022,\u0022c1005-pc-29\u0022,\u0022c1005-pc-30\u0022,\u0022c1005-pc-31\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 480,
+      "planColumn": 165,
+      "id": "PC-33",
+      "test": "PlanCoverageCensusTests.census_unions_overlapping_filters_and_partial_declarations",
+      "name": "c1005-pc-33",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 205,
+      "detail": "earlier labels=[\u0022c1005-pc-20\u0022,\u0022c1005-pc-34\u0022,\u0022c1005-pc-60\u0022,\u0022c1005-pc-62\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 483,
+      "planColumn": 167,
+      "id": "PC-36",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "name": "c1005-pc-36",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 225,
+      "detail": "earlier labels=[\u0022c1005-pc-35\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 484,
+      "planColumn": 212,
+      "id": "PC-37",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "name": "c1005-pc-37",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 225,
+      "detail": "earlier labels=[\u0022c1005-pc-35\u0022,\u0022c1005-pc-36\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 485,
+      "planColumn": 184,
+      "id": "PC-38",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "name": "c1005-pc-38",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 225,
+      "detail": "earlier labels=[\u0022c1005-pc-35\u0022,\u0022c1005-pc-36\u0022,\u0022c1005-pc-37\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 486,
+      "planColumn": 179,
+      "id": "PC-39",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "name": "c1005-pc-39",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 225,
+      "detail": "earlier labels=[\u0022c1005-pc-35\u0022,\u0022c1005-pc-36\u0022,\u0022c1005-pc-37\u0022,\u0022c1005-pc-38\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 487,
+      "planColumn": 199,
+      "id": "PC-40",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "name": "c1005-pc-40",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 225,
+      "detail": "earlier labels=[\u0022c1005-pc-35\u0022,\u0022c1005-pc-36\u0022,\u0022c1005-pc-37\u0022,\u0022c1005-pc-38\u0022,\u0022c1005-pc-39\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 488,
+      "planColumn": 173,
+      "id": "PC-41",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "name": "c1005-pc-41",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 225,
+      "detail": "earlier labels=[\u0022c1005-pc-35\u0022,\u0022c1005-pc-36\u0022,\u0022c1005-pc-37\u0022,\u0022c1005-pc-38\u0022,\u0022c1005-pc-39\u0022,\u0022c1005-pc-40\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 489,
+      "planColumn": 161,
+      "id": "PC-42",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "name": "c1005-pc-42",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 225,
+      "detail": "earlier labels=[\u0022c1005-pc-35\u0022,\u0022c1005-pc-36\u0022,\u0022c1005-pc-37\u0022,\u0022c1005-pc-38\u0022,\u0022c1005-pc-39\u0022,\u0022c1005-pc-40\u0022,\u0022c1005-pc-41\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 491,
+      "planColumn": 183,
+      "id": "PC-44",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "name": "c1005-pc-44",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 247,
+      "detail": "earlier labels=[\u0022c1005-pc-43\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 492,
+      "planColumn": 163,
+      "id": "PC-45",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "name": "c1005-pc-45",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 247,
+      "detail": "earlier labels=[\u0022c1005-pc-43\u0022,\u0022c1005-pc-44\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 493,
+      "planColumn": 169,
+      "id": "PC-46",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "name": "c1005-pc-46",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 247,
+      "detail": "earlier labels=[\u0022c1005-pc-43\u0022,\u0022c1005-pc-44\u0022,\u0022c1005-pc-45\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 494,
+      "planColumn": 163,
+      "id": "PC-47",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "name": "c1005-pc-47",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 247,
+      "detail": "earlier labels=[\u0022c1005-pc-43\u0022,\u0022c1005-pc-44\u0022,\u0022c1005-pc-45\u0022,\u0022c1005-pc-46\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 495,
+      "planColumn": 245,
+      "id": "PC-48",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "name": "c1005-pc-48",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 247,
+      "detail": "earlier labels=[\u0022c1005-pc-43\u0022,\u0022c1005-pc-44\u0022,\u0022c1005-pc-45\u0022,\u0022c1005-pc-46\u0022,\u0022c1005-pc-47\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 496,
+      "planColumn": 191,
+      "id": "PC-49",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "name": "c1005-pc-49",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 247,
+      "detail": "earlier labels=[\u0022c1005-pc-43\u0022,\u0022c1005-pc-44\u0022,\u0022c1005-pc-45\u0022,\u0022c1005-pc-46\u0022,\u0022c1005-pc-47\u0022,\u0022c1005-pc-48\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 497,
+      "planColumn": 209,
+      "id": "PC-50",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "name": "c1005-pc-50",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 247,
+      "detail": "earlier labels=[\u0022c1005-pc-43\u0022,\u0022c1005-pc-44\u0022,\u0022c1005-pc-45\u0022,\u0022c1005-pc-46\u0022,\u0022c1005-pc-47\u0022,\u0022c1005-pc-48\u0022,\u0022c1005-pc-49\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 498,
+      "planColumn": 175,
+      "id": "PC-51",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "name": "c1005-pc-51",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 247,
+      "detail": "earlier labels=[\u0022c1005-pc-43\u0022,\u0022c1005-pc-44\u0022,\u0022c1005-pc-45\u0022,\u0022c1005-pc-46\u0022,\u0022c1005-pc-47\u0022,\u0022c1005-pc-48\u0022,\u0022c1005-pc-49\u0022,\u0022c1005-pc-50\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 499,
+      "planColumn": 204,
+      "id": "PC-52",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "name": "c1005-pc-52",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 247,
+      "detail": "earlier labels=[\u0022c1005-pc-43\u0022,\u0022c1005-pc-44\u0022,\u0022c1005-pc-45\u0022,\u0022c1005-pc-46\u0022,\u0022c1005-pc-47\u0022,\u0022c1005-pc-48\u0022,\u0022c1005-pc-49\u0022,\u0022c1005-pc-50\u0022,\u0022c1005-pc-51\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 500,
+      "planColumn": 173,
+      "id": "PC-53",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "name": "c1005-pc-53",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 247,
+      "detail": "earlier labels=[\u0022c1005-pc-43\u0022,\u0022c1005-pc-44\u0022,\u0022c1005-pc-45\u0022,\u0022c1005-pc-46\u0022,\u0022c1005-pc-47\u0022,\u0022c1005-pc-48\u0022,\u0022c1005-pc-49\u0022,\u0022c1005-pc-50\u0022,\u0022c1005-pc-51\u0022,\u0022c1005-pc-52\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 501,
+      "planColumn": 170,
+      "id": "PC-54",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "name": "c1005-pc-54",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 247,
+      "detail": "earlier labels=[\u0022c1005-pc-43\u0022,\u0022c1005-pc-44\u0022,\u0022c1005-pc-45\u0022,\u0022c1005-pc-46\u0022,\u0022c1005-pc-47\u0022,\u0022c1005-pc-48\u0022,\u0022c1005-pc-49\u0022,\u0022c1005-pc-50\u0022,\u0022c1005-pc-51\u0022,\u0022c1005-pc-52\u0022,\u0022c1005-pc-53\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 502,
+      "planColumn": 186,
+      "id": "PC-55",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "name": "c1005-pc-55",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 247,
+      "detail": "earlier labels=[\u0022c1005-pc-43\u0022,\u0022c1005-pc-44\u0022,\u0022c1005-pc-45\u0022,\u0022c1005-pc-46\u0022,\u0022c1005-pc-47\u0022,\u0022c1005-pc-48\u0022,\u0022c1005-pc-49\u0022,\u0022c1005-pc-50\u0022,\u0022c1005-pc-51\u0022,\u0022c1005-pc-52\u0022,\u0022c1005-pc-53\u0022,\u0022c1005-pc-54\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 503,
+      "planColumn": 204,
+      "id": "PC-56",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "name": "c1005-pc-56",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 247,
+      "detail": "earlier labels=[\u0022c1005-pc-43\u0022,\u0022c1005-pc-44\u0022,\u0022c1005-pc-45\u0022,\u0022c1005-pc-46\u0022,\u0022c1005-pc-47\u0022,\u0022c1005-pc-48\u0022,\u0022c1005-pc-49\u0022,\u0022c1005-pc-50\u0022,\u0022c1005-pc-51\u0022,\u0022c1005-pc-52\u0022,\u0022c1005-pc-53\u0022,\u0022c1005-pc-54\u0022,\u0022c1005-pc-55\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 504,
+      "planColumn": 159,
+      "id": "PC-57",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "name": "c1005-pc-57",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 247,
+      "detail": "earlier labels=[\u0022c1005-pc-43\u0022,\u0022c1005-pc-44\u0022,\u0022c1005-pc-45\u0022,\u0022c1005-pc-46\u0022,\u0022c1005-pc-47\u0022,\u0022c1005-pc-48\u0022,\u0022c1005-pc-49\u0022,\u0022c1005-pc-50\u0022,\u0022c1005-pc-51\u0022,\u0022c1005-pc-52\u0022,\u0022c1005-pc-53\u0022,\u0022c1005-pc-54\u0022,\u0022c1005-pc-55\u0022,\u0022c1005-pc-56\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 505,
+      "planColumn": 250,
+      "id": "PC-58",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "name": "c1005-pc-58",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 247,
+      "detail": "earlier labels=[\u0022c1005-pc-43\u0022,\u0022c1005-pc-44\u0022,\u0022c1005-pc-45\u0022,\u0022c1005-pc-46\u0022,\u0022c1005-pc-47\u0022,\u0022c1005-pc-48\u0022,\u0022c1005-pc-49\u0022,\u0022c1005-pc-50\u0022,\u0022c1005-pc-51\u0022,\u0022c1005-pc-52\u0022,\u0022c1005-pc-53\u0022,\u0022c1005-pc-54\u0022,\u0022c1005-pc-55\u0022,\u0022c1005-pc-56\u0022,\u0022c1005-pc-57\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 506,
+      "planColumn": 210,
+      "id": "PC-59",
+      "test": "PlanCoverageCensusTests.census_reports_new_or_omitted_selected_method",
+      "name": "c1005-pc-59",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 125,
+      "detail": "earlier labels=[\u0022c1005-pc-11\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 507,
+      "planColumn": 191,
+      "id": "PC-60",
+      "test": "PlanCoverageCensusTests.census_unions_overlapping_filters_and_partial_declarations",
+      "name": "c1005-pc-60",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 205,
+      "detail": "earlier labels=[\u0022c1005-pc-34\u0022,\u0022c1005-pc-62\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 508,
+      "planColumn": 203,
+      "id": "PC-61",
+      "test": "PlanCoverageCensusTests.census_rejects_unselected_or_non_test_roster_methods",
+      "name": "c1005-pc-61",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 141,
+      "detail": "earlier labels=[\u0022c1005-pc-12\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 509,
+      "planColumn": 198,
+      "id": "PC-62",
+      "test": "PlanCoverageCensusTests.census_unions_overlapping_filters_and_partial_declarations",
+      "name": "c1005-pc-62",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 205,
+      "detail": "earlier labels=[\u0022c1005-pc-34\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 511,
+      "planColumn": 178,
+      "id": "PC-64",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "name": "c1005-pc-64",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 306,
+      "detail": "earlier labels=[\u0022c1005-pc-63\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 512,
+      "planColumn": 178,
+      "id": "PC-65",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "name": "c1005-pc-65",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 306,
+      "detail": "earlier labels=[\u0022c1005-pc-63\u0022,\u0022c1005-pc-64\u0022,\u0022c1005-pc-66\u0022,\u0022c1005-pc-67\u0022,\u0022c1005-pc-78\u0022,\u0022c1005-pc-79\u0022,\u0022c1005-public-repeat\u0022,\u0022c1005-public-text\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 513,
+      "planColumn": 158,
+      "id": "PC-66",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "name": "c1005-pc-66",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 306,
+      "detail": "earlier labels=[\u0022c1005-pc-63\u0022,\u0022c1005-pc-64\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 514,
+      "planColumn": 186,
+      "id": "PC-67",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "name": "c1005-pc-67",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 306,
+      "detail": "earlier labels=[\u0022c1005-pc-63\u0022,\u0022c1005-pc-64\u0022,\u0022c1005-pc-66\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 516,
+      "planColumn": 146,
+      "id": "PC-69",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "name": "c1005-pc-69",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 356,
+      "detail": "earlier labels=[\u0022c1005-pc-68\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 517,
+      "planColumn": 178,
+      "id": "PC-70",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "name": "c1005-pc-70",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 356,
+      "detail": "earlier labels=[\u0022c1005-pc-68\u0022,\u0022c1005-pc-69\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 518,
+      "planColumn": 184,
+      "id": "PC-71",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "name": "c1005-pc-71",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 356,
+      "detail": "earlier labels=[\u0022c1005-pc-68\u0022,\u0022c1005-pc-69\u0022,\u0022c1005-pc-70\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 520,
+      "planColumn": 161,
+      "id": "PC-73",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "name": "c1005-pc-73",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 356,
+      "detail": "earlier labels=[\u0022c1005-pc-68\u0022,\u0022c1005-pc-69\u0022,\u0022c1005-pc-70\u0022,\u0022c1005-pc-71\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 521,
+      "planColumn": 181,
+      "id": "PC-74",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "name": "c1005-pc-74",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 356,
+      "detail": "earlier labels=[\u0022c1005-pc-68\u0022,\u0022c1005-pc-69\u0022,\u0022c1005-pc-70\u0022,\u0022c1005-pc-71\u0022,\u0022c1005-pc-73\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 522,
+      "planColumn": 192,
+      "id": "PC-75",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "name": "c1005-pc-75",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 356,
+      "detail": "earlier labels=[\u0022c1005-pc-68\u0022,\u0022c1005-pc-69\u0022,\u0022c1005-pc-70\u0022,\u0022c1005-pc-71\u0022,\u0022c1005-pc-73\u0022,\u0022c1005-pc-74\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 523,
+      "planColumn": 176,
+      "id": "PC-76",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "name": "c1005-pc-76",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 356,
+      "detail": "earlier labels=[\u0022c1005-pc-68\u0022,\u0022c1005-pc-69\u0022,\u0022c1005-pc-70\u0022,\u0022c1005-pc-71\u0022,\u0022c1005-pc-73\u0022,\u0022c1005-pc-74\u0022,\u0022c1005-pc-75\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 524,
+      "planColumn": 181,
+      "id": "PC-77",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "name": "c1005-pc-77",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 225,
+      "detail": "earlier labels=[\u0022c1005-pc-35\u0022,\u0022c1005-pc-36\u0022,\u0022c1005-pc-37\u0022,\u0022c1005-pc-38\u0022,\u0022c1005-pc-39\u0022,\u0022c1005-pc-40\u0022,\u0022c1005-pc-41\u0022,\u0022c1005-pc-42\u0022,\u0022c1005-pc-93\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 525,
+      "planColumn": 269,
+      "id": "PC-78",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "name": "c1005-pc-78",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 306,
+      "detail": "earlier labels=[\u0022c1005-pc-63\u0022,\u0022c1005-pc-64\u0022,\u0022c1005-pc-66\u0022,\u0022c1005-pc-67\u0022,\u0022c1005-pc-79\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 526,
+      "planColumn": 240,
+      "id": "PC-79",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "name": "c1005-pc-79",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 306,
+      "detail": "earlier labels=[\u0022c1005-pc-63\u0022,\u0022c1005-pc-64\u0022,\u0022c1005-pc-66\u0022,\u0022c1005-pc-67\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 528,
+      "planColumn": 202,
+      "id": "PC-81",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "name": "c1005-pc-81",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 306,
+      "detail": "earlier labels=[\u0022c1005-pc-63\u0022,\u0022c1005-pc-64\u0022,\u0022c1005-pc-65\u0022,\u0022c1005-pc-66\u0022,\u0022c1005-pc-67\u0022,\u0022c1005-pc-78\u0022,\u0022c1005-pc-79\u0022,\u0022c1005-public-repeat\u0022,\u0022c1005-public-text\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 529,
+      "planColumn": 216,
+      "id": "PC-82",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "name": "c1005-pc-82",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 306,
+      "detail": "earlier labels=[\u0022c1005-pc-63\u0022,\u0022c1005-pc-64\u0022,\u0022c1005-pc-65\u0022,\u0022c1005-pc-66\u0022,\u0022c1005-pc-67\u0022,\u0022c1005-pc-78\u0022,\u0022c1005-pc-79\u0022,\u0022c1005-pc-81\u0022,\u0022c1005-public-repeat\u0022,\u0022c1005-public-text\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 530,
+      "planColumn": 187,
+      "id": "PC-83",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "name": "c1005-pc-83",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 356,
+      "detail": "earlier labels=[\u0022c1005-pc-68\u0022,\u0022c1005-pc-69\u0022,\u0022c1005-pc-70\u0022,\u0022c1005-pc-71\u0022,\u0022c1005-pc-73\u0022,\u0022c1005-pc-74\u0022,\u0022c1005-pc-75\u0022,\u0022c1005-pc-76\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 531,
+      "planColumn": 210,
+      "id": "PC-84",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "name": "c1005-pc-84",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 247,
+      "detail": "earlier labels=[\u0022c1005-base-sources\u0022,\u0022c1005-pc-43\u0022,\u0022c1005-pc-44\u0022,\u0022c1005-pc-45\u0022,\u0022c1005-pc-46\u0022,\u0022c1005-pc-47\u0022,\u0022c1005-pc-48\u0022,\u0022c1005-pc-49\u0022,\u0022c1005-pc-50\u0022,\u0022c1005-pc-51\u0022,\u0022c1005-pc-52\u0022,\u0022c1005-pc-53\u0022,\u0022c1005-pc-54\u0022,\u0022c1005-pc-55\u0022,\u0022c1005-pc-56\u0022,\u0022c1005-pc-57\u0022,\u0022c1005-pc-58\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 532,
+      "planColumn": 199,
+      "id": "PC-85",
+      "test": "PlanCoverageCommandTests.existing_outside_project_is_refused_by_root_boundary",
+      "name": "coverage-existing-outside-root-boundary",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCommandTests.cs",
+      "testLine": 112,
+      "detail": "earlier labels=[\u0022coverage-existing-outside-project-refused\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 539,
+      "planColumn": 162,
+      "id": "PC-92",
+      "test": "PlanCoverageCensusTests.census_compares_resolved_identities_not_counts",
+      "name": "c1005-pc-92",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 156,
+      "detail": "earlier labels=[\u0022c1005-pc-14\u0022,\u0022c1005-pc-15\u0022,\u0022c1005-pc-16\u0022,\u0022c1005-pc-17\u0022,\u0022c1005-pc-18\u0022,\u0022c1005-pc-19\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 540,
+      "planColumn": 212,
+      "id": "PC-93",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "name": "c1005-pc-93",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 225,
+      "detail": "earlier labels=[\u0022c1005-pc-35\u0022,\u0022c1005-pc-36\u0022,\u0022c1005-pc-37\u0022,\u0022c1005-pc-38\u0022,\u0022c1005-pc-39\u0022,\u0022c1005-pc-40\u0022,\u0022c1005-pc-41\u0022,\u0022c1005-pc-42\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 541,
+      "planColumn": 207,
+      "id": "PC-94",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "name": "c1005-pc-94",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 247,
+      "detail": "earlier labels=[\u0022c1005-base-sources\u0022,\u0022c1005-pc-43\u0022,\u0022c1005-pc-44\u0022,\u0022c1005-pc-45\u0022,\u0022c1005-pc-46\u0022,\u0022c1005-pc-47\u0022,\u0022c1005-pc-48\u0022,\u0022c1005-pc-49\u0022,\u0022c1005-pc-50\u0022,\u0022c1005-pc-51\u0022,\u0022c1005-pc-52\u0022,\u0022c1005-pc-53\u0022,\u0022c1005-pc-54\u0022,\u0022c1005-pc-55\u0022,\u0022c1005-pc-56\u0022,\u0022c1005-pc-57\u0022,\u0022c1005-pc-58\u0022,\u0022c1005-pc-84\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 542,
+      "planColumn": 200,
+      "id": "PC-95",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "name": "c1005-pc-95",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 247,
+      "detail": "earlier labels=[\u0022c1005-base-sources\u0022,\u0022c1005-pc-43\u0022,\u0022c1005-pc-44\u0022,\u0022c1005-pc-45\u0022,\u0022c1005-pc-46\u0022,\u0022c1005-pc-47\u0022,\u0022c1005-pc-48\u0022,\u0022c1005-pc-49\u0022,\u0022c1005-pc-50\u0022,\u0022c1005-pc-51\u0022,\u0022c1005-pc-52\u0022,\u0022c1005-pc-53\u0022,\u0022c1005-pc-54\u0022,\u0022c1005-pc-55\u0022,\u0022c1005-pc-56\u0022,\u0022c1005-pc-57\u0022,\u0022c1005-pc-58\u0022,\u0022c1005-pc-84\u0022,\u0022c1005-pc-94\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 543,
+      "planColumn": 205,
+      "id": "PC-96",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "name": "c1005-pc-96",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 356,
+      "detail": "earlier labels=[\u0022c1005-pc-68\u0022,\u0022c1005-pc-69\u0022,\u0022c1005-pc-70\u0022,\u0022c1005-pc-71\u0022,\u0022c1005-pc-73\u0022,\u0022c1005-pc-74\u0022,\u0022c1005-pc-75\u0022,\u0022c1005-pc-76\u0022,\u0022c1005-pc-83\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 544,
+      "planColumn": 192,
+      "id": "PC-97",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "name": "c1005-pc-97",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 356,
+      "detail": "earlier labels=[\u0022c1005-pc-68\u0022,\u0022c1005-pc-69\u0022,\u0022c1005-pc-70\u0022,\u0022c1005-pc-71\u0022,\u0022c1005-pc-73\u0022,\u0022c1005-pc-74\u0022,\u0022c1005-pc-75\u0022,\u0022c1005-pc-76\u0022,\u0022c1005-pc-83\u0022,\u0022c1005-pc-96\u0022]; execution order unproven"
+    },
+    {
+      "code": "PC_EARLIER_OTHER_LABEL",
+      "planLine": 545,
+      "planColumn": 163,
+      "id": "PC-98",
+      "test": "PlanCoverageCensusTests.census_matches_exact_checklist_roster",
+      "name": "c1005-pc-98",
+      "testPath": "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+      "testLine": 114,
+      "detail": "earlier labels=[\u0022c1005-pc-72\u0022]; execution order unproven"
+    }
+  ],
+  "pcs": [
+    {
+      "id": "PC-1",
+      "status": "static-labeled",
+      "target": "c1005-pc-1",
+      "test": "PlanCoverageCensusTests.checklist_flag_accepts_true_false_and_absence",
+      "targetLine": 59,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-2",
+      "status": "static-labeled",
+      "target": "c1005-pc-2",
+      "test": "PlanCoverageCensusTests.checklist_flag_accepts_true_false_and_absence",
+      "targetLine": 60,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-1"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-3",
+      "status": "static-labeled",
+      "target": "c1005-pc-3",
+      "test": "PlanCoverageCensusTests.checklist_flag_accepts_true_false_and_absence",
+      "targetLine": 63,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-1",
+        "c1005-pc-2"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-4",
+      "status": "static-labeled",
+      "target": "c1005-pc-4",
+      "test": "PlanCoverageCensusTests.checklist_flag_accepts_true_false_and_absence",
+      "targetLine": 64,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-1",
+        "c1005-pc-2",
+        "c1005-pc-3"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-5",
+      "status": "static-labeled",
+      "target": "c1005-pc-5",
+      "test": "PlanCoverageCensusTests.checklist_flag_rejects_invalid_or_conflicting_input",
+      "targetLine": 77,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-6",
+      "status": "static-labeled",
+      "target": "c1005-pc-6",
+      "test": "PlanCoverageCensusTests.checklist_flag_rejects_invalid_or_conflicting_input",
+      "targetLine": 83,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-5"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-7",
+      "status": "static-labeled",
+      "target": "c1005-pc-7",
+      "test": "PlanCoverageCensusTests.checklist_flag_rejects_invalid_or_conflicting_input",
+      "targetLine": 89,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-5",
+        "c1005-pc-6"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-8",
+      "status": "static-labeled",
+      "target": "c1005-pc-8",
+      "test": "PlanCoverageCensusTests.checklist_flag_rejects_invalid_or_conflicting_input",
+      "targetLine": 95,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-5",
+        "c1005-pc-6",
+        "c1005-pc-7"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-9",
+      "status": "static-labeled",
+      "target": "c1005-pc-9",
+      "test": "PlanCoverageCensusTests.checklist_flag_rejects_invalid_or_conflicting_input",
+      "targetLine": 99,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-5",
+        "c1005-pc-6",
+        "c1005-pc-7",
+        "c1005-pc-8"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-10",
+      "status": "static-labeled",
+      "target": "c1005-pc-10",
+      "test": "PlanCoverageCensusTests.checklist_flag_rejects_invalid_or_conflicting_input",
+      "targetLine": 105,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-5",
+        "c1005-pc-6",
+        "c1005-pc-7",
+        "c1005-pc-8",
+        "c1005-pc-9"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-11",
+      "status": "static-labeled",
+      "target": "c1005-pc-11",
+      "test": "PlanCoverageCensusTests.census_reports_new_or_omitted_selected_method",
+      "targetLine": 125,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-12",
+      "status": "static-labeled",
+      "target": "c1005-pc-12",
+      "test": "PlanCoverageCensusTests.census_rejects_unselected_or_non_test_roster_methods",
+      "targetLine": 141,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-13",
+      "status": "static-labeled",
+      "target": "c1005-pc-13",
+      "test": "PlanCoverageCensusTests.census_matches_exact_checklist_roster",
+      "targetLine": 117,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-exact-roster",
+        "c1005-pc-72",
+        "c1005-pc-98"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-14",
+      "status": "static-labeled",
+      "target": "c1005-pc-14",
+      "test": "PlanCoverageCensusTests.census_compares_resolved_identities_not_counts",
+      "targetLine": 156,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-15",
+      "status": "static-labeled",
+      "target": "c1005-pc-15",
+      "test": "PlanCoverageCensusTests.census_compares_resolved_identities_not_counts",
+      "targetLine": 158,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-14"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-16",
+      "status": "static-labeled",
+      "target": "c1005-pc-16",
+      "test": "PlanCoverageCensusTests.census_compares_resolved_identities_not_counts",
+      "targetLine": 161,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-14",
+        "c1005-pc-15"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-17",
+      "status": "static-labeled",
+      "target": "c1005-pc-17",
+      "test": "PlanCoverageCensusTests.census_compares_resolved_identities_not_counts",
+      "targetLine": 163,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-14",
+        "c1005-pc-15",
+        "c1005-pc-16"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-18",
+      "status": "static-labeled",
+      "target": "c1005-pc-18",
+      "test": "PlanCoverageCensusTests.census_compares_resolved_identities_not_counts",
+      "targetLine": 165,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-14",
+        "c1005-pc-15",
+        "c1005-pc-16",
+        "c1005-pc-17"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-19",
+      "status": "static-labeled",
+      "target": "c1005-pc-19",
+      "test": "PlanCoverageCensusTests.census_compares_resolved_identities_not_counts",
+      "targetLine": 167,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-14",
+        "c1005-pc-15",
+        "c1005-pc-16",
+        "c1005-pc-17",
+        "c1005-pc-18"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-20",
+      "status": "static-labeled",
+      "target": "c1005-pc-20",
+      "test": "PlanCoverageCensusTests.census_unions_overlapping_filters_and_partial_declarations",
+      "targetLine": 214,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-34",
+        "c1005-pc-60",
+        "c1005-pc-62"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-21",
+      "status": "static-labeled",
+      "target": "c1005-pc-21",
+      "test": "PlanCoverageCensusTests.census_rejects_unselected_or_non_test_roster_methods",
+      "targetLine": 147,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-extra-helper",
+        "c1005-pc-12",
+        "c1005-pc-61"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-22",
+      "status": "static-labeled",
+      "target": "c1005-pc-22",
+      "test": "PlanCoverageCensusTests.census_rejects_unselected_or_non_test_roster_methods",
+      "targetLine": 149,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-extra-helper",
+        "c1005-pc-12",
+        "c1005-pc-21",
+        "c1005-pc-61"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-23",
+      "status": "static-labeled",
+      "target": "c1005-pc-23",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "targetLine": 178,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-24",
+      "status": "static-labeled",
+      "target": "c1005-pc-24",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "targetLine": 179,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-23"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-25",
+      "status": "static-labeled",
+      "target": "c1005-pc-25",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "targetLine": 180,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-23",
+        "c1005-pc-24"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-26",
+      "status": "static-labeled",
+      "target": "c1005-pc-26",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "targetLine": 181,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-23",
+        "c1005-pc-24",
+        "c1005-pc-25"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-27",
+      "status": "static-labeled",
+      "target": "c1005-pc-27",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "targetLine": 182,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-23",
+        "c1005-pc-24",
+        "c1005-pc-25",
+        "c1005-pc-26"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-28",
+      "status": "static-labeled",
+      "target": "c1005-pc-28",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "targetLine": 183,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-23",
+        "c1005-pc-24",
+        "c1005-pc-25",
+        "c1005-pc-26",
+        "c1005-pc-27"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-29",
+      "status": "static-labeled",
+      "target": "c1005-pc-29",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "targetLine": 184,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-23",
+        "c1005-pc-24",
+        "c1005-pc-25",
+        "c1005-pc-26",
+        "c1005-pc-27",
+        "c1005-pc-28"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-30",
+      "status": "static-labeled",
+      "target": "c1005-pc-30",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "targetLine": 185,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-23",
+        "c1005-pc-24",
+        "c1005-pc-25",
+        "c1005-pc-26",
+        "c1005-pc-27",
+        "c1005-pc-28",
+        "c1005-pc-29"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-31",
+      "status": "static-labeled",
+      "target": "c1005-pc-31",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "targetLine": 186,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-23",
+        "c1005-pc-24",
+        "c1005-pc-25",
+        "c1005-pc-26",
+        "c1005-pc-27",
+        "c1005-pc-28",
+        "c1005-pc-29",
+        "c1005-pc-30"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-32",
+      "status": "static-labeled",
+      "target": "c1005-pc-32",
+      "test": "PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project",
+      "targetLine": 187,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-23",
+        "c1005-pc-24",
+        "c1005-pc-25",
+        "c1005-pc-26",
+        "c1005-pc-27",
+        "c1005-pc-28",
+        "c1005-pc-29",
+        "c1005-pc-30",
+        "c1005-pc-31"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-33",
+      "status": "static-labeled",
+      "target": "c1005-pc-33",
+      "test": "PlanCoverageCensusTests.census_unions_overlapping_filters_and_partial_declarations",
+      "targetLine": 217,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-20",
+        "c1005-pc-34",
+        "c1005-pc-60",
+        "c1005-pc-62"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-34",
+      "status": "static-labeled",
+      "target": "c1005-pc-34",
+      "test": "PlanCoverageCensusTests.census_unions_overlapping_filters_and_partial_declarations",
+      "targetLine": 205,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-35",
+      "status": "static-labeled",
+      "target": "c1005-pc-35",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "targetLine": 225,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-36",
+      "status": "static-labeled",
+      "target": "c1005-pc-36",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "targetLine": 226,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-35"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-37",
+      "status": "static-labeled",
+      "target": "c1005-pc-37",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "targetLine": 227,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-35",
+        "c1005-pc-36"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-38",
+      "status": "static-labeled",
+      "target": "c1005-pc-38",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "targetLine": 228,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-35",
+        "c1005-pc-36",
+        "c1005-pc-37"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-39",
+      "status": "static-labeled",
+      "target": "c1005-pc-39",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "targetLine": 229,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-35",
+        "c1005-pc-36",
+        "c1005-pc-37",
+        "c1005-pc-38"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-40",
+      "status": "static-labeled",
+      "target": "c1005-pc-40",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "targetLine": 230,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-35",
+        "c1005-pc-36",
+        "c1005-pc-37",
+        "c1005-pc-38",
+        "c1005-pc-39"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-41",
+      "status": "static-labeled",
+      "target": "c1005-pc-41",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "targetLine": 231,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-35",
+        "c1005-pc-36",
+        "c1005-pc-37",
+        "c1005-pc-38",
+        "c1005-pc-39",
+        "c1005-pc-40"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-42",
+      "status": "static-labeled",
+      "target": "c1005-pc-42",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "targetLine": 232,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-35",
+        "c1005-pc-36",
+        "c1005-pc-37",
+        "c1005-pc-38",
+        "c1005-pc-39",
+        "c1005-pc-40",
+        "c1005-pc-41"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-43",
+      "status": "static-labeled",
+      "target": "c1005-pc-43",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "targetLine": 247,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-44",
+      "status": "static-labeled",
+      "target": "c1005-pc-44",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "targetLine": 248,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-43"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-45",
+      "status": "static-labeled",
+      "target": "c1005-pc-45",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "targetLine": 249,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-43",
+        "c1005-pc-44"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-46",
+      "status": "static-labeled",
+      "target": "c1005-pc-46",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "targetLine": 250,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-43",
+        "c1005-pc-44",
+        "c1005-pc-45"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-47",
+      "status": "static-labeled",
+      "target": "c1005-pc-47",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "targetLine": 251,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-43",
+        "c1005-pc-44",
+        "c1005-pc-45",
+        "c1005-pc-46"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-48",
+      "status": "static-labeled",
+      "target": "c1005-pc-48",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "targetLine": 253,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-43",
+        "c1005-pc-44",
+        "c1005-pc-45",
+        "c1005-pc-46",
+        "c1005-pc-47"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-49",
+      "status": "static-labeled",
+      "target": "c1005-pc-49",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "targetLine": 255,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-43",
+        "c1005-pc-44",
+        "c1005-pc-45",
+        "c1005-pc-46",
+        "c1005-pc-47",
+        "c1005-pc-48"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-50",
+      "status": "static-labeled",
+      "target": "c1005-pc-50",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "targetLine": 256,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-43",
+        "c1005-pc-44",
+        "c1005-pc-45",
+        "c1005-pc-46",
+        "c1005-pc-47",
+        "c1005-pc-48",
+        "c1005-pc-49"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-51",
+      "status": "static-labeled",
+      "target": "c1005-pc-51",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "targetLine": 257,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-43",
+        "c1005-pc-44",
+        "c1005-pc-45",
+        "c1005-pc-46",
+        "c1005-pc-47",
+        "c1005-pc-48",
+        "c1005-pc-49",
+        "c1005-pc-50"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-52",
+      "status": "static-labeled",
+      "target": "c1005-pc-52",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "targetLine": 258,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-43",
+        "c1005-pc-44",
+        "c1005-pc-45",
+        "c1005-pc-46",
+        "c1005-pc-47",
+        "c1005-pc-48",
+        "c1005-pc-49",
+        "c1005-pc-50",
+        "c1005-pc-51"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-53",
+      "status": "static-labeled",
+      "target": "c1005-pc-53",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "targetLine": 259,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-43",
+        "c1005-pc-44",
+        "c1005-pc-45",
+        "c1005-pc-46",
+        "c1005-pc-47",
+        "c1005-pc-48",
+        "c1005-pc-49",
+        "c1005-pc-50",
+        "c1005-pc-51",
+        "c1005-pc-52"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-54",
+      "status": "static-labeled",
+      "target": "c1005-pc-54",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "targetLine": 260,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-43",
+        "c1005-pc-44",
+        "c1005-pc-45",
+        "c1005-pc-46",
+        "c1005-pc-47",
+        "c1005-pc-48",
+        "c1005-pc-49",
+        "c1005-pc-50",
+        "c1005-pc-51",
+        "c1005-pc-52",
+        "c1005-pc-53"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-55",
+      "status": "static-labeled",
+      "target": "c1005-pc-55",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "targetLine": 265,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-43",
+        "c1005-pc-44",
+        "c1005-pc-45",
+        "c1005-pc-46",
+        "c1005-pc-47",
+        "c1005-pc-48",
+        "c1005-pc-49",
+        "c1005-pc-50",
+        "c1005-pc-51",
+        "c1005-pc-52",
+        "c1005-pc-53",
+        "c1005-pc-54"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-56",
+      "status": "static-labeled",
+      "target": "c1005-pc-56",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "targetLine": 266,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-43",
+        "c1005-pc-44",
+        "c1005-pc-45",
+        "c1005-pc-46",
+        "c1005-pc-47",
+        "c1005-pc-48",
+        "c1005-pc-49",
+        "c1005-pc-50",
+        "c1005-pc-51",
+        "c1005-pc-52",
+        "c1005-pc-53",
+        "c1005-pc-54",
+        "c1005-pc-55"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-57",
+      "status": "static-labeled",
+      "target": "c1005-pc-57",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "targetLine": 268,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-43",
+        "c1005-pc-44",
+        "c1005-pc-45",
+        "c1005-pc-46",
+        "c1005-pc-47",
+        "c1005-pc-48",
+        "c1005-pc-49",
+        "c1005-pc-50",
+        "c1005-pc-51",
+        "c1005-pc-52",
+        "c1005-pc-53",
+        "c1005-pc-54",
+        "c1005-pc-55",
+        "c1005-pc-56"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-58",
+      "status": "static-labeled",
+      "target": "c1005-pc-58",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "targetLine": 271,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-43",
+        "c1005-pc-44",
+        "c1005-pc-45",
+        "c1005-pc-46",
+        "c1005-pc-47",
+        "c1005-pc-48",
+        "c1005-pc-49",
+        "c1005-pc-50",
+        "c1005-pc-51",
+        "c1005-pc-52",
+        "c1005-pc-53",
+        "c1005-pc-54",
+        "c1005-pc-55",
+        "c1005-pc-56",
+        "c1005-pc-57"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-59",
+      "status": "static-labeled",
+      "target": "c1005-pc-59",
+      "test": "PlanCoverageCensusTests.census_reports_new_or_omitted_selected_method",
+      "targetLine": 128,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-11"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-60",
+      "status": "static-labeled",
+      "target": "c1005-pc-60",
+      "test": "PlanCoverageCensusTests.census_unions_overlapping_filters_and_partial_declarations",
+      "targetLine": 211,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-34",
+        "c1005-pc-62"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-61",
+      "status": "static-labeled",
+      "target": "c1005-pc-61",
+      "test": "PlanCoverageCensusTests.census_rejects_unselected_or_non_test_roster_methods",
+      "targetLine": 144,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-12"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-62",
+      "status": "static-labeled",
+      "target": "c1005-pc-62",
+      "test": "PlanCoverageCensusTests.census_unions_overlapping_filters_and_partial_declarations",
+      "targetLine": 206,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-34"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-63",
+      "status": "static-labeled",
+      "target": "c1005-pc-63",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "targetLine": 306,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-64",
+      "status": "static-labeled",
+      "target": "c1005-pc-64",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "targetLine": 307,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-63"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-65",
+      "status": "static-labeled",
+      "target": "c1005-pc-65",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "targetLine": 317,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-63",
+        "c1005-pc-64",
+        "c1005-pc-66",
+        "c1005-pc-67",
+        "c1005-pc-78",
+        "c1005-pc-79",
+        "c1005-public-repeat",
+        "c1005-public-text"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-66",
+      "status": "static-labeled",
+      "target": "c1005-pc-66",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "targetLine": 308,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-63",
+        "c1005-pc-64"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-67",
+      "status": "static-labeled",
+      "target": "c1005-pc-67",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "targetLine": 309,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-63",
+        "c1005-pc-64",
+        "c1005-pc-66"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-68",
+      "status": "static-labeled",
+      "target": "c1005-pc-68",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "targetLine": 356,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-69",
+      "status": "static-labeled",
+      "target": "c1005-pc-69",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "targetLine": 357,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-68"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-70",
+      "status": "static-labeled",
+      "target": "c1005-pc-70",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "targetLine": 358,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-68",
+        "c1005-pc-69"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-71",
+      "status": "static-labeled",
+      "target": "c1005-pc-71",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "targetLine": 361,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-68",
+        "c1005-pc-69",
+        "c1005-pc-70"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-72",
+      "status": "static-labeled",
+      "target": "c1005-pc-72",
+      "test": "PlanCoverageCensusTests.census_matches_exact_checklist_roster",
+      "targetLine": 114,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-73",
+      "status": "static-labeled",
+      "target": "c1005-pc-73",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "targetLine": 365,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-68",
+        "c1005-pc-69",
+        "c1005-pc-70",
+        "c1005-pc-71"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-74",
+      "status": "static-labeled",
+      "target": "c1005-pc-74",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "targetLine": 367,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-68",
+        "c1005-pc-69",
+        "c1005-pc-70",
+        "c1005-pc-71",
+        "c1005-pc-73"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-75",
+      "status": "static-labeled",
+      "target": "c1005-pc-75",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "targetLine": 369,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-68",
+        "c1005-pc-69",
+        "c1005-pc-70",
+        "c1005-pc-71",
+        "c1005-pc-73",
+        "c1005-pc-74"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-76",
+      "status": "static-labeled",
+      "target": "c1005-pc-76",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "targetLine": 372,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-68",
+        "c1005-pc-69",
+        "c1005-pc-70",
+        "c1005-pc-71",
+        "c1005-pc-73",
+        "c1005-pc-74",
+        "c1005-pc-75"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-77",
+      "status": "static-labeled",
+      "target": "c1005-pc-77",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "targetLine": 235,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-35",
+        "c1005-pc-36",
+        "c1005-pc-37",
+        "c1005-pc-38",
+        "c1005-pc-39",
+        "c1005-pc-40",
+        "c1005-pc-41",
+        "c1005-pc-42",
+        "c1005-pc-93"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-78",
+      "status": "static-labeled",
+      "target": "c1005-pc-78",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "targetLine": 311,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-63",
+        "c1005-pc-64",
+        "c1005-pc-66",
+        "c1005-pc-67",
+        "c1005-pc-79"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-79",
+      "status": "static-labeled",
+      "target": "c1005-pc-79",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "targetLine": 310,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-63",
+        "c1005-pc-64",
+        "c1005-pc-66",
+        "c1005-pc-67"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-80",
+      "status": "static-labeled",
+      "target": "scripts/lib/checkpoint-usage.ps1 Get-NamespaceCensus is stale against the compiled checkpoint cases",
+      "test": "CheckpointNamespaceCensusUsageTests.namespace_census_matches_compiled_checkpoint_cases",
+      "targetLine": 363,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-81",
+      "status": "static-labeled",
+      "target": "c1005-pc-81",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "targetLine": 318,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-63",
+        "c1005-pc-64",
+        "c1005-pc-65",
+        "c1005-pc-66",
+        "c1005-pc-67",
+        "c1005-pc-78",
+        "c1005-pc-79",
+        "c1005-public-repeat",
+        "c1005-public-text"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-82",
+      "status": "static-labeled",
+      "target": "c1005-pc-82",
+      "test": "PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only",
+      "targetLine": 319,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-63",
+        "c1005-pc-64",
+        "c1005-pc-65",
+        "c1005-pc-66",
+        "c1005-pc-67",
+        "c1005-pc-78",
+        "c1005-pc-79",
+        "c1005-pc-81",
+        "c1005-public-repeat",
+        "c1005-public-text"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-83",
+      "status": "static-labeled",
+      "target": "c1005-pc-83",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "targetLine": 374,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-68",
+        "c1005-pc-69",
+        "c1005-pc-70",
+        "c1005-pc-71",
+        "c1005-pc-73",
+        "c1005-pc-74",
+        "c1005-pc-75",
+        "c1005-pc-76"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-84",
+      "status": "static-labeled",
+      "target": "c1005-pc-84",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "targetLine": 273,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-base-sources",
+        "c1005-pc-43",
+        "c1005-pc-44",
+        "c1005-pc-45",
+        "c1005-pc-46",
+        "c1005-pc-47",
+        "c1005-pc-48",
+        "c1005-pc-49",
+        "c1005-pc-50",
+        "c1005-pc-51",
+        "c1005-pc-52",
+        "c1005-pc-53",
+        "c1005-pc-54",
+        "c1005-pc-55",
+        "c1005-pc-56",
+        "c1005-pc-57",
+        "c1005-pc-58"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-85",
+      "status": "static-labeled",
+      "target": "coverage-existing-outside-root-boundary",
+      "test": "PlanCoverageCommandTests.existing_outside_project_is_refused_by_root_boundary",
+      "targetLine": 113,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "coverage-existing-outside-project-refused"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-86",
+      "status": "static-labeled",
+      "target": "coverage-opened-metadata-decision",
+      "test": "PlanCoverageHandleTests.opened_metadata_decision_table",
+      "targetLine": 84,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-87",
+      "status": "static-labeled",
+      "target": "coverage-opened-metadata-decision",
+      "test": "PlanCoverageHandleTests.opened_metadata_decision_table",
+      "targetLine": 84,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-88",
+      "status": "static-labeled",
+      "target": "coverage-opened-metadata-decision",
+      "test": "PlanCoverageHandleTests.opened_metadata_decision_table",
+      "targetLine": 84,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-89",
+      "status": "static-labeled",
+      "target": "coverage-size-limit-refused",
+      "test": "PlanCoverageHandleTests.oversized_selected_file_is_refused",
+      "targetLine": 45,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-90",
+      "status": "static-labeled",
+      "target": "coverage-cached-source-limit-refused",
+      "test": "PlanCoverageHandleTests.cached_plan_bytes_still_obey_the_source_limit",
+      "targetLine": 109,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-91",
+      "status": "static-labeled",
+      "target": "coverage-read-from-verified-handle",
+      "test": "PlanCoverageHandleTests.read_uses_the_verified_handle_after_path_replacement",
+      "targetLine": 97,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-92",
+      "status": "static-labeled",
+      "target": "c1005-pc-92",
+      "test": "PlanCoverageCensusTests.census_compares_resolved_identities_not_counts",
+      "targetLine": 169,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-14",
+        "c1005-pc-15",
+        "c1005-pc-16",
+        "c1005-pc-17",
+        "c1005-pc-18",
+        "c1005-pc-19"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-93",
+      "status": "static-labeled",
+      "target": "c1005-pc-93",
+      "test": "PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once",
+      "targetLine": 233,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-35",
+        "c1005-pc-36",
+        "c1005-pc-37",
+        "c1005-pc-38",
+        "c1005-pc-39",
+        "c1005-pc-40",
+        "c1005-pc-41",
+        "c1005-pc-42"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-94",
+      "status": "static-labeled",
+      "target": "c1005-pc-94",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "targetLine": 274,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-base-sources",
+        "c1005-pc-43",
+        "c1005-pc-44",
+        "c1005-pc-45",
+        "c1005-pc-46",
+        "c1005-pc-47",
+        "c1005-pc-48",
+        "c1005-pc-49",
+        "c1005-pc-50",
+        "c1005-pc-51",
+        "c1005-pc-52",
+        "c1005-pc-53",
+        "c1005-pc-54",
+        "c1005-pc-55",
+        "c1005-pc-56",
+        "c1005-pc-57",
+        "c1005-pc-58",
+        "c1005-pc-84"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-95",
+      "status": "static-labeled",
+      "target": "c1005-pc-95",
+      "test": "PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery",
+      "targetLine": 275,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-base-sources",
+        "c1005-pc-43",
+        "c1005-pc-44",
+        "c1005-pc-45",
+        "c1005-pc-46",
+        "c1005-pc-47",
+        "c1005-pc-48",
+        "c1005-pc-49",
+        "c1005-pc-50",
+        "c1005-pc-51",
+        "c1005-pc-52",
+        "c1005-pc-53",
+        "c1005-pc-54",
+        "c1005-pc-55",
+        "c1005-pc-56",
+        "c1005-pc-57",
+        "c1005-pc-58",
+        "c1005-pc-84",
+        "c1005-pc-94"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-96",
+      "status": "static-labeled",
+      "target": "c1005-pc-96",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "targetLine": 378,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-68",
+        "c1005-pc-69",
+        "c1005-pc-70",
+        "c1005-pc-71",
+        "c1005-pc-73",
+        "c1005-pc-74",
+        "c1005-pc-75",
+        "c1005-pc-76",
+        "c1005-pc-83"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-97",
+      "status": "static-labeled",
+      "target": "c1005-pc-97",
+      "test": "PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts",
+      "targetLine": 380,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-68",
+        "c1005-pc-69",
+        "c1005-pc-70",
+        "c1005-pc-71",
+        "c1005-pc-73",
+        "c1005-pc-74",
+        "c1005-pc-75",
+        "c1005-pc-76",
+        "c1005-pc-83",
+        "c1005-pc-96"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-98",
+      "status": "static-labeled",
+      "target": "c1005-pc-98",
+      "test": "PlanCoverageCensusTests.census_matches_exact_checklist_roster",
+      "targetLine": 115,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [
+        "c1005-pc-72"
+      ],
+      "reachability": "unproven"
+    },
+    {
+      "id": "PC-99",
+      "status": "static-labeled",
+      "target": "coverage-size-limit-refused",
+      "test": "PlanCoverageHandleTests.oversized_selected_file_is_refused",
+      "targetLine": 45,
+      "predecessorLine": 0,
+      "earlierOtherLabels": [],
+      "reachability": "unproven"
+    }
+  ],
+  "invalid": false,
+  "summary": {
+    "obligations": 177,
+    "matched": 177,
+    "missing": 0,
+    "unmapped": 0,
+    "pcIssues": 0,
+    "pcAdvisories": 79,
+    "result": "clean",
+    "reachability": "unproven"
+  },
+  "exitCode": 0
+}

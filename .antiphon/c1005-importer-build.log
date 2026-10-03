@@ -1,0 +1,15 @@
+BUILD SLOT granted lease=030ae167-e8fb-4a62-a361-17966ba263f4 waited=0s maxcpucount=6
+
+  Determining projects to restore...
+  Restored /work/worktrees/task-b288ec96/tools/Antiphon.Checkpoints/Antiphon.Checkpoints.csproj (in 674 ms).
+/work/worktrees/task-b288ec96/tools/Antiphon.Checkpoints/Execution/TaskOwnerGuard.cs(170,17): warning CS8602: Dereference of a possibly null reference. [/work/worktrees/task-b288ec96/tools/Antiphon.Checkpoints/Antiphon.Checkpoints.csproj]
+  Antiphon.Checkpoints -> /work/worktrees/task-b288ec96/tools/Antiphon.Checkpoints/bin-c1005-importer/Antiphon.Checkpoints.dll
+
+Build succeeded.
+
+/work/worktrees/task-b288ec96/tools/Antiphon.Checkpoints/Execution/TaskOwnerGuard.cs(170,17): warning CS8602: Dereference of a possibly null reference. [/work/worktrees/task-b288ec96/tools/Antiphon.Checkpoints/Antiphon.Checkpoints.csproj]
+    1 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:08.42
+BUILD SLOT released lease=030ae167-e8fb-4a62-a361-17966ba263f4 held=9s
