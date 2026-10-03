@@ -2426,6 +2426,7 @@ public sealed class RemoteScriptContractTests
             CacheSeedTreeHarness() + "\n" + Block(remote, "c849_saved_copy") + "\n" +
             Block(remote, "c849_no_cache_attachments") + "\n" +
             Block(remote, "c849_seed_failure") + "\n" + Block(remote, "c849_seed") + "\n" +
+            Block(remote, "c1008_rollout_lock") + "\n" +
             Block(remote, "case_deploy_parent") + "\n" + Block(remote, "case_deploy_temp_runner") + "\n" + """
             SERVER2_ROOT="$root/server2"; CASE_DIR="$root/case"
             mkdir -p "$SERVER2_ROOT/cache" "$CASE_DIR" "$root/volumes/packages" "$root/volumes/npm"
