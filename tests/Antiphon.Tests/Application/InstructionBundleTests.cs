@@ -23,6 +23,60 @@ namespace Antiphon.Tests.Application;
 public class InstructionBundleTests
 {
     [Test]
+    public void C1015_Composed_workers_keep_generated_evidence_untracked()
+    {
+        foreach (var role in new[] { AgentTaskRole.Code, AgentTaskRole.Review, AgentTaskRole.Debug, AgentTaskRole.Docs })
+        {
+            var text = InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, role)).Text;
+            text.ShouldContain("Generated evidence stays gitignored", "c1015-common-ignored");
+            text.ShouldContain("1048576 bytes", "c1015-common-cap");
+            text.ShouldContain("individual report paths", "c1015-common-individual");
+            text.ShouldContain("outside checkpoint directories", "c1015-common-directory");
+        }
+    }
+
+    [Test]
+    public void C1015_Code_keeps_range_guard_and_exact_source()
+    {
+        var stage = InstructionBundles.TextOf(InstructionBundles.StageCode);
+        var composed = InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Code)).Text;
+        foreach (var text in new[] { stage, composed })
+        {
+            text.ShouldContain("check-evidence-diff.ps1", "c1015-code-range");
+            text.ShouldContain("full task base..HEAD", "c1015-code-range");
+            text.ShouldContain("actual tested SHA", "c1015-code-source");
+            text.ShouldContain("unedited CHECKPOINT lines", "c1015-code-verbatim");
+        }
+    }
+
+    [Test]
+    public void C1015_Review_remains_read_only_and_checks_history()
+    {
+        var stage = InstructionBundles.TextOf(InstructionBundles.StageReview);
+        var composed = InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Review)).Text;
+        foreach (var text in new[] { stage, composed })
+        {
+            text.ShouldContain("Read-only", "c1015-review-read-only");
+            text.ShouldContain("Do not fix anything", "c1015-review-read-only");
+            text.ShouldContain("check-evidence-diff.ps1", "c1015-review-range");
+            text.ShouldContain("complete candidate base..HEAD", "c1015-review-range");
+        }
+    }
+
+    [Test]
+    public void C1015_SourceLanding_keeps_its_external_evidence_exception()
+    {
+        var text = InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Mutation)).Text;
+        var start = text.IndexOf("SOURCELANDING MUTATION EXCEPTION:", StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0);
+        var end = text.IndexOf("- COMMIT AND PUSH", start, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(start);
+        var exception = text[start..end];
+        exception.ShouldContain("assigned external evidence root", "c1015-source-external");
+        exception.ShouldContain("never commit/push", "c1015-source-no-commit");
+    }
+
+    [Test]
     public void C807_ShippedReviewExampleParses()
     {
         var text = InstructionBundles.TextOf(InstructionBundles.StageReview);
