@@ -9,6 +9,24 @@ namespace Antiphon.Tests.Infrastructure;
 public sealed class DockerStackDocumentationTests
 {
     [Test]
+    public void Main_volume_recycling_is_scripted_only()
+    {
+        var text = Read("docs/docker-stack.md");
+        const string heading = "### Volume recycling and disk reclaim (CARD-1008)";
+        var start = text.IndexOf(heading, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0);
+        var end = text.IndexOf("### ", start + heading.Length, StringComparison.Ordinal);
+        var section = end < 0 ? text[start..] : text[start..end];
+
+        section.ShouldContain("Assert-ZeroCounters", "the stopped-main refusal must be explained");
+        section.ShouldContain("RunnerCounterUnknown", "a stopped main makes redeploy-old refuse");
+        section.ShouldContain("scripted only");
+        foreach (var volume in new[] { "work", "runner-tmp", "dind-data" })
+            section.ShouldNotContain($"docker volume rm antiphon-runner_{volume}",
+                "manual main-volume removal cannot precede redeploy-old");
+    }
+
+    [Test]
     public void Docker_stack_doc_names_the_nested_daemon()
     {
         var text = Read("docs/docker-stack.md");
