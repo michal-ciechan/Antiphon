@@ -4,7 +4,7 @@ Date: 2026-10-03. Plan task: `b29278e3-8d7e-4a39-8d0d-04d1d8a3cee9`.
 Inspected source: `bb5fa774cd56f85ee6f0b1122c198192427e5ddf`.
 Latest observed master: `b0ccedda2e93a6b847e9219a602a3413694f64ea`; its changes since the inspected source do not touch the relevant bundles, Git infrastructure, scripts, CI, testing owner or `.antiphon/` inventory.
 
-Status: owner decisions resolved; see **Owner decision amendments** and the appended **Verification design**. The original Plan text below is retained as history, not current authority where those sections supersede it. In particular, the old D-2/D-5, initial checkpoint sketch and decision-stage handoff are superseded. No implementation or verification execution is claimed here.
+Status: **Code admission suspended pending the scope decision in "Rule-based scope amendment (task b6180921)" below.** Inspection found that 20 of the original 108 paths pass D-1, so deleting every original path conflicts with deleting exactly the guard-rejected set. The previous literal-inventory freeze and its Code handoff are not executable authority. The original fix design is retained; this documentation-only amendment changes no implementation and claims no builds, test runs or mutation evidence.
 
 ## Outcome and scope
 
@@ -567,15 +567,114 @@ PC floor (Mutation) = **870.25 minutes**: 34 method baselines x4 = 136, plus 89 
 
 One baseline per method instead of one per PC saves **220 estimated minutes** ((89-34)x4) after exact same-source restoration. One CP build reused by four integration rows saves **12 estimated minutes** versus four redundant three-minute builds. Measured savings = 0. No savings are assumed from broadening PC filters or batching same-file controls. Authoring, slot waits and findings are additional; the freeze does not authorize omitting controls to meet an estimate.
 
-## TestDesign validation and handoff
+## Prior TestDesign validation (superseded for Code admission)
 
 Bodies read before naming cases; **guards=89, mapped=89, missing=0, duplicate PC maps=0**. Every PC names an executable method after the explicit S2/S2b fixture setup; the fault substitutions and their limits are declared. 34 distinct PC filters, 32 new ordinary methods, seven CP rows, 4,034 ordinary TUnit executions, 27-minute ordinary floor and 870.25-minute PC floor. No placeholder/TBD cases remain. The documentation-only checks are source inventory, Markdown/table/ID/count arithmetic and `git diff --check`; they are not a compiled importer or test receipt.
 
 Code's precise start condition: CARD-1005 task b288ec96's reviewed Code/census landing is in the fresh dispatch start ref; that ref also contains this freeze and the pinned inventory ancestor; the read-only inventory still matches all 108 original path/object entries; the current namespace census is reconciled without CARD-1015 editing it; and the real seven-row importer admits the plan before ordinary execution. Unexpected legacy changes require a revised exact deletion inventory decision, not an automatic broad deletion. This is a sequencing condition, not an unresolved owner choice. Code implements S1/S2/S2b/S3, pushes each slice, runs ordinary V/R, leaves every PC pending and returns next: review.
 
-After reviewed land, caller records actual master deletion evidence, activates the server bundles under the existing owner runbook, observes loaded bundle hashes and the SHA-bound Actions guard result, and commissions SourceLanding Mutation. Commission the separately recommended card-Done cleanup follow-up; do not count it as implemented by CARD-1015.
+After reviewed land, caller records actual master deletion evidence, activates the server bundles under the existing owner runbook, observes loaded bundle hashes and the SHA-bound Actions guard result, and commissions SourceLanding Mutation. Whole-worktree cleanup is now tracked separately as **CARD-1017**; CARD-1015 must not change its runtime.
+
+## Rule-based scope amendment (task b6180921)
+
+2026-10-03. Assigned start: `7903d53c1cdfc181565ee8335b3e25944fedb828`. Fetched and inspected `origin/master`: **`7af83b0c3270006cd98a25a69531f24e37240a4e`**. Inspection used an object-only, no-checkout local clone at `/tmp/card1015-b6180921-master-inspection`, with every inventory read naming that full master SHA. Only tracked paths, modes, object IDs and byte sizes were inspected for evidence; no evidence payloads, credentials or private notes were opened. No files were deleted. This section supersedes the fixed-108 admission and old Code-start instructions above, but is **not a completed executable freeze**: the explicit choice below is necessary first.
+
+### Inspection
+
+- Read the complete existing plan, the checkpoint-manifest/coverage/Mutation owner sections in `docs/testing-and-build.md`, and the stage/landing/cleanup policy in `docs/orchestration-loop.md`. The original S1/S2 fix design and D-1/D-3/D-4/D-6 remain unchanged.
+- Read the nearest new-script fixture bodies: `Scripts/ScriptHarness`, `Application/DelegateScriptRunner`, `TestHelpers/LandingGitFixture`, and `RunCheckpointSourceScriptTests` with its nested fixture/process helpers. Their real Git/PowerShell invocation, process ownership and byte-fixture gaps still require the setup already specified in the freeze. No new test method is named by this blocked amendment.
+- Read `CheckpointNamespaceCensusUsageTests.namespace_census_matches_compiled_checkpoint_cases`, `UsageLibrary` and `CheckpointRoster.CompiledCases`; compared all `tests/Antiphon.Tests`, `tests/Shared` and census-library changes from the assigned start to inspected master. CARD-1005 contributes 12 non-parameterized Unit/Checkpoints tests; CARD-1006 contributes 11 non-parameterized `GrokLinuxBlockingPromptTests` methods and one `GrokSignInPromptDetectorTests` method. Source counting excludes strings/text fixtures and is not execution evidence.
+- Read-only inventory command: `git ls-tree -r -z -l --full-tree 7af83b0c3270006cd98a25a69531f24e37240a4e`. Split metadata from literal path at the first tab and records at NUL; use committed byte sizes, not worktree lengths. Filtering the ordered records to the exact case-insensitive root `.antiphon` component yields **312 paths / 38,101,068 bytes**. SHA-256 of concatenated original path bytes, each followed by NUL, is **`ba48a18494f1c24ff59df50ba5171e967a755be4572865df7c6523e4772bbec0`**.
+- All original 108 entries retain their exact path/mode/object identities. The increase is **204 paths / 20,325,527 bytes**: 117 CARD-1005 artifacts, six CARD-1006 artifacts, 78 checkpoint paths, and three permitted task Markdown files. The full original inventory remains **108 / 17,775,541 bytes / `356edf4a223e53669d4137631e40c0f5f7d19127c2568fdd0608fa4364e5ac9c`**.
+
+### Rule and path-family classification
+
+The existing D-1/D-3 predicate is fully mechanical. For a tracked entry whose first path component equals `.antiphon` ignoring case, reject it if **any** of these is true: a descendant directory component contains `checkpoints` ignoring case; its mode is neither `100644` nor `100755`; its final extension is not `.md` ignoring case; or its committed blob exceeds **1,048,576 bytes**. Entries outside that root are out of this guard's scope. A parse/missing-object failure is unknown, never an allowed entry. Directory tests exclude the leaf filename. No content classifier or new filename-family exception is implied.
+
+| Family at inspected master | Total paths | Total bytes | D-1 rejected paths / bytes | D-1 permitted paths / bytes | Classification |
+|---|---:|---:|---:|---:|---|
+| `.antiphon/checkpoints/**` | 115 | 26,698,398 | 115 / 26,698,398 | 0 / 0 | Generated checkpoint output, including its Markdown reports, locks, JSON/JSONL, TRX, HTML, logs and manifests; forbidden directory wins regardless of extension/size. |
+| `.antiphon/c1005-*` and their descendants | 117 | 5,302,554 | 117 / 5,302,554 | 0 / 0 | Logs, JSON receipts, TRX, HTML, CSV/TXT/TEXT rosters, YAML manifests, and scratch PS1/CS/CSPROJ probes; none meets the Markdown allowance. |
+| `.antiphon/c1006-code-evidence/**` | 6 | 1,182,494 | 6 / 1,182,494 | 0 / 0 | Archive inventories, SHA256 files and two tar.gz archives; all rejected. |
+| `.antiphon/c965-continuation/**` and `.antiphon/c965-verification/**` | 24 | 1,009,163 | 24 / 1,009,163 | 0 / 0 | TRX, JSON receipts and TXT restoration/validation records; all rejected. |
+| `.antiphon/c998-evidence/**` non-Markdown entries | 26 | 2,351,915 | 26 / 2,351,915 | 0 / 0 | Compressed TRX, logs, YAML and JSON; all rejected. |
+| `.antiphon/c998-evidence/**` Markdown entries | 6 | 18,267 | 0 / 0 | 6 / 18,267 | Four `report.md` and two `CP-*-failures.md` files. **Operator question:** retain under D-1, or broaden the rule to reject generated Markdown summaries outside checkpoint-named directories? The present predicate permits all six. |
+| `.antiphon/card1007-evidence.tar.gz` | 1 | 997,368 | 1 / 997,368 | 0 / 0 | Archive rejected even below 1 MiB. |
+| `.antiphon/task-*.md` | 17 | 540,909 | 0 / 0 | 17 / 540,909 | Regular Markdown task reports, each below 1 MiB; D-1 permits them. Fourteen belong to the original 108. |
+| **Root evidence total** | **312** | **38,101,068** | **289 / 37,541,892** | **23 / 559,176** | The 312-path census is not a generated-artifact deletion inventory. |
+| `docs/investigations/*.md` (recursive census) | 194 | 2,749,360 | 0 / 0 | 194 / 2,749,360 | Preserve: documentation outside root `.antiphon/`; all individually below 1 MiB. |
+| `docs/superpowers/plans/*.md` (recursive census) | 464 | 19,149,682 | 0 / 0 | 464 / 19,149,682 | Preserve: plan deliverables outside root `.antiphon/`; all individually below 1 MiB. |
+
+The last two rows are outside the 312-path total. Other source/fixture paths outside root `.antiphon/` also stay; a `.json` test fixture is not permission to delete source. No generated payload is relocated into `docs/`.
+
+Under the unchanged predicate the rejected-set digest is **`4e0a2ec36b9817c7cba9a2d5e05e85ecaa3f5a23b56daeb7469b3fd55b7684ed`** and permitted-set digest is **`2e663b26148771f50e1cb73c6e4821b9e3df52b14190504a8cd199588c868ace`**. These are observations at the inspected SHA, not literals to require at a later Code start.
+
+### Required operator decision
+
+The brief simultaneously requires an exact guard-rejected deletion set, retention of D-1-permitted Markdown, and inclusion of **all original 108 paths in the deletion anchor**. These cannot all hold: the original 108 partition into **88 rejected / 17,414,103 bytes** and **20 permitted / 361,438 bytes**. The 20 are 14 task reports (343,171 bytes) plus all six c998 Markdown summaries (18,267 bytes). Even excluding the six ambiguous summaries leaves 14 clearly permitted original task reports.
+
+Choose the intended authority; no deletion is authorized by this amendment while this choice is outstanding:
+
+1. **Recommended: preserve D-1 unchanged.** At inspected master delete 289, keep 23. Change the original-108 requirement to an independent **classification and preservation anchor**: all 108 must be accounted for, with 88 deleted and 20 kept. This preserves the exact rule-based set without silently discarding the original anchor.
+2. **Broaden D-1 for generated Markdown summaries.** At this snapshot, excluding the six c998 summaries would delete 295 (37,560,159 bytes) and keep 17 task reports (540,909 bytes). The operator must specify a general path rule, not just approve these six names; the original-108 anchor still cannot require all 108 deletions.
+3. **Keep all 108 original deletions as an explicit exception.** Their union with D-1's rejected set is 309 paths / 37,903,330 bytes, keeping three newer task reports / 197,738 bytes. This abandons the requested equality with the unchanged guard rejection rule and requires a Plan decision about the exception. Deleting all 312 would additionally remove those three permitted reports.
+
+The question was raised during this amendment; no answer is recorded. This is a scope/authority conflict, not a missing technical seam. Return `next: decide`, not an unsafe Code dispatch. Once resolved, land the completed amended plan **doc-only, with no implementation Review evidence**, then dispatch a fresh Code task from current `origin/master` containing that plan and CARD-1005. Do not restart the blocked Code branch or merge/rebase this assigned branch.
+
+### Delivery inventory
+
+Unchanged: no asynchronous application delivery path is added. Git CLI exit plus full verified object/tree results proves the synchronous check only. No queue insert, acknowledgement, Sent flag, instruction composition or local receipt proves session delivery. Busy/eligible-recipient and crash/enqueue tests remain excluded because no delivery implementation changes; CARD-1017 owns any subsequent cleanup/recovery delivery design.
+
+### Oracle and admission contract to finalize after the decision
+
+Let **B** be the fresh Code task's immutable dispatch/start commit, **T(B)** its complete tracked tree, **D(B)** the entries rejected by the accepted D-1/D-3 predicate, and **K(B)** the remaining entries. The delete set is computed from T(B), never from the candidate deletion diff, current worktree, deletion parent or an evolving `origin/master`. Record B, full-tree classification, D(B)'s count/byte sum/NUL-list digest and K(B)'s preservation identities before staging. Use one production classifier for history destinations and inventory selection; fixture expectations must be independently authored from the rule, never by calling that classifier to manufacture expected values.
+
+For option 1, preserve the literal full-original anchor (108/count/bytes/digest and original mode/OID identities) and independently pin its two verdict partitions: original rejects **88**, NUL-list SHA-256 **`26abc1b90cf1dc40dec8dfb38bd8f5c75f8c555f22f8042c49268c78f259e95f`**; original permits **20**, NUL-list SHA-256 **`320fcb2d7ffe6607de6c46d3bd477522ffda0ab7355bb10be252e7eac8be05f6`**. A test must fail if a rule bug drops an original entry, changes its classification, or misclassifies a newer family. This is the proposed replacement for the impossible all-108-deleted assertion; it is not accepted by implication.
+
+The proof must locate exactly one ordinary, single-parent deletion commit with the exact existing trailer. Its complete unfiltered raw diff contains only D records, and both directional set differences with D(B) are empty. Its old modes/OIDs equal B. No K(B) entry is deleted or modified in that deletion commit; the complete tree comparison protects allowed Markdown and all unrelated source. Required deleted paths stay absent at the qualified head, original objects remain retrievable, and a complete scan of the qualified head finds zero rejected entries under the accepted rule. The history guard must separately pass **B..qualified-head**, including intermediate commits. An equal-ref history check is not a post-deletion-tree proof.
+
+Code performs this order after the resolved plan lands:
+
+1. Start from fresh current master containing CARD-1005 and the amended plan; record B and verify the census/prerequisites read-only. Do not pin this older inspection SHA as the next task base.
+2. Compute and record D(B)/K(B), all counts/bytes/digests and the original classification anchor; reconcile any later additions by the accepted rule. Changed original identities or an unclassifiable entry stop admission visibly.
+3. Implement and push S1, S2 and S2b separately, with verification pending; implement the real inventory/deletion/tree checks and independent fixture oracle before any S3 staging.
+4. Recheck selected path mode/OID identities against B, stage only the literal D(B) paths with NUL/literal pathspecs, prove the exact staged set, then commit/push deletion-only S3 normally. Never rewrite history or force-push.
+5. Freeze source, bind the actual B/count/bytes/digest into CP-6/CP-7, run/import/lint the finalized seven-row manifest through the gated checkpoint tool, qualify the exact pushed source and report ordinary V/R. Do not add generated evidence commits. Code returns `next: review`; PCs stay pending.
+6. After ordinary Review and implementation land, repeat the history/deletion/tree proof against the actual landed master history, record its deletion commit and actual review/landing identities, then commission SourceLanding Mutation. New generated artifacts from a concurrent master landing make that acceptance scan fail; do not silently widen an already reviewed S3 or call it delivered.
+
+### Proves it works now
+
+- V-21/V-24 require revision from literal inventory deletion to the above B-derived exact set, kept-entry identities and final-tree check. Include a later pre-B artifact absent from the original 108, a permitted pre-B Markdown note, a permitted checkpoint-named leaf, a forbidden nested checkpoint directory, boundary modes/sizes/case, and outside-root source. No real evidence payload is required in tiny fixture repositories.
+- V-23 must check the **actual Code B** through its qualified tip. The old `bb5fa...` range would reject already-landed evidence introduced before Code; deleting those blobs cannot undo their presence in that history. Pre-B rejected artifacts are removed by S3's tree proof, not grandfathered in the final tree.
+- V-25/R-6 require the actual current independent census **377**, not 365. At inspected master the prior 3,994 Unit baseline plus 12 CARD-1005 and 12 CARD-1006 results is **4,018**. Existing planned eight Unit additions produce **4,026 selections**, minus six explicit Windows exclusions = **4,020 Linux executions**. Existing planned integration/smoke results add 18+6+1+1 = 26, giving **4,046 ordinary results** before any additional methods required by the resolved rule design. None of CARD-1015's tests belongs in the Checkpoints namespace; do not edit its literal to fit the selected roster.
+
+### Guards the regression
+
+- R-5 must derive its expected delete set from the independently applied accepted rule on B, plus the original literal classification anchor. Neither a hardcoded 108/312 deletion list nor reuse of production classification as expected output is an oracle.
+- Preservation and exact-set assertions must cover omitted and extra paths independently. To make the missing-in-S3 control decisive despite the separate final absence check, its fixture deletes the omitted path in a later unmarked commit: final absence then passes while S3 equality must fail. To isolate resurrection from final policy rejection, use a base oversize Markdown path restored later with permitted small Markdown bytes.
+- The historical-object recovery control needs its own deterministic cut after metadata/classification has succeeded; a missing blob that already aborts inventory sizing cannot demonstrate that the later recoverability guard works. The existing low-level Git-result seam can isolate that boundary; real-Git success remains required.
+
+### Guard inventory and positive controls
+
+The inherited inventory has **89 guards / 89 one-to-one PC mappings / 0 missing mappings / 0 duplicate mappings**. Those numbers describe the prior freeze only, not approval of the changed deletion oracle. Its 34 exact method filters and PC-1..PC-89 are retained as history. G-59/G-60/G-63/G-66..G-71 and their same-numbered controls must be rebound to B-derived selection/preservation, and independently bypassable rule-selection, original-anchor and final-tree guards need their own distinct controls after the operator chooses the rule. It would be false to report all amended PCs executable before that choice. No mutation was run and no unresolved guard is waived. Code runs ordinary V/R; Review judges the completed inventory; Mutation executes exact-method break/red/restore/green after land.
+
+### Out of scope
+
+Runtime cleanup remains unchanged and belongs to CARD-1017. No evidence-store implementation, semantic/private-note inspection, source-fixture cleanup, bulk Markdown deletion, history rewrite, force-push or active-stack mutation is authorized here. This dispatch edits only this plan and runs no repository builds/tests.
+
+### Checkpoint reconciliation
+
+The prior seven-row `### Checkpoints` table is **suspended**, not runnable with its stale constants. After the rule decision, retain CP-1's exact filter and build, updating its observed minimum from 4008 to **4020** at the inspected master plus the existing eight planned Unit methods; reconcile any additional drift at B. CP-2..CP-5 keep their existing exact filters/minima unless the completed test design adds methods. CP-6 must take literal B recorded at Code admission. CP-7 must take B and its computed count/bytes/path digest and prove the accepted final-tree rule. Binding these values is a read-only admission computation, not a fresh operator approval for every added artifact. The actual command interface and corresponding new guard controls must be frozen after the scope choice; no placeholder command is admitted for execution now.
+
+### Cost
+
+No builds, test executions or PC cycles were run in this documentation stage. The retained schedule's **estimated ordinary V/R floor is 27 minutes** (CP-1..CP-7 = 15+5+3+1+1+1+1); setup/tool build is **3**, giving **30 minutes Code verification**, excluding authoring. Its **estimated inherited PC floor is 870.25 minutes** (34 exact-method baselines x4 + 89 cycles x8.25); Mutation setup adds **4**, for **874.25**. Combined inherited Code+Mutation = **904.25 minutes**; with ordinary Review 30 and master acceptance 2, **936.25 minutes**. These are a numeric lower bound for the unfinished amendment, not a claim that new controls cost zero. Each additional control on an existing exact method adds **8.25 minutes**; each new method baseline adds **4 minutes**. The prior 220-minute baseline-reuse and 12-minute build-reuse estimates remain estimates; measured savings = **0**. A complete revised total depends on the actual rule and must be frozen with its one-to-one controls before Code.
+
+### Amendment validation and handoff
+
+Read-only Git metadata reproduced the supplied 312-path census and unchanged original identities, then exposed the 20-path permission conflict. Rule partitions, family byte totals and updated source-census arithmetic were checked without executing repository code. The artifact is ready for a scope decision, **not Code**. After resolution, complete the guard/control/manifest revision, land that plan doc-only with no implementation Review evidence, and dispatch Code from fresh current master containing the resolved plan and CARD-1005.
 
 --- next stage ---
-next: code
-handoff: Start fresh after CARD-1005 b288ec96 reviewed Code/census land with this freeze and intact 108-path inventory. Implement S1/S2/S2b plus deletion-only S3; run seven CP rows (4034 ordinary results), keep 89 PCs pending for post-land Mutation. Do not change cleanup runtime or checkpoint census; return next: review.
+next: decide
+handoff: Resolve the conflict: D-1 permits 20 of the original 108. Recommended rule deletes 289/312 and anchors all 108 classifications (88 delete, 20 keep); c998 Markdown is the ambiguous family. Then finish controls/manifest, land the amended plan doc-only with no Review evidence, and dispatch fresh Code from current master containing CARD-1005 and this plan. Cleanup remains CARD-1017.
 artifact: docs/superpowers/plans/2026-10-03-card-1015-evidence-git-policy-plan.md
