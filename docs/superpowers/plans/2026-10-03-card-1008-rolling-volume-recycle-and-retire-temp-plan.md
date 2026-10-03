@@ -1217,6 +1217,24 @@ behavior. The explicitly commissioned Final whole Unit lane is an additional
 run to this table; the dispatch brief overrides the older exclusion below.
 Shared files remain owned by CARD-1008 ahead of CARD-0980/0983 and CARD-1010.
 
+Continuation admission (Code task `b3777342-2f88-4f7c-8266-86fbbc22d1c9`,
+2026-10-03): new landing owner; FF-only base `b0d5c552d0dccf9d85e9a7a0e04465a29eeb2b57`.
+Read current master `edb96aecd93cbe90fe8887c1a8d1523527bd49d9` through local Git objects,
+without fetch/merge/rebase. CARD-0927 adds jq to the image/verifier and tests in other
+classes; retained cache census remains 36 methods/54 results, six CP-4 classes remain
+112+23+35+11+20+6=207, Remote remains 77/95 with this draft. Retained designs remain
+20 V methods, 32 RD outcomes and 125 guard/PC mappings: all deltas zero.
+The process image still lacks jq; supplied task-local jq 1.7.1 has SHA-256
+`5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5`, independently
+matched to CARD-0927's committed Dockerfile pin. Platform routes were reread:
+defaults revision 2, live Linux/Windows and unavailable temp; no placement pin.
+CP-2 at this continuation base completed 19/19 passed, 0 failed/skipped, clean
+source and verified build provenance; measured build+row wall was 29 minutes,
+above the table's 15-minute estimate. This proves the existing implemented vectors,
+not the predecessor report's remaining guard/resume/real-Docker obligations.
+The Final brief additionally requires whole Unit and every full affected class;
+it overrides the older implementation-profile exclusion below.
+
 Closed Code list. Each row owns one isolated build and one literal TUnit filter.
 Group names name the lane; no unsupported `Lane` column is added to the importer.
 CP-1 is the explicit expected-red preparatory row, not a final green certificate.
