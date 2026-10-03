@@ -18,8 +18,8 @@ work itself: each one is here because ignoring it has already cost a real task.
 
 - COMMIT AND PUSH EACH MEANINGFUL SLICE OR FIX as it completes, not only at the end of a dispatch,
   with the real outcome in the commit message. Never claim green while tests fail.
-  This instruction IS the explicit request: commit/push is part of the task, never a report's
-  "next step"; uncommitted deliverables are flagged at settlement.
+  This instruction IS the explicit request: commit/push is part of the task,
+  never a "next step" to offer; uncommitted deliverables are flagged at settlement.
 
 - Generated evidence stays gitignored: TRX, JSON receipts, logs, archives and checkpoint outputs
   are excluded from the generic commit requirement. Optional Markdown up to 1048576 bytes,
@@ -77,10 +77,9 @@ work itself: each one is here because ignoring it has already cost a real task.
 
 - RUN THE FULL SUITE ONCE, THEN TARGET. `Antiphon.Tests` is ~25.5 minutes (CARD-0110) and does not fit
   one 10-minute foreground window — chunk it by namespace (`--treenode-filter
-  "/*/Antiphon.Tests.Application/*/*"`). After a fix, re-run only what you touched. When you verify
-  that red is pre-existing, re-run the failing tests at the base commit, not the assembly —
-  confirming four known test names costs about one minute targeted and ~25.5 minutes full. A
-  Code/Review brief's verification profile sets that task's ordinary scope and wins over this rule.
+  "/*/Antiphon.Tests.Application/*/*"`).After a fix, re-run only what you touched. Confirm inherited red with failing tests at
+  the base commit, never the assembly. A Code/Review brief's verification profile sets that
+  task's ordinary scope and wins over this rule.
 
 - CLOSE THE REPORT WITH A VERDICT LINE. End your final message with one line, on its own:
   `[antiphon-report:<id> done]` if the work is complete, `[antiphon-report:<id> blocked]` if you

@@ -567,6 +567,9 @@ The full Unit row selects Linux (no host pin) because its six Windows exclusions
 | CP-10 | S1-repair | CP-8 | platform-repair | `/*/*/TaskPlatformGuidanceTests/*` | R-1, V-25, R-7 | complete affected class; 5 passed; 0 failed/skipped; seven caused Unit failures restored | 5 | 1 | true | `C804_ORPHAN_SWEEP_ROOT=c1015-disabled;TUNIT_MAX_PARALLEL_TESTS=4` |
 | CP-11 | S1-repair | CP-8 | round-repair | `/*/*/VerificationRoundInstructionTests/*` | R-1, V-25, R-7 | complete affected class; 6 passed; 0 failed/skipped; seven caused Unit failures restored | 6 | 1 | true | `C804_ORPHAN_SWEEP_ROOT=c1015-disabled;TUNIT_MAX_PARALLEL_TESTS=4` |
 | CP-12 | S1-repair | CP-8 | repeat-repair | `/*/*/CheckpointRepeatDocumentationTests/*` | R-1, R-6, V-25, R-7 | complete affected class; 1 passed; 0 failed/skipped; seven caused Unit failures restored | 1 | 1 | true | `C804_ORPHAN_SWEEP_ROOT=c1015-disabled;TUNIT_MAX_PARALLEL_TESTS=4` |
+| CP-13 | S1-repair | CP-8 | publication-contract-repair | `/*/*/PostLandMutationContractTests/*` | V-19, R-1, V-25, R-7 | complete adjacent affected class; 30 passed; 0 failed/skipped | 30 | 1 | true | `C804_ORPHAN_SWEEP_ROOT=c1015-disabled;TUNIT_MAX_PARALLEL_TESTS=4` |
+| CP-14 | S1-repair | CP-8 | scope-contract-repair | `/*/*/ScopedVerificationInstructionTests/*` | V-19, R-1, V-25, R-7 | complete adjacent affected class; 17 passed; 0 failed/skipped | 17 | 1 | true | `C804_ORPHAN_SWEEP_ROOT=c1015-disabled;TUNIT_MAX_PARALLEL_TESTS=4` |
+| CP-15 | S1-repair | CP-8 | composed-launch-repair | `/*/*/DelegateBundleLaunchTests/*` | V-19, R-1, V-25, R-7 | complete adjacent affected class; 23 passed; 0 failed/skipped | 23 | 1 | true | `C804_ORPHAN_SWEEP_ROOT=c1015-disabled;TUNIT_MAX_PARALLEL_TESTS=4` |
 
 Code/Review bootstrap the checkpoint tool once through `scripts/build-slot.ps1` into `bin-c1015-tool/`. Import the real seven-row table, compare filters/minima/build reuse to this manifest, and run the owner's read-only coverage lint with explicit files for the three new classes and InstructionBundleTests plus the two smoke/census files. New labels must bind to real assertions; reconcile static diagnostics without treating syntax success as runtime proof. Use the built DLL for importer/lint so those calls introduce no implicit build. Run the checkpoint tool for this plan with `--after S1-S3 --expected-source-sha` set to the actual full source SHA and wait until exit is not 75. Any slot timeout is not-run, never a reason to bypass the gate. No tests run while source is changing.
 
@@ -713,3 +716,14 @@ lane. Its original red receipt remains red and is disclosed, with the seven
 failed cases reconciled against fresh repair TRX. The operator accepts disclosed
 inherited skips and the resulting strict Unit qualification refusal; do not lower
 4020 or turn skips into passed/executed results. No ordinary V/R is deferred.
+
+The first targeted repair run 20261003-211527-effd passed CP-9..CP-12 (19/19)
+but CP-8 remained red (63/66): two additional pinned phrases were shortened
+and the command-line estimate also includes quoting/other arguments, beyond
+the composition body. Restore both original phrases and shorten explanatory
+prose again. CP-13..CP-15 add the three affected adjacent complete classes,
+including the Integration launch-spec constructor class (no process/message
+delivery change). The closed repair group is now eight classes / 155 results,
+estimated eight minutes with one isolated build. No assertion/cap/budget is
+changed. CP-6/CP-7 rerun against each new committed repair/report HEAD; previous
+receipts retain their actual source identities.
