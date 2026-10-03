@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
+using System.Reflection;
 using System.Text.Json;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
@@ -178,5 +179,116 @@ public sealed class RunnerCodexCliEvidenceTests
         cancelled.Cancel();
         await Should.ThrowAsync<OperationCanceledException>(async () =>
             await (Task<RunnerCodexCliVersionDto?>)method.Invoke(client, [descriptor, cancelled.Token])!);
+
+        using var io = new ProbeIo();
+        await using var actual = await PhoneHomeTestHost.StartAsync(io.Clock,
+            configureServices: services => services.AddSingleton(io.Probe),
+            mapEndpoints: app => app.MapCodexCliVersionRoutes());
+        using var http = new HttpClient();
+        var localClient = new SessionRunnerHttpClient(http, new UnusedHttpFactory(),
+            Options.Create(new Antiphon.Server.Application.Settings.SessionRunnerSettings
+            { BaseUrl = actual.Http.BaseAddress!.ToString() }), time: io.Clock);
+        var exact = new RunnerCodexCliProbeRequest(io.Executable, io.Root);
+        var throughHttp = await (Task<RunnerCodexCliVersionDto?>)method.Invoke(localClient, [exact, CancellationToken.None])!;
+        (throughHttp?.CodexCliVersion).ShouldBe("0.160.0", "C959-v13-http-route");
+        io.Starts.Single().FileName.ShouldBe(io.Executable, "C959-v13-selected-native");
+        io.Starts.Single().ArgumentList.ShouldBe(["--version"], "C959-v13-version-only");
+        throughHttp!.CodexCliLauncherFingerprint!.Length.ShouldBe(64, "C959-v13-opaque");
+        throughHttp.CodexCliLauncherFingerprint.ShouldNotContain(io.Root, "C959-v13-no-path");
+        var dispatcher = new PhoneHomeCommandDispatcher(new PhoneHomeRuntimeAdapter(io.Runtime,
+            new RunnerBuildDto("test", "build-sha", T.UtcDateTime, T.UtcDateTime)),
+            new PhoneHomeSettings { AllowedCwd = io.Root });
+        await using var actualPeer = await actual.ConnectPeerAsync(capabilities: dispatcher.Capabilities());
+        actual.Directory.MarkRecovered(await actual.WaitLiveAsync());
+        actualPeer.Reply = request => dispatcher.DispatchAsync(request, CancellationToken.None).GetAwaiter().GetResult();
+        var bound = new RunnerScopedSessionRunnerClient(actual.Directory, actual.AllowedRunnerId);
+        var throughSocket = await (Task<RunnerCodexCliVersionDto?>)method.Invoke(bound, [exact, CancellationToken.None])!;
+        throughSocket.ShouldBe(throughHttp, "C959-v13-actual-dispatch");
+        io.Starts.Count.ShouldBe(1, "C959-v13-shared-exact-cache");
+        actual.Local.Calls.ShouldBeEmpty("C959-pc-108");
+        (await actual.Directory.DescribeAsync(actual.AllowedRunnerId, CancellationToken.None))!
+            .Capabilities!.CodexCliVersion.ShouldBeNull("C959-v13-exact-does-not-overwrite-default");
+        foreach (var invalid in new[]
+        {
+            exact with { Executable = new string('X', 65537) }, exact with { ResolutionCwd = new string('X', 65537) },
+            exact with { Path = new string('X', 65537) }, exact with { ResolutionCwd = "${secret:C959}" },
+            exact with { Path = "${secret:C959}" }, exact with { Executable = "codex\0" },
+            exact with { Path = new string('X', CodexCliVersionProbe.DescriptorFieldLimit + 1) },
+        })
+        {
+            var unknown = await (Task<RunnerCodexCliVersionDto?>)method.Invoke(localClient, [invalid, CancellationToken.None])!;
+            (unknown?.CodexCliVersionError).ShouldBe("launcher_unverified", "C959-pc-117/118");
+            io.Starts.Count.ShouldBe(1, "C959-v13-invalid-no-child");
+        }
+        var atLimit = exact with { Path = new string('X', CodexCliVersionProbe.DescriptorFieldLimit) };
+        (await (Task<RunnerCodexCliVersionDto?>)method.Invoke(localClient, [atLimit, CancellationToken.None])!)!
+            .CodexCliVersion.ShouldBe("0.160.0", "C959-v13-limit-equality");
+        actualPeer.Reply = request => request.Operation == (PhoneHomeOperation)33
+            ? new(PhoneHomeFrameKind.Error, request.Epoch, request.RequestId, request.Operation,
+                ErrorCode: PhoneHomeProblemTypes.UnsupportedOperation, StatusCode: 409) : null;
+        (await (Task<RunnerCodexCliVersionDto?>)method.Invoke(bound, [exact, CancellationToken.None])!)
+            .ShouldBeNull("C959-pc-112");
+        actualPeer.AutoReply = false;
+        actualPeer.Reply = _ => null;
+        var silent = (Task<RunnerCodexCliVersionDto?>)method.Invoke(bound, [exact, CancellationToken.None])!;
+        await actualPeer.WaitForAsync((PhoneHomeOperation)33);
+        io.Clock.Advance(TimeSpan.FromSeconds(8));
+        (await silent.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeNull("C959-pc-114");
+    }
+
+    private sealed class UnusedHttpFactory : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => throw new InvalidOperationException("Probe entered a named GET client.");
+    }
+
+    private sealed class ProbeIo : IDisposable
+    {
+        public string Root { get; } = Path.Combine(Path.GetTempPath(), "c959-wire-" + Guid.NewGuid().ToString("N"));
+        public string Executable { get; }
+        public FakeTimeProvider Clock { get; } = new(T);
+        public List<ProcessStartInfo> Starts { get; } = [];
+        private readonly List<Process> _children = [];
+        public CodexCliVersionProbe Probe { get; }
+        public SessionRunnerRuntime Runtime { get; }
+        public ProbeIo()
+        {
+            Directory.CreateDirectory(Root);
+            Executable = Path.Combine(Root, OperatingSystem.IsWindows() ? "codex.exe" : "codex");
+            File.Copy(Environment.ProcessPath!, Executable);
+            Runtime = new(Options.Create(new Antiphon.SessionRunner.SessionRunnerSettings { SessionLogPath = Root }),
+                NullLogger<SessionRunnerRuntime>.Instance, timeProvider: Clock);
+            Probe = new(Clock, new PhoneHomeProcessIdentity(), Options.Create(new CodexCliVersionSettings
+                { Executable = Executable, ResolutionCwd = Root }), Start);
+            typeof(SessionRunnerRuntime).GetProperty("CodexCliProbe", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(Runtime, Probe);
+        }
+        private Process Start(ProcessStartInfo actual)
+        {
+            Starts.Add(actual);
+            var script = Path.Combine(Environment.CurrentDirectory, "tests/Antiphon.SessionRunner.Tests/Fixtures/CodexVersionChild.ps1");
+            for (var dir = new DirectoryInfo(Environment.CurrentDirectory); !File.Exists(script) && dir.Parent is not null; dir = dir.Parent)
+                script = Path.Combine(dir.Parent.FullName, "tests/Antiphon.SessionRunner.Tests/Fixtures/CodexVersionChild.ps1");
+            var child = new ProcessStartInfo("pwsh") { UseShellExecute = false, RedirectStandardInput = true,
+                RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = actual.WorkingDirectory };
+            child.Environment.Clear();
+            foreach (var pair in actual.Environment) child.Environment[pair.Key] = pair.Value;
+            var receipts = Path.Combine(Root, "receipts-" + Starts.Count);
+            Directory.CreateDirectory(receipts);
+            foreach (var arg in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-File", script,
+                         "-Mode", "success", "-ReceiptRoot", receipts }) child.ArgumentList.Add(arg);
+            var process = Process.Start(child)!;
+            _children.Add(Process.GetProcessById(process.Id));
+            return process;
+        }
+        public void Dispose()
+        {
+            foreach (var child in _children)
+            {
+                if (!child.HasExited) { child.Kill(true); child.WaitForExit(5000); }
+                child.Dispose();
+            }
+            Probe.Dispose();
+            Directory.Delete(Root, true);
+        }
     }
 }

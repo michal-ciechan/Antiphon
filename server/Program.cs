@@ -332,7 +332,7 @@ try
         sp.GetRequiredService<TimeProvider>(),
         sp.GetRequiredService<RemoteSpillCourier>(),
         sp.GetRequiredService<ILogger<PhoneHomeRunnerDirectory>>(),
-        sp.GetService<IRunnerEligibilityObserver>()));
+        sp.GetService<IRunnerEligibilityObserver>(), sp.GetRequiredService<IOptions<DelegationSettings>>()));
     builder.Services.AddSingleton<ISessionRunnerDirectory>(sp => sp.GetRequiredService<PhoneHomeRunnerDirectory>());
     builder.Services.AddSingleton<IRunnerEligibilitySnapshotSource>(sp => sp.GetRequiredService<PhoneHomeRunnerDirectory>());
     builder.Services.AddSingleton<ISessionRunnerClient, RoutingSessionRunnerClient>();

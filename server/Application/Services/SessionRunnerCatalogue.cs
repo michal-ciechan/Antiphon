@@ -29,10 +29,7 @@ public static class SessionRunnerCatalogue
         {
             try
             {
-                var row = await RemoteAsync(directory, id, db, prep, ct);
-                var evidence = await directory.DescribeAsync(id, ct);
-                rows.Add(ProjectCli(row, evidence?.Capabilities, directory.CodexCliEvidenceNow,
-                    delegation.CodexCliVersionMaxAgeMinutes));
+                rows.Add(await RemoteAsync(directory, id, db, prep, delegation.CodexCliVersionMaxAgeMinutes, ct));
             }
             catch (OperationCanceledException)
             {
@@ -84,6 +81,7 @@ public static class SessionRunnerCatalogue
         string id,
         AppDbContext? db,
         RemoteWorkspacePreparer? prep,
+        int maxAgeMinutes,
         CancellationToken ct)
     {
         var described = await directory.DescribeAsync(id, ct);
@@ -111,8 +109,9 @@ public static class SessionRunnerCatalogue
 
         var name = described?.DisplayName ?? id;
         var state = directory.DrainState(id);
-        return Row(described, id, name, "sessions", capacity, occupied, observed,
-            state is { Draining: true }, state?.RetiredAt is not null);
+        return ProjectCli(Row(described, id, name, "sessions", capacity, occupied, observed,
+            state is { Draining: true }, state?.RetiredAt is not null), described?.Capabilities,
+            directory.CodexCliEvidenceNow, maxAgeMinutes);
     }
 
     private static SessionRunnerCatalogueEntryDto Row(
