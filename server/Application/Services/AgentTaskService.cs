@@ -1398,6 +1398,11 @@ public sealed class AgentTaskService
                 request.AllowUnauthenticatedProvider, remoteRunnerId, ct);
             await RefuseUnauthenticatedRunnerCodexAsync(
                 agentKind, request.AllowUnauthenticatedProvider, remoteRunnerId, ct);
+            var cli = await CodexCliAdmissionPolicy.RequireAsync(
+                await CodexCliProbeDescriptor.ResolveAsync(_db, task, _registrySettings, _phoneHome, _apiKeyEnvResolver, ct),
+                _runners, _settings, _timeProvider, ct);
+            if (cli?.Warning is { } cliWarning)
+                warning = warning is null ? cliWarning : warning + " " + cliWarning;
         }
 
         if (repeatOf is not null)
@@ -2642,6 +2647,11 @@ public sealed class AgentTaskService
             allowUnauthenticated: false, task.RunnerId, ct);
         await RefuseUnauthenticatedRunnerCodexAsync(
             task.AgentKind, allowUnauthenticated: false, task.RunnerId, ct);
+        var cli = await CodexCliAdmissionPolicy.RequireAsync(
+            await CodexCliProbeDescriptor.ResolveAsync(_db, task, _registrySettings, _phoneHome, _apiKeyEnvResolver, ct),
+            _runners, _settings, _timeProvider, ct);
+        if (cli?.Warning is { } cliWarning)
+            AddEvent(task.Id, AgentTaskEventType.Warning, null, cliWarning, UtcNow());
 
         await RequeueAsync(
             task, AgentTaskEventType.Retried, task.ModelLevel,
@@ -4031,7 +4041,7 @@ public sealed class AgentTaskService
     /// stands in for the runner's. Unknown, unavailable and timed-out answers admit (the
     /// dispatcher and runner backstops remain); the caller's own cancellation propagates.
     /// </summary>
-    private async Task RefuseUnauthenticatedRunnerCodexAsync(
+    internal async Task RefuseUnauthenticatedRunnerCodexAsync(
         AgentKind agentKind,
         bool allowUnauthenticated,
         string? runnerId,
