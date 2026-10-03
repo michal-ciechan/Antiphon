@@ -114,6 +114,12 @@ rebases, verifies when required, fast-forwards, pushes, and cleans up. The resul
 Publication and cleanup have separate durable statuses. `LandRefused` leaves publication
 unconfirmed and can follow local target advancement. A cleanup retry emits `LandingCleanup`
 for the same operation, without another publication. A request survives a server restart.
+
+Generated verification evidence stays ignored (CARD-1015); essential receipt lines and
+provenance belong in the stored task report. Ignored output does not dirty tracked source.
+Program currently registers `RefusingEvidenceRetention`, so publication can succeed while
+cleanup retains evidence residue. Whole completed-card worktree removal belongs to CARD-1017;
+this policy supplies neither that deletion authority nor durable raw-artifact storage.
 A 409 means a land is running in
 this server now — wait for its outcome event. A `Warning` "did not finish (server restarted);
 re-running" is informational. The orchestrator decides the order and what a refusal means, but
