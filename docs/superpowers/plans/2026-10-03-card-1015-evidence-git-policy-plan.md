@@ -4,7 +4,7 @@ Date: 2026-10-03. Plan task: `b29278e3-8d7e-4a39-8d0d-04d1d8a3cee9`.
 Inspected source: `bb5fa774cd56f85ee6f0b1122c198192427e5ddf`.
 Latest observed master: `b0ccedda2e93a6b847e9219a602a3413694f64ea`; its changes since the inspected source do not touch the relevant bundles, Git infrastructure, scripts, CI, testing owner or `.antiphon/` inventory.
 
-Status: implementation plan under the defaults below, awaiting the card owner's decision. The brief requests verification planning but does not fold the separate TestDesign stage into this dispatch. After the decision, TestDesign freezes the verification design and checkpoint manifest before Code starts. No implementation or verification execution is claimed here.
+Status: owner decisions resolved; see **Owner decision amendments** and the appended **Verification design**. The original Plan text below is retained as history, not current authority where those sections supersede it. In particular, the old D-2/D-5, initial checkpoint sketch and decision-stage handoff are superseded. No implementation or verification execution is claimed here.
 
 ## Outcome and scope
 
@@ -135,7 +135,7 @@ Additional witnesses:
 
 TestDesign must supply distinct positive controls for the directory, file-type/mode, size, commit-range, Git-error, CI-range selection and invocation guards, and review whether separate mode/format and base/head identity controls are needed. Run deliberate mutations only in the later method-scoped SourceLanding Mutation stage. Do not use a compiler failure, zero selected tests or a fixture error as the intended red assertion.
 
-### Checkpoints
+### Initial checkpoint sketch (superseded)
 
 Initial manifest for TestDesign to freeze. All groups use the **Any lane**; host selection follows D-7. `After` is the same S1-S2 group so the isolated build can be reused. The ordinary scope is Unit plus the new integration class and two explicitly named unchanged adjacent smoke methods, not the full landing/checkpoint namespaces.
 
@@ -170,3 +170,49 @@ No client, browser, live provider, remote-runner, database, entire `Antiphon.Tes
 ## Plan-stage validation
 
 Read-only card/API, Git inventory/history and source inspection only. No build or test was run for this documentation-only planning task. Before settlement, check Markdown table shape and `git diff --check`, commit this plan on the assigned task branch, push it, and verify the remote branch SHA. No source, bundle, workflow, test or existing evidence file is changed by this dispatch.
+
+## Owner decision amendments
+
+TestDesign task `f0aad56e-937e-4a3b-8164-5e0c82bf9bd3`, 2026-10-03. The commissioning brief records the resolved decisions verbatim:
+
+- D-1: ACCEPTED. Markdown evidence up to 1 MiB is allowed; generated artifacts are rejected by the git-history guard.
+- D-2: CHANGED. Do NOT leave the existing 108 paths (about 17.7 MB). Remove them with a normal DELETION COMMIT on master: no history rewrite, no force-push, no filter-branch. Plan the deletion slice (exact path list derivation and a guard that proves exactly those paths, and nothing else, are removed; the files stay recoverable from history).
+- D-5: CHANGED. The operator's words: "for cleanup we should delete whole worktree after card is done, then fine to leave gitignored".
+
+These replace the old D-2/D-5 defaults. D-1, D-3, D-4, D-6 and the runtime routing preference remain. D-5's desired end state is deletion of the whole task worktree, including ignored evidence, after the card is done; preserving cleanup residue is not the desired retention design. Implementing that end state is a **recommended separate follow-up card**, as expressly permitted by this brief. CARD-1015 implements the bounded Git policy and the D-2 deletion only. Raw evidence may remain ignored while a task/card is active. This card adds no raw-artifact durability promise and must not claim that Done already triggers removal.
+
+### Cleanup inspection and follow-up boundary
+
+Read `CardTaskSettlement.SettleClosedCardAsync`, `AgentTaskReplyService.PrepareRemoteAsync`/`MergeBackAsync`, `AgentTaskLandingProtocol.CleanupAsync`, `TaskWorktreeRetirementService.ReleaseAsync`/`TryRetireAsync`/`RemoveRemoteMirrorAsync`, `WorktreeResidueSweepService`, `RemoteWorkspaceService.RemoveMirrorAsync`, `RunnerWorkspaceService.RemoveAsync`, `WorktreeIgnoredContentGate`, `WorktreeCleanupSettings`, `IWorktreeEvidenceRetention`, the Program registration and `LandingEnums`.
+
+- Card closure currently cancels unstarted open tasks and leaves started tasks open with a warning. It does not create deletion authority for all tasks attached to a Done card. Task settlement records/synchronizes published progress; it is not a card-wide cleanup transaction.
+- Desktop landing cleanup starts only after publication. `LandCleanupStatus.NotStarted` is the default enum value, not evidence that the directory is absent. Cleanup transitions through Pending to Complete or Refused; Complete requires the returned directory/registration/branch facts. Settled-task retirement additionally requires explicit `NoFurtherWorkspaceUse`, terminal task/settling floor, exact ownership, retrievable reports, containment and workspace-use admission. The residue job is the scheduler; its Execute default is false.
+- `WorktreeCleanupSettings.DefaultRetainedIgnored` includes task reports, TRX and checkpoint folders. Program registers `RefusingEvidenceRetention`; nonempty evidence returns `evidence_retention_unavailable`. Merely changing the ignore rule or declaring evidence disposable does not supply card-Done authority, resolve report pointers, release active sessions, or implement recovery.
+- Remote retirement calls `RemoteWorkspaceService.RemoveMirrorAsync` after the local attempt and records runner residue separately. The runner's ordinary `RemoveAsync` checks its root, dirty status and (when supplied) published ancestry, then invokes `git worktree remove --force`. Its status query omits ignored files. Local landing cleanup Complete and remote mirror absence are therefore different facts; runner removal is not proof of durable raw-evidence retention. SourceLanding snapshots have their own sealed custody/removal protocol and remain excluded.
+
+The follow-up needs a card-Done-triggered, durable/idempotent cleanup obligation in the card-transition/settlement path; fresh terminal/publication/workspace-use checks via `TaskWorktreeRetirementService` and the residue scheduler; an explicit ignored-evidence disposal policy in `WorktreeIgnoredContentGate`/settings that preserves canonical `AgentReportStore` and real deliverable pointers; and separately retriable remote removal through `RemoteWorkspaceService`, runner contracts and `RunnerWorkspaceService`. It must record local and mirror completion independently and handle offline runners, process ownership, reopen races, partial deletion and restart recovery. Existing `WorktreeCleanupAttempt`/retirement journals should be reused where their authority fits. A new retention-copy service is not required by the operator's disposable-evidence choice.
+
+This is materially larger and more destructive than a Git-history policy: it changes the timing and authority for filesystem deletion across hosts. It needs its own Plan/TestDesign, cleanup failure controls and any new notification's real-queue recipient evidence. Do not implement it by changing a classifier glob or by treating card Done as permission to kill a working session. Caller action: commission **"Delete completed-card task worktrees including ignored evidence"** as the follow-up; this plan-only dispatch does not create or claim a board record. No unanswered owner choice blocks CARD-1015's reduced scope.
+
+### Revised slices and deletion authority
+
+S1 and S2 retain their original purposes. S1 documents the accepted policy and the deferred whole-worktree cleanup end state, replacing the old preserved-residue design language; it must accurately describe today's implementation gap. S2 may add `scripts/lib/evidence-policy.ps1` for the byte-oriented Git/result-validation seam described below. Add the following dedicated slices:
+
+| Slice | Files | Purpose |
+|---|---|---|
+| S2b | New `scripts/check-evidence-deletion.ps1`; shared evidence-policy library; new `tests/Antiphon.Tests/Scripts/EvidenceDeletionGuardTests.cs` | Read-only exact-deletion validator and real-Git fixture tests; commit/push before S3. |
+| S3 | Exactly the frozen 108 tracked paths under `.antiphon/` | One normal deletion-only commit, with exact trailer `Antiphon-Evidence-Deletion: CARD-1015`. Push the task branch and land through the normal reviewed operation onto master. No direct worktree push to master, history rewrite, force-push or `filter-branch`. |
+
+The inventory is the output bytes of:
+
+```text
+git ls-tree -r -z --full-tree --name-only 496bd2abafbbc7fb7040610e13938682fdf161f0 -- .antiphon/
+```
+
+This exact NUL-delimited Git-order list contains **108 paths**, SHA-256 **356edf4a223e53669d4137631e40c0f5f7d19127c2568fdd0608fa4364e5ac9c**; the corresponding blobs total **17,775,541 bytes**. This is an immutable derivation, not a glob against whatever HEAD happens to contain. Include Markdown in this deletion inventory: the owner asked to remove all existing 108, not only files that D-1 would reject. Do not read payloads, secrets or private notes to derive it. Files remain reachable at that inventory commit.
+
+Before S3, independently verify the list digest/count and each current path's mode/object identity against that inventory. A missing or changed entry is a visible conflict, not permission to broaden or silently shrink the list. Stage only those literal paths through Git's NUL pathspec input and literal-pathspec mode; never a directory-wide force-add or broad filesystem delete. Assert the staged raw diff against S3's parent is exactly 108 D records with the frozen paths/old objects and no other change, then create the deletion-only commit. Source/tests/docs belong in earlier slices. Later fixes must not be mixed into S3 or rewrite it.
+
+`check-evidence-deletion.ps1` accepts Repository, InventoryRef, InventoryPathSha256, InventoryCount and HeadRef. All are resolved/validated before inspection. It locates **exactly one** commit with the exact trailer in InventoryRef..HeadRef, requires a single parent and validates its complete unfiltered, no-renames raw diff. Every record must be D; the ordinal path set must equal the frozen inventory (missing and extra paths fail independently); old mode/object identities must match; those original paths must remain absent at HeadRef. Require InventoryRef ancestry of the deletion parent and deletion ancestry of HeadRef. Validate every original blob with `cat-file -e` without printing contents. Count/digest assertions are independent, never recomputed from the candidate deletions. Exit 0 = exact deletion proven, 1 = mismatched deletion policy, 2 = unknown/ref/Git/parse failure. Report inventory/deletion/head SHAs, digest, path count and recoverability verdict. The same validator is called by fixture tests and CP-7, not a prose-only manual checklist.
+
+After reviewed land, the caller repeats CP-6/CP-7 against the actual master tip (landing may change S3's SHA) and records the deletion SHA there. This proves a normal deletion reached master; it does not claim any reduction in Git history size. Original inventory SHA remains reachable because it is an ancestor. A follow-up qualifying commit is allowed; the exact deletion commit must still be discoverable and unchanged in meaning.
