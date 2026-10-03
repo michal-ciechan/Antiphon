@@ -136,6 +136,14 @@ internal sealed class ClassCensusSelection
             }
             if (depth > 0) return "conditional test shape";
             if (attrs.Any(a => AttributeName(a).Split('.').Last().Contains("Skip", StringComparison.Ordinal))) return "runtime skip eligibility";
+            foreach (var attribute in attrs)
+            {
+                var name = AttributeName(attribute);
+                var declarations = index.Declarations.Where(d => d.Class == name || d.Class == name + "Attribute"
+                    || d.Class == c.Namespace + "." + name || d.Class == c.Namespace + "." + name + "Attribute");
+                if (declarations.Any(d => d.Syntax.BaseList?.Types.Any(b => b.Type.ToString().Split('.').Last().EndsWith("SkipAttribute", StringComparison.Ordinal)) == true))
+                    return "runtime skip eligibility";
+            }
             if (attrs.Any(a => AttributeName(a).Split('.').Last() is "Explicit" or "ExplicitAttribute")) return "explicit test eligibility";
             if (baseClass && direct.Any(IsTest)) return "inherited test execution";
             foreach (var type in c.Syntax.BaseList?.Types ?? [])
@@ -144,8 +152,10 @@ internal sealed class ClassCensusSelection
                 if (aliases.Contains(name.Split('.')[0])) return "ambiguous base alias";
                 if (name is "object" or "System.Object" or "global::System.Object") continue;
                 name = name.Replace("global::", "", StringComparison.Ordinal);
-                var exact = index.Declarations.Where(d => d.Class == name || d.Class == c.Namespace + "." + name).ToArray();
-                var resolved = exact.Length > 0 ? exact : index.Declarations.Where(d => d.Syntax.Identifier.ValueText == name).ToArray();
+                var namespaces = root.DescendantNodes().OfType<UsingDirectiveSyntax>().Where(u => u.Alias is null && u.StaticKeyword.ValueText.Length == 0)
+                    .Select(u => u.Name?.ToString()).Where(n => n is not null).ToArray();
+                var resolved = index.Declarations.Where(d => d.Class == name || d.Class == c.Namespace + "." + name
+                    || !name.Contains('.') && namespaces.Any(ns => d.Class == ns + "." + name)).ToArray();
                 if (resolved.Select(d => d.Class).Distinct().Count() != 1) return "unresolved or ambiguous base";
                 foreach (var b in resolved)
                 {

@@ -74,7 +74,7 @@ public sealed class CoverageCommand
                 var build = imported.Manifest.Builds.Single(b => b.Id == row.Build);
                 var project = SelectPath(build.Project, true);
                 var directory = Directory.Exists(project) ? project : Path.GetDirectoryName(project)!;
-                var candidates = ProjectSources(root, directory, selected.Values, path => Read(path, ConfinedFileReader.SourceLimit));
+                var candidates = ProjectSources(root, directory, selected.Values, path => Read(path, ConfinedFileReader.SourceLimit), census is not null);
                 var index = new TestAssertionIndex(candidates);
                 if (index.Diagnostics.Any()) throw new InvalidDataException("invalid selected project syntax");
                 census?.Add(row, planText, index);
@@ -139,7 +139,7 @@ public sealed class CoverageCommand
             : suffix ? simple.StartsWith(token, StringComparison.Ordinal) : simple == token;
         return match && (ns == "*" || name.StartsWith(ns + ".", StringComparison.Ordinal));
     }
-    private static List<CoverageSource> ProjectSources(string root, string directory, IEnumerable<CoverageSource> explicitSources, Func<string, string> read)
+    private static List<CoverageSource> ProjectSources(string root, string directory, IEnumerable<CoverageSource> explicitSources, Func<string, string> read, bool includeExplicitLinks = false)
     {
         var paths = new HashSet<string>(PathComparer());
         var visited = new HashSet<string>(PathComparer());
@@ -162,7 +162,7 @@ public sealed class CoverageCommand
                 var value = include.Value.Replace('\\', Path.DirectorySeparatorChar);
                 if (value.Contains('*') || value.Contains('$')) throw new InvalidDataException("unsupported linked source requires literal scope");
                 var linked = Confined(root, Path.Combine(directory, value));
-                if (!explicitSources.Any(s => Confined(root, s.Path) == linked))
+                if (includeExplicitLinks || !explicitSources.Any(s => Confined(root, s.Path) == linked))
                 {
                     // In-root linked files may declare a filter-selected class. External links are never admitted.
                     paths.Add(linked);
