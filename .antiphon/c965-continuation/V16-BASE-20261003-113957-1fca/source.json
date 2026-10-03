@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "name": "V16-BASE",
+  "start": {
+    "commit": "6dd0ac62ed7e51d722fd2257f527afb5ea1e0e69",
+    "dirtyFiles": 0,
+    "fingerprint": "37ab9b2cc851e59997d422a2f40ffa6621b3a6939a6be6954d6fcd0bfaae8864",
+    "observedAtUtc": "2026-10-03T11:39:58.5196866+00:00",
+    "captureStatus": "known",
+    "errorCode": null
+  },
+  "end": {
+    "commit": "6dd0ac62ed7e51d722fd2257f527afb5ea1e0e69",
+    "dirtyFiles": 0,
+    "fingerprint": "37ab9b2cc851e59997d422a2f40ffa6621b3a6939a6be6954d6fcd0bfaae8864",
+    "observedAtUtc": "2026-10-03T11:42:24.6090872+00:00",
+    "captureStatus": "known",
+    "errorCode": null
+  },
+  "state": "clean",
+  "buildSource": "verified",
+  "reason": null,
+  "receipt": "CHECKPOINT V16-BASE commit=6dd0ac62ed7e51d722fd2257f527afb5ea1e0e69 build=ok filter=/*/*/AgentTaskInputFallbackTests*/Runner_write_failure_types_only_the_durable_api_pointer* executed=3 passed=3 failed=0 skipped=0 trx=/work/worktrees/task-4c1697dc/.antiphon/c965-continuation/V16-BASE-20261003-113957-1fca/run.trx slot=granted waited=0s dirty=0 source=6dd0ac62ed7e51d722fd2257f527afb5ea1e0e69 sourceState=clean buildSource=verified",
+  "exitCode": 0,
+  "executed": 3,
+  "passed": 3,
+  "failed": 0,
+  "skipped": 0,
+  "timings": {
+    "slotWaitSeconds": 0.0,
+    "buildSeconds": 81.8061842,
+    "startupSeconds": 38.5442929,
+    "testsWallSeconds": 23.3206055,
+    "teardownSeconds": 1.2380006,
+    "testHostWallSeconds": 63.1028875,
+    "method": "utc-trx-and-monotonic-host",
+    "unavailableReason": null
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "name": "V20-STRENGTH-RED",
+  "start": {
+    "commit": "3211f53bece05a9f1af54063c9f0bb37f9bd63cb",
+    "dirtyFiles": 5,
+    "fingerprint": "8e09b9d1488ef55534d70f497edd2697fd309409c14cd52c35b230056e3b9dfe",
+    "observedAtUtc": "2026-10-03T11:49:03.1107340+00:00",
+    "captureStatus": "known",
+    "errorCode": null
+  },
+  "end": {
+    "commit": "3211f53bece05a9f1af54063c9f0bb37f9bd63cb",
+    "dirtyFiles": 5,
+    "fingerprint": "8e09b9d1488ef55534d70f497edd2697fd309409c14cd52c35b230056e3b9dfe",
+    "observedAtUtc": "2026-10-03T11:49:56.1700972+00:00",
+    "captureStatus": "known",
+    "errorCode": null
+  },
+  "state": "dirty",
+  "buildSource": "verified",
+  "reason": null,
+  "receipt": "CHECKPOINT V20-STRENGTH-RED commit=3211f53bece05a9f1af54063c9f0bb37f9bd63cb build=reused filter=/*/*/AgentTaskInputFallbackTests*/Input_endpoint_requires_the_recipient_task_token executed=1 passed=0 failed=1 skipped=0 trx=/work/worktrees/task-4c1697dc/.antiphon/c965-continuation/V20-STRENGTH-RED-20261003-114902-e5dd/run.trx slot=granted waited=0s dirty=5 source=3211f53bece05a9f1af54063c9f0bb37f9bd63cb+dirty:8e09b9d1488ef55534d70f497edd2697fd309409c14cd52c35b230056e3b9dfe sourceState=dirty buildSource=verified",
+  "exitCode": 1,
+  "executed": 1,
+  "passed": 0,
+  "failed": 1,
+  "skipped": 0,
+  "timings": {
+    "slotWaitSeconds": 0.0,
+    "buildSeconds": 0.0,
+    "startupSeconds": 38.4432625,
+    "testsWallSeconds": 11.8081599,
+    "teardownSeconds": 1.2558844,
+    "testHostWallSeconds": 51.5072839,
+    "method": "utc-trx-and-monotonic-host",
+    "unavailableReason": null
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "name": "V29-STRENGTH-RED",
+  "start": {
+    "commit": "3211f53bece05a9f1af54063c9f0bb37f9bd63cb",
+    "dirtyFiles": 5,
+    "fingerprint": "8e09b9d1488ef55534d70f497edd2697fd309409c14cd52c35b230056e3b9dfe",
+    "observedAtUtc": "2026-10-03T11:50:50.9356411+00:00",
+    "captureStatus": "known",
+    "errorCode": null
+  },
+  "end": {
+    "commit": "3211f53bece05a9f1af54063c9f0bb37f9bd63cb",
+    "dirtyFiles": 5,
+    "fingerprint": "8e09b9d1488ef55534d70f497edd2697fd309409c14cd52c35b230056e3b9dfe",
+    "observedAtUtc": "2026-10-03T11:51:48.7526497+00:00",
+    "captureStatus": "known",
+    "errorCode": null
+  },
+  "state": "dirty",
+  "buildSource": "verified",
+  "reason": null,
+  "receipt": "CHECKPOINT V29-STRENGTH-RED commit=3211f53bece05a9f1af54063c9f0bb37f9bd63cb build=reused filter=/*/*/TaskInputReadFailureTests*/Repeated_attention_reads_keep_one_stable_condition executed=1 passed=0 failed=1 skipped=0 trx=/work/worktrees/task-4c1697dc/.antiphon/c965-continuation/V29-STRENGTH-RED-20261003-115050-516c/run.trx slot=granted waited=0s dirty=5 source=3211f53bece05a9f1af54063c9f0bb37f9bd63cb+dirty:8e09b9d1488ef55534d70f497edd2697fd309409c14cd52c35b230056e3b9dfe sourceState=dirty buildSource=verified",
+  "exitCode": 1,
+  "executed": 1,
+  "passed": 0,
+  "failed": 1,
+  "skipped": 0,
+  "timings": {
+    "slotWaitSeconds": 0.0,
+    "buildSeconds": 0.0,
+    "startupSeconds": 48.6131306,
+    "testsWallSeconds": 7.0358781,
+    "teardownSeconds": 1.5279367,
+    "testHostWallSeconds": 57.1769296,
+    "method": "utc-trx-and-monotonic-host",
+    "unavailableReason": null
+  }
+}

@@ -333,6 +333,7 @@ public sealed class AgentTaskInputFallbackTests
         logs.Entries.ShouldNotBeEmpty("log-capture-active");
         var logJson = new JsonSerializerOptions();
         logJson.Converters.Add(new ReflectionLogValue());
+        logJson.Converters.Add(new DelegateLogValue());
         foreach (var entry in logs.Entries)
         {
             entry.Message.ShouldNotContain("private-tail-888", customMessage: "log-tail-absent");
@@ -348,6 +349,15 @@ public sealed class AgentTaskInputFallbackTests
             JsonSerializerOptions options) => throw new NotSupportedException();
         public override void Write(Utf8JsonWriter writer, MemberInfo value, JsonSerializerOptions options) =>
             writer.WriteStringValue(value.ToString());
+    }
+
+    private sealed class DelegateLogValue : JsonConverter<Delegate>
+    {
+        public override bool CanConvert(Type typeToConvert) => typeof(Delegate).IsAssignableFrom(typeToConvert);
+        public override Delegate? Read(ref Utf8JsonReader reader, Type typeToConvert,
+            JsonSerializerOptions options) => throw new NotSupportedException();
+        public override void Write(Utf8JsonWriter writer, Delegate value, JsonSerializerOptions options) =>
+            writer.WriteStringValue($"{value.Method} target={value.Target?.GetType().FullName}");
     }
 
     [Test]
