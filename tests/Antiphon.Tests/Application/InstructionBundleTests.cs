@@ -73,11 +73,11 @@ public class InstructionBundleTests
     public void C1011_qualification_gates()
     {
         var owner = C1011Owner();
-        owner.ShouldContain("Both actual InboxConhost and ModernConPty require real Review evidence.", customMessage: "both-hosts");
-        owner.ShouldContain("A fresh worktree must visibly show trust, receive one y, clear trust, and reach Ready.", customMessage: "fresh-trust");
+        owner.ShouldContain("Actual ModernConPty requires real Review evidence; WQ-1 is excluded by the operator for CARD-1022.", customMessage: "modern-review");
+        owner.ShouldContain("A fresh worktree must reach Ready. Record whether trust appeared; send no startup input without observed trust, or exactly one y if it appeared, then require cleared trust and Ready.", customMessage: "fresh-startup");
         owner.ShouldContain("Delivery requires a matching complete UserPrompt transcript.", customMessage: "whole-receipt");
         owner.ShouldContain("Settlement requires a final report and confirmed release ownership.", customMessage: "release-owner");
-        owner.ShouldContain("WQ-1, WQ-2 and WQ-3 gate prompt landing and Debug pin activation.", customMessage: "preland-gate");
+        owner.ShouldContain("WQ-2 and WQ-3 gate prompt landing and Debug pin activation; WQ-1 is operator-excluded.", customMessage: "preland-gate");
         owner.ShouldContain("Backend configuration must be restored and the actual restored host verified.", customMessage: "backend-restored");
         owner.ShouldContain("### Activation after qualification and independent Final/Full Review", customMessage: "final-full-review");
     }
