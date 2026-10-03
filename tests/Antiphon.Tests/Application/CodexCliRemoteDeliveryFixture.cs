@@ -129,12 +129,16 @@ internal static class CodexCliRemoteDeliveryFixture
                 owned, expectedFull.Length, AgentKind.Codex).TrimEnd();
             queued.Body.ShouldBe(expectedWire, "C959-pc-186 remote " + vector);
             var spillPath = Path.Combine(task.RemoteWorktreePath!, owned);
+            Guid? observedRecipient = null;
+            bool? observedFileExists = null;
+            byte[]? observedFileBytes = null;
             runtime.BeforeBody = async (id, input) =>
             {
                 if (!input.Contains(DelegationReportFormatter.TaskMarker(task.Id), StringComparison.Ordinal)) return;
-                id.ShouldBe(task.AgentSessionId!.Value, "C959-v21-remote-recipient-identity " + vector);
-                File.Exists(spillPath).ShouldBeTrue("C959-pc-217 " + vector);
-                (await File.ReadAllBytesAsync(spillPath)).ShouldBe(Encoding.UTF8.GetBytes(expectedFull), "C959-pc-211 " + vector);
+                if (observedRecipient is not null) return;
+                observedRecipient = id;
+                observedFileExists = File.Exists(spillPath);
+                if (observedFileExists.Value) observedFileBytes = await File.ReadAllBytesAsync(spillPath);
             };
             launches.Release(h.Provider.GetRequiredService<AgentSessionLaunchQueue>());
             await h.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
@@ -147,6 +151,9 @@ internal static class CodexCliRemoteDeliveryFixture
                 await h.Runtime.CatchUpTranscriptAsync(task.AgentSessionId.Value, CancellationToken.None);
                 await h.Queue.FlushSessionAsync(task.AgentSessionId.Value, CancellationToken.None);
             }
+            observedRecipient.ShouldBe(task.AgentSessionId, "C959-v21-remote-recipient-identity " + vector);
+            observedFileExists.ShouldBe(true, "C959-pc-217 " + vector);
+            observedFileBytes.ShouldBe(Encoding.UTF8.GetBytes(expectedFull), "C959-pc-211 " + vector);
             terminal.SubmittedBodies.Single().ShouldBe(expectedWire, "C959-v21-remote-W " + vector);
             expectedWire.ShouldNotContain("\n", customMessage: "C959-pc-212 remote " + vector);
             expectedWire.ShouldNotContain("\r");
