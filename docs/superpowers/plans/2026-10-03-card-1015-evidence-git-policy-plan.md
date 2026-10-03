@@ -268,7 +268,7 @@ Every named new method is non-parameterized, one TUnit result. Internal vectors 
 | V-6 | `EvidenceDiffGuardTests.Grandfathers_unchanged_legacy_and_allows_deletion` | Base contains forbidden legacy files; unchanged entries and pure deletions pass 0. Equal base/head gives explicit zero-commit/zero-entry success; unrelated normal commit gives nonzero commits/zero inspected entries. |
 | V-7 | `EvidenceDiffGuardTests.Rechecks_modified_and_renamed_legacy_paths` | Change an existing forbidden blob; rename a small raw artifact; copy/rename source into `.antiphon/x.json`; change a Markdown file's mode: each fails. Rename into a permitted small `.md` passes if all introduced records comply. |
 | V-8 | `EvidenceDiffGuardTests.Checks_intermediate_commits_even_when_tip_is_clean` | Introduce forbidden blob then delete it before head; fail 1 and name the introducing commit although net diff is clean. |
-| V-9 | `EvidenceDiffGuardTests.Checks_merge_side_history` | Side branch adds then deletes forbidden blob before merge; fail on side SHA even with clean merge result. Separately, a merge resolution introduces a forbidden path absent from both parents; fail on the merge SHA's first-parent diff. |
+| V-9 | `EvidenceDiffGuardTests.Checks_merge_side_history` | Side branch adds then deletes forbidden blob before merge; fail on side SHA even with clean merge result. Separately, a merge resolution introduces a forbidden path absent from both parents; fail on the merge SHA's first-parent diff. A third vector merges an unrelated root lineage that added then deleted a forbidden blob: base remains an ancestor of head, and the introduced root must be diffed against the empty tree and rejected. |
 | V-10 | `EvidenceDiffGuardTests.Reads_pinned_git_objects_not_index_or_worktree` | Committed oversize Markdown with staged/working small bytes fails; committed small Markdown with staged/untracked oversize bytes passes. Assert the exact committed object size/identity. |
 | V-11 | `EvidenceDiffGuardTests.Handles_literal_paths_and_case_variants` | Root `.ANTIPHON`, directory case, spaces, tabs, LF, non-ASCII and shell-text path vectors cannot hide a violation. Literal sentinel expression never executes; decoded reported path matches the object path and the output remains safely escaped. Payload sentinel never appears in stdout/stderr. |
 | V-12 | `EvidenceDiffGuardTests.Refuses_unverifiable_ranges_and_objects` | Missing base, missing head, blob/tag-to-blob ref, unrelated histories, and removed loose object fail 2; valid annotated commit tag and equal range pass. Assert no clean verdict/count certificate on error. |
@@ -389,8 +389,8 @@ The inventory covers every safety-critical invariant added/relied on by the chan
 | G-85 | D-1/S1; Common Markdown allowance excludes checkpoint directories | PC-85 |
 | G-86 | D-6/S1; Checkpoint report lines remain verbatim | PC-86 |
 | G-87 | D-2/S2b; Deletion marker is an exact complete trailer, not a substring | PC-87 |
-
 | G-88 | D-3; Raw path bytes must decode losslessly, never through UTF-8 replacement fallback | PC-88 |
+| G-89 | D-3; Newly reachable root commits introduced by a merge are diffed against the empty tree | PC-89 |
 
 ### Positive controls
 
@@ -489,14 +489,13 @@ Method filter = `/*/*/ClassName/ExactTestMethod` for the class-qualified method 
 | PC-85 / G-85 | delete only the outside-checkpoint-directories clause from the common allowance | `InstructionBundleTests.C1015_Composed_workers_keep_generated_evidence_untracked` | common-directory: composed common allowance excludes checkpoint directories |
 | PC-86 / G-86 | replace only the unedited CHECKPOINT-line requirement with permission to paraphrase | `InstructionBundleTests.C1015_Code_keeps_range_guard_and_exact_source` | code-verbatim: stage Code requires unedited CHECKPOINT lines |
 | PC-87 / G-87 | use Contains instead of exact complete trailer-line equality | `EvidenceDeletionGuardTests.Rejects_ambiguous_or_merge_deletion` | deletion-trailer: ExitCode == 1 with only a CARD-10150 near-match marker |
-
 | PC-88 / G-88 | change the strict UTF-8 path decoder to replacement fallback, keeping all other raw fields valid | `EvidenceDiffGuardTests.Refuses_failed_or_malformed_git_results` | raw-encoding: ExitCode == 2 for an invalid-byte tiny Markdown path |
+| PC-89 / G-89 | skip zero-parent commits in the history walk | `EvidenceDiffGuardTests.Checks_merge_side_history` | merged-root: ExitCode == 1 and introducing root SHA is reported although the root lineage later deleted the artifact |
 
 ### Out of scope
 
 - D-5's card-Done deletion, raw-artifact retention service, remote cleanup recovery and new notification delivery: separate follow-up with the components/reasons above. Current Unit coverage is only a regression witness.
 - Git history rewriting or size reclamation: expressly forbidden. S3 removes paths from the current tree; historical blobs remain recoverable. No blanket deletion of other tracked or ignored files.
-- Root commits in the proposed range: explicit commit base + required base ancestry means a newly introduced root cannot occur in a valid range; unrelated-root inputs fail 2. Root-against-empty-tree handling may remain defensive code but is not used to waive ancestry.
 - Semantic inspection of Markdown content, artifacts disguised as Markdown, arbitrary generated payloads moved outside root `.antiphon/`, and branch-protection administration: beyond the specified path/mode/size guard. Review enforces the anti-evasion instruction; extension checking does not prove a file is a human report.
 - Whole-assembly, database, live provider/session, client/browser and Windows native qualification: no changed runtime path requires them. Full eligible Unit plus named Git integrations remains mandatory. Six explicitly Windows-only Unit methods are outside the selected Linux lane, not waived skips.
 - Hosted Actions execution and active server bundle adoption are caller acceptance observations after push/activation; local fixtures do not prove them. The existing restart: server / runner: none requirement remains.
@@ -537,7 +536,7 @@ Mutation takes one four-minute baseline per distinct exact method at the landed 
 | `/*/*/EvidenceDiffGuardTests/Grandfathers_unchanged_legacy_and_allows_deletion` | PC-9, PC-10 | 1 | 4 | 2 x 8.25 = 16.5 | 20.5 |
 | `/*/*/EvidenceDiffGuardTests/Rechecks_modified_and_renamed_legacy_paths` | PC-11, PC-12 | 1 | 4 | 2 x 8.25 = 16.5 | 20.5 |
 | `/*/*/EvidenceDiffGuardTests/Checks_intermediate_commits_even_when_tip_is_clean` | PC-13 | 1 | 4 | 1 x 8.25 = 8.25 | 12.25 |
-| `/*/*/EvidenceDiffGuardTests/Checks_merge_side_history` | PC-14, PC-15 | 1 | 4 | 2 x 8.25 = 16.5 | 20.5 |
+| `/*/*/EvidenceDiffGuardTests/Checks_merge_side_history` | PC-14, PC-15, PC-89 | 1 | 4 | 3 x 8.25 = 24.75 | 28.75 |
 | `/*/*/EvidenceDiffGuardTests/Reads_pinned_git_objects_not_index_or_worktree` | PC-16 | 1 | 4 | 1 x 8.25 = 8.25 | 12.25 |
 | `/*/*/EvidenceDiffGuardTests/Refuses_unverifiable_ranges_and_objects` | PC-21, PC-22, PC-23 | 1 | 4 | 3 x 8.25 = 24.75 | 28.75 |
 | `/*/*/EvidenceDiffGuardTests/Refuses_failed_or_malformed_git_results` | PC-24, PC-25, PC-26, PC-75, PC-76, PC-77, PC-78, PC-88 | 1 | 4 | 8 x 8.25 = 66 | 70 |
@@ -564,13 +563,13 @@ Mutation takes one four-minute baseline per distinct exact method at the landed 
 | `/*/*/EvidenceDeletionGuardTests/Verifies_exact_legacy_deletion` | PC-72 | 1 | 4 | 1 x 8.25 = 8.25 | 12.25 |
 | `/*/*/EvidenceDiffGuardTests/Allows_small_markdown_and_other_source` | PC-73 | 1 | 4 | 1 x 8.25 = 8.25 | 12.25 |
 
-PC floor (Mutation) = **862 minutes**: 34 method baselines x4 = 136, plus 88 independent red/restore/green cycles x8.25 = 726. With external setup, Mutation admission + PC floor = **866 minutes**. Combined Code + Mutation floor = **896 minutes = 3 + 27 + 4 + 136 + 726**. Including separate ordinary Review and the caller's two actual-master guard commands gives **928 minutes**. No execution cost is claimed measured; this dispatch ran zero builds/tests/PCs. The PC schedule has **235 TUnit result executions** including the six-argument cap method, separate from ordinary 4,034.
+PC floor (Mutation) = **870.25 minutes**: 34 method baselines x4 = 136, plus 89 independent red/restore/green cycles x8.25 = 734.25. With external setup, Mutation admission + PC floor = **874.25 minutes**. Combined Code + Mutation floor = **904.25 minutes = 3 + 27 + 4 + 136 + 734.25**. Including separate ordinary Review and the caller's two actual-master guard commands gives **936.25 minutes**. No execution cost is claimed measured; this dispatch ran zero builds/tests/PCs. The PC schedule has **237 TUnit result executions** including the six-argument cap method, separate from ordinary 4,034.
 
-One baseline per method instead of one per PC saves **216 estimated minutes** ((88-34)x4) after exact same-source restoration. One CP build reused by four integration rows saves **12 estimated minutes** versus four redundant three-minute builds. Measured savings = 0. No savings are assumed from broadening PC filters or batching same-file controls. Authoring, slot waits and findings are additional; the freeze does not authorize omitting controls to meet an estimate.
+One baseline per method instead of one per PC saves **220 estimated minutes** ((89-34)x4) after exact same-source restoration. One CP build reused by four integration rows saves **12 estimated minutes** versus four redundant three-minute builds. Measured savings = 0. No savings are assumed from broadening PC filters or batching same-file controls. Authoring, slot waits and findings are additional; the freeze does not authorize omitting controls to meet an estimate.
 
 ## TestDesign validation and handoff
 
-Bodies read before naming cases; **guards=88, mapped=88, missing=0, duplicate PC maps=0**. Every PC names an executable method after the explicit S2/S2b fixture setup; the fault substitutions and their limits are declared. 34 distinct PC filters, 32 new ordinary methods, seven CP rows, 4,034 ordinary TUnit executions, 27-minute ordinary floor and 862-minute PC floor. No placeholder/TBD cases remain. The documentation-only checks are source inventory, Markdown/table/ID/count arithmetic and `git diff --check`; they are not a compiled importer or test receipt.
+Bodies read before naming cases; **guards=89, mapped=89, missing=0, duplicate PC maps=0**. Every PC names an executable method after the explicit S2/S2b fixture setup; the fault substitutions and their limits are declared. 34 distinct PC filters, 32 new ordinary methods, seven CP rows, 4,034 ordinary TUnit executions, 27-minute ordinary floor and 870.25-minute PC floor. No placeholder/TBD cases remain. The documentation-only checks are source inventory, Markdown/table/ID/count arithmetic and `git diff --check`; they are not a compiled importer or test receipt.
 
 Code's precise start condition: CARD-1005 task b288ec96's reviewed Code/census landing is in the fresh dispatch start ref; that ref also contains this freeze and the pinned inventory ancestor; the read-only inventory still matches all 108 original path/object entries; the current namespace census is reconciled without CARD-1015 editing it; and the real seven-row importer admits the plan before ordinary execution. Unexpected legacy changes require a revised exact deletion inventory decision, not an automatic broad deletion. This is a sequencing condition, not an unresolved owner choice. Code implements S1/S2/S2b/S3, pushes each slice, runs ordinary V/R, leaves every PC pending and returns next: review.
 
@@ -578,5 +577,5 @@ After reviewed land, caller records actual master deletion evidence, activates t
 
 --- next stage ---
 next: code
-handoff: Start fresh after CARD-1005 b288ec96 reviewed Code/census land with this freeze and intact 108-path inventory. Implement S1/S2/S2b plus deletion-only S3; run seven CP rows (4034 ordinary results), keep 88 PCs pending for post-land Mutation. Do not change cleanup runtime or checkpoint census; return next: review.
+handoff: Start fresh after CARD-1005 b288ec96 reviewed Code/census land with this freeze and intact 108-path inventory. Implement S1/S2/S2b plus deletion-only S3; run seven CP rows (4034 ordinary results), keep 89 PCs pending for post-land Mutation. Do not change cleanup runtime or checkpoint census; return next: review.
 artifact: docs/superpowers/plans/2026-10-03-card-1015-evidence-git-policy-plan.md
