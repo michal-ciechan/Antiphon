@@ -1,0 +1,78 @@
+[
+  {
+    "request": "status",
+    "mode": "subprocess",
+    "calls": 10,
+    "milliseconds": [
+      878.7017,
+      838.6076,
+      829.4749,
+      837.6748,
+      850.5165,
+      833.6316,
+      844.5245,
+      844.4381,
+      844.5789,
+      872.4042
+    ],
+    "meanMilliseconds": 847.4552799999998,
+    "outputIdentical": true
+  },
+  {
+    "request": "status",
+    "mode": "script-scope",
+    "calls": 10,
+    "milliseconds": [
+      101.961,
+      5.3334,
+      4.2491,
+      4.2621,
+      33.0803,
+      3.5161,
+      3.0718,
+      3.2491,
+      3.1209,
+      3.1816
+    ],
+    "meanMilliseconds": 16.50254,
+    "outputIdentical": true
+  },
+  {
+    "request": "projects",
+    "mode": "subprocess",
+    "calls": 10,
+    "milliseconds": [
+      850.696,
+      831.5376,
+      820.286,
+      834.7474,
+      816.3992,
+      824.7457,
+      815.1611,
+      810.4538,
+      806.0738,
+      836.1974
+    ],
+    "meanMilliseconds": 824.6298,
+    "outputIdentical": true
+  },
+  {
+    "request": "projects",
+    "mode": "script-scope",
+    "calls": 10,
+    "milliseconds": [
+      5.8615,
+      2.0859,
+      2.1918,
+      2.1642,
+      2.0762,
+      8.0027,
+      2.1469,
+      2.087,
+      2.009,
+      2.1901
+    ],
+    "meanMilliseconds": 3.08153,
+    "outputIdentical": true
+  }
+]

@@ -89,7 +89,7 @@ function Invoke-RunnerRequestCore {
     $path = '/api/session-runners/' + [uri]::EscapeDataString($RunnerId) + $Suffix
     if ($env:C727_TEST_HTTP_STUB) {
         $bodyJson = if ($null -eq $Body) { '' } else { $Body | ConvertTo-Json -Compress }
-        $raw = & pwsh -NoProfile -File $env:C727_TEST_HTTP_STUB -Method $Method -RunnerId $RunnerId -Suffix $Suffix -BodyJson $bodyJson
+        $raw = & $env:C727_TEST_HTTP_STUB -Method $Method -RunnerId $RunnerId -Suffix $Suffix -BodyJson $bodyJson
         if ($LASTEXITCODE -ne 0) { throw "RunnerApiUnavailable $RunnerId$Suffix" }
         if ([string]$raw -eq '__404__') { return $null }
         if ([string]$raw -eq '__503__') { throw "RunnerApiFailed $RunnerId$Suffix HTTP 503" }
@@ -177,7 +177,7 @@ function Invoke-RecycleRead {
     param([string]$Path)
     try {
         if ($env:C727_TEST_HTTP_STUB) {
-            $raw = & pwsh -NoProfile -File $env:C727_TEST_HTTP_STUB -Method GET -Path $Path 2>$null
+            $raw = & $env:C727_TEST_HTTP_STUB -Method GET -Path $Path 2>$null
             if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace([string]$raw)) { throw 'read failed' }
             return ([string]$raw | ConvertFrom-Json)
         }
