@@ -499,6 +499,57 @@ public sealed class RemoteScriptContractTests
         partial.Removed.ShouldBe(new[] { "antiphon-runner_work" }, "recycle-receipt-facts: partial completion survives next rm failure");
         failedRemoval.Output.ShouldContain("outcome=partial");
         Regex.Matches(failedRemoval.Output, "(?m)^C1008_RECYCLE ").Count.ShouldBe(1);
+        using var copied = new C1008HostFixture();
+        (await copied.Run()).Exit.ShouldBe(0);
+        var bridgeRoot = Path.Combine(copied.Root, "bridge");
+        Directory.CreateDirectory(Path.Combine(bridgeRoot, "deploy-parent"));
+        File.Copy(Path.Combine(copied.Root, "evidence/deploy-parent/c590-result.json"),
+            Path.Combine(bridgeRoot, "deploy-parent/c590-result.json"));
+        foreach (var failCopy in new[] { true, false })
+        {
+            var psi = new ProcessStartInfo("pwsh") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+            psi.ArgumentList.Add("-NoProfile"); psi.ArgumentList.Add("-Command");
+            psi.ArgumentList.Add($$"""
+                $ErrorActionPreference='Stop'
+                . '{{DelegateScriptRunner.RepoRoot}}/scripts/c590-command.ps1'
+                . '{{DelegateScriptRunner.RepoRoot}}/scripts/c590-real.ps1'
+                function Invoke-C628ClaudeTokenOnDeploy { return $false }
+                function Invoke-C590Ssh {
+                    param([string]$Command)
+                    if ($Command.Contains('bash /home/mc/antiphon-c590/c590-remote.sh')) {
+                        if (-not $Command.Contains("export C1008_RESUME='1'")) {throw 'resume transport missing'}
+                        $env:C590_CASE='deploy-parent'; $env:C590_SHA='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+                        $env:C590_RUN='c1008fixture'; $env:C590_REEXEC='1'; $env:C1008_RESUME='1'; $env:C604_SERVER_ORIGIN='http://127.0.0.1:1'
+                        & bash '{{copied.Root}}/remote.sh' | Out-Null
+                        return $LASTEXITCODE
+                    }
+                    return 0
+                }
+                function scp {
+                    if ($args -contains '-r') {
+                        if ({{(failCopy ? "$true" : "$false")}}) { $global:LASTEXITCODE=77; return }
+                        Copy-Item -Recurse -Force '{{copied.Root}}/evidence/deploy-parent' '{{bridgeRoot}}'
+                    }
+                    $global:LASTEXITCODE=0
+                }
+                $manifest=[pscustomobject]@{evidenceRoot='{{bridgeRoot}}';sourceSha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';runId='c1008copy';
+                  recycle=[pscustomobject]@{version=1;project='antiphon-runner';operationId='c100800000000000000000000000000001';
+                    dryRun=$false;resume=$true;projectId='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1'}}
+                Invoke-C590LiveCase -Case deploy-parent -Manifest $manifest
+                """);
+            using var child = Process.Start(psi)!;
+            var stdout = child.StandardOutput.ReadToEndAsync(); var stderr = child.StandardError.ReadToEndAsync();
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            try { await child.WaitForExitAsync(deadline.Token); }
+            catch { if (!child.HasExited) { child.Kill(true); await child.WaitForExitAsync(); } throw; }
+            var output = await stdout + await stderr;
+            child.ExitCode.ShouldBe(failCopy ? 2 : 0, "recycle-receipt-facts: real bridge copy after host removal; " + output);
+            if (failCopy) output.ShouldContain("RecycleReceiptUnavailable");
+            copied.Removed.Length.ShouldBe(3, "recycle-receipt-facts: copy retry never removes a second generation");
+            var hostJournal = Path.Combine(copied.Root, "server/recycle/c100800000000000000000000000000001.json");
+            File.Exists(hostJournal).ShouldBeTrue();
+            if (!failCopy) File.ReadAllText(Path.Combine(bridgeRoot, "deploy-parent/recycle.json")).ShouldBe(File.ReadAllText(hostJournal));
+        }
     }
 
     [Test]
