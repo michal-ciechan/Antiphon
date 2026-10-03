@@ -219,3 +219,104 @@ re-measured: it is read from the scripts and the three run logs.
    and kills the named container at begin + 15 s regardless of helper state,
    tested with a deliberately stalled launch; that is a new capture and host
    changes, which were not done here.
+
+## D-2.6 re-run (one stalled-launch test, then one real capture)
+
+Run on the operator's approval of the host lane, under the same hard rules as the
+first run (same bounded host changes only, each reverted; zero input; abort and
+restore on anything unexpected). Times are UTC on 2026-10-03.
+
+**D-2.6 verdict: MET for a stalled capture after CLI launch**, with the
+limits listed under "Limits" below. The external timer is independent of the
+helper, was measured, and fired inside the 15 s plus or minus 1 s tolerance.
+
+**What changed.** The host script now starts an external timer when it reads the
+container's `CAPTURE-BEGIN` line (the helper prints it immediately before the
+launch request, so the CLI spawns up to about 1.5 s after the marker; the timer
+therefore runs slightly ahead of CLI launch, never behind it). At begin plus
+15 s the timer inserts a drop-all rule at the top of chain `A2CAP` and then runs
+`docker kill` on the named container, whatever the helper is doing. On
+`CAPTURE-END` the host cancels that timer, cuts egress at once and caps the
+awaited cleanup with a 5 s container kill (D-2.6's awaited-cleanup allowance).
+The 55 s egress cut and 60 s container kill from the first run stayed as the
+second layer.
+
+**Stalled-launch test (before the real capture).** Same exact image id, same
+`a2cap` bridge and chain, swap still on (no capture data involved). The
+container ran `echo CAPTURE-BEGIN; exec sleep 600`, a harmless command that
+prints the marker and then nothing:
+
+| Event | Time | Offset from marker |
+|---|---|---|
+| container launch | 16:24:40.017Z | |
+| begin marker seen by the host | 16:24:41.108Z | 0 |
+| timer egress cut (drop-all inserted) | 16:24:56.153Z | +15.04 s |
+| `docker kill` returned | 16:24:57.005Z | +15.90 s |
+| `docker run` returned rc 137 | 16:24:57.100Z | +15.99 s |
+
+Result: PASSED. The cut landed at 15.04 s; the kill signal was sent right after
+it and `docker kill` itself took about 0.85 s to return, so the container was
+gone by +15.99 s. After the fire the top rule of `A2CAP` was the inserted
+`-A A2CAP -j DROP`, 0 stalled containers remained, and removing that one rule
+restored the chain to its original ten rules (byte-compared) before the real
+capture started. The test used a surrogate command, not Grok; the timer does not
+depend on what the container runs.
+
+**Real capture (zero input, 120x30).** Marker seen 16:25:04.796Z; the launch
+request took 1,455 ms; the sanitized sign-in frame was stable twice and the
+helper ended its window at 4,434 ms. The host cancelled the timer at
+16:25:09.265Z (+4.47 s) and cut egress on the end marker at 16:25:09.343Z
+(+4.55 s). The timer never fired, the 5 s cleanup cap never fired and the 55/60 s
+backstop never fired (no fire line in the log). The owned session was killed
+individually (200, `Exited` in 183 ms), the runner exited 0 and nothing
+lingered. All 11 pre-launch egress checks were as expected. Counter delta over
+the window: UDP 53 to 1.1.1.1 12 packets / 648 bytes; TCP 443 2,335 packets /
+134,730 bytes; every drop rule 0. The sanitized frames are byte-identical to the
+first run's (SHA-256 `adc45f2b...` and `5c3041eb...`, the same as in the frames
+file) and again differ from the committed C1/C2 frames only in row 1, the cwd
+line; the nine-cell code was replaced with `<CODE-9> ` at row 15, columns 56 to
+64 (3 replacements on the wire), privacy scan clean, no leftover code-shaped
+string. One ordinary ANSI log existed on tmpfs (13,919 bytes, never read); 66
+files and 176,340,954 bytes were created under `/scratch/run`, none under `/tmp`;
+the marker find after deleting the owned root returned 0 entries. Input calls 0,
+input bytes 0; no login, auth read, model turn, browser step, or printed code or
+sign-in address.
+
+**Restore verification (final).** Swap was off from 16:24:57.286Z to
+16:25:12.796Z (15.5 s); `/swap.img` is active again at 542,716 KiB with SwapFree
+equal to SwapTotal. `iptables -S` 109 lines, `ip6tables -S` 13 and
+`iptables -t nat -S` 58, each byte-identical before and after (the baseline was
+taken inside this run, before any change). No `br-a2cap` link, no `a2cap`
+network, no references to the chain in either table, 0 containers named `a2cap`,
+running containers 33 before and after, volumes 29 before and after. The host
+scratch directory (helper script and baseline listings only) was removed; no
+`/tmp/a2cap.*` directory remains. The container's ownership marker and scratch
+root were deleted by exact path before it exited. The earlier first-run
+restore (and its final re-check) also held.
+
+**Exec on tmpfs.** `exec` on the scratch tmpfs is required in the tested
+layout, and it is the only relaxation used: `/tmp` and `/dev/shm` stayed
+`noexec` in the successful runs. Evidence is a one-variable change between two
+runs: with `/scratch` `noexec` the launch request returned 500 (no Grok process
+started); with `exec` on `/scratch` and nothing else changed it returned 201 in
+three runs. The 500 body was not recorded in that failing run, so the cause is
+inferred from that single change, not read from an error message. The runner
+executes its shadow-copied pty-host from `<log path>/pty-hosts/bin`; a narrower
+exec-only mount for just that directory was not tested, so `exec` on the whole
+scratch tmpfs is the minimum I have proven, not a proven global minimum.
+
+**Limits (unchanged by this run).**
+1. The timer starts at the `CAPTURE-BEGIN` marker. A helper that hangs before
+   printing it is covered only by the 55 s / 60 s backstop measured from
+   container launch, which the first-run addendum already records.
+2. The real capture ended on `stable-twice`, so the timer was exercised only by
+   the stalled-launch surrogate, not by a stalled real Grok.
+3. `docker kill` took about 0.85 s to return in the test; the egress cut
+   itself landed at 15.04 s.
+4. A-1's RepoDigest wording, the absent real trust frame and the other caveats
+   in the original Verdict are unchanged.
+
+--- next stage ---
+next: code
+handoff: D-2.6 met for a post-launch stall (external begin+15 s timer, stalled-launch test 15.04 s cut / 15.90 s kill return, real capture clean, host restored byte-identical). Remaining caveats: pre-marker hang covered only by the 55/60 s backstop, A-1 digest wording, no real trust frame, exec-on-scratch proven minimal only at mount granularity.
+artifact: docs/investigations/2026-10-03-card-1006-a2-capture-receipt.md
