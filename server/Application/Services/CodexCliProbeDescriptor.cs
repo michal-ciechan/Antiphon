@@ -23,8 +23,7 @@ internal sealed record CodexCliProbeDescriptor(
         var runner = string.IsNullOrWhiteSpace(task.RunnerId) ? "desktop" : task.RunnerId;
         var agent = task.AgentId is Guid id
             ? await db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == id, ct) : null;
-        var model = task.SpecialistModelAlias ?? (string.IsNullOrWhiteSpace(agent?.ModelId)
-            ? ModelLevelAliases.ForCodex(task.ModelLevel) : agent.ModelId.Trim());
+        var model = task.SpecialistModelAlias ?? ModelLevelAliases.ForCodex(task.ModelLevel);
         var env = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         string? executable = null;
         IReadOnlyList<string> arguments = [];
@@ -45,6 +44,8 @@ internal sealed record CodexCliProbeDescriptor(
                     throw new ConflictException("The selected runner profile passes no model argument; clear the exact model or set the profile's model argument name.", "model_argument_unsupported");
                 model = null;
             }
+            model = string.IsNullOrWhiteSpace(revision.ModelArgumentName) ? null
+                : string.IsNullOrWhiteSpace(agent.ModelId) ? ModelLevelAliases.ForCodex(task.ModelLevel) : agent.ModelId.Trim();
             revisionId = revision.Id;
             executable = AgentExecutableResolver.Default.TryResolve(revision.Executable) ?? revision.Executable;
             arguments = JsonSerializer.Deserialize<string[]>(revision.ArgumentsJson) ?? [];
