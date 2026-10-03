@@ -32,13 +32,29 @@ public sealed class RemoteScriptContractTests
         ledger["containers"]!.AsArray().Single(x => x!["Id"]!.GetValue<string>() == new string('3', 64))!
             ["State"]!["Running"]!.GetValue<bool>().ShouldBeTrue("recycle-exact-defaults: broker survives");
         f.Trace.Any(a => a.Contains("prune")).ShouldBeFalse("recycle-exact-defaults: never prune");
-        foreach (var project in new[] { "antiphon-runner", "antiphon-runner-temp" })
+        foreach (var role in new[] { "work", "runner-tmp", "dind-data", "runner-state" })
+        foreach (var mutation in new[] { "external", "name", "label" })
         {
             using var bad = new C1008HostFixture();
-            bad.Docker["models"]![project]!["volumes"]!["work"]!["external"] = true;
-            if (project == "antiphon-runner-temp") continue;
-            await bad.Run();
-            bad.Removed.ShouldBeEmpty("recycle-exact-defaults: external private volume refuses");
+            if (mutation == "external") bad.Docker["models"]!["antiphon-runner"]!["volumes"]![role]!["external"] = true;
+            if (mutation == "name") bad.Docker["models"]!["antiphon-runner"]!["volumes"]![role]!["name"] = "schoolrevision-staging";
+            if (mutation == "label") bad.Docker["volumes"]!["antiphon-runner_" + role]!["Labels"]!["com.docker.compose.project"] = "foreign";
+            var refused = await bad.Run();
+            bad.Removed.ShouldBeEmpty("recycle-exact-defaults: whole-set private " + role + " " + mutation);
+            refused.Exit.ShouldBe(2);
+        }
+        foreach (var role in new[] { "nuget-packages", "nuget-scratch", "npm-content" })
+        foreach (var mutation in new[] { "external", "name", "owner", "missing" })
+        {
+            using var bad = new C1008HostFixture();
+            var key = "runner-" + role; var name = "antiphon-runner-cache-" + role;
+            if (mutation == "external") bad.Docker["models"]!["antiphon-runner"]!["volumes"]![key]!["external"] = false;
+            if (mutation == "name") bad.Docker["models"]!["antiphon-runner"]!["volumes"]![key]!["name"] = "openclaw-state";
+            if (mutation == "owner") bad.Docker["volumes"]![name]!["Labels"]!["io.antiphon.owner"] = "foreign";
+            if (mutation == "missing") bad.Docker["volumes"]!.AsObject().Remove(name);
+            var refused = await bad.Run();
+            bad.Removed.ShouldBeEmpty("recycle-exact-defaults: preserved cache " + role + " " + mutation);
+            refused.Exit.ShouldBe(2);
         }
     }
 
@@ -74,7 +90,7 @@ public sealed class RemoteScriptContractTests
     public async Task C1008_Recycle_audits_work_as_1654()
     {
         using var f = new C1008HostFixture();
-        await C1008GitGraph(f);
+        await C1008GitGraph(f, "layouts");
         var run = await f.Run();
         f.Trace.Any(a => a[0] == "create" && a.Contains("1654:1654") && a.Contains("--entrypoint") &&
             a.Any(x => x.EndsWith(",target=/work,readonly", StringComparison.Ordinal))).ShouldBeTrue("recycle-audit-uid: pinned readonly uid helper; " + run.Output);
@@ -90,7 +106,7 @@ public sealed class RemoteScriptContractTests
             await C1008GitGraph(accepted); var run = await accepted.Run();
             accepted.Removed.Length.ShouldBe(3, "recycle-work-preserved: published clean control reaches removal; " + run.Output);
         }
-        foreach (var fault in new[] { "head", "branch", "tag", "dirty", "staged", "untracked" })
+        foreach (var fault in new[] { "head", "branch", "tag", "second-remote", "linked", "detached", "bare", "dirty", "staged", "untracked" })
         {
             using var f = new C1008HostFixture(); await C1008GitGraph(f, fault);
             var run = await f.Run(); f.Removed.ShouldBeEmpty("recycle-work-preserved: " + fault);
@@ -215,11 +231,15 @@ public sealed class RemoteScriptContractTests
             git -C '{{root}}/work/repo' commit -qm A
             git -C '{{root}}/work/repo' push -q origin master
             """;
-        if (fault is "head" or "branch" or "tag") script += $$"""
+        if (fault is "head" or "branch" or "tag" or "second-remote" or "linked" or "detached" or "bare") script += $$"""
 
             git -C '{{root}}/work/repo' commit -qm B --allow-empty
             {{(fault == "branch" ? $"git -C '{root}/work/repo' branch unpublished; git -C '{root}/work/repo' checkout -q --detach HEAD~1" : fault == "tag" ? $"git -C '{root}/work/repo' tag unpublished; git -C '{root}/work/repo' reset -q --hard HEAD~1" : "")}}
             """;
+        if (fault == "layouts") script += $"\ngit -C '{root}/work/repo' worktree add -q --detach '{root}/work/linked clean' HEAD\ngit clone -q '{root}/origin' '{root}/work/standalone'\ngit clone -q --mirror '{root}/origin' '{root}/work/bare.git'\n";
+        if (fault == "second-remote") script += $"\ngit init -q --bare '{root}/second'\ngit -C '{root}/work/repo' remote add other '{root}/second'\ngit -C '{root}/work/repo' push -q other master\n";
+        if (fault is "linked" or "detached") script += $"\ngit -C '{root}/work/repo' worktree add -q --detach '{root}/work/unpublished space' HEAD\ngit -C '{root}/work/repo' reset -q --hard HEAD~1\n";
+        if (fault == "bare") script += $"\ngit clone -q --mirror '{root}/work/repo' '{root}/work/bare.git'\ngit -C '{root}/work/bare.git' remote set-url origin '{root}/origin'\ngit -C '{root}/work/bare.git' branch unpublished HEAD\ngit -C '{root}/work/bare.git' update-ref refs/heads/master HEAD~1\ngit -C '{root}/work/repo' reset -q --hard HEAD~1\n";
         if (fault is "dirty" or "staged") script += $"\necho B >> '{root}/work/repo/file'\n";
         if (fault == "staged") script += $"git -C '{root}/work/repo' add file\n";
         if (fault == "untracked") script += $"\necho B > '{root}/work/repo/new'\n";
