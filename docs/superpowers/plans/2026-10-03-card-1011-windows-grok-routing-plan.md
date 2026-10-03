@@ -357,6 +357,12 @@ are specified below; the existing Review Grok/Opus pin remains in force.
 
 ## Verification design
 
+**Amendment authority — task `418b258e`, 2026-10-03.** The exhaustion oracle,
+commit sequence, Final checkpoint scope and counts amended below supersede the
+corresponding original freeze text. S0-S3's fix design and all WQ gates remain.
+This task changes this plan only; it runs no repository builds/tests or live work.
+The Code continuation changes assertions/documentation, not routing or placement.
+
 TestDesign freeze: task `29fba8af-3bb0-489b-a0cb-914e22a491c3`, 2026-10-03,
 source `0514484597439bc46cd1d2117ef1ceb92b7c59cd`. This appendix supersedes the
 historical checkpoint proposal and its V/R identifiers, not S0-S3 or D-2..D-6.
@@ -412,11 +418,13 @@ d6e4138e turn, queue status, or Notify acknowledgement cannot waive a missing ga
 | Current bundle; relevant orchestration/delegate skill guidance; project-context, orchestration stage/Review/activation owner, testing manifest/runner/Mutation/delivery rules, agent-kinds/TUI startup sections, session-runtime delivery/release owner, ConPTY ADR/backend provenance and logs owner | S0-S3, all V/R; no live configuration inferred from documentation |
 | CARD-0959 Inspection/Delivery/admission/checkpoint freeze; CARD-1005 freeze from commit `b1ed3f4244419f59bb71c85f398f3740526f8f93` (not present in this checkout's working tree) | Source census versus executions, explicit missing setup, independent controls and post-land custody |
 
-Missing setup, to implement in S1-S2: five single-result InstructionBundle methods
-named below; new WindowsGrokRoutingPolicyTests with three four-argument methods;
-one two-argument native FakeGrok method; and a separately opt-in, single-result
-real trust probe in that same native file for S0. The latter is verification
-scaffolding, not a production adapter change. Keep helpers test-local. The matrix
+Scaffolding now exists at `749e73f1c743737d551b677bf8a6d78ff109a3a1`: five
+single-result InstructionBundle methods, three four-argument routing methods,
+the two-argument native FakeGrok method, and the Explicit real-trust probe.
+Still missing are the amended Linux refusal assertions, the held prompt edit,
+the three additional gate/order assertions specified below, Windows execution/
+qualification and backend-restoration evidence. The probe is
+verification scaffolding, not a production adapter change. Keep helpers test-local. The matrix
 can reuse `DefaultRunnerKit.Service(..., withRouting: true)` and its fresh-context
 reader. Its private placement MatrixDirectory must be reproduced locally, not
 made a production dependency. `CreateIsolatedSchemaAsync` actually gives each
@@ -490,9 +498,12 @@ substring. This scoped reuse does not certify every pre-existing delivery guard.
   `opus` in routing outcomes, exact pin Id, role, RequiredPlatform and
   ObservedPlatform, selected directory descriptor's platform, and candidate
   order/outcomes. Healthy chooses 1/2; a manual open-ended Grok alias hold chooses
-  2/2 and records its skipped reason; both alias holds produce Blocked, the same
-  pin Id, an exhausted explanation and no chosen candidate. No role-policy or
-  Codex escape. Also assert the role pin is unchanged after each create.
+  2/2 and records its skipped reason. With both holds, the Windows arguments
+  retain every durable Blocked/pin/audit/no-chosen assertion; the Linux arguments
+  assert the exact pre-insert refusal and unchanged task/event identity sets
+  specified in the amendment below. Keep the existing method name and all four
+  arguments; do not skip Linux or change the fake directory. No role-policy or
+  Codex escape. Assert pin immutability even on the exception branch.
 - V-3: both native Windows hosts really deliver | Native, CP-3 |
   add `RunnerGrokAdapterReadyTestsPty.C1011_windows_backends_reach_ready_and_complete_prompt`
   with exactly `[Arguments("inbox")]` and `[Arguments("modern")]`. Use its
@@ -558,7 +569,8 @@ real evidence. They do not turn prose or a fixture pass into rollout approval.
   backend and full prompt. The old 1.0.13 trust fixture remains historical;
   WQ-3 must observe the installed CLI independently.
 - R-4: no delivery claim before recipient evidence, no loss or duplicate across
-  queue recovery | CP-5/CP-6 whole-body assertions described in V-4/V-5. Preserve
+  queue recovery | CP-5/CP-6 now run both complete affected classes, including
+  the whole-body assertions described in V-4/V-5. Preserve
   LF/bracketed-paste/separate-Enter production behavior and all existing budgets.
 
 ### Guard inventory
@@ -628,6 +640,12 @@ are allowed, shared PC identifiers are not.
 | G-55 | S3: pin edits do not retarget already queued tasks | PC-55 |
 | G-56 | S3: successful pin write requires readback | PC-56 |
 | G-57 | D-3: explicit Level alone narrows to the surviving pair | PC-57 |
+| G-58 | V-2 amendment: exhausted automatic remote placement is refused when the local descriptor cannot satisfy Linux | PC-58 |
+| G-59 | V-2 amendment: that placement refusal persists no new task, including no durable Blocked task | PC-59 |
+| G-60 | V-2/D-3: admission leaves the seeded Human pin row unchanged, including on the refusal branch | PC-60 |
+| G-61 | S0: backend configuration is restored and its actual host verified before the gate closes | PC-61 |
+| G-62 | S3: independent Final/Full Review precedes implementation land | PC-62 |
+| G-63 | S3: fresh role/card pin, default and runner reads precede the pin write | PC-63 |
 
 ### Positive controls
 
@@ -668,7 +686,7 @@ assertions. Keep each mutation separate even when it uses the same method/file.
 | PC-20 | Delete the `WQ-4 complete receipt and release` step | InstructionBundleTests.C1011_activation_order; `debug-confirmation` existence assertion |
 | PC-21 | ComplexityRoutingService.WalkCandidatesAsync iterates `candidates.Reverse()` | WindowsGrokRoutingPolicyTests.C1011_healthy_head_is_grok; persisted AgentKind equals Grok (all four rows) |
 | PC-22 | In FirstSkipReasonAsync ignore a Grok hold only: change hold condition to `hold is not null && candidate.Kind != AgentKind.Grok` | WindowsGrokRoutingPolicyTests.C1011_held_head_falls_back_to_opus; selected kind equals ClaudeCode |
-| PC-23 | RoutingCandidates.Compose Required arm appends `resolveAgainstRolePolicy(AgentKind.ClaudeCode, AgentModelLevel.Medium)` to pinSlots | WindowsGrokRoutingPolicyTests.C1011_exhausted_pair_blocks; Status equals Blocked (unlisted Sonnet is unheld) |
+| PC-23 | RoutingCandidates.Compose Required arm appends `resolveAgainstRolePolicy(AgentKind.ClaudeCode, AgentModelLevel.Medium)` to pinSlots | WindowsGrokRoutingPolicyTests.C1011_exhausted_pair_blocks; Linux arguments fail `remote-exhaustion-refusal` because unheld Sonnet returns a task; Windows arguments fail `saved.Task.ModelLevel.ShouldBe(High)` at Medium before the retained Blocked assertions. Inspect all four results. |
 | PC-24 | AgentTaskService.CreateAsync initializer writes `RoutingPinId = null` | WindowsGrokRoutingPolicyTests.C1011_healthy_head_is_grok; persisted RoutingPinId equals seeded Id |
 | PC-25 | That initializer writes `ModelLevel = AgentModelLevel.Medium` | WindowsGrokRoutingPolicyTests.C1011_healthy_head_is_grok; persisted ModelLevel equals High |
 | PC-26 | That initializer writes `RequiredPlatform = RequiredPlatform.Any` | WindowsGrokRoutingPolicyTests.C1011_held_head_falls_back_to_opus; persisted RequiredPlatform equals argument |
@@ -703,6 +721,12 @@ assertions. Keep each mutation separate even when it uses the same method/file.
 | PC-55 | Delete `Queued tasks retain their recorded selection.` | InstructionBundleTests.C1011_activation_order; `queued-selection` |
 | PC-56 | Change activation step `pin write and readback` to `pin write` | InstructionBundleTests.C1011_activation_order; `pin-readback` existence assertion |
 | PC-57 | ResolveAsync single-compatible `resolvedKind` uses `pinCandidates[0].AgentKind` instead of `compatible[0].AgentKind` | RoutingPinCandidateCreateTests.Explicit_level_only_narrows_to_a_single_non_head_survivor_and_is_not_walked; created.AgentKind.ShouldBe(ClaudeCode) fails |
+| PC-58 | In DefaultRunnerRoutingPolicy.ExclusionFor change only `if (shape.RoutingExhausted)` to `if (false && shape.RoutingExhausted)` | WindowsGrokRoutingPolicyTests.C1011_exhausted_pair_blocks; both Linux arguments fail `remote-exhaustion-refusal` (Should.ThrowAsync<ConflictException>) because remote placement now succeeds and returns Blocked; Windows arguments remain green. |
+| PC-59 | Immediately before the exclusion-arm ConflictException in SelectConstrainedAutomaticAsync persist the valid root AgentTask shown below, then throw the unchanged exception | WindowsGrokRoutingPolicyTests.C1011_exhausted_pair_blocks; both Linux arguments reach the exact error checks then fail fresh-context task-ID equality labelled `remote-refusal-no-task`; Windows arguments remain green. |
+| PC-60 | After CreateAsync resolves pinDecision, when Applied, execute the reason update below without changing the selected pair | WindowsGrokRoutingPolicyTests.C1011_healthy_head_is_grok; all four arguments fail `unchanged.Reason.ShouldBe(reason)` on the fresh persisted pin read, after routing assertions pass. |
+| PC-61 | Delete `Backend configuration must be restored and the actual restored host verified.` from the routing owner | InstructionBundleTests.C1011_qualification_gates; `backend-restored` fails on the missing exact clause. |
+| PC-62 | Delete `and independent Final/Full Review` from the owner's activation heading | InstructionBundleTests.C1011_qualification_gates; `final-full-review` fails on the missing heading. |
+| PC-63 | Delete the owner's step-3 sentence starting `Serialize affected dispatches; re-read role/card pins` and ending `pipeline and host occupancy.` | InstructionBundleTests.C1011_activation_order; `fresh-state` existence assertion fails before ordering assertions. |
 
 PC-23 uses a compiling list expression or `pinSlots.Concat(new[] { ... }).ToList()`;
 PC-34 stores the awaited bool in a local before `return false`, not unreachable
@@ -728,6 +752,54 @@ the entire sentence would make PC-3 fail early at the wrong label. Activation
 anchor existence assertions use their PC labels before checking their order.
 Do not alter expected values, seed lists or test input to manufacture red.
 
+PC-59's compiling insertion uses the existing `_db`, `shape` and `requirement`
+in that instance method; the entity/configuration bodies were inspected. It has
+no foreign-key dependencies and changes production behavior only during Mutation:
+
+```csharp
+var pc59Id = Guid.NewGuid();
+_db.AgentTasks.Add(new AgentTask
+{
+    Id = pc59Id, RootTaskId = pc59Id, Title = "PC-59 premature task",
+    Goal = "PC-59 premature task", WorkingDirectory = ".",
+    Kind = shape.TaskKind, Role = shape.Role, AgentKind = shape.Kind,
+    ModelLevel = AgentModelLevel.High, Workspace = WorkspaceMode.Worktree,
+    RequiredPlatform = requirement, Status = AgentTaskStatus.Blocked,
+    CreatedAt = DateTime.UtcNow,
+});
+await _db.SaveChangesAsync(ct);
+```
+
+PC-58 is distinct from PC-23: it leaves the Required candidate list exhausted
+but bypasses the remote-placement fence. PC-59 leaves both fences and the exact
+refusal intact while violating persistence ordering. Exact message/code/status
+checks are diagnostic assertions on the refusal, not additional authorization
+guards. PC-60 covers the existing pin-immutability assertion separately from
+G-18's published exception-preservation instruction. Its compiling insertion is:
+
+```csharp
+if (pinDecision.Applied)
+    await _db.RoutingPins.Where(p => p.Id == pinDecision.Pin!.Id)
+        .ExecuteUpdateAsync(s => s.SetProperty(p => p.Reason, "PC-60 unauthorized edit"), ct);
+```
+
+All 63 PCs remain pending; the two refusal controls run the exact four-result
+exhaustion method, never the class. No mutation runs are commissioned to Code.
+
+Add G-61/G-62 assertions to the existing C1011_qualification_gates method with
+the PC labels above: the exact restoration clause and
+`### Activation after qualification and independent Final/Full Review` heading.
+Add G-63 to the existing C1011_activation_order method: require the complete
+whitespace-collapsed sentence `Serialize affected dispatches; re-read role/card
+pins, /api/runner-defaults, /api/session-runners, pipeline and host occupancy.`
+after stripping only Markdown backticks for this assertion. Label it `fresh-state`;
+then require its index after canonical restart and before `pin write and readback`.
+These are three additional assertions, **zero additional test executions**.
+The current owner already satisfies them, so they do not create another prompt
+hold. They guard the published instructions; Q/Review/activation still require
+actual evidence. G-61/62/63 were previously implicit acceptance requirements;
+this amendment supplies their independent controls rather than silently waiving them.
+
 ### Out of scope
 
 - OS-specific pin storage, aliases, RolePolicy, automatic startup retry,
@@ -737,11 +809,13 @@ Do not alter expected values, seed lists or test input to manufacture red.
   existing Linux admission behavior. No claim of MacOS CLI support is added.
 - Full classifier/modal/malformed-frame mutation belongs to CARD-1006; this card
   does not change those files. No tolerance, retry or timeout relaxation is allowed.
-- The full Unit category and full assembly are replaced by the explicit affected
-  Unit profile below: the production delta is embedded guidance, with routing
-  and native contracts selected separately. Unrelated Unit tests do not improve
-  the prompt/placement/delivery evidence. This is an explicit narrow profile,
-  not an assertion that 90 is the repository's full Unit inventory.
+- The full assembly remains excluded. The prior Code brief additionally required
+  the whole Unit lane once; that run completed at the scaffold SHA and remains
+  historical red evidence, with the exact counts below. Following the owner rule
+  "run once, then target", the continuation reruns all affected Unit classes in
+  CP-1 after the prompt fix, plus the complete affected integration classes.
+  This explicitly retains the original freeze's affected Unit acceptance profile;
+  it does not call 90 the full Unit inventory or relabel skipped cases as passes.
 - Existing dispatch/rules/settlement/release crash matrices are unchanged and not
   requalified wholesale. Their successful real chain remains mandatory WQ evidence;
   the six queue handoff recovery cases are included, not waived by this exclusion.
@@ -826,39 +900,249 @@ caller commissions missing Windows S0 evidence, independently from Linux work.
 Policy prompt landing and pin activation wait for complete WQ-1/2/3 and ordinary
 Final/Full Review. No automatic fleet pin write is a Code test or tracker action.
 
+### Amendment: exhaustion, source identities and sequence
+
+This amendment reads both the committed
+[Code evidence](../../investigations/2026-10-03-card-1011-code-evidence-698c0e44.md)
+and the complete report at
+`/work/worktrees/task-698c0e44/.antiphon/task-698c0e44.md`. They agree. Original
+Code/landing owner remains `698c0e44-127d-4a7a-9584-7031570573e5`.
+
+Additional bodies read for this amendment: all of WindowsGrokRoutingPolicyTests
+(including Hold/MatrixDirectory), DefaultRunnerKit's factory/Service/fresh readers,
+the five C1011 InstructionBundle methods and helpers, both cap arguments, the
+entire native Ready/trust probe and its observer/process helpers, both entire
+SessionQueueReceiptPlumbingTests and SessionMessageQueueGrokPtyIntegrationTests,
+and SessionQueueTranscriptPump. Production inspection covers AgentTaskService's
+two exhausted-walk branches, placement before entity construction, insert and
+Blocked assignment, SelectConstrainedAutomaticAsync/TryPlatformPreferenceAsync,
+DefaultRunnerRoutingPolicy.ExclusionFor/shape, ConflictException/HttpException,
+RunnerPlatformProblems and AgentTask's entity/EF configuration. These map to
+V-1..5/R-1..4, G-23 and G-58..63. The owner and qualification ledger were read.
+Full-class additions reuse unchanged fixture bodies; they add regression context,
+not new delivery mechanisms or additional acceptance claims based on screen/Sent.
+
+**Existing exhaustion behavior, not a routing repair.** The matrix's local
+descriptor is always Windows and its remote descriptor Linux, independent of
+the test host OS. With two held aliases, CreateAsync sets `routingExhausted`,
+then selects a platform **before** constructing/inserting the task.
+ExclusionFor returns `routing_exhausted`; TryPlatformPreferenceAsync refuses
+remote placement; SelectConstrainedAutomaticAsync considers only the local
+descriptor. Windows can therefore persist Blocked. Linux cannot use the local
+Windows descriptor and throws before the task exists.
+
+Keep `C1011_exhausted_pair_blocks` and its four arguments (the historical name
+now includes refusal cases). Only `(Review, Linux)` and `(Debug, Linux)` change:
+
+1. Capture the task and task-event ID sets from a fresh context after fixture
+   setup and before CreateAsync. Use Should.ThrowAsync<ConflictException>, labelled
+   `remote-exhaustion-refusal`, around the real CreateAsync call with no explicit
+   kind/level/runner and no RefuseIfExhausted override.
+2. Assert `StatusCode == 409`, `Code == "runner_platform_unavailable"` and
+   `Message == "No eligible runner can run a Linux task."`, including the period.
+   A generic exception or RoutingExhaustedException is not the expected outcome.
+3. Re-read using a fresh context: sorted task IDs equal the before-set, labelled
+   `remote-refusal-no-task`; sorted task-event IDs also equal the before-set.
+   No returned DTO, Created audit, Routing DTO or persisted pin ID can be asserted
+   for this refused task. Do not invent them or inspect only tracked entities.
+4. Execute the existing pin-immutability assertions on this branch too. Do not
+   return early past them. Both Windows arguments retain the saved Blocked row,
+   same pin/High tier/platform, exhausted audit, two held/skipped candidates and
+   no chosen candidate. The eight healthy/held-head arguments stay unchanged.
+
+Together the twelve results prove Review and Debug use Grok/High -> ClaudeCode/High
+-> exhausted refusal on both requested platforms; Windows represents refusal by
+Blocked and Linux by the pre-insert 409 in this fixture. This is not an
+OperatingSystem conditional and is not permission to change the placement engine.
+The Code report's Linux-host baseline command executed all four exhaustion
+arguments: **two Windows-requested passes, two Linux-requested failures**, both
+at unchanged production `a3f5951d2700f26f78414c036563eef93cf4f894` and in CP-2 at
+the scaffold SHA. It quotes no actual Windows-host CP-2 run; do not claim one.
+
+**FOLLOW-UP recommendation (caller files it):** placement refuses before
+persisting a durable Blocked task on remote-runner routing exhaustion.
+This card preserves that discrepancy. Correct the two unconditional “stays
+Blocked” sentences in the routing owner to describe local Blocked versus
+pre-insert placement refusal, keeping every frozen policy/gate clause. Earlier
+S2/fallback prose in the fix design is interpreted with this explicit correction.
+No production service, pin resolver, alias, placement or routing-engine edit is
+authorized in this continuation.
+
+**Commit and evidence order.** The following SHA symbols are outputs to record
+when those commits exist, not substitute SHAs or placeholders in commands:
+
+| Point | Exact source / new commit | Expected verification state and permitted work |
+|---|---|---|
+| A: implemented scaffolding | `749e73f1c743737d551b677bf8a6d78ff109a3a1` | CP-1 88 passed/2 failed/0 skipped of 90; CP-2 42/2/0 of 44. Five new guidance methods: three owner/gate/order green, two composed-prompt methods red. Whole Unit: 3945 passed/2 failed/52 skipped, 3947 executed of 3999 total. These are measured historical receipts, never land approval. |
+| E: evidence tip and this freeze | `53581918de63b44af522ed3d1569ba887d0eb786`, then this task's pushed tip | Evidence/plan only on top of A. No prompt edit, no runtime change. The next Code task starts at this task's pushed tip. |
+| X: exhaustion assertion/documentation correction | Next Code's first separate committed and pushed slice | Add the three existing-owner gate assertions too. Run CP-2 once against X: expect 44/44, no skips. Use its own isolated build when CP-1 is not selected. CP-1 would still be 88/90 and a repeated whole Unit would still have the same two prompt failures; do not spend runs rediscovering that hold. No land of X as the completed card. |
+| Q: qualification evidence | Separately commissioned Windows tasks test A; evidence is then committed/reconciled onto X's continuation | Close WQ-1, WQ-2, WQ-3 and backend restoration. Preserve A receipts as A receipts. No prompt edit until these gates pass. If qualification needs a harness fix, commit it first and bind the affected qualification rerun to that new exact SHA; report the changed subject explicitly. |
+| P: prompt edit | After Q, add a separate commit with only the frozen 868-to-674 paragraph replacement | Raw LF-normalized UTF-16 length 14116; cap still 14310. Nothing is deployed or activated by this commit. Final/Full Review is of the result, not a prerequisite to authoring the result it must review. |
+| C: complete Code review subject | Clean pushed tip containing X, Q evidence and P; record full SHA | Run the complete active CP-1..6 manifest at C on their assigned OS lanes. CP-1 90/90; CP-2 44/44; all five guidance methods green; native/full-class rows green with no skips. Separate Final/Full Review binds C and validated receipts. No red commit is landable. |
+
+The whole Unit lane was already run once, uninterrupted, on A with the exact
+`/*/*/*/*[Category=Unit]` filter. Its only failures are
+`C1011_composed_windows_routing_contract` and `C1011_model_kind_and_tier_contract`.
+CP-1 at C runs those plus the complete affected Unit classes after the fix;
+this is the continuation's required Unit checkpoint. This amendment explicitly
+commissions targeted post-fix verification under the run-once-then-target rule,
+not another full Unit run. If separately commissioned unchanged on the same
+Linux setup, the whole lane's expected result after P is **3947 passed, 0 failed,
+52 skipped**; with jq installed, 19 of those skips become eligible (3966 executed,
+33 Windows-only skips). Neither hypothetical result is a measured pass here.
+The 52 inherited skips are 33 Windows-only and 19 CARD-0912 jq prerequisites.
+They cannot be called green evidence or fed to the zero-skip clean-receipt
+validator. Moving the entire lane to Windows also skips Linux-only Unit cases
+(inspected PlanCoverageHandleTests and DetachedLauncherTests). Final Review
+validates the complete required affected selection CP-1..6 at C; the full Unit
+receipt at A remains attached with its original failures/skips. No WQ gate is
+relaxed and no test assertion is weakened to obtain a pass.
+
+The preparatory X proof uses the active CP-2 filter/minimum with its own build;
+this explicit single-row exception is run through the slot-owning driver:
+
+```powershell
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-2-X -Project tests/Antiphon.Tests -OutputPath bin-c1011-x/ -Filter '/*/*/(WindowsGrokRoutingPolicyTests*)|(RoutingPinCandidateCreateTests*)|(TaskPlatformPlacementTests*)/*' -MinExecuted 44 -ExpectedSourceSha (git rev-parse HEAD) -ResultsRoot .antiphon/c1011-x
+```
+
+Run only after committing X; retain its clean receipt. It is not final C evidence.
+
+**Windows commissions and SHA binding.** The caller commissions separate Debug
+tasks with `-Role Debug -Platform Windows -Worktree -StartRef
+749e73f1c743737d551b677bf8a6d78ff109a3a1`, a file-backed brief, and the current
+effective pin; no live Debug-pin activation is needed to run qualification.
+Do not silently label a checkout at E/X/C as A. These preparatory selections
+are explicitly budgeted additions, using the exact Code-evidence filters:
+
+| Commission | Exact filter (literal pipe) | Min | Estimated minutes including its allocated build |
+|---|---|---:|---:|
+| Q-native, CP-3 at A | `/*/*/RunnerGrokAdapterReadyTestsPty/(Fake_dashboard_marker_reaches_ready_and_complete_first_prompt*)\|(C1011_windows_backends_reach_ready_and_complete_prompt*)` | 4 | 7 |
+| Q-native, CP-4 at A, reuse its build | `/*/*/InstructionBundleTests/orchestrator_bundle_points_to_operational_autonomy_without_growing*` | 2 | 1 |
+| Q-queue, CP-5 subset at A | `/*/*/SessionQueueReceiptPlumbingTests/(C475_QueueCommitAndTransportRecovery*)\|(C475_AlreadyIdleWhenIdleHasRecipientReceipt*)` | 7 | 11 |
+| Q-queue, CP-6 subset at A, reuse its build | `/*/*/SessionMessageQueueGrokPtyIntegrationTests/Multiline_delivery_is_transcript_confirmed_through_the_real_grok_tailer*` | 1 | 4 |
+| Q-trust, WQ-3 at A, Explicit and ANTIPHON_HEADED_TESTS=1 | `/*/*/RunnerGrokAdapterReadyTestsPty/C1011_real_fresh_worktree_trust*` | 1 | 10 live + 3 build |
+
+The Debug tasks run commands/evidence collection; they are not the real Review
+canaries or independent Final implementation Review. The caller separately
+commissions WQ-1/2 real Review canaries with the same A worktree start ref and
+the existing effective Review pin, no Kind/Level/IgnoreRoutingPin. Record the
+**loaded server/runner SHA separately** from the canary checkout and harness
+SHA: StartRef does not deploy code. S0 qualifies unchanged runtime behavior and
+the actual CLI/backend tuple; P changes only embedded guidance. The A-to-C diff
+must confirm no runtime/harness change before reusing real WQ evidence at C.
+Otherwise rerun the affected WQ row on the changed runtime under its commissioned
+window. The successful d6e4138e facts remain accepted within their stated limits.
+
+Use the checkpoint tool for the historical CP row selections at A; Q-queue's
+fresh isolated build is required because it is a separate checkout/commission.
+Use run-checkpoint.ps1 for the explicitly paid Q-trust method. All drivers take
+build slots. Await terminal results, preserve full prompt/report/release evidence
+and serialize native processes; separate tasks do not authorize concurrent
+FakeClaude/native assemblies. Backend windows and restoration remain caller-owned.
+At C commission the final Windows Debug verification task with `-StartRef` equal
+to the recorded full C SHA and active CP-3..6 (including full classes below).
+Rebuild at C: A's embedded bundle/output stamp cannot certify the prompt edit.
+Do not rerun a paid real WQ row solely because a documentation-only commit moved
+HEAD; require the explicit diff/evidence binding instead.
+
+**Landing and activation stay strictly ordered:** all WQ-1/2/3 plus restoration
+-> P and complete green C ordinary scope -> independent Final/Full Review of C
+-> record companion -> confirmed land of original Code owner -> canonical source
+advance/restart and `/api/version` publication SHA -> fresh pin/default/runner
+and occupancy reads -> approved Debug pin write/readback -> bundle stamp and
+idle-gated refresh -> WQ-4 complete receipt/report/release -> acceptance ->
+SourceLanding Mutation. A successful no-change canary never supplies Final/Full
+Review. No gate is proposed for relaxation; any later waiver requires a human
+choice, not an inference from this amendment.
+
+### Amendment: branch footprint and continuation order
+
+Read-only remote census via `git ls-remote`, followed by two task-owned throwaway
+clones (`clone --no-checkout --filter=blob:none --single-branch`, fetch master,
+`git diff --stat <merge-base> HEAD` and `--name-only`), found:
+
+| Branch | Pushed tip | Merge base with observed master | Footprint |
+|---|---|---|---|
+| feat/card-task-698c0e44 | `53581918de63b44af522ed3d1569ba887d0eb786` | `5f214b0c1daef4d6d7fbbbfbebd14deb83636639` | 12 files, 1835 insertions |
+| feat/card-task-818582a5 (CARD-0959) | `95ad909ce517d025100baadc8f7c5c11bbe59fc6` | `edb96aecd93cbe90fe8887c1a8d1523527bd49d9` | 56 files, 9308 insertions, 104 deletions |
+
+CARD-1011's twelve paths are the two Antiphon SKILL.md files, agent-kinds.md,
+ai-agent-tui-configuration.md, orchestration-loop.md, this plan, the Code admission
+and Code evidence documents, the Windows qualification ledger, and
+`RunnerGrokAdapterReadyTestsPty.cs`, `InstructionBundleTests.cs`,
+`WindowsGrokRoutingPolicyTests.cs`. P adds `server/Bundles/orchestrator.md`.
+The continuation edits only the routing and InstructionBundle tests, the two inaccurate exhaustion
+sentences in orchestration-loop.md, the held bundle paragraph, and scoped evidence.
+
+The intersection with CARD-0959 is **exactly** `docs/agent-kinds.md` and
+`docs/ai-agent-tui-configuration.md`. CARD-0959 additionally changes
+`server/Application/Services/AgentTaskService.cs`, AgentTaskDispatcher.cs,
+ModelLevelAliases.cs, CodexCliAdmissionPolicy/CodexCliProbeDescriptor,
+SessionRunnerCatalogue and its DTO, DelegationSettings, ISessionRunnerClient,
+the phone-home/routing/scoped/HTTP runner clients, both Programs, runner/contracts
+Codex-version probe/refresh/settings/transport files and their admission/runner
+tests, plus its plan/ops/evidence. None of those production paths is in CARD-1011's
+footprint. In particular **AgentTaskService.cs belongs to CARD-0959's source
+work here, not CARD-1011**. Any later repair of exhaustion must be separately
+commissioned and serialized against that owner.
+
+The accepted docs overlap is already isolated in
+`c9081e8c30996f35783787b2d58f8d177fd81cc8`: section
+**5. Grok (xAI Grok Build TUI)** in agent-kinds.md and
+**Local Grok Build TUI profile** in ai-agent-tui-configuration.md. Preserve that
+small slice; caller serializes/replays those two hunks at land and checks their
+final text. Re-read pushed footprints before the next continuation and before
+landing; this census is not a reservation of changing branch tips. Serialize any
+newly overlapping path, including CARD-1006's native test file, before editing it.
+
+Next Code continuation, in order: (1) start at this amendment's pushed tip and
+recheck footprints; (2) commit/push X's test/oracle, gate assertions and owner-prose correction,
+then prove CP-2 44/44; (3) caller commissions the separate Windows Debug/Review
+qualification tasks at A and commits complete Q/restoration evidence; (4) only
+after Q add/push the exact P prompt edit; (5) run/validate all active CP rows at C,
+with Windows full-class scope, all five guidance guards green and historical Unit
+accounting retained; (6) hand off independent Final/Full Review, keeping original
+Code owner identity, then follow the landing/activation order above. If a WQ row
+fails, preserve it and return the concrete gap; no prompt/pin activation or
+production routing repair is a fallback action.
+
 ### Checkpoints
 
-This is the sole active checkpoint table. All rows follow committed S1-S2 tests
-and guidance; CP-1/2 are Any, CP-3..6 Windows at the identical implementation SHA.
+This is the sole active checkpoint table. All final rows follow committed S1-S2
+and the amendment's P/Q slices; CP-1/2 are Any, CP-3..6 Windows at identical C.
 One exact filter per row, isolated builds in CP-1/3 and reuse only within the same
 After group. The table plus separate S0/WQ acceptance is the closed scope; no
 repository build/test was run by TestDesign.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1-S2 | `tests/Antiphon.Tests -> bin-c1011-any/` | any-guidance-unit | `/*/*/(InstructionBundleTests*)\|(TaskPlatformGuidanceTests*)\|(RunnerDefaultGuidanceTests*)\|(StandingPipelinePolicyDocumentationTests*)\|(RunnerGrokAdapterTrustPromptTests*)/*` | V-1, R-1, R-3 | 90 expanded results; all named classes; 0 failed/skipped | 90 | 8 |
-| CP-2 | S1-S2 | CP-1 | any-routing | `/*/*/(WindowsGrokRoutingPolicyTests*)\|(RoutingPinCandidateCreateTests*)\|(TaskPlatformPlacementTests*)/*` | V-2, R-2 | 12 new + 17 create + 15 placement; 0 failed/skipped | 44 | 6 |
-| CP-3 | S1-S2 | `tests/Antiphon.Tests -> bin-c1011-win/` | windows-native | `/*/*/RunnerGrokAdapterReadyTestsPty/(Fake_dashboard_marker_reaches_ready_and_complete_first_prompt*)\|(C1011_windows_backends_reach_ready_and_complete_prompt*)` | V-3, R-3 | 2 existing marker + 2 backend argument results; 0 failed/skipped | 4 | 7 |
-| CP-4 | S1-S2 | CP-3 | windows-bundle-cap | `/*/*/InstructionBundleTests/orchestrator_bundle_points_to_operational_autonomy_without_growing*` | V-1, R-1 | LF and CRLF; <=14310; 0 failed/skipped | 2 | 1 |
-| CP-5 | S1-S2 | CP-3 | windows-queue-recovery | `/*/*/SessionQueueReceiptPlumbingTests/(C475_QueueCommitAndTransportRecovery*)\|(C475_AlreadyIdleWhenIdleHasRecipientReceipt*)` | V-4, R-4 | 6 cut arguments + 1 already-idle; exact complete receipts; 0 failed/skipped | 7 | 8 |
-| CP-6 | S1-S2 | CP-3 | windows-grok-tailer | `/*/*/SessionMessageQueueGrokPtyIntegrationTests/Multiline_delivery_is_transcript_confirmed_through_the_real_grok_tailer*` | V-5, R-4 | 1 real queue/tailer FakeGrok result; 0 failed/skipped | 1 | 4 |
+| CP-1 | C-final | `tests/Antiphon.Tests -> bin-c1011-any/` | any-guidance-unit | `/*/*/(InstructionBundleTests*)\|(TaskPlatformGuidanceTests*)\|(RunnerDefaultGuidanceTests*)\|(StandingPipelinePolicyDocumentationTests*)\|(RunnerGrokAdapterTrustPromptTests*)/*` | V-1, R-1, R-3 | 90 results; all five C1011 guards green; 0 failed/skipped | 90 | 8 |
+| CP-2 | C-final | CP-1 | any-routing | `/*/*/(WindowsGrokRoutingPolicyTests*)\|(RoutingPinCandidateCreateTests*)\|(TaskPlatformPlacementTests*)/*` | V-2, R-2 | 12 matrix incl. 2 Linux refusals + 17 create + 15 placement; 0 failed/skipped | 44 | 6 |
+| CP-3 | C-final | `tests/Antiphon.Tests -> bin-c1011-win/` | windows-native | `/*/*/RunnerGrokAdapterReadyTestsPty/(Fake_dashboard_marker_reaches_ready_and_complete_first_prompt*)\|(C1011_windows_backends_reach_ready_and_complete_prompt*)` | V-3, R-3 | Entire ordinary class: 2 marker + 2 backend results; paid Explicit excluded; 0 failed/skipped | 4 | 7 |
+| CP-4 | C-final | CP-3 | windows-bundle-cap | `/*/*/InstructionBundleTests/orchestrator_bundle_points_to_operational_autonomy_without_growing*` | V-1, R-1 | LF and CRLF; cap <=14310, frozen raw edit 14116; 0 failed/skipped | 2 | 1 |
+| CP-5 | C-final | CP-3 | windows-queue-recovery | `/*/*/SessionQueueReceiptPlumbingTests/*` | V-4, R-4 | Entire class 20 results incl. six cuts/idle, pump recovery/disposal, Esc and paste; 0 failed/skipped | 20 | 12 |
+| CP-6 | C-final | CP-3 | windows-grok-tailer | `/*/*/SessionMessageQueueGrokPtyIntegrationTests/*` | V-5, R-4 | Entire class 5 results incl. multiline exact transcript, startup, submission, spill and Enter recovery; 0 failed/skipped | 5 | 8 |
 
 Read-only census recipe: `rg -n '^    \[(Test|Arguments)'` on each listed file,
 then assign Arguments to the following method (no loop/Shouldly assertion is
-an execution). InstructionBundleTests has **42 methods / 62 results**: its
-2/8/6/3/6 argument groups add 20 over method count. Five new single-result
-methods make 67. TaskPlatformGuidanceTests contributes 5, the second class
+an execution). Before the Code additions InstructionBundleTests had **42 methods /
+62 results**: its 2/8/6/3/6 argument groups add 20 over method count. The five
+new single-result methods are present: **47 methods / 67 results**.
+TaskPlatformGuidanceTests contributes 5, the second class
 RunnerDefaultGuidanceTests in that file contributes 4, standing-policy has
 7 methods/10 results, trust adapter has 4: **67+5+4+10+4=90**.
 Routing-create is 17 and placement is 15 single-result methods; new matrix is
-3 methods x 4 arguments: **44**. Ordinary native filter is 4, cap is 2,
-queue filter is 6+1, tailer is 1: **148 ordinary executions**, including the
+3 methods x 4 arguments: **44**; the refusal amendment changes no result count.
+Ordinary native filter is 4, cap is 2. Full queue class is 8 methods/20 results
+(6+1+5+1+1+4+1+1); full Grok class is 5 methods/5 results:
+**165 ordinary executions**, including the
 intentional two cap executions repeated on Windows. The Explicit paid method
 is not counted. These counts were reconciled against bodies and grep; they are
 not measured discovery or passes. Recount after any source drift, and inspect
 fresh TRX for every named identity/argument, not only the total.
 
-No prebuilt importer was assumed or executed. Code's explicit bootstrap exception
+This amendment runs no importer. The Code report already proves the original
+six-row import; Code must import this amended six-row table afresh. Its bootstrap exception
 is one gated tool build to `bin-c1011-tool/` (estimated four minutes), then run
 that built Antiphon.Checkpoints DLL's `import --plan` on this artifact without
 another build. Require six imported rows, exact filters and minima. Use its
@@ -872,11 +1156,22 @@ and remove only task-owned alternate outputs after all owned children exit.
 
 ### Cost
 
-All times below are estimates, not measurements. The ordinary V/R floor (Code)
-is **8+6+7+1+8+4 = 34 minutes** for CP-1..6, including their two isolated builds.
-Tool bootstrap/import adds **4 minutes**, so ordinary execution/setup is **38**.
-Authoring, independent Review's same 34-minute rerun, slot waits and evidence
-investigation are additional and must be reported separately.
+Prospective times are estimates. Ordinary V/R floor (Code) is the active-table
+sum **8+6+7+1+12+8 = 42 minutes** for CP-1..6, including two isolated builds.
+Tool bootstrap/import adds **4 minutes**, so final ordinary execution/setup is
+**46 minutes**. Independent Review's same selection adds **42 minutes**;
+authoring, slot waits and evidence investigation remain additional.
+CP-1 is the exact five-class affected Unit filter; CP-2 the three routing classes;
+CP-3 the two-method/four-result native filter; CP-4 the exact cap method; CP-5/6
+the full queue/Grok classes. Their literal filters are in the active table.
+
+Explicit preparatory additions are **35 minutes**: X's CP-2-only proof with an
+isolated build **9**, Q-native CP-3/4 **7+1**, Q-queue CP-5/6 subsets in its own
+checkout **11+4**, and Q-trust's isolated build **3** (its ten-minute paid runtime
+is counted in the live allowance below). These are named pre-gate commissions,
+not hidden final-CP reruns. Code/Windows preparatory + final setup/V/R therefore
+totals **81 minutes**. A reused importer binary may save setup only if its binding
+is verified; no such saving is booked. No extra whole Unit run is commissioned.
 
 Mutation PC floor, using the exact method filters in the PC table, is:
 
@@ -891,31 +1186,44 @@ Mutation PC floor, using the exact method filters in the PC table, is:
 | PC-46 (healthy trust adapter) | 2 | 2 | 2 | 1 | 7 |
 | PC-47/48/51/52/53/54/55/56 (independent owner/skill guards) | 2 | 2 | 2 | 1 | 56 |
 | PC-49/50/57 (aliases and explicit level) | 3 | 3 | 3 | 1 | 30 |
+| PC-58/59 (exact exhaustion method, four arguments per phase) | 3 | 3 | 3 | 1 | 20 |
+| PC-60 (exact healthy routing method, four arguments per phase) | 3 | 3 | 3 | 1 | 10 |
+| PC-61..63 (exact qualification/order methods) | 2 | 2 | 2 | 1 | 21 |
 
-Thus **PC floor = 495 minutes**, including all 57 baseline/red/restored-green
+Thus **PC floor = 546 minutes**, including all 63 baseline/red/restored-green
 cycles, phase builds and edit/evidence time. Do not use class-wide mutation
 filters to reduce this cost. Batch only genuinely independent different-file,
 different-method controls, and report measured savings rather than assuming them.
-Numeric automated total is **4 + 34 + 495 = 533 minutes**. S0/WQ live allowance
+Numeric final automated total is **4 + 42 + 546 = 592 minutes**. S0/WQ live allowance
 is four bounded runs x 10 = **40 minutes** (two Review hosts, separate observed
 trust, post-activation Debug), plus **15 minutes** setup/restoration = **55**;
-combined execution/qualification estimate **588 minutes**, excluding Review,
-authoring and slot waits. Reusing attributable canary evidence saves 10 minutes
+combined final execution/qualification estimate **647 minutes**; adding the
+35-minute preparatory commissions gives **682 minutes** (or **724** including
+independent Review), excluding authoring and slot waits. Reusing attributable canary evidence saves 10 minutes
 per whole live row avoided; no saving is booked before its missing evidence exists.
 
-The affected Unit row is 8 versus the proposal's 15 minutes (estimated 7 saved).
-Reusing outputs on four rows avoids four estimated three-minute rebuilds (12
-saved versus rebuilding this same roster per row). Ordinary scope grows from
-the proposal's 29 to 34 minutes because complete queue/recovery/Grok-tail evidence
-is now explicit. No correctness or Windows gate is traded for those savings.
+Measured historical Code time: the A CP-1/2 build/run took about **2m39s**
+(95.819s build, 8.44s CP-1, 53.10s CP-2); the whole Unit TRX took about **4m18s**
+with a 263s lease, and importer bootstrap about **6s**. These measurements do not
+predict Windows/native or PC duration. Estimates retain setup/headroom.
+Targeting the post-prompt fix avoids one unchanged full Unit rerun (about **4.3
+minutes** at the measured host rate); final CP-1 still executes both formerly
+red methods and all affected Unit classes. Build reuse on four final rows saves
+four estimated three-minute rebuilds (**12 minutes**) versus isolated rebuilding
+of each row. Full-class CP-5/6 add **17 results / 8 estimated minutes** over the
+old subset freeze. The six extra PCs add **51 minutes**. Preparatory A runs and
+final C rebuilds have **zero assumed reuse savings** because their source stamps
+and embedded prompt differ. No paid WQ saving is booked before attributable
+backend/trust/release evidence exists.
 
-Read-only final artifact audit found one active Checkpoints heading, six rows
-with nine cells each, minima 90/44/4/2/7/1 (148 total), estimates totaling 34,
-and the exact 868-to-674-character prompt substitution yielding 14116. This
-text audit is not a compiled importer or test execution; Code still imports it.
+Read-only final artifact audit: one active Checkpoints heading, six rows with
+nine cells each; minima **90/44/4/2/20/5 = 165**, estimates **42**; the exact
+868-to-674-character prompt substitution still yields **14116**. This is text
+inspection, not a compiled importer or test execution; Code imports the amendment.
 
-Before handoff audit: bodies above read; **guards=57, mapped=57, missing=0,
+Before handoff audit: amendment bodies above read; **guards=63, mapped=63, missing=0,
 duplicate PC maps=0**; all controls specify a compiling defect, exact method and
-decisive assertion. Newly named tests remain Code work, not existing passes.
+decisive assertion. The two refusal assertions remain Code work; their controls
+are executable once X lands, not existing red/green results.
 Next is Code under the admission/evidence gates above; PCs remain pending for
 independent post-land Mutation.
