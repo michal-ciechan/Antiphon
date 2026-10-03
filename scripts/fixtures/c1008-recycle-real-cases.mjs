@@ -87,7 +87,7 @@ function fixture(mainReplacement=true) {
   cacheRoles.forEach((r,i)=>createVolume(f.caches[i],['io.antiphon.owner=server2-runner','io.antiphon.cache-schema=1','io.antiphon.cache-role='+r]));
   f.names.slice(11).forEach(n=>createVolume(n,[])); createVolume(f.origin,[]);
   const args=f.names.flatMap((n,i)=>['--mount','type=volume,source='+guard(n)+',target=/v'+i]);
-  runDocker('run','--rm','--network','none','--label',label+'='+prefix,...args,image,'bash','-c',f.names.map((n,i)=>`printf 'sentinel:${n}:old\\n' > /v${i}/sentinel; chown 1654:1654 /v${i}`).join('; '));
+  runDocker('run','--rm','--network','none','--label',label+'='+prefix,...args,image,'bash','-c',f.names.map((n,i)=>`printf 'sentinel:${n}:old\\n' > /v${i}/sentinel; chown 1654:1654 /v${i}; chmod 0700 /v${i}`).join('; '));
   f.before=Object.fromEntries(f.names.map(n=>[n,volumeFacts(n)]));
   f.marker=fs.readFileSync(f.root+'/server/cache/seed-accepted','utf8');
   runDocker('compose','-p',f.main,'-f',f.root+'/'+f.main+'.json','up','-d');
@@ -123,6 +123,7 @@ ensure_checkout() { :; }; ensure_runner_boot_files() { :; }; retire_c590_leftove
 compose_host() { ${compose(f.main)}; }; compose_temp() { ${compose(f.temp)}; }
 c849_lock() { :; }; c849_prepare() { :; }; c849_require_ready() { :; }
 sudo() { [ "$1" = -n ] && shift; if [ "$1" = install ]; then mkdir -p "\${@: -1}"; elif [ "$1" = df ] && [ '${options.lowDisk?1:0}' = 1 ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\nfixture 10000000 1 1000 99%% /fixture\\n'; else command docker exec '${helper}' nsenter -t 1 -m -r -w -- "$@"; fi; }
+df() { if [ '${options.lowDisk?1:0}' = 1 ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\nfixture 10000000 1 1000 99%% /fixture\\n'; else command docker exec '${helper}' nsenter -t 1 -m -r -w -- df "$@"; fi; }
 docker() {
   for argument in "$@"; do if [[ "$argument" == *antiphon-runner* ]]; then return 97; fi; done
   if [ "$1:$2" = image:inspect ]; then printf '%s\\n' '${docker('image','inspect','--format','{{.Id}}',image)}'
