@@ -1,0 +1,677 @@
+[
+  {
+    "run": "20261003-181139-fda0",
+    "root": ".antiphon/c959-second",
+    "sha": "8ee8c929aae94dde7fa0514f156d73301cb2cfe2",
+    "exitCode": 2,
+    "verdict": "RED",
+    "rows": [
+      {
+        "id": "CP-4",
+        "executed": null,
+        "passed": null,
+        "failed": null,
+        "skipped": null,
+        "slot": null,
+        "waitedSeconds": 0,
+        "build": "bin-c959-admission",
+        "source": {
+          "version": 1,
+          "start": {
+            "commit": "8ee8c929aae94dde7fa0514f156d73301cb2cfe2",
+            "dirtyFiles": 0,
+            "fingerprint": "a89d9a88d3a9a2f8c55e3d74b6edc7de45e9388e8eaf4db8047675995fb4e241",
+            "observedAtUtc": "2026-10-03T18:11:40.0176739+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "end": {
+            "commit": "8ee8c929aae94dde7fa0514f156d73301cb2cfe2",
+            "dirtyFiles": 0,
+            "fingerprint": "a89d9a88d3a9a2f8c55e3d74b6edc7de45e9388e8eaf4db8047675995fb4e241",
+            "observedAtUtc": "2026-10-03T18:13:40.3716404+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "state": "clean",
+          "buildSource": "unknown"
+        }
+      }
+    ]
+  },
+  {
+    "run": "20261003-181502-1e8a",
+    "root": ".antiphon/c959-second",
+    "sha": "87efb5b179aa503fd30931454ede09bd28bc3cf6",
+    "exitCode": 1,
+    "verdict": "RED",
+    "rows": [
+      {
+        "id": "CP-4",
+        "executed": 9,
+        "passed": 8,
+        "failed": 1,
+        "skipped": 0,
+        "slot": "granted",
+        "waitedSeconds": 0,
+        "build": "bin-c959-admission",
+        "source": {
+          "version": 1,
+          "start": {
+            "commit": "87efb5b179aa503fd30931454ede09bd28bc3cf6",
+            "dirtyFiles": 0,
+            "fingerprint": "8d9a65673ec3243ec8ad20e74cc647be79790f646004cd3cdb924887e09ae6e8",
+            "observedAtUtc": "2026-10-03T18:15:03.2846944+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "end": {
+            "commit": "87efb5b179aa503fd30931454ede09bd28bc3cf6",
+            "dirtyFiles": 0,
+            "fingerprint": "8d9a65673ec3243ec8ad20e74cc647be79790f646004cd3cdb924887e09ae6e8",
+            "observedAtUtc": "2026-10-03T18:17:41.71886+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "state": "clean",
+          "buildSource": "verified"
+        }
+      }
+    ]
+  },
+  {
+    "run": "20261003-181913-21cc",
+    "root": ".antiphon/c959-second",
+    "sha": "138c7f71859919ba4fbbc2aacfbbd56929f6e665",
+    "exitCode": 1,
+    "verdict": "RED",
+    "rows": [
+      {
+        "id": "CP-4",
+        "executed": 9,
+        "passed": 8,
+        "failed": 1,
+        "skipped": 0,
+        "slot": "granted",
+        "waitedSeconds": 0,
+        "build": "bin-c959-admission",
+        "source": {
+          "version": 1,
+          "start": {
+            "commit": "138c7f71859919ba4fbbc2aacfbbd56929f6e665",
+            "dirtyFiles": 0,
+            "fingerprint": "eaa045d661067e9c994b41ffbab7b637e3539d00b03da9d8fd233e0238253fe0",
+            "observedAtUtc": "2026-10-03T18:19:13.7938542+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "end": {
+            "commit": "138c7f71859919ba4fbbc2aacfbbd56929f6e665",
+            "dirtyFiles": 0,
+            "fingerprint": "eaa045d661067e9c994b41ffbab7b637e3539d00b03da9d8fd233e0238253fe0",
+            "observedAtUtc": "2026-10-03T18:22:07.3609102+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "state": "clean",
+          "buildSource": "verified"
+        }
+      }
+    ]
+  },
+  {
+    "run": "20261003-182512-689d",
+    "root": ".antiphon/c959-second",
+    "sha": "c8b75d44ed590f29d94dfae801d68a6e20a14790",
+    "exitCode": 0,
+    "verdict": "GREEN",
+    "rows": [
+      {
+        "id": "CP-4",
+        "executed": 9,
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "slot": "granted",
+        "waitedSeconds": 0,
+        "build": "bin-c959-admission",
+        "source": {
+          "version": 1,
+          "start": {
+            "commit": "c8b75d44ed590f29d94dfae801d68a6e20a14790",
+            "dirtyFiles": 0,
+            "fingerprint": "df4177fbb5f4d27b847ce2bfc9b50eaf2e7c493d94bcd0ce55b4590125db210a",
+            "observedAtUtc": "2026-10-03T18:25:13.7082103+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "end": {
+            "commit": "c8b75d44ed590f29d94dfae801d68a6e20a14790",
+            "dirtyFiles": 0,
+            "fingerprint": "df4177fbb5f4d27b847ce2bfc9b50eaf2e7c493d94bcd0ce55b4590125db210a",
+            "observedAtUtc": "2026-10-03T18:30:38.6068462+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "state": "clean",
+          "buildSource": "verified"
+        }
+      }
+    ]
+  },
+  {
+    "run": "20261003-183750-efac",
+    "root": ".antiphon/c959-second",
+    "sha": "4822d5b41532d0c6ad7b336c9934af0dc8249443",
+    "exitCode": 1,
+    "verdict": "RED",
+    "rows": [
+      {
+        "id": "CP-4",
+        "executed": 9,
+        "passed": 8,
+        "failed": 1,
+        "skipped": 0,
+        "slot": "granted",
+        "waitedSeconds": 0,
+        "build": "bin-c959-admission",
+        "source": {
+          "version": 1,
+          "start": {
+            "commit": "4822d5b41532d0c6ad7b336c9934af0dc8249443",
+            "dirtyFiles": 0,
+            "fingerprint": "2406fe4963be8e2259837d7cb99d91583bcd646a1e19fee72964889f266700df",
+            "observedAtUtc": "2026-10-03T18:37:51.2458891+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "end": {
+            "commit": "4822d5b41532d0c6ad7b336c9934af0dc8249443",
+            "dirtyFiles": 0,
+            "fingerprint": "2406fe4963be8e2259837d7cb99d91583bcd646a1e19fee72964889f266700df",
+            "observedAtUtc": "2026-10-03T18:41:30.8144783+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "state": "clean",
+          "buildSource": "verified"
+        }
+      }
+    ]
+  },
+  {
+    "run": "20261003-184351-7c60",
+    "root": ".antiphon/c959-second",
+    "sha": "45ed0e62ba00d4f62759c3257b40c30711a471de",
+    "exitCode": 2,
+    "verdict": "RED",
+    "rows": [
+      {
+        "id": "CP-4",
+        "executed": null,
+        "passed": null,
+        "failed": null,
+        "skipped": null,
+        "slot": null,
+        "waitedSeconds": 0,
+        "build": "bin-c959-admission",
+        "source": {
+          "version": 1,
+          "start": {
+            "commit": "45ed0e62ba00d4f62759c3257b40c30711a471de",
+            "dirtyFiles": 0,
+            "fingerprint": "1c6eda5fc37ccd1f464df016dc4ac0cc991f683e698b54517350ce8d3746ebd8",
+            "observedAtUtc": "2026-10-03T18:43:51.6392707+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "end": {
+            "commit": "45ed0e62ba00d4f62759c3257b40c30711a471de",
+            "dirtyFiles": 0,
+            "fingerprint": "1c6eda5fc37ccd1f464df016dc4ac0cc991f683e698b54517350ce8d3746ebd8",
+            "observedAtUtc": "2026-10-03T18:45:06.894336+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "state": "clean",
+          "buildSource": "unknown"
+        }
+      }
+    ]
+  },
+  {
+    "run": "20261003-184602-9733",
+    "root": ".antiphon/c959-second",
+    "sha": "95e942a0646ca858db2f73c35f85bab7a44fc658",
+    "exitCode": 0,
+    "verdict": "GREEN",
+    "rows": [
+      {
+        "id": "CP-4",
+        "executed": 9,
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "slot": "granted",
+        "waitedSeconds": 0,
+        "build": "bin-c959-admission",
+        "source": {
+          "version": 1,
+          "start": {
+            "commit": "95e942a0646ca858db2f73c35f85bab7a44fc658",
+            "dirtyFiles": 0,
+            "fingerprint": "8234f5300a7da019179c7dc58080b4ccc3dae5168575c746af98125ca529631e",
+            "observedAtUtc": "2026-10-03T18:46:02.6189808+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "end": {
+            "commit": "95e942a0646ca858db2f73c35f85bab7a44fc658",
+            "dirtyFiles": 0,
+            "fingerprint": "8234f5300a7da019179c7dc58080b4ccc3dae5168575c746af98125ca529631e",
+            "observedAtUtc": "2026-10-03T18:49:49.9291573+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "state": "clean",
+          "buildSource": "verified"
+        }
+      }
+    ]
+  },
+  {
+    "run": "20261003-185400-b135",
+    "root": ".antiphon/c959-second",
+    "sha": "8667f35e77a82cf220a0b6792991db610e6d6b16",
+    "exitCode": 2,
+    "verdict": "RED",
+    "rows": [
+      {
+        "id": "CP-4",
+        "executed": null,
+        "passed": null,
+        "failed": null,
+        "skipped": null,
+        "slot": null,
+        "waitedSeconds": 0,
+        "build": "bin-c959-admission",
+        "source": {
+          "version": 1,
+          "start": {
+            "commit": "8667f35e77a82cf220a0b6792991db610e6d6b16",
+            "dirtyFiles": 0,
+            "fingerprint": "f3207a49d894576ba0761b7552a7d8bc01c623e04bcb3e16dd9b5537c167630a",
+            "observedAtUtc": "2026-10-03T18:54:00.8414432+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "end": {
+            "commit": "8667f35e77a82cf220a0b6792991db610e6d6b16",
+            "dirtyFiles": 0,
+            "fingerprint": "f3207a49d894576ba0761b7552a7d8bc01c623e04bcb3e16dd9b5537c167630a",
+            "observedAtUtc": "2026-10-03T18:55:29.0054936+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "state": "clean",
+          "buildSource": "unknown"
+        }
+      }
+    ]
+  },
+  {
+    "run": "20261003-185639-7d72",
+    "root": ".antiphon/c959-second",
+    "sha": "a3192200d821559c0f5fe8947923732da5c81c34",
+    "exitCode": 1,
+    "verdict": "RED",
+    "rows": [
+      {
+        "id": "CP-4",
+        "executed": 9,
+        "passed": 8,
+        "failed": 1,
+        "skipped": 0,
+        "slot": "granted",
+        "waitedSeconds": 0,
+        "build": "bin-c959-admission",
+        "source": {
+          "version": 1,
+          "start": {
+            "commit": "a3192200d821559c0f5fe8947923732da5c81c34",
+            "dirtyFiles": 0,
+            "fingerprint": "09467d35b63c87266a7d6d85eec283eaf57030179dee29441f3719f7637e3a81",
+            "observedAtUtc": "2026-10-03T18:56:40.243515+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "end": {
+            "commit": "a3192200d821559c0f5fe8947923732da5c81c34",
+            "dirtyFiles": 0,
+            "fingerprint": "09467d35b63c87266a7d6d85eec283eaf57030179dee29441f3719f7637e3a81",
+            "observedAtUtc": "2026-10-03T19:00:01.7192192+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "state": "clean",
+          "buildSource": "verified"
+        }
+      }
+    ]
+  },
+  {
+    "run": "20261003-190236-40fe",
+    "root": ".antiphon/c959-second",
+    "sha": "95ad909ce517d025100baadc8f7c5c11bbe59fc6",
+    "exitCode": 1,
+    "verdict": "RED",
+    "rows": [
+      {
+        "id": "CP-4",
+        "executed": 9,
+        "passed": 8,
+        "failed": 1,
+        "skipped": 0,
+        "slot": "granted",
+        "waitedSeconds": 0,
+        "build": "bin-c959-admission",
+        "source": {
+          "version": 1,
+          "start": {
+            "commit": "95ad909ce517d025100baadc8f7c5c11bbe59fc6",
+            "dirtyFiles": 0,
+            "fingerprint": "fb96c4634eb29a08de1403b9e70ddc25c9f1f90aa3c02450146972a17734e680",
+            "observedAtUtc": "2026-10-03T19:02:37.1598326+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "end": {
+            "commit": "95ad909ce517d025100baadc8f7c5c11bbe59fc6",
+            "dirtyFiles": 0,
+            "fingerprint": "fb96c4634eb29a08de1403b9e70ddc25c9f1f90aa3c02450146972a17734e680",
+            "observedAtUtc": "2026-10-03T19:06:11.3854624+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "state": "clean",
+          "buildSource": "verified"
+        }
+      }
+    ]
+  },
+  {
+    "run": "20261003-190721-c37b",
+    "root": ".antiphon/c959-second",
+    "sha": "3ccc171bdaedffaf48838dfa744c6129d82c06ef",
+    "exitCode": 0,
+    "verdict": "GREEN",
+    "rows": [
+      {
+        "id": "CP-4",
+        "executed": 9,
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "slot": "granted",
+        "waitedSeconds": 0,
+        "build": "bin-c959-admission",
+        "source": {
+          "version": 1,
+          "start": {
+            "commit": "3ccc171bdaedffaf48838dfa744c6129d82c06ef",
+            "dirtyFiles": 0,
+            "fingerprint": "2e630d8d2d3276e1ddb93f38fbd6f6740a31765de6dda12914f190288c01ef67",
+            "observedAtUtc": "2026-10-03T19:07:21.7431993+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "end": {
+            "commit": "3ccc171bdaedffaf48838dfa744c6129d82c06ef",
+            "dirtyFiles": 0,
+            "fingerprint": "2e630d8d2d3276e1ddb93f38fbd6f6740a31765de6dda12914f190288c01ef67",
+            "observedAtUtc": "2026-10-03T19:10:40.8694532+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "state": "clean",
+          "buildSource": "verified"
+        }
+      }
+    ]
+  },
+  {
+    "run": "20261003-193706-c6b6",
+    "root": ".antiphon/c959-second",
+    "sha": "6d2e6fb6fe51e0f32c3073b4936ff965775e6452",
+    "exitCode": 0,
+    "verdict": "GREEN",
+    "rows": [
+      {
+        "id": "CP-4",
+        "executed": 9,
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "slot": "granted",
+        "waitedSeconds": 0,
+        "build": "bin-c959-admission",
+        "source": {
+          "version": 1,
+          "start": {
+            "commit": "6d2e6fb6fe51e0f32c3073b4936ff965775e6452",
+            "dirtyFiles": 0,
+            "fingerprint": "f6ca070f356dbd668827327113367ccbec745c3a002d69b674e489979673e60b",
+            "observedAtUtc": "2026-10-03T19:37:07.4133086+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "end": {
+            "commit": "6d2e6fb6fe51e0f32c3073b4936ff965775e6452",
+            "dirtyFiles": 0,
+            "fingerprint": "f6ca070f356dbd668827327113367ccbec745c3a002d69b674e489979673e60b",
+            "observedAtUtc": "2026-10-03T19:40:34.8340793+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "state": "clean",
+          "buildSource": "verified"
+        }
+      }
+    ]
+  },
+  {
+    "run": "20261003-191547-0744",
+    "root": ".antiphon/c959-second-final",
+    "sha": "3ccc171bdaedffaf48838dfa744c6129d82c06ef",
+    "exitCode": 0,
+    "verdict": "GREEN",
+    "rows": [
+      {
+        "id": "CP-1",
+        "executed": 5,
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0,
+        "slot": "granted",
+        "waitedSeconds": 0,
+        "build": "bin-c959-probe",
+        "source": {
+          "version": 1,
+          "start": {
+            "commit": "3ccc171bdaedffaf48838dfa744c6129d82c06ef",
+            "dirtyFiles": 0,
+            "fingerprint": "2e630d8d2d3276e1ddb93f38fbd6f6740a31765de6dda12914f190288c01ef67",
+            "observedAtUtc": "2026-10-03T19:15:48.257262+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "end": {
+            "commit": "3ccc171bdaedffaf48838dfa744c6129d82c06ef",
+            "dirtyFiles": 0,
+            "fingerprint": "2e630d8d2d3276e1ddb93f38fbd6f6740a31765de6dda12914f190288c01ef67",
+            "observedAtUtc": "2026-10-03T19:17:18.7143011+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "state": "clean",
+          "buildSource": "verified"
+        }
+      },
+      {
+        "id": "CP-3",
+        "executed": 5,
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0,
+        "slot": "granted",
+        "waitedSeconds": 0,
+        "build": "bin-c959-evidence",
+        "source": {
+          "version": 1,
+          "start": {
+            "commit": "3ccc171bdaedffaf48838dfa744c6129d82c06ef",
+            "dirtyFiles": 0,
+            "fingerprint": "2e630d8d2d3276e1ddb93f38fbd6f6740a31765de6dda12914f190288c01ef67",
+            "observedAtUtc": "2026-10-03T19:15:48.257262+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "end": {
+            "commit": "3ccc171bdaedffaf48838dfa744c6129d82c06ef",
+            "dirtyFiles": 0,
+            "fingerprint": "2e630d8d2d3276e1ddb93f38fbd6f6740a31765de6dda12914f190288c01ef67",
+            "observedAtUtc": "2026-10-03T19:19:16.4586966+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "state": "clean",
+          "buildSource": "verified"
+        }
+      },
+      {
+        "id": "CP-5",
+        "executed": 22,
+        "passed": 22,
+        "failed": 0,
+        "skipped": 0,
+        "slot": "granted",
+        "waitedSeconds": 0,
+        "build": "bin-c959-auth",
+        "source": {
+          "version": 1,
+          "start": {
+            "commit": "3ccc171bdaedffaf48838dfa744c6129d82c06ef",
+            "dirtyFiles": 0,
+            "fingerprint": "2e630d8d2d3276e1ddb93f38fbd6f6740a31765de6dda12914f190288c01ef67",
+            "observedAtUtc": "2026-10-03T19:15:48.257262+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "end": {
+            "commit": "3ccc171bdaedffaf48838dfa744c6129d82c06ef",
+            "dirtyFiles": 0,
+            "fingerprint": "2e630d8d2d3276e1ddb93f38fbd6f6740a31765de6dda12914f190288c01ef67",
+            "observedAtUtc": "2026-10-03T19:21:50.5192274+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "state": "clean",
+          "buildSource": "verified"
+        }
+      },
+      {
+        "id": "CP-6",
+        "executed": 20,
+        "passed": 20,
+        "failed": 0,
+        "skipped": 0,
+        "slot": "granted",
+        "waitedSeconds": 0,
+        "build": "bin-c959-directory",
+        "source": {
+          "version": 1,
+          "start": {
+            "commit": "3ccc171bdaedffaf48838dfa744c6129d82c06ef",
+            "dirtyFiles": 0,
+            "fingerprint": "2e630d8d2d3276e1ddb93f38fbd6f6740a31765de6dda12914f190288c01ef67",
+            "observedAtUtc": "2026-10-03T19:15:48.257262+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "end": {
+            "commit": "3ccc171bdaedffaf48838dfa744c6129d82c06ef",
+            "dirtyFiles": 0,
+            "fingerprint": "2e630d8d2d3276e1ddb93f38fbd6f6740a31765de6dda12914f190288c01ef67",
+            "observedAtUtc": "2026-10-03T19:24:13.5092296+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "state": "clean",
+          "buildSource": "verified"
+        }
+      },
+      {
+        "id": "CP-7",
+        "executed": 76,
+        "passed": 76,
+        "failed": 0,
+        "skipped": 0,
+        "slot": "granted",
+        "waitedSeconds": 0,
+        "build": "bin-c959-models",
+        "source": {
+          "version": 1,
+          "start": {
+            "commit": "3ccc171bdaedffaf48838dfa744c6129d82c06ef",
+            "dirtyFiles": 0,
+            "fingerprint": "2e630d8d2d3276e1ddb93f38fbd6f6740a31765de6dda12914f190288c01ef67",
+            "observedAtUtc": "2026-10-03T19:15:48.257262+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "end": {
+            "commit": "3ccc171bdaedffaf48838dfa744c6129d82c06ef",
+            "dirtyFiles": 0,
+            "fingerprint": "2e630d8d2d3276e1ddb93f38fbd6f6740a31765de6dda12914f190288c01ef67",
+            "observedAtUtc": "2026-10-03T19:25:54.780307+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "state": "clean",
+          "buildSource": "verified"
+        }
+      },
+      {
+        "id": "CP-8",
+        "executed": 3961,
+        "passed": 3961,
+        "failed": 0,
+        "skipped": 33,
+        "slot": "granted",
+        "waitedSeconds": 0,
+        "build": "bin-c959-unit",
+        "source": {
+          "version": 1,
+          "start": {
+            "commit": "3ccc171bdaedffaf48838dfa744c6129d82c06ef",
+            "dirtyFiles": 0,
+            "fingerprint": "2e630d8d2d3276e1ddb93f38fbd6f6740a31765de6dda12914f190288c01ef67",
+            "observedAtUtc": "2026-10-03T19:15:48.257262+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "end": {
+            "commit": "3ccc171bdaedffaf48838dfa744c6129d82c06ef",
+            "dirtyFiles": 0,
+            "fingerprint": "2e630d8d2d3276e1ddb93f38fbd6f6740a31765de6dda12914f190288c01ef67",
+            "observedAtUtc": "2026-10-03T19:35:23.2752828+00:00",
+            "captureStatus": "known",
+            "errorCode": null
+          },
+          "state": "clean",
+          "buildSource": "verified"
+        }
+      }
+    ]
+  }
+]
