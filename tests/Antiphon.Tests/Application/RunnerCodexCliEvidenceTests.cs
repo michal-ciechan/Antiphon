@@ -166,7 +166,7 @@ public sealed class RunnerCodexCliEvidenceTests
         RunnerCodexCliVersionDto? sample = null;
         if (method is not null)
             sample = await (Task<RunnerCodexCliVersionDto?>)method.Invoke(client, [descriptor, CancellationToken.None])!;
-        sample?.CodexCliVersion.ShouldBe("0.159.1", "C959-v13-phone-home");
+        (sample?.CodexCliVersion).ShouldBe("0.159.1", "C959-v13-phone-home");
         requests.ShouldHaveSingleItem("C959-v13-no-retry");
         requests[0].ShouldBe(descriptor, "C959-v13-descriptor");
         var legacy = host.Local;
