@@ -26,9 +26,12 @@ namespace Antiphon.Tests.Application;
 // phone-home frames, runner spill writer, delivery queue and transcript pull are real.
 internal static class CodexCliRemoteDeliveryFixture
 {
-    public static async Task RunAsync(string body, string version, bool busy)
+    public static Task RunAsync(string body, string version, bool busy) =>
+        RunAsync(body, new RunnerCodexCliVersionDto(version, DateTimeOffset.UtcNow, null, new string('a', 64)), busy);
+
+    public static async Task RunAsync(string body, RunnerCodexCliVersionDto? sample, bool busy)
     {
-        var vector = $"remote/{version}/busy={busy}";
+        var vector = $"remote/{sample?.CodexCliVersion}/{sample?.CodexCliVersionError}/busy={busy}";
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         using var git = new ScratchGitRepo("c959-remote");
         await git.CommitFileAsync("seed.txt", "C959 real runner mirror\n");
@@ -36,7 +39,7 @@ internal static class CodexCliRemoteDeliveryFixture
         var root = System.IO.Directory.CreateTempSubdirectory("c959-recipient-").FullName;
         try
         {
-            await using var runtime = new Recipient(version);
+            await using var runtime = new Recipient(sample);
             var dispatcher = new PhoneHomeCommandDispatcher(runtime, new PhoneHomeSettings
             {
                 AllowedCwd = root, RunnerRepository = Path.Combine(root, "repo"),
@@ -240,7 +243,7 @@ internal static class CodexCliRemoteDeliveryFixture
         }
     }
 
-    private sealed class Recipient(string version) : IPhoneHomeRuntimeSurface, IAsyncDisposable
+    private sealed class Recipient(RunnerCodexCliVersionDto? sample) : IPhoneHomeRuntimeSurface, IAsyncDisposable
     {
         public Dictionary<Guid, FakeAgentProtocolAdapter> Terminals { get; } = [];
         private readonly Dictionary<Guid, List<RunnerTranscriptEvent>> _transcripts = [];
@@ -253,11 +256,13 @@ internal static class CodexCliRemoteDeliveryFixture
                 kind == TranscriptKinds.UserPrompt ? "user" : null, text, null, null, null, null, stopReason));
         }
         public RunnerCapabilitiesDto Capabilities() => new("InboxConhost", "inbox", "test", false,
-            Version: "d40c1670", Platform: "linux", Features: [RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.WorkspaceRepositoryV1]);
+            Version: "d40c1670", Platform: "linux", Features: [RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.WorkspaceRepositoryV1],
+            CodexCliVersion: sample?.CodexCliVersion, CodexCliVersionCheckedAtUtc: sample?.CodexCliVersionCheckedAtUtc,
+            CodexCliVersionError: sample?.CodexCliVersionError, CodexCliLauncherFingerprint: sample?.CodexCliLauncherFingerprint);
         public Task<RunnerCodexCliVersionDto?> GetCodexCliVersionAsync(RunnerCodexCliProbeRequest request, CancellationToken ct)
         {
             ProbeRequests.Add(request);
-            return Task.FromResult<RunnerCodexCliVersionDto?>(new(version, DateTimeOffset.UtcNow, null, new string('a',64)));
+            return Task.FromResult(sample);
         }
         public string Health() => "Healthy";
         public IReadOnlyList<RunnerSessionDto> List() => Terminals.Keys.Select(Session).ToList();
