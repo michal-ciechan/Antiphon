@@ -6,6 +6,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
+using Antiphon.Tests.Application;
 using Antiphon.TestSupport;
 using Microsoft.Extensions.Options;
 using Shouldly;
