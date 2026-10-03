@@ -24,7 +24,7 @@ index bfd7deae1..141c01434 100644
 +        return observer.StartupInputs.SequenceEqual(expectedInputs)
              ? StartupVerdict.Accepted : StartupVerdict.UnexpectedStartupInput;
      }
- 
+
 diff --git a/tests/Antiphon.Tests/Agents/RunnerGrokAdapterReadyTestsPty.cs b/tests/Antiphon.Tests/Agents/RunnerGrokAdapterReadyTestsPty.cs
 index 44c3a11ba..db8cf965e 100644
 --- a/tests/Antiphon.Tests/Agents/RunnerGrokAdapterReadyTestsPty.cs
@@ -211,7 +211,7 @@ index 44c3a11ba..db8cf965e 100644
 @@ -171,6 +226,17 @@ public class RunnerGrokAdapterReadyTestsPty
          }
      }
- 
+
 +    private static object C1011BinaryIdentity(string path)
 +    {
 +        using var stream = File.OpenRead(path);
