@@ -1,0 +1,91 @@
+COUNTERS
+
+total               : 4000
+executed            : 3954
+passed              : 3954
+failed              : 0
+error               : 0
+timeout             : 0
+aborted             : 0
+inconclusive        : 0
+passedButRunAborted : 0
+notRunnable         : 0
+notExecuted         : 46
+disconnected        : 0
+warning             : 0
+completed           : 0
+inProgress          : 0
+pending             : 0
+
+ROSTER expectedIdentities=2771 actualIdentities=2771 expectedCases=4000 actualCases=4000 mismatches=0
+FOCUSED FULL CLASSES / METHODS
+Antiphon.Tests.Checkpoints.CheckpointImportTests cases=20 passed=20 expected=20 identities=20
+Antiphon.Tests.Checkpoints.CheckpointManifestTests cases=6 passed=6 expected=6 identities=6
+Antiphon.Tests.Checkpoints.CheckpointNamespaceCensusUsageTests cases=1 passed=1 expected=1 identities=1
+Antiphon.Tests.Checkpoints.PlanCoverageAssertionTests cases=5 passed=5 expected=5 identities=5
+Antiphon.Tests.Checkpoints.PlanCoverageCensusTests cases=12 passed=12 expected=12 identities=12
+Antiphon.Tests.Checkpoints.PlanCoverageCommandTests cases=10 passed=10 expected=10 identities=10
+Antiphon.Tests.Checkpoints.PlanCoverageGoldenTests cases=4 passed=4 expected=4 identities=4
+Antiphon.Tests.Checkpoints.PlanCoverageHandleTests cases=16 passed=16 expected=16 identities=6
+Antiphon.Tests.Checkpoints.PlanCoverageParserTests cases=8 passed=8 expected=8 identities=8
+Antiphon.Tests.Checkpoints.PlanCoveragePcTests cases=4 passed=4 expected=4 identities=4
+V/R METHODS
+Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.census_compares_resolved_identities_not_counts cases=1 outcomes=Passed
+Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.census_excludes_helpers_and_counts_parameterized_method_once cases=1 outcomes=Passed
+Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.census_matches_exact_checklist_roster cases=1 outcomes=Passed
+Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.census_public_cli_is_deterministic_and_read_only cases=1 outcomes=Passed
+Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.census_rejects_unselected_or_non_test_roster_methods cases=1 outcomes=Passed
+Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.census_reports_new_or_omitted_selected_method cases=1 outcomes=Passed
+Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.census_reports_unmapped_selection_without_dynamic_discovery cases=1 outcomes=Passed
+Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.census_tracks_filter_class_namespace_and_project cases=1 outcomes=Passed
+Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.census_unions_overlapping_filters_and_partial_declarations cases=1 outcomes=Passed
+Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.checklist_flag_accepts_true_false_and_absence cases=1 outcomes=Passed
+Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.checklist_flag_rejects_invalid_or_conflicting_input cases=1 outcomes=Passed
+Antiphon.Tests.Checkpoints.PlanCoverageCensusTests.opt_out_preserves_legacy_reports_and_declared_counts cases=1 outcomes=Passed
+NON-PASS RESULTS
+Antiphon.Tests.Agents.AgentRegistrySettingsTests.The_shipped_codex_definition_resolves_to_a_real_executable_on_this_machine NotExecuted: 
+Antiphon.Tests.Application.AgentExecutableResolverTests.Resolves_sibling_flavor_when_configured_one_is_gone NotExecuted: 
+Antiphon.Tests.Application.AgentPinPathTests.V01_canonical_cwd_uses_windows_separators_and_drops_trailing_slash NotExecuted: 
+Antiphon.Tests.Application.ClaudeRemoteControlLaunchArgsTests.Off_settings_path_round_trips_through_LaunchArgvGuard NotExecuted: 
+Antiphon.Tests.Application.DelegationReportFormatterTests.reported_repository_paths_normalize_relative_and_absolute_windows_forms NotExecuted: 
+Antiphon.Tests.Application.DirectoryBrowseServiceTests.trailing_slash_lists_children_of_that_directory NotExecuted: 
+Antiphon.Tests.Application.DirectoryBrowseServiceTests.existing_path_reports_exists_true NotExecuted: 
+Antiphon.Tests.Application.DirectoryBrowseServiceTests.caches_within_ttl_and_refreshes_after NotExecuted: 
+Antiphon.Tests.Application.DirectoryBrowseServiceTests.prefix_returns_matching_child_directories NotExecuted: 
+Antiphon.Tests.Application.DirectoryBrowseServiceTests.partial_leaf_matches_substring_within_child_name NotExecuted: 
+Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls NotExecuted: 
+Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls NotExecuted: 
+Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls NotExecuted: 
+Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls NotExecuted: 
+Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls NotExecuted: 
+Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls NotExecuted: 
+Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls NotExecuted: 
+Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls NotExecuted: 
+Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls NotExecuted: 
+Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls NotExecuted: 
+Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls NotExecuted: 
+Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls NotExecuted: 
+Antiphon.Tests.Application.PtyDeliveryCeilingsTests.A_silent_runner_leaves_this_processes_own_decision_standing NotExecuted: 
+Antiphon.Tests.Application.PtyDeliveryCeilingsTests.A_runner_on_the_modern_backend_confirms_the_raised_ceilings NotExecuted: 
+Antiphon.Tests.Application.PtyDeliveryCeilingsTests.A_runner_on_the_inbox_conhost_downgrades_a_modern_server NotExecuted: 
+Antiphon.Tests.Application.SessionDeliveryProfileTests.Phone_home_Claude_keeps_the_inbox_ceiling_for_its_own_kind NotExecuted: 
+Antiphon.Tests.Application.SessionDeliveryProfileTests.Phone_home_Grok_never_uses_local_modern_evidence NotExecuted: 
+Antiphon.Tests.Scripts.RemoteScriptContractTests.C912_Cold_cache_probe_requires_uid_writes_cleanup_and_bounded_exit NotExecuted: 
+Antiphon.Tests.Scripts.RemoteScriptContractTests.C912_Cold_marker_has_distinct_validation_and_full_context_refusal NotExecuted: 
+Antiphon.Tests.Scripts.RemoteScriptContractTests.C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers NotExecuted: 
+Antiphon.Tests.Scripts.RemoteScriptContractTests.C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers NotExecuted: 
+Antiphon.Tests.Scripts.RemoteScriptContractTests.C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers NotExecuted: 
+Antiphon.Tests.Scripts.RemoteScriptContractTests.C912_Cold_volumes_seed_rechecks_initialization_and_probe_boundaries NotExecuted: 
+Antiphon.Tests.Scripts.RemoteScriptContractTests.C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers NotExecuted: 
+Antiphon.Tests.Scripts.RemoteScriptContractTests.C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers NotExecuted: 
+Antiphon.Tests.Scripts.RemoteScriptContractTests.C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune NotExecuted: 
+Antiphon.Tests.Scripts.RemoteScriptContractTests.C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune NotExecuted: 
+Antiphon.Tests.Scripts.RemoteScriptContractTests.C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune NotExecuted: 
+Antiphon.Tests.Scripts.RemoteScriptContractTests.C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune NotExecuted: 
+Antiphon.Tests.Scripts.RemoteScriptContractTests.C973_Prune_and_saved_donor_still_require_full_after_seed_image_prune NotExecuted: 
+Antiphon.Tests.Scripts.RemoteScriptContractTests.C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers NotExecuted: 
+Antiphon.Tests.Scripts.RemoteScriptContractTests.C912_Cold_volumes_seed_refuses_unknown_mounted_or_populated_targets NotExecuted: 
+Antiphon.Tests.Scripts.RemoteScriptContractTests.C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune NotExecuted: 
+Antiphon.Tests.Scripts.RemoteScriptContractTests.C912_Cold_seed_refuses_when_created_volume_disappears_before_init NotExecuted: 
+Antiphon.Tests.Scripts.RemoteScriptContractTests.C912_Cold_volumes_seed_accepts_busy_main_without_packages NotExecuted: 
+Antiphon.Tests.Scripts.RemoteScriptContractTests.C912_Cold_seed_with_unrelated_bind_initializes_only_three_labelled_roots NotExecuted: 

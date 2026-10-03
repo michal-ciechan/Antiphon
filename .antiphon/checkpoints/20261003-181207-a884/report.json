@@ -1,0 +1,1789 @@
+{
+  "schemaVersion": 2,
+  "source": {
+    "version": 1,
+    "start": {
+      "commit": "740c9b570f4361ff5baad2c863140a23a9712973",
+      "dirtyFiles": 0,
+      "fingerprint": "a9232c20b778005657756d49bb3a94afb13ebf1dc63e782b9848e5de02d6d825",
+      "observedAtUtc": "2026-10-03T18:12:07.9355829+00:00",
+      "captureStatus": "known",
+      "errorCode": null
+    },
+    "end": {
+      "commit": "740c9b570f4361ff5baad2c863140a23a9712973",
+      "dirtyFiles": 0,
+      "fingerprint": "a9232c20b778005657756d49bb3a94afb13ebf1dc63e782b9848e5de02d6d825",
+      "observedAtUtc": "2026-10-03T18:20:31.1325031+00:00",
+      "captureStatus": "known",
+      "errorCode": null
+    },
+    "state": "clean",
+    "buildSource": "verified"
+  },
+  "runId": "20261003-181207-a884",
+  "manifestPath": "/work/worktrees/task-535715ec/.antiphon/checkpoints/20261003-181207-a884/manifest.resolved.yaml",
+  "manifestHash": "a84158a4690be85e05d289f6dedd5907ba0c6cdf8ba62cd3dce1074e58b65377",
+  "commit": "740c9b570f4361ff5baad2c863140a23a9712973",
+  "branch": "feat/card-task-535715ec",
+  "worktree": "/work/worktrees/task-535715ec",
+  "host": {
+    "os": "Debian GNU/Linux 12 (bookworm)",
+    "cores": 24,
+    "memAvailableMb": 101230,
+    "loadAvg": "16.24 13.15 14.82 45/3402 16453"
+  },
+  "startedAt": "2026-10-03T18:12:09.7696002+00:00",
+  "endedAt": "2026-10-03T18:20:31.1571501+00:00",
+  "wallSeconds": 501.3875499,
+  "sequentialEquivalentSeconds": 369.8164293,
+  "exitCode": 3,
+  "reason": null,
+  "verdict": "RED",
+  "builds": [
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": null,
+          "dirtyFiles": null,
+          "fingerprint": null,
+          "observedAtUtc": "2026-10-03T18:12:10.7081231+00:00",
+          "captureStatus": "unknown",
+          "errorCode": "not_observed"
+        },
+        "end": null,
+        "state": "unknown",
+        "buildSource": "unknown"
+      },
+      "id": "bin-c1005-final",
+      "project": "tests/Antiphon.Tests",
+      "state": "unused",
+      "seconds": 0,
+      "slot": "",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": "740c9b570f4361ff5baad2c863140a23a9712973",
+          "dirtyFiles": 0,
+          "fingerprint": "a9232c20b778005657756d49bb3a94afb13ebf1dc63e782b9848e5de02d6d825",
+          "observedAtUtc": "2026-10-03T18:12:07.9355829+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "end": {
+          "commit": "740c9b570f4361ff5baad2c863140a23a9712973",
+          "dirtyFiles": 0,
+          "fingerprint": "a9232c20b778005657756d49bb3a94afb13ebf1dc63e782b9848e5de02d6d825",
+          "observedAtUtc": "2026-10-03T18:14:20.3508753+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "state": "clean",
+        "buildSource": "verified"
+      },
+      "id": "bin-c1005-unit",
+      "project": "tests/Antiphon.Tests",
+      "state": "ok",
+      "seconds": 129.4762276,
+      "slot": "granted",
+      "slotReason": null,
+      "waitedSeconds": 0
+    }
+  ],
+  "rows": [
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": "740c9b570f4361ff5baad2c863140a23a9712973",
+          "dirtyFiles": 0,
+          "fingerprint": "a9232c20b778005657756d49bb3a94afb13ebf1dc63e782b9848e5de02d6d825",
+          "observedAtUtc": "2026-10-03T18:12:07.9355829+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "end": {
+          "commit": "740c9b570f4361ff5baad2c863140a23a9712973",
+          "dirtyFiles": 0,
+          "fingerprint": "a9232c20b778005657756d49bb3a94afb13ebf1dc63e782b9848e5de02d6d825",
+          "observedAtUtc": "2026-10-03T18:20:29.4850982+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "state": "clean",
+        "buildSource": "verified"
+      },
+      "id": "CP-2",
+      "group": "linux-unit",
+      "filter": "/*[Category=Unit]/*/*/(!windows_quick_row_finishes_beside_a_slow_row*)\u0026(!windows_row_arguments_round_trip_intact*)\u0026(!windows_chatty_row_drains_interleaved_stdout_and_stderr*)\u0026(!windows_row_timeout_kills_the_start_b_grandchild*)\u0026(!C665_LockedFileMidDeleteResumesOnLaterPass*)\u0026(!C721_HeldHandleDuringCleanupStaysRegisteredOrRecorded*)",
+      "command": null,
+      "build": "bin-c1005-unit",
+      "state": "roster-miss",
+      "exitCode": 3,
+      "slot": "granted",
+      "slotReason": null,
+      "waitedSeconds": 0,
+      "executed": 3954,
+      "passed": 3954,
+      "failed": 0,
+      "skipped": 46,
+      "reruns": 0,
+      "trx": "/work/worktrees/task-535715ec/.antiphon/checkpoints/20261003-181207-a884/rows/CP-2/run.trx",
+      "seconds": 369.8164293,
+      "line": "CHECKPOINT CP-2 commit=740c9b570f4361ff5baad2c863140a23a9712973 build=ok filter=/*[Category=Unit]/*/*/(!windows_quick_row_finishes_beside_a_slow_row*)\u0026(!windows_row_arguments_round_trip_intact*)\u0026(!windows_chatty_row_drains_interleaved_stdout_and_stderr*)\u0026(!windows_row_timeout_kills_the_start_b_grandchild*)\u0026(!C665_LockedFileMidDeleteResumesOnLaterPass*)\u0026(!C721_HeldHandleDuringCleanupStaysRegisteredOrRecorded*) executed=3954 passed=3954 failed=0 skipped=46 trx=/work/worktrees/task-535715ec/.antiphon/checkpoints/20261003-181207-a884/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=740c9b570f4361ff5baad2c863140a23a9712973 sourceState=clean buildSource=verified",
+      "failures": [],
+      "rerunLines": [],
+      "slowClasses": [
+        {
+          "className": "Antiphon.Tests.TestHelpers.TestClassificationPolicyTests",
+          "seconds": 81.74934,
+          "tests": 25
+        },
+        {
+          "className": "Antiphon.Tests.Scripts.RemoteScriptContractTests",
+          "seconds": 49.18452430000001,
+          "tests": 65
+        },
+        {
+          "className": "Antiphon.Tests.Agents.RunnerClaudeAdapterEffortPromptTests",
+          "seconds": 22.209827000000004,
+          "tests": 10
+        },
+        {
+          "className": "Antiphon.Tests.AgentTui.AgentTuiSecretProtectorTests",
+          "seconds": 19.314638600000002,
+          "tests": 65
+        },
+        {
+          "className": "Antiphon.Tests.Application.ChannelOutboundStorageTests",
+          "seconds": 16.9421184,
+          "tests": 28
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointTaskOwnershipTests",
+          "seconds": 16.0798691,
+          "tests": 23
+        },
+        {
+          "className": "Antiphon.Tests.Agents.RunnerGrokAdapterReadyTests",
+          "seconds": 10.8003854,
+          "tests": 14
+        },
+        {
+          "className": "Antiphon.Tests.Agents.RunnerCodexAdapterTurnCompleteTests",
+          "seconds": 10.2475235,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Agents.RunnerClaudeAdapterTrustPromptTests",
+          "seconds": 8.947623499999999,
+          "tests": 8
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointRepeatHostTests",
+          "seconds": 7.7516584,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Agents.RunnerTerminalSessionGenerationTests",
+          "seconds": 7.0780688000000005,
+          "tests": 8
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointTempRootSweepTests",
+          "seconds": 6.429691500000001,
+          "tests": 15
+        },
+        {
+          "className": "Antiphon.Tests.Agents.RunnerGrokAdapterTurnCompleteTests",
+          "seconds": 6.2450963999999995,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Agents.RunnerGrokAdapterTrustPromptTests",
+          "seconds": 6.2245951999999996,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.PlanCoverageCommandTests",
+          "seconds": 4.8767424,
+          "tests": 10
+        },
+        {
+          "className": "Antiphon.Tests.Application.WorktreeCleanupPresentationTests",
+          "seconds": 4.0878878,
+          "tests": 33
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.PlanCoverageGoldenTests",
+          "seconds": 3.5766513,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Application.WorktreeIgnoredContentClassifierTests",
+          "seconds": 3.2418512000000006,
+          "tests": 46
+        },
+        {
+          "className": "Antiphon.Tests.Agents.RunnerCodexAdapterReadyTests",
+          "seconds": 3.1958366,
+          "tests": 12
+        },
+        {
+          "className": "Antiphon.Tests.Application.SessionDeliveryProfileTests",
+          "seconds": 3.0022998,
+          "tests": 5
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointToolCopyCleanupTests",
+          "seconds": 2.7946122,
+          "tests": 16
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.RerunFilterHostTests",
+          "seconds": 2.7219202,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointSlotContractTests",
+          "seconds": 2.3370384,
+          "tests": 11
+        },
+        {
+          "className": "Antiphon.Tests.Application.HerdrSupervisionFailureEvidenceTests",
+          "seconds": 2.2015491999999997,
+          "tests": 24
+        },
+        {
+          "className": "Antiphon.Tests.TestHelpers.DelegationHarnessCensusTests",
+          "seconds": 2.0805336,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointExecutorLogTests",
+          "seconds": 1.9290498999999999,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Application.SpecialistRoleContractTests",
+          "seconds": 1.8537267000000002,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.LandingRemovalPolicyControlTests",
+          "seconds": 1.7367177000000003,
+          "tests": 70
+        },
+        {
+          "className": "Antiphon.Tests.Migrations.CommitOnSettleMigrationTests",
+          "seconds": 1.6308259999999999,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.PlanCoverageCensusTests",
+          "seconds": 1.5692468,
+          "tests": 12
+        },
+        {
+          "className": "Antiphon.Tests.TestHelpers.TestDbFixtureLifecycleTests",
+          "seconds": 1.4869744000000005,
+          "tests": 33
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.DockerDeliveryBarrierTests",
+          "seconds": 1.4689588,
+          "tests": 24
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.AppDbContextModelTests",
+          "seconds": 1.3841365,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.Resilience.ResilienceCircuitTests",
+          "seconds": 1.3432552999999998,
+          "tests": 6
+        },
+        {
+          "className": "Antiphon.Tests.Application.OperatorShutdownCoordinatorTests",
+          "seconds": 1.3201030999999999,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Agents.FakeLlmApiSelfTests",
+          "seconds": 1.3174936000000002,
+          "tests": 12
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointNamespaceCensusUsageTests",
+          "seconds": 1.164905,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.BuildSlotClientTests",
+          "seconds": 1.1344525,
+          "tests": 12
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.DetachedLauncherTests",
+          "seconds": 1.1155606,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.Resilience.ResilienceBudgetTests",
+          "seconds": 1.0682224,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Agents.RunnerClaudeAdapterVerifiedPromptTests",
+          "seconds": 1.0433312,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.TestSupport.TestClassificationGuardTests",
+          "seconds": 0.9534057,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Application.PhoneHomeDirectoryTests",
+          "seconds": 0.9169675,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.RunSchedulerTests",
+          "seconds": 0.8633778,
+          "tests": 14
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.Resilience.HttpReadResilienceTests",
+          "seconds": 0.8126493000000001,
+          "tests": 8
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.EvidenceFolderTests",
+          "seconds": 0.8112398999999999,
+          "tests": 6
+        },
+        {
+          "className": "Antiphon.Tests.Application.PlanCatalogServiceTests",
+          "seconds": 0.7779154,
+          "tests": 28
+        },
+        {
+          "className": "Antiphon.Tests.Application.CheckSpecialistLaunchPolicyTests",
+          "seconds": 0.6878742999999998,
+          "tests": 20
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.PlanCoverageAssertionTests",
+          "seconds": 0.6850167,
+          "tests": 5
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointImportTests",
+          "seconds": 0.5214982,
+          "tests": 20
+        },
+        {
+          "className": "Antiphon.Tests.Agents.GrokStartupReadinessTests",
+          "seconds": 0.5060697000000001,
+          "tests": 5
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.OperatorTokenFileTests",
+          "seconds": 0.4769331,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.TimeoutTests",
+          "seconds": 0.46569740000000004,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.PlanCoverageHandleTests",
+          "seconds": 0.46425489999999997,
+          "tests": 16
+        },
+        {
+          "className": "Antiphon.Tests.Application.AgentTaskLandingStateTests",
+          "seconds": 0.4600932,
+          "tests": 76
+        },
+        {
+          "className": "Antiphon.Tests.Application.RunnerSlotRulesTests",
+          "seconds": 0.41560719999999995,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.LogRetentionTests",
+          "seconds": 0.40026439999999996,
+          "tests": 21
+        },
+        {
+          "className": "Antiphon.Tests.TestHelpers.TestLaneCategoryGuardTests",
+          "seconds": 0.3894081,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.GrokRunnerImageContractTests",
+          "seconds": 0.38247220000000004,
+          "tests": 26
+        },
+        {
+          "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+          "seconds": 0.36635009999999996,
+          "tests": 103
+        },
+        {
+          "className": "Antiphon.Tests.Application.TaskCompletionContinuationTests",
+          "seconds": 0.3506574,
+          "tests": 48
+        },
+        {
+          "className": "Antiphon.Tests.AgentTui.AgentTuiSmokeScriptTests",
+          "seconds": 0.3462431,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointLaunchCleanupTests",
+          "seconds": 0.3435606,
+          "tests": 11
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.CodexRunnerImageContractTests",
+          "seconds": 0.34198850000000003,
+          "tests": 11
+        },
+        {
+          "className": "Antiphon.Tests.TestHelpers.ControlledLandingGitTests",
+          "seconds": 0.33823839999999994,
+          "tests": 51
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.Resilience.HttpResilienceRegistrationTests",
+          "seconds": 0.32967029999999997,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.WaitCommandTests",
+          "seconds": 0.31601900000000005,
+          "tests": 9
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointAppTests",
+          "seconds": 0.3052355,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Agents.RunnerTerminalSessionInputEncodingTests",
+          "seconds": 0.3023824,
+          "tests": 5
+        },
+        {
+          "className": "Antiphon.Tests.Application.AreaMapContractTests",
+          "seconds": 0.2950987,
+          "tests": 6
+        },
+        {
+          "className": "Antiphon.Tests.AgentTui.RunnerProcessProbeRedactionTests",
+          "seconds": 0.24905909999999995,
+          "tests": 62
+        },
+        {
+          "className": "Antiphon.Tests.Application.OrchestratorWorkspaceLayoutTests",
+          "seconds": 0.24843529999999997,
+          "tests": 21
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.DockerStackContractTests",
+          "seconds": 0.24822739999999996,
+          "tests": 112
+        },
+        {
+          "className": "Antiphon.Tests.Application.AgentTaskDecisionQuestionTests",
+          "seconds": 0.23903379999999996,
+          "tests": 18
+        },
+        {
+          "className": "Antiphon.Tests.Application.PhoneHomeRunnerRetirementIdentityTests",
+          "seconds": 0.2317293,
+          "tests": 9
+        },
+        {
+          "className": "Antiphon.Tests.Agents.RunnerCodexAdapterSubmitConfirmTests",
+          "seconds": 0.22765359999999998,
+          "tests": 8
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.DindRunnerContractTests",
+          "seconds": 0.2203273,
+          "tests": 23
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.WorktreeLockDiagnosticsTests",
+          "seconds": 0.21484219999999998,
+          "tests": 37
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.LandingIdentityControlTests",
+          "seconds": 0.185035,
+          "tests": 26
+        },
+        {
+          "className": "Antiphon.Tests.Application.OutboundConversionManifestTests",
+          "seconds": 0.18397389999999997,
+          "tests": 35
+        },
+        {
+          "className": "Antiphon.Tests.Application.ChannelInboundDebouncerTests",
+          "seconds": 0.1835224,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Application.PostLandMutationReceiptPolicyTests",
+          "seconds": 0.1827077,
+          "tests": 25
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.BaselineComparerTests",
+          "seconds": 0.1800787,
+          "tests": 5
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.HostCleanupExecutionTests",
+          "seconds": 0.17756539999999996,
+          "tests": 20
+        },
+        {
+          "className": "Antiphon.Tests.Agents.GrokStartupCaptureStoreTests",
+          "seconds": 0.173616,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.Resilience.ResilienceOptionsAndTelemetryTests",
+          "seconds": 0.16759979999999997,
+          "tests": 10
+        },
+        {
+          "className": "Antiphon.Tests.Application.LandFailureDiagnosticTests",
+          "seconds": 0.1579595,
+          "tests": 12
+        },
+        {
+          "className": "Antiphon.Tests.Application.CardTaskFileRendererTests",
+          "seconds": 0.1554876,
+          "tests": 11
+        },
+        {
+          "className": "Antiphon.Tests.Application.OrchestratorInvestigationDetectorTests",
+          "seconds": 0.15361930000000001,
+          "tests": 17
+        },
+        {
+          "className": "Antiphon.Tests.Agents.RunnerGrokAdapterSignInPromptTests",
+          "seconds": 0.1443652,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Application.DelegateBindRefusalRecoveryTests",
+          "seconds": 0.1441615,
+          "tests": 11
+        },
+        {
+          "className": "Antiphon.Tests.Application.SlashCommandCatalogServiceTests",
+          "seconds": 0.13928680000000002,
+          "tests": 11
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.JqRunnerImageContractTests",
+          "seconds": 0.13895439999999998,
+          "tests": 14
+        },
+        {
+          "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+          "seconds": 0.1365330999999999,
+          "tests": 92
+        },
+        {
+          "className": "Antiphon.Tests.Application.DirectoryBrowseServiceTests",
+          "seconds": 0.1354214,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Application.IssueTrackerConfigParserTests",
+          "seconds": 0.1276941,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.DockerStackDocumentationTests",
+          "seconds": 0.1268587,
+          "tests": 11
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.WorktreeDeleteAccessProbeTests",
+          "seconds": 0.11918250000000001,
+          "tests": 38
+        },
+        {
+          "className": "Antiphon.Tests.Application.ExpectationPipelineTests",
+          "seconds": 0.1148701,
+          "tests": 9
+        },
+        {
+          "className": "Antiphon.Tests.Application.RemoteWorktreeMirrorTests",
+          "seconds": 0.1137213,
+          "tests": 8
+        },
+        {
+          "className": "Antiphon.Tests.Application.InstructionBundleTests",
+          "seconds": 0.11172989999999998,
+          "tests": 62
+        },
+        {
+          "className": "Antiphon.Tests.Application.VerificationRoundBriefTests",
+          "seconds": 0.110687,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.RunStateStoreTests",
+          "seconds": 0.1104355,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Application.ProviderContractCatalogTests",
+          "seconds": 0.1077098,
+          "tests": 37
+        },
+        {
+          "className": "Antiphon.Tests.Application.TrackerSyncSummaryFormatterTests",
+          "seconds": 0.10047659999999999,
+          "tests": 13
+        },
+        {
+          "className": "Antiphon.Tests.Application.LandVerificationBuildSlotTests",
+          "seconds": 0.09987549999999998,
+          "tests": 6
+        },
+        {
+          "className": "Antiphon.Tests.AgentTui.AgentTuiOperationCoordinatorTests",
+          "seconds": 0.0996111,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Application.ComplexityRoutingComposeTests",
+          "seconds": 0.09824000000000002,
+          "tests": 16
+        },
+        {
+          "className": "Antiphon.Tests.Application.HostCleanupWorktreeInventoryTests",
+          "seconds": 0.0908507,
+          "tests": 6
+        },
+        {
+          "className": "Antiphon.Tests.Application.TaskCompletionProgressPolicyTests",
+          "seconds": 0.089063,
+          "tests": 33
+        },
+        {
+          "className": "Antiphon.Tests.Application.SiblingWarningReducerTests",
+          "seconds": 0.08644660000000001,
+          "tests": 6
+        },
+        {
+          "className": "Antiphon.Tests.Application.ChannelOutboundEvidenceAccountingTests",
+          "seconds": 0.0839,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Agents.TranscriptNormalizerTests",
+          "seconds": 0.0795718,
+          "tests": 38
+        },
+        {
+          "className": "Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests",
+          "seconds": 0.0794241,
+          "tests": 12
+        },
+        {
+          "className": "Antiphon.Tests.Application.ScopeDriftTests",
+          "seconds": 0.07821230000000001,
+          "tests": 11
+        },
+        {
+          "className": "Antiphon.Tests.Application.UsageLimitWallParserTests",
+          "seconds": 0.07535450000000003,
+          "tests": 39
+        },
+        {
+          "className": "Antiphon.Tests.Application.SessionReAdoptionStateTests",
+          "seconds": 0.0739829,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Application.DiagnosticsRedactorTests",
+          "seconds": 0.0724153,
+          "tests": 18
+        },
+        {
+          "className": "Antiphon.Tests.Application.InternalDecisionPolicyTests",
+          "seconds": 0.07141600000000002,
+          "tests": 51
+        },
+        {
+          "className": "Antiphon.Tests.Application.CardRankingOrderTests",
+          "seconds": 0.07098850000000001,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Application.AgentTaskLandQueueVisibilityTests",
+          "seconds": 0.07023299999999999,
+          "tests": 5
+        },
+        {
+          "className": "Antiphon.Tests.Application.ChannelOutboundContractTests",
+          "seconds": 0.0698593,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Application.CompactionContinuationPolicyTests",
+          "seconds": 0.06862149999999999,
+          "tests": 19
+        },
+        {
+          "className": "Antiphon.Tests.Application.CompletionNoteWorkQueueTests",
+          "seconds": 0.06730839999999999,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.OutputCleanupTests",
+          "seconds": 0.0668276,
+          "tests": 5
+        },
+        {
+          "className": "Antiphon.Tests.Application.AttentionKindWireTests",
+          "seconds": 0.06608159999999999,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointProcessIdentityTests",
+          "seconds": 0.0650394,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Application.DiagnosisTests",
+          "seconds": 0.06477840000000003,
+          "tests": 42
+        },
+        {
+          "className": "Antiphon.Tests.Application.ChannelContractsTests",
+          "seconds": 0.0642691,
+          "tests": 14
+        },
+        {
+          "className": "Antiphon.Tests.Application.CheckpointManifestDocumentationTests",
+          "seconds": 0.06424579999999999,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Application.CardWorkflowRunFactoryTests",
+          "seconds": 0.0622624,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.ProgressAwareWaitTests",
+          "seconds": 0.059013100000000006,
+          "tests": 6
+        },
+        {
+          "className": "Antiphon.Tests.Application.ChannelPromptCorrelationUnitTests",
+          "seconds": 0.0576833,
+          "tests": 8
+        },
+        {
+          "className": "Antiphon.Tests.Agents.GrokLinuxStartupReadinessTests",
+          "seconds": 0.05732390000000001,
+          "tests": 21
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.PlanCoverageParserTests",
+          "seconds": 0.0552288,
+          "tests": 8
+        },
+        {
+          "className": "Antiphon.Tests.Application.SessionContextUsageTests",
+          "seconds": 0.0548917,
+          "tests": 34
+        },
+        {
+          "className": "Antiphon.Tests.CachingChatClientTests",
+          "seconds": 0.05446240000000001,
+          "tests": 13
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.DockerDeliveryObservationTests",
+          "seconds": 0.05250419999999999,
+          "tests": 31
+        },
+        {
+          "className": "Antiphon.Tests.Agents.AgentRegistrySettingsTests",
+          "seconds": 0.05228179999999999,
+          "tests": 22
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointTempScopeTests",
+          "seconds": 0.0504237,
+          "tests": 9
+        },
+        {
+          "className": "Antiphon.Tests.Application.ProviderQuotaRefusalTests",
+          "seconds": 0.0499494,
+          "tests": 18
+        },
+        {
+          "className": "Antiphon.Tests.Application.CodexPhoneHomeProjectionTests",
+          "seconds": 0.0490559,
+          "tests": 5
+        },
+        {
+          "className": "Antiphon.Tests.Application.CardFilePolicyTests",
+          "seconds": 0.0477874,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.ApiKeys.AgentLaunchEnvTests",
+          "seconds": 0.0471297,
+          "tests": 28
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointRunOwnershipTests",
+          "seconds": 0.047089,
+          "tests": 12
+        },
+        {
+          "className": "Antiphon.Tests.Application.DispatchHoldLedgerTests",
+          "seconds": 0.046790800000000014,
+          "tests": 22
+        },
+        {
+          "className": "Antiphon.Tests.Application.WorkflowEngineParsingTests",
+          "seconds": 0.0465247,
+          "tests": 13
+        },
+        {
+          "className": "Antiphon.Tests.TestHelpers.DelegationTestServicesTests",
+          "seconds": 0.0436565,
+          "tests": 5
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.RowRunnerTests",
+          "seconds": 0.042762400000000006,
+          "tests": 13
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.OperatorDashboardSessionsTests",
+          "seconds": 0.04239,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Application.PhoneHomeSpillTests",
+          "seconds": 0.0413613,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Application.RepositoryLeaseWaitersTests",
+          "seconds": 0.0410027,
+          "tests": 5
+        },
+        {
+          "className": "Antiphon.Tests.Application.ExpectationDirectiveTests",
+          "seconds": 0.039536,
+          "tests": 5
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.HostCleanupPolicyTests",
+          "seconds": 0.0389971,
+          "tests": 22
+        },
+        {
+          "className": "Antiphon.Tests.Application.OutputDistillationQueueTests",
+          "seconds": 0.0384823,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Application.AreaMapLoaderTests",
+          "seconds": 0.0373819,
+          "tests": 9
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointToolSourceTests",
+          "seconds": 0.036591500000000006,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Application.SpecialistAttemptEvidenceTests",
+          "seconds": 0.036375500000000005,
+          "tests": 13
+        },
+        {
+          "className": "Antiphon.Tests.Application.StandingPipelinePolicyDocumentationTests",
+          "seconds": 0.0360019,
+          "tests": 10
+        },
+        {
+          "className": "Antiphon.Tests.Agents.GrokCredentialStoreTests",
+          "seconds": 0.034781000000000006,
+          "tests": 12
+        },
+        {
+          "className": "Antiphon.Tests.Migrations.PipelineDefinitionMigrationShapeTests",
+          "seconds": 0.0343273,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Application.DelegationScopeLeaseTests",
+          "seconds": 0.033342100000000006,
+          "tests": 16
+        },
+        {
+          "className": "Antiphon.Tests.Application.ScheduleRecurrenceTests",
+          "seconds": 0.033279,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Application.SubscriptionUsageParserTests",
+          "seconds": 0.0332553,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Application.StandingSpecialistHealthPolicyTests",
+          "seconds": 0.0323376,
+          "tests": 5
+        },
+        {
+          "className": "Antiphon.Tests.Application.TaskReportHousekeepingTests",
+          "seconds": 0.031810000000000005,
+          "tests": 11
+        },
+        {
+          "className": "Antiphon.Tests.Application.PtyDeliveryCeilingsTests",
+          "seconds": 0.0313233,
+          "tests": 9
+        },
+        {
+          "className": "Antiphon.Tests.Domain.StateMachine.RunAttemptStateMachineTests",
+          "seconds": 0.0309571,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Application.ModelLevelAliasDisplayTests",
+          "seconds": 0.030826100000000002,
+          "tests": 24
+        },
+        {
+          "className": "Antiphon.Tests.Application.AwayDigestFormatterTests",
+          "seconds": 0.030377399999999995,
+          "tests": 8
+        },
+        {
+          "className": "Antiphon.Tests.Application.RemoteVerificationWorkspaceTests",
+          "seconds": 0.030327299999999998,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Application.DelegationWorkspaceBoundaryTests",
+          "seconds": 0.030055600000000002,
+          "tests": 15
+        },
+        {
+          "className": "Antiphon.Tests.Application.BoardServiceNeedsHumanReviewTests",
+          "seconds": 0.029535899999999997,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.RerunPolicyTests",
+          "seconds": 0.0290902,
+          "tests": 6
+        },
+        {
+          "className": "Antiphon.Tests.Application.ModelAliasTests",
+          "seconds": 0.02866769999999999,
+          "tests": 76
+        },
+        {
+          "className": "Antiphon.Tests.Application.CardFilePrivacyDocumentationTests",
+          "seconds": 0.0284078,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Application.InstructionFileStampTests",
+          "seconds": 0.0278699,
+          "tests": 15
+        },
+        {
+          "className": "Antiphon.Tests.Application.VerificationReceiptPolicyTests",
+          "seconds": 0.0269857,
+          "tests": 5
+        },
+        {
+          "className": "Antiphon.Tests.Application.CommitRecoveryObligationsTests",
+          "seconds": 0.0266203,
+          "tests": 9
+        },
+        {
+          "className": "Antiphon.Tests.Application.PhoneHomeRunnerSettingsValidatorTests",
+          "seconds": 0.025812599999999998,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Application.PipelineHandoffParseTests",
+          "seconds": 0.0253589,
+          "tests": 42
+        },
+        {
+          "className": "Antiphon.Tests.Application.PostLandMutationContractTests",
+          "seconds": 0.024738500000000007,
+          "tests": 30
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointManifestTests",
+          "seconds": 0.0240912,
+          "tests": 6
+        },
+        {
+          "className": "Antiphon.Tests.Application.CompletionHeaderOverlapTests",
+          "seconds": 0.0237472,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Application.DirectoryMatcherTests",
+          "seconds": 0.023652199999999998,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Application.TypedBodySpillTests",
+          "seconds": 0.023525400000000002,
+          "tests": 9
+        },
+        {
+          "className": "Antiphon.Tests.Application.AgentTaskLivenessTests",
+          "seconds": 0.022857100000000005,
+          "tests": 6
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.CustodyHelperContractTests",
+          "seconds": 0.0225881,
+          "tests": 9
+        },
+        {
+          "className": "Antiphon.Tests.Domain.StateMachine.WorkflowStateMachineTests",
+          "seconds": 0.0223191,
+          "tests": 47
+        },
+        {
+          "className": "Antiphon.Tests.Application.ProviderCapacityNoticeTests",
+          "seconds": 0.0220724,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Application.AgentPresetsTests",
+          "seconds": 0.0216689,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Application.SharedWriterLeaseProjectionTests",
+          "seconds": 0.0215376,
+          "tests": 6
+        },
+        {
+          "className": "Antiphon.Tests.Application.SpecialistFailurePolicyTests",
+          "seconds": 0.021068299999999995,
+          "tests": 30
+        },
+        {
+          "className": "Antiphon.Tests.Application.ClaudeRemoteControlLaunchArgsTests",
+          "seconds": 0.0206049,
+          "tests": 10
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.DirectoryBuildRspTests",
+          "seconds": 0.020368,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Application.DelegationCostTests",
+          "seconds": 0.019359400000000002,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Application.BlockedQuestionTests",
+          "seconds": 0.0189346,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Application.SourceLandingAdmissionTests",
+          "seconds": 0.0183037,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.ReportMergerTests",
+          "seconds": 0.0180793,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Application.SessionRunnerHttpClientHostStatsTests",
+          "seconds": 0.0178805,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.WorktreeManagerTests",
+          "seconds": 0.017340800000000003,
+          "tests": 10
+        },
+        {
+          "className": "Antiphon.Tests.Domain.StateMachine.CardStateMachineTests",
+          "seconds": 0.0172702,
+          "tests": 12
+        },
+        {
+          "className": "Antiphon.Tests.Application.WorkerWorkspaceDefaultStorageTests",
+          "seconds": 0.01718,
+          "tests": 6
+        },
+        {
+          "className": "Antiphon.Tests.Application.CardRankingTests",
+          "seconds": 0.0171765,
+          "tests": 13
+        },
+        {
+          "className": "Antiphon.Tests.Application.WorkspaceReservationLivenessTests",
+          "seconds": 0.0170173,
+          "tests": 20
+        },
+        {
+          "className": "Antiphon.Tests.Application.MutationRoleContractTests",
+          "seconds": 0.0167965,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Application.ScopedVerificationInstructionTests",
+          "seconds": 0.0164179,
+          "tests": 17
+        },
+        {
+          "className": "Antiphon.Tests.Application.ReviewEvidenceParserTests",
+          "seconds": 0.016382,
+          "tests": 21
+        },
+        {
+          "className": "Antiphon.Tests.Application.ClaudeLaunchArgsTests",
+          "seconds": 0.0162996,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Application.ScopeResolverAreaTests",
+          "seconds": 0.0162875,
+          "tests": 10
+        },
+        {
+          "className": "Antiphon.Tests.Application.ChannelMachineTurnMatchTests",
+          "seconds": 0.0162166,
+          "tests": 10
+        },
+        {
+          "className": "Antiphon.Tests.Application.RestartFailureClassificationTests",
+          "seconds": 0.0156057,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Application.CapacityRecoveryPolicyTests",
+          "seconds": 0.015571399999999997,
+          "tests": 8
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.LandingGitProfileTests",
+          "seconds": 0.015111399999999995,
+          "tests": 23
+        },
+        {
+          "className": "Antiphon.Tests.Application.HostStatsCacheTests",
+          "seconds": 0.014818099999999999,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Application.DelegationCapabilityContractTests",
+          "seconds": 0.0147896,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Application.ApiErrorClassifierTests",
+          "seconds": 0.014695699999999997,
+          "tests": 16
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.TrxReportTests",
+          "seconds": 0.0137735,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Application.GrokNativeSessionResumeTests",
+          "seconds": 0.012729599999999999,
+          "tests": 6
+        },
+        {
+          "className": "Antiphon.Tests.Application.AgentPinPathTests",
+          "seconds": 0.012660999999999999,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Application.ApiErrorRetryScheduleTests",
+          "seconds": 0.012638499999999999,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Application.DelegationKindPricingTests",
+          "seconds": 0.01227,
+          "tests": 12
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.HostCleanupOwnershipTests",
+          "seconds": 0.0120167,
+          "tests": 12
+        },
+        {
+          "className": "Antiphon.Tests.Application.TaskPlatformGuidanceTests",
+          "seconds": 0.0119467,
+          "tests": 5
+        },
+        {
+          "className": "Antiphon.Tests.Agents.AgentProtocolAdapterFactoryTests",
+          "seconds": 0.0118675,
+          "tests": 6
+        },
+        {
+          "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+          "seconds": 0.0117436,
+          "tests": 25
+        },
+        {
+          "className": "Antiphon.Tests.TestHelpers.ScaledTimeProviderTests",
+          "seconds": 0.0115618,
+          "tests": 6
+        },
+        {
+          "className": "Antiphon.Tests.Agents.AgentRegistryTests",
+          "seconds": 0.011408099999999997,
+          "tests": 17
+        },
+        {
+          "className": "Antiphon.Tests.Application.LaunchModelArgumentAppenderTests",
+          "seconds": 0.011312099999999999,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Application.CommitOnSettlePolicyResolverTests",
+          "seconds": 0.010649799999999997,
+          "tests": 24
+        },
+        {
+          "className": "Antiphon.Tests.Application.RemoteControlPolicyTests",
+          "seconds": 0.0105656,
+          "tests": 5
+        },
+        {
+          "className": "Antiphon.Tests.Application.PhoneHomeTaskRoutingTests",
+          "seconds": 0.010368099999999998,
+          "tests": 8
+        },
+        {
+          "className": "Antiphon.Tests.Application.PostLandMutationPublicationTests",
+          "seconds": 0.010241,
+          "tests": 33
+        },
+        {
+          "className": "Antiphon.Tests.Application.DeliveryBackendCeilingsTests",
+          "seconds": 0.0102091,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.ApiKeys.ApiKeyPlaceholderTests",
+          "seconds": 0.0101831,
+          "tests": 18
+        },
+        {
+          "className": "Antiphon.Tests.Application.SubscriptionQuotaGateTests",
+          "seconds": 0.0100917,
+          "tests": 13
+        },
+        {
+          "className": "Antiphon.Tests.Application.GitIndexLockTests",
+          "seconds": 0.0098993,
+          "tests": 9
+        },
+        {
+          "className": "Antiphon.Tests.Application.RepairSourceDocumentationTests",
+          "seconds": 0.0097786,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Application.RemoteControlMenuScreenTests",
+          "seconds": 0.0096576,
+          "tests": 12
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointRepeatConfigurationTests",
+          "seconds": 0.0093319,
+          "tests": 5
+        },
+        {
+          "className": "Antiphon.Tests.Application.HerdrAgentKindMapTests",
+          "seconds": 0.009018499999999999,
+          "tests": 6
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.ReportWriterTests",
+          "seconds": 0.0090157,
+          "tests": 6
+        },
+        {
+          "className": "Antiphon.Tests.ApiKeys.ApiKeyProtectorTests",
+          "seconds": 0.0089488,
+          "tests": 6
+        },
+        {
+          "className": "Antiphon.Tests.TestHelpers.SlowTestTripwireTests",
+          "seconds": 0.0086129,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Application.UnmarkedWaitingContractTests",
+          "seconds": 0.0085022,
+          "tests": 5
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.Resilience.ResiliencePredicateTests",
+          "seconds": 0.008172800000000001,
+          "tests": 8
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.PlanCoveragePcTests",
+          "seconds": 0.008049800000000001,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Agents.GrokAdapterTests",
+          "seconds": 0.007976500000000001,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Application.ScopeOverlapPolicyTests",
+          "seconds": 0.007872299999999999,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Application.PolicyRefreshDeltaTests",
+          "seconds": 0.0077255,
+          "tests": 5
+        },
+        {
+          "className": "Antiphon.Tests.Agents.GrokModelListParserTests",
+          "seconds": 0.007480499999999999,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.WorktreeManagerSafetyTests",
+          "seconds": 0.007383,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Application.SlashCommandParserTests",
+          "seconds": 0.0073089,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.AgentTui.DollarEnvArgTests",
+          "seconds": 0.0069459,
+          "tests": 11
+        },
+        {
+          "className": "Antiphon.Tests.Application.CheckCompactionContinuationSettingsTests",
+          "seconds": 0.0068087,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Agents.TranscriptTurnBaselineTests",
+          "seconds": 0.006560100000000001,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.WorktreeRemovalDefaultTests",
+          "seconds": 0.0064859,
+          "tests": 5
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.ShadowCopyTests",
+          "seconds": 0.0063494,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Application.GrokDeliveryShapeTests",
+          "seconds": 0.0059691,
+          "tests": 14
+        },
+        {
+          "className": "Antiphon.Tests.Application.CheckInterpretationValidatorTests",
+          "seconds": 0.0058931999999999995,
+          "tests": 36
+        },
+        {
+          "className": "Antiphon.Tests.Application.CodexLaunchArgsTests",
+          "seconds": 0.0058261,
+          "tests": 8
+        },
+        {
+          "className": "Antiphon.Tests.Agents.CodexResponseAnalyzerTests",
+          "seconds": 0.0056208000000000004,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Application.HostStatsAntiphonCountersTests",
+          "seconds": 0.0055294,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Application.ContextCompactionSettingsTests",
+          "seconds": 0.005525899999999999,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.AppHostBrokerSourceGuardTests",
+          "seconds": 0.0054656,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Application.AgentTaskDispatcherPredicateTests",
+          "seconds": 0.0054081,
+          "tests": 8
+        },
+        {
+          "className": "Antiphon.Tests.Agents.AgentLaunchSpecTests",
+          "seconds": 0.0053811,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Application.WorktreeCleanupSettingsValidatorTests",
+          "seconds": 0.0053667,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Application.PostLandRetrospectiveContractTests",
+          "seconds": 0.0053579,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Application.CardAliasNormalizationTests",
+          "seconds": 0.0050049000000000005,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Application.VerificationRoundInstructionTests",
+          "seconds": 0.0049125,
+          "tests": 6
+        },
+        {
+          "className": "Antiphon.Tests.Application.AgentExecutableResolverTests",
+          "seconds": 0.0047824,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Application.WorkerWorkspaceDefaultMigrationShapeTests",
+          "seconds": 0.0047683,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Application.RunnerDefaultGuidanceTests",
+          "seconds": 0.004537299999999999,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Application.DelegationDenyHookPolicyTests",
+          "seconds": 0.004384900000000001,
+          "tests": 5
+        },
+        {
+          "className": "Antiphon.Tests.Agents.GrokSignInPromptDetectorTests",
+          "seconds": 0.0043758,
+          "tests": 16
+        },
+        {
+          "className": "Antiphon.Tests.Application.PipelineStagesJsonTests",
+          "seconds": 0.004260000000000001,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Application.DelegationQuestionDetectionTests",
+          "seconds": 0.0040980999999999995,
+          "tests": 8
+        },
+        {
+          "className": "Antiphon.Tests.Application.DelegationLeaseSettingsTests",
+          "seconds": 0.0040808,
+          "tests": 8
+        },
+        {
+          "className": "Antiphon.Tests.Application.WorktreeListParsingTests",
+          "seconds": 0.0040251,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointRepeatDocumentationTests",
+          "seconds": 0.0039678,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.TestHelpers.TestAppHostPathTests",
+          "seconds": 0.0038033,
+          "tests": 5
+        },
+        {
+          "className": "Antiphon.Tests.Application.WorkspaceReservationKeyTests",
+          "seconds": 0.0037436,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Application.AgentContextContractTests",
+          "seconds": 0.0036977,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Application.TranscriptLocalCommandEchoTests",
+          "seconds": 0.0036353999999999996,
+          "tests": 6
+        },
+        {
+          "className": "Antiphon.Tests.ProcessSpawnLimitTests",
+          "seconds": 0.0036063000000000002,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Agents.HerdrEnvelopeBodyTests",
+          "seconds": 0.0033845,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Application.AlarmSettingsValidatorTests",
+          "seconds": 0.0033208,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Scripts.DelegateScriptRunnerSwitchTests",
+          "seconds": 0.0032858999999999996,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Application.HerdrStatusDisagreementTests",
+          "seconds": 0.003162,
+          "tests": 14
+        },
+        {
+          "className": "Antiphon.Tests.LandDeliveryWaitRoutingTests",
+          "seconds": 0.003159,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Application.GrokLaunchArgsTests",
+          "seconds": 0.0030602,
+          "tests": 9
+        },
+        {
+          "className": "Antiphon.Tests.Application.OrchestratorSettingsTests",
+          "seconds": 0.0030428,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Application.LandMergeWriterTests",
+          "seconds": 0.003004,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.DotnetToolManifestContractTests",
+          "seconds": 0.0029944999999999998,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Application.CardIdentifierAllocatorTests",
+          "seconds": 0.0028691999999999997,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Application.GrokRulesLiveEvidenceTests",
+          "seconds": 0.00278,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Application.ColumnTextTests",
+          "seconds": 0.0027791,
+          "tests": 6
+        },
+        {
+          "className": "Antiphon.Tests.Application.CommitOnSettleDocumentationTests",
+          "seconds": 0.0027427,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Agents.CodexWorkingIndicatorTests",
+          "seconds": 0.0026408,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Application.RunnerBranchContractDocumentationTests",
+          "seconds": 0.0024615,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Agents.AgentSessionSettingsTests",
+          "seconds": 0.002432,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.PostgresPoolConfigurationTests",
+          "seconds": 0.0023791,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointLineTests",
+          "seconds": 0.0021847,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Agents.OpenCodeAdapterTests",
+          "seconds": 0.0019332000000000002,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.ExitCodeTests",
+          "seconds": 0.0019089999999999999,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.CheckpointToolProjectContractTests",
+          "seconds": 0.0018893,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Application.AgentTaskLandVerificationEvidenceTests",
+          "seconds": 0.0017999999999999997,
+          "tests": 9
+        },
+        {
+          "className": "Antiphon.Tests.Agents.GrokTrustPromptDetectorTests",
+          "seconds": 0.0017539,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Application.CheckScheduleBackoffTests",
+          "seconds": 0.0016968999999999999,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Application.SubagentNotificationTests",
+          "seconds": 0.0015501,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Application.RoutingCandidateParseTests",
+          "seconds": 0.0013866,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Application.PipelineDefinitionDocumentationTests",
+          "seconds": 0.0013758,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Application.HerdrLaunchContextTitleTests",
+          "seconds": 0.0013097,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Application.PtyInlineCeilingTests",
+          "seconds": 0.0011654,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Application.GrokQuestionPopupTests",
+          "seconds": 0.0009524,
+          "tests": 4
+        },
+        {
+          "className": "Antiphon.Tests.Application.DelegationAllowedRootsFileTests",
+          "seconds": 0.000923,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Application.DelegationPoolDefaultsTests",
+          "seconds": 0.0009063,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Application.BootWedgeContractTests",
+          "seconds": 0.0008963,
+          "tests": 2
+        },
+        {
+          "className": "Antiphon.Tests.Application.TierReasoningEffortAgreementTests",
+          "seconds": 0.0008719,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Application.CheckScheduleElapsedTimesTests",
+          "seconds": 0.0007694,
+          "tests": 3
+        },
+        {
+          "className": "Antiphon.Tests.Application.CheckScheduleRoundingTests",
+          "seconds": 0.0006996,
+          "tests": 7
+        },
+        {
+          "className": "Antiphon.Tests.Application.SessionRunnerSettingsTests",
+          "seconds": 0.0005403,
+          "tests": 1
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.ProcessDriverTests",
+          "seconds": 0.0005291,
+          "tests": 1
+        }
+      ],
+      "attempt": 1,
+      "repeat": null,
+      "timings": {
+        "slotWaitSeconds": 0,
+        "buildSlotWaitSeconds": 0,
+        "rowSlotWaitSeconds": 0,
+        "buildSeconds": 129.4762276,
+        "producingBuild": "bin-c1005-unit",
+        "startupSeconds": 172.4246167,
+        "testsWallSeconds": 191.5815567,
+        "teardownSeconds": 4.3347049,
+        "testHostWallSeconds": 368.3411638,
+        "method": "utc-trx-and-monotonic-host",
+        "unavailableReason": null
+      }
+    }
+  ],
+  "unlisted": [],
+  "evidence": "/work/worktrees/task-535715ec/.antiphon/checkpoints/20261003-181207-a884/report.md",
+  "cleanedOutputs": false,
+  "outputNames": [
+    "bin-c1005-final/",
+    "bin-c1005-unit/"
+  ],
+  "maxConcurrentRows": 1,
+  "maxConcurrentBuilds": 1
+}
