@@ -478,10 +478,10 @@ No PC is executed by this Plan dispatch; ordinary Code does not claim these rows
 ### Inspection
 
 TestDesign freeze 79011cb4, 2026-10-03, inspected HEAD and origin/master
-d40c16704e5a26c7da8ea0be11ed11170ebc828e (remote read at 12:50 UTC).
+d40c16704e5a26c7da8ea0be11ed11170ebc828e (remote tip rechecked unchanged at 13:21 UTC).
 This appendix freezes the proposed verification without changing D-1..D-10.
-The introductory TestDesign handoff and the preceding PC-1..PC-22 table are
-historical: those PC numbers name **families F-1..F-22**, not the independently
+The introductory TestDesign handoff and the preceding F-1..F-22 family table are
+historical: the original PC-1..PC-22 identifiers name **families F-1..F-22**, not the independently
 executable controls numbered below. Code implements the 22 methods below as
 single [Test] results, with internal labelled vectors, no Arguments/data source
 expansion, no skips and no test-only fail-open product default.
@@ -642,7 +642,7 @@ Literal operator item uses canonical desktop; repeat with runner-a:
 {"runnerId":"desktop","model":"gpt-6.1-sol","reason":"C959 isolated qualification",
 "expiresAtUtc":"2026-10-03T12:05:00Z",
 "allowedRefusalCodes":["codex_cli_version_too_old"]}.
-Map member casing to the final settings DTO without broadening this permission.
+These freeze the new settings member names; normal case-insensitive configuration binding is permitted without broadening this permission.
 Test empty array; wrong runner/model/code separately; "*" in each scope;
 empty reason; duplicate exact tuple; invalid code; missing/invalid UTC expiry;
 lifetime 24h accepted versus 24h+tick rejected; expiry at T and T-1tick;
@@ -706,8 +706,10 @@ resolution fields and unsupported loader overrides return unknown with starts=0.
 Use 65,537 ASCII characters for each oversized executable/cwd/PATH input, one
 field at a time with the others valid; NUL and the literal ${secret:C959} are
 separate invalid vectors. These are guaranteed-invalid payloads, not invented
-claims of a baseline field limit. Code records the actual finite limits and
-adds equality/+1 vectors against each chosen limit within V-13 before its CP.
+claims of a baseline field limit. D-4 leaves per-field numeric ceilings to
+implementation, so equality at an invented baseline ceiling is not a frozen
+acceptance condition. Code records its chosen finite limits and adds equality/+1
+vectors within V-13 before its CP; method count and admission behavior stay fixed.
 
 #### Harmless child and missing setup
 
@@ -715,9 +717,10 @@ S1 must materialize the optional Fixtures/CodexVersionChild.ps1 from literal
 source, or embed the same literal in CodexCliVersionTestFixture; locate it from
 the repository root if file-backed, since the csproj does not copy arbitrary ps1.
 It has only fixed modes: success emits "codex-cli 0.160.0" and exits 0;
-nonzero emits that line and exits 1; stderr adds one fixed stderr byte; flood
-writes 4097 stdout bytes; tree starts one leaf child that holds inherited pipes;
-leaf waits for parent cleanup. Use ProcessStartInfo.ArgumentList with the
+nonzero emits that line and exits 1; stderr adds one fixed stderr byte;
+stdout-flood and stderr-flood write 4097 bytes to their respective streams;
+stdin waits for EOF, timeout waits for cleanup, and tree starts one leaf child
+that holds inherited pipes. The leaf waits for parent cleanup. Use ProcessStartInfo.ArgumentList with the
 resolved pwsh executable, -NoLogo -NoProfile -NonInteractive -File and literal
 mode, never -Command or a shell command string. Each parent/leaf writes PID plus
 UTC start time into its own receipt file under the owned root before signalling
@@ -739,7 +742,7 @@ The harmless-child literal to implement in the new fixture is:
 
 ~~~powershell
 param(
-    [ValidateSet('success','nonzero','stderr','stdout-flood','stderr-flood','tree','leaf')]
+    [ValidateSet('success','nonzero','stderr','stdout-flood','stderr-flood','stdin','timeout','tree','leaf')]
     [string]$Mode = 'success',
     [Parameter(Mandatory=$true)][string]$ReceiptRoot
 )
@@ -752,7 +755,7 @@ $receipt = @{
     mode = $Mode
 } | ConvertTo-Json -Compress
 [IO.File]::WriteAllText((Join-Path $ReceiptRoot ($Mode + '.json')), $receipt)
-if ($Mode -eq 'leaf') {
+if ($Mode -eq 'leaf' -or $Mode -eq 'timeout') {
     [Threading.Thread]::Sleep(20000)
     exit 0
 }
@@ -785,6 +788,11 @@ if ($Mode -eq 'tree') {
 }
 if ($Mode -eq 'stdout-flood') { [Console]::Out.Write(('A' * 4097)); exit 0 }
 if ($Mode -eq 'stderr-flood') { [Console]::Error.Write(('E' * 4097)); exit 0 }
+if ($Mode -eq 'stdin') {
+    $inputBody = [Console]::In.ReadToEnd()
+    if ($inputBody.Length -ne 0) { throw 'probe stdin carried data' }
+    [IO.File]::WriteAllText((Join-Path $ReceiptRoot 'stdin-eof'), 'eof')
+}
 [Console]::Out.WriteLine('codex-cli 0.160.0')
 if ($Mode -eq 'stderr') { [Console]::Error.Write('E') }
 if ($Mode -eq 'nonzero') { exit 1 }
@@ -1047,16 +1055,32 @@ are additional internal cases of the same V method, not additional TUnit results
 | G-196 | D-6; Owned deadline fails unknown | PC-196 |
 | G-197 | D-7; Retry checks current override expiry | PC-197 |
 | G-198 | D-4; Retry old client fails unknown | PC-198 |
+| G-199 | D-2; Probe DTO never publishes raw diagnostic | PC-199 |
+| G-200 | D-5; Exactly maximum age remains admissible | PC-200 |
+| G-201 | D-3; Live foreign store still refused | PC-201 |
+| G-202 | D-3; Store replacement waits full lease | PC-202 |
+| G-203 | D-3; Retired slot cannot register | PC-203 |
+| G-204 | D-6; Warm reuse checks CLI before input | PC-204 |
+| G-205 | D-4; Resolution cwd participates in identity | PC-205 |
+| G-206 | D-4; Selected node package owns identity and probe | PC-206 |
+| G-207 | D-3; Store replacement waits a full lease after disconnect | PC-207 |
+| G-208 | D-3; Store replacement requires explicit retirement clear | PC-208 |
 
 ### Positive controls
 
-**198 independent variants in 22 families.** Each row changes production behavior
+**208 independent variants in 22 families.** Each row changes production behavior
 by one compiling defect, leaves the other guards intact, and selects exactly the
 named method with /*/*/Class/Method (MinExecuted=1). A label below must be attached
 to the direct outcome assertion inside that method. Preserve the correct fixture
 even if a mutant would otherwise make setup take a different branch; use the
 smallest seam necessary to reach the guarded outcome. Never mutate the assertion,
 fixture expectation, a live CLI installation or the independent child rescue.
+Capture production-call exceptions as outcomes, then assert with the listed label;
+an unexpected admission refusal is a labeled behavioral failure, not fixture setup.
+For receipt vectors, use a bounded observation returning false at its deadline and
+assert full receipt with that label, rather than throwing an unlabeled wait timeout.
+The V table's primary labels identify the initial contract assertion; the per-PC
+labels identify the specific vector's first detecting assertion within that method.
 Implementation symbols are introduced by S1-S4; mutations below identify their
 responsibility and exact replacement, rather than inventing existing line numbers.
 
@@ -1225,8 +1249,8 @@ repair or shared-helper rewrite is authorized by this matrix.
 | PC-153 | F-19; CodexCliAdmissionTests/C959_Profile_launcher_uses_its_own_evidence | Use default snapshot despite differing launcher. Input: default current/selected B old. **C959-pc-153**: codex_cli_version_too_old. |
 | PC-154 | F-19; CodexCliAdmissionTests/C959_Profile_launcher_uses_its_own_evidence | Refuse using default old before probing selected A. Input: default old/selected A current. **C959-pc-154**: admitted with selected A evidence. |
 | PC-155 | F-19; CodexCliAdmissionTests/C959_Profile_launcher_uses_its_own_evidence | Accept RunnerVersion=Codex 0.160.0 as probe success. Input: selected B unknown validation good. **C959-pc-155**: codex_cli_version_unknown. |
-| PC-156 | F-19; CodexCliAdmissionTests/C959_Profile_launcher_uses_its_own_evidence | Drop PATH from descriptor/cache identity. Input: A:B changes to B:A. **C959-pc-156**: B old refused. |
-| PC-157 | F-19; CodexCliAdmissionTests/C959_Profile_launcher_uses_its_own_evidence | Drop PATHEXT from resolution identity. Input: Windows selector resolves other extension. **C959-pc-157**: changed identity reprobed or unknown. |
+| PC-156 | F-19; CodexCliAdmissionTests/C959_Profile_launcher_uses_its_own_evidence | Drop the profile PATH override while constructing the exact probe descriptor. Input: bare selector, default A:B, profile B:A. **C959-pc-156**: outgoing descriptor PATH is B:A and B old is refused. |
+| PC-157 | F-19; CodexCliAdmissionTests/C959_Profile_launcher_uses_its_own_evidence | Drop the profile PATHEXT override while constructing the exact probe descriptor. Input: default .EXE;.CMD, profile .CMD;.EXE. **C959-pc-157**: outgoing descriptor PATHEXT is .CMD;.EXE. |
 | PC-158 | F-19; CodexCliAdmissionTests/C959_Profile_launcher_uses_its_own_evidence | Resolve nonexistent future cwd from parent. Input: relative codex with future worktree. **C959-pc-158**: unknown. |
 | PC-159 | F-19; CodexCliAdmissionTests/C959_Profile_launcher_uses_its_own_evidence | Send desktop codex.cmd path to remote probe. Input: standard remote Codex launch. **C959-pc-159**: descriptor selector Linux codex. |
 | PC-160 | F-20; CodexCliAdmissionTests/C959_Override_is_scoped_expiring_and_audited | Remove runner equality predicate. Input: wrong runner/live/model/code valid. **C959-pc-160**: refusal preserved. |
@@ -1260,7 +1284,7 @@ repair or shared-helper rewrite is authorized by this matrix.
 | PC-188 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | Drop dispatch handoff when session currently busy. Input: busy then TurnEnd. **C959-pc-188**: one full recipient prompt after becoming eligible. |
 | PC-189 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | Emit CLI override Warning on ordinary compatible success. Input: F-current without exception. **C959-pc-189**: CLI Warning count 0. |
 | PC-190 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | Remove Dispatcher launch enqueue while retaining message enqueue. Input: fresh compatible task. **C959-pc-190**: recipient adapter starts and full prompt arrives. |
-| PC-191 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | Treat failed enqueue as delivered in Dispatcher follow-on state. Input: enqueue fault before persistence. **C959-pc-191**: no receipt/success until recovery. |
+| PC-191 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | In the Dispatcher enqueue-exception catch, set claimed.Status to Working and save it. Input: enqueue fault before persistence. **C959-pc-191**: task is not Working and has no recipient receipt until recovery. |
 | PC-192 | F-21; CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | Reuse old session id for retry queue handoff. Input: restart and retry with new session generation. **C959-pc-192**: receipt on retry session/generation only. |
 | PC-193 | F-22; CodexCliAdmissionTests/C959_Retry_and_cancellation_recheck | Remove retry CLI gate. Input: failed task on old/unknown/stale runner. **C959-pc-193**: status unchanged and Retried count 0. |
 | PC-194 | F-22; CodexCliAdmissionTests/C959_Retry_and_cancellation_recheck | Return Queued without persisting retry transition. Input: failed old task repaired to floor. **C959-pc-194**: real queue full UserPrompt. |
@@ -1268,14 +1292,32 @@ repair or shared-helper rewrite is authorized by this matrix.
 | PC-196 | F-22; CodexCliAdmissionTests/C959_Retry_and_cancellation_recheck | On owned deadline return admitted. Input: silent exact probe. **C959-pc-196**: codex_cli_version_unknown. |
 | PC-197 | F-22; CodexCliAdmissionTests/C959_Retry_and_cancellation_recheck | Reuse previous override admission on retry. Input: same task after expiry. **C959-pc-197**: refused, no Retried event. |
 | PC-198 | F-22; CodexCliAdmissionTests/C959_Retry_and_cancellation_recheck | Use default success if new client operation absent. Input: legacy client on retry. **C959-pc-198**: unknown and unchanged status. |
+| PC-199 | F-2; CodexCliVersionProbeTests/C959_Probe_is_version_only_and_auth_free | Assign captured stderr to CodexCliVersionError instead of fixed reason. Input: synthetic diagnostic sentinel. **C959-pc-199**: serialized sample excludes sentinel and error is fixed token. |
+| PC-200 | F-10; RunnerCodexCliEvidenceTests/C959_Freshness_boundaries | Change age <= maxAge to age < maxAge. Input: age exactly 15m, no error, bound launcher/generation. **C959-pc-200**: admitted without refresh. |
+| PC-201 | F-11; RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Delete only the slot.Live-is-not-null disjunct in the store replacement guard. Input: retirement cleared, original registration lease expired, same boot, different store, current socket still live and no disconnect. **C959-pc-201**: phone_home_store_mismatch and current sample unchanged. |
+| PC-202 | F-11; RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Delete only slot.LeaseUntil > now in the store replacement guard. Input: retirement cleared, no socket/disconnect, same boot, new store at 89s of the 90s registration lease. **C959-pc-202**: phone_home_store_mismatch and current sample unchanged. |
+| PC-203 | F-11; RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Remove retired-slot registration refusal. Input: retired slot with same or foreign store. **C959-pc-203**: existing RunnerRetired code and no accepted sample. |
+| PC-204 | F-17; CodexCliAdmissionTests/C959_Queued_downgrade_blocks_before_claim | Skip CLI preflight on warm-session branch only. Input: compatible create then old CLI on selected warm idle session. **C959-pc-204**: Blocked and reused-session input count 0. |
+| PC-205 | F-19; CodexCliAdmissionTests/C959_Profile_launcher_uses_its_own_evidence | Remove cwd consistently from the descriptor fingerprint and cache identity. Input: same absolute native executable/metadata with resolution cwds A and B; both report current. **C959-pc-205**: fingerprint differs and second descriptor is probed. |
+| PC-206 | F-19; CodexCliAdmissionTests/C959_Profile_launcher_uses_its_own_evidence | Substitute default package A codex.js before both resolution and probing. Input: same node with explicitly selected package B old, default A current. **C959-pc-206**: captured js prefix is B and selected B is refused. |
+| PC-207 | F-11; RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Delete only the LastDisconnect plus lease disjunct from store replacement. Input: expired registration lease, retirement cleared, same boot, recent heartbeat then disconnect, new store after 89 of 90 seconds from disconnect. **C959-pc-207**: phone_home_store_mismatch and old identity unchanged. |
+| PC-208 | F-11; RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Delete only !slot.StoreReplacementAuthorized from store replacement. Input: same boot, no socket, expired registration/disconnect leases, no retirement clear, different store. **C959-pc-208**: phone_home_store_mismatch and old identity unchanged. |
 
-Audit: bodies read as listed; **guards=198, mapped=198, missing=0,
-duplicate PC maps=0**. All 198 have one exact method, one concrete injected
+Audit: bodies read as listed; **guards=208, mapped=208, missing=0,
+duplicate PC maps=0**. All 208 have one exact method, one concrete injected
 defect, one fixture and one first detecting label; executable after S1-S4 supplies
 the frozen methods/setup. None was executed in TestDesign. A new implementation
 guard or an unexecutable control returns for an explicit freeze amendment; it is
 not silently discarded. There is no claim that the current baseline already
 contains the new tests.
+
+Read-only final document audit passed: unchanged D-1..D-10 and implementation
+slices; seven byte-identical checkpoint rows with eleven fields each; 166 ordinary
+results and 55 estimated minutes; complete G/PC sequences 1..208 with unique
+one-to-one maps and a labelled assertion on every control; 22 exact method filters;
+family counts and the 1833-minute PC floor reconcile. The literal harmless-child
+PowerShell parsed with zero syntax errors; it was not executed. These checks
+validate document structure and arithmetic, not product behavior or importer output.
 
 ### Out of scope
 
@@ -1449,7 +1491,7 @@ authoring and slot queue wait. Review repeating the affected rows adds 55 minute
 There is no TestDesign build/test cost receipt; read-only inspection did not
 execute any checkpoint.
 
-Mutation now has **198** independent controls, replacing the unfrozen 22-family,
+Mutation now has **208** independent controls, replacing the unfrozen 22-family,
 300-minute planning envelope. Cost each exact method's baseline at four minutes
 (portable) or five (Windows), including its isolated build. Each PC then costs
 four-minute red build/run + 0.25-minute restoration/check + four-minute green
@@ -1460,7 +1502,7 @@ per invocation. Baseline and both mutant/restored phases stay method-scoped.
 | Family / exact filter | Variants | Baseline minutes | Red/restore/green per PC | Family floor minutes |
 |---|---:|---:|---:|---:|
 | F-1; /*/*/CodexCliVersionProbeTests/C959_Parses_and_orders_versions | 13 | 4 | 8.25 | 111.25 |
-| F-2; /*/*/CodexCliVersionProbeTests/C959_Probe_is_version_only_and_auth_free | 13 | 4 | 8.25 | 111.25 |
+| F-2; /*/*/CodexCliVersionProbeTests/C959_Probe_is_version_only_and_auth_free | 14 | 4 | 8.25 | 119.5 |
 | F-3; /*/*/CodexCliVersionProbeTests/C959_Failure_bounds_and_cleanup | 11 | 4 | 8.25 | 94.75 |
 | F-4; /*/*/CodexCliVersionProbeTests/C959_Refresh_replaces_evidence | 12 | 4 | 8.25 | 103 |
 | F-5; /*/*/CodexCliVersionProbeTests/C959_Local_and_registration_share_snapshot | 11 | 4 | 8.25 | 94.75 |
@@ -1468,34 +1510,34 @@ per invocation. Baseline and both mutant/restored phases stay method-scoped.
 | F-7; /*/*/CodexCliVersionWindowsTests/C959_Native_and_direct_node_probe | 4 | 5 | 10.25 | 46 |
 | F-8; /*/*/CodexCliVersionWindowsTests/C959_Unverified_launcher_is_unknown | 5 | 5 | 10.25 | 56.25 |
 | F-9; /*/*/RunnerCodexCliEvidenceTests/C959_Heartbeat_updates_only_probe_evidence | 7 | 4 | 8.25 | 61.75 |
-| F-10; /*/*/RunnerCodexCliEvidenceTests/C959_Freshness_boundaries | 11 | 4 | 8.25 | 94.75 |
-| F-11; /*/*/RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | 7 | 4 | 8.25 | 61.75 |
+| F-10; /*/*/RunnerCodexCliEvidenceTests/C959_Freshness_boundaries | 12 | 4 | 8.25 | 103 |
+| F-11; /*/*/RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | 12 | 4 | 8.25 | 103 |
 | F-12; /*/*/RunnerCodexCliEvidenceTests/C959_Catalogue_and_status_project_version | 9 | 4 | 8.25 | 78.25 |
 | F-13; /*/*/RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | 16 | 4 | 8.25 | 136 |
 | F-14; /*/*/CodexCliAdmissionTests/C959_Ladder_and_exact_models_share_floor | 4 | 4 | 8.25 | 37 |
 | F-15; /*/*/CodexCliAdmissionTests/C959_Create_refuses_bad_versions | 6 | 4 | 8.25 | 53.5 |
 | F-16; /*/*/CodexCliAdmissionTests/C959_Existing_refusals_and_flags_keep_precedence | 5 | 4 | 8.25 | 45.25 |
-| F-17; /*/*/CodexCliAdmissionTests/C959_Queued_downgrade_blocks_before_claim | 8 | 4 | 8.25 | 70 |
+| F-17; /*/*/CodexCliAdmissionTests/C959_Queued_downgrade_blocks_before_claim | 9 | 4 | 8.25 | 78.25 |
 | F-18; /*/*/CodexCliAdmissionTests/C959_Exact_profile_model_wins | 6 | 4 | 8.25 | 53.5 |
-| F-19; /*/*/CodexCliAdmissionTests/C959_Profile_launcher_uses_its_own_evidence | 7 | 4 | 8.25 | 61.75 |
+| F-19; /*/*/CodexCliAdmissionTests/C959_Profile_launcher_uses_its_own_evidence | 9 | 4 | 8.25 | 78.25 |
 | F-20; /*/*/CodexCliAdmissionTests/C959_Override_is_scoped_expiring_and_audited | 23 | 4 | 8.25 | 193.75 |
 | F-21; /*/*/CodexCliAdmissionTests/C959_Compatible_launch_keeps_model_and_runner | 10 | 4 | 8.25 | 86.5 |
 | F-22; /*/*/CodexCliAdmissionTests/C959_Retry_and_cancellation_recheck | 6 | 4 | 8.25 | 53.5 |
 
-The **Mutation PC floor is 1750.5 minutes** (91 baseline + 1659.5 red/restore/green),
-plus **4 minutes** for inherited-driver/evidence setup = **1754.5 minutes**.
-The combined setup/build + ordinary V/R + all PC floor is **1813.5 minutes**:
+The **Mutation PC floor is 1833 minutes** (91 baseline + 1742 red/restore/green),
+plus **4 minutes** for inherited-driver/evidence setup = **1837 minutes**.
+The combined setup/build + ordinary V/R + all PC floor is **1896 minutes**:
 4 Code bootstrap + 55 CP ordinary + 4 Mutation setup + 91 method baselines +
-1659.5 PC cycles. A separate full ordinary Review makes **1868.5 minutes**.
+1742 PC cycles. A separate full ordinary Review makes **1951 minutes**.
 Authoring, native Windows scheduling, slot waits and findings/repairs are additional.
 
 No broad suite substitutes for a named method. Reuse the known clean baseline
 for the same method/source after exact restoration; retain every red/green
 receipt independently. Relative to repeating an extra baseline for every variant,
-22 method baselines instead of 198 save an estimated **714 minutes**
-(166 redundant portable baselines x4 + 10 redundant Windows baselines x5).
-Measured savings=0: no execution occurred. There are **418** method executions
-in the PC estimate (22 baselines + 198 red + 198 green), separate from the
+22 method baselines instead of 208 save an estimated **754 minutes**
+(176 redundant portable baselines x4 + 10 redundant Windows baselines x5).
+Measured savings=0: no execution occurred. There are **438** method executions
+in the PC estimate (22 baselines + 208 red + 208 green), separate from the
 166 ordinary executions. The larger floor is the consequence of independently
 testing the guards; it is not a claim of measured runtime or permission to batch
 controls sharing a method/file.
@@ -1535,5 +1577,5 @@ No unrelated structural defect was established in this Plan dispatch.
 
 --- next stage ---
 next: code
-handoff: Implement frozen CARD-0959 S1-S4 after current-base census, active-footprint collision check and real seven-row importer admission; 22 new methods, 166 ordinary results, 198 post-land PCs. Keep excluded queue/attention/deploy/Grok/Coverage files untouched; schedule Windows CP-2 at the same implementation SHA and activate runners before server enforcement.
+handoff: Implement frozen CARD-0959 S1-S4 after current-base census, active-footprint collision check and real seven-row importer admission; 22 new methods, 166 ordinary results, 208 post-land PCs. Keep excluded queue/attention/deploy/Grok/Coverage files untouched; schedule Windows CP-2 at the same implementation SHA and activate runners before server enforcement.
 artifact: docs/superpowers/plans/2026-10-03-card-0959-runner-codex-version-plan.md
