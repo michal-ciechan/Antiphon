@@ -13,6 +13,7 @@ using System.Data.Common;
 using System.Reflection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -102,10 +103,17 @@ public sealed class TaskInputReadFailureTests
         var commands = new WriteProbe();
         var runner = DispatchProxy.Create<ISessionRunnerClient, InputCallProbe>();
         var inputProbe = (InputCallProbe)runner;
-        var first = (await ReadItemsAsync(f, commands, runner)).Single(i => i.Kind == AttentionKind.TaskInputUnreadable);
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 2, 10, 5, 0, TimeSpan.Zero));
+        var first = (await ReadItemsAsync(f, commands, runner, clock)).Single(i => i.Kind == AttentionKind.TaskInputUnreadable);
+        first.SinceUtc.ShouldBe(new DateTime(2026, 10, 2, 10, 1, 41, DateTimeKind.Utc),
+            "condition-time-is-complaint-time");
         await using var db = f.Db();
         var eventsBefore = await db.AgentTaskEvents.CountAsync();
-        var secondItems = await ReadItemsAsync(f, commands, runner);
+        var rowsBefore = JsonSnapshot(await db.SessionQueuedMessages.AsNoTracking().ToListAsync());
+        var tasksBefore = JsonSnapshot(await db.AgentTasks.AsNoTracking().ToListAsync());
+        var sessionsBefore = JsonSnapshot(await db.AgentSessions.AsNoTracking().ToListAsync());
+        clock.Advance(TimeSpan.FromMinutes(1));
+        var secondItems = await ReadItemsAsync(f, commands, runner, clock);
         secondItems.Count(i => i.Kind == AttentionKind.TaskInputUnreadable).ShouldBe(1,
             "condition-count=1");
         var second = secondItems.Single(i => i.Kind == AttentionKind.TaskInputUnreadable);
@@ -117,6 +125,12 @@ public sealed class TaskInputReadFailureTests
         commands.Writes.ShouldBe(0, "attention-command-write-count=0");
         inputProbe.InputCalls.ShouldBe(0, "attention-input-call-count=0");
         (await db.AgentTaskEvents.CountAsync()).ShouldBe(eventsBefore, "attention-write-count=0");
+        JsonSnapshot(await db.SessionQueuedMessages.AsNoTracking().ToListAsync()).ShouldBe(rowsBefore,
+            "attention-queue-values-unchanged");
+        JsonSnapshot(await db.AgentTasks.AsNoTracking().ToListAsync()).ShouldBe(tasksBefore,
+            "attention-task-values-unchanged");
+        JsonSnapshot(await db.AgentSessions.AsNoTracking().ToListAsync()).ShouldBe(sessionsBefore,
+            "attention-session-values-unchanged");
     }
 
     [Test]
@@ -206,16 +220,20 @@ public sealed class TaskInputReadFailureTests
     }
 
     private static async Task<IReadOnlyList<AttentionItemDto>> ReadItemsAsync(TaskInputSpillFixture f,
-        WriteProbe? commands = null, ISessionRunnerClient? runner = null)
+        WriteProbe? commands = null, ISessionRunnerClient? runner = null, TimeProvider? clock = null)
     {
         var options = new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(f.ConnectionString);
         if (commands is not null) options.AddInterceptors(commands);
         await using var db = new AppDbContext(options.Options);
         var service = new AttentionService(db, runner ?? new BridgeQueueHarness.EmptyRunnerClient(),
             Options.Create(new SupervisionSettings()), Options.Create(new DelegationSettings()),
-            TimeProvider.System, NullLogger<AttentionService>.Instance);
+            clock ?? TimeProvider.System, NullLogger<AttentionService>.Instance);
         return (await service.GetAsync(CancellationToken.None, includeProgressProbe: false)).Items;
     }
+
+    private static string JsonSnapshot<T>(T value) => System.Text.Json.JsonSerializer.Serialize(value,
+        new System.Text.Json.JsonSerializerOptions
+        { ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles });
 
     public class InputCallProbe : DispatchProxy
     {
