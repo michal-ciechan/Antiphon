@@ -1,0 +1,4 @@
+BUILD SLOT granted lease=d8804325-29e9-43b3-bafb-4c73e60545a6 waited=0s maxcpucount=6
+base absence was not refused
+C1008_HOST_MANUAL cleanup=absent evidence=/tmp/c1008-host-real-manual-yE8sPf/evidence.json
+BUILD SLOT released lease=d8804325-29e9-43b3-bafb-4c73e60545a6 held=3s

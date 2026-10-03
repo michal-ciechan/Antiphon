@@ -1,0 +1,33 @@
+
+const fs=require('fs'),os=require('os'),cp=require('child_process'),crypto=require('crypto');
+const d=(...a)=>cp.execFileSync('docker',a,{encoding:'utf8',timeout:90000}).trim();
+if(!fs.existsSync('/.dockerenv')||d('info','--format','{{.Name}}')!==os.hostname())throw Error('SiblingDaemonRefused');
+const root=fs.mkdtempSync('/tmp/c1008-git-manual-'),prefix='c1008gitmanual'+crypto.randomBytes(8).toString('hex'),image='mcr.microsoft.com/dotnet/sdk:10.0',names=[prefix+'_work',prefix+'_origin'],results=[];
+const guard=n=>{if(!n.startsWith(prefix)||/^antiphon-runner(?:$|_|-temp|cache)/.test(n))throw Error('ProductionNameRefused');return n;};
+const run=(uid,readOnly,script)=>cp.spawnSync('docker',['run','--rm','--network','none','--label','io.antiphon.c1008-git-manual='+prefix,'--user',uid,'--entrypoint','/bin/bash','-e','GIT_OPTIONAL_LOCKS=0','-e','GIT_CONFIG_GLOBAL=/dev/null','-e','GIT_CONFIG_SYSTEM=/dev/null','-e','GIT_TERMINAL_PROMPT=0','--mount','type=volume,source='+guard(names[0])+',target=/work'+(readOnly?',readonly':''),'--mount','type=volume,source='+guard(names[1])+',target=/origin'+(readOnly?',readonly':''),image,'-c','set -euo pipefail; '+script],{encoding:'utf8',timeout:60000});
+let error=null;
+try{
+ d('image','inspect',image);
+ for(const n of names)d('volume','create','--label','io.antiphon.c1008-git-manual='+prefix,guard(n));
+ let p=run('0:0',false,'chown 1654:1654 /work /origin; chmod 0700 /work /origin');if(p.status!==0)throw Error('ownership setup failed');
+ p=run('1654:1654',false,"git init -q --bare /origin; git init -q -b master /work/repo; git -C /work/repo config user.name Fixture; git -C /work/repo config user.email fixture@example.invalid; git -C /work/repo remote add origin /origin; git -C /work/repo commit --allow-empty -qm A; git -C /work/repo push -q origin master; git -C /work/repo worktree add -q --detach '/work/linked clean' HEAD; git clone -q /origin /work/standalone; git clone -q --mirror /origin /work/bare.git");
+ if(p.status!==0)throw Error('uid1654 graph setup failed');
+ p=run('1654:1654',true,"test \"$(id -u)\" = 1654; test \"$(git -C /work/repo rev-list --count HEAD --not --remotes=origin)\" = 0; git -C /work/repo ls-remote --heads origin; git -C /work/repo worktree list --porcelain; test \"$(git -C '/work/linked clean' rev-list --count HEAD --not --remotes=origin)\" = 0; test \"$(git -C /work/standalone rev-list --count HEAD --not --remotes=origin)\" = 0; test \"$(git -C /work/bare.git rev-parse --is-bare-repository)\" = true");
+ if(p.status!==0)throw Error('readonly uid1654 published layouts rejected');results.push('uid1654-readonly-published','current-origin-advertisement','linked-path-space','standalone-clone','bare-mirror');
+ const ownership=run('0:0',true,'git -C /work/repo rev-list --count HEAD --not --remotes=origin');
+ if(ownership.status!==128||!(ownership.stderr||'').includes('dubious ownership'))throw Error('root ownership error was treated as proof');results.push('uid0-ownership-error-128');
+ p=run('1654:1654',false,"git -C /work/repo commit --allow-empty -qm B; git -C /work/repo branch unpublished HEAD; git -C /work/repo tag unpublished HEAD; git -C /work/repo worktree add -q --detach '/work/detached unpublished' HEAD; git -C /work/repo reset -q --hard HEAD~1");
+ if(p.status!==0)throw Error('unpublished graph setup failed');
+ p=run('1654:1654',true,"test \"$(git -C /work/repo rev-list --count HEAD --not --remotes=origin)\" = 0; test \"$(git -C /work/repo rev-list --count unpublished --not --remotes=origin)\" = 1; test \"$(git -C /work/repo rev-list --count refs/tags/unpublished --not --remotes=origin)\" = 1; test \"$(git -C '/work/detached unpublished' rev-list --count HEAD --not --remotes=origin)\" = 1");
+ if(p.status!==0)throw Error('off-HEAD unique commits escaped census');results.push('off-HEAD-branch-and-tag-count-one','detached-unpublished-count-one');
+ console.log('C1008_GIT_MANUAL outcomes='+results.length+' evidence='+root);
+}catch(e){error=e;console.error(e.message);}
+finally{
+ const ids=d('ps','-aq','--filter','label=io.antiphon.c1008-git-manual='+prefix).split('\n').filter(Boolean);
+ for(const id of ids)d('rm','-f',id);
+ for(const n of names)if(d('volume','ls','-q').split('\n').includes(n))d('volume','rm','--',guard(n));
+ if(d('ps','-aq','--filter','label=io.antiphon.c1008-git-manual='+prefix)||names.some(n=>d('volume','ls','-q').split('\n').includes(n)))throw Error('fixture cleanup not absent');
+ fs.writeFileSync(root+'/evidence.json',JSON.stringify({source:cp.execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),image,imageId:d('image','inspect','--format','{{.Id}}',image),prefix,results,failure:error?.message||null,cleanup:'recorded containers and volumes absent; pre-existing image retained',scope:'manual actual Git/UID semantics; not RD comparison'},null,2));
+ console.log('C1008_GIT_MANUAL cleanup=absent evidence='+root+'/evidence.json');
+}
+if(error)process.exit(1);

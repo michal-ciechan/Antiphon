@@ -1,0 +1,583 @@
+{
+  "source": "b9e58152b87f6f9323e83001a786faa3128a9de8",
+  "prefix": "c1008manualeb79bcdd8d840f2d",
+  "daemon": "5d9e09695ab3",
+  "nameGuard": [
+    "antiphon-runner",
+    "antiphon-runner-temp",
+    "antiphon-runner_work",
+    "antiphon-runner-temp_runner-state",
+    "antiphon-runner-cache-npm-content"
+  ],
+  "volumes": [
+    "c1008manualeb79bcdd8d840f2d_work",
+    "c1008manualeb79bcdd8d840f2d_runner-tmp",
+    "c1008manualeb79bcdd8d840f2d_dind-data",
+    "c1008manualeb79bcdd8d840f2d_runner-state",
+    "c1008manualeb79bcdd8d840f2d_cache"
+  ],
+  "results": [
+    "production-name-firewall",
+    "nested-daemon",
+    "explicit-null-options",
+    "controlled-stop",
+    "exact-three-removals",
+    "state-cache-identity-payload-preserved",
+    "old-three-payloads-absent",
+    "tmp-1777-image-asset-as-1654",
+    "broker-running"
+  ],
+  "commands": [
+    [
+      "build",
+      "--network",
+      "none",
+      "-t",
+      "c1008manualeb79bcdd8d840f2d:fixture",
+      "/tmp/c1008-manual-A4h8R0"
+    ],
+    [
+      "volume",
+      "create",
+      "--label",
+      "io.antiphon.c1008-manual=c1008manualeb79bcdd8d840f2d",
+      "c1008manualeb79bcdd8d840f2d_work"
+    ],
+    [
+      "volume",
+      "create",
+      "--label",
+      "io.antiphon.c1008-manual=c1008manualeb79bcdd8d840f2d",
+      "c1008manualeb79bcdd8d840f2d_runner-tmp"
+    ],
+    [
+      "volume",
+      "create",
+      "--label",
+      "io.antiphon.c1008-manual=c1008manualeb79bcdd8d840f2d",
+      "c1008manualeb79bcdd8d840f2d_dind-data"
+    ],
+    [
+      "volume",
+      "create",
+      "--label",
+      "io.antiphon.c1008-manual=c1008manualeb79bcdd8d840f2d",
+      "c1008manualeb79bcdd8d840f2d_runner-state"
+    ],
+    [
+      "volume",
+      "create",
+      "--label",
+      "io.antiphon.c1008-manual=c1008manualeb79bcdd8d840f2d",
+      "c1008manualeb79bcdd8d840f2d_cache"
+    ],
+    [
+      "volume",
+      "inspect",
+      "c1008manualeb79bcdd8d840f2d_work"
+    ],
+    [
+      "volume",
+      "inspect",
+      "c1008manualeb79bcdd8d840f2d_runner-tmp"
+    ],
+    [
+      "volume",
+      "inspect",
+      "c1008manualeb79bcdd8d840f2d_dind-data"
+    ],
+    [
+      "volume",
+      "inspect",
+      "c1008manualeb79bcdd8d840f2d_runner-state"
+    ],
+    [
+      "volume",
+      "inspect",
+      "c1008manualeb79bcdd8d840f2d_cache"
+    ],
+    [
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--label",
+      "io.antiphon.c1008-manual=c1008manualeb79bcdd8d840f2d",
+      "--mount",
+      "type=volume,source=c1008manualeb79bcdd8d840f2d_work,target=/data",
+      "c1008manualeb79bcdd8d840f2d:fixture",
+      "sh",
+      "-c",
+      "printf old-payload > /data/sentinel"
+    ],
+    [
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--label",
+      "io.antiphon.c1008-manual=c1008manualeb79bcdd8d840f2d",
+      "--mount",
+      "type=volume,source=c1008manualeb79bcdd8d840f2d_runner-tmp,target=/data",
+      "c1008manualeb79bcdd8d840f2d:fixture",
+      "sh",
+      "-c",
+      "printf old-payload > /data/sentinel"
+    ],
+    [
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--label",
+      "io.antiphon.c1008-manual=c1008manualeb79bcdd8d840f2d",
+      "--mount",
+      "type=volume,source=c1008manualeb79bcdd8d840f2d_dind-data,target=/data",
+      "c1008manualeb79bcdd8d840f2d:fixture",
+      "sh",
+      "-c",
+      "printf old-payload > /data/sentinel"
+    ],
+    [
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--label",
+      "io.antiphon.c1008-manual=c1008manualeb79bcdd8d840f2d",
+      "--mount",
+      "type=volume,source=c1008manualeb79bcdd8d840f2d_runner-state,target=/data",
+      "c1008manualeb79bcdd8d840f2d:fixture",
+      "sh",
+      "-c",
+      "printf old-payload > /data/sentinel"
+    ],
+    [
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--label",
+      "io.antiphon.c1008-manual=c1008manualeb79bcdd8d840f2d",
+      "--mount",
+      "type=volume,source=c1008manualeb79bcdd8d840f2d_cache,target=/data",
+      "c1008manualeb79bcdd8d840f2d:fixture",
+      "sh",
+      "-c",
+      "printf old-payload > /data/sentinel"
+    ],
+    [
+      "run",
+      "-d",
+      "--name",
+      "c1008manualeb79bcdd8d840f2d-runner",
+      "--label",
+      "io.antiphon.c1008-manual=c1008manualeb79bcdd8d840f2d",
+      "--mount",
+      "type=volume,source=c1008manualeb79bcdd8d840f2d_work,target=/work",
+      "--mount",
+      "type=volume,source=c1008manualeb79bcdd8d840f2d_runner-tmp,target=/tmp",
+      "--mount",
+      "type=volume,source=c1008manualeb79bcdd8d840f2d_dind-data,target=/var/lib/docker",
+      "--mount",
+      "type=volume,source=c1008manualeb79bcdd8d840f2d_runner-state,target=/state",
+      "--mount",
+      "type=volume,source=c1008manualeb79bcdd8d840f2d_cache,target=/cache",
+      "c1008manualeb79bcdd8d840f2d:fixture",
+      "sleep",
+      "infinity"
+    ],
+    [
+      "run",
+      "-d",
+      "--name",
+      "c1008manualeb79bcdd8d840f2d-broker",
+      "--label",
+      "io.antiphon.c1008-manual=c1008manualeb79bcdd8d840f2d",
+      "busybox:1.37",
+      "sleep",
+      "infinity"
+    ],
+    [
+      "stop",
+      "--time",
+      "5",
+      "--",
+      "f7c98d932349824c0a4739ae2f587351e818354992cb614c517419094177533a"
+    ],
+    [
+      "inspect",
+      "f7c98d932349824c0a4739ae2f587351e818354992cb614c517419094177533a"
+    ],
+    [
+      "rm",
+      "--",
+      "f7c98d932349824c0a4739ae2f587351e818354992cb614c517419094177533a"
+    ],
+    [
+      "volume",
+      "rm",
+      "--",
+      "c1008manualeb79bcdd8d840f2d_work"
+    ],
+    [
+      "volume",
+      "rm",
+      "--",
+      "c1008manualeb79bcdd8d840f2d_runner-tmp"
+    ],
+    [
+      "volume",
+      "rm",
+      "--",
+      "c1008manualeb79bcdd8d840f2d_dind-data"
+    ],
+    [
+      "volume",
+      "inspect",
+      "c1008manualeb79bcdd8d840f2d_runner-state"
+    ],
+    [
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--label",
+      "io.antiphon.c1008-manual=c1008manualeb79bcdd8d840f2d",
+      "--mount",
+      "type=volume,source=c1008manualeb79bcdd8d840f2d_runner-state,target=/data,readonly",
+      "busybox:1.37",
+      "cat",
+      "/data/sentinel"
+    ],
+    [
+      "volume",
+      "inspect",
+      "c1008manualeb79bcdd8d840f2d_cache"
+    ],
+    [
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--label",
+      "io.antiphon.c1008-manual=c1008manualeb79bcdd8d840f2d",
+      "--mount",
+      "type=volume,source=c1008manualeb79bcdd8d840f2d_cache,target=/data,readonly",
+      "busybox:1.37",
+      "cat",
+      "/data/sentinel"
+    ],
+    [
+      "run",
+      "-d",
+      "--name",
+      "c1008manualeb79bcdd8d840f2d-replacement",
+      "--label",
+      "io.antiphon.c1008-manual=c1008manualeb79bcdd8d840f2d",
+      "--mount",
+      "type=volume,source=c1008manualeb79bcdd8d840f2d_work,target=/work",
+      "--mount",
+      "type=volume,source=c1008manualeb79bcdd8d840f2d_runner-tmp,target=/tmp",
+      "--mount",
+      "type=volume,source=c1008manualeb79bcdd8d840f2d_dind-data,target=/var/lib/docker",
+      "--mount",
+      "type=volume,source=c1008manualeb79bcdd8d840f2d_runner-state,target=/state",
+      "--mount",
+      "type=volume,source=c1008manualeb79bcdd8d840f2d_cache,target=/cache",
+      "c1008manualeb79bcdd8d840f2d:fixture",
+      "sleep",
+      "infinity"
+    ],
+    [
+      "exec",
+      "--user",
+      "1654:1654",
+      "ecc3a5df215f63c050aded0225c4fb7bd3d82eaca136cd29ef71bef5885eb34a",
+      "sh",
+      "-c",
+      "test \"$(stat -c %a /tmp)\" = 1777 && test \"$(cat /tmp/antiphon-pty-hosts/fixture)\" = image-asset"
+    ],
+    [
+      "inspect",
+      "13282eec3679bca3abc14e6dc4c262fbdfafe003399266966629ba53daf652ea"
+    ],
+    [
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--label",
+      "io.antiphon.c1008-manual=c1008manualeb79bcdd8d840f2d",
+      "--mount",
+      "type=volume,source=c1008manualeb79bcdd8d840f2d_runner-state,target=/data,readonly",
+      "busybox:1.37",
+      "cat",
+      "/data/sentinel"
+    ],
+    [
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--label",
+      "io.antiphon.c1008-manual=c1008manualeb79bcdd8d840f2d",
+      "--mount",
+      "type=volume,source=c1008manualeb79bcdd8d840f2d_cache,target=/data,readonly",
+      "busybox:1.37",
+      "cat",
+      "/data/sentinel"
+    ],
+    [
+      "volume",
+      "inspect",
+      "c1008manualeb79bcdd8d840f2d_work"
+    ],
+    [
+      "volume",
+      "inspect",
+      "c1008manualeb79bcdd8d840f2d_runner-tmp"
+    ],
+    [
+      "volume",
+      "inspect",
+      "c1008manualeb79bcdd8d840f2d_dind-data"
+    ],
+    [
+      "volume",
+      "inspect",
+      "c1008manualeb79bcdd8d840f2d_runner-state"
+    ],
+    [
+      "volume",
+      "inspect",
+      "c1008manualeb79bcdd8d840f2d_cache"
+    ],
+    [
+      "ps",
+      "-aq",
+      "--filter",
+      "label=io.antiphon.c1008-manual=c1008manualeb79bcdd8d840f2d"
+    ],
+    [
+      "inspect",
+      "ecc3a5df215f"
+    ],
+    [
+      "rm",
+      "-f",
+      "ecc3a5df215f"
+    ],
+    [
+      "inspect",
+      "13282eec3679"
+    ],
+    [
+      "rm",
+      "-f",
+      "13282eec3679"
+    ],
+    [
+      "volume",
+      "ls",
+      "-q"
+    ],
+    [
+      "volume",
+      "rm",
+      "--",
+      "c1008manualeb79bcdd8d840f2d_work"
+    ],
+    [
+      "volume",
+      "ls",
+      "-q"
+    ],
+    [
+      "volume",
+      "ls",
+      "-q"
+    ],
+    [
+      "volume",
+      "rm",
+      "--",
+      "c1008manualeb79bcdd8d840f2d_runner-tmp"
+    ],
+    [
+      "volume",
+      "ls",
+      "-q"
+    ],
+    [
+      "volume",
+      "ls",
+      "-q"
+    ],
+    [
+      "volume",
+      "rm",
+      "--",
+      "c1008manualeb79bcdd8d840f2d_dind-data"
+    ],
+    [
+      "volume",
+      "ls",
+      "-q"
+    ],
+    [
+      "volume",
+      "ls",
+      "-q"
+    ],
+    [
+      "volume",
+      "rm",
+      "--",
+      "c1008manualeb79bcdd8d840f2d_runner-state"
+    ],
+    [
+      "volume",
+      "ls",
+      "-q"
+    ],
+    [
+      "volume",
+      "ls",
+      "-q"
+    ],
+    [
+      "volume",
+      "rm",
+      "--",
+      "c1008manualeb79bcdd8d840f2d_cache"
+    ],
+    [
+      "volume",
+      "ls",
+      "-q"
+    ],
+    [
+      "ps",
+      "-aq",
+      "--filter",
+      "label=io.antiphon.c1008-manual=c1008manualeb79bcdd8d840f2d"
+    ],
+    [
+      "image",
+      "rm",
+      "c1008manualeb79bcdd8d840f2d:fixture"
+    ]
+  ],
+  "scope": "manual Docker semantics only; not RD comparison",
+  "before": {
+    "c1008manualeb79bcdd8d840f2d_work": {
+      "CreatedAt": "2026-10-03T14:58:10Z",
+      "Driver": "local",
+      "Labels": {
+        "io.antiphon.c1008-manual": "c1008manualeb79bcdd8d840f2d"
+      },
+      "Mountpoint": "/var/lib/docker/volumes/c1008manualeb79bcdd8d840f2d_work/_data",
+      "Name": "c1008manualeb79bcdd8d840f2d_work",
+      "Options": null,
+      "Scope": "local"
+    },
+    "c1008manualeb79bcdd8d840f2d_runner-tmp": {
+      "CreatedAt": "2026-10-03T14:58:10Z",
+      "Driver": "local",
+      "Labels": {
+        "io.antiphon.c1008-manual": "c1008manualeb79bcdd8d840f2d"
+      },
+      "Mountpoint": "/var/lib/docker/volumes/c1008manualeb79bcdd8d840f2d_runner-tmp/_data",
+      "Name": "c1008manualeb79bcdd8d840f2d_runner-tmp",
+      "Options": null,
+      "Scope": "local"
+    },
+    "c1008manualeb79bcdd8d840f2d_dind-data": {
+      "CreatedAt": "2026-10-03T14:58:10Z",
+      "Driver": "local",
+      "Labels": {
+        "io.antiphon.c1008-manual": "c1008manualeb79bcdd8d840f2d"
+      },
+      "Mountpoint": "/var/lib/docker/volumes/c1008manualeb79bcdd8d840f2d_dind-data/_data",
+      "Name": "c1008manualeb79bcdd8d840f2d_dind-data",
+      "Options": null,
+      "Scope": "local"
+    },
+    "c1008manualeb79bcdd8d840f2d_runner-state": {
+      "CreatedAt": "2026-10-03T14:58:10Z",
+      "Driver": "local",
+      "Labels": {
+        "io.antiphon.c1008-manual": "c1008manualeb79bcdd8d840f2d"
+      },
+      "Mountpoint": "/var/lib/docker/volumes/c1008manualeb79bcdd8d840f2d_runner-state/_data",
+      "Name": "c1008manualeb79bcdd8d840f2d_runner-state",
+      "Options": null,
+      "Scope": "local"
+    },
+    "c1008manualeb79bcdd8d840f2d_cache": {
+      "CreatedAt": "2026-10-03T14:58:10Z",
+      "Driver": "local",
+      "Labels": {
+        "io.antiphon.c1008-manual": "c1008manualeb79bcdd8d840f2d"
+      },
+      "Mountpoint": "/var/lib/docker/volumes/c1008manualeb79bcdd8d840f2d_cache/_data",
+      "Name": "c1008manualeb79bcdd8d840f2d_cache",
+      "Options": null,
+      "Scope": "local"
+    }
+  },
+  "after": {
+    "c1008manualeb79bcdd8d840f2d_work": {
+      "CreatedAt": "2026-10-03T14:58:22Z",
+      "Driver": "local",
+      "Labels": null,
+      "Mountpoint": "/var/lib/docker/volumes/c1008manualeb79bcdd8d840f2d_work/_data",
+      "Name": "c1008manualeb79bcdd8d840f2d_work",
+      "Options": null,
+      "Scope": "local"
+    },
+    "c1008manualeb79bcdd8d840f2d_runner-tmp": {
+      "CreatedAt": "2026-10-03T14:58:22Z",
+      "Driver": "local",
+      "Labels": null,
+      "Mountpoint": "/var/lib/docker/volumes/c1008manualeb79bcdd8d840f2d_runner-tmp/_data",
+      "Name": "c1008manualeb79bcdd8d840f2d_runner-tmp",
+      "Options": null,
+      "Scope": "local"
+    },
+    "c1008manualeb79bcdd8d840f2d_dind-data": {
+      "CreatedAt": "2026-10-03T14:58:22Z",
+      "Driver": "local",
+      "Labels": null,
+      "Mountpoint": "/var/lib/docker/volumes/c1008manualeb79bcdd8d840f2d_dind-data/_data",
+      "Name": "c1008manualeb79bcdd8d840f2d_dind-data",
+      "Options": null,
+      "Scope": "local"
+    },
+    "c1008manualeb79bcdd8d840f2d_runner-state": {
+      "CreatedAt": "2026-10-03T14:58:10Z",
+      "Driver": "local",
+      "Labels": {
+        "io.antiphon.c1008-manual": "c1008manualeb79bcdd8d840f2d"
+      },
+      "Mountpoint": "/var/lib/docker/volumes/c1008manualeb79bcdd8d840f2d_runner-state/_data",
+      "Name": "c1008manualeb79bcdd8d840f2d_runner-state",
+      "Options": null,
+      "Scope": "local"
+    },
+    "c1008manualeb79bcdd8d840f2d_cache": {
+      "CreatedAt": "2026-10-03T14:58:10Z",
+      "Driver": "local",
+      "Labels": {
+        "io.antiphon.c1008-manual": "c1008manualeb79bcdd8d840f2d"
+      },
+      "Mountpoint": "/var/lib/docker/volumes/c1008manualeb79bcdd8d840f2d_cache/_data",
+      "Name": "c1008manualeb79bcdd8d840f2d_cache",
+      "Options": null,
+      "Scope": "local"
+    }
+  },
+  "failure": null,
+  "cleanup": "all recorded objects absent"
+}

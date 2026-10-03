@@ -1,0 +1,11 @@
+2026-10-03T15:02:23.5205527+00:00 execute rows=3 width=2 total=76m
+2026-10-03T15:02:23.7954889+00:00 BUILD SLOT operation=probe status=200 reason=enabled maxcpucount=6 elapsed=0s
+2026-10-03T15:02:23.8956023+00:00 BUILD SLOT granted lease=35dd756d-807e-476c-a543-a5c1e0215bbd label="build:bin-c1008-scripts" waited=0s maxcpucount=6
+2026-10-03T15:03:51.9003709+00:00 BUILD SLOT released lease=35dd756d-807e-476c-a543-a5c1e0215bbd label="build:bin-c1008-scripts"
+2026-10-03T15:03:52.0136260+00:00 BUILD SLOT granted lease=770eeb3e-c721-4887-96c6-4822743c057b label="CP-2@bin-c1008-scripts" waited=0s maxcpucount=6
+2026-10-03T15:38:51.1024032+00:00 BUILD SLOT released lease=770eeb3e-c721-4887-96c6-4822743c057b label="CP-2@bin-c1008-scripts"
+2026-10-03T15:38:51.1582295+00:00 BUILD SLOT granted lease=fff51a47-d6f3-44c9-b06b-2c6564ac2e39 label="build:bin-c1008-cache" waited=0s maxcpucount=6
+2026-10-03T15:40:28.7004396+00:00 BUILD SLOT released lease=fff51a47-d6f3-44c9-b06b-2c6564ac2e39 label="build:bin-c1008-cache"
+2026-10-03T15:40:28.7391410+00:00 BUILD SLOT granted lease=f72b57ac-d4e7-4cd9-84d3-9fe95cbb94e3 label="CP-3@bin-c1008-cache" waited=0s maxcpucount=6
+2026-10-03T15:42:44.4106470+00:00 BUILD SLOT released lease=f72b57ac-d4e7-4cd9-84d3-9fe95cbb94e3 label="CP-3@bin-c1008-cache"
+2026-10-03T15:42:44.4460464+00:00 BUILD SLOT granted lease=8f2c294e-1ebe-4f52-92c9-85c32ee89c63 label="build:bin-c1008-docs" waited=0s maxcpucount=6
