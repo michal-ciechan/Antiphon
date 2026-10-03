@@ -146,6 +146,52 @@ public sealed class RunnerCodexCliEvidenceTests
         Text(status, "codexCliVersion").ShouldBe("0.160.0", "C959-v12-status");
         using var missing = await host.Http.GetAsync("/api/session-runners/missing-c959/status");
         missing.StatusCode.ShouldBe(HttpStatusCode.NotFound, "C959-v12-not-found");
+
+        var settings = new PhoneHomeRunnerSettings { Enabled = true };
+        foreach (var id in new[] { "runner-a", "runner-b", "runner-offline" })
+            settings.Runners[id] = new() { Enabled = true, AllowDelegatedTasks = true, DisplayName = id,
+                HostWorkspaceRoot = @"C:\work", RunnerWorkspace = "/work/" + id, SharedSecret = "c959-many",
+                RunnerRepository = "/work/repos/antiphon", CallbackOrigin = "https://antiphon.test" };
+        await using var many = await PhoneHomeTestHost.StartAsync(clock, configured: settings);
+        many.Local.Capabilities = Caps("0.159.1", T);
+        await using var a = await many.ConnectPeerAsync(runnerId: "runner-a", secret: "c959-many", capabilities: Caps("0.160.0", T));
+        await using var b = await many.ConnectPeerAsync(runnerId: "runner-b", secret: "c959-many", capabilities: Caps("0.156.1", T));
+        var liveA = await many.WaitLiveAsync(runnerId: "runner-a");
+        var liveB = await many.WaitLiveAsync(runnerId: "runner-b");
+        many.Directory.MarkRecovered(liveA); many.Directory.MarkRecovered(liveB);
+        async Task<JsonElement> ListMany()
+        {
+            using var result = await many.Http.GetAsync("/api/session-runners");
+            result.StatusCode.ShouldBe(HttpStatusCode.OK);
+            return JsonDocument.Parse(await result.Content.ReadAsStringAsync()).RootElement;
+        }
+        var distinct = await ListMany();
+        Text(distinct.EnumerateArray().Single(row => Text(row, "runnerId") == "runner-a"), "codexCliVersion")
+            .ShouldBe("0.160.0", "C959-pc-099");
+        Text(distinct.EnumerateArray().Single(row => Text(row, "runnerId") == "runner-b"), "codexCliVersion")
+            .ShouldBe("0.156.1", "C959-pc-100");
+        var offline = distinct.EnumerateArray().Single(row => Text(row, "runnerId") == "runner-offline");
+        foreach (var field in new[] { "codexCliVersion", "codexCliVersionCheckedAtUtc", "codexCliVersionError", "codexCliVersionStale" })
+            offline.GetProperty(field).ValueKind.ShouldBe(JsonValueKind.Null, "C959-pc-102 " + field);
+        Flag(offline, "codexCliVersionStale").ShouldBeNull("C959-pc-103");
+        Flag(distinct.EnumerateArray().Single(row => Text(row, "runnerId") == "runner-a"), "codexCliVersionStale")
+            .ShouldBe(false, "C959-pc-105");
+        clock.Advance(TimeSpan.FromMinutes(16));
+        await a.EmitAsync(new(PhoneHomeFrameKind.Heartbeat, a.Epoch, Guid.NewGuid(), Payload: Shape(new { capacity = 1 })));
+        await new PhoneHomeRunnerClient(liveA).GetHealthAsync(CancellationToken.None);
+        var aged = await ListMany();
+        Flag(aged.EnumerateArray().Single(row => Text(row, "runnerId") == "runner-a"), "codexCliVersionStale")
+            .ShouldBe(true, "C959-pc-104");
+        await a.EmitAsync(new(PhoneHomeFrameKind.Heartbeat, a.Epoch, Guid.NewGuid(),
+            Payload: Shape(new { capacity = 1, codexCli = Sample("0.159.1", clock.GetUtcNow()) })));
+        await new PhoneHomeRunnerClient(liveA).GetHealthAsync(CancellationToken.None);
+        Text(Shape(many.Directory.Status("runner-a")), "codexCliVersion").ShouldBe("0.159.1", "C959-pc-101");
+        b.Socket.Abort();
+        var end = Stopwatch.StartNew();
+        while (liveB.SocketOpen && end.Elapsed < TimeSpan.FromSeconds(2)) await Task.Delay(10);
+        var unavailable = Shape(many.Directory.Status("runner-b"));
+        Text(unavailable, "codexCliVersion").ShouldBe("0.156.1", "C959-v12-retained-display");
+        unavailable.GetProperty("dispatchEligible").GetBoolean().ShouldBeFalse("C959-v12-disconnected-not-admitted");
     }
 
     [Test]
