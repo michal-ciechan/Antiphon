@@ -385,7 +385,7 @@ public sealed class CodexCliAdmissionTests
         public async Task<AgentTaskCreatedDto> CreateAsync()
         {
             using var scope = Harness.Provider.CreateScope();
-            return await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CreateAsync(new(Body, Role: AgentTaskRole.Docs,
+            return await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CreateAsync(new(Body, Title: Body, Role: AgentTaskRole.Docs,
                 AgentKind: AgentKind.Codex, ModelLevel: AgentModelLevel.High, Workspace: WorkspaceMode.Shared, RunnerId: "local"),
                 new(null, null, Path.Combine(Harness.TempRoot, "workspace")), CancellationToken.None);
         }

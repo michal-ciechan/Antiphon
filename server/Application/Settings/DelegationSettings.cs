@@ -1195,7 +1195,7 @@ public sealed class DelegationSettingsValidator(TimeProvider? clock = null) : IV
         {
             if (string.IsNullOrWhiteSpace(item.RunnerId) || item.RunnerId != item.RunnerId.Trim()
                 || !System.Text.RegularExpressions.Regex.IsMatch(item.RunnerId, @"\A[a-zA-Z0-9][a-zA-Z0-9_.-]*\z")
-                || ModelAlias.Normalize(AgentKind.Codex, item.Model) != item.Model || string.IsNullOrWhiteSpace(item.Model)
+                || item.Model == ModelAlias.KindWide || ModelAlias.Normalize(AgentKind.Codex, item.Model) != item.Model || string.IsNullOrWhiteSpace(item.Model)
                 || string.IsNullOrWhiteSpace(item.Reason) || item.Reason.Length > 1000
                 || item.ExpiresAtUtc == default || item.ExpiresAtUtc.Offset != TimeSpan.Zero
                 || item.ExpiresAtUtc <= now || item.ExpiresAtUtc - now > TimeSpan.FromHours(24)
