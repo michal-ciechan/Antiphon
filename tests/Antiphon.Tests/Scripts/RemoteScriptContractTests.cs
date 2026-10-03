@@ -1034,11 +1034,12 @@ public sealed class RemoteScriptContractTests
         var fixtureRestore = Block(text, "c849_fixture_nuget_race");
         var fixtureApphost = Block(text, "c849_fixture_apphost");
         var fixtureNpm = Block(text, "c849_fixture_npm");
-        var recycleLock = Block(text, "c1008_lock");
+        var recycleLock = Block(text, "c1008_rollout_lock");
+        var recycle = Block(text, "c1008_recycle");
         var recycleReferences = Block(text, "c1008_references");
         var recycleDisk = Block(text, "c1008_disk");
         var recycleCaches = Block(text, "c1008_cache_preservation");
-        foreach (var body in new[] { recycleLock, recycleReferences, recycleDisk, recycleCaches })
+        foreach (var body in new[] { recycleLock, recycle, recycleReferences, recycleDisk, recycleCaches })
             body.ShouldContain("require_lane host");
         foreach (var line in sudoLines)
             (EnsureDirsBody(text).Contains(line, StringComparison.Ordinal)
@@ -1060,6 +1061,7 @@ public sealed class RemoteScriptContractTests
                 || fixtureApphost.Contains(line, StringComparison.Ordinal)
                 || fixtureNpm.Contains(line, StringComparison.Ordinal)
                 || recycleLock.Contains(line, StringComparison.Ordinal)
+                || recycle.Contains(line, StringComparison.Ordinal)
                 || recycleReferences.Contains(line, StringComparison.Ordinal)
                 || recycleDisk.Contains(line, StringComparison.Ordinal)
                 || recycleCaches.Contains(line, StringComparison.Ordinal))

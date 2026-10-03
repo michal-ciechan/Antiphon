@@ -151,7 +151,7 @@ build_server2_images() {
 `;
   const script=f.root+'/'+name+'.sh'; fs.writeFileSync(script,transformed.replace("trap 'ec=$?;",injected+"\ntrap 'ec=$?;"));
   const env={...process.env,C590_CASE:hostCase,C590_SHA:source,C590_RUN:'c1008real',C590_REEXEC:'1',C604_SERVER_ORIGIN:originUrl};
-  let outcome; try {outcome=await exec('bash',[script],{env,timeout:90000,maxBuffer:1024*1024});outcome.code=0;} catch(e){outcome=e;}
+  let outcome; try {outcome=await exec('bash',['-x',script],{env,timeout:90000,maxBuffer:1024*1024});outcome.code=0;} catch(e){outcome=e;}
   fs.writeFileSync(f.root+'/'+name+'.log',(outcome.stdout||'')+(outcome.stderr||''));
   const result=JSON.parse(fs.readFileSync(dest+'/c590-result.json','utf8'));
   const journalPath=f.root+'/server/recycle/'+f.op+'.json';
