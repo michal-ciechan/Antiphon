@@ -6,9 +6,13 @@ namespace Antiphon.SessionRunner;
 public sealed class CodexCliVersionRefreshService(
     CodexCliVersionProbe probe, TimeProvider clock, IOptions<CodexCliVersionSettings> settings) : BackgroundService
 {
+    private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    internal Task Ready => _ready.Task;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(settings.Value.RefreshIntervalMinutes), clock);
+        _ready.TrySetResult();
         try
         {
             while (await timer.WaitForNextTickAsync(stoppingToken))
