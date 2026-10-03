@@ -93,6 +93,20 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_refuses_references_and_unknown_census()
     {
+        foreach (var defect in new[] { "missing-work", "wrong-source", "wrong-destination", "readonly", "unknown-mount" })
+        {
+            using var invalid = new C1008HostFixture();
+            var mounts = invalid.Docker["containers"]![0]!["Mounts"]!.AsArray();
+            if (defect == "missing-work") mounts.RemoveAt(0);
+            else if (defect == "wrong-source") mounts[0]!["Source"] = Path.Combine(invalid.Root, "work");
+            else if (defect == "wrong-destination") mounts[0]!["Destination"] = "/foreign";
+            else if (defect == "readonly") mounts[0]!["RW"] = false;
+            else mounts.Add(new JsonObject { ["Type"] = "volume", ["Name"] = "openclaw-state", ["Destination"] = "/unknown", ["RW"] = true });
+            var refusal = await invalid.Run();
+            invalid.Trace.Any(a => a[0] == "stop").ShouldBeFalse("recycle-reference-refusal: inspected owned mount " + defect);
+            invalid.Removed.ShouldBeEmpty();
+            refusal.Output.ShouldContain("RecycleContainerStateUnknown");
+        }
         using (var accepted = new C1008HostFixture())
         {
             var run = await accepted.Run();
@@ -243,6 +257,17 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_resume_requires_matching_receipt()
     {
+        using (var seeded = new C1008HostFixture())
+        {
+            var interruption = await seeded.Run(extra: "seed_runner_checkout() { write_result false InjectedSeedFailure 2; }; build_server2_images() { :; }; c849_prepare() { :; }; c849_require_ready() { :; }; ensure_build_slots_broker() { :; }");
+            interruption.Exit.ShouldBe(2);
+            var receipt = JsonNode.Parse(File.ReadAllText(Path.Combine(seeded.Root, "server/recycle/c100800000000000000000000000000000001.json")))!;
+            receipt["phase"]!.GetValue<string>().ShouldBe("recreating", "recycle-resume-generation: creation intent precedes a failing seed");
+            seeded.ReloadDocker();
+            var resumed = await seeded.Run(extra: "C1008_RESUME=1");
+            resumed.Exit.ShouldBe(0, "recycle-resume-generation: empty recorded creation boundary resumes; " + resumed.Output);
+            seeded.Removed.Length.ShouldBe(3, "recycle-resume-generation: no repeated deletion after seed failure");
+        }
         using var f = new C1008HostFixture(); f.Docker["fault"] = "rm-second-failed";
         var run = await f.Run();
         f.Removed.ShouldBe(new[] { "antiphon-runner_work" }, "recycle-resume-generation: committed partial first removal; " + run.Output);
