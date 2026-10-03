@@ -28,10 +28,10 @@ public class InstructionBundleTests
         foreach (var role in new[] { AgentTaskRole.Code, AgentTaskRole.Review, AgentTaskRole.Debug, AgentTaskRole.Docs })
         {
             var text = InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, role)).Text;
-            text.ShouldContain("Generated evidence stays gitignored", "c1015-common-ignored");
-            text.ShouldContain("1048576 bytes", "c1015-common-cap");
-            text.ShouldContain("individual report paths", "c1015-common-individual");
-            text.ShouldContain("outside checkpoint directories", "c1015-common-directory");
+            text.ShouldContain("Generated evidence stays gitignored", customMessage: "c1015-common-ignored");
+            text.ShouldContain("1048576 bytes", customMessage: "c1015-common-cap");
+            text.ShouldContain("individual report paths", customMessage: "c1015-common-individual");
+            text.ShouldContain("outside checkpoint directories", customMessage: "c1015-common-directory");
         }
     }
 
@@ -42,10 +42,10 @@ public class InstructionBundleTests
         var composed = InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Code)).Text;
         foreach (var text in new[] { stage, composed })
         {
-            text.ShouldContain("check-evidence-diff.ps1", "c1015-code-range");
-            text.ShouldContain("full task base..HEAD", "c1015-code-range");
-            text.ShouldContain("actual tested SHA", "c1015-code-source");
-            text.ShouldContain("unedited CHECKPOINT lines", "c1015-code-verbatim");
+            text.ShouldContain("check-evidence-diff.ps1", customMessage: "c1015-code-range");
+            text.ShouldContain("full task base..HEAD", customMessage: "c1015-code-range");
+            text.ShouldContain("actual tested SHA", customMessage: "c1015-code-source");
+            text.ShouldContain("unedited CHECKPOINT lines", customMessage: "c1015-code-verbatim");
         }
     }
 
@@ -56,10 +56,10 @@ public class InstructionBundleTests
         var composed = InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Review)).Text;
         foreach (var text in new[] { stage, composed })
         {
-            text.ShouldContain("Read-only", "c1015-review-read-only");
-            text.ShouldContain("Do not fix anything", "c1015-review-read-only");
-            text.ShouldContain("check-evidence-diff.ps1", "c1015-review-range");
-            text.ShouldContain("complete candidate base..HEAD", "c1015-review-range");
+            text.ShouldContain("Read-only", customMessage: "c1015-review-read-only");
+            text.ShouldContain("Do not fix anything", customMessage: "c1015-review-read-only");
+            text.ShouldContain("check-evidence-diff.ps1", customMessage: "c1015-review-range");
+            text.ShouldContain("complete candidate base..HEAD", customMessage: "c1015-review-range");
         }
     }
 
@@ -72,8 +72,8 @@ public class InstructionBundleTests
         var end = text.IndexOf("- COMMIT AND PUSH", start, StringComparison.Ordinal);
         end.ShouldBeGreaterThan(start);
         var exception = text[start..end];
-        exception.ShouldContain("assigned external evidence root", "c1015-source-external");
-        exception.ShouldContain("never commit/push", "c1015-source-no-commit");
+        exception.ShouldContain("assigned external evidence root", customMessage: "c1015-source-external");
+        exception.ShouldContain("never commit/push", customMessage: "c1015-source-no-commit");
     }
 
     [Test]
