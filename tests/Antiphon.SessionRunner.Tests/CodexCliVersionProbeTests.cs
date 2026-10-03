@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.SessionRunner;
+using Microsoft.Extensions.Options;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
@@ -113,7 +114,8 @@ public sealed class CodexCliVersionProbeTests
             await held.WaitForReceiptAsync(mode == "tree" ? "leaf" : "timeout");
             pending.IsCompleted.ShouldBeFalse("C959-v03-held");
             held.Clock.Advance(TimeSpan.FromSeconds(5));
-            var timedOut = await pending.WaitAsync(TimeSpan.FromSeconds(10));
+            (await CompletedAsync(pending, TimeSpan.FromSeconds(10))).ShouldBeTrue("C959-pc-032 deadline");
+            var timedOut = await pending;
             CodexCliVersionTestFixture.Text(timedOut, "codexCliVersionError").ShouldBe("timeout", "C959-pc-032");
             CodexCliVersionTestFixture.Text(timedOut, "codexCliVersion").ShouldBeNull("C959-v03-timeout");
             held.ReceiptIsAlive(mode).ShouldBeFalse("C959-v03-parent");
@@ -139,14 +141,18 @@ public sealed class CodexCliVersionProbeTests
             held.Clock.Advance(TimeSpan.FromSeconds(5));
             await cleanupEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             held.Clock.Advance(TimeSpan.FromSeconds(2));
-            var unknown = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+            (await CompletedAsync(pending, TimeSpan.FromSeconds(5))).ShouldBeTrue("C959-pc-034 deadline");
+            var unknown = await pending;
             CodexCliVersionTestFixture.Text(unknown, "codexCliVersionError").ShouldBe("cleanup_unconfirmed", "C959-pc-034");
             CodexCliVersionTestFixture.Text(unknown, "codexCliVersion").ShouldBeNull("C959-pc-035");
             probe.OwnedCleanupCount.ShouldBe(1, "C959-pc-036");
             release.TrySetResult(false);
-            await probe.ReapAsync();
-            await Task.Delay(100);
-            await probe.ReapAsync();
+            var limit = Stopwatch.StartNew();
+            while (probe.OwnedCleanupCount != 0 && limit.Elapsed < TimeSpan.FromSeconds(5))
+            {
+                await probe.ReapAsync();
+                await Task.Delay(10);
+            }
             probe.OwnedCleanupCount.ShouldBe(0, "C959-v03-reaper");
             held.ReceiptIsAlive("timeout").ShouldBeFalse("C959-v03-cleanup-release");
         }
@@ -201,6 +207,52 @@ public sealed class CodexCliVersionProbeTests
                 await Should.ThrowAsync<OperationCanceledException>(async () => await wait);
             probe.CacheCount.ShouldBeLessThanOrEqualTo(32, "C959-pc-045");
         }
+        using (var many = new CodexCliVersionTestFixture())
+        {
+            for (var i = 0; i < 32; i++)
+            {
+                var exe = Path.Combine(many.Root, "codex-" + i);
+                File.Copy(many.Executable, exe);
+                var entry = await many.Attempt(exe, force: false);
+                CodexCliVersionTestFixture.Text(entry, "codexCliVersion").ShouldBe("0.160.0", "C959-v04-cache-fill " + i);
+            }
+            var overflow = Path.Combine(many.Root, "codex-32");
+            File.Copy(many.Executable, overflow);
+            var refused = await many.Attempt(overflow, force: false);
+            CodexCliVersionTestFixture.Text(refused, "codexCliVersionError").ShouldBe("probe_busy", "C959-pc-045");
+            ((CodexCliVersionProbe)many.Probe!).CacheCount.ShouldBe(32, "C959-v04-cache-size");
+            many.Starts.Count.ShouldBe(32, "C959-v04-cache-starts");
+        }
+        using (var startup = new CodexCliVersionTestFixture { Mode = "timeout" })
+        {
+            var gate = new PhoneHomeAdoptionGate();
+            var ready = gate.WaitAsync(CancellationToken.None);
+            var attempt = CodexCliVersionRoutes.PrepareAdvertisementAsync((CodexCliVersionProbe)startup.Probe!, gate, CancellationToken.None);
+            await startup.WaitForReceiptAsync("timeout");
+            ready.IsCompleted.ShouldBeFalse("C959-pc-038");
+            startup.Clock.Advance(TimeSpan.FromSeconds(5));
+            await attempt.WaitAsync(TimeSpan.FromSeconds(10));
+            ready.IsCompleted.ShouldBeTrue("C959-v04-ready-after-budget");
+            ((CodexCliVersionProbe)startup.Probe!).Snapshot.CodexCliVersionCheckedAtUtc
+                .ShouldBe(CodexCliVersionTestFixture.T.AddSeconds(5), "C959-pc-040");
+        }
+        using (var periodic = new CodexCliVersionTestFixture())
+        {
+            await periodic.Refresh();
+            using var service = new CodexCliVersionRefreshService((CodexCliVersionProbe)periodic.Probe!, periodic.Clock,
+                Options.Create(new CodexCliVersionSettings()));
+            await service.StartAsync(CancellationToken.None);
+            periodic.Mode = "nonzero";
+            periodic.Clock.Advance(TimeSpan.FromMinutes(5));
+            var limit = Stopwatch.StartNew();
+            while (periodic.Starts.Count < 2 && limit.Elapsed < TimeSpan.FromSeconds(5)) await Task.Delay(10);
+            periodic.Starts.Count.ShouldBe(2, "C959-pc-042");
+            limit.Restart();
+            while (CodexCliVersionTestFixture.Text(periodic.Local(), "codexCliVersion") is not null
+                   && limit.Elapsed < TimeSpan.FromSeconds(5)) await Task.Delay(10);
+            CodexCliVersionTestFixture.Text(periodic.Local(), "codexCliVersionError").ShouldBe("nonzero_exit", "C959-v04-periodic-failure");
+            await service.StopAsync(CancellationToken.None);
+        }
     }
 
     [Test]
@@ -230,5 +282,11 @@ public sealed class CodexCliVersionProbeTests
         }
         JsonSerializer.Deserialize<RunnerCapabilitiesDto>("{\"ptyBackend\":\"InboxConhost\",\"ptyBackendRequested\":\"inbox\",\"ptyBackendReason\":\"test\",\"ptyBackendFellBack\":false,\"future\":17}",
             new JsonSerializerOptions(JsonSerializerDefaults.Web)).ShouldNotBeNull("C959-v05-legacy");
+    }
+
+    private static async Task<bool> CompletedAsync(Task task, TimeSpan timeout)
+    {
+        try { await task.WaitAsync(timeout); return true; }
+        catch (TimeoutException) { return false; }
     }
 }

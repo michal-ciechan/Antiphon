@@ -220,8 +220,8 @@ async ValueTask<object?> HerdrUnreachableFilter(EndpointFilterInvocationContext 
     var adopted = await runtime.AdoptOrphanedHostsAsync(probe, CancellationToken.None);
     if (adopted > 0)
         app.Logger.LogInformation("Adopted {Count} surviving pty-host session(s) from a previous runner", adopted);
-    await app.Services.GetRequiredService<CodexCliVersionProbe>().RefreshDefaultAsync(app.Lifetime.ApplicationStopping);
-    app.Services.GetRequiredService<IPhoneHomeAdoptionGate>().SignalReady();
+    await CodexCliVersionRoutes.PrepareAdvertisementAsync(app.Services.GetRequiredService<CodexCliVersionProbe>(),
+        app.Services.GetRequiredService<IPhoneHomeAdoptionGate>(), app.Lifetime.ApplicationStopping);
 }
 
 app.MapHealthChecks("/health");
