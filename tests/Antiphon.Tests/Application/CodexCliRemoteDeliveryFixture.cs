@@ -36,7 +36,7 @@ internal static class CodexCliRemoteDeliveryFixture
         var root = System.IO.Directory.CreateTempSubdirectory("c959-recipient-").FullName;
         try
         {
-            var runtime = new Recipient(version);
+            await using var runtime = new Recipient(version);
             var dispatcher = new PhoneHomeCommandDispatcher(runtime, new PhoneHomeSettings
             {
                 AllowedCwd = root, RunnerRepository = Path.Combine(root, "repo"),
@@ -81,7 +81,7 @@ internal static class CodexCliRemoteDeliveryFixture
                     services.AddSingleton<PhoneHomeLaunchPolicy>();
                     services.AddSingleton<IOptions<AgentRegistrySettings>>(Options.Create(registry));
                     services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new BridgeQueueHarness.OptionsMonitorStub<AgentRegistrySettings>(registry));
-                    services.AddSingleton<IAgentProtocolAdapterFactory>(new RemoteFactory(host.Directory, host.AllowedRunnerId, registry));
+                    services.AddSingleton<IAgentProtocolAdapterFactory>(_ => new RemoteFactory(host.Directory, host.AllowedRunnerId, registry));
                     services.AddSingleton<LandDeliveryBoundary>(freeze);
                     services.AddSingleton<IAgentTaskLaunchSink>(launches);
                     services.AddSingleton<RemoteSpillCourier>();
@@ -174,7 +174,7 @@ internal static class CodexCliRemoteDeliveryFixture
         public void Release(AgentSessionLaunchQueue queue)
         {
             _items.ShouldHaveSingleItem("C959-v21-one-real-launch");
-            foreach (var item in _items) queue.EnqueueInteractiveSession(item.Session, item.Agent, item.Generation, item.Spec, null, null);
+            foreach (var item in _items) queue.EnqueueInteractiveSession(item.Session, item.Agent, item.Generation, item.Spec, remoteControlName: null, notes: null);
             _items.Clear();
         }
     }
@@ -195,9 +195,23 @@ internal static class CodexCliRemoteDeliveryFixture
         }
     }
 
-    private sealed class RemoteFactory(ISessionRunnerDirectory directory, string runnerId, AgentRegistrySettings registry) : IAgentProtocolAdapterFactory
+    private sealed class RemoteFactory(ISessionRunnerDirectory directory, string runnerId, AgentRegistrySettings registry) : IAgentProtocolAdapterFactory, IAsyncDisposable
     {
-        public IAgentProtocolAdapter Create(AgentKind kind) => new RunnerCodexAdapter(new RunnerScopedSessionRunnerClient(directory, runnerId), Options.Create(registry));
+        private readonly List<RunnerCodexAdapter> _created = [];
+        public IAgentProtocolAdapter Create(AgentKind kind)
+        {
+            var adapter = new RunnerCodexAdapter(new RunnerScopedSessionRunnerClient(directory, runnerId), Options.Create(registry));
+            _created.Add(adapter);
+            return adapter;
+        }
+        public async ValueTask DisposeAsync()
+        {
+            foreach (var adapter in _created)
+            {
+                await adapter.DisposeAsync();
+                await adapter.Exited.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+        }
     }
 
     private sealed class BusyBus(MockEventBus inner, string connection) : IEventBus
@@ -215,7 +229,7 @@ internal static class CodexCliRemoteDeliveryFixture
         }
     }
 
-    private sealed class Recipient(string version) : IPhoneHomeRuntimeSurface
+    private sealed class Recipient(string version) : IPhoneHomeRuntimeSurface, IAsyncDisposable
     {
         public Dictionary<Guid, FakeAgentProtocolAdapter> Terminals { get; } = [];
         private readonly Dictionary<Guid, List<RunnerTranscriptEvent>> _transcripts = [];
@@ -276,5 +290,6 @@ internal static class CodexCliRemoteDeliveryFixture
         }
         public int OwnedSessionCount => Terminals.Values.Count(t => !t.Killed);
         public async Task StopAsync() { foreach (var terminal in Terminals.Values) await terminal.KillAsync(TimeSpan.FromSeconds(1), CancellationToken.None); }
+        public async ValueTask DisposeAsync() => await StopAsync();
     }
 }
