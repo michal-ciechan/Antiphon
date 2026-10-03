@@ -153,21 +153,21 @@ public sealed class CodexCliVersionProbeTests
             await Should.ThrowAsync<OperationCanceledException>(async () => await pending, "C959-pc-037");
             held.ReceiptIsAlive("leaf").ShouldBeFalse("C959-v03-cancel-reaped");
         }
-        using (var held = new CodexCliVersionTestFixture { Mode = "timeout" })
+        using (var held = new CodexCliVersionTestFixture { Mode = "tree" })
         {
             var probe = (CodexCliVersionProbe)held.Probe!;
             var cleanupEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             probe.StopTreeAsync = (_, _) => { cleanupEntered.TrySetResult(); return release.Task; };
             var pending = held.Attempt();
-            await held.WaitForReceiptAsync("timeout");
+            await held.WaitForReceiptAsync("leaf");
             held.Clock.Advance(TimeSpan.FromSeconds(5));
             await cleanupEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             held.Clock.Advance(TimeSpan.FromSeconds(2));
             (await CompletedAsync(pending, TimeSpan.FromSeconds(5))).ShouldBeTrue("C959-pc-034 deadline");
             var unknown = await pending;
-            CodexCliVersionTestFixture.Text(unknown, "codexCliVersionError").ShouldBe("cleanup_unconfirmed", "C959-pc-034");
             CodexCliVersionTestFixture.Text(unknown, "codexCliVersion").ShouldBeNull("C959-pc-035");
+            CodexCliVersionTestFixture.Text(unknown, "codexCliVersionError").ShouldBe("cleanup_unconfirmed", "C959-pc-034");
             probe.OwnedCleanupCount.ShouldBe(1, "C959-pc-036");
             release.TrySetResult(false);
             var limit = Stopwatch.StartNew();
@@ -177,7 +177,7 @@ public sealed class CodexCliVersionProbeTests
                 await Task.Delay(10);
             }
             probe.OwnedCleanupCount.ShouldBe(0, "C959-v03-reaper");
-            held.ReceiptIsAlive("timeout").ShouldBeFalse("C959-v03-cleanup-release");
+            held.ReceiptIsAlive("leaf").ShouldBeFalse("C959-v03-cleanup-release");
         }
     }
 
