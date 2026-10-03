@@ -1,0 +1,113 @@
+schemaVersion: 1
+plan: /work/worktrees/task-22b182d6/docs/superpowers/plans/2026-10-03-card-0965-final-qualification.md
+resultsRoot: .antiphon/checkpoints
+build:
+  properties: {}
+  maxCpuCount: 0
+  slots: auto
+  slotWaitMinutes: 45
+parallel: {}
+timeouts:
+  rowMinutes: 15
+  totalMinutes: 90
+rerun:
+  knownFlaky: []
+baseline: {}
+builds:
+- id: bin-c965-qualified
+  project: tests/Antiphon.Tests
+  outputPath: bin-c965-qualified/
+checkpoints:
+- id: CP-1
+  repeat: 1
+  after:
+  - Q1
+  build: bin-c965-qualified
+  group: task-input
+  filter: /*/*/(AgentTaskInputSpillTests*)|(AgentTaskRefineTests*)|(AgentTaskReplyOverlayTests*)/*
+  expect:
+  - AgentTaskInputSpillTests
+  - AgentTaskRefineTests
+  - AgentTaskReplyOverlayTests
+  expectText: AgentTaskInputSpillTests,AgentTaskRefineTests,AgentTaskReplyOverlayTests
+  minExecuted: 31
+  estimatedMinutes: 5
+  timeoutMinutes: 15
+  serial: true
+  environment:
+    C804_ORPHAN_SWEEP_ROOT: c965-disabled
+    TUNIT_MAX_PARALLEL_TESTS: 1
+  isCommand: false
+- id: CP-2
+  repeat: 1
+  after:
+  - Q1
+  build: bin-c965-qualified
+  group: fallback
+  filter: /*/*/(AgentTaskInputFallbackTests*)|(PhoneHomeSpillTests*)|(PhoneHomeSpillTransportTests*)|(DurableRunnerSpillReceiptTests*)/*
+  expect:
+  - AgentTaskInputFallbackTests
+  - PhoneHomeSpillTests
+  - PhoneHomeSpillTransportTests
+  - DurableRunnerSpillReceiptTests
+  expectText: AgentTaskInputFallbackTests,PhoneHomeSpillTests,PhoneHomeSpillTransportTests,DurableRunnerSpillReceiptTests
+  minExecuted: 29
+  estimatedMinutes: 4
+  timeoutMinutes: 15
+  serial: true
+  environment:
+    C804_ORPHAN_SWEEP_ROOT: c965-disabled
+    TUNIT_MAX_PARALLEL_TESTS: 1
+  isCommand: false
+- id: CP-3
+  repeat: 1
+  after:
+  - Q1
+  build: bin-c965-qualified
+  group: attention
+  filter: /*/*/TaskInputReadFailureTests*/*
+  expect: []
+  expectText: TaskInputReadFailureTests
+  minExecuted: 8
+  estimatedMinutes: 2
+  timeoutMinutes: 15
+  serial: true
+  environment:
+    C804_ORPHAN_SWEEP_ROOT: c965-disabled
+    TUNIT_MAX_PARALLEL_TESTS: 1
+  isCommand: false
+- id: CP-7
+  repeat: 1
+  after:
+  - Q1
+  build: bin-c965-qualified
+  group: compatibility
+  filter: /*/*/(ParkedMessageSweepServiceTests*)|(CapacityRecoveryCompatibilityTests*)/*
+  expect:
+  - ParkedMessageSweepServiceTests
+  - CapacityRecoveryCompatibilityTests
+  expectText: ParkedMessageSweepServiceTests,CapacityRecoveryCompatibilityTests
+  minExecuted: 18
+  estimatedMinutes: 2
+  timeoutMinutes: 15
+  serial: true
+  environment:
+    C804_ORPHAN_SWEEP_ROOT: c965-disabled
+    TUNIT_MAX_PARALLEL_TESTS: 1
+  isCommand: false
+- id: CP-6
+  repeat: 1
+  after:
+  - Q1
+  build: bin-c965-qualified
+  group: unit
+  filter: /*/*/*/*[Category=Unit]
+  expect: []
+  expectText: nonzero Unit results
+  minExecuted: 1
+  estimatedMinutes: 4
+  timeoutMinutes: 15
+  serial: true
+  environment:
+    C804_ORPHAN_SWEEP_ROOT: c965-disabled
+  isCommand: false

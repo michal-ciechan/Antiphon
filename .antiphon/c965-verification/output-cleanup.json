@@ -1,0 +1,37 @@
+{
+  "root": "/work/worktrees/task-22b182d6",
+  "producer": "22b182d6",
+  "names": [
+    "bin-c965-fallback",
+    "bin-c965-qualified"
+  ],
+  "removed": [
+    "src/Antiphon.Agents.Pty/bin-c965-fallback",
+    "src/Antiphon.FakeClaude/bin-c965-fallback",
+    "src/Antiphon.FakeGrok/bin-c965-fallback",
+    "src/Antiphon.FakeLlmApi/bin-c965-fallback",
+    "src/Antiphon.HostCleanup/bin-c965-fallback",
+    "src/Antiphon.Messaging/bin-c965-fallback",
+    "src/Antiphon.Messaging.Client/bin-c965-fallback",
+    "src/Antiphon.Messaging.Client.Testing/bin-c965-fallback",
+    "src/Antiphon.Messaging.Gateway/bin-c965-fallback",
+    "src/Antiphon.Messaging.Slack/bin-c965-fallback",
+    "src/Antiphon.NightlyWatchdog/bin-c965-fallback",
+    "src/Antiphon.PtyHost/bin-c965-fallback",
+    "src/Antiphon.PtyHost.Client/bin-c965-fallback",
+    "src/Antiphon.PtyHost.Protocol/bin-c965-fallback",
+    "src/Antiphon.Resilience/bin-c965-fallback",
+    "src/Antiphon.SessionRunner/bin-c965-fallback",
+    "src/Antiphon.SessionRunner.Contracts/bin-c965-fallback",
+    "server/bin-c965-fallback",
+    "tests/Antiphon.ChannelOutbound.Probe/bin-c965-fallback",
+    "tests/Antiphon.Checkpoints.FilterHost/bin-c965-fallback",
+    "tests/Antiphon.Checkpoints.LifecycleHost/bin-c965-fallback",
+    "tests/Antiphon.Checkpoints.RepeatHost/bin-c965-fallback",
+    "tests/Antiphon.CustodyTestChild/bin-c965-fallback",
+    "tests/Antiphon.DockerStack.Fixture/bin-c965-fallback",
+    "tests/Antiphon.Tests/bin-c965-fallback",
+    "tools/Antiphon.Checkpoints/bin-c965-fallback"
+  ],
+  "toolCleaned": "bin-c965-qualified"
+}
