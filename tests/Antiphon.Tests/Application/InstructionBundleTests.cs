@@ -26,23 +26,23 @@ public class InstructionBundleTests
     public void C1011_composed_windows_routing_contract()
     {
         var text = C1011Collapse(InstructionBundleComposer.Compose([InstructionBundles.Orchestrator]).Text);
-        text.ShouldContain("OS needs do not authorize -IgnoreRoutingPin.", "os-pin");
+        text.ShouldContain("OS needs do not authorize -IgnoreRoutingPin.", customMessage: "os-pin");
         var omitted = System.Text.RegularExpressions.Regex.Match(text, @"Normally omit (.*?) to preserve").Groups[1].Value;
-        omitted.ShouldContain("-Kind", "omit-kind");
-        omitted.ShouldContain("-Level", "omit-level");
-        text.ShouldContain("docs/orchestration-loop.md#windows-review-and-debug-routing", "owner-pointer");
+        omitted.ShouldContain("-Kind", customMessage: "omit-kind");
+        omitted.ShouldContain("-Level", customMessage: "omit-level");
+        text.ShouldContain("docs/orchestration-loop.md#windows-review-and-debug-routing", customMessage: "owner-pointer");
         C1011Read(".claude/skills/antiphon-orchestrator/SKILL.md")
-            .ShouldContain("orchestration-loop.md#windows-review-and-debug-routing", "orchestrator-skill-pointer");
+            .ShouldContain("orchestration-loop.md#windows-review-and-debug-routing", customMessage: "orchestrator-skill-pointer");
         C1011Read(".claude/skills/antiphon-delegate/SKILL.md")
-            .ShouldContain("orchestration-loop.md#windows-review-and-debug-routing", "delegate-skill-pointer");
+            .ShouldContain("orchestration-loop.md#windows-review-and-debug-routing", customMessage: "delegate-skill-pointer");
     }
 
     [Test]
     public void C1011_model_kind_and_tier_contract()
     {
         var text = C1011Collapse(InstructionBundleComposer.Compose([InstructionBundles.Orchestrator]).Text);
-        text.ShouldContain("`-Kind` selects `ClaudeCode`, `Grok`, or `Codex`", "kind-values");
-        text.ShouldContain("`-Level` selects `Frontier`, `High`, `Medium`, or `Low`", "level-values");
+        text.ShouldContain("`-Kind` selects `ClaudeCode`, `Grok`, or `Codex`", customMessage: "kind-values");
+        text.ShouldContain("`-Level` selects `Frontier`, `High`, `Medium`, or `Low`", customMessage: "level-values");
         text.ShouldContain("Model-tier names are **not AgentKind values**.");
         text.ShouldContain("Never pass a model-tier name as either flag.");
         text.ShouldContain("server/Application/Services/ModelLevelAliases.cs");
@@ -52,31 +52,31 @@ public class InstructionBundleTests
     public void C1011_owner_role_wide_policy_and_fallback()
     {
         var owner = C1011Owner();
-        owner.ShouldContain("Review and Debug on every platform, including Linux", "all-platforms");
-        owner.ShouldContain("Required", "required-strength");
-        owner.ShouldContain("Human", "human-provenance");
+        owner.ShouldContain("Review and Debug on every platform, including Linux", customMessage: "all-platforms");
+        owner.ShouldContain("Required", customMessage: "required-strength");
+        owner.ShouldContain("Human", customMessage: "human-provenance");
         owner.ShouldContain("Human Required");
-        owner.ShouldContain("Grok/High then ClaudeCode/High", "required-pair");
+        owner.ShouldContain("Grok/High then ClaudeCode/High", customMessage: "required-pair");
         owner.ShouldContain("grok-4.7");
         owner.ShouldContain("opus");
-        owner.ShouldContain("Startup failure requires explicit authorized recovery; do not retry Grok automatically.", "startup-recovery");
+        owner.ShouldContain("Startup failure requires explicit authorized recovery; do not retry Grok automatically.", customMessage: "startup-recovery");
         var recoveryAt = owner.IndexOf("### Explicit startup recovery", StringComparison.Ordinal);
         recoveryAt.ShouldBeGreaterThanOrEqualTo(0);
         var recovery = owner[recoveryAt..];
-        recovery.ShouldContain("-Platform Windows", "recovery-platform");
+        recovery.ShouldContain("-Platform Windows", customMessage: "recovery-platform");
         recovery.ShouldContain("-Kind ClaudeCode -Level High");
-        recovery.ShouldContain("no -IgnoreRoutingPin", "recovery-no-bypass");
+        recovery.ShouldContain("no -IgnoreRoutingPin", customMessage: "recovery-no-bypass");
     }
 
     [Test]
     public void C1011_qualification_gates()
     {
         var owner = C1011Owner();
-        owner.ShouldContain("Both actual InboxConhost and ModernConPty require real Review evidence.", "both-hosts");
-        owner.ShouldContain("A fresh worktree must visibly show trust, receive one y, clear trust, and reach Ready.", "fresh-trust");
-        owner.ShouldContain("Delivery requires a matching complete UserPrompt transcript.", "whole-receipt");
-        owner.ShouldContain("Settlement requires a final report and confirmed release ownership.", "release-owner");
-        owner.ShouldContain("WQ-1, WQ-2 and WQ-3 gate prompt landing and Debug pin activation.", "preland-gate");
+        owner.ShouldContain("Both actual InboxConhost and ModernConPty require real Review evidence.", customMessage: "both-hosts");
+        owner.ShouldContain("A fresh worktree must visibly show trust, receive one y, clear trust, and reach Ready.", customMessage: "fresh-trust");
+        owner.ShouldContain("Delivery requires a matching complete UserPrompt transcript.", customMessage: "whole-receipt");
+        owner.ShouldContain("Settlement requires a final report and confirmed release ownership.", customMessage: "release-owner");
+        owner.ShouldContain("WQ-1, WQ-2 and WQ-3 gate prompt landing and Debug pin activation.", customMessage: "preland-gate");
     }
 
     [Test]
@@ -97,8 +97,8 @@ public class InstructionBundleTests
         pin.ShouldBeGreaterThan(restart, "canonical-before-pin");
         refresh.ShouldBeGreaterThan(pin);
         debug.ShouldBeGreaterThan(refresh);
-        owner.ShouldContain("Preserve unrelated Human card exceptions.", "preserve-exceptions");
-        owner.ShouldContain("Queued tasks retain their recorded selection.", "queued-selection");
+        owner.ShouldContain("Preserve unrelated Human card exceptions.", customMessage: "preserve-exceptions");
+        owner.ShouldContain("Queued tasks retain their recorded selection.", customMessage: "queued-selection");
     }
 
     private static string C1011Read(string relative) => File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, relative));
