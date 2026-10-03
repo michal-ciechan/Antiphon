@@ -143,7 +143,7 @@ public sealed class CodexCliAdmissionTests
             await using var db = k.Context();
             var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
             task.Status.ShouldBe(AgentTaskStatus.Blocked, "C959-v17-blocked");
-            task.FailureReason.ShouldStartWith("codex_cli_version_", "C959-pc-141");
+            task.FailureReason.ShouldStartWith("codex_cli_version_", customMessage: "C959-pc-141");
             task.AgentSessionId.ShouldBeNull("C959-pc-140");
             k.Factory.Created.ShouldBeEmpty("C959-pc-139");
             (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == created.Id && e.Type == AgentTaskEventType.Blocked)).ShouldBe(1);
@@ -391,7 +391,7 @@ public sealed class CodexCliAdmissionTests
             });
             return new() { Schema = schema, Harness = h, Client = client, Factory = (Factory)h.Provider.GetRequiredService<IAgentProtocolAdapterFactory>() };
         }
-        public async Task<AgentTaskSummaryDto> CreateAsync()
+        public async Task<AgentTaskCreatedDto> CreateAsync()
         {
             using var scope = Harness.Provider.CreateScope();
             return await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CreateAsync(new(Body, Role: AgentTaskRole.Docs,
@@ -438,7 +438,7 @@ public sealed class CodexCliAdmissionTests
         public bool? AuthPresent { get; set; } = true;
         public Func<CancellationToken, Task<RunnerCodexCliVersionDto?>>? Probe { get; set; }
         public List<RunnerCodexCliProbeRequest> Requests { get; } = [];
-        public Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct) => Task.FromResult<RunnerCapabilitiesDto?>(new("test", "test", "test", false, "d40c1670", Platform: "linux", CodexCliVersion: "0.160.0", CodexCliVersionCheckedAtUtc: T, CodexCliLauncherFingerprint: new string('a',64)));
+        public Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct) => Task.FromResult<RunnerCapabilitiesDto?>(new("test", "test", "test", false, Version: "d40c1670", Platform: "linux", CodexCliVersion: "0.160.0", CodexCliVersionCheckedAtUtc: T, CodexCliLauncherFingerprint: new string('a',64)));
         public Task<RunnerCodexCliVersionDto?> GetCodexCliVersionAsync(RunnerCodexCliProbeRequest request, CancellationToken ct)
         { Requests.Add(request); return Probe is null ? Task.FromResult(Sample) : Probe(ct); }
         public Task<RunnerProviderAuthDto?> GetProviderAuthAsync(string provider, CancellationToken ct) => Task.FromResult<RunnerProviderAuthDto?>(new(provider, AuthPresent, null, null, T, null));
