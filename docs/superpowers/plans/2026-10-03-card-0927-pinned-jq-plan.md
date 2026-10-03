@@ -19,6 +19,12 @@ V-3: Manual isolated nested-Docker layer build through c927-jq-layer build slot;
 root ownership/mode and real jq-version row as uid 1654, network none, no ports/socket/privilege.
 V-4: Full RemoteScriptContractTests with scratch jq first on PATH; inspect C849/C912/C973
 and every RequireLinuxJq case in fresh TRX, zero jq skips.
+The current source has 66 methods expanded to 84 cases, confirmed independently from
+attributes and the first full-class TRX (84/84). CP-3's initial floor of 100 was an authoring
+error; it is corrected to this roster count without changing any test assertion or timeout.
+The first Final run passed 3945 Unit cases with 33 Windows-only skips. Only CP-3 is rerun
+after this manifest-only correction; implementation, tests and dependencies documentation
+remain byte-identical to the source verified by the other completed rows.
 V-5: Whole Unit category for the Final profile. This is required even though no shared helper
 or registry changes. Unit does not prove production rollout/delivery/landing/lease/persistence.
 R-1: Full DockerStackContractTests, CodexRunnerImageContractTests and GrokRunnerImageContractTests
@@ -41,5 +47,5 @@ One invocation per unchanged proof selection; no loaded repetitions planned.
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S0 | `tests/Antiphon.Tests -> bin-c927-red/` | red-first | `/*/*/JqRunnerImageContractTests/*` | V-1, V-2 | 14 executed, expected red before S1 | 14 | 3 | true |
 | CP-2 | S1-S2 | `tests/Antiphon.Tests -> bin-c927-contract/` | image-contracts | `/*/*/(JqRunnerImageContractTests*)\|(DockerStackContractTests*)\|(CodexRunnerImageContractTests*)\|(GrokRunnerImageContractTests*)/*` | V-1, V-2, R-1 | all four full classes, zero failed/skipped | 100 | 3 | true |
-| CP-3 | S1-S2 | `tests/Antiphon.Tests -> bin-c927-shell/` | real-jq-shell | `/*/*/RemoteScriptContractTests/*` | V-4 | full class, zero failed or jq skips | 100 | 3 | true |
+| CP-3 | S1-S2 | `tests/Antiphon.Tests -> bin-c927-shell/` | real-jq-shell | `/*/*/RemoteScriptContractTests/*` | V-4 | all 84 cases, zero failed or jq skips | 84 | 3 | true |
 | CP-4 | S1-S2 | `tests/Antiphon.Tests -> bin-c927-unit/` | final-unit | `/*/*/*/*[Category=Unit]` | V-5 | whole Unit lane, zero failed; platform skips individually accounted | 2000 | 8 | true |
