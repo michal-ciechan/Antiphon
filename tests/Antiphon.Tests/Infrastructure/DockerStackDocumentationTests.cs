@@ -18,11 +18,11 @@ public sealed class DockerStackDocumentationTests
         var end = text.IndexOf("### ", start + heading.Length, StringComparison.Ordinal);
         var section = end < 0 ? text[start..] : text[start..end];
 
-        section.ShouldContain("Assert-ZeroCounters", "the stopped-main refusal must be explained");
-        section.ShouldContain("RunnerCounterUnknown", "a stopped main makes redeploy-old refuse");
+        section.ShouldContain("Assert-ZeroCounters", Case.Sensitive, "the stopped-main refusal must be explained");
+        section.ShouldContain("RunnerCounterUnknown", Case.Sensitive, "a stopped main makes redeploy-old refuse");
         section.ShouldContain("scripted only");
         foreach (var volume in new[] { "work", "runner-tmp", "dind-data" })
-            section.ShouldNotContain($"docker volume rm antiphon-runner_{volume}",
+            section.ShouldNotContain($"docker volume rm antiphon-runner_{volume}", Case.Sensitive,
                 "manual main-volume removal cannot precede redeploy-old");
     }
 
