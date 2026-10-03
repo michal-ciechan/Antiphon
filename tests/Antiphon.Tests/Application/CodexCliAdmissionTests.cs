@@ -596,7 +596,7 @@ public sealed class CodexCliAdmissionTests
             var ownsSchema = schema is null;
             schema ??= await TestDbFixture.CreateIsolatedSchemaAsync();
             clock ??= TimeProvider.System;
-            var client = new Client { Sample = new("0.160.0", clock.GetUtcNow(), null, new string('a',64)) };
+            var client = new Client { Sample = new("0.160.0", clock.GetUtcNow(), null, new string('a',64)), ConfirmAbsentProcess = true };
             Factory? factory = null;
             var boundary = new BriefBoundary(schema.ConnectionString) { CancelAfterClaim = cancelAfterClaim };
             var h = await BridgeQueueHarness.CreateAsync(new()
@@ -608,6 +608,9 @@ public sealed class CodexCliAdmissionTests
                 ConfigureServices = services =>
                 {
                     services.AddSingleton<ISessionRunnerDirectory>(new Directory(client, new Client()));
+                    // Factory-started adapters own live processes. An unstarted, lost launch
+                    // has no process on this isolated client; its kill/status responses confirm absence.
+                    services.AddSingleton<ISessionRunnerClient>(client);
                     services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new BridgeQueueHarness.OptionsMonitorStub<AgentRegistrySettings>(Registry()));
                     services.AddSingleton<IOptions<AgentRegistrySettings>>(Options.Create(Registry()));
                     services.AddSingleton<IAgentProtocolAdapterFactory>(sp => factory = new(sp.GetRequiredService<AgentSessionRuntime>(), schema.ConnectionString, clock)
@@ -741,6 +744,7 @@ public sealed class CodexCliAdmissionTests
         public RunnerCodexCliVersionDto? Sample { get; set; } = new("0.160.0", T, null, new string('a',64));
         public bool? AuthPresent { get; set; } = true;
         public Func<CancellationToken, Task<RunnerCodexCliVersionDto?>>? Probe { get; set; }
+        public bool ConfirmAbsentProcess { get; init; }
         public List<RunnerCodexCliProbeRequest> Requests { get; } = [];
         public Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct) => Task.FromResult<RunnerCapabilitiesDto?>(new("test", "test", "test", false, Version: "d40c1670", Platform: "linux", CodexCliVersion: "0.160.0", CodexCliVersionCheckedAtUtc: T, CodexCliLauncherFingerprint: new string('a',64)));
         public Task<RunnerCodexCliVersionDto?> GetCodexCliVersionAsync(RunnerCodexCliProbeRequest request, CancellationToken ct)
@@ -748,14 +752,18 @@ public sealed class CodexCliAdmissionTests
         public Task<RunnerProviderAuthDto?> GetProviderAuthAsync(string provider, CancellationToken ct) => Task.FromResult<RunnerProviderAuthDto?>(new(provider, AuthPresent, null, null, T, null));
         public Task<SessionRunnerSessionDto> StartAsync(Guid id, AgentLaunchSpec spec, CancellationToken ct) => throw new NotSupportedException();
         public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
-        public Task<SessionRunnerSessionDto> GetAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
+        public Task<SessionRunnerSessionDto> GetAsync(Guid id, CancellationToken ct) => ConfirmAbsentProcess
+            ? Task.FromResult(Absent(id)) : throw new NotSupportedException();
         public Task<SessionRunnerBufferDto> GetBufferAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
         public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
-        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
+        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid id, CancellationToken ct) => ConfirmAbsentProcess
+            ? Task.FromResult(new SessionRunnerTranscriptDto(id, [], 0)) : throw new NotSupportedException();
         public Task SendInputAsync(Guid id, string input, CancellationToken ct) => throw new NotSupportedException();
         public Task ClearLiveBufferAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
         public Task ResizeAsync(Guid id, int cols, int rows, CancellationToken ct) => throw new NotSupportedException();
-        public Task<SessionRunnerSessionDto> KillAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
+        public Task<SessionRunnerSessionDto> KillAsync(Guid id, CancellationToken ct) => ConfirmAbsentProcess
+            ? Task.FromResult(Absent(id)) : throw new NotSupportedException();
+        private static SessionRunnerSessionDto Absent(Guid id) => new(id, null, DateTime.UtcNow, "Exited", 0, "", 0);
         public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(CancellationToken ct) { await Task.CompletedTask; yield break; }
     }
     internal static AgentRegistrySettings Registry() => new()
