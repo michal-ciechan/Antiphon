@@ -251,7 +251,7 @@ internal sealed class C1008WrapperFixture : IDisposable
             "scripts/fixtures/c1008-recycle-cases.json")))!;
         State = new JsonObject
         {
-            ["scenario"] = "c1008", ["sha"] = vectors["sourceSha"]!.DeepClone(),
+            ["scenario"] = "c1008", ["sha"] = vectors["sourceSha"]!.DeepClone(), ["oldDeployed"] = false,
             ["tempContainer"] = false,
             ["statuses"] = new JsonObject
             {
