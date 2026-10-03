@@ -255,7 +255,7 @@ public sealed class EvidenceDiffGuardTests
             var hook = "function Get-EvidenceGitResult { param($Repository,$Arguments) $r=Invoke-EvidenceNativeGit $Repository $Arguments; " +
                 "if (" + condition + ") { Write-Host 'FAULT-HIT'; $s=[Text.Encoding]::UTF8.GetString($r.Bytes); " + alteration + " }; return $r }";
             var r = await f.HistoryAsync(f.Base, head, hook);
-            r.Output.ShouldContain("FAULT-HIT");
+            r.Output.Split("FAULT-HIT", StringSplitOptions.None).Length.ShouldBe(2, "fault cut hit exactly once");
             r.Exit.ShouldBe(2, "c1015-" + label);
             r.Output.ShouldNotContain("EVIDENCE result");
         }
@@ -280,7 +280,7 @@ public sealed class EvidenceDiffGuardTests
             "$r=Invoke-EvidenceNativeGit $Repository $Arguments; if ($Arguments -contains 'moving-head^{commit}') { " +
             "[void](Invoke-EvidenceNativeGit $Repository @('update-ref','refs/heads/moving-head'," + EvidenceGitFixture.Quote(bad) + ")); Write-Host 'FAULT-HIT' }; return $r }";
         var pinned = await f.HistoryAsync("moving-base", "moving-head", hook);
-        pinned.Output.ShouldContain("FAULT-HIT");
+        pinned.Output.Split("FAULT-HIT", StringSplitOptions.None).Length.ShouldBe(2, "head movement cut hit exactly once");
         pinned.Exit.ShouldBe(0, "c1015-pinned-head");
         pinned.Output.ShouldContain("head=" + head, customMessage: "c1015-pinned-head");
     }

@@ -1,0 +1,36 @@
+name: Evidence Git policy
+on:
+  push:
+    branches:
+      - master
+      - "feat/**"
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Explicit comparison base
+        required: true
+        type: string
+      head:
+        description: Selected head (empty uses workflow SHA)
+        required: false
+        type: string
+permissions:
+  contents: read
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.head || github.event.after || github.sha }}
+      - name: Check proposed evidence history
+        shell: pwsh
+        env:
+          EVIDENCE_EVENT_PATH: ${{ github.event_path }}
+          EVIDENCE_EVENT_NAME: ${{ github.event_name }}
+          EVIDENCE_MANUAL_BASE: ${{ inputs.base }}
+          EVIDENCE_MANUAL_HEAD: ${{ inputs.head || github.sha }}
+        run: |
+          & ./scripts/check-evidence-diff.ps1 -EventPath $env:EVIDENCE_EVENT_PATH -EventName $env:EVIDENCE_EVENT_NAME -ManualBase $env:EVIDENCE_MANUAL_BASE -ManualHead $env:EVIDENCE_MANUAL_HEAD
+          exit $LASTEXITCODE
