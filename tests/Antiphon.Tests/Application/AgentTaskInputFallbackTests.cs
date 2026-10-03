@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -25,7 +26,10 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentTaskInputFallbackTests
 {
     [Test]
-    public async Task Runner_write_failure_types_only_the_durable_api_pointer()
+    [Arguments("send-now")]
+    [Arguments("flush")]
+    [Arguments("enqueue-now")]
+    public async Task Runner_write_failure_types_only_the_durable_api_pointer(string path)
     {
         await using var f = await TaskInputDeliveryFixture.CreateAsync();
         await f.Replies.RefineAsync(f.TaskId, new string('a', 4200) + "fallback-tail-888",
@@ -40,9 +44,17 @@ public sealed class AgentTaskInputFallbackTests
             RunnerRepository = Path.Combine(Path.GetDirectoryName(f.RunnerCwd)!, "repo"),
             CapacityStatePath = Path.Combine(Path.GetDirectoryName(f.RunnerCwd)!, "capacity"),
         });
-        await using var transport = await PhoneHomeTestHost.StartAsync();
-        await using var peer = await transport.ConnectPeerAsync();
-        var live = await transport.WaitLiveAsync();
+        var ready = new RunnerReadySignal();
+        await using var transport = await PhoneHomeTestHost.StartAsync(observer: ready);
+        ready.Directory = transport.Directory;
+        var ticket = await transport.RegisterAsync();
+        await using var peer = new PhoneHomeScriptedPeer();
+        peer.Socket.Options.SetRequestHeader(PhoneHomeProtocol.TicketHeader, ticket.Ticket);
+        await peer.Socket.ConnectAsync(transport.ConnectUri, CancellationToken.None);
+        var live = await ready.Live.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        live.RunnerStoreId.ShouldBe(transport.StoreId, "readiness-expected-store");
+        peer.Epoch = live.Epoch;
+        peer.Start();
         live.DispatchEligible = true;
         PhoneHomeFrame? writerReply = null;
         peer.Reply = frame =>
@@ -54,15 +66,34 @@ public sealed class AgentTaskInputFallbackTests
         var runnerClient = new PhoneHomeRunnerClient(live,
             f.Provider.GetRequiredService<RemoteSpillCourier>());
         f.Adapter.BeforeInput = (text, ct) => runnerClient.SendInputAsync(f.SessionId, text, ct);
-        await Should.ThrowAsync<ConflictException>(() =>
-            f.Queue.SendNowAsync(f.SessionId, initial.Id, CancellationToken.None));
+        if (path == "flush")
+        {
+            await f.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd);
+            await f.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
+        }
+        else if (path == "enqueue-now")
+        {
+            // Seed the admitted ownership at the persistence boundary; this API is also used
+            // for ordinary question overlays, which intentionally have no task-input key.
+            await using (var setup = f.Db())
+                await setup.SessionQueuedMessages.ExecuteDeleteAsync();
+            f.Provider.GetRequiredService<RemoteSpillCourier>().Stage(f.SessionId, f.RunnerCwd,
+                new PhoneHomeInputSpill(initial.RemoteSpillRelativePath!, initial.RemoteSpillBody!));
+            await Should.ThrowAsync<ConflictException>(() =>
+                f.Queue.EnqueueDeliveringNowAsync(f.SessionId, initial.Body, CancellationToken.None,
+                    QueuedMessageOrigin.Delegation));
+        }
+        else
+            await Should.ThrowAsync<ConflictException>(() =>
+                f.Queue.SendNowAsync(f.SessionId, initial.Id, CancellationToken.None));
         writerReply?.ErrorCode.ShouldBe(PhoneHomeProblemTypes.SpillWriteFailedBeforeInput,
             "real-writer-before-input-code");
         f.Adapter.Inputs.ShouldBeEmpty("file-pointer-input-count=0");
         runtime.Inputs.ShouldBeEmpty("real-runtime-input-count=0");
         await using var db = f.Db();
         var changed = await db.SessionQueuedMessages.AsNoTracking().SingleAsync();
-        changed.Id.ShouldBe(initial.Id);
+        if (path != "enqueue-now") changed.Id.ShouldBe(initial.Id);
+        changed.ConversationKey.ShouldBe(initial.ConversationKey, "fallback-owned-key");
         changed.Status.ShouldBe(QueuedMessageStatus.Pending);
         changed.Body.ShouldContain("/api/agent-tasks/", customMessage: "api-only-persisted-pointer");
         changed.Body.ShouldNotContain(".antiphon/inbox/");
@@ -371,5 +402,17 @@ public sealed class AgentTaskInputFallbackTests
         public Task ClearLiveBufferAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
         public Task ResizeAsync(Guid id, int cols, int rows, CancellationToken ct) => throw new NotSupportedException();
         public Task<RunnerKillGenerationResult> KillGenerationAsync(Guid id, DateTime startedAt, CancellationToken ct) => throw new NotSupportedException();
+    }
+
+    private sealed class RunnerReadySignal : IRunnerEligibilityObserver
+    {
+        public PhoneHomeRunnerDirectory? Directory { get; set; }
+        public TaskCompletionSource<PhoneHomeLiveConnection> Live { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public void Changed(string runnerId)
+        {
+            if (Directory?.SnapshotLive(runnerId) is { } live)
+                Live.TrySetResult(live);
+        }
     }
 }
