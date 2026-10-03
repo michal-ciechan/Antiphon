@@ -3223,9 +3223,9 @@ public sealed class RemoteScriptContractTests
                 """);
             foreach (var variant in new[] { "valid", "missing", "malformed", "duplicate", "foreign-marker",
                 "malformed-image", "malformed-source", "symlink" })
-                preservation.ShouldContain("marker-independent-" + variant, "retirement executes the real read-only cache gate: " + preservation);
+                preservation.ShouldContain("marker-independent-" + variant, Case.Sensitive, "retirement executes the real read-only cache gate: " + preservation);
             foreach (var variant in new[] { "foreign-volume", "missing-volume" })
-                preservation.ShouldContain("cache-identity-refused-" + variant, preservation);
+                preservation.ShouldContain("cache-identity-refused-" + variant, Case.Sensitive, preservation);
             return;
         }
         RequireLinuxJq();
