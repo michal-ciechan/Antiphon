@@ -35,11 +35,16 @@ Before an AppHost or desktop runner restart, ensure `logs/apphost.restart.lock` 
 `logs/apphost.launch.lock` are clear; AppHost exit 3 refuses the restart, so inspect ownership
 and both locks before retrying.
 
-Orchestrators may recycle the disposable volumes of a drained, stopped runner and
+Orchestrators may perform the documented in-container disk cleanup of a **running**
+main as the runner user, and remove the retired temp project's volumes. They
 must ALWAYS retire temp (`retire-temp`) once scheduling is back on main, under the
 [volume recycling policy](docker-stack.md#volume-recycling-and-disk-reclaim-card-1008).
 Every drain, zero-work, routing, land, unpublished-work and unreferenced-volume
-precondition in that procedure must pass; use its manual equivalent until the script fixes land.
+precondition for volume removal in that procedure must pass; use its manual temp
+equivalent until the script fixes land. Main volume recycling by hand is not
+authorized or documented: it is scripted only, to be implemented inside
+`redeploy-old` / `deploy-parent` by CARD-1008. Stopping main by hand makes
+`Assert-ZeroCounters` refuse with `RunnerCounterUnknown` before deployment.
 
 Still requires a human: `Reset`, Docker prune, recycling runner-state or cache volumes
 beyond that policy (main state/cache recycling requires explicit opt-in), deleting
@@ -48,7 +53,7 @@ and other destructive or irreversible steps outside that grant; deleting other d
 killing other sessions or alwaysOn agents;
 changing budgets, routing pins, or settings; spend beyond a sanctioned canary; handling secrets;
 touching the user's untracked files; or touching the standing server2 runner container outside
-the rolling phases and their documented volume-recycling equivalent. Pause for explicit human authorization before any such step, except the
+the rolling phases. Pause for explicit human authorization before any such step, except the
 operator's CARD-0934 authorization to stop remaining server2 sessions after the staged rollout's
 four-hour drain cap, under [that procedure](docker-stack.md#staged-server2-rolling-rollout-card-0934).
 
