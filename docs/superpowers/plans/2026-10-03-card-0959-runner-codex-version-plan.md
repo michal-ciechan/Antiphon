@@ -1,5 +1,10 @@
 # CARD-0959: verified Codex CLI version per runner
 
+**Active scope:** [Inert observation re-freeze](#inert-observation-re-freeze--task-4170230f)
+supersedes admission/refusal requirements below. Keep the original fix design as
+history; Code uses the appended verification design and its sole active checkpoint
+table. CARD-0959 now reports CLI observations and never gates work on them.
+
 Date: 2026-10-03. Plan task: `429e016c`. Source baseline:
 `f0fadc61635e3d977f045876d65e1e09ef06b17a`.
 
@@ -385,7 +390,7 @@ Commit/push each meaningful slice and before any checkpoint. No source edits
 under an active build/test run. Final Review runs the closed affected rows at the
 reviewed tip, including the Windows row on its qualified lane.
 
-## Verification design
+## Archived verification design (superseded by 4170230f)
 
 The following are **22 proposed single-result methods**, not claims of existing
 tests. Keep vector sets inside their named method or update the expanded CP
@@ -1589,7 +1594,7 @@ Windows. The desktop worktree is unreachable from this delegate. No live runner
 version, installed CLI upgrade, two-period production observation or Windows
 execution is claimed from source fixtures.
 
-### Checkpoints
+### Archived checkpoints (superseded by 4170230f)
 
 Group names name the lane. CP-2 requires Windows; all other rows are portable
 and normally run on the automatically selected Linux lane. This amended table
@@ -1725,7 +1730,7 @@ Require exit 0 and all seven CP rows/minima/filters in the emitted manifest.
 The shell invocation uses literal `|`; only Markdown table cells escape `\|`.
 Do not claim runtime tests or PCs passed from this documentation-only check.
 
-### Cost
+### Archived cost (superseded by 4170230f)
 
 All costs below are **estimated**, not execution receipts. Ordinary Code V/R is
 **74 minutes**, the sum of CP-1..CP-8: 8+8+8+14+8+8+5+15, including
@@ -1825,4 +1830,922 @@ No unrelated structural defect was established in this Plan dispatch.
 --- next stage ---
 next: code
 handoff: Continue from pushed ee18a226 amendment tip: implement V-21/V-22 E/W contract, remote/busy/durable recovery, launcher/transport/profile/override guards and manual qualification; run Final CP-1..8 with jq, separate Windows Debug CP-2 at final SHA, then Review. 22 feature methods/166 results, Unit floor 3961, 224 post-land PCs; preserve excluded source areas.
+artifact: docs/superpowers/plans/2026-10-03-card-0959-runner-codex-version-plan.md
+
+## Inert observation re-freeze — task 4170230f
+
+Authority: operator direction of 2026-10-03, commissioned in this task's full
+brief, supersedes the card's older gating request. Inspected implementation:
+bfc12c6d73f828cc864a205bc72967a8244ce883. This appendix is the active scope and
+verification contract. The preceding fix design and historical verification
+remain as provenance, not executable instructions where they conflict here.
+No gate, including a known-old-version gate, lands in CARD-0959.
+
+The operator's rule is that an upgrade, an unknown combination, or an old CLI
+does not by itself establish incompatibility. The present ladder already stores
+the floor per model: gpt-6.1-sol has 0.159.1; Astra and Luna have null. Keep that
+data. Removing this card's enforcement does not assert that every combination
+works; it leaves the existing admission and launch policies responsible for
+their own decisions.
+
+| Plan reference | Kept | Removed from this implementation | Deferred to the next matrix card |
+|---|---|---|---|
+| D-1 | CodexLadderEntry(ModelId, MinimumCliVersion), canonical lookup, unchanged model strings, SemVer parser/comparer | All consumption of the floor as admission permission | Evidence-backed known-broken combinations and any minimum-version refusal |
+| D-2 | Runner singleton, five-minute refresh, bounded unauthenticated child, sanitized environment, ownership, cache | Nothing that makes a failed observation block work | Broader CLI-kind observations |
+| D-3 | Optional DTO fields, registration/heartbeat, generation-bound memory, old-reader compatibility | Any inference that a sample grants dispatch eligibility | Durable compatibility catalogue, if commissioned |
+| D-4 | Typed diagnostic operation, launcher request/opaque fingerprint as observations, pure FromSpec projection | ResolveAsync in the admission path; profile/runner/descriptor comparisons as permission; opaque-fingerprint equality claim PC-110 | A verifiable correlation contract if a future decision depends on it |
+| D-5 | Fifteen-minute stale display boundary, timestamp/skew reporting only | Admission freshness setting/check, bounded refresh-to-admit, stale refusal | Any future evidence freshness policy for known-broken cells |
+| D-6 | Existing auth/model holds/platform/drain/capacity policies and real queue delivery | Entire CodexCliAdmissionPolicy admission portion, create/retry/dispatch/reuse/final-launch call sites, admission eight-second owner, exception and three refusal codes | All CLI compatibility refusals |
+| D-7 | None | Override class/list/validator rules/audit warnings and override settings/documentation | No override design commissioned |
+| D-8 | Additive catalogue/status fields, separate runner build SHA, nullable stale, default installation semantics | Refusal-oriented help text | Optional UI presentation |
+| D-9 | Reviewed land; runners report first, then server reads | Server activation of enforcement, server-first unknown refusal, minimum CLI rollout gate | Matrix activation policy |
+| D-10 | Collision exclusions, no queue/attention/deployment repair | Historical instructions to finish admission implementation | Separate owner tasks for independently reproduced defects |
+
+Ordered Code slices, all from this freeze's pushed tip (the report supplies its
+full SHA), on top of the inspected implementation:
+
+1. S1 remove admission in AgentTaskService.CreateAsync/RetryAsync and
+   AgentTaskDispatcher: _codexAdmissions, preflight RequireAsync, post-claim
+   descriptor comparison/BlockAsync, CLI-specific catch/terminalization, and
+   final BuildLaunchSpecAsync reauthorization/reprobe/warning. Preserve existing
+   model/auth/profile/placement decisions at their existing boundaries. Do not
+   replace the removed policy with an always-allow policy or an advisory RPC on
+   every task. Create, retry, warm reuse and final cold launch make zero typed
+   CLI probe calls. Diagnostic observation failures never change task status.
+2. S1 retain DisplayStale as a pure observation helper named
+   CodexCliObservation, then delete CodexCliAdmissionPolicy and
+   CodexCliVersionRequiredException. Remove DelegationSettings'
+   CodexCliVersionMaxAgeMinutes, CodexCliVersionOverrides, CodexCliVersionOverride
+   type and their validation; restore the validator's pre-feature constructor
+   and composition wiring if the injected clock is now unused. Keep the unrelated
+   validator rules. Public projection uses a fixed, documented 15-minute display
+   threshold. This is not an admission setting.
+3. S1 keep the additive runner/contract/HTTP/phone-home/default-interface
+   observation paths, their bounded standalone diagnostic RPC timeout, and
+   runner CodexCliVersionSettings (cadence/cache bounds only). The eight-second
+   admission owner is deleted; the eight-second HTTP/phone-home diagnostic
+   transport bound remains outside task creation/dispatch. Keep FromSpec as pure
+   observation data; remove its admission-only ResolveAsync and credential/DB
+   traversal. Explicit diagnostics may compose the existing remote projection
+   with FromSpec. No new profile sweep, public API or admission caller is added.
+   Keep ModelLevelAliases metadata; correct its obsolete enforcement comments.
+4. S2 replace gating tests as enumerated below; rename CodexCliAdmissionTests.cs
+   and its class to CodexCliObservationTests. Rename helper references in
+   ModelAvailabilityCreateTests and CodexCliRemoteDeliveryFixture; remove the
+   admission-only fresh-sample crutches in CodexPhoneHomeCreateTests and
+   ModelAvailabilityCreateTests when no longer needed. Do not delete their
+   auth/hold/model assertions. Update docs/ops-http.md, docs/agent-kinds.md and
+   docs/ai-agent-tui-configuration.md to reporting-only semantics. Audit all
+   server/src/test references to the deleted class/settings/codes.
+5. S2 retain and complete the observation and V-21/V-22 assertions below,
+   including the exact per-kind delivery amendment. Remove V-21's initial
+   expected refusal, V-22's bad-sample/override refusal loops and probe deadline
+   cancellation setup, and remote fixture's expectation of a probe during task
+   delivery. CLI evidence never delays either producer. Run the entire active
+   checkpoint table on the committed result, then ordinary Review. Green means
+   all remaining ordinary cases, not only methods inherited green before
+   required cases were added. All PCs remain post-land Mutation.
+
+Observation projection is concrete: version/attempt-time remain the received
+observation; a recognized fixed probe error stays that token; unrecognized error
+text projects probe_unavailable. A successful sample more than one minute in
+the future reports clock_skew; a non-null malformed launcher fingerprint reports
+launcher_mismatch. Absence of a legacy fingerprint alone does not invent a
+failure or prevent placement. Derived errors yield nullable stale=null; a parsed
+successful sample at age <=15m displays false and >15m true. Missing/invalid
+version or missing timestamp displays null freshness. These fields, including
+the explicit old version, are the reporting surface; no new task warning/outbox
+is required. Row availability, dispatchEligible and capacity remain independent.
+
+Next card direction only: a compatibility matrix with dimensions CLI kind and
+version, model/alias, session-runner build, pty-host build/backend, and host/infra
+(including OS). Cells are known-works, known-broken with evidence, or unknown
+(which allows). A curated known-broken catalogue file in the repository and
+observed combinations from probes/canaries supply evidence. Only a known-broken
+cell may refuse. Schema, matching, precedence, lifecycle and enforcement are
+deliberately not designed in CARD-0959. The caller commissions that next card;
+this docs-only dispatch does not edit the board or invent a card number.
+
+## Verification design
+
+### Inspection
+
+All inspection is read-only at bfc12c6d73f828cc864a205bc72967a8244ce883; this
+TestDesign task ran no build, test, importer or mutation. Current method bodies
+were read before naming their replacements.
+
+| Bodies read | Boundaries -> V/R IDs or exclusion |
+|---|---|
+| CARD-0959 via card.ps1 get -Board Antiphon; complete preceding plan; project-context; testing/build manifest, runner, slot and delivery owner; orchestration stage/landing rules; ops route guidance; session-runtime delivery rules | Authority and stage order; all IDs; no live operations |
+| CodexCliVersionProbeTests, CodexCliVersionTestFixture, CodexCliVersionWindowsTests and literal CodexVersionChild.ps1; CodexNpmLayout; CodexWindowsLaunchPolicyTests | Parser/process/cache/cadence/native layouts -> V-1..8, R-4 |
+| RunnerCodexCliEvidenceTests including ProbeIo/ControlledSendSocket and nested factories | Real production POST, framed transport, server receipt/projections -> V-9..13 |
+| CodexCliAdmissionTests including Kit, DispatchKit, Factory, Client, Directory, LegacyClient, BriefBoundary, BusyEventBus and RecoveryClock; CodexCliRemoteDeliveryFixture including Recipient, Freeze, HeldLaunches and RemoteFactory | Actual source of V-14..22; new V-23..26 use these nearest fixtures |
+| BridgeQueueHarness HarnessOptions/CreateAsync, retained-schema attach, InsertEntryAsync and DisposeAsync; FakeAgentProtocolAdapter StartAsync/SendInputAsync and OnSubmitted; PhoneHomeTestHost Start/Connect and scripted receive/reply/transcript/dispose | Real launch/message queues; submitted-input-only transcript, generation, retained database -> V-21..26 |
+| CodexPhoneHomeCreateTests/ProbeClient/Kit; ModelAvailabilityCreateTests/CreateService; ModelAvailabilityDispatcherTests/CreateDispatcher; PinnedCodexProfileDispatchLaunchTests/factory; RunnerCatalogueTests; PhoneHomeDirectoryTests; PhoneHomeRunnerRetirementIdentityTests; ModelAliasTests | Existing regression bodies/setup and expanded rosters -> R-1..4; no synthetic admission bypass |
+| CodexCliAdmissionPolicy, CodexCliProbeDescriptor, ModelLevelAliases; CLI call sites in AgentTaskService/AgentTaskDispatcher; DelegationSettings validation; CodexCliVersionProbe/RefreshService/Settings; HTTP/phone-home version client bodies and catalogue/directory projections | Ordered removal; observation error/freshness; no on-demand task probe -> V-10/14/19/23..26 |
+| SessionMessageQueueService BindStagedSpill, LateConfirmAttemptedMessagesAsync, AcceptedByCompleteUserPrompt, TryFindConfirmingRecordAsync; RemoteSpillCourier receipt/retention bodies; importer ExtractSection | Whole receipt versus ack; current session/baseline and spill persistence -> V-21/22; only one active Checkpoints heading |
+| Prior Code report .antiphon/task-818582a5.md, c959-second-evidence/trx-counts.txt and checkpoint receipt lines; source Test/Arguments census | 137 portable and 3961 Unit inherited executions are evidence at their recorded SHAs, not at this future implementation |
+
+Missing setup remains implementation work: advertised-sample setters must feed
+GetCapabilitiesAsync and the real directory/status projection (the present
+Client returns a constant good capability regardless of Sample). Add recording
+typed-probe spies that return promptly, never a hanging admission probe. Extend
+the existing isolated remote fixture to inject arbitrary samples and retain its
+schema, runtime transcript and runner workspace across graph recreation. Add
+Grok's actual rules-ready setup and a remote Claude adapter; the current remote
+factory only creates RunnerCodexAdapter. Preserve the existing limits. Add
+before/after DB and enqueue fault interceptors, delayed replies, owned-file write
+faults and withheld/clipped/old/wrong-session recipient transcript modes. Add
+serial Console.Error capture for diagnostic PC-26, labels on the actual direct
+assertions, boot-fingerprint equality fixtures and parent-exits-before-leaf-EOF
+process fixture with independent rescue. Do not claim these absent cases passed.
+
+The parent-exits case must withhold verified success while its pipe/child is
+unresolved and retain cleanup ownership until actual completion; a PID exit is
+not descendant cleanup. Its ordinary run determines whether the current probe
+needs repair. No existing timeout or assertion is relaxed to obtain green. If
+an ordinary failure is inherited, reproduce it at the named base method and
+report it; a structural repair outside this slice returns to its owner.
+
+### Delivery inventory
+
+No durable CLI sample or compatibility outbox is introduced. Observation identity
+is runnerId/storeId/bootId/accepted epoch plus launcher fingerprint and completed
+attempt time; typed requests additionally have the transport requestId. Memory
+loss produces unknown until a real attempt is reacquired. The opaque fingerprint
+is observed, not a caller-verifiable descriptor echo; old G-110/PC-110 is removed.
+
+| Producer -> destination | Persistence boundary / joined identity | Recovery and observable recipient evidence |
+|---|---|---|
+| Probe child -> singleton -> local capability and registration producers | Atomic completed sample in process memory; boot/fingerprint/completed-at, no DB | V-3/4/5: crash/cancel before and after completion, restart singleton; bounded initial failure permits advertisement with unknown, next completed refresh replaces it. Deserialize actual local/registration fields; GET starts no child. PC-33..42, 49..60, 199 |
+| Singleton -> PhoneHomeConnectionService -> real PhoneHomeConnectionWriter -> live directory -> list/status | Serialized frame is volatile; accepted epoch owns server sample | V-9/11: already writable and busy writer; failure before write, after receiver accepts/before send completion, and disconnect before projection. Repeat original sample or reconnect and register, never renew its time. Require recipient list/status fields, not send ack. PCs-74..80, 92..98, 201..203/207..208 |
+| Explicit diagnostic request -> local HTTP or selected phone-home -> runner probe -> requesting observer | Volatile request/reply keyed by runner/epoch/requestId/operation; no task/claim boundary | V-13: real production route/dispatcher, writable/busy writer, failed enqueue, lost response, cancellation, wrong request/epoch/operation/kind, replaced/closed connection. Null/error until new explicit request; recovered response must be actual sample at observer. PCs-108..120 except 110, 122/123, 247..249 |
+| Create/Retry -> task -> dispatcher -> launch queue and message queue -> local/remote recipient | Durable TaskId/ExecutionTaskId -> queue Id -> runner/store -> session + accepted generation -> original attempt sequence/timestamp floor; launch work item is volatile | V-21/22/23..26: real producer, actual queue, eligible/busy recipient; complete matching UserPrompt W and actual file E when spilled. Claimed/Queued/Dispatched/Sent/StartedArgs/Input ack are never receipt. PCs-184..188, 190..192, 194, 209..224, 225..236, 246 |
+
+For every task handoff exercise faults immediately before and after task save,
+dispatch claim/session save, volatile launch scheduling/start, message enqueue,
+spill staging -> queue-owned E/path persistence, runner-file write, body input,
+recipient transcript persistence/pull, and confirmation/status save. Run desktop
+and remote Codex, eligible and busy; use one failed/unknown and one old sample
+across recovery, since no CLI enforcement branch exists. Keep Shared/Worktree
+success pairs. Existing claim seams, EF ConfigureDbContext and local adapter
+BeforeInput/OnSubmitted plus test-local phone-home faults are sufficient.
+Retain the database and recreate DI. Before a task save, retry the failed request
+explicitly; after committed claim/lost volatile launch, run the real
+FailNeverStartedAsync and verify durable Failed/event before explicit RetryAsync.
+After durable queue insertion, recover the same queue Id and E/path; do not
+restage E from the expected oracle. After actual input, pull the actual transcript
+and late-confirm with exactly one body submission across graphs. Enqueue/write
+failure allows zero receipt before repair. Write failure allows zero pointer
+input. Local IO-denial fallback is excluded; local faults bracket successful writes.
+
+E/W contract from ee18a226 is retained verbatim in substance. Literal
+B="C959 delivery α\nsecond line\nEND-C959"; freeze producer inputs before queue
+handoff; independently compose E with BuildBrief and require LF-only E containing B.
+For Claude within its existing measured local ceiling, W=E.TrimEnd(), with
+bracketed paste and a separate CR submit. For Codex/Grok, effective inline ceiling
+is zero: file bytes are exactly UTF-8 E, W is the exact single-line BuildBriefPointer
+result after only known owned-path substitution. Remote queue-owned path is
+.antiphon/inbox/{queueId:D}.md; file must exist with E before first pointer input.
+Remote Claude spills at its existing inbox ceiling and retains multiline paste
+encoding where applicable. Do not flatten E, widen a ceiling or require B inside
+a non-Claude pointer. Keep Claude first assertion order: separate Enter, complete
+W, then wrapper. Keep file-existence before exact bytes, persisted spill/path
+before releasing busy recipient, and bytes before aggregate receipt.
+
+Every success requires one complete ordinal-equal W UserPrompt on the selected
+session/generation above the original baseline; no shortened marker match.
+For screen/ack-only, first-200-character pointer, same W at baseline, old-generation,
+timestamp-before-floor and another session's whole W, assert E remains durable
+and no qualifying receipt. Then permit the selected recipient's real current W
+to complete. An inserted expected UserPrompt cannot establish positive delivery;
+negative transcript fixtures are expressly adversarial inputs.
+
+Substitutes: the scripted terminal emits a UserPrompt only after real submitted
+input; it proves queue-to-recipient behavior, not vendor/model acceptance. Exact
+E file plus pointer W receipt proves availability and pointer submission, not
+that a provider read the file. Harmless children prove bounds/ownership, not a
+real Codex installation. Recreated DI proves persisted handoff recovery, not
+power-loss atomicity. Native Windows remains required for Windows mechanics.
+Claude/Grok repeat success/encoding/readiness vectors; shared persistence faults
+are not multiplied by every kind or tier because no changed kind-specific
+recovery branch exists. This design never stops at an enqueue or acknowledgment.
+
+### Proves it works now
+
+All named methods are single Test results, with internal labelled vectors.
+P=CodexCliVersionProbeTests, W=CodexCliVersionWindowsTests,
+E=RunnerCodexCliEvidenceTests, O=CodexCliObservationTests.
+P/W remain in tests/Antiphon.SessionRunner.Tests; E/O remain in
+tests/Antiphon.Tests/Application. The first three file names already exist;
+O is the rename of the inspected admission file. Exact method filters are
+/*/*/Class/Method; the checkpoint table is the ordinary command roster.
+
+| V | Exact class.method | Layer / expected decisive behavior |
+|---|---|---|
+| V-1 | P.C959_Parses_and_orders_versions | Contracts; retain full literal numeric/SemVer/banner invalid and boundary roster, never a lexical comparison |
+| V-2 | P.C959_Probe_is_version_only_and_auth_free | Real bounded child seam; fixed argv, scrubbed environment, fresh home, neutral cwd, stdin EOF, no auth IO/raw diagnostics; selected absolute/PATH/cwd installation observations independent of default |
+| V-3 | P.C959_Failure_bounds_and_cleanup | Real owned harmless children; missing/nonzero/stderr/truncation/5s execution/2s cleanup/cancel/unconfirmed cleanup and parent-exited pipe; null success and exact fixed error, independent rescue |
+| V-4 | P.C959_Refresh_replaces_evidence | Hosted service/cache; bounded startup, timer refresh, failure replaces old success, actual completion time, no read inflation, one child, 32 entries, changed size/mtime/cwd/boot identity |
+| V-5 | P.C959_Local_and_registration_share_snapshot | Real producers; equal optional success/failure fields, feature, legacy/future JSON; GET starts zero children |
+| V-6 | W.C959_Npm_probe_uses_launch_resolution | Native Windows; stock shim, sibling/PATH node, Unicode/space boundaries, version-only args |
+| V-7 | W.C959_Native_and_direct_node_probe | Native Windows; explicit native and direct-node selected package, relative cwd, distinct fingerprint, real child cleanup |
+| V-8 | W.C959_Unverified_launcher_is_unknown | Native Windows; missing node/js/vendor package, nonstock wrapper, no fallback/child. Loader descriptor check lives in V-19 |
+| V-9 | E.C959_Heartbeat_updates_only_probe_evidence | Real sender/writer/receiver; busy and eligible, failures/reconnect, omission/out-of-order/error; exact recipient sample time, independent capacity/liveness |
+| V-10 | E.C959_Freshness_boundaries | Pure observation plus actual list/status; 15m equal=false, +tick=true, missing/error=null, future 1m=false/+tick=null and clock_skew; malformed fingerprint mismatch report; runner cadence validation only. Delete policy Evaluate/RequireAsync and DelegationSettings cases |
+| V-11 | E.C959_Generation_change_clears_version | Accepted boot/epoch/store replacement clears, rejected registration preserves, old heartbeat/reply ignored; existing lease/live/retired guards retained |
+| V-12 | E.C959_Catalogue_and_status_project_version | Actual serialized desktop/two remote/offline/disconnected/404 shapes; independent build SHA, no fingerprint/path/raw error leakage |
+| V-13 | E.C959_Exact_probe_transport_is_bound | Real POST/framed operation; observer gets selected recipient sample, correct request/epoch/operation/kind/current connection; bounds/cancel/no retry/legacy null. No descriptor-fingerprint authentication or task claim asserted |
+| V-14 | O.C959_Ladder_and_exact_models_share_floor | Metadata only; directly inspect entry and canonical lookup, exact 6.1 floor, Astra/Luna null, unchanged aliases |
+| V-19 | O.C959_Launcher_descriptors_are_observations | Replace old admission method; call pure FromSpec and existing remote Project explicitly. PATH/PATHEXT/node prefix/cwd retained, loader/secret inputs unknown. No service admission/credential reads; no requirement to authorize a model |
+| V-21 | O.C959_Compatible_launch_keeps_model_and_runner | Real producer/queues; keep floor/current desktop Shared/Worktree and remote Codex eligible/busy, add Claude/Grok eligible/busy per-kind E/W contract; complete recipient receipt, unchanged model/runner, zero admission probe |
+| V-22 | O.C959_Retry_and_cancellation_recheck | Retained-schema producer recovery and complete E/W receipt across every enumerated handoff. Retry with old/unknown/stale/failed evidence succeeds; cancellation exercised at real save/queue seams, not a removed admission RPC. Retain cancellation no-partial-save assertion |
+| V-23 | O.C959_Probe_failure_never_refuses | Create, actual failed-task Retry, cold/warm dispatch on desktop/remote with timeout/nonzero/cleanup_unconfirmed; persist placement and complete receipt; status reports fixed error and null stale |
+| V-24 | O.C959_Stale_sample_never_refuses | Same real service/queue paths; success age 15m+tick and 16m while live; chosen model/runner unchanged, list/status stale=true and original attempt time; zero typed probe |
+| V-25 | O.C959_Unknown_version_never_refuses | Same paths with omitted legacy DTO, null version, banana, missing timestamp, malformed fingerprint, clock_skew; uncertainty reported, placement and complete receipt succeed; no cross-runner fallback |
+| V-26 | O.C959_Old_version_with_floor_never_refuses | Same paths with 0.156.1, 0.159.0 and floor prerelease for exact 6.1 and tier High/Medium; old sample still reported, metadata stays 0.159.1, unchanged selected model/runner reaches recipient; Astra/Luna remain allowed too |
+
+New methods must supply each state through the same advertised sample used by
+catalogue/status, not a dead mock property. For V-23..26, use independent fresh
+schemas for create, retry and dispatch, capture unexpected exceptions as labelled
+outcomes, assert the selected runner rather than accepting a reroute, and require
+the complete E/W receipt for the dispatch arm. Retry failure is produced by the
+same real watchdog path as V-22, never a manually Failed assignment. Change
+samples between create and tick, and between failed attempt and retry. Include
+warm pinned reuse and a cold Worktree whose final cwd changes. No test may turn
+off existing auth/model/placement policies just to prove CLI inertness.
+
+Removed method IDs, individually: V-15 C959_Create_refuses_bad_versions;
+V-16 C959_Existing_refusals_and_flags_keep_precedence;
+V-17 C959_Queued_downgrade_blocks_before_claim;
+V-18 C959_Exact_profile_model_wins;
+V-20 C959_Override_is_scoped_expiring_and_audited.
+Delete these five method bodies rather than preserving assertions for removed
+behavior. Existing auth/hold/exact-model regression tests stay. V-10, V-19,
+V-21 and V-22 keep their IDs with the explicit narrowed contracts above;
+V-19's old method name is retired. V-23..26 are four new results. There are
+21 active feature methods: 18 portable and 3 Windows.
+
+### Guards the regression
+
+| R | Test roster / decisive assertion |
+|---|---|
+| R-1 | Entire CodexPhoneHomeCreateTests (6), PinnedCodexProfileDispatchLaunchTests (2), ModelAvailabilityCreateTests (11), ModelAvailabilityDispatcherTests (3): signed-out HTTP 409/remedy and zero insert; unknown auth Queued; cancellation inserts nothing; hold codes/events preserved; exactly one pinned model arg/provenance and whole instruction block. Only remove CLI-gating fixture dependencies |
+| R-2 | Entire RunnerCatalogueTests (4), PhoneHomeDirectoryTests (7), PhoneHomeRunnerRetirementIdentityTests (9): independent rows/404/capacity/historical placement, current socket/store/lease/retirement guards |
+| R-3 | Entire ModelAliasTests (76 expanded): alias normalization, historical exact IDs, canonical holds and unchanged ladder |
+| R-4 | Entire CodexWindowsLaunchPolicyTests (26 expanded): native/npm resolution, sibling precedence, command/argument bounds and original refusal semantics on Windows |
+| R-5 | Whole Antiphon.Tests Unit lane (3961 Linux executions plus 33 documented Windows exclusions): broad shared DTO/settings/alias regression inherited from the Final profile; does not replace V or native CP-2 |
+
+Read-only source census agrees with prior green TRX: P=5, W=3, E=5,
+old admission=9, R-1=6+2+11+3=22, R-2=4+7+9=20, R-3=76, R-4=26.
+No DataSource expansion is invented. The eight-method O roster is
+9 - 5 removed + 4 new = 8. Portable becomes 137 - 5 + 4 = 136;
+with Windows, 165; with Unit, 4126 executions. R-2/R-3 overlap Unit by
+design; these totals count executions, not unique tests. Unit remains 3961
+because all changed feature methods retain Integration and renamed fixtures
+do not add/remove Unit tests. Native Windows CP-2 stays 29.
+
+### Guard inventory
+
+Every active row below maps to exactly one distinct identically numbered PC.
+Identifiers are stable and intentionally sparse. The old ledger is archival;
+only this ledger commissions mutations. Retained guards are observation/process/
+delivery safety, not task admission. "Unknown" or "refused" in a retained probe
+row means no verified observation/child execution, never refusing a task.
+No safety-critical guard is excused merely because its fixture still needs work.
+
+| Guard | Plan reference + safety-critical invariant | Positive control |
+|---|---|---|
+| G-1 | D-1; Numeric core ordering | PC-1 |
+| G-2 | D-1; Prerelease below release | PC-2 |
+| G-3 | D-1; Numeric prerelease ordering | PC-3 |
+| G-4 | D-1; Build metadata does not order | PC-4 |
+| G-5 | D-1; Exactly three numeric components | PC-5 |
+| G-6 | D-1; Overflow rejected | PC-6 |
+| G-7 | D-1; Leading zero core rejected | PC-7 |
+| G-8 | D-1; Leading zero prerelease rejected | PC-8 |
+| G-9 | D-1; Identifier grammar strict | PC-9 |
+| G-10 | D-1; No empty suffix identifier | PC-10 |
+| G-11 | D-1; One whole output record | PC-11 |
+| G-12 | D-1; Anchored banner only | PC-12 |
+| G-13 | D-1; No trailing embedded text | PC-13 |
+| G-14 | D-2; Version-only argv | PC-14 |
+| G-16 | D-2; No shell command evaluation | PC-16 |
+| G-17 | D-2; Credential environment absent | PC-17 |
+| G-18 | D-2; Antiphon tokens absent | PC-18 |
+| G-19 | D-2; Proxy environment absent | PC-19 |
+| G-20 | D-2; Node injection absent | PC-20 |
+| G-21 | D-2; Startup hook environment absent | PC-21 |
+| G-22 | D-2; Fresh empty home | PC-22 |
+| G-23 | D-2; Neutral execution cwd | PC-23 |
+| G-24 | D-2; Closed stdin | PC-24 |
+| G-25 | D-2; Probe-owned I/O never opens authentication | PC-25 |
+| G-26 | D-2; no raw child diagnostics emitted | PC-26 |
+| G-27 | D-2; Missing executable unknown | PC-27 |
+| G-28 | D-2; Nonzero exit refused | PC-28 |
+| G-29 | D-2; Stderr refused | PC-29 |
+| G-30 | D-2; Stdout bounded | PC-30 |
+| G-31 | D-2; Stderr bounded | PC-31 |
+| G-32 | D-2; Five-second execution deadline | PC-32 |
+| G-33 | D-2; Owned descendant termination | PC-33 |
+| G-34 | D-2; Two-second cleanup deadline | PC-34 |
+| G-35 | D-2; cleanup uncertainty never produces a verified sample | PC-35 |
+| G-36 | D-2; Failed cleanup stays owned | PC-36 |
+| G-37 | D-2; Cancellation never success | PC-37 |
+| G-38 | D-2; Initial attempt precedes registration | PC-38 |
+| G-39 | D-2; Failed attempt clears old value | PC-39 |
+| G-40 | D-2; Attempt time is completion time | PC-40 |
+| G-41 | D-2; Reads never renew sample | PC-41 |
+| G-42 | D-2; Periodic refresh occurs | PC-42 |
+| G-43 | D-2; Identical requests single flight | PC-43 |
+| G-44 | D-2; All child probes serialized | PC-44 |
+| G-45 | D-2; Cache capacity bounded | PC-45 |
+| G-46 | D-2; Busy admission bounded | PC-46 |
+| G-47 | D-2; Executable metadata invalidates | PC-47 |
+| G-48 | D-2; Mtime invalidates | PC-48 |
+| G-49 | D-2; launcher fingerprint includes runner boot | PC-49 |
+| G-50 | D-3; Local producer carries version | PC-50 |
+| G-51 | D-3; Local producer carries attempt time | PC-51 |
+| G-52 | D-3; Local producer carries error | PC-52 |
+| G-53 | D-3; Local producer carries fingerprint | PC-53 |
+| G-54 | D-3; Registration carries version | PC-54 |
+| G-55 | D-3; Registration carries attempt time | PC-55 |
+| G-56 | D-3; Registration carries error | PC-56 |
+| G-57 | D-3; Registration carries fingerprint | PC-57 |
+| G-58 | D-3; Local feature advertisement | PC-58 |
+| G-59 | D-3; Remote feature advertisement | PC-59 |
+| G-60 | D-2; GET starts no process | PC-60 |
+| G-61 | D-2/D-4; Sibling node precedence | PC-61 |
+| G-62 | D-2/D-4; Stock shim not executed | PC-62 |
+| G-63 | D-2/D-4; PATH fallback when sibling absent | PC-63 |
+| G-64 | D-2/D-4; Arguments preserve path boundaries | PC-64 |
+| G-65 | D-4; Explicit native selector honored | PC-65 |
+| G-66 | D-4; Direct-node js prefix retained | PC-66 |
+| G-67 | D-4; Relative js uses descriptor cwd | PC-67 |
+| G-68 | D-2; Windows real child cleanup | PC-68 |
+| G-69 | D-2/D-4; Missing node never falls back to codex | PC-69 |
+| G-70 | D-2/D-4; Missing js never falls back | PC-70 |
+| G-71 | D-2/D-4; Missing native package refused | PC-71 |
+| G-72 | D-2/D-4; Nonstock wrapper not trusted | PC-72 |
+| G-73 | D-4 observation; loader environment is not represented as verified launcher | PC-73 |
+| G-74 | D-3; Heartbeat carries snapshot | PC-74 |
+| G-75 | D-3; Heartbeat preserves attempt time | PC-75 |
+| G-76 | D-3; Failed heartbeat clears success | PC-76 |
+| G-77 | D-3; Missing legacy heartbeat not refresh | PC-77 |
+| G-78 | D-3; Older completed attempt ignored | PC-78 |
+| G-79 | D-3; Writer contention delivers complete sample | PC-79 |
+| G-80 | D-3; Reconnect republishes latest snapshot | PC-80 |
+| G-81 | D-8; age one tick above 15 minutes displays stale | PC-81 |
+| G-82 | D-8; missing completed-at displays unknown freshness | PC-82 |
+| G-83 | D-8; future time beyond one minute displays unknown freshness | PC-83 |
+| G-84 | D-8; tolerated future time displays fresh | PC-84 |
+| G-89 | D-2; runner cache-age setting has bounded upper value | PC-89 |
+| G-90 | D-2; refresh cadence remains below runner cache-age setting | PC-90 |
+| G-91 | D-8; error sample cannot display verified freshness | PC-91 |
+| G-92 | D-3; Accepted boot change clears old sample | PC-92 |
+| G-93 | D-3; Accepted epoch change clears old sample | PC-93 |
+| G-94 | D-3; Accepted store replacement clears old sample | PC-94 |
+| G-95 | D-3; Omitted capabilities do not inherit CLI | PC-95 |
+| G-96 | D-3; Old epoch heartbeat ignored | PC-96 |
+| G-97 | D-3; replaced connection cannot return its late observation | PC-97 |
+| G-98 | D-3; Rejected registration leaves current sample | PC-98 |
+| G-99 | D-8; Build SHA is not CLI version | PC-99 |
+| G-100 | D-8; Catalogue values per runner | PC-100 |
+| G-101 | D-8; Status uses latest sample | PC-101 |
+| G-102 | D-8; Offline placeholder unknown | PC-102 |
+| G-103 | D-8; Unobserved stale indicator null | PC-103 |
+| G-104 | D-8; Expired indicator independent of liveness | PC-104 |
+| G-105 | D-8; Fresh indicator false | PC-105 |
+| G-106 | D-8; Private fingerprint excluded from public API | PC-106 |
+| G-107 | D-8; Unknown runner remains 404 | PC-107 |
+| G-108 | D-4; Probe routed to selected remote | PC-108 |
+| G-109 | D-4; Response request correlation | PC-109 |
+| G-111 | D-4 observation; selected runner request cannot borrow another runner | PC-111 |
+| G-112 | D-4 observation; unsupported operation yields no sample | PC-112 |
+| G-113 | D-4; Interface default unknown | PC-113 |
+| G-114 | D-4 observation; standalone RPC bounded independently of admission | PC-114 |
+| G-115 | D-4; No transport retry | PC-115 |
+| G-116 | D-4; Caller cancellation propagates | PC-116 |
+| G-117 | D-4 observation; descriptor field lengths bounded before process | PC-117 |
+| G-118 | D-4 observation; dollar secret placeholders never resolved | PC-118 |
+| G-119 | D-3; wire operation ordinals stable | PC-119 |
+| G-120 | D-4; Actual route registered | PC-120 |
+| G-122 | D-4; Failed request enqueue not success | PC-122 |
+| G-123 | D-4; Lost response not success | PC-123 |
+| G-124 | D-1 data; 6.1 ladder entry carries 0.159.1 | PC-124 |
+| G-125 | D-1 data; Astra and Luna gain no minimum | PC-125 |
+| G-126 | D-1; Exact lookup shares metadata | PC-126 |
+| G-127 | D-1; Public alias strings preserved | PC-127 |
+| G-153 | D-4 observation; explicit installation is observed | PC-153 |
+| G-154 | D-4 observation; selected new installation independent of old default | PC-154 |
+| G-155 | D-4 observation; unsupported selector cannot inherit default success | PC-155 |
+| G-156 | D-4 observation; descriptor retains PATH | PC-156 |
+| G-157 | D-4 observation; descriptor retains PATHEXT | PC-157 |
+| G-158 | D-4 observation; future relative cwd yields unknown | PC-158 |
+| G-159 | D-4 observation; remote descriptor follows existing executable projection | PC-159 |
+| G-184 | Inert slice delivery; No model downgrade | PC-184 |
+| G-185 | Inert slice delivery; Selected runner retained | PC-185 |
+| G-186 | Inert slice delivery; Producer actually enqueues the correct wire representation | PC-186 |
+| G-187 | Inert slice delivery; Whole logical brief survives fitting, inline or spilled | PC-187 |
+| G-188 | Inert slice delivery; Busy recipient preserves work | PC-188 |
+| G-190 | Inert slice delivery; Launch handoff actually occurs | PC-190 |
+| G-191 | Inert slice delivery; Interrupted dispatch cannot count as receipt | PC-191 |
+| G-192 | Inert slice delivery; Recipient identity preserved across retry | PC-192 |
+| G-194 | Inert slice delivery; Retry repair reaches recipient | PC-194 |
+| G-199 | D-2; Probe DTO never publishes raw diagnostic | PC-199 |
+| G-200 | D-8; exactly 15 minutes displays fresh | PC-200 |
+| G-201 | D-3; Live foreign store still refused | PC-201 |
+| G-202 | D-3; Store replacement waits full lease | PC-202 |
+| G-203 | D-3; Retired slot cannot register | PC-203 |
+| G-205 | D-4 observation; resolution cwd participates in identity | PC-205 |
+| G-206 | D-4 observation; selected node package owns probe identity | PC-206 |
+| G-207 | D-3; Store replacement waits a full lease after disconnect | PC-207 |
+| G-208 | D-3; Store replacement requires explicit retirement clear | PC-208 |
+| G-209 | Inert slice delivery; Non-Claude inline ceiling remains zero | PC-209 |
+| G-210 | Inert slice delivery; Local spill keeps exact logical bytes | PC-210 |
+| G-211 | Inert slice delivery; Runner spill keeps exact logical bytes | PC-211 |
+| G-212 | Inert slice delivery; Non-Claude pointer is single-line | PC-212 |
+| G-213 | Inert slice delivery; Pointer binds the message-owned runner path | PC-213 |
+| G-214 | Inert slice delivery; Inline multiline body retains bracketed-paste wrapper | PC-214 |
+| G-215 | Inert slice delivery; Submit Enter is a separate write | PC-215 |
+| G-216 | Inert slice delivery; Remote spill bytes persist before input | PC-216 |
+| G-217 | Inert slice delivery; Runner writes spill before accepting pointer input | PC-217 |
+| G-218 | Inert slice delivery; Screen/ack alone cannot release durable spill bytes | PC-218 |
+| G-219 | Inert slice delivery; Restart retrieves exact spill from the durable queue row | PC-219 |
+| G-220 | Inert slice delivery; Complete receipt prevents duplicate body submission | PC-220 |
+| G-221 | Inert slice delivery; Lost committed launch reaches real durable failure before explicit retry | PC-221 |
+| G-222 | Inert slice delivery; Head-only pointer transcript is not complete delivery | PC-222 |
+| G-223 | Inert slice delivery; Prior-attempt sequence cannot confirm current delivery | PC-223 |
+| G-224 | Inert slice delivery; Other session's complete transcript cannot confirm delivery | PC-224 |
+| G-225 | Inert slice; failed probe cannot refuse create | PC-225 |
+| G-226 | Inert slice; failed probe cannot refuse retry | PC-226 |
+| G-227 | Inert slice; failed probe cannot refuse dispatch | PC-227 |
+| G-228 | Inert slice; stale sample cannot refuse create | PC-228 |
+| G-229 | Inert slice; stale sample cannot refuse retry | PC-229 |
+| G-230 | Inert slice; stale sample cannot refuse dispatch | PC-230 |
+| G-231 | Inert slice; unknown version cannot refuse create | PC-231 |
+| G-232 | Inert slice; unknown version cannot refuse retry | PC-232 |
+| G-233 | Inert slice; unknown version cannot refuse dispatch | PC-233 |
+| G-234 | Inert slice; old version below recorded floor cannot refuse create | PC-234 |
+| G-235 | Inert slice; old version below recorded floor cannot refuse retry | PC-235 |
+| G-236 | Inert slice; old version below recorded floor cannot refuse dispatch | PC-236 |
+| G-237 | Inert slice; create starts zero version probes | PC-237 |
+| G-238 | Inert slice; retry starts zero version probes | PC-238 |
+| G-239 | Inert slice; cold dispatch starts zero version probes | PC-239 |
+| G-240 | Inert slice; warm reuse starts zero version probes | PC-240 |
+| G-241 | Existing admission; holds retain their refusal | PC-241 |
+| G-242 | Existing admission; signed-out provider retains refusal | PC-242 |
+| G-243 | Existing admission; unknown provider authentication still allows | PC-243 |
+| G-244 | D-4 observation; NUL descriptor input rejected before child | PC-244 |
+| G-245 | D-4 observation; key placeholders rejected before child | PC-245 |
+| G-246 | Inert delivery; null-sequence baseline still fences old timestamps | PC-246 |
+| G-247 | D-4 observation; response operation must match | PC-247 |
+| G-248 | D-4 observation; Error frame cannot be decoded as sample | PC-248 |
+| G-249 | D-4 observation; closed socket observation rejected | PC-249 |
+| G-250 | D-8; excessive future observation reports clock skew | PC-250 |
+| G-251 | D-8; malformed launcher fingerprint reports mismatch only | PC-251 |
+| G-252 | D-8; unknown peer diagnostics do not escape projection | PC-252 |
+| G-253 | Inert slice; final launch starts zero version probes | PC-253 |
+| G-254 | D-2; refresh interval positive | PC-254 |
+| G-255 | D-2; refresh interval finite | PC-255 |
+
+Retired guards and controls (each ID explicitly removed; no historical PC may
+be run merely because its old row remains above):
+
+| Removed guard | Removed PC | Reason |
+|---|---|---|
+| G-15 | PC-15 | No profile VersionArguments enter the closed version-only request; fixed argv remains G-14. |
+| G-85 | PC-85 | Admission refresh-to-allow removed; runner refresh and display have independent controls. |
+| G-86 | PC-86 | Admission refresh-to-allow removed; runner refresh and display have independent controls. |
+| G-87 | PC-87 | Admission refresh-to-allow removed; runner refresh and display have independent controls. |
+| G-88 | PC-88 | Redundant lower-bound predicate: positive refresh < MaxAge already implies MaxAge > 0; G-90/254 cover the effective guard. |
+| G-110 | PC-110 | Opaque fingerprint cannot authenticate caller descriptor; observation-only scope makes this admission claim unnecessary. |
+| G-121 | PC-121 | Admission task-claim/probe handoff deleted; no-query controls replace it. |
+| G-128 | PC-128 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-129 | PC-129 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-130 | PC-130 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-131 | PC-131 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-132 | PC-132 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-133 | PC-133 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-134 | PC-134 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-135 | PC-135 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-136 | PC-136 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-137 | PC-137 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-138 | PC-138 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-139 | PC-139 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-140 | PC-140 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-141 | PC-141 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-142 | PC-142 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-143 | PC-143 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-144 | PC-144 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-145 | PC-145 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-146 | PC-146 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-147 | PC-147 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-148 | PC-148 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-149 | PC-149 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-150 | PC-150 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-151 | PC-151 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-152 | PC-152 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-160 | PC-160 | Override configuration/permission/audit removed. |
+| G-161 | PC-161 | Override configuration/permission/audit removed. |
+| G-162 | PC-162 | Override configuration/permission/audit removed. |
+| G-163 | PC-163 | Override configuration/permission/audit removed. |
+| G-164 | PC-164 | Override configuration/permission/audit removed. |
+| G-165 | PC-165 | Override configuration/permission/audit removed. |
+| G-166 | PC-166 | Override configuration/permission/audit removed. |
+| G-167 | PC-167 | Override configuration/permission/audit removed. |
+| G-168 | PC-168 | Override configuration/permission/audit removed. |
+| G-169 | PC-169 | Override configuration/permission/audit removed. |
+| G-170 | PC-170 | Override configuration/permission/audit removed. |
+| G-171 | PC-171 | Override configuration/permission/audit removed. |
+| G-172 | PC-172 | Override configuration/permission/audit removed. |
+| G-173 | PC-173 | Override configuration/permission/audit removed. |
+| G-174 | PC-174 | Override configuration/permission/audit removed. |
+| G-175 | PC-175 | Override configuration/permission/audit removed. |
+| G-176 | PC-176 | Override configuration/permission/audit removed. |
+| G-177 | PC-177 | Override configuration/permission/audit removed. |
+| G-178 | PC-178 | Override configuration/permission/audit removed. |
+| G-179 | PC-179 | Override configuration/permission/audit removed. |
+| G-180 | PC-180 | Override configuration/permission/audit removed. |
+| G-181 | PC-181 | Override configuration/permission/audit removed. |
+| G-182 | PC-182 | Override configuration/permission/audit removed. |
+| G-183 | PC-183 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-189 | PC-189 | Override configuration/permission/audit removed. |
+| G-193 | PC-193 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-195 | PC-195 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-196 | PC-196 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-197 | PC-197 | Override configuration/permission/audit removed. |
+| G-198 | PC-198 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+| G-204 | PC-204 | CLI admission/floor/freshness/refusal or admission-coupled model/flag guard removed; existing non-CLI regressions retained. |
+
+### Positive controls
+
+Mutation runs break/red/restore/green after land; Code runs ordinary V/R; Review
+judges this executable design before land. Run a clean method baseline once per
+exact source/method, then each compiling defect separately. Select only
+`/*/*/Class/ExactMethod`, MinExecuted=1 (R methods here are single-result).
+No class-wide mutation cycle. Capture exceptions/timeouts as labelled behavior
+where specified. Build errors, fixture setup errors and zero tests are not red.
+The cited labels must annotate the *direct* outcome assertion, before incidental
+assertions, not a label-only constant. Add missing labels/cases in Code before
+ordinary Review; do not wait until Mutation to discover that a required method
+cannot execute. No source edits while a run is active. Restore and freshly build
+before green; retain per-PC source and assertion receipts outside a SourceLanding
+snapshot. Mutations of excluded queue/transport owners confer no repair authority.
+
+The active rows below replace their archival PC definitions, including retargeted
+observation cases. Where an unchanged historical row names a production responsibility
+rather than its symbol, the inspected source body named in Inspection is its site.
+
+| PC | Exact method (filter prefix `/*/*/`) | Break by compiling defect; expect named assertion red |
+|---|---|---|
+| PC-1 | CodexCliVersionProbeTests/C959_Parses_and_orders_versions | Replace numeric component comparison with ordinal string comparison. Input: 0.9.0 versus 0.159.1. **C959-pc-001**: comparison < 0. |
+| PC-2 | CodexCliVersionProbeTests/C959_Parses_and_orders_versions | Ignore prerelease when cores match. Input: 0.159.1-beta.1 versus floor. **C959-pc-002**: comparison < 0. |
+| PC-3 | CodexCliVersionProbeTests/C959_Parses_and_orders_versions | Compare numeric prerelease identifiers as strings. Input: beta.2 versus beta.10. **C959-pc-003**: comparison < 0. |
+| PC-4 | CodexCliVersionProbeTests/C959_Parses_and_orders_versions | Compare build suffix as a final ordering component. Input: 0.159.1+build.7 versus floor. **C959-pc-004**: comparison = 0. |
+| PC-5 | CodexCliVersionProbeTests/C959_Parses_and_orders_versions | Accept two-component output by appending zero. Input: codex-cli 0.159. **C959-pc-005**: version null. |
+| PC-6 | CodexCliVersionProbeTests/C959_Parses_and_orders_versions | Clamp overflowing major to Int32.MaxValue. Input: codex-cli 2147483648.0.0. **C959-pc-006**: version null. |
+| PC-7 | CodexCliVersionProbeTests/C959_Parses_and_orders_versions | Remove core leading-zero check. Input: codex-cli 00.159.1. **C959-pc-007**: version null. |
+| PC-8 | CodexCliVersionProbeTests/C959_Parses_and_orders_versions | Remove numeric prerelease leading-zero check. Input: codex-cli 0.159.1-beta.01. **C959-pc-008**: version null. |
+| PC-9 | CodexCliVersionProbeTests/C959_Parses_and_orders_versions | Allow underscore in identifier predicate. Input: codex-cli 0.159.1-bad_id. **C959-pc-009**: version null. |
+| PC-10 | CodexCliVersionProbeTests/C959_Parses_and_orders_versions | Skip empty-identifier rejection. Input: codex-cli 0.159.1+build..7. **C959-pc-010**: version null. |
+| PC-11 | CodexCliVersionProbeTests/C959_Parses_and_orders_versions | Parse only first line. Input: two F-current records. **C959-pc-011**: version null. |
+| PC-12 | CodexCliVersionProbeTests/C959_Parses_and_orders_versions | Remove start anchor / allow prefix substring match. Input: prefix codex-cli 0.160.0. **C959-pc-012**: version null. |
+| PC-13 | CodexCliVersionProbeTests/C959_Parses_and_orders_versions | Remove end anchor. Input: codex-cli 0.160.0 extra. **C959-pc-013**: version null. |
+| PC-14 | CodexCliVersionProbeTests/C959_Probe_is_version_only_and_auth_free | Append --model and gpt-6.1-sol to production probe args. Input: native descriptor A. **C959-pc-014**: args exactly [--version]. |
+| PC-16 | CodexCliVersionProbeTests/C959_Probe_is_version_only_and_auth_free | Set UseShellExecute=true. Input: native descriptor A captured before start. **C959-pc-016**: UseShellExecute false. |
+| PC-17 | CodexCliVersionProbeTests/C959_Probe_is_version_only_and_auth_free | Copy synthetic OPENAI_API_KEY into child environment. Input: credential sentinel. **C959-pc-017**: key absent. |
+| PC-18 | CodexCliVersionProbeTests/C959_Probe_is_version_only_and_auth_free | Copy synthetic ANTIPHON_TASK_TOKEN. Input: task-token sentinel. **C959-pc-018**: key absent. |
+| PC-19 | CodexCliVersionProbeTests/C959_Probe_is_version_only_and_auth_free | Copy synthetic HTTPS_PROXY. Input: proxy sentinel. **C959-pc-019**: key absent. |
+| PC-20 | CodexCliVersionProbeTests/C959_Probe_is_version_only_and_auth_free | Copy synthetic NODE_OPTIONS. Input: parent-only loader sentinel. **C959-pc-020**: key absent. |
+| PC-21 | CodexCliVersionProbeTests/C959_Probe_is_version_only_and_auth_free | Copy synthetic BASH_ENV. Input: parent-only startup sentinel. **C959-pc-021**: key absent. |
+| PC-22 | CodexCliVersionProbeTests/C959_Probe_is_version_only_and_auth_free | Use parent CODEX_HOME instead of created scratch home. Input: synthetic parent auth.json. **C959-pc-022**: child home differs and is empty. |
+| PC-23 | CodexCliVersionProbeTests/C959_Probe_is_version_only_and_auth_free | Use descriptor resolution cwd as execution cwd. Input: cwd with synthetic config. **C959-pc-023**: actual child cwd equals neutral scratch. |
+| PC-24 | CodexCliVersionProbeTests/C959_Probe_is_version_only_and_auth_free | Leave redirected stdin open after start. Input: fixture reads to EOF. **C959-pc-024**: EOF observed before output. |
+| PC-25 | CodexCliVersionProbeTests/C959_Probe_is_version_only_and_auth_free | Add an auth.json open through the probe I/O boundary before starting the child. Input: synthetic parent CODEX_HOME/auth.json with read-audit hook. **C959-pc-025**: auth-file open count 0. |
+| PC-26 | CodexCliVersionProbeTests/C959_Probe_is_version_only_and_auth_free | Add Console.Error.Write of captured diagnostic bytes before returning Unknown. Capture process-host Console.Error in the serial fixture; sentinel stderr case must assert captured host output excludes the sentinel at **C959-pc-026**. |
+| PC-27 | CodexCliVersionProbeTests/C959_Failure_bounds_and_cleanup | Return floor success when start reports missing. Input: missing selected A, good B on PATH. **C959-pc-027**: version null and executable_missing. |
+| PC-28 | CodexCliVersionProbeTests/C959_Failure_bounds_and_cleanup | Remove exit-code success predicate. Input: F-current stdout with exit 1. **C959-pc-028**: version null and nonzero_exit. |
+| PC-29 | CodexCliVersionProbeTests/C959_Failure_bounds_and_cleanup | Remove empty-stderr predicate. Input: F-current plus stderr byte. **C959-pc-029**: version null and stderr_output. |
+| PC-30 | CodexCliVersionProbeTests/C959_Failure_bounds_and_cleanup | Raise stdout cap from 4096 to 8192. Input: 4097-byte stdout beginning with valid banner. **C959-pc-030**: stdout truncation true and version null. |
+| PC-31 | CodexCliVersionProbeTests/C959_Failure_bounds_and_cleanup | Raise stderr cap from 4096 to 8192. Input: 4097-byte stderr. **C959-pc-031**: stderr truncation true and version null. |
+| PC-32 | CodexCliVersionProbeTests/C959_Failure_bounds_and_cleanup | Change deadline to six seconds. Input: ready held child; clock advance 5s. **C959-pc-032**: operation has entered cleanup at 5s. |
+| PC-33 | CodexCliVersionProbeTests/C959_Failure_bounds_and_cleanup | Replace process-tree kill with parent-only kill. Input: ready tree with pipe-holding leaf. **C959-pc-033**: leaf PID/start no longer alive. |
+| PC-34 | CodexCliVersionProbeTests/C959_Failure_bounds_and_cleanup | Change cleanup deadline to three seconds. Input: held pipe cleanup; clock +2s. **C959-pc-034**: unknown completion at cleanup bound. |
+| PC-35 | CodexCliVersionProbeTests/C959_Failure_bounds_and_cleanup | In RunAsync's cleanup-exception branch return new RunnerCodexCliVersionDto("0.160.0", _clock.GetUtcNow(), null, resolved.Fingerprint) after retaining the child. Held StopTreeAsync past two seconds; assert sample version null at **C959-pc-035**. |
+| PC-36 | CodexCliVersionProbeTests/C959_Failure_bounds_and_cleanup | Remove retention in probe reaper on unconfirmed cleanup. Input: synthetic kill refusal then release. **C959-pc-036**: owned cleanup count remains 1 until exit. |
+| PC-37 | CodexCliVersionProbeTests/C959_Failure_bounds_and_cleanup | Convert cancelled process result into parsed stdout success. Input: cancel after F-current before exit. **C959-pc-037**: version not successful. |
+| PC-38 | CodexCliVersionProbeTests/C959_Refresh_replaces_evidence | Complete startup-ready signal before awaited initial probe. Input: held initial attempt. **C959-pc-038**: advertisement remains blocked until completion/budget. |
+| PC-39 | CodexCliVersionProbeTests/C959_Refresh_replaces_evidence | Retain cached version on refresh failure. Input: F-current then nonzero at T+5m. **C959-pc-039**: version null. |
+| PC-40 | CodexCliVersionProbeTests/C959_Refresh_replaces_evidence | Stamp checkedAt when child starts. Input: hold start at T, finish at T+2s. **C959-pc-040**: checkedAt T+2s. |
+| PC-41 | CodexCliVersionProbeTests/C959_Refresh_replaces_evidence | Assign clock.Now in snapshot getter. Input: ten reads after +1m. **C959-pc-041**: checkedAt unchanged. |
+| PC-42 | CodexCliVersionProbeTests/C959_Refresh_replaces_evidence | Return without probe on timer tick. Input: clock advance five minutes. **C959-pc-042**: starts 2. |
+| PC-43 | CodexCliVersionProbeTests/C959_Refresh_replaces_evidence | Bypass in-flight task lookup. Input: 20 identical held requests. **C959-pc-043**: starts 1. |
+| PC-44 | CodexCliVersionProbeTests/C959_Refresh_replaces_evidence | Remove shared runner child semaphore. Input: two different held launchers. **C959-pc-044**: peak concurrent children 1. |
+| PC-45 | CodexCliVersionProbeTests/C959_Refresh_replaces_evidence | Allow insertion of the 33rd unexpired entry. Input: 33 distinct descriptors. **C959-pc-045**: cache entries <=32. |
+| PC-46 | CodexCliVersionProbeTests/C959_Refresh_replaces_evidence | Wait indefinitely for the child semaphore instead of deadline. Input: second descriptor while first held. **C959-pc-046**: unknown/probe_busy within owner deadline. |
+| PC-47 | CodexCliVersionProbeTests/C959_Refresh_replaces_evidence | Reuse cached sample after size change. Input: replace selected file with changed length. **C959-pc-047**: probe starts again. |
+| PC-48 | CodexCliVersionProbeTests/C959_Refresh_replaces_evidence | Drop mtime from cache identity. Input: same-length selected file with new mtime. **C959-pc-048**: probe starts again. |
+| PC-49 | CodexCliVersionProbeTests/C959_Refresh_replaces_evidence | Replace _boot.ToString("D") in fingerprint inputs with Guid.Empty.ToString("D"). Two probe instances with different PhoneHomeProcessIdentity and the same absolute fixture file/cwd/env must report unequal fingerprints at **C959-pc-049**. |
+| PC-50 | CodexCliVersionProbeTests/C959_Local_and_registration_share_snapshot | Set local codexCliVersion=null. Input: F-current snapshot. **C959-pc-050**: local version 0.160.0. |
+| PC-51 | CodexCliVersionProbeTests/C959_Local_and_registration_share_snapshot | Set local checkedAt=null. Input: F-current snapshot. **C959-pc-051**: local checkedAt T. |
+| PC-52 | CodexCliVersionProbeTests/C959_Local_and_registration_share_snapshot | Set local error=null. Input: F-timeout snapshot. **C959-pc-052**: local error timeout. |
+| PC-53 | CodexCliVersionProbeTests/C959_Local_and_registration_share_snapshot | Set local fingerprint=null. Input: resolved A snapshot. **C959-pc-053**: local fingerprint equals A. |
+| PC-54 | CodexCliVersionProbeTests/C959_Local_and_registration_share_snapshot | Set adapter codexCliVersion=null. Input: F-current snapshot. **C959-pc-054**: registration version 0.160.0. |
+| PC-55 | CodexCliVersionProbeTests/C959_Local_and_registration_share_snapshot | Set adapter checkedAt=null. Input: F-current snapshot. **C959-pc-055**: registration checkedAt T. |
+| PC-56 | CodexCliVersionProbeTests/C959_Local_and_registration_share_snapshot | Set adapter error=null. Input: F-timeout snapshot. **C959-pc-056**: registration error timeout. |
+| PC-57 | CodexCliVersionProbeTests/C959_Local_and_registration_share_snapshot | Set adapter fingerprint=null. Input: resolved A snapshot. **C959-pc-057**: registration fingerprint equals A. |
+| PC-58 | CodexCliVersionProbeTests/C959_Local_and_registration_share_snapshot | Omit codex-cli-version-v1 from local features. Input: new local snapshot. **C959-pc-058**: feature present. |
+| PC-59 | CodexCliVersionProbeTests/C959_Local_and_registration_share_snapshot | Omit codex-cli-version-v1 from adapter features. Input: new registration. **C959-pc-059**: feature present. |
+| PC-60 | CodexCliVersionProbeTests/C959_Local_and_registration_share_snapshot | Call refresh from local capability GET handler. Input: ten reads of F-current. **C959-pc-060**: starts unchanged. |
+| PC-61 | CodexCliVersionWindowsTests/C959_Npm_probe_uses_launch_resolution | Select PATH node even when sibling exists. Input: stock npm layout with both. **C959-pc-061**: selected exe sibling node. |
+| PC-62 | CodexCliVersionWindowsTests/C959_Npm_probe_uses_launch_resolution | Return codex.cmd as process executable after Apply. Input: stock npm layout. **C959-pc-062**: selected exe node.exe. |
+| PC-63 | CodexCliVersionWindowsTests/C959_Npm_probe_uses_launch_resolution | Return unknown rather than resolve PATH node. Input: stock layout without sibling, PATH node present. **C959-pc-063**: selected exe PATH node. |
+| PC-64 | CodexCliVersionWindowsTests/C959_Npm_probe_uses_launch_resolution | Split js path at spaces before ArgumentList. Input: spaces and Unicode layout. **C959-pc-064**: one complete js argv element. |
+| PC-65 | CodexCliVersionWindowsTests/C959_Native_and_direct_node_probe | Substitute default native A for explicit B. Input: A current/B old. **C959-pc-065**: selected executable B. |
+| PC-66 | CodexCliVersionWindowsTests/C959_Native_and_direct_node_probe | Drop js prefix before appending --version. Input: direct node descriptor. **C959-pc-066**: argv [absolute js,--version]. |
+| PC-67 | CodexCliVersionWindowsTests/C959_Native_and_direct_node_probe | Resolve js from Environment.CurrentDirectory. Input: different descriptor cwd. **C959-pc-067**: resolved js equals layout js. |
+| PC-68 | CodexCliVersionWindowsTests/C959_Native_and_direct_node_probe | Replace Windows tree kill with parent-only kill. Input: Windows tree helper. **C959-pc-068**: leaf PID/start no longer alive. |
+| PC-69 | CodexCliVersionWindowsTests/C959_Unverified_launcher_is_unknown | On node resolution failure return bare codex. Input: npm no sibling/no PATH node. **C959-pc-069**: unknown and child starts 0. |
+| PC-70 | CodexCliVersionWindowsTests/C959_Unverified_launcher_is_unknown | On missing js choose default native. Input: npm no js, good default. **C959-pc-070**: unknown and child starts 0. |
+| PC-71 | CodexCliVersionWindowsTests/C959_Unverified_launcher_is_unknown | Skip vendored package presence guard. Input: npm no native package. **C959-pc-071**: unknown and child starts 0. |
+| PC-72 | CodexCliVersionWindowsTests/C959_Unverified_launcher_is_unknown | Treat basename codex.cmd as stock. Input: StockNpmShimText plus echo line. **C959-pc-072**: unknown and child starts 0. |
+| PC-73 | CodexCliObservationTests/C959_Launcher_descriptors_are_observations | Remove FromSpec's IsLoaderName early return. For NODE_OPTIONS, NODE_PATH, LD_PRELOAD, LD_LIBRARY_PATH and DOTNET_STARTUP_HOOKS separately, descriptor Request must be null and Error launcher_unverified at **C959-pc-073**. |
+| PC-74 | RunnerCodexCliEvidenceTests/C959_Heartbeat_updates_only_probe_evidence | Omit CodexCli member from outgoing heartbeat. Input: completed new probe. **C959-pc-074**: recipient version updated. |
+| PC-75 | RunnerCodexCliEvidenceTests/C959_Heartbeat_updates_only_probe_evidence | Assign receive-time to server checkedAt. Input: repeat at T+5m. **C959-pc-075**: recipient checkedAt T. |
+| PC-76 | RunnerCodexCliEvidenceTests/C959_Heartbeat_updates_only_probe_evidence | Ignore null-version/error sample. Input: success then failure. **C959-pc-076**: recipient version null. |
+| PC-77 | RunnerCodexCliEvidenceTests/C959_Heartbeat_updates_only_probe_evidence | Assign current time on absent CodexCli. Input: legacy heartbeat at T+16m. **C959-pc-077**: original checkedAt unchanged. |
+| PC-78 | RunnerCodexCliEvidenceTests/C959_Heartbeat_updates_only_probe_evidence | Apply any arriving sample without timestamp comparison. Input: new failure then old success. **C959-pc-078**: recipient still null/error. |
+| PC-79 | RunnerCodexCliEvidenceTests/C959_Heartbeat_updates_only_probe_evidence | Skip heartbeat send when writer is busy. Input: held reply then CLI heartbeat. **C959-pc-079**: recipient receives exact snapshot after release. |
+| PC-80 | RunnerCodexCliEvidenceTests/C959_Heartbeat_updates_only_probe_evidence | Suppress snapshot on next registration after failed send. Input: send failure then fresh connection. **C959-pc-080**: recipient receives latest completed sample. |
+| PC-81 | RunnerCodexCliEvidenceTests/C959_Freshness_boundaries | In CodexCliObservation.DisplayStale add one tick to allowed age. Sample age 15m+tick must yield true at **C959-pc-081**. |
+| PC-82 | RunnerCodexCliEvidenceTests/C959_Freshness_boundaries | Replace missing completed-at with now in DisplayStale. Successful version without timestamp must yield null at **C959-pc-082**. |
+| PC-83 | RunnerCodexCliEvidenceTests/C959_Freshness_boundaries | Remove future tolerance predicate in DisplayStale. Sample T+1m+tick must yield null at **C959-pc-083**. |
+| PC-84 | RunnerCodexCliEvidenceTests/C959_Freshness_boundaries | Change future tolerance to zero. Sample T+1m must yield false at **C959-pc-084**. |
+| PC-89 | RunnerCodexCliEvidenceTests/C959_Freshness_boundaries | Remove MaxAgeMinutes > 60 from CodexCliVersionSettings.Validate. MaxAgeMinutes=61, RefreshIntervalMinutes=5 must fail validation at **C959-pc-089**. |
+| PC-90 | RunnerCodexCliEvidenceTests/C959_Freshness_boundaries | Change RefreshIntervalMinutes >= MaxAgeMinutes to > in CodexCliVersionSettings.Validate. Both 15 must fail validation at **C959-pc-090**. |
+| PC-91 | RunnerCodexCliEvidenceTests/C959_Freshness_boundaries | Remove non-null error check in DisplayStale. Current parsed version plus timeout must yield null at **C959-pc-091**. |
+| PC-92 | RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Retain CLI memory on same-store new boot without CLI. Input: new boot legacy registration. **C959-pc-092**: version null. |
+| PC-93 | RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Retain CLI memory on same-boot new epoch without CLI. Input: new epoch legacy registration. **C959-pc-093**: version null. |
+| PC-94 | RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Copy CLI from retired old store into new slot. Input: authorized replacement without CLI. **C959-pc-094**: version null. |
+| PC-95 | RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Reuse old general capabilities CLI fields. Input: new registration Capabilities=null. **C959-pc-095**: version null. |
+| PC-96 | RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Remove CLI heartbeat epoch equality guard. Input: old success after new unknown generation. **C959-pc-096**: version null. |
+| PC-97 | RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Remove both before/after _isCurrent checks in PhoneHomeRunnerClient.GetCodexCliVersionAsync (one connection-ownership guard checked twice). Hold a reply, accept a new epoch, release old result while old socket remains open under the fixture; assert null at **C959-pc-097**. |
+| PC-98 | RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Clear CLI before existing registration guards. Input: foreign store refused while current live. **C959-pc-098**: current sample unchanged. |
+| PC-99 | RunnerCodexCliEvidenceTests/C959_Catalogue_and_status_project_version | Project BuildVersion into CLI field. Input: build=d40c1670, CLI=0.160.0. **C959-pc-099**: CLI exactly 0.160.0. |
+| PC-100 | RunnerCodexCliEvidenceTests/C959_Catalogue_and_status_project_version | Use remote A snapshot for every remote row. Input: A current/B old. **C959-pc-100**: B version 0.156.1. |
+| PC-101 | RunnerCodexCliEvidenceTests/C959_Catalogue_and_status_project_version | Project immutable registration capabilities instead of mutable snapshot. Input: heartbeat changes version. **C959-pc-101**: status equals latest. |
+| PC-102 | RunnerCodexCliEvidenceTests/C959_Catalogue_and_status_project_version | Copy first live version to configured offline row. Input: offline runner-b. **C959-pc-102**: version/time/error/stale null. |
+| PC-103 | RunnerCodexCliEvidenceTests/C959_Catalogue_and_status_project_version | Project false for absent successful evidence. Input: F-legacy. **C959-pc-103**: codexCliVersionStale null. |
+| PC-104 | RunnerCodexCliEvidenceTests/C959_Catalogue_and_status_project_version | Compute CLI stale from row availability only. Input: live heartbeat, stale CLI. **C959-pc-104**: codexCliVersionStale true. |
+| PC-105 | RunnerCodexCliEvidenceTests/C959_Catalogue_and_status_project_version | Project true for every parsed sample. Input: F-current. **C959-pc-105**: codexCliVersionStale false. |
+| PC-106 | RunnerCodexCliEvidenceTests/C959_Catalogue_and_status_project_version | Append fingerprint to catalogue JSON. Input: selected A. **C959-pc-106**: JSON has no launcher fingerprint/path. |
+| PC-107 | RunnerCodexCliEvidenceTests/C959_Catalogue_and_status_project_version | Use default row on unknown status id. Input: other-runner/status. **C959-pc-107**: HTTP 404. |
+| PC-108 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Use directory.Local instead of selected client. Input: runner-a request. **C959-pc-108**: only runner-a recipient sees descriptor. |
+| PC-109 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Accept wrong requestId frame. Input: wrong id then correct-id deadline. **C959-pc-109**: unknown, no success. |
+| PC-111 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | In RunnerScopedSessionRunnerClient.GetCodexCliVersionAsync route runner-a to runner-b. Configure both live with different versions and capture each recipient; assert A received the request and result equals A sample at **C959-pc-111**. |
+| PC-112 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | In PhoneHomeRunnerClient.GetCodexCliVersionAsync return fixed successful sample for UnsupportedOperation Error frame. Assert returned sample null at **C959-pc-112**. |
+| PC-113 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Return floor sample in default GetCodexCliVersionAsync. Input: client omits override. **C959-pc-113**: result null/unknown. |
+| PC-114 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Change PhoneHomeRunnerClient's own eight-second timeout to nine (no admission helper remains). Silent peer at fake-clock +8s; bounded IsCompleted must be true, result null at **C959-pc-114**. |
+| PC-115 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Retry once after first 503. Input: 503 followed by good response. **C959-pc-115**: request count 1 and unknown. |
+| PC-116 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Catch caller OCE and return unknown normally. Input: cancel while waiting. **C959-pc-116**: OperationCanceledException. |
+| PC-117 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Remove length comparison in runner Resolve. Use valid absolute executable with PATH length 32769 so resolution still succeeds; assert launcher_unverified and child starts unchanged at; repeat all fields' 32768/32769 boundary without using invalid filenames as the only oracle **C959-pc-117**. |
+| PC-118 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Remove only the ${secret: predicate in runner Resolve. Put literal ${secret:C959} in PATH with valid absolute executable; assert launcher_unverified and starts unchanged at **C959-pc-118**. |
+| PC-119 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Change Capabilities enum value from 1 to unused 999. Assert (int)PhoneHomeOperation.Capabilities equals 1 before sending frames, and unchanged CodexCliVersion equals 33, at **C959-pc-119**. |
+| PC-120 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Remove production mapping of new POST. Input: isolated real mapping. **C959-pc-120**: HTTP response contains requested sample, not 404. |
+| PC-122 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Return cached success from enqueue exception catch. Input: writer enqueue failure. **C959-pc-122**: unknown until explicit new request. |
+| PC-123 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Return default advertised success on response timeout. Input: different selected B, lost reply. **C959-pc-123**: unknown. |
+| PC-124 | CodexCliObservationTests/C959_Ladder_and_exact_models_share_floor | Set CodexSol.MinimumCliVersion to null. Assert ForCodexEntry(High/Medium/999).MinimumCliVersion equals parsed 0.159.1 at **C959-pc-124**. |
+| PC-125 | CodexCliObservationTests/C959_Ladder_and_exact_models_share_floor | Assign parsed 0.159.1 to CodexFrontier.MinimumCliVersion. Assert ForCodexEntry(Frontier).MinimumCliVersion null directly (not the independent lookup) at **C959-pc-125**. |
+| PC-126 | CodexCliObservationTests/C959_Ladder_and_exact_models_share_floor | Return null from canonical 6.1 lookup. Input: Low exact 6.1. **C959-pc-126**: same floor as High. |
+| PC-127 | CodexCliObservationTests/C959_Ladder_and_exact_models_share_floor | Change High ForCodex result to prior Sol. Input: High and Medium. **C959-pc-127**: gpt-6.1-sol. |
+| PC-153 | CodexCliVersionProbeTests/C959_Probe_is_version_only_and_auth_free | In Resolve replace the requested absolute executable B with _settings.Executable A, leaving all other identity inputs intact. A current/B old: actual result must be 0.156.1 at **C959-pc-153**. |
+| PC-154 | CodexCliVersionProbeTests/C959_Probe_is_version_only_and_auth_free | In ProbeAsync return Snapshot when Snapshot.CodexCliVersion == "0.156.1". Refresh default A old then request B current; result must be 0.160.0 at **C959-pc-154**. |
+| PC-155 | CodexCliVersionProbeTests/C959_Probe_is_version_only_and_auth_free | In ProbeAsync's ProbeRefusal catch return Snapshot instead of Unknown. Good default A then missing B must return null version with executable_missing at **C959-pc-155**. |
+| PC-156 | CodexCliObservationTests/C959_Launcher_descriptors_are_observations | Replace Get("PATH") with null in FromSpec. Profile-style resolved spec PATH=B:A must produce request.Path B:A at **C959-pc-156**. |
+| PC-157 | CodexCliObservationTests/C959_Launcher_descriptors_are_observations | Replace Get("PATHEXT") with null in FromSpec. Spec PATHEXT=.CMD;.EXE must produce that exact request field at **C959-pc-157**. |
+| PC-158 | CodexCliVersionProbeTests/C959_Probe_is_version_only_and_auth_free | Replace the nonexistent-cwd guard and cwd with the existing parent for a relative selector. Create parent/codex but leave child future-worktree absent; result must be launcher_unverified without a child at **C959-pc-158**. |
+| PC-159 | CodexCliObservationTests/C959_Launcher_descriptors_are_observations | Change PhoneHomeLaunchPolicy's standard Codex projection to retain the desktop codex.cmd selector. Explicitly Project a remote spec then FromSpec; request.Executable must equal codex and cwd the projected remote cwd at **C959-pc-159**. |
+| PC-184 | CodexCliObservationTests/C959_Compatible_launch_keeps_model_and_runner | Replace final 6.1 model argument with gpt-6-sol. Input: F-current selected task. **C959-pc-184**: one model argument exactly gpt-6.1-sol. |
+| PC-185 | CodexCliObservationTests/C959_Compatible_launch_keeps_model_and_runner | Rewrite final launch target to desktop. Input: remote F-current. **C959-pc-185**: recipient transcript belongs to selected remote session. |
+| PC-186 | CodexCliObservationTests/C959_Compatible_launch_keeps_model_and_runner | Remove Dispatcher queue enqueue for observation-only task. Input: eligible/busy. **C959-pc-186**: complete matching W UserPrompt after release and exact E file when spilled. |
+| PC-187 | CodexCliObservationTests/C959_Compatible_launch_keeps_model_and_runner | In FitBriefForTyping, after BuildBrief returns, replace literal `END-C959` with empty text before either inline/spill branch. Input: B in Claude inline first, then Codex/Grok spill vectors. **C959-pc-187**: ordinal whole submitted W equals independent E.TrimEnd() for Claude; whole spill equals E and includes B for non-Claude. Never demand B inside a non-Claude pointer. Assert this before exact wrapped-payload equality. |
+| PC-188 | CodexCliObservationTests/C959_Compatible_launch_keeps_model_and_runner | Drop dispatch handoff when session busy. Input: busy then TurnEnd. **C959-pc-188**: exactly one complete W UserPrompt after eligibility, with E file if spilled. |
+| PC-190 | CodexCliObservationTests/C959_Compatible_launch_keeps_model_and_runner | Remove Dispatcher launch enqueue while retaining message enqueue. Input: fresh observation-only task. **C959-pc-190**: adapter starts and complete W UserPrompt arrives, with exact E file if spilled. |
+| PC-191 | CodexCliObservationTests/C959_Compatible_launch_keeps_model_and_runner | In the Dispatcher enqueue-exception catch, set claimed.Status to Working and save it. Input: enqueue fault before persistence. **C959-pc-191**: task is not Working and has no recipient receipt until recovery. |
+| PC-192 | CodexCliObservationTests/C959_Compatible_launch_keeps_model_and_runner | Reuse old session id for retry queue handoff. Input: restart and retry with new session generation. **C959-pc-192**: receipt on retry session/generation only. |
+| PC-194 | CodexCliObservationTests/C959_Retry_and_cancellation_recheck | Return Queued without persisting retry transition. Input: real watchdog-failed task with old or unknown CLI evidence, explicit RetryAsync. **C959-pc-194**: real queues yield complete W UserPrompt plus exact E file on retry session/generation; no manually Failed setup qualifies this vector. |
+| PC-199 | CodexCliVersionProbeTests/C959_Probe_is_version_only_and_auth_free | Assign captured stderr to CodexCliVersionError instead of fixed reason. Input: synthetic diagnostic sentinel. **C959-pc-199**: serialized sample excludes sentinel and error is fixed token. |
+| PC-200 | RunnerCodexCliEvidenceTests/C959_Freshness_boundaries | Change DisplayStale age > 15m to >= 15m. Exact boundary must display false at **C959-pc-200**. |
+| PC-201 | RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Delete only the slot.Live-is-not-null disjunct in the store replacement guard. Input: retirement cleared, original registration lease expired, same boot, different store, current socket still live and no disconnect. **C959-pc-201**: phone_home_store_mismatch and current sample unchanged. |
+| PC-202 | RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Delete only slot.LeaseUntil > now in the store replacement guard. Input: retirement cleared, no socket/disconnect, same boot, new store at 89s of the 90s registration lease. **C959-pc-202**: phone_home_store_mismatch and current sample unchanged. |
+| PC-203 | RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Remove retired-slot registration refusal. Input: retired slot with same or foreign store. **C959-pc-203**: existing RunnerRetired code and no accepted sample. |
+| PC-205 | CodexCliVersionProbeTests/C959_Probe_is_version_only_and_auth_free | Omit cwd from runner fingerprint inputs. Same absolute executable/metadata with existing cwds A and B must have unequal fingerprints and two actual probe starts at **C959-pc-205**. |
+| PC-206 | CodexCliVersionWindowsTests/C959_Native_and_direct_node_probe | Substitute package A's codex.js for requested package B in runner Resolve before hashing/starting. Same node, two complete npm package fixtures: captured js argument must name B at **C959-pc-206**. |
+| PC-207 | RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Delete only the LastDisconnect plus lease disjunct from store replacement. Input: expired registration lease, retirement cleared, same boot, recent heartbeat then disconnect, new store after 89 of 90 seconds from disconnect. **C959-pc-207**: phone_home_store_mismatch and old identity unchanged. |
+| PC-208 | RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version | Delete only !slot.StoreReplacementAuthorized from store replacement. Input: same boot, no socket, expired registration/disconnect leases, no retirement clear, different store. **C959-pc-208**: phone_home_store_mismatch and old identity unchanged. |
+| PC-209 | CodexCliObservationTests/C959_Compatible_launch_keeps_model_and_runner | In PtyDeliveryCeilings.ForAgentKind set the non-Claude BriefInlineMaxBytes to the unmodified instance value. Codex/Grok with measured modern profile. **C959-pc-209**: effective ceiling equals 0, followed by spill+pointer receipt. |
+| PC-210 | CodexCliObservationTests/C959_Compatible_launch_keeps_model_and_runner | In FitBriefForTyping's local File.WriteAllText only, write `brief.Replace("\n", " ")`. **C959-pc-210**: actual pointer-named file bytes equal UTF-8 E, including LF B. Place before aggregate receipt assertion. |
+| PC-211 | CodexCliObservationTests/C959_Compatible_launch_keeps_model_and_runner | In RunnerWorkspaceService.WriteSpillAsync's final write only, replace LF in spill.Body with a space. **C959-pc-211**: runner file bytes equal UTF-8 E at first input callback; pointer ack alone cannot pass. |
+| PC-212 | CodexCliObservationTests/C959_Compatible_launch_keeps_model_and_runner | In BuildBriefPointer force local `joins = false`. Non-Claude short-title pointer fixtures use explanatory form. **C959-pc-212**: submitted pointer contains neither LF nor CR, before whole-W equality. |
+| PC-213 | CodexCliObservationTests/C959_Compatible_launch_keeps_model_and_runner | In BindStagedSpill omit only row.Body path replacement; retain owned path/body. Hold busy recipient. **C959-pc-213**: persisted pointer contains exact `.antiphon/inbox/{row.Id:D}.md`, before allowing input. |
+| PC-214 | CodexCliObservationTests/C959_Compatible_launch_keeps_model_and_runner | In DeliverAsync replace WrapIfMultiline(trimmed) with trimmed. Claude inline LF. **C959-pc-214**: recorded task-body write equals ESC[200~ + W + ESC[201~; harmless fake still submits exact W, so PC-187 passes and this wrapper assertion fails. |
+| PC-215 | CodexCliObservationTests/C959_Compatible_launch_keeps_model_and_runner | In DeliverAsync append `"\r"` to payload in the body SendInputAsync call, leaving later submit untouched. **C959-pc-215**: body write contains no CR and next submit is a separate exactly-CR write; inspect ordered task writes before whole-body equality. |
+| PC-216 | CodexCliObservationTests/C959_Compatible_launch_keeps_model_and_runner | In BindStagedSpill assign row.RemoteSpillBody=null instead of staged.Spill.Body. **C959-pc-216**: a fresh DB context sees E before recipient input, with staging still alive so no setup error masks the loss. |
+| PC-217 | CodexCliObservationTests/C959_Compatible_launch_keeps_model_and_runner | In PhoneHomeCommandDispatcher.Input swap awaited SendInputAsync and WriteSpillIfPresentAsync. **C959-pc-217**: recipient's first input callback observes file existence before the separate PC-211 byte equality; also a forced write failure records zero pointer input. Capture absence as false, not FileNotFoundException. |
+| PC-218 | CodexCliObservationTests/C959_Compatible_launch_keeps_model_and_runner | Make AcceptedByCompleteUserPrompt return true for every outcome. Suppress recipient transcript but keep screen advance/ack. **C959-pc-218**: queue RemoteSpillBody still equals E and receipt count is zero; eventual genuine W UserPrompt releases bytes. |
+| PC-219 | CodexCliObservationTests/C959_Retry_and_cancellation_recheck | In RemoteSpillCourier.FindDurableAsync return null when row.RemoteSpillBody is nonempty. After persisted enqueue, recreate DI, remove only the test-owned recipient file, retain DB. **C959-pc-219**: bounded recovery produces exact E at original message-owned path before pointer input and complete W receipt; absent durable lookup is red, not a fake restage. |
+| PC-220 | CodexCliObservationTests/C959_Retry_and_cancellation_recheck | Make LateConfirmAttemptedMessagesAsync return LateConfirmCounts.Empty at entry. Crash after actual submission before status save, recreate DI and pull actual transcript. **C959-pc-220**: body submission count across both graphs remains 1 while queue settles against complete W, not a second submit. |
+| PC-221 | CodexCliObservationTests/C959_Retry_and_cancellation_recheck | Make FailNeverStartedAsync return 0 at entry. Drop launch after committed claim, retain DB, recreate DI and advance existing clock past delivery timeout. **C959-pc-221**: task durably Failed with recorded failure before explicit RetryAsync; then PC-194's E/W receipt. Do not manufacture failure in fixture. |
+| PC-222 | CodexCliObservationTests/C959_Compatible_launch_keeps_model_and_runner | Make PromptSubmissionMatch.IsCompleteIn return IsConfirmedBy(body, recordText). Recipient records only first 200 characters of non-Claude W. **C959-pc-222**: no transcript-confirmed verdict and spill E retained; observed head-only UserPrompt never passes complete receipt assertion. |
+| PC-223 | CodexCliObservationTests/C959_Compatible_launch_keeps_model_and_runner | Remove only `t.Sequence > baselineSequence` in TryFindConfirmingRecordAsync. Inject identical whole W at sequence equal to baseline, withhold current receipt. **C959-pc-223**: no transcript-confirmed verdict and E retained; release actual new W above floor to finish green. |
+| PC-224 | CodexCliObservationTests/C959_Compatible_launch_keeps_model_and_runner | Remove only `t.AgentSessionId == sessionId` in TryFindConfirmingRecordAsync. Other isolated session holds whole W at sequence above baseline; selected recipient withholds receipt. **C959-pc-224**: selected row remains unconfirmed with E retained, until selected session's actual receipt. |
+| PC-225 | CodexCliObservationTests/C959_Probe_failure_never_refuses | Break by insert `throw new ConflictException("C959 mutant", "c959_observation_refused");` immediately before CreateAsync's final task save, conditional on Codex and sample.CodexCliVersionError is not null. Run create case before incidental assertions; captured exception null and stored task Queued at **C959-pc-225**. The defect reads that scenario's advertised sample through the selected client's GetCapabilitiesAsync (not the removed typed admission probe); only this condition triggers the inserted refusal. Capture exceptions as outcomes, never fixture errors. |
+| PC-226 | CodexCliObservationTests/C959_Probe_failure_never_refuses | Break by insert the same throw immediately before RetryAsync's RequeueAsync call for Codex when sample.CodexCliVersionError is not null. Run retry case before incidental assertions; captured exception null, persisted Queued and exactly one Retried event at **C959-pc-226**. The defect reads that scenario's advertised sample through the selected client's GetCapabilitiesAsync (not the removed typed admission probe); only this condition triggers the inserted refusal. Capture exceptions as outcomes, never fixture errors. |
+| PC-227 | CodexCliObservationTests/C959_Probe_failure_never_refuses | Break by in DispatchOneAsync before claim, for Codex when sample.CodexCliVersionError is not null call BlockAsync(task, "c959_observation_refused", ct) and return DispatchOneResult.NotClaimed. Run dispatch case before incidental assertions; selected recipient has exactly one complete matching W UserPrompt, E file where spilled, with no CLI Blocked event at **C959-pc-227**. The defect reads that scenario's advertised sample through the selected client's GetCapabilitiesAsync (not the removed typed admission probe); only this condition triggers the inserted refusal. Capture exceptions as outcomes, never fixture errors. |
+| PC-228 | CodexCliObservationTests/C959_Stale_sample_never_refuses | Break by insert `throw new ConflictException("C959 mutant", "c959_observation_refused");` immediately before CreateAsync's final task save, conditional on Codex and sample.CodexCliVersionCheckedAtUtc < now.AddMinutes(-15). Run create case before incidental assertions; captured exception null and stored task Queued at **C959-pc-228**. The defect reads that scenario's advertised sample through the selected client's GetCapabilitiesAsync (not the removed typed admission probe); only this condition triggers the inserted refusal. Capture exceptions as outcomes, never fixture errors. |
+| PC-229 | CodexCliObservationTests/C959_Stale_sample_never_refuses | Break by insert the same throw immediately before RetryAsync's RequeueAsync call for Codex when sample.CodexCliVersionCheckedAtUtc < now.AddMinutes(-15). Run retry case before incidental assertions; captured exception null, persisted Queued and exactly one Retried event at **C959-pc-229**. The defect reads that scenario's advertised sample through the selected client's GetCapabilitiesAsync (not the removed typed admission probe); only this condition triggers the inserted refusal. Capture exceptions as outcomes, never fixture errors. |
+| PC-230 | CodexCliObservationTests/C959_Stale_sample_never_refuses | Break by in DispatchOneAsync before claim, for Codex when sample.CodexCliVersionCheckedAtUtc < now.AddMinutes(-15) call BlockAsync(task, "c959_observation_refused", ct) and return DispatchOneResult.NotClaimed. Run dispatch case before incidental assertions; selected recipient has exactly one complete matching W UserPrompt, E file where spilled, with no CLI Blocked event at **C959-pc-230**. The defect reads that scenario's advertised sample through the selected client's GetCapabilitiesAsync (not the removed typed admission probe); only this condition triggers the inserted refusal. Capture exceptions as outcomes, never fixture errors. |
+| PC-231 | CodexCliObservationTests/C959_Unknown_version_never_refuses | Break by insert `throw new ConflictException("C959 mutant", "c959_observation_refused");` immediately before CreateAsync's final task save, conditional on Codex and sample.CodexCliVersion is null. Run create case before incidental assertions; captured exception null and stored task Queued at **C959-pc-231**. The defect reads that scenario's advertised sample through the selected client's GetCapabilitiesAsync (not the removed typed admission probe); only this condition triggers the inserted refusal. Capture exceptions as outcomes, never fixture errors. |
+| PC-232 | CodexCliObservationTests/C959_Unknown_version_never_refuses | Break by insert the same throw immediately before RetryAsync's RequeueAsync call for Codex when sample.CodexCliVersion is null. Run retry case before incidental assertions; captured exception null, persisted Queued and exactly one Retried event at **C959-pc-232**. The defect reads that scenario's advertised sample through the selected client's GetCapabilitiesAsync (not the removed typed admission probe); only this condition triggers the inserted refusal. Capture exceptions as outcomes, never fixture errors. |
+| PC-233 | CodexCliObservationTests/C959_Unknown_version_never_refuses | Break by in DispatchOneAsync before claim, for Codex when sample.CodexCliVersion is null call BlockAsync(task, "c959_observation_refused", ct) and return DispatchOneResult.NotClaimed. Run dispatch case before incidental assertions; selected recipient has exactly one complete matching W UserPrompt, E file where spilled, with no CLI Blocked event at **C959-pc-233**. The defect reads that scenario's advertised sample through the selected client's GetCapabilitiesAsync (not the removed typed admission probe); only this condition triggers the inserted refusal. Capture exceptions as outcomes, never fixture errors. |
+| PC-234 | CodexCliObservationTests/C959_Old_version_with_floor_never_refuses | Break by insert `throw new ConflictException("C959 mutant", "c959_observation_refused");` immediately before CreateAsync's final task save, conditional on Codex and sample.CodexCliVersion == "0.156.1". Run create case before incidental assertions; captured exception null and stored task Queued at **C959-pc-234**. The defect reads that scenario's advertised sample through the selected client's GetCapabilitiesAsync (not the removed typed admission probe); only this condition triggers the inserted refusal. Capture exceptions as outcomes, never fixture errors. |
+| PC-235 | CodexCliObservationTests/C959_Old_version_with_floor_never_refuses | Break by insert the same throw immediately before RetryAsync's RequeueAsync call for Codex when sample.CodexCliVersion == "0.156.1". Run retry case before incidental assertions; captured exception null, persisted Queued and exactly one Retried event at **C959-pc-235**. The defect reads that scenario's advertised sample through the selected client's GetCapabilitiesAsync (not the removed typed admission probe); only this condition triggers the inserted refusal. Capture exceptions as outcomes, never fixture errors. |
+| PC-236 | CodexCliObservationTests/C959_Old_version_with_floor_never_refuses | Break by in DispatchOneAsync before claim, for Codex when sample.CodexCliVersion == "0.156.1" call BlockAsync(task, "c959_observation_refused", ct) and return DispatchOneResult.NotClaimed. Run dispatch case before incidental assertions; selected recipient has exactly one complete matching W UserPrompt, E file where spilled, with no CLI Blocked event at **C959-pc-236**. The defect reads that scenario's advertised sample through the selected client's GetCapabilitiesAsync (not the removed typed admission probe); only this condition triggers the inserted refusal. Capture exceptions as outcomes, never fixture errors. |
+| PC-237 | CodexCliObservationTests/C959_Probe_failure_never_refuses | Break by insert `await _runners!.Local.GetCodexCliVersionAsync(new("codex", task.WorkingDirectory), ct);` before final create save. Recording probe returns unknown immediately; its request count must stay zero at **C959-pc-237**. |
+| PC-238 | CodexCliObservationTests/C959_Stale_sample_never_refuses | Break by insert that local observation call before RequeueAsync. Recording probe returns unknown immediately; its request count must stay zero at **C959-pc-238**. |
+| PC-239 | CodexCliObservationTests/C959_Unknown_version_never_refuses | Break by insert that local observation call at DispatchOneAsync before claim. Recording probe returns unknown immediately; its request count must stay zero at **C959-pc-239**. |
+| PC-240 | CodexCliObservationTests/C959_Old_version_with_floor_never_refuses | Before the existing reused-session handoff insert `await _runners!.Local.GetCodexCliVersionAsync(new("codex", task.WorkingDirectory), ct);`. Recording probe returns unknown immediately; warm-session request count must stay zero at **C959-pc-240**. |
+| PC-241 | ModelAvailabilityCreateTests/Create_without_IgnoreModelDisabled_is_still_409_while_held | Remove only CreateAsync's existing modelAvailability.RequireAsync call. Existing held fixture expects ModelDisabledException with code model_disabled; Should.ThrowAsync is the decisive assertion (retain it; add identifying label) **C959-pc-241**. |
+| PC-242 | CodexPhoneHomeCreateTests/Signed_out_remote_create_refuses_with_codex_problem_details | Remove only RefuseUnauthenticatedRunnerCodexAsync call in CreateAsync. Should.ThrowAsync<ProviderSignInRequiredException> must fail before zero-insert assertions (add identifying label) **C959-pc-242**. |
+| PC-243 | CodexPhoneHomeCreateTests/Present_unknown_and_unavailable_probe_admit | Change remote Codex auth test from LoggedIn == false to LoggedIn != true. Capture the create exception in the unknown-auth vector and assert null before reading its row at **C959-pc-243**. |
+| PC-244 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Remove only input.Contains('\0') in runner Resolve. Valid absolute executable and PATH="NUL\0sentinel" bypass filesystem path parsing; assert launcher_unverified with no new child at **C959-pc-244**. |
+| PC-245 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Remove only {{key: predicate in runner Resolve. Valid absolute executable with PATH="{{key:C959}}" must produce launcher_unverified with no child at **C959-pc-245**. |
+| PC-246 | CodexCliObservationTests/C959_Retry_and_cancellation_recheck | In TryFindUnobservableConfirmingRecordAsync remove the timestamp-floor predicate. Null sequence baseline; same-session complete W has original timestamp below the attempt floor minus existing tolerance, while current receipt is withheld. Durable E must remain, qualifying receipt count zero at **C959-pc-246**. |
+| PC-247 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Remove frame.Operation != PhoneHomeOperation.CodexCliVersion in client. Correlated Result with Health operation and valid sample must return null at **C959-pc-247**. |
+| PC-248 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Remove frame.Kind != PhoneHomeFrameKind.Result in client. Correct request/epoch/operation Error carrying a syntactically valid sample must return null at **C959-pc-248**. |
+| PC-249 | RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound | Remove !_connection.SocketOpen in client. Hold a valid correlated reply until socket closes before its client continuation; current-connection callback stays true. Result must be null at **C959-pc-249**. |
+| PC-250 | RunnerCodexCliEvidenceTests/C959_Freshness_boundaries | Make CodexCliObservation.DisplayError return null for completed time now+1m+tick. Catalogue/status codexCliVersionError must equal clock_skew at **C959-pc-250**. |
+| PC-251 | RunnerCodexCliEvidenceTests/C959_Freshness_boundaries | Remove malformed non-null fingerprint detection from DisplayError. Otherwise good sample with fingerprint "bad" must project launcher_mismatch at; V-25 separately proves placement still succeeds **C959-pc-251**. |
+| PC-252 | RunnerCodexCliEvidenceTests/C959_Catalogue_and_status_project_version | Return sample.CodexCliVersionError verbatim in DisplayError. Inject C959-diagnostic-sentinel; both public shapes must show probe_unavailable and exclude sentinel at **C959-pc-252**. |
+| PC-253 | CodexCliObservationTests/C959_Old_version_with_floor_never_refuses | Insert `await _runners!.Local.GetCodexCliVersionAsync(new("codex", task.WorkingDirectory), ct);` in BuildLaunchSpecAsync immediately before return spec. Cold Worktree launch with changed final cwd must retain zero typed-probe calls at **C959-pc-253**. |
+| PC-254 | RunnerCodexCliEvidenceTests/C959_Freshness_boundaries | Remove RefreshIntervalMinutes <= 0 from CodexCliVersionSettings.Validate. Interval 0, MaxAgeMinutes 15 must yield a captured validation exception at **C959-pc-254**. |
+| PC-255 | RunnerCodexCliEvidenceTests/C959_Freshness_boundaries | Remove !double.IsFinite(RefreshIntervalMinutes) from Validate. NaN, MaxAgeMinutes 15 must yield a captured validation exception at **C959-pc-255**. |
+
+All controls are executable designs using the named methods and concrete
+fixtures; authoring the explicitly listed missing setup precedes ordinary green.
+Audit of the active ledger: bodies read; guards=192, mapped=192, missing=0,
+duplicate PC maps=0. There are 161 retained/retargeted controls, 63 retired
+controls, and 31 new controls (225..255); 224 - 63 + 31 = 192. No control was
+executed in TestDesign. New production guards discovered during Code must be
+mapped before handoff, not silently omitted.
+
+### Out of scope
+
+- All CLI-based task admission, even a parsed version below a recorded floor;
+  all overrides and CLI refusal codes. The matrix card owns future enforcement.
+- A request-descriptor fingerprint authenticity guarantee: the present response
+  has no caller-known expected fingerprint; no permission decision consumes it.
+  The actual request/runner/epoch/operation correlation remains tested.
+- Matrix schema/matching/precedence, UI redesign, new DB persistence, provider
+  entitlement, automatic rerouting/model downgrade and per-flush compatibility
+  checks. No such behavior is needed for reporting.
+- Real provider spend, serving CLI upgrades/downgrades, production rollout,
+  auth-home access, live queue traffic or external mutation execution. Fixture
+  CLI output cannot establish an installed vendor/version/model combination.
+- General queue/attention/task-input/PTY/deploy/tool repairs. Retain inherited
+  unrelated branch changes, including CARD-0965/1001/1008/1014 work; do not revert
+  whole files to an old base to remove CARD-0959 hunks. Recheck active footprints.
+- Full all-category Antiphon.Tests and Antiphon.Agents.Pty.Tests: the closed
+  Final profile below retains the inherited whole Unit lane and every named
+  affected V/R, plus native Windows. No broader suite is justified by this
+  additive observation/removal slice. Local spill-denial/API-pointer fallback,
+  missing RunnerCwd, specialist full-inline and hostile filesystem containment
+  are separate owners; the owned writable-workspace delivery contract is explicit.
+
+### Checkpoints
+
+This is the **only active importer heading**; the earlier table is renamed
+Archived checkpoints because PlanTableImporter.ExtractSection selects the first
+literal heading. This table is a closed Final Code/Review scope, one isolated
+build and one exact filter per row. Run after both removal and test/doc slices
+are committed; native CP-2 must use the same final pushed Code source SHA.
+Portable rows run on the selected Linux lane; Windows requires a separate
+commissioned native lane and cannot be discharged by Linux skips.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
+|---|---|---|---|---|---|---|---:|---:|---|---|
+| CP-1 | S1-S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c959-inert-probe/` | portable-inert-probe | `/*/*/CodexCliVersionProbeTests*/C959_*` | V-1..V-5 | 5 methods, all listed, 0 failed/skipped | 5 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-2 | S1-S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c959-inert-windows/` | windows-inert-launcher | `/*/*/(CodexCliVersionWindowsTests*)\|(CodexWindowsLaunchPolicyTests*)/*` | V-6..V-8, R-4 | 3 feature plus 26 regression executions, 0 failed/skipped | 29 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-3 | S1-S2 | `tests/Antiphon.Tests -> bin-c959-inert-evidence/` | portable-inert-wire | `/*/*/RunnerCodexCliEvidenceTests*/C959_*` | V-9..V-13 | 5 methods, all listed, 0 failed/skipped | 5 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c959-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-4 | S1-S2 | `tests/Antiphon.Tests -> bin-c959-inert-placement/` | portable-inert-placement | `/*/*/CodexCliObservationTests*/C959_*` | V-14,V-19,V-21..V-26 | 8 methods, full E/W delivery/recovery and no-refusal vectors, 0 failed/skipped | 8 | 14 | true | `C804_ORPHAN_SWEEP_ROOT=c959-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-5 | S1-S2 | `tests/Antiphon.Tests -> bin-c959-inert-auth/` | portable-existing-refusals | `/*/*/(CodexPhoneHomeCreateTests*)\|(PinnedCodexProfileDispatchLaunchTests*)\|(ModelAvailabilityCreateTests*)\|(ModelAvailabilityDispatcherTests*)/*` | R-1 | 22 expanded executions, full classes, 0 failed/skipped | 22 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c959-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-6 | S1-S2 | `tests/Antiphon.Tests -> bin-c959-inert-directory/` | portable-directory-regression | `/*/*/(RunnerCatalogueTests*)\|(PhoneHomeDirectoryTests*)\|(PhoneHomeRunnerRetirementIdentityTests*)/*` | R-2 | 20 expanded executions, full classes, 0 failed/skipped | 20 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c959-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-7 | S1-S2 | `tests/Antiphon.Tests -> bin-c959-inert-models/` | portable-model-regression | `/*/*/ModelAliasTests*/*` | R-3 | 76 expanded executions, full class, 0 failed/skipped | 76 | 5 | true | `C804_ORPHAN_SWEEP_ROOT=c959-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-8 | S1-S2 | `tests/Antiphon.Tests -> bin-c959-inert-unit/` | portable-final-unit | `/*/*/*/*[Category=Unit]` | R-5 | >=3961 executed, 0 failed, only the 33 recorded Windows exclusions; jq cases execute | 3961 | 15 | true | `C804_ORPHAN_SWEEP_ROOT=c959-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+
+All filters/builds are literal, not examples. Min counts TUnit executions only.
+CP-1/3/4/5/6/7 sum 136; CP-2 adds 29; CP-8 adds 3961 = 4126.
+The preceding receipt roster at 3ccc171bdaedffaf48838dfa744c6129d82c06ef
+(CP-1/3/5/6/7/8) and 6d2e6fb6fe51e0f32c3073b4936ff965775e6452 (CP-4)
+establishes the old counts, not green for the removal.
+
+Code prerequisite: isolated, host-slot-gated checkpoint-tool bootstrap,
+OutputPath=bin-c959-inert-tool/, then import this table with the built DLL.
+No importer was run here because this task prohibits builds/tests. Use the
+checkpoint tool run --plan this path --expected-source-sha full committed HEAD
+--serial, then wait to a terminal exit other than 75; split the native row to
+its commissioned Windows execution. All drivers take the host build-slot gate;
+exit 4 means not run. Preserve source-bound receipts and clean only owned
+alternate bin directories after every foreground child finishes.
+
+Provide jq for CP-8 on the test child's PATH; missing jq is not an OS exclusion.
+Read c959-second-evidence/unit-windows-exclusions.tsv for the exact 33 names:
+2 npm/executable, 3 canonical path/argv, 5 drive-directory, 12 Grok Windows
+rules argv, 5 ConPTY profiles, 4 checkpoint process mechanics, 2 sharing locks.
+A new skip or count drift requires a documented recount, never silent lowering.
+The prior Code report records CP-8 validator exit 2 because strict validation
+rejects even these known skips. Fresh checkpoint execution must retain this
+discrepancy if still present; never assert reviewedSourceClean=true without the
+owner-required validation. Escalate a persisting validator limitation to the
+checkpoint owner; this freeze does not authorize tool edits or falsified green.
+Run scripts/check-evidence-diff.ps1 over the full Code/Review task range; new
+TRX/JSON/log/archive payloads stay ignored.
+
+### Cost
+
+All figures below are estimates, not measured in this docs-only task.
+Ordinary Code V/R floor = 74 minutes: CP-1..8 estimates
+8+8+8+14+8+8+5+15, including each isolated build. Setup = 6 minutes
+(4 tool bootstrap/import, 2 jq), giving 80 minutes before authoring/slot waits.
+The remaining delivery/recovery work keeps CP-4 at 14 minutes despite one fewer
+method; ordinary estimated time saving is zero, justified by retained handoffs
+and the four new placement methods.
+
+Mutation is separate. Each exact filter below has one method baseline; then each
+PC has an isolated red build/run, 0.25 minutes to restore/check, and an isolated
+green build/run. Portable baseline/run=4 minutes; Windows=5; real delivery and
+no-refusal producer methods=6. MinExecuted=1 every invocation. Baselines may be
+shared only for the same clean source and exact method; no broadened PC filter.
+
+| Exact filter | PCs | Baseline minutes | Red/restore/green per PC | Floor minutes |
+|---|---:|---:|---:|---:|
+| `/*/*/CodexCliVersionProbeTests/C959_Parses_and_orders_versions` | 13 | 4 | 8.25 | 111.25 |
+| `/*/*/CodexCliVersionProbeTests/C959_Probe_is_version_only_and_auth_free` | 18 | 4 | 8.25 | 152.5 |
+| `/*/*/CodexCliVersionProbeTests/C959_Failure_bounds_and_cleanup` | 11 | 4 | 8.25 | 94.75 |
+| `/*/*/CodexCliVersionProbeTests/C959_Refresh_replaces_evidence` | 12 | 4 | 8.25 | 103 |
+| `/*/*/CodexCliVersionProbeTests/C959_Local_and_registration_share_snapshot` | 11 | 4 | 8.25 | 94.75 |
+| `/*/*/CodexCliVersionWindowsTests/C959_Npm_probe_uses_launch_resolution` | 4 | 5 | 10.25 | 46 |
+| `/*/*/CodexCliVersionWindowsTests/C959_Native_and_direct_node_probe` | 5 | 5 | 10.25 | 56.25 |
+| `/*/*/CodexCliVersionWindowsTests/C959_Unverified_launcher_is_unknown` | 4 | 5 | 10.25 | 46 |
+| `/*/*/CodexCliObservationTests/C959_Launcher_descriptors_are_observations` | 4 | 4 | 8.25 | 37 |
+| `/*/*/RunnerCodexCliEvidenceTests/C959_Heartbeat_updates_only_probe_evidence` | 7 | 4 | 8.25 | 61.75 |
+| `/*/*/RunnerCodexCliEvidenceTests/C959_Freshness_boundaries` | 12 | 4 | 8.25 | 103 |
+| `/*/*/RunnerCodexCliEvidenceTests/C959_Generation_change_clears_version` | 12 | 4 | 8.25 | 103 |
+| `/*/*/RunnerCodexCliEvidenceTests/C959_Catalogue_and_status_project_version` | 10 | 4 | 8.25 | 86.5 |
+| `/*/*/RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound` | 19 | 4 | 8.25 | 160.75 |
+| `/*/*/CodexCliObservationTests/C959_Ladder_and_exact_models_share_floor` | 4 | 4 | 8.25 | 37 |
+| `/*/*/CodexCliObservationTests/C959_Compatible_launch_keeps_model_and_runner` | 21 | 6 | 12.25 | 263.25 |
+| `/*/*/CodexCliObservationTests/C959_Retry_and_cancellation_recheck` | 5 | 6 | 12.25 | 67.25 |
+| `/*/*/CodexCliObservationTests/C959_Probe_failure_never_refuses` | 4 | 6 | 12.25 | 55 |
+| `/*/*/CodexCliObservationTests/C959_Stale_sample_never_refuses` | 4 | 6 | 12.25 | 55 |
+| `/*/*/CodexCliObservationTests/C959_Unknown_version_never_refuses` | 4 | 6 | 12.25 | 55 |
+| `/*/*/CodexCliObservationTests/C959_Old_version_with_floor_never_refuses` | 5 | 6 | 12.25 | 67.25 |
+| `/*/*/ModelAvailabilityCreateTests/Create_without_IgnoreModelDisabled_is_still_409_while_held` | 1 | 4 | 8.25 | 12.25 |
+| `/*/*/CodexPhoneHomeCreateTests/Signed_out_remote_create_refuses_with_codex_problem_details` | 1 | 4 | 8.25 | 12.25 |
+| `/*/*/CodexPhoneHomeCreateTests/Present_unknown_and_unavailable_probe_admit` | 1 | 4 | 8.25 | 12.25 |
+
+PC floor = 1893 minutes (111 method baselines + 1782 red/restore/green);
+Mutation setup adds 4, giving 1897. Total setup/build + ordinary V/R + PCs
+= 6 + 74 + 4 + 111 + 1782 = 1977 minutes. Separate ordinary Review repeats
+74 minutes: total 2051. Authoring, scheduling, slot wait and repairs are additional.
+There are 408 method executions in the PC estimate (24 baselines + 192 red +
+192 green), separate from the 4126 ordinary execution floor.
+
+Compared with the archived 224-control estimate, the PC floor drops from
+2097 to 1893, saving 204 estimated minutes; combined total drops 2181 -> 1977.
+Using 24 method baselines instead of a redundant baseline per PC saves another
+756 estimated minutes within this estimate; measured savings=0. These are
+scope/cycle arithmetic, not evidence that present fixtures are already complete.
+
+Activation after Code/Review/land: update runners through their sanctioned lanes
+to report observations, confirm actual version/error/time on local capabilities
+and remote registration/heartbeat over two refresh periods, then update the server
+to read/show them. Nothing enforces CLI compatibility. A server reading an old
+runner shows unknown and continues existing eligible placement; a runner upgrade
+does not imply older combinations stopped working. The rollout does not require
+upgrading the installed CLI merely to satisfy metadata. Verify loaded source SHA
+via /api/version and actual fields; health/build SHA is not a CLI receipt.
+Rollback of these additive readers removes visibility, not a gate. Live provider
+canaries remain separately commissioned and require full matching UserPrompt.
+
+Before handoff: active headings/table/roster, unique guard-PC mapping and numeric
+cost are statically checked; builds/tests/importer/mutations=0 in TestDesign.
+No human compatibility-policy decision remains for this inert slice. Next is
+Code from the exact pushed freeze tip, complete removal then retained/new proofs,
+ordinary Review before land, and commissioned Mutation after land.
+
+--- next stage ---
+next: code
+handoff: Start at this freeze's pushed tip reported by task 4170230f. Remove service/dispatcher CLI gating, exceptions, overrides and admission settings/probes; retain observation transports, metadata/descriptors and status. Replace gating tests with V-23..26; complete retained E/W delivery/recovery. Run active CP-1..8 (Windows CP-2), then Review. 192 post-land PCs.
 artifact: docs/superpowers/plans/2026-10-03-card-0959-runner-codex-version-plan.md
