@@ -1125,25 +1125,27 @@ condition is satisfied; the retained TestDesign freeze admits next: code.
 - Async session delivery: no changed queue/session producer exists, as inventoried
   above. Command acceptance is never substituted for observed Docker/receipt effects.
 
-### Admission blockers, shared files and platform qualification
+### Admission status, shared files and platform qualification
 
 B-1 is **MOVED to CARD-1010** with PC-121/122; it is not a CARD-1008 admission blocker.
 
-**B-2 — actual importer receipt (execution gate, no open design decision).**
-The previous TestDesign dispatch could not build/run the tool. The original Plan
-report (`delegate.ps1 -Status 9de0189e`) records five imported rows and DOCS-1008
-36 passed, but does not give an importer command. That receipt predates this table.
-For this dispatch, the sanctioned DOCS-1008 checkpoint builds the unchanged tool
-as an existing Antiphon.Tests project reference. After the final-SHA checkpoint,
-run its actual CLI without another build or executor:
+**B-2 resolved — actual importer accepted all five rows.**
+The original Plan report (`delegate.ps1 -Status 9de0189e`) records five imported
+rows and DOCS-1008 36 passed, but that receipt predates this table. This Plan
+reconciliation ran the actual unchanged CLI built as Antiphon.Tests' existing
+project reference by the self-leasing DOCS-1008 checkpoint at
+`f0df65050d1f5e31b86e677b0472d455b62b7b5f`. Import exited **0**, accepted
+**CP-1..CP-5**, and emitted minima **1/19/54/207/1** with estimates **6/15/10/8/12**.
+It did not launch a checkpoint executor or a separate build. Exact working command:
 
-`dotnet tools/Antiphon.Checkpoints/bin-c1008-plan/net9.0/Antiphon.Checkpoints.dll import --plan docs/superpowers/plans/2026-10-03-card-1008-rolling-volume-recycle-and-retire-temp-plan.md --out .antiphon/c1008-plan-checkpoints/imported.yml`
+`dotnet tools/Antiphon.Checkpoints/bin-c1008-plan/Antiphon.Checkpoints.dll import --plan docs/superpowers/plans/2026-10-03-card-1008-rolling-volume-recycle-and-retire-temp-plan.md --out .antiphon/c1008-plan-checkpoints/imported.yml`
 
-Report the exit and all five imported CP IDs/floors in the final receipt; this
-closes B-2 only on success. If the checkpoint cannot supply that artifact, B-2 is
-the sole remaining Code-admission execution step, to run after the declared leased
-bootstrap. Static parsing or the 36 generic documentation/import tests alone do
-not close it. Do not launch the owner-bound checkpoint executor without its token.
+The final documentation amendment corrects the tool path (OutputPath has no
+net9.0 suffix) and records this receipt; it leaves the imported table byte-identical.
+Re-import at the final committed SHA before cleanup and include that receipt in
+the final report. B-2 no longer blocks Code; a later table edit requires a fresh
+import. Static parsing or the 36 generic documentation/import tests alone do not
+establish executability. Do not launch the owner-bound executor without its token.
 
 | Shared path/region | Overlap and required ordering |
 |---|---|
@@ -1185,8 +1187,7 @@ ordered C1008 land on an uncommissioned Windows repair or silently add a sixth C
 
 **Code start condition:** the corrected policy Docs land is contained in the Code
 base; C1008 has exclusive shared-file ownership ahead of 0980/0983 and 1010; the
-source census is refreshed there; and B-2 has a real importer receipt for this
-revised table. No further TestDesign freeze is required for the retained scope.
+source census is refreshed there; and the revised table retains its actual importer receipt (B-2 resolved here). No further TestDesign freeze is required for the retained scope.
 All **20 V methods, 32 RD outcomes and 125 active guard/control mappings** bind Code.
 
 Reconciliation deltas from b365b1af: V **21 -> 20** (only V-11 moves); PCs/guards
@@ -1229,7 +1230,7 @@ methods/counts. Code implements that contract; it does not redesign it. Preserve
    without broadening the retired-temp exception or adding state replacement waits.
 5. All 20 active V methods, R-1/R-2 expansion, 32 RD outcomes and 125 method-scoped
    PC input/first-assertion bindings. A method omitted from its filter is a defect.
-6. A real import of this exact table (B-2). A static coverage pass is a syntax check,
+6. The real import of this exact table (B-2 resolved). A static coverage pass is a syntax check,
    never a method-scoped Mutation receipt.
 
 Code commits/pushes every meaningful slice and before a build. Use the checkpoint
@@ -1370,5 +1371,5 @@ duplicate card is needed. CARD-0980/0983 re-baseline after CARD-1008 lands.
 
 --- next stage ---
 next: code
-handoff: Implement the retained TestDesign freeze: default main recycle with its own stop, retired-absent temp acceptance and temp down -v; preview remains. 125 executable PCs, 20 V methods, 32 RD outcomes; five CP rows (1/19/54/207-derived/1). Require policy land af6d03f1, admission recount and real importer receipt B-2. CARD-1008 lands before 0980/0983 re-baseline and 1010 starts.
+handoff: Implement the retained freeze: default main recycle with its own stop, retired-absent temp acceptance and temp down -v; preview remains. 125 executable PCs, 20 V methods, 32 RD outcomes; CP minima 1/19/54/207-derived/1. B-2 import passed. Require policy land af6d03f1 and admission recount. CARD-1008 lands before 0980/0983 re-baseline and 1010 starts.
 artifact: docs/superpowers/plans/2026-10-03-card-1008-rolling-volume-recycle-and-retire-temp-plan.md
