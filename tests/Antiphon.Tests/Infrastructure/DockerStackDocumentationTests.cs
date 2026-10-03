@@ -15,7 +15,7 @@ public sealed class DockerStackDocumentationTests
         const string heading = "### Volume recycling and disk reclaim (CARD-1008)";
         var start = text.IndexOf(heading, StringComparison.Ordinal);
         start.ShouldBeGreaterThanOrEqualTo(0);
-        var end = text.IndexOf("### ", start + heading.Length, StringComparison.Ordinal);
+        var end = text.IndexOf(" ### ", start + heading.Length, StringComparison.Ordinal);
         var section = end < 0 ? text[start..] : text[start..end];
 
         section.ShouldContain("Assert-ZeroCounters", Case.Sensitive, "the stopped-main refusal must be explained");

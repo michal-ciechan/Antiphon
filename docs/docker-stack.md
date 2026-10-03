@@ -141,11 +141,15 @@ main runner. After drain and the checks below, temp is disposable: `compose_temp
 removes all four private volumes (work, runner-tmp, dind-data, runner-state). This is
 part of the rollout's disk reclaim, not a reason to retain temp for rollback.
 
-At `redeploy-old`, after main is drained with zero live seats and its container is
-stopped, recycle **only** `antiphon-runner_work`, `antiphon-runner_runner-tmp` and
-`antiphon-runner_dind-data` by default. Never use blanket `down -v` on main. Until
-CARD-1008's script implementation lands, perform the manual step below before
-`redeploy-old`; the phase does not yet implement this policy automatically.
+Main volume recycling is **scripted only**: CARD-1008 must implement recycling
+`antiphon-runner_work`, `antiphon-runner_runner-tmp` and `antiphon-runner_dind-data`
+inside the `redeploy-old` / `deploy-parent` flow, after its admission checks and
+controlled stop. Until that script work lands, do not stop or remove main's container
+or recycle its volumes by hand. A stopped main reports `runnerSessions=null` while
+still advertising the old SHA: `Assert-ZeroCounters` makes `redeploy-old` refuse
+with `RunnerCounterUnknown server2 runnerSessions` before `deploy-parent` runs.
+Never use blanket `down -v` on main. Its only documented manual disk reclaim is
+the in-container cleanup below, with the runner kept **running**.
 
 | Volume | What it holds | Default on retire/replace | Consequence of recreating |
 |---|---|---|---|
@@ -153,9 +157,9 @@ CARD-1008's script implementation lands, perform the manual step below before
 | `antiphon-runner-temp_runner-tmp` | Temp `/tmp` | Remove on temp retirement | Image `/tmp`, including `/tmp/antiphon-pty-hosts`, copies in on first mount (CARD-0827) |
 | `antiphon-runner-temp_dind-data` | Temp nested Docker data | Remove on temp retirement | Nested images and containers must be rebuilt |
 | `antiphon-runner-temp_runner-state` | Temp identity/store and volume-backed provider state | Remove on temp retirement | New store; next deployment uses explicit retirement clear and lease admission (CARD-0953) |
-| `antiphon-runner_work` | Main task worktrees and mirrors | Recycle on main replacement | Empty workspace; recover unpublished work first |
-| `antiphon-runner_runner-tmp` | Main `/tmp` | Recycle on main replacement | Image `/tmp`, including `/tmp/antiphon-pty-hosts`, copies in on first mount; never substitute a name-pattern sweep |
-| `antiphon-runner_dind-data` | Main nested Docker data | Recycle on main replacement | Nested images and containers must be rebuilt |
+| `antiphon-runner_work` | Main task worktrees and mirrors | Preserve until CARD-1008 scripted replacement recycling lands | Empty workspace; recover unpublished work first |
+| `antiphon-runner_runner-tmp` | Main `/tmp` | Preserve until CARD-1008 scripted replacement recycling lands | Image `/tmp`, including `/tmp/antiphon-pty-hosts`, copies in on first mount; never substitute a name-pattern sweep |
+| `antiphon-runner_dind-data` | Main nested Docker data | Preserve until CARD-1008 scripted replacement recycling lands | Nested images and containers must be rebuilt |
 | `antiphon-runner_runner-state` | Main runner identity/store and volume-backed provider state | Preserve; explicit human opt-in to recycle | A different store hits `StoreMismatch`; retire, explicitly clear retirement, allow connection detachment and lease expiry, then re-register under CARD-0953 |
 | `antiphon-runner-cache-nuget-packages` | Shared NuGet packages | Preserve; explicit human opt-in to recycle | CARD-0912 cold Seed required; minutes to an hour, best effort |
 | `antiphon-runner-cache-nuget-scratch` | Shared NuGet lock scratch | Preserve; explicit human opt-in to recycle | Recreate through the cache maintenance/Seed procedure |
@@ -185,9 +189,54 @@ A nonzero count or unique unpublished work stops removal: publish or recover it 
 and record the task IDs, paths and results. Perform this inventory before stopping
 and removing the container, while its workspace can still be read; never mount the
 volume in a helper container during the final unreferenced-volume check.
+Run Git as the runner user (UID 1654), not root; root encounters `dubious ownership`,
+and an ignored Git failure can masquerade as a zero unpublished-commit count.
+Require successful command exits and current origin refs proving every commit is
+published, rather than trusting a zero against an unrelated remote.
 
-Until the scripts implement this policy, an orchestrator uses this manual equivalent
-from the canonical desktop checkout, recording every check in the rollout receipt:
+#### Manual main cleanup while running
+
+Keep main up and retain its container and every volume. From the canonical desktop
+checkout, record main's status, container ID/start time, disk free space and an exact
+candidate list in the rollout receipt. Inspect the fleet pipeline for lands, routing
+and live sessions, and the complete project/board-scoped task listings; follow every
+page. Reclaim only terminal task worktrees whose commits and local branch tips are
+all on current origin refs, stale build outputs, and runner `/tmp` entries with no
+open handles. Apply CARD-0831's mirror/worktree inventory above to each candidate;
+Blocked/Failed tasks need publication or recovery first.
+
+Use `docker exec -u 1654:1654` for both Git checks and cleanup, with main's exact
+census container ID. For each exact candidate worktree, inspect:
+
+```powershell
+ssh mc@server2 'docker exec -u 1654:1654 <main-container-id> git -C <worktree-path> status --porcelain --untracked-files=all'
+ssh mc@server2 'docker exec -u 1654:1654 <main-container-id> git -C <worktree-path> rev-list --count HEAD --not --remotes=origin'
+ssh mc@server2 'docker exec -u 1654:1654 <main-container-id> git -C <mirror-path> worktree list --porcelain'
+```
+
+Refuse unique unpushed commits, modified tracked files, unrecovered untracked work,
+live process paths (including working directories and open handles), lock files with
+a live owner PID, and credential-like names. An unavailable ownership or handle
+check stops deletion. Preserve `/tmp/antiphon-pty-hosts`, provider state, credentials,
+deployment markers and donor tars; never sweep by name pattern. Recheck ownership
+immediately before each removal. Remove an approved terminal worktree through its
+owning mirror without force, as the runner user:
+
+```powershell
+ssh mc@server2 'docker exec -u 1654:1654 <main-container-id> git -C <mirror-path> worktree remove <approved-exact-worktree-path>'
+ssh mc@server2 'docker exec -u 1654:1654 <main-container-id> rm -r -- <approved-exact-stale-build-output-or-tmp-entry>'
+```
+
+Use only individually reviewed, nonempty absolute paths for the second command;
+never substitute a volume root, glob or possibly-empty variable. Verify main's
+container ID/start time is unchanged and it remains up, and record disk free space
+before/after with `df -Pk` in the container. This procedure does not remove volumes
+or stop main before `redeploy-old`.
+
+#### Manual retired-temp volume removal
+
+Until the scripts implement this policy, an orchestrator uses this manual temp
+equivalent from the canonical desktop checkout, recording every check in the rollout receipt:
 
 1. Read `GET /api/session-runners`, the target's status, and
    `GET /api/agent-tasks/pipeline` (fleet-wide). Inspect routing
@@ -195,8 +244,8 @@ from the canonical desktop checkout, recording every check in the rollout receip
    the runner; a capped pipeline preview cannot prove absence. Verify the other runner
    is accepting, drain/zero-work conditions above, and no queued or executing land.
    Complete the unpublished-work inventory before teardown.
-2. Census the target project (replace `<project>` with exactly `antiphon-runner-temp`
-   or `antiphon-runner`), record volume names/sizes and disk free space:
+2. Census the target project (replace `<project>` with exactly `antiphon-runner-temp`),
+   record volume names/sizes and disk free space:
 
    ```powershell
    Invoke-RestMethod 'http://localhost:17202/api/session-runners'
@@ -229,23 +278,13 @@ from the canonical desktop checkout, recording every check in the rollout receip
    ssh mc@server2 'docker volume rm antiphon-runner-temp_runner-state'
    ```
 
-   For main replacement, remove only these three, then resume `redeploy-old`:
-
-   ```powershell
-   ssh mc@server2 'docker volume rm antiphon-runner_work'
-   ssh mc@server2 'docker volume rm antiphon-runner_runner-tmp'
-   ssh mc@server2 'docker volume rm antiphon-runner_dind-data'
-   ```
-
    Remove by **exact full name**, one at a time; never prune or use a glob. The prefix
    collision `antiphon-runner_*` versus `antiphon-runner-temp_*` can destroy the standing
    workspace if a name is shortened or inferred.
 5. Repeat the project census, volume listing and `df` command. After temp retirement,
    prove its four private volumes and containers are absent, main's container ID/start
    time and state/cache volumes are unchanged, and main remains accepting; temp must
-   remain retired/offline with zero bound work. After main replacement, prove the three
-   disposable volumes were recreated, retained state/cache volumes survived, and run
-   the ordinary SHA, mount/cache and smoke gates. Record a receipt line:
+   remain retired/offline with zero bound work. Record a receipt line:
    `VOLUME_RECYCLE runner=<id> removed=<exact-names> dfFreeKiBBefore=<n> dfFreeKiBAfter=<n>`.
 
 **Current retire-temp guard caveat:** `Assert-ZeroCounters` in
