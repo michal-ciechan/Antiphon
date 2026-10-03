@@ -503,6 +503,8 @@ public sealed class CodexCliAdmissionTests
                     services.AddSingleton<IOptions<AgentRegistrySettings>>(Options.Create(Registry()));
                     services.AddSingleton<IAgentProtocolAdapterFactory>(sp => factory = new(sp.GetRequiredService<AgentSessionRuntime>(), schema.ConnectionString));
                     services.AddSingleton<LandDeliveryBoundary>(boundary);
+                    if (busy) services.AddSingleton<IEventBus>(sp => new BusyEventBus(
+                        sp.GetRequiredService<MockEventBus>(), schema.ConnectionString));
                     services.AddSingleton(sp =>
                     {
                         var settings = sp.GetRequiredService<IOptions<DelegationSettings>>().Value;
@@ -559,13 +561,26 @@ public sealed class CodexCliAdmissionTests
             var wire = path is null ? full.TrimEnd() : DelegationReportFormatter.BuildBriefPointer(task, Settings,
                 path, full.Length, task.AgentKind).TrimEnd();
             Briefs.Add(taskId, new(full, wire, path));
-            if (busy)
+        }
+    }
+
+    // A cold launch writes its own restart boundary. Mark activity AFTER that boundary,
+    // at SessionStarted and before the real launch queue's boot flush.
+    private sealed class BusyEventBus(MockEventBus inner, string connection) : IEventBus
+    {
+        public Task PublishToAllAsync(string name, object payload, CancellationToken ct = default) =>
+            inner.PublishToAllAsync(name, payload, ct);
+        public async Task PublishToGroupAsync(string group, string name, object payload, CancellationToken ct = default)
+        {
+            if (name == "SessionStarted")
             {
-                await BridgeQueueHarness.InsertEntryAsync(task.AgentSessionId!.Value, TranscriptKinds.TurnEnd,
+                var id = (Guid)payload.GetType().GetProperty("sessionId")!.GetValue(payload)!;
+                await BridgeQueueHarness.InsertEntryAsync(id, TranscriptKinds.TurnEnd,
                     stopReason: "end_turn", connectionString: connection);
-                await BridgeQueueHarness.InsertEntryAsync(task.AgentSessionId.Value, TranscriptKinds.AssistantText,
+                await BridgeQueueHarness.InsertEntryAsync(id, TranscriptKinds.AssistantText,
                     "C959 activity after TurnEnd", connectionString: connection);
             }
+            await inner.PublishToGroupAsync(group, name, payload, ct);
         }
     }
 
