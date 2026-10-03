@@ -1,0 +1,8 @@
+Official release: https://github.com/jqlang/jq/releases/tag/jq-1.7.1
+Asset: https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64
+Manifest: https://github.com/jqlang/jq/releases/download/jq-1.7.1/sha256sum.txt
+Observed --version: jq-1.7.1
+Verified actual SHA256 against manifest before chmod755 and PATH use: 5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5
+Release manifest matching line:
+5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5  jq-linux-amd64
+No system package/source/daemon change. Literal task-owned binary removed after Unit run.
