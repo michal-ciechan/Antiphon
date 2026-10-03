@@ -396,3 +396,10 @@ CHECKPOINT RED-1005 commit=8b93eae935bc03118dcdb9557ecb2540df7e09d7 build=ok fil
 CHECKPOINT RED-1005 EXIT CODE: 1
 
 ```
+
+Cleanup limitation: basename-based task-output cleanup also removed checkpoint
+build-log folders named bin-c1005-* under the evidence tree. Structured build/source
+provenance, state histories, external driver logs, raw JSON comparisons and fresh
+TRX receipts remain; the embedded build console logs are unavailable. Automatic
+command review rejected the original broad rm-style cleanup and requested a safer
+approach; cleanup used validated task-owned paths. This was not a test failure.
