@@ -91,7 +91,7 @@ public class RunnerGrokAdapterReadyTestsPty
         await GitAsync(DelegateScriptRunner.RepoRoot, ["worktree", "add", "--detach", cwd, source], deadline.Token);
         var sessionId = Guid.NewGuid();
         await using var client = new DirectSessionRunnerClient(Path.Combine(root, "logs"), ptyBackend: "modern");
-        var observer = new TrustObserver(client);
+        var observer = new C1011GrokQualification.Observer(client);
         await using var adapter = new RunnerGrokAdapter(observer, Options.Create(new AgentRegistrySettings
         {
             GrokStartupCaptureDirectory = Path.Combine(root, "startup"),
@@ -107,12 +107,15 @@ public class RunnerGrokAdapterReadyTestsPty
             started = true;
             adapter.Pid.ShouldNotBeNull();
             ownedChild = Process.GetProcessById(adapter.Pid.Value);
-            (await adapter.WaitForReadyAsync(deadline.Token)).ShouldBeTrue();
-            observer.TrustBeforeFirstInput.ShouldBeTrue("a new path without observed trust does not qualify WQ-3");
-            observer.StartupInputs.ShouldBe(new[] { "y" });
+            var adapterReady = await adapter.WaitForReadyAsync(deadline.Token);
+            adapterReady.ShouldBeTrue();
             var ready = await observer.GetSnapshotAsync(sessionId, deadline.Token);
             GrokStartupScreen.Classify(ready.RenderedScreen).Reason.ShouldBe(GrokStartupReason.Ready);
             GrokTrustPromptDetector.IsVisibleOnScreen(ready.RenderedScreen).ShouldBeFalse();
+            var prePrompt = await observer.GetTranscriptAsync(sessionId, deadline.Token);
+            C1011GrokQualification.StartupVerdict(adapterReady, ready.RenderedScreen,
+                observer.TrustBeforeFirstInput, observer.StartupInputs, prePrompt)
+                .ShouldBe(C1011GrokQualification.Verdict.Accepted, "startup-accepted");
             (await ReadHostLogAsync(client, sessionId, deadline.Token))
                 .ShouldContain("pty backend: ModernConPty (requested 'modern')");
             observer.StartupComplete = true;
@@ -211,40 +214,6 @@ public class RunnerGrokAdapterReadyTestsPty
         return output;
     }
 
-    private sealed class TrustObserver(DirectSessionRunnerClient inner) : ISessionRunnerClient
-    {
-        public bool StartupComplete { get; set; }
-        public bool TrustBeforeFirstInput { get; private set; }
-        public List<string> StartupInputs { get; } = [];
-        public List<object> Observations { get; } = [];
-        public async Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid id, CancellationToken ct)
-        {
-            var snapshot = await inner.GetSnapshotAsync(id, ct);
-            var reason = GrokStartupScreen.Classify(snapshot.RenderedScreen).Reason;
-            if (!StartupComplete)
-            {
-                if (reason == GrokStartupReason.Trust && StartupInputs.Count == 0) TrustBeforeFirstInput = true;
-                // Metadata only: suppress sign-in contents and all unrelated screen text.
-                if (Observations.Count < 4096) Observations.Add(new { snapshot.LastSequence, reason = reason.ToString(), at = DateTime.UtcNow });
-            }
-            return snapshot;
-        }
-        public Task SendInputAsync(Guid id, string input, CancellationToken ct)
-        {
-            if (!StartupComplete) StartupInputs.Add(input);
-            return inner.SendInputAsync(id, input, ct);
-        }
-        public Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct) => inner.GetCapabilitiesAsync(ct);
-        public Task<SessionRunnerSessionDto> StartAsync(Guid id, AgentLaunchSpec spec, CancellationToken ct) => inner.StartAsync(id, spec, ct);
-        public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) => inner.ListAsync(ct);
-        public Task<SessionRunnerSessionDto> GetAsync(Guid id, CancellationToken ct) => inner.GetAsync(id, ct);
-        public Task<SessionRunnerBufferDto> GetBufferAsync(Guid id, CancellationToken ct) => inner.GetBufferAsync(id, ct);
-        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid id, CancellationToken ct) => inner.GetTranscriptAsync(id, ct);
-        public Task ClearLiveBufferAsync(Guid id, CancellationToken ct) => inner.ClearLiveBufferAsync(id, ct);
-        public Task ResizeAsync(Guid id, int cols, int rows, CancellationToken ct) => inner.ResizeAsync(id, cols, rows, ct);
-        public Task<SessionRunnerSessionDto> KillAsync(Guid id, CancellationToken ct) => inner.KillAsync(id, ct);
-        public IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(CancellationToken ct) => inner.StreamEventsAsync(ct);
-    }
 
     [Test]
     [Arguments(false)]
