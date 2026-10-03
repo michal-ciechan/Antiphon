@@ -219,8 +219,8 @@ public sealed class CodexCliVersionProbe : IDisposable
                     throw new ProbeRefusal("launcher_unverified");
             }
             var normalized = CodexWindowsLaunchPolicy.Apply(new RunnerLaunchRequest(
-                Guid.NewGuid(), exe, request.CodexJsPrefix is null ? args : [request.CodexJsPrefix, "--version"], cwd,
-                Env: env, TranscriptFormat: TranscriptFormats.Codex), false);
+                Guid.NewGuid(), exe, request.CodexJsPrefix is null ? args : [request.CodexJsPrefix, "--version"], env, cwd,
+                Cols: 120, Rows: 30, TranscriptFormat: TranscriptFormats.Codex), false);
             exe = ResolveExecutable(normalized.Exe, cwd, path, env) ?? throw new ProbeRefusal("executable_missing");
             args = normalized.Args.ToArray();
             if (args.Length == 2) args[0] = Path.GetFullPath(args[0], cwd);
