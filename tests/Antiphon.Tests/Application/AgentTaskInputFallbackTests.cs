@@ -96,7 +96,11 @@ public sealed class AgentTaskInputFallbackTests
         await using var db = f.Db();
         var changed = await db.SessionQueuedMessages.AsNoTracking().SingleAsync();
         if (path != "enqueue-now") changed.Id.ShouldBe(initial.Id);
-        else changed.Id.ShouldBe(ownership.RowId, "enqueue-fallback-same-persisted-row");
+        else
+        {
+            ownership.RowId.ShouldNotBeNull("enqueue-persisted-row-observed");
+            changed.Id.ShouldBe(ownership.RowId.Value, "enqueue-fallback-same-persisted-row");
+        }
         changed.ConversationKey.ShouldBe(initial.ConversationKey, "fallback-owned-key");
         changed.Status.ShouldBe(QueuedMessageStatus.Pending);
         changed.Body.ShouldContain("/api/agent-tasks/", customMessage: "api-only-persisted-pointer");
