@@ -48,9 +48,9 @@ public sealed class ModelAvailabilityHttpTests
             var snapshot = await client.GetFromJsonAsync<JsonElement>("/api/model-availability");
             snapshot.GetProperty("holds").EnumerateArray()
                 .ShouldContain(h => h.GetProperty("id").GetGuid() == row.Id
-                    && h.GetProperty("modelAlias").GetString() == alias);
+                    && h.GetProperty("modelAlias").GetString() == alias, "C967-listed-retired-row");
             snapshot.GetProperty("available").EnumerateArray()
-                .Select(v => v.GetString()).ShouldNotContain(alias);
+                .Select(v => v.GetString()).ShouldNotContain(alias, "C967-retired-not-in-ladder");
 
             var cleared = await client.DeleteAsync($"/api/model-availability/{kind}/{alias}");
             cleared.StatusCode.ShouldBe(HttpStatusCode.NoContent, "C967-clear-status");
@@ -77,17 +77,19 @@ public sealed class ModelAvailabilityHttpTests
     }
 
     [Test]
-    [Arguments("gpt-6-sol")]
-    [Arguments("gpt-5.6-terra")]
-    [Arguments("gpt-5.6-sol")]
-    public async Task PUT_accepts_retired_selectable_alias_and_converts_auto_hold(string alias)
+    [Arguments("gpt-6-sol", "gpt-6-sol")]
+    [Arguments("gpt-5.6-terra", "gpt-5.6-terra")]
+    [Arguments("gpt-5.6-sol", "gpt-5.6-sol")]
+    [Arguments("Sol", "gpt-6-sol")]
+    [Arguments("GPT_5_6_Terra", "gpt-5.6-terra")]
+    public async Task PUT_accepts_retired_selectable_alias_and_converts_auto_hold(string input, string alias)
     {
         using var client = _factory.CreateClient();
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         try
         {
-            var put = await client.PutAsJsonAsync($"/api/model-availability/Codex/{alias}",
+            var put = await client.PutAsJsonAsync($"/api/model-availability/Codex/{Uri.EscapeDataString(input)}",
                 new { reason = "retired explicit profile" });
             put.StatusCode.ShouldBe(HttpStatusCode.OK, "C967-retired-put-status");
             var body = await put.Content.ReadFromJsonAsync<JsonElement>();
