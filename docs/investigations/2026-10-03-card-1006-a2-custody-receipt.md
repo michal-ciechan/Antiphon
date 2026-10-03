@@ -180,6 +180,34 @@ receipt privacy scan passed for all five required patterns with zero matches;
 `git diff --check` passed. No build or test suite was run. This receipt is an
 infeasibility finding, not a successful capture or runtime qualification.
 
+## Minimal compliant lane options, appended at caller request
+
+Advisory only: no capture, image transfer, mount, swap change or network probe
+was performed for this addendum. Both options still require all D-2 safeguards.
+
+| Lane | Image location and minimum preparation | Approval owner |
+|---|---|---|
+| Server2 host lane | The **outer server2 host Docker daemon** is the expected image holder, based on the supplied deployment identity; this session inspected only the nested daemon. The host owner must confirm the standing container's image ID with a narrowly formatted inspection, then inspect the supplied tag and immutable ID on that same daemon. Run only a separately commissioned disposable container. | Caller/orchestrator commissions the lane; the human server2 host operator approves privileged host preparation and firewall/swap changes outside the documented rollout autonomy. No standing-runner replacement is needed. |
+| Isolated host lane | The host operator exports the pristine image from server2's outer daemon and imports it into an approved isolated host's Docker daemon, checking the same immutable image ID before and after. Transfer image layers only; never export a running container, provider home, state volume or repository snapshot. A swap-free isolated host avoids changing production swap policy. The current nested daemon is an alternative only after the same image is supplied and its shared host's swap protection is verified. | Caller/orchestrator approves the destination and commissions the lane; source and destination host operators approve image transfer and privileged preparation. This task does not authorize a new external executor. |
+
+For either lane, **the caller owning A-1 and the frozen-plan acceptance must
+resolve the supplied local image ID versus required registry digest before
+claiming admission**. A matching image ID alone does not waive that gate.
+
+| Requirement | Minimum evidence before any future capture | Approval owner |
+|---|---|---|
+| Tmpfs protected from persistent swap | Prefer an isolated host with swap disabled: verify host `/proc/swaps` is empty before launch and remains empty through deletion. Alternatively use a kernel that demonstrably supports newly mounted `tmpfs,noswap`; verify effective mount options in the capture namespace for scratch and `/tmp`, including every writable log/state/home path. On current server2, host-wide swap disablement requires a RAM-capacity review and operator-approved maintenance; restore prior policy only after deleting scratch. Neither `vm.swappiness=0` nor a container memory/swap limit proves tmpfs protection. | Human operator of the selected host approves swap/mount policy or host provisioning. Caller reviews the resulting custody evidence. No host/kernel upgrade or swap change is authorized here. |
+| Restricted egress | The host/network owner installs capture-bridge-specific default-deny enforcement before launch: permit DNS only through the configured resolver and public TCP 443, deny host/production/private/management destinations and other traffic, and disable IPv6 or apply equivalent IPv6 rules. Verify the actual firewall backend, rule order, Docker DNS forwarding and host-directed traffic paths; with iptables, forwarding restrictions must run before Docker accepts traffic. Retain sanitized rules/counters and approved controlled allow/deny checks from the same network namespace, covering DNS, public 443, forbidden ports and private destinations. Use controlled targets rather than live production services; retain no packets or payloads. Socket observations alone are insufficient. | Human host/network operator approves and installs the scoped policy and controlled test targets; the commissioned Debug helper verifies it, and the caller reviews admission evidence. This addendum runs no checks. |
+
+Technical basis: [Linux tmpfs documentation](//docs.kernel.org/filesystems/tmpfs.html)
+documents ordinary tmpfs swapping and the `noswap` mount option;
+[Docker's iptables documentation](//docs.docker.com/engine/network/firewall-iptables/)
+places user forwarding policy before Docker acceptance in `DOCKER-USER`.
+Host approval assignments follow
+[the repository operational-autonomy policy](../orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout);
+the caller owns A-1 acceptance under the frozen plan. These options have not
+been provisioned or verified and do not change the A-2 UNMET verdict.
+
 --- next stage ---
 next: code
 handoff: A-2 UNMET. Keep Code admission closed until the caller supplies a compliant capture lane and a successful custody/cleanup receipt; preserve the A-1/A-3/A-4 gates and frozen probe roster.
