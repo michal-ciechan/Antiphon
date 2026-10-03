@@ -94,12 +94,12 @@ function Assert-RecycleContext {
     $keys = @($Context.PSObject.Properties.Name)
     $expected = @('version', 'project', 'operationId', 'dryRun', 'resume', 'projectId')
     if ($keys.Count -ne $expected.Count -or @($keys | Where-Object { $_ -notin $expected }).Count -ne 0) { throw 'RecycleContextInvalid' }
-    if ($Context.version -ne 1 -or $Context.version -isnot [long] -and $Context.version -isnot [int] -or
+    if ($Context.version -ne 1 -or ($Context.version -isnot [long] -and $Context.version -isnot [int]) -or
         $Context.project -cnotin @('antiphon-runner', 'antiphon-runner-temp') -or
         $Context.operationId -cnotmatch '^c1008[0-9a-f]{32}$' -or
         $Context.dryRun -isnot [bool] -or $Context.resume -isnot [bool] -or
         $Context.projectId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or
-        $Context.dryRun -and $Context.resume) { throw 'RecycleContextInvalid' }
+        ($Context.dryRun -and $Context.resume)) { throw 'RecycleContextInvalid' }
 }
 
 function Invoke-RecycleRead {
