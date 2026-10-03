@@ -189,6 +189,16 @@ public sealed class RollingVolumeRecycleScriptTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Refusal_receipts_do_not_leak_secrets()
     {
+        using (var host = new C1008HostFixture())
+        {
+            host.Docker["containers"]![0]!["Config"]!["Env"] = new JsonArray("SENTINEL_C1008_DOCKER_CREDENTIAL");
+            host.Docker["containers"]![0]!["Config"]!["Labels"]!["foreign.secret"] = "SENTINEL_C1008_LABEL_CREDENTIAL";
+            var accepted = await host.Run();
+            accepted.Exit.ShouldBe(0);
+            var record = File.ReadAllText(Path.Combine(host.Root, "server/recycle/c100800000000000000000000000000001.json"));
+            record.ShouldNotContain("SENTINEL_C1008_DOCKER_CREDENTIAL", Case.Sensitive, "recycle-receipt-custody: approved inspection fields only");
+            record.ShouldNotContain("SENTINEL_C1008_LABEL_CREDENTIAL");
+        }
         using var f = new C1008WrapperFixture();
         f.State["taskError"] = "SENTINEL_C1008_HTTP_CREDENTIAL";
         var run = await f.Run("retire-temp");
@@ -362,7 +372,8 @@ internal sealed class C1008HostFixture : IDisposable
         var containers = new JsonArray();
         if (main)
         {
-            containers.Add(Container('1', "antiphon-runner", "session-runner", true, "work", "runner-tmp", "dind-data", "runner-state"));
+            containers.Add(Container('1', "antiphon-runner", "session-runner", true, "work", "runner-tmp", "dind-data", "runner-state",
+                "cache-nuget-packages", "cache-nuget-scratch", "cache-npm-content"));
             containers.Add(Container('2', "antiphon-runner", "state-init", false, "work", "runner-state"));
         }
         containers.Add(Container('3', "antiphon-runner", "build-slots", true));
@@ -382,15 +393,23 @@ internal sealed class C1008HostFixture : IDisposable
             ["CreatedAt"] = "2026-10-03T09:00:00Z", ["Mountpoint"] = mount, ["Labels"] = labels };
     }
 
+    private static string VolumeName(string project, string role) => role.StartsWith("cache-", StringComparison.Ordinal)
+        ? "antiphon-runner-" + role : project + "_" + role;
+    private static string Destination(string role) => role switch
+    {
+        "work" => "/work", "runner-tmp" => "/tmp", "dind-data" => "/var/lib/docker", "runner-state" => "/state",
+        "cache-nuget-packages" => "/home/app/.nuget/packages", "cache-nuget-scratch" => "/var/cache/antiphon/nuget-scratch",
+        "cache-npm-content" => "/home/app/.npm/_cacache", _ => "/unknown"
+    };
     internal JsonObject Container(char id, string project, string service, bool running, params string[] roles) =>
         new() { ["Id"] = new string(id, 64), ["Image"] = "sha256:" + new string('a', 64),
             ["State"] = new JsonObject { ["Running"] = running, ["Status"] = running ? "running" : "exited" },
             ["Config"] = new JsonObject { ["Labels"] = new JsonObject
                 { ["com.docker.compose.project"] = project, ["com.docker.compose.service"] = service } },
             ["Mounts"] = new JsonArray(roles.Select(role => (JsonNode)new JsonObject
-                { ["Type"] = "volume", ["Name"] = project + "_" + role,
-                    ["Source"] = Path.Combine(Root, "volumes", project + "_" + role, "_data"),
-                    ["Destination"] = role == "work" ? "/work" : role == "runner-tmp" ? "/tmp" : role == "dind-data" ? "/var/lib/docker" : "/state", ["RW"] = true }).ToArray()) };
+                { ["Type"] = "volume", ["Name"] = VolumeName(project, role),
+                    ["Source"] = Path.Combine(Root, "volumes", VolumeName(project, role), "_data"),
+                    ["Destination"] = Destination(role), ["RW"] = true }).ToArray()) };
 
     internal async Task<(int Exit, string Output)> Run(string hostCase = "deploy-parent", string extra = "", bool dryRun = false)
     {
