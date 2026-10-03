@@ -55,7 +55,7 @@ public class ModelAvailabilityCreateTests
             service.CreateAsync(request with { AgentId = agent.Id }, caller, CancellationToken.None),
             "C967-create-exact-refusal");
         refused.Code.ShouldBe("model_disabled", "C967-create-refusal-code");
-        refused.Message.ShouldContain("gpt-6-sol is disabled", "C967-create-refusal-alias");
+        refused.Message.ShouldContain("gpt-6-sol is disabled", customMessage: "C967-create-refusal-alias");
         var exactAlias = DispatchModelAlias.Resolve(AgentKind.Codex, level, agent.ModelId);
         exactAlias.ShouldBe(ModelAlias.Gpt6Sol, "C967-dispatch-exact-alias");
         await Should.ThrowAsync<ModelDisabledException>(() =>
