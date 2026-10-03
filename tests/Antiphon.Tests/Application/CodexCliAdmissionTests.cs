@@ -288,7 +288,7 @@ public sealed class CodexCliAdmissionTests
         task.Status = AgentTaskStatus.Failed;
         await k.Db.SaveChangesAsync();
         k.Local.Sample = new("0.156.1", T, null, new string('a',64));
-        (await FailureAsync(() => k.Service.RetryAsync(task.Id, CancellationToken.None)))
+        (await CodeAsync(() => k.Service.RetryAsync(task.Id, CancellationToken.None)))
             .ShouldBe("codex_cli_version_too_old", "C959-pc-193");
         task.Status.ShouldBe(AgentTaskStatus.Failed, "C959-v22-state");
         (await k.Db.AgentTaskEvents.CountAsync(e => e.Type == AgentTaskEventType.Retried)).ShouldBe(0);
