@@ -1,7 +1,9 @@
 # CARD-1008: rolling volume recycling and retired-temp cleanup
 
 Date: 2026-10-03. Plan baseline: `c6d5d56b5b4c565d36157e21de9c85029cc45b53`.
-Plan owner: task `9de0189e`, branch `feat/card-task-9de0189e`.
+Original Plan: task `9de0189e`; TestDesign freeze: task `97e2c86f`, commit
+`b365b1afaeeba58695040e696ffce5c02659e439`. Scope reconciliation: task
+`f500932f`, branch `feat/card-task-f500932f`, fast-forward from that freeze.
 
 ## Outcome and authority
 
@@ -10,23 +12,30 @@ volumes during replacement, safely remove all four temp volumes at retirement,
 preserve unpublished work, and record disk reclamation. This dispatch writes the
 plan only. It does not authorize a live rollout or execute a destructive probe.
 
-The full card was read through `card.ps1 get CARD-1008 -Board Antiphon`. Its policy
-is the authority supplied by this brief. The separate Docs task `719e9a27`, at
-`ebda8f4903c3f3ccf1b572e49236c7fd465f256e`, owns the policy prose; it is not in this
-baseline. Do not replace that task's changes or treat the old gate-9 human-confirmation
-sentence on this baseline as the agreed policy. Read the landed Docs change before
-Code edits the implementation examples. CARD-0831 and CARD-0994 were also read in full.
+The orchestrator's commissioned split is authoritative over the older CARD-1008
+acceptance text: CARD-1008 owns default main recycle, the retired-absent temp guard
+and temp down -v. Runner-state/cache opt-ins belong to CARD-1010. Full reads of
+CARD-1008, CARD-1010, CARD-0994, CARD-0831, CARD-0980 and CARD-0983 confirm that split
+and the required shared-file ordering. No new server/HTTP lease contract is chosen.
 
-Owners read: `docs/project-context.md`, `docs/ops-http.md`, the relevant route/DTO
-contracts in `docs/antiphon-api.md`, `docs/orchestration-loop.md`,
-`docs/agent-card-lifecycle.md`, `docs/docker-stack.md`, and the checkpoint,
-build-slot and Mutation sections of `docs/testing-and-build.md`. Format references:
-the CARD-1004 Linux composer plan and CARD-0891 plan-to-test coverage plan.
+The corrected policy is already on master by `af6d03f19f9fc8298301187cecebee2c4b4f5d90`;
+its volume section was read with `git show`. Main volume recycling is **scripted
+only**, inside redeploy-old / deploy-parent with its own controlled stop. Manual
+main stop/removal makes the strict counters refuse and is not a workaround.
+The task branch predates that land; do not merge, rebase or fetch to import it.
+Code must start from a landed base containing that policy. Master was observed at
+`d1d04626740023ce23bbc1ac0159393efa1a40d9` by `git ls-remote` during reconciliation.
 
-Verification design is included below, but **TestDesign must freeze its fixture
-vectors, counts and maintenance-seed proof before Code**. This is a concrete
-design with a bounded test-design handoff, not permission for Build to invent those
-contracts while implementing the destructive path.
+Owners read: `docs/project-context.md`, `docs/ops-http.md`,
+`docs/orchestration-loop.md`, `docs/agent-card-lifecycle.md`,
+`docs/docker-stack.md`, and the checkpoint/build-slot owner in
+`docs/testing-and-build.md`. Format reference: the CARD-1004 Linux composer plan.
+
+The remaining TestDesign content is **already frozen**. This reconciliation moves
+opt-in-only rows explicitly without renumbering, preserves the other fixture
+vectors, rebinds PC-117 to the retained strict-null regression, and supplies the
+remaining controls' input index. All remaining PCs have methods, inputs and first
+assertions; next is Code, subject to the ordinary admission receipt checks below.
 
 ## Ground truth
 
@@ -34,20 +43,20 @@ contracts while implementing the destructive path.
 |---|---|---|
 | `redeploy-old` recycles disposable storage after drain. | `scripts/deploy-server2.ps1` calls `deploy-parent` only when `buildVersion != Sha`; `case_deploy_parent` in `scripts/c590-remote.sh` builds/prepares caches/seeds the checkout and runs Compose up. It never recycles these volumes. | Add an explicitly commissioned recycle context to this call; ordinary `deploy-parent` must not acquire destructive behavior by default. Same-SHA healthy retries remain verification-only. |
 | Stopping a container makes its volumes removable. | Docker retains references from stopped containers. Compose `state-init` also mounts `work` and `runner-state`; the project includes a separate build-slot broker. | Identify, stop and remove the owned runner/state-init containers without deleting volumes, then prove zero references. Do not stop the broker or blindly down the main project. |
-| Main has three disposable and four preserved volumes. | Main private names are `antiphon-runner_work`, `_runner-tmp`, `_dind-data`, `_runner-state`; caches have fixed external names independent of the Compose project. | Exact allowlists, with state/cache opt-ins separated. No prefix scan or prune. |
+| Main has three disposable and four preserved volumes. | Main private names are `antiphon-runner_work`, `_runner-tmp`, `_dind-data`, `_runner-state`; caches have fixed external names independent of the Compose project. | Exact default allowlist; preserve main state/caches. Opt-ins move to CARD-1010. No prefix scan or prune. |
 | A retired, absent temp has null live inventory. | `Assert-ZeroCounters` refuses missing/null fields; `case_retire_temp_runner` independently calls strict `c849_status_zero`, which also rejects null. | Both layers need a retirement-specific absent-placeholder predicate. Do not weaken the shared cache/donor predicate. |
 | Cleanup should reclaim space when the disk is low. | Remote retirement currently calls `c849_prepare`, `c849_require_ready` and `c849_budget_gate` before `compose_temp down -v`; the budget gate refuses below 20 GiB. | Read-only preservation checks precede deletion; space-consuming deployment/cache checks follow reclamation. Low disk cannot itself prevent safe retirement. |
-| Existing CARD-0912 Cold can rebuild deleted caches. | `c849_cold_proof` requires one running main without overlapping cache mounts, plus retired/absent temp. Cold creates labelled empty roots, checks uid-1654 writes and publishes a schema-2 marker; it does not download a warm payload. | The current Cold front door cannot simply be called after stopping/removing main. Add a separate, strictly gated recycle-maintenance context sharing the volume/probe primitives. Distinguish empty cold readiness from later warmup cost. |
-| Recreating main state is just another deletion. | `/state/runner-store-id` belongs to the state volume. CARD-0953 requires stamped retirement, explicit clear, detached connection and lease expiry before a different store can register. | Default preserves state. Opt-in requires the full identity transition; ordinary drain/clear is insufficient. |
+| Existing CARD-0912 Cold can rebuild deleted caches. | `c849_cold_proof` requires one running main without overlapping cache mounts, plus retired/absent temp. Cold creates labelled empty roots, checks uid-1654 writes and publishes a schema-2 marker; it does not download a warm payload. | Preserve ordinary Cold and default cache payload/marker identity here. The absent-main maintenance context and its proof move to CARD-1010. |
+| Recreating main state is just another deletion. | `/state/runner-store-id` belongs to the state volume. CARD-0953 requires stamped retirement, explicit clear, detached connection and lease expiry before a different store can register. | Default preserves state. The identity-transition opt-in and the unobservable lease waits (B-1) move to CARD-1010; no lease wait is added to default recycling. |
 | Zero seats means all work can be discarded. | `RunnerWorkspaceService` uses `/work/worktrees`, repository paths under the runner repository policy, and retained failed/blocked mirrors. Task summary has `runnerId`, status and pending-land fields. | Audit every repository/worktree in the work volume and the complete task census. A stopped process is not publication evidence. |
 | The manual publication check can run as root. | The incident's `git rev-list --count HEAD --not --remotes` ran as uid 1654; root can fail dubious-ownership checks. | Explicit uid/gid 1654, check exit codes and numeric output. Errors never become zero. |
 | `/tmp` may be cleaned by name. | CARD-0827's named mount copies the image `/tmp`, including `/tmp/antiphon-pty-hosts`, on first mount. | Recreate the entire exact volume using normal copy-up. No sweep within `/tmp`, and no `volume-nocopy` on that mount. |
 | CARD-0957 supplies a proven harness. | `77615d506` records 24 rolling groups/66 invocations/227 assertions, 52 cache results and 19 real-Docker outcomes; retained fixture is `scripts/fixtures/c973-rolling-host-cases.mjs`. | Reuse its trace/assertion and real-daemon isolation patterns. These are historical receipts, not executions by this Plan task. |
-| One script edit transports new flags. | `deploy-server2.ps1` writes manifests; `verify-docker-stack.ps1` routes cases; `c590-real.ps1` validates/exports manifest fields to the host shell. | Include both transport files and their tests in scope; reject malformed options at both boundaries. |
+| One script edit transports recycle context and preview. | `deploy-server2.ps1` writes manifests; `verify-docker-stack.ps1` routes cases; `c590-real.ps1` validates/exports manifest fields to the host shell. | Include both transport files and their tests in scope; reject malformed context/preview values at both boundaries. |
 
 Platform observation: GET `/api/runner-defaults` returned revision 2, with an
 automatic Linux runner preference, and GET `/api/session-runners` returned a live
-Linux runner, live Windows desktop and offline retired temp at 10:23 UTC. This is
+Linux runner, live Windows desktop and offline retired temp at 11:13 UTC on 2026-10-03. This is
 an observation, not a pinned fleet layout. Resolve these routes again at dispatch.
 Omit `-Runner` for ordinary work; select `-Platform Linux` only for the shell/real
 Docker rows that require it. Omit `-Platform` for platform-independent work;
@@ -64,17 +73,22 @@ Default main recycle set, in deterministic order:
 2. `antiphon-runner_runner-tmp`
 3. `antiphon-runner_dind-data`
 
-`-RecycleRunnerState` adds only `antiphon-runner_runner-state`.
-`-RecycleCaches` adds only `antiphon-runner-cache-nuget-packages`,
-`antiphon-runner-cache-nuget-scratch`, `antiphon-runner-cache-npm-content`.
-Both flags default false, are valid only for explicit `-Phase redeploy-old`, and
-require D-6 maintenance proof. Refuse them on `all`, temp phases and unrelated
-host cases as `RecycleOptionsInvalid`; do not silently ignore a misplaced flag.
-Default `all` still performs its ordinary main recycle and temp retirement.
+D-1a: do not declare `-RecycleRunnerState` or `-RecycleCaches` in CARD-1008.
+PowerShell's existing advanced-script parameter binder rejects these unknown
+switches before the script body, including dry-run. Do not add compatibility flags
+that always refuse: they would imply shipped functionality and preserve unnecessary
+maintenance branches. `RecycleOptionsInvalid`, `RecycleStateResetNotAuthorized`
+and `RecycleCacheMaintenanceRequired` move to CARD-1010 with the flags; they are
+not CARD-1008 refusal codes. Default `all` still recycles main and retires temp.
 
-The wrapper passes typed booleans and a recycle operation identifier through the
-manifest to `deploy-parent`; the host rejects strings such as `"false"`, unknown
-fields in the recycle object, user-supplied volume lists and unsupported projects.
+The manifest carries the explicit default-recycle context, operation identifier
+and typed `dryRun` boolean (false for apply). No state/cache opt-in fields or
+user volume list exist. Retain strict unknown-field/project validation at wrapper
+and bridge. G/PC-24 and G/PC-25 retain boolean validation **only for D-7 dryRun**:
+string `"false"`, null, numeric and omitted preview values refuse before SSH/host
+mutation. This is independent of the moved opt-in booleans. G/PC-87 still binds the
+remaining journal options (dryRun=false and the fixed default context) on resume.
+
 Direct/legacy `deploy-parent` without that context preserves its current behavior.
 Prefer a small `c1008_*` helper group in the remote script over a second deployment
 driver. Transport functions remain ASCII-only and use literal argument arrays.
@@ -143,7 +157,6 @@ Typed refusal families (exit 2, plus structured receipt):
 | `RecycleUnpublishedWork`, `RecycleWorktreeDirty`, `RecycleGitAuditUnknown` | Repo/worktree relative path, ref/tip/count and stable cause; no Git stderr/credential URLs. |
 | `RecycleVolumeInUse`, `RecycleVolumeCensusUnknown`, `RecycleVolumeIdentityMismatch` | Exact selected volume and owning container IDs, or failed enumeration/changed identity. |
 | `RecycleStopFailed`, `RecycleRemoveFailed`, `RecycleReceiptUnavailable` | Last completed boundary and exact retained/removal state; leave drain set. |
-| `RecycleStateResetNotAuthorized`, `RecycleCacheMaintenanceRequired` | Missing D-6 identity/maintenance prerequisites; fail before any main stop. |
 | `RecycleResumeMismatch`, `RecycleDiskUnknown` | Receipt/source/volume generation mismatch, or unparseable df; no deletion on an unknown before observation. |
 
 Task census implementation uses documented endpoints, not board previews. Start
@@ -281,52 +294,30 @@ Rejected: swallowing `rm` failures, treating every inspect error as absence,
 rerunning the whole deletion loop after a failed up, journaling inside `/work` or
 `/tmp`, and accepting an arbitrary evidence path as authority.
 
-### D-6: opt-ins have stronger maintenance preconditions
+### D-6: MOVED to CARD-1010 — runner-state/cache opt-ins
 
-State reset is an explicit one-way identity operation. Start from main's strict
-live-zero drain proof and save it with the old store in this operation's journal.
-The opted-in phase then uses the existing drain/retire path to request retirement
-and wait for its stamp. Save the stamp before proceeding. Its resulting null live
-inventory is accepted only against that operation's pre-retirement zero proof,
-fresh server-side zeros and inspected stopped/absent owned containers. A pre-existing
-offline main with no such proof refuses; a matching resume journal can supply it.
-Stop/remove its owned containers, prove absence, delete the selected volumes, then
-perform the CARD-0953 explicit retirement clear and a non-retiring verification
-hold. Wait for detached connection/lease expiry; new
-registration must supply a different store and the requested SHA. `StoreMismatch`
-is a stop condition, never something to bypass or erase by direct DB mutation.
-Restarting with preserved state uses the normal existing-store path. Document
-that state loss also affects runner-local stores/configuration/auth not separately
-bind-mounted; never read, log or delete the host's Codex/secret mounts.
+D-6 never modifies D-2 for the default path. The original maintenance exception
+replaced accepting temp with both consumers closed **only when an opt-in was
+selected**. Default main replacement still requires accepting temp, saved live-zero
+proof, this phase's own stop/removal and a fresh final census. Main state and all
+three caches remain preserved; no cold seed or identity-reset workflow is added.
 
-Caches are shared. `-RecycleCaches` requires **both** runner consumers drained,
-strictly idle (or evidenced retired/absent), no queued/routed work or lands, temp
-retired/absent, and no foreign container or bind-overlap consumer of any cache volume.
-An accepting temp during normal rolling deployment therefore refuses before main
-is stopped; a flag is not permission to delete its mounted caches. The caller must
-commission a maintenance window, not turn the rolling redirect into two drains.
-This explicit context replaces D-2's accepting-temp requirement with both runners'
-closed admission proof; it never changes that requirement for default recycling.
-Main's identified containers may still reference caches at preflight: stop/remove
-those under D-2, then require absolutely no references before any cache deletion.
-Combining both flags follows the same saved live-zero/retirement chain for state.
+CARD-1010 owns both flags, state retire/clear/new-store registration, shared-cache
+quiescence, absent-main cold proof/seed/verification, helper/marker recovery and
+maintenance-only transport. Rejected here: inventing lease fields, assuming a fixed
+90-second sleep, selecting a new registration wait protocol, or weakening the
+default accepting-temp guard to bypass B-1. `Register` checks `slot.Live`,
+`slot.LeaseUntil` and `LastDisconnect.AtUtc + LeaseSeconds`; status exposes
+neither lease deadline nor configured duration (default 90). PC-121/122 are moved
+specifically because B-1 makes their original predicates unobservable.
 
-After exact cache removal, invalidate only the validated old seed marker with a
-receipt. A recycle-maintenance context in `c849_cold_proof` accepts **absent main**
-only with this operation's completed stop/audit/removal journal and a retained,
-inspected helper-image digest. It replaces the running-main/no-cache-mount proof
-with both-runner quiescence and no-consumer proof; it does not weaken ordinary
-`Seed -Cold`. Share CARD-0912's label/driver/path/ownership checks, 1654 write probes,
-empty-content tests and atomic schema-2 cold marker publication. Invoke it as a
-separate `runner-cache-recycle-seed` host case so `write_result`/EXIT semantics cannot terminate deployment
-halfway through a helper substitution. Freeze this context in TestDesign before
-Code; include positive and negative comparisons with ordinary Cold.
-
-Proceed through fresh work seeding/up, `verify-runner-caches` cold-context checks
-and requested-SHA registration before clearing admission. Empty valid cold caches
-are the initial state; restoring performance may take minutes to an hour depending
-on workload/network. Do not falsely assert a full donor/apphost payload is already
-present. Preserve the existing full-seed, saved-donor and cache verification gates.
+Moved G/PC IDs: **13, 29, 118–144, 155, 156** (31 guard/control pairs).
+V-11 and RD-9/RD-10 move with them. Each row remains marked in its original table.
+G/PC-129's maintenance-seed mutation moves as requested; V-1/RD-1 still require
+zero default cold-seed calls and preserved cache/marker identity. G/PC-117 remains
+because D-4 must not weaken the shared donor/reset/prune null guard; V-9 now owns it.
+G/PC-24/25 and PC-87 retain only the preview/default-context inputs defined in D-1.
+CARD-1010 starts after CARD-1008 lands and re-baselines against that implementation.
 
 ### D-7: dry-run is a preview, not an authorization receipt
 
@@ -352,16 +343,16 @@ runtime leases, Docker daemon settings or runner workspace services.
 | Slice | Exact files / scope | Work and exit evidence |
 |---|---|---|
 | S1: detecting fixtures | `scripts/test-deploy-server2.ps1`; `scripts/fixtures/c727-fake-http.ps1`; `scripts/fixtures/c727-fake-verify.ps1`; new `scripts/fixtures/c1008-recycle-cases.json`; new `scripts/fixtures/c1008-fake-docker.sh`; new `tests/Antiphon.Tests/Scripts/RollingVolumeRecycleScriptTests.cs`; additions to `tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs` | Freeze state/command traces and introduce the V methods. Commit/push; CP-1 must fail the retired-absent success assertion against unchanged production, not fail from missing dependencies. |
-| S2: default recycle and custody guards | `scripts/deploy-server2.ps1`; `scripts/c590-remote.sh`; `scripts/c590-real.ps1`; `scripts/verify-docker-stack.ps1`; S1 tests/fixtures | D-1..D-5 default main + narrow temp exception; task/land/Git proof, exact removal, journals, disk receipt, partial recovery. Commit/push this complete behavior before adding opt-ins. |
-| S3: maintenance opt-ins and preview | S2 production paths; `scripts/verify-card0849-caches.ps1` only for explicit maintenance-context transport if needed by the frozen design; S1 tests/fixtures | D-6 state reset/cache context and D-7 dry-run; preserve ordinary Cold/Seed/Reset/Prune. Commit/push, then CP-2 on S1-S3. |
+| S2: default recycle and custody guards | `scripts/deploy-server2.ps1`; `scripts/c590-remote.sh`; `scripts/c590-real.ps1`; `scripts/verify-docker-stack.ps1`; S1 tests/fixtures | D-1..D-5 default main + narrow temp exception; task/land/Git proof, exact removal, journals, disk receipt, partial recovery. Commit/push this complete behavior before preview integration. |
+| S3: read-only preview | S2 production paths; S1 tests/fixtures | D-7 dry-run with strict default-context/preview transport, independent of opt-ins. Preserve ordinary Cold/Seed/Reset/Prune. Commit/push, then CP-2 on S1-S3. Maintenance work and verify-card0849-caches.ps1 edits move to CARD-1010. |
 | S4: regression, real comparison and docs alignment | new `scripts/fixtures/c1008-recycle-real-cases.mjs`; new `tests/Antiphon.Tests/Scripts/RollingVolumeRecycleDockerTests.cs`; `scripts/test-deploy-server2-jq.ps1`; `scripts/fixtures/c973-marker-reader.sh`; S1 fixture count pins; `tests/Antiphon.Tests/Infrastructure/DockerStackDocumentationTests.cs`; `docs/docker-stack.md`; `server/Bundles/orchestrator.md` only if a rollout instruction there conflicts with the landed policy | Freeze the real fixture's allowlist/cleanup and final rosters; align examples/pins after the separate Docs task lands. Commit/push and run CP-3..CP-5. Amend this plan only for reviewed fixture/count reconciliation. |
 
 Scope list for dispatch is these literal paths, plus this plan path, not `scripts/**`
 or `tests/**`. `RemoteScriptContractTests.cs` and `c590-remote.sh` collide with
 CARD-0980/CARD-0983; serialize work touching them. Re-read the current landed file
 before integration, preserve their test additions, and update the frozen regression
-count if their changes alter it. The CARD-1008 Docs task similarly owns overlapping
-documentation until it lands. No parallel Code dispatch into these paths.
+count if their changes alter it. The policy Docs change has landed; preserve its scripted-only main policy.
+CARD-1010 starts only after CARD-1008 lands. No parallel Code dispatch into these paths.
 
 ## Verification design
 
@@ -396,20 +387,20 @@ these methods already exist. Every fault has an adjacent accepted control.
 | V-6 | Remote.`C1008_Recycle_preserves_tmp_copyup` | Actual intended Compose mount has copy-up, recreated `/tmp` has mode 1777 and image pty-host assets; trace contains no within-volume name sweep. Real Docker corroborates copy-up. `recycle-tmp-assets`. |
 | V-7 | Remote.`C1008_Recycle_resume_requires_matching_receipt` | Interrupt after stop, container removal, each volume rm and partial up; resume completes only remaining work; source/flags/project/stamp/volume-generation drift refuses; healthy same-SHA retry deletes nothing. `recycle-resume-generation`. |
 | V-8 | Remote.`C1008_Recycle_receipt_records_disk_and_partial_failure` | df before/after on data-root filesystem; signed delta, units, once-only line; disk probe/receipt write failure and partial rm preserve honest boundary data, including already absent target. `recycle-receipt-facts`. |
-| V-9 | Remote.`C1008_Retire_temp_rechecks_absence_and_retirement` | Host accepts absent/null and ordinary strict-zero path; new container between wrapper/host, timestamp change, missing field and census failure refuse. `retire-host-proof`. |
+| V-9 | Remote.`C1008_Retire_temp_rechecks_absence_and_retirement` | Host accepts absent/null and ordinary strict-zero path; separately execute unchanged c849_status_zero with donor/reset/prune null (refuse) and explicit zero (accept); new container between wrapper/host, timestamp change, missing field and census failure refuse. `retire-host-proof`. |
 | V-10 | Remote.`C1008_Retire_temp_reclaims_below_cache_disk_gate` | Low df does not block safe temp down; missing warm marker does not create caches; main reclaim precedes build disk gate, remaining-low stops before allocations; deploy-temp still refuses low disk. `recycle-disk-order`. |
-| V-11 | Remote.`C1008_Recycle_optins_require_maintenance_proofs` | State default preserved; reset requires retired/clear/detach/lease chain; cache default preserved; mounted temp rejects cache flag; absent-maintenance cold path recreates exactly three labelled 1654 roots and marker; ordinary Cold gate unchanged. `recycle-optin-proof`. |
+| V-11 | **MOVED to CARD-1010**: Remote.`C1008_Recycle_optins_require_maintenance_proofs` | Entire maintenance method retired here; default state/cache/marker preservation and zero cold seed remain V-1/RD-1; strict shared null regression remains V-9 (PC-117). Not a CARD-1008 result. |
 | V-12 | Remote.`C1008_Recycle_dry_run_never_mutates` | Both supported phases list exact targets/preserved names and blockers, offline audit pending; trace forbids POST, stop/rm/up/run, volume create/rm, seed/checkout mutations; apply rechecks changed facts. `recycle-preview-readonly`. |
 | V-13 | Rolling.`C1008_Retired_absent_null_is_accepted` | Retired/offline/absent/null with integer zeros and no routed work reaches only retire host case, preserves retirement, and reports all four volume outcomes. `retire-absent-null-accepted`. |
 | V-14 | Rolling.`C1008_Present_or_unknown_temp_keeps_null_refusal` | Running/exited/state-init container + null, census error, omitted live counter, strings/bools, wrong redirect and nonretired row refuse with exact reason; no host delete and no clear. `retire-null-stays-closed`. |
 | V-15 | Rolling.`C1008_Busy_routed_and_land_in_flight_refuse` | Each nonzero counter, accepting row, routed queued/dispatched/working task, Blocked/Failed mirror owner, queued/held/running land on succeeded task, excluded-project/unscoped task and API failure refuse before host mutation. `recycle-work-gates`. |
 | V-16 | Rolling.`C1008_Same_sha_and_partial_retries_are_safe` | Healthy same SHA verifies only; offline/partial-operation same SHA resumes from journal; cache/registration failure never clears drain. `recycle-wrapper-resume`. |
-| V-17 | Rolling.`C1008_Option_manifest_is_strict` | Flags arrive as booleans, source full SHA/operation ID/stamp survive JSON transport; missing/invalid/misplaced fields and shell metacharacters reject before SSH; direct deploy-parent remains nondestructive. `recycle-manifest-strict`. |
+| V-17 | Rolling.`C1008_Option_manifest_is_strict` | Preview dryRun arrives as a boolean; removed opt-in switches fail parameter binding before any script effect, removed manifest fields refuse as unknown; source full SHA/operation ID/stamp survive JSON transport; missing/invalid/misplaced fields and shell metacharacters reject before SSH; direct deploy-parent remains nondestructive. `recycle-manifest-strict`. |
 | V-18 | Rolling.`C1008_Legacy_rolling_and_jq_rosters_remain` | Execute existing `test-deploy-server2.ps1` through jq driver modes present/absent/missing-shell/failing-shell, once each; retain T1-T24 expectations except intentional new receipt/order detail. New C1008 targeted groups stay outside the historical all-roster. `rolling-regressions-preserved`. |
 | V-19 | Rolling.`C1008_Documentation_and_transport_pins_match` | D-8 claims, strict transport, exact volume allowlists, ASCII bytes and unchanged host/nested lane boundaries agree; real assertions of rendered config as well as sentence pins. `recycle-doc-contract`. |
 | V-20 | Rolling.`C1008_Refusal_receipts_do_not_leak_secrets` | Secret-bearing Git stderr/HTTP sentinel and malformed filenames never enter public logs/JSON; receipt retains typed IDs/reasons, original failure not `UnhandledExit`. `recycle-receipt-custody`. |
 | V-21 | Real.`C1008_Real_docker_comparison` | Execute the RD matrix below against real isolated Docker/Git; exact result/identity/cleanup census and base/new differences. `recycle-real-comparison`. |
-| R-1 | Existing Remote cache methods | Preserve the historical 52-result C849/C912/C973/C944/C951/C976/C946/C957 selection; freeze expanded count at admission. No fallback to weakened cache gates. |
+| R-1 | Existing Remote cache methods | Preserve the recounted 54-result C849/C912/C973/C944/C951/C976/C946/C957 selection from 36 methods; refresh at Code admission. No fallback to weakened cache gates. |
 | R-2 | Existing Docker/plan contracts | Full `DockerStackContractTests`, `DindRunnerContractTests`, `DockerStackSmokeCommandTests`, `DockerStackDocumentationTests`, `CheckpointImportTests`, `CheckpointManifestTests`; preserve compose isolation, command transport and import schema. |
 
 ### Real-Docker comparison, adapted from CARD-0957
@@ -442,13 +433,13 @@ only by the fixture's fixed unique-name map.
 | RD-6 | Prefix neighbours and unrelated project volumes remain identical, including schoolrevision/openclaw logical sentinels. |
 | RD-7 | Real uid-1654 linked/detached/unpublished/bare repositories: unpublished or dirty blocks, published clean control removes; root ownership failure is not green. |
 | RD-8 | Partial rm injected after a real first deletion: receipt is partial; matching resume deletes only remaining originals; recreated-generation intrusion refuses. |
-| RD-9 | Cache opt-in with live temp reference refuses; maintenance path with no consumers recreates labelled/owned empty roots, invalidates old marker, verifies new cold marker. |
-| RD-10 | Recreated state changes store fixture identity only after explicit retire/clear/lease proof; missing proof refuses before deletion. Full production StoreMismatch behavior remains a rollout gate. |
+| RD-9 | **MOVED to CARD-1010**: all cache maintenance outcomes (4 changed). |
+| RD-10 | **MOVED to CARD-1010**: all state identity transition outcomes (3 changed); B-1 lease contract remains that card’s decision. |
 | RD-11 | Wrapper census says absent, then fixture creates a container before host deletion: host refuses. Census failure cannot look absent. |
 | RD-12 | Low-space value is the only df shim: temp cleanup runs, main post-reclaim allocation gate holds. Real df values are still retained separately; no claim of physical low-disk pressure. |
 
-TestDesign expands RD-1..RD-12 into named expected base/branch outcomes, including
-rejection controls, and freezes the exact count. Do not copy CARD-0957's 19 as this
+The freeze below expands retained RD-1..RD-8 and RD-11..RD-12 into 32 named
+base/branch outcomes, including rejection controls. RD-9/10 retain moved IDs only. Do not copy CARD-0957's 19 as this
 card's result count. Finally remove only recorded fixture container IDs, volumes
 and images, check exit codes and verify absence; retain the evidence root. This
 comparison proves Docker semantics, not a live rollout, cache warmup duration or
@@ -478,7 +469,7 @@ committed/pushed; repairs require a separate commissioned task.
 | PC-10 | Restore pre-deletion CacheDiskLow on retirement. | `RemoteScriptContractTests.C1008_Retire_temp_reclaims_below_cache_disk_gate` / `recycle-disk-order`. |
 | PC-11 | Resume deletion without checking volume generation. | `RemoteScriptContractTests.C1008_Recycle_resume_requires_matching_receipt` / `recycle-resume-generation`. |
 | PC-12 | Let DryRun enter the apply branch. | `RemoteScriptContractTests.C1008_Recycle_dry_run_never_mutates` / `recycle-preview-readonly`. |
-| PC-13 | Admit cache recreation under the ordinary rolling/temp-active context. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` / `recycle-optin-proof`. |
+| PC-13 | **MOVED to CARD-1010**; Admit cache recreation under the ordinary rolling/temp-active context. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` / `recycle-optin-proof`. |
 | PC-14 | Replace after-df with before-df when writing the receipt. | `RemoteScriptContractTests.C1008_Recycle_receipt_records_disk_and_partial_failure` / `recycle-receipt-facts`. |
 
 TestDesign must order the labelled substantive assertions before generic exit/count
@@ -488,12 +479,13 @@ self-mutating text assertion as post-land execution.
 
 ### Inspection
 
-TestDesign task `97e2c86f`, 2026-10-03: the following is an additive freeze of
-verification, not a replacement for D-1..D-8. **Code admission is blocked by B-1
-below.** Source observations are at `b0b9aa34d91da9fbe3b84f5c1f945173a1aa8af6`,
-also the `git ls-remote origin refs/heads/master` result at inspection. No rebase,
-repository build, test execution, fixture implementation or Docker mutation was
-performed. Counts below are source counts, never passing receipts.
+TestDesign task `97e2c86f` froze verification at
+`b0b9aa34d91da9fbe3b84f5c1f945173a1aa8af6` and pushed `b365b1af`.
+Plan task `f500932f` reconciles that freeze against the commissioned scope split.
+The historical inspection roster below remains provenance, including moved work;
+active obligations are the marked V/R/RD/G/PC tables, not that historical roster.
+No implementation, PC execution, Docker mutation or live rollout is claimed.
+Counts are derived from source and refreshed at Code admission.
 
 | Bodies read | Boundaries and coverage |
 |---|---|
@@ -505,11 +497,10 @@ performed. Counts below are source counts, never passing receipts.
 | `PhoneHomeRunnerStatusDto`, directory `Status` and `Register`, all `PhoneHomeRunnerRetirementIdentityTests` bodies | V-11/V-16, RD-10 and B-1; fake clock controls establish server semantics, not an HTTP lease-proof field |
 | `PlanTableImporter`, complete Import/Manifest test bodies; source Test/Arguments attributes of DockerStackContract, DindRunnerContract and DockerStackSmokeCommand classes | CP-1..CP-5 schema and counts; those three unchanged classes were counted, not represented as newly inspected behavioral coverage |
 
-The separate Docs branch now contains `b71e8e105` (following `ebda8f490`), whose
-volume section was read with `git show`. It corrects the earlier manual-main
-instruction to **scripted only** and adds one documentation test. It is not an
-ancestor of this checkout. The final landed revision must include that correction;
-the earlier `ebda8f490` alone is not an adequate prerequisite.
+The policy correction and added `Main_volume_recycling_is_scripted_only` test are
+contained in master at `af6d03f1`, inspected with `git show`. This task's older
+base intentionally does not include them. CP-4's post-policy **207** is DERIVED
+from that source roster (112+23+35+11+20+6), not an executed receipt on this branch.
 
 ### Delivery inventory
 
@@ -525,9 +516,9 @@ The changed cross-process operations still require end-to-end effect evidence:
 | Producer -> destination | Durable identity and persistence | Recovery and observed outcome |
 |---|---|---|
 | Rolling wrapper -> verifier -> real bridge -> host recycle | Full source SHA + operation ID + project + options; wrapper manifest and host journal outside selected volumes | V-17 executes validation and transport with intercepted SSH/SCP, then the production host entry; V-7/V-8 restart a fresh child from the persisted journal. Docker inspection and volume payloads, not a host-case trace alone, prove removal/recreation. |
-| Host -> maintenance cold-seed host case -> deploy continuation | Same operation, pinned helper image, cache generations and schema-2 marker | V-11 interrupts before request, after cache rm/before seed, after each create/probe and after marker publication/before reply. Fresh invocation reconciles the journal; real `c849_require_ready` and `case_verify_runner_caches` observe new roots before any clear. RD-9 corroborates filesystem ownership/mount behavior. |
+| **MOVED to CARD-1010**: Host -> maintenance cold-seed host case -> deploy continuation | Same operation, pinned helper image, cache generations and schema-2 marker | V-11 interrupts before request, after cache rm/before seed, after each create/probe and after marker publication/before reply. Fresh invocation reconciles the journal; real `c849_require_ready` and `case_verify_runner_caches` observe new roots before any clear. RD-9 corroborates filesystem ownership/mount behavior. |
 | Host journal -> wrapper receipt copy | Same operation/source/project, journal phase and per-volume outcomes | V-8 fails SCP after deletion; wrapper cannot report completed or clear admission, and retry retrieves the existing host receipt without another deletion. Both copies and current Docker generations must agree. |
-| Wrapper retire/clear/hold -> existing server -> replacement registration | Runner ID, old/new store, retirement stamp, requested SHA | V-11 checks POST ordering and final observed new-store/SHA status; a POST 200 or container health is insufficient. B-1 prevents claiming the prerequisite lease observation is available. |
+| **MOVED to CARD-1010**: Wrapper retire/clear/hold -> existing server -> replacement registration | Runner ID, old/new store, retirement stamp, requested SHA | V-11 checks POST ordering and final observed new-store/SHA status; a POST 200 or container health is insufficient. B-1 prevents claiming the prerequisite lease observation is available. |
 
 Fakes substitute only HTTP, SSH, Docker and controlled fault boundaries. Their
 command logs prove requested operations, not actual Docker copy-up, uid isolation,
@@ -537,8 +528,9 @@ production leases, a provider conversation or package warmup performance.
 
 ### Proves it works now
 
-V-1..V-21 retain the exact methods and primary labels in the V-matrix. CP-2 owns
-the 12 Remote and 8 Rolling methods; CP-5 owns the single Real method. Each is one
+V-1..V-10 and V-12..V-21 retain their methods and primary labels: **20 V methods**.
+Only V-11 moves. CP-2 owns **11 Remote + 8 Rolling = 19** methods; CP-5 owns the
+single Real method. PC-117 uses V-9’s retained strict-null comparison. Each is one
 `[Test]`, with internal vectors and **no Arguments/data-source expansion**. The
 following fixture contract is to be implemented in S1, not generated by this task.
 
@@ -620,7 +612,7 @@ from a failed process with empty stdout. No test uses a live fleet status snapsh
 Do not cross every independent fault with every other fault: one-fault vectors
 establish attribution and their accepted neighbor establishes reachability. Required
 combinations are null+retired+absence (and each missing fact), stopped+reference,
-same SHA+partial journal, both opt-ins, cache opt-in+accepting temp, nonterminal
+same SHA+partial journal, nonterminal
 land+Succeeded task, and scope exclusion+bound work. These combinations cannot be
 replaced by independent single-field tests.
 
@@ -688,27 +680,16 @@ filesystem identity. Empty/invalid df before refuses; after-failure reports unkn
 after/delta plus the real removed subset. Journal prewrite failure stops all effects;
 per-volume write/SCP failure leaves drain set and never erases the host journal.
 
-**Maintenance cold seed.** V-11 runs all four flag pairs (false/false, true/false,
-false/true, true/true). Default and state-only leave cache payload/marker identity
-unchanged and record **zero calls** to cold proof/seed, cache create/rm or marker
-invalidation; a missing default marker fails verification without secretly seeding.
-Cache opt-in with tempAccepting refuses before main stop. Maintenance uses both
-closed-admission proofs, tempRetiredAbsent, saved main live-zero, matching completed
-stop/audit/removal journal and retained helper digest. No fake may inject a running
-main merely to satisfy ordinary Cold. Execute the real maintenance cold helpers
-and the real post-up verify function; the host request trace alone is insufficient.
-
-Old marker is removed only after exact old cache generations are removed. New
-labelled empty roots are uid/gid 1654, mode 0700; probes create/rename/delete as 1654,
-remove only owned helpers/canaries, and publish exactly the existing eight-field
-schema-2 cold marker by atomic rename after P6. Probe failures and new consumers at
-each pre/post boundary prevent marker/admission. Retry before marker requires empty
-roots; retry after a valid committed marker uses allow-cold and permits normal
-subsequent content without reseeding. Real `verify-runner-caches` must observe correct
-shared/private mounts, `/tmp` 1777 and uid writability, return kind=cold, and never
-invoke full-payload smoke. Ordinary Cold still requires one running main with no
-cache overlap and permits a busy main; absent main without the maintenance journal
-refuses. Saved donor/Reset/Prune remain full-only. B-1 separately limits state reset.
+**Default preservation.** V-1 preserves state/cache payload and seed-marker identity
+and records zero cold proof/seed, cache create/rm and marker-invalidation calls;
+a missing default marker fails verification without seeding. RD-1 corroborates this.
+The four opt-in flag combinations, cache-plus-accepting-temp refusal, both-closed
+maintenance journal, absent-main cold proof, init/probe/marker interruptions and
+maintenance retry/verification vectors are **MOVED to CARD-1010** with V-11 and
+RD-9/10. Ordinary Cold, saved donor, Reset and Prune remain unchanged and covered
+by R-1. V-9 exercises the real shared `c849_status_zero` predicate for PC-117,
+using otherwise-valid status with runnerSessions null then integer zero; assert
+null refuses and zero passes before generic exit checks (`retire-host-proof`).
 
 ### Guards the regression
 
@@ -716,14 +697,15 @@ R-1's current source census is **36 methods / 54 results**: C849 18/18,
 C912 9/9, C973 3/12 (Arguments 6+5+one), C944 1/1, C951 1/8,
 C976 1/1, C946 2/2, C957 1/3. Historical 52 is short by the two C912
 root-initialization/disappearance methods. Remote overall is **66/84**; adding the
-12 C1008 Remote methods yields **78/96**. C905's two results and 28 other results
+11 C1008 Remote methods yields **77/95**. C905's two results and 28 other results
 remain outside CP-3; V-19 explicitly protects touched lane/transport boundaries.
 
 R-2 at this baseline is **206** single-result methods: DockerStackContractTests 112,
 DindRunnerContractTests 23, DockerStackSmokeCommandTests 35,
 DockerStackDocumentationTests 10, CheckpointImportTests 20, CheckpointManifestTests 6.
-The required policy-doc branch adds `Main_volume_recycling_is_scripted_only`, making
-the admitted total **207**, documentation class **11**. Extend that method's policy
+The policy-doc land contained at `af6d03f1` adds `Main_volume_recycling_is_scripted_only`.
+Post-docs counts are **DERIVED: 207**, documentation class **11**, and must be
+recounted at Code admission. This branch still has 206; no merge is authorized. Extend that method's policy
 assertions in place; no extra documentation method is commissioned. Preserve its
 scripted-only/no-manual-main-rm assertion after implementation. No other argument
 or data-source expansion appears in these six source classes.
@@ -768,26 +750,25 @@ entry points on base, never new flags that only prove unknown-option refusal.
 | RD-6 | C prefix-neighbor/unrelated payload identities survive | 1 |
 | RD-7 | C linked-unpublished; detached-unpublished; unchecked-out-branch-unpublished; bare-unpublished; tag-only-unpublished; dirty; uid-0 ownership error; all-published clean passes | 8 |
 | RD-8 | C fail after first removal; resume first; fail after second; resume second; recreated-volume intrusion; recorded partial-up resumes without rm; foreign recreated-container refuses | 7 |
-| RD-9 | C temp consumer refuses; maintenance cold seed+real verify passes; probe failure leaves marker absent; retry after successful marker performs no seed | 4 |
-| RD-10 | C fixture-approved identity transition; missing retirement-clear refusal; attached/unexpired fixture refusal (limited by B-1) | 3 |
+| RD-9 | **MOVED to CARD-1010**: temp consumer refusal; cold seed/verify; probe failure; post-marker retry | 0 (4 moved) |
+| RD-10 | **MOVED to CARD-1010**: identity transition; missing clear; attached/unexpired refusal; B-1 | 0 (3 moved) |
 | RD-11 | C wrapper-absent/host-new-container refusal; census error+empty stdout refusal | 2 |
 | RD-12 | B low-disk retirement refuses; C low-disk retirement reclaims; C main reclaim then low-budget allocation refusal | 3 |
-| Total | 5 B outcomes + 34 C outcomes; 39 named results, one TUnit result | 39 |
+| Total | 5 B + 27 C = 32 active named outcomes, one TUnit result; 7 C outcomes moved | 32 |
 
 The unique-object ledger must verify cleanup exits and final absence of every
 fixture container/volume/image while retaining evidence. No inherited c973 helper
-that silently ignores cleanup exit codes qualifies. RD-9 retains actual stat/mount/
-payload checks, real uid-1654 probes and actual final cold verification. RD-12 shims
-only df's reported capacity, recording real df separately. RD-10 cannot be promoted
-from fixture registration to proof of an exposed server lease contract (B-1).
+that silently ignores cleanup exit codes qualifies. RD-12 shims only df's reported
+capacity, recording real df separately. All retained RD counts/vectors are unchanged;
+39 minus RD-9’s 4 and RD-10’s 3 gives 32. The moved outcomes discharge nothing here.
 
 ### Guard inventory
 
 The inventory is for D-1..D-8's script guards, including independent wrapper and
 host checks. Each G has exactly one distinct PC; the original PC-1..PC-14 table
 is retained (PC-3 now changes uid only; PC-5 owns error handling). Input variants
-for a guard run inside its named single-result method. B-1 blocks the two
-lease proof controls expressly identified below; no fake field may conceal it.
+for an active guard run inside its named single-result method. MOVED rows are
+retained for traceability only and excluded from every active count. No renumbering.
 
 | Guard | Plan reference and safety-critical invariant | Control |
 |---|---|---|
@@ -803,7 +784,7 @@ lease proof controls expressly identified below; no fake field may conceal it.
 | G-10 | D-5: Retirement may reclaim under low disk | PC-10 |
 | G-11 | D-5: Resume generation binding | PC-11 |
 | G-12 | D-7: Preview exits before mutation | PC-12 |
-| G-13 | D-6: Cache opt-in cannot use accepting temp | PC-13 |
+| G-13 | **MOVED to CARD-1010**; D-6: Cache opt-in cannot use accepting temp | PC-13 |
 | G-14 | D-5: Receipt uses real after-df | PC-14 |
 | G-15 | D-1: Default shared caches excluded | PC-15 |
 | G-16 | D-1: Default target names exact | PC-16 |
@@ -814,12 +795,12 @@ lease proof controls expressly identified below; no fake field may conceal it.
 | G-21 | D-1: Broker survives | PC-21 |
 | G-22 | D-1: Post-down selected volumes absent | PC-22 |
 | G-23 | D-1: Preserved volume identities unchanged | PC-23 |
-| G-24 | D-1: Wrapper options are typed booleans | PC-24 |
-| G-25 | D-1: Bridge options are typed booleans | PC-25 |
+| G-24 | D-1/D-7: Wrapper dryRun is a typed boolean | PC-24 |
+| G-25 | D-1/D-7: Bridge dryRun is a typed boolean | PC-25 |
 | G-26 | D-1: Unknown recycle fields refused | PC-26 |
 | G-27 | D-1: Arbitrary volume lists refused | PC-27 |
 | G-28 | D-1: Only supported project admitted | PC-28 |
-| G-29 | D-1: Opt-ins only explicit redeploy-old | PC-29 |
+| G-29 | **MOVED to CARD-1010**; D-1: Opt-ins only explicit redeploy-old | PC-29 |
 | G-30 | D-1: Legacy deploy-parent remains nondestructive | PC-30 |
 | G-31 | D-5: Operation ID is not a path/shell fragment | PC-31 |
 | G-32 | D-2: Wrapper counters have present integer types | PC-32 |
@@ -908,33 +889,33 @@ lease proof controls expressly identified below; no fake field may conceal it.
 | G-115 | D-4: Main accepting before temp retirement | PC-115 |
 | G-116 | D-4: Retirement retained after temp removal | PC-116 |
 | G-117 | D-4: Shared donor/reset/prune null guard unchanged | PC-117 |
-| G-118 | D-6: State reset needs stamped retirement | PC-118 |
-| G-119 | D-6: State clear follows owned removal | PC-119 |
-| G-120 | D-6: State replacement waits detached connection | PC-120 |
-| G-121 | D-6: State replacement waits registration lease | PC-121 |
-| G-122 | D-6: State replacement waits post-disconnect lease | PC-122 |
-| G-123 | D-6: Registration observes different new store | PC-123 |
-| G-124 | D-6: StoreMismatch is not bypassed | PC-124 |
-| G-125 | D-6: Both cache consumers closed and zero | PC-125 |
-| G-126 | D-6: Cache bind/foreign consumers excluded | PC-126 |
-| G-127 | D-6: Maintenance context journal required | PC-127 |
-| G-128 | D-6: Maintenance helper image retained and inspected | PC-128 |
-| G-129 | D-6: Default must not cold seed | PC-129 |
-| G-130 | D-6: Old marker invalidated only for completed cache removal | PC-130 |
-| G-131 | D-6: Cold seed creates exact labelled volumes | PC-131 |
-| G-132 | D-6: Cold roots have correct driver/options | PC-132 |
-| G-133 | D-6: Cold root canonical and non-symlink | PC-133 |
-| G-134 | D-6: Cold ownership 1654 and mode 0700 | PC-134 |
-| G-135 | D-6: Cold roots empty including hidden entries | PC-135 |
-| G-136 | D-6: Cold uid-write probe must succeed | PC-136 |
-| G-137 | D-6: Cold probe helpers/canaries cleaned | PC-137 |
-| G-138 | D-6: Cold rechecks around create/init/probe/marker | PC-138 |
-| G-139 | D-6: Cold seed cannot autocreate missing source | PC-139 |
-| G-140 | D-6: Cold marker validated atomically | PC-140 |
-| G-141 | D-6: Cold verification really observes recreated roots | PC-141 |
-| G-142 | D-6: Full-only contexts stay full-only | PC-142 |
-| G-143 | D-6: Ordinary Cold still requires running main | PC-143 |
-| G-144 | D-6: Seed host-case success cannot terminate deploy early | PC-144 |
+| G-118 | **MOVED to CARD-1010**; D-6: State reset needs stamped retirement | PC-118 |
+| G-119 | **MOVED to CARD-1010**; D-6: State clear follows owned removal | PC-119 |
+| G-120 | **MOVED to CARD-1010**; D-6: State replacement waits detached connection | PC-120 |
+| G-121 | **MOVED to CARD-1010 — B-1: production lease predicate unavailable**; D-6: State replacement waits registration lease | PC-121 |
+| G-122 | **MOVED to CARD-1010 — B-1: production lease predicate unavailable**; D-6: State replacement waits post-disconnect lease | PC-122 |
+| G-123 | **MOVED to CARD-1010**; D-6: Registration observes different new store | PC-123 |
+| G-124 | **MOVED to CARD-1010**; D-6: StoreMismatch is not bypassed | PC-124 |
+| G-125 | **MOVED to CARD-1010**; D-6: Both cache consumers closed and zero | PC-125 |
+| G-126 | **MOVED to CARD-1010**; D-6: Cache bind/foreign consumers excluded | PC-126 |
+| G-127 | **MOVED to CARD-1010**; D-6: Maintenance context journal required | PC-127 |
+| G-128 | **MOVED to CARD-1010**; D-6: Maintenance helper image retained and inspected | PC-128 |
+| G-129 | **MOVED to CARD-1010**; D-6: Default must not cold seed | PC-129 |
+| G-130 | **MOVED to CARD-1010**; D-6: Old marker invalidated only for completed cache removal | PC-130 |
+| G-131 | **MOVED to CARD-1010**; D-6: Cold seed creates exact labelled volumes | PC-131 |
+| G-132 | **MOVED to CARD-1010**; D-6: Cold roots have correct driver/options | PC-132 |
+| G-133 | **MOVED to CARD-1010**; D-6: Cold root canonical and non-symlink | PC-133 |
+| G-134 | **MOVED to CARD-1010**; D-6: Cold ownership 1654 and mode 0700 | PC-134 |
+| G-135 | **MOVED to CARD-1010**; D-6: Cold roots empty including hidden entries | PC-135 |
+| G-136 | **MOVED to CARD-1010**; D-6: Cold uid-write probe must succeed | PC-136 |
+| G-137 | **MOVED to CARD-1010**; D-6: Cold probe helpers/canaries cleaned | PC-137 |
+| G-138 | **MOVED to CARD-1010**; D-6: Cold rechecks around create/init/probe/marker | PC-138 |
+| G-139 | **MOVED to CARD-1010**; D-6: Cold seed cannot autocreate missing source | PC-139 |
+| G-140 | **MOVED to CARD-1010**; D-6: Cold marker validated atomically | PC-140 |
+| G-141 | **MOVED to CARD-1010**; D-6: Cold verification really observes recreated roots | PC-141 |
+| G-142 | **MOVED to CARD-1010**; D-6: Full-only contexts stay full-only | PC-142 |
+| G-143 | **MOVED to CARD-1010**; D-6: Ordinary Cold still requires running main | PC-143 |
+| G-144 | **MOVED to CARD-1010**; D-6: Seed host-case success cannot terminate deploy early | PC-144 |
 | G-145 | D-7: Preview never provisions secrets/checkouts | PC-145 |
 | G-146 | D-7: Preview is not apply authority | PC-146 |
 | G-147 | D-7: Absent-helper audit pending in preview | PC-147 |
@@ -945,8 +926,8 @@ lease proof controls expressly identified below; no fake field may conceal it.
 | G-152 | D-2: Host lane cannot target sibling daemon | PC-152 |
 | G-153 | D-2: Rollout lock held before cache lock | PC-153 |
 | G-154 | D-2: All admission-changing rollout phases respect lock | PC-154 |
-| G-155 | D-2: Lock is not reacquired recursively | PC-155 |
-| G-156 | D-1: Real bridge routes new host case | PC-156 |
+| G-155 | **MOVED to CARD-1010**; D-2: Lock is not reacquired recursively | PC-155 |
+| G-156 | **MOVED to CARD-1010**; D-1: Real bridge routes new host case | PC-156 |
 
 ### Positive controls
 
@@ -980,12 +961,12 @@ Mutation executor. SourceLanding never commits or pushes its temporary mutations
 | PC-21 | Add the broker ID to the owned-container removal list. | `RemoteScriptContractTests.C1008_Recycle_exact_default_volumes` | `recycle-exact-defaults` |
 | PC-22 | Remove post-down inspection and report all targets removed. | `RemoteScriptContractTests.C1008_Retire_temp_rechecks_absence_and_retirement` | `retire-host-proof` |
 | PC-23 | Replace preserved-volume after-inspection comparison with :. | `RemoteScriptContractTests.C1008_Recycle_exact_default_volumes` | `recycle-exact-defaults` |
-| PC-24 | Replace wrapper boolean type rejection with boolean coercion. | `RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict` | `recycle-manifest-strict` |
-| PC-25 | Replace bridge boolean type rejection with boolean coercion. | `RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict` | `recycle-manifest-strict` |
+| PC-24 | Replace wrapper dryRun boolean type rejection with boolean coercion. | `RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict` | `recycle-manifest-strict` |
+| PC-25 | Replace bridge dryRun boolean type rejection with boolean coercion. | `RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict` | `recycle-manifest-strict` |
 | PC-26 | Remove the recycle-object unknown-property rejection. | `RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict` | `recycle-manifest-strict` |
 | PC-27 | Accept and use manifest recycle.volumes as the removal array. | `RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict` | `recycle-manifest-strict` |
 | PC-28 | Replace project allowlist check with true. | `RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict` | `recycle-manifest-strict` |
-| PC-29 | Remove the flag/Phase rejection branch. | `RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict` | `recycle-manifest-strict` |
+| PC-29 | **MOVED to CARD-1010**; Remove the flag/Phase rejection branch. | `RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict` | `recycle-manifest-strict` |
 | PC-30 | Make absent recycle context take the default recycle apply branch. | `RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict` | `recycle-manifest-strict` |
 | PC-31 | Remove ResumeRecycle grammar rejection before path/SSH construction. | `RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict` | `recycle-manifest-strict` |
 | PC-32 | Coerce null or string counter to int before validation. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
@@ -995,7 +976,7 @@ Mutation executor. SourceLanding never commits or pushes its temporary mutations
 | PC-36 | Remove acceptingNewWork=false check from recycle preflight. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
 | PC-37 | Remove draining=true check from recycle preflight. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
 | PC-38 | Remove redirectTo comparison from recycle preflight. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
-| PC-39 | Remove temp accepting check outside maintenance context. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
+| PC-39 | Remove temp accepting check on default replacement. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
 | PC-40 | Reuse preflight status instead of the immediate pre-removal GET. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` | `recycle-reference-refusal` |
 | PC-41 | Accept offline/null main when journal has no strict-zero observation. | `RemoteScriptContractTests.C1008_Recycle_resume_requires_matching_receipt` | `recycle-resume-generation` |
 | PC-42 | Accept saved zeros without matching stop/removal container receipt. | `RemoteScriptContractTests.C1008_Recycle_resume_requires_matching_receipt` | `recycle-resume-generation` |
@@ -1073,34 +1054,34 @@ Mutation executor. SourceLanding never commits or pushes its temporary mutations
 | PC-114 | Treat exited temp container as absent in null predicate. | `RemoteScriptContractTests.C1008_Retire_temp_rechecks_absence_and_retirement` | `retire-host-proof` |
 | PC-115 | Remove host counterpart accepting check. | `RemoteScriptContractTests.C1008_Retire_temp_rechecks_absence_and_retirement` | `retire-host-proof` |
 | PC-116 | Add temp drain/clear on successful retirement. | `RollingVolumeRecycleScriptTests.C1008_Retired_absent_null_is_accepted` | `retire-absent-null-accepted` |
-| PC-117 | Allow null runnerSessions in c849_status_zero. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-118 | Allow state reset from ordinary drain without retirement stamp. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-119 | Move retirement clear before owned container removal. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-120 | Treat unavailable status alone as detached. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-121 | Replace lease-expiry proof with fixed sleep using default 90. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-122 | Ignore recent-disconnect lease window. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-123 | Accept old runnerStoreId as successful state reset. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-124 | Treat StoreMismatch registration result as success. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-125 | Use only main status for maintenance admission. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-126 | Exclude foreign containers from maintenance cache reference scan. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-127 | Allow absent-main cold proof with flags only and no completed journal. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-128 | Accept an uninspectable helper image digest before cache rm. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-129 | Invoke runner-cache-recycle-seed unconditionally after default recycle. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-130 | Delete seed marker before cache reference/removal proof. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-131 | Remove io.antiphon.cache-role label from cache volume create. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-132 | Skip driver/options check in c849_cold_volume_facts. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-133 | Skip canonical-root/symlink validation. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-134 | Skip owner/mode validation after initialization. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-135 | Replace find emptiness probe with non-dot glob. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-136 | Ignore nonzero c849_cold_probe result. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-137 | Ignore helper cleanup failure and publish marker. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-138 | Remove the final P6 c849_cold_proof call. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-139 | Remove C849_COLD_PRESENT check before init helper. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-140 | Write ready marker before final proof using direct destination write. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-141 | Return success in case_verify_runner_caches before mounts/writability. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-142 | Make c849_require_ready accept cold in full-required context. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-143 | Apply maintenance absent-main exception when no recycle context is supplied. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-144 | Call exit-producing c849_cold_seed inline in deploy-parent. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-117 | Allow null runnerSessions in c849_status_zero. | `RemoteScriptContractTests.C1008_Retire_temp_rechecks_absence_and_retirement` | `retire-host-proof` |
+| PC-118 | **MOVED to CARD-1010**; Allow state reset from ordinary drain without retirement stamp. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-119 | **MOVED to CARD-1010**; Move retirement clear before owned container removal. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-120 | **MOVED to CARD-1010**; Treat unavailable status alone as detached. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-121 | **MOVED to CARD-1010 — B-1: production lease predicate unavailable**; Replace lease-expiry proof with fixed sleep using default 90. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-122 | **MOVED to CARD-1010 — B-1: production lease predicate unavailable**; Ignore recent-disconnect lease window. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-123 | **MOVED to CARD-1010**; Accept old runnerStoreId as successful state reset. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-124 | **MOVED to CARD-1010**; Treat StoreMismatch registration result as success. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-125 | **MOVED to CARD-1010**; Use only main status for maintenance admission. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-126 | **MOVED to CARD-1010**; Exclude foreign containers from maintenance cache reference scan. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-127 | **MOVED to CARD-1010**; Allow absent-main cold proof with flags only and no completed journal. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-128 | **MOVED to CARD-1010**; Accept an uninspectable helper image digest before cache rm. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-129 | **MOVED to CARD-1010**; Invoke runner-cache-recycle-seed unconditionally after default recycle. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-130 | **MOVED to CARD-1010**; Delete seed marker before cache reference/removal proof. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-131 | **MOVED to CARD-1010**; Remove io.antiphon.cache-role label from cache volume create. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-132 | **MOVED to CARD-1010**; Skip driver/options check in c849_cold_volume_facts. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-133 | **MOVED to CARD-1010**; Skip canonical-root/symlink validation. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-134 | **MOVED to CARD-1010**; Skip owner/mode validation after initialization. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-135 | **MOVED to CARD-1010**; Replace find emptiness probe with non-dot glob. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-136 | **MOVED to CARD-1010**; Ignore nonzero c849_cold_probe result. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-137 | **MOVED to CARD-1010**; Ignore helper cleanup failure and publish marker. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-138 | **MOVED to CARD-1010**; Remove the final P6 c849_cold_proof call. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-139 | **MOVED to CARD-1010**; Remove C849_COLD_PRESENT check before init helper. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-140 | **MOVED to CARD-1010**; Write ready marker before final proof using direct destination write. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-141 | **MOVED to CARD-1010**; Return success in case_verify_runner_caches before mounts/writability. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-142 | **MOVED to CARD-1010**; Make c849_require_ready accept cold in full-required context. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-143 | **MOVED to CARD-1010**; Apply maintenance absent-main exception when no recycle context is supplied. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-144 | **MOVED to CARD-1010**; Call exit-producing c849_cold_seed inline in deploy-parent. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
 | PC-145 | Move dry-run dispatch below ensure_checkout/boot-file preparation. | `RemoteScriptContractTests.C1008_Recycle_dry_run_never_mutates` | `recycle-preview-readonly` |
 | PC-146 | Reuse preview status/journal without fresh apply preflight. | `RemoteScriptContractTests.C1008_Recycle_dry_run_never_mutates` | `recycle-preview-readonly` |
 | PC-147 | Start audit Docker helper during offline preview. | `RemoteScriptContractTests.C1008_Recycle_dry_run_never_mutates` | `recycle-preview-readonly` |
@@ -1111,17 +1092,26 @@ Mutation executor. SourceLanding never commits or pushes its temporary mutations
 | PC-152 | Replace host lane refusal at recycle entry with :. | `RollingVolumeRecycleScriptTests.C1008_Documentation_and_transport_pins_match` | `recycle-doc-contract` |
 | PC-153 | Remove rollout-lock acquisition while retaining cache lock. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` | `recycle-reference-refusal` |
 | PC-154 | Remove rollout-lock acquisition on drain/clear path. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` | `recycle-work-gates` |
-| PC-155 | Unconditionally reacquire cache lock inside maintenance seed while parent holds it. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
-| PC-156 | Remove runner-cache-recycle-seed from live-case dispatch roster. | `RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict` | `recycle-manifest-strict` |
+| PC-155 | **MOVED to CARD-1010**; Unconditionally reacquire cache lock inside maintenance seed while parent holds it. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` | `recycle-optin-proof` |
+| PC-156 | **MOVED to CARD-1010**; Remove runner-cache-recycle-seed from live-case dispatch roster. | `RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict` | `recycle-manifest-strict` |
 
-Inventory audit: **guards=156, mapped=156, missing=0, duplicate PC maps=0**.
-**Executable-design exceptions: PC-121, PC-122 (B-1)**; their predicates lack a production-observable contract.
-The remaining 154 controls have specified mutations, methods, inputs and first
-assertions, but are not claimed executed. The all-PCs-executable handoff condition
-is therefore **not satisfied**; the next stage is Plan, not Code.
+Inventory audit for the **remaining** rows: **guards=125, mapped=125, missing=0,
+duplicate PC maps=0**. **31 guards and 31 PCs MOVED to CARD-1010** (13, 29,
+118–144, 155, 156); all original IDs 1..156 remain represented once per inventory.
+PC-121/122 move specifically for B-1. V-11 moves; PC-117 remains executable in V-9.
+
+**All 125 remaining PCs are executable designs:** each has its concrete production
+mutation, exact method and first assertion above, and a frozen input/expected-effect
+binding below. No remaining PC depends on the missing lease predicate. This means
+executable test design, not a claim that S1 methods exist or that Mutation ran.
+Code must preserve these first substantive assertions, then Mutation proves actual
+reachability at the eventual statement coordinates. The all-PCs-executable handoff
+condition is satisfied; the retained TestDesign freeze admits next: code.
 
 ### Out of scope
 
+- Runner-state/cache opt-ins: **CARD-1010**, including D-6 maintenance/lease contracts,
+  V-11, RD-9/10 and every explicitly MOVED guard/control; starts after CARD-1008 lands.
 - Live rollout, production Docker deletion, provider launches, cache warmup duration,
   server lease implementation and new API fields. RD's identity fixture cannot prove
   production lease expiry; existing CARD-0953 server tests are read-only dependencies.
@@ -1137,35 +1127,23 @@ is therefore **not satisfied**; the next stage is Plan, not Code.
 
 ### Admission blockers, shared files and platform qualification
 
-**B-1 — state-reset lease proof is not implementable from the frozen HTTP seam.**
-`PhoneHomeRunnerDirectory.Register` checks `slot.Live`, `slot.LeaseUntil` and
-`LastDisconnect.AtUtc + _settings.LeaseSeconds`, in addition to retirement-clear
-authorization. `Status`/`PhoneHomeRunnerStatusDto` expose old store, epoch, last
-heartbeat/disconnect and counters, but not LeaseUntil or configured LeaseSeconds.
-The setting defaults to 90 and is configurable; copying 90 into a fake proves
-neither production expiry condition. `available=false` also covers an attached
-expired connection. Inspection of `SnapshotOf`/`ReadSnapshot` confirms a **present
-epoch key with null value** can witness `slot.Live == null` at that observation;
-PC-120 therefore has an executable vector (unavailable plus non-null epoch must
-refuse), while PC-121/122 do not yet have an observable expiry predicate.
+B-1 is **MOVED to CARD-1010** with PC-121/122; it is not a CARD-1008 admission blocker.
 
-Missing input: Plan must choose and specify the production-observable contract for
-the two lease waits, or explicitly revise D-6's timing/authority and scope. Existing
-server registration acceptance could be an authoritative later observation, but
-adopting that as the wait protocol would change the decided design; TestDesign does
-not silently make that choice. No fake `leaseExpired`/`connectionAttached` fields
-may be added to the status DTO fixture. Keep the state flag refused until this is
-resolved; that is not permission to ship partial acceptance as CARD-1008 complete.
+**B-2 — actual importer receipt (execution gate, no open design decision).**
+The previous TestDesign dispatch could not build/run the tool. The original Plan
+report (`delegate.ps1 -Status 9de0189e`) records five imported rows and DOCS-1008
+36 passed, but does not give an importer command. That receipt predates this table.
+For this dispatch, the sanctioned DOCS-1008 checkpoint builds the unchanged tool
+as an existing Antiphon.Tests project reference. After the final-SHA checkpoint,
+run its actual CLI without another build or executor:
 
-**B-2 — actual importer receipt is unavailable in this docs-only dispatch.**
-No prebuilt `Antiphon.Checkpoints.dll` exists under the tool checkout. The brief
-forbids repository builds/tests, so the actual importer was read but not executed.
-The table was checked for its nine ordered required columns plus Serial/Environment,
-escaped pipes, five distinct forward-slash outputs and numeric floors. This is
-source validation, not an importer pass. Missing evidence: run the unchanged real
-importer against this committed file using the already-declared isolated tool
-bootstrap in the next authorized implementation task, before any checkpoint run.
-No build is requested from this TestDesign delegate to erase the limitation.
+`dotnet tools/Antiphon.Checkpoints/bin-c1008-plan/net9.0/Antiphon.Checkpoints.dll import --plan docs/superpowers/plans/2026-10-03-card-1008-rolling-volume-recycle-and-retire-temp-plan.md --out .antiphon/c1008-plan-checkpoints/imported.yml`
+
+Report the exit and all five imported CP IDs/floors in the final receipt; this
+closes B-2 only on success. If the checkpoint cannot supply that artifact, B-2 is
+the sole remaining Code-admission execution step, to run after the declared leased
+bootstrap. Static parsing or the 36 generic documentation/import tests alone do
+not close it. Do not launch the owner-bound checkpoint executor without its token.
 
 | Shared path/region | Overlap and required ordering |
 |---|---|
@@ -1173,14 +1151,15 @@ No build is requested from this TestDesign delegate to erase the limitation.
 | `scripts/test-deploy-server2.ps1` | C1008 targeted dispatch/fake state and frozen counters share param/probe/roster regions with 0983's require-jq option. |
 | `scripts/test-deploy-server2-jq.ps1` | Shared present-probe qualification, expected groups/invocations/assertions and no-jq fallback. |
 | `scripts/fixtures/c727-fake-http.ps1`, `scripts/fixtures/c727-fake-verify.ps1`, `scripts/fixtures/c973-marker-reader.sh` | C1008 extends runner/task state, manifest tracing and retire-reader behavior; reserve against sibling harness edits and re-read any later shared helper change. |
-| `scripts/c590-remote.sh` | C1008 deploy/retire, c849 cold/ready and host dispatcher regions; reserve as the brief's shared production region. The current 0980 card is test-only and 0983 names jq harnesses, so neither currently establishes a required production edit here. |
+| `scripts/c590-remote.sh` | C1008 deploy/retire, retirement cache-reader and host dispatcher regions; reserve as the brief's shared production region. The current 0980 card is test-only and 0983 names jq harnesses, so neither currently establishes a required production edit here. |
 | `scripts/deploy-server2.ps1` | C1008 parameters, strict/retirement predicates, manifest and phase dispatch; same conservative serialization reservation from the brief, not a claim that 0980 currently commissions a production fix. |
-| `docs/docker-stack.md`, `DockerStackDocumentationTests.cs` | Policy Docs branch must land first, including b71e8e105's correction and added test; C1008 then updates implementation status without reinstating manual main removal. |
+| `docs/docker-stack.md`, `DockerStackDocumentationTests.cs` | Policy correction and added test landed by af6d03f1; Code base must contain them; C1008 then updates implementation status without reinstating manual main removal. |
 
-**Landing order:** corrected policy Docs -> this freeze and B-1 Plan repair ->
+**Landing order:** policy Docs (already landed by af6d03f1) -> this reconciled freeze ->
 CARD-1008 Code/Review/land **first** -> CARD-0980 and CARD-0983 re-baseline their
 shared files and counts. Do not let either sibling dispatch into these regions
-while CARD-1008 owns them. Their historical 57-result/19-group figures are not
+while CARD-1008 owns them. CARD-1010 starts after CARD-1008 lands and re-baselines
+its maintenance work then. Their historical 57-result/19-group figures are not
 current admission floors. `server/Bundles/orchestrator.md` has no matching rolling,
 retire-temp, redeploy-old or recycling instruction in this baseline; no bundle edit
 is justified by this inspection.
@@ -1200,21 +1179,23 @@ and c727-fake-verify, not the five defective callers. V-13/14/16/17/18/19 are th
 wrapper/manifest/jq portability observations worth including in a later Windows
 qualification; CP-5 requires Linux's own isolated nested daemon. The current five
 CPs commission Linux evidence only; no Windows green or live-desktop activation is
-claimed. CARD-0980's later Windows full-Remote row must recount from 96 expected
+claimed. CARD-0980's later Windows full-Remote row must recount from 95 expected
 post-C1008 results, plus its own additions, and prove zero skips. Do not block the
 ordered C1008 land on an uncommissioned Windows repair or silently add a sixth CP.
 
-**Code start condition:** B-1 has a reviewed Plan amendment and a completed
-TestDesign reconciliation making PC-121/122 executable; the corrected policy Docs
-land is contained in the Code base; C1008 has exclusive shared-file ownership ahead
-of 0980/0983; the source census is refreshed at that base; and the real importer
-passes after the declared bootstrap (B-2). All 21 V methods, 39 RD outcomes and 156
-guard mappings then remain binding unless that amendment explicitly reconciles them.
+**Code start condition:** the corrected policy Docs land is contained in the Code
+base; C1008 has exclusive shared-file ownership ahead of 0980/0983 and 1010; the
+source census is refreshed there; and B-2 has a real importer receipt for this
+revised table. No further TestDesign freeze is required for the retained scope.
+All **20 V methods, 32 RD outcomes and 125 active guard/control mappings** bind Code.
 
-Freeze count deltas: CP-3 Min **52 -> 54**; CP-4 Min **36 -> 207** (170 existing
-Compose/command results previously omitted plus one pending policy test); CP-5
-keeps Min **1** and now explicitly requires **39** internal outcomes. CP-1/2 remain
-1/20. Five rows and **51 estimated minutes** are unchanged; no measured speed claim.
+Reconciliation deltas from b365b1af: V **21 -> 20** (only V-11 moves); PCs/guards
+**156 -> 125** (31 moved); CP-2 Min **20 -> 19**; CP-3 remains **54 from 36**;
+CP-4 remains **DERIVED 207** after the already-landed policy (206 on this branch);
+CP-5 keeps Min **1** but RD outcomes **39 -> 32** (7 moved). CP-1 remains **1**.
+Five checkpoint rows and **51 estimated minutes** remain; no measured speed claim.
+Remote class projection is **77 methods / 95 results** (66/84 + 11/11), to be
+recounted when siblings re-baseline. No unchanged fixture count was reduced.
 
 ### Checkpoints
 
@@ -1227,36 +1208,29 @@ Review runs CP-2..CP-5 at the reviewed tip. Counts are frozen by source inspecti
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1008-red/` | linux-offline-red | `/*/*/RollingVolumeRecycleScriptTests/C1008_Retired_absent_null_is_accepted` | V-13 | 1 executed, 1 expected assertion failure against unchanged scripts; no setup error | 1 | 6 | true | `C804_ORPHAN_SWEEP_ROOT=c1008-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-2 | S1-S3 | `tests/Antiphon.Tests -> bin-c1008-scripts/` | linux-offline-contract | `/*/*/(RemoteScriptContractTests*)\|(RollingVolumeRecycleScriptTests*)/C1008_*` | V-1..V-20 | 20 named single-result methods, 0 failed/skipped; internal rolling rosters reported separately | 20 | 15 | true | `C804_ORPHAN_SWEEP_ROOT=c1008-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-2 | S1-S3 | `tests/Antiphon.Tests -> bin-c1008-scripts/` | linux-offline-contract | `/*/*/(RemoteScriptContractTests*)\|(RollingVolumeRecycleScriptTests*)/C1008_*` | V-1..V-10, V-12..V-20 | 19 named single-result methods, V-11 moved, 0 failed/skipped; internal rolling rosters reported separately | 19 | 15 | true | `C804_ORPHAN_SWEEP_ROOT=c1008-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-3 | S4 | `tests/Antiphon.Tests -> bin-c1008-cache/` | linux-cache-regression | `/*/*/RemoteScriptContractTests*/(C849_*)\|(C912_*)\|(C973_*)\|(C944_*)\|(C951_*)\|(C976_*)\|(C946_*)\|(C957_*)` | R-1 | 54 expanded results from 36 methods, 0 failed/skipped; retirement reader changes specified in the freeze | 54 | 10 | true | `C804_ORPHAN_SWEEP_ROOT=c1008-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1008-docs/` | linux-compose-doc-contract | `/*/*/(DockerStackContractTests*)\|(DindRunnerContractTests*)\|(DockerStackSmokeCommandTests*)\|(DockerStackDocumentationTests*)\|(CheckpointImportTests*)\|(CheckpointManifestTests*)/*` | R-2 | 207 results = 112+23+35+11+20+6 after the required policy-doc land, 0 failed/skipped | 207 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c1008-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-5 | S4 | `tests/Antiphon.Tests -> bin-c1008-real/` | linux-isolated-docker | `/*/*/RollingVolumeRecycleDockerTests/C1008_Real_docker_comparison` | V-21 | 1 TUnit result, 39 named RD outcomes (5 base + 34 changed), 0 failed/skipped, zero fixture residue | 1 | 12 | true | `C804_ORPHAN_SWEEP_ROOT=c1008-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1008-docs/` | linux-compose-doc-contract | `/*/*/(DockerStackContractTests*)\|(DindRunnerContractTests*)\|(DockerStackSmokeCommandTests*)\|(DockerStackDocumentationTests*)\|(CheckpointImportTests*)\|(CheckpointManifestTests*)/*` | R-2 | DERIVED 207 = 112+23+35+11+20+6 at policy land af6d03f1; recount at Code admission; 0 failed/skipped | 207 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c1008-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-5 | S4 | `tests/Antiphon.Tests -> bin-c1008-real/` | linux-isolated-docker | `/*/*/RollingVolumeRecycleDockerTests/C1008_Real_docker_comparison` | V-21 | 1 TUnit result, 32 named RD outcomes (5 base + 27 changed; 7 moved), 0 failed/skipped, zero fixture residue | 1 | 12 | true | `C804_ORPHAN_SWEEP_ROOT=c1008-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 
 ## Test-design freeze and execution hooks
 
-The original Plan handoff checklist below is retained for traceability. The additive
-freeze above supplies its vectors and counts; B-1/B-2 remain explicit admission
-conditions, so it does not yet admit Code:
+The retained TestDesign freeze supplies status/Git/volume/resume vectors and exact
+methods/counts. Code implements that contract; it does not redesign it. Preserve:
 
-1. Freeze `c1008-recycle-cases.json`: each accepted/refused state, intended reason,
-   command ordering, receipt shape and first labelled assertion. Model missing vs
-   explicit null, stopped references, stale census and same-SHA partial recovery.
-2. Freeze task-census closure using actual summary/detail DTOs, including unscoped
-   and excluded-project rows, pending lands on succeeded tasks and retained
-   Blocked/Failed work. No live API failure may become an empty array. Confirm the
-   documented no-new-land operational window and state the remaining race limit.
-3. Freeze the maintenance-only cold proof's before/after/retry states against
-   `c849_cold_proof`, `c849_cold_seed`, `c849_require_ready` and verification contexts.
-   Show that the normal Cold and saved-donor contracts retain their existing gates.
-4. Freeze live-zero-before-stop evidence and the main null-after-own-stop resume
-   proof without broadening the retired-temp exception; pin lease/store transition
-   fixture vectors to CARD-0953. Never claim the fake proves elapsed production leases.
-5. Freeze all 21 V methods, actual argument expansion, R-1/R-2 source roster,
-   CP-4's full minimum, RD base/branch count, harness count pins, and method-scoped
-   PC mutation/first-assertion map. A named method omitted from a filter is a defect.
-6. Parse this exact checkpoint table using the existing importer; static coverage
-   lint may report shell/JSON obligations requiring an explicit checklist binding.
-   Preserve those mappings rather than calling the static pass mutation evidence.
+1. Literal missing-versus-null status inputs, stopped references, same-SHA partial
+   recovery, command ordering, receipt shape and the first labelled assertion.
+2. Actual summary/detail DTOs, complete unscoped/excluded-project task census,
+   pending lands on succeeded tasks, retained Blocked/Failed work and the stated
+   no-new-land operational window. Failed reads never become empty arrays.
+3. Default state/cache/marker preservation and zero cold seed; ordinary Cold and
+   saved-donor gates remain unchanged. Maintenance-only vectors moved to CARD-1010.
+4. Live-zero-before-own-stop evidence and the main null-after-own-stop resume proof,
+   without broadening the retired-temp exception or adding state replacement waits.
+5. All 20 active V methods, R-1/R-2 expansion, 32 RD outcomes and 125 method-scoped
+   PC input/first-assertion bindings. A method omitted from its filter is a defect.
+6. A real import of this exact table (B-2). A static coverage pass is a syntax check,
+   never a method-scoped Mutation receipt.
 
 Code commits/pushes every meaningful slice and before a build. Use the checkpoint
 tool once per committed slice group with `--expected-source-sha <full-sha>` and
@@ -1299,7 +1273,7 @@ the sentence tests, so prose alone cannot certify implementation.
 |---|---|
 | "Retiring TEMP: always `compose down -v` for the temp project" | D-1/D-4, all four private volumes removed, retirement retained. |
 | "Default for main = recycle work + runner-tmp + dind-data." | D-1 exact names, default state/cache sentinels preserved. |
-| "Recycling runner-state and/or the cache volumes is an explicit opt-in" | D-6 separate flags, identity reset and shared-cache maintenance costs; no flag bypasses references. |
+| "Recycling runner-state and/or the cache volumes is an explicit opt-in" | MOVED to CARD-1010; document as deferred opt-ins, absent in CARD-1008. Here state/caches always remain preserved. |
 | "Preconditions for ANY volume removal: drain complete; 0 sessions, 0 queued, nothing routed there; no land in flight; container stopped; volumes unreferenced by any container" | D-2/D-3/D-4 and the no-new-land operational window; receipt names the evidence, not just 'idle'. |
 | "remove by EXACT name" and "never prune" | Fixed allowlists; prefix/unrelated-project negative sentinels. |
 | "df before/after recorded" | D-5 numeric before/after receipt even when a later deployment step fails. |
@@ -1325,68 +1299,64 @@ only once the corresponding script/tests have landed, not in this Plan commit.
 | Partial failure and unsafe retries. | Durable external journal, per-volume states, exact identity/CreatedAt binding, explicit resume; no redeletion of recreated data. |
 | CARD-0994 present/null dead end. | Intentionally preserve the refusal; fix absent/null only. Caller arranges a reviewed exact-container recovery if needed; deploy-temp never bypasses TempContainersRemain. |
 | CacheDiskLow blocks the cleanup intended to solve it. | Read-only safety checks before deletion, allocation gate after reclaim; deploy-temp early gate remains, requiring separate approved reclaim if temp cannot start. |
-| Cache reset breaks the only accepting runner. | Shared-cache all-consumer gate; explicit maintenance window, no accepting temp. New cold-maintenance proof must be frozen separately from ordinary Cold. |
-| State reset loses identity/auth or gets StoreMismatch. | State preserved by default; retirement/clear/detach/lease transition and post-registration identity check. Bind-mounted secret/Codex homes remain outside volume targets. |
 | `/tmp` loses pty-host assets. | Whole exact volume recreation with image copy-up; inspect assets/mode on real Docker. No pattern cleanup. |
 | A misleading df delta or incomplete success receipt. | Same filesystem/units, signed delta and partial outcomes; no guaranteed minimum bytes recovered. Evidence failures stop admission. |
 | Dry-run accidentally follows generic mutating host setup. | Early separate preview dispatch, forbidden-operation trace, no preview-as-permit; offline audit marked pending. |
 | PowerShell 5.1 encoding fallback / quoting. | All touched scripts remain ASCII-only even though this driver requires PS7; use literal args and typed JSON, preserve Windows backslash config paths. Never interpolate raw user data into SSH shell. |
 | Test doubles agree with themselves. | Real Docker comparison, real Git refs, actual wrapper/host execution, post-land mutation; historical counts are not new evidence. |
-| Shared-file collisions and unlanded policy. | Serialize CARD-0980/0983 edits and wait for Docs task landing; re-read/reconcile exact touched paths, do not overwrite sibling changes. |
+| Shared-file collisions or outdated policy base. | Policy landed by af6d03f1; require it at Code admission. CARD-1008 first, then CARD-0980/0983 re-baseline and CARD-1010 starts. Preserve sibling changes. |
 
 ## Rollout sequencing and recovery
 
-Land the policy Docs change, then this plan/TestDesign freeze, then reviewed Code.
+The policy Docs change has landed. Land this reconciled freeze, then reviewed Code.
 Run the isolated RD comparison and ordinary checkpoints before any operational use;
 post-land Mutation is separately commissioned. No AppHost restart is required for
 script-only activation: the rollout caller must run the reviewed landed script SHA,
-and host transport must verify that same SHA. State-reset admission still depends
-on the already deployed CARD-0953 server behavior.
+and host transport must verify that same SHA. State-reset admission belongs to
+CARD-1010; ordinary preserved-store registration still uses the existing server.
 
 For the first normal rollout: confirm no lands are active/pending and hold new
 lands; run the read-only preview; deploy/verify temp; drain main; require zero
 work and publication proof; recycle default main volumes; verify the exact new
 runner SHA/mounts/caches before admission; run the existing smoke/canary gates;
 return scheduling to main, drain temp, then retire temp and retain both reclaim
-receipts. Do not combine first rollout qualification with state/cache opt-ins.
+receipts. State/cache opt-ins are unavailable in this card.
 
 If main recycle/up fails, keep temp accepting and main drained. A rollback image
 can start with newly created disposable volumes, but deleted work/tmp/dind payload
 cannot be rolled back. Re-run only via the matching operation's journal. If temp
 retirement refuses, keep main accepting and preserve temp's retirement/evidence;
-do not clear it to force a future deploy. If an opt-in fails, preserve its explicit
-maintenance hold and receipts until identity/cache verification succeeds.
+do not clear it to force a future deploy. CARD-1010 separately owns opt-in failure
+and maintenance recovery; it adds no recovery prerequisite to the default path.
 
 ### Cost
 
 Ordinary Code checkpoints total **51 estimated minutes** (6+15+10+8+12), including
 the expected-red row and isolated builds; authoring/TestDesign, queue waits and
 post-land controls are additional. CP-2's rolling harness is intentionally bounded
-and counted separately from its 20 TUnit results. No performance claim follows
+and counted separately from its 19 TUnit results. No performance claim follows
 from these estimates. This Plan task is time-boxed to 40 minutes and runs only its
 36-result documentation selection.
 
-TestDesign cost reconciliation (all estimates; this dispatch ran **0** builds,
-**0** tests and **0** PCs): ordinary Code floor remains **51 minutes**, CP-1
-6 + CP-2 15 + CP-3 10 + CP-4 8 + CP-5 12, including their isolated builds.
-One-time Code tool bootstrap/setup adds **6 minutes**, giving **57** before authoring
-or slot waits. Expanded PC inventory is **156**, rather than the original 14.
-Mutation has **6 minutes** setup and **1,078 minutes** of method-scoped cycles:
-115 controls at 6 minutes, 11 V-7 resume controls at 8, and 30 V-11 opt-in controls
-at 10. Each uses the literal exact method filter bound in the PC tables, Min=1.
+Reconciled estimates (no PC execution by this Plan task): ordinary Code floor
+remains **51 minutes**: CP-1 6 + CP-2 15 + CP-3 10 + CP-4 8 + CP-5 12,
+including isolated builds. One-time Code tool bootstrap/setup adds **6 minutes**,
+giving **57** before authoring/slot waits. The active PC inventory is **125**.
+Mutation has **6 minutes** setup and **772 minutes** of method-scoped cycles:
+114 controls at 6 minutes plus 11 V-7 resume controls at 8. The former 30 V-11
+controls lose 29 to CARD-1010; PC-117 runs within V-9 at the ordinary six-minute
+estimate. PC-29 and PC-156 also move, accounting for all 31 retired controls.
+Each remaining cycle uses its literal exact method filter and Min=1.
 The six-minute unit includes 0.5 edit/restore, 2 red build, 0.5 red method, 2 green
-build, 0.5 restored method and 0.5 evidence; V-7 adds 1 per method execution and
-V-11 adds 2 per execution for their internal vectors. Mutation floor = **1,084
-minutes**. Combined verification estimate = **6 + 51 + 6 + 1,078 = 1,141 minutes**
-(19 hours 1 minute), excluding authoring, repairs, queue waits and any newly
-commissioned lease-contract work. PC-121/122 costs reserve work blocked by B-1;
-reserving time is not executable proof. Final Review CP-2..CP-5 adds **45** if
-budgeting that separate dispatch, for **1,186** including Review.
+build, 0.5 restored method and 0.5 evidence; V-7 adds 1 per method execution.
+Mutation floor = **778 minutes**. Combined verification estimate =
+**6 + 51 + 6 + 772 = 835 minutes** (13 hours 55 minutes), excluding authoring,
+repairs and queue waits. Final Review CP-2..CP-5 adds **45**, giving **880 minutes**.
+CARD-1010 must budget its moved controls and lease-contract work independently.
 
-Compared with two whole CP-2 builds/runs per control (156 x 30 = 4,680 minutes),
-the method-scoped cycle estimate saves **3,602 minutes**; measured savings are
-**0** because nothing ran. The large mandatory PC floor is disclosed to Plan,
-not hidden behind the earlier 14-control proposal or credited as Code work.
+Compared with two whole CP-2 builds/runs per active control (125 x 30 = 3,750
+minutes), method-scoped cycles estimate **2,978 minutes** saved; measured savings
+remain **0**. These are conservative retained checkpoint estimates, not speed evidence.
 
 ## FOLLOW-UPS
 
@@ -1395,10 +1365,10 @@ Board searches `unpublished` and `retire-temp` used `card.ps1 search -Board Anti
 retirement bugs. CARD-1008 implements CARD-0831's work-preservation gate and the
 latest absent-placeholder portion of CARD-0994. Its retained-container/null case
 remains explicitly refused. CARD-0935 already tracks the separate canary-before-
-promotion issue; this card does not move that gate. No additional structural
-defect requiring a new card was established during this Plan inspection.
+promotion issue; this card does not move that gate. CARD-1010 is the existing commissioned follow-up for both opt-ins and B-1; no new
+duplicate card is needed. CARD-0980/0983 re-baseline after CARD-1008 lands.
 
 --- next stage ---
-next: plan
-handoff: Resolve B-1: D-6 lease waits lack an observable HTTP contract, leaving PC-121/122 unexecutable. Preserve the frozen status/Git/volume/resume vectors, 21 V methods, 54/207 checkpoint counts, 39 RD outcomes and 156 guard mappings; then reconcile TestDesign before Code. Require corrected policy Docs land and C1008-first serialization ahead of 0980/0983.
+next: code
+handoff: Implement the retained TestDesign freeze: default main recycle with its own stop, retired-absent temp acceptance and temp down -v; preview remains. 125 executable PCs, 20 V methods, 32 RD outcomes; five CP rows (1/19/54/207-derived/1). Require policy land af6d03f1, admission recount and real importer receipt B-2. CARD-1008 lands before 0980/0983 re-baseline and 1010 starts.
 artifact: docs/superpowers/plans/2026-10-03-card-1008-rolling-volume-recycle-and-retire-temp-plan.md
