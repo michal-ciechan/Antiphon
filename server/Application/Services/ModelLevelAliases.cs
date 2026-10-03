@@ -19,8 +19,8 @@ namespace Antiphon.Server.Application.Services;
 /// <c>astra</c> 400s the same way), so the Codex ladder pins full slugs
 /// (<c>gpt-6-astra</c> / <c>gpt-6.1-sol</c> / <c>gpt-6.1-sol</c> / <c>gpt-5.6-luna</c>) and needs
 /// deliberate catalog bumps. <c>gpt-6-astra</c> requires codex-cli 0.153.4+; <c>gpt-6.1-sol</c>
-/// requires 0.159.1+. Runner capabilities do not yet advertise the installed Codex CLI version,
-/// so rollout must upgrade every Codex-serving runner before activating this ladder.</para>
+/// has recorded floor 0.159.1. CARD-0959 reports runner CLI observations and retains floor
+/// metadata as data only; it does not enforce compatibility or require a fleet upgrade.</para>
 /// </summary>
 public static class ModelLevelAliases
 {

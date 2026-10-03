@@ -6,7 +6,7 @@ public sealed class CodexCliVersionSettings
     public string Executable { get; set; } = OperatingSystem.IsWindows() ? "codex.cmd" : "codex";
     public string? ResolutionCwd { get; set; }
     public double RefreshIntervalMinutes { get; set; } = 5;
-    // This bound is also checked by the server. Refresh must precede expiry.
+    // Runner-local cache bound. Public display uses its own fixed fifteen-minute threshold.
     public int MaxAgeMinutes { get; set; } = 15;
 
     public void Validate()

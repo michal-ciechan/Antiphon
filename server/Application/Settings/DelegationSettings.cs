@@ -11,10 +11,6 @@ namespace Antiphon.Server.Application.Settings;
 /// </summary>
 public sealed class DelegationSettings
 {
-    /// <summary>A completed Codex CLI observation may be used for at most this many minutes.</summary>
-    public int CodexCliVersionMaxAgeMinutes { get; set; } = 15;
-    /// <summary>Operator-only, exact runner/model permissions. Expiry is checked on every use.</summary>
-    public List<CodexCliVersionOverride> CodexCliVersionOverrides { get; set; } = [];
     /// <summary>Fresh unpinned tasks inherit this mode unless their project overrides it.</summary>
     public WorkspaceMode DefaultWorkerWorkspace { get; set; } = WorkspaceMode.Worktree;
     public bool Enabled { get; set; } = true;
@@ -1175,37 +1171,11 @@ public sealed class LlmEnvInheritanceSettings
 /// null (unbounded) or a positive integer. Zero and negatives fail the host rather than
 /// silently treating a nonsense cap as "no recommendation" (CARD-0304).
 /// </summary>
-public sealed class CodexCliVersionOverride
-{
-    public string RunnerId { get; set; } = "";
-    public string Model { get; set; } = "";
-    public string Reason { get; set; } = "";
-    public DateTimeOffset ExpiresAtUtc { get; set; }
-    public List<string> AllowedRefusalCodes { get; set; } = [];
-}
-
-public sealed class DelegationSettingsValidator(TimeProvider? clock = null) : IValidateOptions<DelegationSettings>
+public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSettings>
 {
     public ValidateOptionsResult Validate(string? name, DelegationSettings options)
     {
         var failures = new List<string>();
-        var now = (clock ?? TimeProvider.System).GetUtcNow();
-        var tuples = new HashSet<(string, string)>();
-        foreach (var item in options.CodexCliVersionOverrides)
-        {
-            if (string.IsNullOrWhiteSpace(item.RunnerId) || item.RunnerId != item.RunnerId.Trim()
-                || !System.Text.RegularExpressions.Regex.IsMatch(item.RunnerId, @"\A[a-zA-Z0-9][a-zA-Z0-9_.-]*\z")
-                || item.Model == ModelAlias.KindWide || ModelAlias.Normalize(AgentKind.Codex, item.Model) != item.Model || string.IsNullOrWhiteSpace(item.Model)
-                || string.IsNullOrWhiteSpace(item.Reason) || item.Reason.Length > 1000
-                || item.ExpiresAtUtc == default || item.ExpiresAtUtc.Offset != TimeSpan.Zero
-                || item.ExpiresAtUtc <= now || item.ExpiresAtUtc - now > TimeSpan.FromHours(24)
-                || item.AllowedRefusalCodes.Count == 0 || item.AllowedRefusalCodes.Any(code =>
-                    code is not ("codex_cli_version_too_old" or "codex_cli_version_unknown" or "codex_cli_version_stale"))
-                || !tuples.Add((item.RunnerId, item.Model)))
-                failures.Add("Delegation:CodexCliVersionOverrides requires unique exact runner/model scopes, known CLI codes, a reason, and a UTC expiry within 24 hours.");
-        }
-        if (options.CodexCliVersionMaxAgeMinutes is < 1 or > 60)
-            failures.Add("Delegation:CodexCliVersionMaxAgeMinutes must be between 1 and 60.");
         if (options.DefaultWorkerWorkspace is not (WorkspaceMode.Shared or WorkspaceMode.Worktree))
             failures.Add("Delegation:DefaultWorkerWorkspace must be Shared or Worktree.");
         if (options.LandWarningSeconds <= 0 || options.LandErrorSeconds <= options.LandWarningSeconds)
