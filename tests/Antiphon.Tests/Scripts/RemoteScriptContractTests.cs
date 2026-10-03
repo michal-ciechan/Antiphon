@@ -149,7 +149,7 @@ public sealed class RemoteScriptContractTests
     {
         using var f = new C1008HostFixture();
         var run = await f.Run(extra: "sudo() { [ \"$1\" = -n ] && shift; if [ \"$1\" = df ]; then if [ -f \"$C1008_FIXTURE_ROOT/df-seen\" ]; then n=3072; else n=1024; touch \"$C1008_FIXTURE_ROOT/df-seen\"; fi; printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\nfixture 99999999 1 %s 1%% /fixture\\n' \"$n\"; elif [ \"$1\" = install ]; then mkdir -p \"${@: -1}\"; else \"$@\"; fi; }");
-        run.Output.ShouldContain("freeAfterBytes=3145728", "recycle-receipt-facts: measured after-df bytes");
+        run.Output.ShouldContain("freeAfterBytes=3145728", Case.Sensitive, "recycle-receipt-facts: measured after-df bytes");
         run.Output.ShouldContain("freeBeforeBytes=1048576"); run.Output.ShouldContain("deltaBytes=2097152");
         Regex.Matches(run.Output, "(?m)^C1008_RECYCLE ").Count.ShouldBe(1);
     }
@@ -193,7 +193,7 @@ public sealed class RemoteScriptContractTests
         {
             using var f = new C1008HostFixture(main);
             var run = await f.Run(main ? "deploy-parent" : "retire-temp-runner", dryRun: true);
-            run.Output.ShouldNotContain("MUTATION", "recycle-preview-readonly: preview precedes generic setup");
+            run.Output.ShouldNotContain("MUTATION", Case.Sensitive, "recycle-preview-readonly: preview precedes generic setup");
             f.Removed.ShouldBeEmpty("recycle-preview-readonly: no selected removal");
             f.Trace.Any(a => new[] { "stop", "rm", "create", "start", "run" }.Contains(a[0]) || a.Take(2).SequenceEqual(new[] { "volume", "rm" })).ShouldBeFalse();
             run.Output.ShouldContain("auditPending=true");
