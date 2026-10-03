@@ -98,6 +98,15 @@ RUN apt-get update \
  && install -m 0755 /tmp/claude-install/claude /usr/local/bin/claude \
  && env HOME=/tmp/claude-install CLAUDE_CONFIG_DIR=/tmp/claude-install/cfg DISABLE_AUTOUPDATER=1 /usr/local/bin/claude --version | grep -F "${CLAUDE_CODE_VERSION}" \
  && rm -rf /tmp/claude-install
+# CARD-0927: every runner target carries the verified static jq for cold-seed shell tests.
+ARG JQ_VERSION=1.7.1
+ARG JQ_SHA256=5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5
+RUN mkdir -p /tmp/jq-download \
+ && curl -fsSL -o /tmp/jq-download/jq "https://github.com/jqlang/jq/releases/download/jq-${JQ_VERSION}/jq-linux-amd64" \
+ && echo "${JQ_SHA256}  /tmp/jq-download/jq" | sha256sum -c - \
+ && install -o root -g root -m 0755 /tmp/jq-download/jq /usr/local/bin/jq \
+ && test "$(/usr/local/bin/jq --version)" = "jq-${JQ_VERSION}" \
+ && rm -rf /tmp/jq-download
 # CARD-0660 D-1/D-2: codex-cli's native linux-x64 platform package, pinned by version AND npm's
 # published SHA-512 (dist.integrity sha512-KI/73OqGrHmR18s7ya7E1NqV6rT0y3lxr0s8S1qR2m6zU6QRF/HlR529jALLh5vjdUnsRT4Ahoxt0axb4kY99g==
 # in hex). The archive is hashed before tar runs; a re-published tarball fails the build and the

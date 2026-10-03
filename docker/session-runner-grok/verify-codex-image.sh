@@ -10,6 +10,7 @@ set -u
 
 CODEX_VERSION=0.160.0
 GROK_VERSION=1.0.41
+JQ_VERSION=1.7.1
 PACKAGE_ROOT=/opt/codex/$CODEX_VERSION/package
 VENDOR=$PACKAGE_ROOT/vendor/x86_64-unknown-linux-musl
 # Regular files in @openai/codex@0.160.0-linux-x64 (measured from the pinned tarball).
@@ -73,6 +74,15 @@ case "$row" in
     [[ "$out" =~ $version_pattern ]] || result fail "version output does not match pinned Grok $GROK_VERSION format"
     [ ! -s "$PROBE_HOME/grok-version.err" ] || result fail "unexpected version stderr"
     result ok "Grok $GROK_VERSION as uid 1654 home=$PROBE_HOME/grok"
+    ;;
+  jq-version)
+    need_uid 1654
+    out=$(env HOME=$PROBE_HOME /usr/local/bin/jq --version 2>"$PROBE_HOME/jq-version.err")
+    code=$?
+    [ $code -eq 0 ] || result fail "exit=$code"
+    [ "$out" = "jq-$JQ_VERSION" ] || result fail "stdout=[$out] expected jq-$JQ_VERSION"
+    [ ! -s "$PROBE_HOME/jq-version.err" ] || result fail "unexpected version stderr"
+    result ok "jq-$JQ_VERSION as uid 1654"
     ;;
   layout)
     command -v ps >/dev/null 2>&1 || result fail "ps required by codex managed app-server"
@@ -217,7 +227,7 @@ EOF
     result ok "SDK=10.0.401 net9 apphost restore+build+run uid=1654 empty NuGet cache and home"
     ;;
   *)
-    echo "usage: verify-codex-image.sh version|grok-version|layout|install-readonly|no-baked-auth|fresh-home|trust|config-accepted|preserve-arm <nonce>|preserve-check|net9-offline" >&2
+    echo "usage: verify-codex-image.sh version|grok-version|jq-version|layout|install-readonly|no-baked-auth|fresh-home|trust|config-accepted|preserve-arm <nonce>|preserve-check|net9-offline" >&2
     exit 2
     ;;
 esac
