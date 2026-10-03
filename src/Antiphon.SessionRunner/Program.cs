@@ -57,6 +57,11 @@ builder.Services.PostConfigure<PhoneHomeSettings>(settings =>
 });
 builder.Services.AddHttpClient(nameof(PhoneHomeConnectionService));
 builder.Services.AddSingleton<PhoneHomeProcessIdentity>();
+builder.Services.AddOptions<CodexCliVersionSettings>()
+    .Bind(builder.Configuration.GetSection(CodexCliVersionSettings.SectionName))
+    .PostConfigure(settings => settings.Validate()).ValidateOnStart();
+builder.Services.AddSingleton<CodexCliVersionProbe>();
+builder.Services.AddHostedService<CodexCliVersionRefreshService>();
 builder.Services.AddSingleton(sp => new RunnerCapacityState(sp.GetRequiredService<IOptions<PhoneHomeSettings>>().Value));
 builder.Services.AddSingleton<IPhoneHomeAdoptionGate, PhoneHomeAdoptionGate>();
 builder.Services.AddSingleton<PhoneHomeCommandDispatcher>(sp =>
@@ -215,10 +220,12 @@ async ValueTask<object?> HerdrUnreachableFilter(EndpointFilterInvocationContext 
     var adopted = await runtime.AdoptOrphanedHostsAsync(probe, CancellationToken.None);
     if (adopted > 0)
         app.Logger.LogInformation("Adopted {Count} surviving pty-host session(s) from a previous runner", adopted);
+    await app.Services.GetRequiredService<CodexCliVersionProbe>().RefreshDefaultAsync(app.Lifetime.ApplicationStopping);
     app.Services.GetRequiredService<IPhoneHomeAdoptionGate>().SignalReady();
 }
 
 app.MapHealthChecks("/health");
+app.MapCodexCliVersionRoutes();
 
 // Which pseudoconsole every session here gets, on request. The server's delivery ceilings are
 // coupled to this answer (CARD-0037), and it is the one thing it cannot infer from its own
