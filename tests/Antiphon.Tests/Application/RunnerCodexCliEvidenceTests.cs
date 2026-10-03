@@ -42,7 +42,9 @@ public sealed class RunnerCodexCliEvidenceTests
         // Anonymous legacy-compatible wire shape allows this behavior to run before the member exists.
         await peer.EmitAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Heartbeat, epoch ?? peer.Epoch, Guid.NewGuid(),
             Payload: Shape(new { capacity, codexCli = cli })));
-        await host.Directory.Resolve(host.AllowedRunnerId).GetHealthAsync(CancellationToken.None);
+        // Health is allowed during recovery. Its reply is a receive-order barrier after the heartbeat.
+        await new PhoneHomeRunnerClient(host.Directory.SnapshotLive(host.AllowedRunnerId)!)
+            .GetHealthAsync(CancellationToken.None);
     }
 
     [Test]
