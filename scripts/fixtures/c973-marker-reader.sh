@@ -31,7 +31,7 @@ case "$variant" in
     malformed-image) sed -i 's/^image=.*/image=not-an-image/' "$C849_READY" ;;
     malformed-source) sed -i 's/^source-sha=.*/source-sha=not-a-sha/' "$C849_READY" ;;
     symlink) mv "$C849_READY" "$root/target"; ln -s "$root/target" "$C849_READY" ;;
-    foreign-volume|unwritable|foreign-main|no-main|no-image) ;;
+    foreign-volume|missing-volume|unwritable|foreign-main|no-main|no-image) ;;
     saved) C590_SAVED_DONOR=/fixture/saved ;;
     full)
         mkdir -p "$SERVER2_ROOT/cache/recovery-fixture/packages" "$SERVER2_ROOT/cache/recovery-fixture/npm"
@@ -76,6 +76,7 @@ docker() {
         volume:ls) printf '%s\n' "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM" ;;
         volume:inspect)
             name="${@: -1}"
+            [ "$variant" != missing-volume ] || { printf 'No such volume\n' >&2; return 1; }
             # Retired verification checks that temp private volumes are absent.
             [[ "$name" == "$TEMP_PROJECT"_* ]] && return 1
             [[ "$name" == "$HOST_PROJECT"_* ]] && return 0
@@ -92,7 +93,7 @@ docker() {
                     *) return 2 ;;
                 esac
             else
-                printf '[{"Name":"%s","Driver":"local","Options":{},"Mountpoint":"%s/volumes/%s/_data","Labels":{"io.antiphon.owner":"%s","io.antiphon.cache-schema":"1","io.antiphon.cache-role":"%s"}}]\n' "$name" "$root" "$name" "$owner" "$role"
+                printf '[{"Name":"%s","Driver":"local","Options":{},"CreatedAt":"2026-10-03T09:00:00Z","Mountpoint":"%s/volumes/%s/_data","Labels":{"io.antiphon.owner":"%s","io.antiphon.cache-schema":"1","io.antiphon.cache-role":"%s"}}]\n' "$name" "$root" "$name" "$owner" "$role"
             fi ;;
         inspect:*)
             case "$*" in
@@ -126,7 +127,7 @@ docker() {
         *) return 2 ;;
     esac
 }
-for function in c849_image c849_empty_volume c849_volume c849_prepare c849_cold_volume_facts c849_require_ready c849_assert_mounts c849_seed case_verify_runner_caches case_verify_runner_caches_retired; do
+for function in c1008_volume c1008_cache_preservation c849_image c849_empty_volume c849_volume c849_prepare c849_cold_volume_facts c849_require_ready c849_assert_mounts c849_seed case_verify_runner_caches case_verify_runner_caches_retired; do
     eval "$(extract "$function")"
 done
 # Cold reuse must not consult a donor or run smoke. Unexpected work is a refusal.
@@ -135,7 +136,11 @@ c849_no_temp_containers() { :; }
 c849_smoke() { write_result false UnexpectedSmoke 2; }
 case "$reader" in
     case_verify_runner_caches|case_verify_runner_caches_retired|c849_seed) "$reader" ;;
-    case_deploy_parent|case_deploy_temp_runner|case_retire_temp_runner)
+    case_retire_temp_runner)
+        c1008_refuse() { write_result false "$1" 2; }
+        c1008_cache_preservation || write_result false RecycleVolumeIdentityMismatch 2
+        write_result true '' 0 ;;
+    case_deploy_parent|case_deploy_temp_runner)
         # Execute this caller's exact prepare/ready reader slice, without its deployment.
         slice="$(extract "$reader" | awk '/^    c849_prepare / || /^    c849_require_ready / {print}')"
         eval "$slice"

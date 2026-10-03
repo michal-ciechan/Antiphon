@@ -98,6 +98,40 @@ public sealed class RollingVolumeRecycleScriptTests
             run.Trace.ShouldBeEmpty("recycle-manifest-strict: operation ID has no path authority");
             run.Exit.ShouldNotBe(0);
         }
+        // Invoke both real validators with raw JSON before any switch binding.
+        var raw = await C1008Process("pwsh", "-NoProfile", "-Command", $$"""
+            $ErrorActionPreference='Stop'
+            $repo='{{DelegateScriptRunner.RepoRoot.Replace("'", "''", StringComparison.Ordinal)}}'
+            foreach ($pair in @(@('deploy-server2.ps1','Assert-RecycleContext'),@('c590-real.ps1','Assert-C1008BridgeContext'))) {
+                $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $repo ('scripts/'+$pair[0])),[ref]$null,[ref]$null)
+                $name=$pair[1]
+                $function=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
+                if (-not $function) { throw 'real validator missing' }
+                Invoke-Expression $function.Extent.Text
+                foreach ($vector in @('false','true','string','null','number','omitted','unknown','volumes','project','operation')) {
+                    $context='{"version":1,"project":"antiphon-runner-temp","operationId":"c100800000000000000000000000000000001","dryRun":false,"resume":false,"projectId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1"}' | ConvertFrom-Json
+                    switch ($vector) {
+                        true {$context.dryRun=$true}
+                        string {$context.dryRun='false'}
+                        null {$context.dryRun=$null}
+                        number {$context.dryRun=0}
+                        omitted {$context.PSObject.Properties.Remove('dryRun')}
+                        unknown {$context | Add-Member -NotePropertyName recycleCaches -NotePropertyValue $false}
+                        volumes {$context | Add-Member -NotePropertyName volumes -NotePropertyValue @('antiphon-runner_runner-state')}
+                        project {$context.project='unsupported'}
+                        operation {$context.operationId='../receipt'}
+                    }
+                    $accepted=$true
+                    try { & $name -Context $context -Case 'retire-temp-runner' } catch {$accepted=$false}
+                    if ($accepted -ne ($vector -in @('false','true'))) { throw "recycle-manifest-strict: $name $vector accepted=$accepted" }
+                    Write-Output "$name/$vector checked"
+                }
+            }
+            """);
+        raw.Exit.ShouldBe(0, "recycle-manifest-strict: independent raw validators; " + raw.Output);
+        foreach (var validator in new[] { "Assert-RecycleContext", "Assert-C1008BridgeContext" })
+        foreach (var vector in new[] { "false", "true", "string", "null", "number", "omitted", "unknown", "volumes", "project", "operation" })
+            raw.Output.ShouldContain(validator + "/" + vector + " checked");
     }
 
     [Test]
@@ -165,6 +199,18 @@ public sealed class RollingVolumeRecycleScriptTests
             "retire-absent-null-accepted: retirement must remain stamped");
         JsonNode.Parse(File.ReadAllText(fixture.StatePath))!["statuses"]!["server2-temp"]!["retiredAt"]!
             .GetValue<string>().ShouldBe("2026-10-03T09:30:00Z");
+        var request = run.Trace.Single(x => x["kind"]?.GetValue<string>() == "case" &&
+            x["name"]?.GetValue<string>() == "retire-temp-runner");
+        request["recycle"]!["dryRun"]!.GetValue<bool>().ShouldBeFalse();
+        request["recycle"]!["project"]!.GetValue<string>().ShouldBe("antiphon-runner-temp");
+        using var host = new C1008HostFixture(main: false);
+        var operation = request["recycle"]!["operationId"]!.GetValue<string>();
+        Regex.IsMatch(operation, "^c1008[0-9a-f]{32}$").ShouldBeTrue();
+        var stamp = request["tempRetiredAt"]!.GetValue<string>();
+        var retired = await host.Run("retire-temp-runner", $"C1008_OPERATION='{operation}'; C590_TEMP_RETIRED_AT='{stamp}'");
+        retired.Exit.ShouldBe(0, "retire-absent-null-accepted: actual host entry using wrapper context; " + retired.Output);
+        host.Removed.ShouldBe(new[] { "antiphon-runner-temp_work", "antiphon-runner-temp_runner-tmp",
+            "antiphon-runner-temp_dind-data", "antiphon-runner-temp_runner-state" });
     }
 }
 
