@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "repositoryRoot": "/work/worktrees/task-535715ec",
+  "project": "/work/worktrees/task-535715ec/tests/Antiphon.Tests",
+  "outputPath": "/work/worktrees/task-535715ec/tests/Antiphon.Tests/bin-c1005-unit/",
+  "properties": [
+    "UseAppHost=false"
+  ],
+  "commit": "3947a6d339df9c2b1c0cf28c981da970edb90bbf",
+  "fingerprint": "86370be235d4136135c824f4cc7b676b75f7189867bb258a551d5371f8325fec",
+  "sourceState": "clean",
+  "pathName": "/work/worktrees/task-535715ec/tests/Antiphon.Tests/bin-c1005-unit/checkpoint-build-source.json"
+}
