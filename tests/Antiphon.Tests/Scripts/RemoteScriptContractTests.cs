@@ -123,10 +123,46 @@ public sealed class RemoteScriptContractTests
             f.Removed.ShouldBeEmpty("recycle-reference-refusal: running and exited foreign references preserve the whole set");
             run.Output.ShouldContain("RecycleVolumeInUse");
         }
-        foreach (var fault in new[] { "ps-error", "inspect-error", "inspect-empty", "volume-ls-error", "volume-inspect-error", "stop-failed", "stop-stays-running" })
+        foreach (var fault in new[] { "ps-error", "inspect-error", "inspect-empty", "inspect-malformed", "volume-ls-error", "volume-inspect-error", "stop-failed", "stop-stays-running",
+            "helper-rm-failed", "final-ps-error", "late-busy", "late-routing", "late-land", "late-attachment" })
         {
             using var f = new C1008HostFixture(); f.Docker["fault"] = fault;
             await f.Run(); f.Removed.ShouldBeEmpty("recycle-reference-refusal: " + fault);
+        }
+        foreach (var field in new[] { "sessions", "runnerSessions", "queuedTasks" })
+        foreach (var value in new JsonNode?[] { null, JsonValue.Create("0"), JsonValue.Create(false), JsonValue.Create(-1), JsonValue.Create(0.5), JsonValue.Create(1) })
+        {
+            using var invalid = new C1008HostFixture(); invalid.Statuses["server2"]![field] = value?.DeepClone();
+            var refused = await invalid.Run();
+            refused.Output.ShouldContain(value?.ToJsonString() == "1" ? "RunnerBusy" : "RunnerCounterUnknown", Case.Sensitive,
+                "recycle-reference-refusal: host typed " + field);
+            invalid.Removed.ShouldBeEmpty();
+        }
+        foreach (var field in new[] { "sessions", "runnerSessions", "queuedTasks" })
+        {
+            using var missing = new C1008HostFixture(); missing.Statuses["server2"]!.AsObject().Remove(field);
+            var refused = await missing.Run(); refused.Output.ShouldContain("RunnerCounterUnknown", Case.Sensitive, "recycle-reference-refusal: omitted host " + field);
+            missing.Removed.ShouldBeEmpty();
+        }
+        foreach (var state in new[] { "running", "created", "unknown" })
+        {
+            using var invalid = new C1008HostFixture();
+            invalid.Docker["containers"]![1]!["State"]!["Status"] = state;
+            invalid.Docker["containers"]![1]!["State"]!["Running"] = state == "running";
+            var refused = await invalid.Run();
+            invalid.Trace.Any(a => a[0] == "stop").ShouldBeFalse("recycle-reference-refusal: ambiguous state-init " + state);
+            refused.Output.ShouldContain("RecycleContainerStateUnknown");
+        }
+        foreach (var overlap in new[] { "exact", "descendant", "last-target" })
+        {
+            using var bind = new C1008HostFixture(); var foreign = bind.Container('5', "foreign", "foreign", false, "work");
+            var role = overlap == "last-target" ? "dind-data" : "work";
+            var target = Path.Combine(bind.Root, "volumes", "antiphon-runner_" + role, "_data");
+            if (overlap == "descendant") target = Directory.CreateDirectory(Path.Combine(target, "child")).FullName;
+            foreign["Mounts"]![0]!["Type"] = "bind"; foreign["Mounts"]![0]!["Source"] = target;
+            bind.Docker["containers"]!.AsArray().Add(foreign);
+            var refused = await bind.Run(); bind.Removed.ShouldBeEmpty("recycle-reference-refusal: whole set bind " + overlap);
+            refused.Output.ShouldContain("RecycleVolumeInUse");
         }
         using (var duplicate = new C1008HostFixture())
         {
@@ -207,6 +243,12 @@ public sealed class RemoteScriptContractTests
             await C1008GitGraph(accepted); var run = await accepted.Run();
             accepted.Removed.Length.ShouldBe(3, "recycle-work-preserved: published clean control reaches removal; " + run.Output);
         }
+        using (var drift = new C1008HostFixture())
+        {
+            await C1008GitGraph(drift); drift.Docker["fault"] = "audit-drift";
+            var refused = await drift.Run(); drift.Removed.ShouldBeEmpty("recycle-work-preserved: quiescent audit observes new work");
+            refused.Output.ShouldContain("RecycleWorktreeDirty");
+        }
         foreach (var fault in new[] { "head", "branch", "tag", "second-remote", "linked", "detached", "bare", "dirty", "staged", "untracked" })
         {
             using var f = new C1008HostFixture(); await C1008GitGraph(f, fault);
@@ -223,6 +265,22 @@ public sealed class RemoteScriptContractTests
         {
             await C1008GitGraph(accepted); var run = await accepted.Run();
             accepted.Removed.Length.ShouldBe(3, "recycle-git-unknown-refuses: complete history control; " + run.Output);
+        }
+        foreach (var fault in new[] { "exit128", "timeout", "empty", "nonnumeric", "negative", "shallow", "partial", "stale", "deleted", "missing", "broken-gitdir", "escaping-link", "missing-object", "origin-failed" })
+        {
+            using var bad = new C1008HostFixture(); await C1008GitGraph(bad);
+            var repo = Path.Combine(bad.Root, "work/repo");
+            if (fault is "exit128" or "timeout" or "empty" or "nonnumeric" or "negative") bad.Docker["gitFault"] = fault;
+            else if (fault == "shallow") File.WriteAllText(Path.Combine(repo, ".git/shallow"), File.ReadAllText(Path.Combine(repo, ".git/refs/heads/master")));
+            else if (fault == "partial") File.AppendAllText(Path.Combine(repo, ".git/config"), "\n[extensions]\npartialClone = origin\n");
+            else if (fault is "deleted" or "missing") File.Delete(Path.Combine(repo, ".git/refs/remotes/origin/master"));
+            else if (fault == "stale") File.WriteAllText(Path.Combine(repo, ".git/refs/remotes/origin/master"), new string('0', 40));
+            else if (fault == "broken-gitdir") File.WriteAllText(Path.Combine(bad.Root, "work/.git"), "gitdir: /missing\n");
+            else if (fault == "escaping-link") Directory.CreateSymbolicLink(Path.Combine(bad.Root, "work/escape"), bad.Root);
+            else if (fault == "missing-object") Directory.Delete(Path.Combine(repo, ".git/objects"), true);
+            else File.AppendAllText(Path.Combine(repo, ".git/config"), "\n[remote \"origin\"]\nurl = /missing-origin\n");
+            var refused = await bad.Run(); bad.Removed.ShouldBeEmpty("recycle-git-unknown-refuses: " + fault);
+            refused.Output.ShouldContain("RecycleGitAuditUnknown");
         }
         foreach (var marker in new[] { "index.lock", "MERGE_HEAD", "rebase-merge" })
         {
@@ -250,6 +308,14 @@ public sealed class RemoteScriptContractTests
         f.Removed.ShouldContain("antiphon-runner_runner-tmp", "recycle-tmp-assets: whole named tmp is recycled; " + run.Output);
         var compose = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "docker-compose.server2-runner.yml"));
         compose.ShouldNotContain("volume-nocopy");
+        foreach (var defect in new[] { "mode", "assets" })
+        {
+            using var bad = new C1008HostFixture();
+            if (defect == "mode") bad.Docker["tmpMode"] = "0755"; else bad.Docker["tmpAssets"] = false;
+            var refused = await bad.Run(extra: "c1008_verify_tmp " + new string('1', 64) + "; write_result true '' 0");
+            refused.Exit.ShouldBe(2, "recycle-tmp-assets: recreated " + defect + " refuses");
+            refused.Output.ShouldContain(defect == "mode" ? "RecycleTmpModeInvalid" : "RecycleTmpAssetsMissing");
+        }
         // Recreated asset/mode effects are independently required by RD-1.
     }
 
@@ -349,6 +415,63 @@ public sealed class RemoteScriptContractTests
         run.Output.ShouldContain("freeAfterBytes=3145728", Case.Sensitive, "recycle-receipt-facts: measured after-df bytes");
         run.Output.ShouldContain("freeBeforeBytes=1048576"); run.Output.ShouldContain("deltaBytes=2097152");
         Regex.Matches(run.Output, "(?m)^C1008_RECYCLE ").Count.ShouldBe(1);
+        foreach (var boundary in new[] { "preflight", "stop", "remove", "volume" })
+        {
+            using var interrupted = new C1008HostFixture();
+            var predicate = boundary switch {
+                "preflight" => "true", "stop" => "(.stopReceipts|length)>0",
+                "remove" => "(.removeReceipts|length)>0", _ => ".volumes[\"antiphon-runner_work\"].outcome==\"removed\""
+            };
+            var extra = "mv() { if printf '%s' \"$C1008_RECORD\" | jq -e '" + predicate + "' >/dev/null; then return 77; fi; command mv \"$@\"; }";
+            var failed = await interrupted.Run(extra: extra);
+            failed.Exit.ShouldBe(2, "recycle-receipt-facts: failed atomic replacement " + boundary);
+            failed.Output.ShouldContain("RecycleReceiptUnavailable");
+            if (boundary == "preflight") interrupted.Trace.Any(a => a[0] == "stop").ShouldBeFalse("recycle-receipt-facts: prewrite failure prevents all effects");
+            else {
+                var journal = Path.Combine(interrupted.Root, "server/recycle/c100800000000000000000000000000000001.json");
+                JsonNode.Parse(File.ReadAllText(journal)).ShouldNotBeNull("recycle-receipt-facts: previous atomic journal remains valid");
+                interrupted.ReloadDocker();
+                if (boundary != "stop") { interrupted.Statuses["server2"]!["runnerSessions"] = null; interrupted.Statuses["server2"]!["available"] = false; interrupted.Statuses["server2"]!["dispatchEligible"] = false; }
+                var recovered = await interrupted.Run(extra: "C1008_RESUME=1");
+                recovered.Exit.ShouldBe(0, "recycle-receipt-facts: corroborate persisted intent/absence " + boundary + "; " + recovered.Output);
+                interrupted.Removed.Length.ShouldBe(3);
+            }
+        }
+        foreach (var fault in new[] { "empty", "invalid", "negative", "after", "reverse", "filesystem" })
+        {
+            using var disk = new C1008HostFixture();
+            var extra = $$"""
+                sudo() { [ "$1" = -n ] && shift; if [ "$1" = df ]; then
+                  printf '%s\n' "$2 $3" >> "$C1008_FIXTURE_ROOT/df-argv"
+                  n=1024; fs=fixture
+                  if [ -f "$C1008_FIXTURE_ROOT/df-seen" ]; then
+                    n=3072; [ '{{fault}}' != after ] || return 77
+                    [ '{{fault}}' != filesystem ] || fs=foreign
+                    [ '{{fault}}' != reverse ] || n=1024
+                  else
+                    touch "$C1008_FIXTURE_ROOT/df-seen"
+                    [ '{{fault}}' != empty ] || return 0
+                    [ '{{fault}}' != invalid ] || n=unknown
+                    [ '{{fault}}' != negative ] || n=-1
+                    [ '{{fault}}' != reverse ] || n=3072
+                  fi
+                  printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n%s 99999 1 %s 1%% /fixture\n' "$fs" "$n"
+                elif [ "$1" = install ]; then mkdir -p "${@: -1}"; else "$@"; fi; }
+                """;
+            var observed = await disk.Run(extra: extra);
+            File.ReadAllText(Path.Combine(disk.Root, "df-argv")).ShouldContain("-Pk " + disk.Root, Case.Sensitive, "recycle-receipt-facts: Docker data-root filesystem");
+            if (fault == "reverse") { observed.Output.ShouldContain("deltaBytes=-2097152"); observed.Exit.ShouldBe(0); }
+            else {
+                observed.Output.ShouldContain("RecycleDiskUnknown"); observed.Exit.ShouldBe(2);
+                if (fault is "empty" or "invalid" or "negative") disk.Removed.ShouldBeEmpty("recycle-receipt-facts: unknown before cannot delete");
+                else { observed.Output.ShouldContain("freeAfterBytes=unknown"); observed.Output.ShouldContain("deltaBytes=unknown"); disk.Removed.Length.ShouldBe(3); }
+            }
+        }
+        using var partial = new C1008HostFixture(); partial.Docker["fault"] = "rm-second-failed";
+        var failedRemoval = await partial.Run();
+        partial.Removed.ShouldBe(new[] { "antiphon-runner_work" }, "recycle-receipt-facts: partial completion survives next rm failure");
+        failedRemoval.Output.ShouldContain("outcome=partial");
+        Regex.Matches(failedRemoval.Output, "(?m)^C1008_RECYCLE ").Count.ShouldBe(1);
     }
 
     [Test]
@@ -359,6 +482,25 @@ public sealed class RemoteScriptContractTests
         {
             var run = await accepted.Run("retire-temp-runner");
             accepted.Removed.Length.ShouldBe(4, "retire-host-proof: absent/null success removes four; " + run.Output);
+        }
+        foreach (var (field, value) in new (string, JsonNode?)[] {
+            ("retiredAt", JsonValue.Create("2026-10-03T09:31:00Z")), ("retiredAt", null),
+            ("draining", JsonValue.Create(false)), ("retireWhenIdle", JsonValue.Create(false)),
+            ("redirectTo", null), ("available", JsonValue.Create(true)), ("dispatchEligible", JsonValue.Create(true)),
+            ("acceptingNewWork", JsonValue.Create(true)), ("runnerSessions", JsonValue.Create("0")) })
+        {
+            using var invalid = new C1008HostFixture(main: false); invalid.Statuses["server2-temp"]![field] = value?.DeepClone();
+            var refused = await invalid.Run("retire-temp-runner");
+            invalid.Removed.ShouldBeEmpty("retire-host-proof: fresh host predicate " + field); refused.Exit.ShouldBe(2);
+        }
+        foreach (var fault in new[] { "down-retains-volume", "ps-error", "counterpart" })
+        {
+            using var invalid = new C1008HostFixture(main: false);
+            if (fault == "counterpart") invalid.Statuses["server2"]!["acceptingNewWork"] = false;
+            else invalid.Docker["fault"] = fault;
+            var refused = await invalid.Run("retire-temp-runner");
+            refused.Exit.ShouldBe(2, "retire-host-proof: checked down/census/counterpart " + fault);
+            invalid.Removed.ShouldBeEmpty();
         }
         using (var present = new C1008HostFixture(main: false))
         {

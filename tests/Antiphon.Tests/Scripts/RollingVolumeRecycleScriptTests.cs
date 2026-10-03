@@ -32,12 +32,48 @@ public sealed class RollingVolumeRecycleScriptTests
         var blocked = await present.Run("retire-temp");
         blocked.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse("retire-null-stays-closed: exited container retains null refusal");
         blocked.Output.ShouldContain("RunnerCounterUnknown");
+        foreach (var (field, value) in new (string, JsonNode?)[] {
+            ("retiredAt", JsonValue.Create("not-a-date")), ("retiredAt", null),
+            ("draining", JsonValue.Create(false)), ("retireWhenIdle", JsonValue.Create(false)),
+            ("redirectTo", JsonValue.Create("foreign")), ("redirectTo", null),
+            ("available", JsonValue.Create(true)), ("dispatchEligible", JsonValue.Create(true)),
+            ("acceptingNewWork", JsonValue.Create(true)), ("runnerSessions", JsonValue.Create("0")),
+            ("runnerSessions", JsonValue.Create(false)) })
+        {
+            using var invalid = new C1008WrapperFixture(); invalid.State["statuses"]!["server2-temp"]![field] = value?.DeepClone();
+            var refused = await invalid.Run("retire-temp");
+            refused.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse("retire-null-stays-closed: corrupt " + field);
+            refused.Exit.ShouldBe(2);
+        }
+        using var failedCensus = new C1008WrapperFixture(); failedCensus.State["censusError"] = true;
+        var unknown = await failedCensus.Run("retire-temp");
+        unknown.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse("retire-null-stays-closed: empty failed census is unknown");
+        unknown.Output.ShouldContain("TempContainerCensusUnavailable");
     }
 
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Busy_routed_and_land_in_flight_refuse()
     {
+        using (var held = new C1008WrapperFixture())
+        {
+            held.State["statuses"]!["server2"]!["draining"] = true;
+            held.State["statuses"]!["server2"]!["redirectTo"] = "server2-temp";
+            held.State["statuses"]!["server2"]!["acceptingNewWork"] = false;
+            held.State["allowClear"] = true;
+            var file = Path.Combine(held.Root, "rollout.lock"); held.State["rolloutLockFile"] = file;
+            var lease = File.Open(file, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            var running = held.Run("redeploy-old");
+            try {
+                var deadline = DateTime.UtcNow.AddSeconds(10);
+                while ((!File.Exists(held.TracePath) || !File.ReadAllText(held.TracePath).Contains("lock-request", StringComparison.Ordinal)) && DateTime.UtcNow < deadline)
+                    await Task.Delay(25);
+                File.ReadAllText(held.TracePath).ShouldContain("lock-request", Case.Sensitive, "recycle-work-gates: real admission lock barrier reached");
+                await Task.Delay(150);
+                File.ReadAllText(held.TracePath).ShouldNotContain("\"POST\"", Case.Sensitive, "recycle-work-gates: held rollout lock excludes POST entry");
+            } finally { lease.Dispose(); await running; }
+            (await running).Exit.ShouldBe(0);
+        }
         using (var good = new C1008WrapperFixture())
         {
             var run = await good.Run("retire-temp");
@@ -60,6 +96,34 @@ public sealed class RollingVolumeRecycleScriptTests
             var run = await f.Run("retire-temp");
             run.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse("recycle-work-gates: retained owner/pending land " + status);
         }
+        foreach (var fault in new[] { "sessions-null", "runnerSessions-null", "queuedTasks-null", "omitted", "accepting", "drain", "redirect", "counterpart" })
+        {
+            using var invalid = new C1008WrapperFixture(); invalid.MainDrained();
+            var status = invalid.State["statuses"]!["server2"]!;
+            if (fault.EndsWith("-null", StringComparison.Ordinal)) status[fault[..^5]] = null;
+            else if (fault == "omitted") status.AsObject().Remove("runnerSessions");
+            else if (fault == "accepting") status["acceptingNewWork"] = true;
+            else if (fault == "drain") status["draining"] = false;
+            else if (fault == "redirect") status["redirectTo"] = null;
+            else invalid.State["statuses"]!["server2-temp"]!["acceptingNewWork"] = false;
+            var refused = await invalid.Run("redeploy-old");
+            refused.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse("recycle-work-gates: main proof " + fault);
+            refused.Exit.ShouldBe(2);
+        }
+        foreach (var state in new[] { "Queued", "Held", "Running", "NeedsResolution", "Unknown", "omitted", "started" })
+        {
+            using var invalid = new C1008WrapperFixture();
+            var row = new JsonObject { ["id"] = "11111111-1111-1111-1111-111111111111", ["status"] = "Succeeded", ["runnerId"] = "other",
+                ["projectId"] = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1", ["scopeSource"] = "Task", ["landRequestedAt"] = null,
+                ["landStartedAt"] = state == "started" ? "2026-10-03T09:00:00Z" : null };
+            invalid.State["tasks"]!["items"]!.AsArray().Add(row);
+            var detail = new JsonObject { ["summary"] = row.DeepClone() };
+            if (state != "omitted") detail["landRequest"] = state == "started" ? null : new JsonObject { ["state"] = state };
+            invalid.State["details"] = new JsonObject { [row["id"]!.GetValue<string>()] = detail };
+            var refused = await invalid.Run("retire-temp");
+            refused.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse("recycle-work-gates: succeeded pending land " + state);
+            refused.Exit.ShouldBe(2);
+        }
     }
 
     [Test]
@@ -75,6 +139,13 @@ public sealed class RollingVolumeRecycleScriptTests
         run.Trace.Where(x => x["kind"]?.GetValue<string>() == "case").Select(x => x["name"]!.GetValue<string>())
             .ShouldBe(new[] { "verify-runner-caches" }, "recycle-wrapper-resume: healthy same SHA only verifies; " + run.Output);
         run.Exit.ShouldBe(0);
+        using (var incomplete = new C1008WrapperFixture())
+        {
+            incomplete.State["incompleteRecycle"] = true;
+            var refused = await incomplete.Run("redeploy-old");
+            refused.Trace.Any(x => x["method"]?.GetValue<string>() == "POST").ShouldBeFalse("recycle-wrapper-resume: healthy same SHA cannot hide an incomplete journal");
+            refused.Output.ShouldContain("RecycleResumeRequired");
+        }
         foreach (var fail in new[] { "", "deploy", "cache", "no-resume" })
         {
             using var partial = new C1008WrapperFixture();
@@ -271,6 +342,13 @@ internal sealed class C1008WrapperFixture : IDisposable
             ["tasks"] = vectors["emptyTasks"]!.DeepClone()
         };
         File.WriteAllText(Path.Combine(Root, "operator-token"), "C1008_TEST_TOKEN_SENTINEL");
+    }
+
+    internal void MainDrained()
+    {
+        var vectors = JsonNode.Parse(File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1008-recycle-cases.json")))!;
+        State["statuses"]!["server2"] = vectors["mainDrained"]!.DeepClone();
+        State["statuses"]!["server2-temp"] = vectors["tempAccepting"]!.DeepClone();
     }
 
     internal async Task<(int Exit, string Output, JsonObject[] Trace)> Run(string phase, params string[] extra)
