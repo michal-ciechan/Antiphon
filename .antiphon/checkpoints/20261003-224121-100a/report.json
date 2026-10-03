@@ -1,0 +1,271 @@
+{
+  "schemaVersion": 2,
+  "source": {
+    "version": 1,
+    "start": {
+      "commit": "e05216507e14b128a96006bc698e425d06919067",
+      "dirtyFiles": 0,
+      "fingerprint": "45b7de8cb35bd2a6952ffddf945fc58839193bf9f0c0ec43a35ef8a2666499dd",
+      "observedAtUtc": "2026-10-03T22:41:22.089517+00:00",
+      "captureStatus": "known",
+      "errorCode": null
+    },
+    "end": {
+      "commit": "e05216507e14b128a96006bc698e425d06919067",
+      "dirtyFiles": 0,
+      "fingerprint": "45b7de8cb35bd2a6952ffddf945fc58839193bf9f0c0ec43a35ef8a2666499dd",
+      "observedAtUtc": "2026-10-03T22:44:45.4922606+00:00",
+      "captureStatus": "known",
+      "errorCode": null
+    },
+    "state": "clean",
+    "buildSource": "verified"
+  },
+  "runId": "20261003-224121-100a",
+  "manifestPath": "/work/worktrees/task-5fcba512/.antiphon/checkpoints/20261003-224121-100a/manifest.resolved.yaml",
+  "manifestHash": "e8ba5cc7d7d3e8cf519b446bb83a642ed5f49a67e21df99cf1849de65b8acc16",
+  "commit": "e05216507e14b128a96006bc698e425d06919067",
+  "branch": "feat/card-task-5fcba512",
+  "worktree": "/work/worktrees/task-5fcba512",
+  "host": {
+    "os": "Debian GNU/Linux 12 (bookworm)",
+    "cores": 24,
+    "memAvailableMb": 103579,
+    "loadAvg": "9.89 8.28 4.98 1/3097 18174"
+  },
+  "startedAt": "2026-10-03T22:41:23.9386141+00:00",
+  "endedAt": "2026-10-03T22:44:45.5051537+00:00",
+  "wallSeconds": 201.5665396,
+  "sequentialEquivalentSeconds": 39.6864013,
+  "exitCode": 0,
+  "reason": null,
+  "verdict": "GREEN",
+  "builds": [
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": null,
+          "dirtyFiles": null,
+          "fingerprint": null,
+          "observedAtUtc": "2026-10-03T22:41:24.2708733+00:00",
+          "captureStatus": "unknown",
+          "errorCode": "not_observed"
+        },
+        "end": null,
+        "state": "unknown",
+        "buildSource": "unknown"
+      },
+      "id": "bin-c1008-red",
+      "project": "tests/Antiphon.Tests",
+      "state": "unused",
+      "seconds": 0,
+      "slot": "",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": null,
+          "dirtyFiles": null,
+          "fingerprint": null,
+          "observedAtUtc": "2026-10-03T22:41:24.2710899+00:00",
+          "captureStatus": "unknown",
+          "errorCode": "not_observed"
+        },
+        "end": null,
+        "state": "unknown",
+        "buildSource": "unknown"
+      },
+      "id": "bin-c1008-scripts",
+      "project": "tests/Antiphon.Tests",
+      "state": "unused",
+      "seconds": 0,
+      "slot": "",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": null,
+          "dirtyFiles": null,
+          "fingerprint": null,
+          "observedAtUtc": "2026-10-03T22:41:24.2710912+00:00",
+          "captureStatus": "unknown",
+          "errorCode": "not_observed"
+        },
+        "end": null,
+        "state": "unknown",
+        "buildSource": "unknown"
+      },
+      "id": "bin-c1008-cache",
+      "project": "tests/Antiphon.Tests",
+      "state": "unused",
+      "seconds": 0,
+      "slot": "",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": "e05216507e14b128a96006bc698e425d06919067",
+          "dirtyFiles": 0,
+          "fingerprint": "45b7de8cb35bd2a6952ffddf945fc58839193bf9f0c0ec43a35ef8a2666499dd",
+          "observedAtUtc": "2026-10-03T22:41:22.089517+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "end": {
+          "commit": "e05216507e14b128a96006bc698e425d06919067",
+          "dirtyFiles": 0,
+          "fingerprint": "45b7de8cb35bd2a6952ffddf945fc58839193bf9f0c0ec43a35ef8a2666499dd",
+          "observedAtUtc": "2026-10-03T22:44:05.5076012+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "state": "clean",
+        "buildSource": "verified"
+      },
+      "id": "bin-c1008-docs",
+      "project": "tests/Antiphon.Tests",
+      "state": "ok",
+      "seconds": 161.000917,
+      "slot": "granted",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": null,
+          "dirtyFiles": null,
+          "fingerprint": null,
+          "observedAtUtc": "2026-10-03T22:41:24.2710928+00:00",
+          "captureStatus": "unknown",
+          "errorCode": "not_observed"
+        },
+        "end": null,
+        "state": "unknown",
+        "buildSource": "unknown"
+      },
+      "id": "bin-c1008-real",
+      "project": "tests/Antiphon.Tests",
+      "state": "unused",
+      "seconds": 0,
+      "slot": "",
+      "slotReason": null,
+      "waitedSeconds": 0
+    }
+  ],
+  "rows": [
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": "e05216507e14b128a96006bc698e425d06919067",
+          "dirtyFiles": 0,
+          "fingerprint": "45b7de8cb35bd2a6952ffddf945fc58839193bf9f0c0ec43a35ef8a2666499dd",
+          "observedAtUtc": "2026-10-03T22:41:22.089517+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "end": {
+          "commit": "e05216507e14b128a96006bc698e425d06919067",
+          "dirtyFiles": 0,
+          "fingerprint": "45b7de8cb35bd2a6952ffddf945fc58839193bf9f0c0ec43a35ef8a2666499dd",
+          "observedAtUtc": "2026-10-03T22:44:45.1726643+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "state": "clean",
+        "buildSource": "verified"
+      },
+      "id": "CP-4",
+      "group": "linux-compose-doc-contract",
+      "filter": "/*/*/(DockerStackContractTests*)|(DindRunnerContractTests*)|(DockerStackSmokeCommandTests*)|(DockerStackDocumentationTests*)|(CheckpointImportTests*)|(CheckpointManifestTests*)/*",
+      "command": null,
+      "build": "bin-c1008-docs",
+      "state": "green",
+      "exitCode": 0,
+      "slot": "granted",
+      "slotReason": null,
+      "waitedSeconds": 0,
+      "executed": 207,
+      "passed": 207,
+      "failed": 0,
+      "skipped": 0,
+      "reruns": 0,
+      "trx": "/work/worktrees/task-5fcba512/.antiphon/checkpoints/20261003-224121-100a/rows/CP-4/run.trx",
+      "seconds": 39.6864013,
+      "line": "CHECKPOINT CP-4 commit=e05216507e14b128a96006bc698e425d06919067 build=ok filter=/*/*/(DockerStackContractTests*)|(DindRunnerContractTests*)|(DockerStackSmokeCommandTests*)|(DockerStackDocumentationTests*)|(CheckpointImportTests*)|(CheckpointManifestTests*)/* executed=207 passed=207 failed=0 skipped=0 trx=/work/worktrees/task-5fcba512/.antiphon/checkpoints/20261003-224121-100a/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=e05216507e14b128a96006bc698e425d06919067 sourceState=clean buildSource=verified",
+      "failures": [],
+      "rerunLines": [],
+      "slowClasses": [
+        {
+          "className": "Antiphon.Tests.Scripts.DockerStackSmokeCommandTests",
+          "seconds": 33.1657154,
+          "tests": 35
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointImportTests",
+          "seconds": 0.7449037000000001,
+          "tests": 20
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.DindRunnerContractTests",
+          "seconds": 0.17353800000000003,
+          "tests": 23
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.DockerStackContractTests",
+          "seconds": 0.14727639999999997,
+          "tests": 112
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.DockerStackDocumentationTests",
+          "seconds": 0.1088614,
+          "tests": 11
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointManifestTests",
+          "seconds": 0.019759400000000003,
+          "tests": 6
+        }
+      ],
+      "attempt": 1,
+      "repeat": null,
+      "timings": {
+        "slotWaitSeconds": 0,
+        "buildSlotWaitSeconds": 0,
+        "rowSlotWaitSeconds": 0,
+        "buildSeconds": 161.000917,
+        "producingBuild": "bin-c1008-docs",
+        "startupSeconds": 3.9089932,
+        "testsWallSeconds": 34.5136071,
+        "teardownSeconds": 0.6984424,
+        "testHostWallSeconds": 39.1213545,
+        "method": "utc-trx-and-monotonic-host",
+        "unavailableReason": null
+      }
+    }
+  ],
+  "unlisted": [],
+  "evidence": "/work/worktrees/task-5fcba512/.antiphon/checkpoints/20261003-224121-100a/report.md",
+  "cleanedOutputs": true,
+  "outputNames": [
+    "bin-c1008-red/",
+    "bin-c1008-scripts/",
+    "bin-c1008-cache/",
+    "bin-c1008-docs/",
+    "bin-c1008-real/"
+  ],
+  "maxConcurrentRows": 1,
+  "maxConcurrentBuilds": 1
+}
