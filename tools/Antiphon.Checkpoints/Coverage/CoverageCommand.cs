@@ -15,9 +15,10 @@ public sealed class CoverageCommand
         {
             if (format is not ("text" or "json")) throw new InvalidDataException("unsupported format");
             root = CanonicalRoot(root);
-            var planPath = SelectPath(plan); var planText = File.ReadAllText(planPath);
+            var contents = new Dictionary<string, string>(PathComparer());
+            var planPath = SelectPath(plan); var planText = Read(planPath, ConfinedFileReader.DocumentLimit);
             report.Plan = Relative(root, planPath); report.PlanSha256 = PlanCoverageReport.Hash(planText);
-            var imported = PlanTableImporter.ImportFile(planPath);
+            var imported = PlanTableImporter.ImportMarkdown(planText, planPath);
             if (imported.Manifest is null) throw new InvalidDataException("invalid checkpoint manifest");
             var selected = new Dictionary<string, CoverageSource>(PathComparer());
             var explicitSet = new HashSet<string>(PathComparer());
@@ -62,7 +63,7 @@ public sealed class CoverageCommand
                 var build = imported.Manifest.Builds.Single(b => b.Id == row.Build);
                 var project = SelectPath(build.Project, true);
                 var directory = Directory.Exists(project) ? project : Path.GetDirectoryName(project)!;
-                var candidates = ProjectSources(root, directory, selected.Values);
+                var candidates = ProjectSources(root, directory, selected.Values, path => Read(path, ConfinedFileReader.SourceLimit));
                 var index = new TestAssertionIndex(candidates);
                 if (index.Diagnostics.Any()) throw new InvalidDataException("invalid selected project syntax");
                 foreach (var operand in classOperands)
@@ -80,8 +81,18 @@ public sealed class CoverageCommand
                 }
             }
             if (selected.Count == 0) throw new InvalidDataException("empty source selection");
-            var checklistText = checklist is null ? null : File.ReadAllText(SelectPath(checklist));
+            var checklistText = checklist is null ? null : Read(SelectPath(checklist), ConfinedFileReader.DocumentLimit);
             report = new PlanCoverageAnalyzer().Analyze(report.Plan, planText, selected.Values.OrderBy(s => s.Path, StringComparer.Ordinal).ToArray(), checklistText);
+            string Read(string path, int limit)
+            {
+                inputPath = Relative(root, path);
+                if (!contents.TryGetValue(path, out var text))
+                {
+                    text = ConfinedFileReader.Read(root, path, limit);
+                    contents.Add(path, text);
+                }
+                return text;
+            }
             string SelectPath(string path, bool directoryAllowed = false)
             {
                 var full = Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(root, path));
@@ -92,7 +103,7 @@ public sealed class CoverageCommand
             {
                 inputPath = Relative(root, path);
                 if (!path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("source must be C#");
-                if (!selected.ContainsKey(path)) selected.Add(path, new(Relative(root, path), File.ReadAllText(path)));
+                if (!selected.ContainsKey(path)) selected.Add(path, new(Relative(root, path), Read(path, ConfinedFileReader.SourceLimit)));
             }
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException or InvalidOperationException
@@ -115,7 +126,7 @@ public sealed class CoverageCommand
             : suffix ? simple.StartsWith(token, StringComparison.Ordinal) : simple == token;
         return match && (ns == "*" || name.StartsWith(ns + ".", StringComparison.Ordinal));
     }
-    private static List<CoverageSource> ProjectSources(string root, string directory, IEnumerable<CoverageSource> explicitSources)
+    private static List<CoverageSource> ProjectSources(string root, string directory, IEnumerable<CoverageSource> explicitSources, Func<string, string> read)
     {
         var paths = new HashSet<string>(PathComparer());
         var visited = new HashSet<string>(PathComparer());
@@ -133,7 +144,7 @@ public sealed class CoverageCommand
         Walk(directory);
         foreach (var project in Directory.EnumerateFiles(directory, "*.csproj"))
         {
-            foreach (var include in XDocument.Load(Confined(root, project)).Descendants("Compile").Attributes("Include"))
+            foreach (var include in XDocument.Parse(read(Confined(root, project))).Descendants("Compile").Attributes("Include"))
             {
                 var value = include.Value.Replace('\\', Path.DirectorySeparatorChar);
                 if (value.Contains('*') || value.Contains('$')) throw new InvalidDataException("unsupported linked source requires literal scope");
@@ -145,7 +156,7 @@ public sealed class CoverageCommand
                 }
             }
         }
-        return paths.Order(StringComparer.Ordinal).Select(path => new CoverageSource(Relative(root, path), File.ReadAllText(path))).ToList();
+        return paths.Order(StringComparer.Ordinal).Select(path => new CoverageSource(Relative(root, path), read(path))).ToList();
     }
     private static StringComparer PathComparer() => OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
     private static string Relative(string root, string path) => Path.GetRelativePath(root, path).Replace('\\', '/');
