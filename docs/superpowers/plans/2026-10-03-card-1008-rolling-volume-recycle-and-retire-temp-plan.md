@@ -1,0 +1,652 @@
+# CARD-1008: rolling volume recycling and retired-temp cleanup
+
+Date: 2026-10-03. Plan baseline: `c6d5d56b5b4c565d36157e21de9c85029cc45b53`.
+Plan owner: task `9de0189e`, branch `feat/card-task-9de0189e`.
+
+## Outcome and authority
+
+Implement acceptance 2-5 of CARD-1008: recycle the standing runner's disposable
+volumes during replacement, safely remove all four temp volumes at retirement,
+preserve unpublished work, and record disk reclamation. This dispatch writes the
+plan only. It does not authorize a live rollout or execute a destructive probe.
+
+The full card was read through `card.ps1 get CARD-1008 -Board Antiphon`. Its policy
+is the authority supplied by this brief. The separate Docs task `719e9a27`, at
+`ebda8f4903c3f3ccf1b572e49236c7fd465f256e`, owns the policy prose; it is not in this
+baseline. Do not replace that task's changes or treat the old gate-9 human-confirmation
+sentence on this baseline as the agreed policy. Read the landed Docs change before
+Code edits the implementation examples. CARD-0831 and CARD-0994 were also read in full.
+
+Owners read: `docs/project-context.md`, `docs/ops-http.md`, the relevant route/DTO
+contracts in `docs/antiphon-api.md`, `docs/orchestration-loop.md`,
+`docs/agent-card-lifecycle.md`, `docs/docker-stack.md`, and the checkpoint,
+build-slot and Mutation sections of `docs/testing-and-build.md`. Format references:
+the CARD-1004 Linux composer plan and CARD-0891 plan-to-test coverage plan.
+
+Verification design is included below, but **TestDesign must freeze its fixture
+vectors, counts and maintenance-seed proof before Code**. This is a concrete
+design with a bounded test-design handoff, not permission for Build to invent those
+contracts while implementing the destructive path.
+
+## Ground truth
+
+| Card assumption / requested behavior | Code at the baseline | Design consequence |
+|---|---|---|
+| `redeploy-old` recycles disposable storage after drain. | `scripts/deploy-server2.ps1` calls `deploy-parent` only when `buildVersion != Sha`; `case_deploy_parent` in `scripts/c590-remote.sh` builds/prepares caches/seeds the checkout and runs Compose up. It never recycles these volumes. | Add an explicitly commissioned recycle context to this call; ordinary `deploy-parent` must not acquire destructive behavior by default. Same-SHA healthy retries remain verification-only. |
+| Stopping a container makes its volumes removable. | Docker retains references from stopped containers. Compose `state-init` also mounts `work` and `runner-state`; the project includes a separate build-slot broker. | Identify, stop and remove the owned runner/state-init containers without deleting volumes, then prove zero references. Do not stop the broker or blindly down the main project. |
+| Main has three disposable and four preserved volumes. | Main private names are `antiphon-runner_work`, `_runner-tmp`, `_dind-data`, `_runner-state`; caches have fixed external names independent of the Compose project. | Exact allowlists, with state/cache opt-ins separated. No prefix scan or prune. |
+| A retired, absent temp has null live inventory. | `Assert-ZeroCounters` refuses missing/null fields; `case_retire_temp_runner` independently calls strict `c849_status_zero`, which also rejects null. | Both layers need a retirement-specific absent-placeholder predicate. Do not weaken the shared cache/donor predicate. |
+| Cleanup should reclaim space when the disk is low. | Remote retirement currently calls `c849_prepare`, `c849_require_ready` and `c849_budget_gate` before `compose_temp down -v`; the budget gate refuses below 20 GiB. | Read-only preservation checks precede deletion; space-consuming deployment/cache checks follow reclamation. Low disk cannot itself prevent safe retirement. |
+| Existing CARD-0912 Cold can rebuild deleted caches. | `c849_cold_proof` requires one running main without overlapping cache mounts, plus retired/absent temp. Cold creates labelled empty roots, checks uid-1654 writes and publishes a schema-2 marker; it does not download a warm payload. | The current Cold front door cannot simply be called after stopping/removing main. Add a separate, strictly gated recycle-maintenance context sharing the volume/probe primitives. Distinguish empty cold readiness from later warmup cost. |
+| Recreating main state is just another deletion. | `/state/runner-store-id` belongs to the state volume. CARD-0953 requires stamped retirement, explicit clear, detached connection and lease expiry before a different store can register. | Default preserves state. Opt-in requires the full identity transition; ordinary drain/clear is insufficient. |
+| Zero seats means all work can be discarded. | `RunnerWorkspaceService` uses `/work/worktrees`, repository paths under the runner repository policy, and retained failed/blocked mirrors. Task summary has `runnerId`, status and pending-land fields. | Audit every repository/worktree in the work volume and the complete task census. A stopped process is not publication evidence. |
+| The manual publication check can run as root. | The incident's `git rev-list --count HEAD --not --remotes` ran as uid 1654; root can fail dubious-ownership checks. | Explicit uid/gid 1654, check exit codes and numeric output. Errors never become zero. |
+| `/tmp` may be cleaned by name. | CARD-0827's named mount copies the image `/tmp`, including `/tmp/antiphon-pty-hosts`, on first mount. | Recreate the entire exact volume using normal copy-up. No sweep within `/tmp`, and no `volume-nocopy` on that mount. |
+| CARD-0957 supplies a proven harness. | `77615d506` records 24 rolling groups/66 invocations/227 assertions, 52 cache results and 19 real-Docker outcomes; retained fixture is `scripts/fixtures/c973-rolling-host-cases.mjs`. | Reuse its trace/assertion and real-daemon isolation patterns. These are historical receipts, not executions by this Plan task. |
+| One script edit transports new flags. | `deploy-server2.ps1` writes manifests; `verify-docker-stack.ps1` routes cases; `c590-real.ps1` validates/exports manifest fields to the host shell. | Include both transport files and their tests in scope; reject malformed options at both boundaries. |
+
+Platform observation: GET `/api/runner-defaults` returned revision 2, with an
+automatic Linux runner preference, and GET `/api/session-runners` returned a live
+Linux runner, live Windows desktop and offline retired temp at 10:23 UTC. This is
+an observation, not a pinned fleet layout. Resolve these routes again at dispatch.
+Omit `-Runner` for ordinary work; select `-Platform Linux` only for the shell/real
+Docker rows that require it. Omit `-Platform` for platform-independent work;
+`-Platform Any` explicitly removes a previous OS pin. Production runner/project
+identifiers below are the existing deployment contract, not placement instructions.
+
+## Decisions
+
+### D-1: exact targets and an explicit deployment context
+
+Default main recycle set, in deterministic order:
+
+1. `antiphon-runner_work`
+2. `antiphon-runner_runner-tmp`
+3. `antiphon-runner_dind-data`
+
+`-RecycleRunnerState` adds only `antiphon-runner_runner-state`.
+`-RecycleCaches` adds only `antiphon-runner-cache-nuget-packages`,
+`antiphon-runner-cache-nuget-scratch`, `antiphon-runner-cache-npm-content`.
+Both flags default false, are valid only for explicit `-Phase redeploy-old`, and
+require D-6 maintenance proof. Refuse them on `all`, temp phases and unrelated
+host cases as `RecycleOptionsInvalid`; do not silently ignore a misplaced flag.
+Default `all` still performs its ordinary main recycle and temp retirement.
+
+The wrapper passes typed booleans and a recycle operation identifier through the
+manifest to `deploy-parent`; the host rejects strings such as `"false"`, unknown
+fields in the recycle object, user-supplied volume lists and unsupported projects.
+Direct/legacy `deploy-parent` without that context preserves its current behavior.
+Prefer a small `c1008_*` helper group in the remote script over a second deployment
+driver. Transport functions remain ASCII-only and use literal argument arrays.
+
+Temp retirement always ends in `compose_temp down -v` for exactly its private
+`work`, `runner-tmp`, `dind-data`, `runner-state` volumes. Validate the rendered
+Compose model: the four names are project-private/non-external and the three cache
+volumes remain external with their fixed names. A changed model refuses
+`RecycleComposeMismatch`, before down. After down inspect all four private names
+and the preserved state/cache names; an unremoved target is a failure, not success.
+
+Rejected: blanket main `down -v`, `docker volume prune`, `docker system prune`,
+prefix/substring selection, accepting arbitrary volume names, or silently turning
+all calls to `deploy-parent` into a cleanup command. Those alternatives either
+delete identity/shared caches or widen the destructive entry point.
+
+### D-2: proof before stop, proof before removal, no unknown-as-zero
+
+Use a host rollout lock, then the existing cache-maintenance lock, in that fixed
+order. Recycle/retire and their admission-changing rollout paths must respect the
+rollout lock; do not nest a second acquisition of the same lock in helper calls.
+The lock protects script operations, not the server's repository mutation lease.
+
+Before stopping anything, require integer `sessions=0`, `runnerSessions=0`,
+`queuedTasks=0`, explicit `acceptingNewWork=false`, a durable drain with the expected
+redirect, and the other runner accepting for a normal rolling main replacement.
+Require a complete task/land census and D-3 publication audit. List the exact owned
+container IDs, labels, image digest, state and mounts. Reject unknown containers,
+foreign consumers or duplicate runner identities before touching availability.
+
+Then stop the identified runner gracefully, verify it is stopped, and remove only
+its exact ID and identified stopped `state-init` IDs, without `-v`. Never use
+`docker rm -f` to turn live sessions into a zero result. A running/ambiguous
+state-init or unexpected service refuses `RecycleContainerStateUnknown`. Preserve
+the build-slot broker/network. A stop failure leaves all volumes intact.
+
+Audit the now-quiescent work volume again with a temporary helper using the
+inspected/pinned runner image, explicit `--user 1654:1654`, read-only work mount at
+its original `/work` path and an overridden entrypoint that cannot start the
+runner. Remove the helper and wait for its removal before the final census.
+An inspect failure must never create a missing source volume implicitly.
+
+Immediately before the first removal, re-read counters/routing/land/task evidence
+and every selected volume's references using `docker ps -aq` (including exited
+containers), backed by inspected mount names and canonical bind-mount overlap
+checks. Validate all targets before deleting the first one, and recheck each target
+at removal. The stopped/removed main's live inventory may turn null: accept that
+only against this operation's saved strict-zero observation and exact stop/removal
+receipt, with fresh server-side zeros and unchanged drain. A generic offline main
+does not acquire the retired-temp exception.
+
+Use one exact `docker volume rm -- <name>` per target. Docker's own in-use refusal
+is a final protection against attachment races; preserve it as
+`RecycleVolumeInUse`, never retry with force. No collection-wide optimistic delete.
+Recreate via the existing state-init/checkout-seed/Compose up path. Verify image
+SHA, mount identities, `/tmp` mode/host assets and caches before clearing the drain.
+
+Typed refusal families (exit 2, plus structured receipt):
+
+| Reason | Required detail / refusal boundary |
+|---|---|
+| `RunnerStatusMissing`, `RunnerCounterUnknown`, `RunnerBusy` | Runner, field, observed type/value; omitted/null/string/bool/fractional/negative counters refuse. Existing stable names remain usable. |
+| `RecycleRoutingActive`, `RecycleRoutingUnknown` | Accepting/drain/redirect or routed-task inconsistency; no stop/remove. |
+| `RecycleLandInFlight`, `RecycleLandUnknown` | Pending land task/operation IDs, or unavailable/incomplete census; no remove. Queued/held lands also refuse. |
+| `RecycleBoundTasks`, `RecycleTaskCensusUnknown` | Target-bound queued/dispatched/working/blocked/failed task IDs or an incomplete/unavailable response. |
+| `RecycleUnpublishedWork`, `RecycleWorktreeDirty`, `RecycleGitAuditUnknown` | Repo/worktree relative path, ref/tip/count and stable cause; no Git stderr/credential URLs. |
+| `RecycleVolumeInUse`, `RecycleVolumeCensusUnknown`, `RecycleVolumeIdentityMismatch` | Exact selected volume and owning container IDs, or failed enumeration/changed identity. |
+| `RecycleStopFailed`, `RecycleRemoveFailed`, `RecycleReceiptUnavailable` | Last completed boundary and exact retained/removal state; leave drain set. |
+| `RecycleStateResetNotAuthorized`, `RecycleCacheMaintenanceRequired` | Missing D-6 identity/maintenance prerequisites; fail before any main stop. |
+| `RecycleResumeMismatch`, `RecycleDiskUnknown` | Receipt/source/volume generation mismatch, or unparseable df; no deletion on an unknown before observation. |
+
+Task census implementation uses documented endpoints, not board previews. Start
+with the deployment's resolved project scope, GET
+`/api/agent-tasks?projectId=<id>&unscoped=include&includeChecks=true` without a
+`since` or status window, and follow `excluded.byProject` with explicitly scoped
+reads until the census closes. Reconcile IDs/counts and recheck exclusions for
+new scopes; unreadable scopes refuse. The current list has no pagination and
+must not be given invented `runnerId`, `limit` or page query parameters. Inspect
+`runnerId` locally; retain only IDs/status/ref facts in evidence, not goals/results.
+Pending `landRequestedAt`/`landStartedAt` and detail `landRequest` are evidence;
+the pipeline preview alone cannot establish no land. Freeze DTO/null/legacy
+interpretation in TestDesign. Check pending lands across the closed census,
+including succeeded tasks, because task status is not landing status.
+
+The no-new-land interval remains an orchestrator rollout precondition. Scripts
+recheck immediately before removal and refuse a changed snapshot. No script-only
+lock claims to exclude an independently initiated server land atomically. If the
+caller needs an atomic fleet maintenance lease, that requires a separate server
+contract; this plan does not invent an HTTP lease or claim that stronger guarantee.
+
+### D-3: unpublished-work custody is independent of liveness
+
+Enumerate all repositories/mirrors in the exact work volume, not just the primary
+checkout or worktrees whose tasks are Succeeded. Use the runner's repository
+policy roots, `/work/repos`, `/work/worktrees`, Git common directories and
+`git worktree list --porcelain`; include detached worktrees, standalone clones,
+bare mirrors, and local branch/tag refs without a checked-out worktree. Bound
+traversal to this volume, reject escaping symlinks/broken gitdir pointers and
+in-progress rebase/merge/index-lock state. An unreadable entry is an audit refusal.
+
+Run `git rev-list --count HEAD --not --remotes` **as uid 1654**, checking exit status
+and a single nonnegative integer. This reproduces the manual incident check, but
+does not let another remote mask an unpublished origin commit: prove all remote
+tracking refs are origin's, or use the stronger
+`git rev-list --count HEAD --not --remotes=origin` for the verdict. Check each local
+branch/tag tip similarly; bare mirrors need explicit tip/ref enumeration, not a
+possibly absent HEAD. Record the tip hashes and comparison-ref digest.
+
+Require a current origin ref advertisement to agree with the local origin
+comparison set before trusting zero; stale/deleted/missing refs, missing objects,
+shallow/partial history that cannot prove ancestry, or failed remote observation
+are `RecycleGitAuditUnknown`. Do not turn `git` exit 128, dubious ownership, timeout
+or empty stdout into zero. Disable optional locks and lazy object fetching in the
+read-only helper; it must refuse if proof needs a write. Do not add `safe.directory=*`.
+The baseline/live origin audit can run before stop; repeat the local tip/ref census
+after stop against that captured advertisement and refuse drift. An already-absent
+temp uses the same read-only uid-1654 helper and explicit noninteractive origin
+observation; no production secret/home mount is needed for this repository.
+
+Refuse nonzero unpublished counts, dirty index/worktree or untracked work, and
+Blocked/Failed tasks bound to the runner even if their currently inspected HEAD
+looks published. List task IDs and paths for caller recovery. Recovery is separate:
+publish/salvage using the existing runner WorkspacePublish path, resolve or retire
+the task's workspace obligation, refresh refs deliberately as uid 1654, then retry.
+The cleanup operation never commits, pushes, resets or deletes a suspicious repo.
+Ignored build products are disposable; this is a tip/ref/worktree audit, not a
+promise to recover arbitrary unreachable objects from old reflogs.
+
+### D-4: narrow retired-absent exception, in both languages
+
+Keep `Assert-ZeroCounters` strict for ordinary main and cache maintenance calls.
+Add a retirement-specific predicate with these jointly required facts:
+
+- Valid `retiredAt`, `draining=true`, `retireWhenIdle=true`, `redirectTo=server2`.
+- Present integer `sessions=0` and `queuedTasks=0`; no routed tasks from D-2.
+- Present `runnerSessions`: either integer zero, or null only for the exception.
+- For null: `available=false`, `dispatchEligible=false`, `acceptingNewWork=false`
+  and a successful current host census proving **no project container**, including
+  stopped/created/state-init containers. Empty stdout after SSH failure is not absence.
+- Main is accepting and the retirement timestamp/redirect still match when the
+  host repeats the predicate immediately before cleanup.
+
+The wrapper's SSH census and the remote host's census must agree. Missing fields,
+malformed values, wrong redirect, unknown census, or a new container invalidate the
+exception. Present-container plus null still returns `RunnerCounterUnknown`;
+`deploy-temp` retains `TempContainersRemain`. Do not change `c849_status_zero` to
+accept null for donors, Reset, Prune or Seed. An ordinary temp with a proven live
+zero inventory may be gracefully stopped/removed under D-2 before final `down -v`.
+An already-exited container with null inventory remains a reviewed recovery case,
+as explicitly required by this brief; CARD-0994's broader original proposal is
+not silently admitted.
+
+Already-absent volumes are recorded as `alreadyAbsent`; still execute the validated
+temp Compose down and produce a fresh receipt. Keep the API row retired. No
+`/drain/clear`, registration or source checkout is needed just to reclaim temp.
+Missing/corrupt Compose inputs refuse; do not guess a replacement volume model.
+
+### D-5: durable receipts, partial failure and disk ordering
+
+Store a schema-versioned JSON journal under the existing host evidence root outside
+all recycled volumes, and copy it to the wrapper's `.antiphon/rolling-server2/<id>/`.
+Bind source SHA, operation ID, project, flags, retiredAt/old store where applicable,
+Compose digest, original container IDs/images, each volume's name/driver/CreatedAt/
+labels, audit digests, counters, task/land observations and timestamps. Record
+`preflight`, `stopped`, `containersRemoved`, per-volume `removed|alreadyAbsent`,
+`recreated`, `verified`, and `completed` using atomic file replacement. Refusal
+receipts include the completed subset; a later failure never erases earlier removal.
+Evidence-write failure before mutation refuses; failure after mutation reports
+partial completion and keeps the drain.
+
+Observe Docker's data-root filesystem with numeric `df -Pk` available blocks,
+convert to bytes without locale-dependent parsing, and retain raw before/after
+rows. Before is just before removal; after is after deletion and before new builds
+or seeding. Print exactly one summary on each attempted recycle, for example:
+
+```text
+C1008_RECYCLE project=antiphon-runner operation=<id> removed=3 alreadyAbsent=0 freeBeforeBytes=<n> freeAfterBytes=<n> deltaBytes=<signed-n> outcome=completed receipt=<path>
+```
+
+Use `outcome=partial|refused|preview` and unknown fields explicitly when necessary;
+never invent zeros or promise a positive delta on a shared filesystem. Final deploy
+verification and this deletion receipt are distinct outcomes.
+
+Do not put `c849_budget_gate` before temp deletion, or require a warm cache/helper
+image merely to prove that unrelated cache volumes were preserved. Read-only
+cache identity/external-mount checks suffice there. For main, recycle only after
+all safety preconditions, then run CacheDiskLow **before** image build/seed/up
+allocations. If space remains below threshold, stop with the reclaim receipt,
+main drained and temp accepting. `deploy-temp`'s existing early disk gate is
+unchanged: this feature cannot repair insufficient space before temp exists.
+
+Introduce `-ResumeRecycle <operation-id>` for an incomplete committed journal,
+with a strict non-path operation-ID grammar. Revalidate source/flags/project,
+retirement, fresh server state and volume generations. Already removed names may
+be absent; newly appearing or recreated generations refuse rather than being
+deleted again. An interrupted `volume rm` whose journal update did not land is
+resolved by inspection. A volume known absent after removal can be skipped, but
+an unknown generation cannot. A partial up/seed records its owned new generations;
+resume verifies/completes those without recycling them a second time. Never use
+`buildVersion == Sha` alone to hide an incomplete journal, and never recycle a
+healthy same-SHA runner merely because the command was rerun.
+
+Rejected: swallowing `rm` failures, treating every inspect error as absence,
+rerunning the whole deletion loop after a failed up, journaling inside `/work` or
+`/tmp`, and accepting an arbitrary evidence path as authority.
+
+### D-6: opt-ins have stronger maintenance preconditions
+
+State reset is an explicit one-way identity operation. Start from main's strict
+live-zero drain proof and save it with the old store in this operation's journal.
+The opted-in phase then uses the existing drain/retire path to request retirement
+and wait for its stamp. Save the stamp before proceeding. Its resulting null live
+inventory is accepted only against that operation's pre-retirement zero proof,
+fresh server-side zeros and inspected stopped/absent owned containers. A pre-existing
+offline main with no such proof refuses; a matching resume journal can supply it.
+Stop/remove its owned containers, prove absence, delete the selected volumes, then
+perform the CARD-0953 explicit retirement clear and a non-retiring verification
+hold. Wait for detached connection/lease expiry; new
+registration must supply a different store and the requested SHA. `StoreMismatch`
+is a stop condition, never something to bypass or erase by direct DB mutation.
+Restarting with preserved state uses the normal existing-store path. Document
+that state loss also affects runner-local stores/configuration/auth not separately
+bind-mounted; never read, log or delete the host's Codex/secret mounts.
+
+Caches are shared. `-RecycleCaches` requires **both** runner consumers drained,
+strictly idle (or evidenced retired/absent), no queued/routed work or lands, temp
+retired/absent, and no foreign container or bind-overlap consumer of any cache volume.
+An accepting temp during normal rolling deployment therefore refuses before main
+is stopped; a flag is not permission to delete its mounted caches. The caller must
+commission a maintenance window, not turn the rolling redirect into two drains.
+This explicit context replaces D-2's accepting-temp requirement with both runners'
+closed admission proof; it never changes that requirement for default recycling.
+Main's identified containers may still reference caches at preflight: stop/remove
+those under D-2, then require absolutely no references before any cache deletion.
+Combining both flags follows the same saved live-zero/retirement chain for state.
+
+After exact cache removal, invalidate only the validated old seed marker with a
+receipt. A recycle-maintenance context in `c849_cold_proof` accepts **absent main**
+only with this operation's completed stop/audit/removal journal and a retained,
+inspected helper-image digest. It replaces the running-main/no-cache-mount proof
+with both-runner quiescence and no-consumer proof; it does not weaken ordinary
+`Seed -Cold`. Share CARD-0912's label/driver/path/ownership checks, 1654 write probes,
+empty-content tests and atomic schema-2 cold marker publication. Invoke it as a
+separate `runner-cache-recycle-seed` host case so `write_result`/EXIT semantics cannot terminate deployment
+halfway through a helper substitution. Freeze this context in TestDesign before
+Code; include positive and negative comparisons with ordinary Cold.
+
+Proceed through fresh work seeding/up, `verify-runner-caches` cold-context checks
+and requested-SHA registration before clearing admission. Empty valid cold caches
+are the initial state; restoring performance may take minutes to an hour depending
+on workload/network. Do not falsely assert a full donor/apphost payload is already
+present. Preserve the existing full-seed, saved-donor and cache verification gates.
+
+### D-7: dry-run is a preview, not an authorization receipt
+
+Implement `-DryRun` for explicit `redeploy-old` and `retire-temp`. It prints ordered
+exact removal candidates, preserved names, container owners, current counters,
+refusal reasons and available disk. It performs GET/SSH census/inspect/Compose
+config reads only, plus owned evidence writes. It makes no POST, drain clear,
+container stop/remove/start, Docker volume create/remove, seed-marker write, image
+build, checkout mutation or secret provisioning call. Intercept before the generic
+host setup path, which currently mutates directories/checkouts.
+
+If an absent-container Git audit needs a helper, preview says `auditPending=true`
+rather than creating one or claiming authorization. Apply always obtains fresh
+proofs and cannot consume preview as a destructive permit. Invalid flags refuse in
+preview too. `-DryRun -Phase all` refuses rather than simulating unperformed drains.
+
+## Slices and owned files
+
+Plan and TestDesign edit this plan; Code owns the following closed footprint.
+Read dependencies do not confer permission to change server DTOs, drain services,
+runtime leases, Docker daemon settings or runner workspace services.
+
+| Slice | Exact files / scope | Work and exit evidence |
+|---|---|---|
+| S1: detecting fixtures | `scripts/test-deploy-server2.ps1`; `scripts/fixtures/c727-fake-http.ps1`; `scripts/fixtures/c727-fake-verify.ps1`; new `scripts/fixtures/c1008-recycle-cases.json`; new `scripts/fixtures/c1008-fake-docker.sh`; new `tests/Antiphon.Tests/Scripts/RollingVolumeRecycleScriptTests.cs`; additions to `tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs` | Freeze state/command traces and introduce the V methods. Commit/push; CP-1 must fail the retired-absent success assertion against unchanged production, not fail from missing dependencies. |
+| S2: default recycle and custody guards | `scripts/deploy-server2.ps1`; `scripts/c590-remote.sh`; `scripts/c590-real.ps1`; `scripts/verify-docker-stack.ps1`; S1 tests/fixtures | D-1..D-5 default main + narrow temp exception; task/land/Git proof, exact removal, journals, disk receipt, partial recovery. Commit/push this complete behavior before adding opt-ins. |
+| S3: maintenance opt-ins and preview | S2 production paths; `scripts/verify-card0849-caches.ps1` only for explicit maintenance-context transport if needed by the frozen design; S1 tests/fixtures | D-6 state reset/cache context and D-7 dry-run; preserve ordinary Cold/Seed/Reset/Prune. Commit/push, then CP-2 on S1-S3. |
+| S4: regression, real comparison and docs alignment | new `scripts/fixtures/c1008-recycle-real-cases.mjs`; new `tests/Antiphon.Tests/Scripts/RollingVolumeRecycleDockerTests.cs`; `scripts/test-deploy-server2-jq.ps1`; `scripts/fixtures/c973-marker-reader.sh`; S1 fixture count pins; `tests/Antiphon.Tests/Infrastructure/DockerStackDocumentationTests.cs`; `docs/docker-stack.md`; `server/Bundles/orchestrator.md` only if a rollout instruction there conflicts with the landed policy | Freeze the real fixture's allowlist/cleanup and final rosters; align examples/pins after the separate Docs task lands. Commit/push and run CP-3..CP-5. Amend this plan only for reviewed fixture/count reconciliation. |
+
+Scope list for dispatch is these literal paths, plus this plan path, not `scripts/**`
+or `tests/**`. `RemoteScriptContractTests.cs` and `c590-remote.sh` collide with
+CARD-0980/CARD-0983; serialize work touching them. Re-read the current landed file
+before integration, preserve their test additions, and update the frozen regression
+count if their changes alter it. The CARD-1008 Docs task similarly owns overlapping
+documentation until it lands. No parallel Code dispatch into these paths.
+
+## Verification design
+
+All new script tests execute production functions or the actual wrapper with
+controlled HTTP/SSH/Docker boundaries; textual name checks alone cannot discharge
+destructive behavior. Fake Docker must model stopped-container references,
+exact-name matching, failure exit codes, Compose-created generations and copy-up.
+Use real disposable Git repositories with published and unpublished commits for
+audit cases; fake only the Docker/SSH transport, not rev-list's answer.
+
+Each V method below is one `[Test]` result, with explicit case vectors inside it;
+case/assertion counts are separate. New process-spawning methods carry the existing
+assembly-local `ParallelLimiter<ProcessSpawnLimit>`. TUnit wrapper children inherit
+the checkpoint's build-slot lease and launch no additional build/test driver. Do
+not run the Pty assembly concurrently. Require bash, jq, Git, Node and pwsh for the
+Linux lane; unavailable tools are a not-run qualification, not a green skip.
+
+### V-matrix
+
+Class abbreviations in this table: Remote = `RemoteScriptContractTests`, Rolling =
+`RollingVolumeRecycleScriptTests`, Real = `RollingVolumeRecycleDockerTests`.
+Methods and assertion labels below are the test-design contract, not claims that
+these methods already exist. Every fault has an adjacent accepted control.
+
+| ID | Named test | Cases and decisive assertion label |
+|---|---|---|
+| V-1 | Remote.`C1008_Recycle_exact_default_volumes` | Exact default three removed in order; main state, three caches, all temp names, `antiphon-runner_work-extra`, `schoolrevision-staging` and `openclaw-state` survive byte/identity checks; broker stays running. `recycle-exact-defaults`. |
+| V-2 | Remote.`C1008_Recycle_refuses_references_and_unknown_census` | Own runner/state-init stop+rm precedes volume removal; foreign running and stopped consumers, bind overlap, duplicate identity, failed/empty-on-error ps/inspect, concurrent attachment all refuse; no earlier target deleted on preflight failure. `recycle-reference-refusal`. |
+| V-3 | Remote.`C1008_Recycle_audits_work_as_1654` | Real Git audit runs as 1654 across linked/detached worktrees, standalone clone and bare mirror, including path spaces; root's dubious ownership is an error control, never zero. `recycle-audit-uid`. |
+| V-4 | Remote.`C1008_Recycle_refuses_unpublished_and_dirty_work` | Unpushed HEAD, local branch without checkout, another remote containing HEAD but origin lacking it, dirty/index/untracked work, blocked/failed task; published clean origin tips pass. `recycle-work-preserved`. |
+| V-5 | Remote.`C1008_Recycle_refuses_uninspectable_git` | Git exit 128, timeout, nonnumeric/empty count, unreadable/broken gitdir, missing object, stale origin refs, escaping link and half-rebase refuse before rm. `recycle-git-unknown-refuses`. |
+| V-6 | Remote.`C1008_Recycle_preserves_tmp_copyup` | Actual intended Compose mount has copy-up, recreated `/tmp` has mode 1777 and image pty-host assets; trace contains no within-volume name sweep. Real Docker corroborates copy-up. `recycle-tmp-assets`. |
+| V-7 | Remote.`C1008_Recycle_resume_requires_matching_receipt` | Interrupt after stop, container removal, each volume rm and partial up; resume completes only remaining work; source/flags/project/stamp/volume-generation drift refuses; healthy same-SHA retry deletes nothing. `recycle-resume-generation`. |
+| V-8 | Remote.`C1008_Recycle_receipt_records_disk_and_partial_failure` | df before/after on data-root filesystem; signed delta, units, once-only line; disk probe/receipt write failure and partial rm preserve honest boundary data, including already absent target. `recycle-receipt-facts`. |
+| V-9 | Remote.`C1008_Retire_temp_rechecks_absence_and_retirement` | Host accepts absent/null and ordinary strict-zero path; new container between wrapper/host, timestamp change, missing field and census failure refuse. `retire-host-proof`. |
+| V-10 | Remote.`C1008_Retire_temp_reclaims_below_cache_disk_gate` | Low df does not block safe temp down; missing warm marker does not create caches; main reclaim precedes build disk gate, remaining-low stops before allocations; deploy-temp still refuses low disk. `recycle-disk-order`. |
+| V-11 | Remote.`C1008_Recycle_optins_require_maintenance_proofs` | State default preserved; reset requires retired/clear/detach/lease chain; cache default preserved; mounted temp rejects cache flag; absent-maintenance cold path recreates exactly three labelled 1654 roots and marker; ordinary Cold gate unchanged. `recycle-optin-proof`. |
+| V-12 | Remote.`C1008_Recycle_dry_run_never_mutates` | Both supported phases list exact targets/preserved names and blockers, offline audit pending; trace forbids POST, stop/rm/up/run, volume create/rm, seed/checkout mutations; apply rechecks changed facts. `recycle-preview-readonly`. |
+| V-13 | Rolling.`C1008_Retired_absent_null_is_accepted` | Retired/offline/absent/null with integer zeros and no routed work reaches only retire host case, preserves retirement, and reports all four volume outcomes. `retire-absent-null-accepted`. |
+| V-14 | Rolling.`C1008_Present_or_unknown_temp_keeps_null_refusal` | Running/exited/state-init container + null, census error, omitted live counter, strings/bools, wrong redirect and nonretired row refuse with exact reason; no host delete and no clear. `retire-null-stays-closed`. |
+| V-15 | Rolling.`C1008_Busy_routed_and_land_in_flight_refuse` | Each nonzero counter, accepting row, routed queued/dispatched/working task, Blocked/Failed mirror owner, queued/held/running land on succeeded task, excluded-project/unscoped task and API failure refuse before host mutation. `recycle-work-gates`. |
+| V-16 | Rolling.`C1008_Same_sha_and_partial_retries_are_safe` | Healthy same SHA verifies only; offline/partial-operation same SHA resumes from journal; cache/registration failure never clears drain. `recycle-wrapper-resume`. |
+| V-17 | Rolling.`C1008_Option_manifest_is_strict` | Flags arrive as booleans, source full SHA/operation ID/stamp survive JSON transport; missing/invalid/misplaced fields and shell metacharacters reject before SSH; direct deploy-parent remains nondestructive. `recycle-manifest-strict`. |
+| V-18 | Rolling.`C1008_Legacy_rolling_and_jq_rosters_remain` | Execute existing `test-deploy-server2.ps1` through jq driver modes present/absent/missing-shell/failing-shell, once each; retain T1-T24 expectations except intentional new receipt/order detail. New C1008 targeted groups stay outside the historical all-roster. `rolling-regressions-preserved`. |
+| V-19 | Rolling.`C1008_Documentation_and_transport_pins_match` | D-8 claims, strict transport, exact volume allowlists, ASCII bytes and unchanged host/nested lane boundaries agree; real assertions of rendered config as well as sentence pins. `recycle-doc-contract`. |
+| V-20 | Rolling.`C1008_Refusal_receipts_do_not_leak_secrets` | Secret-bearing Git stderr/HTTP sentinel and malformed filenames never enter public logs/JSON; receipt retains typed IDs/reasons, original failure not `UnhandledExit`. `recycle-receipt-custody`. |
+| V-21 | Real.`C1008_Real_docker_comparison` | Execute the RD matrix below against real isolated Docker/Git; exact result/identity/cleanup census and base/new differences. `recycle-real-comparison`. |
+| R-1 | Existing Remote cache methods | Preserve the historical 52-result C849/C912/C973/C944/C951/C976/C946/C957 selection; freeze expanded count at admission. No fallback to weakened cache gates. |
+| R-2 | Existing Docker/plan contracts | Full `DockerStackContractTests`, `DindRunnerContractTests`, `DockerStackSmokeCommandTests`, `DockerStackDocumentationTests`, `CheckpointImportTests`, `CheckpointManifestTests`; preserve compose isolation, command transport and import schema. |
+
+### Real-Docker comparison, adapted from CARD-0957
+
+New retained fixture `scripts/fixtures/c1008-recycle-real-cases.mjs` follows the
+existing c973 fixture: require `/.dockerenv` and daemon Name equal to hostname,
+use that isolated nested daemon, unique project labels/names, a random-loopback
+status/task endpoint and an exact created-object ledger. Refuse a host/sibling
+daemon. Record base SHA, tested SHA, script digests, Docker/Compose versions and
+shim inventory. The base is this plan's full baseline SHA, selected with `git show`;
+never reset/rebase either worktree. Base failure due to absent new command syntax
+is not detecting evidence; drive the common wrapper/host entry points.
+
+Keep Docker stop/rm/volume rm/ps/inspect, Compose down/up private-volume semantics,
+filesystem payloads, df and Git history real. Shim only lane/root relocation,
+private status endpoints, expensive image build/provider startup and transport to
+the isolated daemon. Use a tiny fixture image containing `/tmp/antiphon-pty-hosts`
+and a uid-1654 Git helper, not a production provider launch. Archive sanitized
+status/command/result JSON outside all fixture volumes. No live fleet identifiers
+may be forwarded to a production daemon; logical production names are remapped
+only by the fixture's fixed unique-name map.
+
+| RD | Required real outcome |
+|---|---|
+| RD-1 | Base retains disposable payloads across common redeploy boundary; new script removes/recreates the three, retaining state/cache sentinels and image `/tmp` assets. |
+| RD-2 | Present retired temp with null inventory refuses on both versions. Exited state-init alone still counts as present. |
+| RD-3 | Retired absent/null temp: base refuses; new path removes all four existing volumes, leaves API retirement and main/cache identities intact. |
+| RD-4 | Retired absent/null temp with all four already absent: new path succeeds with four alreadyAbsent entries and no new volumes. |
+| RD-5 | Separate running and stopped foreign containers referencing a target cause refusal; no force-removal and no lost sentinel. |
+| RD-6 | Prefix neighbours and unrelated project volumes remain identical, including schoolrevision/openclaw logical sentinels. |
+| RD-7 | Real uid-1654 linked/detached/unpublished/bare repositories: unpublished or dirty blocks, published clean control removes; root ownership failure is not green. |
+| RD-8 | Partial rm injected after a real first deletion: receipt is partial; matching resume deletes only remaining originals; recreated-generation intrusion refuses. |
+| RD-9 | Cache opt-in with live temp reference refuses; maintenance path with no consumers recreates labelled/owned empty roots, invalidates old marker, verifies new cold marker. |
+| RD-10 | Recreated state changes store fixture identity only after explicit retire/clear/lease proof; missing proof refuses before deletion. Full production StoreMismatch behavior remains a rollout gate. |
+| RD-11 | Wrapper census says absent, then fixture creates a container before host deletion: host refuses. Census failure cannot look absent. |
+| RD-12 | Low-space value is the only df shim: temp cleanup runs, main post-reclaim allocation gate holds. Real df values are still retained separately; no claim of physical low-disk pressure. |
+
+TestDesign expands RD-1..RD-12 into named expected base/branch outcomes, including
+rejection controls, and freezes the exact count. Do not copy CARD-0957's 19 as this
+card's result count. Finally remove only recorded fixture container IDs, volumes
+and images, check exit codes and verify absence; retain the evidence root. This
+comparison proves Docker semantics, not a live rollout, cache warmup duration or
+production registration lease timing.
+
+### Post-land positive controls
+
+Post-land SourceLanding Mutation only; all controls remain pending after Code.
+Each cycle uses `/*/*/<Class>/<ExactMethod>` from the table, one selected method;
+all case vectors belonging to that method run, never the entire class. Mutate
+production only, commit/restore under the Mutation custody rules, retain first
+assertion failure and restored-green receipt. Zero tests, missing jq, build errors,
+timeouts and harness failures are not red. A SourceLanding snapshot is never
+committed/pushed; repairs require a separate commissioned task.
+
+| PC | One concrete production mutation | Detecting test / first intended label |
+|---|---|---|
+| PC-1 | Include standing runner-state in the default allowlist. | `RemoteScriptContractTests.C1008_Recycle_exact_default_volumes` / `recycle-exact-defaults`. |
+| PC-2 | Replace all-container reference census with running-only. | `RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census` / `recycle-reference-refusal`. |
+| PC-3 | Run the work audit as uid 0 and coerce failed count to zero. | `RemoteScriptContractTests.C1008_Recycle_audits_work_as_1654` / `recycle-audit-uid`. |
+| PC-4 | Drop origin-only ancestry comparison so another remote masks HEAD. | `RemoteScriptContractTests.C1008_Recycle_refuses_unpublished_and_dirty_work` / `recycle-work-preserved`. |
+| PC-5 | Accept failed Git inspection as empty/zero. | `RemoteScriptContractTests.C1008_Recycle_refuses_uninspectable_git` / `recycle-git-unknown-refuses`. |
+| PC-6 | Allow null live inventory regardless of host census. | `RollingVolumeRecycleScriptTests.C1008_Present_or_unknown_temp_keeps_null_refusal` / `retire-null-stays-closed`. |
+| PC-7 | Restore unconditional null refusal in retire-temp. | `RollingVolumeRecycleScriptTests.C1008_Retired_absent_null_is_accepted` / `retire-absent-null-accepted`. |
+| PC-8 | Skip the remote retirement/absence recheck. | `RemoteScriptContractTests.C1008_Retire_temp_rechecks_absence_and_retirement` / `retire-host-proof`. |
+| PC-9 | Ignore pending land evidence on succeeded tasks. | `RollingVolumeRecycleScriptTests.C1008_Busy_routed_and_land_in_flight_refuse` / `recycle-work-gates`. |
+| PC-10 | Restore pre-deletion CacheDiskLow on retirement. | `RemoteScriptContractTests.C1008_Retire_temp_reclaims_below_cache_disk_gate` / `recycle-disk-order`. |
+| PC-11 | Resume deletion without checking volume generation. | `RemoteScriptContractTests.C1008_Recycle_resume_requires_matching_receipt` / `recycle-resume-generation`. |
+| PC-12 | Let DryRun enter the apply branch. | `RemoteScriptContractTests.C1008_Recycle_dry_run_never_mutates` / `recycle-preview-readonly`. |
+| PC-13 | Admit cache recreation under the ordinary rolling/temp-active context. | `RemoteScriptContractTests.C1008_Recycle_optins_require_maintenance_proofs` / `recycle-optin-proof`. |
+| PC-14 | Replace after-df with before-df when writing the receipt. | `RemoteScriptContractTests.C1008_Recycle_receipt_records_disk_and_partial_failure` / `recycle-receipt-facts`. |
+
+TestDesign must order the labelled substantive assertions before generic exit/count
+assertions that could mask a mutant. Pin each concrete replacement to the eventual
+production helper and record why the assertion is reachable; do not count an inline
+self-mutating text assertion as post-land execution.
+
+### Checkpoints
+
+Closed Code list. Each row owns one isolated build and one literal TUnit filter.
+Group names name the lane; no unsupported `Lane` column is added to the importer.
+CP-1 is the explicit expected-red preparatory row, not a final green certificate.
+All other rows require zero failures/skips at their committed slice SHA. Final
+Review runs CP-2..CP-5 at the reviewed tip. Counts are prospective until TestDesign
+freezes fixtures/rosters; `Min` counts TUnit results, not harness assertions.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
+|---|---|---|---|---|---|---|---:|---:|---|---|
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1008-red/` | linux-offline-red | `/*/*/RollingVolumeRecycleScriptTests/C1008_Retired_absent_null_is_accepted` | V-13 | 1 executed, 1 expected assertion failure against unchanged scripts; no setup error | 1 | 6 | true | `C804_ORPHAN_SWEEP_ROOT=c1008-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-2 | S1-S3 | `tests/Antiphon.Tests -> bin-c1008-scripts/` | linux-offline-contract | `/*/*/(RemoteScriptContractTests*)\|(RollingVolumeRecycleScriptTests*)/C1008_*` | V-1..V-20 | 20 named single-result methods, 0 failed/skipped; internal rolling rosters reported separately | 20 | 15 | true | `C804_ORPHAN_SWEEP_ROOT=c1008-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-3 | S4 | `tests/Antiphon.Tests -> bin-c1008-cache/` | linux-cache-regression | `/*/*/RemoteScriptContractTests*/(C849_*)\|(C912_*)\|(C973_*)\|(C944_*)\|(C951_*)\|(C976_*)\|(C946_*)\|(C957_*)` | R-1 | complete expanded baseline roster, at least historical 52, 0 failed/skipped | 52 | 10 | true | `C804_ORPHAN_SWEEP_ROOT=c1008-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1008-docs/` | linux-compose-doc-contract | `/*/*/(DockerStackContractTests*)\|(DindRunnerContractTests*)\|(DockerStackSmokeCommandTests*)\|(DockerStackDocumentationTests*)\|(CheckpointImportTests*)\|(CheckpointManifestTests*)/*` | R-2 | every named class, at least 10+20+6 existing doc/import results plus all compose/command results; freeze total | 36 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c1008-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-5 | S4 | `tests/Antiphon.Tests -> bin-c1008-real/` | linux-isolated-docker | `/*/*/RollingVolumeRecycleDockerTests/C1008_Real_docker_comparison` | V-21 | 1 TUnit result, every frozen RD outcome, 0 failed/skipped, zero fixture residue | 1 | 12 | true | `C804_ORPHAN_SWEEP_ROOT=c1008-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+
+## Test-design freeze and execution hooks
+
+TestDesign is next, and must commit/push the following reconciliation to this plan
+before admitting Code:
+
+1. Freeze `c1008-recycle-cases.json`: each accepted/refused state, intended reason,
+   command ordering, receipt shape and first labelled assertion. Model missing vs
+   explicit null, stopped references, stale census and same-SHA partial recovery.
+2. Freeze task-census closure using actual summary/detail DTOs, including unscoped
+   and excluded-project rows, pending lands on succeeded tasks and retained
+   Blocked/Failed work. No live API failure may become an empty array. Confirm the
+   documented no-new-land operational window and state the remaining race limit.
+3. Freeze the maintenance-only cold proof's before/after/retry states against
+   `c849_cold_proof`, `c849_cold_seed`, `c849_require_ready` and verification contexts.
+   Show that the normal Cold and saved-donor contracts retain their existing gates.
+4. Freeze live-zero-before-stop evidence and the main null-after-own-stop resume
+   proof without broadening the retired-temp exception; pin lease/store transition
+   fixture vectors to CARD-0953. Never claim the fake proves elapsed production leases.
+5. Freeze all 21 V methods, actual argument expansion, R-1/R-2 source roster,
+   CP-4's full minimum, RD base/branch count, harness count pins, and method-scoped
+   PC mutation/first-assertion map. A named method omitted from a filter is a defect.
+6. Parse this exact checkpoint table using the existing importer; static coverage
+   lint may report shell/JSON obligations requiring an explicit checklist binding.
+   Preserve those mappings rather than calling the static pass mutation evidence.
+
+Code commits/pushes every meaningful slice and before a build. Use the checkpoint
+tool once per committed slice group with `--expected-source-sha <full-sha>` and
+the table rows; continue `wait` while exit is 75. Keep every child owned and awaited;
+do not edit source under a run. The bootstrap build, if needed, is the only declared
+extra build: isolated `bin-c1008-tool/` through `scripts/build-slot.ps1`. Row drivers
+own their slots; do not wrap a self-leasing checkpoint driver in another slot.
+Timeout exit 4 is not-run, never a reason for `-NoSlot` or an unleased retry.
+
+Report per-CP executed/passed/failed/skipped counts and source/build/slot receipts,
+plus separate harness groups/invocations/assertions and RD outcomes. Confirm any
+unexpected red on the assigned base using the exact failing method before calling
+it inherited. No whole Unit/full assembly, provider call, real rollout, production
+volume deletion or repeated test battery belongs to this implementation profile.
+Remove only task-owned `bin-c1008-*/` outputs after awaited runs, with nonempty,
+canonical in-root path checks; preserve evidence.
+
+### Plan-stage documentation check
+
+This Plan dispatch runs only the following existing documentation/import contracts,
+once after its final committed plan SHA, as required by the brief:
+
+```powershell
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name DOCS-1008 -Project tests/Antiphon.Tests -OutputPath bin-c1008-plan/ -Filter '/*/*/(DockerStackDocumentationTests*)|(CheckpointImportTests*)|(CheckpointManifestTests*)/*' -MinExecuted 36 -Expect DockerStackDocumentationTests,CheckpointImportTests,CheckpointManifestTests -ExpectedSourceSha <full-plan-sha> -ResultsRoot .antiphon/c1008-plan-checkpoints
+```
+
+The baseline has 10 DockerStackDocumentationTests, 20 CheckpointImportTests and 6
+CheckpointManifestTests. The latter own table-format fixtures and historical plan
+pins; none is a generic assertion that every new plan is executable. Report this
+limit. Runtime script implementation and V/R/RD/PC execution remain future work.
+
+## Documentation and bundle pins
+
+D-8: keep these policy sentences true when updating examples after the Docs task
+lands. They are quoted from CARD-1008's agreed policy; normalize whitespace in doc
+tests rather than pinning wrapping. Add executable volume/phase checks alongside
+the sentence tests, so prose alone cannot certify implementation.
+
+| Policy claim to preserve in `docs/docker-stack.md` | Implementation/test obligation |
+|---|---|
+| "Retiring TEMP: always `compose down -v` for the temp project" | D-1/D-4, all four private volumes removed, retirement retained. |
+| "Default for main = recycle work + runner-tmp + dind-data." | D-1 exact names, default state/cache sentinels preserved. |
+| "Recycling runner-state and/or the cache volumes is an explicit opt-in" | D-6 separate flags, identity reset and shared-cache maintenance costs; no flag bypasses references. |
+| "Preconditions for ANY volume removal: drain complete; 0 sessions, 0 queued, nothing routed there; no land in flight; container stopped; volumes unreferenced by any container" | D-2/D-3/D-4 and the no-new-land operational window; receipt names the evidence, not just 'idle'. |
+| "remove by EXACT name" and "never prune" | Fixed allowlists; prefix/unrelated-project negative sentinels. |
+| "df before/after recorded" | D-5 numeric before/after receipt even when a later deployment step fails. |
+| "before removing a work volume, enumerate runner-side mirrors/worktrees for commits not on any origin ref and for Blocked/Failed tasks bound to the runner" | D-3 uid-1654 proof and typed recovery refusal. |
+| "a recycled runner-tmp volume copies the image /tmp (including /tmp/antiphon-pty-hosts) on first mount" | V-6/RD-1 normal Docker copy-up, no selective `/tmp` sweep. |
+
+Keep the Docs task's `AGENTS.md` rollout front door and
+`docs/orchestration-loop.md` autonomy links; this script task does not duplicate
+their policy paragraphs. Search `server/Bundles/orchestrator.md` for conflicting
+rollout text at admission; if none exists, no bundle edit is needed. Keep live
+host locations out of stage/dispatch examples; existing deployment transport
+configuration is a different concern. Remove any now-stale manual-only caveat
+only once the corresponding script/tests have landed, not in this Plan commit.
+
+## Risk register
+
+| Risk | Control / residual limitation |
+|---|---|
+| Destructive selection or prefix collision (`antiphon-runner_` versus `antiphon-runner-temp_`). | Fixed exact arrays, inspected Compose model and per-name rm; no prune. Foreign `schoolrevision-staging`, `openclaw-state` and similarly prefixed volumes are canaries. |
+| Stopped containers/state-init still reference work. | All-container census, inspect owners and remove only proven stopped owned IDs; keep broker. Foreign or uncertain owner refuses. |
+| Lost unpublished/blocked work, root returning false zeros. | Double uid-1654 audit, checked Git exits, current origin comparison, all local tips and closed task census; no automatic salvage side effects. |
+| A land/task or container appears between observations. | Drain, script serialization and immediate rechecks; Docker protects in-use volume removal. Server lands require the operational no-new-land interval; no atomic cross-service lease is claimed. |
+| Partial failure and unsafe retries. | Durable external journal, per-volume states, exact identity/CreatedAt binding, explicit resume; no redeletion of recreated data. |
+| CARD-0994 present/null dead end. | Intentionally preserve the refusal; fix absent/null only. Caller arranges a reviewed exact-container recovery if needed; deploy-temp never bypasses TempContainersRemain. |
+| CacheDiskLow blocks the cleanup intended to solve it. | Read-only safety checks before deletion, allocation gate after reclaim; deploy-temp early gate remains, requiring separate approved reclaim if temp cannot start. |
+| Cache reset breaks the only accepting runner. | Shared-cache all-consumer gate; explicit maintenance window, no accepting temp. New cold-maintenance proof must be frozen separately from ordinary Cold. |
+| State reset loses identity/auth or gets StoreMismatch. | State preserved by default; retirement/clear/detach/lease transition and post-registration identity check. Bind-mounted secret/Codex homes remain outside volume targets. |
+| `/tmp` loses pty-host assets. | Whole exact volume recreation with image copy-up; inspect assets/mode on real Docker. No pattern cleanup. |
+| A misleading df delta or incomplete success receipt. | Same filesystem/units, signed delta and partial outcomes; no guaranteed minimum bytes recovered. Evidence failures stop admission. |
+| Dry-run accidentally follows generic mutating host setup. | Early separate preview dispatch, forbidden-operation trace, no preview-as-permit; offline audit marked pending. |
+| PowerShell 5.1 encoding fallback / quoting. | All touched scripts remain ASCII-only even though this driver requires PS7; use literal args and typed JSON, preserve Windows backslash config paths. Never interpolate raw user data into SSH shell. |
+| Test doubles agree with themselves. | Real Docker comparison, real Git refs, actual wrapper/host execution, post-land mutation; historical counts are not new evidence. |
+| Shared-file collisions and unlanded policy. | Serialize CARD-0980/0983 edits and wait for Docs task landing; re-read/reconcile exact touched paths, do not overwrite sibling changes. |
+
+## Rollout sequencing and recovery
+
+Land the policy Docs change, then this plan/TestDesign freeze, then reviewed Code.
+Run the isolated RD comparison and ordinary checkpoints before any operational use;
+post-land Mutation is separately commissioned. No AppHost restart is required for
+script-only activation: the rollout caller must run the reviewed landed script SHA,
+and host transport must verify that same SHA. State-reset admission still depends
+on the already deployed CARD-0953 server behavior.
+
+For the first normal rollout: confirm no lands are active/pending and hold new
+lands; run the read-only preview; deploy/verify temp; drain main; require zero
+work and publication proof; recycle default main volumes; verify the exact new
+runner SHA/mounts/caches before admission; run the existing smoke/canary gates;
+return scheduling to main, drain temp, then retire temp and retain both reclaim
+receipts. Do not combine first rollout qualification with state/cache opt-ins.
+
+If main recycle/up fails, keep temp accepting and main drained. A rollback image
+can start with newly created disposable volumes, but deleted work/tmp/dind payload
+cannot be rolled back. Re-run only via the matching operation's journal. If temp
+retirement refuses, keep main accepting and preserve temp's retirement/evidence;
+do not clear it to force a future deploy. If an opt-in fails, preserve its explicit
+maintenance hold and receipts until identity/cache verification succeeds.
+
+### Cost
+
+Ordinary Code checkpoints total **51 estimated minutes** (6+15+10+8+12), including
+the expected-red row and isolated builds; authoring/TestDesign, queue waits and
+post-land controls are additional. CP-2's rolling harness is intentionally bounded
+and counted separately from its 20 TUnit results. No performance claim follows
+from these estimates. This Plan task is time-boxed to 40 minutes and runs only its
+36-result documentation selection.
+
+## FOLLOW-UPS
+
+Board searches `unpublished` and `retire-temp` used `card.ps1 search -Board Antiphon
+-All`, then full reads of CARD-0831/CARD-0994. Reuse those cards; do not file duplicate
+retirement bugs. CARD-1008 implements CARD-0831's work-preservation gate and the
+latest absent-placeholder portion of CARD-0994. Its retained-container/null case
+remains explicitly refused. CARD-0935 already tracks the separate canary-before-
+promotion issue; this card does not move that gate. No additional structural
+defect requiring a new card was established during this Plan inspection.
+
+--- next stage ---
+next: test-design
+handoff: Freeze CARD-1008's status/Git/volume and partial-resume fixtures, maintenance cold-seed proof, exact checkpoint and real-Docker counts, and method-scoped PCs before Code; serialize the shared remote-script tests with CARD-0980/0983.
+artifact: docs/superpowers/plans/2026-10-03-card-1008-rolling-volume-recycle-and-retire-temp-plan.md
