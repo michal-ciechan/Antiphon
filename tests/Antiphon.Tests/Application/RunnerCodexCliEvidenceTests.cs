@@ -205,8 +205,8 @@ public sealed class RunnerCodexCliEvidenceTests
                 using var request = new HttpRequestMessage(HttpMethod.Post, PhoneHomeProtocol.RegisterPath);
                 request.Headers.TryAddWithoutValidation(PhoneHomeProtocol.SecretHeader, generation.Secret);
                 request.Content = JsonContent.Create(generation.Registration(bootId: Guid.NewGuid()), options: Json);
-                using var response = await generation.Http.SendAsync(request);
-                response.StatusCode.ShouldBe(HttpStatusCode.Conflict, "C959-v11-live-boot-refused");
+                using var registrationResponse = await generation.Http.SendAsync(request);
+                registrationResponse.StatusCode.ShouldBe(HttpStatusCode.Conflict, "C959-v11-ownershipLive-boot-refused");
                 Text(Shape(generation.Directory.Status(generation.AllowedRunnerId)), "codexCliVersion")
                     .ShouldBe("0.160.0", "C959-v11-unaccepted-registration-preserves");
                 clock.Advance(TimeSpan.FromSeconds(91));
@@ -223,16 +223,16 @@ public sealed class RunnerCodexCliEvidenceTests
             var clock = new FakeTimeProvider(T);
             await using var ownership = await PhoneHomeTestHost.StartAsync(clock);
             using var socket = WebSocket.CreateFromStream(new MemoryStream(), new WebSocketCreationOptions { IsServer = true });
-            var first = ownership.Directory.Register(ownership.Registration() with { Capabilities = Caps("0.160.0", T) });
-            var live = ownership.Directory.AcceptConnect(ownership.AllowedRunnerId, first.Ticket, socket);
+            var ownershipRegistration = ownership.Directory.Register(ownership.Registration() with { Capabilities = Caps("0.160.0", T) });
+            var ownershipLive = ownership.Directory.AcceptConnect(ownership.AllowedRunnerId, ownershipRegistration.Ticket, socket);
             clock.Advance(TimeSpan.FromSeconds(91));
-            live.NoteHeartbeat(clock.GetUtcNow());
+            ownershipLive.NoteHeartbeat(clock.GetUtcNow());
             if (clearRetirement)
             {
                 ownership.Directory.ApplyState(ownership.AllowedRunnerId, new RunnerState(true, clock.GetUtcNow(), "C959", null, false, null, clock.GetUtcNow(), "C959"));
                 ownership.Directory.ApplyState(ownership.AllowedRunnerId, new RunnerState(false, null, null, null, false, null, null, null));
             }
-            ownership.Directory.Disconnect(live, "C959 owned fixture disconnect");
+            ownership.Directory.Disconnect(ownershipLive, "C959 owned fixture disconnect");
             var replacement = ownership.Registration(storeId: Guid.NewGuid());
             clock.Advance(TimeSpan.FromSeconds(89));
             Should.Throw<ConflictException>(() => ownership.Directory.Register(replacement)).Code
