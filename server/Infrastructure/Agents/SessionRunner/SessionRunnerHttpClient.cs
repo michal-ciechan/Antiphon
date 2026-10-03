@@ -314,6 +314,22 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         }
     }
 
+    public async Task<RunnerCodexCliVersionDto?> GetCodexCliVersionAsync(RunnerCodexCliProbeRequest request, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8), _time);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
+        try
+        {
+            // This descriptor POST is deliberately outside admitted GET resilience and never retried.
+            using var response = await _httpClient.PostAsJsonAsync("capabilities/codex-cli-version", request, JsonOptions, linked.Token);
+            if (!response.IsSuccessStatusCode) return null;
+            return await response.Content.ReadFromJsonAsync<RunnerCodexCliVersionDto>(JsonOptions, linked.Token);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested && ex is HttpRequestException or JsonException or OperationCanceledException)
+        { return null; }
+    }
+
     public Task<RunnerHostStatsDto?> GetHostStatsAsync(CancellationToken ct) =>
         HostStatsReadAsync<RunnerHostStatsDto>("host-stats", _hostStats.RequestTimeoutMs, ct);
 

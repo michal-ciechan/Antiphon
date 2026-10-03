@@ -16,4 +16,8 @@ public sealed record SessionRunnerCatalogueEntryDto(
     bool Stale,
     IReadOnlyList<string> Features,
     bool Draining = false,
-    bool AcceptingNewWork = false);
+    bool AcceptingNewWork = false,
+    string? CodexCliVersion = null,
+    DateTimeOffset? CodexCliVersionCheckedAtUtc = null,
+    string? CodexCliVersionError = null,
+    bool? CodexCliVersionStale = null);

@@ -15,6 +15,11 @@ public sealed class RoutingSessionRunnerClient : ISessionRunnerClient
     public Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct) =>
         _directory.Local.GetCapabilitiesAsync(ct);
 
+    // Descriptor probes without a session identity address this routing facade's local surface.
+    // Remote admission uses the explicitly runner-scoped client returned by the directory.
+    public Task<RunnerCodexCliVersionDto?> GetCodexCliVersionAsync(RunnerCodexCliProbeRequest request, CancellationToken ct) =>
+        _directory.Local.GetCodexCliVersionAsync(request, ct);
+
     public Task<string?> GetHealthAsync(CancellationToken ct) => _directory.Local.GetHealthAsync(ct);
 
     // CARD-0589: the build budget belongs to the host this server builds on, i.e. the local runner.

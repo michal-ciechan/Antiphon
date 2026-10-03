@@ -23,12 +23,16 @@ public static class SessionRunnerCatalogue
     {
         var rows = new List<SessionRunnerCatalogueEntryDto>();
         var desktop = await directory.DescribeAsync(null, ct);
-        rows.Add(await DesktopAsync(desktop, db, delegation, ct));
+        rows.Add(ProjectCli(await DesktopAsync(desktop, db, delegation, ct), desktop?.Capabilities,
+            directory.CodexCliEvidenceNow, delegation.CodexCliVersionMaxAgeMinutes));
         foreach (var id in directory.KnownRunnerIds.Where(id => !RunnerRequestIntent.IsDesktopAlias(id)))
         {
             try
             {
-                rows.Add(await RemoteAsync(directory, id, db, prep, ct));
+                var row = await RemoteAsync(directory, id, db, prep, ct);
+                var evidence = await directory.DescribeAsync(id, ct);
+                rows.Add(ProjectCli(row, evidence?.Capabilities, directory.CodexCliEvidenceNow,
+                    delegation.CodexCliVersionMaxAgeMinutes));
             }
             catch (OperationCanceledException)
             {
@@ -44,6 +48,17 @@ public static class SessionRunnerCatalogue
 
         return rows;
     }
+
+    private static SessionRunnerCatalogueEntryDto ProjectCli(SessionRunnerCatalogueEntryDto row,
+        RunnerCapabilitiesDto? caps, DateTimeOffset now, int maxAgeMinutes) => row with
+    {
+        CodexCliVersion = caps?.CodexCliVersion,
+        CodexCliVersionCheckedAtUtc = caps?.CodexCliVersionCheckedAtUtc,
+        CodexCliVersionError = caps?.CodexCliVersionError,
+        CodexCliVersionStale = CodexCliAdmissionPolicy.DisplayStale(caps is null ? null :
+            new(caps.CodexCliVersion, caps.CodexCliVersionCheckedAtUtc, caps.CodexCliVersionError,
+                caps.CodexCliLauncherFingerprint), now, maxAgeMinutes),
+    };
 
     private static async Task<SessionRunnerCatalogueEntryDto> DesktopAsync(
         RunnerDescriptor? described, AppDbContext? db, DelegationSettings delegation, CancellationToken ct)

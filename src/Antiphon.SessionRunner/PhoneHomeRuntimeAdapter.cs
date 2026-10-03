@@ -26,6 +26,8 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
     }
 
     public int OwnedSessionCount => _runtime.LiveSessionCount;
+    public async Task<RunnerCodexCliVersionDto?> GetCodexCliVersionAsync(RunnerCodexCliProbeRequest request, CancellationToken ct) =>
+        _runtime.CodexCliProbe is { } probe ? await probe.ProbeAsync(request, false, ct) : null;
     public async Task<int> KillAllAsync(TimeSpan timeout, CancellationToken ct) =>
         (await _runtime.KillAllAsync(timeout, ct)).Count;
 

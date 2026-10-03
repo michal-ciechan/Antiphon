@@ -354,7 +354,7 @@ public sealed class PhoneHomeConnectionService : BackgroundService
     internal Task SendHeartbeatAsync(PhoneHomeConnectionWriter writer, long epoch, CancellationToken ct) =>
         writer.SendAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Heartbeat, epoch, Guid.NewGuid(),
             Payload: JsonSerializer.SerializeToElement(
-                new PhoneHomeCapacityHeartbeat(_capacity.Capacity), PhoneHomeFraming.Json)), ct);
+                new PhoneHomeCapacityHeartbeat(_capacity.Capacity, _runtime.CodexCliProbe?.Snapshot), PhoneHomeFraming.Json)), ct);
 
     internal Task SendEventAsync(PhoneHomeConnectionWriter writer, long epoch, RunnerServerSentEvent evt, CancellationToken ct)
     {
