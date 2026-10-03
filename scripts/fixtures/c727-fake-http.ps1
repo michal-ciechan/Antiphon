@@ -7,6 +7,13 @@ $trace = [ordered]@{ kind = 'http'; method = $Method; runnerId = $RunnerId; suff
 Add-Content -LiteralPath $env:C727_TEST_TRACE -Value ($trace | ConvertTo-Json -Compress -Depth 5)
 
 if ($state.scenario -eq 'c1008') {
+    if ($Method -eq 'POST' -and $state.allowClear -and $Suffix -eq '/drain/clear') {
+        $state.statuses.$RunnerId.draining = $false
+        $state.statuses.$RunnerId.acceptingNewWork = $true
+        $state | ConvertTo-Json -Compress -Depth 20 | Set-Content -LiteralPath $env:C727_TEST_STATE
+        Write-Output '{}'
+        exit 0
+    }
     if ($Method -ne 'GET') { exit 2 }
     if ($Suffix -eq '/status' -and $state.statuses.PSObject.Properties.Name -contains $RunnerId) {
         $state.statuses.$RunnerId | ConvertTo-Json -Compress -Depth 20

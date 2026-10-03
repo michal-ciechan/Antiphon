@@ -235,8 +235,9 @@ internal sealed class C1008HostFixture : IDisposable
     internal string StatePath => Path.Combine(Root, "docker.json");
     internal string[] Removed => JsonNode.Parse(File.ReadAllText(StatePath))!["removed"]!.AsArray()
         .Select(x => x!.GetValue<string>()).ToArray();
-    internal string[][] Trace => File.ReadAllLines(Path.Combine(Root, "docker-trace.jsonl"))
-        .Select(x => JsonNode.Parse(x)!.AsArray().Select(y => y!.GetValue<string>()).ToArray()).ToArray();
+    internal string[][] Trace => File.Exists(Path.Combine(Root, "docker-trace.jsonl"))
+        ? File.ReadAllLines(Path.Combine(Root, "docker-trace.jsonl"))
+            .Select(x => JsonNode.Parse(x)!.AsArray().Select(y => y!.GetValue<string>()).ToArray()).ToArray() : [];
     internal JsonObject Vectors { get; }
 
     internal C1008HostFixture(bool main = true)
