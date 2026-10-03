@@ -1,7 +1,10 @@
 # CARD-1011 Windows Grok qualification ledger
 
-Status: **WQ-1 excluded; WQ-2 reported met by caller; amended WQ-3 pending. No activation is claimed.**
-New Code/landing owner: `b657a1e2-767d-4bcb-b25a-1cf2ed925be3`, continuing predecessor `698c0e44-127d-4a7a-9584-7031570573e5`.
+Status: **WQ-1 dropped by the operator; WQ-2 and amended WQ-3 MET. No activation is claimed.**
+New Code/landing owner: `d422c5a9-e1b4-404d-9d28-438613671c15`, continuing
+`b657a1e2-767d-4bcb-b25a-1cf2ed925be3` and `698c0e44-127d-4a7a-9584-7031570573e5`.
+The [step-3 evidence note](2026-10-03-card-1011-code-d422c5a9.md) reconciles the
+caller-supplied Windows evidence with the two tasks' retrieved full reports.
 The [frozen plan](../superpowers/plans/2026-10-03-card-1011-windows-grok-routing-plan.md)
 owns the exact procedure, filters, budgets and gate ordering.
 
@@ -13,12 +16,12 @@ state. Its transcript model was `grok-4.7-build`, dispatch model `grok-4.7`.
 Reported Windows CLI: 1.0.41, build `4220f3b224a6`. These inherited facts do not
 identify the actual backend, visible trust transition or runner release ownership.
 
-| Row | Status | Evidence still required |
+| Row | Status | Evidence and remaining limits |
 |---|---|---|
-| WQ-1 inbox real Review | Operator-excluded for CARD-1022; not passed | No real inbox launch commissioned. Existing fake inbox regressions remain. |
-| WQ-2 modern real Review | Caller reports MET, task `02e5b9b7`; complete receipt reconciliation pending | Reported Grok 1.0.46 (`2765805b9442` [stable]), ModernConPty 1.24.260710001, 120x30/ASCII >, UserPrompts 1 and 10. Retain full caller-held task/session/report/release and binary provenance before final Q binding. |
-| WQ-3 fresh-worktree Ready and one turn | Pending; old mandatory-trust probe failed before a paid prompt | Ready; record whether trust appeared; startup inputs exactly [] without trust or ["y"] if observed; cleared trust; exactly one whole nonce UserPrompt, AssistantText exactly nonce, later TurnEnd, confirmed owned-child exit. Version/build and actual backend line are mandatory. |
-| Backend restoration | Pending | Saved setting, configuration window owner if canonical, restored setting/restart and actual restored host |
+| WQ-1 inbox real Review | Dropped by operator; not passed | Legacy inbox backend is being deprecated in CARD-1022. No real inbox launch commissioned. Existing fake inbox regressions remain. |
+| WQ-2 modern real Review | MET, task `02e5b9b7-9301-4324-b3e9-50fdbd929dc1` | Grok 1.0.46 (`2765805b9442` [stable]), ModernConPty 1.24.260710001, 120x30/ASCII > at row 26; Ready, UserPrompts 1 and 10, final report and clean pty-host exit. Required Review pin selected Grok/High; pins unchanged. |
+| WQ-3 fresh-worktree Ready and one turn | MET at harness `189042dae13c605ed70d8fe9d6f94923ac1ae747`, Debug `d7e561a7-fa8b-4a0e-a74a-fee0fdb842d8` | Fresh detached worktree; trust not observed; startup inputs []; Ready after 6.6 s; one exact UserPrompt seq 1, nonce reply seq 3, TurnEnd seq 4, releaseConfirmed=True. Fresh one-result TRX, clean source and verified build provenance. |
+| Backend restoration | No global change to restore in the accepted modern-only run | WQ-3 used a per-instance modern override; its report confirms no backend/settings/pin/default writes. Owned child/worktree/26 output directories removed, and provider auth/config/trust metadata unchanged. Caller owns any separate canonical configuration window. |
 | Final/Full implementation Review | Pending | Independent ordinary Review binding clean committed source and verified build receipts |
 | WQ-4 live Debug | Pending, post-activation | Effective pin with no kind/level/bypass, routing audit, source/bundle stamp, whole task receipt, useful report and release |
 
@@ -42,8 +45,9 @@ and exact actual `backendLine` before prompt assertions, plus source/harness SHA
 runner/pty-host build identity, modern binary/package provenance and any differing
 session-banner version. One bounded paid turn only; no automatic relaunch.
 
-Neither the embedded prompt nor the live Debug pin changes until WQ-2/3 and
-restoration pass. Independent Final/Full Review then binds the implementation.
+The supplied WQ-2/3 evidence permits the held prompt edit. Independent Final/Full
+Review must bind the completed implementation before land; the live Debug pin
+remains the caller's post-land activation work.
 Activation: confirmed land -> canonical restart/version -> fresh pin/default/
 runner reads -> approved Debug pin write/readback -> bundle stamp/idle refresh ->
 WQ-4 -> acceptance -> SourceLanding Mutation. All PC-1..69 and their variants remain pending.
