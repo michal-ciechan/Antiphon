@@ -1,0 +1,152 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="b8255e39-f328-4800-b23f-4ca93954dd89" name="@5d9e09695ab3 2026-10-03 16:01:28.0104445" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-10-03T16:00:25.9484957Z" queuing="2026-10-03T16:00:25.9484957Z" start="2026-10-03T16:00:25.9484957Z" finish="2026-10-03T16:01:28.0119316Z" />
+  <TestSettings name="default" id="55e93104-bd53-4c3f-acd8-e62550cd5248">
+    <Deployment runDeploymentRoot="_5d9e09695ab3_2026-10-03_16_01_28.0104445" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="27f9a8c2-1c85-4e3b-ac7a-31984e7fe778" testId="2fa1b4a9-b7f1-958d-d5b7-58564ac86db1" testName="C1008_Recycle_refuses_references_and_unknown_census" computerName="5d9e09695ab3" duration="00:00:19.1457696" startTime="2026-10-03T16:00:29.7162539+00:00" endTime="2026-10-03T16:00:48.8620235+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="27f9a8c2-1c85-4e3b-ac7a-31984e7fe778">
+      <Output>
+        <StdOut>[CARD-0204] SessionRunner__BaseUrl=http://127.0.0.1:1, Delegation__CheckInterpreterEnabled=false, Delegation__DiagnoseEnabled=false and Delegation__OutputDistillerEnabled=false for every Program boot in this assembly (inherited SessionRunner__BaseUrl='&lt;unset&gt;') - test hosts never launch on the production session-runner.
+[CARD-0298] Hangfire__ServerEnabled=false for every Program boot in this assembly - test hosts never start a Hangfire worker (no WMI census, no production-runner list).
+[CARD-0045] cleared inherited ANTIPHON_PTY_BACKEND='inbox' — pty tests declare their backend; the suite means the same thing whoever launched it.
+</StdOut>
+        <ErrorInfo>
+          <Message>ShouldAssertException: invalid.Trace.Any(a =&gt; a[0] == "stop")
+    should be
+False
+    but was
+True
+
+Additional Info:
+    recycle-reference-refusal: inspected owned mount missing-work</Message>
+          <StackTrace>   at Antiphon.Tests.Scripts.RemoteScriptContractTests.C1008_Recycle_refuses_references_and_unknown_census() in /work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs:line 106
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="5e37835d-05e5-4a64-885d-21460ece29de" testId="a4a219c0-654a-2f43-db29-ba7f2ba45411" testName="C1008_Recycle_resume_requires_matching_receipt" computerName="5d9e09695ab3" duration="00:00:16.9621086" startTime="2026-10-03T16:00:48.8909934+00:00" endTime="2026-10-03T16:01:05.8531020+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="5e37835d-05e5-4a64-885d-21460ece29de">
+      <Output>
+        <ErrorInfo>
+          <Message>ShouldAssertException: receipt["phase"]!.GetValue&lt;string&gt;()
+    should be
+"recreating"
+    but was
+"volumesRemoved"
+    difference
+Difference     |  |    |    |    |    |    |    |    |    |    |    |    |    |    |   
+               | \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  
+Index          | 0    1    2    3    4    5    6    7    8    9    10   11   12   13   
+Expected Value | r    e    c    r    e    a    t    i    n    g                        
+Actual Value   | v    o    l    u    m    e    s    R    e    m    o    v    e    d    
+Expected Code  | 114  101  99   114  101  97   116  105  110  103                      
+Actual Code    | 118  111  108  117  109  101  115  82   101  109  111  118  101  100  
+
+Additional Info:
+    recycle-resume-generation: creation intent precedes a failing seed</Message>
+          <StackTrace>   at Antiphon.Tests.Scripts.RemoteScriptContractTests.C1008_Recycle_resume_requires_matching_receipt() in /work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs:line 265
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="6913367f-7425-4453-95cd-2e85edbe786f" testId="42a01e7a-b63c-9454-95fe-f294b24800cb" testName="C1008_Refusal_receipts_do_not_leak_secrets" computerName="5d9e09695ab3" duration="00:00:21.7978876" startTime="2026-10-03T16:01:05.8661341+00:00" endTime="2026-10-03T16:01:27.6640217+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="6913367f-7425-4453-95cd-2e85edbe786f">
+      <Output>
+        <ErrorInfo>
+          <Message>FileNotFoundException: Could not find file '/tmp/c1008-host-3rnys3/server/recycle/c100800000000000000000000000000001.json'.</Message>
+          <StackTrace>   at Interop.ThrowExceptionForIoErrno(ErrorInfo errorInfo, String path, Boolean isDirError)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, UnixFileMode openPermissions, Int64&amp; fileLength, UnixFileMode&amp; filePermissions, Boolean failForSymlink, Boolean&amp; wasSymlink, Func`4 createOpenException)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.StreamReader.ValidateArgsAndOpenPath(String path, Encoding encoding, Int32 bufferSize)
+   at System.IO.File.ReadAllText(String path, Encoding encoding)
+   at Antiphon.Tests.Scripts.RollingVolumeRecycleScriptTests.C1008_Refusal_receipts_do_not_leak_secrets() in /work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/Scripts/RollingVolumeRecycleScriptTests.cs:line 198
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="C1008_Recycle_refuses_references_and_unknown_census" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-guard-red/antiphon.tests.dll" id="2fa1b4a9-b7f1-958d-d5b7-58564ac86db1">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="27f9a8c2-1c85-4e3b-ac7a-31984e7fe778" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-guard-red/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C1008_Recycle_refuses_references_and_unknown_census" />
+    </UnitTest>
+    <UnitTest name="C1008_Recycle_resume_requires_matching_receipt" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-guard-red/antiphon.tests.dll" id="a4a219c0-654a-2f43-db29-ba7f2ba45411">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="5e37835d-05e5-4a64-885d-21460ece29de" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-guard-red/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C1008_Recycle_resume_requires_matching_receipt" />
+    </UnitTest>
+    <UnitTest name="C1008_Refusal_receipts_do_not_leak_secrets" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-guard-red/antiphon.tests.dll" id="42a01e7a-b63c-9454-95fe-f294b24800cb">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="6913367f-7425-4453-95cd-2e85edbe786f" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-guard-red/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RollingVolumeRecycleScriptTests" name="C1008_Refusal_receipts_do_not_leak_secrets" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="2fa1b4a9-b7f1-958d-d5b7-58564ac86db1" executionId="27f9a8c2-1c85-4e3b-ac7a-31984e7fe778" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="a4a219c0-654a-2f43-db29-ba7f2ba45411" executionId="5e37835d-05e5-4a64-885d-21460ece29de" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="42a01e7a-b63c-9454-95fe-f294b24800cb" executionId="6913367f-7425-4453-95cd-2e85edbe786f" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="3" executed="3" passed="0" failed="3" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <RunInfos>
+      <RunInfo computerName="5d9e09695ab3" outcome="Error" timestamp="2026-10-03T16:01:28.0396741">
+        <Text>Exit code indicates failure: '2'. Please refer to https://aka.ms/testingplatform/exitcodes for more information.</Text>
+      </RunInfo>
+    </RunInfos>
+    <CollectorDataEntries>
+      <Collector agentName="5d9e09695ab3" uri="datacollector://TUnitExtensionHtmlReporter/1.44.0.0" collectorDisplayName="TUnit">
+        <UriAttachments>
+          <UriAttachment>
+            <A href="5d9e09695ab3/Antiphon.Tests-linux-net9.0-report.html" />
+          </UriAttachment>
+        </UriAttachments>
+      </Collector>
+    </CollectorDataEntries>
+  </ResultSummary>
+</TestRun>

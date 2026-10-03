@@ -1,0 +1,352 @@
+{
+  "schemaVersion": 2,
+  "source": {
+    "version": 1,
+    "start": {
+      "commit": "be7a1414e55e9673e73a403665e98b80bc62ddc2",
+      "dirtyFiles": 0,
+      "fingerprint": "1eeac6b4524aca0196a3a23779085429945d5872ef11971f625a71c1551b773c",
+      "observedAtUtc": "2026-10-03T17:11:04.6357801+00:00",
+      "captureStatus": "known",
+      "errorCode": null
+    },
+    "end": {
+      "commit": "be7a1414e55e9673e73a403665e98b80bc62ddc2",
+      "dirtyFiles": 0,
+      "fingerprint": "1eeac6b4524aca0196a3a23779085429945d5872ef11971f625a71c1551b773c",
+      "observedAtUtc": "2026-10-03T17:26:29.0784033+00:00",
+      "captureStatus": "known",
+      "errorCode": null
+    },
+    "state": "clean",
+    "buildSource": "verified"
+  },
+  "runId": "20261003-171104-a1d4",
+  "manifestPath": "/work/worktrees/task-1b2e83e3/.antiphon/checkpoints/20261003-171104-a1d4/manifest.resolved.yaml",
+  "manifestHash": "363db742c449b14f87d775f21f246990d146a5d09f7169be2a5ba7e38dda4908",
+  "commit": "be7a1414e55e9673e73a403665e98b80bc62ddc2",
+  "branch": "feat/card-task-1b2e83e3",
+  "worktree": "/work/worktrees/task-1b2e83e3",
+  "host": {
+    "os": "Debian GNU/Linux 12 (bookworm)",
+    "cores": 24,
+    "memAvailableMb": 102370,
+    "loadAvg": "5.28 12.46 18.61 7/3326 27008"
+  },
+  "startedAt": "2026-10-03T17:11:05.6073845+00:00",
+  "endedAt": "2026-10-03T17:26:29.0921242+00:00",
+  "wallSeconds": 923.4847397,
+  "sequentialEquivalentSeconds": 586.4486746,
+  "exitCode": 1,
+  "reason": null,
+  "verdict": "RED",
+  "builds": [
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": null,
+          "dirtyFiles": null,
+          "fingerprint": null,
+          "observedAtUtc": "2026-10-03T17:11:05.9140924+00:00",
+          "captureStatus": "unknown",
+          "errorCode": "not_observed"
+        },
+        "end": null,
+        "state": "unknown",
+        "buildSource": "unknown"
+      },
+      "id": "bin-c1008-red",
+      "project": "tests/Antiphon.Tests",
+      "state": "unused",
+      "seconds": 0,
+      "slot": "",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": null,
+          "dirtyFiles": null,
+          "fingerprint": null,
+          "observedAtUtc": "2026-10-03T17:11:05.9143115+00:00",
+          "captureStatus": "unknown",
+          "errorCode": "not_observed"
+        },
+        "end": null,
+        "state": "unknown",
+        "buildSource": "unknown"
+      },
+      "id": "bin-c1008-scripts",
+      "project": "tests/Antiphon.Tests",
+      "state": "unused",
+      "seconds": 0,
+      "slot": "",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": "be7a1414e55e9673e73a403665e98b80bc62ddc2",
+          "dirtyFiles": 0,
+          "fingerprint": "1eeac6b4524aca0196a3a23779085429945d5872ef11971f625a71c1551b773c",
+          "observedAtUtc": "2026-10-03T17:11:04.6357801+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "end": {
+          "commit": "be7a1414e55e9673e73a403665e98b80bc62ddc2",
+          "dirtyFiles": 0,
+          "fingerprint": "1eeac6b4524aca0196a3a23779085429945d5872ef11971f625a71c1551b773c",
+          "observedAtUtc": "2026-10-03T17:13:28.2950754+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "state": "clean",
+        "buildSource": "verified"
+      },
+      "id": "bin-c1008-cache",
+      "project": "tests/Antiphon.Tests",
+      "state": "ok",
+      "seconds": 142.1262704,
+      "slot": "granted",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": null,
+          "dirtyFiles": null,
+          "fingerprint": null,
+          "observedAtUtc": "2026-10-03T17:11:05.9143132+00:00",
+          "captureStatus": "unknown",
+          "errorCode": "not_observed"
+        },
+        "end": null,
+        "state": "unknown",
+        "buildSource": "unknown"
+      },
+      "id": "bin-c1008-docs",
+      "project": "tests/Antiphon.Tests",
+      "state": "unused",
+      "seconds": 0,
+      "slot": "",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": "be7a1414e55e9673e73a403665e98b80bc62ddc2",
+          "dirtyFiles": 0,
+          "fingerprint": "1eeac6b4524aca0196a3a23779085429945d5872ef11971f625a71c1551b773c",
+          "observedAtUtc": "2026-10-03T17:11:04.6357801+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "end": {
+          "commit": "be7a1414e55e9673e73a403665e98b80bc62ddc2",
+          "dirtyFiles": 0,
+          "fingerprint": "1eeac6b4524aca0196a3a23779085429945d5872ef11971f625a71c1551b773c",
+          "observedAtUtc": "2026-10-03T17:18:58.1018225+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "state": "clean",
+        "buildSource": "verified"
+      },
+      "id": "bin-c1008-real",
+      "project": "tests/Antiphon.Tests",
+      "state": "ok",
+      "seconds": 88.7031246,
+      "slot": "granted",
+      "slotReason": null,
+      "waitedSeconds": 105
+    }
+  ],
+  "rows": [
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": "be7a1414e55e9673e73a403665e98b80bc62ddc2",
+          "dirtyFiles": 0,
+          "fingerprint": "1eeac6b4524aca0196a3a23779085429945d5872ef11971f625a71c1551b773c",
+          "observedAtUtc": "2026-10-03T17:11:04.6357801+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "end": {
+          "commit": "be7a1414e55e9673e73a403665e98b80bc62ddc2",
+          "dirtyFiles": 0,
+          "fingerprint": "1eeac6b4524aca0196a3a23779085429945d5872ef11971f625a71c1551b773c",
+          "observedAtUtc": "2026-10-03T17:15:43.960766+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "state": "clean",
+        "buildSource": "verified"
+      },
+      "id": "CP-3",
+      "group": "linux-cache-regression",
+      "filter": "/*/*/RemoteScriptContractTests*/(C849_*)|(C912_*)|(C973_*)|(C944_*)|(C951_*)|(C976_*)|(C946_*)|(C957_*)",
+      "command": null,
+      "build": "bin-c1008-cache",
+      "state": "red",
+      "exitCode": 1,
+      "slot": "granted",
+      "slotReason": null,
+      "waitedSeconds": 0,
+      "executed": 54,
+      "passed": 51,
+      "failed": 3,
+      "skipped": 0,
+      "reruns": 0,
+      "trx": "/work/worktrees/task-1b2e83e3/.antiphon/checkpoints/20261003-171104-a1d4/rows/CP-3/run.trx",
+      "seconds": 135.6779489,
+      "line": "CHECKPOINT CP-3 commit=be7a1414e55e9673e73a403665e98b80bc62ddc2 build=ok filter=/*/*/RemoteScriptContractTests*/(C849_*)|(C912_*)|(C973_*)|(C944_*)|(C951_*)|(C976_*)|(C946_*)|(C957_*) executed=54 passed=51 failed=3 skipped=0 trx=/work/worktrees/task-1b2e83e3/.antiphon/checkpoints/20261003-171104-a1d4/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=be7a1414e55e9673e73a403665e98b80bc62ddc2 sourceState=clean buildSource=verified",
+      "failures": [
+        {
+          "name": "Antiphon.Tests.Scripts.RemoteScriptContractTests.C849_Deploy_prepares_and_verifies_before_acceptance",
+          "message": "ShouldAssertException: deployments\n    should contain (case insensitive comparison)\n\u0022prepare temp verdict=deploy-result=false:CacheRootNotWritable\u0022\n    but was actually\n\u0022prepare parent verdict=deploy-result=false:CacheRootNotWritable\nprepare temp verdict=main: line 185:...\u0022",
+          "stackTrace": "   at Antiphon.Tests.Scripts.RemoteScriptContractTests.C849_Deploy_prepares_and_verifies_before_acceptance() in /work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs:line 2818\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---",
+          "stdOut": "prepare parent verdict=deploy-result=false:CacheRootNotWritable\nprepare temp verdict=main: line 185: c1008_rollout_lock: command not found\ndeploy-result=false:CacheRootNotWritable\nready parent verdict=deploy-result=false:CacheSeedRequired\nready temp verdict=main: line 185: c1008_rollout_lock: command not found\ndeploy-result=false:CacheSeedRequired\n\n",
+          "baseline": null,
+          "durationSeconds": 26.5923933
+        },
+        {
+          "name": "Antiphon.Tests.Scripts.RemoteScriptContractTests.C849_Deploy_temp_names_saved_import_when_seed_is_missing",
+          "message": "ShouldAssertException: output\n    should contain (case insensitive comparison)\n\u0022exit=2 verdict=deploy=CacheSeedRequired:\u0022\n    but was actually\n\u0022exit=2 verdict=main: line 58: c1008_rollout_lock: command not found\ndeploy=CacheSeedRequired: run pw...\u0022",
+          "stackTrace": "   at Antiphon.Tests.Scripts.RemoteScriptContractTests.C849_Deploy_temp_names_saved_import_when_seed_is_missing() in /work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs:line 2710\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---",
+          "stdOut": "exit=2 verdict=main: line 58: c1008_rollout_lock: command not found\ndeploy=CacheSeedRequired: run pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -SavedDonor /home/mc/runner-cache-donor/temp-runner-cache.tar\n\n",
+          "baseline": null,
+          "durationSeconds": 0.0446636
+        },
+        {
+          "name": "Antiphon.Tests.Scripts.RemoteScriptContractTests.C849_Saved_donor_archive_is_checked_and_imported_without_a_container",
+          "message": "ShouldAssertException: output\n    should contain (case insensitive comparison)\n\u0022deploy-temp=seed-result=false:PastSeedGate\u0022\n    but was actually\n\u0022success=0 seed-result=true:\nmarker-written\nsaved-identity\npayload-imported\nrecovery-retained\nrecover...\u0022",
+          "stackTrace": "   at Antiphon.Tests.Scripts.RemoteScriptContractTests.C849_Saved_donor_archive_is_checked_and_imported_without_a_container() in /work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs:line 2537\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---",
+          "stdOut": "success=0 seed-result=true:\nmarker-written\nsaved-identity\npayload-imported\nrecovery-retained\nrecovery-host-owned\nunsafe-mode-masked\nincomplete-pruned\nlive-cache-owned-by-1654\nidle-count=3 smoke-count=1\nsmoke-exit=2 diagnosis=seed-result=false:CacheSeedSmokeFailed\nsmoke-no-ready-marker\nsmoke-stage-cleaned\ndirectory-imported\ndeploy-parent=seed-result=false:PastSeedGate\ndeploy-temp=main: line 424: c1008_rollout_lock: command not found\nseed-result=false:PastSeedGate\n\n",
+          "baseline": null,
+          "durationSeconds": 2.0052565
+        }
+      ],
+      "rerunLines": [],
+      "slowClasses": [
+        {
+          "className": "Antiphon.Tests.Scripts.RemoteScriptContractTests",
+          "seconds": 129.97648119999997,
+          "tests": 54
+        }
+      ],
+      "attempt": 1,
+      "repeat": null,
+      "timings": {
+        "slotWaitSeconds": 0,
+        "buildSlotWaitSeconds": 0,
+        "rowSlotWaitSeconds": 0,
+        "buildSeconds": 142.1262704,
+        "producingBuild": "bin-c1008-cache",
+        "startupSeconds": 4.4680976,
+        "testsWallSeconds": 130.0793082,
+        "teardownSeconds": 0.6663602,
+        "testHostWallSeconds": 135.2137768,
+        "method": "utc-trx-and-monotonic-host",
+        "unavailableReason": null
+      }
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": "be7a1414e55e9673e73a403665e98b80bc62ddc2",
+          "dirtyFiles": 0,
+          "fingerprint": "1eeac6b4524aca0196a3a23779085429945d5872ef11971f625a71c1551b773c",
+          "observedAtUtc": "2026-10-03T17:11:04.6357801+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "end": {
+          "commit": "be7a1414e55e9673e73a403665e98b80bc62ddc2",
+          "dirtyFiles": 0,
+          "fingerprint": "1eeac6b4524aca0196a3a23779085429945d5872ef11971f625a71c1551b773c",
+          "observedAtUtc": "2026-10-03T17:26:28.9119453+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "state": "clean",
+        "buildSource": "verified"
+      },
+      "id": "CP-5",
+      "group": "linux-isolated-docker",
+      "filter": "/*/*/RollingVolumeRecycleDockerTests/C1008_Real_docker_comparison",
+      "command": null,
+      "build": "bin-c1008-real",
+      "state": "red",
+      "exitCode": 1,
+      "slot": "granted",
+      "slotReason": null,
+      "waitedSeconds": 0,
+      "executed": 1,
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "reruns": 0,
+      "trx": "/work/worktrees/task-1b2e83e3/.antiphon/checkpoints/20261003-171104-a1d4/rows/CP-5/run.trx",
+      "seconds": 450.7707257,
+      "line": "CHECKPOINT CP-5 commit=be7a1414e55e9673e73a403665e98b80bc62ddc2 build=ok filter=/*/*/RollingVolumeRecycleDockerTests/C1008_Real_docker_comparison executed=1 passed=0 failed=1 skipped=0 trx=/work/worktrees/task-1b2e83e3/.antiphon/checkpoints/20261003-171104-a1d4/rows/CP-5/run.trx slot=granted waited=0s dirty=0 source=be7a1414e55e9673e73a403665e98b80bc62ddc2 sourceState=clean buildSource=verified",
+      "failures": [
+        {
+          "name": "Antiphon.Tests.Scripts.RollingVolumeRecycleDockerTests.C1008_Real_docker_comparison",
+          "message": "ShouldAssertException: child.ExitCode\n    should be\n0\n    but was\n1\n\nAdditional Info:\n    recycle-real-comparison: real Docker/Git outcomes; C1008_REAL_ROOT=/tmp/c1008-real-DvRU75\nC1008_REAL {\u0022name\u0022:\u0022B-default\u0022,\u0022version\u0022:\u0022B\u0022,\u0022exit\u0022:0,\u0022diagnosis\u0022:\u0022\u0022,\u0022accepted\u0022:true,\u0022operation\u0022:\u0022c1008ae22ebdb147347b860eaf49fc7035828\u0022}\nC1008_REAL {\u0022name\u0022:\u0022C-default\u0022,\u0022version\u0022:\u0022C\u0022,\u0022exit\u0022:0,\u0022diagnosis\u0022:\u0022\u0022,\u0022accepted\u0022:true,\u0022operation\u0022:\u0022c10081864afe25e00f101fb3d16a8022bb9ab\u0022}\nC1008_REAL {\u0022name\u0022:\u0022B-null-session-runner\u0022,\u0022version\u0022:\u0022B\u0022,\u0022exit\u0022:2,\u0022diagnosis\u0022:\u0022TempRunnerNotIdle\u0022,\u0022accepted\u0022:false,\u0022operation\u0022:\u0022c100863ca5700312d9bb7da75d5be7d0489db\u0022}\nC1008_REAL {\u0022name\u0022:\u0022C-null-session-runner\u0022,\u0022version\u0022:\u0022C\u0022,\u0022exit\u0022:2,\u0022diagnosis\u0022:\u0022RunnerCounterUnknown\u0022,\u0022accepted\u0022:false,\u0022operation\u0022:\u0022c1008b36511a02b36560da0255267a3ff617a\u0022}\nC1008_REAL {\u0022name\u0022:\u0022B-null-state-init\u0022,\u0022version\u0022:\u0022B\u0022,\u0022exit\u0022:2,\u0022diagnosis\u0022:\u0022TempRunnerNotIdle\u0022,\u0022accepted\u0022:false,\u0022operation\u0022:\u0022c100864794c1caad04628606aa5ace6784215\u0022}\nC1008_REAL {\u0022name\u0022:\u0022C-null-state-init\u0022,\u0022version\u0022:\u0022C\u0022,\u0022exit\u0022:2,\u0022diagnosis\u0022:\u0022RunnerCounterUnknown\u0022,\u0022accepted\u0022:false,\u0022operation\u0022:\u0022c1008c002dfa5ccc7d09cc27483924e6968b4\u0022}\nC1008_REAL {\u0022name\u0022:\u0022B-absent-null\u0022,\u0022version\u0022:\u0022B\u0022,\u0022exit\u0022:2,\u0022diagnosis\u0022:\u0022TempRunnerNotIdle\u0022,\u0022accepted\u0022:false,\u0022operation\u0022:\u0022c10080e4f64b2b927038e031a24f87d7a6bf7\u0022}\nC1008_REAL {\u0022name\u0022:\u0022C-absent-null\u0022,\u0022version\u0022:\u0022C\u0022,\u0022exit\u0022:0,\u0022diagnosis\u0022:\u0022\u0022,\u0022accepted\u0022:true,\u0022operation\u0022:\u0022c10084e1c39960c897b69dcee1feafcfcc4f5\u0022}\nC1008_REAL {\u0022name\u0022:\u0022C-four-alreadyAbsent\u0022,\u0022version\u0022:\u0022C\u0022,\u0022exit\u0022:0,\u0022diagnosis\u0022:\u0022\u0022,\u0022accepted\u0022:true,\u0022operation\u0022:\u0022c1008c04eefdef66d2c6c14ce2550d4c4c3de\u0022}\nC1008_REAL {\u0022name\u0022:\u0022C-foreign-running\u0022,\u0022version\u0022:\u0022C\u0022,\u0022exit\u0022:2,\u0022diagnosis\u0022:\u0022RecycleVolumeInUse\u0022,\u0022accepted\u0022:false,\u0022operation\u0022:\u0022c100881e8309d6b924f55b881109db30ff61c\u0022}\nC1008_REAL {\u0022name\u0022:\u0022C-foreign-stopped\u0022,\u0022version\u0022:\u0022C\u0022,\u0022exit\u0022:2,\u0022diagnosis\u0022:\u0022RecycleVolumeInUse\u0022,\u0022accepted\u0022:false,\u0022operation\u0022:\u0022c1008cb3c04f3ceed4ff9041e953c33c15bba\u0022}\nC1008_REAL {\u0022name\u0022:\u0022C-prefix-neighbours\u0022,\u0022version\u0022:\u0022C\u0022,\u0022exit\u0022:0,\u0022diagnosis\u0022:\u0022\u0022,\u0022accepted\u0022:true,\u0022operation\u0022:\u0022c1008813c406365706842331d9b745d823e0a\u0022}\nC1008_REAL {\u0022name\u0022:\u0022C-git-linked\u0022,\u0022version\u0022:\u0022C\u0022,\u0022exit\u0022:2,\u0022diagnosis\u0022:\u0022RecycleUnpublishedWork\u0022,\u0022accepted\u0022:false,\u0022operation\u0022:\u0022c1008d8887d060c7b7177641ab6467c280adc\u0022}\nC1008_REAL {\u0022name\u0022:\u0022C-git-detached\u0022,\u0022version\u0022:\u0022C\u0022,\u0022exit\u0022:2,\u0022diagnosis\u0022:\u0022RecycleUnpublishedWork\u0022,\u0022accepted\u0022:false,\u0022operation\u0022:\u0022c10086cf56a9d57edd2d8e2c00600cace73a7\u0022}\nC1008_REAL {\u0022name\u0022:\u0022C-git-branch\u0022,\u0022version\u0022:\u0022C\u0022,\u0022exit\u0022:2,\u0022diagnosis\u0022:\u0022RecycleUnpublishedWork\u0022,\u0022accepted\u0022:false,\u0022operation\u0022:\u0022c10088518718ec46676c67cb0ec6ea6388f01\u0022}\nC1008_REAL {\u0022name\u0022:\u0022C-git-bare\u0022,\u0022version\u0022:\u0022C\u0022,\u0022exit\u0022:2,\u0022diagnosis\u0022:\u0022RecycleUnpublishedWork\u0022,\u0022accepted\u0022:false,\u0022operation\u0022:\u0022c1008aaf3644f25f7a35b5155915578fc4249\u0022}\nC1008_REAL {\u0022name\u0022:\u0022C-git-tag\u0022,\u0022version\u0022:\u0022C\u0022,\u0022exit\u0022:2,\u0022diagnosis\u0022:\u0022RecycleUnpublishedWork\u0022,\u0022accepted\u0022:false,\u0022operation\u0022:\u0022c1008dc11e8ea28cf476f82638bd98df5d13d\u0022}\nC1008_REAL {\u0022name\u0022:\u0022C-git-dirty\u0022,\u0022version\u0022:\u0022C\u0022,\u0022exit\u0022:2,\u0022diagnosis\u0022:\u0022RecycleWorktreeDirty\u0022,\u0022accepted\u0022:false,\u0022operation\u0022:\u0022c100862c087f52516ba803a8b450381f88bf7\u0022}\nC1008_REAL {\u0022name\u0022:\u0022C-git-uid0\u0022,\u0022version\u0022:\u0022C\u0022,\u0022exit\u0022:2,\u0022diagnosis\u0022:\u0022RecycleGitAuditUnknown\u0022,\u0022accepted\u0022:false,\u0022operation\u0022:\u0022c1008a7383585196991e918572f61d92bdce4\u0022}\nC1008_REAL {\u0022name\u0022:\u0022C-git-published\u0022,\u0022version\u0022:\u0022C\u0022,\u0022exit\u0022:0,\u0022diagnosis\u0022:\u0022\u0022,\u0022accepted\u0022:true,\u0022operation\u0022:\u0022c1008d8734d3bac266e09f1c9a6ae13f9f025\u0022}\nC1008_REAL {\u0022name\u0022:\u0022C-partial-1\u0022,\u0022version\u0022:\u0022C\u0022,\u0022exit\u0022:2,\u0022diagnosis\u0022:\u0022RecycleVolumeInUse\u0022,\u0022accepted\u0022:false,\u0022operation\u0022:\u0022c100808e63524df73f7c1e34d7587d213c420\u0022}\nC1008_REAL {\u0022name\u0022:\u0022C-resume-1\u0022,\u0022version\u0022:\u0022C\u0022,\u0022exit\u0022:0,\u0022diagnosis\u0022:\u0022\u0022,\u0022accepted\u0022:true,\u0022operation\u0022:\u0022c100808e63524df73f7c1e34d7587d213c420\u0022}\nC1008_REAL {\u0022name\u0022:\u0022C-partial-2\u0022,\u0022version\u0022:\u0022C\u0022,\u0022exit\u0022:2,\u0022diagnosis\u0022:\u0022RecycleVolumeInUse\u0022,\u0022accepted\u0022:false,\u0022operation\u0022:\u0022c1008b42903888bd132112f2190ffcd8b475b\u0022}\nC1008_REAL {\u0022name\u0022:\u0022C-resume-2\u0022,\u0022version\u0022:\u0022C\u0022,\u0022exit\u0022:0,\u0022diagnosis\u0022:\u0022\u0022,\u0022accepted\u0022:true,\u0022operation\u0022:\u0022c1008b42903888bd132112f2190ffcd8b475b\u0022}\nC1008_REAL {\u0022name\u0022:\u0022C-recreated-volume-intrusion\u0022,\u0022version\u0022:\u0022C\u0022,\u0022exit\u0022:2,\u0022diagnosis\u0022:\u0022RecycleResumeMismatch\u0022,\u0022accepted\u0022:false,\u0022operation\u0022:\u0022c10085fbfb4df3772e54f15dfc48086f8f28f\u0022}\nC1008_REAL cases=25 base=4 changed=21 failures=1 cleanup=absent evidence=/tmp/c1008-real-DvRU75/evidence.json\nDEPRECATED: The legacy builder is deprecated and will be removed in a future release.\n            Install the buildx component to build images with BuildKit:\n            https://docs.docker.com/go/buildx/\n\n Network c1008rd4bd5e1265316f650c0afdb49emain_default  Creating\n Network c1008rd4bd5e1265316f650c0afdb49emain_default  Created\n Container c1008rd4bd5e1265316f650c0afdb49emain-state-init-1  Creating\n Container c1008rd4bd5e1265316f650c0afdb49emain-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650c0afdb49emain-state-init-1  Created\n Container c1008rd4bd5e1265316f650c0afdb49emain-session-runner-1  Created\n Container c1008rd4bd5e1265316f650c0afdb49emain-state-init-1  Starting\n Container c1008rd4bd5e1265316f650c0afdb49emain-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650c0afdb49emain-state-init-1  Started\n Container c1008rd4bd5e1265316f650c0afdb49emain-session-runner-1  Started\n Network c1008rd4bd5e1265316f650cfb8fba54main_default  Creating\n Network c1008rd4bd5e1265316f650cfb8fba54main_default  Created\n Container c1008rd4bd5e1265316f650cfb8fba54main-state-init-1  Creating\n Container c1008rd4bd5e1265316f650cfb8fba54main-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650cfb8fba54main-session-runner-1  Created\n Container c1008rd4bd5e1265316f650cfb8fba54main-state-init-1  Created\n Container c1008rd4bd5e1265316f650cfb8fba54main-state-init-1  Starting\n Container c1008rd4bd5e1265316f650cfb8fba54main-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650cfb8fba54main-state-init-1  Started\n Container c1008rd4bd5e1265316f650cfb8fba54main-session-runner-1  Started\n Network c1008rd4bd5e1265316f650c20635fa8main_default  Creating\n Network c1008rd4bd5e1265316f650c20635fa8main_default  Created\n Container c1008rd4bd5e1265316f650c20635fa8main-state-init-1  Creating\n Container c1008rd4bd5e1265316f650c20635fa8main-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650c20635fa8main-state-init-1  Created\n Container c1008rd4bd5e1265316f650c20635fa8main-session-runner-1  Created\n Container c1008rd4bd5e1265316f650c20635fa8main-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650c20635fa8main-state-init-1  Starting\n Container c1008rd4bd5e1265316f650c20635fa8main-state-init-1  Started\n Container c1008rd4bd5e1265316f650c20635fa8main-session-runner-1  Started\n Network c1008rd4bd5e1265316f650c7a236b0amain_default  Creating\n Network c1008rd4bd5e1265316f650c7a236b0amain_default  Created\n Container c1008rd4bd5e1265316f650c7a236b0amain-state-init-1  Creating\n Container c1008rd4bd5e1265316f650c7a236b0amain-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650c7a236b0amain-state-init-1  Created\n Container c1008rd4bd5e1265316f650c7a236b0amain-session-runner-1  Created\n Container c1008rd4bd5e1265316f650c7a236b0amain-state-init-1  Starting\n Container c1008rd4bd5e1265316f650c7a236b0amain-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650c7a236b0amain-session-runner-1  Started\n Container c1008rd4bd5e1265316f650c7a236b0amain-state-init-1  Started\n Network c1008rd4bd5e1265316f650cc8d3e68dmain_default  Creating\n Network c1008rd4bd5e1265316f650cc8d3e68dmain_default  Created\n Container c1008rd4bd5e1265316f650cc8d3e68dmain-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650cc8d3e68dmain-state-init-1  Creating\n Container c1008rd4bd5e1265316f650cc8d3e68dmain-session-runner-1  Created\n Container c1008rd4bd5e1265316f650cc8d3e68dmain-state-init-1  Created\n Container c1008rd4bd5e1265316f650cc8d3e68dmain-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650cc8d3e68dmain-state-init-1  Starting\n Container c1008rd4bd5e1265316f650cc8d3e68dmain-state-init-1  Started\n Container c1008rd4bd5e1265316f650cc8d3e68dmain-session-runner-1  Started\n Network c1008rd4bd5e1265316f650c55b6814bmain_default  Creating\n Network c1008rd4bd5e1265316f650c55b6814bmain_default  Created\n Container c1008rd4bd5e1265316f650c55b6814bmain-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650c55b6814bmain-state-init-1  Creating\n Container c1008rd4bd5e1265316f650c55b6814bmain-state-init-1  Created\n Container c1008rd4bd5e1265316f650c55b6814bmain-session-runner-1  Created\n Container c1008rd4bd5e1265316f650c55b6814bmain-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650c55b6814bmain-state-init-1  Starting\n Container c1008rd4bd5e1265316f650c55b6814bmain-state-init-1  Started\n Container c1008rd4bd5e1265316f650c55b6814bmain-session-runner-1  Started\n Network c1008rd4bd5e1265316f650cf4ffb4e6main_default  Creating\n Network c1008rd4bd5e1265316f650cf4ffb4e6main_default  Created\n Container c1008rd4bd5e1265316f650cf4ffb4e6main-state-init-1  Creating\n Container c1008rd4bd5e1265316f650cf4ffb4e6main-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650cf4ffb4e6main-state-init-1  Created\n Container c1008rd4bd5e1265316f650cf4ffb4e6main-session-runner-1  Created\n Container c1008rd4bd5e1265316f650cf4ffb4e6main-state-init-1  Starting\n Container c1008rd4bd5e1265316f650cf4ffb4e6main-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650cf4ffb4e6main-state-init-1  Started\n Container c1008rd4bd5e1265316f650cf4ffb4e6main-session-runner-1  Started\n Network c1008rd4bd5e1265316f650cd7bf5e5dmain_default  Creating\n Network c1008rd4bd5e1265316f650cd7bf5e5dmain_default  Created\n Container c1008rd4bd5e1265316f650cd7bf5e5dmain-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650cd7bf5e5dmain-state-init-1  Creating\n Container c1008rd4bd5e1265316f650cd7bf5e5dmain-state-init-1  Created\n Container c1008rd4bd5e1265316f650cd7bf5e5dmain-session-runner-1  Created\n Container c1008rd4bd5e1265316f650cd7bf5e5dmain-state-init-1  Starting\n Container c1008rd4bd5e1265316f650cd7bf5e5dmain-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650cd7bf5e5dmain-state-init-1  Started\n Container c1008rd4bd5e1265316f650cd7bf5e5dmain-session-runner-1  Started\n Network c1008rd4bd5e1265316f650cbead81e1main_default  Creating\n Network c1008rd4bd5e1265316f650cbead81e1main_default  Created\n Container c1008rd4bd5e1265316f650cbead81e1main-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650cbead81e1main-state-init-1  Creating\n Container c1008rd4bd5e1265316f650cbead81e1main-state-init-1  Created\n Container c1008rd4bd5e1265316f650cbead81e1main-session-runner-1  Created\n Container c1008rd4bd5e1265316f650cbead81e1main-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650cbead81e1main-state-init-1  Starting\n Container c1008rd4bd5e1265316f650cbead81e1main-session-runner-1  Started\n Container c1008rd4bd5e1265316f650cbead81e1main-state-init-1  Started\n Network c1008rd4bd5e1265316f650cc97d08b0main_default  Creating\n Network c1008rd4bd5e1265316f650cc97d08b0main_default  Created\n Container c1008rd4bd5e1265316f650cc97d08b0main-state-init-1  Creating\n Container c1008rd4bd5e1265316f650cc97d08b0main-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650cc97d08b0main-state-init-1  Created\n Container c1008rd4bd5e1265316f650cc97d08b0main-session-runner-1  Created\n Container c1008rd4bd5e1265316f650cc97d08b0main-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650cc97d08b0main-state-init-1  Starting\n Container c1008rd4bd5e1265316f650cc97d08b0main-session-runner-1  Started\n Container c1008rd4bd5e1265316f650cc97d08b0main-state-init-1  Started\n Network c1008rd4bd5e1265316f650c3776b1bbmain_default  Creating\n Network c1008rd4bd5e1265316f650c3776b1bbmain_default  Created\n Container c1008rd4bd5e1265316f650c3776b1bbmain-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650c3776b1bbmain-state-init-1  Creating\n Container c1008rd4bd5e1265316f650c3776b1bbmain-session-runner-1  Created\n Container c1008rd4bd5e1265316f650c3776b1bbmain-state-init-1  Created\n Container c1008rd4bd5e1265316f650c3776b1bbmain-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650c3776b1bbmain-state-init-1  Starting\n Container c1008rd4bd5e1265316f650c3776b1bbmain-session-runner-1  Started\n Container c1008rd4bd5e1265316f650c3776b1bbmain-state-init-1  Started\n Network c1008rd4bd5e1265316f650cb6abe393main_default  Creating\n Network c1008rd4bd5e1265316f650cb6abe393main_default  Created\n Container c1008rd4bd5e1265316f650cb6abe393main-state-init-1  Creating\n Container c1008rd4bd5e1265316f650cb6abe393main-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650cb6abe393main-state-init-1  Created\n Container c1008rd4bd5e1265316f650cb6abe393main-session-runner-1  Created\n Container c1008rd4bd5e1265316f650cb6abe393main-state-init-1  Starting\n Container c1008rd4bd5e1265316f650cb6abe393main-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650cb6abe393main-session-runner-1  Started\n Container c1008rd4bd5e1265316f650cb6abe393main-state-init-1  Started\n Network c1008rd4bd5e1265316f650c22c847dfmain_default  Creating\n Network c1008rd4bd5e1265316f650c22c847dfmain_default  Created\n Container c1008rd4bd5e1265316f650c22c847dfmain-state-init-1  Creating\n Container c1008rd4bd5e1265316f650c22c847dfmain-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650c22c847dfmain-session-runner-1  Created\n Container c1008rd4bd5e1265316f650c22c847dfmain-state-init-1  Created\n Container c1008rd4bd5e1265316f650c22c847dfmain-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650c22c847dfmain-state-init-1  Starting\n Container c1008rd4bd5e1265316f650c22c847dfmain-session-runner-1  Started\n Container c1008rd4bd5e1265316f650c22c847dfmain-state-init-1  Started\n Network c1008rd4bd5e1265316f650cce9a7b7fmain_default  Creating\n Network c1008rd4bd5e1265316f650cce9a7b7fmain_default  Created\n Container c1008rd4bd5e1265316f650cce9a7b7fmain-state-init-1  Creating\n Container c1008rd4bd5e1265316f650cce9a7b7fmain-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650cce9a7b7fmain-session-runner-1  Created\n Container c1008rd4bd5e1265316f650cce9a7b7fmain-state-init-1  Created\n Container c1008rd4bd5e1265316f650cce9a7b7fmain-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650cce9a7b7fmain-state-init-1  Starting\n Container c1008rd4bd5e1265316f650cce9a7b7fmain-state-init-1  Started\n Container c1008rd4bd5e1265316f650cce9a7b7fmain-session-runner-1  Started\n Network c1008rd4bd5e1265316f650cd6804d91main_default  Creating\n Network c1008rd4bd5e1265316f650cd6804d91main_default  Created\n Container c1008rd4bd5e1265316f650cd6804d91main-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650cd6804d91main-state-init-1  Creating\n Container c1008rd4bd5e1265316f650cd6804d91main-session-runner-1  Created\n Container c1008rd4bd5e1265316f650cd6804d91main-state-init-1  Created\n Container c1008rd4bd5e1265316f650cd6804d91main-state-init-1  Starting\n Container c1008rd4bd5e1265316f650cd6804d91main-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650cd6804d91main-state-init-1  Started\n Container c1008rd4bd5e1265316f650cd6804d91main-session-runner-1  Started\n Network c1008rd4bd5e1265316f650c220244ffmain_default  Creating\n Network c1008rd4bd5e1265316f650c220244ffmain_default  Created\n Container c1008rd4bd5e1265316f650c220244ffmain-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650c220244ffmain-state-init-1  Creating\n Container c1008rd4bd5e1265316f650c220244ffmain-state-init-1  Created\n Container c1008rd4bd5e1265316f650c220244ffmain-session-runner-1  Created\n Container c1008rd4bd5e1265316f650c220244ffmain-state-init-1  Starting\n Container c1008rd4bd5e1265316f650c220244ffmain-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650c220244ffmain-state-init-1  Started\n Container c1008rd4bd5e1265316f650c220244ffmain-session-runner-1  Started\n Network c1008rd4bd5e1265316f650c3f447d81main_default  Creating\n Network c1008rd4bd5e1265316f650c3f447d81main_default  Created\n Container c1008rd4bd5e1265316f650c3f447d81main-state-init-1  Creating\n Container c1008rd4bd5e1265316f650c3f447d81main-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650c3f447d81main-state-init-1  Created\n Container c1008rd4bd5e1265316f650c3f447d81main-session-runner-1  Created\n Container c1008rd4bd5e1265316f650c3f447d81main-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650c3f447d81main-state-init-1  Starting\n Container c1008rd4bd5e1265316f650c3f447d81main-state-init-1  Started\n Container c1008rd4bd5e1265316f650c3f447d81main-session-runner-1  Started\n Network c1008rd4bd5e1265316f650c7360b698main_default  Creating\n Network c1008rd4bd5e1265316f650c7360b698main_default  Created\n Container c1008rd4bd5e1265316f650c7360b698main-state-init-1  Creating\n Container c1008rd4bd5e1265316f650c7360b698main-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650c7360b698main-session-runner-1  Created\n Container c1008rd4bd5e1265316f650c7360b698main-state-init-1  Created\n Container c1008rd4bd5e1265316f650c7360b698main-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650c7360b698main-state-init-1  Starting\n Container c1008rd4bd5e1265316f650c7360b698main-state-init-1  Started\n Container c1008rd4bd5e1265316f650c7360b698main-session-runner-1  Started\n Network c1008rd4bd5e1265316f650c159afaccmain_default  Creating\n Network c1008rd4bd5e1265316f650c159afaccmain_default  Created\n Container c1008rd4bd5e1265316f650c159afaccmain-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650c159afaccmain-state-init-1  Creating\n Container c1008rd4bd5e1265316f650c159afaccmain-state-init-1  Created\n Container c1008rd4bd5e1265316f650c159afaccmain-session-runner-1  Created\n Container c1008rd4bd5e1265316f650c159afaccmain-state-init-1  Starting\n Container c1008rd4bd5e1265316f650c159afaccmain-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650c159afaccmain-state-init-1  Started\n Container c1008rd4bd5e1265316f650c159afaccmain-session-runner-1  Started\n Network c1008rd4bd5e1265316f650ce21c8cf8main_default  Creating\n Network c1008rd4bd5e1265316f650ce21c8cf8main_default  Created\n Container c1008rd4bd5e1265316f650ce21c8cf8main-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650ce21c8cf8main-state-init-1  Creating\n Container c1008rd4bd5e1265316f650ce21c8cf8main-session-runner-1  Created\n Container c1008rd4bd5e1265316f650ce21c8cf8main-state-init-1  Created\n Container c1008rd4bd5e1265316f650ce21c8cf8main-state-init-1  Starting\n Container c1008rd4bd5e1265316f650ce21c8cf8main-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650ce21c8cf8main-session-runner-1  Started\n Container c1008rd4bd5e1265316f650ce21c8cf8main-state-init-1  Started\n Network c1008rd4bd5e1265316f650c4876bbbdmain_default  Creating\n Network c1008rd4bd5e1265316f650c4876bbbdmain_default  Created\n Container c1008rd4bd5e1265316f650c4876bbbdmain-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650c4876bbbdmain-state-init-1  Creating\n Container c1008rd4bd5e1265316f650c4876bbbdmain-state-init-1  Created\n Container c1008rd4bd5e1265316f650c4876bbbdmain-session-runner-1  Created\n Container c1008rd4bd5e1265316f650c4876bbbdmain-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650c4876bbbdmain-state-init-1  Starting\n Container c1008rd4bd5e1265316f650c4876bbbdmain-state-init-1  Started\n Container c1008rd4bd5e1265316f650c4876bbbdmain-session-runner-1  Started\n Network c1008rd4bd5e1265316f650cf8905a53main_default  Creating\n Network c1008rd4bd5e1265316f650cf8905a53main_default  Created\n Container c1008rd4bd5e1265316f650cf8905a53main-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650cf8905a53main-state-init-1  Creating\n Container c1008rd4bd5e1265316f650cf8905a53main-state-init-1  Created\n Container c1008rd4bd5e1265316f650cf8905a53main-session-runner-1  Created\n Container c1008rd4bd5e1265316f650cf8905a53main-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650cf8905a53main-state-init-1  Starting\n Container c1008rd4bd5e1265316f650cf8905a53main-session-runner-1  Started\n Container c1008rd4bd5e1265316f650cf8905a53main-state-init-1  Started\n Network c1008rd4bd5e1265316f650cdfc4a25amain_default  Creating\n Network c1008rd4bd5e1265316f650cdfc4a25amain_default  Created\n Container c1008rd4bd5e1265316f650cdfc4a25amain-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650cdfc4a25amain-state-init-1  Creating\n Container c1008rd4bd5e1265316f650cdfc4a25amain-session-runner-1  Created\n Container c1008rd4bd5e1265316f650cdfc4a25amain-state-init-1  Created\n Container c1008rd4bd5e1265316f650cdfc4a25amain-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650cdfc4a25amain-state-init-1  Starting\n Container c1008rd4bd5e1265316f650cdfc4a25amain-session-runner-1  Started\n Container c1008rd4bd5e1265316f650cdfc4a25amain-state-init-1  Started\n Network c1008rd4bd5e1265316f650c89b0df41main_default  Creating\n Network c1008rd4bd5e1265316f650c89b0df41main_default  Created\n Container c1008rd4bd5e1265316f650c89b0df41main-session-runner-1  Creating\n Container c1008rd4bd5e1265316f650c89b0df41main-state-init-1  Creating\n Container c1008rd4bd5e1265316f650c89b0df41main-state-init-1  Created\n Container c1008rd4bd5e1265316f650c89b0df41main-session-runner-1  Created\n Container c1008rd4bd5e1265316f650c89b0df41main-session-runner-1  Starting\n Container c1008rd4bd5e1265316f650c89b0df41main-state-init-1  Starting\n Container c1008rd4bd5e1265316f650c89b0df41main-session-runner-1  Started\n Container c1008rd4bd5e1265316f650c89b0df41main-state-init-1  Started\nError: ExpectedSuccess:C-recorded-partial-up:RecycleResumeMismatch\n    at reclaimed (file:///work/worktrees/task-1b2e83e3/scripts/fixtures/c1008-recycle-real-cases.mjs:184:58)\n    at file:///work/worktrees/task-1b2e83e3/scripts/fixtures/c1008-recycle-real-cases.mjs:249:226\n    at record (file:///work/worktrees/task-1b2e83e3/scripts/fixtures/c1008-recycle-real-cases.mjs:179:3)\n    at file:///work/worktrees/task-1b2e83e3/scripts/fixtures/c1008-recycle-real-cases.mjs:249:5\n    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)\n",
+          "stackTrace": "   at Antiphon.Tests.Scripts.RollingVolumeRecycleDockerTests.C1008_Real_docker_comparison() in /work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/Scripts/RollingVolumeRecycleDockerTests.cs:line 48\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---",
+          "stdOut": "[CARD-0204] SessionRunner__BaseUrl=http://127.0.0.1:1, Delegation__CheckInterpreterEnabled=false, Delegation__DiagnoseEnabled=false and Delegation__OutputDistillerEnabled=false for every Program boot in this assembly (inherited SessionRunner__BaseUrl=\u0027\u003Cunset\u003E\u0027) - test hosts never launch on the production session-runner.\n[CARD-0298] Hangfire__ServerEnabled=false for every Program boot in this assembly - test hosts never start a Hangfire worker (no WMI census, no production-runner list).\n[CARD-0045] cleared inherited ANTIPHON_PTY_BACKEND=\u0027inbox\u0027 \u2014 pty tests declare their backend; the suite means the same thing whoever launched it.\n",
+          "baseline": null,
+          "durationSeconds": 446.7181867
+        }
+      ],
+      "rerunLines": [],
+      "slowClasses": [
+        {
+          "className": "Antiphon.Tests.Scripts.RollingVolumeRecycleDockerTests",
+          "seconds": 446.7181867,
+          "tests": 1
+        }
+      ],
+      "attempt": 1,
+      "repeat": null,
+      "timings": {
+        "slotWaitSeconds": 105,
+        "buildSlotWaitSeconds": 105,
+        "rowSlotWaitSeconds": 0,
+        "buildSeconds": 88.7031246,
+        "producingBuild": "bin-c1008-real",
+        "startupSeconds": 2.5246997,
+        "testsWallSeconds": 446.7181867,
+        "teardownSeconds": 1.0799905,
+        "testHostWallSeconds": 450.3228766,
+        "method": "utc-trx-and-monotonic-host",
+        "unavailableReason": null
+      }
+    }
+  ],
+  "unlisted": [],
+  "evidence": "/work/worktrees/task-1b2e83e3/.antiphon/checkpoints/20261003-171104-a1d4/report.md",
+  "cleanedOutputs": false,
+  "outputNames": [
+    "bin-c1008-red/",
+    "bin-c1008-scripts/",
+    "bin-c1008-cache/",
+    "bin-c1008-docs/",
+    "bin-c1008-real/"
+  ],
+  "maxConcurrentRows": 1,
+  "maxConcurrentBuilds": 1
+}

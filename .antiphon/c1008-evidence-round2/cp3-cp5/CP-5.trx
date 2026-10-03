@@ -1,0 +1,359 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="71fd6607-f804-4643-9cb1-0e1fbba67d6c" name="@5d9e09695ab3 2026-10-03 17:26:28.1530663" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-10-03T17:19:00.595027Z" queuing="2026-10-03T17:19:00.595027Z" start="2026-10-03T17:19:00.595027Z" finish="2026-10-03T17:26:28.1544656Z" />
+  <TestSettings name="default" id="5bb0d2a3-0614-47b3-b2b2-f78a85cdbca7">
+    <Deployment runDeploymentRoot="_5d9e09695ab3_2026-10-03_17_26_28.1530663" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="53b2cba4-b247-483d-9be0-0647fb19495e" testId="ab2adbe2-0b75-2bcb-9b5f-cbc99a685b43" testName="C1008_Real_docker_comparison" computerName="5d9e09695ab3" duration="00:07:26.7181867" startTime="2026-10-03T17:19:01.0115698+00:00" endTime="2026-10-03T17:26:27.7297565+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="53b2cba4-b247-483d-9be0-0647fb19495e">
+      <Output>
+        <StdOut>[CARD-0204] SessionRunner__BaseUrl=http://127.0.0.1:1, Delegation__CheckInterpreterEnabled=false, Delegation__DiagnoseEnabled=false and Delegation__OutputDistillerEnabled=false for every Program boot in this assembly (inherited SessionRunner__BaseUrl='&lt;unset&gt;') - test hosts never launch on the production session-runner.
+[CARD-0298] Hangfire__ServerEnabled=false for every Program boot in this assembly - test hosts never start a Hangfire worker (no WMI census, no production-runner list).
+[CARD-0045] cleared inherited ANTIPHON_PTY_BACKEND='inbox' — pty tests declare their backend; the suite means the same thing whoever launched it.
+</StdOut>
+        <ErrorInfo>
+          <Message>ShouldAssertException: child.ExitCode
+    should be
+0
+    but was
+1
+
+Additional Info:
+    recycle-real-comparison: real Docker/Git outcomes; C1008_REAL_ROOT=/tmp/c1008-real-DvRU75
+C1008_REAL {"name":"B-default","version":"B","exit":0,"diagnosis":"","accepted":true,"operation":"c1008ae22ebdb147347b860eaf49fc7035828"}
+C1008_REAL {"name":"C-default","version":"C","exit":0,"diagnosis":"","accepted":true,"operation":"c10081864afe25e00f101fb3d16a8022bb9ab"}
+C1008_REAL {"name":"B-null-session-runner","version":"B","exit":2,"diagnosis":"TempRunnerNotIdle","accepted":false,"operation":"c100863ca5700312d9bb7da75d5be7d0489db"}
+C1008_REAL {"name":"C-null-session-runner","version":"C","exit":2,"diagnosis":"RunnerCounterUnknown","accepted":false,"operation":"c1008b36511a02b36560da0255267a3ff617a"}
+C1008_REAL {"name":"B-null-state-init","version":"B","exit":2,"diagnosis":"TempRunnerNotIdle","accepted":false,"operation":"c100864794c1caad04628606aa5ace6784215"}
+C1008_REAL {"name":"C-null-state-init","version":"C","exit":2,"diagnosis":"RunnerCounterUnknown","accepted":false,"operation":"c1008c002dfa5ccc7d09cc27483924e6968b4"}
+C1008_REAL {"name":"B-absent-null","version":"B","exit":2,"diagnosis":"TempRunnerNotIdle","accepted":false,"operation":"c10080e4f64b2b927038e031a24f87d7a6bf7"}
+C1008_REAL {"name":"C-absent-null","version":"C","exit":0,"diagnosis":"","accepted":true,"operation":"c10084e1c39960c897b69dcee1feafcfcc4f5"}
+C1008_REAL {"name":"C-four-alreadyAbsent","version":"C","exit":0,"diagnosis":"","accepted":true,"operation":"c1008c04eefdef66d2c6c14ce2550d4c4c3de"}
+C1008_REAL {"name":"C-foreign-running","version":"C","exit":2,"diagnosis":"RecycleVolumeInUse","accepted":false,"operation":"c100881e8309d6b924f55b881109db30ff61c"}
+C1008_REAL {"name":"C-foreign-stopped","version":"C","exit":2,"diagnosis":"RecycleVolumeInUse","accepted":false,"operation":"c1008cb3c04f3ceed4ff9041e953c33c15bba"}
+C1008_REAL {"name":"C-prefix-neighbours","version":"C","exit":0,"diagnosis":"","accepted":true,"operation":"c1008813c406365706842331d9b745d823e0a"}
+C1008_REAL {"name":"C-git-linked","version":"C","exit":2,"diagnosis":"RecycleUnpublishedWork","accepted":false,"operation":"c1008d8887d060c7b7177641ab6467c280adc"}
+C1008_REAL {"name":"C-git-detached","version":"C","exit":2,"diagnosis":"RecycleUnpublishedWork","accepted":false,"operation":"c10086cf56a9d57edd2d8e2c00600cace73a7"}
+C1008_REAL {"name":"C-git-branch","version":"C","exit":2,"diagnosis":"RecycleUnpublishedWork","accepted":false,"operation":"c10088518718ec46676c67cb0ec6ea6388f01"}
+C1008_REAL {"name":"C-git-bare","version":"C","exit":2,"diagnosis":"RecycleUnpublishedWork","accepted":false,"operation":"c1008aaf3644f25f7a35b5155915578fc4249"}
+C1008_REAL {"name":"C-git-tag","version":"C","exit":2,"diagnosis":"RecycleUnpublishedWork","accepted":false,"operation":"c1008dc11e8ea28cf476f82638bd98df5d13d"}
+C1008_REAL {"name":"C-git-dirty","version":"C","exit":2,"diagnosis":"RecycleWorktreeDirty","accepted":false,"operation":"c100862c087f52516ba803a8b450381f88bf7"}
+C1008_REAL {"name":"C-git-uid0","version":"C","exit":2,"diagnosis":"RecycleGitAuditUnknown","accepted":false,"operation":"c1008a7383585196991e918572f61d92bdce4"}
+C1008_REAL {"name":"C-git-published","version":"C","exit":0,"diagnosis":"","accepted":true,"operation":"c1008d8734d3bac266e09f1c9a6ae13f9f025"}
+C1008_REAL {"name":"C-partial-1","version":"C","exit":2,"diagnosis":"RecycleVolumeInUse","accepted":false,"operation":"c100808e63524df73f7c1e34d7587d213c420"}
+C1008_REAL {"name":"C-resume-1","version":"C","exit":0,"diagnosis":"","accepted":true,"operation":"c100808e63524df73f7c1e34d7587d213c420"}
+C1008_REAL {"name":"C-partial-2","version":"C","exit":2,"diagnosis":"RecycleVolumeInUse","accepted":false,"operation":"c1008b42903888bd132112f2190ffcd8b475b"}
+C1008_REAL {"name":"C-resume-2","version":"C","exit":0,"diagnosis":"","accepted":true,"operation":"c1008b42903888bd132112f2190ffcd8b475b"}
+C1008_REAL {"name":"C-recreated-volume-intrusion","version":"C","exit":2,"diagnosis":"RecycleResumeMismatch","accepted":false,"operation":"c10085fbfb4df3772e54f15dfc48086f8f28f"}
+C1008_REAL cases=25 base=4 changed=21 failures=1 cleanup=absent evidence=/tmp/c1008-real-DvRU75/evidence.json
+DEPRECATED: The legacy builder is deprecated and will be removed in a future release.
+            Install the buildx component to build images with BuildKit:
+            https://docs.docker.com/go/buildx/
+
+ Network c1008rd4bd5e1265316f650c0afdb49emain_default  Creating
+ Network c1008rd4bd5e1265316f650c0afdb49emain_default  Created
+ Container c1008rd4bd5e1265316f650c0afdb49emain-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650c0afdb49emain-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650c0afdb49emain-state-init-1  Created
+ Container c1008rd4bd5e1265316f650c0afdb49emain-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650c0afdb49emain-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650c0afdb49emain-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650c0afdb49emain-state-init-1  Started
+ Container c1008rd4bd5e1265316f650c0afdb49emain-session-runner-1  Started
+ Network c1008rd4bd5e1265316f650cfb8fba54main_default  Creating
+ Network c1008rd4bd5e1265316f650cfb8fba54main_default  Created
+ Container c1008rd4bd5e1265316f650cfb8fba54main-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650cfb8fba54main-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650cfb8fba54main-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650cfb8fba54main-state-init-1  Created
+ Container c1008rd4bd5e1265316f650cfb8fba54main-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650cfb8fba54main-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650cfb8fba54main-state-init-1  Started
+ Container c1008rd4bd5e1265316f650cfb8fba54main-session-runner-1  Started
+ Network c1008rd4bd5e1265316f650c20635fa8main_default  Creating
+ Network c1008rd4bd5e1265316f650c20635fa8main_default  Created
+ Container c1008rd4bd5e1265316f650c20635fa8main-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650c20635fa8main-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650c20635fa8main-state-init-1  Created
+ Container c1008rd4bd5e1265316f650c20635fa8main-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650c20635fa8main-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650c20635fa8main-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650c20635fa8main-state-init-1  Started
+ Container c1008rd4bd5e1265316f650c20635fa8main-session-runner-1  Started
+ Network c1008rd4bd5e1265316f650c7a236b0amain_default  Creating
+ Network c1008rd4bd5e1265316f650c7a236b0amain_default  Created
+ Container c1008rd4bd5e1265316f650c7a236b0amain-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650c7a236b0amain-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650c7a236b0amain-state-init-1  Created
+ Container c1008rd4bd5e1265316f650c7a236b0amain-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650c7a236b0amain-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650c7a236b0amain-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650c7a236b0amain-session-runner-1  Started
+ Container c1008rd4bd5e1265316f650c7a236b0amain-state-init-1  Started
+ Network c1008rd4bd5e1265316f650cc8d3e68dmain_default  Creating
+ Network c1008rd4bd5e1265316f650cc8d3e68dmain_default  Created
+ Container c1008rd4bd5e1265316f650cc8d3e68dmain-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650cc8d3e68dmain-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650cc8d3e68dmain-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650cc8d3e68dmain-state-init-1  Created
+ Container c1008rd4bd5e1265316f650cc8d3e68dmain-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650cc8d3e68dmain-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650cc8d3e68dmain-state-init-1  Started
+ Container c1008rd4bd5e1265316f650cc8d3e68dmain-session-runner-1  Started
+ Network c1008rd4bd5e1265316f650c55b6814bmain_default  Creating
+ Network c1008rd4bd5e1265316f650c55b6814bmain_default  Created
+ Container c1008rd4bd5e1265316f650c55b6814bmain-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650c55b6814bmain-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650c55b6814bmain-state-init-1  Created
+ Container c1008rd4bd5e1265316f650c55b6814bmain-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650c55b6814bmain-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650c55b6814bmain-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650c55b6814bmain-state-init-1  Started
+ Container c1008rd4bd5e1265316f650c55b6814bmain-session-runner-1  Started
+ Network c1008rd4bd5e1265316f650cf4ffb4e6main_default  Creating
+ Network c1008rd4bd5e1265316f650cf4ffb4e6main_default  Created
+ Container c1008rd4bd5e1265316f650cf4ffb4e6main-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650cf4ffb4e6main-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650cf4ffb4e6main-state-init-1  Created
+ Container c1008rd4bd5e1265316f650cf4ffb4e6main-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650cf4ffb4e6main-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650cf4ffb4e6main-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650cf4ffb4e6main-state-init-1  Started
+ Container c1008rd4bd5e1265316f650cf4ffb4e6main-session-runner-1  Started
+ Network c1008rd4bd5e1265316f650cd7bf5e5dmain_default  Creating
+ Network c1008rd4bd5e1265316f650cd7bf5e5dmain_default  Created
+ Container c1008rd4bd5e1265316f650cd7bf5e5dmain-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650cd7bf5e5dmain-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650cd7bf5e5dmain-state-init-1  Created
+ Container c1008rd4bd5e1265316f650cd7bf5e5dmain-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650cd7bf5e5dmain-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650cd7bf5e5dmain-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650cd7bf5e5dmain-state-init-1  Started
+ Container c1008rd4bd5e1265316f650cd7bf5e5dmain-session-runner-1  Started
+ Network c1008rd4bd5e1265316f650cbead81e1main_default  Creating
+ Network c1008rd4bd5e1265316f650cbead81e1main_default  Created
+ Container c1008rd4bd5e1265316f650cbead81e1main-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650cbead81e1main-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650cbead81e1main-state-init-1  Created
+ Container c1008rd4bd5e1265316f650cbead81e1main-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650cbead81e1main-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650cbead81e1main-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650cbead81e1main-session-runner-1  Started
+ Container c1008rd4bd5e1265316f650cbead81e1main-state-init-1  Started
+ Network c1008rd4bd5e1265316f650cc97d08b0main_default  Creating
+ Network c1008rd4bd5e1265316f650cc97d08b0main_default  Created
+ Container c1008rd4bd5e1265316f650cc97d08b0main-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650cc97d08b0main-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650cc97d08b0main-state-init-1  Created
+ Container c1008rd4bd5e1265316f650cc97d08b0main-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650cc97d08b0main-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650cc97d08b0main-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650cc97d08b0main-session-runner-1  Started
+ Container c1008rd4bd5e1265316f650cc97d08b0main-state-init-1  Started
+ Network c1008rd4bd5e1265316f650c3776b1bbmain_default  Creating
+ Network c1008rd4bd5e1265316f650c3776b1bbmain_default  Created
+ Container c1008rd4bd5e1265316f650c3776b1bbmain-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650c3776b1bbmain-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650c3776b1bbmain-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650c3776b1bbmain-state-init-1  Created
+ Container c1008rd4bd5e1265316f650c3776b1bbmain-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650c3776b1bbmain-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650c3776b1bbmain-session-runner-1  Started
+ Container c1008rd4bd5e1265316f650c3776b1bbmain-state-init-1  Started
+ Network c1008rd4bd5e1265316f650cb6abe393main_default  Creating
+ Network c1008rd4bd5e1265316f650cb6abe393main_default  Created
+ Container c1008rd4bd5e1265316f650cb6abe393main-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650cb6abe393main-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650cb6abe393main-state-init-1  Created
+ Container c1008rd4bd5e1265316f650cb6abe393main-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650cb6abe393main-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650cb6abe393main-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650cb6abe393main-session-runner-1  Started
+ Container c1008rd4bd5e1265316f650cb6abe393main-state-init-1  Started
+ Network c1008rd4bd5e1265316f650c22c847dfmain_default  Creating
+ Network c1008rd4bd5e1265316f650c22c847dfmain_default  Created
+ Container c1008rd4bd5e1265316f650c22c847dfmain-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650c22c847dfmain-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650c22c847dfmain-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650c22c847dfmain-state-init-1  Created
+ Container c1008rd4bd5e1265316f650c22c847dfmain-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650c22c847dfmain-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650c22c847dfmain-session-runner-1  Started
+ Container c1008rd4bd5e1265316f650c22c847dfmain-state-init-1  Started
+ Network c1008rd4bd5e1265316f650cce9a7b7fmain_default  Creating
+ Network c1008rd4bd5e1265316f650cce9a7b7fmain_default  Created
+ Container c1008rd4bd5e1265316f650cce9a7b7fmain-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650cce9a7b7fmain-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650cce9a7b7fmain-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650cce9a7b7fmain-state-init-1  Created
+ Container c1008rd4bd5e1265316f650cce9a7b7fmain-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650cce9a7b7fmain-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650cce9a7b7fmain-state-init-1  Started
+ Container c1008rd4bd5e1265316f650cce9a7b7fmain-session-runner-1  Started
+ Network c1008rd4bd5e1265316f650cd6804d91main_default  Creating
+ Network c1008rd4bd5e1265316f650cd6804d91main_default  Created
+ Container c1008rd4bd5e1265316f650cd6804d91main-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650cd6804d91main-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650cd6804d91main-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650cd6804d91main-state-init-1  Created
+ Container c1008rd4bd5e1265316f650cd6804d91main-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650cd6804d91main-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650cd6804d91main-state-init-1  Started
+ Container c1008rd4bd5e1265316f650cd6804d91main-session-runner-1  Started
+ Network c1008rd4bd5e1265316f650c220244ffmain_default  Creating
+ Network c1008rd4bd5e1265316f650c220244ffmain_default  Created
+ Container c1008rd4bd5e1265316f650c220244ffmain-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650c220244ffmain-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650c220244ffmain-state-init-1  Created
+ Container c1008rd4bd5e1265316f650c220244ffmain-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650c220244ffmain-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650c220244ffmain-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650c220244ffmain-state-init-1  Started
+ Container c1008rd4bd5e1265316f650c220244ffmain-session-runner-1  Started
+ Network c1008rd4bd5e1265316f650c3f447d81main_default  Creating
+ Network c1008rd4bd5e1265316f650c3f447d81main_default  Created
+ Container c1008rd4bd5e1265316f650c3f447d81main-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650c3f447d81main-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650c3f447d81main-state-init-1  Created
+ Container c1008rd4bd5e1265316f650c3f447d81main-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650c3f447d81main-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650c3f447d81main-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650c3f447d81main-state-init-1  Started
+ Container c1008rd4bd5e1265316f650c3f447d81main-session-runner-1  Started
+ Network c1008rd4bd5e1265316f650c7360b698main_default  Creating
+ Network c1008rd4bd5e1265316f650c7360b698main_default  Created
+ Container c1008rd4bd5e1265316f650c7360b698main-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650c7360b698main-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650c7360b698main-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650c7360b698main-state-init-1  Created
+ Container c1008rd4bd5e1265316f650c7360b698main-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650c7360b698main-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650c7360b698main-state-init-1  Started
+ Container c1008rd4bd5e1265316f650c7360b698main-session-runner-1  Started
+ Network c1008rd4bd5e1265316f650c159afaccmain_default  Creating
+ Network c1008rd4bd5e1265316f650c159afaccmain_default  Created
+ Container c1008rd4bd5e1265316f650c159afaccmain-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650c159afaccmain-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650c159afaccmain-state-init-1  Created
+ Container c1008rd4bd5e1265316f650c159afaccmain-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650c159afaccmain-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650c159afaccmain-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650c159afaccmain-state-init-1  Started
+ Container c1008rd4bd5e1265316f650c159afaccmain-session-runner-1  Started
+ Network c1008rd4bd5e1265316f650ce21c8cf8main_default  Creating
+ Network c1008rd4bd5e1265316f650ce21c8cf8main_default  Created
+ Container c1008rd4bd5e1265316f650ce21c8cf8main-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650ce21c8cf8main-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650ce21c8cf8main-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650ce21c8cf8main-state-init-1  Created
+ Container c1008rd4bd5e1265316f650ce21c8cf8main-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650ce21c8cf8main-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650ce21c8cf8main-session-runner-1  Started
+ Container c1008rd4bd5e1265316f650ce21c8cf8main-state-init-1  Started
+ Network c1008rd4bd5e1265316f650c4876bbbdmain_default  Creating
+ Network c1008rd4bd5e1265316f650c4876bbbdmain_default  Created
+ Container c1008rd4bd5e1265316f650c4876bbbdmain-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650c4876bbbdmain-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650c4876bbbdmain-state-init-1  Created
+ Container c1008rd4bd5e1265316f650c4876bbbdmain-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650c4876bbbdmain-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650c4876bbbdmain-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650c4876bbbdmain-state-init-1  Started
+ Container c1008rd4bd5e1265316f650c4876bbbdmain-session-runner-1  Started
+ Network c1008rd4bd5e1265316f650cf8905a53main_default  Creating
+ Network c1008rd4bd5e1265316f650cf8905a53main_default  Created
+ Container c1008rd4bd5e1265316f650cf8905a53main-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650cf8905a53main-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650cf8905a53main-state-init-1  Created
+ Container c1008rd4bd5e1265316f650cf8905a53main-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650cf8905a53main-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650cf8905a53main-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650cf8905a53main-session-runner-1  Started
+ Container c1008rd4bd5e1265316f650cf8905a53main-state-init-1  Started
+ Network c1008rd4bd5e1265316f650cdfc4a25amain_default  Creating
+ Network c1008rd4bd5e1265316f650cdfc4a25amain_default  Created
+ Container c1008rd4bd5e1265316f650cdfc4a25amain-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650cdfc4a25amain-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650cdfc4a25amain-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650cdfc4a25amain-state-init-1  Created
+ Container c1008rd4bd5e1265316f650cdfc4a25amain-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650cdfc4a25amain-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650cdfc4a25amain-session-runner-1  Started
+ Container c1008rd4bd5e1265316f650cdfc4a25amain-state-init-1  Started
+ Network c1008rd4bd5e1265316f650c89b0df41main_default  Creating
+ Network c1008rd4bd5e1265316f650c89b0df41main_default  Created
+ Container c1008rd4bd5e1265316f650c89b0df41main-session-runner-1  Creating
+ Container c1008rd4bd5e1265316f650c89b0df41main-state-init-1  Creating
+ Container c1008rd4bd5e1265316f650c89b0df41main-state-init-1  Created
+ Container c1008rd4bd5e1265316f650c89b0df41main-session-runner-1  Created
+ Container c1008rd4bd5e1265316f650c89b0df41main-session-runner-1  Starting
+ Container c1008rd4bd5e1265316f650c89b0df41main-state-init-1  Starting
+ Container c1008rd4bd5e1265316f650c89b0df41main-session-runner-1  Started
+ Container c1008rd4bd5e1265316f650c89b0df41main-state-init-1  Started
+Error: ExpectedSuccess:C-recorded-partial-up:RecycleResumeMismatch
+    at reclaimed (file:///work/worktrees/task-1b2e83e3/scripts/fixtures/c1008-recycle-real-cases.mjs:184:58)
+    at file:///work/worktrees/task-1b2e83e3/scripts/fixtures/c1008-recycle-real-cases.mjs:249:226
+    at record (file:///work/worktrees/task-1b2e83e3/scripts/fixtures/c1008-recycle-real-cases.mjs:179:3)
+    at file:///work/worktrees/task-1b2e83e3/scripts/fixtures/c1008-recycle-real-cases.mjs:249:5
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+</Message>
+          <StackTrace>   at Antiphon.Tests.Scripts.RollingVolumeRecycleDockerTests.C1008_Real_docker_comparison() in /work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/Scripts/RollingVolumeRecycleDockerTests.cs:line 48
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="C1008_Real_docker_comparison" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-real/antiphon.tests.dll" id="ab2adbe2-0b75-2bcb-9b5f-cbc99a685b43">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Integration" />
+        <TestCategoryItem TestCategory="Slow" />
+      </TestCategory>
+      <Execution id="53b2cba4-b247-483d-9be0-0647fb19495e" />
+      <Properties>
+        <Property>
+          <Key>Slow</Key>
+          <Value></Value>
+        </Property>
+        <Property>
+          <Key>Integration</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-real/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RollingVolumeRecycleDockerTests" name="C1008_Real_docker_comparison" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="ab2adbe2-0b75-2bcb-9b5f-cbc99a685b43" executionId="53b2cba4-b247-483d-9be0-0647fb19495e" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="1" executed="1" passed="0" failed="1" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <RunInfos>
+      <RunInfo computerName="5d9e09695ab3" outcome="Error" timestamp="2026-10-03T17:26:28.1811208">
+        <Text>Exit code indicates failure: '2'. Please refer to https://aka.ms/testingplatform/exitcodes for more information.</Text>
+      </RunInfo>
+    </RunInfos>
+    <CollectorDataEntries>
+      <Collector agentName="5d9e09695ab3" uri="datacollector://TUnitExtensionHtmlReporter/1.44.0.0" collectorDisplayName="TUnit">
+        <UriAttachments>
+          <UriAttachment>
+            <A href="5d9e09695ab3/Antiphon.Tests-linux-net9.0-report.html" />
+          </UriAttachment>
+        </UriAttachments>
+      </Collector>
+    </CollectorDataEntries>
+  </ResultSummary>
+</TestRun>

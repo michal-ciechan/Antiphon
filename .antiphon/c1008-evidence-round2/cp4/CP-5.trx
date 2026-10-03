@@ -1,0 +1,115 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="8f032c11-5e0e-47f0-bd50-66597a0e8319" name="@5d9e09695ab3 2026-10-03 16:31:57.1076169" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-10-03T16:29:28.5711246Z" queuing="2026-10-03T16:29:28.5711246Z" start="2026-10-03T16:29:28.5711246Z" finish="2026-10-03T16:31:57.1090063Z" />
+  <TestSettings name="default" id="c9125a35-437e-406c-ac84-e87f774cfeed">
+    <Deployment runDeploymentRoot="_5d9e09695ab3_2026-10-03_16_31_57.1076169" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="11d9387c-93b0-4e92-a2e7-c41e5073e028" testId="ab2adbe2-0b75-2bcb-9b5f-cbc99a685b43" testName="C1008_Real_docker_comparison" computerName="5d9e09695ab3" duration="00:02:27.6436834" startTime="2026-10-03T16:29:29.0479529+00:00" endTime="2026-10-03T16:31:56.6916363+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="11d9387c-93b0-4e92-a2e7-c41e5073e028">
+      <Output>
+        <StdOut>[CARD-0204] SessionRunner__BaseUrl=http://127.0.0.1:1, Delegation__CheckInterpreterEnabled=false, Delegation__DiagnoseEnabled=false and Delegation__OutputDistillerEnabled=false for every Program boot in this assembly (inherited SessionRunner__BaseUrl='&lt;unset&gt;') - test hosts never launch on the production session-runner.
+[CARD-0298] Hangfire__ServerEnabled=false for every Program boot in this assembly - test hosts never start a Hangfire worker (no WMI census, no production-runner list).
+[CARD-0045] cleared inherited ANTIPHON_PTY_BACKEND='inbox' — pty tests declare their backend; the suite means the same thing whoever launched it.
+</StdOut>
+        <ErrorInfo>
+          <Message>ShouldAssertException: child.ExitCode
+    should be
+0
+    but was
+1
+
+Additional Info:
+    recycle-real-comparison: real Docker/Git outcomes; C1008_REAL_ROOT=/tmp/c1008-real-Kh9gPU
+C1008_REAL {"name":"B-default","version":"B","exit":0,"diagnosis":"","accepted":true,"operation":"c100880137096512d85a8c98df528ceaf6a9e"}
+C1008_REAL cases=1 base=1 changed=0 failures=1 cleanup=absent evidence=/tmp/c1008-real-Kh9gPU/evidence.json
+DEPRECATED: The legacy builder is deprecated and will be removed in a future release.
+            Install the buildx component to build images with BuildKit:
+            https://docs.docker.com/go/buildx/
+
+ Network c1008rdee9317ebd491c137ce9888ba1main_default  Creating
+ Network c1008rdee9317ebd491c137ce9888ba1main_default  Created
+ Container c1008rdee9317ebd491c137ce9888ba1main-session-runner-1  Creating
+ Container c1008rdee9317ebd491c137ce9888ba1main-state-init-1  Creating
+ Container c1008rdee9317ebd491c137ce9888ba1main-session-runner-1  Created
+ Container c1008rdee9317ebd491c137ce9888ba1main-state-init-1  Created
+ Container c1008rdee9317ebd491c137ce9888ba1main-state-init-1  Starting
+ Container c1008rdee9317ebd491c137ce9888ba1main-session-runner-1  Starting
+ Container c1008rdee9317ebd491c137ce9888ba1main-session-runner-1  Started
+ Container c1008rdee9317ebd491c137ce9888ba1main-state-init-1  Started
+ Network c1008rdee9317ebd491c137c8cbf766emain_default  Creating
+ Network c1008rdee9317ebd491c137c8cbf766emain_default  Created
+ Container c1008rdee9317ebd491c137c8cbf766emain-session-runner-1  Creating
+ Container c1008rdee9317ebd491c137c8cbf766emain-state-init-1  Creating
+ Container c1008rdee9317ebd491c137c8cbf766emain-session-runner-1  Created
+ Container c1008rdee9317ebd491c137c8cbf766emain-state-init-1  Created
+ Container c1008rdee9317ebd491c137c8cbf766emain-state-init-1  Starting
+ Container c1008rdee9317ebd491c137c8cbf766emain-session-runner-1  Starting
+ Container c1008rdee9317ebd491c137c8cbf766emain-state-init-1  Started
+ Container c1008rdee9317ebd491c137c8cbf766emain-session-runner-1  Started
+Error: ExpectedSuccess:C-default:UnhandledExit 1
+    at reclaimed (file:///work/worktrees/task-1b2e83e3/scripts/fixtures/c1008-recycle-real-cases.mjs:167:58)
+    at file:///work/worktrees/task-1b2e83e3/scripts/fixtures/c1008-recycle-real-cases.mjs:193:18
+    at record (file:///work/worktrees/task-1b2e83e3/scripts/fixtures/c1008-recycle-real-cases.mjs:162:3)
+    at file:///work/worktrees/task-1b2e83e3/scripts/fixtures/c1008-recycle-real-cases.mjs:193:5
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+</Message>
+          <StackTrace>   at Antiphon.Tests.Scripts.RollingVolumeRecycleDockerTests.C1008_Real_docker_comparison() in /work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/Scripts/RollingVolumeRecycleDockerTests.cs:line 30
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="C1008_Real_docker_comparison" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-real/antiphon.tests.dll" id="ab2adbe2-0b75-2bcb-9b5f-cbc99a685b43">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Integration" />
+        <TestCategoryItem TestCategory="Slow" />
+      </TestCategory>
+      <Execution id="11d9387c-93b0-4e92-a2e7-c41e5073e028" />
+      <Properties>
+        <Property>
+          <Key>Slow</Key>
+          <Value></Value>
+        </Property>
+        <Property>
+          <Key>Integration</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-real/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RollingVolumeRecycleDockerTests" name="C1008_Real_docker_comparison" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="ab2adbe2-0b75-2bcb-9b5f-cbc99a685b43" executionId="11d9387c-93b0-4e92-a2e7-c41e5073e028" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="1" executed="1" passed="0" failed="1" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <RunInfos>
+      <RunInfo computerName="5d9e09695ab3" outcome="Error" timestamp="2026-10-03T16:31:57.135091">
+        <Text>Exit code indicates failure: '2'. Please refer to https://aka.ms/testingplatform/exitcodes for more information.</Text>
+      </RunInfo>
+    </RunInfos>
+    <CollectorDataEntries>
+      <Collector agentName="5d9e09695ab3" uri="datacollector://TUnitExtensionHtmlReporter/1.44.0.0" collectorDisplayName="TUnit">
+        <UriAttachments>
+          <UriAttachment>
+            <A href="5d9e09695ab3/Antiphon.Tests-linux-net9.0-report.html" />
+          </UriAttachment>
+        </UriAttachments>
+      </Collector>
+    </CollectorDataEntries>
+  </ResultSummary>
+</TestRun>

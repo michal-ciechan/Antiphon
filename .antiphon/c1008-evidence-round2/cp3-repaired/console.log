@@ -1,0 +1,66 @@
+
+████████╗██╗   ██╗███╗   ██╗██╗████████╗
+╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝
+   ██║   ██║   ██║██╔██╗ ██║██║   ██║
+   ██║   ██║   ██║██║╚██╗██║██║   ██║
+   ██║   ╚██████╔╝██║ ╚████║██║   ██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝
+
+   TUnit v1.44.0.0 | 64-bit | Debian GNU/Linux 12 (bookworm) | linux-x64 | .NET 9.0.20 | Microsoft Testing Platform v2.2.2
+
+   Engine Mode: SourceGenerated
+
+failed C849_Saved_donor_archive_is_checked_and_imported_without_a_container (4s 155ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: output
+      should contain (case insensitive comparison)
+  "deploy-temp=seed-result=false:PastSeedGate"
+      but was actually
+  "success=0 seed-result=true:
+  marker-written
+  saved-identity
+  payload-imported
+  recovery-retained
+  recover..."
+    at Antiphon.Tests.Scripts.RemoteScriptContractTests.C849_Saved_donor_archive_is_checked_and_imported_without_a_container() in /work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs:2537
+    at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+    at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+    at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+    at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+    at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+    at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+    at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+    at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+    at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+  Standard output
+    success=0 seed-result=true:
+    marker-written
+    saved-identity
+    payload-imported
+    recovery-retained
+    recovery-host-owned
+    unsafe-mode-masked
+    incomplete-pruned
+    live-cache-owned-by-1654
+    idle-count=3 smoke-count=1
+    smoke-exit=2 diagnosis=seed-result=false:CacheSeedSmokeFailed
+    smoke-no-ready-marker
+    smoke-stage-cleaned
+    directory-imported
+    deploy-parent=seed-result=false:PastSeedGate
+    deploy-temp=main: line 424: c1008_rollout_lock: command not found
+    seed-result=false:PastSeedGate
+    
+    
+HTML test report written to: /work/worktrees/task-1b2e83e3/.antiphon/checkpoints/20261003-173710-56b2/rows/CP-3/Antiphon.Tests-linux-net9.0-report.html
+
+  In process file artifacts produced:
+    - /work/worktrees/task-1b2e83e3/.antiphon/checkpoints/20261003-173710-56b2/rows/CP-3/Antiphon.Tests-linux-net9.0-report.html
+    - /work/worktrees/task-1b2e83e3/.antiphon/checkpoints/20261003-173710-56b2/rows/CP-3/run.trx
+
+Test run summary: Failed! - /work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll (net9.0|x64)
+  total: 54
+  failed: 1
+  succeeded: 53
+  skipped: 0
+  duration: 2m 44s 542ms

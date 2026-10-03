@@ -1,0 +1,255 @@
+{
+  "schemaVersion": 2,
+  "source": {
+    "version": 1,
+    "start": {
+      "commit": "bdeb1a21333de0cdd4b6cbe04640250d1a76bf45",
+      "dirtyFiles": 0,
+      "fingerprint": "a840e2060e11d71a3c3d3718a8c9beeb865a365a9c2a80d9fd6bd666312c51fb",
+      "observedAtUtc": "2026-10-03T17:37:10.9182964+00:00",
+      "captureStatus": "known",
+      "errorCode": null
+    },
+    "end": {
+      "commit": "bdeb1a21333de0cdd4b6cbe04640250d1a76bf45",
+      "dirtyFiles": 0,
+      "fingerprint": "a840e2060e11d71a3c3d3718a8c9beeb865a365a9c2a80d9fd6bd666312c51fb",
+      "observedAtUtc": "2026-10-03T17:43:28.9352051+00:00",
+      "captureStatus": "known",
+      "errorCode": null
+    },
+    "state": "clean",
+    "buildSource": "verified"
+  },
+  "runId": "20261003-173710-56b2",
+  "manifestPath": "/work/worktrees/task-1b2e83e3/.antiphon/checkpoints/20261003-173710-56b2/manifest.resolved.yaml",
+  "manifestHash": "363db742c449b14f87d775f21f246990d146a5d09f7169be2a5ba7e38dda4908",
+  "commit": "bdeb1a21333de0cdd4b6cbe04640250d1a76bf45",
+  "branch": "feat/card-task-1b2e83e3",
+  "worktree": "/work/worktrees/task-1b2e83e3",
+  "host": {
+    "os": "Debian GNU/Linux 12 (bookworm)",
+    "cores": 24,
+    "memAvailableMb": 99885,
+    "loadAvg": "26.78 26.59 20.87 3/3733 22682"
+  },
+  "startedAt": "2026-10-03T17:37:12.6056028+00:00",
+  "endedAt": "2026-10-03T17:43:28.9425731+00:00",
+  "wallSeconds": 376.3369703,
+  "sequentialEquivalentSeconds": 168.7160918,
+  "exitCode": 1,
+  "reason": null,
+  "verdict": "RED",
+  "builds": [
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": null,
+          "dirtyFiles": null,
+          "fingerprint": null,
+          "observedAtUtc": "2026-10-03T17:37:12.9529702+00:00",
+          "captureStatus": "unknown",
+          "errorCode": "not_observed"
+        },
+        "end": null,
+        "state": "unknown",
+        "buildSource": "unknown"
+      },
+      "id": "bin-c1008-red",
+      "project": "tests/Antiphon.Tests",
+      "state": "unused",
+      "seconds": 0,
+      "slot": "",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": null,
+          "dirtyFiles": null,
+          "fingerprint": null,
+          "observedAtUtc": "2026-10-03T17:37:12.9532222+00:00",
+          "captureStatus": "unknown",
+          "errorCode": "not_observed"
+        },
+        "end": null,
+        "state": "unknown",
+        "buildSource": "unknown"
+      },
+      "id": "bin-c1008-scripts",
+      "project": "tests/Antiphon.Tests",
+      "state": "unused",
+      "seconds": 0,
+      "slot": "",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": "bdeb1a21333de0cdd4b6cbe04640250d1a76bf45",
+          "dirtyFiles": 0,
+          "fingerprint": "a840e2060e11d71a3c3d3718a8c9beeb865a365a9c2a80d9fd6bd666312c51fb",
+          "observedAtUtc": "2026-10-03T17:37:10.9182964+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "end": {
+          "commit": "bdeb1a21333de0cdd4b6cbe04640250d1a76bf45",
+          "dirtyFiles": 0,
+          "fingerprint": "a840e2060e11d71a3c3d3718a8c9beeb865a365a9c2a80d9fd6bd666312c51fb",
+          "observedAtUtc": "2026-10-03T17:40:39.1745806+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "state": "clean",
+        "buildSource": "verified"
+      },
+      "id": "bin-c1008-cache",
+      "project": "tests/Antiphon.Tests",
+      "state": "ok",
+      "seconds": 205.9863431,
+      "slot": "granted",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": null,
+          "dirtyFiles": null,
+          "fingerprint": null,
+          "observedAtUtc": "2026-10-03T17:37:12.9532281+00:00",
+          "captureStatus": "unknown",
+          "errorCode": "not_observed"
+        },
+        "end": null,
+        "state": "unknown",
+        "buildSource": "unknown"
+      },
+      "id": "bin-c1008-docs",
+      "project": "tests/Antiphon.Tests",
+      "state": "unused",
+      "seconds": 0,
+      "slot": "",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": null,
+          "dirtyFiles": null,
+          "fingerprint": null,
+          "observedAtUtc": "2026-10-03T17:37:12.9532287+00:00",
+          "captureStatus": "unknown",
+          "errorCode": "not_observed"
+        },
+        "end": null,
+        "state": "unknown",
+        "buildSource": "unknown"
+      },
+      "id": "bin-c1008-real",
+      "project": "tests/Antiphon.Tests",
+      "state": "unused",
+      "seconds": 0,
+      "slot": "",
+      "slotReason": null,
+      "waitedSeconds": 0
+    }
+  ],
+  "rows": [
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": "bdeb1a21333de0cdd4b6cbe04640250d1a76bf45",
+          "dirtyFiles": 0,
+          "fingerprint": "a840e2060e11d71a3c3d3718a8c9beeb865a365a9c2a80d9fd6bd666312c51fb",
+          "observedAtUtc": "2026-10-03T17:37:10.9182964+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "end": {
+          "commit": "bdeb1a21333de0cdd4b6cbe04640250d1a76bf45",
+          "dirtyFiles": 0,
+          "fingerprint": "a840e2060e11d71a3c3d3718a8c9beeb865a365a9c2a80d9fd6bd666312c51fb",
+          "observedAtUtc": "2026-10-03T17:43:28.0805793+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "state": "clean",
+        "buildSource": "verified"
+      },
+      "id": "CP-3",
+      "group": "linux-cache-regression",
+      "filter": "/*/*/RemoteScriptContractTests*/(C849_*)|(C912_*)|(C973_*)|(C944_*)|(C951_*)|(C976_*)|(C946_*)|(C957_*)",
+      "command": null,
+      "build": "bin-c1008-cache",
+      "state": "red",
+      "exitCode": 1,
+      "slot": "granted",
+      "slotReason": null,
+      "waitedSeconds": 0,
+      "executed": 54,
+      "passed": 53,
+      "failed": 1,
+      "skipped": 0,
+      "reruns": 0,
+      "trx": "/work/worktrees/task-1b2e83e3/.antiphon/checkpoints/20261003-173710-56b2/rows/CP-3/run.trx",
+      "seconds": 168.7160918,
+      "line": "CHECKPOINT CP-3 commit=bdeb1a21333de0cdd4b6cbe04640250d1a76bf45 build=ok filter=/*/*/RemoteScriptContractTests*/(C849_*)|(C912_*)|(C973_*)|(C944_*)|(C951_*)|(C976_*)|(C946_*)|(C957_*) executed=54 passed=53 failed=1 skipped=0 trx=/work/worktrees/task-1b2e83e3/.antiphon/checkpoints/20261003-173710-56b2/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=bdeb1a21333de0cdd4b6cbe04640250d1a76bf45 sourceState=clean buildSource=verified",
+      "failures": [
+        {
+          "name": "Antiphon.Tests.Scripts.RemoteScriptContractTests.C849_Saved_donor_archive_is_checked_and_imported_without_a_container",
+          "message": "ShouldAssertException: output\n    should contain (case insensitive comparison)\n\u0022deploy-temp=seed-result=false:PastSeedGate\u0022\n    but was actually\n\u0022success=0 seed-result=true:\nmarker-written\nsaved-identity\npayload-imported\nrecovery-retained\nrecover...\u0022",
+          "stackTrace": "   at Antiphon.Tests.Scripts.RemoteScriptContractTests.C849_Saved_donor_archive_is_checked_and_imported_without_a_container() in /work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs:line 2537\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---",
+          "stdOut": "success=0 seed-result=true:\nmarker-written\nsaved-identity\npayload-imported\nrecovery-retained\nrecovery-host-owned\nunsafe-mode-masked\nincomplete-pruned\nlive-cache-owned-by-1654\nidle-count=3 smoke-count=1\nsmoke-exit=2 diagnosis=seed-result=false:CacheSeedSmokeFailed\nsmoke-no-ready-marker\nsmoke-stage-cleaned\ndirectory-imported\ndeploy-parent=seed-result=false:PastSeedGate\ndeploy-temp=main: line 424: c1008_rollout_lock: command not found\nseed-result=false:PastSeedGate\n\n",
+          "baseline": null,
+          "durationSeconds": 4.1555753
+        }
+      ],
+      "rerunLines": [],
+      "slowClasses": [
+        {
+          "className": "Antiphon.Tests.Scripts.RemoteScriptContractTests",
+          "seconds": 161.72733829999999,
+          "tests": 54
+        }
+      ],
+      "attempt": 1,
+      "repeat": null,
+      "timings": {
+        "slotWaitSeconds": 0,
+        "buildSlotWaitSeconds": 0,
+        "rowSlotWaitSeconds": 0,
+        "buildSeconds": 205.9863431,
+        "producingBuild": "bin-c1008-cache",
+        "startupSeconds": 5.0905008,
+        "testsWallSeconds": 161.8035164,
+        "teardownSeconds": 0.8398909,
+        "testHostWallSeconds": 167.744493,
+        "method": "utc-trx-and-monotonic-host",
+        "unavailableReason": null
+      }
+    }
+  ],
+  "unlisted": [],
+  "evidence": "/work/worktrees/task-1b2e83e3/.antiphon/checkpoints/20261003-173710-56b2/report.md",
+  "cleanedOutputs": false,
+  "outputNames": [
+    "bin-c1008-red/",
+    "bin-c1008-scripts/",
+    "bin-c1008-cache/",
+    "bin-c1008-docs/",
+    "bin-c1008-real/"
+  ],
+  "maxConcurrentRows": 1,
+  "maxConcurrentBuilds": 1
+}
