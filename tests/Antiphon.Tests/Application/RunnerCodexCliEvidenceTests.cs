@@ -194,7 +194,7 @@ public sealed class RunnerCodexCliEvidenceTests
         io.Starts.Single().FileName.ShouldBe(io.Executable, "C959-v13-selected-native");
         io.Starts.Single().ArgumentList.ShouldBe(["--version"], "C959-v13-version-only");
         throughHttp!.CodexCliLauncherFingerprint!.Length.ShouldBe(64, "C959-v13-opaque");
-        throughHttp.CodexCliLauncherFingerprint.ShouldNotContain(io.Root, "C959-v13-no-path");
+        throughHttp.CodexCliLauncherFingerprint.Contains(io.Root, StringComparison.Ordinal).ShouldBeFalse("C959-v13-no-path");
         var dispatcher = new PhoneHomeCommandDispatcher(new PhoneHomeRuntimeAdapter(io.Runtime,
             new RunnerBuildDto("test", "build-sha", T.UtcDateTime, T.UtcDateTime)),
             new PhoneHomeSettings { AllowedCwd = io.Root });
