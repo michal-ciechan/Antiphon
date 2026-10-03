@@ -42,9 +42,10 @@ public static class ModelAlias
     ];
 
     /// <summary>
-    /// PUT/DELETE alias vocabulary (CARD-0309): a known <see cref="DelegatableAliases"/> value
+    /// Current-tier alias vocabulary (CARD-0309): a known <see cref="DelegatableAliases"/> value
     /// or <see cref="KindWide"/>, case-insensitive. Unknown text (including TUI names like
-    /// <c>claude-fable-5</c>) returns null so the operator must use the canonical list.
+    /// <c>claude-fable-5</c>) returns null. Manual PUT/DELETE use <see cref="Normalize"/>
+    /// instead so recognized explicit model ids remain operable after a tier-ladder change.
     /// </summary>
     public static string? CanonicalHoldAlias(string? raw)
     {

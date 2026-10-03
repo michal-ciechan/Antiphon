@@ -44,19 +44,20 @@ public class ModelAvailabilityCreateTests
         var caller = new AgentTaskService.Caller(null, null, workspace.Path);
         var service = CreateService(db);
         var current = await service.CreateAsync(request, caller, CancellationToken.None);
-        current.Status.ShouldBe(AgentTaskStatus.Queued);
-        current.AgentKind.ShouldBe(AgentKind.Codex);
-        current.ModelLevel.ShouldBe(level);
+        current.Status.ShouldBe(AgentTaskStatus.Queued, "C967-current-tier-queued");
+        current.AgentKind.ShouldBe(AgentKind.Codex, "C967-current-kind");
+        current.ModelLevel.ShouldBe(level, "C967-current-level");
         var currentAlias = DispatchModelAlias.Resolve(AgentKind.Codex, level, null);
-        currentAlias.ShouldBe(ModelAlias.Gpt61Sol);
+        currentAlias.ShouldBe(ModelAlias.Gpt61Sol, "C967-current-alias");
         await Service(db).RequireAsync(AgentKind.Codex, currentAlias, CancellationToken.None);
 
         var refused = await Should.ThrowAsync<ModelDisabledException>(() =>
-            service.CreateAsync(request with { AgentId = agent.Id }, caller, CancellationToken.None));
-        refused.Code.ShouldBe("model_disabled");
-        refused.Message.ShouldContain("gpt-6-sol is disabled");
+            service.CreateAsync(request with { AgentId = agent.Id }, caller, CancellationToken.None),
+            "C967-create-exact-refusal");
+        refused.Code.ShouldBe("model_disabled", "C967-create-refusal-code");
+        refused.Message.ShouldContain("gpt-6-sol is disabled", "C967-create-refusal-alias");
         var exactAlias = DispatchModelAlias.Resolve(AgentKind.Codex, level, agent.ModelId);
-        exactAlias.ShouldBe(ModelAlias.Gpt6Sol);
+        exactAlias.ShouldBe(ModelAlias.Gpt6Sol, "C967-dispatch-exact-alias");
         await Should.ThrowAsync<ModelDisabledException>(() =>
             Service(db).RequireAsync(AgentKind.Codex, exactAlias, CancellationToken.None));
         await Service(db).ClearAsync("Codex", ModelAlias.Gpt6Sol, CancellationToken.None);

@@ -253,7 +253,7 @@ public class ModelAvailabilityManualTests
 
         var alias = await Should.ThrowAsync<ValidationException>(() =>
             availability.UpsertManualAsync(
-                "ClaudeCode", "claude-fable-5", null, null, CancellationToken.None));
+                "ClaudeCode", "claude-mystery-9", null, null, CancellationToken.None));
         alias.Errors.ShouldContainKey("alias");
 
         var kind = await Should.ThrowAsync<ValidationException>(() =>

@@ -245,7 +245,7 @@ public sealed class ModelAvailability : IModelAvailability
         CancellationToken ct)
     {
         var parsedKind = ParseHoldKind(kind);
-        var canonical = ParseHoldAlias(alias);
+        var canonical = ParseHoldAlias(parsedKind, alias);
         var now = UtcNow();
         DateTime? untilUtc = null;
         if (disabledUntil is { } until)
@@ -313,7 +313,7 @@ public sealed class ModelAvailability : IModelAvailability
     public async Task ClearAsync(string kind, string alias, CancellationToken ct)
     {
         var parsedKind = ParseHoldKind(kind);
-        var canonical = ParseHoldAlias(alias);
+        var canonical = ParseHoldAlias(parsedKind, alias);
         var existing = await _db.ModelAvailabilityHolds
             .FirstOrDefaultAsync(
                 h => h.Kind == parsedKind && h.ModelAlias == canonical && h.ClearedAt == null, ct);
@@ -344,15 +344,16 @@ public sealed class ModelAvailability : IModelAvailability
         return parsed;
     }
 
-    private static string ParseHoldAlias(string alias)
+    private static string ParseHoldAlias(AgentKind kind, string alias)
     {
-        var canonical = ModelAlias.CanonicalHoldAlias(alias);
+        // Holds must remain operable when an explicit model id leaves the tier ladder.
+        // Use the same recognized vocabulary as explicit create/dispatch selections.
+        var canonical = ModelAlias.Normalize(kind, alias);
         if (canonical is null)
         {
-            var known = string.Join(", ", ModelAlias.DelegatableAliases.Select(a => a.Alias).Distinct());
             throw new ValidationException(
                 "alias",
-                $"Unknown alias '{alias}'. Use a ModelLevelAliases value ({known}) or '*'.");
+                $"Unknown alias '{alias}'. Use a recognized model alias (including retired explicit model ids) or '*'.");
         }
 
         return canonical;

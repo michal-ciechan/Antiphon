@@ -43,8 +43,9 @@ No unbounded classes; no full assembly run. Final includes the whole Unit lane.
 Positive controls remain pending for method-scoped post-land SourceLanding Mutation:
 PC-1: restore current-ladder validation in ClearAsync; `ModelAvailabilityHttpTests.Retired_manual_hold_is_listed_and_DELETE_clears_persisted_row` must fail at assertion `C967-clear-status`. Variants: Codex sol/terra/old sol, Grok 4.6.
 PC-2: make unknown alias validation permissive; `ModelAvailabilityHttpTests.Unknown_alias_PUT_and_DELETE_remain_422_without_persisting_a_hold` must fail at assertion `C967-unknown-status`. Variants: independent PUT and DELETE.
-PC-3: restore current-ladder validation in PUT; `ModelAvailabilityHttpTests.PUT_accepts_retired_selectable_alias_and_converts_auto_hold` must fail at assertion `C967-retired-put-status`. Variants: sol/terra/old sol.
-PC-4: remap historical Sol to current Sol at create/dispatch selection; `ModelAvailabilityCreateTests.Retired_sol_hold_allows_current_tier_but_blocks_exact_selection` must fail on exact-selection refusal or permitted-tier assertions. Variants: High/Medium, create/dispatch.
+PC-3: restore current-ladder validation in PUT; `ModelAvailabilityHttpTests.PUT_accepts_retired_selectable_alias_and_converts_auto_hold` must fail at assertion `C967-retired-put-status`. Variants: sol/terra/old sol, bare Sol, folded Terra.
+PC-4A: remap historical Sol to current Sol at create selection; `ModelAvailabilityCreateTests.Retired_sol_hold_allows_current_tier_but_blocks_exact_selection` must fail at assertion `C967-create-exact-refusal`. Variants: High/Medium.
+PC-4B: remap historical Sol to current Sol at dispatch selection; `ModelAvailabilityCreateTests.Retired_sol_hold_allows_current_tier_but_blocks_exact_selection` must fail at assertion `C967-dispatch-exact-alias`. Variants: High/Medium.
 No scratch mutants are run by Code under the standing stage ownership contract.
 
 The lane and manual-read rows use executed TRX census and source inspection; the following
@@ -53,6 +54,11 @@ inline checklist enables explicit source selection for static lint of the named 
 ```plan-coverage-v1
 {"version":1,"items":[]}
 ```
+
+Existing validation test data changes from claude-fable-5 (recognized by Normalize) to
+claude-mystery-9 (unrecognized). All existing 422 assertions remain intact.
+PUT family-text variants pin the expanded recognized-vocabulary behavior.
+Follow-up CARD-1009 (e44a579c-427c-44eb-80f8-57648280596e) owns historical task-chip display.
 
 ### Cost
 
