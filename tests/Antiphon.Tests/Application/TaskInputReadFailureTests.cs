@@ -1,11 +1,16 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using System.Data.Common;
+using System.Reflection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -94,12 +99,23 @@ public sealed class TaskInputReadFailureTests
         var row = await SeedPointerAsync(f);
         await AddEntryAsync(f, 101, TranscriptKinds.AssistantText,
             $"I cannot read {row.RemoteSpillRelativePath}.");
-        var first = (await ReadItemsAsync(f)).Single(i => i.Kind == AttentionKind.TaskInputUnreadable);
+        var commands = new WriteProbe();
+        var runner = DispatchProxy.Create<ISessionRunnerClient, InputCallProbe>();
+        var inputProbe = (InputCallProbe)runner;
+        var first = (await ReadItemsAsync(f, commands, runner)).Single(i => i.Kind == AttentionKind.TaskInputUnreadable);
         await using var db = f.Db();
         var eventsBefore = await db.AgentTaskEvents.CountAsync();
-        var second = (await ReadItemsAsync(f)).Single(i => i.Kind == AttentionKind.TaskInputUnreadable);
+        var secondItems = await ReadItemsAsync(f, commands, runner);
+        secondItems.Count(i => i.Kind == AttentionKind.TaskInputUnreadable).ShouldBe(1,
+            "condition-count=1");
+        var second = secondItems.Single(i => i.Kind == AttentionKind.TaskInputUnreadable);
         second.ConditionKey.ShouldBe(first.ConditionKey, "condition-key-stable");
         second.SinceUtc.ShouldBe(first.SinceUtc, "condition-time-stable");
+        second.TaskId.ShouldBe(first.TaskId, "condition-task-stable");
+        second.SessionId.ShouldBe(first.SessionId, "condition-session-stable");
+        second.MessageId.ShouldBe(first.MessageId, "condition-message-stable");
+        commands.Writes.ShouldBe(0, "attention-command-write-count=0");
+        inputProbe.InputCalls.ShouldBe(0, "attention-input-call-count=0");
         (await db.AgentTaskEvents.CountAsync()).ShouldBe(eventsBefore, "attention-write-count=0");
     }
 
@@ -141,10 +157,29 @@ public sealed class TaskInputReadFailureTests
         var row = await SeedPointerAsync(f);
         await AddEntryAsync(f, 101, TranscriptKinds.AssistantText,
             $"I cannot read {row.RemoteSpillRelativePath}.");
+        Guid otherTaskId;
+        await using (var db = f.Db())
+        {
+            otherTaskId = Guid.NewGuid();
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = otherTaskId, RootTaskId = otherTaskId, Title = "independent blocked question",
+                Goal = "decide", Status = AgentTaskStatus.Blocked, CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+        var before = await ReadItemsAsync(f);
+        before.Count(i => i.Kind == AttentionKind.TaskInputUnreadable).ShouldBe(1,
+            "terminal-positive-input-condition-count=1");
+        before.Count(i => i.Kind == AttentionKind.BlockedQuestion && i.TaskId == otherTaskId)
+            .ShouldBe(1, "other-attention-positive-control");
         await using (var db = f.Db())
             await db.AgentTasks.Where(t => t.Id == f.TaskId)
                 .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Succeeded));
-        (await ReadItemsAsync(f)).Count(i => i.Kind == AttentionKind.TaskInputUnreadable)
+        var after = await ReadItemsAsync(f);
+        after.Count(i => i.Kind == AttentionKind.BlockedQuestion && i.TaskId == otherTaskId)
+            .ShouldBe(1, "terminal-preserves-other-attention");
+        after.Count(i => i.Kind == AttentionKind.TaskInputUnreadable)
             .ShouldBe(0, "terminal-input-condition-count=0");
     }
 
@@ -170,12 +205,51 @@ public sealed class TaskInputReadFailureTests
         await db.SaveChangesAsync();
     }
 
-    private static async Task<IReadOnlyList<AttentionItemDto>> ReadItemsAsync(TaskInputSpillFixture f)
+    private static async Task<IReadOnlyList<AttentionItemDto>> ReadItemsAsync(TaskInputSpillFixture f,
+        WriteProbe? commands = null, ISessionRunnerClient? runner = null)
     {
-        await using var db = f.Db();
-        var service = new AttentionService(db, new BridgeQueueHarness.EmptyRunnerClient(),
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(f.ConnectionString);
+        if (commands is not null) options.AddInterceptors(commands);
+        await using var db = new AppDbContext(options.Options);
+        var service = new AttentionService(db, runner ?? new BridgeQueueHarness.EmptyRunnerClient(),
             Options.Create(new SupervisionSettings()), Options.Create(new DelegationSettings()),
             TimeProvider.System, NullLogger<AttentionService>.Instance);
         return (await service.GetAsync(CancellationToken.None, includeProgressProbe: false)).Items;
+    }
+
+    public class InputCallProbe : DispatchProxy
+    {
+        private readonly BridgeQueueHarness.EmptyRunnerClient _inner = new();
+        public int InputCalls { get; private set; }
+        protected override object? Invoke(MethodInfo? method, object?[]? args)
+        {
+            if (method!.Name == nameof(ISessionRunnerClient.SendInputAsync)) InputCalls++;
+            return method.Invoke(_inner, args);
+        }
+    }
+
+    private sealed class WriteProbe : DbCommandInterceptor
+    {
+        public int Writes { get; private set; }
+        private void Observe(DbCommand command)
+        {
+            if (System.Text.RegularExpressions.Regex.IsMatch(command.CommandText,
+                    @"\b(INSERT|UPDATE|DELETE)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                Writes++;
+        }
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData data, InterceptionResult<DbDataReader> result,
+            CancellationToken ct = default)
+        { Observe(command); return ValueTask.FromResult(result); }
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData data, InterceptionResult<int> result,
+            CancellationToken ct = default)
+        { Observe(command); return ValueTask.FromResult(result); }
+        public override InterceptionResult<DbDataReader> ReaderExecuting(
+            DbCommand command, CommandEventData data, InterceptionResult<DbDataReader> result)
+        { Observe(command); return result; }
+        public override InterceptionResult<int> NonQueryExecuting(
+            DbCommand command, CommandEventData data, InterceptionResult<int> result)
+        { Observe(command); return result; }
     }
 }

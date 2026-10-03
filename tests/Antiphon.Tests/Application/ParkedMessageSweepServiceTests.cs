@@ -201,6 +201,33 @@ public class ParkedMessageSweepServiceTests
         (await world.ReadMessageAsync(canceled)).Status.ShouldBe(QueuedMessageStatus.Canceled);
     }
 
+    [Test]
+    public async Task Malformed_task_input_keys_stay_pending()
+    {
+        await using var world = await World.CreateAsync();
+        var session = await world.SeedSessionAsync(SessionStatus.Failed);
+        var task = await world.SeedTaskAsync(session, AgentTaskStatus.Succeeded);
+        var input = await world.SeedTaskInputAsync(task, session, AgentTaskEventType.Refined);
+        var valid = await world.SeedMessageAsync(session, QueuedMessageOrigin.Delegation,
+            conversationKey: AgentTaskInputService.ConversationKey(task, input));
+        var malformed = new List<Guid>();
+        foreach (var key in new[]
+        {
+            "task-input:short",
+            $"task-input:{task:D}:{input:D}".ToUpperInvariant().Replace("TASK-INPUT:", "task-input:"),
+            $"task-input:{task:D}:not-a-guid--------------------------",
+        })
+            malformed.Add(await world.SeedMessageAsync(session, QueuedMessageOrigin.Delegation,
+                conversationKey: key));
+
+        await world.ScanAsync();
+        foreach (var id in malformed)
+            (await world.ReadMessageAsync(id)).Status.ShouldBe(QueuedMessageStatus.Pending,
+                "malformed-task-input-stays-pending");
+        (await world.ReadMessageAsync(valid)).Status.ShouldBe(QueuedMessageStatus.Canceled,
+            "valid-task-input-positive-control");
+    }
+
     private sealed class World : IAsyncDisposable
     {
         private readonly IsolatedTestSchema _schema;
