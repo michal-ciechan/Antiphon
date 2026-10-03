@@ -752,7 +752,7 @@ receipts. CP-3 keeps the original plan's two raw byte comparisons unchanged.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1-S2 | `tests/Antiphon.Tests -> bin-c1005-final/` | linux-unit-coverage | `/*/*/(PlanCoverageCensusTests*)\|(PlanCoverageParserTests*)\|(PlanCoverageAssertionTests*)\|(PlanCoveragePcTests*)\|(PlanCoverageGoldenTests*)\|(PlanCoverageCommandTests*)\|(PlanCoverageHandleTests*)\|(CheckpointImportTests*)\|(CheckpointManifestTests*)\|(CheckpointNamespaceCensusUsageTests*)/*` | V-1..V-10, R-1, R-2, R-4, R-5 | all 86 listed results, 0 failed/skipped | 86 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c1005-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-2 | S1-S2 | `tests/Antiphon.Tests -> bin-c1005-unit/` | linux-unit | `/*/*/*/A*[Category=Unit]\|a*[Category=Unit]\|B*[Category=Unit]\|b*[Category=Unit]\|C4*[Category=Unit]\|C5*[Category=Unit]\|C60*[Category=Unit]\|C61*[Category=Unit]\|C64*[Category=Unit]\|C65*[Category=Unit]\|C664*[Category=Unit]\|C665_D*[Category=Unit]\|C665_E*[Category=Unit]\|C665_F*[Category=Unit]\|C665_J*[Category=Unit]\|C665_N*[Category=Unit]\|C665_P*[Category=Unit]\|C665_R*[Category=Unit]\|C665_U*[Category=Unit]\|C67*[Category=Unit]\|C68*[Category=Unit]\|C71*[Category=Unit]\|C721_S*[Category=Unit]\|C75*[Category=Unit]\|C78*[Category=Unit]\|c78*[Category=Unit]\|C8*[Category=Unit]\|c8*[Category=Unit]\|C9*[Category=Unit]\|Ca*[Category=Unit]\|ca*[Category=Unit]\|Ce*[Category=Unit]\|ce*[Category=Unit]\|Cg*[Category=Unit]\|Ch*[Category=Unit]\|ch*[Category=Unit]\|cl*[Category=Unit]\|Cl*[Category=Unit]\|co*[Category=Unit]\|Co*[Category=Unit]\|Cr*[Category=Unit]\|cr*[Category=Unit]\|cs*[Category=Unit]\|Cu*[Category=Unit]\|cu*[Category=Unit]\|D*[Category=Unit]\|d*[Category=Unit]\|E*[Category=Unit]\|e*[Category=Unit]\|f*[Category=Unit]\|F*[Category=Unit]\|g*[Category=Unit]\|G*[Category=Unit]\|H*[Category=Unit]\|h*[Category=Unit]\|i*[Category=Unit]\|I*[Category=Unit]\|J*[Category=Unit]\|j*[Category=Unit]\|K*[Category=Unit]\|L*[Category=Unit]\|l*[Category=Unit]\|M*[Category=Unit]\|m*[Category=Unit]\|N*[Category=Unit]\|n*[Category=Unit]\|O*[Category=Unit]\|o*[Category=Unit]\|P*[Category=Unit]\|p*[Category=Unit]\|Q*[Category=Unit]\|q*[Category=Unit]\|R*[Category=Unit]\|r*[Category=Unit]\|s*[Category=Unit]\|S*[Category=Unit]\|t*[Category=Unit]\|T*[Category=Unit]\|U*[Category=Unit]\|u*[Category=Unit]\|V*[Category=Unit]\|v*[Category=Unit]\|wa*[Category=Unit]\|Wa*[Category=Unit]\|we*[Category=Unit]\|Wh*[Category=Unit]\|wid*[Category=Unit]\|Windows_d*[Category=Unit]\|Windows_e*[Category=Unit]\|windows_e*[Category=Unit]\|windows_l*[Category=Unit]\|Windows_p*[Category=Unit]\|windows_s*[Category=Unit]\|Windows_v*[Category=Unit]\|wit*[Category=Unit]\|Wit*[Category=Unit]\|wo*[Category=Unit]\|Wo*[Category=Unit]\|Wr*[Category=Unit]\|X*[Category=Unit]\|Y*[Category=Unit]\|z*[Category=Unit]\|Z*[Category=Unit]` | R-5 | >= 4000 executed, 0 failed/skipped; all Linux-eligible Unit names | 4000 | 15 | true | `C804_ORPHAN_SWEEP_ROOT=c1005-disabled;TUNIT_MAX_PARALLEL_TESTS=4` |
+| CP-2 | S1-S2 | `tests/Antiphon.Tests -> bin-c1005-unit/` | linux-unit | `/*[Category=Unit]/*/*/(A*)\|(B*)\|(C4*)\|(C5*)\|(C60*)\|(C61*)\|(C64*)\|(C65*)\|(C664*)\|(C665_D*)\|(C665_E*)\|(C665_F*)\|(C665_J*)\|(C665_N*)\|(C665_P*)\|(C665_R*)\|(C665_U*)\|(C67*)\|(C68*)\|(C71*)\|(C721_S*)\|(C75*)\|(c78*)\|(C8*)\|(C9*)\|(Ca*)\|(Ce*)\|(Cg*)\|(Ch*)\|(cl*)\|(Co*)\|(Cr*)\|(cs*)\|(Cu*)\|(D*)\|(E*)\|(F*)\|(G*)\|(H*)\|(i*)\|(J*)\|(K*)\|(L*)\|(M*)\|(n*)\|(O*)\|(P*)\|(Q*)\|(R*)\|(s*)\|(T*)\|(U*)\|(V*)\|(wa*)\|(we*)\|(Wh*)\|(wid*)\|(Windows_d*)\|(windows_e*)\|(windows_l*)\|(Windows_p*)\|(windows_s*)\|(Windows_v*)\|(wit*)\|(wo*)\|(Wr*)\|(X*)\|(Y*)\|(z*)` | R-5 | >= 4000 executed, 0 failed/skipped; all Linux-eligible Unit names | 4000 | 15 | true | `C804_ORPHAN_SWEEP_ROOT=c1005-disabled;TUNIT_MAX_PARALLEL_TESTS=4` |
 | CP-3 | S1-S2 | n/a | linux-cli-legacy-json | `sh -eu -c 'mkdir -p .antiphon/c1005-compat; for p in docs/superpowers/plans/2026-10-01-card-0891-plan-to-test-coverage-check-plan.md tests/Antiphon.Tests/Checkpoints/Fixtures/PlanCoverage/c999-frozen-plan.md.txt; do n=$(basename "$p"); dotnet .antiphon/c1005-baseline/tools/Antiphon.Checkpoints/bin-c1005-master/net9.0/Antiphon.Checkpoints.dll coverage --repo-root "$PWD" --plan "$p" --format json > ".antiphon/c1005-compat/$n.master.json"; dotnet tools/Antiphon.Checkpoints/bin-c1005-tool/net9.0/Antiphon.Checkpoints.dll coverage --repo-root "$PWD" --plan "$p" --format json > ".antiphon/c1005-compat/$n.branch.json"; cmp ".antiphon/c1005-compat/$n.master.json" ".antiphon/c1005-compat/$n.branch.json"; sha256sum ".antiphon/c1005-compat/$n.master.json" ".antiphon/c1005-compat/$n.branch.json"; done'` | R-3 | four exit-0 coverage invocations; two byte-identical JSON pairs and two matching hash pairs | n/a | 2 | true | n/a |
 
 ### Cost
@@ -866,10 +866,10 @@ unchanged `bb5fa774` baseline test runtime. This is a filter-admission repair,
 not a smaller verification profile: CP-2 still selects every current
 Linux-eligible Unit method, excludes exactly the same six Windows-only
 methods, requires 4,000 executions and zero failed/skipped results, and
-retains the original 15-minute timeout and environment. CP-1/CP-3 are unchanged.
+retains the original 15-minute estimate, derived 45-minute row deadline and environment. CP-1/CP-3 are unchanged.
 
-The replacement is one positive OR filter with a category constraint on every
-operand. Prefixes were derived from the compiled Unit method roster; none can
+The replacement is one positive OR filter with the category constraint once
+on the assembly segment (the property bag applies to the whole test node). Prefixes were derived from the compiled Unit method roster; none can
 match the six excluded method names under the pinned parser's case-insensitive
 matching. A manual parser-membership check covered all 2,777 compiled Unit
 method identities: exactly the six exclusions were false, all other Unit
@@ -883,3 +883,16 @@ minimum, timeout, invariant, or positive control was relaxed.
 Evidence: `.antiphon/c1005-unit-roster.csv`,
 `.antiphon/c1005-filter-admission.log`,
 `.antiphon/c1005-base-filter-refusal.log`, and the first run's CP-2 console.
+The first admitted positive expression placed Category=Unit on every method
+operand. Run `20261003-165835-e5ba` passed CP-1 (86/86) and CP-3, but CP-2
+remained in TUnit MetadataDependencyExpander/MetadataFilterMatcher pre-registration
+regex matching without a TRX. A managed-stack-only diagnostic confirmed that
+location, and the owned run was explicitly stopped before changing the plan;
+its Unit row is incomplete, not passed. The final expression deduplicates
+case-insensitive equivalent prefixes and applies Category=Unit once before the
+method alternatives. The same exhaustive 2,777-identity parser admission passed.
+The final red-row rerun selects only CP-2 from this closed table: CP-1/CP-3 already
+passed with byte-identical implementation/test source and unchanged selections.
+No production/test file changed since `f42849b3`, no assertions or deadlines were
+relaxed, and fresh source-qualified CP-2 evidence is still required. Evidence:
+`.antiphon/c1005-unit-stack.txt`, `.antiphon/c1005-filter-admission-root.log`.
