@@ -62,9 +62,11 @@ CARD-0959 adds nullable `codexCliVersion`, `codexCliVersionCheckedAtUtc`,
 and remote status responses. These describe the default installed Codex launcher,
 independently of build SHA, capacity and connection liveness. Checked-at is the
 completed probe attempt time; reads and heartbeats do not renew it. A successful
-observation is fresh through exactly `Delegation:CodexCliVersionMaxAgeMinutes`
-(default 15, valid 1..60). Stale is null without a valid successful observation,
-including a timestamp more than one minute in the future. Disconnect retains
+observation is fresh through exactly fifteen minutes, a fixed display threshold.
+Stale is null without a valid successful observation. A timestamp more than one
+minute in the future reports `clock_skew`; a malformed non-null launcher fingerprint
+reports `launcher_mismatch`. Unknown peer error text becomes `probe_unavailable`.
+Version and attempt time remain the received observations. Disconnect retains
 display evidence while dispatch eligibility follows the existing connection rules.
 An accepted registration clears CLI evidence from the previous epoch.
 
@@ -75,8 +77,10 @@ Descriptor strings are limited to 32,768 characters each; invalid inputs return
 unknown evidence before process start. Default probes run before registration and
 every five minutes. `GET /capabilities` reads memory. Launcher fingerprints stay
 on internal capability/probe DTOs and are absent from catalogue/status projections.
-There is no new server public probe endpoint. Server admission refusals and expiring
-operator exceptions remain pending the CARD-0959 Code continuation; see the frozen
+There is no new server public probe endpoint. No observation refuses create, retry,
+dispatch, warm reuse or launch, and those paths start no diagnostic version probes.
+Existing auth/model/placement rules remain independent. Activate reporting runners
+first, then server readers; older runners display unknown without a CLI gate. See the active
 [implementation and verification plan](superpowers/plans/2026-10-03-card-0959-runner-codex-version-plan.md).
 
 CARD-0415 adds `GET`/`PUT /api/agents/{id}/specialist-routing` and
