@@ -18,6 +18,12 @@ if (fault === 'volume-ls-error' && args[0] === 'volume' && args[1] === 'ls') fai
 if (args[0] === 'info') { out(root+'\n'); }
 else if(args[0]==='image'&&args[1]==='inspect')out('sha256:'+'a'.repeat(64)+'\n');
 else if (args[0] === 'ps') {
+ if(!state.containers.some(c=>['session-runner','state-init'].includes(c.Config.Labels['com.docker.compose.service']))) {
+  state.postStopPs=(state.postStopPs||0)+1;
+  if(fault==='late-attachment'&&state.postStopPs===3)state.containers.push({Id:'5'.repeat(64),Image:'sha256:'+'a'.repeat(64),State:{Running:false,Status:'exited'},Config:{Labels:{}},Mounts:[{Type:'volume',Name:'antiphon-runner_work',Source:state.volumes['antiphon-runner_work'].Mountpoint,Destination:'/foreign',RW:true}]});
+  if(fault==='final-ps-error')fail();
+  save();
+ }
  let items = state.containers;
  const filter = args[args.indexOf('--filter')+1];
  if(args.includes('--filter')) {
@@ -30,10 +36,16 @@ else if (args[0] === 'ps') {
 } else if(args[0]==='inspect') {
  const c=state.containers.find(c=>c.Id===name); if(!c)process.exit(1);
  if(fault==='inspect-empty'){out('');process.exit(0);}
+ if(fault==='inspect-malformed'){out('{');process.exit(0);}
  out([c]);
 } else if(args[0]==='stop') {
  if(fault==='stop-failed')fail(); const c=state.containers.find(c=>c.Id===name);if(!c)fail();
- if(fault!=='stop-stays-running')c.State={Running:false,Status:'exited'};save();out(name+'\n');
+ if(fault!=='stop-stays-running')c.State={Running:false,Status:'exited'};
+ if(fault==='late-busy') { const p=path.join(root,'statuses.json'),s=JSON.parse(fs.readFileSync(p));s.server2.sessions=1;fs.writeFileSync(p,JSON.stringify(s)); }
+ if(fault==='late-routing') { const p=path.join(root,'statuses.json'),s=JSON.parse(fs.readFileSync(p));s.server2.acceptingNewWork=true;fs.writeFileSync(p,JSON.stringify(s)); }
+ if(fault==='late-land') { const p=path.join(root,'tasks.json'),s=JSON.parse(fs.readFileSync(p));s.scopes[Object.keys(s.scopes)[0]].items.push({id:'22222222-2222-2222-2222-222222222222',status:'Succeeded',runnerId:'server2',projectId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',scopeSource:'Task',landRequestedAt:'2026-10-03T09:00:00Z',landStartedAt:null});fs.writeFileSync(p,JSON.stringify(s)); }
+ if(fault==='audit-drift') fs.writeFileSync(path.join(root,'work/new-work'), 'retained');
+ save();out(name+'\n');
 } else if(args[0]==='rm') {
  if(args.some(a=>a==='-f'||a==='--force'||a==='-v'))fail();
  const c=state.containers.find(c=>c.Id===name);if(!c||c.State.Running||fault==='helper-rm-failed'&&c.Config.Labels['io.antiphon.audit'])fail();
@@ -72,10 +84,15 @@ else if(args[0]==='volume'&&args[1]==='inspect') {
 } else if(args[0]==='start') {
  const id=args.at(-1),c=state.containers.find(c=>c.Id===id);if(!c)fail();
  // Remap the mount path, preserving unrelated scratch filenames such as /worktrees.
- const program=state.auditProgram.replace(/\/work(?=[\/\s"')]|$)/g,path.join(root,'work'));
+ let program=state.auditProgram.replace(/\/work(?=[\/\s"')]|$)/g,path.join(root,'work'));
+ if(state.gitFault)program='git() { case " $* " in *" rev-list "*) '+(state.gitFault==='exit128'?'return 128':state.gitFault==='timeout'?'return 124':state.gitFault==='empty'?'return 0':state.gitFault==='nonnumeric'?'echo unknown; return 0':'echo -1; return 0')+' ;; esac; command git "$@"; }; '+program;
  const run=cp.spawnSync('bash',['-c',program],{env:{...process.env},encoding:'utf8',timeout:15000});out(run.stdout||'');c.State={Running:false,Status:'exited'};save();process.exit(run.status??2);
 } else if(args[0]==='cp') {
  // The pinned audit helper receives only the test-materialized production program.
  const source=args[1];fs.copyFileSync(source,path.join(root,'audit.sh'));
+} else if(args[0]==='exec') {
+ if(args.includes('stat'))out(state.tmpMode||'1777');
+ else if(args.includes('sh'))process.exit(state.tmpAssets===false?1:0);
+ else fail();
 } else fail();
 NODE

@@ -2,13 +2,34 @@
 param([string]$Case, [string]$Manifest)
 $ErrorActionPreference = 'Stop'
 $state = Get-Content -Raw -LiteralPath $env:C727_TEST_STATE | ConvertFrom-Json
+if ($Case -eq 'rollout-lock') {
+    Add-Content -LiteralPath $env:C727_TEST_TRACE -Value '{"kind":"lock-request"}'
+    $lock = $null
+    try {
+        if ($state.rolloutLockFile) {
+            do {
+                try { $lock = [IO.File]::Open([string]$state.rolloutLockFile, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+                catch { Start-Sleep -Milliseconds 20 }
+            } while ($null -eq $lock)
+        }
+        [Console]::WriteLine('C1008_LOCKED')
+        [Console]::Out.Flush()
+        [void][Console]::ReadLine()
+    } finally { if ($null -ne $lock) { $lock.Dispose() } }
+    exit 0
+}
+if ($Case -eq 'recycle-discover') {
+    if ($state.incompleteRecycle) { Write-Output 'c100800000000000000000000000000000001' }
+    if ($state.discoveryError) { exit 2 }
+    exit 0
+}
 $request = Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json
 if ($request.sourceSha -cne $state.sha -or $request.runId -notmatch '^c727[0-9a-f]{12}$') { exit 2 }
 if ($Case -eq 'verify-runner-caches' -and $request.runnerId -notin @('server2', 'server2-temp')) { exit 2 }
 $savedDonor = if ($request.PSObject.Properties.Name -contains 'savedDonor') { [string]$request.savedDonor } else { '' }
 if ($Case -eq 'temp-project-absent') {
     Add-Content -LiteralPath $env:C727_TEST_TRACE -Value '{"kind":"census","name":"temp-project-absent"}'
-    if ($state.scenario -eq 'census-failed') { exit 2 }
+    if ($state.scenario -eq 'census-failed' -or $state.censusError) { exit 2 }
     if ($state.tempContainer) { Write-Output 'fixture-temp-container' }
     exit 0
 }

@@ -39,7 +39,52 @@ $runId = 'c727' + [guid]::NewGuid().ToString('N').Substring(0, 12)
 $evidenceRoot = Join-Path $repoRoot ('.antiphon/rolling-server2/' + $runId)
 New-Item -ItemType Directory -Force -Path $evidenceRoot | Out-Null
 
+function Enter-RolloutAdmissionLock {
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    if ($env:C727_TEST_VERIFY_STUB) {
+        $psi.FileName = 'pwsh'
+        $tokens = @('-NoProfile', '-File', $env:C727_TEST_VERIFY_STUB, '-Case', 'rollout-lock')
+    } else {
+        $psi.FileName = 'ssh'
+        $tokens = @('-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', 'mc@server2',
+            'set -e; mkdir -p /home/mc/antiphon-server2/locks; chmod 700 /home/mc/antiphon-server2/locks; exec 8>/home/mc/antiphon-server2/locks/rollout.lock; flock -w 60 8; printf "C1008_LOCKED\n"; read -r release')
+    }
+    foreach ($token in $tokens) { [void]$psi.ArgumentList.Add($token) }
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $stderr = $proc.StandardError.ReadToEndAsync()
+    try {
+        $ready = $proc.StandardOutput.ReadLineAsync()
+        if (-not $ready.Wait(70000) -or $ready.Result -cne 'C1008_LOCKED' -or $proc.HasExited) { throw 'RecycleRolloutBusy' }
+        return $proc
+    } catch {
+        if (-not $proc.HasExited) { $proc.Kill($true); $proc.WaitForExit() }
+        $proc.Dispose()
+        throw 'RecycleRolloutBusy'
+    }
+}
+
 function Invoke-RunnerRequest {
+    param([string]$Method, [string]$RunnerId, [string]$Suffix = '', $Body = $null)
+    $lock = $null
+    try {
+        if ($Method -eq 'POST') { $lock = Enter-RolloutAdmissionLock }
+        return Invoke-RunnerRequestCore -Method $Method -RunnerId $RunnerId -Suffix $Suffix -Body $Body
+    } finally {
+        if ($null -ne $lock) {
+            try {
+                $lock.StandardInput.WriteLine('release')
+                $lock.StandardInput.Close()
+                if (-not $lock.WaitForExit(5000)) { $lock.Kill($true); $lock.WaitForExit() }
+            } finally { $lock.Dispose() }
+        }
+    }
+}
+
+function Invoke-RunnerRequestCore {
     param([string]$Method, [string]$RunnerId, [string]$Suffix = '', $Body = $null)
     $path = '/api/session-runners/' + [uri]::EscapeDataString($RunnerId) + $Suffix
     if ($env:C727_TEST_HTTP_STUB) {
@@ -64,6 +109,32 @@ function Invoke-RunnerRequest {
     }
     if ([string]::IsNullOrWhiteSpace($response.Content)) { return $null }
     return ($response.Content | ConvertFrom-Json)
+}
+
+# Same-SHA health cannot hide an unfinished operation or a lost receipt copy.
+function Assert-NoIncompleteRecycle {
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    if ($env:C727_TEST_VERIFY_STUB) {
+        $psi.FileName = 'pwsh'
+        $tokens = @('-NoProfile', '-File', $env:C727_TEST_VERIFY_STUB, '-Case', 'recycle-discover')
+    } else {
+        $psi.FileName = 'ssh'
+        $command = 'set -e; command -v jq >/dev/null; for receipt in /home/mc/antiphon-server2/recycle/c1008*.json; do test -e "$receipt" || continue; test -f "$receipt" && test ! -L "$receipt"; jq -er --arg sha ' + $Sha +
+            ' ''if .schema!=1 then error("schema") elif .sourceSha==$sha and .project=="antiphon-runner" and .phase!="completed" then .operationId else empty end'' "$receipt" || test "$?" = 4; done'
+        $tokens = @('-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', 'mc@server2', $command)
+    }
+    foreach ($token in $tokens) { [void]$psi.ArgumentList.Add($token) }
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    try {
+        $stdout = $proc.StandardOutput.ReadToEndAsync()
+        $stderr = $proc.StandardError.ReadToEndAsync()
+        if (-not $proc.WaitForExit(30000)) { $proc.Kill($true); $proc.WaitForExit(); throw 'RecycleReceiptUnavailable' }
+        if ($proc.ExitCode -ne 0) { throw 'RecycleReceiptUnavailable' }
+        if (-not [string]::IsNullOrWhiteSpace($stdout.GetAwaiter().GetResult())) { throw 'RecycleResumeRequired' }
+    } finally { $proc.Dispose() }
 }
 
 function Get-RunnerStatus {
@@ -398,6 +469,7 @@ function Invoke-Phase {
         'redeploy-old' {
             $s = Get-RunnerStatus -RunnerId 'server2'
             if ($null -eq $s) { throw 'OldRunnerStatusMissing' }
+            if ([string]$s.buildVersion -eq $Sha -and -not $ResumeRecycle -and -not $DryRun) { Assert-NoIncompleteRecycle }
             if ([string]$s.buildVersion -eq $Sha -and -not $ResumeRecycle -and
                 ($s.available -ne $true -or $s.dispatchEligible -ne $true)) { throw 'RecycleResumeRequired' }
             $preservedStore = [string]$s.runnerStoreId
