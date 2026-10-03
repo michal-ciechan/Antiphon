@@ -3626,7 +3626,7 @@ c1008_tasks() {
                   ((.landRequest.state as $s | ["Completed","Superseded","Canceled"]|index($s)!=null) and
                     (.landRequest.terminalEventId|type)=="string" and
                     (.landRequest.terminalEventId|test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")))' >/dev/null || return 2
-                detail="$(printf '%s' "$detail" | jq -c '.landRequest')" || return 2
+                detail="$(printf '%s' "$detail" | jq -c 'if .landRequest==null then null else .landRequest|{state,terminalEventId} end')" || return 2
                 printf '%s' "$land" | jq -e --arg id "$id" --argjson detail "$detail" 'has($id) and .[$id]!=$detail' >/dev/null && return 2
                 land="$(printf '%s' "$land" | jq -c --arg id "$id" --argjson detail "$detail" '.[$id]=$detail')" || return 2
             done < <(printf '%s' "$envelope" | jq -c '.items[]')
@@ -3677,6 +3677,8 @@ c1008_status_proof() {
         fi
         if printf '%s' "$body" | jq -e 'has("runnerSessions") and .runnerSessions==null' >/dev/null; then
             saved="$(printf '%s' "$C1008_RECORD" | jq -r '.phase')"
+            printf '%s' "$body" | jq -e '.available==false and .dispatchEligible==false' >/dev/null \
+                || c1008_refuse RunnerCounterUnknown
             case "$saved" in containersRemoved|removing|volumesRemoved|recreating|verified) ;; *) c1008_refuse RunnerCounterUnknown ;; esac
             printf '%s' "$C1008_RECORD" | jq -e '.liveZero.runnerSessions==0 and .liveZero.sessions==0 and .liveZero.queuedTasks==0 and .ownedRemoved==true' >/dev/null \
                 || c1008_refuse RecycleResumeMismatch
