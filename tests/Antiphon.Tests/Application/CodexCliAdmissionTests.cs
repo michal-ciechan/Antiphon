@@ -77,7 +77,7 @@ public sealed class CodexCliAdmissionTests
             selected.Sample = new(version, T - age, error, new string('a', 64));
             var request = k.Request(remote);
             var failure = await FailureAsync(() => k.Service.CreateAsync(request, k.Caller, CancellationToken.None));
-            failure?.Code.ShouldBe(code, "C959-v15-code " + remote + "/" + version + "/" + error);
+            (failure?.Code).ShouldBe(code, "C959-v15-code " + remote + "/" + version + "/" + error);
             if (code is not null)
             {
                 failure!.StatusCode.ShouldBe(409, "C959-pc-128");
@@ -92,8 +92,7 @@ public sealed class CodexCliAdmissionTests
         }
         await using var legacy = await Kit.CreateAsync();
         legacy.Local.Sample = null;
-        (await FailureAsync(() => legacy.Service.CreateAsync(legacy.Request(false), legacy.Caller, CancellationToken.None)))
-            ?.Code.ShouldBe("codex_cli_version_unknown", "C959-v15-omitted");
+        (await CodeAsync(() => legacy.Service.CreateAsync(legacy.Request(false), legacy.Caller, CancellationToken.None))).ShouldBe("codex_cli_version_unknown", "C959-v15-omitted");
     }
 
     [Test]
@@ -102,11 +101,9 @@ public sealed class CodexCliAdmissionTests
         await using var k = await Kit.CreateAsync();
         k.Local.Sample = k.Remote.Sample = new("0.156.1", T, null, new string('a', 64));
         var request = k.Request(true) with { AllowUnauthenticatedProvider = true };
-        (await FailureAsync(() => k.Service.CreateAsync(request, k.Caller, CancellationToken.None)))
-            ?.Code.ShouldBe("codex_cli_version_too_old", "C959-pc-137");
+        (await CodeAsync(() => k.Service.CreateAsync(request, k.Caller, CancellationToken.None))).ShouldBe("codex_cli_version_too_old", "C959-pc-137");
         k.Remote.AuthPresent = false;
-        (await FailureAsync(() => k.Service.CreateAsync(request with { AllowUnauthenticatedProvider = false }, k.Caller, CancellationToken.None)))
-            ?.Code.ShouldBe("provider_sign_in_required", "C959-pc-135");
+        (await CodeAsync(() => k.Service.CreateAsync(request with { AllowUnauthenticatedProvider = false }, k.Caller, CancellationToken.None))).ShouldBe("provider_sign_in_required", "C959-pc-135");
         k.Remote.Requests.Clear();
         k.Db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
         {
@@ -114,11 +111,9 @@ public sealed class CodexCliAdmissionTests
             Source = ModelAvailabilitySource.Manual, HitAt = T.UtcDateTime,
         });
         await k.Db.SaveChangesAsync();
-        (await FailureAsync(() => k.Service.CreateAsync(request, k.Caller, CancellationToken.None)))
-            ?.Code.ShouldBe("model_disabled", "C959-pc-134");
+        (await CodeAsync(() => k.Service.CreateAsync(request, k.Caller, CancellationToken.None))).ShouldBe("model_disabled", "C959-pc-134");
         k.Remote.Requests.ShouldBeEmpty("C959-v16-auth-hold-before-probe");
-        (await FailureAsync(() => k.Service.CreateAsync(request with { IgnoreModelDisabled = true }, k.Caller, CancellationToken.None)))
-            ?.Code.ShouldBe("codex_cli_version_too_old", "C959-pc-138");
+        (await CodeAsync(() => k.Service.CreateAsync(request with { IgnoreModelDisabled = true }, k.Caller, CancellationToken.None))).ShouldBe("codex_cli_version_too_old", "C959-pc-138");
         await k.Db.ModelAvailabilityHolds.ExecuteDeleteAsync();
         k.Remote.AuthPresent = null;
         k.Remote.Sample = new("0.160.0", T, null, new string('a', 64));
@@ -167,8 +162,7 @@ public sealed class CodexCliAdmissionTests
             var agent = await k.Db.Agents.SingleAsync(a => a.Id == id);
             agent.ModelLevel = level;
             await k.Db.SaveChangesAsync();
-            (await FailureAsync(() => k.Service.CreateAsync(k.Request(false) with { AgentId = id }, k.Caller, CancellationToken.None)))
-                ?.Code.ShouldBe("codex_cli_version_too_old", "C959-pc-147");
+            (await CodeAsync(() => k.Service.CreateAsync(k.Request(false) with { AgentId = id }, k.Caller, CancellationToken.None))).ShouldBe("codex_cli_version_too_old", "C959-pc-147");
         }
         var pin = await k.Db.Agents.SingleAsync(a => a.Id == id);
         pin.ModelId = "gpt-6-sol";
@@ -180,8 +174,7 @@ public sealed class CodexCliAdmissionTests
         revision.ModelArgumentName = "";
         pin.ModelId = "gpt-6.1-sol";
         await k.Db.SaveChangesAsync();
-        (await FailureAsync(() => k.Service.CreateAsync(k.Request(false) with { AgentId = id }, k.Caller, CancellationToken.None)))
-            ?.Code.ShouldBe("model_argument_unsupported", "C959-pc-149");
+        (await CodeAsync(() => k.Service.CreateAsync(k.Request(false) with { AgentId = id }, k.Caller, CancellationToken.None))).ShouldBe("model_argument_unsupported", "C959-pc-149");
         pin.ModelId = null;
         await k.Db.SaveChangesAsync();
         k.Local.Requests.Clear();
@@ -196,8 +189,7 @@ public sealed class CodexCliAdmissionTests
         await using var k = await Kit.CreateAsync();
         var id = await k.ProfileAgentAsync("gpt-6.1-sol", "/fixture/codex-b", "--model");
         k.Local.Sample = new("0.156.1", T, null, new string('b',64));
-        (await FailureAsync(() => k.Service.CreateAsync(k.Request(false) with { AgentId = id }, k.Caller, CancellationToken.None)))
-            ?.Code.ShouldBe("codex_cli_version_too_old", "C959-pc-153");
+        (await CodeAsync(() => k.Service.CreateAsync(k.Request(false) with { AgentId = id }, k.Caller, CancellationToken.None))).ShouldBe("codex_cli_version_too_old", "C959-pc-153");
         k.Local.Requests.Single().Executable.ShouldBe("/fixture/codex-b", "C959-v19-selected");
         k.Local.Sample = new("0.160.0", T, null, new string('b',64));
         (await k.Service.CreateAsync(k.Request(false) with { AgentId = id }, k.Caller, CancellationToken.None)).Status
@@ -210,8 +202,7 @@ public sealed class CodexCliAdmissionTests
         k.Local.Requests.Single().Path.ShouldBe("B:A", "C959-pc-156");
         k.Local.Requests.Single().PathExt.ShouldBe(".CMD;.EXE", "C959-pc-157");
         k.Local.Sample = null;
-        (await FailureAsync(() => k.Service.CreateAsync(k.Request(false) with { AgentId = id }, k.Caller, CancellationToken.None)))
-            ?.Code.ShouldBe("codex_cli_version_unknown", "C959-pc-155");
+        (await CodeAsync(() => k.Service.CreateAsync(k.Request(false) with { AgentId = id }, k.Caller, CancellationToken.None))).ShouldBe("codex_cli_version_unknown", "C959-pc-155");
     }
 
     [Test]
@@ -234,8 +225,7 @@ public sealed class CodexCliAdmissionTests
         })
         {
             Override(runner, model, code);
-            (await FailureAsync(() => k.Service.CreateAsync(k.Request(false), k.Caller, CancellationToken.None)))
-                ?.Code.ShouldBe("codex_cli_version_too_old", "C959-v20-wrong-scope");
+            (await CodeAsync(() => k.Service.CreateAsync(k.Request(false), k.Caller, CancellationToken.None))).ShouldBe("codex_cli_version_too_old", "C959-v20-wrong-scope");
         }
         Override();
         var task = await k.Service.CreateAsync(k.Request(false), k.Caller, CancellationToken.None);
@@ -247,8 +237,7 @@ public sealed class CodexCliAdmissionTests
         warning.Detail.ShouldContain("C959 isolated qualification");
         k.Local.Sample.CodexCliVersion.ShouldBe("0.156.1", "C959-pc-174");
         k.Clock.Advance(TimeSpan.FromMinutes(5));
-        (await FailureAsync(() => k.Service.CreateAsync(k.Request(false), k.Caller, CancellationToken.None)))
-            ?.Code.ShouldBe("codex_cli_version_too_old", "C959-pc-163");
+        (await CodeAsync(() => k.Service.CreateAsync(k.Request(false), k.Caller, CancellationToken.None))).ShouldBe("codex_cli_version_too_old", "C959-pc-163");
         foreach (var invalid in new[] { "runner", "model", "code", "reason", "expiry", "lifetime" })
         {
             Override(invalid == "runner" ? "*" : "desktop", invalid == "model" ? "*" : "gpt-6.1-sol",
@@ -264,7 +253,7 @@ public sealed class CodexCliAdmissionTests
         await using (var refused = await DispatchKit.BuildAsync())
         {
             refused.Client.Sample = new("0.159.0", T, null, new string('a',64));
-            (await FailureAsync(() => refused.CreateAsync())).ShouldNotBeNull("C959-v21-admission-before-delivery");
+            (await CodeAsync(() => refused.CreateAsync())).ShouldNotBeNull("C959-v21-admission-before-delivery");
         }
         foreach (var version in new[] { "0.159.1", "0.160.0" })
         {
@@ -299,12 +288,12 @@ public sealed class CodexCliAdmissionTests
         task.Status = AgentTaskStatus.Failed;
         await k.Db.SaveChangesAsync();
         k.Local.Sample = new("0.156.1", T, null, new string('a',64));
-        (await FailureAsync(() => k.Service.RetryAsync(task.Id, CancellationToken.None)))?.Code
+        (await FailureAsync(() => k.Service.RetryAsync(task.Id, CancellationToken.None)))
             .ShouldBe("codex_cli_version_too_old", "C959-pc-193");
         task.Status.ShouldBe(AgentTaskStatus.Failed, "C959-v22-state");
         (await k.Db.AgentTaskEvents.CountAsync(e => e.Type == AgentTaskEventType.Retried)).ShouldBe(0);
         k.Local.Sample = null;
-        (await FailureAsync(() => k.Service.RetryAsync(task.Id, CancellationToken.None)))?.Code
+        (await CodeAsync(() => k.Service.RetryAsync(task.Id, CancellationToken.None)))
             .ShouldBe("codex_cli_version_unknown", "C959-pc-198");
         k.Local.Sample = new("0.159.1", T, null, new string('a',64));
         (await k.Service.RetryAsync(task.Id, CancellationToken.None)).Status.ShouldBe(AgentTaskStatus.Queued);
@@ -313,6 +302,8 @@ public sealed class CodexCliAdmissionTests
         await Should.ThrowAsync<OperationCanceledException>(() => k.Service.CreateAsync(k.Request(false), k.Caller, cancel.Token));
         (await k.Db.AgentTasks.CountAsync()).ShouldBe(1, "C959-pc-195");
     }
+
+    private static async Task<string?> CodeAsync(Func<Task> call) => (await FailureAsync(call))?.Code;
 
     private static async Task<HttpException?> FailureAsync(Func<Task> call)
     {
@@ -339,7 +330,7 @@ public sealed class CodexCliAdmissionTests
                 CallbackOrigin = "https://antiphon.test", SharedSecret = "x",
             })), runners: new Directory(Local, Remote));
         public CreateAgentTaskRequest Request(bool remote) => new(Body, Role: AgentTaskRole.Code, AgentKind: AgentKind.Codex,
-            ModelLevel: AgentModelLevel.High, Workspace: WorkspaceMode.Shared, RunnerId: remote ? "runner-a" : "local");
+            ModelLevel: AgentModelLevel.High, Workspace: remote ? WorkspaceMode.Worktree : WorkspaceMode.Shared, RunnerId: remote ? "runner-a" : "local");
         public static async Task<Kit> CreateAsync()
         {
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
