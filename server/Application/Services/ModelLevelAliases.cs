@@ -1,4 +1,5 @@
 using Antiphon.Server.Domain.Enums;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -23,6 +24,22 @@ namespace Antiphon.Server.Application.Services;
 /// </summary>
 public static class ModelLevelAliases
 {
+    public sealed record CodexLadderEntry(string ModelId, CodexCliVersion? MinimumCliVersion);
+    private static readonly CodexLadderEntry CodexFrontier = new(ModelAlias.Gpt6Astra, null);
+    private static readonly CodexLadderEntry CodexSol = new(ModelAlias.Gpt61Sol, CodexCliVersion.Parse("0.159.1")!);
+    private static readonly CodexLadderEntry CodexLow = new(ModelAlias.Gpt56Luna, null);
+
+    public static CodexLadderEntry ForCodexEntry(AgentModelLevel level) => level switch
+    {
+        AgentModelLevel.Frontier => CodexFrontier,
+        AgentModelLevel.Low => CodexLow,
+        _ => CodexSol,
+    };
+
+    /// <summary>The floor belongs to the actual explicit model, including exact profile pins.</summary>
+    public static CodexCliVersion? MinimumCodexCliVersion(AgentKind kind, string? actualModel) =>
+        kind == AgentKind.Codex && string.Equals(actualModel?.Trim(), CodexSol.ModelId, StringComparison.OrdinalIgnoreCase)
+            ? CodexSol.MinimumCliVersion : null;
     public static string ForClaude(AgentModelLevel level) => level switch
     {
         AgentModelLevel.Frontier => "fable",
@@ -52,14 +69,7 @@ public static class ModelLevelAliases
     /// <para><c>gpt-6.1-sol</c> is bundled from codex-cli 0.159.1 onward and supports both
     /// medium and high effort in 0.160.0. Do not pass bare <c>astra</c> or <c>sol</c> to Codex.</para>
     /// </summary>
-    public static string ForCodex(AgentModelLevel level) => level switch
-    {
-        AgentModelLevel.Frontier => "gpt-6-astra",
-        AgentModelLevel.High => "gpt-6.1-sol",
-        AgentModelLevel.Medium => "gpt-6.1-sol",
-        AgentModelLevel.Low => "gpt-5.6-luna",
-        _ => "gpt-6.1-sol",
-    };
+    public static string ForCodex(AgentModelLevel level) => ForCodexEntry(level).ModelId;
 
     /// <summary>
     /// The alias for the program a task or session ACTUALLY runs on (CARD-0084 S4). Every place that
