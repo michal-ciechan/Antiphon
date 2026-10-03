@@ -128,7 +128,7 @@ Caveats (none hidden):
    `BROWSER=/bin/false`, `ANTIPHON_PTY_AUDIT=0`); the runner ran phone-home,
    Herdr, host statistics and the CPU watchdog disabled, with a random private
    loopback port. Image-level configuration audit (names only): the image
-   environment names are PATH, APP_UID, ASPNETCORE_HTTP_PORTS, DOTNET_*,
+   environment names are PATH, APP_UID, ASPNETCORE_*_PORTS, DOTNET_*,
    PhoneHome__Enabled and ASPNETCORE_URLS, with no Grok or MCP name; no
    `/etc/grok*` or `/etc/xdg/grok*` path exists. Absence of an MCP surface is
    not proof of full isolation; CARD-0857 still owns that.
