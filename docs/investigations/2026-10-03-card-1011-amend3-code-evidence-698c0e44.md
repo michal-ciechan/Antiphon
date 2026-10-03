@@ -10,7 +10,7 @@ GET /api/agent-tasks/pipeline, /api/runner-defaults and /api/session-runners wer
 
 - 41c9c48b558a85e720a11202966ccb118418c8d3: shared test-local Observer, startup/turn verdict and receipt projection; new GrokFreshWorktreeQualificationTests three methods/eight results; existing real probe uses the extracted Observer/startup verdict. Legacy mandatory-trust verdict is deliberately retained for preparatory red proof.
 - 614cc8f4017bb962d91ee5a50fc696ad8d753bff: ensure the missing-TurnEnd control reaches the named verdict assertion rather than throwing on null metadata. No deliberate mutant was executed.
-- d5ff10008 (resolve full SHA from Git): durable **inert, unapplied, uncompiled** next-phase source candidate at docs/investigations/2026-10-03-card-1011-amend3-green-preparation-698c0e44.md; git apply --check succeeds against current source. It is not executable harness approval.
+- d5ff10008bfcbdad5d438f934aeb15924ec65bb0: durable **inert, unapplied, uncompiled** next-phase source candidate at docs/investigations/2026-10-03-card-1011-amend3-green-preparation-698c0e44.md; git apply --check succeeds against current source. It is not executable harness approval.
 
 All completed slices are committed and pushed before report. New fields are tested through serialized/deserialized JSON, and negative turn cases build independent normalized records; they are not self-comparisons. Fake tests run the real adapter over a scripted client. Their shared legacy startup oracle is intended to fail only the false argument; **that assertion-red has not been measured**, because execution was refused. The eight new cases are not marked passed or complete.
 
