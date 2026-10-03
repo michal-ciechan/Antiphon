@@ -138,6 +138,29 @@ dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c
 dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c475/ -- --treenode-filter '/*/*/(AgentTaskLandBoundaryControlledTests*)|(AgentTaskLandAdmissionControlledTests*)|(AgentTaskLandConcurrencyControlledTests*)/*' --report-trx --report-trx-filename controlled.trx --results-directory .antiphon/c475-controlled
 ```
 
+### Offline Pty provider oracles (CARD-1007)
+
+The Codex `debug prompt-input` and Grok `inspect --json` methods in
+`OrchestratorWorkspaceLayoutCanaryTests` require `ANTIPHON_PTY_PROVIDER_ORACLES=1`.
+Like the headed canaries, the shared gate accepts exactly `1`; otherwise both skip
+with `Set ANTIPHON_PTY_PROVIDER_ORACLES=1 to opt in to offline Codex/Grok provider oracles`
+before binary lookup, scratch layout creation or process launch. This flag enables
+only the offline probes; headed canaries keep their existing opt-ins. Both original
+oracle assertions still run when their existing binary prerequisites are satisfied.
+
+Run the intentional lane from a clean committed checkout (PowerShell):
+
+```powershell
+$env:ANTIPHON_PTY_PROVIDER_ORACLES='1'
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name provider-oracles -Project tests/Antiphon.Agents.Pty.Tests -OutputPath bin-provider-oracles/ -Filter '/*/*/OrchestratorWorkspaceLayoutCanaryTests*/(Codex_prompt_input_is_bounded_at_the_nested_checkout_git_root*)|(Grok_inspect_is_bounded_at_the_nested_checkout_git_root*)' -MinExecuted 2 -Expect 'Codex_prompt_input_is_bounded_at_the_nested_checkout_git_root,Grok_inspect_is_bounded_at_the_nested_checkout_git_root' -ExpectedSourceSha (git rev-parse HEAD) -ResultsRoot .antiphon/provider-oracles
+Remove-Item Env:ANTIPHON_PTY_PROVIDER_ORACLES
+```
+
+The existing resolvers use Windows install paths; `ANTIPHON_CODEX_EXE` can select a
+native Codex executable on another platform. An enabled skip for a missing binary
+is incomplete oracle evidence. CARD-0596 owns the separate Grok inspect assertion
+failure; this gate does not change that assertion or its timeout.
+
 ### Alternate-output cleanup safety (CARD-0448)
 
 `scripts/cleanup-build-junk.ps1` retains its pre-CARD-0448 behavior: the weekly Windmill
