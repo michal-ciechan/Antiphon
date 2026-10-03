@@ -428,7 +428,7 @@ public sealed class CodexCliAdmissionTests
                     lost.Factory.Created.ShouldBeEmpty("C959-v22-no-volatile-launch " + vector);
                     (await db.SessionQueuedMessages.CountAsync(q => q.ExecutionTaskId == taskId)).ShouldBe(0);
                     (await db.TranscriptEntries.CountAsync(e => e.AgentSessionId == lostSession)).ShouldBe(0,
-                        "C959-pc-191 " + vector);
+                        "C959-v22-lost-claim-no-receipt " + vector);
                     helperSession = lost.Harness.SessionId;
                     helperAgent = lost.Harness.AgentId;
                 }
@@ -461,13 +461,23 @@ public sealed class CodexCliAdmissionTests
                 })
                 {
                     recovered.Client.Sample = sample;
-                    (await CodeAsync(() => Retry())).ShouldBe(code, "C959-pc-193/C959-pc-198 " + vector);
+                    (await CodeAsync(() => Retry())).ShouldBe(code, "C959-pc-193 " + vector);
                     await using var db = recovered.Context();
                     (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId)).Status
                         .ShouldBe(AgentTaskStatus.Failed, "C959-v22-state " + vector);
                     (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Retried)).ShouldBe(0);
                     recovered.Factory.Created.ShouldBeEmpty();
                 }
+                var directory = (Directory)recovered.Harness.Provider.GetRequiredService<ISessionRunnerDirectory>();
+                directory.Local = new LegacyClient(recovered.Client);
+                try
+                {
+                    (await CodeAsync(() => Retry())).ShouldBe("codex_cli_version_unknown", "C959-pc-198 " + vector);
+                    await using var db = recovered.Context();
+                    (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId)).Status.ShouldBe(AgentTaskStatus.Failed);
+                    (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Retried)).ShouldBe(0);
+                }
+                finally { directory.Local = recovered.Client; }
                 recovered.Client.Sample = new("0.156.1", clock.GetUtcNow(), null, new string('a',64));
                 recovered.Harness.Delegation.CodexCliVersionOverrides = [new()
                 {
@@ -483,7 +493,7 @@ public sealed class CodexCliAdmissionTests
                 await recovered.Harness.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
                 await using var finalDb = recovered.Context();
                 var row = await finalDb.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
-                row.AgentSessionId.ShouldNotBe(lostSession, "C959-pc-192 " + vector);
+                row.AgentSessionId.ShouldNotBe(lostSession, "C959-v22-retry-session " + vector);
                 var adapter = recovered.Factory.Created.Single();
                 if (busy)
                 {
@@ -507,7 +517,7 @@ public sealed class CodexCliAdmissionTests
                 receipts.Single().Text.ShouldBe(frozen.Wire, "C959-pc-194 receipt " + vector);
                 receipts.Single().Sequence.ShouldBeGreaterThan(queued.LastDeliveryBaselineSequence ?? 0, "C959-v22-baseline " + vector);
                 (await finalDb.TranscriptEntries.CountAsync(e => e.AgentSessionId == lostSession && e.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0,
-                    "C959-pc-192 old-session " + vector);
+                    "C959-v22-old-session " + vector);
                 (await finalDb.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Retried)).ShouldBe(1);
             }
             finally
@@ -734,13 +744,29 @@ public sealed class CodexCliAdmissionTests
     }
     private sealed class Directory(Client local, Client remote) : ISessionRunnerDirectory
     {
-        public ISessionRunnerClient Local => local;
+        public ISessionRunnerClient Local { get; set; } = local;
         public IReadOnlyList<string> KnownRunnerIds => ["runner-a"];
         public ISessionRunnerClient Resolve(string? runnerId) => string.IsNullOrWhiteSpace(runnerId) ? local : remote;
         public Guid? GetLiveStoreId(string? runnerId) => null;
         public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) => Task.FromResult<SessionRunnerOwner?>(null);
         public Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct) => Task.FromResult<SessionRunnerBinding>(SessionRunnerBinding.Local.Instance);
         public Task<RunnerInventory> GetInventoryAsync(string? runnerId, CancellationToken ct) => Task.FromResult<RunnerInventory>(new RunnerInventory.Available([]));
+    }
+    // Deliberately omits the additive typed probe: use the real default interface body.
+    private sealed class LegacyClient(Client inner) : ISessionRunnerClient
+    {
+        public Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct) => inner.GetCapabilitiesAsync(ct);
+        public Task<SessionRunnerSessionDto> StartAsync(Guid id, AgentLaunchSpec spec, CancellationToken ct) => inner.StartAsync(id, spec, ct);
+        public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) => inner.ListAsync(ct);
+        public Task<SessionRunnerSessionDto> GetAsync(Guid id, CancellationToken ct) => inner.GetAsync(id, ct);
+        public Task<SessionRunnerBufferDto> GetBufferAsync(Guid id, CancellationToken ct) => inner.GetBufferAsync(id, ct);
+        public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid id, CancellationToken ct) => inner.GetSnapshotAsync(id, ct);
+        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid id, CancellationToken ct) => inner.GetTranscriptAsync(id, ct);
+        public Task SendInputAsync(Guid id, string input, CancellationToken ct) => inner.SendInputAsync(id, input, ct);
+        public Task ClearLiveBufferAsync(Guid id, CancellationToken ct) => inner.ClearLiveBufferAsync(id, ct);
+        public Task ResizeAsync(Guid id, int cols, int rows, CancellationToken ct) => inner.ResizeAsync(id, cols, rows, ct);
+        public Task<SessionRunnerSessionDto> KillAsync(Guid id, CancellationToken ct) => inner.KillAsync(id, ct);
+        public IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(CancellationToken ct) => inner.StreamEventsAsync(ct);
     }
     private sealed class Client : ISessionRunnerClient
     {

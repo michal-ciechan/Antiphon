@@ -152,7 +152,9 @@ internal static class CodexCliRemoteDeliveryFixture
             var args = terminal.StartedArgs.ToList();
             args.Count(a => a == "--model").ShouldBe(1, "C959-pc-184 remote " + vector);
             args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.1-sol");
-            (await h.Runtime.CatchUpTranscriptAsync(task.AgentSessionId.Value, CancellationToken.None)).ShouldBeTrue();
+            await h.Runtime.CatchUpTranscriptAsync(task.AgentSessionId.Value, CancellationToken.None);
+            peer.RequestCount(PhoneHomeOperation.Transcript).ShouldBeGreaterThan(0,
+                "C959-v21-actual-remote-transcript-pull " + vector);
             var receipts = await db.TranscriptEntries.AsNoTracking().Where(e => e.AgentSessionId == task.AgentSessionId && e.Kind == TranscriptKinds.UserPrompt).ToListAsync();
             receipts.Count.ShouldBe(1, "C959-v21-remote-no-duplicate " + vector);
             receipts.Single().Text.ShouldBe(expectedWire, "C959-v21-remote-pulled-receipt " + vector);
