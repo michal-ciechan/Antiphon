@@ -94,7 +94,7 @@ function Assert-RecycleContext {
     $expected = @('version', 'project', 'operationId', 'dryRun', 'resume', 'projectId')
     if ($keys.Count -ne $expected.Count -or @($keys | Where-Object { $_ -notin $expected }).Count -ne 0) { throw 'RecycleContextInvalid' }
     if ($Context.version -ne 1 -or $Context.version -isnot [long] -and $Context.version -isnot [int] -or
-        $Context.project -notin @('antiphon-runner', 'antiphon-runner-temp') -or
+        $Context.project -cnotin @('antiphon-runner', 'antiphon-runner-temp') -or
         $Context.operationId -cnotmatch '^c1008[0-9a-f]{32}$' -or
         $Context.dryRun -isnot [bool] -or $Context.resume -isnot [bool] -or
         $Context.projectId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or
@@ -131,6 +131,8 @@ function Assert-RecycleTaskCensus {
         $scopes = [System.Collections.Generic.HashSet[string]]::new()
         $rows = @{}
         $observations = @{}
+        $scopeCounts = @{}
+        $landEvidence = @{}
         while ($pending.Count -gt 0) {
             $scope = $pending.Dequeue()
             if (-not $scopes.Add($scope)) { continue }
@@ -141,19 +143,36 @@ function Assert-RecycleTaskCensus {
                 [string]$envelope.scope.projectId -ne $scope -or [string]$envelope.scope.unscoped -ne 'include') {
                 throw 'RecycleTaskCensusUnknown'
             }
+            foreach ($key in @('total','unscoped')) {
+                if (($envelope.excluded.$key -isnot [int] -and $envelope.excluded.$key -isnot [long]) -or
+                    $envelope.excluded.$key -lt 0) { throw 'RecycleTaskCensusUnknown' }
+            }
+            if ($envelope.excluded.unscoped -ne 0) { throw 'RecycleTaskCensusUnknown' }
+            $withheldCount = 0
+            $excludedScopes = [System.Collections.Generic.HashSet[string]]::new()
             $observations[$scope] = @($envelope.items | ForEach-Object id | Sort-Object) -join ','
             foreach ($excluded in $envelope.excluded.byProject) {
-                if ([string]$excluded.projectId -cnotmatch '^[0-9a-f-]{36}$' -or
-                    ($excluded.count -isnot [int] -and $excluded.count -isnot [long]) -or $excluded.count -lt 0) { throw 'RecycleTaskCensusUnknown' }
+                $excludedId = [string]$excluded.projectId
+                if ($excludedId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or $excludedId -eq $scope -or
+                    -not $excludedScopes.Add($excludedId) -or
+                    ($excluded.count -isnot [int] -and $excluded.count -isnot [long]) -or $excluded.count -le 0) { throw 'RecycleTaskCensusUnknown' }
+                $withheldCount += $excluded.count
+                if ($scopeCounts.ContainsKey($excludedId) -and $scopeCounts[$excludedId] -ne $excluded.count) { throw 'RecycleTaskCensusUnknown' }
+                $scopeCounts[$excludedId] = $excluded.count
                 $pending.Enqueue([string]$excluded.projectId)
                 $observations[$scope] += '|' + [string]$excluded.projectId + ':' + [string]$excluded.count
             }
+            if ($withheldCount -ne $envelope.excluded.total) { throw 'RecycleTaskCensusUnknown' }
             foreach ($task in $envelope.items) {
                 foreach ($key in @('id', 'status', 'runnerId', 'projectId', 'scopeSource', 'landRequestedAt', 'landStartedAt')) {
                     if ($task.PSObject.Properties.Name -notcontains $key) { throw 'RecycleTaskCensusUnknown' }
                 }
                 $id = [string]$task.id
-                if ($id -cnotmatch '^[0-9a-f-]{36}$' -or [string]$task.status -notin @('Queued','Dispatched','Working','Blocked','Succeeded','Failed','Canceled')) { throw 'RecycleTaskCensusUnknown' }
+                if ($id -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or
+                    [string]$task.status -cnotin @('Queued','Dispatched','Working','Blocked','Succeeded','Failed','Canceled') -or
+                    [string]$task.scopeSource -cnotin @('Task','Card','None') -or
+                    ($task.scopeSource -eq 'None' -and $null -ne $task.projectId) -or
+                    ($task.scopeSource -ne 'None' -and [string]$task.projectId -cne $scope)) { throw 'RecycleTaskCensusUnknown' }
                 $facts = [ordered]@{ id = $id; status = [string]$task.status; runnerId = $task.runnerId;
                     projectId = $task.projectId; scopeSource = $task.scopeSource;
                     landRequestedAt = $task.landRequestedAt; landStartedAt = $task.landStartedAt } | ConvertTo-Json -Compress
@@ -163,15 +182,26 @@ function Assert-RecycleTaskCensus {
                 if ([string]$task.runnerId -eq $RunnerId -and [string]$task.status -in @('Queued','Dispatched','Working','Blocked','Failed')) { throw "RecycleBoundTasks $id" }
                 $detail = Invoke-RecycleRead -Path ('/api/agent-tasks/' + $id)
                 if ($detail.PSObject.Properties.Name -notcontains 'landRequest' -or [string]$detail.summary.id -ne $id) { throw 'RecycleLandUnknown' }
-                if ($null -ne $detail.landRequest) {
-                    if ([string]$detail.landRequest.state -in @('Queued','Held','Running','NeedsResolution')) { throw "RecycleLandInFlight $id" }
-                    if ([string]$detail.landRequest.state -notin @('Completed','Superseded','Canceled') -or
-                        -not $detail.landRequest.terminalEventId) { throw 'RecycleLandUnknown' }
+                foreach ($key in @('id','status','runnerId','projectId','scopeSource','landRequestedAt','landStartedAt')) {
+                    if ($detail.summary.PSObject.Properties.Name -notcontains $key -or
+                        ($detail.summary.$key | ConvertTo-Json -Compress) -cne ($task.$key | ConvertTo-Json -Compress)) { throw 'RecycleLandUnknown' }
                 }
+                if ($null -ne $detail.landRequest) {
+                    if ([string]$detail.landRequest.state -cin @('Queued','Held','Running','NeedsResolution')) { throw "RecycleLandInFlight $id" }
+                    if ([string]$detail.landRequest.state -cnotin @('Completed','Superseded','Canceled') -or
+                        [string]$detail.landRequest.terminalEventId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { throw 'RecycleLandUnknown' }
+                }
+                $proof = [ordered]@{ state=$detail.landRequest.state; terminalEventId=$detail.landRequest.terminalEventId } | ConvertTo-Json -Compress
+                if ($landEvidence.ContainsKey($id) -and $landEvidence[$id] -cne $proof) { throw 'RecycleLandUnknown' }
+                $landEvidence[$id] = $proof
             }
         }
+        foreach ($scopeId in $scopeCounts.Keys) {
+            $actual = @($rows.Values | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object projectId -eq $scopeId).Count
+            if ($actual -ne $scopeCounts[$scopeId]) { throw 'RecycleTaskCensusUnknown' }
+        }
         $snapshot = (@($observations.Keys | Sort-Object | ForEach-Object { $_ + '=' + $observations[$_] }) +
-            @($rows.Keys | Sort-Object | ForEach-Object { $rows[$_] })) -join "`n"
+            @($rows.Keys | Sort-Object | ForEach-Object { $rows[$_] + '|' + $landEvidence[$_] })) -join "`n"
         if ($pass -eq 1 -and $snapshot -cne $previous) { throw 'RecycleTaskCensusUnknown' }
         $previous = $snapshot
     }
@@ -186,6 +216,7 @@ function Assert-RetiredTempCounters {
     if ($stamp -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,7})?(Z|[+-]\d{2}:\d{2})$' -or
         -not [datetimeoffset]::TryParse($stamp, [ref]$parsed)) { throw 'TempRunnerNotRetired' }
     if ($Status.retireWhenIdle -isnot [bool] -or $Status.retireWhenIdle -ne $true -or [string]$Status.redirectTo -cne 'server2') { throw 'TempRunnerDrainConflict' }
+    if ($Status.acceptingNewWork -isnot [bool] -or $Status.acceptingNewWork -ne $false) { throw 'TempRunnerDrainConflict' }
     $copy = $Status | ConvertTo-Json -Depth 20 | ConvertFrom-Json
     if ($Status.PSObject.Properties.Name -notcontains 'runnerSessions') { throw 'RunnerCounterUnknown server2-temp runnerSessions' }
     if ($null -eq $Status.runnerSessions) {
@@ -368,7 +399,8 @@ function Invoke-Phase {
             if ($null -eq $s) { throw 'OldRunnerStatusMissing' }
             if ([string]$s.buildVersion -ne $Sha -or $ResumeRecycle -or $DryRun) {
                 Assert-ZeroCounters -Status $s -RunnerId 'server2'
-                if (-not $s.draining -or [string]$s.redirectTo -ne 'server2-temp' -or $s.retireWhenIdle) { throw 'OldRunnerDrainConflict' }
+                if ($s.draining -isnot [bool] -or $s.draining -ne $true -or [string]$s.redirectTo -cne 'server2-temp' -or
+                    $s.retireWhenIdle -isnot [bool] -or $s.retireWhenIdle -ne $false -or $s.retiredAt) { throw 'OldRunnerDrainConflict' }
                 if ($s.acceptingNewWork -isnot [bool] -or $s.acceptingNewWork -ne $false) { throw 'RecycleRoutingActive' }
                 $counterpart = Get-RunnerStatus -RunnerId 'server2-temp'
                 if ($null -eq $counterpart -or $counterpart.acceptingNewWork -isnot [bool] -or $counterpart.acceptingNewWork -ne $true) { throw 'TempRunnerNotAcceptingNewWork' }

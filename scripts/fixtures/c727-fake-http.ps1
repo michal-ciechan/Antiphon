@@ -13,13 +13,20 @@ if ($Path) {
     }
     if ($state.taskError) { [Console]::Error.WriteLine([string]$state.taskError); exit 2 }
     if ($Path -like '/api/agent-tasks?*') {
-        if ($state.tasks) { $state.tasks | ConvertTo-Json -Compress -Depth 20 }
+        $scopeId = ([regex]::Match($Path, 'projectId=([^&]+)')).Groups[1].Value
+        if ($state.taskScopes -and $state.taskScopes.PSObject.Properties.Name -contains $scopeId) { $state.taskScopes.$scopeId | ConvertTo-Json -Compress -Depth 20 }
+        elseif ($state.tasks) { $state.tasks | ConvertTo-Json -Compress -Depth 20 }
         else { Write-Output '{"items":[],"scope":{"projectId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1","unscoped":"include"},"excluded":{"total":0,"unscoped":0,"byProject":[]}}' }
         exit 0
     }
     if ($Path -like '/api/agent-tasks/*') {
         $id = $Path.Substring('/api/agent-tasks/'.Length)
-        @{ summary = @{ id = $id }; landRequest = $null } | ConvertTo-Json -Compress -Depth 5
+        if ($state.details -and $state.details.PSObject.Properties.Name -contains $id) { $state.details.$id | ConvertTo-Json -Compress -Depth 20 }
+        else {
+            $summary = @($state.tasks.items | Where-Object id -eq $id) | Select-Object -First 1
+            if (-not $summary) { $summary = @{ id=$id } }
+            @{ summary = $summary; landRequest = $null } | ConvertTo-Json -Compress -Depth 20
+        }
         exit 0
     }
     exit 2

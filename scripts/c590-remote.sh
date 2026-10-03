@@ -3606,17 +3606,21 @@ c1008_tasks() {
 }
 
 c1008_status_proof() {
-    local body counterpart census ids stamp saved code tasks
+    local body counterpart census ids stamp saved code tasks normalized expected_stamp
     body="$(c849_status_body "$C1008_RUNNER")" || c1008_refuse RunnerStatusMissing
     census="$(c1008_container_census)" || c1008_refuse RecycleVolumeCensusUnknown
     ids="$(printf '%s' "$census" | jq -c --arg project "$C1008_PROJECT" \
         '[.[]|select(.Config.Labels["com.docker.compose.project"]==$project)]')"
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
         stamp="$(printf '%s' "$body" | jq -r '.retiredAt // empty')"
-        [[ "$stamp" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]] || c1008_refuse TempRunnerNotRetired
+        [[ "$stamp" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$ ]] || c1008_refuse TempRunnerNotRetired
         [ -n "${C590_TEMP_RETIRED_AT:-}" ] || c1008_refuse TempRunnerNotRetired
-        [ "$(date -u -d "$stamp" +%s 2>/dev/null)" = "$(date -u -d "$C590_TEMP_RETIRED_AT" +%s 2>/dev/null)" ] \
-            || c1008_refuse TempRunnerRetirementChanged
+        normalized="$(date -u -d "$stamp" +%Y-%m-%dT%H:%M:%S.%NZ 2>/dev/null)" || c1008_refuse TempRunnerNotRetired
+        expected_stamp="$(date -u -d "$C590_TEMP_RETIRED_AT" +%Y-%m-%dT%H:%M:%S.%NZ 2>/dev/null)" || c1008_refuse TempRunnerNotRetired
+        [ "$normalized" = "$expected_stamp" ] || c1008_refuse TempRunnerRetirementChanged
+        if [ "${C1008_RESUME:-0}" = 1 ]; then
+            [ "$normalized" = "$(printf '%s' "$C1008_RECORD" | jq -r .retiredAt)" ] || c1008_refuse RecycleResumeMismatch
+        fi
         printf '%s' "$body" | jq -e '.draining==true and .retireWhenIdle==true and .redirectTo=="server2" and .acceptingNewWork==false' >/dev/null \
             || c1008_refuse TempRunnerDrainConflict
         if printf '%s' "$body" | jq -e 'has("runnerSessions") and .runnerSessions==null' >/dev/null; then
@@ -3645,18 +3649,29 @@ c1008_status_proof() {
         || c1008_refuse RecycleRoutingActive
     code=0; tasks="$(c1008_tasks)" || code=$?
     case "$code" in 0) ;; 3) c1008_refuse RecycleLandInFlight ;; 4) c1008_refuse RecycleBoundTasks ;; *) c1008_refuse RecycleTaskCensusUnknown ;; esac
-    C1008_STATUS="$body"; C1008_CENSUS="$census"; C1008_TASKS="$tasks"
+    if [ "${C1008_ACTIVE:-0}" = 1 ] || [ "${C1008_RESUME:-0}" = 1 ]; then
+        [ "$(printf '%s' "$tasks" | jq -Sc .)" = "$(printf '%s' "$C1008_RECORD" | jq -Sc .tasks)" ] || c1008_refuse RecycleTaskCensusUnknown
+    fi
+    C1008_STATUS="$body"; C1008_CENSUS="$census"; C1008_TASKS="$tasks"; C1008_RETIRED_AT="${normalized:-}"
 }
 
 c1008_git_program() {
     cat <<'C1008_GIT'
 set -euo pipefail
-export GIT_OPTIONAL_LOCKS=0 GIT_NO_LAZY_FETCH=1 GIT_TERMINAL_PROMPT=0
+export GIT_OPTIONAL_LOCKS=0 GIT_NO_LAZY_FETCH=1 GIT_TERMINAL_PROMPT=0 LC_ALL=C
 export GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_GLOBAL=/dev/null
 unknown() { printf 'RecycleGitAuditUnknown\n'; exit 2; }
 trap 'unknown' ERR
 root="$(readlink -e /work)" || unknown
-declare -A seen=()
+scratch="$(mktemp -d /tmp/c1008-audit-XXXXXXXX)" || unknown
+trap '[ -n "$scratch" ] && [ -d "$scratch" ] && rm -r -- "$scratch"' EXIT
+# Capture enumeration before reading it: process substitution loses find failures.
+find "$root" -xdev -name .git -print0 -prune -o -type f -name HEAD -print0 > "$scratch/repositories" 2>/dev/null || unknown
+find "$root" -xdev -type l -print0 > "$scratch/links" 2>/dev/null || unknown
+while IFS= read -r -d '' link; do
+    resolved="$(readlink -e -- "$link")" || unknown
+    [[ "$resolved/" == "$root/"* ]] || unknown
+done < "$scratch/links"
 while IFS= read -r -d '' entry; do
     case "$entry" in */.git) repo="${entry%/.git}" ;; */HEAD) repo="${entry%/HEAD}" ;; *) unknown ;; esac
     top="$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || unknown
@@ -3666,34 +3681,94 @@ while IFS= read -r -d '' entry; do
         [ ! -e "$top/$marker" ] || unknown
     done
     [ "$(git -C "$repo" rev-parse --is-shallow-repository 2>/dev/null)" = false ] || unknown
-    if git -C "$repo" config --get-regexp '^(extensions\.partialclone|remote\..*\.promisor)$' >/dev/null 2>&1; then unknown; fi
-    if [ "$(git -C "$repo" rev-parse --is-bare-repository)" = false ]; then
-        clean="$(git -C "$repo" status --porcelain --untracked-files=all 2>/dev/null)" || unknown
-        if [ -n "$clean" ]; then printf 'RecycleWorktreeDirty\n'; exit 2; fi
-    fi
-    # Every linked/detached worktree is observed even if no local branch names its tip.
-    while IFS= read -r work; do
-        [[ "$work" == worktree\ * ]] || continue
-        work="${work#worktree }"; work="$(readlink -e "$work")" || unknown
+    partial_status=0
+    git -C "$repo" config --get-regexp '^(extensions\.partialclone|remote\..*\.promisor)$' > /dev/null 2>&1 || partial_status=$?
+    [ "$partial_status" = 1 ] || unknown
+    bare="$(git -C "$repo" rev-parse --is-bare-repository 2>/dev/null)" || unknown
+    case "$bare" in
+        false)
+            clean="$(git -C "$repo" status --porcelain --untracked-files=all 2>/dev/null)" || unknown
+            [ -z "$clean" ] || { printf 'RecycleWorktreeDirty\n'; exit 2; } ;;
+        true) ;;
+        *) unknown ;;
+    esac
+    git -C "$repo" worktree list --porcelain -z > "$scratch/worktrees" 2>/dev/null || unknown
+    git -C "$repo" for-each-ref --format='%(objectname)' refs/heads refs/tags > "$scratch/tips" 2>/dev/null || unknown
+    while IFS= read -r -d '' field; do
+        [[ "$field" == worktree\ * ]] || continue
+        work="${field#worktree }"; work="$(readlink -e "$work")" || unknown
         [[ "$work/" == "$root/"* ]] || unknown
-        [ -z "$(git -C "$work" status --porcelain --untracked-files=all 2>/dev/null)" ] || { printf 'RecycleWorktreeDirty\n'; exit 2; }
-    done < <(git -C "$repo" worktree list --porcelain 2>/dev/null)
-    origin="$(timeout --kill-after=5s 30s git -C "$repo" ls-remote --heads origin 2>/dev/null | sort)" || unknown
+        work_bare="$(git -C "$work" rev-parse --is-bare-repository 2>/dev/null)" || unknown
+        if [ "$work_bare" = false ]; then
+            clean="$(git -C "$work" status --porcelain --untracked-files=all 2>/dev/null)" || unknown
+            [ -z "$clean" ] || { printf 'RecycleWorktreeDirty\n'; exit 2; }
+            git -C "$work" rev-parse --verify HEAD >> "$scratch/tips" 2>/dev/null || unknown
+        elif [ "$work_bare" != true ]; then unknown; fi
+    done < "$scratch/worktrees"
+    # A mirror may have no HEAD; its explicit local branch/tag tips still count.
+    if [ "$bare" = false ]; then git -C "$repo" rev-parse --verify HEAD >> "$scratch/tips" 2>/dev/null || unknown; fi
+    timeout --kill-after=5s 30s git -C "$repo" ls-remote --heads origin > "$scratch/origin" 2>/dev/null || unknown
+    origin="$(sort "$scratch/origin")" || unknown
     [ -n "$origin" ] || unknown
-    local_refs="$(git -C "$repo" for-each-ref --format='%(objectname)%09refs/heads/%(refname:strip=3)' refs/remotes/origin | grep -v $'\trefs/heads/HEAD$' | sort)" || unknown
-    if [ "$origin" != "$local_refs" ]; then unknown; fi
-    tips="$(git -C "$repo" for-each-ref --format='%(objectname)' refs/heads refs/tags)" || unknown
-    head="$(git -C "$repo" rev-parse --verify HEAD 2>/dev/null)" || unknown
-    tips="$tips"$'\n'"$head"
+    comparisons=()
+    while IFS=$'\t' read -r tip ref; do
+        [[ "$tip" =~ ^[0-9a-f]{40}$ && "$ref" == refs/heads/* ]] || unknown
+        git -C "$repo" cat-file -e "$tip^{commit}" 2>/dev/null || unknown
+        comparisons+=("$tip")
+        if [ "$bare" = true ]; then
+            local_tip="$(git -C "$repo" rev-parse --verify "$ref^{commit}" 2>/dev/null)" || unknown
+            [ "$local_tip" = "$tip" ] || unknown
+        fi
+    done <<< "$origin"
+    [ "${#comparisons[@]}" -gt 0 ] || unknown
+    if [ "$bare" = false ]; then
+        git -C "$repo" for-each-ref --format='%(objectname)%09refs/heads/%(refname:strip=3)' refs/remotes/origin > "$scratch/local" 2>/dev/null || unknown
+        local_refs="$(awk '$2!="refs/heads/HEAD" {print}' "$scratch/local" | sort)" || unknown
+        [ "$origin" = "$local_refs" ] || unknown
+    fi
+    sort -u "$scratch/tips" > "$scratch/unique" || unknown
+    [ -s "$scratch/unique" ] || unknown
     while IFS= read -r tip; do
-        [ -n "$tip" ] || continue
-        count="$(timeout --kill-after=5s 30s git -C "$repo" rev-list --count "$tip" --not --remotes=origin 2>/dev/null)" || unknown
+        [[ "$tip" =~ ^[0-9a-f]{40}$ ]] || unknown
+        count="$(timeout --kill-after=5s 30s git -C "$repo" rev-list --count "$tip" --not "${comparisons[@]}" 2>/dev/null)" || unknown
         [[ "$count" =~ ^[0-9]+$ ]] || unknown
-        if [ "$count" != 0 ]; then printf 'RecycleUnpublishedWork\n'; exit 2; fi
+        [ "$count" = 0 ] || { printf 'RecycleUnpublishedWork\n'; exit 2; }
         printf 'tip=%s origin=%s repo=%s\n' "$tip" "$(printf '%s' "$origin" | sha256sum | cut -d' ' -f1)" "$(printf '%s' "$repo" | sha256sum | cut -d' ' -f1)"
-    done <<< "$tips"
-done < <(find "$root" -xdev -name .git -print0 -prune -o -type f -name HEAD -print0)
+    done < "$scratch/unique"
+done < "$scratch/repositories"
 C1008_GIT
+}
+
+# Retirement preserves shared cache identities without inspecting a seed marker,
+# starting helpers, creating a missing volume or requiring a warm helper image.
+c1008_cache_preservation() {
+    require_lane host
+    local role name facts mount canonical result='{}'
+    for role in nuget-packages nuget-scratch npm-content; do
+        case "$role" in nuget-packages) name="$C849_PACKAGES" ;; nuget-scratch) name="$C849_SCRATCH" ;; npm-content) name="$C849_NPM" ;; esac
+        facts="$(c1008_volume "$name")" || c1008_refuse RecycleVolumeIdentityMismatch
+        [ "$facts" != null ] || c1008_refuse RecycleVolumeIdentityMismatch
+        printf '%s' "$facts" | jq -e --arg role "$role" '
+            .Labels["io.antiphon.owner"]=="server2-runner" and
+            .Labels["io.antiphon.cache-schema"]=="1" and .Labels["io.antiphon.cache-role"]==$role' >/dev/null \
+            || c1008_refuse RecycleVolumeIdentityMismatch
+        mount="$(printf '%s' "$facts" | jq -r .Mountpoint)"
+        canonical="$(sudo -n readlink -e -- "$mount" 2>/dev/null)" || c1008_refuse RecycleVolumeIdentityMismatch
+        [ "$canonical" = "$mount" ] || c1008_refuse RecycleVolumeIdentityMismatch
+        result="$(printf '%s' "$result" | jq -c --arg name "$name" --argjson facts "$facts" '.[$name]=$facts')" || c1008_refuse RecycleVolumeIdentityMismatch
+    done
+    printf '%s' "$result"
+}
+
+c1008_private_identity() {
+    local facts="$1" name="$2" project="$3" role="$4" stamp
+    [ "$facts" != null ] || return 0
+    printf '%s' "$facts" | jq -e --arg name "$name" --arg project "$project" --arg role "$role" '
+        .Name==$name and .Labels["com.docker.compose.project"]==$project and
+        .Labels["com.docker.compose.volume"]==$role' >/dev/null || return 2
+    stamp="$(printf '%s' "$facts" | jq -r .CreatedAt)"
+    [[ "$stamp" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$ ]] || return 2
+    date -u -d "$stamp" +%s >/dev/null 2>&1 || return 2
 }
 
 c1008_audit() {
@@ -3738,6 +3813,7 @@ c1008_audit_checked() {
 }
 
 c1008_references() {
+    require_lane host
     local census="$1" owned="$2" name facts mount id source target
     for name in "${C1008_TARGETS[@]}"; do
         facts="$(c1008_volume "$name")" || c1008_refuse RecycleVolumeCensusUnknown
@@ -3760,6 +3836,7 @@ c1008_references() {
 }
 
 c1008_disk() {
+    require_lane host
     local data raw row free
     data="$(docker info -f '{{.DockerRootDir}}' 2>/dev/null)" || return 2
     [ -n "$data" ] || return 2
@@ -3817,11 +3894,16 @@ c1008_recycle() {
             originals="$(printf '%s' "$originals" | jq -c --arg name "$name" --argjson facts "$facts" '.[$name]={original:$facts,outcome:"pending"}')"
         fi
     done
-    for name in "${HOST_PROJECT}_runner-state" "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
-        facts="$(c1008_volume "$name")" || c1008_refuse RecycleVolumeIdentityMismatch
-        [ "$facts" != null ] || c1008_refuse RecycleVolumeIdentityMismatch
-        preserved="$(printf '%s' "$preserved" | jq -c --arg name "$name" --argjson facts "$facts" '.[$name]=$facts')"
+    for name in "${C1008_TARGETS[@]}"; do
+        facts="$(c1008_volume "$name")" || c1008_refuse RecycleVolumeCensusUnknown
+        c1008_private_identity "$facts" "$name" "$C1008_PROJECT" "${name#"${C1008_PROJECT}_"}" || c1008_refuse RecycleVolumeIdentityMismatch
     done
+    preserved="$(c1008_cache_preservation)" || c1008_refuse RecycleVolumeIdentityMismatch
+    name="${HOST_PROJECT}_runner-state"
+    facts="$(c1008_volume "$name")" || c1008_refuse RecycleVolumeIdentityMismatch
+    [ "$facts" != null ] || c1008_refuse RecycleVolumeIdentityMismatch
+    c1008_private_identity "$facts" "$name" "$HOST_PROJECT" runner-state || c1008_refuse RecycleVolumeIdentityMismatch
+    preserved="$(printf '%s' "$preserved" | jq -c --arg name "$name" --argjson facts "$facts" '.[$name]=$facts')"
     owned="$(printf '%s' "$C1008_CENSUS" | jq -c --arg project "$C1008_PROJECT" \
         '[.[]|select(.Config.Labels["com.docker.compose.project"]==$project and .Config.Labels["com.docker.compose.service"]!="build-slots")]')"
     printf '%s' "$owned" | jq -e 'all(.[]; .Config.Labels["com.docker.compose.service"]=="session-runner" or
@@ -3831,7 +3913,7 @@ c1008_recycle() {
         image="$(printf '%s' "$owned" | jq -r '[.[]|select(.Config.Labels["com.docker.compose.service"]=="session-runner")][0].Image // empty')"
         C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --argjson volumes "$originals" --argjson preserved "$preserved" \
             --argjson owned "$owned" --argjson live "$C1008_STATUS" --argjson tasks "$C1008_TASKS" --arg image "$image" \
-            '.volumes=$volumes|.preserved=$preserved|.owned=$owned|.liveZero=$live|.tasks=$tasks|.image=$image')"
+            --arg retiredAt "${C1008_RETIRED_AT:-}" '.volumes=$volumes|.preserved=$preserved|.owned=$owned|.liveZero=$live|.tasks=$tasks|.image=$image|.retiredAt=$retiredAt')"
     else
         [ "$(printf '%s' "$preserved" | jq -Sc .)" = "$(printf '%s' "$C1008_RECORD" | jq -Sc .preserved)" ] || c1008_refuse RecycleResumeMismatch
         printf '%s' "$C1008_RECORD" | jq -e --argjson owned "$owned" \

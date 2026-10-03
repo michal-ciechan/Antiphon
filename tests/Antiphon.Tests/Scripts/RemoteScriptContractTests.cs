@@ -711,6 +711,12 @@ public sealed class RemoteScriptContractTests
         var fixtureRestore = Block(text, "c849_fixture_nuget_race");
         var fixtureApphost = Block(text, "c849_fixture_apphost");
         var fixtureNpm = Block(text, "c849_fixture_npm");
+        var recycleLock = Block(text, "c1008_lock");
+        var recycleReferences = Block(text, "c1008_references");
+        var recycleDisk = Block(text, "c1008_disk");
+        var recycleCaches = Block(text, "c1008_cache_preservation");
+        foreach (var body in new[] { recycleLock, recycleReferences, recycleDisk, recycleCaches })
+            body.ShouldContain("require_lane host");
         foreach (var line in sudoLines)
             (EnsureDirsBody(text).Contains(line, StringComparison.Ordinal)
                 || containment.Contains(line, StringComparison.Ordinal)
@@ -729,7 +735,11 @@ public sealed class RemoteScriptContractTests
                 || cachePruneTree.Contains(line, StringComparison.Ordinal)
                 || fixtureRestore.Contains(line, StringComparison.Ordinal)
                 || fixtureApphost.Contains(line, StringComparison.Ordinal)
-                || fixtureNpm.Contains(line, StringComparison.Ordinal))
+                || fixtureNpm.Contains(line, StringComparison.Ordinal)
+                || recycleLock.Contains(line, StringComparison.Ordinal)
+                || recycleReferences.Contains(line, StringComparison.Ordinal)
+                || recycleDisk.Contains(line, StringComparison.Ordinal)
+                || recycleCaches.Contains(line, StringComparison.Ordinal))
                 .ShouldBeTrue("sudo outside a declared host-lane case or helper: " + line);
         EnsureDirsBody(text).ShouldContain("if [ \"$LANE\" = \"host\" ]; then");
         var codexCommands = Commands(codexHome);
@@ -2295,7 +2305,7 @@ public sealed class RemoteScriptContractTests
 
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
-    public void C849_Deploy_prepares_and_verifies_before_acceptance()
+    public async Task C849_Deploy_prepares_and_verifies_before_acceptance()
     {
         var remote = Remote();
         foreach (var name in new[] { "case_deploy_parent", "case_deploy_temp_runner" })
@@ -2307,56 +2317,44 @@ public sealed class RemoteScriptContractTests
         }
         Order(Block(remote, "case_deploy_parent"), "c849_smoke", "retire_superseded_server2_images").ShouldBeTrue();
         var retire = Block(remote, "case_retire_temp_runner");
-        Order(retire, "c849_status_zero server2-temp", "compose_temp down -v").ShouldBeTrue();
-        retire.ShouldContain("c849_require_ready");
-        retire.ShouldContain("c849_budget_gate");
-        var output = LinuxShell(CacheStatusHarness() + "\n" + retire + "\n" + """
-            C590_TEMP_RETIRED_AT=2026-09-30T00:00:00Z
-            SERVER2_TEMP_ENV="$root/temp.env"; printf 'RUNNER_GROK_STORE_DIR=/x\n' > "$SERVER2_TEMP_ENV"
-            SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/cache"
-            CASE_DIR="$root/case"; mkdir -p "$CASE_DIR"
-            RUN=red; LANE=host
-            require_lane() { :; }
-            write_result() { printf 'retire-result=%s:%s\n' "$1" "$2"; exit "$3"; }
-            c849_prepare() { :; }; c849_require_ready() { :; }; c849_budget_gate() { :; }
-            c849_image() { echo image; }
-            c849_volume() {
-                [ "$VOLUME_FAIL" != yes ] || return 1
-                [ -s "$root/volumes/$1/sentinel" ]
+        retire.ShouldContain("c1008_recycle \"$TEMP_PROJECT\"");
+        retire.ShouldNotContain("c849_require_ready");
+        retire.ShouldNotContain("c849_budget_gate");
+        var recycle = Block(remote, "c1008_recycle");
+        Order(recycle, "c1008_status_proof", "compose_temp down -v").ShouldBeTrue();
+        Order(recycle, "c1008_cache_preservation", "compose_temp down -v").ShouldBeTrue();
+        Order(Block(remote, "case_deploy_parent"), "c1008_recycle", "c849_budget_gate").ShouldBeTrue();
+        Order(Block(remote, "case_deploy_parent"), "c849_budget_gate", "build_server2_images").ShouldBeTrue();
+        foreach (var field in new[] { "sessions", "runnerSessions", "queuedTasks" })
+        {
+            using var blocked = new C1008HostFixture(main: false);
+            blocked.Statuses["server2-temp"]![field] = 1;
+            var run = await blocked.Run("retire-temp-runner");
+            run.Output.ShouldContain("RunnerBusy");
+            blocked.Removed.ShouldBeEmpty("retirement proof preserves all targets: " + field);
+        }
+        using (var lost = new C1008HostFixture(main: false))
+        {
+            lost.Docker["volumes"]!.AsObject().Remove("antiphon-runner-cache-nuget-packages");
+            var run = await lost.Run("retire-temp-runner");
+            run.Output.ShouldContain("RecycleVolumeIdentityMismatch");
+            lost.Removed.ShouldBeEmpty("missing preserved cache prevents down");
+        }
+        using (var retained = new C1008HostFixture(main: false))
+        {
+            var run = await retained.Run("retire-temp-runner");
+            run.Exit.ShouldBe(0, run.Output);
+            retained.Removed.ShouldBe(new[] { "antiphon-runner-temp_work", "antiphon-runner-temp_runner-tmp",
+                "antiphon-runner-temp_dind-data", "antiphon-runner-temp_runner-state" });
+            var ledger = JsonNode.Parse(File.ReadAllText(retained.StatePath))!["volumes"]!.AsObject();
+            foreach (var name in new[] { "antiphon-runner_runner-state", "antiphon-runner-cache-nuget-packages",
+                "antiphon-runner-cache-nuget-scratch", "antiphon-runner-cache-npm-content" })
+            {
+                ledger.ContainsKey(name).ShouldBeTrue("retirement preserves exact identity: " + name);
+                File.ReadAllText(Path.Combine(retained.Root, "volumes", name, "_data", "sentinel"))
+                    .ShouldBe("sentinel:" + name + ":old\n");
             }
-            compose_temp() {
-                printf 'compose %s\n' "$*" >> "$root/trace"
-                rm -rf "$root/temp-private"
-            }
-            for STATUS in sessions runnerSessions queuedTasks null garbage unknown; do
-                : > "$root/trace"
-                ( case_retire_temp_runner ) > "$root/result" 2>&1
-                printf '%s verdict=%s\n' "$STATUS" "$(cat "$root/result")"
-                if grep -q 'down -v' "$root/trace"; then echo unsafe-down; fi
-            done
-            STATUS=zero; VOLUME_FAIL=yes
-            ( case_retire_temp_runner ) > "$root/result" 2>&1
-            printf 'lost-volume verdict=%s\n' "$(cat "$root/result")"
-            mkdir -p "$root/temp-private"
-            for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
-                mkdir -p "$root/volumes/$name"
-                printf 'keep\n' > "$root/volumes/$name/sentinel"
-            done
-            VOLUME_FAIL=no
-            ( case_retire_temp_runner ) > "$root/result" 2>&1
-            printf 'retained verdict=%s\n' "$(cat "$root/result")"
-            [ ! -e "$root/temp-private" ] && echo private-removed
-            for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
-                [ -s "$root/volumes/$name/sentinel" ] || echo cache-lost
-            done
-            """);
-        foreach (var fault in new[] { "sessions", "runnerSessions", "queuedTasks", "null", "garbage", "unknown" })
-            output.ShouldContain(fault + " verdict=retire-result=false:TempRunnerNotIdle");
-        output.ShouldNotContain("unsafe-down");
-        output.ShouldContain("lost-volume verdict=retire-result=false:");
-        output.ShouldContain("retained verdict=retire-result=true:");
-        output.ShouldContain("private-removed");
-        output.ShouldNotContain("cache-lost");
+        }
         var deployments = LinuxShell(Block(remote, "case_deploy_parent") + "\n" +
             Block(remote, "case_deploy_temp_runner") + "\n" + """
             root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
@@ -3080,11 +3078,13 @@ public sealed class RemoteScriptContractTests
     {
         var remote = Remote();
         foreach (var function in new[] { "case_verify_runner_caches", "case_verify_runner_caches_retired",
-                     "case_deploy_parent", "case_deploy_temp_runner", "case_retire_temp_runner" })
+                     "case_deploy_parent", "case_deploy_temp_runner" })
         {
             var body = Block(remote, function);
             body.Contains("c849_require_ready allow-cold").ShouldBeTrue("cold-verify-empty-cache " + function);
         }
+        Block(remote, "c1008_recycle").ShouldContain("c1008_cache_preservation");
+        Block(remote, "case_retire_temp_runner").ShouldNotContain("c849_require_ready");
         Block(remote, "case_verify_runner_caches").Contains("if [ \"$C849_KIND\" = full ]; then c849_smoke").ShouldBeTrue("cold-no-smoke");
         Block(remote, "case_verify_runner_caches_retired").Contains("if [ \"$C849_KIND\" = full ]; then c849_smoke").ShouldBeTrue("full-smoke-retained");
         var front = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "verify-card0849-caches.ps1"));
@@ -3208,6 +3208,26 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(string reader)
     {
+        if (reader == "case_retire_temp_runner")
+        {
+            RequireLinuxJq();
+            var preservation = LinuxShell(C973ReaderHarness() + """
+                for variant in valid missing malformed duplicate foreign-marker malformed-image malformed-source symlink; do
+                    result="$(run_reader case_retire_temp_runner 0 0 "$variant")"; code=$?
+                    [ "$code" = 0 ] && printf '%s' "$result" | grep -Fq '"accepted":true' && echo "marker-independent-$variant"
+                done
+                for variant in foreign-volume missing-volume; do
+                    result="$(run_reader case_retire_temp_runner 0 0 "$variant")"; code=$?
+                    [ "$code" = 2 ] && printf '%s' "$result" | grep -Fq 'DIAGNOSIS=RecycleVolumeIdentityMismatch' && echo "cache-identity-refused-$variant"
+                done
+                """);
+            foreach (var variant in new[] { "valid", "missing", "malformed", "duplicate", "foreign-marker",
+                "malformed-image", "malformed-source", "symlink" })
+                preservation.ShouldContain("marker-independent-" + variant, "retirement executes the real read-only cache gate: " + preservation);
+            foreach (var variant in new[] { "foreign-volume", "missing-volume" })
+                preservation.ShouldContain("cache-identity-refused-" + variant, preservation);
+            return;
+        }
         RequireLinuxJq();
         var output = LinuxShell(C973ReaderHarness() + $"\nreader='{reader}'\n" + """
             result="$(run_reader "$reader" 0 1 valid)"; code=$?
