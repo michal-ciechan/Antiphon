@@ -1,0 +1,127 @@
+
+████████╗██╗   ██╗███╗   ██╗██╗████████╗
+╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝
+   ██║   ██║   ██║██╔██╗ ██║██║   ██║
+   ██║   ██║   ██║██║╚██╗██║██║   ██║
+   ██║   ╚██████╔╝██║ ╚████║██║   ██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝
+
+   TUnit v1.44.0.0 | 64-bit | Debian GNU/Linux 12 (bookworm) | linux-x64 | .NET 9.0.20 | Microsoft Testing Platform v2.2.2
+
+   Engine Mode: SourceGenerated
+
+skipped The_shipped_codex_definition_resolves_to_a_real_executable_on_this_machine (2ms)
+  The npm shim layout is Windows-specific
+skipped Resolves_sibling_flavor_when_configured_one_is_gone (1ms)
+  Sibling executable flavors (.exe/.cmd/.bat) are resolved only on Windows
+skipped V01_canonical_cwd_uses_windows_separators_and_drops_trailing_slash (0ms)
+  Canonical pin cwd is a Windows drive-rooted path
+skipped Off_settings_path_round_trips_through_LaunchArgvGuard (2ms)
+  CommandLineToArgvW is Windows-only
+skipped reported_repository_paths_normalize_relative_and_absolute_windows_forms (1ms)
+  Drive-letter report paths resolve only against a Windows repo root
+skipped trailing_slash_lists_children_of_that_directory (4ms)
+  Drive-letter directory listing needs a Windows MockFileSystem
+skipped existing_path_reports_exists_true (1ms)
+  Drive-letter directory listing needs a Windows MockFileSystem
+skipped caches_within_ttl_and_refreshes_after (2ms)
+  Drive-letter directory listing needs a Windows MockFileSystem
+skipped prefix_returns_matching_child_directories (1ms)
+  Drive-letter directory listing needs a Windows MockFileSystem
+skipped partial_leaf_matches_substring_within_child_name (1ms)
+  Drive-letter directory listing needs a Windows MockFileSystem
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(duplicate_second) (2ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(cr) (0ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(env) (0ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(crlf) (0ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(braced_env) (0ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(nul) (0ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(alias) (0ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(equals) (0ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(missing) (0ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(duplicate_first) (0ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(env_flag) (0ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(lf) (0ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+Initialized empty Git repository in /tmp/antiphon-plans-64543f6db7ba4416bc838d298c3d9226/checkout/.git/
+Initialized empty Git repository in /tmp/antiphon-plans-42933c864c034116941d922bd3680fd1/checkout/.git/
+[main (root-commit) f2c2a64] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 docs/superpowers/specs/2026-08-16-card-0035-stuck-work-view.md
+[main (root-commit) f2c2a64] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 docs/superpowers/specs/2026-08-16-card-0035-stuck-work-view.md
+[feat/card-0034 1a07b3a] branch plan
+ 1 file changed, 3 insertions(+)
+ create mode 100644 docs/superpowers/plans/2026-08-26-card-0034-review-and-react-plan.md
+skipped A_runner_on_the_modern_backend_confirms_the_raised_ceilings (1ms)
+  no shipped conpty.dll: not Windows — there is no pseudoconsole to redirect
+skipped A_silent_runner_leaves_this_processes_own_decision_standing (4ms)
+  no shipped conpty.dll: not Windows — there is no pseudoconsole to redirect
+skipped A_runner_on_the_inbox_conhost_downgrades_a_modern_server (5ms)
+  no shipped conpty.dll: not Windows — there is no pseudoconsole to redirect
+skipped Phone_home_Claude_keeps_the_inbox_ceiling_for_its_own_kind (3ms)
+  ConPTY only on Windows
+skipped Phone_home_Grok_never_uses_local_modern_evidence (2ms)
+  ConPTY only on Windows
+skipped C912_Cold_cache_probe_requires_uid_writes_cleanup_and_bounded_exit (5ms)
+  CARD-0912: jq is not on the Linux shell PATH; install jq in the runner or WSL to run C912 cold-seed tests.
+skipped C912_Cold_marker_has_distinct_validation_and_full_context_refusal (2ms)
+  CARD-0912: jq is not on the Linux shell PATH; install jq in the runner or WSL to run C912 cold-seed tests.
+skipped C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(c849_seed) (1ms)
+  CARD-0912: jq is not on the Linux shell PATH; install jq in the runner or WSL to run C912 cold-seed tests.
+skipped C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(case_deploy_parent) (0ms)
+  CARD-0912: jq is not on the Linux shell PATH; install jq in the runner or WSL to run C912 cold-seed tests.
+skipped C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(case_deploy_temp_runner) (0ms)
+  CARD-0912: jq is not on the Linux shell PATH; install jq in the runner or WSL to run C912 cold-seed tests.
+skipped C912_Cold_volumes_seed_rechecks_initialization_and_probe_boundaries (0ms)
+  CARD-0912: jq is not on the Linux shell PATH; install jq in the runner or WSL to run C912 cold-seed tests.
+skipped C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(case_retire_temp_runner) (0ms)
+  CARD-0912: jq is not on the Linux shell PATH; install jq in the runner or WSL to run C912 cold-seed tests.
+skipped C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(case_verify_runner_caches_retired) (0ms)
+  CARD-0912: jq is not on the Linux shell PATH; install jq in the runner or WSL to run C912 cold-seed tests.
+skipped C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune(runner-cache-inventory) (1ms)
+  CARD-0912: jq is not on the Linux shell PATH; install jq in the runner or WSL to run C912 cold-seed tests.
+skipped C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune(runner-cache-fixture) (0ms)
+  CARD-0912: jq is not on the Linux shell PATH; install jq in the runner or WSL to run C912 cold-seed tests.
+skipped C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune(runner-cache-prune-preview) (0ms)
+  CARD-0912: jq is not on the Linux shell PATH; install jq in the runner or WSL to run C912 cold-seed tests.
+skipped C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune(runner-cache-reset) (0ms)
+  CARD-0912: jq is not on the Linux shell PATH; install jq in the runner or WSL to run C912 cold-seed tests.
+skipped C973_Prune_and_saved_donor_still_require_full_after_seed_image_prune (0ms)
+  CARD-0912: jq is not on the Linux shell PATH; install jq in the runner or WSL to run C912 cold-seed tests.
+skipped C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(case_verify_runner_caches) (0ms)
+  CARD-0912: jq is not on the Linux shell PATH; install jq in the runner or WSL to run C912 cold-seed tests.
+skipped C912_Cold_volumes_seed_refuses_unknown_mounted_or_populated_targets (0ms)
+  CARD-0912: jq is not on the Linux shell PATH; install jq in the runner or WSL to run C912 cold-seed tests.
+skipped C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune(runner-cache-seed) (0ms)
+  CARD-0912: jq is not on the Linux shell PATH; install jq in the runner or WSL to run C912 cold-seed tests.
+skipped C912_Cold_seed_refuses_when_created_volume_disappears_before_init (1ms)
+  CARD-0912: jq is not on the Linux shell PATH; install jq in the runner or WSL to run C912 cold-seed tests.
+skipped C912_Cold_volumes_seed_accepts_busy_main_without_packages (0ms)
+  CARD-0912: jq is not on the Linux shell PATH; install jq in the runner or WSL to run C912 cold-seed tests.
+skipped C912_Cold_seed_with_unrelated_bind_initializes_only_three_labelled_roots (1ms)
+  CARD-0912: jq is not on the Linux shell PATH; install jq in the runner or WSL to run C912 cold-seed tests.
+HTML test report written to: /work/worktrees/task-535715ec/.antiphon/checkpoints/20261003-181207-a884/rows/CP-2/Antiphon.Tests-linux-net9.0-report.html
+
+  In process file artifacts produced:
+    - /work/worktrees/task-535715ec/.antiphon/checkpoints/20261003-181207-a884/rows/CP-2/Antiphon.Tests-linux-net9.0-report.html
+    - /work/worktrees/task-535715ec/.antiphon/checkpoints/20261003-181207-a884/rows/CP-2/run.trx
+
+Test run summary: Passed! - /work/worktrees/task-535715ec/tests/Antiphon.Tests/bin-c1005-unit/Antiphon.Tests.dll (net9.0|x64)
+  total: 4000
+  failed: 0
+  succeeded: 3954
+  skipped: 46
+  duration: 6m 04s 660ms

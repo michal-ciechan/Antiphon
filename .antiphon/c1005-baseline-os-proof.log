@@ -1,0 +1,75 @@
+BUILD SLOT granted lease=4fa73086-ba3e-4cf7-869a-f3e66c2e44c4 waited=0s maxcpucount=6
+
+████████╗██╗   ██╗███╗   ██╗██╗████████╗
+╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝
+   ██║   ██║   ██║██╔██╗ ██║██║   ██║
+   ██║   ██║   ██║██║╚██╗██║██║   ██║
+   ██║   ╚██████╔╝██║ ╚████║██║   ██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝
+
+   TUnit v1.44.0.0 | 64-bit | Debian GNU/Linux 12 (bookworm) | linux-x64 | .NET 9.0.20 | Microsoft Testing Platform v2.2.2
+
+   Engine Mode: SourceGenerated
+
+System.InvalidOperationException: Sequence contains no elements
+   at System.Linq.ThrowHelper.ThrowNoElementsException()
+   at System.Linq.Enumerable.Last[TSource](IEnumerable`1 source)
+   at Microsoft.Testing.Platform.Requests.TreeNodeFilter.MatchesFilter(String testNodeFullPath, PropertyBag filterableProperties) in /_/src/Platform/Microsoft.Testing.Platform/Requests/TreeNodeFilter/TreeNodeFilter.cs:line 498
+   at TUnit.Engine.Services.TestFilterService.CheckTreeNodeFilter(TreeNodeFilter treeNodeFilter, AbstractExecutableTest executableTest)
+   at TUnit.Engine.Services.TestFilterService.MatchesTest(ITestExecutionFilter testExecutionFilter, AbstractExecutableTest executableTest)
+   at TUnit.Engine.Services.TestFilterService.FilterTests(ITestExecutionFilter testExecutionFilter, IReadOnlyCollection`1 testNodes)
+   at TUnit.Engine.TestDiscoveryService.DiscoverTests(String testSessionId, ITestExecutionFilter filter, CancellationToken cancellationToken, Boolean isForExecution)
+   at TUnit.Engine.Framework.TestRequestHandler.HandleRunRequestAsync(TUnitServiceProvider serviceProvider, RunTestExecutionRequest request, ExecuteRequestContext context, ITestExecutionFilter testExecutionFilter)
+   at TUnit.Engine.Framework.TestRequestHandler.HandleRequestAsync(TestExecutionRequest request, TUnitServiceProvider serviceProvider, ExecuteRequestContext context, ITestExecutionFilter testExecutionFilter)
+   at TUnit.Engine.Framework.TUnitTestFramework.ExecuteRequestAsync(ExecuteRequestContext context)
+failed Unhandled exception - InvalidOperationException: Sequence contains no elements
+  System.InvalidOperationException: Sequence contains no elements
+    at System.Linq.ThrowHelper.ThrowNoElementsException()
+    at System.Linq.Enumerable.Last[TSource](IEnumerable`1 source)
+    at Microsoft.Testing.Platform.Requests.TreeNodeFilter.MatchesFilter(String testNodeFullPath, PropertyBag filterableProperties) in /_/src/Platform/Microsoft.Testing.Platform/Requests/TreeNodeFilter/TreeNodeFilter.cs:498
+    at TUnit.Engine.Services.TestFilterService.CheckTreeNodeFilter(TreeNodeFilter treeNodeFilter, AbstractExecutableTest executableTest)
+    at TUnit.Engine.Services.TestFilterService.MatchesTest(ITestExecutionFilter testExecutionFilter, AbstractExecutableTest executableTest)
+    at TUnit.Engine.Services.TestFilterService.FilterTests(ITestExecutionFilter testExecutionFilter, IReadOnlyCollection`1 testNodes)
+    at TUnit.Engine.TestDiscoveryService.DiscoverTests(String testSessionId, ITestExecutionFilter filter, CancellationToken cancellationToken, Boolean isForExecution)
+    at TUnit.Engine.Framework.TestRequestHandler.HandleRunRequestAsync(TUnitServiceProvider serviceProvider, RunTestExecutionRequest request, ExecuteRequestContext context, ITestExecutionFilter testExecutionFilter)
+    at TUnit.Engine.Framework.TestRequestHandler.HandleRequestAsync(TestExecutionRequest request, TUnitServiceProvider serviceProvider, ExecuteRequestContext context, ITestExecutionFilter testExecutionFilter)
+    at TUnit.Engine.Framework.TUnitTestFramework.ExecuteRequestAsync(ExecuteRequestContext context)
+Test adapter test session failure
+HTML test report written to: /work/worktrees/task-535715ec/.antiphon/c1005-baseline-os-proof/Antiphon.Tests-linux-net9.0-report.html
+Unhandled exception in AppDomain: System.InvalidOperationException: The test framework 'TUnit' with UID 'TUnitExtension' does not support the 'ITrxReportCapability' leading to missing or incomplete TRX reports
+   at Microsoft.Testing.Extensions.TrxReport.Abstractions.TrxReportEngine.GetClassAndMethodName(TestNode testNode) in /_/src/Platform/Microsoft.Testing.Extensions.TrxReport/TrxReportEngine.cs:line 648
+   at Microsoft.Testing.Extensions.TrxReport.Abstractions.TrxReportEngine.AddResults(TestNodeUpdateMessage[] testNodeUpdateMessages, String testAppModule, XElement testRun, String runDeploymentRoot, XElement testDefinitions, XElement testEntries) in /_/src/Platform/Microsoft.Testing.Extensions.TrxReport/TrxReportEngine.cs:line 603
+   at Microsoft.Testing.Extensions.TrxReport.Abstractions.TrxReportEngine.<>c__DisplayClass19_0.<<GenerateReportAsync>b__0>d.MoveNext() in /_/src/Platform/Microsoft.Testing.Extensions.TrxReport/TrxReportEngine.cs:line 143
+--- End of stack trace from previous location ---
+   at Microsoft.Testing.Extensions.TrxReport.Abstractions.TrxReportEngine.RetryWhenIOExceptionAsync(Func`1 func) in /_/src/Platform/Microsoft.Testing.Extensions.TrxReport/TrxReportEngine.cs:line 191
+   at Microsoft.Testing.Extensions.TrxReport.Abstractions.TrxReportEngine.GenerateReportAsync(TestNodeUpdateMessage[] testNodeUpdateMessages, String testHostCrashInfo, Boolean isTestHostCrashed) in /_/src/Platform/Microsoft.Testing.Extensions.TrxReport/TrxReportEngine.cs:line 106
+   at Microsoft.Testing.Extensions.TrxReport.Abstractions.TrxReportGenerator.OnTestSessionFinishingAsync(ITestSessionContext testSessionContext) in /_/src/Platform/Microsoft.Testing.Extensions.TrxReport/TrxDataConsumer.cs:line 197
+   at Microsoft.Testing.Platform.Hosts.CommonHost.NotifyTestSessionEndAsync(ITestSessionContext testSessionContext, BaseMessageBus baseMessageBus, ServiceProvider serviceProvider, IPlatformOpenTelemetryService otelService) in /_/src/Platform/Microsoft.Testing.Platform/Hosts/CommonTestHost.cs:line 283
+   at Microsoft.Testing.Platform.Hosts.CommonHost.ExecuteRequestAsync(ProxyOutputDevice outputDevice, ITestSessionContext testSessionInfo, ServiceProvider serviceProvider, BaseMessageBus baseMessageBus, ITestFramework testFramework, ClientInfo client) in /_/src/Platform/Microsoft.Testing.Platform/Hosts/CommonTestHost.cs:line 171
+   at Microsoft.Testing.Platform.Hosts.ConsoleTestHost.InternalRunAsync(CancellationToken cancellationToken) in /_/src/Platform/Microsoft.Testing.Platform/Hosts/ConsoleTestHost.cs:line 85
+   at Microsoft.Testing.Platform.Hosts.ConsoleTestHost.InternalRunAsync(CancellationToken cancellationToken) in /_/src/Platform/Microsoft.Testing.Platform/Hosts/ConsoleTestHost.cs:line 117
+   at Microsoft.Testing.Platform.Hosts.CommonHost.RunTestAppAsync(IPlatformOpenTelemetryService platformOTelService, CancellationToken testApplicationCancellationToken) in /_/src/Platform/Microsoft.Testing.Platform/Hosts/CommonTestHost.cs:line 130
+   at Microsoft.Testing.Platform.Hosts.CommonHost.RunAsync() in /_/src/Platform/Microsoft.Testing.Platform/Hosts/CommonTestHost.cs:line 44
+   at Microsoft.Testing.Platform.Hosts.CommonHost.RunAsync() in /_/src/Platform/Microsoft.Testing.Platform/Hosts/CommonTestHost.cs:line 83
+   at Microsoft.Testing.Platform.Builder.TestApplication.RunAsync() in /_/src/Platform/Microsoft.Testing.Platform/Builder/TestApplication.cs:line 223
+   at Antiphon.Tests.MicrosoftTestingPlatformEntryPoint.Main(String[] args) in /work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/obj/Debug/net9.0/MicrosoftTestingPlatformEntryPoint.cs:line 18
+   at Antiphon.Tests.MicrosoftTestingPlatformEntryPoint.<Main>(String[] args)
+Unhandled exception. System.InvalidOperationException: The test framework 'TUnit' with UID 'TUnitExtension' does not support the 'ITrxReportCapability' leading to missing or incomplete TRX reports
+   at Microsoft.Testing.Extensions.TrxReport.Abstractions.TrxReportEngine.GetClassAndMethodName(TestNode testNode) in /_/src/Platform/Microsoft.Testing.Extensions.TrxReport/TrxReportEngine.cs:line 648
+   at Microsoft.Testing.Extensions.TrxReport.Abstractions.TrxReportEngine.AddResults(TestNodeUpdateMessage[] testNodeUpdateMessages, String testAppModule, XElement testRun, String runDeploymentRoot, XElement testDefinitions, XElement testEntries) in /_/src/Platform/Microsoft.Testing.Extensions.TrxReport/TrxReportEngine.cs:line 603
+   at Microsoft.Testing.Extensions.TrxReport.Abstractions.TrxReportEngine.<>c__DisplayClass19_0.<<GenerateReportAsync>b__0>d.MoveNext() in /_/src/Platform/Microsoft.Testing.Extensions.TrxReport/TrxReportEngine.cs:line 143
+--- End of stack trace from previous location ---
+   at Microsoft.Testing.Extensions.TrxReport.Abstractions.TrxReportEngine.RetryWhenIOExceptionAsync(Func`1 func) in /_/src/Platform/Microsoft.Testing.Extensions.TrxReport/TrxReportEngine.cs:line 191
+   at Microsoft.Testing.Extensions.TrxReport.Abstractions.TrxReportEngine.GenerateReportAsync(TestNodeUpdateMessage[] testNodeUpdateMessages, String testHostCrashInfo, Boolean isTestHostCrashed) in /_/src/Platform/Microsoft.Testing.Extensions.TrxReport/TrxReportEngine.cs:line 106
+   at Microsoft.Testing.Extensions.TrxReport.Abstractions.TrxReportGenerator.OnTestSessionFinishingAsync(ITestSessionContext testSessionContext) in /_/src/Platform/Microsoft.Testing.Extensions.TrxReport/TrxDataConsumer.cs:line 197
+   at Microsoft.Testing.Platform.Hosts.CommonHost.NotifyTestSessionEndAsync(ITestSessionContext testSessionContext, BaseMessageBus baseMessageBus, ServiceProvider serviceProvider, IPlatformOpenTelemetryService otelService) in /_/src/Platform/Microsoft.Testing.Platform/Hosts/CommonTestHost.cs:line 283
+   at Microsoft.Testing.Platform.Hosts.CommonHost.ExecuteRequestAsync(ProxyOutputDevice outputDevice, ITestSessionContext testSessionInfo, ServiceProvider serviceProvider, BaseMessageBus baseMessageBus, ITestFramework testFramework, ClientInfo client) in /_/src/Platform/Microsoft.Testing.Platform/Hosts/CommonTestHost.cs:line 171
+   at Microsoft.Testing.Platform.Hosts.ConsoleTestHost.InternalRunAsync(CancellationToken cancellationToken) in /_/src/Platform/Microsoft.Testing.Platform/Hosts/ConsoleTestHost.cs:line 85
+   at Microsoft.Testing.Platform.Hosts.ConsoleTestHost.InternalRunAsync(CancellationToken cancellationToken) in /_/src/Platform/Microsoft.Testing.Platform/Hosts/ConsoleTestHost.cs:line 117
+   at Microsoft.Testing.Platform.Hosts.CommonHost.RunTestAppAsync(IPlatformOpenTelemetryService platformOTelService, CancellationToken testApplicationCancellationToken) in /_/src/Platform/Microsoft.Testing.Platform/Hosts/CommonTestHost.cs:line 130
+   at Microsoft.Testing.Platform.Hosts.CommonHost.RunAsync() in /_/src/Platform/Microsoft.Testing.Platform/Hosts/CommonTestHost.cs:line 44
+   at Microsoft.Testing.Platform.Hosts.CommonHost.RunAsync() in /_/src/Platform/Microsoft.Testing.Platform/Hosts/CommonTestHost.cs:line 83
+   at Microsoft.Testing.Platform.Builder.TestApplication.RunAsync() in /_/src/Platform/Microsoft.Testing.Platform/Builder/TestApplication.cs:line 223
+   at Antiphon.Tests.MicrosoftTestingPlatformEntryPoint.Main(String[] args) in /work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/obj/Debug/net9.0/MicrosoftTestingPlatformEntryPoint.cs:line 18
+   at Antiphon.Tests.MicrosoftTestingPlatformEntryPoint.<Main>(String[] args)
+BUILD SLOT released lease=4fa73086-ba3e-4cf7-869a-f3e66c2e44c4 held=7s

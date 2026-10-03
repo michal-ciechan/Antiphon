@@ -1,0 +1,792 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="ac43a54b-f42f-4a97-b466-cbba5c1c6133" name="@5d9e09695ab3 2026-10-03 18:24:58.4062404" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-10-03T18:24:10.1753563Z" queuing="2026-10-03T18:24:10.1753563Z" start="2026-10-03T18:24:10.1753563Z" finish="2026-10-03T18:24:58.407044Z" />
+  <TestSettings name="default" id="77eebc69-1ded-4ec6-8aaf-137ad058f957">
+    <Deployment runDeploymentRoot="_5d9e09695ab3_2026-10-03_18_24_58.4062404" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="b04d8ce1-f838-429c-ae16-f6c325b75e71" testId="473ade5e-7851-236c-4f0d-e29ba3921aa6" testName="V01_canonical_cwd_uses_windows_separators_and_drops_trailing_slash" computerName="5d9e09695ab3" duration="00:00:00.0353676" startTime="2026-10-03T18:24:46.0514337+00:00" endTime="2026-10-03T18:24:46.0868013+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="b04d8ce1-f838-429c-ae16-f6c325b75e71">
+      <Output>
+        <DebugTrace>Skipped: Canonical pin cwd is a Windows drive-rooted path</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="f1dcc80e-3676-4499-b7fa-7e032d5acc04" testId="13ca2c05-8796-c5c5-880e-1b03832d9470" testName="Off_settings_path_round_trips_through_LaunchArgvGuard" computerName="5d9e09695ab3" duration="00:00:00.0354262" startTime="2026-10-03T18:24:46.0513998+00:00" endTime="2026-10-03T18:24:46.0868260+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="f1dcc80e-3676-4499-b7fa-7e032d5acc04">
+      <Output>
+        <StdOut>[CARD-0204] SessionRunner__BaseUrl=http://127.0.0.1:1, Delegation__CheckInterpreterEnabled=false, Delegation__DiagnoseEnabled=false and Delegation__OutputDistillerEnabled=false for every Program boot in this assembly (inherited SessionRunner__BaseUrl='&lt;unset&gt;') - test hosts never launch on the production session-runner.
+[CARD-0298] Hangfire__ServerEnabled=false for every Program boot in this assembly - test hosts never start a Hangfire worker (no WMI census, no production-runner list).
+[CARD-0045] cleared inherited ANTIPHON_PTY_BACKEND='inbox' — pty tests declare their backend; the suite means the same thing whoever launched it.
+[testcontainers.org 00:00:00.57] Connected to Docker:
+  Host: unix:///var/run/docker.sock
+  Server Version: 27.5.1
+  Kernel Version: 4.15.0-213-generic
+  API Version: 1.47
+  Operating System: Debian GNU/Linux 12 (bookworm) (containerized)
+  Total Memory: 125.90 GB
+[testcontainers.org 00:00:01.02] Docker container fd82ab97dac3 created
+[testcontainers.org 00:00:01.14] Start Docker container fd82ab97dac3
+[testcontainers.org 00:00:01.47] Wait for Docker container fd82ab97dac3 to complete readiness checks
+[testcontainers.org 00:00:02.51] Docker container fd82ab97dac3 ready
+[testcontainers.org 00:00:02.62] Docker container c7133d5f69b0 created
+[testcontainers.org 00:00:02.62] Start Docker container c7133d5f69b0
+[testcontainers.org 00:00:03.01] Wait for Docker container c7133d5f69b0 to complete readiness checks
+[testcontainers.org 00:00:03.02] Execute "pg_isready --host localhost --dbname antiphon_test --username test" at Docker container c7133d5f69b0
+[testcontainers.org 00:00:04.16] Execute "pg_isready --host localhost --dbname antiphon_test --username test" at Docker container c7133d5f69b0
+[testcontainers.org 00:00:05.25] Execute "pg_isready --host localhost --dbname antiphon_test --username test" at Docker container c7133d5f69b0
+[testcontainers.org 00:00:05.37] Docker container c7133d5f69b0 ready
+</StdOut>
+        <StdErr>[TUnit] External span cap of 100 reached; subsequent spans will be dropped. Set TUNIT_OTEL_MAX_EXTERNAL_SPANS to raise the limit.
+</StdErr>
+        <DebugTrace>Skipped: CommandLineToArgvW is Windows-only</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="e54b0709-c411-41f0-9977-6796fdf0a147" testId="0d445417-c295-a322-4d55-feed561de49a" testName="The_shipped_codex_definition_resolves_to_a_real_executable_on_this_machine" computerName="5d9e09695ab3" duration="00:00:00.0354142" startTime="2026-10-03T18:24:46.0513532+00:00" endTime="2026-10-03T18:24:46.0867674+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="e54b0709-c411-41f0-9977-6796fdf0a147">
+      <Output>
+        <DebugTrace>Skipped: The npm shim layout is Windows-specific</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="49af82ea-4b23-4008-9226-5c2e2dd53632" testId="bc2a4bcc-624f-93ed-b63f-2c7421ec25bf" testName="Resolves_sibling_flavor_when_configured_one_is_gone" computerName="5d9e09695ab3" duration="00:00:00.0354186" startTime="2026-10-03T18:24:46.0513518+00:00" endTime="2026-10-03T18:24:46.0867704+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="49af82ea-4b23-4008-9226-5c2e2dd53632">
+      <Output>
+        <DebugTrace>Skipped: Sibling executable flavors (.exe/.cmd/.bat) are resolved only on Windows</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="097d63c6-1751-4260-a2bc-99e90e5bd11c" testId="ee398f49-120b-917b-03a8-c30048f0ce64" testName="existing_path_reports_exists_true" computerName="5d9e09695ab3" duration="00:00:00.0030502" startTime="2026-10-03T18:24:46.1015254+00:00" endTime="2026-10-03T18:24:46.1045756+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="097d63c6-1751-4260-a2bc-99e90e5bd11c">
+      <Output>
+        <DebugTrace>Skipped: Drive-letter directory listing needs a Windows MockFileSystem</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="72f8866a-896d-4cd0-b70e-0ad1807151f3" testId="4ba9d923-deb0-24e8-1147-8ececc8388b1" testName="partial_leaf_matches_substring_within_child_name" computerName="5d9e09695ab3" duration="00:00:00.0030809" startTime="2026-10-03T18:24:46.1014963+00:00" endTime="2026-10-03T18:24:46.1045772+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="72f8866a-896d-4cd0-b70e-0ad1807151f3">
+      <Output>
+        <DebugTrace>Skipped: Drive-letter directory listing needs a Windows MockFileSystem</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="7694e68e-87ff-4ba1-af42-25383077c37b" testId="373821da-4f9a-df36-9732-68b696f0ab85" testName="trailing_slash_lists_children_of_that_directory" computerName="5d9e09695ab3" duration="00:00:00.0031385" startTime="2026-10-03T18:24:46.1015277+00:00" endTime="2026-10-03T18:24:46.1046662+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="7694e68e-87ff-4ba1-af42-25383077c37b">
+      <Output>
+        <DebugTrace>Skipped: Drive-letter directory listing needs a Windows MockFileSystem</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="edd42ebb-69aa-4d4d-854f-76b77cf76ec5" testId="c3de3de3-93eb-025f-aae9-793082a9db4a" testName="caches_within_ttl_and_refreshes_after" computerName="5d9e09695ab3" duration="00:00:00.0014427" startTime="2026-10-03T18:24:46.1048217+00:00" endTime="2026-10-03T18:24:46.1062644+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="edd42ebb-69aa-4d4d-854f-76b77cf76ec5">
+      <Output>
+        <DebugTrace>Skipped: Drive-letter directory listing needs a Windows MockFileSystem</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="46157a3e-6a56-42f4-8cb3-04fc8245ef35" testId="2c612967-1d77-ecc7-1030-ac96fd470e8f" testName="prefix_returns_matching_child_directories" computerName="5d9e09695ab3" duration="00:00:00.0014797" startTime="2026-10-03T18:24:46.1048062+00:00" endTime="2026-10-03T18:24:46.1062859+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="46157a3e-6a56-42f4-8cb3-04fc8245ef35">
+      <Output>
+        <DebugTrace>Skipped: Drive-letter directory listing needs a Windows MockFileSystem</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="8bc25ea4-6c3f-42f4-8784-cd5affe55a75" testId="13b26d39-8cfb-b5bd-9670-dcab0fc4ae45" testName="reported_repository_paths_normalize_relative_and_absolute_windows_forms" computerName="5d9e09695ab3" duration="00:00:00.0048411" startTime="2026-10-03T18:24:46.1014972+00:00" endTime="2026-10-03T18:24:46.1063383+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="8bc25ea4-6c3f-42f4-8784-cd5affe55a75">
+      <Output>
+        <DebugTrace>Skipped: Drive-letter report paths resolve only against a Windows repo root</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="74827f47-ca3d-41eb-a5a3-616c4ab689e3" testId="04ad30e2-73e7-51d4-f8be-3a6ff6d6474e" testName="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(braced_env)" computerName="5d9e09695ab3" duration="00:00:00.0016330" startTime="2026-10-03T18:24:46.1068515+00:00" endTime="2026-10-03T18:24:46.1084845+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="74827f47-ca3d-41eb-a5a3-616c4ab689e3">
+      <Output>
+        <DebugTrace>Skipped: CARD-0382 Grok rules argv guard is Windows-only by design</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="618f0b03-86d1-4bde-89fc-d607a940ab50" testId="b68faca5-7289-c534-6f22-906a9273cd7b" testName="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(env_flag)" computerName="5d9e09695ab3" duration="00:00:00.0016003" startTime="2026-10-03T18:24:46.1068527+00:00" endTime="2026-10-03T18:24:46.1084530+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="618f0b03-86d1-4bde-89fc-d607a940ab50">
+      <Output>
+        <DebugTrace>Skipped: CARD-0382 Grok rules argv guard is Windows-only by design</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="a623c62d-a0d2-4549-a880-b201307f7d45" testId="2bb89da3-b8bf-1de8-db3c-02f7a5e98198" testName="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(duplicate_first)" computerName="5d9e09695ab3" duration="00:00:00.0016844" startTime="2026-10-03T18:24:46.1068682+00:00" endTime="2026-10-03T18:24:46.1085526+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="a623c62d-a0d2-4549-a880-b201307f7d45">
+      <Output>
+        <DebugTrace>Skipped: CARD-0382 Grok rules argv guard is Windows-only by design</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="14dfebb6-8316-449e-af94-f8eb63a56033" testId="793fe86b-4298-4eb3-c676-fd5563806521" testName="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(cr)" computerName="5d9e09695ab3" duration="00:00:00.0025975" startTime="2026-10-03T18:24:46.1059551+00:00" endTime="2026-10-03T18:24:46.1085526+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="14dfebb6-8316-449e-af94-f8eb63a56033">
+      <Output>
+        <DebugTrace>Skipped: CARD-0382 Grok rules argv guard is Windows-only by design</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="2c48ac0b-1fc0-4f4b-92a1-2e12a24281e8" testId="75854a42-8fb0-c3e2-5271-7d36a70f0b25" testName="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(equals)" computerName="5d9e09695ab3" duration="00:00:00.0003752" startTime="2026-10-03T18:24:46.1103395+00:00" endTime="2026-10-03T18:24:46.1107147+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="2c48ac0b-1fc0-4f4b-92a1-2e12a24281e8">
+      <Output>
+        <DebugTrace>Skipped: CARD-0382 Grok rules argv guard is Windows-only by design</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="97cc3df9-f2db-46b3-a3fe-c0bcfb53707c" testId="95a89bce-ea59-f0bc-d192-1ec4307fccab" testName="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(alias)" computerName="5d9e09695ab3" duration="00:00:00.0003582" startTime="2026-10-03T18:24:46.1104364+00:00" endTime="2026-10-03T18:24:46.1107946+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="97cc3df9-f2db-46b3-a3fe-c0bcfb53707c">
+      <Output>
+        <DebugTrace>Skipped: CARD-0382 Grok rules argv guard is Windows-only by design</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="3c8bda3b-5e82-4d07-bcc6-08ebb8ec3078" testId="ce57c759-c8e9-1aed-27ac-43b387da6fb0" testName="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(missing)" computerName="5d9e09695ab3" duration="00:00:00.0005748" startTime="2026-10-03T18:24:46.1103978+00:00" endTime="2026-10-03T18:24:46.1109726+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="3c8bda3b-5e82-4d07-bcc6-08ebb8ec3078">
+      <Output>
+        <DebugTrace>Skipped: CARD-0382 Grok rules argv guard is Windows-only by design</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="8cdc4a0c-5c38-4bab-8f73-941322210bfb" testId="ba97ea4f-db22-412c-eca3-69fd44bd1477" testName="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(crlf)" computerName="5d9e09695ab3" duration="00:00:00.0003397" startTime="2026-10-03T18:24:46.1108906+00:00" endTime="2026-10-03T18:24:46.1112303+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="8cdc4a0c-5c38-4bab-8f73-941322210bfb">
+      <Output>
+        <DebugTrace>Skipped: CARD-0382 Grok rules argv guard is Windows-only by design</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="e3a21d31-01cd-4bad-890f-dfb7a9b0516f" testId="02331705-985a-e1e2-b088-dff7754dadfd" testName="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(lf)" computerName="5d9e09695ab3" duration="00:00:00.0003925" startTime="2026-10-03T18:24:46.1110094+00:00" endTime="2026-10-03T18:24:46.1114019+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="e3a21d31-01cd-4bad-890f-dfb7a9b0516f">
+      <Output>
+        <DebugTrace>Skipped: CARD-0382 Grok rules argv guard is Windows-only by design</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="339d51de-a7f6-44f6-8ba7-3c6365b7d59b" testId="e1ad7666-e1c5-e311-b3e1-f9359fcd1ca9" testName="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(nul)" computerName="5d9e09695ab3" duration="00:00:00.0005741" startTime="2026-10-03T18:24:46.1108227+00:00" endTime="2026-10-03T18:24:46.1113968+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="339d51de-a7f6-44f6-8ba7-3c6365b7d59b">
+      <Output>
+        <DebugTrace>Skipped: CARD-0382 Grok rules argv guard is Windows-only by design</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="6e88d36a-459e-4906-a39e-e89fb31c913c" testId="4b2437e8-75e9-d4d5-3751-c2296ca086e0" testName="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(env)" computerName="5d9e09695ab3" duration="00:00:00.0003525" startTime="2026-10-03T18:24:46.1113807+00:00" endTime="2026-10-03T18:24:46.1117332+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="6e88d36a-459e-4906-a39e-e89fb31c913c">
+      <Output>
+        <DebugTrace>Skipped: CARD-0382 Grok rules argv guard is Windows-only by design</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="7da077e3-e5ad-426e-b820-66de376f2d0b" testId="744f06b2-cd83-16d1-1924-26d3d2795abd" testName="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(duplicate_second)" computerName="5d9e09695ab3" duration="00:00:00.0005611" startTime="2026-10-03T18:24:46.1111926+00:00" endTime="2026-10-03T18:24:46.1117537+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="7da077e3-e5ad-426e-b820-66de376f2d0b">
+      <Output>
+        <DebugTrace>Skipped: CARD-0382 Grok rules argv guard is Windows-only by design</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="015a1e61-905c-40ec-819b-dd7209b71783" testId="15ca2912-7259-328c-068b-7c6841db9de1" testName="A_runner_on_the_inbox_conhost_downgrades_a_modern_server" computerName="5d9e09695ab3" duration="00:00:00.0024835" startTime="2026-10-03T18:24:46.1118551+00:00" endTime="2026-10-03T18:24:46.1143386+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="015a1e61-905c-40ec-819b-dd7209b71783">
+      <Output>
+        <DebugTrace>Skipped: no shipped conpty.dll: not Windows — there is no pseudoconsole to redirect</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="f335b817-a1ca-422f-ad36-89118da78bc8" testId="caa9ba4e-b67d-7ce4-b86a-bfe69283034b" testName="A_runner_on_the_modern_backend_confirms_the_raised_ceilings" computerName="5d9e09695ab3" duration="00:00:00.0026227" startTime="2026-10-03T18:24:46.1118670+00:00" endTime="2026-10-03T18:24:46.1144897+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="f335b817-a1ca-422f-ad36-89118da78bc8">
+      <Output>
+        <DebugTrace>Skipped: no shipped conpty.dll: not Windows — there is no pseudoconsole to redirect</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="55b93b26-f4de-4b9a-8a84-63b133766a9a" testId="e23dc2bd-88cf-e931-a3b1-cc4f393566af" testName="Phone_home_Grok_never_uses_local_modern_evidence" computerName="5d9e09695ab3" duration="00:00:00.0030039" startTime="2026-10-03T18:24:46.1122073+00:00" endTime="2026-10-03T18:24:46.1152112+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="55b93b26-f4de-4b9a-8a84-63b133766a9a">
+      <Output>
+        <DebugTrace>Skipped: ConPTY only on Windows</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="25b41b13-bb82-4fff-8a71-bfc9c0e7b175" testId="cea0db02-9f45-1757-2eb5-010068cbd0d2" testName="Phone_home_Claude_keeps_the_inbox_ceiling_for_its_own_kind" computerName="5d9e09695ab3" duration="00:00:00.0015775" startTime="2026-10-03T18:24:46.1144816+00:00" endTime="2026-10-03T18:24:46.1160591+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="25b41b13-bb82-4fff-8a71-bfc9c0e7b175">
+      <Output>
+        <DebugTrace>Skipped: ConPTY only on Windows</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="b315e2cc-c2e6-4155-83c2-c48d16407c32" testId="414a4ab8-5504-17b4-73cc-0a684b7f3f6f" testName="A_silent_runner_leaves_this_processes_own_decision_standing" computerName="5d9e09695ab3" duration="00:00:00.0157046" startTime="2026-10-03T18:24:46.1118731+00:00" endTime="2026-10-03T18:24:46.1275777+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="NotExecuted" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="b315e2cc-c2e6-4155-83c2-c48d16407c32">
+      <Output>
+        <DebugTrace>Skipped: no shipped conpty.dll: not Windows — there is no pseudoconsole to redirect</DebugTrace>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="9970c665-cf46-4ad5-ac06-4ec7a37a7125" testId="2ce5dae0-0f90-0a87-ff06-ebf88b7d76ab" testName="Caches_within_ttl_and_refreshes_after" computerName="5d9e09695ab3" duration="00:00:00.0483069" startTime="2026-10-03T18:24:46.1150590+00:00" endTime="2026-10-03T18:24:46.1633659+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="9970c665-cf46-4ad5-ac06-4ec7a37a7125" />
+    <UnitTestResult executionId="60ead32a-400a-4432-af59-273e98cdd38d" testId="9a2b88f6-dc87-8e57-0e65-dc430e6e4319" testName="trailing_slash_lists_children_of_that_directory" computerName="5d9e09695ab3" duration="00:00:00.7491189" startTime="2026-10-03T18:24:55.0920485+00:00" endTime="2026-10-03T18:24:55.8411674+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="60ead32a-400a-4432-af59-273e98cdd38d">
+      <Output>
+        <StdOut>[18:24:47 INF] PTY delivery ceilings: InboxConhost: brief 900B, reply 3,000 chars, single write 1,024B (ANTIPHON_PTY_BACKEND='inbox') {"SourceContext": "Antiphon.Server.Application.Services.PtyDeliveryProfile"}
+
+[18:24:49 WRN] The 'AgentKind' property 'Kind' on entity type 'Agent' is configured with a database-generated default, but has no configured sentinel value. The database-generated default will always be used for inserts when the property has the value 'Raw', since this is the CLR default for the 'AgentKind' type. Consider using a nullable type, using a nullable backing field, or setting the sentinel value for the property to ensure the database default is used when, and only when, appropriate. See https://aka.ms/efcore-docs-default-values for more information. {"EventId": {"Id": 20601, "Name": "Microsoft.EntityFrameworkCore.Model.Validation.BoolWithDefaultWarning"}, "SourceContext": "Microsoft.EntityFrameworkCore.Model.Validation"}
+
+[18:24:49 WRN] The 'AgentKind' property 'AgentKind' on entity type 'AgentTask' is configured with a database-generated default, but has no configured sentinel value. The database-generated default will always be used for inserts when the property has the value 'Raw', since this is the CLR default for the 'AgentKind' type. Consider using a nullable type, using a nullable backing field, or setting the sentinel value for the property to ensure the database default is used when, and only when, appropriate. See https://aka.ms/efcore-docs-default-values for more information. {"EventId": {"Id": 20601, "Name": "Microsoft.EntityFrameworkCore.Model.Validation.BoolWithDefaultWarning"}, "SourceContext": "Microsoft.EntityFrameworkCore.Model.Validation"}
+
+[18:24:50 INF] Acquiring an exclusive lock for migration application. See https://aka.ms/efcore-docs-migrations-lock for more information if this takes too long. {"EventId": {"Id": 20411, "Name": "Microsoft.EntityFrameworkCore.Migrations.AcquiringMigrationLock"}, "SourceContext": "Microsoft.EntityFrameworkCore.Migrations"}
+
+[18:24:50 INF] No migrations were applied. The database is already up to date. {"EventId": {"Id": 20405, "Name": "Microsoft.EntityFrameworkCore.Migrations.MigrationsNotApplied"}, "SourceContext": "Microsoft.EntityFrameworkCore.Migrations"}
+
+[18:24:52 INF] Workspace reservations reconciled: released 0 orphaned Launch rows {"SourceContext": "Antiphon.Server"}
+
+[18:24:52 WRN] The WebRootPath was not found: /work/worktrees/task-535715ec/.antiphon/c1005-current-master/server/wwwroot. Static files may be unavailable. {"EventId": {"Id": 16, "Name": "WebRootPathNotFound"}, "SourceContext": "Microsoft.AspNetCore.StaticFiles.StaticFileMiddleware"}
+
+[18:24:52 INF] Antiphon server starting {}
+
+[18:24:53 ERR] The key ring does not contain a valid default protection key. The data protection system cannot create a new key because auto-generation of keys is disabled. For more information go to http://aka.ms/dataprotectionwarning {"EventId": {"Id": 49, "Name": "KeyRingDoesNotContainValidDefaultKey"}, "SourceContext": "Microsoft.AspNetCore.DataProtection.KeyManagement.KeyRingProvider"}
+
+[18:24:53 ERR] An error occurred while reading the key ring. {"EventId": {"Id": 48, "Name": "ErrorOccurredWhileReadingKeyRing"}, "SourceContext": "Microsoft.AspNetCore.DataProtection.KeyManagement.KeyRingProvider"}
+System.InvalidOperationException: The key ring does not contain a valid default protection key. The data protection system cannot create a new key because auto-generation of keys is disabled. For more information go to https://aka.ms/aspnet/dataprotectionwarning
+   at Microsoft.AspNetCore.DataProtection.KeyManagement.KeyRingProvider.CreateCacheableKeyRingCore(DateTimeOffset now, IKey keyJustAdded)
+   at System.Threading.Tasks.Task`1.InnerInvoke()
+   at System.Threading.ExecutionContext.RunFromThreadPoolDispatchLoop(Thread threadPoolThread, ExecutionContext executionContext, ContextCallback callback, Object state)
+--- End of stack trace from previous location ---
+   at System.Threading.ExecutionContext.RunFromThreadPoolDispatchLoop(Thread threadPoolThread, ExecutionContext executionContext, ContextCallback callback, Object state)
+   at System.Threading.Tasks.Task.ExecuteWithThreadLocal(Task&amp; currentTaskSlot, Thread threadPoolThread)
+--- End of stack trace from previous location ---
+   at Microsoft.AspNetCore.DataProtection.KeyManagement.KeyRingProvider.GetKeyRingFromCompletedTaskUnsynchronized(Task`1 task, DateTime utcNow)
+
+[18:24:53 INF] Key ring failed to load during application startup. {"EventId": {"Id": 66, "Name": "KeyRingFailedToLoadOnStartup"}, "SourceContext": "Microsoft.AspNetCore.DataProtection.Internal.DataProtectionHostedService"}
+System.InvalidOperationException: The key ring does not contain a valid default protection key. The data protection system cannot create a new key because auto-generation of keys is disabled. For more information go to https://aka.ms/aspnet/dataprotectionwarning
+   at Microsoft.AspNetCore.DataProtection.KeyManagement.KeyRingProvider.CreateCacheableKeyRingCore(DateTimeOffset now, IKey keyJustAdded)
+   at System.Threading.Tasks.Task`1.InnerInvoke()
+   at System.Threading.ExecutionContext.RunFromThreadPoolDispatchLoop(Thread threadPoolThread, ExecutionContext executionContext, ContextCallback callback, Object state)
+--- End of stack trace from previous location ---
+   at System.Threading.ExecutionContext.RunFromThreadPoolDispatchLoop(Thread threadPoolThread, ExecutionContext executionContext, ContextCallback callback, Object state)
+   at System.Threading.Tasks.Task.ExecuteWithThreadLocal(Task&amp; currentTaskSlot, Thread threadPoolThread)
+--- End of stack trace from previous location ---
+   at Microsoft.AspNetCore.DataProtection.KeyManagement.KeyRingProvider.GetKeyRingFromCompletedTaskUnsynchronized(Task`1 task, DateTime utcNow)
+   at Microsoft.AspNetCore.DataProtection.KeyManagement.KeyRingProvider.GetCurrentKeyRingCoreNew(DateTime utcNow, Boolean forceRefresh)
+   at Microsoft.AspNetCore.DataProtection.Internal.DataProtectionHostedService.StartAsync(CancellationToken token)
+
+[18:24:53 INF] GitHub integration is disabled globally. GitHubMonitorService will not run {"SourceContext": "Antiphon.Server.Infrastructure.GitHub.GitHubMonitorService"}
+
+[18:24:53 INF] ChangeDetectionService started with 30s poll interval {"SourceContext": "Antiphon.Server.Infrastructure.ExternalChanges.ChangeDetectionService"}
+
+[18:24:53 INF] WorktreeHealthHostedService started {"SourceContext": "Antiphon.Server.Infrastructure.Git.WorktreeHealthHostedService"}
+
+[18:24:53 INF] Away digest disabled by configuration {"SourceContext": "Antiphon.Server.Infrastructure.Supervision.AwayDigestHostedService"}
+
+[18:24:53 INF] Subscription usage monitoring disabled by configuration {"SourceContext": "Antiphon.Server.Infrastructure.Supervision.SubscriptionUsageMonitorHostedService"}
+
+[18:24:53 INF] Output distiller is disabled; the distiller worker will not run. {"SourceContext": "Antiphon.Server.Infrastructure.Orchestration.OutputDistillationHostedService"}
+
+[18:24:53 INF] Diagnose sweep is disabled; unlabelled cards will not be queued. {"SourceContext": "Antiphon.Server.Infrastructure.Orchestration.DiagnoseSweepHostedService"}
+
+[18:24:53 INF] Diagnose is disabled; the diagnose worker will not run. {"SourceContext": "Antiphon.Server.Infrastructure.Orchestration.DiagnoseHostedService"}
+
+[18:24:53 WRN] Overriding HTTP_PORTS '8080' and HTTPS_PORTS ''. Binding to values defined by URLS instead 'http://+:8080'. {"EventId": {"Id": 15}, "SourceContext": "Microsoft.AspNetCore.Hosting.Diagnostics"}
+
+[18:24:53 WRN] The WebRootPath was not found: /work/worktrees/task-535715ec/.antiphon/c1005-current-master/server/wwwroot. Static files may be unavailable. {"EventId": {"Id": 16, "Name": "WebRootPathNotFound"}, "SourceContext": "Microsoft.AspNetCore.StaticFiles.StaticFileMiddleware"}
+
+Activity.TraceId:            7fd8b8a426dcbca8dff446e00e4c2cbd
+Activity.SpanId:             17a92efcf101fe27
+Activity.TraceFlags:         Recorded
+Activity.ParentSpanId:       99c139f7ea88d33c
+Activity.DisplayName:        GET
+Activity.Kind:               Client
+Activity.StartTime:          2026-10-03T18:24:53.4312063Z
+Activity.Duration:           00:00:00.0248743
+Activity.Tags:
+    http.request.method: GET
+    server.address: 127.0.0.1
+    server.port: 1
+    url.full: http://127.0.0.1:1/host-stats
+    error.type: connection_error
+StatusCode: Error
+Instrumentation scope (ActivitySource):
+    Name: System.Net.Http
+Resource associated with Activity:
+    service.name: Antiphon
+    service.instance.id: afc7aff7-4734-4a38-ad43-72d24650f625
+    telemetry.sdk.name: opentelemetry
+    telemetry.sdk.language: dotnet
+    telemetry.sdk.version: 1.15.0
+Activity.TraceId:            7fd8b8a426dcbca8dff446e00e4c2cbd
+Activity.SpanId:             7d567b0d7816439a
+Activity.TraceFlags:         Recorded
+Activity.ParentSpanId:       99c139f7ea88d33c
+Activity.DisplayName:        GET
+Activity.Kind:               Client
+Activity.StartTime:          2026-10-03T18:24:53.9141276Z
+Activity.Duration:           00:00:00.0011559
+Activity.Tags:
+    http.request.method: GET
+    server.address: 127.0.0.1
+    server.port: 1
+    url.full: http://127.0.0.1:1/capabilities
+    error.type: connection_error
+StatusCode: Error
+Instrumentation scope (ActivitySource):
+    Name: System.Net.Http
+Resource associated with Activity:
+    service.name: Antiphon
+    service.instance.id: afc7aff7-4734-4a38-ad43-72d24650f625
+    telemetry.sdk.name: opentelemetry
+    telemetry.sdk.language: dotnet
+    telemetry.sdk.version: 1.15.0
+[18:24:53 WRN] Resilience retry runner.get-capabilities dependency runner retry 1 of 6 reason socket:ConnectionRefused elapsed 50 remaining 99835 delay 277 {"SourceContext": "Antiphon.Resilience.ResiliencePipelineCache", "HttpMethod": "GET", "Uri": "http://127.0.0.1:1/capabilities", "Scope": ["HTTP GET http://127.0.0.1:1/capabilities"]}
+
+[18:24:54 INF] Retention sweep deleted 0 session row(s), 0 transcript row(s), 0 queued message(s), 0 task row(s), 0 audit record(s), 0 subscription-usage sample(s) {"SourceContext": "Antiphon.Server.Infrastructure.Supervision.DataRetentionHostedService"}
+
+Activity.TraceId:            7fd8b8a426dcbca8dff446e00e4c2cbd
+Activity.SpanId:             cab464736e2aa954
+Activity.TraceFlags:         Recorded
+Activity.ParentSpanId:       99c139f7ea88d33c
+Activity.DisplayName:        GET
+Activity.Kind:               Client
+Activity.StartTime:          2026-10-03T18:24:54.2354542Z
+Activity.Duration:           00:00:00.0016997
+Activity.Tags:
+    http.request.method: GET
+    server.address: 127.0.0.1
+    server.port: 1
+    url.full: http://127.0.0.1:1/capabilities
+    error.type: connection_error
+StatusCode: Error
+Instrumentation scope (ActivitySource):
+    Name: System.Net.Http
+Resource associated with Activity:
+    service.name: Antiphon
+    service.instance.id: afc7aff7-4734-4a38-ad43-72d24650f625
+    telemetry.sdk.name: opentelemetry
+    telemetry.sdk.language: dotnet
+    telemetry.sdk.version: 1.15.0
+[18:24:54 WRN] Resilience retry runner.get-capabilities dependency runner retry 2 of 6 reason socket:ConnectionRefused elapsed 7 remaining 99536 delay 75 {"SourceContext": "Antiphon.Resilience.ResiliencePipelineCache", "HttpMethod": "GET", "Uri": "http://127.0.0.1:1/capabilities", "Scope": ["HTTP GET http://127.0.0.1:1/capabilities"]}
+
+Activity.TraceId:            7fd8b8a426dcbca8dff446e00e4c2cbd
+Activity.SpanId:             cdb1142cc658300c
+Activity.TraceFlags:         Recorded
+Activity.ParentSpanId:       99c139f7ea88d33c
+Activity.DisplayName:        GET
+Activity.Kind:               Client
+Activity.StartTime:          2026-10-03T18:24:54.3183879Z
+Activity.Duration:           00:00:00.0009892
+Activity.Tags:
+    http.request.method: GET
+    server.address: 127.0.0.1
+    server.port: 1
+    url.full: http://127.0.0.1:1/capabilities
+    error.type: connection_error
+StatusCode: Error
+Instrumentation scope (ActivitySource):
+    Name: System.Net.Http
+Resource associated with Activity:
+    service.name: Antiphon
+    service.instance.id: afc7aff7-4734-4a38-ad43-72d24650f625
+    telemetry.sdk.name: opentelemetry
+    telemetry.sdk.language: dotnet
+    telemetry.sdk.version: 1.15.0
+[18:24:54 WRN] Resilience retry runner.get-capabilities dependency runner retry 3 of 6 reason socket:ConnectionRefused elapsed 1 remaining 99458 delay 467 {"SourceContext": "Antiphon.Resilience.ResiliencePipelineCache", "HttpMethod": "GET", "Uri": "http://127.0.0.1:1/capabilities", "Scope": ["HTTP GET http://127.0.0.1:1/capabilities"]}
+
+Activity.TraceId:            7fd8b8a426dcbca8dff446e00e4c2cbd
+Activity.SpanId:             f8b1007758256719
+Activity.TraceFlags:         Recorded
+Activity.ParentSpanId:       99c139f7ea88d33c
+Activity.DisplayName:        GET
+Activity.Kind:               Client
+Activity.StartTime:          2026-10-03T18:24:54.7891302Z
+Activity.Duration:           00:00:00.0011622
+Activity.Tags:
+    http.request.method: GET
+    server.address: 127.0.0.1
+    server.port: 1
+    url.full: http://127.0.0.1:1/capabilities
+    error.type: connection_error
+StatusCode: Error
+Instrumentation scope (ActivitySource):
+    Name: System.Net.Http
+Resource associated with Activity:
+    service.name: Antiphon
+    service.instance.id: afc7aff7-4734-4a38-ad43-72d24650f625
+    telemetry.sdk.name: opentelemetry
+    telemetry.sdk.language: dotnet
+    telemetry.sdk.version: 1.15.0
+[18:24:54 WRN] Resilience retry runner.get-capabilities dependency runner retry 4 of 6 reason socket:ConnectionRefused elapsed 1 remaining 98988 delay 821 {"SourceContext": "Antiphon.Resilience.ResiliencePipelineCache", "HttpMethod": "GET", "Uri": "http://127.0.0.1:1/capabilities", "Scope": ["HTTP GET http://127.0.0.1:1/capabilities"]}
+
+[18:24:55 INF] Now listening on: http://+:8080 {"EventId": {"Id": 14, "Name": "ListeningOnAddress"}, "SourceContext": "Microsoft.Hosting.Lifetime"}
+
+[18:24:55 WRN] Resilience outcome runner.get-capabilities dependency runner outcome canceled reason TaskCanceledException elapsed 1701 {"SourceContext": "Antiphon.Resilience.AdmittedReadHandler", "HttpMethod": "GET", "Uri": "http://127.0.0.1:1/capabilities", "Scope": ["HTTP GET http://127.0.0.1:1/capabilities"]}
+
+[testcontainers.org 00:00:44.09] Delete Docker container c7133d5f69b0
+</StdOut>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="V01_canonical_cwd_uses_windows_separators_and_drops_trailing_slash" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="473ade5e-7851-236c-4f0d-e29ba3921aa6">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="b04d8ce1-f838-429c-ae16-f6c325b75e71" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.AgentPinPathTests" name="V01_canonical_cwd_uses_windows_separators_and_drops_trailing_slash" />
+    </UnitTest>
+    <UnitTest name="Off_settings_path_round_trips_through_LaunchArgvGuard" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="13ca2c05-8796-c5c5-880e-1b03832d9470">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="f1dcc80e-3676-4499-b7fa-7e032d5acc04" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.ClaudeRemoteControlLaunchArgsTests" name="Off_settings_path_round_trips_through_LaunchArgvGuard" />
+    </UnitTest>
+    <UnitTest name="The_shipped_codex_definition_resolves_to_a_real_executable_on_this_machine" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="0d445417-c295-a322-4d55-feed561de49a">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="e54b0709-c411-41f0-9977-6796fdf0a147" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Agents.AgentRegistrySettingsTests" name="The_shipped_codex_definition_resolves_to_a_real_executable_on_this_machine" />
+    </UnitTest>
+    <UnitTest name="Resolves_sibling_flavor_when_configured_one_is_gone" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="bc2a4bcc-624f-93ed-b63f-2c7421ec25bf">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="49af82ea-4b23-4008-9226-5c2e2dd53632" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.AgentExecutableResolverTests" name="Resolves_sibling_flavor_when_configured_one_is_gone" />
+    </UnitTest>
+    <UnitTest name="existing_path_reports_exists_true" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="ee398f49-120b-917b-03a8-c30048f0ce64">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="097d63c6-1751-4260-a2bc-99e90e5bd11c" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.DirectoryBrowseServiceTests" name="existing_path_reports_exists_true" />
+    </UnitTest>
+    <UnitTest name="partial_leaf_matches_substring_within_child_name" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="4ba9d923-deb0-24e8-1147-8ececc8388b1">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="72f8866a-896d-4cd0-b70e-0ad1807151f3" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.DirectoryBrowseServiceTests" name="partial_leaf_matches_substring_within_child_name" />
+    </UnitTest>
+    <UnitTest name="trailing_slash_lists_children_of_that_directory" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="373821da-4f9a-df36-9732-68b696f0ab85">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="7694e68e-87ff-4ba1-af42-25383077c37b" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.DirectoryBrowseServiceTests" name="trailing_slash_lists_children_of_that_directory" />
+    </UnitTest>
+    <UnitTest name="caches_within_ttl_and_refreshes_after" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="c3de3de3-93eb-025f-aae9-793082a9db4a">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="edd42ebb-69aa-4d4d-854f-76b77cf76ec5" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.DirectoryBrowseServiceTests" name="caches_within_ttl_and_refreshes_after" />
+    </UnitTest>
+    <UnitTest name="prefix_returns_matching_child_directories" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="2c612967-1d77-ecc7-1030-ac96fd470e8f">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="46157a3e-6a56-42f4-8cb3-04fc8245ef35" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.DirectoryBrowseServiceTests" name="prefix_returns_matching_child_directories" />
+    </UnitTest>
+    <UnitTest name="reported_repository_paths_normalize_relative_and_absolute_windows_forms" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="13b26d39-8cfb-b5bd-9670-dcab0fc4ae45">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="8bc25ea4-6c3f-42f4-8784-cd5affe55a75" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.DelegationReportFormatterTests" name="reported_repository_paths_normalize_relative_and_absolute_windows_forms" />
+    </UnitTest>
+    <UnitTest name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(braced_env)" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="04ad30e2-73e7-51d4-f8be-3a6ff6d6474e">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="74827f47-ca3d-41eb-a5a3-616c4ab689e3" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests" name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls" />
+    </UnitTest>
+    <UnitTest name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(env_flag)" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="b68faca5-7289-c534-6f22-906a9273cd7b">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="618f0b03-86d1-4bde-89fc-d607a940ab50" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests" name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls" />
+    </UnitTest>
+    <UnitTest name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(duplicate_first)" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="2bb89da3-b8bf-1de8-db3c-02f7a5e98198">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="a623c62d-a0d2-4549-a880-b201307f7d45" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests" name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls" />
+    </UnitTest>
+    <UnitTest name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(cr)" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="793fe86b-4298-4eb3-c676-fd5563806521">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="14dfebb6-8316-449e-af94-f8eb63a56033" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests" name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls" />
+    </UnitTest>
+    <UnitTest name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(equals)" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="75854a42-8fb0-c3e2-5271-7d36a70f0b25">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="2c48ac0b-1fc0-4f4b-92a1-2e12a24281e8" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests" name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls" />
+    </UnitTest>
+    <UnitTest name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(alias)" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="95a89bce-ea59-f0bc-d192-1ec4307fccab">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="97cc3df9-f2db-46b3-a3fe-c0bcfb53707c" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests" name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls" />
+    </UnitTest>
+    <UnitTest name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(missing)" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="ce57c759-c8e9-1aed-27ac-43b387da6fb0">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="3c8bda3b-5e82-4d07-bcc6-08ebb8ec3078" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests" name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls" />
+    </UnitTest>
+    <UnitTest name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(crlf)" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="ba97ea4f-db22-412c-eca3-69fd44bd1477">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="8cdc4a0c-5c38-4bab-8f73-941322210bfb" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests" name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls" />
+    </UnitTest>
+    <UnitTest name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(lf)" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="02331705-985a-e1e2-b088-dff7754dadfd">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="e3a21d31-01cd-4bad-890f-dfb7a9b0516f" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests" name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls" />
+    </UnitTest>
+    <UnitTest name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(nul)" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="e1ad7666-e1c5-e311-b3e1-f9359fcd1ca9">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="339d51de-a7f6-44f6-8ba7-3c6365b7d59b" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests" name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls" />
+    </UnitTest>
+    <UnitTest name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(env)" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="4b2437e8-75e9-d4d5-3751-c2296ca086e0">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="6e88d36a-459e-4906-a39e-e89fb31c913c" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests" name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls" />
+    </UnitTest>
+    <UnitTest name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls(duplicate_second)" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="744f06b2-cd83-16d1-1924-26d3d2795abd">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="7da077e3-e5ad-426e-b820-66de376f2d0b" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests" name="Unsafe_raw_rules_are_refused_server_side_before_runner_calls" />
+    </UnitTest>
+    <UnitTest name="A_runner_on_the_inbox_conhost_downgrades_a_modern_server" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="15ca2912-7259-328c-068b-7c6841db9de1">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="015a1e61-905c-40ec-819b-dd7209b71783" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.PtyDeliveryCeilingsTests" name="A_runner_on_the_inbox_conhost_downgrades_a_modern_server" />
+    </UnitTest>
+    <UnitTest name="A_runner_on_the_modern_backend_confirms_the_raised_ceilings" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="caa9ba4e-b67d-7ce4-b86a-bfe69283034b">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="f335b817-a1ca-422f-ad36-89118da78bc8" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.PtyDeliveryCeilingsTests" name="A_runner_on_the_modern_backend_confirms_the_raised_ceilings" />
+    </UnitTest>
+    <UnitTest name="Phone_home_Grok_never_uses_local_modern_evidence" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="e23dc2bd-88cf-e931-a3b1-cc4f393566af">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="55b93b26-f4de-4b9a-8a84-63b133766a9a" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.SessionDeliveryProfileTests" name="Phone_home_Grok_never_uses_local_modern_evidence" />
+    </UnitTest>
+    <UnitTest name="Phone_home_Claude_keeps_the_inbox_ceiling_for_its_own_kind" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="cea0db02-9f45-1757-2eb5-010068cbd0d2">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="25b41b13-bb82-4fff-8a71-bfc9c0e7b175" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.SessionDeliveryProfileTests" name="Phone_home_Claude_keeps_the_inbox_ceiling_for_its_own_kind" />
+    </UnitTest>
+    <UnitTest name="A_silent_runner_leaves_this_processes_own_decision_standing" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="414a4ab8-5504-17b4-73cc-0a684b7f3f6f">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="b315e2cc-c2e6-4155-83c2-c48d16407c32" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.PtyDeliveryCeilingsTests" name="A_silent_runner_leaves_this_processes_own_decision_standing" />
+    </UnitTest>
+    <UnitTest name="Caches_within_ttl_and_refreshes_after" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="2ce5dae0-0f90-0a87-ff06-ebf88b7d76ab">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="9970c665-cf46-4ad5-ac06-4ec7a37a7125" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.SlashCommandCatalogServiceTests" name="Caches_within_ttl_and_refreshes_after" />
+    </UnitTest>
+    <UnitTest name="trailing_slash_lists_children_of_that_directory" storage="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/antiphon.tests/bin-c1005-master-discovery/antiphon.tests.dll" id="9a2b88f6-dc87-8e57-0e65-dc430e6e4319">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Integration" />
+      </TestCategory>
+      <Execution id="60ead32a-400a-4432-af59-273e98cdd38d" />
+      <Properties>
+        <Property>
+          <Key>Integration</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.FileSystemBrowseMockedTests" name="trailing_slash_lists_children_of_that_directory" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="473ade5e-7851-236c-4f0d-e29ba3921aa6" executionId="b04d8ce1-f838-429c-ae16-f6c325b75e71" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="13ca2c05-8796-c5c5-880e-1b03832d9470" executionId="f1dcc80e-3676-4499-b7fa-7e032d5acc04" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="0d445417-c295-a322-4d55-feed561de49a" executionId="e54b0709-c411-41f0-9977-6796fdf0a147" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="bc2a4bcc-624f-93ed-b63f-2c7421ec25bf" executionId="49af82ea-4b23-4008-9226-5c2e2dd53632" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="ee398f49-120b-917b-03a8-c30048f0ce64" executionId="097d63c6-1751-4260-a2bc-99e90e5bd11c" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="4ba9d923-deb0-24e8-1147-8ececc8388b1" executionId="72f8866a-896d-4cd0-b70e-0ad1807151f3" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="373821da-4f9a-df36-9732-68b696f0ab85" executionId="7694e68e-87ff-4ba1-af42-25383077c37b" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="c3de3de3-93eb-025f-aae9-793082a9db4a" executionId="edd42ebb-69aa-4d4d-854f-76b77cf76ec5" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="2c612967-1d77-ecc7-1030-ac96fd470e8f" executionId="46157a3e-6a56-42f4-8cb3-04fc8245ef35" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="13b26d39-8cfb-b5bd-9670-dcab0fc4ae45" executionId="8bc25ea4-6c3f-42f4-8784-cd5affe55a75" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="04ad30e2-73e7-51d4-f8be-3a6ff6d6474e" executionId="74827f47-ca3d-41eb-a5a3-616c4ab689e3" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="b68faca5-7289-c534-6f22-906a9273cd7b" executionId="618f0b03-86d1-4bde-89fc-d607a940ab50" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="2bb89da3-b8bf-1de8-db3c-02f7a5e98198" executionId="a623c62d-a0d2-4549-a880-b201307f7d45" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="793fe86b-4298-4eb3-c676-fd5563806521" executionId="14dfebb6-8316-449e-af94-f8eb63a56033" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="75854a42-8fb0-c3e2-5271-7d36a70f0b25" executionId="2c48ac0b-1fc0-4f4b-92a1-2e12a24281e8" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="95a89bce-ea59-f0bc-d192-1ec4307fccab" executionId="97cc3df9-f2db-46b3-a3fe-c0bcfb53707c" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="ce57c759-c8e9-1aed-27ac-43b387da6fb0" executionId="3c8bda3b-5e82-4d07-bcc6-08ebb8ec3078" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="ba97ea4f-db22-412c-eca3-69fd44bd1477" executionId="8cdc4a0c-5c38-4bab-8f73-941322210bfb" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="02331705-985a-e1e2-b088-dff7754dadfd" executionId="e3a21d31-01cd-4bad-890f-dfb7a9b0516f" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="e1ad7666-e1c5-e311-b3e1-f9359fcd1ca9" executionId="339d51de-a7f6-44f6-8ba7-3c6365b7d59b" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="4b2437e8-75e9-d4d5-3751-c2296ca086e0" executionId="6e88d36a-459e-4906-a39e-e89fb31c913c" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="744f06b2-cd83-16d1-1924-26d3d2795abd" executionId="7da077e3-e5ad-426e-b820-66de376f2d0b" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="15ca2912-7259-328c-068b-7c6841db9de1" executionId="015a1e61-905c-40ec-819b-dd7209b71783" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="caa9ba4e-b67d-7ce4-b86a-bfe69283034b" executionId="f335b817-a1ca-422f-ad36-89118da78bc8" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="e23dc2bd-88cf-e931-a3b1-cc4f393566af" executionId="55b93b26-f4de-4b9a-8a84-63b133766a9a" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="cea0db02-9f45-1757-2eb5-010068cbd0d2" executionId="25b41b13-bb82-4fff-8a71-bfc9c0e7b175" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="414a4ab8-5504-17b4-73cc-0a684b7f3f6f" executionId="b315e2cc-c2e6-4155-83c2-c48d16407c32" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="2ce5dae0-0f90-0a87-ff06-ebf88b7d76ab" executionId="9970c665-cf46-4ad5-ac06-4ec7a37a7125" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="9a2b88f6-dc87-8e57-0e65-dc430e6e4319" executionId="60ead32a-400a-4432-af59-273e98cdd38d" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="29" executed="2" passed="2" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="27" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <CollectorDataEntries>
+      <Collector agentName="5d9e09695ab3" uri="datacollector://TUnitExtensionHtmlReporter/1.44.0.0" collectorDisplayName="TUnit">
+        <UriAttachments>
+          <UriAttachment>
+            <A href="5d9e09695ab3/Antiphon.Tests-linux-net9.0-report.html" />
+          </UriAttachment>
+        </UriAttachments>
+      </Collector>
+    </CollectorDataEntries>
+  </ResultSummary>
+</TestRun>

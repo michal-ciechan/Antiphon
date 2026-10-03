@@ -1,0 +1,39 @@
+2026-10-03T18:12:09.9015510+00:00 execute rows=1 width=1 total=40m
+2026-10-03T18:12:10.7069175+00:00 BUILD SLOT operation=probe status=200 reason=enabled maxcpucount=6 elapsed=0s
+2026-10-03T18:12:10.7619500+00:00 BUILD SLOT granted lease=573910f6-b58a-44e6-aaa9-3f11bfe86d53 label="build:bin-c1005-unit" waited=0s maxcpucount=6
+2026-10-03T18:12:23.1895663+00:00 owner read failed: http 502
+2026-10-03T18:12:26.1932228+00:00 owner read failed: http 502
+2026-10-03T18:12:29.1995977+00:00 owner read failed: http 502
+2026-10-03T18:12:32.2073479+00:00 owner read failed: http 502
+2026-10-03T18:12:35.2128935+00:00 owner read failed: http 502
+2026-10-03T18:12:38.2182629+00:00 owner read failed: http 502
+2026-10-03T18:12:41.2299414+00:00 owner read failed: http 502
+2026-10-03T18:12:44.2414509+00:00 owner read failed: http 502
+2026-10-03T18:12:47.2507433+00:00 owner read failed: http 502
+2026-10-03T18:12:50.2624686+00:00 owner read failed: http 502
+2026-10-03T18:12:53.2697188+00:00 owner read failed: http 502
+2026-10-03T18:12:56.4498216+00:00 owner read failed: http 502
+2026-10-03T18:12:59.5027455+00:00 owner read failed: http 502
+2026-10-03T18:13:02.8511258+00:00 owner read failed: http 502
+2026-10-03T18:13:06.1119102+00:00 owner read failed: http 502
+2026-10-03T18:13:09.1582993+00:00 owner read failed: http 502
+2026-10-03T18:13:12.1649920+00:00 owner read failed: http 502
+2026-10-03T18:13:15.8551046+00:00 owner read failed: http 502
+2026-10-03T18:13:18.9128707+00:00 owner read failed: http 502
+2026-10-03T18:13:21.9921491+00:00 owner read failed: http 502
+2026-10-03T18:13:25.0951915+00:00 owner read failed: http 502
+2026-10-03T18:13:28.7231418+00:00 owner read failed: http 502
+2026-10-03T18:13:31.7529461+00:00 owner read failed: http 502
+2026-10-03T18:13:34.8080935+00:00 owner read failed: http 502
+2026-10-03T18:13:37.8203245+00:00 owner read failed: http 502
+2026-10-03T18:13:40.8248625+00:00 owner read failed: http 502
+2026-10-03T18:13:43.8290217+00:00 owner read failed: http 502
+2026-10-03T18:13:46.8355033+00:00 owner read failed: http 502
+2026-10-03T18:13:49.8395499+00:00 owner read failed: http 502
+2026-10-03T18:13:52.8482531+00:00 owner read failed: http 502
+2026-10-03T18:13:55.8527067+00:00 owner read failed: http 502
+2026-10-03T18:14:10.8657845+00:00 owner read failed: timeout after 12s
+2026-10-03T18:14:20.3578863+00:00 BUILD SLOT released lease=573910f6-b58a-44e6-aaa9-3f11bfe86d53 label="build:bin-c1005-unit"
+2026-10-03T18:14:20.4328256+00:00 BUILD SLOT granted lease=1024c524-17ca-4337-b401-ad186ed70d7e label="CP-2@bin-c1005-unit" waited=0s maxcpucount=6
+2026-10-03T18:20:30.2505601+00:00 BUILD SLOT released lease=1024c524-17ca-4337-b401-ad186ed70d7e label="CP-2@bin-c1005-unit"
+2026-10-03T18:20:31.3529051+00:00 done exit=3

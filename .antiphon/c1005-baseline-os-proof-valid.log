@@ -1,0 +1,111 @@
+BUILD SLOT granted lease=01dce3be-0277-4464-9511-83376ff09713 waited=0s maxcpucount=6
+
+████████╗██╗   ██╗███╗   ██╗██╗████████╗
+╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝
+   ██║   ██║   ██║██╔██╗ ██║██║   ██║
+   ██║   ██║   ██║██║╚██╗██║██║   ██║
+   ██║   ╚██████╔╝██║ ╚████║██║   ██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝
+
+   TUnit v1.44.0.0 | 64-bit | Debian GNU/Linux 12 (bookworm) | linux-x64 | .NET 9.0.20 | Microsoft Testing Platform v2.2.2
+
+   Engine Mode: SourceGenerated
+
+skipped Resolves_sibling_flavor_when_configured_one_is_gone (35ms)
+  Sibling executable flavors (.exe/.cmd/.bat) are resolved only on Windows
+skipped The_shipped_codex_definition_resolves_to_a_real_executable_on_this_machine (35ms)
+  The npm shim layout is Windows-specific
+skipped Off_settings_path_round_trips_through_LaunchArgvGuard (35ms)
+  CommandLineToArgvW is Windows-only
+  Standard output
+    [CARD-0204] SessionRunner__BaseUrl=http://127.0.0.1:1, Delegation__CheckInterpreterEnabled=false, Delegation__DiagnoseEnabled=false and Delegation__OutputDistillerEnabled=false for every Program boot in this assembly (inherited SessionRunner__BaseUrl='<unset>') - test hosts never launch on the production session-runner.
+    [CARD-0298] Hangfire__ServerEnabled=false for every Program boot in this assembly - test hosts never start a Hangfire worker (no WMI census, no production-runner list).
+    [CARD-0045] cleared inherited ANTIPHON_PTY_BACKEND='inbox' — pty tests declare their backend; the suite means the same thing whoever launched it.
+    [testcontainers.org 00:00:00.57] Connected to Docker:
+      Host: unix:///var/run/docker.sock
+      Server Version: 27.5.1
+      Kernel Version: 4.15.0-213-generic
+      API Version: 1.47
+      Operating System: Debian GNU/Linux 12 (bookworm) (containerized)
+      Total Memory: 125.90 GB
+    [testcontainers.org 00:00:01.02] Docker container fd82ab97dac3 created
+    [testcontainers.org 00:00:01.14] Start Docker container fd82ab97dac3
+    [testcontainers.org 00:00:01.47] Wait for Docker container fd82ab97dac3 to complete readiness checks
+    [testcontainers.org 00:00:02.51] Docker container fd82ab97dac3 ready
+    [testcontainers.org 00:00:02.62] Docker container c7133d5f69b0 created
+    [testcontainers.org 00:00:02.62] Start Docker container c7133d5f69b0
+    [testcontainers.org 00:00:03.01] Wait for Docker container c7133d5f69b0 to complete readiness checks
+    [testcontainers.org 00:00:03.02] Execute "pg_isready --host localhost --dbname antiphon_test --username test" at Docker container c7133d5f69b0
+    [testcontainers.org 00:00:04.16] Execute "pg_isready --host localhost --dbname antiphon_test --username test" at Docker container c7133d5f69b0
+    [testcontainers.org 00:00:05.25] Execute "pg_isready --host localhost --dbname antiphon_test --username test" at Docker container c7133d5f69b0
+    [testcontainers.org 00:00:05.37] Docker container c7133d5f69b0 ready
+    
+  Error output
+    [TUnit] External span cap of 100 reached; subsequent spans will be dropped. Set TUNIT_OTEL_MAX_EXTERNAL_SPANS to raise the limit.
+    
+skipped V01_canonical_cwd_uses_windows_separators_and_drops_trailing_slash (35ms)
+  Canonical pin cwd is a Windows drive-rooted path
+skipped partial_leaf_matches_substring_within_child_name (3ms)
+  Drive-letter directory listing needs a Windows MockFileSystem
+skipped existing_path_reports_exists_true (3ms)
+  Drive-letter directory listing needs a Windows MockFileSystem
+skipped trailing_slash_lists_children_of_that_directory (3ms)
+  Drive-letter directory listing needs a Windows MockFileSystem
+skipped caches_within_ttl_and_refreshes_after (1ms)
+  Drive-letter directory listing needs a Windows MockFileSystem
+skipped prefix_returns_matching_child_directories (1ms)
+  Drive-letter directory listing needs a Windows MockFileSystem
+skipped reported_repository_paths_normalize_relative_and_absolute_windows_forms (4ms)
+  Drive-letter report paths resolve only against a Windows repo root
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(braced_env) (1ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(env_flag) (1ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(cr) (2ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(duplicate_first) (1ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(equals) (0ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(alias) (0ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(missing) (0ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(crlf) (0ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(lf) (0ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(nul) (0ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(env) (0ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped Unsafe_raw_rules_are_refused_server_side_before_runner_calls(duplicate_second) (0ms)
+  CARD-0382 Grok rules argv guard is Windows-only by design
+skipped A_runner_on_the_inbox_conhost_downgrades_a_modern_server (2ms)
+  no shipped conpty.dll: not Windows — there is no pseudoconsole to redirect
+skipped A_runner_on_the_modern_backend_confirms_the_raised_ceilings (2ms)
+  no shipped conpty.dll: not Windows — there is no pseudoconsole to redirect
+skipped Phone_home_Grok_never_uses_local_modern_evidence (3ms)
+  ConPTY only on Windows
+skipped Phone_home_Claude_keeps_the_inbox_ceiling_for_its_own_kind (1ms)
+  ConPTY only on Windows
+skipped A_silent_runner_leaves_this_processes_own_decision_standing (15ms)
+  no shipped conpty.dll: not Windows — there is no pseudoconsole to redirect
+%3|1791051892.949|FAIL|rdkafka#producer-1| [thrd:localhost:19092/bootstrap]: localhost:19092/bootstrap: Connect to ipv4#127.0.0.1:19092 failed: Connection refused (after 0ms in state CONNECT)
+%3|1791051892.949|ERROR|rdkafka#producer-1| [thrd:localhost:19092/bootstrap]: 1/1 brokers are down
+%3|1791051892.951|ERROR|rdkafka#producer-1| [thrd:app]: rdkafka#producer-1: localhost:19092/bootstrap: Connect to ipv4#127.0.0.1:19092 failed: Connection refused (after 0ms in state CONNECT)
+%3|1791051893.948|FAIL|rdkafka#producer-1| [thrd:localhost:19092/bootstrap]: localhost:19092/bootstrap: Connect to ipv4#127.0.0.1:19092 failed: Connection refused (after 0ms in state CONNECT, 1 identical error(s) suppressed)
+%3|1791051893.948|ERROR|rdkafka#producer-1| [thrd:app]: rdkafka#producer-1: localhost:19092/bootstrap: Connect to ipv4#127.0.0.1:19092 failed: Connection refused (after 0ms in state CONNECT, 1 identical error(s) suppressed)
+HTML test report written to: /work/worktrees/task-535715ec/.antiphon/c1005-baseline-os-proof-valid/Antiphon.Tests-linux-net9.0-report.html
+
+  In process file artifacts produced:
+    - /work/worktrees/task-535715ec/.antiphon/c1005-baseline-os-proof-valid/Antiphon.Tests-linux-net9.0-report.html
+    - /work/worktrees/task-535715ec/.antiphon/c1005-baseline-os-proof-valid/run.trx
+
+Test run summary: Passed! - /work/worktrees/task-535715ec/.antiphon/c1005-current-master/tests/Antiphon.Tests/bin-c1005-master-discovery/Antiphon.Tests.dll (net9.0|x64)
+  total: 29
+  failed: 0
+  succeeded: 2
+  skipped: 27
+  duration: 48s 280ms
+BUILD SLOT released lease=01dce3be-0277-4464-9511-83376ff09713 held=52s
