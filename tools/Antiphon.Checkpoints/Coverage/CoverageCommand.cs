@@ -20,6 +20,10 @@ public sealed class CoverageCommand
             report.Plan = Relative(root, planPath); report.PlanSha256 = PlanCoverageReport.Hash(planText);
             var imported = PlanTableImporter.ImportMarkdown(planText, planPath);
             if (imported.Manifest is null) throw new InvalidDataException("invalid checkpoint manifest");
+            var checklistText = checklist is null ? null : Read(SelectPath(checklist), ConfinedFileReader.DocumentLimit);
+            var contract = new PlanCoverageReader().Read(report.Plan, planText, checklistText);
+            if (contract.Invalid) { report = contract; output.Write(format == "json" ? report.Json() : report.Text()); return report.ExitCode; }
+            var census = contract.SelectedClassCensus ? new ClassCensusSelection() : null;
             var selected = new Dictionary<string, CoverageSource>(PathComparer());
             var explicitSet = new HashSet<string>(PathComparer());
             foreach (var path in tests ?? [])
@@ -45,6 +49,8 @@ public sealed class CoverageCommand
             }
             foreach (var row in imported.Manifest.Checkpoints)
             {
+                var supported = ClassCensusSelection.Supports(row, out _);
+                if (census is not null && !supported) census.Add(row, planText, null);
                 if (row.IsCommand)
                 {
                     if (explicitSet.Count == 0 || checklist is null && !planText.Contains("```plan-coverage-v1", StringComparison.Ordinal))
@@ -59,13 +65,19 @@ public sealed class CoverageCommand
                     continue;
                 }
                 var classOperands = segments[3].Split('|').Select(s => s.Trim('(', ')')).ToArray();
-                if (classOperands.Any(s => !Regex.IsMatch(s, @"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\*?$"))) throw new InvalidDataException("unsupported class filter");
+                if (classOperands.Any(s => !Regex.IsMatch(s, @"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\*?$")))
+                {
+                    if (census is not null && explicitSet.Count > 0) continue;
+                    throw new InvalidDataException("unsupported class filter");
+                }
+                if (census is not null && !supported) continue;
                 var build = imported.Manifest.Builds.Single(b => b.Id == row.Build);
                 var project = SelectPath(build.Project, true);
                 var directory = Directory.Exists(project) ? project : Path.GetDirectoryName(project)!;
                 var candidates = ProjectSources(root, directory, selected.Values, path => Read(path, ConfinedFileReader.SourceLimit));
                 var index = new TestAssertionIndex(candidates);
                 if (index.Diagnostics.Any()) throw new InvalidDataException("invalid selected project syntax");
+                census?.Add(row, planText, index);
                 foreach (var operand in classOperands)
                 {
                     var token = operand.TrimEnd('*'); var suffix = operand.EndsWith('*');
@@ -81,8 +93,7 @@ public sealed class CoverageCommand
                 }
             }
             if (selected.Count == 0) throw new InvalidDataException("empty source selection");
-            var checklistText = checklist is null ? null : Read(SelectPath(checklist), ConfinedFileReader.DocumentLimit);
-            report = new PlanCoverageAnalyzer().Analyze(report.Plan, planText, selected.Values.OrderBy(s => s.Path, StringComparer.Ordinal).ToArray(), checklistText);
+            report = new PlanCoverageAnalyzer().Analyze(report.Plan, planText, selected.Values.OrderBy(s => s.Path, StringComparer.Ordinal).ToArray(), checklistText, census);
             string Read(string path, int limit)
             {
                 inputPath = Relative(root, path);

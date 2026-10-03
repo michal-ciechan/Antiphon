@@ -5,6 +5,9 @@ namespace Antiphon.Checkpoints.Coverage;
 public sealed class PlanCoverageAnalyzer
 {
     public PlanCoverageReport Analyze(string plan, string text, IReadOnlyList<CoverageSource> sources, string? checklist = null)
+        => Analyze(plan, text, sources, checklist, null);
+
+    internal PlanCoverageReport Analyze(string plan, string text, IReadOnlyList<CoverageSource> sources, string? checklist, ClassCensusSelection? selection)
     {
         var report = new PlanCoverageReader().Read(plan, text, checklist);
         var index = new TestAssertionIndex(sources);
@@ -40,6 +43,11 @@ public sealed class PlanCoverageAnalyzer
             void Finding(string code, string detail, string path = "") => report.Diagnostics.Add(new(code, obligation.PlanLine, obligation.PlanColumn, obligation.Id, obligation.Test, obligation.Name, path, Detail: detail));
         }
         ValidateCounts(report, index);
+        if (report.SelectedClassCensus && !report.Invalid)
+        {
+            if (selection is null) report.Diagnostics.Add(new("CLASS_CENSUS_UNMAPPED", Detail: "trusted checkpoint selection context required"));
+            else selection.Compare(report, index);
+        }
         report.Obligations = report.Obligations.OrderBy(o => o.PlanLine).ThenBy(o => o.PlanColumn).ThenBy(o => o.Id, StringComparer.Ordinal)
             .ThenBy(o => o.Kind, StringComparer.Ordinal).ThenBy(o => o.Name, StringComparer.Ordinal).ThenBy(o => o.Test, StringComparer.Ordinal).ToList();
         report.Diagnostics = report.Diagnostics.Distinct().OrderBy(d => d.PlanLine).ThenBy(d => d.PlanColumn).ThenBy(d => d.Id, StringComparer.Ordinal)

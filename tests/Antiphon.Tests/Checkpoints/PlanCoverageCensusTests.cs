@@ -214,7 +214,7 @@ public sealed class PlanCoverageCensusTests : CheckpointTestBase
         Census(Run(Make(source: source, roster: roster.Where(s => s != "A.Data").ToArray()))).ShouldBe(["One.A.Data:selected method absent from checklist"], "c1005-pc-41");
         Census(Run(Make(source: source, roster: roster.Where(s => s != "A.Repeated").ToArray()))).ShouldBe(["One.A.Repeated:selected method absent from checklist"], "c1005-pc-42");
         Census(Run(Make(source: source, roster: roster.Where(s => !s.Contains("Global")).ToArray()))).ShouldBe(["One.A.Global:selected method absent from checklist", "One.A.GlobalSuffix:selected method absent from checklist"], "c1005-pc-93");
-        var dynamic = Make(source: source, roster: roster); File.WriteAllText(dynamic.Plan, File.ReadAllText(dynamic.Plan).Replace("Coverage", "`A` (9 results)"));
+        var dynamic = Make(source: source.Replace("class A", "class ATests"), filter: "/*/*/ATests/*", roster: roster.Select(s => s.Replace("A.", "ATests.")).ToArray()); File.WriteAllText(dynamic.Plan, File.ReadAllText(dynamic.Plan).Replace("Coverage", "`ATests` (9 results)"));
         Run(dynamic).Diagnostics.ShouldContain(d => d.Code == "CHECKLIST_COUNT_UNMAPPED", "c1005-pc-77");
         foreach (var attrs in new[] { "[ClassDataSource(typeof(Cases))]", "" })
         {
@@ -247,7 +247,8 @@ public sealed class PlanCoverageCensusTests : CheckpointTestBase
         Run(Make(source: Two.Replace("class A", "[Explicit] class A"))).Diagnostics.ShouldContain(d => d.Code == "CLASS_CENSUS_UNMAPPED", "c1005-pc-57");
         var known = Make(source: Two.Replace("class A", "class A : B")); Add(known, "tests/Sample/Bases.cs", "namespace One; class B : C { void Helper() {} } class C { [Before(Test)] void Setup() {} }");
         var admitted = Run(known);
-        (admitted.ExitCode, admitted.Sources.Select(s => s.Path).ToArray()).ShouldBe((0, new[] { "tests/Sample/A.cs" }), "c1005-pc-58");
+        admitted.ExitCode.ShouldBe(0, "c1005-pc-58");
+        admitted.Sources.Select(s => s.Path).ShouldBe(["tests/Sample/A.cs"], "c1005-base-sources");
         Run(Make(source: Two + "class Unsafe : Missing { [Test, Explicit] void Decoy() {} }")).ExitCode.ShouldBe(0, "c1005-pc-84");
         Run(Make(source: Two + "class TestAttribute {}" )).Diagnostics.ShouldContain(d => d.Code == "CLASS_CENSUS_UNMAPPED", "c1005-pc-94");
         Run(Make(source: Two.Replace("class A", "[System.CodeDom.Compiler.GeneratedCode(\"g\", \"1\")] class A"))).Diagnostics.ShouldContain(d => d.Code == "CLASS_CENSUS_UNMAPPED", "c1005-pc-95");
@@ -292,22 +293,24 @@ public sealed class PlanCoverageCensusTests : CheckpointTestBase
             var sourceHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(Two)));
             var digest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(r.PlanSha256 + "\n" + r.ChecklistSha256 + "\n" + "tests/Sample/A.cs\0" + sourceHash)));
             r.InputsSha256.ShouldBe(digest, "c1005-pc-71");
-            File.WriteAllText(w.Plan, File.ReadAllText(w.Plan).Replace("Coverage", "`A` (3 results)"));
+            File.WriteAllText(w.Source, Two.Replace("class A", "class ATests"));
+            File.WriteAllText(w.Plan, File.ReadAllText(w.Plan).Replace("/A/", "/ATests/").Replace("Coverage", "`ATests` (3 results)"));
+            File.WriteAllText(w.Checklist, Checklist([Item("ATests.First"), Item("ATests.Second")], flag));
             Run(w).Diagnostics.ShouldContain(d => d.Code == "CHECKLIST_COUNT_MISMATCH" && d.Detail == "results expected=3 actual=2", "c1005-pc-73");
             File.WriteAllText(w.Checklist, Checklist([], flag));
             Run(w).Diagnostics.ShouldNotContain(d => d.Code == "CHECKLIST_COUNT_MISMATCH", "c1005-pc-74");
             File.WriteAllText(w.Plan, File.ReadAllText(w.Plan).Replace("Regression", "All 1 class-qualified methods in the checklist are required."));
             Run(w).Diagnostics.ShouldContain(d => d.Code == "CHECKLIST_COUNT_MISMATCH" && d.Id == "R-1", "c1005-pc-75");
-            var scoped = Make(flag: flag); File.WriteAllText(scoped.Plan, File.ReadAllText(scoped.Plan).Replace("Coverage", "`A` (2 results)"));
-            File.WriteAllText(scoped.Checklist, Checklist([Item("A.First"), Item("A.Second", "R-1")], flag));
+            var scoped = Make(source: Two.Replace("class A", "class ATests"), filter: "/*/*/ATests/*", roster: ["ATests.First", "ATests.Second"], flag: flag); File.WriteAllText(scoped.Plan, File.ReadAllText(scoped.Plan).Replace("Coverage", "`ATests` (2 results)"));
+            File.WriteAllText(scoped.Checklist, Checklist([Item("ATests.First"), Item("ATests.Second", "R-1")], flag));
             Run(scoped).Diagnostics.ShouldContain(d => d.Code == "CHECKLIST_COUNT_MISMATCH" && d.Detail == "results expected=2 actual=1", "c1005-pc-76");
             var helper = Make(roster: ["A.Helper"], flag: flag);
             Run(helper).Obligations.Single().Matches.Count.ShouldBe(1, "c1005-pc-83");
-            var classes = Make(source: Two + "class Other { void Second() {} }", flag: flag);
-            File.WriteAllText(classes.Plan, File.ReadAllText(classes.Plan).Replace("Coverage", "`A` (3 results)"));
-            File.WriteAllText(classes.Checklist, Checklist([Item("A.First"), Item("A.Second"), Item("Other.Second")], flag));
+            var classes = Make(source: Two.Replace("class A", "class ATests") + "class Other { void Second() {} }", filter: "/*/*/ATests/*", flag: flag);
+            File.WriteAllText(classes.Plan, File.ReadAllText(classes.Plan).Replace("Coverage", "`ATests` (3 results)"));
+            File.WriteAllText(classes.Checklist, Checklist([Item("ATests.First"), Item("ATests.Second"), Item("Other.Second")], flag));
             Run(classes).Diagnostics.ShouldContain(d => d.Code == "CHECKLIST_COUNT_MISMATCH" && d.Detail == "results expected=3 actual=2", "c1005-pc-96");
-            File.WriteAllText(scoped.Checklist, Checklist([Item("A.First"), Item("One.A.First"), Item("A.Second")], flag));
+            File.WriteAllText(scoped.Checklist, Checklist([Item("ATests.First"), Item("One.ATests.First"), Item("ATests.Second")], flag));
             Run(scoped).Diagnostics.ShouldBeEmpty("c1005-pc-97");
         }
         Run(Make()).ExitCode.ShouldBe(0, "c1005-opt-in-control");
