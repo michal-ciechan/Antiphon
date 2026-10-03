@@ -1,6 +1,6 @@
 # CARD-0660 V-9 image qualification (Q-1 runtime, Q-2 session-testing; CP-10/11). Evidence
 # tooling, not product. Builds ONE image target in the foreground (or checks a separately built
-# CARD-0904 image with -SkipBuild), then grades eight Codex rows, a Grok version row, plus a net9 offline
+# CARD-0904 image with -SkipBuild), then grades eight Codex rows, Grok and jq version rows, plus a net9 offline
 # apphost row for the SDK-bearing session-testing target by
 # running docker/session-runner-grok/verify-codex-image.sh inside throwaway containers of that
 # image: phone-home disabled, --network none, no published port, no Docker socket, not
@@ -12,7 +12,7 @@
 # is touched.
 #
 # Rows: (1) version (2) layout (3) install-readonly (4) no-baked-auth (5) fresh-home (6) trust
-# (7) preserve (8) config-accepted (9) grok-version; session-testing also grades (10) net9-offline.
+# (7) preserve (8) config-accepted (9) grok-version (10) jq-version; session-testing also grades (11) net9-offline.
 # Exit codes: 0 all applicable rows ok, 1 one or more rows not ok, 2 setup failed (dirty or mismatched
 # source, reused tag, non-fresh results root, no Docker, failed build or image revision mismatch).
 param(
@@ -39,6 +39,7 @@ $rows = [ordered]@{
     'version' = 'unknown'; 'layout' = 'unknown'; 'install-readonly' = 'unknown'; 'no-baked-auth' = 'unknown'
     'fresh-home' = 'unknown'; 'trust' = 'unknown'; 'preserve' = 'unknown'; 'config-accepted' = 'unknown'
     'grok-version' = 'unknown'
+    'jq-version' = 'unknown'
 }
 if ($Target -eq 'session-testing') { $rows['net9-offline'] = 'unknown' }
 $imageId = 'none'
@@ -155,6 +156,7 @@ if ((Invoke-Init 'init-1.txt') -ne 0) { Exit-Qualification 2 'first init-state r
 
 $rows['version'] = Invoke-Probe 'version' '1654:1654' @()
 $rows['grok-version'] = Invoke-Probe 'grok-version' '1654:1654' @()
+$rows['jq-version'] = Invoke-Probe 'jq-version' '1654:1654' @()
 $rows['layout'] = Invoke-Probe 'layout' '1654:1654' @()
 $rows['install-readonly'] = Invoke-Probe 'install-readonly' '1654:1654' @()
 $rows['no-baked-auth'] = Invoke-Probe 'no-baked-auth' '0:0' @()
