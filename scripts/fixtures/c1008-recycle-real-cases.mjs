@@ -8,7 +8,12 @@ import util from 'node:util';
 
 // Ordinary RD evidence only. This fixture never runs from a SourceLanding snapshot.
 const exec = util.promisify(cp.execFile);
-const docker = (...args) => cp.execFileSync('docker', args, {encoding:'utf8', timeout:90000}).trim();
+const commandTimings = [], startedAt = performance.now();
+const docker = (...args) => {
+  const start = performance.now();
+  try { return cp.execFileSync('docker', args, {encoding:'utf8', timeout:90000}).trim(); }
+  finally { commandTimings.push({args, milliseconds:performance.now()-start}); }
+};
 if (!fs.existsSync('/.dockerenv') || docker('info','--format','{{.Name}}') !== os.hostname()) throw Error('SiblingDaemonRefused');
 const root = fs.mkdtempSync('/tmp/c1008-real-');
 console.log('C1008_REAL_ROOT=' + root);
@@ -70,12 +75,21 @@ function createContainer(f, service, running, names, project=f.main, overrideNam
 }
 function cleanupCase(f) {
   if (!f) return;
-  for (const id of runDocker('ps','-aq','--no-trunc','--filter','label='+label+'='+prefix).split('\n').filter(Boolean)) {
-    const fact=JSON.parse(docker('inspect',id))[0];
-    if (fact.Name.startsWith('/'+f.prefix)) {objects.containers.add(id); runDocker('rm','-f','--',id);}
+  const ids=runDocker('ps','-aq','--no-trunc','--filter','label='+label+'='+prefix,'--filter','name='+f.prefix).split('\n').filter(Boolean);
+  if (ids.length) {
+    const facts=JSON.parse(runDocker('inspect',...ids));
+    if (facts.length!==ids.length || facts.some(c=>c.Config.Labels[label]!==prefix || !c.Name.startsWith('/'+f.prefix))) throw Error('CleanupOwnershipMismatch');
+    facts.forEach(c=>objects.containers.add(c.Id));
+    runDocker('rm','-f','--',...facts.map(c=>c.Id));
   }
   const present=new Set(allVolumes());
-  for(const n of [...f.names,f.origin]) if(present.has(n)) runDocker('volume','rm','--',guard(n));
+  const names=[...f.names,f.origin].filter(n=>present.has(n)).map(guard);
+  if(names.length) runDocker('volume','rm','--',...names);
+  for(const id of runDocker('network','ls','-q','--no-trunc','--filter','label='+label+'='+prefix,'--filter','label=com.docker.compose.project='+f.main).split('\n').filter(Boolean)) {
+    const fact=JSON.parse(runDocker('network','inspect',id))[0];
+    if(fact.Labels[label]!==prefix || fact.Labels['com.docker.compose.project']!==f.main) throw Error('CleanupOwnershipMismatch');
+    objects.networks.add(id);runDocker('network','rm',id);
+  }
 }
 function fixture(mainReplacement=true) {
   cleanupCase(active);
@@ -93,7 +107,7 @@ function fixture(mainReplacement=true) {
     const volumes=Object.fromEntries([...roles.map(r=>[r,{name:project+'_'+r}]),...cacheRoles.map((r,i)=>['runner-'+r,{name:f.caches[i],external:true}])]);
     const services={'session-runner':{image,init:true,command:['sleep','infinity'],labels:{[label]:prefix},volumes:[...roles,...cacheRoles.map(r=>'runner-'+r)].map((r,i)=>r+':'+mounts[i])},
       'state-init':{image,command:['true'],labels:{[label]:prefix},volumes:['work:/work','runner-state:/state']}};
-    fs.writeFileSync(f.root+'/'+project+'.json',JSON.stringify({services,volumes}));
+    fs.writeFileSync(f.root+'/'+project+'.json',JSON.stringify({services,volumes,networks:{default:{labels:{[label]:prefix}}}}));
   }
   cacheRoles.forEach((r,i)=>createVolume(f.caches[i],['io.antiphon.owner=server2-runner','io.antiphon.cache-schema=1','io.antiphon.cache-role='+r]));
   f.names.slice(11).forEach(n=>createVolume(n,[])); createVolume(f.origin,[]);
@@ -178,7 +192,7 @@ build_server2_images() {
 function record(result,check) {
   check(result); preservation(result.f);
   const fact={name:result.name,version:result.version,exit:result.exit,diagnosis:result.diagnosis,accepted:result.accepted,operation:result.f.op,journal:result.journal};
-  results.push(fact); console.log('C1008_REAL '+JSON.stringify({...fact,journal:undefined}));
+  results.push(fact); console.log('C1008_REAL '+JSON.stringify({...fact,journal:undefined,elapsedMilliseconds:performance.now()-startedAt}));
 }
 const refused = r => {if(r.exit!==2||r.accepted!==false)throw Error('ExpectedRefusal:'+r.name); for(const n of roles.slice(0,3).map(x=>(r.f.mainReplacement?r.f.main:r.f.temp)+'_'+x)) payload(r.f,n);};
 const reclaimed = r => {if(r.exit!==0||!r.accepted)throw Error('ExpectedSuccess:'+r.name+':'+r.diagnosis);};
@@ -259,22 +273,29 @@ try {
 } catch(e) {failure=e;console.error(e.stack);}
 finally {
   // Discover Compose-created objects through the fixture's exact ownership label.
-  for(const id of runDocker('ps','-aq','--no-trunc','--filter','label='+label+'='+prefix).split('\n').filter(Boolean)) {
-    if(JSON.parse(docker('inspect',id))[0].Config.Labels[label]!==prefix)throw Error('CleanupOwnershipMismatch'); objects.containers.add(id);
+  const ownedIds=runDocker('ps','-aq','--no-trunc','--filter','label='+label+'='+prefix).split('\n').filter(Boolean);
+  if(ownedIds.length) for(const c of JSON.parse(runDocker('inspect',...ownedIds))) {
+    if(c.Config.Labels[label]!==prefix)throw Error('CleanupOwnershipMismatch');objects.containers.add(c.Id);
   }
   const presentContainers=new Set(runDocker('ps','-aq','--no-trunc').split('\n'));
-  for(const id of objects.containers) if(presentContainers.has(id))runDocker('rm','-f','--',id);
+  const removeIds=[...objects.containers].filter(id=>presentContainers.has(id));
+  if(removeIds.length)runDocker('rm','-f','--',...removeIds);
   const presentVolumes=new Set(allVolumes());
-  for(const n of objects.volumes)if(presentVolumes.has(n))runDocker('volume','rm','--',guard(n));
-  for(const id of runDocker('network','ls','-q','--filter','label=com.docker.compose.project').split('\n').filter(Boolean)) {
-    const facts=JSON.parse(docker('network','inspect',id))[0]; if(facts.Labels?.['com.docker.compose.project']?.startsWith(prefix)){objects.networks.add(id);runDocker('network','rm',id);}
+  const removeNames=[...objects.volumes].filter(n=>presentVolumes.has(n)).map(guard);
+  if(removeNames.length)runDocker('volume','rm','--',...removeNames);
+  for(const id of runDocker('network','ls','-q','--no-trunc','--filter','label='+label+'='+prefix).split('\n').filter(Boolean)) {
+    const facts=JSON.parse(runDocker('network','inspect',id))[0];
+    if(facts.Labels?.[label]!==prefix || !facts.Labels?.['com.docker.compose.project']?.startsWith(prefix))throw Error('CleanupOwnershipMismatch');
+    objects.networks.add(id);runDocker('network','rm',id);
   }
   for(const n of objects.images)if(cp.spawnSync('docker',['image','inspect',guard(n)],{encoding:'utf8'}).status===0)runDocker('image','rm',guard(n));
   const remaining=runDocker('ps','-aq','--no-trunc','--filter','label='+label+'='+prefix);
   const finalVolumes=new Set(allVolumes());
   if(remaining||[...objects.volumes].some(n=>finalVolumes.has(n))||[...objects.images].some(n=>cp.spawnSync('docker',['image','inspect',n],{encoding:'utf8'}).status===0))throw Error('FixtureResidue');
+  const finalNetworks=new Set(runDocker('network','ls','-q','--no-trunc').split('\n'));
+  if([...objects.networks].some(id=>finalNetworks.has(id)))throw Error('FixtureNetworkResidue');
   await new Promise(resolve=>endpoint.close(resolve));
-  fs.writeFileSync(root+'/evidence.json',JSON.stringify({source,base,scriptDigests:{base:hash(scripts.B),changed:hash(scripts.C)},docker:docker('version','--format','{{.Server.Version}}'),compose:docker('compose','version','--short'),prefix,results,failure:failure?.message||null,cleanup:'all recorded containers, volumes, networks and fixture image absent',objects:Object.fromEntries(Object.entries(objects).map(([k,v])=>[k,[...v]])),commands,shims:['lane/root relocation','private HTTP status/task endpoint','sudo through owned nested-root namespace helper','fixed helper-image pin and origin fixture mount','expensive build/provider startup boundary with real Compose up','controlled rm/ps faults','df capacity only for RD-12'],realDf},null,2));
+  fs.writeFileSync(root+'/evidence.json',JSON.stringify({source,base,scriptDigests:{base:hash(scripts.B),changed:hash(scripts.C)},docker:docker('version','--format','{{.Server.Version}}'),compose:docker('compose','version','--short'),prefix,results,failure:failure?.message||null,cleanup:'all recorded containers, volumes, networks and fixture image absent',objects:Object.fromEntries(Object.entries(objects).map(([k,v])=>[k,[...v]])),commands,commandTimings,elapsedMilliseconds:performance.now()-startedAt,shims:['lane/root relocation','private HTTP status/task endpoint','sudo through owned nested-root namespace helper','fixed helper-image pin and origin fixture mount','expensive build/provider startup boundary with real Compose up','controlled rm/ps faults','df capacity only for RD-12'],realDf},null,2));
   console.log('C1008_REAL cases='+results.length+' base='+results.filter(r=>r.version==='B').length+' changed='+results.filter(r=>r.version==='C').length+' failures='+(failure?1:0)+' cleanup=absent evidence='+root+'/evidence.json');
 }
 if(failure)process.exit(1);
