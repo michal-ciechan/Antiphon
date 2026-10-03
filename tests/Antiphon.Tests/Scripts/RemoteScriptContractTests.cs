@@ -32,6 +32,22 @@ public sealed class RemoteScriptContractTests
         ledger["containers"]!.AsArray().Single(x => x!["Id"]!.GetValue<string>() == new string('3', 64))!
             ["State"]!["Running"]!.GetValue<bool>().ShouldBeTrue("recycle-exact-defaults: broker survives");
         f.Trace.Any(a => a.Contains("prune")).ShouldBeFalse("recycle-exact-defaults: never prune");
+        using (var plain = new C1008HostFixture())
+        {
+            foreach (var volume in plain.Docker["volumes"]!.AsObject()) volume.Value!["Options"] = null;
+            var accepted = await plain.Run();
+            plain.Removed.Length.ShouldBe(3, "recycle-exact-defaults: Docker local volumes report Options:null; " + accepted.Output);
+            accepted.Exit.ShouldBe(0);
+        }
+        foreach (var options in new JsonNode?[] { JsonValue.Create(""), JsonValue.Create(false), new JsonArray(),
+                     new JsonObject { ["device"] = "/foreign" } })
+        {
+            using var bad = new C1008HostFixture();
+            bad.Docker["volumes"]!["antiphon-runner_work"]!["Options"] = options?.DeepClone();
+            var refused = await bad.Run();
+            bad.Removed.ShouldBeEmpty("recycle-exact-defaults: malformed/nonempty volume options retain every target");
+            refused.Exit.ShouldBe(2);
+        }
         foreach (var role in new[] { "work", "runner-tmp", "dind-data", "runner-state" })
         foreach (var mutation in new[] { "external", "name", "label" })
         {
