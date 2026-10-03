@@ -925,3 +925,18 @@ Its delta from pinned bb5fa774 contains no tests, checkpoint implementation or
 namespace-census changes, so the frozen counts remain 86 / 377 / 4,000. A
 comparison discovery run will use its own detached checkout and owned output;
 ordinary verification in this task remains sequential with committed source.
+Comparison result: current-master's gated isolated test build completed in 133s,
+then the old CP-2 expression remained before any result for a diagnostic-only
+120s execution probe (exit 124, no TRX). Thus the delay is reproducible without
+this card's implementation. The earlier `--list-tests` probe returned all 14,151
+cases in 3.721s because that mode ignores the execution filter; it is explicitly
+not a filter-admission or Unit receipt. Both probes are unlisted diagnosis only.
+Logs: `.antiphon/c1005-current-master-build.log`,
+`.antiphon/c1005-master-old-discovery.log`,
+`.antiphon/c1005-master-execution-probe.log`. Their slots were granted, waited=0s.
+The ordinary continuation reruns only the repaired red CP-2 row through the
+checkpoint tool. It also gives fresh executions for every CP-1 class and its
+namespace guard because all ten classes are Unit. Existing green CP-1/CP-3
+receipts stay source-qualified to their predecessor SHA; no fourth legacy JSON
+proof repetition is commissioned. CP-2 and R-5 share one whole-Unit execution;
+there is no second overlapping Unit build/run.
