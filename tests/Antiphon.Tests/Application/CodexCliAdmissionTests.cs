@@ -763,7 +763,7 @@ public sealed class CodexCliAdmissionTests
         public Task ResizeAsync(Guid id, int cols, int rows, CancellationToken ct) => throw new NotSupportedException();
         public Task<SessionRunnerSessionDto> KillAsync(Guid id, CancellationToken ct) => ConfirmAbsentProcess
             ? Task.FromResult(Absent(id)) : throw new NotSupportedException();
-        private static SessionRunnerSessionDto Absent(Guid id) => new(id, null, DateTime.UtcNow, "Exited", 0, "", 0);
+        private static SessionRunnerSessionDto Absent(Guid id) => new(id, null, DateTime.UtcNow, "Exited", 0, AgentExitReason.Unknown, 0);
         public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(CancellationToken ct) { await Task.CompletedTask; yield break; }
     }
     internal static AgentRegistrySettings Registry() => new()
