@@ -136,7 +136,7 @@ public sealed class CodexCliAdmissionTests
             new RunnerCodexCliVersionDto("0.160.0", T.AddMinutes(-16), null, new string('a',64)),
         })
         {
-            await using var k = await DispatchKit.CreateAsync();
+            await using var k = await DispatchKit.BuildAsync();
             var created = await k.CreateAsync();
             k.Client.Sample = sample;
             await k.TickAsync();
@@ -261,14 +261,14 @@ public sealed class CodexCliAdmissionTests
     [Test]
     public async Task C959_Compatible_launch_keeps_model_and_runner()
     {
-        await using (var refused = await DispatchKit.CreateAsync())
+        await using (var refused = await DispatchKit.BuildAsync())
         {
             refused.Client.Sample = new("0.159.0", T, null, new string('a',64));
             (await FailureAsync(() => refused.CreateAsync())).ShouldNotBeNull("C959-v21-admission-before-delivery");
         }
         foreach (var version in new[] { "0.159.1", "0.160.0" })
         {
-            await using var k = await DispatchKit.CreateAsync();
+            await using var k = await DispatchKit.BuildAsync();
             k.Client.Sample = new(version, T, null, new string('a',64));
             var task = await k.CreateAsync();
             await k.TickAsync();
@@ -367,7 +367,7 @@ public sealed class CodexCliAdmissionTests
         public required Client Client { get; init; }
         public required Factory Factory { get; init; }
         public AppDbContext Context() => new(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
-        public static async Task<DispatchKit> CreateAsync()
+        public static async Task<DispatchKit> BuildAsync()
         {
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             var client = new Client();
