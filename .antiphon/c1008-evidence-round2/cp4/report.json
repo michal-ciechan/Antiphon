@@ -1,0 +1,352 @@
+{
+  "schemaVersion": 2,
+  "source": {
+    "version": 1,
+    "start": {
+      "commit": "63306c0fe9ba163f8770227d75038f8fe68ba176",
+      "dirtyFiles": 0,
+      "fingerprint": "66ee553941b5a990bc7f3c65a2a8ce54acc901094812da86ca18a2fca4f4b773",
+      "observedAtUtc": "2026-10-03T16:24:36.141653+00:00",
+      "captureStatus": "known",
+      "errorCode": null
+    },
+    "end": {
+      "commit": "63306c0fe9ba163f8770227d75038f8fe68ba176",
+      "dirtyFiles": 0,
+      "fingerprint": "66ee553941b5a990bc7f3c65a2a8ce54acc901094812da86ca18a2fca4f4b773",
+      "observedAtUtc": "2026-10-03T16:31:57.8935676+00:00",
+      "captureStatus": "known",
+      "errorCode": null
+    },
+    "state": "clean",
+    "buildSource": "verified"
+  },
+  "runId": "20261003-162435-85ca",
+  "manifestPath": "/work/worktrees/task-1b2e83e3/.antiphon/checkpoints/20261003-162435-85ca/manifest.resolved.yaml",
+  "manifestHash": "363db742c449b14f87d775f21f246990d146a5d09f7169be2a5ba7e38dda4908",
+  "commit": "63306c0fe9ba163f8770227d75038f8fe68ba176",
+  "branch": "feat/card-task-1b2e83e3",
+  "worktree": "/work/worktrees/task-1b2e83e3",
+  "host": {
+    "os": "Debian GNU/Linux 12 (bookworm)",
+    "cores": 24,
+    "memAvailableMb": 100143,
+    "loadAvg": "21.87 21.28 15.98 3/3337 19130"
+  },
+  "startedAt": "2026-10-03T16:24:37.8279143+00:00",
+  "endedAt": "2026-10-03T16:31:57.9074083+00:00",
+  "wallSeconds": 440.079494,
+  "sequentialEquivalentSeconds": 198.58790290000002,
+  "exitCode": 1,
+  "reason": null,
+  "verdict": "RED",
+  "builds": [
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": null,
+          "dirtyFiles": null,
+          "fingerprint": null,
+          "observedAtUtc": "2026-10-03T16:24:38.1888481+00:00",
+          "captureStatus": "unknown",
+          "errorCode": "not_observed"
+        },
+        "end": null,
+        "state": "unknown",
+        "buildSource": "unknown"
+      },
+      "id": "bin-c1008-red",
+      "project": "tests/Antiphon.Tests",
+      "state": "unused",
+      "seconds": 0,
+      "slot": "",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": null,
+          "dirtyFiles": null,
+          "fingerprint": null,
+          "observedAtUtc": "2026-10-03T16:24:38.1892891+00:00",
+          "captureStatus": "unknown",
+          "errorCode": "not_observed"
+        },
+        "end": null,
+        "state": "unknown",
+        "buildSource": "unknown"
+      },
+      "id": "bin-c1008-scripts",
+      "project": "tests/Antiphon.Tests",
+      "state": "unused",
+      "seconds": 0,
+      "slot": "",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": null,
+          "dirtyFiles": null,
+          "fingerprint": null,
+          "observedAtUtc": "2026-10-03T16:24:38.1892902+00:00",
+          "captureStatus": "unknown",
+          "errorCode": "not_observed"
+        },
+        "end": null,
+        "state": "unknown",
+        "buildSource": "unknown"
+      },
+      "id": "bin-c1008-cache",
+      "project": "tests/Antiphon.Tests",
+      "state": "unused",
+      "seconds": 0,
+      "slot": "",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": "63306c0fe9ba163f8770227d75038f8fe68ba176",
+          "dirtyFiles": 0,
+          "fingerprint": "66ee553941b5a990bc7f3c65a2a8ce54acc901094812da86ca18a2fca4f4b773",
+          "observedAtUtc": "2026-10-03T16:24:36.141653+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "end": {
+          "commit": "63306c0fe9ba163f8770227d75038f8fe68ba176",
+          "dirtyFiles": 0,
+          "fingerprint": "66ee553941b5a990bc7f3c65a2a8ce54acc901094812da86ca18a2fca4f4b773",
+          "observedAtUtc": "2026-10-03T16:26:32.9360713+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "state": "clean",
+        "buildSource": "verified"
+      },
+      "id": "bin-c1008-docs",
+      "project": "tests/Antiphon.Tests",
+      "state": "ok",
+      "seconds": 114.513586,
+      "slot": "granted",
+      "slotReason": null,
+      "waitedSeconds": 0
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": "63306c0fe9ba163f8770227d75038f8fe68ba176",
+          "dirtyFiles": 0,
+          "fingerprint": "66ee553941b5a990bc7f3c65a2a8ce54acc901094812da86ca18a2fca4f4b773",
+          "observedAtUtc": "2026-10-03T16:24:36.141653+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "end": {
+          "commit": "63306c0fe9ba163f8770227d75038f8fe68ba176",
+          "dirtyFiles": 0,
+          "fingerprint": "66ee553941b5a990bc7f3c65a2a8ce54acc901094812da86ca18a2fca4f4b773",
+          "observedAtUtc": "2026-10-03T16:29:24.7198324+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "state": "clean",
+        "buildSource": "verified"
+      },
+      "id": "bin-c1008-real",
+      "project": "tests/Antiphon.Tests",
+      "state": "ok",
+      "seconds": 125.6543455,
+      "slot": "granted",
+      "slotReason": null,
+      "waitedSeconds": 0
+    }
+  ],
+  "rows": [
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": "63306c0fe9ba163f8770227d75038f8fe68ba176",
+          "dirtyFiles": 0,
+          "fingerprint": "66ee553941b5a990bc7f3c65a2a8ce54acc901094812da86ca18a2fca4f4b773",
+          "observedAtUtc": "2026-10-03T16:24:36.141653+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "end": {
+          "commit": "63306c0fe9ba163f8770227d75038f8fe68ba176",
+          "dirtyFiles": 0,
+          "fingerprint": "66ee553941b5a990bc7f3c65a2a8ce54acc901094812da86ca18a2fca4f4b773",
+          "observedAtUtc": "2026-10-03T16:27:18.6791533+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "state": "clean",
+        "buildSource": "verified"
+      },
+      "id": "CP-4",
+      "group": "linux-compose-doc-contract",
+      "filter": "/*/*/(DockerStackContractTests*)|(DindRunnerContractTests*)|(DockerStackSmokeCommandTests*)|(DockerStackDocumentationTests*)|(CheckpointImportTests*)|(CheckpointManifestTests*)/*",
+      "command": null,
+      "build": "bin-c1008-docs",
+      "state": "green",
+      "exitCode": 0,
+      "slot": "granted",
+      "slotReason": null,
+      "waitedSeconds": 0,
+      "executed": 207,
+      "passed": 207,
+      "failed": 0,
+      "skipped": 0,
+      "reruns": 0,
+      "trx": "/work/worktrees/task-1b2e83e3/.antiphon/checkpoints/20261003-162435-85ca/rows/CP-4/run.trx",
+      "seconds": 45.7087314,
+      "line": "CHECKPOINT CP-4 commit=63306c0fe9ba163f8770227d75038f8fe68ba176 build=ok filter=/*/*/(DockerStackContractTests*)|(DindRunnerContractTests*)|(DockerStackSmokeCommandTests*)|(DockerStackDocumentationTests*)|(CheckpointImportTests*)|(CheckpointManifestTests*)/* executed=207 passed=207 failed=0 skipped=0 trx=/work/worktrees/task-1b2e83e3/.antiphon/checkpoints/20261003-162435-85ca/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=63306c0fe9ba163f8770227d75038f8fe68ba176 sourceState=clean buildSource=verified",
+      "failures": [],
+      "rerunLines": [],
+      "slowClasses": [
+        {
+          "className": "Antiphon.Tests.Scripts.DockerStackSmokeCommandTests",
+          "seconds": 38.656126799999996,
+          "tests": 35
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointImportTests",
+          "seconds": 0.8736934000000001,
+          "tests": 20
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.DindRunnerContractTests",
+          "seconds": 0.23394130000000002,
+          "tests": 23
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.DockerStackContractTests",
+          "seconds": 0.1503732,
+          "tests": 112
+        },
+        {
+          "className": "Antiphon.Tests.Infrastructure.DockerStackDocumentationTests",
+          "seconds": 0.1020122,
+          "tests": 11
+        },
+        {
+          "className": "Antiphon.Tests.Checkpoints.CheckpointManifestTests",
+          "seconds": 0.021226,
+          "tests": 6
+        }
+      ],
+      "attempt": 1,
+      "repeat": null,
+      "timings": {
+        "slotWaitSeconds": 0,
+        "buildSlotWaitSeconds": 0,
+        "rowSlotWaitSeconds": 0,
+        "buildSeconds": 114.513586,
+        "producingBuild": "bin-c1008-docs",
+        "startupSeconds": 4.4018708,
+        "testsWallSeconds": 40.1955244,
+        "teardownSeconds": 0.6311821,
+        "testHostWallSeconds": 45.228589,
+        "method": "utc-trx-and-monotonic-host",
+        "unavailableReason": null
+      }
+    },
+    {
+      "source": {
+        "version": 1,
+        "start": {
+          "commit": "63306c0fe9ba163f8770227d75038f8fe68ba176",
+          "dirtyFiles": 0,
+          "fingerprint": "66ee553941b5a990bc7f3c65a2a8ce54acc901094812da86ca18a2fca4f4b773",
+          "observedAtUtc": "2026-10-03T16:24:36.141653+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "end": {
+          "commit": "63306c0fe9ba163f8770227d75038f8fe68ba176",
+          "dirtyFiles": 0,
+          "fingerprint": "66ee553941b5a990bc7f3c65a2a8ce54acc901094812da86ca18a2fca4f4b773",
+          "observedAtUtc": "2026-10-03T16:31:57.644561+00:00",
+          "captureStatus": "known",
+          "errorCode": null
+        },
+        "state": "clean",
+        "buildSource": "verified"
+      },
+      "id": "CP-5",
+      "group": "linux-isolated-docker",
+      "filter": "/*/*/RollingVolumeRecycleDockerTests/C1008_Real_docker_comparison",
+      "command": null,
+      "build": "bin-c1008-real",
+      "state": "red",
+      "exitCode": 1,
+      "slot": "granted",
+      "slotReason": null,
+      "waitedSeconds": 0,
+      "executed": 1,
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "reruns": 0,
+      "trx": "/work/worktrees/task-1b2e83e3/.antiphon/checkpoints/20261003-162435-85ca/rows/CP-5/run.trx",
+      "seconds": 152.8791715,
+      "line": "CHECKPOINT CP-5 commit=63306c0fe9ba163f8770227d75038f8fe68ba176 build=ok filter=/*/*/RollingVolumeRecycleDockerTests/C1008_Real_docker_comparison executed=1 passed=0 failed=1 skipped=0 trx=/work/worktrees/task-1b2e83e3/.antiphon/checkpoints/20261003-162435-85ca/rows/CP-5/run.trx slot=granted waited=0s dirty=0 source=63306c0fe9ba163f8770227d75038f8fe68ba176 sourceState=clean buildSource=verified",
+      "failures": [
+        {
+          "name": "Antiphon.Tests.Scripts.RollingVolumeRecycleDockerTests.C1008_Real_docker_comparison",
+          "message": "ShouldAssertException: child.ExitCode\n    should be\n0\n    but was\n1\n\nAdditional Info:\n    recycle-real-comparison: real Docker/Git outcomes; C1008_REAL_ROOT=/tmp/c1008-real-Kh9gPU\nC1008_REAL {\u0022name\u0022:\u0022B-default\u0022,\u0022version\u0022:\u0022B\u0022,\u0022exit\u0022:0,\u0022diagnosis\u0022:\u0022\u0022,\u0022accepted\u0022:true,\u0022operation\u0022:\u0022c100880137096512d85a8c98df528ceaf6a9e\u0022}\nC1008_REAL cases=1 base=1 changed=0 failures=1 cleanup=absent evidence=/tmp/c1008-real-Kh9gPU/evidence.json\nDEPRECATED: The legacy builder is deprecated and will be removed in a future release.\n            Install the buildx component to build images with BuildKit:\n            https://docs.docker.com/go/buildx/\n\n Network c1008rdee9317ebd491c137ce9888ba1main_default  Creating\n Network c1008rdee9317ebd491c137ce9888ba1main_default  Created\n Container c1008rdee9317ebd491c137ce9888ba1main-session-runner-1  Creating\n Container c1008rdee9317ebd491c137ce9888ba1main-state-init-1  Creating\n Container c1008rdee9317ebd491c137ce9888ba1main-session-runner-1  Created\n Container c1008rdee9317ebd491c137ce9888ba1main-state-init-1  Created\n Container c1008rdee9317ebd491c137ce9888ba1main-state-init-1  Starting\n Container c1008rdee9317ebd491c137ce9888ba1main-session-runner-1  Starting\n Container c1008rdee9317ebd491c137ce9888ba1main-session-runner-1  Started\n Container c1008rdee9317ebd491c137ce9888ba1main-state-init-1  Started\n Network c1008rdee9317ebd491c137c8cbf766emain_default  Creating\n Network c1008rdee9317ebd491c137c8cbf766emain_default  Created\n Container c1008rdee9317ebd491c137c8cbf766emain-session-runner-1  Creating\n Container c1008rdee9317ebd491c137c8cbf766emain-state-init-1  Creating\n Container c1008rdee9317ebd491c137c8cbf766emain-session-runner-1  Created\n Container c1008rdee9317ebd491c137c8cbf766emain-state-init-1  Created\n Container c1008rdee9317ebd491c137c8cbf766emain-state-init-1  Starting\n Container c1008rdee9317ebd491c137c8cbf766emain-session-runner-1  Starting\n Container c1008rdee9317ebd491c137c8cbf766emain-state-init-1  Started\n Container c1008rdee9317ebd491c137c8cbf766emain-session-runner-1  Started\nError: ExpectedSuccess:C-default:UnhandledExit 1\n    at reclaimed (file:///work/worktrees/task-1b2e83e3/scripts/fixtures/c1008-recycle-real-cases.mjs:167:58)\n    at file:///work/worktrees/task-1b2e83e3/scripts/fixtures/c1008-recycle-real-cases.mjs:193:18\n    at record (file:///work/worktrees/task-1b2e83e3/scripts/fixtures/c1008-recycle-real-cases.mjs:162:3)\n    at file:///work/worktrees/task-1b2e83e3/scripts/fixtures/c1008-recycle-real-cases.mjs:193:5\n    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)\n",
+          "stackTrace": "   at Antiphon.Tests.Scripts.RollingVolumeRecycleDockerTests.C1008_Real_docker_comparison() in /work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/Scripts/RollingVolumeRecycleDockerTests.cs:line 30\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()\n   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)\n   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)\n   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---",
+          "stdOut": "[CARD-0204] SessionRunner__BaseUrl=http://127.0.0.1:1, Delegation__CheckInterpreterEnabled=false, Delegation__DiagnoseEnabled=false and Delegation__OutputDistillerEnabled=false for every Program boot in this assembly (inherited SessionRunner__BaseUrl=\u0027\u003Cunset\u003E\u0027) - test hosts never launch on the production session-runner.\n[CARD-0298] Hangfire__ServerEnabled=false for every Program boot in this assembly - test hosts never start a Hangfire worker (no WMI census, no production-runner list).\n[CARD-0045] cleared inherited ANTIPHON_PTY_BACKEND=\u0027inbox\u0027 \u2014 pty tests declare their backend; the suite means the same thing whoever launched it.\n",
+          "baseline": null,
+          "durationSeconds": 147.6436834
+        }
+      ],
+      "rerunLines": [],
+      "slowClasses": [
+        {
+          "className": "Antiphon.Tests.Scripts.RollingVolumeRecycleDockerTests",
+          "seconds": 147.6436834,
+          "tests": 1
+        }
+      ],
+      "attempt": 1,
+      "repeat": null,
+      "timings": {
+        "slotWaitSeconds": 0,
+        "buildSlotWaitSeconds": 0,
+        "rowSlotWaitSeconds": 0,
+        "buildSeconds": 125.6543455,
+        "producingBuild": "bin-c1008-real",
+        "startupSeconds": 4.073661,
+        "testsWallSeconds": 147.6436834,
+        "teardownSeconds": 0.7925061,
+        "testHostWallSeconds": 152.5098503,
+        "method": "utc-trx-and-monotonic-host",
+        "unavailableReason": null
+      }
+    }
+  ],
+  "unlisted": [],
+  "evidence": "/work/worktrees/task-1b2e83e3/.antiphon/checkpoints/20261003-162435-85ca/report.md",
+  "cleanedOutputs": false,
+  "outputNames": [
+    "bin-c1008-red/",
+    "bin-c1008-scripts/",
+    "bin-c1008-cache/",
+    "bin-c1008-docs/",
+    "bin-c1008-real/"
+  ],
+  "maxConcurrentRows": 1,
+  "maxConcurrentBuilds": 1
+}

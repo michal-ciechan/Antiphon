@@ -1,0 +1,1638 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="e04826fd-5df1-4165-86a0-e7a0e1db3f02" name="@5d9e09695ab3 2026-10-03 17:43:27.2849078" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-10-03T17:40:42.8669734Z" queuing="2026-10-03T17:40:42.8669734Z" start="2026-10-03T17:40:42.8669734Z" finish="2026-10-03T17:43:27.2863958Z" />
+  <TestSettings name="default" id="e0f192b7-2f94-4704-ad5c-d615dc11889e">
+    <Deployment runDeploymentRoot="_5d9e09695ab3_2026-10-03_17_43_27.2849078" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="9721f9b3-d696-4609-9b89-5c9753026493" testId="ac8360ca-71cd-f405-10c6-1194d2a9a74f" testName="C944_All_cache_loop_variables_are_local" computerName="5d9e09695ab3" duration="00:00:00.1233270" startTime="2026-10-03T17:40:45.1545025+00:00" endTime="2026-10-03T17:40:45.2778295+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="9721f9b3-d696-4609-9b89-5c9753026493">
+      <Output>
+        <StdOut>[CARD-0204] SessionRunner__BaseUrl=http://127.0.0.1:1, Delegation__CheckInterpreterEnabled=false, Delegation__DiagnoseEnabled=false and Delegation__OutputDistillerEnabled=false for every Program boot in this assembly (inherited SessionRunner__BaseUrl='&lt;unset&gt;') - test hosts never launch on the production session-runner.
+[CARD-0298] Hangfire__ServerEnabled=false for every Program boot in this assembly - test hosts never start a Hangfire worker (no WMI census, no production-runner list).
+[CARD-0045] cleared inherited ANTIPHON_PTY_BACKEND='inbox' — pty tests declare their backend; the suite means the same thing whoever launched it.
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="ce1a784d-443f-4bb3-9af1-7c481d69dffa" testId="f8e9ed8d-0496-1417-3dad-752631bb5c99" testName="C849_Docker_volume_paths_have_no_bare_host_reads" computerName="5d9e09695ab3" duration="00:00:00.0255458" startTime="2026-10-03T17:40:45.3022524+00:00" endTime="2026-10-03T17:40:45.3277982+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="ce1a784d-443f-4bb3-9af1-7c481d69dffa" />
+    <UnitTestResult executionId="166e3a30-115d-429c-90b0-61d9b973b339" testId="799c7180-2a66-2afc-9f36-5c2dc09b2946" testName="C849_Prune_preview_is_read_only_and_bounded" computerName="5d9e09695ab3" duration="00:00:00.0163088" startTime="2026-10-03T17:40:45.3290893+00:00" endTime="2026-10-03T17:40:45.3453981+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="166e3a30-115d-429c-90b0-61d9b973b339">
+      <Output>
+        <StdOut>79=OK
+80=WARN
+99=WARN
+100=OVER
+101=OVER
+below=LOW
+at=OK
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="66409ea1-177b-4660-b83c-a919445a86fa" testId="c18b3174-deb9-b1d7-a928-b90be480e161" testName="C849_Prune_and_rollback_retain_roots_and_recovery" computerName="5d9e09695ab3" duration="00:00:00.0876750" startTime="2026-10-03T17:40:45.3459037+00:00" endTime="2026-10-03T17:40:45.4335787+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="66409ea1-177b-4660-b83c-a919445a86fa">
+      <Output>
+        <StdOut>exit=0
+root-retained
+selected-cleared
+recovery-retained
+clear /tmp/tmp.bMAJ6cuAVz/volumes/packages
+refill /tmp/tmp.bMAJ6cuAVz/volumes/packages
+clear /tmp/tmp.bMAJ6cuAVz/volumes/scratch
+clear /tmp/tmp.bMAJ6cuAVz/volumes/npm
+smoke-after-refill
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="21169f92-a8a3-4de1-a205-d83e1de24445" testId="47836ab0-e48d-9436-fe74-0f814ca8c761" testName="C849_Cache_receipts_exclude_credentials_and_payloads" computerName="5d9e09695ab3" duration="00:00:00.0116783" startTime="2026-10-03T17:40:45.4343407+00:00" endTime="2026-10-03T17:40:45.4460190+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="21169f92-a8a3-4de1-a205-d83e1de24445">
+      <Output>
+        <StdOut>aggregates-retained
+toxic-code=2 diagnosis=EvidenceNotAllowListed
+toxic-not-exported
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="c14933a1-b82f-4224-8d46-447e5f02e63a" testId="73e1dba2-0e66-e4ce-d511-945cd5025271" testName="C912_Cold_seed_with_unrelated_bind_initializes_only_three_labelled_roots" computerName="5d9e09695ab3" duration="00:00:03.2591672" startTime="2026-10-03T17:40:45.4465072+00:00" endTime="2026-10-03T17:40:48.7056744+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="c14933a1-b82f-4224-8d46-447e5f02e63a">
+      <Output>
+        <StdOut>C912_JQ_AVAILABLE
+
+C912_TEST_ROOT=/tmp/c912-cold-lnanHmNi
+RESULT accepted=true diagnosis=
+cold-seed-accepted
+init-targets-packages-scratch-npm-in-order
+no-unlabelled-volume
+all-three-labelled-owned-0700
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="ee817f51-6aea-4e9b-b3e1-47798575e93e" testId="263054c0-aab0-420b-0dcd-dca6af8dc0a8" testName="C912_Cold_seed_refuses_when_created_volume_disappears_before_init" computerName="5d9e09695ab3" duration="00:00:00.8084798" startTime="2026-10-03T17:40:48.7074975+00:00" endTime="2026-10-03T17:40:49.5159773+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="ee817f51-6aea-4e9b-b3e1-47798575e93e">
+      <Output>
+        <StdOut>C912_TEST_ROOT=/tmp/c912-cold-L3kK1XHT
+RESULT accepted=false diagnosis=CacheFirstSeedPreconditionUnknown
+no-accepted-marker
+no-unlabelled-auto-created-volume
+no-init-against-absent-volume
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="27a0edde-bf12-4d05-83ed-6ce8c11b7cf8" testId="9019da97-e0a6-17d5-d272-bd0e2463a792" testName="C912_Cold_volumes_seed_accepts_busy_main_without_packages" computerName="5d9e09695ab3" duration="00:00:49.9115019" startTime="2026-10-03T17:40:49.5172205+00:00" endTime="2026-10-03T17:41:39.4287224+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="27a0edde-bf12-4d05-83ed-6ce8c11b7cf8">
+      <Output>
+        <StdOut>C912_TEST_ROOT=/tmp/c912-cold-pBhzea7W
+RESULT accepted=true diagnosis=
+cold-ready
+only-absent-created
+cold-receipt
+empty-roots
+no-package-network-or-slot-call
+main-unchanged
+
+C912_TEST_ROOT=/tmp/c912-cold-d302aOsx
+RESULT accepted=true diagnosis=
+cold-ready
+only-absent-created
+cold-receipt
+empty-roots
+no-package-network-or-slot-call
+main-unchanged
+
+C912_TEST_ROOT=/tmp/c912-cold-V6yjQ89e
+RESULT accepted=true diagnosis=
+cold-ready
+only-absent-created
+cold-receipt
+empty-roots
+no-package-network-or-slot-call
+main-unchanged
+
+C912_TEST_ROOT=/tmp/c912-cold-DWk7GIYX
+RESULT accepted=true diagnosis=
+cold-ready
+only-absent-created
+cold-receipt
+empty-roots
+no-package-network-or-slot-call
+main-unchanged
+
+C912_TEST_ROOT=/tmp/c912-cold-G4Lyzq3H
+RESULT accepted=true diagnosis=
+cold-ready
+only-absent-created
+cold-receipt
+empty-roots
+no-package-network-or-slot-call
+main-unchanged
+
+C912_TEST_ROOT=/tmp/c912-cold-D4NyEedp
+RESULT accepted=true diagnosis=
+cold-ready
+only-absent-created
+cold-receipt
+empty-roots
+no-package-network-or-slot-call
+main-unchanged
+
+C912_TEST_ROOT=/tmp/c912-cold-Sz1UfKRa
+RESULT accepted=true diagnosis=
+cold-ready
+only-absent-created
+cold-receipt
+empty-roots
+no-package-network-or-slot-call
+main-unchanged
+
+C912_TEST_ROOT=/tmp/c912-cold-19ACHP8C
+RESULT accepted=true diagnosis=
+cold-ready
+only-absent-created
+cold-receipt
+empty-roots
+no-package-network-or-slot-call
+main-unchanged
+
+main: line 151: printf: write error: Broken pipe
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="104b8200-d484-47e3-91f1-086079555b26" testId="f5aa7d4c-262f-0143-ef6a-36791b18d870" testName="C912_Cold_volumes_seed_refuses_unknown_mounted_or_populated_targets" computerName="5d9e09695ab3" duration="00:00:02.3219218" startTime="2026-10-03T17:41:39.4295979+00:00" endTime="2026-10-03T17:41:41.7515197+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="104b8200-d484-47e3-91f1-086079555b26">
+      <Output>
+        <StdOut>C912_TEST_ROOT=/tmp/c912-cold-GrRKieBQ
+RESULT accepted=false diagnosis=CacheFirstSeedPreconditionUnknown
+preflight-no-write-census-error
+RESULT accepted=false diagnosis=CacheFirstSeedPreconditionUnknown
+preflight-no-write-inspect-error
+RESULT accepted=false diagnosis=CacheFirstSeedVolumeInUse
+preflight-no-write-main-mount
+RESULT accepted=false diagnosis=CacheFirstSeedVolumeInUse
+preflight-no-write-other-mount
+RESULT accepted=false diagnosis=CacheFirstSeedVolumeInUse
+preflight-no-write-stopped-mount
+RESULT accepted=false diagnosis=CacheFirstSeedTempNotRetired
+preflight-no-write-temp-unretired
+RESULT accepted=false diagnosis=CacheFirstSeedPreconditionUnknown
+preflight-no-write-temp-counter-omitted
+RESULT accepted=false diagnosis=CacheVolumeForeign
+preflight-no-write-foreign-owner
+RESULT accepted=false diagnosis=CacheRootOwnershipInvalid
+preflight-no-write-wrong-mode
+RESULT accepted=false diagnosis=CacheUnmarkedContent
+preflight-no-write-hidden
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="c788a52a-c223-4602-b22d-a367e62280e5" testId="47fc162a-6623-3b9a-7a7e-bd5c62745d5e" testName="C912_Cold_volumes_seed_rechecks_initialization_and_probe_boundaries" computerName="5d9e09695ab3" duration="00:00:02.8386428" startTime="2026-10-03T17:41:41.7521308+00:00" endTime="2026-10-03T17:41:44.5907736+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="c788a52a-c223-4602-b22d-a367e62280e5">
+      <Output>
+        <StdOut>C912_TEST_ROOT=/tmp/c912-cold-Me5CDliV
+RESULT accepted=true diagnosis=
+phase-proof-recorded-P0
+phase-proof-recorded-P1
+phase-proof-recorded-P2
+phase-proof-recorded-P3
+phase-proof-recorded-P4
+phase-proof-recorded-P5
+phase-proof-recorded-P6
+repeated-proof
+
+C912_TEST_ROOT=/tmp/c912-cold-ZcO3mrvi
+RESULT accepted=false diagnosis=CacheFirstSeedMainMountChanged
+recheck-refused-P1
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="831436ef-1292-4cb9-aecc-6408556f9c38" testId="52549fa4-55a2-9e44-b3f6-e41de6545e86" testName="C912_Cold_cache_probe_requires_uid_writes_cleanup_and_bounded_exit" computerName="5d9e09695ab3" duration="00:00:07.6123024" startTime="2026-10-03T17:41:44.5916100+00:00" endTime="2026-10-03T17:41:52.2039124+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="831436ef-1292-4cb9-aecc-6408556f9c38">
+      <Output>
+        <StdOut>C912_TEST_ROOT=/tmp/c912-cold-YlxdS0LP
+RESULT accepted=true diagnosis=
+probe-writable
+probe-uid-1654
+probe-owned-helper-stopped
+
+C912_TEST_ROOT=/tmp/c912-cold-1MzdL5S9
+RESULT accepted=false diagnosis=CacheHelperImageMissing
+probe-refused-no-marker-or-outside-write
+
+C912_TEST_ROOT=/tmp/c912-cold-HgUE6wpp
+RESULT accepted=false diagnosis=CacheVolumeCreateFailed
+probe-refused-no-marker-or-outside-write
+
+C912_TEST_ROOT=/tmp/c912-cold-hi3FgGre
+RESULT accepted=false diagnosis=CacheVolumeInitFailed
+probe-refused-no-marker-or-outside-write
+
+C912_TEST_ROOT=/tmp/c912-cold-pyE42veS
+RESULT accepted=false diagnosis=CacheRootNotWritable
+probe-refused-no-marker-or-outside-write
+probe-owned-helper-stopped
+
+C912_TEST_ROOT=/tmp/c912-cold-o6DdoshP
+RESULT accepted=false diagnosis=CacheRootNotWritable
+probe-refused-no-marker-or-outside-write
+probe-owned-helper-stopped
+
+C912_TEST_ROOT=/tmp/c912-cold-0sfy5lgK
+RESULT accepted=false diagnosis=CacheRootNotWritable
+probe-refused-no-marker-or-outside-write
+probe-owned-helper-stopped
+
+C912_TEST_ROOT=/tmp/c912-cold-nLhZlGtV
+RESULT accepted=false diagnosis=CacheColdProbeTimeout
+probe-refused-no-marker-or-outside-write
+probe-owned-helper-stopped
+
+C912_TEST_ROOT=/tmp/c912-cold-vkaTL0Ql
+RESULT accepted=false diagnosis=CacheSeedProbeCleanupFailed
+probe-refused-no-marker-or-outside-write
+probe-owned-helper-stopped
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="9fe1f2ca-7529-4211-84be-766ef7bfda4e" testId="cbe7a793-5f23-fdf8-21a3-5f97caf399b0" testName="C912_Cold_marker_has_distinct_validation_and_full_context_refusal" computerName="5d9e09695ab3" duration="00:00:04.8300837" startTime="2026-10-03T17:41:52.2046694+00:00" endTime="2026-10-03T17:41:57.0347531+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="9fe1f2ca-7529-4211-84be-766ef7bfda4e">
+      <Output>
+        <StdOut>C912_TEST_ROOT=/tmp/c912-cold-uAHKWAR8
+RESULT accepted=true diagnosis=
+cold-marker-valid
+marker-reuse-no-probe-or-restore
+cross-sha-deploy-temp-accepted
+cross-sha-verify-accepted
+cross-sha-retire-accepted
+cross-sha-reset-full-required
+cross-sha-prune-full-required
+cross-sha-saved-donor-full-required
+RESULT accepted=false diagnosis=CacheFullSeedRequired
+RESULT accepted=false diagnosis=CacheSeedMarkerInvalid
+RESULT accepted=false diagnosis=CacheSeedMarkerInvalid
+RESULT accepted=false diagnosis=CacheSeedMarkerInvalid
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="58d14db9-92fe-43bf-976f-5f60790cff1e" testId="e29b162a-94bb-77e5-dbe5-e4315c64f1f6" testName="C912_Cold_runner_verification_uses_mounts_and_writability_not_payloads" computerName="5d9e09695ab3" duration="00:00:01.3194988" startTime="2026-10-03T17:41:57.0353960+00:00" endTime="2026-10-03T17:41:58.3548948+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="58d14db9-92fe-43bf-976f-5f60790cff1e" />
+    <UnitTestResult executionId="ccdf54a3-d07d-4320-99bf-8e63b329e62f" testId="7b3e98ce-c76d-2801-c311-266829fdb216" testName="C912_Cold_exception_never_weakens_maintenance_or_donor_gates" computerName="5d9e09695ab3" duration="00:00:00.0095642" startTime="2026-10-03T17:41:58.3555649+00:00" endTime="2026-10-03T17:41:58.3651291+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="ccdf54a3-d07d-4320-99bf-8e63b329e62f" />
+    <UnitTestResult executionId="3f86434d-67cd-42ac-9899-9b5cf6ab7473" testId="bb5e5ee3-f92c-8b44-60f0-3a61b45e8c37" testName="C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(c849_seed)" computerName="5d9e09695ab3" duration="00:00:01.1905452" startTime="2026-10-03T17:41:58.3667467+00:00" endTime="2026-10-03T17:41:59.5572919+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="3f86434d-67cd-42ac-9899-9b5cf6ab7473">
+      <Output>
+        <StdOut>C973_READER_ROOT=/tmp/c973-readers-CZDRBwSA
+C973_TEST_ROOT=/tmp/c973-marker-qE5y39CG
+DIAGNOSIS=
+{"accepted":true,"diagnosis":"","exit":0}
+pruned-seed-image-accepted
+invalid-marker-refused-missing
+invalid-marker-refused-malformed
+invalid-marker-refused-duplicate
+invalid-marker-refused-foreign-marker
+invalid-marker-refused-malformed-image
+invalid-marker-refused-malformed-source
+invalid-marker-refused-symlink
+invalid-marker-refused-foreign-volume
+invalid-marker-refused-unwritable
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="57853830-e7ae-414f-973d-f85e46be47b9" testId="03baea48-d343-9486-6049-c84d3538e652" testName="C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(case_deploy_parent)" computerName="5d9e09695ab3" duration="00:00:00.8987108" startTime="2026-10-03T17:41:59.5601041+00:00" endTime="2026-10-03T17:42:00.4588149+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="57853830-e7ae-414f-973d-f85e46be47b9">
+      <Output>
+        <StdOut>C973_READER_ROOT=/tmp/c973-readers-ebZTUIOy
+C973_TEST_ROOT=/tmp/c973-marker-OoCOeX9U
+DIAGNOSIS=
+{"accepted":true,"diagnosis":"","exit":0}
+pruned-seed-image-accepted
+invalid-marker-refused-missing
+invalid-marker-refused-malformed
+invalid-marker-refused-duplicate
+invalid-marker-refused-foreign-marker
+invalid-marker-refused-malformed-image
+invalid-marker-refused-malformed-source
+invalid-marker-refused-symlink
+invalid-marker-refused-foreign-volume
+invalid-marker-refused-unwritable
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="a5b058fc-e307-445b-b726-f578ba10dd1a" testId="cdd70ea2-7e6f-b72f-59e1-1218148740a0" testName="C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(case_deploy_temp_runner)" computerName="5d9e09695ab3" duration="00:00:01.4591998" startTime="2026-10-03T17:42:00.4596183+00:00" endTime="2026-10-03T17:42:01.9188181+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="a5b058fc-e307-445b-b726-f578ba10dd1a">
+      <Output>
+        <StdOut>C973_READER_ROOT=/tmp/c973-readers-yWwO8Tk2
+C973_TEST_ROOT=/tmp/c973-marker-MLtGjs1C
+DIAGNOSIS=
+{"accepted":true,"diagnosis":"","exit":0}
+pruned-seed-image-accepted
+invalid-marker-refused-missing
+invalid-marker-refused-malformed
+invalid-marker-refused-duplicate
+invalid-marker-refused-foreign-marker
+invalid-marker-refused-malformed-image
+invalid-marker-refused-malformed-source
+invalid-marker-refused-symlink
+invalid-marker-refused-foreign-volume
+invalid-marker-refused-unwritable
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="4024169e-a4f3-4d83-8b94-ce44c469b4ba" testId="a0f831dd-c44a-5c44-c72b-096490362c44" testName="C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(case_retire_temp_runner)" computerName="5d9e09695ab3" duration="00:00:01.4632624" startTime="2026-10-03T17:42:01.9193466+00:00" endTime="2026-10-03T17:42:03.3826090+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="4024169e-a4f3-4d83-8b94-ce44c469b4ba">
+      <Output>
+        <StdOut>C973_READER_ROOT=/tmp/c973-readers-xoAxgZpi
+marker-independent-valid
+marker-independent-missing
+marker-independent-malformed
+marker-independent-duplicate
+marker-independent-foreign-marker
+marker-independent-malformed-image
+marker-independent-malformed-source
+marker-independent-symlink
+cache-identity-refused-foreign-volume
+cache-identity-refused-missing-volume
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="819c8cbd-0e8b-4365-b2b1-6a02af17ffc5" testId="28d4dbf5-e351-863a-448a-76b2662a4597" testName="C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(case_verify_runner_caches)" computerName="5d9e09695ab3" duration="00:00:01.3915599" startTime="2026-10-03T17:42:03.3830127+00:00" endTime="2026-10-03T17:42:04.7745726+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="819c8cbd-0e8b-4365-b2b1-6a02af17ffc5">
+      <Output>
+        <StdOut>C973_READER_ROOT=/tmp/c973-readers-WZYaonFf
+C973_TEST_ROOT=/tmp/c973-marker-yenIx2UN
+DIAGNOSIS=
+{"accepted":true,"diagnosis":"","exit":0}
+pruned-seed-image-accepted
+invalid-marker-refused-missing
+invalid-marker-refused-malformed
+invalid-marker-refused-duplicate
+invalid-marker-refused-foreign-marker
+invalid-marker-refused-malformed-image
+invalid-marker-refused-malformed-source
+invalid-marker-refused-symlink
+invalid-marker-refused-foreign-volume
+invalid-marker-refused-unwritable
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="bdbd8de7-7a90-49cc-a991-f578dcc23f59" testId="4092935e-3e6f-914e-fc6e-c5e74abfe391" testName="C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(case_verify_runner_caches_retired)" computerName="5d9e09695ab3" duration="00:00:01.3383274" startTime="2026-10-03T17:42:04.7749898+00:00" endTime="2026-10-03T17:42:06.1133172+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="bdbd8de7-7a90-49cc-a991-f578dcc23f59">
+      <Output>
+        <StdOut>C973_READER_ROOT=/tmp/c973-readers-5iA77pfR
+C973_TEST_ROOT=/tmp/c973-marker-FtOU8LgS
+rollback-image=sha256:1111111111111111111111111111111111111111111111111111111111111111
+DIAGNOSIS=
+{"accepted":true,"diagnosis":"","exit":0}
+pruned-seed-image-accepted
+invalid-marker-refused-missing
+invalid-marker-refused-malformed
+invalid-marker-refused-duplicate
+invalid-marker-refused-foreign-marker
+invalid-marker-refused-malformed-image
+invalid-marker-refused-malformed-source
+invalid-marker-refused-symlink
+invalid-marker-refused-foreign-volume
+invalid-marker-refused-unwritable
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="3d3e56a1-02b1-4287-9d38-151de6d1f63e" testId="a15fc4ef-e694-f2df-ea33-27ceb9b5eefe" testName="C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune(runner-cache-seed)" computerName="5d9e09695ab3" duration="00:00:00.5902971" startTime="2026-10-03T17:42:06.1138467+00:00" endTime="2026-10-03T17:42:06.7041438+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="3d3e56a1-02b1-4287-9d38-151de6d1f63e">
+      <Output>
+        <StdOut>C973_READER_ROOT=/tmp/c973-readers-OcIpwo22
+C973_TEST_ROOT=/tmp/c973-marker-k8ZEpJvB
+HELPER=sha256:1111111111111111111111111111111111111111111111111111111111111111
+DIAGNOSIS=
+{"accepted":true,"diagnosis":"","exit":0}
+available-main-helper
+helper-refused-malformed-image
+helper-refused-foreign-main
+helper-refused-no-main
+helper-refused-no-image
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="8f1e5c33-7e85-4db4-b1b2-da4176abd348" testId="d69485de-bb93-ec61-5be3-4284cf0b1be9" testName="C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune(runner-cache-inventory)" computerName="5d9e09695ab3" duration="00:00:00.6233548" startTime="2026-10-03T17:42:06.7046528+00:00" endTime="2026-10-03T17:42:07.3280076+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="8f1e5c33-7e85-4db4-b1b2-da4176abd348">
+      <Output>
+        <StdOut>C973_READER_ROOT=/tmp/c973-readers-a6qykHf6
+C973_TEST_ROOT=/tmp/c973-marker-AYXOsCRU
+HELPER=sha256:1111111111111111111111111111111111111111111111111111111111111111
+DIAGNOSIS=
+{"accepted":true,"diagnosis":"","exit":0}
+available-main-helper
+helper-refused-malformed-image
+helper-refused-foreign-main
+helper-refused-no-main
+helper-refused-no-image
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="91751e71-3496-4424-91bd-ed49bfb3a7d6" testId="dc2858da-4bbd-ed05-9d86-47b65efc0ab8" testName="C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune(runner-cache-fixture)" computerName="5d9e09695ab3" duration="00:00:00.4936199" startTime="2026-10-03T17:42:07.3286134+00:00" endTime="2026-10-03T17:42:07.8222333+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="91751e71-3496-4424-91bd-ed49bfb3a7d6">
+      <Output>
+        <StdOut>C973_READER_ROOT=/tmp/c973-readers-LN3yVXY9
+C973_TEST_ROOT=/tmp/c973-marker-TtEPunzl
+HELPER=sha256:1111111111111111111111111111111111111111111111111111111111111111
+DIAGNOSIS=
+{"accepted":true,"diagnosis":"","exit":0}
+available-main-helper
+helper-refused-malformed-image
+helper-refused-foreign-main
+helper-refused-no-main
+helper-refused-no-image
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="45327a76-76b8-4df1-9039-e8617f788432" testId="4e111da6-2f9b-e836-ede2-ae5ed3323652" testName="C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune(runner-cache-prune-preview)" computerName="5d9e09695ab3" duration="00:00:00.5883856" startTime="2026-10-03T17:42:07.8225957+00:00" endTime="2026-10-03T17:42:08.4109813+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="45327a76-76b8-4df1-9039-e8617f788432">
+      <Output>
+        <StdOut>C973_READER_ROOT=/tmp/c973-readers-FneVKLzv
+C973_TEST_ROOT=/tmp/c973-marker-PDJYIhEZ
+HELPER=sha256:1111111111111111111111111111111111111111111111111111111111111111
+DIAGNOSIS=
+{"accepted":true,"diagnosis":"","exit":0}
+available-main-helper
+helper-refused-malformed-image
+helper-refused-foreign-main
+helper-refused-no-main
+helper-refused-no-image
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="ec27dd73-8a55-4ae2-bf2d-d4c0542c4798" testId="825d85b1-bb0a-d700-0257-5414874b51cb" testName="C849_Deploy_temp_observes_inaccessible_docker_mountpoints_with_sudo" computerName="5d9e09695ab3" duration="00:00:00.1298424" startTime="2026-10-03T17:42:08.4114393+00:00" endTime="2026-10-03T17:42:08.5412817+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="ec27dd73-8a55-4ae2-bf2d-d4c0542c4798">
+      <Output>
+        <StdOut>C849_PRIVILEGE_ROOT=/tmp/c849-privilege-2in7juPn
+OBSERVE_EXIT=0
+antiphon-runner-cache-nuget-packages nuget-packages /tmp/c849-privilege-2in7juPn/docker/volumes/antiphon-runner-cache-nuget-packages/_data 1654:1654:700 4096 10737418240
+PRUNE_EXIT=0
+DEPLOY_EXIT=0
+main: line 141: c1008_rollout_lock: command not found
+DEPLOY_REACHED_BROKER
+ELEVATED_REALPATH=5
+ELEVATED_SYMLINK=6
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="22426693-87c5-4d02-ac2f-0377db183858" testId="2362455d-10cf-8591-24a0-1d3dcf837a3e" testName="C849_Deploy_prepares_and_verifies_before_acceptance" computerName="5d9e09695ab3" duration="00:00:20.5210324" startTime="2026-10-03T17:42:08.5418131+00:00" endTime="2026-10-03T17:42:29.0628455+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="22426693-87c5-4d02-ac2f-0377db183858">
+      <Output>
+        <StdOut>prepare parent verdict=deploy-result=false:CacheRootNotWritable
+prepare temp verdict=deploy-result=false:CacheRootNotWritable
+ready parent verdict=deploy-result=false:CacheSeedRequired
+ready temp verdict=deploy-result=false:CacheSeedRequired
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="9d62db44-c1ae-46f4-ab2b-a21eb41e9e01" testId="623dfa69-e90e-f607-388c-c3211b6b8e5a" testName="C849_Deploy_temp_names_saved_import_when_seed_is_missing" computerName="5d9e09695ab3" duration="00:00:00.0484293" startTime="2026-10-03T17:42:29.0669070+00:00" endTime="2026-10-03T17:42:29.1153363+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="9d62db44-c1ae-46f4-ab2b-a21eb41e9e01">
+      <Output>
+        <StdOut>exit=2 verdict=deploy=CacheSeedRequired: run pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -SavedDonor /home/mc/runner-cache-donor/temp-runner-cache.tar
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="99d7f377-38d1-4050-8614-11e027d8b517" testId="dd342fe7-91e9-31dc-85b4-83a2b94d237f" testName="C849_Retired_guard_refuses_docker_ps_errors" computerName="5d9e09695ab3" duration="00:00:00.0106489" startTime="2026-10-03T17:42:29.1159999+00:00" endTime="2026-10-03T17:42:29.1266488+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="99d7f377-38d1-4050-8614-11e027d8b517">
+      <Output>
+        <StdOut>exit=2 verdict=guard=CacheDonorLookupFailed
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="a6e5cec6-6a68-4710-b69e-1c7cc46561b4" testId="0649cd9d-607e-599a-6a24-db4a9e4e9d9f" testName="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo(observe, symlink)" computerName="5d9e09695ab3" duration="00:00:00.0389949" startTime="2026-10-03T17:42:29.1271868+00:00" endTime="2026-10-03T17:42:29.1661817+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="a6e5cec6-6a68-4710-b69e-1c7cc46561b4">
+      <Output>
+        <StdOut>C951_ROOT=/tmp/c951-path-TxZDycKg
+READER_EXIT=2
+DIAGNOSIS=CacheTargetInvalid
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="2376f4d8-fcc1-489b-ae63-2fb6f5ed3558" testId="923eb49d-33a8-1740-3bf4-ed4aaaf12b01" testName="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo(prune, symlink)" computerName="5d9e09695ab3" duration="00:00:00.0245604" startTime="2026-10-03T17:42:29.1668435+00:00" endTime="2026-10-03T17:42:29.1914039+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="2376f4d8-fcc1-489b-ae63-2fb6f5ed3558">
+      <Output>
+        <StdOut>C951_ROOT=/tmp/c951-path-sEyYNusy
+READER_EXIT=2
+DIAGNOSIS=CacheTargetInvalid
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="f8441060-5c4b-4bad-affe-a60abe40f720" testId="c51a0b17-d8de-74c3-015e-b4b6fd680fc8" testName="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo(observe, sudo-refused)" computerName="5d9e09695ab3" duration="00:00:00.0277342" startTime="2026-10-03T17:42:29.1921710+00:00" endTime="2026-10-03T17:42:29.2199052+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="f8441060-5c4b-4bad-affe-a60abe40f720">
+      <Output>
+        <StdOut>C951_ROOT=/tmp/c951-path-6H20aaox
+READER_EXIT=2
+DIAGNOSIS=CacheTargetInvalid
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="5e428ce3-87cf-4799-a80c-4b1d61de2730" testId="04aabf8e-19cc-a4e0-b700-2827dc1d3688" testName="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo(prune, sudo-refused)" computerName="5d9e09695ab3" duration="00:00:00.0210380" startTime="2026-10-03T17:42:29.2204226+00:00" endTime="2026-10-03T17:42:29.2414606+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="5e428ce3-87cf-4799-a80c-4b1d61de2730">
+      <Output>
+        <StdOut>C951_ROOT=/tmp/c951-path-nBVeIm4Y
+READER_EXIT=2
+DIAGNOSIS=CacheTargetInvalid
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="9df51cde-ee0e-4ff9-aef3-a21c9c0f1719" testId="2c289ac3-22a6-e846-51c2-65ab49edc340" testName="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo(observe, sudo-test-refused)" computerName="5d9e09695ab3" duration="00:00:00.0310838" startTime="2026-10-03T17:42:29.2419051+00:00" endTime="2026-10-03T17:42:29.2729889+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="9df51cde-ee0e-4ff9-aef3-a21c9c0f1719">
+      <Output>
+        <StdOut>C951_ROOT=/tmp/c951-path-hYxUcWL1
+READER_EXIT=2
+DIAGNOSIS=CacheTargetInvalid
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="37cd0ec8-96c5-4574-b62a-652512be5404" testId="4dc57e6e-a893-cc98-3240-05fcc681791e" testName="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo(prune, sudo-test-refused)" computerName="5d9e09695ab3" duration="00:00:00.0220915" startTime="2026-10-03T17:42:29.2735205+00:00" endTime="2026-10-03T17:42:29.2956120+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="37cd0ec8-96c5-4574-b62a-652512be5404">
+      <Output>
+        <StdOut>C951_ROOT=/tmp/c951-path-3TAZLF3x
+READER_EXIT=2
+DIAGNOSIS=CacheTargetInvalid
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="7d1d65df-4220-4cfc-9f59-4b5336d3a33c" testId="2b06542b-9526-9154-cb93-43fb0c1204fb" testName="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo(observe, symlink-sudo-test-refused)" computerName="5d9e09695ab3" duration="00:00:00.0291611" startTime="2026-10-03T17:42:29.2961718+00:00" endTime="2026-10-03T17:42:29.3253329+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="7d1d65df-4220-4cfc-9f59-4b5336d3a33c">
+      <Output>
+        <StdOut>C951_ROOT=/tmp/c951-path-LkqMpV3P
+READER_EXIT=2
+DIAGNOSIS=CacheTargetInvalid
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="1c83bfd0-7616-4199-8eae-f704a1d03c0c" testId="d5d4744d-3ce2-2835-49c8-92241bd13813" testName="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo(prune, symlink-sudo-test-refused)" computerName="5d9e09695ab3" duration="00:00:00.0244290" startTime="2026-10-03T17:42:29.3260483+00:00" endTime="2026-10-03T17:42:29.3504773+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="1c83bfd0-7616-4199-8eae-f704a1d03c0c">
+      <Output>
+        <StdOut>C951_ROOT=/tmp/c951-path-p3PoPkKW
+READER_EXIT=2
+DIAGNOSIS=CacheTargetInvalid
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="1426a027-f536-4747-845e-c307e77c858e" testId="7f3e9e4e-46bc-4c82-3219-134c0d293b67" testName="C976_Missing_helper_image_preserves_final_receipt_diagnosis" computerName="5d9e09695ab3" duration="00:00:00.0374681" startTime="2026-10-03T17:42:29.3509634+00:00" endTime="2026-10-03T17:42:29.3884315+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="1426a027-f536-4747-845e-c307e77c858e">
+      <Output>
+        <StdOut>C976_ROOT=/tmp/c976-receipt-e9d4JCp8
+PREPARE_EXIT=2
+{"accepted":false,"diagnosis":"CacheHelperImageMissing","exit":2}DIAGNOSIS=CacheHelperImageMissing
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="bc9e2fe2-28db-46a5-a864-6c029dffc5ca" testId="b95af41a-c3ed-ec24-797e-fa3f3d6d8e52" testName="C946_Rolling_harness_cleans_only_its_owned_success_root" computerName="5d9e09695ab3" duration="00:00:00.0006866" startTime="2026-10-03T17:42:29.3889179+00:00" endTime="2026-10-03T17:42:29.3896045+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="bc9e2fe2-28db-46a5-a864-6c029dffc5ca" />
+    <UnitTestResult executionId="4639a82d-afed-4ce9-beed-4b36f604a2e8" testId="309aaf98-daa8-13b3-6b6c-d118316afeff" testName="C957_Scratch_mutation_controls_go_red_and_restore(loop)" computerName="5d9e09695ab3" duration="00:00:00.1567277" startTime="2026-10-03T17:42:29.3899015+00:00" endTime="2026-10-03T17:42:29.5466292+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="4639a82d-afed-4ce9-beed-4b36f604a2e8" />
+    <UnitTestResult executionId="947a8b43-1915-46e6-99c0-140945c1ebed" testId="41b7b9f3-4513-8e50-5545-04ca3e13a388" testName="C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune(runner-cache-reset)" computerName="5d9e09695ab3" duration="00:00:00.6046783" startTime="2026-10-03T17:42:29.5469845+00:00" endTime="2026-10-03T17:42:30.1516628+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="947a8b43-1915-46e6-99c0-140945c1ebed">
+      <Output>
+        <StdOut>C973_READER_ROOT=/tmp/c973-readers-JJgqY2zo
+C973_TEST_ROOT=/tmp/c973-marker-4iT6C6A2
+HELPER=sha256:1111111111111111111111111111111111111111111111111111111111111111
+DIAGNOSIS=
+{"accepted":true,"diagnosis":"","exit":0}
+available-main-helper
+helper-refused-malformed-image
+helper-refused-foreign-main
+helper-refused-no-main
+helper-refused-no-image
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="504d6c97-7e61-465a-9691-68e4cd4dda65" testId="5ddad218-38dd-4286-bbbe-1370d3bb5967" testName="C957_Scratch_mutation_controls_go_red_and_restore(observe)" computerName="5d9e09695ab3" duration="00:00:00.2110846" startTime="2026-10-03T17:42:30.1524318+00:00" endTime="2026-10-03T17:42:30.3635164+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="504d6c97-7e61-465a-9691-68e4cd4dda65">
+      <Output>
+        <StdOut>C951_ROOT=/tmp/c951-path-b8k76len
+READER_EXIT=0
+antiphon-runner-cache-nuget-packages nuget-packages /tmp/c951-path-b8k76len/volumes/antiphon-runner-cache-nuget-packages/_data 1654:1654:700 4096 999999
+
+C951_ROOT=/tmp/c951-path-4rjTNfEZ
+READER_EXIT=2
+DIAGNOSIS=CacheTargetInvalid
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="ef607d58-6409-4465-9adf-22a39b069a3d" testId="8ea314fb-0052-c58d-65e4-9652fd4ef4cb" testName="C946_Green_harness_removes_root_and_failed_keep_run_retains_evidence" computerName="5d9e09695ab3" duration="00:00:20.8925364" startTime="2026-10-03T17:42:30.3639622+00:00" endTime="2026-10-03T17:42:51.2564986+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="ef607d58-6409-4465-9adf-22a39b069a3d">
+      <Output>
+        <StdOut>C849_PWSH_AVAILABLE
+
+C946_ROOT=/tmp/c946-cleanup-ZUmNbFtZ
+GREEN_EXIT=0
+C973_JQ_PROBE available=True
+PASS T-18 retired start
+C849_TEMP removed=/work/worktrees/task-1b2e83e3/.antiphon/c849-rolling-67e8af7bb4044d8da7ed00c5ae721aec
+GREEN_ROOT_REMOVED
+FAILED_KEEP_EXIT=1
+FAILED_KEEP_ROOT_RETAINED
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="5dc0c632-fc52-4376-83af-a46a7dcd62da" testId="a7b42293-32e3-c47a-f3bc-556c46215c69" testName="C849_front_door_passes_every_full_case_name_to_the_invoker" computerName="5d9e09695ab3" duration="00:00:02.0892180" startTime="2026-10-03T17:42:51.2568735+00:00" endTime="2026-10-03T17:42:53.3460915+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="5dc0c632-fc52-4376-83af-a46a7dcd62da" />
+    <UnitTestResult executionId="9554a037-9ec3-4694-a8b1-0dced1cbcdf8" testId="b97e0f63-5cb2-8d0c-080e-c5b3afb1af23" testName="C849_Cache_cases_use_only_the_validated_host_lane" computerName="5d9e09695ab3" duration="00:00:01.9057846" startTime="2026-10-03T17:42:53.3466140+00:00" endTime="2026-10-03T17:42:55.2523986+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="9554a037-9ec3-4694-a8b1-0dced1cbcdf8">
+      <Output>
+        <StdOut>\u001b[31;1mException: \u001b[0m/work/worktrees/task-1b2e83e3/scripts/verify-card0849-caches.ps1:15\u001b[0m
+\u001b[31;1m\u001b[0m\u001b[36;1mLine |\u001b[0m
+\u001b[31;1m\u001b[0m\u001b[36;1m\u001b[36;1m  15 | \u001b[0m … f]{40}$') { \u001b[36;1mthrow 'C849_DEPLOY_SHA must be the reviewed full lowercas\u001b[0m …\u001b[0m
+\u001b[31;1m\u001b[0m\u001b[36;1m\u001b[36;1m\u001b[0m\u001b[36;1m\u001b[0m\u001b[36;1m     | \u001b[31;1m               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u001b[0m
+\u001b[31;1m\u001b[0m\u001b[36;1m\u001b[36;1m\u001b[0m\u001b[36;1m\u001b[0m\u001b[36;1m\u001b[31;1m\u001b[31;1m\u001b[36;1m     | \u001b[31;1mC849_DEPLOY_SHA must be the reviewed full lowercase SHA\u001b[0m
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="d728475d-cb63-49b0-a776-8532d09bb6ef" testId="3b45951e-b3d4-3df7-6e0e-bfac5a6da844" testName="C849_Cache_prepare_is_idempotent_and_preserves_payloads" computerName="5d9e09695ab3" duration="00:00:00.8096919" startTime="2026-10-03T17:42:55.2527411+00:00" endTime="2026-10-03T17:42:56.0624330+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="d728475d-cb63-49b0-a776-8532d09bb6ef">
+      <Output>
+        <StdOut>preserved antiphon-runner-cache-nuget-packages
+preserved antiphon-runner-cache-nuget-scratch
+preserved antiphon-runner-cache-npm-content
+sibling-preserved
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="fa9d685b-2678-4e04-8b76-aaff0b48a619" testId="fcc0640c-f32f-ea42-5733-dbc58c50d52c" testName="C849_Cache_prepare_refuses_foreign_or_unsafe_roots" computerName="5d9e09695ab3" duration="00:00:00.8486202" startTime="2026-10-03T17:42:56.0628385+00:00" endTime="2026-10-03T17:42:56.9114587+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="fa9d685b-2678-4e04-8b76-aaff0b48a619">
+      <Output>
+        <StdOut>RESULT accepted=false diagnosis=CacheVolumeForeign
+driver exit=2
+RESULT accepted=false diagnosis=CacheVolumeForeign
+options exit=2
+RESULT accepted=false diagnosis=CacheVolumeForeign
+owner exit=2
+RESULT accepted=false diagnosis=CacheVolumeForeign
+schema exit=2
+RESULT accepted=false diagnosis=CacheVolumeForeign
+role exit=2
+RESULT accepted=false diagnosis=CacheRootOwnershipInvalid
+mode exit=2
+RESULT accepted=false diagnosis=CacheRootInvalid
+symlink exit=2
+RESULT accepted=false diagnosis=CacheVolumeInitFailed
+file exit=2
+RESULT accepted=false diagnosis=CacheUnmarkedUseUnknown
+unmarked exit=2
+unmarked-preserved
+RESULT accepted=false diagnosis=CacheTargetInvalid
+name exit=2
+
+empty-on-docker-error=1
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="54149c4e-16ab-40d5-80f7-c9cad229de51" testId="fa2d537d-cc2e-241f-8dfe-3e263b3ca6ea" testName="C849_Prune_refuses_stale_or_busy_authority" computerName="5d9e09695ab3" duration="00:00:01.0052971" startTime="2026-10-03T17:42:56.9120491+00:00" endTime="2026-10-03T17:42:57.9173462+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="54149c4e-16ab-40d5-80f7-c9cad229de51">
+      <Output>
+        <StdOut>exit=2
+DIAGNOSIS=CacheTargetInvalid
+package-retained
+no-docker-mutation
+sibling-retained
+
+sessions verdict=reset-result=false:CacheConsumersBusy
+null verdict=reset-result=false:CacheConsumersBusy
+unknown verdict=reset-result=false:CacheConsumersBusy
+broker verdict=reset-result=false:CacheBuildSlotsBusy
+inuse verdict=reset-result=false:CacheConsumersBusy
+stopped verdict=reset-result=false:CacheResetInUse
+lookup verdict=reset-result=false:CacheConsumerUnknown
+foreign verdict=reset-result=false:CacheVolumeForeign
+marker verdict=reset-result=false:CacheSeedAlreadyReady
+success verdict=reset-result=true:
+cleared
+root-retained
+reset-sibling-retained
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="ee8b9b57-9e6a-4e75-81c5-2b8807b549de" testId="7d6e51d6-8a68-ead5-3ace-600d34b8629c" testName="C849_Seed_publishes_complete_payloads_before_its_marker" computerName="5d9e09695ab3" duration="00:00:14.6221268" startTime="2026-10-03T17:42:57.9177475+00:00" endTime="2026-10-03T17:43:12.5398743+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="ee8b9b57-9e6a-4e75-81c5-2b8807b549de">
+      <Output>
+        <StdOut>payload-hash-preserved
+executable-preserved
+incomplete-excluded
+reference-complete
+
+sessions reconnect=1
+runnerSessions reconnect=1
+queuedTasks reconnect=1
+null reconnect=1
+garbage reconnect=1
+unknown reconnect=1
+zero reconnect=0
+dispatch-unknown reconnect=1
+
+seed-result=true:
+
+retired-container=false exit=0 cases=runner-cache-seed,deploy-temp-runner,verify-runner-caches
+retired-container=true exit=2 cases=
+
+host-refusal=
+host-empty=0
+host-refusal=CacheTempContainerExists
+host-present=2
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="69e1a5a6-74d8-48f5-b8dd-464d30b439ee" testId="609f1a11-f0be-e6b0-a539-a8ebe02e782c" testName="C849_Seed_refuses_invalid_donors_and_partial_payloads" computerName="5d9e09695ab3" duration="00:00:00.2585246" startTime="2026-10-03T17:43:12.5403429+00:00" endTime="2026-10-03T17:43:12.7988675+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="69e1a5a6-74d8-48f5-b8dd-464d30b439ee">
+      <Output>
+        <StdOut>host code=2 diagnosis=AppHostDonorMissing
+metadata code=2 diagnosis=AppHostDonorMetadataMissing
+reference code=2 diagnosis=Net9ReferenceDonorMissing
+symlink code=2 diagnosis=CacheDonorUnsafeEntry
+hardlink code=2 diagnosis=CacheDonorUnsafeEntry
+special code=2 diagnosis=CacheDonorUnsafeEntry
+path code=2 diagnosis=CacheDonorUnsafePath
+path code=2 diagnosis=CacheDonorUnsafePath
+sibling-preserved
+
+sessions verdict=seed-result=false:CacheDonorNotIdleDrained
+runnerSessions verdict=seed-result=false:CacheDonorNotIdleDrained
+queuedTasks verdict=seed-result=false:CacheDonorNotIdleDrained
+null verdict=seed-result=false:CacheDonorNotIdleDrained
+garbage verdict=seed-result=false:CacheDonorNotIdleDrained
+unknown verdict=seed-result=false:CacheDonorNotIdleDrained
+
+absent code=0 verdict=
+error code=2 verdict=lookup-result=CacheDonorLookupFailed
+duplicate code=2 verdict=lookup-result=CacheDonorIdentityInvalid
+
+seed-failure=Interrupted
+stage-cleaned
+cleanup-sibling-retained
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="b5dadbcd-9147-4f13-b0dd-4a31bce36b3b" testId="4801c6c3-199f-1f12-928d-b75764530afa" testName="C849_Saved_donor_archive_is_checked_and_imported_without_a_container" computerName="5d9e09695ab3" duration="00:00:04.1555753" startTime="2026-10-03T17:43:12.7992576+00:00" endTime="2026-10-03T17:43:16.9548329+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="b5dadbcd-9147-4f13-b0dd-4a31bce36b3b">
+      <Output>
+        <StdOut>success=0 seed-result=true:
+marker-written
+saved-identity
+payload-imported
+recovery-retained
+recovery-host-owned
+unsafe-mode-masked
+incomplete-pruned
+live-cache-owned-by-1654
+idle-count=3 smoke-count=1
+smoke-exit=2 diagnosis=seed-result=false:CacheSeedSmokeFailed
+smoke-no-ready-marker
+smoke-stage-cleaned
+directory-imported
+deploy-parent=seed-result=false:PastSeedGate
+deploy-temp=main: line 424: c1008_rollout_lock: command not found
+seed-result=false:PastSeedGate
+
+</StdOut>
+        <ErrorInfo>
+          <Message>ShouldAssertException: output
+    should contain (case insensitive comparison)
+"deploy-temp=seed-result=false:PastSeedGate"
+    but was actually
+"success=0 seed-result=true:
+marker-written
+saved-identity
+payload-imported
+recovery-retained
+recover..."</Message>
+          <StackTrace>   at Antiphon.Tests.Scripts.RemoteScriptContractTests.C849_Saved_donor_archive_is_checked_and_imported_without_a_container() in /work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs:line 2537
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="90ee43c2-2757-4c74-8143-471df700da47" testId="e004e3e7-1a17-706b-bf3b-f911c2087258" testName="C849_Saved_donor_rejects_unsafe_archives_missing_pack_and_busy_counters" computerName="5d9e09695ab3" duration="00:00:05.9940393" startTime="2026-10-03T17:43:16.9693799+00:00" endTime="2026-10-03T17:43:22.9634192+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="90ee43c2-2757-4c74-8143-471df700da47">
+      <Output>
+        <StdOut>traversal code=2 diagnosis=CacheDonorUnsafePath
+nested-traversal code=2 diagnosis=CacheDonorUnsafePath
+symlink code=2 diagnosis=CacheDonorUnsafeEntry
+missing code=2 diagnosis=AppHostDonorMissing
+nested-traversal-no-escape
+directory-fifo code=2 diagnosis=CacheDonorUnsafeEntry
+directory-fifo-not-copied
+main-zero code=0 verdict=
+main-busy code=2 verdict=refusal=CacheConsumersBusy
+main-unknown code=2 verdict=refusal=CacheConsumersBusy
+ps-error code=2 verdict=refusal=CacheConsumerUnknown
+retired code=0 verdict=
+attached code=2 verdict=refusal=CacheConsumersBusy
+attachment-unknown code=2 verdict=refusal=CacheConsumerUnknown
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="b26c79fa-d80f-4420-bca2-b59692fb349a" testId="42893a10-f2ea-c0a8-bea4-28af9d4f8817" testName="C849_Saved_donor_rejects_declared_size_bomb_before_writing" computerName="5d9e09695ab3" duration="00:00:01.7326089" startTime="2026-10-03T17:43:22.9638631+00:00" endTime="2026-10-03T17:43:24.6964720+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="b26c79fa-d80f-4420-bca2-b59692fb349a">
+      <Output>
+        <StdOut>size-bomb code=2 diagnosis=CacheBudgetExceeded
+size-bomb-not-written
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="6812107e-e99d-4a4e-8693-a78bb6eeabd1" testId="2a3ddd96-d21c-0122-a447-82d3a5fd1ce4" testName="C957_Scratch_mutation_controls_go_red_and_restore(receipt)" computerName="5d9e09695ab3" duration="00:00:00.5712395" startTime="2026-10-03T17:43:24.6969979+00:00" endTime="2026-10-03T17:43:25.2682374+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="6812107e-e99d-4a4e-8693-a78bb6eeabd1">
+      <Output>
+        <StdOut>C976_ROOT=/tmp/c976-receipt-hG36120I
+PREPARE_EXIT=2
+{"accepted":false,"diagnosis":"UnhandledExit 2","exit":2}DIAGNOSIS=UnhandledExit 2
+
+C976_ROOT=/tmp/c976-receipt-jxbyKb5M
+PREPARE_EXIT=2
+{"accepted":false,"diagnosis":"CacheHelperImageMissing","exit":2}DIAGNOSIS=CacheHelperImageMissing
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="d51cbb94-4693-4b3e-9713-c016f094fb33" testId="7fe003da-4344-485c-c589-afa87f92411b" testName="C973_Prune_and_saved_donor_still_require_full_after_seed_image_prune" computerName="5d9e09695ab3" duration="00:00:01.6894241" startTime="2026-10-03T17:43:25.2685948+00:00" endTime="2026-10-03T17:43:26.9580189+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="d51cbb94-4693-4b3e-9713-c016f094fb33">
+      <Output>
+        <StdOut>C973_READER_ROOT=/tmp/c973-readers-wX06emRn
+full-context-refused-c849_seed
+full-context-refused-full-required
+full-marker-unchanged
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="C944_All_cache_loop_variables_are_local" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="ac8360ca-71cd-f405-10c6-1194d2a9a74f">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="9721f9b3-d696-4609-9b89-5c9753026493" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C944_All_cache_loop_variables_are_local" />
+    </UnitTest>
+    <UnitTest name="C849_Docker_volume_paths_have_no_bare_host_reads" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="f8e9ed8d-0496-1417-3dad-752631bb5c99">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="ce1a784d-443f-4bb3-9af1-7c481d69dffa" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C849_Docker_volume_paths_have_no_bare_host_reads" />
+    </UnitTest>
+    <UnitTest name="C849_Prune_preview_is_read_only_and_bounded" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="799c7180-2a66-2afc-9f36-5c2dc09b2946">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="166e3a30-115d-429c-90b0-61d9b973b339" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C849_Prune_preview_is_read_only_and_bounded" />
+    </UnitTest>
+    <UnitTest name="C849_Prune_and_rollback_retain_roots_and_recovery" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="c18b3174-deb9-b1d7-a928-b90be480e161">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="66409ea1-177b-4660-b83c-a919445a86fa" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C849_Prune_and_rollback_retain_roots_and_recovery" />
+    </UnitTest>
+    <UnitTest name="C849_Cache_receipts_exclude_credentials_and_payloads" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="47836ab0-e48d-9436-fe74-0f814ca8c761">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="21169f92-a8a3-4de1-a205-d83e1de24445" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C849_Cache_receipts_exclude_credentials_and_payloads" />
+    </UnitTest>
+    <UnitTest name="C912_Cold_seed_with_unrelated_bind_initializes_only_three_labelled_roots" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="73e1dba2-0e66-e4ce-d511-945cd5025271">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="c14933a1-b82f-4224-8d46-447e5f02e63a" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C912_Cold_seed_with_unrelated_bind_initializes_only_three_labelled_roots" />
+    </UnitTest>
+    <UnitTest name="C912_Cold_seed_refuses_when_created_volume_disappears_before_init" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="263054c0-aab0-420b-0dcd-dca6af8dc0a8">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="ee817f51-6aea-4e9b-b3e1-47798575e93e" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C912_Cold_seed_refuses_when_created_volume_disappears_before_init" />
+    </UnitTest>
+    <UnitTest name="C912_Cold_volumes_seed_accepts_busy_main_without_packages" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="9019da97-e0a6-17d5-d272-bd0e2463a792">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="27a0edde-bf12-4d05-83ed-6ce8c11b7cf8" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C912_Cold_volumes_seed_accepts_busy_main_without_packages" />
+    </UnitTest>
+    <UnitTest name="C912_Cold_volumes_seed_refuses_unknown_mounted_or_populated_targets" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="f5aa7d4c-262f-0143-ef6a-36791b18d870">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="104b8200-d484-47e3-91f1-086079555b26" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C912_Cold_volumes_seed_refuses_unknown_mounted_or_populated_targets" />
+    </UnitTest>
+    <UnitTest name="C912_Cold_volumes_seed_rechecks_initialization_and_probe_boundaries" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="47fc162a-6623-3b9a-7a7e-bd5c62745d5e">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="c788a52a-c223-4602-b22d-a367e62280e5" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C912_Cold_volumes_seed_rechecks_initialization_and_probe_boundaries" />
+    </UnitTest>
+    <UnitTest name="C912_Cold_cache_probe_requires_uid_writes_cleanup_and_bounded_exit" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="52549fa4-55a2-9e44-b3f6-e41de6545e86">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="831436ef-1292-4cb9-aecc-6408556f9c38" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C912_Cold_cache_probe_requires_uid_writes_cleanup_and_bounded_exit" />
+    </UnitTest>
+    <UnitTest name="C912_Cold_marker_has_distinct_validation_and_full_context_refusal" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="cbe7a793-5f23-fdf8-21a3-5f97caf399b0">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="9fe1f2ca-7529-4211-84be-766ef7bfda4e" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C912_Cold_marker_has_distinct_validation_and_full_context_refusal" />
+    </UnitTest>
+    <UnitTest name="C912_Cold_runner_verification_uses_mounts_and_writability_not_payloads" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="e29b162a-94bb-77e5-dbe5-e4315c64f1f6">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="58d14db9-92fe-43bf-976f-5f60790cff1e" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C912_Cold_runner_verification_uses_mounts_and_writability_not_payloads" />
+    </UnitTest>
+    <UnitTest name="C912_Cold_exception_never_weakens_maintenance_or_donor_gates" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="7b3e98ce-c76d-2801-c311-266829fdb216">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="ccdf54a3-d07d-4320-99bf-8e63b329e62f" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C912_Cold_exception_never_weakens_maintenance_or_donor_gates" />
+    </UnitTest>
+    <UnitTest name="C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(c849_seed)" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="bb5e5ee3-f92c-8b44-60f0-3a61b45e8c37">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="3f86434d-67cd-42ac-9899-9b5cf6ab7473" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers" />
+    </UnitTest>
+    <UnitTest name="C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(case_deploy_parent)" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="03baea48-d343-9486-6049-c84d3538e652">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="57853830-e7ae-414f-973d-f85e46be47b9" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers" />
+    </UnitTest>
+    <UnitTest name="C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(case_deploy_temp_runner)" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="cdd70ea2-7e6f-b72f-59e1-1218148740a0">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="a5b058fc-e307-445b-b726-f578ba10dd1a" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers" />
+    </UnitTest>
+    <UnitTest name="C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(case_retire_temp_runner)" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="a0f831dd-c44a-5c44-c72b-096490362c44">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="4024169e-a4f3-4d83-8b94-ce44c469b4ba" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers" />
+    </UnitTest>
+    <UnitTest name="C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(case_verify_runner_caches)" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="28d4dbf5-e351-863a-448a-76b2662a4597">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="819c8cbd-0e8b-4365-b2b1-6a02af17ffc5" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers" />
+    </UnitTest>
+    <UnitTest name="C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers(case_verify_runner_caches_retired)" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="4092935e-3e6f-914e-fc6e-c5e74abfe391">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="bdbd8de7-7a90-49cc-a991-f578dcc23f59" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers" />
+    </UnitTest>
+    <UnitTest name="C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune(runner-cache-seed)" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="a15fc4ef-e694-f2df-ea33-27ceb9b5eefe">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="3d3e56a1-02b1-4287-9d38-151de6d1f63e" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune" />
+    </UnitTest>
+    <UnitTest name="C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune(runner-cache-inventory)" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="d69485de-bb93-ec61-5be3-4284cf0b1be9">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="8f1e5c33-7e85-4db4-b1b2-da4176abd348" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune" />
+    </UnitTest>
+    <UnitTest name="C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune(runner-cache-fixture)" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="dc2858da-4bbd-ed05-9d86-47b65efc0ab8">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="91751e71-3496-4424-91bd-ed49bfb3a7d6" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune" />
+    </UnitTest>
+    <UnitTest name="C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune(runner-cache-prune-preview)" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="4e111da6-2f9b-e836-ede2-ae5ed3323652">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="45327a76-76b8-4df1-9039-e8617f788432" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune" />
+    </UnitTest>
+    <UnitTest name="C849_Deploy_temp_observes_inaccessible_docker_mountpoints_with_sudo" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="825d85b1-bb0a-d700-0257-5414874b51cb">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="ec27dd73-8a55-4ae2-bf2d-d4c0542c4798" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C849_Deploy_temp_observes_inaccessible_docker_mountpoints_with_sudo" />
+    </UnitTest>
+    <UnitTest name="C849_Deploy_prepares_and_verifies_before_acceptance" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="2362455d-10cf-8591-24a0-1d3dcf837a3e">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="22426693-87c5-4d02-ac2f-0377db183858" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C849_Deploy_prepares_and_verifies_before_acceptance" />
+    </UnitTest>
+    <UnitTest name="C849_Deploy_temp_names_saved_import_when_seed_is_missing" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="623dfa69-e90e-f607-388c-c3211b6b8e5a">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="9d62db44-c1ae-46f4-ab2b-a21eb41e9e01" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C849_Deploy_temp_names_saved_import_when_seed_is_missing" />
+    </UnitTest>
+    <UnitTest name="C849_Retired_guard_refuses_docker_ps_errors" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="dd342fe7-91e9-31dc-85b4-83a2b94d237f">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="99d7f377-38d1-4050-8614-11e027d8b517" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C849_Retired_guard_refuses_docker_ps_errors" />
+    </UnitTest>
+    <UnitTest name="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo(observe, symlink)" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="0649cd9d-607e-599a-6a24-db4a9e4e9d9f">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="a6e5cec6-6a68-4710-b69e-1c7cc46561b4" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo" />
+    </UnitTest>
+    <UnitTest name="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo(prune, symlink)" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="923eb49d-33a8-1740-3bf4-ed4aaaf12b01">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="2376f4d8-fcc1-489b-ae63-2fb6f5ed3558" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo" />
+    </UnitTest>
+    <UnitTest name="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo(observe, sudo-refused)" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="c51a0b17-d8de-74c3-015e-b4b6fd680fc8">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="f8441060-5c4b-4bad-affe-a60abe40f720" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo" />
+    </UnitTest>
+    <UnitTest name="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo(prune, sudo-refused)" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="04aabf8e-19cc-a4e0-b700-2827dc1d3688">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="5e428ce3-87cf-4799-a80c-4b1d61de2730" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo" />
+    </UnitTest>
+    <UnitTest name="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo(observe, sudo-test-refused)" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="2c289ac3-22a6-e846-51c2-65ab49edc340">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="9df51cde-ee0e-4ff9-aef3-a21c9c0f1719" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo" />
+    </UnitTest>
+    <UnitTest name="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo(prune, sudo-test-refused)" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="4dc57e6e-a893-cc98-3240-05fcc681791e">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="37cd0ec8-96c5-4574-b62a-652512be5404" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo" />
+    </UnitTest>
+    <UnitTest name="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo(observe, symlink-sudo-test-refused)" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="2b06542b-9526-9154-cb93-43fb0c1204fb">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="7d1d65df-4220-4cfc-9f59-4b5336d3a33c" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo" />
+    </UnitTest>
+    <UnitTest name="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo(prune, symlink-sudo-test-refused)" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="d5d4744d-3ce2-2835-49c8-92241bd13813">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="1c83bfd0-7616-4199-8eae-f704a1d03c0c" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo" />
+    </UnitTest>
+    <UnitTest name="C976_Missing_helper_image_preserves_final_receipt_diagnosis" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="7f3e9e4e-46bc-4c82-3219-134c0d293b67">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="1426a027-f536-4747-845e-c307e77c858e" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C976_Missing_helper_image_preserves_final_receipt_diagnosis" />
+    </UnitTest>
+    <UnitTest name="C946_Rolling_harness_cleans_only_its_owned_success_root" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="b95af41a-c3ed-ec24-797e-fa3f3d6d8e52">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="bc9e2fe2-28db-46a5-a864-6c029dffc5ca" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C946_Rolling_harness_cleans_only_its_owned_success_root" />
+    </UnitTest>
+    <UnitTest name="C957_Scratch_mutation_controls_go_red_and_restore(loop)" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="309aaf98-daa8-13b3-6b6c-d118316afeff">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="4639a82d-afed-4ce9-beed-4b36f604a2e8" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C957_Scratch_mutation_controls_go_red_and_restore" />
+    </UnitTest>
+    <UnitTest name="C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune(runner-cache-reset)" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="41b7b9f3-4513-8e50-5545-04ca3e13a388">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="947a8b43-1915-46e6-99c0-140945c1ebed" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune" />
+    </UnitTest>
+    <UnitTest name="C957_Scratch_mutation_controls_go_red_and_restore(observe)" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="5ddad218-38dd-4286-bbbe-1370d3bb5967">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="504d6c97-7e61-465a-9691-68e4cd4dda65" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C957_Scratch_mutation_controls_go_red_and_restore" />
+    </UnitTest>
+    <UnitTest name="C946_Green_harness_removes_root_and_failed_keep_run_retains_evidence" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="8ea314fb-0052-c58d-65e4-9652fd4ef4cb">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="ef607d58-6409-4465-9adf-22a39b069a3d" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C946_Green_harness_removes_root_and_failed_keep_run_retains_evidence" />
+    </UnitTest>
+    <UnitTest name="C849_front_door_passes_every_full_case_name_to_the_invoker" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="a7b42293-32e3-c47a-f3bc-556c46215c69">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="5dc0c632-fc52-4376-83af-a46a7dcd62da" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C849_front_door_passes_every_full_case_name_to_the_invoker" />
+    </UnitTest>
+    <UnitTest name="C849_Cache_cases_use_only_the_validated_host_lane" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="b97e0f63-5cb2-8d0c-080e-c5b3afb1af23">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="9554a037-9ec3-4694-a8b1-0dced1cbcdf8" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C849_Cache_cases_use_only_the_validated_host_lane" />
+    </UnitTest>
+    <UnitTest name="C849_Cache_prepare_is_idempotent_and_preserves_payloads" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="3b45951e-b3d4-3df7-6e0e-bfac5a6da844">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="d728475d-cb63-49b0-a776-8532d09bb6ef" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C849_Cache_prepare_is_idempotent_and_preserves_payloads" />
+    </UnitTest>
+    <UnitTest name="C849_Cache_prepare_refuses_foreign_or_unsafe_roots" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="fcc0640c-f32f-ea42-5733-dbc58c50d52c">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="fa9d685b-2678-4e04-8b76-aaff0b48a619" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C849_Cache_prepare_refuses_foreign_or_unsafe_roots" />
+    </UnitTest>
+    <UnitTest name="C849_Prune_refuses_stale_or_busy_authority" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="fa2d537d-cc2e-241f-8dfe-3e263b3ca6ea">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="54149c4e-16ab-40d5-80f7-c9cad229de51" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C849_Prune_refuses_stale_or_busy_authority" />
+    </UnitTest>
+    <UnitTest name="C849_Seed_publishes_complete_payloads_before_its_marker" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="7d6e51d6-8a68-ead5-3ace-600d34b8629c">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="ee8b9b57-9e6a-4e75-81c5-2b8807b549de" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C849_Seed_publishes_complete_payloads_before_its_marker" />
+    </UnitTest>
+    <UnitTest name="C849_Seed_refuses_invalid_donors_and_partial_payloads" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="609f1a11-f0be-e6b0-a539-a8ebe02e782c">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="69e1a5a6-74d8-48f5-b8dd-464d30b439ee" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C849_Seed_refuses_invalid_donors_and_partial_payloads" />
+    </UnitTest>
+    <UnitTest name="C849_Saved_donor_archive_is_checked_and_imported_without_a_container" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="4801c6c3-199f-1f12-928d-b75764530afa">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="b5dadbcd-9147-4f13-b0dd-4a31bce36b3b" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C849_Saved_donor_archive_is_checked_and_imported_without_a_container" />
+    </UnitTest>
+    <UnitTest name="C849_Saved_donor_rejects_unsafe_archives_missing_pack_and_busy_counters" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="e004e3e7-1a17-706b-bf3b-f911c2087258">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="90ee43c2-2757-4c74-8143-471df700da47" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C849_Saved_donor_rejects_unsafe_archives_missing_pack_and_busy_counters" />
+    </UnitTest>
+    <UnitTest name="C849_Saved_donor_rejects_declared_size_bomb_before_writing" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="42893a10-f2ea-c0a8-bea4-28af9d4f8817">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="b26c79fa-d80f-4420-bca2-b59692fb349a" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C849_Saved_donor_rejects_declared_size_bomb_before_writing" />
+    </UnitTest>
+    <UnitTest name="C957_Scratch_mutation_controls_go_red_and_restore(receipt)" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="2a3ddd96-d21c-0122-a447-82d3a5fd1ce4">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="6812107e-e99d-4a4e-8693-a78bb6eeabd1" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C957_Scratch_mutation_controls_go_red_and_restore" />
+    </UnitTest>
+    <UnitTest name="C973_Prune_and_saved_donor_still_require_full_after_seed_image_prune" storage="/work/worktrees/task-1b2e83e3/tests/antiphon.tests/bin-c1008-cache/antiphon.tests.dll" id="7fe003da-4344-485c-c589-afa87f92411b">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Unit" />
+      </TestCategory>
+      <Execution id="d51cbb94-4693-4b3e-9713-c016f094fb33" />
+      <Properties>
+        <Property>
+          <Key>Unit</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-1b2e83e3/tests/Antiphon.Tests/bin-c1008-cache/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Scripts.RemoteScriptContractTests" name="C973_Prune_and_saved_donor_still_require_full_after_seed_image_prune" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="ac8360ca-71cd-f405-10c6-1194d2a9a74f" executionId="9721f9b3-d696-4609-9b89-5c9753026493" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="f8e9ed8d-0496-1417-3dad-752631bb5c99" executionId="ce1a784d-443f-4bb3-9af1-7c481d69dffa" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="799c7180-2a66-2afc-9f36-5c2dc09b2946" executionId="166e3a30-115d-429c-90b0-61d9b973b339" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="c18b3174-deb9-b1d7-a928-b90be480e161" executionId="66409ea1-177b-4660-b83c-a919445a86fa" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="47836ab0-e48d-9436-fe74-0f814ca8c761" executionId="21169f92-a8a3-4de1-a205-d83e1de24445" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="73e1dba2-0e66-e4ce-d511-945cd5025271" executionId="c14933a1-b82f-4224-8d46-447e5f02e63a" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="263054c0-aab0-420b-0dcd-dca6af8dc0a8" executionId="ee817f51-6aea-4e9b-b3e1-47798575e93e" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="9019da97-e0a6-17d5-d272-bd0e2463a792" executionId="27a0edde-bf12-4d05-83ed-6ce8c11b7cf8" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="f5aa7d4c-262f-0143-ef6a-36791b18d870" executionId="104b8200-d484-47e3-91f1-086079555b26" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="47fc162a-6623-3b9a-7a7e-bd5c62745d5e" executionId="c788a52a-c223-4602-b22d-a367e62280e5" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="52549fa4-55a2-9e44-b3f6-e41de6545e86" executionId="831436ef-1292-4cb9-aecc-6408556f9c38" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="cbe7a793-5f23-fdf8-21a3-5f97caf399b0" executionId="9fe1f2ca-7529-4211-84be-766ef7bfda4e" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="e29b162a-94bb-77e5-dbe5-e4315c64f1f6" executionId="58d14db9-92fe-43bf-976f-5f60790cff1e" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="7b3e98ce-c76d-2801-c311-266829fdb216" executionId="ccdf54a3-d07d-4320-99bf-8e63b329e62f" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="bb5e5ee3-f92c-8b44-60f0-3a61b45e8c37" executionId="3f86434d-67cd-42ac-9899-9b5cf6ab7473" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="03baea48-d343-9486-6049-c84d3538e652" executionId="57853830-e7ae-414f-973d-f85e46be47b9" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="cdd70ea2-7e6f-b72f-59e1-1218148740a0" executionId="a5b058fc-e307-445b-b726-f578ba10dd1a" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="a0f831dd-c44a-5c44-c72b-096490362c44" executionId="4024169e-a4f3-4d83-8b94-ce44c469b4ba" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="28d4dbf5-e351-863a-448a-76b2662a4597" executionId="819c8cbd-0e8b-4365-b2b1-6a02af17ffc5" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="4092935e-3e6f-914e-fc6e-c5e74abfe391" executionId="bdbd8de7-7a90-49cc-a991-f578dcc23f59" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="a15fc4ef-e694-f2df-ea33-27ceb9b5eefe" executionId="3d3e56a1-02b1-4287-9d38-151de6d1f63e" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="d69485de-bb93-ec61-5be3-4284cf0b1be9" executionId="8f1e5c33-7e85-4db4-b1b2-da4176abd348" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="dc2858da-4bbd-ed05-9d86-47b65efc0ab8" executionId="91751e71-3496-4424-91bd-ed49bfb3a7d6" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="4e111da6-2f9b-e836-ede2-ae5ed3323652" executionId="45327a76-76b8-4df1-9039-e8617f788432" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="825d85b1-bb0a-d700-0257-5414874b51cb" executionId="ec27dd73-8a55-4ae2-bf2d-d4c0542c4798" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="2362455d-10cf-8591-24a0-1d3dcf837a3e" executionId="22426693-87c5-4d02-ac2f-0377db183858" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="623dfa69-e90e-f607-388c-c3211b6b8e5a" executionId="9d62db44-c1ae-46f4-ab2b-a21eb41e9e01" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="dd342fe7-91e9-31dc-85b4-83a2b94d237f" executionId="99d7f377-38d1-4050-8614-11e027d8b517" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="0649cd9d-607e-599a-6a24-db4a9e4e9d9f" executionId="a6e5cec6-6a68-4710-b69e-1c7cc46561b4" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="923eb49d-33a8-1740-3bf4-ed4aaaf12b01" executionId="2376f4d8-fcc1-489b-ae63-2fb6f5ed3558" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="c51a0b17-d8de-74c3-015e-b4b6fd680fc8" executionId="f8441060-5c4b-4bad-affe-a60abe40f720" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="04aabf8e-19cc-a4e0-b700-2827dc1d3688" executionId="5e428ce3-87cf-4799-a80c-4b1d61de2730" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="2c289ac3-22a6-e846-51c2-65ab49edc340" executionId="9df51cde-ee0e-4ff9-aef3-a21c9c0f1719" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="4dc57e6e-a893-cc98-3240-05fcc681791e" executionId="37cd0ec8-96c5-4574-b62a-652512be5404" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="2b06542b-9526-9154-cb93-43fb0c1204fb" executionId="7d1d65df-4220-4cfc-9f59-4b5336d3a33c" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="d5d4744d-3ce2-2835-49c8-92241bd13813" executionId="1c83bfd0-7616-4199-8eae-f704a1d03c0c" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="7f3e9e4e-46bc-4c82-3219-134c0d293b67" executionId="1426a027-f536-4747-845e-c307e77c858e" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="b95af41a-c3ed-ec24-797e-fa3f3d6d8e52" executionId="bc9e2fe2-28db-46a5-a864-6c029dffc5ca" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="309aaf98-daa8-13b3-6b6c-d118316afeff" executionId="4639a82d-afed-4ce9-beed-4b36f604a2e8" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="41b7b9f3-4513-8e50-5545-04ca3e13a388" executionId="947a8b43-1915-46e6-99c0-140945c1ebed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="5ddad218-38dd-4286-bbbe-1370d3bb5967" executionId="504d6c97-7e61-465a-9691-68e4cd4dda65" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="8ea314fb-0052-c58d-65e4-9652fd4ef4cb" executionId="ef607d58-6409-4465-9adf-22a39b069a3d" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="a7b42293-32e3-c47a-f3bc-556c46215c69" executionId="5dc0c632-fc52-4376-83af-a46a7dcd62da" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="b97e0f63-5cb2-8d0c-080e-c5b3afb1af23" executionId="9554a037-9ec3-4694-a8b1-0dced1cbcdf8" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="3b45951e-b3d4-3df7-6e0e-bfac5a6da844" executionId="d728475d-cb63-49b0-a776-8532d09bb6ef" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="fcc0640c-f32f-ea42-5733-dbc58c50d52c" executionId="fa9d685b-2678-4e04-8b76-aaff0b48a619" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="fa2d537d-cc2e-241f-8dfe-3e263b3ca6ea" executionId="54149c4e-16ab-40d5-80f7-c9cad229de51" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="7d6e51d6-8a68-ead5-3ace-600d34b8629c" executionId="ee8b9b57-9e6a-4e75-81c5-2b8807b549de" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="609f1a11-f0be-e6b0-a539-a8ebe02e782c" executionId="69e1a5a6-74d8-48f5-b8dd-464d30b439ee" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="4801c6c3-199f-1f12-928d-b75764530afa" executionId="b5dadbcd-9147-4f13-b0dd-4a31bce36b3b" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="e004e3e7-1a17-706b-bf3b-f911c2087258" executionId="90ee43c2-2757-4c74-8143-471df700da47" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="42893a10-f2ea-c0a8-bea4-28af9d4f8817" executionId="b26c79fa-d80f-4420-bca2-b59692fb349a" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="2a3ddd96-d21c-0122-a447-82d3a5fd1ce4" executionId="6812107e-e99d-4a4e-8693-a78bb6eeabd1" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="7fe003da-4344-485c-c589-afa87f92411b" executionId="d51cbb94-4693-4b3e-9713-c016f094fb33" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="54" executed="54" passed="53" failed="1" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <RunInfos>
+      <RunInfo computerName="5d9e09695ab3" outcome="Error" timestamp="2026-10-03T17:43:27.3475447">
+        <Text>Exit code indicates failure: '2'. Please refer to https://aka.ms/testingplatform/exitcodes for more information.</Text>
+      </RunInfo>
+    </RunInfos>
+    <CollectorDataEntries>
+      <Collector agentName="5d9e09695ab3" uri="datacollector://TUnitExtensionHtmlReporter/1.44.0.0" collectorDisplayName="TUnit">
+        <UriAttachments>
+          <UriAttachment>
+            <A href="5d9e09695ab3/Antiphon.Tests-linux-net9.0-report.html" />
+          </UriAttachment>
+        </UriAttachments>
+      </Collector>
+    </CollectorDataEntries>
+  </ResultSummary>
+</TestRun>
