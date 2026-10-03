@@ -53,7 +53,7 @@ public sealed class ModelAvailabilityHttpTests
                 .Select(v => v.GetString()).ShouldNotContain(alias);
 
             var cleared = await client.DeleteAsync($"/api/model-availability/{kind}/{alias}");
-            cleared.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+            cleared.StatusCode.ShouldBe(HttpStatusCode.NoContent, "C967-clear-status");
             db.ChangeTracker.Clear();
             var persisted = await db.ModelAvailabilityHolds.SingleAsync(h => h.Id == row.Id);
             persisted.ClearedAt.ShouldNotBeNull();
@@ -89,7 +89,7 @@ public sealed class ModelAvailabilityHttpTests
         {
             var put = await client.PutAsJsonAsync($"/api/model-availability/Codex/{alias}",
                 new { reason = "retired explicit profile" });
-            put.StatusCode.ShouldBe(HttpStatusCode.OK);
+            put.StatusCode.ShouldBe(HttpStatusCode.OK, "C967-retired-put-status");
             var body = await put.Content.ReadFromJsonAsync<JsonElement>();
             var id = body.GetProperty("id").GetGuid();
             body.GetProperty("modelAlias").GetString().ShouldBe(alias);
@@ -119,7 +119,9 @@ public sealed class ModelAvailabilityHttpTests
     }
 
     [Test]
-    public async Task Unknown_alias_PUT_and_DELETE_remain_422_without_persisting_a_hold()
+    [Arguments("PUT")]
+    [Arguments("DELETE")]
+    public async Task Unknown_alias_PUT_and_DELETE_remain_422_without_persisting_a_hold(string verb)
     {
         using var client = _factory.CreateClient();
         var alias = $"unknown-{Guid.NewGuid():N}";
@@ -127,14 +129,11 @@ public sealed class ModelAvailabilityHttpTests
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         try
         {
-            var put = await client.PutAsJsonAsync($"/api/model-availability/Codex/{alias}",
-                new { reason = "garbage" });
-            put.StatusCode.ShouldBe((HttpStatusCode)422);
-            (await put.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errors")
-                .TryGetProperty("alias", out _).ShouldBeTrue();
-            var delete = await client.DeleteAsync($"/api/model-availability/Codex/{alias}");
-            delete.StatusCode.ShouldBe((HttpStatusCode)422);
-            (await delete.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errors")
+            var response = verb == "PUT"
+                ? await client.PutAsJsonAsync($"/api/model-availability/Codex/{alias}", new { reason = "garbage" })
+                : await client.DeleteAsync($"/api/model-availability/Codex/{alias}");
+            response.StatusCode.ShouldBe((HttpStatusCode)422, "C967-unknown-status");
+            (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errors")
                 .TryGetProperty("alias", out _).ShouldBeTrue();
             (await db.ModelAvailabilityHolds.AnyAsync(h => h.ModelAlias == alias)).ShouldBeFalse();
         }

@@ -32,20 +32,27 @@ No unbounded classes; no full assembly run. Final includes the whole Unit lane.
 
 | ID | Verification / guard |
 |---|---|
-| V-1 | Retired_manual_hold_is_listed_and_DELETE_clears_persisted_row: seed manual open-ended rows, GET, DELETE 204, persisted OperatorCleared and ReleasePendingAt, repeat preserves stamp, GET absent; Codex sol/terra/old sol and Grok 4.6. |
-| V-2 | PUT_accepts_retired_selectable_alias_and_converts_auto_hold: manual PUT creates retired rows; subsequent PUT converts auto rows in place with operator deadline. |
-| V-3 | Retired_sol_hold_allows_current_tier_but_blocks_exact_selection: High/Medium create permitted, exact pinned ModelId create and dispatch preflight refused, after clear exact create permitted. |
-| V-4 | Unknown_alias_PUT_and_DELETE_remain_422_without_persisting_a_hold: alias problem field and zero garbage persistence. |
+| V-1 | `ModelAvailabilityHttpTests.Retired_manual_hold_is_listed_and_DELETE_clears_persisted_row`: seed manual open-ended rows, GET, DELETE 204, persisted OperatorCleared and ReleasePendingAt, repeat preserves stamp, GET absent; Codex sol/terra/old sol and Grok 4.6. |
+| V-2 | `ModelAvailabilityHttpTests.PUT_accepts_retired_selectable_alias_and_converts_auto_hold`: manual PUT creates retired rows; subsequent PUT converts auto rows in place with operator deadline. |
+| V-3 | `ModelAvailabilityCreateTests.Retired_sol_hold_allows_current_tier_but_blocks_exact_selection`: High/Medium create permitted, exact pinned ModelId create and dispatch preflight refused, after clear exact create permitted. |
+| V-4 | `ModelAvailabilityHttpTests.Unknown_alias_PUT_and_DELETE_remain_422_without_persisting_a_hold`: independent PUT/DELETE variants check alias problem field and zero garbage persistence. |
 | V-5 | Manual read: panel lists API holds without dropdown filtering and clear uses row alias; API clear suffices. |
 | R-1 | Whole affected ModelAvailability*, ModelAlias* and HTTP classes, including scripts. |
 | R-2 | Whole Category=Unit lane. |
 
 Positive controls remain pending for method-scoped post-land SourceLanding Mutation:
-PC-1: restore current-ladder validation in ClearAsync; V-1 gpt-6-sol must fail on 204 vs 422.
-PC-2: make unknown alias validation permissive; V-4 must fail on PUT/DELETE 422 assertion.
-PC-3: restore current-ladder validation in PUT; V-2 sol/terra/old sol must fail on 200 vs 422.
-PC-4: remap historical Sol to current Sol at create/dispatch selection; V-3 High/Medium must fail on refusal or permitted-tier assertion.
+PC-1: restore current-ladder validation in ClearAsync; `ModelAvailabilityHttpTests.Retired_manual_hold_is_listed_and_DELETE_clears_persisted_row` must fail at assertion `C967-clear-status`. Variants: Codex sol/terra/old sol, Grok 4.6.
+PC-2: make unknown alias validation permissive; `ModelAvailabilityHttpTests.Unknown_alias_PUT_and_DELETE_remain_422_without_persisting_a_hold` must fail at assertion `C967-unknown-status`. Variants: independent PUT and DELETE.
+PC-3: restore current-ladder validation in PUT; `ModelAvailabilityHttpTests.PUT_accepts_retired_selectable_alias_and_converts_auto_hold` must fail at assertion `C967-retired-put-status`. Variants: sol/terra/old sol.
+PC-4: remap historical Sol to current Sol at create/dispatch selection; `ModelAvailabilityCreateTests.Retired_sol_hold_allows_current_tier_but_blocks_exact_selection` must fail on exact-selection refusal or permitted-tier assertions. Variants: High/Medium, create/dispatch.
 No scratch mutants are run by Code under the standing stage ownership contract.
+
+The lane and manual-read rows use executed TRX census and source inspection; the following
+inline checklist enables explicit source selection for static lint of the named guards.
+
+```plan-coverage-v1
+{"version":1,"items":[]}
+```
 
 ### Cost
 
