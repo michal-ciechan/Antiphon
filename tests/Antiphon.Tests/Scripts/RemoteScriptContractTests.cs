@@ -94,7 +94,15 @@ public sealed class RemoteScriptContractTests
         var run = await f.Run();
         f.Trace.Any(a => a[0] == "create" && a.Contains("1654:1654") && a.Contains("--entrypoint") &&
             a.Any(x => x.EndsWith(",target=/work,readonly", StringComparison.Ordinal))).ShouldBeTrue("recycle-audit-uid: pinned readonly uid helper; " + run.Output);
-        f.Removed.Length.ShouldBe(3);
+        run.Exit.ShouldBe(0, "recycle-audit-uid: published layouts; " + run.Output);
+        f.Removed.Length.ShouldBe(3, "recycle-audit-uid: published layouts permit exact reclaim");
+        var record = JsonNode.Parse(File.ReadAllText(Path.Combine(f.Root, "server/recycle/c100800000000000000000000000000000001.json")))!;
+        var observed = Regex.Matches(record["audit"]!.GetValue<string>(), "repo=([0-9a-f]{64})")
+            .Select(x => x.Groups[1].Value).Distinct().Order().ToArray();
+        var expected = new[] { "repo", "linked clean", "standalone", "bare.git" }
+            .Select(x => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                Encoding.UTF8.GetBytes(Path.Combine(f.Root, "work", x)))).ToLowerInvariant()).Order().ToArray();
+        observed.ShouldBe(expected, "recycle-audit-uid: every materialized Git layout appears in the audit");
     }
 
     [Test]
