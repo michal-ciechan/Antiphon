@@ -42,7 +42,7 @@ the drain redirect cannot promote temp for it: stop and report the missing routi
 | 6. Upgrade old | Run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase redeploy-old` only after step 5's zero gate. The phase runs `deploy-parent`, verifies mounts/cache and `buildVersion`, then clears old's drain. | If it refuses, keep temp accepting and old drained; use the retained rollback image and the [rollback procedure](#shared-server2-runner-caches-card-0849) only through a reviewed recovery. Do not clear an unverified old runner. |
 | 7. Smoke upgraded old | Run the command block below for `server2`, a sanctioned `Plan` canary pinned with `-Runner server2`, and `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Both -Sha <sha>`. | `redeploy-old` already clears old's drain after its own host checks, before this separate canary. If this gate fails, immediately drain old toward accepting temp with `pwsh -NoProfile -File scripts/runner-drain.ps1 drain -RunnerId server2 -RedirectTo server2-temp -Reason 'post-upgrade smoke failed'`; stop and report. CARD-0935 tracks a separate canary-before-promotion gate. |
 | 8. Return scheduling and drain temp | Once old passes step 7 and accepts work, run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase drain-temp -WaitIdleMinutes 240`. This sets temp `redirectTo=server2` and `retireWhenIdle=true`; automatic placement uses old again. Verify old accepting and temp drained/retired. | If the phase refuses, leave old accepting and temp in its observed state; report the code. If a rollback is needed before temp retires, clear temp's drain only after verifying old remains accepting; do not start two drains. |
-| 9. Retire temp | `retire-temp` is a separate one-way phase. Do not invoke it without fresh human confirmation; keep the temp container and evidence for rollback. | A retirement refusal or cleanup request goes to the human. |
+| 9. Retire temp | Always retire temp once scheduling is back on main, after drain and the zero-work gate; reclaim its volumes under [Volume recycling and disk reclaim](#volume-recycling-and-disk-reclaim-card-1008). Retain the rollout receipts. | The current absent-row guard can refuse the normal path; use only the documented manual equivalent below, with every precondition satisfied. Other refusals stop the rollout. |
 
 At gate 1, `deploy-temp` accepts either a retired temp placeholder or a cleared offline
 one, whether its drain is set or clear. For a retired start it checks offline zero work,
@@ -128,11 +128,138 @@ pwsh -NoProfile -File scripts/runner-drain.ps1 status -RunnerId server2-temp
 
 Wait until `retiredAt` is non-null, `draining=true`, `retireWhenIdle=true`, and
 `redirectTo=server2`. Preserve the status and census with the failed phase receipt.
-The absent offline placeholder may keep `runnerSessions=null`; do not run
-`retire-temp` until all three counters are fresh non-null zero. When that gate is
-satisfied, use the ordinary `retire-temp` phase to finish host cleanup. Leave a
-retired absent placeholder in place if its live inventory stays unknown; the next
-`deploy-temp` supports that shape. Do not clear the hold to abandon a rollout.
+The absent offline placeholder may keep `runnerSessions=null`; the current phase
+refuses that shape. Follow the [manual retirement equivalent](#volume-recycling-and-disk-reclaim-card-1008)
+only with confirmed container absence and all other preconditions satisfied. Preserve
+the retired absent row; the next `deploy-temp` supports it. Unknown live inventory
+without confirmed absence still stops cleanup. Do not clear the hold to abandon a rollout.
+
+### Volume recycling and disk reclaim (CARD-1008)
+
+Always retire `server2-temp` once scheduling has moved back to the verified, accepting
+main runner. After drain and the checks below, temp is disposable: `compose_temp down -v`
+removes all four private volumes (work, runner-tmp, dind-data, runner-state). This is
+part of the rollout's disk reclaim, not a reason to retain temp for rollback.
+
+At `redeploy-old`, after main is drained with zero live seats and its container is
+stopped, recycle **only** `antiphon-runner_work`, `antiphon-runner_runner-tmp` and
+`antiphon-runner_dind-data` by default. Never use blanket `down -v` on main. Until
+CARD-1008's script implementation lands, perform the manual step below before
+`redeploy-old`; the phase does not yet implement this policy automatically.
+
+| Volume | What it holds | Default on retire/replace | Consequence of recreating |
+|---|---|---|---|
+| `antiphon-runner-temp_work` | Temp task worktrees and mirrors | Remove on temp retirement | Empty workspace; recover unpublished work first |
+| `antiphon-runner-temp_runner-tmp` | Temp `/tmp` | Remove on temp retirement | Image `/tmp`, including `/tmp/antiphon-pty-hosts`, copies in on first mount (CARD-0827) |
+| `antiphon-runner-temp_dind-data` | Temp nested Docker data | Remove on temp retirement | Nested images and containers must be rebuilt |
+| `antiphon-runner-temp_runner-state` | Temp identity/store and volume-backed provider state | Remove on temp retirement | New store; next deployment uses explicit retirement clear and lease admission (CARD-0953) |
+| `antiphon-runner_work` | Main task worktrees and mirrors | Recycle on main replacement | Empty workspace; recover unpublished work first |
+| `antiphon-runner_runner-tmp` | Main `/tmp` | Recycle on main replacement | Image `/tmp`, including `/tmp/antiphon-pty-hosts`, copies in on first mount; never substitute a name-pattern sweep |
+| `antiphon-runner_dind-data` | Main nested Docker data | Recycle on main replacement | Nested images and containers must be rebuilt |
+| `antiphon-runner_runner-state` | Main runner identity/store and volume-backed provider state | Preserve; explicit human opt-in to recycle | A different store hits `StoreMismatch`; retire, explicitly clear retirement, allow connection detachment and lease expiry, then re-register under CARD-0953 |
+| `antiphon-runner-cache-nuget-packages` | Shared NuGet packages | Preserve; explicit human opt-in to recycle | CARD-0912 cold Seed required; minutes to an hour, best effort |
+| `antiphon-runner-cache-nuget-scratch` | Shared NuGet lock scratch | Preserve; explicit human opt-in to recycle | Recreate through the cache maintenance/Seed procedure |
+| `antiphon-runner-cache-npm-content` | Shared npm package content | Preserve; explicit human opt-in to recycle | CARD-0912 cold Seed required; minutes to an hour, best effort |
+
+The three shared cache volumes remain external to temp's `down -v`. Any cache
+recreation must finish the documented Seed and `verify-runner-caches` validation;
+empty caches are not a passing cache gate. State/cache opt-in does not authorize
+prune, deletion of deployment markers or the donor tar, or bypass of admission guards.
+
+Before **any** volume removal, require completed drain, zero sessions and queued
+tasks, no routing or pins to that runner, no land in flight, a stopped container,
+and no container reference to each volume (including exited state-init containers).
+A fresh non-null zero `runnerSessions` is required while a runner container exists.
+For an already-retired, offline, absent temp only, null is expected: prove absence
+with the host census and require `sessions=0`, `queuedTasks=0`, `retiredAt` set,
+`draining=true`, `retireWhenIdle=true`, `redirectTo=server2`, and nothing routed there.
+Unknown counters or failed observations otherwise stop removal.
+
+Before removing work, apply CARD-0831: enumerate every runner-side mirror and its
+worktrees, run `git worktree list --porcelain` in each repository, and run
+`git -C <worktree-or-mirror-path> rev-list --count HEAD --not --remotes` for every
+listed worktree and mirror HEAD. Check all local branch tips for unpublished commits
+as well; origin refs must be current enough to establish publication. Inspect
+Blocked/Failed tasks bound to this runner, including their branches and workspaces.
+A nonzero count or unique unpublished work stops removal: publish or recover it first
+and record the task IDs, paths and results. Perform this inventory before stopping
+and removing the container, while its workspace can still be read; never mount the
+volume in a helper container during the final unreferenced-volume check.
+
+Until the scripts implement this policy, an orchestrator uses this manual equivalent
+from the canonical desktop checkout, recording every check in the rollout receipt:
+
+1. Read `GET /api/session-runners`, the target's status, and
+   `GET /api/agent-tasks/pipeline` (fleet-wide). Inspect routing
+   preferences/pins and the complete project/board-scoped task listing for Blocked/Failed tasks bound to
+   the runner; a capped pipeline preview cannot prove absence. Verify the other runner
+   is accepting, drain/zero-work conditions above, and no queued or executing land.
+   Complete the unpublished-work inventory before teardown.
+2. Census the target project (replace `<project>` with exactly `antiphon-runner-temp`
+   or `antiphon-runner`), record volume names/sizes and disk free space:
+
+   ```powershell
+   Invoke-RestMethod 'http://localhost:17202/api/session-runners'
+   pwsh -NoProfile -File scripts/runner-drain.ps1 status -RunnerId <runner>
+   Invoke-RestMethod 'http://localhost:17202/api/agent-tasks/pipeline'
+   Invoke-RestMethod 'http://localhost:17202/api/agent-tasks?boardId=<board-guid>&status=Blocked,Failed'
+   ssh mc@server2 'docker ps -a --filter label=com.docker.compose.project=<project> --format "{{.ID}} {{.Names}} {{.Status}}"'
+   ssh mc@server2 'docker volume ls --filter label=com.docker.compose.project=<project> --format "{{.Name}}"'
+   ssh mc@server2 'docker system df -v'
+   ssh mc@server2 'df -Pk "$(docker info -f "{{.DockerRootDir}}")"'
+   ```
+
+   Follow every task-list page using the owner HTTP guide; record task runner bindings.
+   Match the exact volume names to `docker system df -v` sizes. Record main's container
+   ID/start time and its retained state/cache volume identities before retiring temp.
+3. Once stopped, remove only the target project's stopped containers by their exact
+   census IDs (`ssh mc@server2 'docker rm <exact-container-id>'`, one at a time).
+   Include stopped state-init containers: stopped is not the same as unreferenced.
+   Do not remove main's containers when retiring temp. For each proposed volume, run
+   `ssh mc@server2 'docker ps -a --filter volume=<exact-full-volume-name>'` and require
+   an empty container listing (header only). Recheck runner/task/routing/land state
+   immediately before removal. Never remove a referenced volume.
+4. For manual temp retirement, execute each command separately, after its own reference
+   check. These exact removals are the disk-reclaim equivalent of temp `compose down -v`:
+
+   ```powershell
+   ssh mc@server2 'docker volume rm antiphon-runner-temp_work'
+   ssh mc@server2 'docker volume rm antiphon-runner-temp_runner-tmp'
+   ssh mc@server2 'docker volume rm antiphon-runner-temp_dind-data'
+   ssh mc@server2 'docker volume rm antiphon-runner-temp_runner-state'
+   ```
+
+   For main replacement, remove only these three, then resume `redeploy-old`:
+
+   ```powershell
+   ssh mc@server2 'docker volume rm antiphon-runner_work'
+   ssh mc@server2 'docker volume rm antiphon-runner_runner-tmp'
+   ssh mc@server2 'docker volume rm antiphon-runner_dind-data'
+   ```
+
+   Remove by **exact full name**, one at a time; never prune or use a glob. The prefix
+   collision `antiphon-runner_*` versus `antiphon-runner-temp_*` can destroy the standing
+   workspace if a name is shortened or inferred.
+5. Repeat the project census, volume listing and `df` command. After temp retirement,
+   prove its four private volumes and containers are absent, main's container ID/start
+   time and state/cache volumes are unchanged, and main remains accepting; temp must
+   remain retired/offline with zero bound work. After main replacement, prove the three
+   disposable volumes were recreated, retained state/cache volumes survived, and run
+   the ordinary SHA, mount/cache and smoke gates. Record a receipt line:
+   `VOLUME_RECYCLE runner=<id> removed=<exact-names> dfFreeKiBBefore=<n> dfFreeKiBAfter=<n>`.
+
+**Current retire-temp guard caveat:** `Assert-ZeroCounters` in
+`scripts/deploy-server2.ps1` (lines 69-78 at this revision) refuses a retired row with
+`runnerSessions=null`, the normal state after `drain-temp` removes the container.
+Until CARD-0994/CARD-1008's guard fix lands, the phase cannot finish that normal path.
+Use the manual equivalent above only for the confirmed retired/absent shape; keep
+the refusal for a retired row that still has a container. Retain the row and receipt.
+
+Evidence, 2026-10-02/03: server2 reached 98% disk with 17.6 GiB free, below the
+20 GiB `CacheDiskLow` gate. Main work occupied 218 GB (116 stale terminal worktrees
+accounted for 100.7 GiB), runner-tmp 38.6 GB and dind-data 17 GB; retired temp volumes
+occupied another 76 GB + 7.3 GB. Cleanup and temp-volume reclaim increased free space
+from 17.6 GiB to 272 GiB (60% used).
 
 ## Shared server2 runner caches (CARD-0849)
 
