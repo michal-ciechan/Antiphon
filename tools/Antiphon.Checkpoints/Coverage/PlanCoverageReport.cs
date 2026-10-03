@@ -22,6 +22,7 @@ public sealed class PlanCoverageReport
 {
     // Reader/analyzer state, deliberately absent from the public JSON schema.
     internal List<CoverageCountPromise> CountPromises { get; } = [];
+    internal bool SelectedClassCensus { get; set; }
     public int SchemaVersion => 1;
     public string Mode => "static";
     public string Plan { get; set; } = "";

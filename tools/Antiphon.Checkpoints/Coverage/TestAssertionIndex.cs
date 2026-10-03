@@ -10,12 +10,14 @@ public sealed record IndexedMethod(string Class, string Name, string Path, Metho
 {
     public string Qualified => Class + "." + Name;
 }
+internal sealed record IndexedClass(string Class, string Namespace, string Path, ClassDeclarationSyntax Syntax);
 
 /// <summary>Bounded syntax evidence. No semantic model, loading or execution of selected code.</summary>
 public sealed class TestAssertionIndex
 {
     private readonly List<(string Path, CompilationUnitSyntax Root)> _trees = [];
     public List<IndexedMethod> Methods { get; } = [];
+    internal List<IndexedClass> Declarations { get; } = [];
     public List<CoverageDiagnostic> Diagnostics { get; } = [];
     public TestAssertionIndex(IReadOnlyList<CoverageSource> sources)
     {
@@ -25,6 +27,8 @@ public sealed class TestAssertionIndex
             if (tree.GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error))
             { Diagnostics.Add(new("SOURCE_INVALID", TestPath: source.Path, Detail: "invalid C# syntax")); continue; }
             var root = tree.GetCompilationUnitRoot(); _trees.Add((source.Path, root));
+            foreach (var declaration in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
+                Declarations.Add(new(ClassName(declaration), string.Join('.', declaration.Ancestors().OfType<BaseNamespaceDeclarationSyntax>().Reverse().Select(n => n.Name.ToString())), source.Path, declaration));
             foreach (var method in root.DescendantNodes().OfType<MethodDeclarationSyntax>())
                 Methods.Add(new(ClassName(method), method.Identifier.ValueText, source.Path, method));
         }

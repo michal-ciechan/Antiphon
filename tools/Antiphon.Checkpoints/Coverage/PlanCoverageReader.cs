@@ -183,8 +183,13 @@ public sealed class PlanCoverageReader
         try
         {
             using var document = JsonDocument.Parse(json);
-            Keys(document.RootElement, ["version", "items"]);
+            Keys(document.RootElement, ["version", "items", "selectedClassCensus"]);
             if (document.RootElement.GetProperty("version").GetInt32() != 1) throw new InvalidDataException();
+            if (document.RootElement.TryGetProperty("selectedClassCensus", out var census))
+            {
+                if (census.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) throw new InvalidDataException();
+                report.SelectedClassCensus = census.GetBoolean();
+            }
             var items = document.RootElement.GetProperty("items").EnumerateArray().ToArray();
             var maps = new List<(string Id, string Test, int Line, string Clause)>();
             foreach (var item in items)
