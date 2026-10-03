@@ -74,6 +74,12 @@ function Run-C727 {
         $state['seedImageAvailable'] = $true
     }
     foreach ($key in $Set.Keys) { $state[$key] = $Set[$key] }
+    # A normal rolling main replacement begins only after temp admission. Keep
+    # this neighbour explicit rather than inventing an absent accepting runner.
+    if ($Phase -eq 'redeploy-old') {
+        if (-not $Set.ContainsKey('tempContainer')) { $state.tempContainer = $true }
+        if (-not $Set.ContainsKey('tempDeployed')) { $state.tempDeployed = $true }
+    }
     if (($state.tempDeployed -or $Phase -eq 'retire-temp') -and -not $Set.ContainsKey('tempContainer')) { $state.tempContainer = $true }
     $state | ConvertTo-Json -Compress | Set-Content -LiteralPath $statePath
     $psi = [System.Diagnostics.ProcessStartInfo]::new('pwsh')
