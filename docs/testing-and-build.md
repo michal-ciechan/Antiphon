@@ -295,9 +295,38 @@ counts support single-result methods and method-level `Arguments` attributes. Dy
 data sources, Matrix/Repeat or class/parameter expansion emit
 `CHECKLIST_COUNT_UNMAPPED` (exit 1); syntax cannot invent their execution census.
 This checks the declared promise set. It does not infer that every current method
-selected by a class filter belongs in an older frozen checklist; that stronger rule
-needs an explicit plan contract. No declarations are added to the JSON report schema,
+selected by a class filter belongs in an older frozen checklist. No declarations are added to the JSON report schema,
 and a matching census adds no output records.
+
+Version 1 checklists may explicitly promise `selectedClassCensus: true`, in either
+the inline fence or the external checklist. Absence and `false` preserve legacy
+behavior and report bytes. The optional key accepts only JSON booleans; duplicate
+keys, unknown keys, malformed values and conflicting checklist sources remain
+`CHECKLIST_INVALID` (exit 2). Upgrade/rebuild the reader before adding the flag to
+a plan; older readers reject it. Historical plans remain unchanged.
+
+The promise compares the union of directly declared TUnit test methods selected
+by whole-class checkpoint rows with distinct successfully bound checklist
+`method` items across V/R/PC IDs. It compares declaration identities, rather than
+counts or display aliases. Prose, labels and canaries do not supply roster members;
+helpers and unselected methods are extra members. Parameter expansion contributes
+one declared identity; declared-result count validation remains independent.
+`CLASS_CENSUS_MISMATCH` (exit 1) identifies each missing/extra method and its source
+location. Missing members retain the earliest selecting CP's original location;
+extra members retain the checklist requirement's location. A match adds no records
+and does not prove PC reachability or change the missing-assertion count.
+
+Static census supports assembly `*`, namespace `*` or an exact namespace, literal
+or OR class operands and trailing class wildcards, and method segment `*`.
+Project boundaries, nested class identities and partial declarations are retained;
+loading a file does not select its siblings. Recognized `Test`/`TestAttribute`
+spellings include TUnit.Core and global qualification. Command/category/method
+selection, unsupported filter syntax, aliases/shadowing, unresolved/inherited-test
+base chains, generated/conditional declarations, Skip and Explicit eligibility
+produce `CLASS_CENSUS_UNMAPPED` (exit 1). A proven test-free base chain is admitted
+without adding supporting files to serialized sources. An opted-in pure analyzer
+without trusted checkpoint selection context is unmapped. Census never executes
+discovery or loads an assembly; malformed manifest/path/source inputs remain exit 2.
 
 Roslyn parses syntax only. Supported Shouldly signatures distinguish the actual,
 expected, Case and custom-message arguments. Setup/comments/another method cannot
