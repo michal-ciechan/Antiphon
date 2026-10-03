@@ -1,6 +1,6 @@
 # CARD-1014 ordinary spill incident repair
 
-Original Code and landing owner: a8a78ab3 (task token identifies the full task GUID).
+Original Code and landing owner: a8a78ab3-b4a9-4bbb-8629-f897bb7418d4.
 Branch: feat/card-task-a8a78ab3. Worktree: /work/worktrees/task-a8a78ab3.
 Base: 29d7c3ebb440378abea791d2c4dcb5ac90b6192b. Round: Final.
 Acceptance: CARD-1014; CARD-0888 origin and CARD-0965 item 5 incident visibility.
