@@ -77,6 +77,97 @@ public class InstructionBundleTests
     }
 
     [Test]
+    public void C1011_composed_windows_routing_contract()
+    {
+        var text = C1011Collapse(InstructionBundleComposer.Compose([InstructionBundles.Orchestrator]).Text);
+        text.ShouldContain("OS needs do not authorize -IgnoreRoutingPin.", "os-pin");
+        var omitted = System.Text.RegularExpressions.Regex.Match(text, @"Normally omit (.*?) to preserve").Groups[1].Value;
+        omitted.ShouldContain("-Kind", "omit-kind");
+        omitted.ShouldContain("-Level", "omit-level");
+        text.ShouldContain("docs/orchestration-loop.md#windows-review-and-debug-routing", "owner-pointer");
+        C1011Read(".claude/skills/antiphon-orchestrator/SKILL.md")
+            .ShouldContain("orchestration-loop.md#windows-review-and-debug-routing", "orchestrator-skill-pointer");
+        C1011Read(".claude/skills/antiphon-delegate/SKILL.md")
+            .ShouldContain("orchestration-loop.md#windows-review-and-debug-routing", "delegate-skill-pointer");
+    }
+
+    [Test]
+    public void C1011_model_kind_and_tier_contract()
+    {
+        var text = C1011Collapse(InstructionBundleComposer.Compose([InstructionBundles.Orchestrator]).Text);
+        text.ShouldContain("`-Kind` selects `ClaudeCode`, `Grok`, or `Codex`", "kind-values");
+        text.ShouldContain("`-Level` selects `Frontier`, `High`, `Medium`, or `Low`", "level-values");
+        text.ShouldContain("Model-tier names are **not AgentKind values**.");
+        text.ShouldContain("Never pass a model-tier name as either flag.");
+        text.ShouldContain("server/Application/Services/ModelLevelAliases.cs");
+    }
+
+    [Test]
+    public void C1011_owner_role_wide_policy_and_fallback()
+    {
+        var owner = C1011Owner();
+        owner.ShouldContain("Review and Debug on every platform, including Linux", "all-platforms");
+        owner.ShouldContain("Required", "required-strength");
+        owner.ShouldContain("Human", "human-provenance");
+        owner.ShouldContain("Human Required");
+        owner.ShouldContain("Grok/High then ClaudeCode/High", "required-pair");
+        owner.ShouldContain("grok-4.7");
+        owner.ShouldContain("opus");
+        owner.ShouldContain("Startup failure requires explicit authorized recovery; do not retry Grok automatically.", "startup-recovery");
+        var recoveryAt = owner.IndexOf("### Explicit startup recovery", StringComparison.Ordinal);
+        recoveryAt.ShouldBeGreaterThanOrEqualTo(0);
+        var recovery = owner[recoveryAt..];
+        recovery.ShouldContain("-Platform Windows", "recovery-platform");
+        recovery.ShouldContain("-Kind ClaudeCode -Level High");
+        recovery.ShouldContain("no -IgnoreRoutingPin", "recovery-no-bypass");
+    }
+
+    [Test]
+    public void C1011_qualification_gates()
+    {
+        var owner = C1011Owner();
+        owner.ShouldContain("Both actual InboxConhost and ModernConPty require real Review evidence.", "both-hosts");
+        owner.ShouldContain("A fresh worktree must visibly show trust, receive one y, clear trust, and reach Ready.", "fresh-trust");
+        owner.ShouldContain("Delivery requires a matching complete UserPrompt transcript.", "whole-receipt");
+        owner.ShouldContain("Settlement requires a final report and confirmed release ownership.", "release-owner");
+        owner.ShouldContain("WQ-1, WQ-2 and WQ-3 gate prompt landing and Debug pin activation.", "preland-gate");
+    }
+
+    [Test]
+    public void C1011_activation_order()
+    {
+        var owner = C1011Owner();
+        var land = owner.IndexOf("confirmed land", StringComparison.Ordinal);
+        var restart = owner.IndexOf("canonical restart and /api/version", StringComparison.Ordinal);
+        var pin = owner.IndexOf("pin write and readback", StringComparison.Ordinal);
+        var refresh = owner.IndexOf("bundle stamp and idle-gated refresh", StringComparison.Ordinal);
+        var debug = owner.IndexOf("WQ-4 complete receipt and release", StringComparison.Ordinal);
+        land.ShouldBeGreaterThanOrEqualTo(0, "confirmed-land");
+        restart.ShouldBeGreaterThanOrEqualTo(0, "canonical-restart");
+        pin.ShouldBeGreaterThanOrEqualTo(0, "pin-readback");
+        refresh.ShouldBeGreaterThanOrEqualTo(0, "refresh-before-canary");
+        debug.ShouldBeGreaterThanOrEqualTo(0, "debug-confirmation");
+        restart.ShouldBeGreaterThan(land);
+        pin.ShouldBeGreaterThan(restart, "canonical-before-pin");
+        refresh.ShouldBeGreaterThan(pin);
+        debug.ShouldBeGreaterThan(refresh);
+        owner.ShouldContain("Preserve unrelated Human card exceptions.", "preserve-exceptions");
+        owner.ShouldContain("Queued tasks retain their recorded selection.", "queued-selection");
+    }
+
+    private static string C1011Read(string relative) => File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, relative));
+    private static string C1011Collapse(string text) => System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ");
+    private static string C1011Owner()
+    {
+        var text = C1011Read("docs/orchestration-loop.md");
+        const string heading = "## Windows Review and Debug routing";
+        var start = text.IndexOf(heading, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, "owner-section");
+        var end = text.IndexOf("\n## ", start + heading.Length, StringComparison.Ordinal);
+        return C1011Collapse(end < 0 ? text[start..] : text[start..end]);
+    }
+
+    [Test]
     public void C807_ShippedReviewExampleParses()
     {
         var text = InstructionBundles.TextOf(InstructionBundles.StageReview);
