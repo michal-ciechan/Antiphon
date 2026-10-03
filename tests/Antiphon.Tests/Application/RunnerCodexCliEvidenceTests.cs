@@ -152,8 +152,8 @@ public sealed class RunnerCodexCliEvidenceTests
             using var response = await projection.Http.GetAsync("/api/session-runners");
             response.EnsureSuccessStatusCode();
             var rows = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
-            var status = Shape(projection.Directory.Status(projection.AllowedRunnerId));
-            foreach (var shape in rows.EnumerateArray().Append(status))
+            var projectedStatus = Shape(projection.Directory.Status(projection.AllowedRunnerId));
+            foreach (var shape in rows.EnumerateArray().Append(projectedStatus))
             {
                 Text(shape, "codexCliVersionError").ShouldBe(error, label);
                 Flag(shape, "codexCliVersionStale").ShouldBe(stale, label + " freshness");
