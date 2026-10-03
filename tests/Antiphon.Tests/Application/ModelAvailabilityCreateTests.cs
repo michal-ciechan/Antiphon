@@ -62,7 +62,7 @@ public class ModelAvailabilityCreateTests
         await Service(db).ClearAsync("Codex", ModelAlias.Gpt6Sol, CancellationToken.None);
         var after = await service.CreateAsync(request with { AgentId = agent.Id }, caller, CancellationToken.None);
         after.Status.ShouldBe(AgentTaskStatus.Queued);
-        after.AgentId.ShouldBe(agent.Id);
+        (await db.AgentTasks.SingleAsync(t => t.Id == after.Id)).AgentId.ShouldBe(agent.Id);
     }
 
     [Test]
