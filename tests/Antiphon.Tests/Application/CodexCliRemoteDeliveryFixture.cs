@@ -93,7 +93,8 @@ internal static class CodexCliRemoteDeliveryFixture
                     services.AddScoped<AgentTaskService>();
                     services.AddScoped<IDelegateSessionStopper>(sp => sp.GetRequiredService<AgentSessionService>());
                     services.AddScoped<AgentTaskDispatcher>();
-                    if (busy) services.AddSingleton<IEventBus>(sp => new BusyBus(sp.GetRequiredService<MockEventBus>(), schema.ConnectionString));
+                    if (busy) services.AddSingleton<IEventBus>(sp => new BusyBus(sp.GetRequiredService<MockEventBus>(), runtime,
+                        () => sp.GetRequiredService<AgentSessionRuntime>()));
                 },
             });
             freeze.Settings = h.Delegation;
@@ -142,7 +143,8 @@ internal static class CodexCliRemoteDeliveryFixture
             {
                 terminal.SubmittedBodies.ShouldBeEmpty("C959-pc-188 remote " + vector);
                 (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == queued.Id)).Status.ShouldBe(QueuedMessageStatus.Pending);
-                await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn", sessionId: task.AgentSessionId);
+                runtime.Append(task.AgentSessionId.Value, TranscriptKinds.TurnEnd, stopReason: "end_turn");
+                await h.Runtime.CatchUpTranscriptAsync(task.AgentSessionId.Value, CancellationToken.None);
                 await h.Queue.FlushSessionAsync(task.AgentSessionId.Value, CancellationToken.None);
             }
             terminal.SubmittedBodies.Single().ShouldBe(expectedWire, "C959-v21-remote-W " + vector);
@@ -216,7 +218,7 @@ internal static class CodexCliRemoteDeliveryFixture
         }
     }
 
-    private sealed class BusyBus(MockEventBus inner, string connection) : IEventBus
+    private sealed class BusyBus(MockEventBus inner, Recipient recipient, Func<AgentSessionRuntime> runtime) : IEventBus
     {
         public Task PublishToAllAsync(string name, object payload, CancellationToken ct = default) => inner.PublishToAllAsync(name, payload, ct);
         public async Task PublishToGroupAsync(string group, string name, object payload, CancellationToken ct = default)
@@ -224,8 +226,9 @@ internal static class CodexCliRemoteDeliveryFixture
             if (name == "SessionStarted")
             {
                 var id = (Guid)payload.GetType().GetProperty("sessionId")!.GetValue(payload)!;
-                await BridgeQueueHarness.InsertEntryAsync(id, TranscriptKinds.TurnEnd, stopReason: "end_turn", connectionString: connection);
-                await BridgeQueueHarness.InsertEntryAsync(id, TranscriptKinds.AssistantText, "C959 remote activity after TurnEnd", connectionString: connection);
+                recipient.Append(id, TranscriptKinds.TurnEnd, stopReason: "end_turn");
+                recipient.Append(id, TranscriptKinds.AssistantText, "C959 remote activity after TurnEnd");
+                await runtime().CatchUpTranscriptAsync(id, ct);
             }
             await inner.PublishToGroupAsync(group, name, payload, ct);
         }
@@ -237,6 +240,12 @@ internal static class CodexCliRemoteDeliveryFixture
         private readonly Dictionary<Guid, List<RunnerTranscriptEvent>> _transcripts = [];
         public List<RunnerCodexCliProbeRequest> ProbeRequests { get; } = [];
         public Func<Guid, string, Task>? BeforeBody { get; set; }
+        public void Append(Guid id, string kind, string? text = null, string? stopReason = null)
+        {
+            var entries = _transcripts[id];
+            entries.Add(new(id, entries.Count + 1, kind, null, null, DateTimeOffset.UtcNow,
+                kind == TranscriptKinds.UserPrompt ? "user" : null, text, null, null, null, null, stopReason));
+        }
         public RunnerCapabilitiesDto Capabilities() => new("InboxConhost", "inbox", "test", false,
             Version: "d40c1670", Platform: "linux", Features: [RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.WorkspaceRepositoryV1]);
         public Task<RunnerCodexCliVersionDto?> GetCodexCliVersionAsync(RunnerCodexCliProbeRequest request, CancellationToken ct)
@@ -257,11 +266,8 @@ internal static class CodexCliRemoteDeliveryFixture
             _transcripts.Add(request.SessionId, []);
             terminal.OnSubmitted = text =>
             {
-                var entries = _transcripts[request.SessionId];
-                entries.Add(new(request.SessionId, entries.Count + 1, TranscriptKinds.UserPrompt, null, null, DateTimeOffset.UtcNow,
-                    "user", text, null, null, null, null, null));
-                entries.Add(new(request.SessionId, entries.Count + 1, TranscriptKinds.TurnEnd, null, null, DateTimeOffset.UtcNow,
-                    null, null, null, null, null, null, "end_turn"));
+                Append(request.SessionId, TranscriptKinds.UserPrompt, text);
+                Append(request.SessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn");
                 return Task.CompletedTask;
             };
             await terminal.StartAsync(new AgentLaunchSpec("codex", AgentKind.Codex, request.Exe, request.Args, request.Env, request.Cwd,
