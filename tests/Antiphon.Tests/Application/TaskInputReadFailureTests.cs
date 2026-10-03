@@ -105,6 +105,9 @@ public sealed class TaskInputReadFailureTests
         var inputProbe = (InputCallProbe)runner;
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 2, 10, 5, 0, TimeSpan.Zero));
         var first = (await ReadItemsAsync(f, commands, runner, clock)).Single(i => i.Kind == AttentionKind.TaskInputUnreadable);
+        first.TaskId.ShouldBe(f.TaskId, "condition-own-task");
+        first.SessionId.ShouldBe(f.SessionId, "condition-own-session");
+        first.MessageId.ShouldBe(row.Id, "condition-own-message");
         first.SinceUtc.ShouldBe(new DateTime(2026, 10, 2, 10, 1, 41, DateTimeKind.Utc),
             "condition-time-is-complaint-time");
         await using var db = f.Db();
