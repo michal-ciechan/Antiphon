@@ -562,6 +562,11 @@ The full Unit row selects Linux (no host pin) because its six Windows exclusions
 | CP-5 | S1-S3 | CP-1 | source-ignored-smoke | `/*/*/CheckpointSourceStateTests/clean_and_ignored_outputs_match_head` | V-22, R-2 | exact method; 0 failed/skipped | 1 | 1 | true | `C804_ORPHAN_SWEEP_ROOT=c1015-disabled` |
 | CP-6 | S1-S3 | n/a | candidate-history | `pwsh -NoProfile -File scripts/check-evidence-diff.ps1 -BaseRef "$C1015_BASE_SHA" -HeadRef HEAD` | V-23, R-3, R-4 | exit 0; resolved B/head and counts; 0 violations; B equals recorded dispatch base | n/a | 1 | true | n/a |
 | CP-7 | S1-S3 | n/a | rule-deletion | `pwsh -NoProfile -File scripts/check-evidence-deletion.ps1 -InventoryRef "$C1015_BASE_SHA" -InventoryPathSha256 "$C1015_DELETE_PATH_SHA256" -InventoryCount "$C1015_DELETE_COUNT" -InventoryBytes "$C1015_DELETE_BYTES" -HeadRef HEAD` | V-24, R-5 | exit 0; one marked ordinary commit; exactly D(B) deleted; anchor 108=88+20; allowed Markdown identical; 0 final-tree rejects; historical blobs retrievable | n/a | 1 | true | n/a |
+| CP-8 | S1-repair | `tests/Antiphon.Tests -> bin-c1015-repair/` | bundle-repair | `/*/*/InstructionBundleTests/*` | V-19, R-1, V-25, R-7 | complete affected class; 66 passed; 0 failed/skipped; seven caused Unit failures restored | 66 | 1 | true | `C804_ORPHAN_SWEEP_ROOT=c1015-disabled;TUNIT_MAX_PARALLEL_TESTS=4` |
+| CP-9 | S1-repair | CP-8 | manifest-repair | `/*/*/CheckpointManifestDocumentationTests/*` | R-1, V-25, R-7 | complete affected class; 7 passed; 0 failed/skipped; seven caused Unit failures restored | 7 | 1 | true | `C804_ORPHAN_SWEEP_ROOT=c1015-disabled;TUNIT_MAX_PARALLEL_TESTS=4` |
+| CP-10 | S1-repair | CP-8 | platform-repair | `/*/*/TaskPlatformGuidanceTests/*` | R-1, V-25, R-7 | complete affected class; 5 passed; 0 failed/skipped; seven caused Unit failures restored | 5 | 1 | true | `C804_ORPHAN_SWEEP_ROOT=c1015-disabled;TUNIT_MAX_PARALLEL_TESTS=4` |
+| CP-11 | S1-repair | CP-8 | round-repair | `/*/*/VerificationRoundInstructionTests/*` | R-1, V-25, R-7 | complete affected class; 6 passed; 0 failed/skipped; seven caused Unit failures restored | 6 | 1 | true | `C804_ORPHAN_SWEEP_ROOT=c1015-disabled;TUNIT_MAX_PARALLEL_TESTS=4` |
+| CP-12 | S1-repair | CP-8 | repeat-repair | `/*/*/CheckpointRepeatDocumentationTests/*` | R-1, R-6, V-25, R-7 | complete affected class; 1 passed; 0 failed/skipped; seven caused Unit failures restored | 1 | 1 | true | `C804_ORPHAN_SWEEP_ROOT=c1015-disabled;TUNIT_MAX_PARALLEL_TESTS=4` |
 
 Code/Review bootstrap the checkpoint tool once through `scripts/build-slot.ps1` into `bin-c1015-tool/`. Import the real seven-row table, compare filters/minima/build reuse to this manifest, and run the owner's read-only coverage lint with explicit files for the three new classes and InstructionBundleTests plus the two smoke/census files. New labels must bind to real assertions; reconcile static diagnostics without treating syntax success as runtime proof. Use the built DLL for importer/lint so those calls introduce no implicit build. Run the checkpoint tool for this plan with `--after S1-S3 --expected-source-sha` set to the actual full source SHA and wait until exit is not 75. Any slot timeout is not-run, never a reason to bypass the gate. No tests run while source is changing.
 
@@ -687,3 +692,24 @@ same six method negations with trailing stars for result-name suffixes.
 The selected lane, six exclusions, count floor, assertions, timeouts and
 environment are unchanged. Run 20261003-203943-2d3d records the parser refusal
 and no Unit TRX; the repaired run is the first actual whole-Unit execution.
+
+### Code instruction repair after the single Unit baseline (bc463e02)
+
+Run 20261003-205229-3106 selected all 4,020 eligible Unit results: 3,967 passed,
+seven failed, 46 inherited Windows/jq prerequisites skipped. All eight new Unit
+methods and the compiled census (377) passed; both full Git classes (18 and six)
+and the two smokes passed. The seven failed instruction cases each pass at B
+90a936e39f899655e48dddb9d2ed8287222d92e8, so these are caused regressions.
+Restore pinned Review/Code instructions and meet the unchanged stage/composition
+budgets; no test, assertion, timeout, original CP filter or count floor is relaxed.
+Review's compact `?` template value is defined by the common bundle as true/false,
+with true requiring SHA-validated clean receipts and verified build provenance.
+
+The brief requires the whole Unit lane once, then targeted repairs. CP-8..CP-12
+are the closed repair manifest: five full affected instruction classes, 85
+executions, one isolated build with reuse, estimated five minutes. Run them
+alongside CP-6/CP-7 at the committed repair SHA; do not restart the whole Unit
+lane. Its original red receipt remains red and is disclosed, with the seven
+failed cases reconciled against fresh repair TRX. The operator accepts disclosed
+inherited skips and the resulting strict Unit qualification refusal; do not lower
+4020 or turn skips into passed/executed results. No ordinary V/R is deferred.
