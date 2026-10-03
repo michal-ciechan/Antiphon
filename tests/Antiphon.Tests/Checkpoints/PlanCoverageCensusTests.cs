@@ -283,6 +283,8 @@ public sealed class PlanCoverageCensusTests : CheckpointTestBase
             (Run(selected).ExitCode, Run(unselected).ExitCode).ShouldBe((1, 0), "c1005-shape-ownership");
         }
         var conditionalSibling = Make(source: Two + "#if false\nclass Unsafe { [Test] void Decoy() {} }\n#endif\n");
+        var aliasSibling = Make(source: "namespace One { class A { [Test] void First() {} } } namespace Two { using Test = Other.Attribute; class Decoy { [Test] void Ignored() {} } }", roster: ["A.First"]);
+        Run(aliasSibling).ExitCode.ShouldBe(0, "c1005-alias-sibling");
         Run(conditionalSibling).ExitCode.ShouldBe(0, "c1005-conditional-sibling");
         foreach (var filter in new[] { "/*/*/A/First", "/Named/*/A/*", "/*/One*/A/*", "/*/*/A?/*", "/*/*/*/*[Category=Unit]" })
             (Run(Make(filter: filter)).ExitCode, Run(Make(filter: filter)).Invalid).ShouldBe((1, false), "c1005-unmapped-verdicts");

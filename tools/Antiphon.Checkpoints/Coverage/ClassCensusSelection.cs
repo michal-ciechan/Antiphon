@@ -116,9 +116,11 @@ internal sealed class ClassCensusSelection
         try
         {
             var root = c.Syntax.SyntaxTree.GetRoot();
+            var usings = root.DescendantNodes().OfType<UsingDirectiveSyntax>()
+                .Where(u => u.Parent is CompilationUnitSyntax || c.Syntax.Ancestors().Any(a => ReferenceEquals(a, u.Parent))).ToArray();
             var direct = c.Syntax.Members.OfType<MethodDeclarationSyntax>().ToArray();
             var attrs = Attributes(c.Syntax).Concat(direct.SelectMany(Attributes)).ToArray();
-            var aliases = root.DescendantNodes().OfType<UsingDirectiveSyntax>().Where(u => u.Alias is not null).Select(u => u.Alias!.Name.Identifier.ValueText).ToHashSet(StringComparer.Ordinal);
+            var aliases = usings.Where(u => u.Alias is not null).Select(u => u.Alias!.Name.Identifier.ValueText).ToHashSet(StringComparer.Ordinal);
             if (attrs.Any(a => aliases.Contains(a.Name.ToString().Split('.')[0]))) return "ambiguous test attribute alias";
             if (direct.Any(m => Attributes(m).Any(a => AttributeName(a) is "Test" or "TestAttribute")) && index.Declarations.Any(d =>
                     d.Syntax.Identifier.ValueText is "Test" or "TestAttribute" && d.Namespace == c.Namespace)) return "shadowed test attribute";
@@ -129,7 +131,7 @@ internal sealed class ClassCensusSelection
             var depth = 0;
             foreach (var d in directives)
             {
-                if (d.SpanStart >= c.Syntax.FullSpan.Start && d.SpanStart <= c.Syntax.FullSpan.End) return "conditional test shape";
+                if (d.SpanStart >= c.Syntax.Span.Start && d.SpanStart < c.Syntax.Span.End) return "conditional test shape";
                 if (d.SpanStart >= c.Syntax.SpanStart) break;
                 if (d is IfDirectiveTriviaSyntax) depth++;
                 if (d is EndIfDirectiveTriviaSyntax) depth--;
@@ -152,7 +154,7 @@ internal sealed class ClassCensusSelection
                 if (aliases.Contains(name.Split('.')[0])) return "ambiguous base alias";
                 if (name is "object" or "System.Object" or "global::System.Object") continue;
                 name = name.Replace("global::", "", StringComparison.Ordinal);
-                var namespaces = root.DescendantNodes().OfType<UsingDirectiveSyntax>().Where(u => u.Alias is null && u.StaticKeyword.ValueText.Length == 0)
+                var namespaces = usings.Where(u => u.Alias is null && u.StaticKeyword.ValueText.Length == 0)
                     .Select(u => u.Name?.ToString()).Where(n => n is not null).ToArray();
                 var resolved = index.Declarations.Where(d => d.Class == name || d.Class == c.Namespace + "." + name
                     || !name.Contains('.') && namespaces.Any(ns => d.Class == ns + "." + name)).ToArray();
