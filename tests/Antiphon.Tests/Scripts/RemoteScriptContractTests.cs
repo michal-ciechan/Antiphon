@@ -93,6 +93,33 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_refuses_references_and_unknown_census()
     {
+        using (var held = new C1008HostFixture())
+        {
+            Directory.CreateDirectory(Path.Combine(held.Root, "server/locks"));
+            var psi = new ProcessStartInfo("bash") { UseShellExecute = false, RedirectStandardInput = true };
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add($"exec 8>'{held.Root}/server/locks/rollout.lock'; flock 8; touch '{held.Root}/held'; read -r release");
+            using var lease = Process.Start(psi)!;
+            Task<(int Exit, string Output)>? running = null;
+            try {
+                var ready = Stopwatch.StartNew();
+                while (!File.Exists(Path.Combine(held.Root, "held")) && ready.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(25);
+                File.Exists(Path.Combine(held.Root, "held")).ShouldBeTrue("recycle-reference-refusal: native owner has rollout lock");
+                running = held.Run(extra: "flock() { touch \"$C1008_FIXTURE_ROOT/lock-wait\"; command flock \"$@\"; }");
+                ready.Restart();
+                while (!File.Exists(Path.Combine(held.Root, "lock-wait")) && !running.IsCompleted && ready.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(25);
+                File.Exists(Path.Combine(held.Root, "lock-wait")).ShouldBeTrue("recycle-reference-refusal: production lock boundary reached");
+                held.Trace.Any(a => a[0] == "stop" || a[0] == "rm").ShouldBeFalse("recycle-reference-refusal: held native lock excludes effects");
+                running.IsCompleted.ShouldBeFalse();
+            } finally {
+                if (!lease.HasExited) await lease.StandardInput.WriteLineAsync("release");
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                try { await lease.WaitForExitAsync(deadline.Token); }
+                catch { if (!lease.HasExited) { lease.Kill(true); await lease.WaitForExitAsync(); } throw; }
+                if (running is not null) await running;
+            }
+            (await running!).Exit.ShouldBe(0, "recycle-reference-refusal: release admits the valid control");
+        }
         foreach (var defect in new[] { "missing-work", "wrong-source", "wrong-destination", "readonly", "unknown-mount" })
         {
             using var invalid = new C1008HostFixture();

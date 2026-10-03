@@ -75,7 +75,8 @@ public sealed class RollingVolumeRecycleScriptTests
                     ["runnerId"] = "other", ["projectId"] = null, ["scopeSource"] = "None", ["landRequestedAt"] = null, ["landStartedAt"] = null });
             }
             scoped.State["taskScopes"] = new JsonObject { [root] = first, [other] = second };
-            scoped.State["details"] = new JsonObject { [id] = new JsonObject { ["summary"] = row.DeepClone(), ["landRequest"] = null } };
+            scoped.State["details"] = new JsonObject { [id] = new JsonObject {
+                ["summary"] = vector == "inconsistent" ? first["items"]![0]!.DeepClone() : row.DeepClone(), ["landRequest"] = null } };
             var result = await scoped.Run("retire-temp");
             result.Exit.ShouldBe(vector == "closed" ? 0 : 2, "recycle-work-gates: actual scoped closure " + vector + "; " + result.Output);
             if (vector != "closed") result.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse();
@@ -294,7 +295,7 @@ public sealed class RollingVolumeRecycleScriptTests
     {
         using (var git = new C1008HostFixture())
         {
-            Directory.CreateDirectory(Path.Combine(git.Root, "work", "SENTINEL_C1008_FILENAME_CREDENTIAL.git"));
+            Directory.CreateDirectory(Path.Combine(git.Root, "work", "SENTINEL_C1008_FILENAME_CREDENTIAL", ".git"));
             git.Docker["gitStderr"] = "SENTINEL_C1008_GIT_CREDENTIAL";
             var refused = await git.Run();
             refused.Exit.ShouldBe(2, "recycle-receipt-custody: malformed Git is refused");
