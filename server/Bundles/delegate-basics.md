@@ -25,6 +25,13 @@ work itself: each one is here because ignoring it has already cost a real task.
   task itself, never a "next step" to offer in your report — there is no user at the other end to
   accept the offer, and a report naming an uncommitted file is flagged at settlement.
 
+- Generated evidence stays gitignored: TRX, JSON receipts, logs, archives and checkpoint outputs
+  are excluded from the generic commit requirement. Optional Markdown up to 1048576 bytes,
+  outside checkpoint directories, may be committed as individual report paths; never force-add
+  an evidence directory or the runtime-owned .antiphon/reports store. Keep essential unedited
+  CHECKPOINT lines/provenance in the stored report; do not move generated payloads elsewhere
+  to evade the rule. Code/Review run scripts/check-evidence-diff.ps1 over the full task range.
+
 - COMMIT BEFORE ANY BIG OR LONG-RUNNING TEST RUN, even as a WIP/checkpoint commit with verification
   still pending. CARD-0448's Code stage made genuine progress for 3.5 hours without a single commit,
   leaving 71 dirty files at risk on the very card about preventing uncommitted-work data loss.

@@ -2,11 +2,11 @@ Implement the landed plan, verification design and tests.
 
 SCOPE: Unit plus the named affected integration classes. Unit misses delivery, landing, leases and persistence. Name the invariant, unbounded classes and cost before a full-assembly run.
 
-CHECKPOINTS: Run the closed list in ### Checkpoints via the checkpoint tool once per committed slice group (docs/testing-and-build.md). Wait; paste CP-n lines unedited and inspect fresh TRX for each intended class/method and nonzero counts. Rerun red rows. Explain unlisted builds/tests; report slot= and waited=. A new test must fail on its guarded defect; self-comparison or a constant is a stub, not done.
+CHECKPOINTS: Run ### Checkpoints via the checkpoint tool once per committed slice group (docs/testing-and-build.md). Wait; inspect fresh TRX names/counts. Rerun red rows; explain unlisted builds/tests; report slot= and waited=. A new test must fail on its guarded defect; self-comparison or a constant is a stub, not done.
 
 repeat-proof: at most 3 normal + 2 loaded repetitions per unchanged proof selection; none required after green. Exceed only for a flake already demonstrated by Review; cite that Review, filter, reason and revised budget.
 
-SOURCE: Pass committed HEAD as expected SHA. Review needs clean receipts with verified build provenance.
+SOURCE: Pass committed HEAD as expected SHA; keep actual tested SHA and unedited CHECKPOINT lines. Require clean receipts with verified build provenance. Run scripts/check-evidence-diff.ps1 on full task base..HEAD, including report commits.
 
 ROUND: Follow the brief. Final (default, first round): whole Unit lane, every full affected class, every ordinary V/R, required manual work. Interim (explicit only): cumulative changed cases since the full baseline incl. earlier repair cases, unresolved-finding tests, named adjacent smoke; unbounded shared impact needs Final. List deferred-to-final IDs; never mark them passed.
 

@@ -179,6 +179,38 @@ The allowlist is `tests/Antiphon.Tests/slow-tests-allowlist.txt` (exact simple o
 
 ### Checkpoint manifest (CARD-0585)
 
+**Evidence Git policy (CARD-1015).** Keep generated TRX, JSON receipts, logs,
+archives and checkpoint output ignored; the generic slice-commit requirement does
+not include them. Under root `.antiphon/` (case-insensitive), only regular Markdown
+blobs up to 1,048,576 bytes outside directories containing `checkpoints`
+(case-insensitive) may be committed, individually. The leaf `checkpoints.md` is
+allowed. Do not relocate generated payloads elsewhere to evade the rule; the
+canonical `.antiphon/reports/` store remains runtime-owned and ignored.
+
+Code and read-only Review run `scripts/check-evidence-diff.ps1 -BaseRef <recorded
+task base> -HeadRef <exact pushed SHA>` over the entire candidate history, including
+report-only commits. The checker reads pinned Git objects and every introduced
+commit, including side branches/root commits, using no-renames raw records. Exit
+0 proves compliance, 1 reports policy violations, and 2 means input/history/Git
+cannot be verified. Unchanged legacy entries are grandfathered; introduced or
+changed entries must satisfy the rule. The independent Actions workflow enforces
+the same CLI; its green result does not establish branch protection.
+
+Continue generating and inspecting structured receipts and fresh TRX. Essential
+unedited CHECKPOINT lines, actual tested SHA, counts and provenance belong in the
+stored task report. A report commit changes HEAD: freeze tracked reports before
+final source qualification, then put later receipt facts in the stored report.
+Never relabel earlier receipts. Review writes no source/evidence; SourceLanding
+Mutation keeps its stricter external-evidence/no-commit exception.
+
+Ignored output does not dirty source; modified tracked evidence does. Publication
+and cleanup remain separate: the currently registered `RefusingEvidenceRetention`
+can preserve residue after publication. Completed-card whole-worktree removal is
+CARD-1017, outside this policy; raw artifacts gain no new durability guarantee.
+CARD-1015's separately marked normal deletion commit is checked by
+`check-evidence-deletion.ps1` against the independently recorded start-tree rule
+inventory, preserving allowed Markdown and proving historical object recovery.
+
 Use the checkpoint tool for repeated class runs. Before any ad hoc destructive shell cleanup, verify both variable components are nonempty, quote their expansions, and resolve the target inside the intended scratch root; a missing component must exit nonzero before `rm`.
 
 A Plan/TestDesign artifact ends its `## Verification design` with a `### Checkpoints` table: one row per isolated build plus one exact test-filter group, bound to the plan slice it closes, and a Code dispatch runs that table as a **closed list** rather than an ad hoc build/test loop. It removes the extra rebuilds (CARD-0490 ran 19 builds for 8 test runs), the hunting for files the plan already named, and the second Code round that CARD-0459 paid for; it does not shrink the named Slow/native V/R work, which is the coverage itself (investigation `docs/superpowers/investigations/2026-09-20-card-0585-batched-edit-test-workflow.md`).
