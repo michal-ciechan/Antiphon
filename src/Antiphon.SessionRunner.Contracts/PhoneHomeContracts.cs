@@ -98,11 +98,12 @@ public enum PhoneHomeOperation
     /// <summary>CARD-0654. Change the runner's own persisted launch seat limit.</summary>
     SetCapacity = 31,
     WorkspacePublish = 32,
+    CodexCliVersion = 33,
 }
 
 public sealed record PhoneHomeSetCapacityRequest(int Capacity, string Reason);
 public sealed record PhoneHomeSetCapacityResponse(int Capacity, bool Persisted, string? Path);
-public sealed record PhoneHomeCapacityHeartbeat(int Capacity);
+public sealed record PhoneHomeCapacityHeartbeat(int Capacity, RunnerCodexCliVersionDto? CodexCli = null);
 
 public sealed record RunnerRetireRequest(bool Force, string Reason);
 
@@ -391,4 +392,8 @@ public sealed record PhoneHomeRunnerStatusDto(
     string? RetireReason = null,
     int? Sessions = null,
     int? QueuedTasks = null,
-    int? RunnerSessions = null);
+    int? RunnerSessions = null,
+    string? CodexCliVersion = null,
+    DateTimeOffset? CodexCliVersionCheckedAtUtc = null,
+    string? CodexCliVersionError = null,
+    bool? CodexCliVersionStale = null);

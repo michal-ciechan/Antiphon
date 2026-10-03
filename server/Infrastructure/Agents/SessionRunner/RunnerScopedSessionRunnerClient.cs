@@ -39,6 +39,8 @@ public sealed class RunnerScopedSessionRunnerClient : ISessionRunnerClient, IVer
         Current.ReadVerificationCustodyAsync(binding, seal, ct);
 
     public Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct) => Current.GetCapabilitiesAsync(ct);
+    public Task<RunnerCodexCliVersionDto?> GetCodexCliVersionAsync(RunnerCodexCliProbeRequest request, CancellationToken ct) =>
+        Current.GetCodexCliVersionAsync(request, ct);
 
     public Task<RunnerProviderAuthDto?> GetProviderAuthAsync(string provider, CancellationToken ct) =>
         Current.GetProviderAuthAsync(provider, ct);

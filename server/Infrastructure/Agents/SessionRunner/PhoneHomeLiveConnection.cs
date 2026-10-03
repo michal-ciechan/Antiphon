@@ -50,7 +50,8 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         string? platform = null,
         RunnerCapabilitiesDto? capabilities = null,
         int maxCapacity = int.MaxValue,
-        Func<string, int, int, CancellationToken, Task>? capacityReconciled = null)
+        Func<string, int, int, CancellationToken, Task>? capacityReconciled = null,
+        Action<PhoneHomeLiveConnection, RunnerCodexCliVersionDto>? codexCliObserved = null)
     {
         RunnerId = runnerId;
         RunnerStoreId = runnerStoreId;
@@ -64,6 +65,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         _capacity = capacity;
         Platform = platform;
         Capabilities = capabilities;
+        _codexCliObserved = codexCliObserved;
         LastHeartbeatUtc = clock.GetUtcNow();
         StartedAtUtc = LastHeartbeatUtc;
     }
@@ -86,6 +88,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
 
     /// <summary>The capabilities DTO the runner sent with its registration, or null.</summary>
     public RunnerCapabilitiesDto? Capabilities { get; }
+    private readonly Action<PhoneHomeLiveConnection, RunnerCodexCliVersionDto>? _codexCliObserved;
     public TimeProvider Clock { get; }
     public DateTimeOffset LastHeartbeatUtc { get; private set; }
     public bool DispatchEligible { get; set; }
@@ -429,6 +432,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
                 if (frame.Payload is { } payload)
                 {
                     var reported = payload.Deserialize<PhoneHomeCapacityHeartbeat>(PhoneHomeFraming.Json);
+                    if (reported?.CodexCli is { } cli) _codexCliObserved?.Invoke(this, cli);
                     if (reported is { Capacity: >= 1 } && reported.Capacity <= _maxCapacity
                         && reported.Capacity != Capacity)
                     {

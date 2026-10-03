@@ -11,6 +11,8 @@ namespace Antiphon.Server.Application.Settings;
 /// </summary>
 public sealed class DelegationSettings
 {
+    /// <summary>A completed Codex CLI observation may be used for at most this many minutes.</summary>
+    public int CodexCliVersionMaxAgeMinutes { get; set; } = 15;
     /// <summary>Fresh unpinned tasks inherit this mode unless their project overrides it.</summary>
     public WorkspaceMode DefaultWorkerWorkspace { get; set; } = WorkspaceMode.Worktree;
     public bool Enabled { get; set; } = true;
@@ -1176,6 +1178,8 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
     public ValidateOptionsResult Validate(string? name, DelegationSettings options)
     {
         var failures = new List<string>();
+        if (options.CodexCliVersionMaxAgeMinutes is < 1 or > 60)
+            failures.Add("Delegation:CodexCliVersionMaxAgeMinutes must be between 1 and 60.");
         if (options.DefaultWorkerWorkspace is not (WorkspaceMode.Shared or WorkspaceMode.Worktree))
             failures.Add("Delegation:DefaultWorkerWorkspace must be Shared or Worktree.");
         if (options.LandWarningSeconds <= 0 || options.LandErrorSeconds <= options.LandWarningSeconds)
@@ -1289,4 +1293,3 @@ public enum DiagnoseLabelMode
     Apply = 0,
     Shadow = 1,
 }
-
