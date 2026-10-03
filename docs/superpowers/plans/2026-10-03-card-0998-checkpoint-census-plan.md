@@ -6,21 +6,22 @@ The card asks: "find which landings added the first 27 cases without moving the 
 
 ## Scope and decision
 
-Only scripts/lib/checkpoint-usage.ps1, tests/Antiphon.Tests/Checkpoints/CheckpointTempUsageTests.cs and the testing owner documentation change; no Coverage implementation changes. Keep an independent literal census: the existing comments and Namespace/Full admission checks use it to catch an incomplete selected roster. Deriving it from that same roster would discard independence. Add method-level Category=Unit to the compiled guard, retaining the Integration classification of its class and its process limiter.
+Only scripts/lib/checkpoint-usage.ps1, tests/Antiphon.Tests/Checkpoints/CheckpointTempUsageTests.cs and the testing owner documentation change; no Coverage implementation changes. Keep an independent literal census: the existing comments and Namespace/Full admission checks use it to catch an incomplete selected roster. Deriving it from that same roster would discard independence. Put the compiled guard in a separate Category=Unit class in the same file, retaining the Integration usage class and process limiters. The attempted method-level category was rejected by the existing lane-XOR guard; S3 repairs this without changing assertions.
 
 The unchanged start guard observed 348 compiled cases vs 290. First 27: CARD-0835 source checks +14 (8 state, 6 execution); CARD-0885 repeat checks +10 (5 configuration, 3 host, 1 build isolation, 1 documentation); CARD-0833 wait follow-ups +3 (1 contract, 2 executor). CARD-0891 and subsequent fixes contribute 31 PlanCoverage cases at the start SHA. New Full-floor guard contributes one, making 349 at S2.
 
 ## Slices
 
 S1: add Unit selection of the existing compiled guard and a Full evidence guard. Commit/push; prove red with census unchanged. The initial method-OR filter selected zero cases; CP-1 now uses the exact census-name wildcard and is rerun.
-S2: update census to 349 and document the independent guard. Commit/push; run Final checkpoints and the two explicitly requested scratch controls.
+S2: update census to 349 and document the independent guard. Commit/push; run checkpoints.
+S3: repair lane-XOR failure by moving the unchanged guard into its own Unit class; the compiled count remains 349. Commit/push; CP-4/CP-5 supply Final evidence, superseding S2 class/Unit receipts. Complete the two requested scratch controls.
 
 ## Verification design
 
-V-1 `CheckpointTempUsageTests.namespace_census_matches_compiled_checkpoint_cases`: unchanged-base red; final literal equals compiled expanded cases; every OS skip pattern resolves. Unit predicate must select the existing method.
+V-1 `CheckpointNamespaceCensusUsageTests.namespace_census_matches_compiled_checkpoint_cases`: unchanged-base red; final literal equals compiled expanded cases; every OS skip pattern resolves. Unit predicate must select the existing method.
 V-2 `CheckpointTempUsageTests.namespace_census_uses_the_native_execution_roster`: Namespace native inputs accepted; short roster, skip executed and unexplained skip rejected.
 V-3 `CheckpointTempUsageTests.full_suite_checkpoint_floor_uses_the_current_census`: Full accepts actual compiled roster plus 1000 supplied ordinary records; rejects missing checkpoint execution and truncated checkpoint roster with exact current expected count. Supplied evidence is not a full-assembly execution claim.
-R-1 Full `CheckpointTempUsageTests*` class (9 cases) retains inspection, incomplete TRX, allocation, repeat manifest, explicit roster and sweep checks. Search found no other test class calling Get-NamespaceCensus or matching namespace census.
+R-1 Full `CheckpointTempUsageTests*` (8 cases) and `CheckpointNamespaceCensusUsageTests*` (1 case) classes retains inspection, incomplete TRX, allocation, repeat manifest, explicit roster and sweep checks. Search found no other test class calling Get-NamespaceCensus or matching namespace census.
 R-2 Whole Category=Unit lane, required by commissioned Final profile; verify V-1 is present in its fresh TRX. No shared test helper or registry changes. This row is mandated by Final profile despite the narrower brief rule.
 
 ### Checkpoints
@@ -30,6 +31,8 @@ R-2 Whole Category=Unit lane, required by commissioned Final profile; verify V-1
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c998-tests-red/` | guards-red | `/*/*/CheckpointTempUsageTests*/*census*` | V-1,V-2,V-3 | exactly 3 executed; red at S1, rerun green after S2 | 3 | 5 | true |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c998-final/` | affected-class | `/*/*/CheckpointTempUsageTests*/*` | V-1,V-2,V-3,R-1 | exactly 9 executed, 0 failed/skipped | 9 | 5 | true |
 | CP-3 | S2 | `tests/Antiphon.Tests -> bin-c998-unit/` | unit | `/*/*/*/*[Category=Unit]` | R-2 | nonzero Unit lane, compiled guard present, 0 failed | 1000 | 6 | true |
+| CP-4 | S3 | `tests/Antiphon.Tests -> bin-c998-repair/` | affected-final | `/*/*/Checkpoint*UsageTests*/*` | V-1,V-2,V-3,R-1 | exactly 9 executed across the two named classes, 0 failed/skipped | 9 | 4 | true |
+| CP-5 | S3 | `tests/Antiphon.Tests -> bin-c998-unit-repair/` | unit-final | `/*/*/*/*[Category=Unit]` | R-2 | whole Unit lane, new Unit guard present, 0 failed; report declared skips | 1000 | 6 | true |
 
 ### Positive controls (pending SourceLanding Mutation)
 
@@ -38,4 +41,4 @@ PC-3: bypass Full execution floor; exact V-3 missingExecution assertion must fai
 
 ### Cost
 
-Ordinary floor 16 minutes plus authoring/history/manual controls; task time box 45 minutes. No full assembly run: shared runtime integration classes are unaffected; Full usage acceptance is tested with supplied roster/TRX/events in V-3. The invariant is independent checkpoint count and execution floor. No unbounded shared production impact.
+Original ordinary floor 16 minutes; cumulative closed-list floor 26 minutes including the required S3 repair rows, plus authoring/history/manual controls; task time box 45 minutes. No full assembly run: shared runtime integration classes are unaffected; Full usage acceptance is tested with supplied roster/TRX/events in V-3. The invariant is independent checkpoint count and execution floor. No unbounded shared production impact.

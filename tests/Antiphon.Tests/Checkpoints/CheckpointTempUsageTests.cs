@@ -120,27 +120,6 @@ public sealed class CheckpointTempUsageTests : CheckpointTestBase
     }
 
     [Test]
-    [Category("Unit")]
-    public async Task namespace_census_matches_compiled_checkpoint_cases()
-    {
-        var dir = TempDir();
-        var names = CompiledCheckpointNames();
-        var namesFile = Path.Combine(dir, "names.json");
-        await File.WriteAllTextAsync(namesFile, JsonSerializer.Serialize(names));
-        using var result = await UsageLibrary.RunAsync(RegisterCheckpointChild, dir, $$"""
-            $census = Get-NamespaceCensus
-            $names = @(Get-Content -LiteralPath {{UsageLibrary.Quote(namesFile)}} -Raw | ConvertFrom-Json)
-            $unmatched = @(@($census.windowsSkips) + @($census.linuxSkips) | Where-Object {
-                $pattern = $_; @($names | Where-Object { $_ -clike $pattern }).Count -eq 0 })
-            @{ selected = $census.selected; unmatched = ($unmatched -join ',') } | ConvertTo-Json -Depth 4
-            """);
-        // Adding or removing a checkpoint case must move Get-NamespaceCensus with it.
-        result.RootElement.GetProperty("selected").GetInt32().ShouldBe(names.Length,
-            "scripts/lib/checkpoint-usage.ps1 Get-NamespaceCensus is stale against the compiled checkpoint cases");
-        result.RootElement.GetProperty("unmatched").GetString().ShouldBeEmpty("every declared OS skip must name a compiled checkpoint case");
-    }
-
-    [Test]
     public async Task full_suite_checkpoint_floor_uses_the_current_census()
     {
         var dir = TempDir();
@@ -359,6 +338,33 @@ public sealed class CheckpointTempUsageTests : CheckpointTestBase
         await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(45));
         return (process.ExitCode, await stdout + "\n" + await stderr);
     }
+}
+
+[Category("Unit")]
+[ParallelLimiter<ProcessSpawnLimit>]
+public sealed class CheckpointNamespaceCensusUsageTests : CheckpointTestBase
+{
+    [Test]
+    public async Task namespace_census_matches_compiled_checkpoint_cases()
+    {
+        var dir = TempDir();
+        var names = CheckpointRoster.CompiledCases(typeof(CheckpointTempUsageTests).Assembly, "Antiphon.Tests.Checkpoints")
+            .Select(test => test.ClassName + "." + test.Method).ToArray();
+        var namesFile = Path.Combine(dir, "names.json");
+        await File.WriteAllTextAsync(namesFile, JsonSerializer.Serialize(names));
+        using var result = await UsageLibrary.RunAsync(RegisterCheckpointChild, dir, $$"""
+            $census = Get-NamespaceCensus
+            $names = @(Get-Content -LiteralPath {{UsageLibrary.Quote(namesFile)}} -Raw | ConvertFrom-Json)
+            $unmatched = @(@($census.windowsSkips) + @($census.linuxSkips) | Where-Object {
+                $pattern = $_; @($names | Where-Object { $_ -clike $pattern }).Count -eq 0 })
+            @{ selected = $census.selected; unmatched = ($unmatched -join ',') } | ConvertTo-Json -Depth 4
+            """);
+        // Adding or removing a checkpoint case must move Get-NamespaceCensus with it.
+        result.RootElement.GetProperty("selected").GetInt32().ShouldBe(names.Length,
+            "scripts/lib/checkpoint-usage.ps1 Get-NamespaceCensus is stale against the compiled checkpoint cases");
+        result.RootElement.GetProperty("unmatched").GetString().ShouldBeEmpty("every declared OS skip must name a compiled checkpoint case");
+    }
+
 }
 
 /// <summary>
