@@ -243,7 +243,7 @@ public sealed class CodexCliAdmissionTests
             Override(invalid == "runner" ? "*" : "desktop", invalid == "model" ? "*" : "gpt-6.1-sol",
                 invalid == "code" ? "model_disabled" : "codex_cli_version_too_old", invalid == "reason" ? "" : "reason",
                 invalid == "expiry" ? default(DateTimeOffset) : invalid == "lifetime" ? k.Clock.GetUtcNow().AddHours(24).AddTicks(1) : k.Clock.GetUtcNow().AddMinutes(5));
-            new DelegationSettingsValidator().Validate(null, k.Settings).Failed.ShouldBeTrue("C959-v20-invalid " + invalid);
+            new DelegationSettingsValidator(k.Clock).Validate(null, k.Settings).Failed.ShouldBeTrue("C959-v20-invalid " + invalid);
         }
     }
 
@@ -258,7 +258,7 @@ public sealed class CodexCliAdmissionTests
         foreach (var version in new[] { "0.159.1", "0.160.0" })
         {
             await using var k = await DispatchKit.BuildAsync();
-            k.Client.Sample = new(version, T, null, new string('a',64));
+            k.Client.Sample = new(version, DateTimeOffset.UtcNow, null, new string('a',64));
             var task = await k.CreateAsync();
             await k.TickAsync();
             await k.Harness.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
@@ -361,7 +361,7 @@ public sealed class CodexCliAdmissionTests
         public static async Task<DispatchKit> BuildAsync()
         {
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-            var client = new Client();
+            var client = new Client { Sample = new("0.160.0", DateTimeOffset.UtcNow, null, new string('a',64)) };
             Factory? factory = null;
             var h = await BridgeQueueHarness.CreateAsync(new()
             {
@@ -445,10 +445,12 @@ public sealed class CodexCliAdmissionTests
         public Task<SessionRunnerSessionDto> KillAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
         public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(CancellationToken ct) { await Task.CompletedTask; yield break; }
     }
-    private static AgentRegistrySettings Registry() => new()
+    internal static AgentRegistrySettings Registry() => new()
     {
         DefaultDefinition = "codex", Definitions = { ["codex"] = new() { Kind = "Codex", Exe = "codex" }, ["claude"] = new() { Kind = "ClaudeCode", Exe = "claude" } },
     };
+    internal static ISessionRunnerDirectory CurrentLocalRunnerFixture() => new Directory(
+        new Client { Sample = new("0.160.0", DateTimeOffset.UtcNow, null, new string('a',64)) }, new Client());
     private static string FindRoot()
     {
         var path = new DirectoryInfo(AppContext.BaseDirectory);

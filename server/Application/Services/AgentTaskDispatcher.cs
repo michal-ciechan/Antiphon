@@ -34,6 +34,8 @@ public sealed class AgentTaskDispatcher
     private readonly DelegationSettings _settings;
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _timeProvider;
+    // Admission stays scoped to this tick/service. It is never a persisted retry permission.
+    private readonly Dictionary<Guid, CodexCliAdmissionPolicy.Admission> _codexAdmissions = [];
     private readonly ILogger<AgentTaskDispatcher> _logger;
     private readonly PtyDeliveryProfile? _ptyProfile;
     private readonly AgentTaskReplyService? _replies;
@@ -4394,6 +4396,20 @@ public sealed class AgentTaskDispatcher
         // change the task's kind, so the pre-claim answer is the one the claim applies.
         var claudeAuth = await ReadClaudeProviderAuthBeforeClaimAsync(task, ct);
         var grokAuth = await ReadGrokProviderAuthBeforeClaimAsync(task, ct);
+        await _tasks.RefuseUnauthenticatedRunnerCodexAsync(task.AgentKind, false, task.RunnerId, ct);
+        CodexCliAdmissionPolicy.Admission? cli;
+        try
+        {
+            cli = await CodexCliAdmissionPolicy.RequireAsync(
+                await CodexCliProbeDescriptor.ResolveAsync(_db, task, _agentRegistry.Settings, _phoneHome, _apiKeyEnvResolver, ct),
+                _runners, _settings, _timeProvider, ct);
+        }
+        catch (CodexCliVersionRequiredException ex)
+        {
+            await BlockAsync(task, ex.Message, ct);
+            return DispatchOneResult.NotClaimed;
+        }
+        if (cli is not null) _codexAdmissions[task.Id] = cli;
 
         // Admission and landing read running claims under the same common-directory lease.
         // Hold through commit of the claim, including warm-agent and follow-up paths.
@@ -4438,6 +4454,21 @@ public sealed class AgentTaskDispatcher
         // FOR UPDATE reuses the tick's tracked instance; reload so Capture sees the locked row
         // (a pre-claim route edit) rather than the outer snapshot. PC-71.
         await _db.Entry(claimed).ReloadAsync(ct);
+        if (cli is not null)
+        {
+            // No runner RPC or probe under the claim. A concurrent profile/route edit invalidates
+            // the preflight rather than borrowing the old installation's observation.
+            var current = await CodexCliProbeDescriptor.ResolveAsync(_db, claimed, _agentRegistry.Settings, _phoneHome, _apiKeyEnvResolver, ct);
+            if (current != cli.Descriptor)
+            {
+                await BlockAsync(claimed, "codex_cli_version_unknown: launch identity changed after preflight; retry with current evidence.", ct);
+                await transaction.CommitAsync(ct);
+                return DispatchOneResult.NotClaimed;
+            }
+            if (cli.Warning is { } cliWarning)
+                _db.AgentTaskEvents.Add(new AgentTaskEvent { Id = Guid.NewGuid(), AgentTaskId = claimed.Id,
+                    Type = AgentTaskEventType.Warning, Detail = cliWarning, At = UtcNow() });
+        }
 
         // CARD-0644 D-3. Revalidate the create-time pin before any checkout is cut. A queued
         // explicit Worktree that still names an existing agent is the conflict create should
@@ -5164,6 +5195,17 @@ public sealed class AgentTaskDispatcher
         if (_phoneHome?.IsRunnerBound(agent) == true)
             spec = _phoneHome.Project(spec, agent, remoteCwd);
         spec = spec with { RequiredPlatform = WireRequiredPlatform(task.RequiredPlatform) };
+        if (_codexAdmissions.TryGetValue(task.Id, out var admission))
+        {
+            var actualModel = program.ProfileId is not null && string.IsNullOrWhiteSpace(program.ModelArgumentName)
+                ? null : program.ProfileId is not null && !string.IsNullOrWhiteSpace(agent.ModelId)
+                    ? agent.ModelId.Trim() : ModelLevelAliases.ForCodex(task.ModelLevel);
+            var actual = CodexCliProbeDescriptor.FromSpec(string.IsNullOrWhiteSpace(task.RunnerId) ? "desktop" : task.RunnerId,
+                actualModel, session.TuiProfileRevisionId, spec.Exe, spec.Args, spec.Env, spec.Cwd);
+            if (actual != admission.Descriptor)
+                throw new CodexCliVersionRequiredException(CodexCliVersionRequiredException.Unknown,
+                    actual.RunnerId, actualModel ?? admission.Descriptor.Model!, ModelLevelAliases.MinimumCodexCliVersion(AgentKind.Codex, admission.Descriptor.Model)!.ToString(), null, "launcher_mismatch", _settings.CodexCliVersionMaxAgeMinutes);
+        }
         GrokLaunchArgs.EnsureWindowsRulesArgv(
             spec.Args, session.AgentKind, session.SessionBackend, spec.Env, $"Session {session.Id}");
         return spec;

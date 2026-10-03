@@ -363,7 +363,9 @@ public class ModelAvailabilityCreateTests
             new RecordingSessionStopper(),
             TimeProvider.System,
             NullLogger<AgentTaskService>.Instance,
-            modelAvailability: Service(db));
+            modelAvailability: Service(db),
+            registrySettings: Options.Create(CodexCliAdmissionTests.Registry()),
+            runners: CodexCliAdmissionTests.CurrentLocalRunnerFixture());
     }
 
     private static ModelAvailability Service(AppDbContext db) =>
