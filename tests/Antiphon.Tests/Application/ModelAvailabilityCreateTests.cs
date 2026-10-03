@@ -22,6 +22,50 @@ namespace Antiphon.Tests.Application;
 public class ModelAvailabilityCreateTests
 {
     [Test]
+    [Arguments(AgentModelLevel.High)]
+    [Arguments(AgentModelLevel.Medium)]
+    public async Task Retired_sol_hold_allows_current_tier_but_blocks_exact_selection(AgentModelLevel level)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        using var workspace = new TempWorkspace();
+        await SeedHoldAsync(db, Guid.NewGuid(), ModelAlias.Gpt6Sol, until: null,
+            manual: true, kind: AgentKind.Codex);
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(), Name = "retired-sol", Slug = "retired-sol",
+            Kind = AgentKind.Codex, ModelLevel = level, ModelId = ModelAlias.Gpt6Sol,
+            WorkingDirectory = workspace.Path, Status = AgentStatus.Idle,
+        };
+        db.Agents.Add(agent);
+        await db.SaveChangesAsync();
+        var request = new CreateAgentTaskRequest("explicit retired sol", Role: AgentTaskRole.Code,
+            AgentKind: AgentKind.Codex, ModelLevel: level, Workspace: WorkspaceMode.Shared);
+        var caller = new AgentTaskService.Caller(null, null, workspace.Path);
+        var service = CreateService(db);
+        var current = await service.CreateAsync(request, caller, CancellationToken.None);
+        current.Status.ShouldBe(AgentTaskStatus.Queued);
+        current.AgentKind.ShouldBe(AgentKind.Codex);
+        current.ModelLevel.ShouldBe(level);
+        var currentAlias = DispatchModelAlias.Resolve(AgentKind.Codex, level, null);
+        currentAlias.ShouldBe(ModelAlias.Gpt61Sol);
+        await Service(db).RequireAsync(AgentKind.Codex, currentAlias, CancellationToken.None);
+
+        var refused = await Should.ThrowAsync<ModelDisabledException>(() =>
+            service.CreateAsync(request with { AgentId = agent.Id }, caller, CancellationToken.None));
+        refused.Code.ShouldBe("model_disabled");
+        refused.Message.ShouldContain("gpt-6-sol is disabled");
+        var exactAlias = DispatchModelAlias.Resolve(AgentKind.Codex, level, agent.ModelId);
+        exactAlias.ShouldBe(ModelAlias.Gpt6Sol);
+        await Should.ThrowAsync<ModelDisabledException>(() =>
+            Service(db).RequireAsync(AgentKind.Codex, exactAlias, CancellationToken.None));
+        await Service(db).ClearAsync("Codex", ModelAlias.Gpt6Sol, CancellationToken.None);
+        var after = await service.CreateAsync(request with { AgentId = agent.Id }, caller, CancellationToken.None);
+        after.Status.ShouldBe(AgentTaskStatus.Queued);
+        after.AgentId.ShouldBe(agent.Id);
+    }
+
+    [Test]
     public async Task Create_Frontier_Claude_against_a_fable_hold_is_409_model_disabled()
     {
         var holdId = Guid.NewGuid();

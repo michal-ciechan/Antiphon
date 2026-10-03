@@ -1,7 +1,12 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
 
@@ -19,6 +24,125 @@ public sealed class ModelAvailabilityHttpTests
     private readonly ModelAvailabilityApiWebAppFactory _factory;
 
     public ModelAvailabilityHttpTests(ModelAvailabilityApiWebAppFactory factory) => _factory = factory;
+
+    [Test]
+    [Arguments("Codex", "gpt-6-sol")]
+    [Arguments("Codex", "gpt-5.6-terra")]
+    [Arguments("Codex", "gpt-5.6-sol")]
+    [Arguments("Grok", "grok-4.6")]
+    public async Task Retired_manual_hold_is_listed_and_DELETE_clears_persisted_row(string kind, string alias)
+    {
+        using var client = _factory.CreateClient();
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var row = new ModelAvailabilityHold
+        {
+            Id = Guid.NewGuid(), Kind = Enum.Parse<AgentKind>(kind), ModelAlias = alias,
+            Source = ModelAvailabilitySource.Manual, HitAt = DateTime.UtcNow,
+            Reason = "retired manual hold", DisabledUntil = null,
+        };
+        db.ModelAvailabilityHolds.Add(row);
+        await db.SaveChangesAsync();
+        try
+        {
+            var snapshot = await client.GetFromJsonAsync<JsonElement>("/api/model-availability");
+            snapshot.GetProperty("holds").EnumerateArray()
+                .ShouldContain(h => h.GetProperty("id").GetGuid() == row.Id
+                    && h.GetProperty("modelAlias").GetString() == alias);
+            snapshot.GetProperty("available").EnumerateArray()
+                .Select(v => v.GetString()).ShouldNotContain(alias);
+
+            var cleared = await client.DeleteAsync($"/api/model-availability/{kind}/{alias}");
+            cleared.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+            db.ChangeTracker.Clear();
+            var persisted = await db.ModelAvailabilityHolds.SingleAsync(h => h.Id == row.Id);
+            persisted.ClearedAt.ShouldNotBeNull();
+            persisted.ClearCause.ShouldBe(ModelAvailabilityClearCause.OperatorCleared);
+            persisted.ReleasePendingAt.ShouldBe(persisted.ClearedAt);
+            var pendingAt = persisted.ReleasePendingAt;
+
+            (await client.DeleteAsync($"/api/model-availability/{kind}/{alias}"))
+                .StatusCode.ShouldBe(HttpStatusCode.NoContent);
+            db.ChangeTracker.Clear();
+            (await db.ModelAvailabilityHolds.SingleAsync(h => h.Id == row.Id))
+                .ReleasePendingAt.ShouldBe(pendingAt);
+            var after = await client.GetFromJsonAsync<JsonElement>("/api/model-availability");
+            after.GetProperty("holds").EnumerateArray()
+                .ShouldNotContain(h => h.GetProperty("id").GetGuid() == row.Id);
+        }
+        finally
+        {
+            await db.ModelAvailabilityHolds.Where(h => h.Id == row.Id).ExecuteDeleteAsync();
+        }
+    }
+
+    [Test]
+    [Arguments("gpt-6-sol")]
+    [Arguments("gpt-5.6-terra")]
+    [Arguments("gpt-5.6-sol")]
+    public async Task PUT_accepts_retired_selectable_alias_and_converts_auto_hold(string alias)
+    {
+        using var client = _factory.CreateClient();
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        try
+        {
+            var put = await client.PutAsJsonAsync($"/api/model-availability/Codex/{alias}",
+                new { reason = "retired explicit profile" });
+            put.StatusCode.ShouldBe(HttpStatusCode.OK);
+            var body = await put.Content.ReadFromJsonAsync<JsonElement>();
+            var id = body.GetProperty("id").GetGuid();
+            body.GetProperty("modelAlias").GetString().ShouldBe(alias);
+            body.GetProperty("source").GetString().ShouldBe("Manual");
+            body.GetProperty("disabledUntil").ValueKind.ShouldBe(JsonValueKind.Null);
+
+            var row = await db.ModelAvailabilityHolds.SingleAsync(h => h.Id == id);
+            row.Source = ModelAvailabilitySource.AutoDetected;
+            row.DisabledUntil = DateTime.UtcNow.AddHours(1);
+            await db.SaveChangesAsync();
+            var converted = await client.PutAsJsonAsync($"/api/model-availability/Codex/{alias}",
+                new { reason = "operator override" });
+            converted.StatusCode.ShouldBe(HttpStatusCode.OK);
+            (await converted.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id")
+                .GetGuid().ShouldBe(id);
+            db.ChangeTracker.Clear();
+            var persisted = await db.ModelAvailabilityHolds.SingleAsync(h => h.Id == id);
+            persisted.Source.ShouldBe(ModelAvailabilitySource.Manual);
+            persisted.DisabledUntil.ShouldBeNull();
+            persisted.Reason.ShouldBe("operator override");
+        }
+        finally
+        {
+            await db.ModelAvailabilityHolds.Where(h => h.Kind == AgentKind.Codex
+                && h.ModelAlias == alias).ExecuteDeleteAsync();
+        }
+    }
+
+    [Test]
+    public async Task Unknown_alias_PUT_and_DELETE_remain_422_without_persisting_a_hold()
+    {
+        using var client = _factory.CreateClient();
+        var alias = $"unknown-{Guid.NewGuid():N}";
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        try
+        {
+            var put = await client.PutAsJsonAsync($"/api/model-availability/Codex/{alias}",
+                new { reason = "garbage" });
+            put.StatusCode.ShouldBe((HttpStatusCode)422);
+            (await put.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errors")
+                .TryGetProperty("alias", out _).ShouldBeTrue();
+            var delete = await client.DeleteAsync($"/api/model-availability/Codex/{alias}");
+            delete.StatusCode.ShouldBe((HttpStatusCode)422);
+            (await delete.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errors")
+                .TryGetProperty("alias", out _).ShouldBeTrue();
+            (await db.ModelAvailabilityHolds.AnyAsync(h => h.ModelAlias == alias)).ShouldBeFalse();
+        }
+        finally
+        {
+            await db.ModelAvailabilityHolds.Where(h => h.ModelAlias == alias).ExecuteDeleteAsync();
+        }
+    }
 
     [Test]
     public async Task Put_get_delete_round_trip_is_camelCase_and_double_clear_is_204()
