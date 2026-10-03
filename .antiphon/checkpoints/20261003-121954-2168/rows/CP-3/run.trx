@@ -1,0 +1,182 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="a4708ff5-7679-4eb8-8742-ce8e7927b927" name="@5d9e09695ab3 2026-10-03 12:24:37.0469702" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-10-03T12:23:48.7972037Z" queuing="2026-10-03T12:23:48.7972037Z" start="2026-10-03T12:23:48.7972037Z" finish="2026-10-03T12:24:37.047838Z" />
+  <TestSettings name="default" id="f1fea413-91a2-4ab4-8aab-74a51d37e8e5">
+    <Deployment runDeploymentRoot="_5d9e09695ab3_2026-10-03_12_24_37.0469702" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="f1760d06-987c-4aa3-9336-ba44d5742e70" testId="5346e967-58e7-f4c0-65fc-cef5f5ae14ec" testName="Own_assistant_read_complaint_appears_while_working" computerName="5d9e09695ab3" duration="00:00:06.8113550" startTime="2026-10-03T12:24:24.4024389+00:00" endTime="2026-10-03T12:24:31.2137939+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="f1760d06-987c-4aa3-9336-ba44d5742e70">
+      <Output>
+        <StdOut>[CARD-0204] SessionRunner__BaseUrl=http://127.0.0.1:1, Delegation__CheckInterpreterEnabled=false, Delegation__DiagnoseEnabled=false and Delegation__OutputDistillerEnabled=false for every Program boot in this assembly (inherited SessionRunner__BaseUrl='&lt;unset&gt;') - test hosts never launch on the production session-runner.
+[CARD-0298] Hangfire__ServerEnabled=false for every Program boot in this assembly - test hosts never start a Hangfire worker (no WMI census, no production-runner list).
+[CARD-0045] cleared inherited ANTIPHON_PTY_BACKEND='inbox' — pty tests declare their backend; the suite means the same thing whoever launched it.
+[testcontainers.org 00:00:00.45] Connected to Docker:
+  Host: unix:///var/run/docker.sock
+  Server Version: 27.5.1
+  Kernel Version: 4.15.0-213-generic
+  API Version: 1.47
+  Operating System: Debian GNU/Linux 12 (bookworm) (containerized)
+  Total Memory: 125.90 GB
+[testcontainers.org 00:00:00.75] Docker container ab6867f06a17 created
+[testcontainers.org 00:00:00.83] Start Docker container ab6867f06a17
+[testcontainers.org 00:00:01.20] Wait for Docker container ab6867f06a17 to complete readiness checks
+[testcontainers.org 00:00:02.24] Docker container ab6867f06a17 ready
+[testcontainers.org 00:00:02.38] Docker container 332976f29f78 created
+[testcontainers.org 00:00:02.38] Start Docker container 332976f29f78
+[testcontainers.org 00:00:02.85] Wait for Docker container 332976f29f78 to complete readiness checks
+[testcontainers.org 00:00:02.86] Execute "pg_isready --host localhost --dbname antiphon_test --username test" at Docker container 332976f29f78
+[testcontainers.org 00:00:04.01] Execute "pg_isready --host localhost --dbname antiphon_test --username test" at Docker container 332976f29f78
+[testcontainers.org 00:00:05.09] Execute "pg_isready --host localhost --dbname antiphon_test --username test" at Docker container 332976f29f78
+[testcontainers.org 00:00:06.18] Execute "pg_isready --host localhost --dbname antiphon_test --username test" at Docker container 332976f29f78
+[testcontainers.org 00:00:06.29] Docker container 332976f29f78 ready
+</StdOut>
+        <StdErr>[TUnit] External span cap of 100 reached; subsequent spans will be dropped. Set TUNIT_OTEL_MAX_EXTERNAL_SPANS to raise the limit.
+</StdErr>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="7ec5979f-d440-4429-a392-ea09f223a91b" testId="a25e4a18-2a25-f071-725f-3698282bb2d0" testName="Legacy_windows_pointer_complaint_is_visible" computerName="5d9e09695ab3" duration="00:00:00.8341478" startTime="2026-10-03T12:24:31.2361891+00:00" endTime="2026-10-03T12:24:32.0703369+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="7ec5979f-d440-4429-a392-ea09f223a91b" />
+    <UnitTestResult executionId="3b0c58c5-d4c6-493e-a362-80c694211c85" testId="435edb30-c3cf-7d2d-15f8-7239a63f3535" testName="Other_task_path_or_turn_does_not_create_attention" computerName="5d9e09695ab3" duration="00:00:00.5423334" startTime="2026-10-03T12:24:32.0712493+00:00" endTime="2026-10-03T12:24:32.6135827+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="3b0c58c5-d4c6-493e-a362-80c694211c85" />
+    <UnitTestResult executionId="78639b72-dda8-488d-bc88-ba247862bcd7" testId="95be316b-4509-79c6-f5a2-79bba38566cb" testName="Quoted_user_tool_text_and_provider_silence_do_not_create_attention" computerName="5d9e09695ab3" duration="00:00:00.4717478" startTime="2026-10-03T12:24:32.6141551+00:00" endTime="2026-10-03T12:24:33.0859029+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="78639b72-dda8-488d-bc88-ba247862bcd7" />
+    <UnitTestResult executionId="a6d04d15-545f-452e-ba08-4ae697369f32" testId="c97f9172-dedb-daf6-3b79-9edd5518dbca" testName="Repeated_attention_reads_keep_one_stable_condition" computerName="5d9e09695ab3" duration="00:00:01.3183510" startTime="2026-10-03T12:24:33.0864657+00:00" endTime="2026-10-03T12:24:34.4048167+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="a6d04d15-545f-452e-ba08-4ae697369f32" />
+    <UnitTestResult executionId="01cdd6c6-625d-4225-a2d1-1c3c2fde94f5" testId="e8c643f1-2d6b-476a-3f2e-c8b74969ec03" testName="Unrelated_assistant_progress_does_not_hide_the_complaint" computerName="5d9e09695ab3" duration="00:00:00.2812315" startTime="2026-10-03T12:24:34.4052147+00:00" endTime="2026-10-03T12:24:34.6864462+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="01cdd6c6-625d-4225-a2d1-1c3c2fde94f5" />
+    <UnitTestResult executionId="2857ffbf-7946-44c7-b2b3-b33684ec275c" testId="e9fc1ad8-3e20-2527-eab6-a4cb4a516da5" testName="Later_delivered_input_supersedes_the_old_complaint" computerName="5d9e09695ab3" duration="00:00:00.5750767" startTime="2026-10-03T12:24:34.6869030+00:00" endTime="2026-10-03T12:24:35.2619797+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="2857ffbf-7946-44c7-b2b3-b33684ec275c" />
+    <UnitTestResult executionId="70c59cc0-76ec-4459-9b7d-956b0137be18" testId="c9694e92-8e6a-10d5-bd17-52e784c3c8b7" testName="Terminal_task_removes_open_input_attention" computerName="5d9e09695ab3" duration="00:00:00.6447447" startTime="2026-10-03T12:24:35.2626171+00:00" endTime="2026-10-03T12:24:35.9073618+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="70c59cc0-76ec-4459-9b7d-956b0137be18">
+      <Output>
+        <StdOut>[testcontainers.org 00:00:45.54] Delete Docker container 332976f29f78
+</StdOut>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="Own_assistant_read_complaint_appears_while_working" storage="/work/worktrees/task-4c1697dc/tests/antiphon.tests/bin-c965-qualified/antiphon.tests.dll" id="5346e967-58e7-f4c0-65fc-cef5f5ae14ec">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Integration" />
+      </TestCategory>
+      <Execution id="f1760d06-987c-4aa3-9336-ba44d5742e70" />
+      <Properties>
+        <Property>
+          <Key>Integration</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-4c1697dc/tests/Antiphon.Tests/bin-c965-qualified/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.TaskInputReadFailureTests" name="Own_assistant_read_complaint_appears_while_working" />
+    </UnitTest>
+    <UnitTest name="Legacy_windows_pointer_complaint_is_visible" storage="/work/worktrees/task-4c1697dc/tests/antiphon.tests/bin-c965-qualified/antiphon.tests.dll" id="a25e4a18-2a25-f071-725f-3698282bb2d0">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Integration" />
+      </TestCategory>
+      <Execution id="7ec5979f-d440-4429-a392-ea09f223a91b" />
+      <Properties>
+        <Property>
+          <Key>Integration</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-4c1697dc/tests/Antiphon.Tests/bin-c965-qualified/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.TaskInputReadFailureTests" name="Legacy_windows_pointer_complaint_is_visible" />
+    </UnitTest>
+    <UnitTest name="Other_task_path_or_turn_does_not_create_attention" storage="/work/worktrees/task-4c1697dc/tests/antiphon.tests/bin-c965-qualified/antiphon.tests.dll" id="435edb30-c3cf-7d2d-15f8-7239a63f3535">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Integration" />
+      </TestCategory>
+      <Execution id="3b0c58c5-d4c6-493e-a362-80c694211c85" />
+      <Properties>
+        <Property>
+          <Key>Integration</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-4c1697dc/tests/Antiphon.Tests/bin-c965-qualified/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.TaskInputReadFailureTests" name="Other_task_path_or_turn_does_not_create_attention" />
+    </UnitTest>
+    <UnitTest name="Quoted_user_tool_text_and_provider_silence_do_not_create_attention" storage="/work/worktrees/task-4c1697dc/tests/antiphon.tests/bin-c965-qualified/antiphon.tests.dll" id="95be316b-4509-79c6-f5a2-79bba38566cb">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Integration" />
+      </TestCategory>
+      <Execution id="78639b72-dda8-488d-bc88-ba247862bcd7" />
+      <Properties>
+        <Property>
+          <Key>Integration</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-4c1697dc/tests/Antiphon.Tests/bin-c965-qualified/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.TaskInputReadFailureTests" name="Quoted_user_tool_text_and_provider_silence_do_not_create_attention" />
+    </UnitTest>
+    <UnitTest name="Repeated_attention_reads_keep_one_stable_condition" storage="/work/worktrees/task-4c1697dc/tests/antiphon.tests/bin-c965-qualified/antiphon.tests.dll" id="c97f9172-dedb-daf6-3b79-9edd5518dbca">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Integration" />
+      </TestCategory>
+      <Execution id="a6d04d15-545f-452e-ba08-4ae697369f32" />
+      <Properties>
+        <Property>
+          <Key>Integration</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-4c1697dc/tests/Antiphon.Tests/bin-c965-qualified/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.TaskInputReadFailureTests" name="Repeated_attention_reads_keep_one_stable_condition" />
+    </UnitTest>
+    <UnitTest name="Unrelated_assistant_progress_does_not_hide_the_complaint" storage="/work/worktrees/task-4c1697dc/tests/antiphon.tests/bin-c965-qualified/antiphon.tests.dll" id="e8c643f1-2d6b-476a-3f2e-c8b74969ec03">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Integration" />
+      </TestCategory>
+      <Execution id="01cdd6c6-625d-4225-a2d1-1c3c2fde94f5" />
+      <Properties>
+        <Property>
+          <Key>Integration</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-4c1697dc/tests/Antiphon.Tests/bin-c965-qualified/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.TaskInputReadFailureTests" name="Unrelated_assistant_progress_does_not_hide_the_complaint" />
+    </UnitTest>
+    <UnitTest name="Later_delivered_input_supersedes_the_old_complaint" storage="/work/worktrees/task-4c1697dc/tests/antiphon.tests/bin-c965-qualified/antiphon.tests.dll" id="e9fc1ad8-3e20-2527-eab6-a4cb4a516da5">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Integration" />
+      </TestCategory>
+      <Execution id="2857ffbf-7946-44c7-b2b3-b33684ec275c" />
+      <Properties>
+        <Property>
+          <Key>Integration</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-4c1697dc/tests/Antiphon.Tests/bin-c965-qualified/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.TaskInputReadFailureTests" name="Later_delivered_input_supersedes_the_old_complaint" />
+    </UnitTest>
+    <UnitTest name="Terminal_task_removes_open_input_attention" storage="/work/worktrees/task-4c1697dc/tests/antiphon.tests/bin-c965-qualified/antiphon.tests.dll" id="c9694e92-8e6a-10d5-bd17-52e784c3c8b7">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Integration" />
+      </TestCategory>
+      <Execution id="70c59cc0-76ec-4459-9b7d-956b0137be18" />
+      <Properties>
+        <Property>
+          <Key>Integration</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-4c1697dc/tests/Antiphon.Tests/bin-c965-qualified/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.TaskInputReadFailureTests" name="Terminal_task_removes_open_input_attention" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="5346e967-58e7-f4c0-65fc-cef5f5ae14ec" executionId="f1760d06-987c-4aa3-9336-ba44d5742e70" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="a25e4a18-2a25-f071-725f-3698282bb2d0" executionId="7ec5979f-d440-4429-a392-ea09f223a91b" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="435edb30-c3cf-7d2d-15f8-7239a63f3535" executionId="3b0c58c5-d4c6-493e-a362-80c694211c85" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="95be316b-4509-79c6-f5a2-79bba38566cb" executionId="78639b72-dda8-488d-bc88-ba247862bcd7" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="c97f9172-dedb-daf6-3b79-9edd5518dbca" executionId="a6d04d15-545f-452e-ba08-4ae697369f32" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="e8c643f1-2d6b-476a-3f2e-c8b74969ec03" executionId="01cdd6c6-625d-4225-a2d1-1c3c2fde94f5" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="e9fc1ad8-3e20-2527-eab6-a4cb4a516da5" executionId="2857ffbf-7946-44c7-b2b3-b33684ec275c" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="c9694e92-8e6a-10d5-bd17-52e784c3c8b7" executionId="70c59cc0-76ec-4459-9b7d-956b0137be18" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="8" executed="8" passed="8" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <CollectorDataEntries>
+      <Collector agentName="5d9e09695ab3" uri="datacollector://TUnitExtensionHtmlReporter/1.44.0.0" collectorDisplayName="TUnit">
+        <UriAttachments>
+          <UriAttachment>
+            <A href="5d9e09695ab3/Antiphon.Tests-linux-net9.0-report.html" />
+          </UriAttachment>
+        </UriAttachments>
+      </Collector>
+    </CollectorDataEntries>
+  </ResultSummary>
+</TestRun>

@@ -1,0 +1,193 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="a55d55b9-c738-42d0-904a-ce5b44c0c0c3" name="@5d9e09695ab3 2026-10-03 11:48:15.5859651" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-10-03T11:47:29.8458642Z" queuing="2026-10-03T11:47:29.8458642Z" start="2026-10-03T11:47:29.8458642Z" finish="2026-10-03T11:48:15.5873679Z" />
+  <TestSettings name="default" id="ca55832c-fc04-463c-b294-c516b8355d6c">
+    <Deployment runDeploymentRoot="_5d9e09695ab3_2026-10-03_11_48_15.5859651" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="325e5a74-85d3-486b-a752-903e63074b07" testId="f2199227-7e44-ee17-eb60-2b558b9ffe1f" testName="Runner_write_failure_types_only_the_durable_api_pointer(send-now)" computerName="5d9e09695ab3" duration="00:00:08.1468695" startTime="2026-10-03T11:48:04.9277966+00:00" endTime="2026-10-03T11:48:13.0746661+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="325e5a74-85d3-486b-a752-903e63074b07">
+      <Output>
+        <StdOut>[CARD-0204] SessionRunner__BaseUrl=http://127.0.0.1:1, Delegation__CheckInterpreterEnabled=false, Delegation__DiagnoseEnabled=false and Delegation__OutputDistillerEnabled=false for every Program boot in this assembly (inherited SessionRunner__BaseUrl='&lt;unset&gt;') - test hosts never launch on the production session-runner.
+[CARD-0298] Hangfire__ServerEnabled=false for every Program boot in this assembly - test hosts never start a Hangfire worker (no WMI census, no production-runner list).
+[CARD-0045] cleared inherited ANTIPHON_PTY_BACKEND='inbox' — pty tests declare their backend; the suite means the same thing whoever launched it.
+[testcontainers.org 00:00:00.27] Connected to Docker:
+  Host: unix:///var/run/docker.sock
+  Server Version: 27.5.1
+  Kernel Version: 4.15.0-213-generic
+  API Version: 1.47
+  Operating System: Debian GNU/Linux 12 (bookworm) (containerized)
+  Total Memory: 125.90 GB
+[testcontainers.org 00:00:00.63] Docker container 336fb4c1c74a created
+[testcontainers.org 00:00:00.75] Start Docker container 336fb4c1c74a
+[testcontainers.org 00:00:01.07] Wait for Docker container 336fb4c1c74a to complete readiness checks
+[testcontainers.org 00:00:02.11] Docker container 336fb4c1c74a ready
+[testcontainers.org 00:00:02.21] Docker container 88014804ba49 created
+[testcontainers.org 00:00:02.22] Start Docker container 88014804ba49
+[testcontainers.org 00:00:02.64] Wait for Docker container 88014804ba49 to complete readiness checks
+[testcontainers.org 00:00:02.65] Execute "pg_isready --host localhost --dbname antiphon_test --username test" at Docker container 88014804ba49
+[testcontainers.org 00:00:03.79] Execute "pg_isready --host localhost --dbname antiphon_test --username test" at Docker container 88014804ba49
+[testcontainers.org 00:00:04.88] Execute "pg_isready --host localhost --dbname antiphon_test --username test" at Docker container 88014804ba49
+[testcontainers.org 00:00:05.98] Execute "pg_isready --host localhost --dbname antiphon_test --username test" at Docker container 88014804ba49
+[testcontainers.org 00:00:06.10] Docker container 88014804ba49 ready
+</StdOut>
+        <StdErr>[TUnit] External span cap of 100 reached; subsequent spans will be dropped. Set TUNIT_OTEL_MAX_EXTERNAL_SPANS to raise the limit.
+</StdErr>
+        <ErrorInfo>
+          <Message>ShouldAssertException: changed.Body
+    should not contain (case insensitive comparison)
+".antiphon/inbox/"
+    but was actually
+"[antiphon-task:143c6af5] REFINEMENT Task: delivery fixture Your caller sent 4,594 characters. Read '..."</Message>
+          <StackTrace>   at Antiphon.Tests.Application.AgentTaskInputFallbackTests.Runner_write_failure_types_only_the_durable_api_pointer(String path) in /work/worktrees/task-4c1697dc/tests/Antiphon.Tests/Application/AgentTaskInputFallbackTests.cs:line 107
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at Antiphon.Tests.Application.AgentTaskInputFallbackTests.Runner_write_failure_types_only_the_durable_api_pointer(String path) in /work/worktrees/task-4c1697dc/tests/Antiphon.Tests/Application/AgentTaskInputFallbackTests.cs:line 124
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at Antiphon.Tests.Application.AgentTaskInputFallbackTests.Runner_write_failure_types_only_the_durable_api_pointer(String path) in /work/worktrees/task-4c1697dc/tests/Antiphon.Tests/Application/AgentTaskInputFallbackTests.cs:line 124
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at Antiphon.Tests.Application.AgentTaskInputFallbackTests.Runner_write_failure_types_only_the_durable_api_pointer(String path) in /work/worktrees/task-4c1697dc/tests/Antiphon.Tests/Application/AgentTaskInputFallbackTests.cs:line 124
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at Antiphon.Tests.Application.AgentTaskInputFallbackTests.Runner_write_failure_types_only_the_durable_api_pointer(String path) in /work/worktrees/task-4c1697dc/tests/Antiphon.Tests/Application/AgentTaskInputFallbackTests.cs:line 124
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="e7ebd90c-1732-4103-a779-0e3c18a0c9f2" testId="46be0c5d-e8c6-39e4-8bf7-c31abd818207" testName="Runner_write_failure_types_only_the_durable_api_pointer(flush)" computerName="5d9e09695ab3" duration="00:00:00.9323868" startTime="2026-10-03T11:48:13.1274565+00:00" endTime="2026-10-03T11:48:14.0598433+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="e7ebd90c-1732-4103-a779-0e3c18a0c9f2">
+      <Output>
+        <ErrorInfo>
+          <Message>ShouldAssertException: changed.Body
+    should not contain (case insensitive comparison)
+".antiphon/inbox/"
+    but was actually
+"[antiphon-task:575c55b4] REFINEMENT Task: delivery fixture Your caller sent 4,594 characters. Read '..."</Message>
+          <StackTrace>   at Antiphon.Tests.Application.AgentTaskInputFallbackTests.Runner_write_failure_types_only_the_durable_api_pointer(String path) in /work/worktrees/task-4c1697dc/tests/Antiphon.Tests/Application/AgentTaskInputFallbackTests.cs:line 107
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at Antiphon.Tests.Application.AgentTaskInputFallbackTests.Runner_write_failure_types_only_the_durable_api_pointer(String path) in /work/worktrees/task-4c1697dc/tests/Antiphon.Tests/Application/AgentTaskInputFallbackTests.cs:line 124
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at Antiphon.Tests.Application.AgentTaskInputFallbackTests.Runner_write_failure_types_only_the_durable_api_pointer(String path) in /work/worktrees/task-4c1697dc/tests/Antiphon.Tests/Application/AgentTaskInputFallbackTests.cs:line 124
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at Antiphon.Tests.Application.AgentTaskInputFallbackTests.Runner_write_failure_types_only_the_durable_api_pointer(String path) in /work/worktrees/task-4c1697dc/tests/Antiphon.Tests/Application/AgentTaskInputFallbackTests.cs:line 124
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at Antiphon.Tests.Application.AgentTaskInputFallbackTests.Runner_write_failure_types_only_the_durable_api_pointer(String path) in /work/worktrees/task-4c1697dc/tests/Antiphon.Tests/Application/AgentTaskInputFallbackTests.cs:line 124
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="57223e91-cb38-4db1-9809-4e45e7636bae" testId="c7cf7bb3-958d-aa61-ff6c-4ceecdfd01a0" testName="Runner_write_failure_types_only_the_durable_api_pointer(enqueue-now)" computerName="5d9e09695ab3" duration="00:00:00.6760953" startTime="2026-10-03T11:48:14.0610994+00:00" endTime="2026-10-03T11:48:14.7371947+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="57223e91-cb38-4db1-9809-4e45e7636bae">
+      <Output>
+        <StdOut>[testcontainers.org 00:00:43.40] Delete Docker container 88014804ba49
+</StdOut>
+        <ErrorInfo>
+          <Message>ShouldAssertException: changed.Body
+    should not contain (case insensitive comparison)
+".antiphon/inbox/"
+    but was actually
+"[antiphon-task:82627c22] REFINEMENT Task: delivery fixture Your caller sent 4,594 characters. Read '..."</Message>
+          <StackTrace>   at Antiphon.Tests.Application.AgentTaskInputFallbackTests.Runner_write_failure_types_only_the_durable_api_pointer(String path) in /work/worktrees/task-4c1697dc/tests/Antiphon.Tests/Application/AgentTaskInputFallbackTests.cs:line 107
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at Antiphon.Tests.Application.AgentTaskInputFallbackTests.Runner_write_failure_types_only_the_durable_api_pointer(String path) in /work/worktrees/task-4c1697dc/tests/Antiphon.Tests/Application/AgentTaskInputFallbackTests.cs:line 124
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at Antiphon.Tests.Application.AgentTaskInputFallbackTests.Runner_write_failure_types_only_the_durable_api_pointer(String path) in /work/worktrees/task-4c1697dc/tests/Antiphon.Tests/Application/AgentTaskInputFallbackTests.cs:line 124
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at Antiphon.Tests.Application.AgentTaskInputFallbackTests.Runner_write_failure_types_only_the_durable_api_pointer(String path) in /work/worktrees/task-4c1697dc/tests/Antiphon.Tests/Application/AgentTaskInputFallbackTests.cs:line 124
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at Antiphon.Tests.Application.AgentTaskInputFallbackTests.Runner_write_failure_types_only_the_durable_api_pointer(String path) in /work/worktrees/task-4c1697dc/tests/Antiphon.Tests/Application/AgentTaskInputFallbackTests.cs:line 124
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="Runner_write_failure_types_only_the_durable_api_pointer(send-now)" storage="/work/worktrees/task-4c1697dc/tests/antiphon.tests/bin-c965-strength/antiphon.tests.dll" id="f2199227-7e44-ee17-eb60-2b558b9ffe1f">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Integration" />
+      </TestCategory>
+      <Execution id="325e5a74-85d3-486b-a752-903e63074b07" />
+      <Properties>
+        <Property>
+          <Key>Integration</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-4c1697dc/tests/Antiphon.Tests/bin-c965-strength/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.AgentTaskInputFallbackTests" name="Runner_write_failure_types_only_the_durable_api_pointer" />
+    </UnitTest>
+    <UnitTest name="Runner_write_failure_types_only_the_durable_api_pointer(flush)" storage="/work/worktrees/task-4c1697dc/tests/antiphon.tests/bin-c965-strength/antiphon.tests.dll" id="46be0c5d-e8c6-39e4-8bf7-c31abd818207">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Integration" />
+      </TestCategory>
+      <Execution id="e7ebd90c-1732-4103-a779-0e3c18a0c9f2" />
+      <Properties>
+        <Property>
+          <Key>Integration</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-4c1697dc/tests/Antiphon.Tests/bin-c965-strength/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.AgentTaskInputFallbackTests" name="Runner_write_failure_types_only_the_durable_api_pointer" />
+    </UnitTest>
+    <UnitTest name="Runner_write_failure_types_only_the_durable_api_pointer(enqueue-now)" storage="/work/worktrees/task-4c1697dc/tests/antiphon.tests/bin-c965-strength/antiphon.tests.dll" id="c7cf7bb3-958d-aa61-ff6c-4ceecdfd01a0">
+      <TestCategory>
+        <TestCategoryItem TestCategory="Integration" />
+      </TestCategory>
+      <Execution id="57223e91-cb38-4db1-9809-4e45e7636bae" />
+      <Properties>
+        <Property>
+          <Key>Integration</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/work/worktrees/task-4c1697dc/tests/Antiphon.Tests/bin-c965-strength/Antiphon.Tests.dll" adapterTypeName="executor://TUnitExtension/1.44.0.0" className="Antiphon.Tests.Application.AgentTaskInputFallbackTests" name="Runner_write_failure_types_only_the_durable_api_pointer" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="f2199227-7e44-ee17-eb60-2b558b9ffe1f" executionId="325e5a74-85d3-486b-a752-903e63074b07" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="46be0c5d-e8c6-39e4-8bf7-c31abd818207" executionId="e7ebd90c-1732-4103-a779-0e3c18a0c9f2" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="c7cf7bb3-958d-aa61-ff6c-4ceecdfd01a0" executionId="57223e91-cb38-4db1-9809-4e45e7636bae" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="3" executed="3" passed="0" failed="3" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <RunInfos>
+      <RunInfo computerName="5d9e09695ab3" outcome="Error" timestamp="2026-10-03T11:48:15.6166041">
+        <Text>Exit code indicates failure: '2'. Please refer to https://aka.ms/testingplatform/exitcodes for more information.</Text>
+      </RunInfo>
+    </RunInfos>
+    <CollectorDataEntries>
+      <Collector agentName="5d9e09695ab3" uri="datacollector://TUnitExtensionHtmlReporter/1.44.0.0" collectorDisplayName="TUnit">
+        <UriAttachments>
+          <UriAttachment>
+            <A href="5d9e09695ab3/Antiphon.Tests-linux-net9.0-report.html" />
+          </UriAttachment>
+        </UriAttachments>
+      </Collector>
+    </CollectorDataEntries>
+  </ResultSummary>
+</TestRun>

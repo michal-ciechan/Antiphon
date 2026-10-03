@@ -1,5 +1,7 @@
 # CARD-0965 continuation Code report
 
+TIMEBOXED PARTIAL: 85/86 final integration results passed. V-22 remains pending: the minimal HTTP host logs RequestDelegate metadata that JSON cannot serialize. The explicit delegate metadata converter is now added, but its compile/full CP-2 rerun and fresh published-tip qualification are NOT RUN. Unit and CP-7 completed. next: code; this supersedes the provisional next: review block below.
+
 V-16 now covers SendNow, idle flush and immediate persisted enqueue; V-29 uses a
 controlled clock advanced one minute and observes database/input effects. Five
 ordinary strength defects failed assertions. Production bytes are restored.
@@ -251,4 +253,19 @@ AttentionService.cs backup=0CA336DC91B4E5AD73E7BC12F4A1FB9D405C14875323B81EF9520
 --- next stage ---
 next: review
 handoff: Review test-only input proof completion at the final qualified pushed SHA; inspect red-first deviation, synthetic immediate-row ownership/recovery and inherited Unit skips; then caller lands current Code owner 4c1697dc and commissions SourceLanding Mutation.
+artifact: docs/superpowers/plans/2026-10-03-card-0965-final-qualification.md
+
+
+## Final qualification outcome at 0bf1a5c4fa6b30bbeba9e71ddcd641294470ec26
+
+CHECKPOINT CP-1 commit=0bf1a5c4fa6b30bbeba9e71ddcd641294470ec26 build=ok filter=/*/*/(AgentTaskInputSpillTests*)|(AgentTaskRefineTests*)|(AgentTaskReplyOverlayTests*)/* executed=31 passed=31 failed=0 skipped=0 trx=/work/worktrees/task-4c1697dc/.antiphon/checkpoints/20261003-121954-2168/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=0bf1a5c4fa6b30bbeba9e71ddcd641294470ec26 sourceState=clean buildSource=verified
+CHECKPOINT CP-2 commit=0bf1a5c4fa6b30bbeba9e71ddcd641294470ec26 build=reused filter=/*/*/(AgentTaskInputFallbackTests*)|(PhoneHomeSpillTests*)|(PhoneHomeSpillTransportTests*)|(DurableRunnerSpillReceiptTests*)/* executed=29 passed=28 failed=1 skipped=0 trx=/work/worktrees/task-4c1697dc/.antiphon/checkpoints/20261003-121954-2168/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=0bf1a5c4fa6b30bbeba9e71ddcd641294470ec26 sourceState=clean buildSource=verified
+CHECKPOINT CP-3 commit=0bf1a5c4fa6b30bbeba9e71ddcd641294470ec26 build=reused filter=/*/*/TaskInputReadFailureTests*/* executed=8 passed=8 failed=0 skipped=0 trx=/work/worktrees/task-4c1697dc/.antiphon/checkpoints/20261003-121954-2168/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=0bf1a5c4fa6b30bbeba9e71ddcd641294470ec26 sourceState=clean buildSource=verified
+CHECKPOINT CP-7 commit=0bf1a5c4fa6b30bbeba9e71ddcd641294470ec26 build=reused filter=/*/*/(ParkedMessageSweepServiceTests*)|(CapacityRecoveryCompatibilityTests*)/* executed=18 passed=18 failed=0 skipped=0 trx=/work/worktrees/task-4c1697dc/.antiphon/checkpoints/20261003-121954-2168/rows/CP-7/run.trx slot=granted waited=0s dirty=0 source=0bf1a5c4fa6b30bbeba9e71ddcd641294470ec26 sourceState=clean buildSource=verified
+
+Fresh TRX: CP-1 31/31, CP-2 28/29 (V-22 RequestDelegate serialization fixture exception), CP-3 8/8, CP-7 18/18; no integration skips. All four rows have granted slots, waited=0s, dirty=0, clean source and verified build provenance. Both new sweep/migration methods passed. V-16 three paths and V-29 controlled clock passed. V-1..V-21 and V-23..V-33, R-1..R-3 passed; V-22 pending repaired green. All PC variants pending. No production bytes changed. The final converter repair changes only this test log inspection; no assertion/timeout was loosened. Rerun full CP-2 and then the four-row published-tip qualification at committed HEAD, without repeating Unit. The 60-minute box ended before this further build could be owned and awaited.
+
+--- next stage ---
+next: code
+handoff: Continue from the pushed 4c1697dc branch: compile and rerun full CP-2 for the added delegate-metadata serializer, then qualify the published tip through the four-row qualification plan; Unit 3910/0/52 and CP-7 18/18 are complete, all PCs pending. Request Review only after ordinary green.
 artifact: docs/superpowers/plans/2026-10-03-card-0965-final-qualification.md

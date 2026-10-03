@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "name": "V16-RED",
+  "start": {
+    "commit": "5e8a9e08f2a4cb9d5485fd1881596c7c9c06199c",
+    "dirtyFiles": 0,
+    "fingerprint": "f84dbebce3469a3a9ed677aab858ec7c30be8015494af6d5a6dc73c36291ed69",
+    "observedAtUtc": "2026-10-03T11:33:43.3836851+00:00",
+    "captureStatus": "known",
+    "errorCode": null
+  },
+  "end": {
+    "commit": "5e8a9e08f2a4cb9d5485fd1881596c7c9c06199c",
+    "dirtyFiles": 0,
+    "fingerprint": "f84dbebce3469a3a9ed677aab858ec7c30be8015494af6d5a6dc73c36291ed69",
+    "observedAtUtc": "2026-10-03T11:36:57.8934964+00:00",
+    "captureStatus": "known",
+    "errorCode": null
+  },
+  "state": "clean",
+  "buildSource": "verified",
+  "reason": null,
+  "receipt": "CHECKPOINT V16-RED commit=5e8a9e08f2a4cb9d5485fd1881596c7c9c06199c build=ok filter=/*/*/AgentTaskInputFallbackTests*/Runner_write_failure_types_only_the_durable_api_pointer* executed=3 passed=0 failed=3 skipped=0 trx=/work/worktrees/task-4c1697dc/.antiphon/c965-continuation/V16-RED-20261003-113342-bff6/run.trx slot=granted waited=0s dirty=0 source=5e8a9e08f2a4cb9d5485fd1881596c7c9c06199c sourceState=clean buildSource=verified",
+  "exitCode": 1,
+  "executed": 3,
+  "passed": 0,
+  "failed": 3,
+  "skipped": 0,
+  "timings": {
+    "slotWaitSeconds": 0.0,
+    "buildSeconds": 114.3986441,
+    "startupSeconds": 38.4917006,
+    "testsWallSeconds": 38.7840812,
+    "teardownSeconds": 1.4336589,
+    "testHostWallSeconds": 78.7094255,
+    "method": "utc-trx-and-monotonic-host",
+    "unavailableReason": null
+  }
+}
