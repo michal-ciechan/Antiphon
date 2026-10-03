@@ -289,7 +289,8 @@ public sealed class PlanCoverageCensusTests : CheckpointTestBase
             json.RootElement.EnumerateObject().Select(p => p.Name).ShouldBe(["schemaVersion", "mode", "plan", "planSha256", "checklistSha256", "inputsSha256", "sources", "obligations", "exclusions", "diagnostics", "pcs", "invalid", "summary", "exitCode"], "c1005-pc-68");
             r.SchemaVersion.ShouldBe(1, "c1005-pc-69");
             r.Sources.Select(s => (s.Path, s.Sha256, string.Join(',', s.Classes))).ShouldBe([("tests/Sample/A.cs", PlanCoverageReport.Hash(Two), "One.A")], "c1005-pc-70");
-            var digest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(r.PlanSha256 + "\n" + r.ChecklistSha256 + "\n" + "tests/Sample/A.cs\0" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(Two)))))));
+            var sourceHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(Two)));
+            var digest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(r.PlanSha256 + "\n" + r.ChecklistSha256 + "\n" + "tests/Sample/A.cs\0" + sourceHash)));
             r.InputsSha256.ShouldBe(digest, "c1005-pc-71");
             File.WriteAllText(w.Plan, File.ReadAllText(w.Plan).Replace("Coverage", "`A` (3 results)"));
             Run(w).Diagnostics.ShouldContain(d => d.Code == "CHECKLIST_COUNT_MISMATCH" && d.Detail == "results expected=3 actual=2", "c1005-pc-73");
