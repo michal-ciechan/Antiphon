@@ -42,6 +42,11 @@ you can re-send it as a sub-orchestrator knowing more than you did.
 
 ## 2. Which role?
 
+Read [Windows Review and Debug routing](../../../docs/orchestration-loop.md#windows-review-and-debug-routing)
+for effective pins, platform placement, explicit startup recovery and CARD-1011's
+pending gates. OS alone never authorizes a pin bypass. The proposed Debug pair
+does not take effect from this guidance; ordinarily omit kind/level for fallback.
+
 Pick by what the work IS. The role sets the model tier, and that is the cost decision.
 
 **Stage vs helper (CARD-0146).** `Investigate`, `Plan`, `TestDesign`, `Code`, `Mutation`, `Review` are pipeline
