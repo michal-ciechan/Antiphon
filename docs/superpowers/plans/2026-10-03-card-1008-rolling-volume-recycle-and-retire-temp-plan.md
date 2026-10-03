@@ -1200,6 +1200,23 @@ recounted when siblings re-baseline. No unchanged fixture count was reduced.
 
 ### Checkpoints
 
+Code admission (task `0c0689e5`, 2026-10-03, source
+`f0fadc61635e3d977f045876d65e1e09ef06b17a`): the policy commit
+`af6d03f19f9fc8298301187cecebee2c4b4f5d90` is an ancestor. Recounted source
+rosters: Remote 66 methods / 84 results; cache selection 36 / 54; CP-4
+112 + 23 + 35 + 11 + 20 + 6 = 207. These match the retained freeze (delta 0).
+The plan has 156 represented guard IDs, 31 moved, 125 retained (delta 0);
+20 retained V designs (delta 0), with zero implemented C1008 methods at admission
+(implementation deficit 20). The retained RD expansion is 5 base + 27 changed
+= 32 designs (delta 0), with zero implemented outcomes (implementation deficit
+32). No execution is claimed by this census. Platform routes were reread: defaults
+revision 2, available Linux and Windows runners, unavailable retired temp. No host
+pin is added. jq is absent from this runner; Code will provide a task-local jq
+for qualified C1008/cache fixtures, without changing CARD-0983's qualification
+behavior. The explicitly commissioned Final whole Unit lane is an additional
+run to this table; the dispatch brief overrides the older exclusion below.
+Shared files remain owned by CARD-1008 ahead of CARD-0980/0983 and CARD-1010.
+
 Closed Code list. Each row owns one isolated build and one literal TUnit filter.
 Group names name the lane; no unsupported `Lane` column is added to the importer.
 CP-1 is the explicit expected-red preparatory row, not a final green certificate.
