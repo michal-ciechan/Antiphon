@@ -355,8 +355,8 @@ and [the evidence ledger](investigations/2026-10-03-card-1011-windows-grok-quali
 | CLI/build | Actual host | Geometry/marker | Trust | Task/session/source | Receipt/release |
 |---|---|---|---|---|---|
 | 1.0.41 / `4220f3b224a6` (reported) | Unknown; WQ-1/2 attribution pending | 120x30 / ASCII `>` to confirm | Not observed | `d6e4138e` / `26d8a18c` / `5f214b0c` | Complete task UserPrompt/report accepted; runner release ownership pending |
-| Same tuple to verify | InboxConhost, WQ-1 pending | 120x30 / ASCII `>` | WQ-3 pending | New or attributable run required | Complete transcript and release required |
-| Same tuple to verify | ModernConPty, WQ-2 pending; no fallback | 120x30 / ASCII `>` | WQ-3 pending | New or attributable run required | Complete transcript, binary provenance and release required |
+| Historical inbox tuple | WQ-1 operator-excluded for CARD-1022 | 120x30 / ASCII `>` | No new real inbox launch | Existing fake coverage retained | Excluded, not passed |
+| 1.0.46 / `2765805b9442` [stable] (caller-reported) | ModernConPty 1.24.260710001, WQ-2 reported met | 120x30 / ASCII `>` | WQ-3 observes trust presence/absence; Ready required | `02e5b9b7`; full identities in ledger pending reconciliation | Complete transcript, binary provenance and release required |
 
 Existing captures and FakeGrok cases are fixture evidence. Other sizes remain
 unqualified. Diagnose Windows startup failures using the session's server-log
