@@ -12,7 +12,7 @@ The unchanged start guard observed 348 compiled cases vs 290. First 27: CARD-083
 
 ## Slices
 
-S1: add Unit selection of the existing compiled guard and a Full evidence guard. Commit/push; prove red with census unchanged.
+S1: add Unit selection of the existing compiled guard and a Full evidence guard. Commit/push; prove red with census unchanged. The initial method-OR filter selected zero cases; CP-1 now uses the exact census-name wildcard and is rerun.
 S2: update census to 349 and document the independent guard. Commit/push; run Final checkpoints and the two explicitly requested scratch controls.
 
 ## Verification design
@@ -27,7 +27,7 @@ R-2 Whole Category=Unit lane, required by commissioned Final profile; verify V-1
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c998-tests-red/` | guards-red | `/*/*/CheckpointTempUsageTests*/(namespace_census_matches_compiled_checkpoint_cases)\|(full_suite_checkpoint_floor_uses_the_current_census)` | V-1,V-3 | exactly 2 executed; both expected red on stale census | 2 | 5 | true |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c998-tests-red/` | guards-red | `/*/*/CheckpointTempUsageTests*/*census*` | V-1,V-2,V-3 | exactly 3 executed; expected red on stale census | 3 | 5 | true |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c998-final/` | affected-class | `/*/*/CheckpointTempUsageTests*/*` | V-1,V-2,V-3,R-1 | exactly 9 executed, 0 failed/skipped | 9 | 5 | true |
 | CP-3 | S2 | `tests/Antiphon.Tests -> bin-c998-unit/` | unit | `/*/*/*/*[Category=Unit]` | R-2 | nonzero Unit lane, compiled guard present, 0 failed | 1000 | 6 | true |
 
