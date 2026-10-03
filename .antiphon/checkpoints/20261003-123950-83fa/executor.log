@@ -1,0 +1,19 @@
+2026-10-03T12:39:52.8332143+00:00 execute rows=5 width=2 total=44m
+2026-10-03T12:39:53.0159621+00:00 BUILD SLOT operation=probe status=200 reason=enabled maxcpucount=6 elapsed=0s
+2026-10-03T12:39:53.0969646+00:00 BUILD SLOT granted lease=e6c97dde-bb94-49ee-b429-46431d023749 label="build:bin-c965-qualified" waited=0s maxcpucount=6
+2026-10-03T12:42:49.6637168+00:00 owner read failed: http 502
+2026-10-03T12:46:32.3992531+00:00 BUILD SLOT released lease=e6c97dde-bb94-49ee-b429-46431d023749 label="build:bin-c965-qualified"
+2026-10-03T12:46:33.0117412+00:00 BUILD SLOT label="CP-1@bin-c965-qualified" operation=acquire status=409 reason=build_slot_busy elapsed=0s detail="{\u0022type\u0022:\u0022build_slot_busy\u0022,\u0022title\u0022:\u0022build_slot_busy\u0022,\u0022status\u0022:409,\u0022occupied\u0022:3,\u0022budget\u0022:4,\u0022queuePosition\u0022:2,\u0022retryAfterMs\u0022:15000}"
+2026-10-03T12:46:33.0119962+00:00 BUILD SLOT waiting label="CP-1@bin-c965-qualified" reason=build_slot_busy elapsed=0m
+2026-10-03T12:46:48.0120785+00:00 BUILD SLOT granted lease=8e0d0105-335c-49a0-9f87-beba3951cd65 label="CP-1@bin-c965-qualified" waited=15s maxcpucount=6
+2026-10-03T12:47:46.6510092+00:00 BUILD SLOT released lease=8e0d0105-335c-49a0-9f87-beba3951cd65 label="CP-1@bin-c965-qualified"
+2026-10-03T12:47:46.7825414+00:00 BUILD SLOT granted lease=5799c75a-50ee-4630-971a-506c74b3f88e label="CP-2@bin-c965-qualified" waited=0s maxcpucount=6
+2026-10-03T12:49:05.8259006+00:00 BUILD SLOT released lease=5799c75a-50ee-4630-971a-506c74b3f88e label="CP-2@bin-c965-qualified"
+2026-10-03T12:49:06.0721896+00:00 BUILD SLOT granted lease=941b2aa6-74e4-42b5-b2ed-6f1f147d0919 label="CP-3@bin-c965-qualified" waited=0s maxcpucount=6
+2026-10-03T12:50:01.3166109+00:00 BUILD SLOT released lease=941b2aa6-74e4-42b5-b2ed-6f1f147d0919 label="CP-3@bin-c965-qualified"
+2026-10-03T12:50:01.4152349+00:00 BUILD SLOT granted lease=3b22acf2-2413-4a72-b205-7a50b0c4ef40 label="CP-7@bin-c965-qualified" waited=0s maxcpucount=6
+2026-10-03T12:50:54.3035732+00:00 BUILD SLOT released lease=3b22acf2-2413-4a72-b205-7a50b0c4ef40 label="CP-7@bin-c965-qualified"
+2026-10-03T12:50:54.3928081+00:00 BUILD SLOT granted lease=013decbc-d6aa-4899-8fee-e9e77590c7f4 label="CP-6@bin-c965-qualified" waited=0s maxcpucount=6
+2026-10-03T12:51:06.5448496+00:00 owner read failed: timeout after 12s
+2026-10-03T12:55:37.8348036+00:00 BUILD SLOT released lease=013decbc-d6aa-4899-8fee-e9e77590c7f4 label="CP-6@bin-c965-qualified"
+2026-10-03T12:55:38.7812236+00:00 done exit=0
