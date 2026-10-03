@@ -222,9 +222,9 @@ public sealed class CodexCliAdmissionTests
         (await k.Service.CreateAsync(k.Request(false) with { AgentId = id }, k.Caller, CancellationToken.None)).Status
             .ShouldBe(AgentTaskStatus.Queued, "C959-pc-150");
         k.Local.Requests.ShouldBeEmpty();
-        var profileless = await k.ProfileAgentAsync("gpt-6-sol", "/fixture/codex-b", "--model");
-        var profilelessAgent = await k.Db.Agents.SingleAsync(a => a.Id == profileless);
-        profilelessAgent.TuiProfileId = null;
+        var profileless = id;
+        pin.ModelId = "gpt-6-sol";
+        pin.TuiProfileId = null;
         await k.Db.SaveChangesAsync();
         k.Local.Sample = new("0.156.1", T, null, new string('a',64));
         (await CodeAsync(() => k.Service.CreateAsync(k.Request(false) with { AgentId = profileless }, k.Caller, CancellationToken.None)))

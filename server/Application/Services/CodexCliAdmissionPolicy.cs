@@ -42,7 +42,15 @@ public static class CodexCliAdmissionPolicy
             catch (Exception) when (!ct.IsCancellationRequested) { reason = "probe_unavailable"; }
         }
         ct.ThrowIfCancellationRequested();
-        var refusal = Evaluate(descriptor.RunnerId, model, floor.ToString(), sample, clock.GetUtcNow(), settings.CodexCliVersionMaxAgeMinutes, reason);
+        return Authorize(descriptor, sample, settings, clock, reason);
+    }
+
+    internal static Admission Authorize(CodexCliProbeDescriptor descriptor, RunnerCodexCliVersionDto? sample,
+        DelegationSettings settings, TimeProvider clock, string missingReason = "probe_unavailable")
+    {
+        var model = descriptor.Model!;
+        var floor = ModelLevelAliases.MinimumCodexCliVersion(AgentKind.Codex, model)!;
+        var refusal = Evaluate(descriptor.RunnerId, model, floor.ToString(), sample, clock.GetUtcNow(), settings.CodexCliVersionMaxAgeMinutes, missingReason);
         if (refusal is null) return new(descriptor, sample, null);
         var allowed = settings.CodexCliVersionOverrides.FirstOrDefault(item =>
             item.RunnerId == descriptor.RunnerId && item.Model == model && item.ExpiresAtUtc > clock.GetUtcNow()
