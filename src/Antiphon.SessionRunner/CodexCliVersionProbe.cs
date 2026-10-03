@@ -95,7 +95,13 @@ public sealed class CodexCliVersionProbe : IDisposable
     private async Task CompleteAsync(Resolved resolved, TaskCompletionSource<RunnerCodexCliVersionDto> completion, CancellationToken ct)
     {
         try { completion.TrySetResult(await RunAsync(resolved, ct)); }
-        catch (OperationCanceledException) { completion.TrySetCanceled(ct); }
+        catch (OperationCanceledException)
+        {
+            lock (_gate)
+                if (_cache.TryGetValue(resolved.Fingerprint, out var flight) && ReferenceEquals(flight, completion.Task))
+                    _cache.Remove(resolved.Fingerprint);
+            completion.TrySetCanceled(ct);
+        }
         catch (Exception) { completion.TrySetResult(Unknown("launcher_unverified", resolved.Fingerprint)); }
     }
 
@@ -177,10 +183,21 @@ public sealed class CodexCliVersionProbe : IDisposable
             {
                 if (process is not null)
                 {
-                    KillTree(process);
-                    process.Dispose();
+                    var owned = completion ?? process.WaitForExitAsync();
+                    using var finalCleanup = new CancellationTokenSource(TimeSpan.FromSeconds(2), _clock);
+                    try
+                    {
+                        if (!KillTree(process)) throw new IOException("Cleanup is unconfirmed.");
+                        await owned.WaitAsync(finalCleanup.Token);
+                    }
+                    catch (Exception)
+                    {
+                        lock (_gate) _cleanup.Add((process, owned, scratch!));
+                        retained = true;
+                    }
+                    if (!retained) process.Dispose();
                 }
-                if (scratch is not null) TryDeleteScratch(scratch);
+                if (!retained && scratch is not null) TryDeleteScratch(scratch);
             }
             _children.Release();
         }
