@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Threading;
 using Antiphon.Tests.Application;
@@ -17,6 +18,217 @@ namespace Antiphon.Tests.Scripts;
 [Category("Unit")]
 public sealed class RemoteScriptContractTests
 {
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Recycle_exact_default_volumes()
+    {
+        using var f = new C1008HostFixture();
+        var run = await f.Run();
+        f.Removed.ShouldBe(new[] { "antiphon-runner_work", "antiphon-runner_runner-tmp", "antiphon-runner_dind-data" },
+            "recycle-exact-defaults: exact ordered defaults; " + run.Output);
+        run.Exit.ShouldBe(0);
+        var ledger = JsonNode.Parse(File.ReadAllText(f.StatePath))!;
+        ledger["volumes"]!.AsObject().Count.ShouldBe(11);
+        ledger["containers"]!.AsArray().Single(x => x!["Id"]!.GetValue<string>() == new string('3', 64))!
+            ["State"]!["Running"]!.GetValue<bool>().ShouldBeTrue("recycle-exact-defaults: broker survives");
+        f.Trace.Any(a => a.Contains("prune")).ShouldBeFalse("recycle-exact-defaults: never prune");
+        foreach (var project in new[] { "antiphon-runner", "antiphon-runner-temp" })
+        {
+            using var bad = new C1008HostFixture();
+            bad.Docker["models"]![project]!["volumes"]!["work"]!["external"] = true;
+            if (project == "antiphon-runner-temp") continue;
+            await bad.Run();
+            bad.Removed.ShouldBeEmpty("recycle-exact-defaults: external private volume refuses");
+        }
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Recycle_refuses_references_and_unknown_census()
+    {
+        using (var accepted = new C1008HostFixture())
+        {
+            var run = await accepted.Run();
+            accepted.Removed.Length.ShouldBe(3, "recycle-reference-refusal: controlled stop is reachable; " + run.Output);
+            Array.FindIndex(accepted.Trace, a => a[0] == "stop").ShouldBeLessThan(
+                Array.FindIndex(accepted.Trace, a => a.Take(2).SequenceEqual(new[] { "volume", "rm" })));
+        }
+        foreach (var running in new[] { true, false })
+        {
+            using var f = new C1008HostFixture();
+            f.Docker["containers"]!.AsArray().Add(f.Container('5', "foreign", "foreign", running, "work"));
+            f.Docker["containers"]!.AsArray().Last()!["Mounts"]![0]!["Name"] = "antiphon-runner_work";
+            var run = await f.Run();
+            f.Removed.ShouldBeEmpty("recycle-reference-refusal: running and exited foreign references preserve the whole set");
+            run.Output.ShouldContain("RecycleVolumeInUse");
+        }
+        foreach (var fault in new[] { "ps-error", "inspect-error", "inspect-empty", "volume-ls-error", "stop-failed", "stop-stays-running" })
+        {
+            using var f = new C1008HostFixture(); f.Docker["fault"] = fault;
+            await f.Run(); f.Removed.ShouldBeEmpty("recycle-reference-refusal: " + fault);
+        }
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Recycle_audits_work_as_1654()
+    {
+        using var f = new C1008HostFixture();
+        await C1008GitGraph(f);
+        var run = await f.Run();
+        f.Trace.Any(a => a[0] == "create" && a.Contains("1654:1654") && a.Contains("--entrypoint") &&
+            a.Any(x => x.EndsWith(",target=/work,readonly", StringComparison.Ordinal))).ShouldBeTrue("recycle-audit-uid: pinned readonly uid helper; " + run.Output);
+        f.Removed.Length.ShouldBe(3);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Recycle_refuses_unpublished_and_dirty_work()
+    {
+        using (var accepted = new C1008HostFixture())
+        {
+            await C1008GitGraph(accepted); var run = await accepted.Run();
+            accepted.Removed.Length.ShouldBe(3, "recycle-work-preserved: published clean control reaches removal; " + run.Output);
+        }
+        foreach (var fault in new[] { "head", "branch", "tag", "dirty", "staged", "untracked" })
+        {
+            using var f = new C1008HostFixture(); await C1008GitGraph(f, fault);
+            var run = await f.Run(); f.Removed.ShouldBeEmpty("recycle-work-preserved: " + fault);
+            run.Output.ShouldContain(fault is "dirty" or "staged" or "untracked" ? "RecycleWorktreeDirty" : "RecycleUnpublishedWork");
+        }
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Recycle_refuses_uninspectable_git()
+    {
+        using (var accepted = new C1008HostFixture())
+        {
+            await C1008GitGraph(accepted); var run = await accepted.Run();
+            accepted.Removed.Length.ShouldBe(3, "recycle-git-unknown-refuses: complete history control; " + run.Output);
+        }
+        foreach (var marker in new[] { "index.lock", "MERGE_HEAD", "rebase-merge" })
+        {
+            using var f = new C1008HostFixture(); await C1008GitGraph(f);
+            File.WriteAllText(Path.Combine(f.Root, "work/repo/.git", marker), "unknown");
+            var run = await f.Run(); f.Removed.ShouldBeEmpty("recycle-git-unknown-refuses: " + marker);
+            run.Output.ShouldContain("RecycleGitAuditUnknown");
+        }
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Recycle_preserves_tmp_copyup()
+    {
+        using var f = new C1008HostFixture(); var run = await f.Run();
+        f.Removed.ShouldContain("antiphon-runner_runner-tmp", "recycle-tmp-assets: whole named tmp is recycled; " + run.Output);
+        var compose = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "docker-compose.server2-runner.yml"));
+        compose.ShouldNotContain("volume-nocopy");
+        // Recreated asset/mode effects are independently required by RD-1.
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Recycle_resume_requires_matching_receipt()
+    {
+        using var f = new C1008HostFixture(); f.Docker["fault"] = "rm-second-failed";
+        var run = await f.Run();
+        f.Removed.ShouldBe(new[] { "antiphon-runner_work" }, "recycle-resume-generation: committed partial first removal; " + run.Output);
+        var journal = Path.Combine(f.Root, "server/recycle/c100800000000000000000000000000000001.json");
+        File.Exists(journal).ShouldBeTrue("recycle-resume-generation: external journal survives work removal");
+        var saved = JsonNode.Parse(File.ReadAllText(f.StatePath))!.AsObject();
+        f.Docker.Clear(); foreach (var (key, value) in saved) f.Docker[key] = value?.DeepClone();
+        f.Docker["fault"] = "";
+        var resume = await f.Run(extra: "C1008_RESUME=1");
+        f.Removed.Length.ShouldBe(3, "recycle-resume-generation: removes only the remaining originals; " + resume.Output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Recycle_receipt_records_disk_and_partial_failure()
+    {
+        using var f = new C1008HostFixture();
+        var run = await f.Run(extra: "sudo() { [ \"$1\" = -n ] && shift; if [ \"$1\" = df ]; then if [ -f \"$C1008_FIXTURE_ROOT/df-seen\" ]; then n=3072; else n=1024; touch \"$C1008_FIXTURE_ROOT/df-seen\"; fi; printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\nfixture 99999999 1 %s 1%% /fixture\\n' \"$n\"; elif [ \"$1\" = install ]; then mkdir -p \"${@: -1}\"; else \"$@\"; fi; }");
+        run.Output.ShouldContain("freeAfterBytes=3145728", "recycle-receipt-facts: measured after-df bytes");
+        run.Output.ShouldContain("freeBeforeBytes=1048576"); run.Output.ShouldContain("deltaBytes=2097152");
+        Regex.Matches(run.Output, "(?m)^C1008_RECYCLE ").Count.ShouldBe(1);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Retire_temp_rechecks_absence_and_retirement()
+    {
+        using (var accepted = new C1008HostFixture(main: false))
+        {
+            var run = await accepted.Run("retire-temp-runner");
+            accepted.Removed.Length.ShouldBe(4, "retire-host-proof: absent/null success removes four; " + run.Output);
+        }
+        using (var present = new C1008HostFixture(main: false))
+        {
+            present.Docker["containers"]!.AsArray().Add(present.Container('4', "antiphon-runner-temp", "state-init", false, "work"));
+            var run = await present.Run("retire-temp-runner");
+            present.Removed.ShouldBeEmpty("retire-host-proof: exited state-init is present");
+            run.Output.ShouldContain("RunnerCounterUnknown");
+        }
+        using var strict = new C1008HostFixture(main: false);
+        var shared = await strict.Run("retire-temp-runner", "if c849_status_zero server2-temp; then write_result false NullWasAccepted 2; fi; node -e 'const fs=require(\"fs\"),p=process.argv[1],s=JSON.parse(fs.readFileSync(p));s[\"server2-temp\"].runnerSessions=0;fs.writeFileSync(p,JSON.stringify(s))' \"$C1008_FIXTURE_ROOT/statuses.json\"; c849_status_zero server2-temp || write_result false ZeroWasRefused 2; write_result true '' 0");
+        shared.Exit.ShouldBe(0, "retire-host-proof: shared null refuses and integer zero accepts; " + shared.Output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Retire_temp_reclaims_below_cache_disk_gate()
+    {
+        using var f = new C1008HostFixture(main: false);
+        var run = await f.Run("retire-temp-runner", "c849_budget_gate() { write_result false CacheDiskLow 2; }");
+        f.Removed.Length.ShouldBe(4, "recycle-disk-order: reclaim does not need the allocation budget; " + run.Output);
+        run.Exit.ShouldBe(0);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Recycle_dry_run_never_mutates()
+    {
+        foreach (var main in new[] { true, false })
+        {
+            using var f = new C1008HostFixture(main);
+            var run = await f.Run(main ? "deploy-parent" : "retire-temp-runner", dryRun: true);
+            run.Output.ShouldNotContain("MUTATION", "recycle-preview-readonly: preview precedes generic setup");
+            f.Removed.ShouldBeEmpty("recycle-preview-readonly: no selected removal");
+            f.Trace.Any(a => new[] { "stop", "rm", "create", "start", "run" }.Contains(a[0]) || a.Take(2).SequenceEqual(new[] { "volume", "rm" })).ShouldBeFalse();
+            run.Output.ShouldContain("auditPending=true");
+        }
+    }
+
+    private static async Task C1008GitGraph(C1008HostFixture fixture, string fault = "")
+    {
+        var root = fixture.Root;
+        var script = $$"""
+            set -e
+            git init -q --bare '{{root}}/origin'
+            git init -q -b master '{{root}}/work/repo'
+            git -C '{{root}}/work/repo' config user.name Fixture
+            git -C '{{root}}/work/repo' config user.email fixture@example.invalid
+            git -C '{{root}}/work/repo' remote add origin '{{root}}/origin'
+            echo A > '{{root}}/work/repo/file'
+            git -C '{{root}}/work/repo' add file
+            git -C '{{root}}/work/repo' commit -qm A
+            git -C '{{root}}/work/repo' push -q origin master
+            """;
+        if (fault is "head" or "branch" or "tag") script += $$"""
+
+            git -C '{{root}}/work/repo' commit -qm B --allow-empty
+            {{(fault == "branch" ? $"git -C '{root}/work/repo' branch unpublished; git -C '{root}/work/repo' checkout -q --detach HEAD~1" : fault == "tag" ? $"git -C '{root}/work/repo' tag unpublished; git -C '{root}/work/repo' reset -q --hard HEAD~1" : "")}}
+            """;
+        if (fault is "dirty" or "staged") script += $"\necho B >> '{root}/work/repo/file'\n";
+        if (fault == "staged") script += $"git -C '{root}/work/repo' add file\n";
+        if (fault == "untracked") script += $"\necho B > '{root}/work/repo/new'\n";
+        var psi = new ProcessStartInfo("bash") { RedirectStandardOutput = true, RedirectStandardError = true };
+        psi.ArgumentList.Add("-c"); psi.ArgumentList.Add(script);
+        using var proc = Process.Start(psi)!; var stdout = proc.StandardOutput.ReadToEndAsync(); var stderr = proc.StandardError.ReadToEndAsync();
+        await proc.WaitForExitAsync(); proc.ExitCode.ShouldBe(0, await stdout + await stderr);
+    }
+
     [Test]
     public void C944_All_cache_loop_variables_are_local()
     {

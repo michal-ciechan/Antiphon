@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -10,6 +11,146 @@ namespace Antiphon.Tests.Scripts;
 [Category("Unit")]
 public sealed class RollingVolumeRecycleScriptTests
 {
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Present_or_unknown_temp_keeps_null_refusal()
+    {
+        using (var good = new C1008WrapperFixture())
+        {
+            var run = await good.Run("retire-temp");
+            run.Exit.ShouldBe(0, "retire-null-stays-closed: explicit null absent control; " + run.Output);
+        }
+        foreach (var field in new[] { "runnerSessions", "sessions", "queuedTasks", "available", "dispatchEligible", "acceptingNewWork", "retiredAt", "redirectTo", "draining", "retireWhenIdle" })
+        {
+            using var f = new C1008WrapperFixture();
+            f.State["statuses"]!["server2-temp"]!.AsObject().Remove(field);
+            var run = await f.Run("retire-temp");
+            run.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse("retire-null-stays-closed: missing " + field);
+            run.Exit.ShouldBe(2);
+        }
+        using var present = new C1008WrapperFixture(); present.State["tempContainer"] = true;
+        var blocked = await present.Run("retire-temp");
+        blocked.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse("retire-null-stays-closed: exited container retains null refusal");
+        blocked.Output.ShouldContain("RunnerCounterUnknown");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Busy_routed_and_land_in_flight_refuse()
+    {
+        using (var good = new C1008WrapperFixture())
+        {
+            var run = await good.Run("retire-temp");
+            run.Exit.ShouldBe(0, "recycle-work-gates: accepted closed census; " + run.Output);
+        }
+        foreach (var field in new[] { "sessions", "runnerSessions", "queuedTasks" })
+        foreach (var value in new JsonNode?[] { JsonValue.Create(1), JsonValue.Create(-1), JsonValue.Create(0.5), JsonValue.Create("0"), JsonValue.Create(false) })
+        {
+            using var f = new C1008WrapperFixture(); f.State["statuses"]!["server2-temp"]![field] = value?.DeepClone();
+            var run = await f.Run("retire-temp");
+            run.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse("recycle-work-gates: typed " + field);
+        }
+        foreach (var status in new[] { "Queued", "Dispatched", "Working", "Blocked", "Failed", "Succeeded" })
+        {
+            using var f = new C1008WrapperFixture();
+            f.State["tasks"]!["items"]!.AsArray().Add(new JsonObject
+            { ["id"] = "11111111-1111-1111-1111-111111111111", ["status"] = status, ["runnerId"] = "server2-temp",
+                ["projectId"] = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1", ["scopeSource"] = "Task",
+                ["landRequestedAt"] = status == "Succeeded" ? "2026-10-03T09:00:00Z" : null, ["landStartedAt"] = null });
+            var run = await f.Run("retire-temp");
+            run.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse("recycle-work-gates: retained owner/pending land " + status);
+        }
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Same_sha_and_partial_retries_are_safe()
+    {
+        using var f = new C1008WrapperFixture();
+        f.State["statuses"]!["server2"]!["draining"] = true;
+        f.State["statuses"]!["server2"]!["redirectTo"] = "server2-temp";
+        f.State["statuses"]!["server2"]!["acceptingNewWork"] = false;
+        f.State["allowClear"] = true;
+        var run = await f.Run("redeploy-old");
+        run.Trace.Where(x => x["kind"]?.GetValue<string>() == "case").Select(x => x["name"]!.GetValue<string>())
+            .ShouldBe(new[] { "verify-runner-caches" }, "recycle-wrapper-resume: healthy same SHA only verifies; " + run.Output);
+        run.Exit.ShouldBe(0);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Option_manifest_is_strict()
+    {
+        using (var good = new C1008WrapperFixture())
+        {
+            var run = await good.Run("retire-temp", "-DryRun");
+            run.Exit.ShouldBe(0, "recycle-manifest-strict: supported typed preview transport; " + run.Output);
+        }
+        foreach (var option in new[] { "-RecycleRunnerState", "-RecycleCaches" })
+        {
+            using var f = new C1008WrapperFixture(); var run = await f.Run("retire-temp", option);
+            run.Trace.ShouldBeEmpty("recycle-manifest-strict: moved opt-ins rejected by parameter binding");
+            run.Exit.ShouldNotBe(0);
+        }
+        foreach (var id in new[] { "../file", "C1008" + new string('a', 32), "c1008a;echo", "" })
+        {
+            using var f = new C1008WrapperFixture(); var run = await f.Run("retire-temp", "-ResumeRecycle", id);
+            run.Trace.ShouldBeEmpty("recycle-manifest-strict: operation ID has no path authority");
+            run.Exit.ShouldNotBe(0);
+        }
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Legacy_rolling_and_jq_rosters_remain()
+    {
+        foreach (var mode in new[] { "present", "absent", "missing-shell", "failing-shell" })
+        {
+            var run = await C1008Process("pwsh", "-NoProfile", "-File",
+                Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/test-deploy-server2-jq.ps1"), "-Case", mode);
+            run.Output.ShouldContain($"C973_JQ case={mode} assertions=31 failures=0", "rolling-regressions-preserved: " + run.Output);
+            if (mode == "present") run.Output.ShouldNotContain("C973_JQ_SKIPPED");
+            run.Exit.ShouldBe(0);
+        }
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Documentation_and_transport_pins_match()
+    {
+        using var f = new C1008HostFixture(main: false);
+        var run = await f.Run("retire-temp-runner", "detect_lane() { LANE=nested; }");
+        run.Output.ShouldContain("WrongLane", "recycle-doc-contract: host operations refuse nested lane");
+        f.Removed.ShouldBeEmpty();
+        foreach (var script in new[] { "deploy-server2.ps1", "c590-real.ps1", "c590-remote.sh", "verify-docker-stack.ps1" })
+            File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", script)).All(x => x < 128)
+                .ShouldBeTrue("recycle-doc-contract: ASCII transport " + script);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Refusal_receipts_do_not_leak_secrets()
+    {
+        using var f = new C1008WrapperFixture();
+        f.State["taskError"] = "SENTINEL_C1008_HTTP_CREDENTIAL";
+        var run = await f.Run("retire-temp");
+        run.Output.ShouldContain("RecycleTaskCensusUnknown", "recycle-receipt-custody: typed census refusal survives");
+        run.Output.ShouldNotContain("SENTINEL_C1008_HTTP_CREDENTIAL");
+        run.Output.ShouldNotContain("C1008_TEST_TOKEN_SENTINEL");
+        run.Output.ShouldNotContain("UnhandledExit");
+    }
+
+    private static async Task<(int Exit, string Output)> C1008Process(string command, params string[] args)
+    {
+        var psi = new ProcessStartInfo(command) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var arg in args) psi.ArgumentList.Add(arg);
+        using var proc = Process.Start(psi)!; var stdout = proc.StandardOutput.ReadToEndAsync(); var stderr = proc.StandardError.ReadToEndAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(12));
+        try { await proc.WaitForExitAsync(deadline.Token); }
+        catch { if (!proc.HasExited) { proc.Kill(true); await proc.WaitForExitAsync(); } throw; }
+        return (proc.ExitCode, await stdout + await stderr);
+    }
+
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Retired_absent_null_is_accepted()
@@ -81,6 +222,133 @@ internal sealed class C1008WrapperFixture : IDisposable
         var output = await stdout + await stderr;
         var trace = File.Exists(TracePath) ? File.ReadAllLines(TracePath).Select(x => JsonNode.Parse(x)!.AsObject()).ToArray() : [];
         return (proc.ExitCode, output, trace);
+    }
+
+    public void Dispose() => Directory.Delete(Root, recursive: true);
+}
+
+internal sealed class C1008HostFixture : IDisposable
+{
+    internal string Root { get; } = Directory.CreateTempSubdirectory("c1008-host-").FullName;
+    internal JsonObject Docker { get; }
+    internal JsonObject Statuses { get; }
+    internal string StatePath => Path.Combine(Root, "docker.json");
+    internal string[] Removed => JsonNode.Parse(File.ReadAllText(StatePath))!["removed"]!.AsArray()
+        .Select(x => x!.GetValue<string>()).ToArray();
+    internal string[][] Trace => File.ReadAllLines(Path.Combine(Root, "docker-trace.jsonl"))
+        .Select(x => JsonNode.Parse(x)!.AsArray().Select(y => y!.GetValue<string>()).ToArray()).ToArray();
+    internal JsonObject Vectors { get; }
+
+    internal C1008HostFixture(bool main = true)
+    {
+        Vectors = JsonNode.Parse(File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot,
+            "scripts/fixtures/c1008-recycle-cases.json")))!.AsObject();
+        Statuses = new JsonObject
+        {
+            ["server2"] = Vectors[main ? "mainDrained" : "mainAccepting"]!.DeepClone(),
+            ["server2-temp"] = Vectors[main ? "tempAccepting" : "tempRetiredAbsent"]!.DeepClone()
+        };
+        var volumes = new JsonObject();
+        var models = new JsonObject();
+        foreach (var project in new[] { "antiphon-runner", "antiphon-runner-temp" })
+        {
+            var model = new JsonObject();
+            foreach (var role in new[] { "work", "runner-tmp", "dind-data", "runner-state" })
+            {
+                var name = project + "_" + role;
+                volumes[name] = Volume(name, new JsonObject
+                { ["com.docker.compose.project"] = project, ["com.docker.compose.volume"] = role });
+                model[role] = new JsonObject { ["name"] = name };
+            }
+            foreach (var (role, key) in new[] { ("nuget-packages", "nuget-packages"),
+                         ("nuget-scratch", "nuget-scratch"), ("npm-content", "npm-content") })
+            {
+                var name = "antiphon-runner-cache-" + role;
+                if (!volumes.ContainsKey(name)) volumes[name] = Volume(name, new JsonObject
+                { ["io.antiphon.owner"] = "server2-runner", ["io.antiphon.cache-schema"] = "1", ["io.antiphon.cache-role"] = role });
+                model[key] = new JsonObject { ["name"] = name, ["external"] = true };
+            }
+            models[project] = new JsonObject { ["volumes"] = model };
+        }
+        foreach (var name in new[] { "antiphon-runner_work-extra", "schoolrevision-staging", "openclaw-state" })
+            volumes[name] = Volume(name, new JsonObject());
+        var containers = new JsonArray();
+        if (main)
+        {
+            containers.Add(Container('1', "antiphon-runner", "session-runner", true, "work", "runner-tmp", "dind-data", "runner-state"));
+            containers.Add(Container('2', "antiphon-runner", "state-init", false, "work", "runner-state"));
+        }
+        containers.Add(Container('3', "antiphon-runner", "build-slots", true));
+        Docker = new JsonObject { ["volumes"] = volumes, ["models"] = models,
+            ["containers"] = containers, ["removed"] = new JsonArray(), ["fault"] = "" };
+        Directory.CreateDirectory(Path.Combine(Root, "work"));
+        Directory.CreateDirectory(Path.Combine(Root, "server/cache"));
+        File.WriteAllText(Path.Combine(Root, "temp.env"), "RUNNER_GROK_STORE_DIR=/fixture/grok\n");
+    }
+
+    private JsonObject Volume(string name, JsonObject labels)
+    {
+        var mount = Path.Combine(Root, "volumes", name, "_data");
+        Directory.CreateDirectory(mount);
+        File.WriteAllText(Path.Combine(mount, "sentinel"), "sentinel:" + name + ":old\n");
+        return new JsonObject { ["Name"] = name, ["Driver"] = "local", ["Options"] = new JsonObject(),
+            ["CreatedAt"] = "2026-10-03T09:00:00Z", ["Mountpoint"] = mount, ["Labels"] = labels };
+    }
+
+    internal JsonObject Container(char id, string project, string service, bool running, params string[] roles) =>
+        new() { ["Id"] = new string(id, 64), ["Image"] = "sha256:" + new string('a', 64),
+            ["State"] = new JsonObject { ["Running"] = running, ["Status"] = running ? "running" : "exited" },
+            ["Config"] = new JsonObject { ["Labels"] = new JsonObject
+                { ["com.docker.compose.project"] = project, ["com.docker.compose.service"] = service } },
+            ["Mounts"] = new JsonArray(roles.Select(role => (JsonNode)new JsonObject
+                { ["Type"] = "volume", ["Name"] = project + "_" + role,
+                    ["Source"] = Path.Combine(Root, "volumes", project + "_" + role, "_data"),
+                    ["Destination"] = role == "work" ? "/work" : role == "runner-tmp" ? "/tmp" : role == "dind-data" ? "/var/lib/docker" : "/state", ["RW"] = true }).ToArray()) };
+
+    internal async Task<(int Exit, string Output)> Run(string hostCase = "deploy-parent", string extra = "", bool dryRun = false)
+    {
+        File.WriteAllText(StatePath, Docker.ToJsonString());
+        File.WriteAllText(Path.Combine(Root, "statuses.json"), Statuses.ToJsonString());
+        var source = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"));
+        var injection = $$"""
+            C1008_FIXTURE_ROOT='{{Root}}'; export C1008_FIXTURE_ROOT
+            SERVER2_ROOT='{{Root}}/server'; ROOT='{{Root}}'; EVIDENCE_ROOT='{{Root}}/evidence'; CASE_DIR="$EVIDENCE_ROOT/$CASE"
+            SERVER2_ENV='{{Root}}/main.env'; SERVER2_TEMP_ENV='{{Root}}/temp.env'; mkdir -p "$CASE_DIR"
+            C1008_OPERATION=c100800000000000000000000000000000001; C1008_CONTEXT=default; C1008_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1
+            C1008_DRY_RUN={{(dryRun ? "1" : "0")}}; C590_TEMP_RETIRED_AT=2026-10-03T09:30:00Z
+            docker() { bash '{{DelegateScriptRunner.RepoRoot}}/scripts/fixtures/c1008-fake-docker.sh' "$@"; }
+            compose_host() { docker compose -p "$HOST_PROJECT" "$@"; }
+            compose_temp() { docker compose -p "$TEMP_PROJECT" "$@"; }
+            detect_lane() { LANE=host; }
+            ensure_dirs() { printf 'MUTATION ensure_dirs\n'; }
+            ensure_checkout() { printf 'MUTATION ensure_checkout\n'; }
+            ensure_runner_boot_files() { printf 'MUTATION boot_files\n'; }
+            retire_c590_leftovers() { :; }
+            broker_sha12() { echo aaaaaaaaaaaa; }
+            build_server2_images() { write_result true '' 0; }
+            c849_lock() { :; }
+            c849_budget_gate() { :; }
+            c849_status_body() { node -e 'process.stdout.write(JSON.stringify(JSON.parse(require("fs").readFileSync(process.argv[1]))[process.argv[2]]))' '{{Root}}/statuses.json' "$1"; }
+            c1008_tasks() { printf '[]'; }
+            sudo() { [ "$1" = -n ] && shift; if [ "$1" = install ]; then mkdir -p "${@: -1}"; elif [ "$1" = df ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nfixture 99999999 1 25000000 1%% /fixture\n'; else "$@"; fi; }
+            {{extra}}
+            """;
+        source = source.Replace("trap 'ec=$?;", injection + "\ntrap 'ec=$?;", StringComparison.Ordinal);
+        var script = Path.Combine(Root, "remote.sh");
+        File.WriteAllText(script, source);
+        var psi = new ProcessStartInfo("bash") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        psi.ArgumentList.Add(script);
+        psi.Environment["C590_CASE"] = hostCase;
+        psi.Environment["C590_SHA"] = new string('a', 40);
+        psi.Environment["C590_RUN"] = "c1008fixture";
+        psi.Environment["C590_REEXEC"] = "1";
+        psi.Environment["C604_SERVER_ORIGIN"] = "http://127.0.0.1:1";
+        using var proc = Process.Start(psi)!;
+        var stdout = proc.StandardOutput.ReadToEndAsync(); var stderr = proc.StandardError.ReadToEndAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        try { await proc.WaitForExitAsync(deadline.Token); }
+        catch { if (!proc.HasExited) { proc.Kill(true); await proc.WaitForExitAsync(); } throw; }
+        return (proc.ExitCode, await stdout + await stderr);
     }
 
     public void Dispose() => Directory.Delete(Root, recursive: true);
