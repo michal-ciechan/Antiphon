@@ -1,0 +1,14 @@
+# CARD-0959 inert observation Code — bd02f8d9
+
+Implementation and Final verification in progress; no pass or Review-ready claim.
+
+Admission recorded before implementation (2026-10-03 23:26 UTC):
+
+- Landing owner: bd02f8d9-52d9-4ba6-a67e-f6325fff27ee. Branch feat/card-task-bd02f8d9; worktree /work/worktrees/task-bd02f8d9. FF-only start 9bd096d2bb3695b7bd06a98cff15cbf6f96fcb05. Its ancestry already includes bfc12c6d73f828cc864a205bc72967a8244ce883 and the second continuation implementation; no cherry-pick needed.
+- Start census: scripts/lib/checkpoint-usage.ps1 selected=365. Freshly fetched origin/master 2d3c582416c5610d72e53df3e790bc114d87ad82 has selected=377. This is the checkpoint namespace census, not the feature/Unit minimum. CARD-1014/1006/1005/1015/0901 ownership and later master changes are not authority to edit excluded tools or merge master into this FF-only branch.
+- Real importer accepted 8 rows from docs/superpowers/plans/2026-10-03-card-0959-runner-codex-version-plan.md into ignored .antiphon/c959-inert-admission/manifest.yaml. Bootstrap: pwsh -NoProfile -File scripts/build-slot.ps1 -Label c959inert-importer -- dotnet build tools/Antiphon.Checkpoints --property:OutputPath=bin-c959-inert-tool/ --property:UseAppHost=false --nologo. Exit 0; slot=granted waited=0s, 6 seconds; one existing TaskOwnerGuard CS8602 warning. This is the required unlisted bootstrap, not an ordinary proof run.
+- GET /api/runner-defaults, /api/session-runners and /api/agent-tasks/pipeline read through the documented ANTIPHON_API route with existing task authentication. Only this Code task was in flight. CARD-1011 Code b657a1e2 is Succeeded at 6bd81b8c696022b5d777896c0804aaad61f513d7; delegate.ps1 -Status read in full. Its Windows WQ-3 Debug d7e561a7 was in flight. Accepted provider-doc overlap is limited to CARD-0959 sections in docs/agent-kinds.md and docs/ai-agent-tui-configuration.md and will be separately committed. No orchestrator bundle edit is planned. No fleet pin or operational changes.
+- Card's old gate request is superseded by the active inert observation re-freeze and operator direction. Every CLI sample is data only; existing model/auth/placement policies stay.
+- New never-refuses methods will first run against the existing admission defect; deliberate PCs remain pending Mutation. All 192 active PCs and their variants are pending post-land SourceLanding Mutation, including if ordinary tests pass.
+- Scope: CP-1/3/4/5/6/7 portable full named classes; CP-8 whole Unit lane for shared DTO/settings/alias regression, unbounded across Unit classes, estimated 15 minutes including build. No full all-category assembly run. Native Windows Debug CP-2 (29 results) is separately caller commissioned at final source SHA.
+- Restart: none. After Review/land caller owns reporting-runner activation first, then server readers. Nothing enforces CLI compatibility.
