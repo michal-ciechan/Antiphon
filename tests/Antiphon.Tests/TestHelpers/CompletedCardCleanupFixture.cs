@@ -9,6 +9,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Shouldly;
+using Antiphon.SessionRunner.Contracts;
+using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Antiphon.Tests.TestHelpers;
 
@@ -86,6 +90,40 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
         var task = await db.AgentTasks.SingleAsync(t => t.Id == TaskId);
         change(task);
         await db.SaveChangesAsync();
+    }
+
+    public async Task BindSourceLandingAsync()
+    {
+        await using var db = Host.CreateContext();
+        var sourceTaskId = Guid.NewGuid();
+        db.AgentTasks.Add(new AgentTask { Id = sourceTaskId, RootTaskId = sourceTaskId, Title = "source publication", Goal = "fixture",
+            Status = AgentTaskStatus.Succeeded, Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Shared, CreatedAt = DateTime.UtcNow });
+        var operationId = Guid.NewGuid();
+        var common = await Host.Fixture.Git.CommonDirectoryAsync(Host.Fixture.Repository, CancellationToken.None);
+        var admin = (await Host.Fixture.RequiredAsync(Tree, "rev-parse", "--absolute-git-dir")).Trim();
+        var branch = "feat/card-task-" + TaskId.ToString("N")[..8];
+        db.AgentTaskLandings.Add(new AgentTaskLanding
+        {
+            Id = operationId, TaskId = sourceTaskId, SchemaVersion = 3, Phase = LandPhase.Complete,
+            Publication = LandPublicationOutcome.Landed, VerifiedSourceSha = Host.Fixture.SeedSha,
+            OriginalSourceSha = Host.Fixture.SeedSha, CommonDirectory = common, RepositoryPath = Host.Fixture.Repository,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        var creation = new VerificationCreationCoordinates(Host.Fixture.Repository, common, Tree, admin, branch, Guid.NewGuid());
+        var seal = new VerificationCleanupSeal(Guid.NewGuid(), 0, creation, [], true, DateTime.UtcNow);
+        var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == TaskId);
+        var restoration = new VerificationRestoration(1, new(TaskId, operationId, Host.Fixture.SeedSha), creation.CreationId,
+            true, "fixture fully restored", Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(task.Result!))), []);
+        var root = Path.Combine(common, "antiphon", "verification", operationId.ToString("N"), TaskId.ToString("N"));
+        Directory.CreateDirectory(root);
+        await File.WriteAllTextAsync(Path.Combine(root, "restoration.json"), JsonSerializer.Serialize(restoration, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        await db.AgentTasks.Where(t => t.Id == TaskId).ExecuteUpdateAsync(s => s
+            .SetProperty(t => t.SourceLandingOperationId, operationId).SetProperty(t => t.Role, AgentTaskRole.Mutation)
+            .SetProperty(t => t.SourceLandingSha, Host.Fixture.SeedSha).SetProperty(t => t.MergeTargetRef, (string?)null)
+            .SetProperty(t => t.VerificationCustodyContractVersion, 1)
+            .SetProperty(t => t.VerificationCreationJson, JsonSerializer.Serialize(creation, (JsonSerializerOptions?)null))
+            .SetProperty(t => t.VerificationCleanupSealJson, JsonSerializer.Serialize(seal, (JsonSerializerOptions?)null)));
     }
 
     public async Task DiscoverAsync()
