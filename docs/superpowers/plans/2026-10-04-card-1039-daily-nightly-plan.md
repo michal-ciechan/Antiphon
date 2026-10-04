@@ -667,13 +667,36 @@ on S3a and qualification, with the acceptance contract below; it is not a reason
 to repeat CARD-1021 Unit or hold remaining S1n/S1/S2/S3b/report work. M-0 and
 M-1 were the original commission and are now accepted; use the amended M-2/M-3
 contract above. No new native pass, delivery, registration or activation is
-claimed by this amendment. Changed V-7/measurement acceptance needs the narrow
-TestDesign update specified below before collection/S3a.
+claimed by this amendment. Task `ecf5a387` at source
+`59407f28f361e7d35059d63f8a643fbd6d66b397` completes the narrow M-2/M-3 and
+V-7 update below. The fix-design prefix and all 27 checkpoint selections remain
+unchanged; only CP-10's time estimate changes. Collection may proceed within
+B-1's bounds; S3a still needs complete accepted M-3.
 
 ### Inspection
 
 Bodies re-read at the source above (new classes are specifications, not existing
 tests). The nearest fixtures are named explicitly.
+
+For this narrow amendment, the following bodies were re-read at `59407f28f`;
+the original inspection inventory below remains the earlier task's evidence.
+
+| Bodies read for M-2/M-3 | Boundaries -> V/R IDs or exclusion |
+|---|---|
+| `ReleaseGatePolicyTests` and `ScriptHarness` complete bodies; `test-release-gate.ps1`: New-C599Root, New-C599Policy, Test-C599_ProfileSchema, Test-C599_ProfileSuites | Nearest existing fixture for proposed `NightlyPartitionTimingTests.cs`; real policy/hash checks and exact case-only assertion inventory -> V-7/R-2. Four unparameterized methods remain four executions. |
+| `nightly-coverage.ps1`: Read-NightlyTrxIdentities, diagnostic record/log parsers, class assignment, disposition/census and Test-NightlyChunkMembership; `Get-NightlyNativeExecutionArguments`; `test-nightly-tests.ps1`: New-Efx, Invoke-E, fresh-probe helper, G037/038 | Identity parsers discard timestamps; membership alone does not reject unknown assignments. Preserve independent census/selection controls; explicit timing extraction and applicability -> V-7/M-2/M-3. |
+| `NightlyDiscoveryParserTests` complete body; C1044 expected-node, writer, inventory, metadata and reconciliation helpers/cases; `c487-harness.ps1` TRX/execution/discovery writers; probe source and raw TRX/diagnostic timing records | Corrected multiline census is reusable; generic synthetic writers lack timestamps. Raw TRX has precise start/end; diagnostic TimingProperty strings have lower precision. Neither automatically supplies an unambiguous expanded-UID join or observed process/cleanup span -> M-2 pilot acceptance. No CARD-1044 rerun commissioned. |
+| testing-and-build checkpoint schema, slots, filters, mutation and nightly sections; PlanTableImporter/ManifestValidator parsing and validation bodies; amended D-9/D-13/B-1 | Preserve 27 rows/100 executions, exact PC methods, phase/DST arithmetic and numeric cost -> V-7. No new async path; DL-1..DL-4 and recipient evidence remain unchanged. |
+
+Missing setup for V-7: S3a adds `Test-NightlyChunkTimingAdmission` to the named
+production helper and four case-only C1039 harness cases/wrappers, with fixed
+independent timing inputs, observable arithmetic breakdown/refusal reasons and
+fresh fixture roots. Neither helper nor `NightlyPartitionTimingTests.cs` exists
+at this source. M-2.0 separately retains its external collector, command manifest
+and offline checks before any pilot. Those checks must cover raw timestamp/UID
+joins, overlaps, gaps, missing/duplicate rows and clock precision; their green
+does not establish native timing applicability. Unknown pilot timestamp semantics
+stop collection for the narrow collector Plan/TestDesign path in B-1.
 
 | Bodies read | Boundaries -> V/R IDs or exclusion |
 |---|---|
@@ -801,8 +824,10 @@ named oracle is also asserted in the corresponding ordinary method.
   complete stored bytes; pending/error paths cannot claim delivery.
 - V-7: only measured partitions are admitted | pure production admission validator
   plus committed policy/independent M-3 roster | CP-10/11 | missing/inapplicable/
-  incomplete inputs refuse, 2,880,000ms inclusive chunk threshold, fixed overhead
-  included and morning forecast supported. Synthetic cases prove refusal logic;
+  incomplete inputs refuse; class-window union plus measured shared residual
+  equals complete chunk wall; shared overhead counts once; 2,880,000ms inclusive
+  chunk threshold and headroom-inclusive whole-run London forecast hold.
+  Synthetic cases prove arithmetic/refusal logic;
   only M-0..M-3 receipts prove applicability and measured durations.
 - V-8: producer consumes the right receipt and recovery stays bounded | production
   wrapper/bootstrap/report/receipt consumer | CP-21..25 | no exit-zero or summary
@@ -864,11 +889,66 @@ stored state. Receipt plus failed incident action is still overall red.
 Timing admission boundaries are 2,879,999/2,880,000/2,880,001ms including measured
 allowance, equal versus changed identity/applicability, complete ordinary-red
 versus capped/incomplete timing, finite versus unknown queue allowance and an
-otherwise valid partition forecast exceeding 08:00. PolicyPartition compares the
+otherwise valid partition forecast exceeding 08:00. The four existing method
+names below are specifications for CP-10; their internal arms do not change Min.
+
+- `C1039_MissingTimingRefuses`: complete A+B is the independent valid control.
+  Remove B, one expanded terminal UID, a class window, measured shared residual,
+  process boundary or cleanup boundary separately. Duplicate/unknown UID,
+  required skip, reversed window, out-of-process window, unknown clock semantics,
+  capped sibling and unobserved cleanup each refuse. A class with all its UIDs
+  terminal in a capped sibling's chunk still cannot supply complete chunk timing.
+  Isolate the cap guard with all A+B UIDs terminal but the shared process capped
+  during sibling teardown; missing-UID validation must not mask this arm.
+  Complete ordinary assertion-red retains timing credit, with no green credit.
+- `C1039_OverBudgetRefuses`: use milliseconds and fixed expected values, never
+  the production calculator as the oracle. For P=1200, K=100 and windows
+  A=[100,700], B=[400,1000], assert C=(600,600), U=900, A_j=400, W=1300.
+  Non-overlap windows [100,400]/[600,900] give U=600, A_j=700, W=1300;
+  adjacent/nested/permuted windows retain their exact union. Include two cases
+  in one class with a gap: its envelope spans the gap, not summed durations.
+  Missing residual is distinct from measured zero. Negative residual and a
+  conservation mismatch beyond a declared 1ms precision refuse; exact and
+  within-precision conservation pass. Assert the arithmetic breakdown as well
+  as admission so cancellation in W=P+K cannot hide a wrong U or residual.
+  Threshold fixtures include positive startup/tail/cleanup: W=2,880,000 passes,
+  W=2,880,001 refuses, and W=2,950,000 refuses even though W*1.2 fits 60 minutes.
+  No division by worker count is allowed.
+- In that same budget method, fix Q_windmill=10, Q_slots=20, checkout=2, builds=15,
+  external discovery=3, five W_j=48 each, O=60 and R=16, all in minutes.
+  B=20, nonqueue total=336 and F=30+336/0.8=450 exactly. On 2026-10-04,
+  scheduled 00:30 BST is 2026-10-03T23:30Z and deadline 08:00 BST is 07:00Z:
+  equality admits, 1ms more queue refuses, 1ms more nonqueue work refuses
+  without rounding down. Missing checkout/build/discovery, any of the other
+  six suites, report/readback/remaining cleanup, or either queue bound refuses;
+  known zero requires an applicable phase receipt, not an absent field.
+  Assert every named contribution so a dropped term cannot hide behind slack.
+  Queue observation and justified finite bound remain distinct. Internal
+  discovery in P is not charged again as external discovery. Measurement-only
+  rebuilds are not production costs. Nonfinite/negative inputs refuse.
+  For 2026-03-29 the actual London window is 390 minutes (00:30Z to 07:00Z);
+  for 2026-10-25 it is 510 (previous day 23:30Z to 08:00Z). Forecasts of
+  420 and 480 minutes respectively must refuse/admit, even though a fixed
+  450-minute assumption would reverse both decisions. Test each start/deadline
+  UTC instant separately, equality, and 1ms beyond the actual deadline.
+- `C1039_TimingIdentity`: change source, assembly, class, hooks, dependencies,
+  tools or OS one at a time (existing PCs); additionally change measured group
+  membership, TUnit parallelism or ProcessSpawnLimit separately. Same complete
+  group/identities pass; changed group without new shared-phase evidence refuses.
+  Explicit applicable receipts can support a legitimate change, retaining the
+  original source/build identity; no automatic equivalence. Complete but stale
+  non-Antiphon phase receipts also refuse. This applies to B/O/R and queue-bound
+  provenance, not only the class measurements.
+
+`C1039_PolicyPartition` compares the
 shipped configuration to the independent measured roster recorded in
 `docs/investigations/2026-10-04-card-1039-partition-admission.md` during S3a, not to
 an expected roster derived from that same policy. That Markdown retains original
-receipt paths/digests and applicability; generated payloads remain external.
+receipt paths/digests and applicability, exact group membership and per-group
+shared-phase identity; a same-roster regrouping is not the admitted partition.
+Generated payloads remain external. Cartesian combinations that mask another
+refusal are excluded; overlap+shared overhead, complete class+capped sibling,
+all chunks fitting+whole run late and DST+deadline equality are mandatory pairs.
 
 **Measurement receipt acceptance (no unit-test claim).** M-0 ends at its 30-minute
 cap with per-class usable/historical/missing classification, original identity and
@@ -879,26 +959,59 @@ slot wait, wall time and observed cleanup. Reparse originals to reproduce counts
 and digest. Malformed/unknown/empty census refuses. Linux receipts, source counts,
 probe inventory and 4,051 historical executions are inadmissible replacements.
 
-M-0/M-1 are accepted; the amended B-1 commission above is authoritative for
-M-2.0 rebuild/reconciliation, shared-process M-2.n and M-3. Freeze named-group
-filters/UIDs and collector hash before execution; compare complete class windows
-plus measured shared residual to process wall. Include actual overlap, startup,
-TRX/drain/cleanup and finite queues once at their declared scope. A complete
-assertion-red may be timing, never green; capped/incomplete groups supply only
-lower bounds to CARD-1040. The 240-minute campaign can stop incomplete; that
-blocks S3a. No separate full assembly or Unit battery, guessed Min, averaged
-class cost or discarded pending roster. Reconcile changed source before reuse.
+M-0/M-1 are accepted. M-2.0 must first verify the retained per-class SHA-256
+`5c8f623dec580cce7d8685a76eddff4ec96679fd2eeef3c2ba860c66620909e2`, rebuild the
+deleted output once through the gate to `bin-c1039-timing/`, then reconcile fresh
+unfiltered compiled discovery against all 14,479 discovered / 14,473 required
+UIDs and 1,085 discovered / 1,081 eligible classes. Preserve six exclusions and reasons.
+An explained source delta receives a new census identity; an unexplained delta
+or absent receipt stops execution. Do not repeat accepted M-0/M-1.
 
-The separate TestDesign stage must extend V-7 in
-`NightlyPartitionTimingTests.C1039_MissingTimingRefuses`,
-`C1039_OverBudgetRefuses`, `C1039_TimingIdentity` and `C1039_PolicyPartition`
-(CP-10/11, portable controlled-I/O lane): missing window/shared phase, overlap
-conservation, once-per-chunk overhead, capped sibling, changed grouping or
-parallelism, headroom-inclusive total and London DST/deadline boundaries. Name
-method-scoped PCs for the new arithmetic and identity guards and reprice those
-changes before S3a Code; the old 203-PC audit is historical, not coverage of this
-amendment. M-2 raw-receipt acceptance remains a native Windows measurement lane;
-passing synthetic arithmetic tests cannot supply timings.
+Freeze exact namespace/class filters, expanded UID sets, argv length, collector
+and output hashes before execution. Pilots are separate Unit/Integration groups
+of at most 32 classes, namespace/ordinal ordered; later groups target 10-15
+minutes observed wall. One shared process, lease and fresh TRX/diagnostic set per
+group; retain normal hooks, TUnit parallelism and process-spawn limiter settings.
+Collector acceptance requires ordered, clock-consistent class envelopes joined
+unambiguously to complete expanded UID outcomes, original offsets/sources, and
+observed process/descendant/drain/receipt completion. Keep P, K, U, A_j=P-U+K and
+W=P+K, not sum(case duration) or sum(class envelopes). Required skips, incomplete
+cleanup, abnormal exit and capped groups cannot supply complete timings.
+
+Before each launch, the queue bound + 20-minute diagnostic execution stop +
+bounded cleanup/receipt reserve must fit both the <=60-minute dispatch and
+remaining <=240-minute initial campaign, including rebuild/discovery/pilot.
+Budget expiration leaves explicit measured/pending counts and unknown forecasts;
+it authorizes neither an extension nor a completion claim. Retain lower bounds
+from a stopped chunk for CARD-1040 without blaming an individual class. No next
+launch until custody is known. These are commission/receipt acceptance gates,
+not a new software scheduler or new mutation target; existing custody/lease PCs
+remain authoritative. Report actual avoided launches/startup time only, never a
+pilot mean multiplied into unmeasured admission. No whole-Unit/assembly battery.
+
+M-3's <=30-minute analysis retains its script/hash, independent membership check
+and all applicable phase receipts. Accept each complete group only at
+W<=2,880,000ms; compute F=Q+(B+sum(W)+O+R)/0.8 with each phase counted once and
+that due date's actual London UTC endpoints. Every missing/inapplicable class,
+shared phase, other-suite/build/report input or queue bound blocks S3a. List
+missing phases for separate bounded commissions, without expanding M-2 into a
+full run. CP-10's synthetic inputs prove the future validator, not these native
+Windows measurements; M-3 can use the external analysis before S3a exists.
+
+**D-13 decision inputs.** Attach category-exclusive UID/class rosters and digests,
+measured/pending counts, complete class windows, per-group shared overhead,
+identity/applicability and cap/deadline verdicts. Compare the full seven-suite
+forecast with daily Unit and weekly Integration proposals using applicable
+group composition, all six other suites, queue bounds and build/report costs at
+each proposed frequency. State the weekly roster, slot/window and deadline;
+do not allocate shared overhead equally or invent a parallel speedup. Mixed,
+unclassified or doubly classified UIDs and unknown timings block a split proposal.
+Complete full-profile fit retains seven daily suites; complete full-profile
+failure with measured Unit fit returns `next: decide` for the explicit profile,
+schedule, reporting and qualification changes. Unit's own measured failure goes
+to CARD-1040 with exact slow/incomplete receipts. Incomplete evidence commissions
+only the missing bounded work; four-hour exhaustion alone does not justify a
+frequency change. Weekly Integration never earns today's full-nightly green.
 
 Q-0..Q-6 and Q-R keep their operational acceptance above. Q-2 manual and Q-4 real
 scheduled runs are explicitly commissioned full nightly runs after landed code;
@@ -1062,10 +1175,10 @@ CARD-0545's existing PCs and Q receipts; this card does not mutate them.
 | G-116 | S3a/D-9 20 percent headroom | PC-116 |
 | G-117 | S3a/D-9 measured invocation/cleanup allowance is included | PC-117 |
 | G-118 | S3a/D-9 timing source applicability | PC-118 |
-| G-119 | S3a/D-9 whole-run forecast includes queues and fixed phases | PC-119 |
+| G-119 | S3a/D-9/M-3 whole-run forecast includes every host-slot queue bound | PC-119 |
 | G-120 | S3a/D-9 unknown queue allowance cannot prove deadline | PC-120 |
 | G-121 | S3a/D-9 native timeout cap unchanged | PC-121 |
-| G-122 | S3a/D-9 checked-in partition is the admitted measured partition | PC-122 |
+| G-122 | S3a/D-9 checked-in roster and grouping are the admitted measured partition | PC-122 |
 | G-123 | S3c-a/D-12 producer manifest precedes launch | PC-123 |
 | G-124 | S3c-a/D-12 immutable intent precedes wake/POST | PC-124 |
 | G-125 | S3c-a/D-12 flushed files precede atomic publication | PC-125 |
@@ -1147,6 +1260,45 @@ CARD-0545's existing PCs and Q receipts; this card does not mutate them.
 | G-201 | S4/D-6 lost schedule-create response reconciles stored state | PC-201 |
 | G-202 | S4/D-6 lost enable response reconciles stored state | PC-202 |
 | G-203 | S3c-d/D-11 report profile reaches producer and recovery | PC-203 |
+| G-204 | S3a/D-9/M-3 class window must be present | PC-204 |
+| G-205 | S3a/D-9/M-3 shared residual must be measured | PC-205 |
+| G-206 | S3a/D-9/M-3 process span must have observed boundaries | PC-206 |
+| G-207 | S3a/D-9/M-3 cleanup span must have observed boundaries | PC-207 |
+| G-208 | S3a/D-9/M-3 class windows are ordered | PC-208 |
+| G-209 | S3a/D-9/M-3 class windows lie inside the process span | PC-209 |
+| G-210 | S3a/D-9/M-3 timestamp clocks and precision are defensible | PC-210 |
+| G-211 | S3a/D-9/M-3 cleanup contributes to the shared residual | PC-211 |
+| G-212 | S3a/D-9/M-3 observed chunk accounting conserves elapsed wall | PC-212 |
+| G-213 | S3a/D-9/M-3 overlapping class windows count once | PC-213 |
+| G-214 | S3a/D-9/M-3 shared allowance is charged once per chunk | PC-214 |
+| G-215 | S3a/D-9/M-3 class elapsed envelope is not summed case durations | PC-215 |
+| G-216 | S3a/D-9/M-3 a capped sibling invalidates the whole shared observation | PC-216 |
+| G-217 | S3a/D-9/M-3 timing requires observed complete cleanup | PC-217 |
+| G-218 | S3a/D-9/M-3 measurement grouping remains applicable | PC-218 |
+| G-219 | S3a/D-9/M-3 TUnit parallelism remains applicable | PC-219 |
+| G-220 | S3a/D-9/M-3 process-spawn limiter settings remain applicable | PC-220 |
+| G-221 | S3a/D-9/M-3 whole-run work reserves 20 percent of capacity | PC-221 |
+| G-222 | S3a/D-9/M-3 queue bound is counted once outside work headroom | PC-222 |
+| G-223 | S3a/D-9/M-3 forecast includes Windmill queue bound | PC-223 |
+| G-224 | S3a/D-9/M-3 forecast includes checkout/sync | PC-224 |
+| G-225 | S3a/D-9/M-3 forecast includes all production builds | PC-225 |
+| G-226 | S3a/D-9/M-3 forecast includes external compiled discovery | PC-226 |
+| G-227 | S3a/D-9/M-3 forecast includes other six suites' complete wall | PC-227 |
+| G-228 | S3a/D-9/M-3 forecast includes remaining reporting and cleanup | PC-228 |
+| G-229 | S3a/D-9/M-3 every B phase has applicable measured input | PC-229 |
+| G-230 | S3a/D-9/M-3 every other-suite phase has applicable measured input | PC-230 |
+| G-231 | S3a/D-9/M-3 every R phase has applicable measured input | PC-231 |
+| G-232 | S3a/D-9/M-3 duration inputs are finite and nonnegative | PC-232 |
+| G-233 | S3a/D-9/M-3 non-Antiphon phase receipts remain applicable | PC-233 |
+| G-234 | S3a/D-9/M-3 production phase scope prevents double charging | PC-234 |
+| G-235 | S3a/D-9/M-3 deadline is due-date 08:00 Europe/London | PC-235 |
+| G-236 | S3a/D-9/M-3 forecast equality at the deadline is admissible | PC-236 |
+| G-237 | S3a/D-9/M-3 forecast comparison retains sub-minute precision | PC-237 |
+| G-238 | S3a/D-9/M-3 duplicate timing UIDs cannot establish completeness | PC-238 |
+| G-239 | S3a/D-9/M-3 unknown timing UIDs cannot establish completeness | PC-239 |
+| G-240 | S3a/D-9/M-3 required skips cannot supply complete timing | PC-240 |
+| G-241 | S3a/D-9/M-3 a queue observation is not a justified queue bound | PC-241 |
+| G-242 | S3a/D-9/M-3 scheduled start is due-date 00:30 Europe/London | PC-242 |
 
 ### Positive controls
 
@@ -1170,6 +1322,13 @@ reporter callsite; wrapper defects in the nightly Windmill definition content.
 Use the exact boundary described, never alter expected assertions to create red.
 For new code these are implementation acceptance recipes, with fully specified
 seams/methods/oracles; they are not claims that the methods exist at this source.
+PC-204..242 mutate only the proposed production timing validator in
+`nightly-coverage.ps1`. Its returned breakdown exposes C/U/A_j/W, named forecast
+contributions and UTC endpoints. Invalid-input cases assert the named refusal
+reason as well as non-admission, so a later arithmetic refusal cannot mask the
+removed check. PC-114..122/192..197/200 remain the earlier V-7 controls, with
+PC-119 narrowed to host queues and PC-122 strengthened to same-roster regrouping;
+the newly separated behaviours each have one distinct PC below.
 
 | PC | Compiling defect in matching G | Exact method expected red | Decisive assertion |
 |---|---|---|---|
@@ -1291,10 +1450,10 @@ seams/methods/oracles; they are not claims that the methods exist at this source
 | PC-116 | use 100 percent instead of 80 percent of 3600000 ms | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | 2880001 ms refuses; 2880000 ms is admitted |
 | PC-117 | omit the measured shared allowance from chunk wall | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | class-window union under threshold plus shared allowance over it refuses |
 | PC-118 | omit source applicability from timing validation | NightlyPartitionTimingTests.C1039_TimingIdentity | changed source without explicit dependency applicability: refused |
-| PC-119 | drop slot/build/discovery costs from the forecast | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | otherwise fitting chunks with forecast after 08:00 do not admit qualification |
+| PC-119 | drop only host-slot queue bounds from F | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | ordinary-day control with host-slot queue increased by 1ms: F exceeds 450 minutes and refuses |
 | PC-120 | coerce missing queue bound to zero | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | unknown queue input: deadline claim is inadmissible |
 | PC-121 | change antiphon watchdog to 7200000 and recompute policyHash | NightlyPartitionTimingTests.C1039_PolicyPartition | shipped antiphon watchdog must equal 3600000 |
-| PC-122 | remove one measured class from chunks.antiphon and recompute policyHash | NightlyPartitionTimingTests.C1039_PolicyPartition | committed roster digest equals admitted M-3 roster digest |
+| PC-122 | move one class between chunks.antiphon groups and recompute policyHash, preserving total roster | NightlyPartitionTimingTests.C1039_PolicyPartition | committed roster AND grouping digest equal the independent admitted M-3 partition |
 | PC-123 | launch driver before publishing report-producers manifest | NightlyReportDeliveryTests.C1039_IntentBeforeWake | manifest publication failure: zero driver starts |
 | PC-124 | wake consumer before outbox atomic rename | NightlyReportDeliveryTests.C1039_IntentBeforeWake | held rename: zero wakes/POSTs and no committed intent visible |
 | PC-125 | omit Flush(true) before publishing intent | NightlyReportDeliveryTests.C1039_IntentBeforeWake | file-operation observer records flush before rename for body/intent; crash leaves no partial published entry |
@@ -1376,6 +1535,45 @@ seams/methods/oracles; they are not claims that the methods exist at this source
 | PC-201 | recreate an already stored schedule on resumed apply | ReleaseGateRegistrationTests.C1039_RestartApply | schedule-create lost response: no second create and stored enablement unchanged |
 | PC-202 | reissue setenabled when GET already matches the selected enabled schedule | ReleaseGateRegistrationTests.C1039_RestartApply | enable lost response: matching readback succeeds without extra setenabled |
 | PC-203 | drop ReportProfile in bootstrap report/recovery argv | NightlyReportDeliveryTests.C1039_ProducerIdentity | same explicit profile path and expected script identities reach both children |
+| PC-204 | default an absent class window to a zero-length interval | NightlyPartitionTimingTests.C1039_MissingTimingRefuses | missing B window: refused with missing-window; complete A+B passes |
+| PC-205 | synthesize an absent shared allowance as zero | NightlyPartitionTimingTests.C1039_MissingTimingRefuses | absent A_j: refused with missing-shared-phase; measured zero control passes |
+| PC-206 | accept a receipt with no root-exit boundary | NightlyPartitionTimingTests.C1039_MissingTimingRefuses | missing root-exit: refused with missing-process-boundary |
+| PC-207 | accept a receipt with no drain/receipt-completion boundary | NightlyPartitionTimingTests.C1039_MissingTimingRefuses | missing cleanup-end: refused with missing-cleanup-boundary |
+| PC-208 | skip the start <= end check | NightlyPartitionTimingTests.C1039_MissingTimingRefuses | reversed window: refused with reversed-window |
+| PC-209 | skip the process containment check for class windows | NightlyPartitionTimingTests.C1039_MissingTimingRefuses | window ending after root exit: refused with window-outside-process |
+| PC-210 | treat unknown timestamp clock semantics as comparable | NightlyPartitionTimingTests.C1039_MissingTimingRefuses | unknown/buffered clock provenance: refused with clock-unknown |
+| PC-211 | calculate A_j=P-U, omitting K | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | P=1200, K=100, U=900: A_j=400, not 300 |
+| PC-212 | remove the declared-precision conservation comparison | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | declared W=1310 versus observed P+K=1300 at 1ms precision: refused with wall-mismatch |
+| PC-213 | compute U as sum(C_c) instead of interval union | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | overlap control: U=900, A_j=400, W=1300 |
+| PC-214 | multiply A_j by class count when forming W | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | two-class overlap control: W=1300, not 1700 |
+| PC-215 | replace lastTerminal-firstStart with the sum of case durations | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | one class with cases [100,200] and [600,700]: C=600, not 200 |
+| PC-216 | ignore chunk capped status when the selected class has all terminal UIDs | NightlyPartitionTimingTests.C1039_MissingTimingRefuses | all A+B UIDs terminal, process capped during sibling teardown: timing refuses with chunk-capped |
+| PC-217 | ignore cleanupComplete=false in timing admission | NightlyPartitionTimingTests.C1039_MissingTimingRefuses | all UIDs terminal and finite K but unobserved descendant exit: refused |
+| PC-218 | omit measured group membership from timing applicability | NightlyPartitionTimingTests.C1039_TimingIdentity | same UID union regrouped A+B into A/B without new shared-phase evidence: refused |
+| PC-219 | omit TUnit parallelism settings from timing applicability | NightlyPartitionTimingTests.C1039_TimingIdentity | parallelism changed alone: refused |
+| PC-220 | omit ProcessSpawnLimit settings from timing applicability | NightlyPartitionTimingTests.C1039_TimingIdentity | limiter changed alone: refused |
+| PC-221 | replace nonqueueWork/0.8 by nonqueueWork*1.2 | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | Q=30, work=340 minutes: F=455 and admission=false, not F=438 |
+| PC-222 | divide Q plus work together by 0.8 | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | Q=30, work=336 minutes: F=450 and admission=true, not F=457.5 |
+| PC-223 | omit Q_windmill from F | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | ordinary-day control with windmill queue increased by 1ms: F exceeds 450 minutes and refuses |
+| PC-224 | omit checkout/sync from B | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | ordinary-day control with checkout increased by 1ms: F exceeds deadline and refuses |
+| PC-225 | omit builds from B | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | ordinary-day control with build time increased by 1ms: F exceeds deadline and refuses |
+| PC-226 | omit external discovery from B | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | ordinary-day control with external discovery increased by 1ms: F exceeds deadline and refuses |
+| PC-227 | omit O from F | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | ordinary-day control with O increased by 1ms: F exceeds deadline and refuses |
+| PC-228 | omit R from F | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | ordinary-day control with R increased by 1ms: F exceeds deadline and refuses |
+| PC-229 | default absent B phase entries to zero | NightlyPartitionTimingTests.C1039_MissingTimingRefuses | missing checkout/build/external-discovery arms each refuse with missing-phase |
+| PC-230 | default absent other-suite receipt entries to zero | NightlyPartitionTimingTests.C1039_MissingTimingRefuses | remove one of the six other-suite receipts: missing-phase refusal, not a five-suite forecast |
+| PC-231 | default absent R phase entries to zero | NightlyPartitionTimingTests.C1039_MissingTimingRefuses | missing report/readback/remaining-cleanup arms each refuse with missing-phase |
+| PC-232 | remove the common finite/nonnegative duration validation | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | negative residual or NaN/infinite phase value: refused with invalid-duration before arithmetic |
+| PC-233 | skip applicability validation for the phase ledger | NightlyPartitionTimingTests.C1039_TimingIdentity | complete but stale B/O/R receipt or queue-bound provenance: refused with inapplicable-phase |
+| PC-234 | charge discovery already inside P again in B | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | internal-discovery receipt included in P: F stays 450 minutes and admits; external discovery still contributes 3 |
+| PC-235 | treat London deadline wall time as UTC | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | 2026-03-29 deadline=07:00Z; F=420 minutes refuses |
+| PC-236 | replace finish > deadline refusal with finish >= deadline | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | exact F=450 on 2026-10-04 admits |
+| PC-237 | truncate forecast minutes before comparing to deadline | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | ordinary-day control plus 1ms queue refuses |
+| PC-238 | deduplicate terminal timing rows before validation | NightlyPartitionTimingTests.C1039_MissingTimingRefuses | all required UIDs plus duplicate A.Rows(1): refused with duplicate-uid |
+| PC-239 | discard unknown terminal timing UIDs before validation | NightlyPartitionTimingTests.C1039_MissingTimingRefuses | complete expected set plus unknown Z UID: refused with unknown-uid |
+| PC-240 | accept required Skipped as a complete terminal timing | NightlyPartitionTimingTests.C1039_MissingTimingRefuses | required skipped UID with timestamps: refused; ordinary Failed with complete timestamps remains admissible |
+| PC-241 | substitute observed queue duration when justified bound is absent | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | observed queue=0 with missing bound/provenance: refuses; separately justified finite bound passes |
+| PC-242 | treat London scheduled start wall time as UTC | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | 2026-10-25 start=2026-10-24T23:30Z, available=510 minutes; F=480 admits |
 
 Every newly introduced safety-critical guard must have the corresponding planned
 method and observer. If Code splits an implementation into additional independently
@@ -1443,7 +1641,7 @@ available producer; CP-9/24 recheck it after the dependent discovery/receipt cha
 | CP-7 | S1 | tests/Antiphon.Tests -> bin-c1039-s1w/ | native-slot-custody | /*/*/NightlyNativeOwnershipTests/C1039_LeaseAfterNativeCleanup | V-1, V-5 | all 1 listed, 0 failed/skipped | 1 | 6 |
 | CP-8 | S2 | tests/Antiphon.Tests -> bin-c1039-s2p/ | chunk-admission | /*/*/NightlyChunkAdmissionTests/(C1039_IndependentDiscovery)\|(C1039_Admission)\|(C1039_DiscoveryFailure)\|(C1039_BuildBinding)\|(C1039_LiteralFilter)\|(C1039_ExpandedUnion)\|(C1039_ContinueAfterRed)\|(C1039_SerialChildren) | V-2 | all 8 listed, 0 failed/skipped | 8 | 12 |
 | CP-9 | S2 | tests/Antiphon.Tests -> bin-c1039-s2w/ | native-partition-loop | /*/*/NightlyNativeOwnershipTests/C1039_NativeFixtureLoop | V-2, V-5 | all 1 listed, 0 failed/skipped | 1 | 5 |
-| CP-10 | S3a | tests/Antiphon.Tests -> bin-c1039-s3a/ | timing-admission | /*/*/NightlyPartitionTimingTests/(C1039_MissingTimingRefuses)\|(C1039_OverBudgetRefuses)\|(C1039_TimingIdentity)\|(C1039_PolicyPartition) | V-7 | all 4 listed, 0 failed/skipped | 4 | 8 |
+| CP-10 | S3a | tests/Antiphon.Tests -> bin-c1039-s3a/ | timing-admission | /*/*/NightlyPartitionTimingTests/(C1039_MissingTimingRefuses)\|(C1039_OverBudgetRefuses)\|(C1039_TimingIdentity)\|(C1039_PolicyPartition) | V-7 | all 4 listed, 0 failed/skipped | 4 | 14 |
 | CP-11 | S3a | CP-10 | policy-contract | /*/*/ReleaseGatePolicyTests/(C599_ProfileSchema)\|(C599_ProfileSuites) | V-7, R-2 | all 2 listed, 0 failed/skipped | 2 | 3 |
 | CP-12 | S3b | tests/Antiphon.Tests -> bin-c1039-s3b/ | unit-receipt | /*/*/NightlyUnitReceiptTests/(C1039_Categories)\|(C1039_TerminalRows)\|(C1039_DuplicateRows)\|(C1039_IdentityBinding)\|(C1039_Digest)\|(C1039_FullNightly)\|(C1039_PhaseDurations) | V-3 | all 7 listed, 0 failed/skipped | 7 | 10 |
 | CP-13 | S3b | CP-12 | parser-retained | /*/*/ReleaseGatePolicyTests/(C599_MetadataParsers)\|(C599_EligibilityCensus)\|(C599_ExpandedCoverage) | R-2 | all 3 listed, 0 failed/skipped | 3 | 3 |
@@ -1476,19 +1674,19 @@ only recorded alternate outputs after every owned child has exited.
 
 ### Cost
 
-Engineering figures below retain the prior TestDesign estimate; changed V-7
-coverage must be repriced before S3a. They are **estimated**, not measured test
+Engineering figures retain the prior estimate outside changed V-7, whose
+arithmetic/applicability work is repriced here. They are **estimated**, not measured test
 durations. Counts are planned outer TUnit executions from the explicit rosters.
 Measurement and qualification are separately bounded commissions.
 
-- Ordinary V/R floor (Code) = **209 minutes**: CP-1 10, CP-2 12, CP-3 9, CP-4 2, CP-5 10, CP-6 4, CP-7 6, CP-8 12, CP-9 5, CP-10 8, CP-11 3, CP-12 10, CP-13 3, CP-14 3, CP-15 9, CP-16 8, CP-17 12, CP-18 8, CP-19 9, CP-20 15, CP-21 9, CP-22 12, CP-23 5, CP-24 10, CP-25 2, CP-26 12, CP-27 1. The table contains **27 rows, 19 isolated builds, 100 TUnit executions**, plus the one non-TUnit diff command. Builds are included at 2 minutes each (38 build + 171 fixture/execution/check minutes), not added twice.
-- Additional setup/tool bootstrap/source-receipt inspection/output cleanup allowance = **12 minutes** across the ordinary campaign; Code verification including setup = **221 minutes**. Authoring is separate. Dispatch authoring+ordinary budgets in minutes: S1n-a 38+10=48; S1n-b 35+12=47; S1n-c 30+11=41; S1 28+20=48; S2 32+17=49; S3a 35+11=46; S3b 32+16=48; S3c-a1 35+9=44; S3c-a2 35+8=43; S3c-b1 38+12=50; S3c-b2 35+8=43; S3c-c1 35+9=44; S3c-c2 35+15=50; S3c-d1 35+9=44; S3c-d2 27+29=56; S4 35+12=47; S5 29+1=30. These sum to 569 authoring + 209 ordinary = 778; every dispatch is 30-60 minutes. The shared 12-minute setup allowance is spread across dispatch slack.
-- PC floor (Mutation) = **1470 minutes** for **203 separate cycles**. Every filter is exactly the Class.Method in its PC row expanded to `/*/*/Class/Method`. Portable slot/chunk/Unit/policy/registration/readiness: 111 PCs x 6 min = 666; native ownership/interpreter: 23 x 8 = 184; disk producer/recovery: 35 x 8 = 280; real HTTP/DB recipient: 34 x 10 = 340. This class-based price assignment uniquely names every filter/PC; no unnamed variants.
-- A 6-minute cycle is mutate 0.5 + isolated red build 2 + exact red method 0.5 + restore 0.5 + fresh green build 2 + exact green method 0.5. The 8-minute cycles allow 1.5 minutes per red/green method; 10-minute recipient cycles allow 2.5 each. Include each cycle's independent cleanup within its execution allowance. Mutation setup/discovery/receipt audit/restoration inventory allowance = **15 minutes**, so Mutation commission floor is **1485 minutes** (split into method-scoped serial commissions at landed slices; do not compress it into a one-hour Code task).
-- Combined engineering verification floor = setup 12 + ordinary 209 + mutation setup 15 + PCs 1470 = **1706 minutes**. This is the complete priced V/R/PC scope; authoring and operational evidence are separate. No actual pass or PC result is claimed.
+- Ordinary V/R floor (Code) = **215 minutes**: CP-1 10, CP-2 12, CP-3 9, CP-4 2, CP-5 10, CP-6 4, CP-7 6, CP-8 12, CP-9 5, CP-10 14, CP-11 3, CP-12 10, CP-13 3, CP-14 3, CP-15 9, CP-16 8, CP-17 12, CP-18 8, CP-19 9, CP-20 15, CP-21 9, CP-22 12, CP-23 5, CP-24 10, CP-25 2, CP-26 12, CP-27 1. The table contains **27 rows, 19 isolated builds, 100 TUnit executions**, plus the one non-TUnit diff command. Builds are included at 2 minutes each (38 build + 177 fixture/execution/check minutes), not added twice. Only CP-10 grows, by 6 minutes; CP-10/11's unchanged four/two-method filters cost 17 minutes total.
+- Additional setup/tool bootstrap/source-receipt inspection/output cleanup allowance = **12 minutes** across the ordinary campaign; Code verification including setup = **227 minutes**. Authoring is separate. Dispatch authoring+ordinary budgets in minutes: S1n-a 38+10=48; S1n-b 35+12=47; S1n-c 30+11=41; S1 28+20=48; S2 32+17=49; S3a 35+17=52; S3b 32+16=48; S3c-a1 35+9=44; S3c-a2 35+8=43; S3c-b1 38+12=50; S3c-b2 35+8=43; S3c-c1 35+9=44; S3c-c2 35+15=50; S3c-d1 35+9=44; S3c-d2 27+29=56; S4 35+12=47; S5 29+1=30. These sum to 569 authoring + 215 ordinary = 784; every dispatch is 30-60 minutes. The shared 12-minute setup allowance is spread across dispatch slack. These are full-plan accounting figures, not authorization to rerun landed S1n-a.
+- PC floor (Mutation) = **1704 minutes** for **242 separate cycles**. Every filter is exactly the Class.Method in its PC row expanded to `/*/*/Class/Method`. Portable slot/chunk/Unit/policy/registration/readiness: 150 PCs x 6 min = 900; native ownership/interpreter: 23 x 8 = 184; disk producer/recovery: 35 x 8 = 280; real HTTP/DB recipient: 34 x 10 = 340. This class-based price assignment uniquely names every filter/PC; no unnamed variants. Changed V-7 has 55 controls (PC-114..122, PC-192..197, PC-200, PC-204..242), each 6 minutes, totaling **330 minutes** versus the old 16 x 6 = 96; the 39 additions cost **234 minutes**.
+- A 6-minute cycle is mutate 0.5 + isolated red build 2 + exact red method 0.5 + restore 0.5 + fresh green build 2 + exact green method 0.5. The 8-minute cycles allow 1.5 minutes per red/green method; 10-minute recipient cycles allow 2.5 each. Include each cycle's independent cleanup within its execution allowance. Retained mutation setup/discovery/receipt audit/restoration allowance = **15 minutes**. Add **10 minutes** for four initial exact-method V-7 baselines (each isolated build 2 + run 0.5): `/*/*/NightlyPartitionTimingTests/C1039_MissingTimingRefuses`, `/*/*/NightlyPartitionTimingTests/C1039_OverBudgetRefuses`, `/*/*/NightlyPartitionTimingTests/C1039_TimingIdentity`, `/*/*/NightlyPartitionTimingTests/C1039_PolicyPartition`. A same-method restored green can serve as the next cycle's baseline at unchanged source. Mutation commission floor = **1729 minutes**, including setup/baselines (split into method-scoped serial commissions at landed slices; not one Code task).
+- Combined engineering verification floor = setup 12 + ordinary 215 + mutation setup/baselines 25 + PCs 1704 = **1956 minutes**, an estimated **250-minute** increase over 1706 (6 ordinary + 234 PC + 10 baseline). This is the complete priced V/R/PC scope; authoring and operational evidence are separate. No actual pass or PC result is claimed.
 - Reuse saves 7 duplicate builds x 2 = **14 minutes** versus one build per TUnit row. No PC build/batching saving is assumed: controls predominantly share production files. Narrow selections replace a whole-Unit run; no invented historical runtime saving is claimed for the waiver.
 - Measurement amendment: M-0/M-1 are accepted sunk work. Remaining first M-2 campaign is **at most 240 minutes**, including rebuild/discovery/pilot, queue and cleanup, in dispatches of at most 60 minutes; M-3 analysis adds **30 minutes**. This 270-minute authorization envelope is not a completion estimate. Replace the refused 1,081-launch / 21,620-minute cap sum with the actual shared-process manifest, measured chunk costs and pending roster. The 20-minute diagnostic stop supplies lower bounds only. Further measurement needs a new bounded commission; never multiply unmeasured classes by a pilot mean to admit S3a.
-- Operational Q-0..Q-6/Q-R: reserve **600 active minutes plus two scheduled boundaries**, including the carried CARD-0545 S6 work and Q-R. The two actual full-nightly execution durations remain measurement-derived, not this active-work reserve; admission requires each genuine scheduled run fit 00:30-08:00 London (450 minutes on an ordinary day including queue/build/cleanup; M-3 uses actual DST instants). A conservative budget envelope is **1,500 minutes** (600 active + two 450-minute execution windows), excluding calendar wait and additional failure diagnosis. It grants no timeout extension and is not a claim the workload fits. The original 3326-minute subtotal and 203-PC pricing are historical; TestDesign must update changed V-7 costs. No revised complete-card total is claimed while M-2 remains incomplete.
+- Operational Q-0..Q-6/Q-R: reserve **600 active minutes plus two scheduled boundaries**, including the carried CARD-0545 S6 work and Q-R. The two actual full-nightly execution durations remain measurement-derived, not this active-work reserve; admission requires each genuine scheduled run fit 00:30-08:00 London (450 minutes on an ordinary day including queue/build/cleanup; M-3 uses actual DST instants). A conservative budget envelope is **1,500 minutes** (600 active + two 450-minute execution windows), excluding calendar wait and additional failure diagnosis. It grants no timeout extension and is not a claim the workload fits. Engineering 1956 + initial measurement/analysis envelope 270 + qualification reserve 1500 = **3726 minutes** of priced scope/reserves, excluding authoring and calendar wait; this is not a complete-card completion estimate. Any missing M-3 phase measurement or further campaign needs its own bounded commission; no unknown cost is entered as zero.
 
 TestDesign validation on 2026-10-04 at source
 `928779e294dc28e4bdf8262195ddf0e5de2559dd`: one host-gated isolated build of
@@ -1503,11 +1701,32 @@ Whitespace and full-range evidence-diff checks passed through that source commit
 This was a tool/manifest validation only: **0 TUnit executions, 0 mutation cycles**;
 it supplies no Windows timing, native ownership or recipient-delivery evidence.
 
-Historical TestDesign admission audit (before this M-2/M-3 amendment): **guards=203, mapped=203, missing=0, duplicate PC maps=0**. All 203 PC recipes have a compiling defect, named exact method and decisive red assertion in the ordinary roster; all are executable specifications after their implementation slice lands. Native and recipient seams are specified, not unresolved. Whole ordinary scope is V-1..V-8/R-1..R-6; its union is the manifest above. M/Q evidence has separate acceptance and cost, not blank Min cells or substituted unit tests.
+Task `ecf5a387` static validation on 2026-10-04 against `59407f28f`: fix-design
+prefix unchanged; 27 rows, 19 builds and Min sum 100 retained; 26 checkpoint rows
+byte-identical and only CP-10 EstimatedMinutes changed (8 to 14), sum now 215.
+Checked nine-column shape, sequential unique G/PC IDs, 1:1 mapping, every PC method
+in the ordinary selection, the four V-7 method names, and cost/forecast arithmetic.
+PowerShell TimeZoneInfo independently confirmed London windows of 450/390/510
+minutes on 2026-10-04/2026-03-29/2026-10-25 with the UTC endpoints above.
+No build, importer execution, TUnit execution, native measurement or PC cycle
+was run for this documentation-only delta; the preceding importer receipt is
+historical. Whitespace and full-range evidence-diff checks accompany the commit.
 
-Amendment handoff: land task `0494e8d7` promptly through caller-owned landing;
-TestDesign updates only M-2/M-3 and V-7/PC arithmetic/applicability coverage, then
-commission the bounded Windows M-2 campaign. Do not repeat accepted M-0/M-1 or
-landed S1n-a. Other admitted slices can continue; S3a waits for complete M-3.
-D-13 names the later lane-split decision trigger; no schedule/policy change is
-made here. Live custody and qualification remain with Q-0's commissioned owner.
+Current narrow TestDesign admission audit: bodies read as listed above;
+**guards=242, mapped=242, missing=0, duplicate PC maps=0**. All PCs have a
+compiling-defect recipe, exact method in the ordinary roster and decisive red
+assertion; executable after their implementation slice lands. The carried 203
+controls are preserved except the forced PC-119/122 refinements; 39 new controls
+split M-3 arithmetic/applicability behaviours. No PC is claimed executed here.
+Whole ordinary scope remains V-1..V-8/R-1..R-6; its union is the unchanged
+27-row selection. M/Q evidence has separate acceptance and cost, not substituted
+unit-test credit. Delivery paths and their recipient evidence remain unchanged.
+
+Amendment handoff: caller lands this pushed documentation promptly, then
+`next: code` for bounded Windows M-2.0 rebuild/reconciliation/collector pilot,
+followed by shared-process measurement within the initial 240-minute cap.
+Do not repeat accepted M-0/M-1 or landed S1n-a. Other admitted slices may continue;
+S3a waits for complete M-3. A pilot with unverifiable timestamp semantics returns
+`next: plan`; only D-13's evidence-backed frequency choice returns `next: decide`.
+No schedule/policy change is made here. Live custody and qualification remain
+with Q-0's commissioned owner.
