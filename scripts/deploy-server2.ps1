@@ -5,7 +5,7 @@
 param(
     [Parameter(Mandatory = $true)][switch]$Rolling,
     [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$Sha,
-    [ValidateSet('all', 'deploy-temp', 'drain-old', 'redeploy-old', 'drain-temp', 'retire-temp')]
+    [ValidateSet('all', 'deploy-temp', 'drain-old', 'redeploy-old', 'drain-temp', 'retire-temp', 'check-host-jq', 'provision-host-jq')]
     [string]$Phase = 'all',
     [string]$SavedDonor = '',
     [ValidateRange(1, 10080)][int]$WaitIdleMinutes = 480,
@@ -39,6 +39,124 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $runId = 'c727' + [guid]::NewGuid().ToString('N').Substring(0, 12)
 $evidenceRoot = Join-Path $repoRoot ('.antiphon/rolling-server2/' + $runId)
 New-Item -ItemType Directory -Force -Path $evidenceRoot | Out-Null
+
+function Invoke-HostJq {
+    param([ValidateSet('check', 'provision')][string]$Mode, [string]$ExecutingPhase)
+    if ($Mode -eq 'provision') {
+        # No worktree override: privileged provisioning uses the clean canonical source.
+        try {
+            $top = & git -C $repoRoot rev-parse --show-toplevel 2>$null
+            if ($LASTEXITCODE -ne 0) { throw 'git' }
+            $gitDir = & git -C $repoRoot rev-parse --path-format=absolute --git-dir 2>$null
+            if ($LASTEXITCODE -ne 0) { throw 'git' }
+            $commonDir = & git -C $repoRoot rev-parse --path-format=absolute --git-common-dir 2>$null
+            if ($LASTEXITCODE -ne 0) { throw 'git' }
+            if ([IO.Path]::GetFullPath([string]$top) -ne [IO.Path]::GetFullPath($repoRoot) -or
+                [string]$gitDir -ne [string]$commonDir) { throw 'git' }
+            $head = & git -C $repoRoot rev-parse HEAD 2>$null
+            if ($LASTEXITCODE -ne 0 -or [string]$head -cne $Sha) { throw 'git' }
+            $dirt = & git -C $repoRoot status --porcelain --untracked-files=all 2>$null
+            if ($LASTEXITCODE -ne 0 -or -not [string]::IsNullOrWhiteSpace(($dirt -join "`n"))) { throw 'git' }
+        } catch { throw 'HostJqCanonicalSourceRequired' }
+    }
+    $psi = [Diagnostics.ProcessStartInfo]::new()
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.FileName = 'ssh'
+    foreach ($token in @('-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', 'mc@server2', 'bash', '-s', '--', $Mode)) {
+        [void]$psi.ArgumentList.Add($token)
+    }
+    $proc = [Diagnostics.Process]::new()
+    $proc.StartInfo = $psi
+    $stdout = $null; $stderr = $null; $inputTask = $null
+    $deadlineMs = if ($Mode -eq 'check') { 30000 } else { 180000 }
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        try {
+            [void]$proc.Start()
+            $stdout = $proc.StandardOutput.ReadToEndAsync()
+            $stderr = $proc.StandardError.ReadToEndAsync()
+            $helper = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'server2-host-jq.sh')).Replace("`r`n", "`n")
+            $inputTask = $proc.StandardInput.WriteAsync($helper)
+            if (-not $inputTask.Wait([Math]::Max(1, $deadlineMs - [int]$timer.ElapsedMilliseconds))) { throw 'timeout' }
+            $inputTask.GetAwaiter().GetResult()
+            $proc.StandardInput.Close()
+            if (-not $proc.WaitForExit([Math]::Max(1, $deadlineMs - [int]$timer.ElapsedMilliseconds))) { throw 'timeout' }
+            if (-not [Threading.Tasks.Task]::WhenAll([Threading.Tasks.Task[]]@($stdout, $stderr)).Wait([Math]::Max(1, $deadlineMs - [int]$timer.ElapsedMilliseconds))) { throw 'timeout' }
+        } catch {
+            if ($timer.ElapsedMilliseconds -ge $deadlineMs) { throw 'HostJqTransportTimeout' }
+            throw 'HostJqTransportUnavailable'
+        }
+        if ($proc.ExitCode -ne 0) {
+            # Only fixed helper diagnoses cross this boundary, never raw remote stderr.
+            $diagnosis = $stderr.GetAwaiter().GetResult().Trim()
+            if ($diagnosis -cin @('HostJqMissing', 'HostJqInvalid', 'HostJqWrongLane', 'HostJqLaneUnavailable')) { throw $diagnosis }
+            throw 'HostJqRemoteRefused'
+        }
+        try {
+            $raw = $stdout.GetAwaiter().GetResult()
+            $document = [Text.Json.JsonDocument]::Parse($raw)
+            try {
+                if ($document.RootElement.ValueKind -ne [Text.Json.JsonValueKind]::Object) { throw 'shape' }
+                $names = @($document.RootElement.EnumerateObject() | ForEach-Object Name)
+                $required = @('schema','lane','mode','path','version','digest','uid','gid','permissions','trueExit','falseExit','installed','outcome')
+                if ($names.Count -ne $required.Count -or @($names | Select-Object -Unique).Count -ne $required.Count -or
+                    @($required | Where-Object { $_ -cnotin $names }).Count -ne 0) { throw 'shape' }
+                foreach ($key in @('schema','uid','gid','trueExit','falseExit')) {
+                    $value = $document.RootElement.GetProperty($key)
+                    $number = 0L
+                    if ($value.ValueKind -ne [Text.Json.JsonValueKind]::Number -or -not $value.TryGetInt64([ref]$number)) { throw 'shape' }
+                }
+                foreach ($key in @('lane','mode','path','version','digest','permissions','outcome')) {
+                    if ($document.RootElement.GetProperty($key).ValueKind -ne [Text.Json.JsonValueKind]::String) { throw 'shape' }
+                }
+                if ($document.RootElement.GetProperty('installed').ValueKind -notin @([Text.Json.JsonValueKind]::True,[Text.Json.JsonValueKind]::False)) { throw 'shape' }
+            } finally { $document.Dispose() }
+            $proof = $raw | ConvertFrom-Json
+            if ($proof.schema -ne 1 -or $proof.lane -cne 'host' -or $proof.mode -cne $Mode -or
+                $proof.path -cnotmatch '^/[^\r\n]+$' -or [string]::IsNullOrWhiteSpace($proof.version) -or
+                $proof.version -match '[\r\n]' -or $proof.digest -cnotmatch '^[0-9a-f]{64}$' -or
+                $proof.uid -lt 0 -or $proof.gid -lt 0 -or $proof.permissions -cnotmatch '^[0-7]{3,4}$' -or
+                $proof.trueExit -ne 0 -or $proof.falseExit -ne 1 -or
+                ($proof.installed -and ($Mode -ne 'provision' -or $proof.outcome -cne 'installed')) -or
+                (-not $proof.installed -and $proof.outcome -cne 'existing')) { throw 'shape' }
+            if ($proof.installed -and ($proof.path -cne '/usr/local/bin/jq' -or $proof.version -cne 'jq-1.7.1' -or
+                $proof.digest -cne '5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5' -or
+                $proof.uid -ne 0 -or $proof.gid -ne 0 -or $proof.permissions -cne '755')) { throw 'shape' }
+        } catch { throw 'HostJqProofInvalid' }
+        $receipt = [ordered]@{}
+        foreach ($property in $proof.PSObject.Properties) { $receipt[$property.Name] = $property.Value }
+        $receipt.sourceSha = $Sha
+        $receipt.runId = $runId
+        $receipt.selectedPhase = $Phase
+        $receipt.phase = $ExecutingPhase
+        $receipt.mode = $Mode
+        $receipt.observedAtUtc = [DateTime]::UtcNow.ToString('o')
+        $receipt.sshExit = $proc.ExitCode
+        try {
+            # CreateNew refuses stale/blocked paths; successful close precedes admission/banner.
+            $file = [IO.File]::Open((Join-Path $evidenceRoot ("host-jq-$ExecutingPhase.json")), [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+            try {
+                $bytes = [Text.Encoding]::UTF8.GetBytes(($receipt | ConvertTo-Json -Compress))
+                $file.Write($bytes, 0, $bytes.Length)
+                $file.Flush($true)
+            } finally { $file.Dispose() }
+        } catch { throw 'HostJqReceiptUnavailable' }
+    } finally {
+        # Custody covers timeout, broken stdin and inherited pipe handles, including root exit.
+        try {
+            if ($proc.Id -gt 0) {
+                if (-not $proc.HasExited) { $proc.Kill($true) }
+                if (-not $proc.WaitForExit(5000)) { throw 'HostJqTransportCustodyUnknown' }
+                $tasks = @($stdout, $stderr, $inputTask) | Where-Object { $null -ne $_ }
+                if ($tasks.Count -gt 0 -and -not [Threading.Tasks.Task]::WhenAll([Threading.Tasks.Task[]]$tasks).Wait(5000)) { throw 'HostJqTransportCustodyUnknown' }
+            }
+        } catch { throw 'HostJqTransportCustodyUnknown' }
+        finally { $proc.Dispose() }
+    }
+}
 
 function Enter-RolloutAdmissionLock {
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
@@ -702,6 +820,12 @@ function Invoke-Phase {
 }
 
 try {
+    if ($Phase -in @('check-host-jq', 'provision-host-jq')) {
+        $mode = if ($Phase -eq 'check-host-jq') { 'check' } else { 'provision' }
+        Invoke-HostJq -Mode $mode -ExecutingPhase $Phase
+        Write-Output "Host jq qualified: $evidenceRoot"
+        exit 0
+    }
     $phases = if ($Phase -eq 'all') { @('deploy-temp', 'drain-old', 'redeploy-old', 'drain-temp', 'retire-temp') } else { @($Phase) }
     foreach ($name in $phases) { Invoke-Phase -Name $name }
     Write-Output "Rolling deploy complete: $evidenceRoot"
