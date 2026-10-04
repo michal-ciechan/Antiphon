@@ -1,5 +1,5 @@
 # CARD-0973 jq precondition regression. Run through build-slot.ps1.
-param([Parameter(Mandatory)][ValidateSet('absent', 'present', 'missing-shell', 'failing-shell')][string]$Case, [switch]$KeepTemp)
+param([Parameter(Mandatory)][ValidateSet('absent', 'present', 'missing-shell', 'failing-shell')][string]$Case, [switch]$KeepTemp, [switch]$RequireJq)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $evidenceRoot = Join-Path $root ('.antiphon/c973-jq-' + [guid]::NewGuid().ToString('N'))
@@ -11,6 +11,7 @@ $psi.RedirectStandardError = $true
 foreach ($arg in @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'test-deploy-server2.ps1'))) {
     [void]$psi.ArgumentList.Add($arg)
 }
+if ($RequireJq) { [void]$psi.ArgumentList.Add('-RequireJq') }
 $psi.Environment['C973_TEST_ROOT'] = $evidenceRoot
 [void]$psi.Environment.Remove('C973_JQ_PROBE_SHELL')
 if ($Case -eq 'absent') { $psi.Environment['C973_TEST_JQ_PROBE'] = 'missing' }
