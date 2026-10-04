@@ -219,4 +219,5 @@ Antiphon.Tests.Application.TaskInputAttentionCostTests
 # CARD-1008: isolated real Docker/Git volume recycle comparison.
 Antiphon.Tests.Scripts.RollingVolumeRecycleDockerTests
 
+# CARD-1017: real Git, isolated PostgreSQL and worktree preservation boundary vectors.
 Antiphon.Tests.Infrastructure.CompletedCardWorktreeRemovalTests
