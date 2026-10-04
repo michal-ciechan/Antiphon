@@ -34,7 +34,7 @@ internal static class CardRevisionLog
         string? movedBy,
         DateTime utcNow)
     {
-        return Append(card, new CardRevision
+        var revision = Append(card, new CardRevision
         {
             Kind = CardRevisionKind.Move,
             FromColumnId = fromColumnId,
@@ -45,6 +45,14 @@ internal static class CardRevisionLog
             EditedBy = Trimmed(movedBy),
             CreatedAt = utcNow
         });
+        // The caller saves the revision and obligation together. Archive and same-status
+        // moves preserve the existing generation; cancellation grants no cleanup authority.
+        if (toColumn.CardStatus == CardStatus.Done && fromStatus != CardStatus.Done)
+            card.WorktreeCleanups.Add(new CardWorktreeCleanup
+            {
+                Card = card, DoneRevision = revision, DoneAt = utcNow, CreatedAt = utcNow
+            });
+        return revision;
     }
 
     /// <summary>

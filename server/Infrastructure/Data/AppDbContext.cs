@@ -73,6 +73,9 @@ public class AppDbContext : DbContext
     public DbSet<AgentTaskDispatchWarningIntent> AgentTaskDispatchWarningIntents => Set<AgentTaskDispatchWarningIntent>();
     public DbSet<WorktreeCleanupAttempt> WorktreeCleanupAttempts => Set<WorktreeCleanupAttempt>();
     public DbSet<TaskWorktreeRetirement> TaskWorktreeRetirements => Set<TaskWorktreeRetirement>();
+    public DbSet<CardWorktreeCleanup> CardWorktreeCleanups => Set<CardWorktreeCleanup>();
+    public DbSet<CardWorktreeCleanupTarget> CardWorktreeCleanupTargets => Set<CardWorktreeCleanupTarget>();
+    public DbSet<CardWorktreeCleanupEndpoint> CardWorktreeCleanupEndpoints => Set<CardWorktreeCleanupEndpoint>();
     public DbSet<TaskWorktreeRetirementAttempt> TaskWorktreeRetirementAttempts => Set<TaskWorktreeRetirementAttempt>();
     public DbSet<WorktreeResidueRun> WorktreeResidueRuns => Set<WorktreeResidueRun>();
     public DbSet<WorktreeResidueRunCandidate> WorktreeResidueRunCandidates => Set<WorktreeResidueRunCandidate>();
@@ -2749,6 +2752,48 @@ public class AppDbContext : DbContext
             entity.Property(c => c.CreatedAt).IsRequired();
             entity.HasIndex(c => c.OriginalAgentId)
                 .HasDatabaseName("IX_AgentPinCleanupRecords_OriginalAgentId");
+        });
+
+        modelBuilder.Entity<CardWorktreeCleanup>(entity =>
+        {
+            entity.HasKey(r => r.Id);
+            entity.HasIndex(r => new { r.CardId, r.DoneRevisionId }).IsUnique();
+            entity.HasOne(r => r.Card).WithMany(c => c.WorktreeCleanups).HasForeignKey(r => r.CardId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(r => r.DoneRevision).WithMany().HasForeignKey(r => r.DoneRevisionId).OnDelete(DeleteBehavior.Restrict);
+        });
+        modelBuilder.Entity<CardWorktreeCleanupTarget>(entity =>
+        {
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.WorkspaceIdentity).HasMaxLength(64);
+            entity.Property(r => r.RepositoryPath).HasMaxLength(1000);
+            entity.Property(r => r.WorktreePath).HasMaxLength(1000);
+            entity.Property(r => r.SourceFullRef).HasMaxLength(400);
+            entity.Property(r => r.ExclusionReason).HasMaxLength(100);
+            entity.HasIndex(r => new { r.CleanupId, r.TaskId, r.TaskAttempt, r.WorkspaceIdentity }).IsUnique();
+            entity.HasOne(r => r.Cleanup).WithMany().HasForeignKey(r => r.CleanupId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<AgentTask>().WithMany().HasForeignKey(r => r.TaskId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<TaskWorktreeRetirement>().WithMany().HasForeignKey(r => r.RetirementId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<AgentTaskLanding>().WithMany().HasForeignKey(r => r.LandingOperationId).OnDelete(DeleteBehavior.Restrict);
+        });
+        modelBuilder.Entity<CardWorktreeCleanupEndpoint>(entity =>
+        {
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.EndpointIdentity).HasMaxLength(64);
+            entity.Property(r => r.RunnerId).HasMaxLength(200);
+            entity.Property(r => r.RunnerStoreId).HasMaxLength(200);
+            entity.Property(r => r.RepositoryPath).HasMaxLength(1000);
+            entity.Property(r => r.WorktreePath).HasMaxLength(1000);
+            entity.Property(r => r.SourceFullRef).HasMaxLength(400);
+            entity.Property(r => r.CommonDirectory).HasMaxLength(1000);
+            entity.Property(r => r.GitDirectory).HasMaxLength(1000);
+            entity.Property(r => r.SourceSha).HasMaxLength(64);
+            entity.Property(r => r.ReportDigest).HasMaxLength(64);
+            entity.Property(r => r.RequestDigest).HasMaxLength(64);
+            entity.Property(r => r.Reason).HasMaxLength(100);
+            entity.Property(r => r.ConcurrencyToken).IsConcurrencyToken();
+            entity.HasIndex(r => new { r.TargetId, r.EndpointIdentity }).IsUnique();
+            entity.HasIndex(r => r.OperationId).IsUnique();
+            entity.HasOne(r => r.Target).WithMany(t => t.Endpoints).HasForeignKey(r => r.TargetId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<TaskWorktreeRetirement>(entity =>
