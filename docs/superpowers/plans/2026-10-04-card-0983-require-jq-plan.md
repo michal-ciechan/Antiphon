@@ -166,7 +166,7 @@ landed base after the shared-file predecessor completes.
    image activation and CARD-1025 host installation remain separate obligations.
    Do not relabel a pre-landing receipt as proving a different source SHA.
 
-## Verification design
+## Provisional verification (Plan stage; superseded by the freeze below)
 
 Proposed design for TestDesign to freeze; no builds/tests ran in this Plan.
 Use native `pwsh` children with `ProcessStartInfo.ArgumentList`, bounded process
@@ -256,7 +256,7 @@ authoring, tool bootstrap if needed and slot wait. No full suite, live deploy,
 loaded repetitions or PC execution in this ordinary list. TestDesign may
 refine estimates from current receipts without weakening counts or assertions.
 
-### Checkpoints
+### Proposed checkpoints (historical; not the importer manifest)
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
@@ -266,3 +266,452 @@ refine estimates from current receipts without weakening counts or assertions.
 | CP-4 | S1 | `tests/Antiphon.Tests -> bin-c983-windows/` | windows-native-debug-required-jq-guards | `/*/*/RemoteScriptContractTests/C983_*` | V-1, V-2 | 7 executed/passed, 0 failed/skipped at final SHA; native Windows parent | 7 | 6 | true | `C804_ORPHAN_SWEEP_ROOT=c983-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-5 | S1 | CP-4 | windows-native-debug-wsl-jq-matrix | `/*/*/RollingVolumeRecycleScriptTests/C1008_Legacy_rolling_and_jq_rosters_remain` | V-3, R-2 | 1 executed/passed, 0 failed/skipped; four 31-assertion receipts, true WSL jq probe and T-20 in required present | 1 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c983-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-6 | S1 | CP-4 | windows-native-debug-wsl-regressions | `/*/*/RemoteScriptContractTests/(C849_*)\|(C912_*)\|(C973_*)\|(C946_*)` | R-1 | 41 executed/passed, 0 failed/skipped at same final SHA; five repaired C849 callers pass through real WSL | 41 | 9 | true | `C804_ORPHAN_SWEEP_ROOT=c983-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+
+## Verification design
+
+Frozen by TestDesign `896f3d65-e2bf-48d7-aeef-27352fd20582` on 2026-10-04.
+This appendix supersedes the provisional verification, checkpoint table and
+ordering observations above; **D-1..D-7 and S1 remain the fix design**. The old
+headings are renamed solely so the importer reads this single active manifest.
+Only this plan changes. TestDesign runs no builds, tests or mutations.
+
+### Inspection
+
+- Read CARD-0983 through `scripts/card.ps1 get CARD-0983 -Board Antiphon`, this
+  plan, the checkpoint/import/build-slot/PC owner contracts, and the stage and
+  landing rules. Start is `facd671834dc301b26a0ab14a11b9983970fc9b8`; refreshed
+  master is `8bb0cea045f5a89359b0ba55712417f02e31a42a`. The two harness scripts,
+  Remote/Rolling test sources and census file have no diff between these refs.
+- Read `Test-C973Jq`, probe publication, `Run-C727`, the `Only` dispatch, T-20,
+  final roster/catch/finally, and the entire jq driver (argument construction,
+  seams, child exit/probe guards, roster/state assertions, retention/cleanup) |
+  required/optional x available/unavailable, default/Only, child success/failure,
+  missing/duplicate probe, owned/caller-owned root -> V-1..V-3, R-1..R-2.
+- Read the neighboring C946 cleanup tests and C973 reader tests and
+  `C973ReaderHarness`; all five C849 pwsh caller bodies named below;
+  `LinuxShell`, cached tool probes, `RequireLinuxPwsh`, `RequireLinuxJq`,
+  `CacheSeedTreeHarness`, `Block`, `Order` and `Remote`; `DelegateScriptRunner`
+  and `ProcessSpawnLimit` | genuine shell availability, Windows path boundary,
+  marker identity, failure retention and process ownership -> V-1..V-3, R-1.
+- Read `C1008_Legacy_rolling_and_jq_rosters_remain` and its `C1008Process`
+  helper; `c727-fake-verify.ps1` and `c973-marker-reader.sh` |
+  real driver/harness/marker reader with private HTTP/Docker substitutes -> V-3.
+  New tests use the existing Remote class; no new tracked fixture file is needed.
+- Read `PlanTableImporter`, `ManifestValidator`, `CheckpointManifest`,
+  `AfterSelector`, `RowTimeout`, `Program.Import`, the import tests for escaped
+  filters/rosters/serial/environment, and the manifest/fixture scope setup |
+  first exact heading, nine ordered columns, count versus time, derived tokens,
+  serial execution and child environment -> six rows below and read-only import.
+- Read CARD-0980's freeze at
+  `17485f615bdc38c28214b1ab0dca103f929ab86b` on
+  `origin/feat/card-task-1e3dddab`: **CARD-0980 S1, then CARD-0983 S1, then
+  CARD-1010 S1**, serializing Code/land on the shared source. CARD-0980 Code
+  `fa69124f` was in flight in the dispatch brief. Await its implementation and
+  native Windows qualification; reconcile its landed source before this Code
+  edits Remote. Do not replay the old class or rebase this published branch.
+- Source recount at refreshed master: Remote **77 methods / 95 expanded
+  results**. Argument expansions are C951=8, C957=3, and C973=6+5. The selected
+  old regression prefixes are **C849 18 + C912 9 + C973 12 + C946 2 = 41**
+  results from 32 methods. C983 adds **two methods / seven results**; Remote
+  would be 79/102 alone or **83/106** after CARD-0980's four single-result
+  additions. The focused regression floor stays **41**, not 106.
+- Current harness literals and driver assertions independently agree on
+  **23 groups / 62 invocations / 218 assertions** without jq and
+  **24 / 66 / 227** with jq; each successful jq driver remains **31 assertions**.
+  These internal counts are not TUnit executions. CARD-1008/1012/1013/1011/1018
+  are accounted for by the current-master read. **CARD-0927 CP-2 stays 163**;
+  this card changes no image-contract floor or historical receipt. No tests
+  enter **Antiphon.Tests.Checkpoints**; census literal **377 stays unchanged**.
+  Only this card's seven new Scripts results increase its affected test roster.
+
+Missing setup: Code must author both C983 methods and their private native-pwsh
+process/scratch helpers. No test or receipt is claimed to exist yet. Resolve
+native pwsh and git to absolute executable paths before changing a child's
+PATH; use `ArgumentList`, concurrent stdout/stderr drains, bounded wait and
+kill-tree/await on failure. Both new methods carry the assembly-local
+`ParallelLimiter<ProcessSpawnLimit>`. Do not change global PATH or the shared
+`LinuxShell` helper. Expected-tool tests fail on missing prerequisites rather
+than skip. Desktop WSL cannot be inspected from this mirror.
+
+### Delivery inventory
+
+**Zero new or changed asynchronous delivery paths.** The changed path is a
+synchronous test-process invocation and its exit/output contract. No durable
+message identity, queue, recipient session, persistence handoff or recovery
+worker changes; busy/eligible recipient and crash/enqueue-failure queue tests
+are therefore inapplicable. No output marker, acknowledgement or checkpoint
+receipt is claimed to prove session delivery; that would require the matching
+complete UserPrompt transcript.
+
+V-2 substitutes a sibling child harness to isolate the real driver's independent
+guard and argv forwarding. It cannot prove the real harness probes jq or runs
+T-20. V-1 runs the real harness; V-3 closes the real driver -> harness -> shell
+marker-reader boundary. Its existing HTTP/Docker fakes cannot prove live
+rollout, actual cache publication, restart recovery or caller delivery. The
+sealed-PATH vector proves refusal of a false probe, not physical absence of jq.
+
+### Proves it works now
+
+Exactly seven new TUnit results, with these two method names:
+
+- **V-1:** refuse required unavailable jq before any group | native process
+  integration | `RemoteScriptContractTests.C983_Required_jq_refuses_unavailable_probe_before_any_group`
+  with exactly six `[Arguments]`: `("harness","absent")`,
+  `("harness","missing-shell")`, `("harness","failing-shell")`,
+  `("driver","absent")`, `("driver","missing-shell")`,
+  `("driver","failing-shell")`. Each process uses `-RequireJq`. Harness
+  vectors use `C973_TEST_JQ_PROBE=missing`, an absolute nonexistent shell, or
+  absolute git as the failing `-c 'command -v jq'` application. Driver vectors
+  use the existing `-Case` values. Clear inherited C973 seams before setting
+  each vector. Verify exit **1**, one `available=False` probe and exactly this
+  diagnosis (match the complete diagnostic line, allowing CRLF):
+
+  `C983_JQ_REQUIRED jq-unavailable: -RequireJq requires jq in the marker-reader shell; T-20 cannot be skipped.`
+
+  Fix assertion labels/order: `c983-required-diagnosis` (exact diagnostic),
+  `c983-required-exit` (exit 1), `c983-single-false-probe` (one false probe),
+  `c983-before-group` (no `PASS T-`, no `state.json` or `trace.jsonl` recursively),
+  `c983-no-skip` (neither `C973_SKIPPED` nor `C973_JQ_SKIPPED`),
+  `c983-zero-failure-roster` (one `C849_ROLLING groups=0 invocations=0 assertions=0 failures=1`),
+  and `c983-failure-retained` (actual evidence directory exists). No V-32 success,
+  zero-failure rolling summary or driver success receipt is permitted.
+  Driver failure output must preserve the child's original diagnosis; do not
+  mistake its additional `harness exit=1` message for the required diagnosis.
+
+  Within the harness/absent result, run `-Only host-saved` **first**, then default
+  all, and then the other accepted Only selections (`retired-start`,
+  `cleared-offline-start`, `host-race`, `host-absence`, `host-recovery`,
+  `cleanup-failure`) with the same missing seam. Include explicit `-Only all`.
+  Within required negatives cross omitted/true `-KeepTemp`; for the direct
+  harness exercise both its normal owned root and a separately created
+  `C973_TEST_ROOT` containing a
+  harmless sentinel. An external root must retain that sentinel. These are
+  internal vectors, not extra TUnit results. Early root creation is allowed;
+  an invocation state or trace file is not. Validate returned root ancestry,
+  expected GUID leaf and no reparse point before test-owned cleanup; delete
+  only an invocation-owned root after asserting retention. Do not infer root
+  ownership from arbitrary output or delete an ancestor.
+
+  **Deterministic false-negative vector:** also within harness/missing-shell,
+  start an absolute native pwsh with a test-owned wrapper and working directory.
+  After PowerShell starts (it can prepend its own directory at startup), set
+  that child process's PATH to **one newly created, empty scratch directory**,
+  with no appended host PATH. Clear both C973 seams, verify the directory is
+  empty and PATH equals its exact full path, then invoke the unchanged real
+  harness by absolute path with `-RequireJq`. Default bash/WSL command lookup
+  must be unavailable and produce the same early failure. Never derive this
+  negative from the Windows host PATH. This complements the explicit missing
+  shell seam and needs no actual host jq absence. Do not run the driver under
+  this sealed PATH: its bare `pwsh` child launch would fail before the jq guard.
+  The real driver's three negative Cases and V-2 cover that boundary instead.
+
+- **V-2:** independently reject a successful false probe, retain optional and
+  successful neighbors | unchanged real driver in owned scratch layout |
+  `RemoteScriptContractTests.C983_Required_jq_driver_rejects_successful_false_probe`,
+  one `[Test]`, no Arguments expansion. Copy the actual driver bytes into
+  `<scratch>/scripts/test-deploy-server2-jq.ps1`; write a sibling harness fixture
+  with a valid `[switch]$RequireJq` parameter. Pre-create an argv observation
+  file outside the driver's evidence root. The child appends bound switch and
+  unbound argv observations before printing output; missing forwarding then
+  gives a normal assertion failure, not a missing-file error.
+
+  The sibling implements complete valid optional-fallback **and** present
+  receipts: 62 ordinary state.json files with a non-cold scenario and no marker,
+  one PASS for T-1..T-19/T-21..T-24, named skip and 23/62/218 for false; add four
+  cold marker states and T-20, omit skip, and emit 24/66/227 for true. Select
+  fixture behavior with a child-only C983 test variable, independent of the
+  bound RequireJq value. It exits normally with the selected code. It must
+  never print the C983 diagnosis itself. Use `-Case present` in the real driver.
+
+  Execute these internal vectors in order: required + false + exit 0;
+  optional + false + exit 0; required + true + exit 0;
+  optional + true + exit 0; required + true + exit 7; required + zero probe
+  lines; required + two identical true probe lines. The last three otherwise
+  emit a valid full roster. A separate optional + false + exit 7 vector covers
+  the fallback branch's child-exit refusal. Required/optional covers both
+  omitted switch and explicit `-RequireJq:$false` for the optional neighbor.
+
+  First require exactly one child observation, bound RequireJq=true for the
+  required vector (`c983-forwarded`), and false for both optional spellings.
+  Then require the exact C983 diagnosis (`c983-driver-diagnosis`), exit 1
+  (`c983-driver-exit`), no driver skip or successful driver receipt
+  (`c983-driver-no-fallback`), and an existing driver-created evidence root
+  containing harness.log (`c983-driver-retained`). The synthetic child's own
+  fallback skip is expected in its captured output: only **C973_JQ_SKIPPED**
+  is forbidden here, unlike V-1. This distinction avoids an impossible oracle.
+  Optional/false must exit 0 with `C973_JQ_SKIPPED`, 31 assertions and 23/62/218
+  (`c983-optional-driver`); both true success vectors have 31 and 24/66/227 with
+  no skip (`c983-available-driver`). Nonzero child exit must yield the driver's
+  `harness exit=7` failure (`c983-child-exit-guard`) before any fallback. Missing
+  or duplicate probe lines must yield `one jq probe` (`c983-probe-cardinality`),
+  not a C983 diagnosis or a success receipt. Check retention with/without
+  KeepTemp on failed vectors and cleanup/kept receipt on successful neighbors.
+  All file operations stay under the fixture's owned root.
+
+- **V-3:** a real jq-required consumer still runs T-20 and all default modes |
+  native TUnit -> real driver -> real harness -> bash/WSL marker reader |
+  `RollingVolumeRecycleScriptTests.C1008_Legacy_rolling_and_jq_rosters_remain`.
+  Keep its four modes and existing assertions. Construct the actual argument
+  list once; add `-RequireJq` only for present and assert that very list contains
+  it before launch (`c983-consumer-requires-jq`). Pass the same list to the
+  existing process helper. This argv observation proves consumer opt-in; V-1
+  and V-2 prove child enforcement. Do not add an assertion to `Assert-Jq` or
+  change the driver's successful 31-assertion count.
+  Preserve `rolling-regressions-preserved`: four `C973_JQ case=... assertions=31 failures=0`
+  receipts and exit 0, with no present skip. The real driver's existing oracles
+  require one true probe, T-20, four cold marker states and 24/66/227 for present;
+  three false probes, no marker states, named skips and 23/62/218 for negatives.
+  Record those harness lines as well as the single passed TUnit result.
+  A jq-free present run is a failure, never accepted as a smaller green roster.
+
+Required + available + Only is covered by the same flag predicate and default
+full success; no second full eight-selector success matrix is needed. The
+unavailable Only cross explicitly tests guard placement before every early exit.
+No additional environment-variable interface or invalid CLI-value behavior is
+introduced. Existing PowerShell parameter binding owns unsupported arguments.
+
+### Guards the regression
+
+- **R-1:** preserve cache/marker/cleanup regressions | exact prefix filter in
+  CP-3/CP-6, **41 results**, zero failed/skipped. Keep every existing assertion,
+  including C946 GREEN_EXIT=0 / GREEN_ROOT_REMOVED / FAILED_KEEP_EXIT=1 /
+  FAILED_KEEP_ROOT_RETAINED. The five C849 native Windows witnesses must remain
+  in the executed roster: `C849_Cache_cases_use_only_the_validated_host_lane`,
+  `C849_Seed_publishes_complete_payloads_before_its_marker`,
+  `C849_Saved_donor_archive_is_checked_and_imported_without_a_container`,
+  `C849_Saved_donor_rejects_unsafe_archives_missing_pack_and_busy_counters`,
+  `C849_Saved_donor_rejects_declared_size_bomb_before_writing`.
+- **R-2:** preserve defaults and scope | V-2/V-3 positive neighbors plus source
+  review. Default switches are false; the first application probe selection,
+  default Windows WSL/Linux bash branches, marker semantics, rosters, timeouts,
+  ownership guards and successful driver count remain intact. The documentation
+  describes required versus optional usage and shell prerequisites. The diff
+  stays in S1 files; ASCII PowerShell is preserved. No new Checkpoints tests,
+  census changes, production deploy script edits or runtime changes.
+
+**Native Windows Debug gate:** separately commission `-Platform Windows` at
+exactly the final pushed implementation SHA, with the original Code owner named,
+selecting CP-4..CP-6 and native .NET Debug configuration. Record OS/configuration,
+full source SHA, clean source/build provenance and executed/passed/failed/skipped
+counts for each row. Only the marker-reader/bash children run inside WSL; a WSL
+TUnit host cannot discharge native Windows argument forwarding or `$IsWindows`.
+In the default desktop WSL distribution, inspect the actual noninteractive
+`wsl.exe -e bash -c` lane: bash, wslpath, **/usr/local/bin/jq = jq-1.7.1** and
+**/usr/local/bin/pwsh = PowerShell 7.6.6**, plus tar, perl, git and the GNU tools
+used by the existing fixtures. Record resolved paths and versions. Do not count
+native Windows jq or Linux-image installation as WSL proof. Linux uses its actual
+native bash/jq/pwsh lane. Missing setup means incomplete qualification; do not
+install tools, append host PATH, add skips or alter prerequisites under this card.
+
+Regression-only classification: reproduce an unexpected failure using **only its
+exact method** at Code's recorded unchanged start SHA, same native OS, WSL setup,
+Debug configuration and build-slot gate, in a separate owned baseline checkout
+with fresh output. The freeze tip is the base if that is the actual Code start;
+if integration supplies a later start, record that exact SHA. Failure at both
+final and base is inherited; base passing means introduced; missing method,
+build/fixture failure or no execution is unclassified. New C983 tests absent at
+base are not inherited failures. Keep conditional baseline receipts and reasons
+separate from the six ordinary rows. Inherited failure is a disclosure, never a
+passing row or completed Windows acceptance. Do not repair unrelated portability
+under this card. Subsequent implementation edits invalidate affected evidence
+and require final-SHA Linux/Windows reruns before Review.
+
+### Guard inventory
+
+These are all safety-critical contracts newly enforced, newly wired, or directly
+relied upon by the new refusal path. Child-exit and single-probe checks are listed
+because they gate the new driver decision. Independent predicates, ordering,
+forwarding, exit/diagnosis, and evidence-retention boundaries are split. The
+unchanged production cache/recycle guards and generic deletion-authority checks
+remain their owners' PC obligations and R-1 regression coverage; this card makes
+no new claim to requalify all deployment guards. None of the listed guards is
+left untested.
+
+| Guard | Plan reference and safety-critical invariant | Control |
+|---|---|---|
+| G-1 | D-2: harness required + false probe refuses | PC-1 |
+| G-2 | D-2: refusal precedes every Only/group early exit | PC-2 |
+| G-3 | D-3: driver forwards RequireJq to its actual child | PC-3 |
+| G-4 | D-3: driver independently refuses successful false probe | PC-4 |
+| G-5 | D-1/D-4: harness absence remains optional without the switch | PC-5 |
+| G-6 | D-1/D-4: driver absence remains optional without the switch | PC-6 |
+| G-7 | D-4: available jq passes the harness's new prerequisite | PC-7 |
+| G-8 | D-4: available jq passes the driver's new prerequisite | PC-8 |
+| G-9 | D-2: harness refusal preserves the exact stable diagnosis | PC-9 |
+| G-10 | D-3: independent driver refusal preserves that diagnosis | PC-10 |
+| G-11 | D-2: harness refusal exits 1 | PC-11 |
+| G-12 | D-3: driver refusal exits 1 | PC-12 |
+| G-13 | D-2: new harness failure retains its owned evidence | PC-13 |
+| G-14 | D-3: new driver failure retains its owned evidence/log | PC-14 |
+| G-15 | D-5: jq-expected existing consumer opts in explicitly | PC-15 |
+| G-16 | D-3: child nonzero exit cannot certify required or optional success | PC-16 |
+| G-17 | D-3: exactly one child probe is required before classification | PC-17 |
+
+### Positive controls
+
+Code runs V/R; ordinary Review judges this design and evidence before land.
+Post-land SourceLanding Mutation runs each **break / intended assertion red /
+exact-byte restore / fresh build / green** cycle. Discover the named methods
+and establish green first. Every defect below is syntactically valid and leaves
+parameter plumbing intact; parameter-binding, timeout, fixture, build or zero-test
+errors do not qualify. A surviving/equivalent control is a finding, not green.
+
+Exact method filter dictionary (all in `tests/Antiphon.Tests`):
+
+| Key | Exact --treenode-filter | MinExecuted |
+|---|---|---:|
+| F1 | `/*/*/RemoteScriptContractTests/C983_Required_jq_refuses_unavailable_probe_before_any_group*` | 6 |
+| F2 | `/*/*/RemoteScriptContractTests/C983_Required_jq_driver_rejects_successful_false_probe` | 1 |
+| F3 | `/*/*/RollingVolumeRecycleScriptTests/C1008_Legacy_rolling_and_jq_rosters_remain` | 1 |
+
+For F1 inspect all six argument rows. Its trailing `*` follows the owner's
+parameterized-method rule and matches only this full method name and argument
+suffixes; never widen to `C983_*` or the class. Retain MinExecuted=6.
+
+| PC | Compiling defect breaking its mapped guard | Exact method and decisive red assertion |
+|---|---|---|
+| PC-1 | In the harness's new prerequisite condition append `-and $false` | F1, harness/absent default or Only vector: `c983-required-diagnosis` absent; real optional execution completes |
+| PC-2 | Move the intact prerequisite below all Only early returns, immediately before `if ($hasJq)` | F1, first harness/absent `-Only host-saved`: `c983-required-diagnosis` absent after normal T-24 execution |
+| PC-3 | Remove only the driver's ArgumentList addition of `-RequireJq` | F2: `c983-forwarded` expects true in the first child's recorded bound switch, gets false |
+| PC-4 | Disable only the driver's required-unavailable condition with `-and $false` | F2: `c983-driver-diagnosis` absent; complete synthetic fallback reaches an otherwise successful driver receipt |
+| PC-5 | Remove `$RequireJq -and` only from the harness prerequisite | F3: existing `rolling-regressions-preserved` fails on absent mode's missing 31/0 receipt after present succeeds |
+| PC-6 | Remove `$RequireJq -and` only from the driver's prerequisite | F2 optional/false neighbor: `c983-optional-driver` expects exit 0 and 31/0, gets required refusal |
+| PC-7 | Change only the harness prerequisite to `if ($RequireJq)` | F3 present: `rolling-regressions-preserved` lacks the 31/0 receipt because true jq is refused |
+| PC-8 | Change only the driver prerequisite to `if ($RequireJq)` | F2 required/true neighbor: `c983-available-driver` expects exit 0 and 31/0, gets refusal |
+| PC-9 | Replace only the harness's thrown C983 diagnostic with `C983_WRONG_DIAGNOSIS` | F1: `c983-required-diagnosis` exact line absent |
+| PC-10 | Replace only the driver's independent thrown C983 diagnostic with `C983_WRONG_DIAGNOSIS` | F2: `c983-driver-diagnosis` exact line absent |
+| PC-11 | Change the harness catch exit from 1 to 0; retain diagnostic and finally | F1 harness vectors: `c983-required-exit` expects 1, gets 0 |
+| PC-12 | Change the driver catch exit from 1 to 0; retain diagnostic/evidence | F2 first vector: `c983-driver-exit` expects 1, gets 0 |
+| PC-13 | In harness finally replace `$success -and -not $KeepTemp` with `-not $KeepTemp`, keeping all existing path/ownership checks | F1 owned root, no KeepTemp: `c983-failure-retained` fails because its valid root was removed |
+| PC-14 | At driver catch entry delete only its already-created `$evidenceDirectory` via `.Delete($true)` | F2: `c983-driver-retained` expects its owned root and harness.log, both absent |
+| PC-15 | Remove only the present-mode argument-list addition of `-RequireJq` from C1008 consumer, retaining its actual-list assertion | F3: `c983-consumer-requires-jq` expects the literal flag, absent before launch |
+| PC-16 | Replace only `Assert-Jq ($proc.ExitCode -eq 0)` with `Assert-Jq $true`, preserving its assertion increment/name | F2 exit-7 valid-roster vector: `c983-child-exit-guard` lacks `harness exit=7` failure; child output is otherwise fully accepted |
+| PC-17 | Replace only the one-probe Assert-Jq condition with `$true`, preserving count/name | F2 zero-probe vector: `c983-probe-cardinality` lacks `one jq probe` failure (new C983 refusal is the wrong classification); duplicate-true neighbor would also incorrectly succeed |
+
+No mutation changes expected values or deletes a witness assertion. PC-15 changes
+the test's real consumer invocation, not its oracle. PC-1/PC-2 use the ordinary
+working PATH forced-absence vector for their red witness; a launch error from the
+additional sealed-PATH vector is not accepted as their red. PC-13/PC-14 touch only
+owned scratch evidence, never external/credential paths. Assert in the specified
+order so the table's decisive assertions are the first relevant failures.
+
+All 17 PCs are portable and run in the Linux SourceLanding lane. None changes the
+existing platform-specific probe or WSL conversion code; native Windows ordinary
+V/R at the identical final SHA covers those compositions. Do not batch controls:
+most share the same scripts/methods, and PC-15 must not hide another PC's result.
+Use a distinct `bin-c983-pc-N-red/` and `bin-c983-pc-N-green/`, local inherited
+build-slot-gated driver, and the assigned external evidence/restoration root.
+Every phase is method-scoped; no class/suite run qualifies. Restore all changes;
+no snapshot commits/pushes or repairs. Findings go to the caller for separate
+Code/Review/land and a new sourced pass.
+
+### Out of scope
+
+- Live deployment, Docker image activation, host jq installation (CARD-1025),
+  runtime queues/transcripts/Pty, full Unit/full Remote and full C1008 suites:
+  the changed call graph is these harnesses and consumer, bounded by the named
+  regressions. No async recipient seam exists to defer to Plan.
+- Probe redesign, shell fallback, timeout widening, retries, new environment
+  interface, global PATH mutation, altered skip policy, or Windows portability
+  repair. CARD-0980 owns its helper and preceding qualification.
+- Requalifying unchanged production recycle/cache/cleanup authorization guards
+  through new PCs; their owners retain those obligations. Failed-root retention
+  on this newly added path is explicitly covered here.
+- Cardinality/child-error vectors use a substitute by design. Actual marker
+  execution remains mandatory in V-3 on each OS; synthetic receipt text cannot
+  replace that evidence. No historical receipt is rewritten or relabeled.
+
+### Checkpoints
+
+Sole active importer table. **One separate isolated build and one exact filter
+per row**, all after committed/pushed S1; union is the entire ordinary scope.
+Linux Code selects CP-1,CP-2,CP-3; separately commissioned native Windows Debug
+selects CP-4,CP-5,CP-6 at the final implementation SHA. No test-host repetition.
+Use `run --plan docs/superpowers/plans/2026-10-04-card-0983-require-jq-plan.md`
+with the lane's `--rows`, `--serial` and `--expected-source-sha` equal to that SHA.
+Use the checkpoint tool and host build-slot gate per the owner, await every
+foreground command/exit-75 continuation, and retain unedited CHECKPOINT lines.
+An administrative tool bootstrap, if required, is the named extra build from
+the procedure above; it is slot-gated and has its own `bin-c983-tool/` output.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
+|---|---|---|---|---|---|---|---:|---:|---|---|
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c983-linux-guards/` | linux-required-jq-guards | `/*/*/RemoteScriptContractTests/C983_*` | V-1, V-2, R-2 | Exactly 7 passed, 0 failed/skipped; six negative arguments plus independent driver method | 7 | 5 | true | `C804_ORPHAN_SWEEP_ROOT=c983-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-2 | S1 | `tests/Antiphon.Tests -> bin-c983-linux-rosters/` | linux-real-jq-optional-matrix | `/*/*/RollingVolumeRecycleScriptTests/C1008_Legacy_rolling_and_jq_rosters_remain` | V-3, R-2 | Exactly 1 passed, 0 failed/skipped; four real 31/0 receipts and exact 24/66/227 or 23/62/218 rosters | 1 | 6 | true | `C804_ORPHAN_SWEEP_ROOT=c983-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-3 | S1 | `tests/Antiphon.Tests -> bin-c983-linux-regressions/` | linux-cache-marker-cleanup | `/*/*/RemoteScriptContractTests/(C849_*)\|(C912_*)\|(C973_*)\|(C946_*)` | R-1 | Exactly 41 passed = 18+9+12+2, 0 failed/skipped; five C849 callers present | 41 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c983-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-4 | S1 | `tests/Antiphon.Tests -> bin-c983-windows-guards/` | windows-native-debug-jq-guards | `/*/*/RemoteScriptContractTests/C983_*` | V-1, V-2, R-2 | Exactly 7 passed, 0 failed/skipped at final SHA; native Windows parent | 7 | 6 | true | `C804_ORPHAN_SWEEP_ROOT=c983-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-5 | S1 | `tests/Antiphon.Tests -> bin-c983-windows-rosters/` | windows-native-debug-jq-matrix | `/*/*/RollingVolumeRecycleScriptTests/C1008_Legacy_rolling_and_jq_rosters_remain` | V-3, R-2 | Exactly 1 passed, 0 failed/skipped; four real 31/0 receipts, WSL T-20 and exact harness rosters | 1 | 9 | true | `C804_ORPHAN_SWEEP_ROOT=c983-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-6 | S1 | `tests/Antiphon.Tests -> bin-c983-windows-regressions/` | windows-native-debug-regressions | `/*/*/RemoteScriptContractTests/(C849_*)\|(C912_*)\|(C973_*)\|(C946_*)` | R-1 | Exactly 41 passed = 18+9+12+2, 0 failed/skipped at same final SHA; five real WSL C849 callers | 41 | 10 | true | `C804_ORPHAN_SWEEP_ROOT=c983-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+
+`Min` is TUnit execution count: **49 per OS / 98 total**, not the internal
+script assertions or minutes. The importer preserves `ExpectText` but enforces
+only its derived roster tokens and Min floor, not exact counts or zero skipped.
+CP-1/4 derive RemoteScriptContractTests, CP-2/5 derive RollingVolumeRecycleScriptTests,
+and CP-3/6 derive C849_, C912_, C973_, C946_. Code/Debug/Review must inspect the
+executed method/argument roster, exact totals, zero skips and harness receipts
+in addition to tool exit. Recount on the integrated Code start; CARD-0980's four
+C980 names are intentionally outside these filters and do not change the 41.
+
+Validate source-bound receipts at the actual tested SHA; `dirty=0`, clean source
+and verified build provenance are required. Run `scripts/check-evidence-diff.ps1`
+over the full Code task range. Store raw logs/TRX/JSON ignored and preserve the
+essential unedited checkpoint lines in the stored report. Clean only owned
+bin-c983 outputs after children exit; no general worktree-cleanup authority.
+
+Read-only importer validation completed successfully for both `isWindows=false`
+and `true` using the real `PlanTableImporter.ImportFile` and
+`ManifestValidator.Validate` APIs. Both returned **6 filter rows / 6 distinct
+builds, zero warnings**, S1, Min **7/1/41/7/1/41**, minutes **5/6/8/6/9/10**,
+timeouts **15/18/24/18/27/30**, repeat 1, serial true, and both environment
+entries intact. Escaped OR filters and derived roster tokens matched the text
+above. The existing assembly loaded read-only was
+`/work/worktrees/task-a87b9e00/tools/Antiphon.Checkpoints/obj/Debug/net9.0/Antiphon.Checkpoints.dll`,
+SHA-256 `98a06767409a7627b66a08ac063384f92a4b9ff6c2d2f5042326b4a1bb4b1914`.
+Its importer, validator, manifest, AfterSelector and RowTimeout sources match
+this checkout byte-for-byte. This is parser evidence, not this task's build
+provenance. No executor, build or test was launched; no YAML/evidence was added
+to Git. The two historical headings are the only edits above this appendix.
+
+### Cost
+
+All values are **estimated**, not test-time measurements. Ordinary V/R floor
+(Code obligation including the separate Windows Debug) is
+**5 + 6 + 8 + 6 + 9 + 10 = 44 minutes**, including six isolated row builds.
+Linux is **19**, Windows **25**. Setup/tool bootstrap allowance is **4 minutes**
+(two per host), so ordinary setup/build/V/R is **48 minutes**, plus authoring and
+build-slot wait. Compared with the provisional reused-output 40-minute profile,
+the four added isolated builds cost **4 minutes**; no ordinary savings claimed.
+
+Post-land Mutation floor is **138 minutes**: setup **2**, initial green discovery
+**11** (F1 **4**, F2 **2**, F3 **5**, with one isolated discovery build included),
+and all 17 red/restore/green cycles **125**. Per-control estimates:
+
+| Controls | Filter | Each cycle: edit/restore + red build/run + restored build/run | Subtotal minutes |
+|---|---|---|---:|
+| PC-1, PC-2, PC-9, PC-11, PC-13 | F1 | 1 + 3 + 3 = 7 | 35 |
+| PC-3, PC-4, PC-6, PC-8, PC-10, PC-12, PC-14, PC-16, PC-17 | F2 | 1 + 2 + 2 = 5 | 45 |
+| PC-5, PC-7, PC-15 | F3 | 1 + 7 + 7 = 15 | 45 |
+
+The cycle subtotals sum to **125**, giving **138 minutes** (2 + 11 + 125).
+Total ordinary
+setup/build/V/R plus every PC setup/discovery/red/restore/green is
+**48 + 138 = 186 minutes**, excluding authoring, reporting and broker wait.
+An observed unexpected Windows failure adds an estimated **4 minutes per exact
+baseline method**, including its isolated base build; never spend that allowance
+without a failure to classify.
+
+Method-scoped PCs avoid rerunning the unrelated 41-result regression group twice
+for each of 17 controls: estimated saving **17 x 2 x 8 = 272 minutes**, using
+CP-3's build-inclusive estimate, compared with appending that group to each PC
+red/green. No time saving is claimed from weakening counts or skipping Windows.
+Stop after ordinary green; new failure/source changes alone justify reruns.
+
+Handoff audit: bodies read; **guards=17, mapped=17, missing=0, duplicate PC
+maps=0**. Every control names an executable method, syntactically valid defect
+and decisive assertion. Code authors the seven planned results before the
+post-land controls can run. No unverifiable seam or human product choice remains.
+
+--- next stage ---
+next: code
+handoff: Implement S1 from the pushed CARD-0983 TestDesign tip after CARD-0980 Code/Windows qualification and source reconciliation; serialize CARD-0980, CARD-0983, CARD-1010 S1. Preserve seven new results and 17 PCs. Run CP-1..CP-3; commission native Windows Debug CP-4..CP-6 at final SHA. Keep 163/377 and rosters unchanged; ordinary Review then land, PCs afterward.
+artifact: docs/superpowers/plans/2026-10-04-card-0983-require-jq-plan.md
