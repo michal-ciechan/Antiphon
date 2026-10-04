@@ -833,8 +833,6 @@ R-1..R-4 ordinary obligations. Q-1 is explicitly post-Review operational scope.
 | CP-6 | S1-S3 | n/a | linux-offline-image | `pwsh -NoProfile -File scripts/verify-card0660-codex-image.ps1 -Target session-testing -Image "${C913_IMAGE:?}" -SourceRevision "${C913_SHA:?}" -ResultsRoot "${C913_RESULTS:?}"` | V-1 | One image build; 11/11 matching rows ok; actual native receipt/empty mounted pair/network none; exit 0 | n/a | 25 | true | n/a |
 | CP-7 | S1-S3 | `tests/Antiphon.Tests -> bin-c913-green-windows/` | windows-receipts | `/*/*/RemoteScriptContractTests/(C849_front_door_passes_every_full_case_name_to_the_invoker*)\|(C913_Receipts_reject_mixed_digest_types_and_false_smoke_claims*)\|(C912_Cold_runner_verification_uses_mounts_and_writability_not_payloads*)` | V-7,R-1 | 3 native Windows pwsh results, 0 failed/skipped | 3 | 12 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-8 | S1-S3 | n/a | windows-rolling | `pwsh -NoProfile -File scripts/test-deploy-server2.ps1 -RequireJq` | R-2,R-3 | Native Windows pwsh + WSL jq; 24 groups / 66 invocations / 227 assertions; failures=0, no skips, exit 0 | n/a | 6 | true | n/a |
-
-
 | CP-C944-Repair | S1-S3 | CP-3 | linux-exact-repair | `/*/*/RemoteScriptContractTests/(C944_All_cache_loop_variables_are_local*)\|(C957_Scratch_mutation_controls_go_red_and_restore*)` | R-1 | 4 executed: C944 plus C957 loop/observe/receipt; 0 failed/skipped | 4 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
 Continuation amendment (Code task `0b054a60-638a-4238-889b-eb03fb7ec1b9`):
