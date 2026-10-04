@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Antiphon.Tests.Application;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 
 namespace Antiphon.Tests.Scripts;
@@ -215,7 +216,7 @@ internal sealed class EvidenceGitFixture : IAsyncDisposable
         GuardAsync("check-evidence-deletion.ps1", ["-InventoryRef", inventoryRef, "-InventoryOnly"], hook, "Invoke-EvidenceDeletion");
     public ValueTask DisposeAsync()
     {
-        if (Directory.Exists(Root)) Directory.Delete(Root, recursive: true);
+        StartRefGit.DeleteDirectory(Root);
         Directory.Exists(Root).ShouldBeFalse("fixture-owned root removed; alternate objects untouched");
         return ValueTask.CompletedTask;
     }
