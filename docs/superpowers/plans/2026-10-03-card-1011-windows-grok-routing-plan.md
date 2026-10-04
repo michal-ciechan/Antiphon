@@ -1519,3 +1519,13 @@ floors above. No remaining unverifiable seam: the missing shared helpers and
 fixture are concrete Code deliverables; real installed-CLI/backend/turn/release
 qualification remains the one commissioned Windows gate. Next: Code, then one
 WQ-3 real launch at its final pushed executable-harness SHA with the paid turn.
+
+## CARD-1021 supersession — 2026-10-04
+
+The accepted [CARD-1021 plan and Verification design](2026-10-04-card-1021-routing-exhaustion-placement-plan.md#verification-design)
+supersede the exhausted-Linux refusal/no-insert oracle in G-58/G-59 and PC-58/59.
+Those guards, controls and receipts remain historical evidence of the old behavior.
+Exhausted automatic requests now follow ordinary placement and persist Blocked,
+including Any defaults; no provider is chosen and no session launches. The Required
+list fence G-23, explicit RefuseIfExhausted and independent placement refusals remain.
+CARD-1021 owns the replacement controls and current receipts.
