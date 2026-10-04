@@ -44,6 +44,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     private readonly HerdrNamedTabResolver _namedTabs = new(HerdrNamedTabResolver.HostLabelComparer);
     private readonly Lazy<RunnerCustodyLedger> _custody;
     private readonly Lazy<string?> _custodyBackend;
+    private readonly Lazy<PtyBackendDecision> _backendDecision;
+
+    public PtyBackendDecision BackendDecision => _backendDecision.Value;
+    internal Func<string?, PtyBackendDecision> BackendResolver { get; init; } = PtyBackendPolicy.Resolve;
+    internal bool BackendPlatformIsWindows { get; init; } = OperatingSystem.IsWindows();
 
     /// <summary>
     /// CARD-0604 D-17. Windows is unchanged: modern ConPTY, job object, windows-job-v1. Linux
@@ -57,7 +62,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     // The DI singleton owns samples. Reads never launch a child.
     internal CodexCliVersionProbe? CodexCliProbe { get; set; }
 
-    private string? DetectCustodyBackend() => OperatingSystem.IsWindows()
+    private string? DetectCustodyBackend() => BackendPlatformIsWindows
         ? PtyBackendPolicy.Resolve(_settings.PtyBackend).Backend == PtyBackend.ModernConPty
             ? VerificationCustodyBackends.WindowsJob : null
         : LinuxCgroupCustodyProbe.Detect(CustodyEnvironment);
@@ -121,6 +126,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         CodexCliVersionProbe? codexCliProbe = null)
     {
         _settings = settings.Value;
+        _backendDecision = new(() => BackendResolver(_settings.PtyBackend));
         CodexCliProbe = codexCliProbe;
         _custody = new(() => new RunnerCustodyLedger(Path.Combine(_settings.SessionLogPath, "verification-custody")));
         _custodyBackend = new(DetectCustodyBackend);
@@ -258,7 +264,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 return await StartCoreAsync(request, ct);
             }
             using var custodyLease = _custody.Value.AcquireSession(request.SessionId);
-            if (!_custody.Value.PrepareStart(request, _settings.PtyBackend, VerificationCustodyBackend))
+            if (!_custody.Value.PrepareStart(request, BackendDecision.Requested, VerificationCustodyBackend))
             {
                 if (_sessions.TryGetValue(request.SessionId, out var existing)
                     && existing.VerificationBinding == request.VerificationBinding)
@@ -443,7 +449,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         HostStartTimeUtc = DateTime.MinValue, CreatedAtUtc = DateTime.UtcNow,
                         AcceptedStartedAt = request.AcceptedStartedAt,
                     }.SaveAtomic(PtyHostManifest.PathFor(_settings.PtyHostManifestDir, request.SessionId));
-                await session.StartAsync(request, _launcher, ct);
+                await session.StartAsync(request, _launcher, BackendDecision.Requested, ct);
             }
 
             return session.ToDto();
@@ -764,7 +770,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             CodexCliVersion: cli?.CodexCliVersion,
             CodexCliVersionCheckedAtUtc: cli?.CodexCliVersionCheckedAtUtc,
             CodexCliVersionError: cli?.CodexCliVersionError,
-            CodexCliLauncherFingerprint: cli?.CodexCliLauncherFingerprint);
+            CodexCliLauncherFingerprint: cli?.CodexCliLauncherFingerprint,
+            PtyBackendDeprecated: decision.Deprecated);
     }
 
     public RunnerSessionDto Get(Guid sessionId) => GetSession(sessionId).ToDto();
@@ -2271,7 +2278,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             }
         }
 
-        public async Task StartAsync(RunnerLaunchRequest request, PtyHostLauncher launcher, CancellationToken ct)
+        public async Task StartAsync(RunnerLaunchRequest request, PtyHostLauncher launcher,
+            string backendRequest, CancellationToken ct)
         {
             Directory.CreateDirectory(_settings.SessionLogPath);
             Directory.CreateDirectory(_settings.PtyHostLogDir);
@@ -2287,14 +2295,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     launchTimeout: TimeSpan.FromSeconds(_settings.PtyHostLaunchTimeoutSec),
                     lingerTtl: TimeSpan.FromHours(_settings.PtyHostLingerHours),
                     ringCapChars: Math.Max(1, _settings.ReplayBufferMaxChars),
-                    // CARD-0045: state the backend on the host's command line instead of relying on it
-                    // inheriting our environment block. Production is unchanged — the daemon exports the
-                    // same SessionRunner:PtyBackend value into ANTIPHON_PTY_BACKEND at startup, so the
-                    // host now hears the same answer twice. What it BUYS is the host-mediated tests: a
-                    // caller that builds its own runtime (DirectSessionRunnerClient) could not reach
-                    // PtyAgentRunner's per-instance override at all, three processes down, and so ran on
-                    // whatever the test process had inherited.
-                    ptyBackend: _settings.PtyBackend,
+                    // Carry the runtime's frozen effective request, including explicit empty.
+                    ptyBackend: backendRequest,
                     custodyStoreRoot: _custodyLedger?.Store.Root,
                     // CARD-0604 D-17: the runner's probe result, which PrepareStart has already
                     // required to equal this binding's backend -- so the binding is the same

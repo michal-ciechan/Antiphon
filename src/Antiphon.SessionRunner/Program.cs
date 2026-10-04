@@ -130,18 +130,11 @@ builder.Services.AddHostedService<HerdrEventPumpService>();
 // CARD-0163: display-only transcript state labels; inert unless the optional Herdr lane is enabled.
 builder.Services.AddHostedService<HerdrStatusPushService>();
 
-// The pty backend switch (CARD-0037), defaulting OFF. Exported into this process's environment so it
-// reaches the DETACHED pty-hosts for free: PtyHostLauncher starts them with UseShellExecute=false
-// and no environment override, so they inherit this block. An env var already set on the runner wins
-// over appsettings — that is how an operator flips one machine without editing config.
-{
-    var configured = builder.Configuration[PtyBackendPolicy.ConfigKey];
-    if (!string.IsNullOrWhiteSpace(configured)
-        && string.IsNullOrEmpty(Environment.GetEnvironmentVariable(PtyBackendPolicy.EnvVar)))
-    {
-        Environment.SetEnvironmentVariable(PtyBackendPolicy.EnvVar, configured);
-    }
-}
+// Resolve environment-over-config once. The runtime carries this same raw request to every host
+// and reports its instance decision through both capability producers and custody.
+var effectivePtyRequest = PtyBackendConfiguration.EffectiveRequest(
+    builder.Configuration[PtyBackendPolicy.ConfigKey], Environment.GetEnvironmentVariable(PtyBackendPolicy.EnvVar));
+builder.Services.PostConfigure<SessionRunnerSettings>(settings => settings.PtyBackend = effectivePtyRequest);
 
 var app = builder.Build();
 var startup = app.Services.GetRequiredService<RunnerStartupDiagnostics>();
@@ -197,13 +190,8 @@ async ValueTask<object?> HerdrUnreachableFilter(EndpointFilterInvocationContext 
 // Say which pseudoconsole every session on this runner will get, once, at startup. A "modern"
 // request that fell back to the inbox conhost looks identical from everywhere else, and it silently
 // re-arms the 1 KB clipping the ceilings exist for.
-{
-    var decision = PtyBackendPolicy.Resolve();
-    if (decision.FellBack)
-        app.Logger.LogWarning("PTY backend: {Decision}", decision);
-    else
-        app.Logger.LogInformation("PTY backend: {Decision}", decision);
-}
+PtyBackendConfiguration.LogDecision(app.Logger,
+    app.Services.GetRequiredService<SessionRunnerRuntime>().BackendDecision);
 
 // Readiness gating: adopt pty-hosts that survived the previous runner BEFORE the HTTP API starts
 // listening. The server's reconciler treats "runner doesn't know this session" as fatal, so the

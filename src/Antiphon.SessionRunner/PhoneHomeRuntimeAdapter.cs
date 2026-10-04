@@ -57,7 +57,8 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
             CodexCliVersion: cli?.CodexCliVersion,
             CodexCliVersionCheckedAtUtc: cli?.CodexCliVersionCheckedAtUtc,
             CodexCliVersionError: cli?.CodexCliVersionError,
-            CodexCliLauncherFingerprint: cli?.CodexCliLauncherFingerprint);
+            CodexCliLauncherFingerprint: cli?.CodexCliLauncherFingerprint,
+            PtyBackendDeprecated: decision.Deprecated);
     }
 
     public string? VerificationCustodyBackend =>

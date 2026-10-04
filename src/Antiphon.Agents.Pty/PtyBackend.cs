@@ -34,6 +34,12 @@ public sealed record PtyBackendDecision(
 {
     public bool Deprecated => Backend == PtyBackend.InboxConhost;
 
+    /// <summary>Unknown Windows selectors remain accepted during release A, with a warning.</summary>
+    public bool UnrecognisedRequest => Backend != PtyBackend.UnixPty
+        && !string.IsNullOrWhiteSpace(Requested) && !PtyBackendPolicy.IsKnownRequest(Requested);
+
+    public bool RequiresWarning => Deprecated || UnrecognisedRequest;
+
     /// <summary>True when the modern backend was asked for and could not be given.</summary>
     public bool FellBack =>
         Backend == PtyBackend.InboxConhost
@@ -44,31 +50,23 @@ public sealed record PtyBackendDecision(
 }
 
 /// <summary>
-/// The flag. <b>Defaults OFF</b> — an unset or unrecognised value is the inbox conhost, i.e. exactly
-/// the behaviour that shipped before CARD-0037, with the existing ceilings still in force.
-///
-/// <para><b>Scope: one switch, process-wide, inherited.</b> The session runner, the detached
-/// pty-hosts it spawns and the server-side adapters all move together, because they all deliver
-/// bodies that were sized against ONE set of ceilings — a per-session backend would make
-/// <c>BriefInlineMaxBytes</c> correct for some sessions and a data-loss bug for others. Propagation
-/// is free: <c>PtyHostLauncher</c> starts hosts with <c>UseShellExecute=false</c> and no environment
-/// override, so the host inherits the runner's environment block, and the runner exports this
-/// variable from <c>SessionRunner:PtyBackend</c> at startup when one is configured.</para>
-///
-/// <para><b>Tests move independently</b>, by construction: they need to pin BOTH backends at once
-/// (the inbox one strips the markers, the modern one delivers them — that pair IS the contract), so
-/// <see cref="PtyAgentRunner"/> takes a per-instance override rather than reading only the
-/// environment.</para>
+/// CARD-1022 release A: Windows defaults to the shipped modern host. Explicit legacy selectors
+/// and missing-pair fallback remain deprecated transitions until releases B/C. Unix uses Porta
+/// without probing Windows files. Explicit instance requests, including empty, override ambient input.
 /// </summary>
 public static class PtyBackendPolicy
 {
-    /// <summary>Accepted values: <c>inbox</c> (default), <c>modern</c>. Also 0/off/false and 1/on/true.</summary>
+    /// <summary>Windows defaults to modern; inbox/0/off/false/no are deprecated selectors.</summary>
     public const string EnvVar = "ANTIPHON_PTY_BACKEND";
 
     /// <summary>The configuration key the session runner reads and exports into <see cref="EnvVar"/>.</summary>
     public const string ConfigKey = "SessionRunner:PtyBackend";
 
-    public static bool IsInboxRequest(string requested) => Parse(requested) == PtyBackend.InboxConhost;
+    public static bool IsInboxRequest(string requested) => requested.Trim().ToLowerInvariant()
+        is "inbox" or "0" or "off" or "false" or "no";
+
+    internal static bool IsKnownRequest(string requested) => IsInboxRequest(requested)
+        || requested.Trim().ToLowerInvariant() is "modern" or "conpty" or "1" or "on" or "true" or "yes";
 
     /// <summary>
     /// Resolves the backend for one spawn. <paramref name="requested"/> overrides the environment;
@@ -89,29 +87,27 @@ public static class PtyBackendPolicy
                   ?? environment
                   ?? string.Empty;
 
-        if (Parse(raw) == PtyBackend.InboxConhost)
+        if (!isWindows)
+            return new PtyBackendDecision(PtyBackend.UnixPty, null, raw,
+                "Unix PTY via Porta; Windows backend selectors do not apply");
+
+        if (IsInboxRequest(raw))
             return new PtyBackendDecision(
                 PtyBackend.InboxConhost, null, raw,
-                raw.Length == 0
-                    ? $"{EnvVar} unset — default"
-                    : $"{EnvVar}='{raw}'");
+                $"{EnvVar}='{raw}' selects the deprecated inbox conhost; migrate to modern");
 
+        var selection = string.IsNullOrWhiteSpace(raw) ? "default modern; "
+            : !IsKnownRequest(raw) ? $"unrecognised {EnvVar}='{raw}'; choosing modern; " : "";
         var (dll, why) = locate();
         if (dll is not null)
-            return new PtyBackendDecision(PtyBackend.ModernConPty, dll, raw, why);
+            return new PtyBackendDecision(PtyBackend.ModernConPty, dll, raw, selection + why);
 
         // The card's explicit requirement: a machine without the redistributable keeps working, on
         // the old binary, with the old ceilings. Which is also why the ceilings cannot simply be
         // deleted once the modern path ships.
         return new PtyBackendDecision(
             PtyBackend.InboxConhost, null, raw,
-            $"modern backend requested but unavailable ({why}) — falling back to the inbox conhost; "
+            selection + $"modern backend requested but unavailable ({why}) — falling back to the deprecated inbox conhost; "
             + "the paste ceilings still apply");
     }
-
-    private static PtyBackend Parse(string raw) => raw.Trim().ToLowerInvariant() switch
-    {
-        "modern" or "conpty" or "1" or "on" or "true" or "yes" => PtyBackend.ModernConPty,
-        _ => PtyBackend.InboxConhost,
-    };
 }

@@ -74,17 +74,20 @@ public static class ConPtyRedistributable
     /// inbox <c>conhost.exe</c> when it cannot find its console host, which would put us back on the
     /// stripping binary while claiming the modern backend.
     /// </summary>
-    public static bool TryLocate(out string? dllPath, out string reason)
+    public static bool TryLocate(out string? dllPath, out string reason) =>
+        TryLocate(OperatingSystem.IsWindows(), ProbeDirectories(), out dllPath, out reason);
+
+    internal static bool TryLocate(bool isWindows, IReadOnlyList<string> probed,
+        out string? dllPath, out string reason)
     {
         dllPath = null;
 
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (!isWindows)
         {
             reason = "not Windows — there is no pseudoconsole to redirect";
             return false;
         }
 
-        var probed = ProbeDirectories();
         foreach (var dir in probed)
         {
             var dll = Path.Combine(dir, DllName);
