@@ -1,5 +1,7 @@
 param(
-    [ValidateSet('success','nonzero','stderr','stdout-flood','stderr-flood','stdin','timeout','tree','parent-exits','leaf','diagnostic','notice','notice-held')]
+    [ValidateSet('success','nonzero','stderr','stdout-flood','stderr-flood','stdin','timeout','tree','parent-exits','leaf','diagnostic','notice','notice-held',
+        'stderr-4096','stderr-4097','stdout-notices','outside-cap','fragment','lf-cap','lf-cap-overflow','crlf-cap','crlf-split','eof-cap','eof-stderr-overflow','both-floods',
+        'nonzero-notice','nonzero-stdout','nonzero-stderr','nonzero-both','stderr-banner','malformed-stdout','empty')]
     [string]$Mode = 'success',
     [Parameter(Mandatory=$true)][string]$ReceiptRoot
 )
@@ -64,6 +66,28 @@ if ($Mode -eq 'stdin') {
     $inputBody = [Console]::In.ReadToEnd()
     if ($inputBody.Length -ne 0) { throw 'probe stdin carried data' }
     [IO.File]::WriteAllText((Join-Path $ReceiptRoot 'stdin-eof'), 'eof')
+}
+$banner = 'codex-cli 0.160.0'
+switch ($Mode) {
+    'stderr-4096' { [Console]::Out.WriteLine($banner); [Console]::Error.Write(('E' * 4096)); exit 0 }
+    'stderr-4097' { [Console]::Out.WriteLine($banner); [Console]::Error.Write(('E' * 4097)); exit 0 }
+    'stdout-notices' { [Console]::Out.Write($banner + "`n" + ('N' * 4097)); [Console]::Error.Write('notice'); exit 0 }
+    'outside-cap' { [Console]::Out.Write(('N' * 4096) + "`n" + $banner + "`n"); exit 0 }
+    'fragment' { [Console]::Out.Write(('N' * (4096 - $banner.Length - 1)) + "`n" + $banner + "-beta`n"); exit 0 }
+    'lf-cap' { [Console]::Out.Write(('N' * (4096 - $banner.Length - 2)) + "`n" + $banner + "`n"); exit 0 }
+    'lf-cap-overflow' { [Console]::Out.Write(('N' * (4096 - $banner.Length - 2)) + "`n" + $banner + "`nN"); exit 0 }
+    'crlf-cap' { [Console]::Out.Write(('N' * (4096 - $banner.Length - 3)) + "`n" + $banner + "`r`n"); exit 0 }
+    'crlf-split' { [Console]::Out.Write(('N' * (4096 - $banner.Length - 2)) + "`n" + $banner + "`r`n"); exit 0 }
+    'eof-cap' { [Console]::Out.Write(('N' * (4096 - $banner.Length - 1)) + "`n" + $banner); exit 0 }
+    'eof-stderr-overflow' { [Console]::Out.Write($banner); [Console]::Error.Write(('E' * 4097)); exit 0 }
+    'both-floods' { [Console]::Out.Write($banner + "`n" + ('N' * 1048576)); [Console]::Error.Write(('E' * 1048576)); exit 0 }
+    'nonzero-notice' { [Console]::Out.WriteLine($banner); [Console]::Error.Write('notice'); exit 1 }
+    'nonzero-stdout' { [Console]::Out.Write($banner + "`n" + ('N' * 4097)); [Console]::Error.Write('notice'); exit 1 }
+    'nonzero-stderr' { [Console]::Out.WriteLine($banner); [Console]::Error.Write(('E' * 4097)); exit 1 }
+    'nonzero-both' { [Console]::Out.Write($banner + "`n" + ('N' * 4097)); [Console]::Error.Write(('E' * 4097)); exit 1 }
+    'stderr-banner' { [Console]::Error.WriteLine($banner); exit 0 }
+    'malformed-stdout' { [Console]::Out.WriteLine('codex-cli banana'); [Console]::Error.WriteLine($banner); exit 0 }
+    'empty' { exit 0 }
 }
 [Console]::Out.WriteLine('codex-cli 0.160.0')
 if ($Mode -eq 'stderr') { [Console]::Error.Write('E') }

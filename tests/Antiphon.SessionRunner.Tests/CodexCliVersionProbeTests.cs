@@ -106,15 +106,24 @@ public sealed class CodexCliVersionProbeTests
             ("codex-cli 0.159", 5), ("codex-cli 2147483648.0.0", 6),
             ("codex-cli 00.159.1", 7), ("codex-cli 0.159.1-beta.01", 8),
             ("codex-cli 0.159.1-bad_id", 9), ("codex-cli 0.159.1+build..7", 10),
-            ("codex-cli 0.160.0\ncodex-cli 0.160.0\n", 11),
             ("prefix codex-cli 0.160.0", 12), ("codex-cli 0.160.0 extra", 13),
             (null, 11), ("", 11), ("  ", 11), ("0.160.0", 12),
-            ("codex-cli 0.160.0\n\n", 11), ("codex-cli -1.159.1", 5),
+            ("codex-cli -1.159.1", 5),
             ("codex-cli 0.159.1-", 10), ("codex-cli 0.159.1+", 10),
             ("codex-cli 0.159.1-.beta", 10), ("codex-cli 0.159.1+_", 9)
         };
         foreach (var (output, guard) in invalid)
             Parse(output).ShouldBeNull($"C959-pc-{guard:000} {output}");
+        foreach (var separator in new[] { "\n", "\r\n" })
+        foreach (var terminator in new[] { "", separator })
+            (Parse(string.Join(separator, "notice", "", "codex-cli banana", "codex-cli 0.160.0", "notice",
+                    "codex-cli 00.160.0") + terminator)?.ToString()).ShouldBe("0.160.0", "C1031-lines");
+        (Parse("codex-cli 0.159.1\ncodex-cli 0.160.0\n")?.ToString()).ShouldBe("0.159.1", "C1031-first");
+        (Parse("codex-cli 0.160.0\ncodex-cli 0.160.0\n")?.ToString()).ShouldBe("0.160.0", "C1031-lines duplicates");
+        (Parse("codex-cli 0.160.0\n\n")?.ToString()).ShouldBe("0.160.0", "C1031-lines blank");
+        foreach (var output in new[] { "prefix codex-cli 0.160.0", " codex-cli 0.160.0", "codex-cli 0.160.0 ",
+                     "codex-cli 0.160.0\r", "codex-cli 0.160.0 extra", "0.160.0" })
+            Parse(output).ShouldBeNull("C1031-whole-line " + output);
 
         foreach (var (left, right, expected, guard) in new[]
                  {
@@ -212,6 +221,7 @@ public sealed class CodexCliVersionProbeTests
         captured.ToString().ShouldNotContain("C959-diagnostic-sentinel", customMessage: "C959-pc-026");
         failed.GetRawText().ShouldNotContain("C959-diagnostic-sentinel", customMessage: "C959-pc-199");
         CodexCliVersionTestFixture.Text(failed, "codexCliVersionError").ShouldBe("stderr_output");
+        CodexCliVersionTestFixture.Text(failed, "codexCliVersion").ShouldBe("0.160.0", "C1031-diagnostic-version");
     }
 
     [Test]
@@ -219,8 +229,8 @@ public sealed class CodexCliVersionProbeTests
     {
         using var kit = new CodexCliVersionTestFixture { Mode = "nonzero" };
         foreach (var (mode, error, label) in new[] { ("nonzero", "nonzero_exit", 28),
-                     ("stderr", "stderr_output", 29), ("stdout-flood", "output_truncated", 30),
-                     ("stderr-flood", "output_truncated", 31) })
+                     ("stdout-flood", "output_truncated", 30),
+                     ("stderr-flood", "invalid_output", 31) })
         {
             kit.Mode = mode;
             var sample = await kit.Attempt();
@@ -302,6 +312,61 @@ public sealed class CodexCliVersionProbeTests
                 await Task.Delay(10);
             }
             probe.OwnedCleanupCount.ShouldBe(0, "C959-parent-exit-cleanup-completed");
+        }
+    }
+
+    [Test]
+    public async Task C1031_Truncated_notices_preserve_complete_version()
+    {
+        using var kit = new CodexCliVersionTestFixture();
+        foreach (var (mode, version, error, label) in new (string, string?, string?, string)[]
+        {
+            ("stderr-4096", "0.160.0", "stderr_output", "C1031-byte-cap"),
+            ("stderr-4097", "0.160.0", "output_truncated", "C1031-byte-cap C1031-stderr-overflow"),
+            ("stdout-notices", "0.160.0", "output_truncated", "C1031-stdout-overflow C1031-truncation-priority"),
+            ("outside-cap", null, "output_truncated", "C1031-byte-cap outside"),
+            ("fragment", null, "output_truncated", "C1031-no-fragment"),
+            ("lf-cap", "0.160.0", null, "C1031-byte-cap LF"),
+            ("lf-cap-overflow", "0.160.0", "output_truncated", "C1031-byte-cap LF overflow"),
+            ("crlf-cap", "0.160.0", null, "C1031-byte-cap CRLF"),
+            ("crlf-split", null, "output_truncated", "C1031-no-fragment CRLF"),
+            ("eof-cap", "0.160.0", null, "C1031-byte-cap EOF"),
+            ("eof-stderr-overflow", "0.160.0", "output_truncated", "C1031-stderr-overflow EOF"),
+            ("both-floods", "0.160.0", "output_truncated", "C1031-both-drained"),
+        })
+        {
+            kit.Mode = mode;
+            var pending = kit.Attempt();
+            (await CompletedAsync(pending, TimeSpan.FromSeconds(10))).ShouldBeTrue(label + " bounded completion");
+            var sample = await pending;
+            CodexCliVersionTestFixture.Text(sample, "codexCliVersion").ShouldBe(version, label);
+            CodexCliVersionTestFixture.Text(sample, "codexCliVersionError").ShouldBe(error, label);
+            kit.Children.Last().HasExited.ShouldBeTrue(label + " child exited");
+        }
+    }
+
+    [Test]
+    public async Task C1031_Invalid_or_failed_output_stays_unknown()
+    {
+        using var kit = new CodexCliVersionTestFixture();
+        foreach (var (mode, error, label) in new[]
+        {
+            ("nonzero-notice", "nonzero_exit", "C1031-exit-precedence"),
+            ("nonzero-stdout", "nonzero_exit", "C1031-exit-precedence stdout"),
+            ("nonzero-stderr", "nonzero_exit", "C1031-exit-precedence stderr"),
+            ("nonzero-both", "nonzero_exit", "C1031-exit-precedence both"),
+            ("stderr-banner", "invalid_output", "C1031-stdout-only"),
+            ("malformed-stdout", "invalid_output", "C1031-stdout-only malformed"),
+            ("empty", "invalid_output", "C1031-no-version-token empty"),
+            ("stderr-flood", "invalid_output", "C1031-no-version-token"),
+            ("stdout-flood", "output_truncated", "C1031-no-version-token stdout"),
+        })
+        {
+            kit.Mode = mode;
+            var sample = await kit.Attempt().WaitAsync(TimeSpan.FromSeconds(10));
+            CodexCliVersionTestFixture.Text(sample, "codexCliVersion").ShouldBeNull(label);
+            CodexCliVersionTestFixture.Text(sample, "codexCliVersionError").ShouldBe(error, label);
+            kit.Children.Last().HasExited.ShouldBeTrue(label + " child exited");
         }
     }
 
@@ -415,6 +480,7 @@ public sealed class CodexCliVersionProbeTests
         using var kit = new CodexCliVersionTestFixture();
         await kit.Refresh();
         foreach (var (mode, version, error) in new[] { ("success", "0.160.0", (string?)null),
+                     ("notice", "0.160.0", "stderr_output"), ("stderr-4097", "0.160.0", "output_truncated"),
                      ("nonzero", (string?)null, "nonzero_exit") })
         {
             kit.Mode = mode;
