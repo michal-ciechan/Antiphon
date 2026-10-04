@@ -90,7 +90,7 @@ public sealed class RoutingExhaustedPlacementTests
         {
             "kind" => RunnerSelectionSource.KindDefault,
             "global" => RunnerSelectionSource.GlobalDefault,
-            _ => RunnerSelectionSource.Fallback,
+            _ => (RunnerSelectionSource?)null,
         }, "selection-source");
         task.RunnerDefaultsRevision.ShouldBe(s.Revision, "defaults-revision");
         created.Routing!.Candidates.ShouldNotContain(x => x.Outcome == "chosen");
