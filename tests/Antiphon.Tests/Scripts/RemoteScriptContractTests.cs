@@ -1391,7 +1391,7 @@ public sealed class RemoteScriptContractTests
             {
                 C849_Cache_cases_use_only_the_validated_host_lane,
                 C849_Saved_donor_archive_is_checked_and_imported_without_a_container,
-                C849_Saved_donor_rejects_unsafe_archives_missing_pack_and_busy_counters,
+                C849_Saved_donor_rejects_unsafe_archives_empty_payload_and_busy_counters,
                 C849_Saved_donor_rejects_declared_size_bomb_before_writing,
                 C849_Seed_publishes_complete_payloads_before_its_marker
             };
@@ -1473,12 +1473,13 @@ public sealed class RemoteScriptContractTests
                     C849WriteLfFixture (Join-Path $caseDir 'c590-result.json') '{"accepted":true,"exit":0}'
                     C849WriteLfFixture (Join-Path $caseDir 'status.json') (
                         @{ sessions=0; runnerSessions=0; queuedTasks=0; buildVersion=$sha; dispatchEligible=$true; acceptingNewWork=$true; draining=$false } | ConvertTo-Json -Compress)
-                    C849WriteLfFixture (Join-Path $caseDir 'smoke-summary.txt') 'uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK'
+                    C849WriteLfFixture (Join-Path $caseDir 'smoke-summary.txt') "C849_SMOKE runner=$($m.runnerId) uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK"
                     $private = if ($m.runnerId -eq 'server2') { 'antiphon-runner_runner-tmp' } else { 'antiphon-runner-temp_runner-tmp' }
                     C849WriteLfFixture (Join-Path $caseDir 'runner-mounts.txt') (
-                        "antiphon-runner-cache-nuget-packages antiphon-runner-cache-nuget-scratch antiphon-runner-cache-npm-content`n$private /tmp true")
+                        "volume antiphon-runner-cache-nuget-packages /home/app/.nuget/packages true`nvolume antiphon-runner-cache-nuget-scratch /var/cache/antiphon/nuget-scratch true`nvolume antiphon-runner-cache-npm-content /home/app/.npm/_cacache true`nvolume $private /tmp true")
                     C849WriteLfFixture (Join-Path $caseDir 'seed-hash.txt') ('a' * 64)
                     C849WriteLfFixture (Join-Path $caseDir 'seed-kind.txt') 'full'
+                    C849WriteLfFixture (Join-Path $caseDir 'seed-contract.txt') "schema=legacy`nkind=full`ndigest-type=payload-sha256`ndigest=$('a' * 64)`nsmoke=passed"
                     foreach ($name in @('c590-result.json', 'status.json', 'smoke-summary.txt', 'runner-mounts.txt', 'seed-hash.txt', 'seed-kind.txt')) {
                         C849AssertLfFixture (Join-Path $caseDir $name)
                     }
@@ -2735,7 +2736,7 @@ public sealed class RemoteScriptContractTests
         var seed = Block(Remote(), "c849_seed");
         Order(seed, "docker stop \"$donor\"", "docker cp \"$donor:/home/app/.nuget/packages/.\"").ShouldBeTrue();
         Order(seed, "c849_smoke \"$helper\" seed", "mv \"$stage\" \"$recovery\"").ShouldBeTrue();
-        Order(seed, "docker start \"$donor\"", "mv \"$C849_READY.tmp-$RUN\" \"$C849_READY\"").ShouldBeTrue();
+        Order(seed, "docker start \"$donor\"", "mv -T -- \"$C849_READY.tmp-$RUN\" \"$C849_READY\"").ShouldBeTrue();
         var status = LinuxShell(CacheStatusHarness() + "\n" + """
             for STATUS in sessions runnerSessions queuedTasks null garbage unknown; do
                 c849_status_zero server2-temp reconnected
@@ -2826,9 +2827,9 @@ public sealed class RemoteScriptContractTests
             for fault in host metadata reference symlink hardlink special; do
                 copy="$root/$fault"; cp -a "$tree" "$copy"
                 case "$fault" in
-                    host) rm "$copy/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" ;;
-                    metadata) : > "$copy/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata" ;;
-                    reference) : > "$copy/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata" ;;
+                    host) find "$copy/packages" -name .nupkg.metadata -delete ;;
+                    metadata) find "$copy/packages" -name .nupkg.metadata -exec truncate -s 0 {} + ;;
+                    reference) printf bad > "$copy/packages/microsoft.netcore.app.ref/bad-version" ;;
                     symlink) ln -s "$root/outside" "$copy/packages/escape" ;;
                     hardlink) ln "$copy/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata" "$copy/packages/escape" ;;
                     special) mkfifo "$copy/packages/escape" ;;
@@ -2843,8 +2844,8 @@ public sealed class RemoteScriptContractTests
             [ "$(cat "$root/sibling")" = keep ] && echo sibling-preserved
             """);
         foreach (var expected in new[] {
-            "host code=2 diagnosis=AppHostDonorMissing", "metadata code=2 diagnosis=AppHostDonorMetadataMissing",
-            "reference code=2 diagnosis=Net9ReferenceDonorMissing", "symlink code=2 diagnosis=CacheDonorUnsafeEntry",
+            "host code=2 diagnosis=CacheDonorPackagesEmpty", "metadata code=2 diagnosis=CacheDonorPackagesEmpty",
+            "reference code=2 diagnosis=CacheDonorVersionInvalid", "symlink code=2 diagnosis=CacheDonorUnsafeEntry",
             "hardlink code=2 diagnosis=CacheDonorUnsafeEntry", "special code=2 diagnosis=CacheDonorUnsafeEntry",
             "path code=2 diagnosis=CacheDonorUnsafePath", "sibling-preserved" })
             output.ShouldContain(expected);
@@ -3035,7 +3036,7 @@ public sealed class RemoteScriptContractTests
 
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
-    public void C849_Saved_donor_rejects_unsafe_archives_missing_pack_and_busy_counters()
+    public void C849_Saved_donor_rejects_unsafe_archives_empty_payload_and_busy_counters()
     {
         RequireLinuxPwsh();
         var remote = Remote();
@@ -3084,7 +3085,7 @@ public sealed class RemoteScriptContractTests
             ln -s "$root/outside" "$tree/packages/link"
             tar -cf "$root/symlink.tar" -C "$tree" .
             rm "$tree/packages/link"
-            rm "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost"
+            find "$tree/packages" -name .nupkg.metadata -delete
             tar -cf "$root/missing.tar" -C "$tree" .
             for fault in traversal nested-traversal symlink missing; do
                 stage="$root/stage-$fault"; mkdir -p "$stage/packages" "$stage/npm"
@@ -3123,7 +3124,7 @@ public sealed class RemoteScriptContractTests
         output.ShouldContain("directory-fifo code=2 diagnosis=CacheDonorUnsafeEntry");
         output.ShouldContain("directory-fifo-not-copied");
         output.ShouldContain("symlink code=2 diagnosis=CacheDonorUnsafeEntry");
-        output.ShouldContain("missing code=2 diagnosis=AppHostDonorMissing");
+        output.ShouldContain("missing code=2 diagnosis=CacheDonorPackagesEmpty");
         output.ShouldContain("main-busy code=2 verdict=refusal=CacheConsumersBusy");
         output.ShouldContain("main-unknown code=2 verdict=refusal=CacheConsumersBusy");
         output.ShouldContain("ps-error code=2 verdict=refusal=CacheConsumerUnknown");
@@ -4012,10 +4013,12 @@ public sealed class RemoteScriptContractTests
                     sessions=0; runnerSessions=0; queuedTasks=0; credential='TOKEN_SENTINEL_C912' } | ConvertTo-Json -Compress
                 [IO.File]::WriteAllText((Join-Path $dir 'status.json'), $status + "`n")
                 $private = if ($m.runnerId -eq 'server2-temp') { 'antiphon-runner-temp_runner-tmp' } else { 'antiphon-runner_runner-tmp' }
-                $mounts = "antiphon-runner-cache-nuget-packages antiphon-runner-cache-nuget-scratch antiphon-runner-cache-npm-content`n$private /tmp true`n"
+                $mounts = "volume antiphon-runner-cache-nuget-packages /home/app/.nuget/packages true`nvolume antiphon-runner-cache-nuget-scratch /var/cache/antiphon/nuget-scratch true`nvolume antiphon-runner-cache-npm-content /home/app/.npm/_cacache true`nvolume $private /tmp true`n"
                 [IO.File]::WriteAllText((Join-Path $dir 'runner-mounts.txt'), $mounts)
                 $kind = if ($m.runnerId -eq 'server2-temp') { $global:kind2 } else { 'cold' }
                 [IO.File]::WriteAllText((Join-Path $dir 'seed-kind.txt'), $kind + "`n")
+                $contract = if ($kind -eq 'cold') { "schema=2`nkind=cold`ndigest-type=none`ndigest=none`nsmoke=not-run`n" } else { "schema=legacy`nkind=full`ndigest-type=payload-sha256`ndigest=$('a' * 64)`nsmoke=passed`n" }
+                [IO.File]::WriteAllText((Join-Path $dir 'seed-contract.txt'), $contract)
                 if ($Case -eq 'verify-runner-caches-retired') {
                     [IO.File]::WriteAllText((Join-Path $dir 'rollback.txt'), 'rollback-image=sha256:' + ('0' * 64) + "`n")
                 }
@@ -4029,7 +4032,7 @@ public sealed class RemoteScriptContractTests
                 Write-Output 'cold-no-smoke'
                 $global:kind2 = 'full'
                 try { & $Front -Case Both -Sha $sha | Out-Null; throw 'mixed-kind-accepted' }
-                catch { if ($_.Exception.Message -ne 'C849 mixed marker kinds') { throw } }
+                catch { if ($_.Exception.Message -ne 'C849 mixed seed contracts') { throw } }
                 Write-Output 'mixed-kind-refused'
             }
             finally {
@@ -4331,24 +4334,20 @@ public sealed class RemoteScriptContractTests
                         done
                         name="${mount#*source=}"; name="${name%%,*}"
                         path="$root/volumes/$name"
-                        case "$code" in
-                            *'stat -c'*)
-                                [ "$FAULT" = symlink ] && return 1
-                                [ "$FAULT" = file ] && return 1
-                                [ "$FAULT" = mode ] && echo 1654:1654:755 || echo 1654:1654:700
-                                return 0 ;;
-                            *'.c849-probe-'*)
-                                [ -d "$path" ] || return 1
-                                printf 'probe\n' > "$path/.c849-probe-$RUN"
-                                mv "$path/.c849-probe-$RUN" "$path/.c849-probe-$RUN.moved"
-                                rm "$path/.c849-probe-$RUN.moved"; return 0 ;;
-                            *'find /cache -mindepth'*)
-                                find "$path" -mindepth 1 -print -quit; return 0 ;;
-                            *'chown 1654'*)
-                                [ -d "$path" ] || return 1
-                                chmod 0700 "$path"; return 0 ;;
-                        esac
-                        return 2 ;;
+                        code="${code//\/cache/$path}"
+                        (
+                            chown() { :; }
+                            stat() {
+                                if [ "$1" = -c ] && [ "$2" = %u:%g:%a ]; then
+                                    if [ "$FAULT" = mode ]; then echo 1654:1654:755
+                                    elif [ "$FAULT" = uid ]; then echo 0:0:700
+                                    else printf '1654:1654:%s\n' "$(command stat -c %a "${@: -1}")"; fi
+                                else command stat "$@"; fi
+                            }
+                            eval "$code"
+                        )
+                        return $? ;;
+
                 esac
                 return 2
             }

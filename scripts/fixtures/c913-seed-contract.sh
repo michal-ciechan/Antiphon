@@ -92,7 +92,7 @@ docker() {
         if [[ "$*" == *volume=* ]]; then [ "$FAULT" != attachment ] || echo foreign; return 0; fi
         if [[ "$*" == *"project=$TEMP_PROJECT"* ]]; then
           if [ "$SOURCE" = live ]; then echo "$donor_id"; [ "$FAULT" != duplicate ] || echo duplicate; fi
-        else echo main; fi ;;
+        else printf '%064d\n' 4; fi ;;
       inspect:*)
         [ "$FAULT" != inspect-error ] || return 1
         case "$3" in
@@ -115,6 +115,7 @@ docker() {
         if [[ "$*" == *'ps -eo uid,comm'* ]]; then
           [ "$FAULT" != process-error ] || return 1
           if [ "$FAULT" = writer ]; then printf '1654 dotnet\n'; else printf '0 init\n'; fi
+        elif [[ "$*" == *'ps -eo uid,args'* ]]; then echo 0
         elif [[ "$*" == *'rev-parse HEAD'* ]]; then echo "$SHA"
         elif [[ "$*" == *'curl '* ]]; then printf '{"occupied":0,"leases":[]}'
         elif [[ "$*" == *'/bin/sh -s'* ]]; then
@@ -142,6 +143,12 @@ docker() {
         fi
         if [ "$entrypoint" = sha256sum ]; then code="sha256sum ${!#}"; fi
         if [ -z "$code" ]; then code=$(cat); fi
+        if [[ "$code" == *'c849_manifest_compare /import '* ]]; then
+          mkdir -p "$root/import-view"
+          cp -a "$root/volumes/$C849_PACKAGES/_data" "$root/import-view/packages"
+          cp -a "$root/volumes/$C849_NPM/_data" "$root/import-view/npm"
+          code="${code//\/import/$root/import-view}"
+        fi
         for arg in "${mappings[@]}"; do target="${arg%%|*}"; source="${arg#*|}"; code="${code//"$target"/"$source"}"; done
         if [[ "$code" == *'cp -a '* ]]; then
           [ "$FAULT" != import ] || return 1
