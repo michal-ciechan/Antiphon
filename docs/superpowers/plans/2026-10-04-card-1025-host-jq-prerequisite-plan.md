@@ -830,7 +830,7 @@ next: code
 handoff: Land this appended TestDesign, then commission S1 and S2 separately within 30–60 minutes each. Implement the private native-Linux seams and 19 methods; run only CP-1 after S1 and CP-2/CP-3 after S2. Ordinary V/R is 23 minutes; 50 exact-method PCs cost 308 minutes post-land. Keep host activation caller-owned and separate from CARD-1040.
 artifact: docs/superpowers/plans/2026-10-04-card-1025-host-jq-prerequisite-plan.md
 
-## Code refinement: CARD-1054 canonical host path
+### Code refinement: CARD-1054 canonical host path
 
 Caller input `2a4f19bd-f3c6-450f-b56a-654a36e853ee`, applied by original Code
 owner `f92f723a-8e78-4d69-93dc-2fb0e97604e2`, supersedes D-2/D-3 and M-1/M-3's
