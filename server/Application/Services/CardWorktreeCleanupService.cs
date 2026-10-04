@@ -5,6 +5,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -14,12 +15,13 @@ namespace Antiphon.Server.Application.Services;
 /// </summary>
 public sealed class CardWorktreeCleanupService(AppDbContext db, TimeProvider clock)
 {
+    internal Func<CancellationToken, Task>? BeforeInventorySaveAsync { get; set; }
+
     public async Task<IReadOnlyList<Guid>> DiscoverAsync(Guid cardId, CancellationToken ct)
     {
-        // Serialize duplicate callbacks with the card writer. No filesystem, Git or runner
-        // call is made in this short transaction. The unique keys are an independent backstop.
+        // Inventory is non-destructive. Uniqueness converges competing callbacks; deletion
+        // admission must independently serialize with the card writer and workspace users.
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
-        await db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM \"Cards\" WHERE \"Id\" = {cardId} FOR UPDATE", ct);
         var card = await db.Cards.AsNoTracking().SingleOrDefaultAsync(c => c.Id == cardId, ct);
         if (card is null || card.Status != CardStatus.Done)
         {
@@ -86,8 +88,23 @@ public sealed class CardWorktreeCleanupService(AppDbContext db, TimeProvider clo
             current.Add(target.Id);
         }
         cleanup.LastDiscoveredAt = now;
-        await db.SaveChangesAsync(ct);
-        await transaction.CommitAsync(ct);
+        if (BeforeInventorySaveAsync is not null) await BeforeInventorySaveAsync(ct);
+        try
+        {
+            await db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+        {
+            // Another discovery committed this generation/attempt first. Read its durable
+            // result after rolling back our whole inventory; no failed tracked row survives.
+            await transaction.RollbackAsync(ct);
+            await transaction.DisposeAsync();
+            db.ChangeTracker.Clear();
+            return await db.CardWorktreeCleanupTargets.AsNoTracking()
+                .Where(t => t.Cleanup.CardId == cardId && t.Cleanup.DoneRevisionId == revision.Id)
+                .Select(t => t.Id).ToListAsync(ct);
+        }
         return current;
     }
 
