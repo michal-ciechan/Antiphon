@@ -17,6 +17,8 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private SessionRunnerRuntime _runtime;
+    private readonly TestOwnedPtyHost _ownedHosts;
+    internal Action? OnDisposeCore { get; set; }
     private readonly Antiphon.SessionRunner.SessionRunnerSettings _runnerSettings;
     private readonly HerdrClient? _herdrClient;
     private readonly IProcessLivenessProbe? _processLiveness;
@@ -119,6 +121,8 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             PtyBackend = ptyBackend,
         };
         _runtime = BuildRuntime();
+        _ownedHosts = new TestOwnedPtyHost(_runnerSettings.ResolvedPtyHostDir,
+            new TestOwnedPtyHost.Operations { Record = (operation, _) => { if (operation == "dispose-core") OnDisposeCore?.Invoke(); } });
     }
 
     /// <summary>
@@ -131,10 +135,14 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
         await _runtime.DisposeAsync();
         _runtime = BuildRuntime();
         await _runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), ct);
+        CaptureOwnedHosts();
     }
 
-    public Task AdoptOrphanedHostsAsync(CancellationToken ct = default) =>
-        _runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), ct);
+    public async Task AdoptOrphanedHostsAsync(CancellationToken ct = default)
+    {
+        await _runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), ct);
+        CaptureOwnedHosts();
+    }
 
     private SessionRunnerRuntime BuildRuntime() =>
         new(
@@ -192,7 +200,9 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
         BeforeStart?.Invoke();
         try
         {
-            return Map(await _runtime.StartAsync(request, ct));
+            var result = await _runtime.StartAsync(request, ct);
+            _ownedHosts.Capture(sessionId, result.Backend, result.VerificationBinding is not null);
+            return Map(result);
         }
         catch (HerdrLaunchException ex)
         {
@@ -394,29 +404,24 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
         }
     }
 
-    public async ValueTask DisposeAsync()
+    private void CaptureOwnedHosts()
     {
-        if (KillOnDispose)
+        foreach (var session in _runtime.List())
+            _ownedHosts.Capture(session.SessionId, session.Backend, session.VerificationBinding is not null);
+        foreach (var request in _startRequests)
+            _ownedHosts.Capture(request.SessionId, request.Backend, request.VerificationBinding is not null);
+    }
+
+    public ValueTask DisposeAsync() => new(_ownedHosts.DisposeAsync(KillOnDispose, CaptureOwnedHosts,
+        async ct =>
         {
             foreach (var session in _runtime.List())
             {
+                ct.ThrowIfCancellationRequested();
                 if (session.Status is "Running" or "Starting")
-                {
-                    try
-                    {
-                        await _runtime.KillAsync(session.SessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
-                    }
-                    catch
-                    {
-                        // Teardown must not mask the test's own failure.
-                    }
-                }
+                    await _runtime.KillAsync(session.SessionId, TimeSpan.FromSeconds(2), ct);
             }
-        }
-
-        await _runtime.DisposeAsync();
-    }
-
+        }, () => _runtime.DisposeAsync().AsTask()));
     private static SessionRunnerEvent? ParseEvent(string eventName, string json)
     {
         if (eventName == SessionRunnerEventNames.SessionOutput)
