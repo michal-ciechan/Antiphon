@@ -652,7 +652,7 @@ internal sealed class C1008HostFixture : IDisposable
         var inputFile = Path.Combine(Root, "bridge-input.sh");
         File.WriteAllText(inputFile, input, new UTF8Encoding(false));
         var arguments = string.Join("\n", start.ArgumentList.Select(a => "$c1030Start.ArgumentList.Add(" + PsQuote(a) + ")"));
-        return $"""
+        return $$"""
             $c1030Start=[System.Diagnostics.ProcessStartInfo]::new({{PsQuote(start.FileName)}})
             $c1030Start.UseShellExecute=$false
             $c1030Start.RedirectStandardInput=$true
