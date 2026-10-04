@@ -30,6 +30,7 @@ public sealed class CardWorktreeCleanupService(AppDbContext db, TimeProvider clo
                 WorktreePath = target.WorktreePath, SourceFullRef = target.SourceFullRef, UpdatedAt = clock.GetUtcNow().UtcDateTime
             };
             target.Endpoints.Add(endpoint);
+            db.CardWorktreeCleanupEndpoints.Add(endpoint);
             await db.SaveChangesAsync(ct);
         }
         return await executor.TryAsync(endpoint.Id, runId, ct);

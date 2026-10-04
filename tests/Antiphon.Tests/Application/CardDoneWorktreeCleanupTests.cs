@@ -1,10 +1,12 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Shouldly;
 using TUnit.Core;
@@ -15,6 +17,197 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CardDoneWorktreeCleanupTests
 {
+    [Test]
+    public async Task C1017_OnlyDoneAuthorizes()
+    {
+        foreach (var status in new[] { CardStatus.InProgress, CardStatus.Review, CardStatus.Canceled })
+        {
+            await using var f = await CompletedCardCleanupFixture.CreateAsync();
+            await f.DiscoverAsync();
+            await using (var writer = f.Host.CreateContext())
+            {
+                var card = await writer.Cards.SingleAsync(c => c.Id == f.CardId);
+                card.Status = status;
+                await writer.SaveChangesAsync();
+            }
+            await f.CleanupAsync();
+            var admittedIntents = await f.IntentsAsync();
+            admittedIntents.ShouldBe(0);
+            (await f.SentinelAsync()).ShouldBe(f.OriginalBytes);
+        }
+        await using var archived = await CompletedCardCleanupFixture.CreateAsync();
+        await archived.DiscoverAsync();
+        await using (var writer = archived.Host.CreateContext())
+        {
+            var card = await writer.Cards.SingleAsync(c => c.Id == archived.CardId);
+            card.ArchivedAt = DateTime.UtcNow;
+            await writer.SaveChangesAsync();
+        }
+        (await archived.CleanupAsync()).IsClean.ShouldBeTrue();
+        await archived.AssertRemovedAsync();
+    }
+
+    [Test]
+    public async Task C1017_GenerationMustMatch()
+    {
+        await using var f = await CompletedCardCleanupFixture.CreateAsync();
+        await f.DiscoverAsync();
+        await f.MoveAsync(f.ReviewColumnId);
+        await f.MoveAsync(f.DoneColumnId);
+        await f.CleanupAsync();
+        var oldGenerationIntents = await f.IntentsAsync();
+        oldGenerationIntents.ShouldBe(0);
+        (await f.SentinelAsync()).ShouldBe(f.OriginalBytes);
+        await f.DiscoverAsync();
+        (await f.CleanupAsync()).IsClean.ShouldBeTrue();
+        await f.AssertRemovedAsync();
+    }
+
+    [Test]
+    public async Task C1017_TerminalTaskRequired()
+    {
+        foreach (var state in new[] { AgentTaskStatus.Queued, AgentTaskStatus.Dispatched, AgentTaskStatus.Working, AgentTaskStatus.Blocked })
+        {
+            await using var f = await CompletedCardCleanupFixture.CreateAsync();
+            await f.ChangeTaskAsync(t => t.Status = state);
+            var reason = (await f.CleanupAsync()).Residue;
+            reason.ShouldBe("terminal_required");
+            (await f.SentinelAsync()).ShouldBe(f.OriginalBytes);
+            await using (var observer = f.Host.CreateContext())
+                (await observer.AgentTasks.SingleAsync(t => t.Id == f.TaskId)).Status.ShouldBe(state);
+            await f.ChangeTaskAsync(t => t.Status = AgentTaskStatus.Succeeded);
+            (await f.CleanupAsync()).IsClean.ShouldBeTrue();
+            await f.AssertRemovedAsync();
+        }
+    }
+
+    [Test]
+    public async Task C1017_UniqueOrdinaryOwner()
+    {
+        foreach (var vector in new[] { "exact-path", "short-prefix" })
+        {
+            await using var f = await CompletedCardCleanupFixture.CreateAsync();
+            await using var writer = f.Host.CreateContext();
+            var id = vector == "short-prefix" ? Guid.ParseExact(f.TaskId.ToString("N")[..8] + Guid.NewGuid().ToString("N")[8..], "N") : Guid.NewGuid();
+            writer.AgentTasks.Add(new AgentTask { Id = id, RootTaskId = id, Title = vector, Goal = "fixture",
+                Status = AgentTaskStatus.Succeeded, Workspace = WorkspaceMode.Worktree,
+                WorktreePath = vector == "exact-path" ? f.Tree : Path.Combine(f.Host.Fixture.Root, "other"),
+                WorktreeBranch = vector == "short-prefix" ? "feat/card-task-" + f.TaskId.ToString("N")[..8] : "other",
+                CreatedAt = DateTime.UtcNow });
+            await writer.SaveChangesAsync();
+            await f.CleanupAsync();
+            var ambiguousIntents = await f.IntentsAsync();
+            ambiguousIntents.ShouldBe(0);
+            (await f.SentinelAsync()).ShouldBe(f.OriginalBytes);
+        }
+    }
+
+    [Test]
+    public async Task C1017_ReopenBeforeIntentRevokes()
+    {
+        await using var f = await CompletedCardCleanupFixture.CreateAsync();
+        await f.CleanupAsync(executor => executor.BeforeIntentAsync = _ => f.MoveAsync(f.ReviewColumnId));
+        var destructiveCalls = f.Host.Fixture.Git.RegistrationDrops.Count;
+        destructiveCalls.ShouldBe(0);
+        (await f.IntentsAsync()).ShouldBe(0);
+        (await f.SentinelAsync()).ShouldBe(f.OriginalBytes);
+    }
+
+    [Test]
+    public async Task C1017_IntentBeforeReopenKeepsFence()
+    {
+        await using var f = await CompletedCardCleanupFixture.CreateAsync();
+        var oldPathLaunches = -1;
+        var result = await f.CleanupAsync(executor => executor.AfterIntentAsync = async ct =>
+        {
+            await f.MoveAsync(f.ReviewColumnId, ct);
+            await using var scope = f.Host.Services.CreateAsyncScope();
+            var journal = scope.ServiceProvider.GetRequiredService<IWorkspaceReservationJournal>();
+            var key = WorkspaceReservationKey.For(f.Tree, "feat/card-task-" + f.TaskId.ToString("N")[..8], f.Host.Fixture.Repository);
+            oldPathLaunches = (await journal.TryAdmitConsumerAsync(new(key, WorkspaceReservationKind.Launch, f.TaskId, null, null), ct)).Accepted ? 1 : 0;
+            var fresh = WorkspaceReservationKey.For(Path.Combine(f.Host.Fixture.Root, "trees", "fresh"), "feat/fresh", f.Host.Fixture.Repository);
+            (await journal.TryAdmitConsumerAsync(new(fresh, WorkspaceReservationKind.Launch, f.TaskId, null, null), ct)).Accepted.ShouldBeTrue();
+        });
+        oldPathLaunches.ShouldBe(0);
+        result.IsClean.ShouldBeTrue(result.Residue);
+        await f.AssertRemovedAsync();
+    }
+
+    [Test]
+    public async Task C1017_ActiveConsumersHold()
+    {
+        foreach (var kind in new[] { "follow-up", "child", "repair", "land", "session" })
+        {
+            await using var f = await CompletedCardCleanupFixture.CreateAsync();
+            await using var scope = f.Host.Services.CreateAsyncScope();
+            var journal = scope.ServiceProvider.GetRequiredService<IWorkspaceReservationJournal>();
+            var key = WorkspaceReservationKey.For(f.Tree, "feat/card-task-" + f.TaskId.ToString("N")[..8], f.Host.Fixture.Repository);
+            var owner = await journal.TryAdmitConsumerAsync(new(key, WorkspaceReservationKind.Launch, f.TaskId, null, null), CancellationToken.None);
+            owner.Accepted.ShouldBeTrue(kind);
+            await f.CleanupAsync();
+            var admittedIntents = await f.IntentsAsync();
+            admittedIntents.ShouldBe(0, kind);
+            (await f.SentinelAsync()).ShouldBe(f.OriginalBytes);
+            await journal.ReleaseConsumerAsync(owner.Snapshot!.Id, owner.Snapshot.Generation, CancellationToken.None);
+            (await f.CleanupAsync()).IsClean.ShouldBeTrue();
+            await f.AssertRemovedAsync();
+        }
+    }
+
+    [Test]
+    public async Task C1017_RecoveryDebtHolds()
+    {
+        await using var f = await CompletedCardCleanupFixture.CreateAsync();
+        await using (var writer = f.Host.CreateContext())
+        {
+            writer.AgentTaskLandRequests.Add(new AgentTaskLandRequest { Id = Guid.NewGuid(), TaskId = f.TaskId, IsPending = true,
+                RequestedAt = DateTime.UtcNow, LastEvaluatedAt = DateTime.UtcNow, LastProgressAt = DateTime.UtcNow });
+            await writer.SaveChangesAsync();
+        }
+        await f.CleanupAsync();
+        var settledRemovalCalls = f.Host.Fixture.Git.RegistrationDrops.Count;
+        settledRemovalCalls.ShouldBe(0);
+        (await f.IntentsAsync()).ShouldBe(0);
+        (await f.SentinelAsync()).ShouldBe(f.OriginalBytes);
+    }
+
+    [Test]
+    public async Task C1017_SnapshotAttemptIsFresh()
+    {
+        await using var f = await CompletedCardCleanupFixture.CreateAsync();
+        await f.CleanupAsync(executor => executor.BeforeIntentAsync = _ => f.ChangeTaskAsync(t => t.Attempt++));
+        var staleIntentCount = await f.IntentsAsync();
+        staleIntentCount.ShouldBe(0);
+        (await f.SentinelAsync()).ShouldBe(f.OriginalBytes);
+    }
+
+    [Test]
+    public async Task C1017_SnapshotReportIsFresh()
+    {
+        await using var f = await CompletedCardCleanupFixture.CreateAsync();
+        await f.CleanupAsync(executor => executor.BeforeIntentAsync = _ => f.ChangeTaskAsync(t => t.Result += "new author detail\n"));
+        var staleIntentCount = await f.IntentsAsync();
+        staleIntentCount.ShouldBe(0);
+        (await f.SentinelAsync()).ShouldBe(f.OriginalBytes);
+    }
+
+    [Test]
+    public async Task C1017_NoDbLockAcrossIo()
+    {
+        await using var f = await CompletedCardCleanupFixture.CreateAsync();
+        var secondWriterCommittedBeforeIoRelease = false;
+        f.Host.Fixture.Git.BeforeUnregister = async _ =>
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            try { await f.MoveAsync(f.ReviewColumnId, deadline.Token); secondWriterCommittedBeforeIoRelease = true; }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
+        };
+        var result = await f.CleanupAsync();
+        secondWriterCommittedBeforeIoRelease.ShouldBeTrue();
+        result.IsClean.ShouldBeTrue(result.Residue);
+        await f.AssertRemovedAsync();
+    }
+
     [Test]
     public async Task C1017_SharedAndBorrowedExcluded()
     {
