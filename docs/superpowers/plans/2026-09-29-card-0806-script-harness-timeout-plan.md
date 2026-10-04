@@ -357,6 +357,11 @@ now has 17 methods, so Linux CP-3 runs 24+17=41 instead of the pinned base's
 The inherited L16 test captures the supervisor PID before cancellation rather
 than reading its disposed Process wrapper after cleanup; its deadlines and
 assertions stay unchanged.
+L14 additionally observes the real root-exit task through a transparent owner
+wrapper before killing the supervisor. This establishes its promised root-exited
+setup before inducing owner loss; all cleanup forwarding, diagnostics, retention
+and descendant-liveness assertions remain intact. Its observed port race was not
+reproduced in three method-scoped runs at the original source tip.
 
 Finalized 2026-09-29 by TestDesign task `b5dff6bc`, against Plan commit
 `c8e1970541c08ea3513bdc3b8325e42f1394fc9f`. **Ready for Code.** D-1 through
