@@ -110,7 +110,7 @@ function Invoke-HostJq {
                         $candidate = $stdout.GetAwaiter().GetResult() | ConvertFrom-Json
                         if ($candidate.lane -cne 'host' -or $candidate.mode -cne $Mode -or $candidate.reason -cne 'HostJqPathUnapproved' -or
                             $candidate.lookupPath -cnotmatch '^/[^\x00-\x1f]{1,4095}$' -or $candidate.path -cnotmatch '^/[^\x00-\x1f]{1,4095}$' -or
-                            $candidate.lookupPath -ceq $hostJqDestination -or $candidate.path -ceq $hostJqDestination) { throw 'shape' }
+                            $candidate.path -ceq $hostJqDestination) { throw 'shape' }
                         $pathRefusal = $candidate
                     } finally { $document.Dispose() }
                 } catch { $pathRefusal = $null }
