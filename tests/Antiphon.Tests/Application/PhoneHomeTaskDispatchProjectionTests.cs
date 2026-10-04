@@ -31,6 +31,77 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
     public Task Runner_bound_grok_task_reaches_the_queue_projected() =>
         VerifyProjectionAsync(AgentKind.Grok);
 
+    [Test]
+    public async Task Signed_out_codex_runner_still_claims_and_reuses_a_warm_session()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+        host.Directory.MarkRecovered(live);
+        var authCalls = 0;
+        peer.Reply = frame =>
+        {
+            if (frame.Operation != PhoneHomeOperation.ProviderAuth) return null;
+            Interlocked.Increment(ref authCalls);
+            return Result(frame, new RunnerProviderAuthDto("codex", false, null, null, DateTimeOffset.UtcNow, null));
+        };
+        var answer = await host.Directory.Resolve(host.AllowedRunnerId).GetProviderAuthAsync("codex", CancellationToken.None);
+        answer.ShouldNotBeNull().LoggedIn.ShouldBe(false);
+        answer.Provider.ShouldBe("codex");
+
+        using var workspace = new TempWorkspace();
+        var taskId = await SeedAsync(schema, workspace.Path, host.AllowedRunnerId, AgentKind.Codex);
+        var agentId = Guid.NewGuid();
+        var sessionId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            // Exercise an already queued Shared task. Create/retry admission and cold-start
+            // authentication remain separate gates; an existing process needs neither.
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+            task.Workspace = WorkspaceMode.Shared;
+            task.WorktreePath = null;
+            task.WorktreeBranch = null;
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = sessionId, DefinitionName = "codex", AgentKind = AgentKind.Codex,
+                Status = SessionStatus.Running, Cwd = workspace.Path,
+                RunnerId = host.AllowedRunnerId, RunnerCwd = "/work/c959-warm",
+                Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now,
+            });
+            db.Agents.Add(new Agent
+            {
+                Id = agentId, Name = "C959 warm Codex", Slug = "c959-" + agentId.ToString("N"),
+                Kind = AgentKind.Codex, ModelLevel = AgentModelLevel.Frontier,
+                WorkingDirectory = workspace.Path, RunnerId = host.AllowedRunnerId,
+                IsPoolDelegate = true, Status = AgentStatus.Idle, PoolIdleSince = now.AddMinutes(-3),
+                PersistentSessionId = sessionId.ToString("D"), CreatedAt = now, UpdatedAt = now,
+            });
+            await db.SaveChangesAsync();
+        }
+        var sink = new RecordingLaunchSink();
+        var graph = CreateDispatcher(schema, host, sink);
+        await using var services = graph.Services;
+        services.GetRequiredService<IOptions<PhoneHomeRunnerSettings>>().Value.CodexAuthProbeEnabled.ShouldBeTrue();
+
+        await graph.Dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var claimed = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        claimed.Status.ShouldBe(AgentTaskStatus.Dispatched, "C959 signed-out evidence must not refuse before claim");
+        claimed.AgentId.ShouldBe(agentId);
+        claimed.AgentSessionId.ShouldBe(sessionId);
+        claimed.RunnerId.ShouldBe(host.AllowedRunnerId);
+        claimed.DispatchedAt.ShouldNotBeNull();
+        (await verify.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Running);
+        var dispatched = await verify.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Dispatched);
+        dispatched.Detail.ShouldContain("Reused warm delegate");
+        (await verify.SessionQueuedMessages.SingleAsync(q => q.ExecutionTaskId == taskId)).AgentSessionId.ShouldBe(sessionId);
+        sink.Specs.ShouldBeEmpty("warm reuse must not start a new process");
+        authCalls.ShouldBe(1, "only the test's independent signed-out observation asks for auth");
+    }
+
     private static async Task VerifyProjectionAsync(AgentKind kind)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
