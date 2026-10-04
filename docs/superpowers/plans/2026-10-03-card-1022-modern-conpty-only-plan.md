@@ -785,7 +785,7 @@ strings below are required assertion labels, used by the PC roster.
   Keep unkeyed NotInParallel, assembly limiter, unique roots and awaited owned
   teardown. No test spawns inbox.
 - V-4: queued modern input/recovery | server integration | complete
-  `SessionQueueReceiptPlumbingTests` (21 results, nine methods) | all inventory
+  `SessionQueueReceiptPlumbingTests` (22 results, ten methods after the b7c17822 repair) | all inventory
   receipt and recovery assertions above, plus pump and failed-startup cleanup tests.
 
 ### Guards the regression
@@ -1048,11 +1048,11 @@ All rows require zero failures and zero skips. No unlisted full-suite run.
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1-S3 | `tests/Antiphon.Agents.Pty.Tests -> bin-c1022-policy/` | portable-policy | `/*/*/(PtyBackendPolicyTests*)\|(Da1StartupResponderTests*)/*` | V-1, R-1 | 8 new policy + 22 parser results; 0 failed/skipped | 30 | 4 | true | `ANTIPHON_PTY_BACKEND=inbox` |
 | CP-2 | S1-S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c1022-capabilities/` | portable-capabilities | `/*/*/(C1022BackendCapabilitiesTests*)\|(RunnerCapabilitiesTests*)/*` | V-2 | 5 new + 7 existing; rebaseline after CARD-0959 land; 0 failed/skipped | 12 | 5 | true | `ANTIPHON_PTY_BACKEND=inbox` |
-| CP-3 | S1-S3 | `tests/Antiphon.Agents.Pty.Tests -> bin-c1022-windows-native/` | windows-modern | `/*/*/(PtyBackendContractTests*)\|(ModernPtyDa1Tests*)\|(PtyBackendEnvGuardTests*)\|(ConPtyEnvironmentIsolationGuardTests*)\|(C1022TypedInputTests*)\|(PtyInputChunkingTests*)/*` | R-1, R-2, R-6 | 4 + 4 + 1 + 2 + 1 + 6 results; 0 failed/skipped | 18 | 9 | true | `ANTIPHON_PTY_BACKEND=inbox` |
+| CP-3 | S1-S3 | `tests/Antiphon.Agents.Pty.Tests -> bin-c1022-windows-native/` | windows-modern | `/*/*/(PtyBackendContractTests*)\|(ModernPtyDa1Tests*)\|(PtyBackendEnvGuardTests*)\|(ConPtyEnvironmentIsolationGuardTests*)\|(C1022TypedInputTests*)\|(PtyInputChunkingTests*)/*` | R-1, R-2, R-6 | 4 + 4 + 1 + 2 + 3 + 6 results; 0 failed/skipped | 20 | 9 | true | `ANTIPHON_PTY_BACKEND=inbox` |
 | CP-4 | S1-S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c1022-windows-launch/` | windows-owned-hosts | `/*/*/(C1022BackendLaunchTests*)\|(PtyBackendEnvGuardTests*)/*` | V-3, R-2 | 3 new owned launches + 1 guard; 0 failed/skipped | 4 | 7 | true | `ANTIPHON_PTY_BACKEND=inbox` |
 | CP-5 | S1-S3 | `tests/Antiphon.PtyHost.Tests -> bin-c1022-windows-pair/` | windows-shadow-pair | `/*/*/(ShadowCopyStoreTests*)\|(PtyBackendEnvGuardTests*)/(Shipped_conpty_binaries_survive_the_deps_json_closure_filter*)\|(The_suite_ignores_an_inherited_pty_backend*)` | R-2, R-3 | Both named methods; 0 failed/skipped | 2 | 4 | true | `ANTIPHON_PTY_BACKEND=inbox` |
 | CP-6 | S1-S3 | `tests/Antiphon.Tests -> bin-c1022-windows-delivery/` | windows-delivery | `/*/Antiphon.Tests.Application/(PtyDeliveryCeilingsTests*)\|(SessionDeliveryProfileTests*)\|(GrokDeliveryShapeTests*)\|(TypedBodySpillTests*)/*` | R-4 | 14 + 7 + 14 + 9 results; 0 failed/skipped | 44 | 8 | true | `ANTIPHON_PTY_BACKEND=inbox;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-7 | S1-S3 | `tests/Antiphon.Tests -> bin-c1022-server-guard/` | windows-queue-and-grok | `/*/*/(PtyBackendEnvGuardTests*)\|(SessionQueueReceiptPlumbingTests*)\|(RunnerGrokAdapterReadyTestsPty*)/(The_suite_ignores_an_inherited_pty_backend*)\|(C475_*)\|(C1022_Incomplete_or_stale_receipts_do_not_confirm*)\|(C1011_windows_backends_reach_ready_and_complete_prompt*)` | V-4, R-2, R-5 | 1 guard + 20 retained queue + 1 new receipt-negative + 1 modern C1011; 0 failed/skipped | 23 | 12 | true | `ANTIPHON_PTY_BACKEND=inbox;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-7 | S1-S3 | `tests/Antiphon.Tests -> bin-c1022-server-guard/` | windows-queue-and-grok | `/*/*/(PtyBackendEnvGuardTests*)\|(SessionQueueReceiptPlumbingTests*)\|(RunnerGrokAdapterReadyTestsPty*)/(The_suite_ignores_an_inherited_pty_backend*)\|(C475_*)\|(C1022_Incomplete_or_stale_receipts_do_not_confirm*)\|(C1022_Partial_receipt_turn_parks_interrupted_attempt*)\|(C1011_windows_backends_reach_ready_and_complete_prompt*)` | V-4, R-2, R-5 | 1 guard + 20 retained queue + 1 native receipt-negative + 1 portable receipt-negative + 1 modern C1011; 0 failed/skipped | 24 | 12 | true | `ANTIPHON_PTY_BACKEND=inbox;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-8 | S1-S3 | `tests/Antiphon.E2E -> bin-c1022-e2e-guard/` | windows-e2e-guard | `/*/*/PtyBackendEnvGuardTests/*` | R-2 | 1 guard, no browser; 0 failed/skipped | 1 | 5 | true | `ANTIPHON_PTY_BACKEND=inbox` |
 | CP-9 | S1-S3 | `tests/Antiphon.Agents.Pty.Tests -> bin-c1022-linux-argv/` | linux-unix-transport | `/*/*/(UnixPtyArgvTests*)\|(PtyBackendEnvGuardTests*)/*` | R-2, R-3 | 17 Unix argument-expanded + 1 guard; 0 failed/skipped | 18 | 5 | true | `ANTIPHON_PTY_BACKEND=modern` |
 
@@ -1060,14 +1060,18 @@ The added receipt-negative method lives in `SessionQueueReceiptPlumbingTests`:
 `C1022_Incomplete_or_stale_receipts_do_not_confirm`, one result with two independent
 worlds. Hold transport before first write, retain the committed attempt/baseline,
 then use the existing test DB seam to insert (a) full body at/below baseline and
-(b) identity-matching truncated body above it. Recreate queue and flush. Stale
+(b) identity-matching truncated body above it, followed by a TurnEnd so the
+recreated queue's idle-only flush can recover the attempt. Recreate queue and flush. Stale
 receipt leaves the row owed until new complete input; current truncated receipt
 parks it under existing truncation policy and never marks LateConfirmed. Assert
 no complete native receipt was fabricated. Use separate worlds so negative rows
 do not contaminate the six recovery cases' exact `[text]` final lists. Release all
 blocked tasks and reap only fixture-owned processes. This is negative evidence,
-not a claim that truncated delivery is successful. New total is **152 results**:
-CP-1/2/9 = 60; Windows CP-3–8 = 92.
+not a claim that truncated delivery is successful. The b7c17822 repair adds two
+portable string/block reader cases (including CRLF/Unicode) and one portable
+partial-receipt fixture case sharing this setup with the native test. These
+reproduce the reported failures on Linux; they do not replace native execution.
+The revised total is **155 results**: CP-1/2/9 = 60; Windows CP-3–8 = 95.
 
 Importer contract: required nine columns remain in order; only supported optional
 Serial/Environment columns follow. Escaped `\|` becomes literal filter OR. All
@@ -1096,7 +1100,7 @@ Validate receipts against their actual SHA. Do not edit source during a run.
 Remove only owned alternate outputs after confirmed test-process exit.
 
 Separate final-SHA Windows Debug is mandatory: run **CP-3–CP-8, exactly as above**
-on the final frozen code SHA, minimum 92 total with every row meeting its own
+on the final frozen code SHA, minimum 95 total with every row meeting its own
 floor and no skips. This is distinct from ordinary Code evidence, even if no
 source changed. Default Debug build configuration applies; do not reuse a Release
 output. Record OS/process architecture, source and loaded runner/host build SHA,
@@ -1131,7 +1135,7 @@ All times below are **estimates**, not measurements. Ordinary Code V/R floor is
 **59 minutes**, the CP column sum: policy 4, capabilities 5, Windows modern 9,
 owned-hosts 7, shadow-pair 4, delivery 8, queue/Grok 12, E2E guard 5, Unix argv 5.
 Each includes its isolated build; do not add nine builds again. Count floor is
-152 executions, unrelated to minutes. Setup/tool bootstrap/provenance import
+155 executions after the b7c17822 repair, unrelated to minutes. Setup/tool bootstrap/provenance import
 allowance is 4 minutes. Authoring and slot queue time are additional, not hidden
 inside measured claims.
 
