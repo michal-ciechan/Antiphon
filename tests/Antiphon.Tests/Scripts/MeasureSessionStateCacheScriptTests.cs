@@ -8,6 +8,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 [Category("Integration")]
+[Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class MeasureSessionStateCacheScriptTests
 {
@@ -223,7 +224,9 @@ public sealed class MeasureSessionStateCacheScriptTests
         var stats = JsonNode.Parse((string)(await command.ExecuteScalarAsync())!)!;
         var rows = stats["statements"]!.AsArray();
         rows.Count.ShouldBe(2);
+        rows.Where(r => r!["shape"]!.GetValue<string>() == "binding").Sum(r => r!["calls"]!.GetValue<int>()).ShouldBe(1);
         rows.Single(r => r!["shape"]!.GetValue<string>() == "binding")!["calls"]!.GetValue<int>().ShouldBe(1);
+        rows.Where(r => r!["shape"]!.GetValue<string>() == "transcript-unknown").Sum(r => r!["calls"]!.GetValue<int>()).ShouldBe(1);
         var unknown = rows.Single(r => r!["shape"]!.GetValue<string>() == "transcript-unknown")!;
         unknown["calls"]!.GetValue<int>().ShouldBe(1);
         unknown["transcript_select"]!.GetValue<bool>().ShouldBeTrue();
@@ -251,6 +254,7 @@ public sealed class MeasureSessionStateCacheScriptTests
         }
         var result = await CompareAsync(Evidence(false), after);
         result.ExitCode.ShouldBe(1, result.Output);
+        result.Summary.ShouldNotBeNull(result.Output);
         result.Summary!["queryAndWorkloadGates"]!.GetValue<bool>().ShouldBeTrue();
         result.Summary["cpuGate"]!.GetValue<bool>().ShouldBeFalse();
         result.Summary["accepted"]!.GetValue<bool>().ShouldBeFalse();
