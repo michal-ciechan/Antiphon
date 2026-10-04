@@ -13,6 +13,31 @@ namespace Antiphon.Agents.Pty.Tests;
 public class C1022TypedInputTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public void ReadPrompts_preserves_string_and_text_block_bodies(bool blocks)
+    {
+        const string body = "L0000 é中😀\r\nL0001 whole body\r\nL0002 tail";
+        object content = blocks
+            ? new object[]
+            {
+                new { type = "text", text = "L0000 é中😀\r\n" },
+                new { type = "image", source = "not prompt text" },
+                new { type = "text", text = "L0001 whole body\r\nL0002 tail" },
+            }
+            : body;
+        var line = JsonSerializer.Serialize(new { type = "user", message = new { content } });
+        var path = Path.Combine(Path.GetTempPath(), "c1022-prompt-" + Guid.NewGuid().ToString("N") + ".jsonl");
+        try
+        {
+            // Windows JSONL delimiters, an unrelated row, and an unfinished trailing row.
+            File.WriteAllText(path, "{\"type\":\"assistant\"}\r\n" + line + "\r\n" + line[..20]);
+            ReadPrompts(path).ShouldBe([body]);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Test]
     public async Task Typed_and_paste_modes_reach_the_modern_peer_distinctly()
     {
         if (!OperatingSystem.IsWindows()) throw new SkipTestException("Windows modern peer proof");
