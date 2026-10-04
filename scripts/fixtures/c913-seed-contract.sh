@@ -37,7 +37,7 @@ c849_lock() { :; }
 c849_prepare() { :; } # Mount/initialization has its separate A1/A2 tests.
 c849_smoke() {
     printf 'smoke\n' >> "$root/trace"
-    [ "$FAULT" != smoke ] || return 17
+    [ "$FAULT" != smoke ] || write_result false CacheSmokeFailed 2
     printf 'C849_SMOKE runner=%s uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK\n' "$2" >> "$CASE_DIR/smoke-summary.txt"
 }
 c849_status_body() {
@@ -63,9 +63,11 @@ chown() { :; }
 export -f chown
 compose_host() { printf 'main\n'; }
 sleep() { :; } # injected reconnect state is constant; do not wait on a synthetic status
-findmnt() { printf '/\n'; }
+findmnt() { printf '/\n'; [ "$FAULT" != nested-mount ] || printf '%s/child\n' "$root/volumes/$C849_SCRATCH/_data"; }
+df() { printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nfixture 999999999 0 999999999 0%% /\n'; }
 docker() {
     printf '%s\n' "$*" >> "$root/docker-trace"
+    local root="$C913_ROOT"
     local name role format arg entrypoint='' code='' target source payload='' i
     local -a mappings=()
     case "$1:${2:-}" in
@@ -117,9 +119,9 @@ docker() {
         if [[ "$*" == *'ps -eo uid,comm'* ]]; then
           [ "$FAULT" != process-error ] || return 1
           if [ "$FAULT" = writer ]; then printf '1654 dotnet\n'; else printf '0 init\n'; fi
-        elif [[ "$*" == *'ps -eo uid,args'* ]]; then echo 0
+        elif [[ "$*" == *'ps -eo uid,args'* ]]; then [ "$FAULT" != process-error ] || return 1; if [ "$FAULT" = writer ]; then echo 1; else echo 0; fi
         elif [[ "$*" == *'rev-parse HEAD'* ]]; then echo "$SHA"
-        elif [[ "$*" == *'curl '* ]]; then printf '{"occupied":0,"leases":[]}'
+        elif [[ "$*" == *'curl '* ]]; then [ "$FAULT" != broker-error ] || return 1; if [ "$FAULT" = broker-busy ]; then printf '{"occupied":1,"leases":[{}]}'; else printf '{"occupied":0,"leases":[]}'; fi
         elif [[ "$*" == *'/bin/sh -s'* ]]; then
           cat >/dev/null
           [ "$FAULT" != refill ] || return 1
@@ -326,26 +328,104 @@ case "$mode" in
     chmod 644 "$path"; run c849_require_ready allow-cold; refuse recovery-execute-changed CacheRecoveryChanged; chmod 751 "$path"
     mv "$C849_READY" "$root/valid-marker"; ln -s "$root/valid-marker" "$C849_READY"
     run c849_require_ready allow-cold; refuse marker-symlink CacheSeedMarkerInvalid
+    rm "$C849_READY"; cp "$root/marker" "$C849_READY"
+    for bad in recovery-missing manifest-missing recovery-escape image-missing digest; do
+      cp "$root/marker" "$C849_READY"; FAULT=none
+      case "$bad" in
+        recovery-missing) mv "$recovery" "$recovery.missing"; diagnosis=CacheRecoveryMissing ;;
+        manifest-missing) mv "$recovery/recovery.manifest" "$recovery/manifest.missing"; diagnosis=CacheRecoveryMissing ;;
+        recovery-escape) sed -i "s|^recovery=.*|recovery=$root/outside|" "$C849_READY"; diagnosis=CacheRecoveryInvalid ;;
+        image-missing) FAULT=image-missing; diagnosis=CacheRecoveryImageMissing ;;
+        digest) sed -i 's/^manifest-sha256=.*/manifest-sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/' "$C849_READY"; diagnosis=CacheRecoveryChanged ;;
+      esac
+      run c849_require_ready allow-cold; refuse "$bad-refused" "$diagnosis"
+      [ ! -d "$recovery.missing" ] || mv "$recovery.missing" "$recovery"
+      [ ! -f "$recovery/manifest.missing" ] || mv "$recovery/manifest.missing" "$recovery/recovery.manifest"
+    done
+    FAULT=none
+    host="$root/volumes/$C849_PACKAGES/_data/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost"
+    mkdir -p "${host%/*}"; printf 'legacy-host' > "$host"
+    legacy_digest=$(sha256sum "$host" | cut -d' ' -f1)
+    printf 'donor=saved\nimage=%s\ntime=2026-10-04T00:00:00Z\npayload-sha256=%s\nreference-sha256=%064d\npackage-bytes=11\nnpm-bytes=0\nrecovery=%s\n' "$image_id" "$legacy_digest" 0 "$recovery" > "$C849_READY"
+    cp "$C849_READY" "$root/legacy-marker"
+    run c849_require_ready allow-cold; accept legacy-valid
+    printf changed >> "$host"
+    run c849_require_ready allow-cold; refuse legacy-payload-change-refused CacheSeedPayloadChanged
+    printf 'legacy-host' > "$host"
+    SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    run c849_require_ready allow-cold; accept legacy-cross-sha-valid
+    cmp -s "$C849_READY" "$root/legacy-marker" || fail legacy-marker-byte-identical
+    pass legacy-marker-byte-identical
+    printf 'schema=2\nkind=cold\ncold=true\nsource-sha=%s\nimage=%s\npackages=%s\nscratch=%s\nnpm=%s\n' "$SHA" "$image_id" "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM" > "$C849_READY"
+    run c849_require_ready allow-cold; accept cold-valid-with-cache-churn
+    run c849_require_ready; refuse cold-full-context-refused CacheFullSeedRequired
     ;;
  prune)
-    make_full_marker
-    ordinary "$root/volumes/$C849_PACKAGES/_data" # recipients are sentinels, not guard stubs
     CASE=runner-cache-prune
     C590_PREVIEW_RUN="$RUN"; receipt="$SERVER2_ROOT/cache/previews/$RUN"; mkdir -p "$receipt"
-    c849_observe_volume() { printf '%s %s %s 1654:1654:700 100000 100000\n' "$1" "$2" "$root/volumes/$1/_data"; }
-    c849_budget_gate() { [ "$FAULT" != budget ] || write_result false CacheBudgetExceeded 2; }
-    c849_prune_idle() { [ "$FAULT" != busy ] || write_result false CacheConsumersBusy 2; }
-    for pair in "$C849_PACKAGES:nuget-packages" "$C849_SCRATCH:nuget-scratch" "$C849_NPM:npm-content"; do c849_observe_volume "${pair%:*}" "${pair#*:}" 100000; done > "$receipt/volumes.txt"
-    printf 'run=%s\nsource-sha=%s\ncreated-at=%s\nvolume-sha256=%s\n' "$RUN" "$SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(sha256sum "$receipt/volumes.txt" | cut -d' ' -f1)" > "$receipt/preview.txt"
+    # Volume size and disk facts are external boundaries; execute all authority,
+    # recovery, whole-target preflight, destructive and final-budget guards.
+    c849_observe_volume() {
+      local bytes=100000
+      if [ "$FAULT" = budget ] && grep -q '^smoke$' "$root/trace"; then bytes=100001; fi
+      printf '%s %s %s 1654:1654:700 %s 100000\n' "$1" "$2" "$root/volumes/$1/_data" "$bytes"
+    }
+    reset_prune() {
+      FAULT=none
+      rm -rf "$SERVER2_ROOT/cache/recovery-$RUN"; make_full_marker
+      for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+        rm -rf "$root/volumes/$name/_data"; mkdir -m700 "$root/volumes/$name/_data"
+      done
+      mkdir -p "$root/volumes/$C849_PACKAGES/_data/ordinary/1.0.0"
+      printf sentinel > "$root/volumes/$C849_PACKAGES/_data/ordinary/1.0.0/data"
+      printf sentinel > "$root/volumes/$C849_SCRATCH/_data/sentinel"
+      printf sentinel > "$root/volumes/$C849_NPM/_data/sentinel"
+      for pair in "$C849_PACKAGES:nuget-packages" "$C849_SCRATCH:nuget-scratch" "$C849_NPM:npm-content"; do c849_observe_volume "${pair%:*}" "${pair#*:}" 100000; done > "$receipt/volumes.txt"
+      printf 'run=%s\nsource-sha=%s\ncreated-at=%s\nvolume-sha256=%s\n' "$RUN" "$SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(sha256sum "$receipt/volumes.txt" | cut -d' ' -f1)" > "$receipt/preview.txt"
+      : > "$root/trace"; : > "$root/docker-trace"; rm -f "$CASE_DIR/prune.txt"
+    }
+    reset_prune
     run c849_prune; accept schema3-prune-success
     grep -Fq admission=held "$CASE_DIR/prune.txt" || fail admission-held
-    ! grep -q 'for p in microsoft.netcore' "$root/docker-trace" || fail no-framework-refill
-    printf changed >> "$SERVER2_ROOT/cache/recovery-$RUN/npm/content"
-    printf sentinel > "$root/volumes/$C849_PACKAGES/_data/sentinel"
-    : > "$root/docker-trace"
-    run c849_prune; refuse recovery-before-delete CacheRecoveryChanged
-    [ "$(cat "$root/volumes/$C849_PACKAGES/_data/sentinel")" = sentinel ] || fail recovery-before-delete
+    [ -d "$root/volumes/$C849_PACKAGES/_data" ] && [ -d "$SERVER2_ROOT/cache/recovery-$RUN" ] || fail roots-and-recovery-retained
+    [ ! -e "$root/volumes/$C849_PACKAGES/_data/ordinary/1.0.0/data" ] && [ ! -e "$root/volumes/$C849_NPM/_data/sentinel" ] || fail selected-contents-cleared
+    ! grep -q 'for p in microsoft.netcore' "$root/docker-trace" || fail schema3-no-framework-copy
+    for bad in missing-recovery missing-manifest changed-recovery image-missing source run age-future age-expired preview-digest volume-facts second-target nested-mount busy unknown writer process-error attachment broker-busy broker-error; do
+      reset_prune
+      diagnosis=CachePreviewStale
+      case "$bad" in
+        missing-recovery) rm -rf "$SERVER2_ROOT/cache/recovery-$RUN"; diagnosis=CacheRecoveryMissing ;;
+        missing-manifest) rm "$SERVER2_ROOT/cache/recovery-$RUN/recovery.manifest"; diagnosis=CacheRecoveryMissing ;;
+        changed-recovery) printf changed >> "$SERVER2_ROOT/cache/recovery-$RUN/npm/content"; diagnosis=CacheRecoveryChanged ;;
+        image-missing) FAULT=image-missing; diagnosis=CacheRecoveryImageMissing ;;
+        source) sed -i 's/^source-sha=.*/source-sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/' "$receipt/preview.txt" ;;
+        run) sed -i 's/^run=.*/run=c84900000000000000000/' "$receipt/preview.txt" ;;
+        age-future) sed -i "s/^created-at=.*/created-at=$(date -u -d '+1 hour' +%Y-%m-%dT%H:%M:%SZ)/" "$receipt/preview.txt" ;;
+        age-expired) sed -i "s/^created-at=.*/created-at=$(date -u -d '-2 hours' +%Y-%m-%dT%H:%M:%SZ)/" "$receipt/preview.txt" ;;
+        preview-digest) printf x >> "$receipt/volumes.txt" ;;
+        volume-facts) sed -i 's/100000 100000/99999 100000/' "$receipt/volumes.txt"; sed -i "s/^volume-sha256=.*/volume-sha256=$(sha256sum "$receipt/volumes.txt" | cut -d' ' -f1)/" "$receipt/preview.txt" ;;
+        second-target) ln -s "$root/outside" "$root/volumes/$C849_SCRATCH/_data/unsafe"; diagnosis=CacheTargetInvalid ;;
+        nested-mount) FAULT=nested-mount; diagnosis=CacheTargetInvalid ;;
+        busy|unknown|writer|attachment) FAULT="$bad"; diagnosis=CacheConsumersBusy ;;
+        process-error) FAULT="$bad"; diagnosis=CacheConsumerUnknown ;;
+        broker-busy|broker-error) FAULT="$bad"; diagnosis=CacheBuildSlotsBusy ;;
+      esac
+      run c849_prune; refuse "$bad-no-delete" "$diagnosis"
+      [ "$(cat "$root/volumes/$C849_PACKAGES/_data/ordinary/1.0.0/data")" = sentinel ] &&
+        [ "$(cat "$root/volumes/$C849_SCRATCH/_data/sentinel")" = sentinel ] &&
+        [ "$(cat "$root/volumes/$C849_NPM/_data/sentinel")" = sentinel ] || fail "$bad-no-delete"
+      ! grep -q 'rm -rf --' "$root/docker-trace" || fail "$bad-no-delete-trace"
+      [ ! -e "$CASE_DIR/prune.txt" ] || fail "$bad-no-success"
+    done
+    for FAULT_CASE in refill refill-receipt smoke budget; do
+      reset_prune; FAULT="$FAULT_CASE"
+      case "$FAULT" in refill) diagnosis=CacheRefillFailed;; refill-receipt) diagnosis=CacheRefillReceiptMissing;; smoke) diagnosis=CacheSmokeFailed;; budget) diagnosis=CacheBudgetExceeded;; esac
+      run c849_prune
+      [ "$(cat "$root/exit")" != 0 ] && [ ! -e "$CASE_DIR/prune.txt" ] || fail "$FAULT-no-success"
+      pass "$FAULT-no-success"
+    done
     ;;
+
  inventory)
     SOURCE=saved
     curl() { c849_status_body "${@: -1}"; }
@@ -359,6 +439,27 @@ case "$mode" in
       [ "$(cat "$root/exit")" != 0 ] || fail "inventory-$FAULT-refused"
       pass "inventory-$FAULT-refused"
     done
+    SOURCE=live; FAULT=none
+    run case_runner_cache_inventory; accept present-temp-accepted
+    : > "$root/cleanup-trace"
+    printf 'c849%sowned-packages\nc849foreign-packages\n' "$RUN" > "$CASE_DIR/.fixture-volumes"
+    (
+      docker() { printf '%s\n' "$*" >> "$C913_ROOT/cleanup-trace"; }
+      c849_fixture_cleanup
+    )
+    grep -Fq "volume rm c849${RUN}owned-packages" "$root/cleanup-trace" || fail owned-ledger-removed
+    ! grep -Fq c849foreign-packages "$root/cleanup-trace" && [ "$(cat "$root/outside")" = outside ] || fail foreign-ledger-no-remove
+    pass foreign-ledger-no-remove
+    fixture_body="$(declare -f c849_fixture)"
+    fixture_body="${fixture_body//\/tmp\/c849-fixture-/$root/fixture-}"
+    eval "$fixture_body"
+    mkdir "$root/fixture-$RUN"
+    run c849_fixture; refuse occupied-fixture-refused FixtureNamespaceOccupied
+    : > "$CASE_DIR/fixture-control-variants.txt"; : > "$CASE_DIR/fixture-controls.txt"
+    intended_refusal() { printf 'ExpectedRefusal\n'; return 2; }
+    run c849_fixture_control PC-01 ExpectedRefusal intended_refusal; accept intended-control-red
+    setup_failure() { printf 'SetupError\n'; return 2; }
+    run c849_fixture_control PC-02 ExpectedRefusal setup_failure; refuse setup-error-not-control-red ControlNotSensitive
     ;;
  *) fail unknown-mode ;;
 esac
