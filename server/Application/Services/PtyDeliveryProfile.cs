@@ -72,7 +72,7 @@ public sealed class PtyDeliveryProfile
 
         // Said once, at startup, because a "modern" request that fell back is invisible from
         // everywhere else and silently re-arms the 1 KB clipping the old ceilings exist for.
-        if (_local.FellBack)
+        if (_local.RequiresWarning)
             _logger.LogWarning("PTY delivery ceilings: {Ceilings}", _ceilings);
         else
             _logger.LogInformation("PTY delivery ceilings: {Ceilings}", _ceilings);

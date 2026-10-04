@@ -281,7 +281,7 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
             yield return cap.ToString();
         }
 
-        if (!string.IsNullOrWhiteSpace(ptyBackend))
+        if (ptyBackend is not null)
         {
             yield return "--pty-backend";
             yield return ptyBackend;
