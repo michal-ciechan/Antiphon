@@ -1593,7 +1593,7 @@ c849_seed_failure() {
 c849_validate_seed_relative() {
     local path="$1"
     case "$path" in
-        ''|/*|.|..|./*|../*|*/../*|*/..|*/./*|*/.)
+        ''|/*|.|..|./*|../*|*/../*|*/..|*/./*|*/.|*//*|*/)
             printf 'CacheDonorUnsafePath\n'; return 2 ;;
     esac
     if [[ "$path" == *$'\n'* || "$path" == *$'\r'* ]]; then
@@ -1631,6 +1631,7 @@ c849_validate_seed_tree() {
 c849_manifest_write() {
     local root="$1" output="$2" list path relative kind size mode digest unsafe
     local LC_ALL=C
+    export LC_ALL
     [ -d "$root/packages" ] && [ ! -L "$root/packages" ] && [ -d "$root/npm" ] && [ ! -L "$root/npm" ] || return 2
     unsafe="$(find "$root/packages" "$root/npm" \( -type l -o -type b -o -type c -o -type p -o -type s -o -type f -links +1 \) -print -quit)" || return 2
     [ -z "$unsafe" ] || return 2
@@ -1660,6 +1661,7 @@ c849_manifest_write() {
 c849_manifest_validate() {
     local manifest="$1" header kind path size mode digest previous='' packages=0 npm=0
     local LC_ALL=C
+    export LC_ALL
     [ -f "$manifest" ] && [ ! -L "$manifest" ] && [ -s "$manifest" ] || return 2
     {
         IFS= read -r -d '' header && [ "$header" = c849-manifest-v1 ] || return 2
@@ -2010,7 +2012,7 @@ c849_seed() {
         else
             c849_no_temp_containers
         fi
-        printf 'ready=true donor=%s\n' "$donor" > "$CASE_DIR/seed.txt"
+        printf 'ready=true donor=%s reused=true\n' "$donor" > "$CASE_DIR/seed.txt"
         write_result true '' 0
     fi
     if [ -z "$donor" ] && [ -z "$saved" ]; then
@@ -2213,13 +2215,17 @@ c849_require_ready() {
         && [ "$(cut -d= -f1 "$C849_READY" | sort -u | wc -l)" -eq 8 ] \
         && [ "$(grep -Ec '^(donor|image|time|payload-sha256|reference-sha256|package-bytes|npm-bytes|recovery)=' "$C849_READY")" -eq 8 ] \
         && grep -Eq '^image=sha256:[0-9a-f]{64}$' "$C849_READY" \
+        && grep -Eq '^donor=(saved|[0-9a-f]{64})$' "$C849_READY" \
+        && grep -Eq '^time=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' "$C849_READY" \
         && grep -Eq '^reference-sha256=[0-9a-f]{64}$' "$C849_READY" \
         && grep -Eq '^package-bytes=[0-9]+$' "$C849_READY" \
         && grep -Eq '^npm-bytes=[0-9]+$' "$C849_READY" \
         || write_result false CacheSeedMarkerInvalid 2
     local recovery
     recovery="$(sed -n 's/^recovery=//p' "$C849_READY" | head -n 1)"
-    case "$recovery" in "$SERVER2_ROOT"/cache/recovery-[a-z0-9]*) ;; *) write_result false CacheRecoveryInvalid 2 ;; esac
+    [ "${recovery%/*}" = "$SERVER2_ROOT/cache" ] && [[ "${recovery##*/}" =~ ^recovery-[a-z0-9-]+$ ]] \
+        && [ ! -L "$recovery" ] && [ "$(realpath -e -- "$recovery" 2>/dev/null)" = "$recovery" ] \
+        || write_result false CacheRecoveryInvalid 2
     [ -d "$recovery/packages" ] && [ -d "$recovery/npm" ] \
         || write_result false CacheRecoveryMissing 2
     local expected actual image

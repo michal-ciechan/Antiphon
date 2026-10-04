@@ -12,10 +12,13 @@ function global:docker {
     $global:LASTEXITCODE = 0
     if ($a[0] -eq 'version') { return '27.5.1' }
     if ($a[0] -eq 'image') {
-        if ($a[-1] -like 'c913-test:*' -and $global:c913Calls.FindAll({ param($x) $x[0] -eq 'build' }).Count -eq 0) {
+        if ($a[-1] -like 'c913-test:*' -and $global:c913Fault -ne 'revision' -and $global:c913Calls.FindAll({ param($x) $x[0] -eq 'build' }).Count -eq 0) {
             $global:LASTEXITCODE = 1; return
         }
-        if (($a -join ' ') -like '*org.opencontainers.image.revision*') { return $sha }
+        if (($a -join ' ') -like '*org.opencontainers.image.revision*') {
+            if ($global:c913Fault -eq 'revision' -and $a[-1] -like 'c913-test:*') { return 'c' * 40 }
+            return $sha
+        }
         if ($global:c913Fault -eq 'image-id') { return 'not-an-image' }
         return 'sha256:' + ('b' * 64)
     }
@@ -42,7 +45,7 @@ function global:docker {
 function Check([bool]$condition, [string]$label) { if (-not $condition) { throw "FAIL $label" }; Write-Output "PASS $label" }
 function Run-Wrapper([string]$fault) {
     $global:c913Calls.Clear(); $global:c913Creates = 0; $global:c913Fault = $fault
-    & (Join-Path $Repo 'scripts/verify-card0660-codex-image.ps1') -Target session-testing -Image "c913-test:$fault" -SourceRevision $sha -ResultsRoot (Join-Path $root $fault) | Out-Null
+    & (Join-Path $Repo 'scripts/verify-card0660-codex-image.ps1') -Target session-testing -Image "c913-test:$fault" -SourceRevision $sha -ResultsRoot (Join-Path $root $fault) -SkipBuild:($fault -eq 'revision') | Out-Null
     return $LASTEXITCODE
 }
 try {
@@ -54,9 +57,9 @@ try {
     Check (@($mounts | Where-Object { $_ -cmatch '^type=volume,source=c660q-[a-zA-Z0-9-]+-scratch,target=/var/cache/antiphon/nuget-scratch,volume-nocopy$' }).Count -eq 1) scratch-mount-contract
     Check (($probe[[Array]::IndexOf($probe, '--network') + 1] -ceq 'none') -and ($probe[[Array]::IndexOf($probe, '--user') + 1] -ceq '1654:1654')) child-network-uid
     Check (($probe -contains 'PhoneHome__Enabled=false') -and ($probe -join ' ') -cnotmatch '(docker.sock|/state/codex|target=/state[, ]|target=/work[, ])') no-sensitive-child-mounts
-    $initializers = @($global:c913Calls | Where-Object { ($_ -join ' ') -match 'chown.*(/home/app/\.nuget/packages|/packages)' })
-    Check ($initializers.Count -eq 1 -and ($initializers[0] -join ' ') -notmatch 'chown -R') owned-roots-only
-    foreach ($fault in @('child-exit', 'wrong-row', 'duplicate-row', 'image-id', 'partial-create')) {
+    $initializers = @($global:c913Calls | Where-Object { ($_ -join ' ') -match 'chown 1654:1654' })
+    Check ($initializers.Count -eq 1 -and $initializers[0][-1] -ceq 'set -eu; for p in /home/app/.nuget/packages /var/cache/antiphon/nuget-scratch; do test -d "$p"; test -z "$(find "$p" -mindepth 1 -print -quit)"; chown 1654:1654 "$p"; chmod 0700 "$p"; done') owned-roots-only
+    foreach ($fault in @('child-exit', 'wrong-row', 'duplicate-row', 'image-id', 'partial-create', 'revision')) {
         $code = Run-Wrapper $fault
         Check ($code -ne 0) "$fault-refused"
         $created = @($global:c913Calls | Where-Object { $_[0] -eq 'volume' -and $_[1] -eq 'create' } | ForEach-Object { $_[-1] })

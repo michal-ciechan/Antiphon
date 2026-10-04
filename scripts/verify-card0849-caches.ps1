@@ -181,7 +181,9 @@ switch ($Case) {
         }
         if ($Cold) { throw 'C849 cold seed receipt invalid' }
         if ($contract.Kind -cne 'full') { throw 'C849 full seed receipt invalid' }
-        Assert-C849Smoke 0 $contract 'seed' ($seed.Trim() -cne 'ready=true donor=')
+        $reused = $seed -cmatch '\Aready=true donor=([0-9a-f]{64})? reused=true\n\z'
+        if ($reused -and $contract.Smoke -cne 'not-run') { throw 'C849 reuse smoke invalid' }
+        Assert-C849Smoke 0 $contract 'seed' (-not $reused)
         if ($seed -match '(?m)^ready=true donor=saved(?: |\r?$)') {
             $status = Read-C849Receipt 0 'status.json' | ConvertFrom-Json
             if ($status.sessions -ne 0 -or $status.queuedTasks -ne 0 -or
@@ -191,14 +193,14 @@ switch ($Case) {
             Write-Output "C849_SEED donor=saved ready=true schema=$($contract.Schema) digestType=$($contract.DigestType) smoke=$($contract.Smoke) recovery=retained"
             break
         }
-        if ($seed -match '(?m)^ready=true donor=\r?$') {
+        if ($seed -ceq "ready=true donor= reused=true`n") {
             if ($contract.Smoke -cne 'not-run') { throw 'C849 reuse smoke invalid' }
             Write-Output "C849_SEED donor=none ready=true schema=$($contract.Schema) digestType=$($contract.DigestType) smoke=not-run recovery=retained"
             break
         }
         $status = Assert-C849Status (Read-C849Receipt 0 'status.json') $false $true
         if ($seed -notmatch '(?m)^ready=true donor=[0-9a-f]{64}(?:\r)?$' -and
-            $seed -notmatch '(?m)^ready=true donor=[0-9a-f]{12,64} (?:.*)$') { throw 'C849 seed receipt invalid' }
+            $seed -cnotmatch '\Aready=true donor=[0-9a-f]{64} reused=true\n\z') { throw 'C849 seed receipt invalid' }
         if ($status.draining -ne $true -or $status.acceptingNewWork -ne $false -or
             $status.dispatchEligible -ne $true -or $status.retireWhenIdle -ne $true -or
             $status.redirectTo -ne 'server2') { throw 'C849 donor reconnect receipt invalid' }

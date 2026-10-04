@@ -77,6 +77,35 @@ public sealed class RemoteScriptContractTests
         output.ShouldContain("PASS " + mode + "-complete");
         output.ShouldContain("C913_EXIT=0", customMessage: output);
         output.ShouldNotContain("FAIL ");
+        if (mode == "seed")
+        {
+            // Independent .NET oracle: fixed recipient bytes, explicit ordinal paths and
+            // execute bits. Neither the shell serializer nor its hash is the expected value.
+            var records = new SortedDictionary<string, (string? Bytes, string Exec)>(StringComparer.Ordinal)
+            {
+                ["npm"] = (null, "-"), ["npm/content"] = ("npm", "000"), ["npm/empty"] = (null, "-"),
+                ["packages"] = (null, "-"), ["packages/c913.probe"] = (null, "-"),
+                ["packages/c913.probe/1.0.0"] = (null, "-"),
+                ["packages/c913.probe/1.0.0/.nupkg.metadata"] = ("{}", "000"),
+                ["packages/c913.probe/1.0.0/data"] = ("probe", "000"),
+                ["packages/c913.tools"] = (null, "-"), ["packages/c913.tools/2.0.0"] = (null, "-"),
+                ["packages/c913.tools/2.0.0/.nupkg.metadata"] = ("{}", "000"),
+                ["packages/c913.tools/2.0.0/tool"] = ("#!/bin/sh\n", "111")
+            };
+            static string Digest(byte[] bytes) => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
+            var golden = new StringBuilder("c849-manifest-v1\0");
+            foreach (var (path, record) in records)
+            {
+                var bytes = record.Bytes is null ? null : Encoding.UTF8.GetBytes(record.Bytes);
+                golden.Append(bytes is null ? "D" : "F").Append('\0').Append(path).Append('\0')
+                    .Append(bytes?.Length ?? 0).Append('\0').Append(record.Exec).Append('\0')
+                    .Append(bytes is null ? "-" : Digest(bytes)).Append('\0');
+            }
+            var expected = Encoding.UTF8.GetBytes(golden.ToString());
+            var actual = Convert.FromBase64String(Regex.Match(output, @"(?m)^MANIFEST_BASE64=(\S+)$").Groups[1].Value);
+            actual.ShouldBe(expected, "manifest-covers-npm; manifest-binds-bytes; manifest-binds-exec");
+            output.ShouldContain("MANIFEST_DIGEST=" + Digest(expected), "independent manifest digest");
+        }
     }
 
     [Test]
@@ -2855,7 +2884,7 @@ public sealed class RemoteScriptContractTests
             c849_image() { echo image; }
             c849_optional_donor() { echo donor; }
             c849_empty_volume() { :; }
-            docker() { printf 'docker %s\n' "$*" >> "$root/docker-trace"; return 1; }
+            docker() { printf 'docker %s\n' "$*" >> "$root/docker-trace"; if [ "$1:$2" = image:inspect ]; then printf 'sha256:%064d\n' 0; return 0; fi; return 1; }
             c849_seed_failure() { write_result false "$2" 2; }
             sudo() { :; }
             SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/cache"
@@ -2922,6 +2951,7 @@ public sealed class RemoteScriptContractTests
         var output = LinuxShell(
             CacheSeedTreeHarness() + "\n" + Block(remote, "c849_saved_copy") + "\n" +
             Block(remote, "c849_no_cache_attachments") + "\n" +
+            string.Join("\n", new[] { "c849_manifest_write", "c849_manifest_validate", "c849_manifest_compare", "c849_compare_import", "c849_contract_receipt" }.Select(name => Block(remote, name))) + "\n" +
             Block(remote, "c849_seed_failure") + "\n" + Block(remote, "c849_seed") + "\n" +
             Block(remote, "c1008_rollout_lock") + "\n" +
             Block(remote, "case_deploy_parent") + "\n" + Block(remote, "case_deploy_temp_runner") + "\n" + """
@@ -2929,7 +2959,7 @@ public sealed class RemoteScriptContractTests
             mkdir -p "$SERVER2_ROOT/cache" "$CASE_DIR" "$root/volumes/packages" "$root/volumes/npm"
             C849_READY="$SERVER2_ROOT/cache/seed-accepted"
             C849_PACKAGES=packages; C849_SCRATCH=scratch; C849_NPM=npm
-            RUN=red; LANE=host; TEMP_PROJECT=temp
+            RUN=red; LANE=host; TEMP_PROJECT=temp; SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             mkdir -p "$tree/packages/incomplete/1.0"
             printf 'unfinished\n' > "$tree/packages/incomplete/1.0/payload"
             chmod 4755 "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost"
@@ -2944,6 +2974,15 @@ public sealed class RemoteScriptContractTests
             jq() { cat; }
             sudo() { mkdir -p "${@: -1}"; }
             docker() {
+                if [[ "$*" == *'target=/snapshot,readonly'* ]]; then
+                    local code="$(cat)"
+                    rm -rf "$root/import-view"; mkdir -p "$root/import-view"
+                    cp -a "$root/volumes/packages" "$root/import-view/packages"
+                    cp -a "$root/volumes/npm" "$root/import-view/npm"
+                    code="${code//\/import/$root/import-view}"
+                    code="${code//\/snapshot/$stage}"
+                    bash -c "$code"; return $?
+                fi
                 case "$1:$2" in
                     image:inspect) printf 'sha256:%064d\n' 0; return 0 ;;
                     volume:inspect) echo "$root/state"; return 0 ;;
@@ -2964,11 +3003,12 @@ public sealed class RemoteScriptContractTests
                                     type=volume,source=*) target="${arg#*source=}"; target="${target%%,*}" ;;
                                 esac
                             done
+                            mkdir -p "$root/owners"
                             cp -a "$source/." "$root/volumes/$target/"
                             if [[ "$*" == *'chown -R 1654:1654 /cache'* ]]; then
-                                printf '1654\n' > "$root/volumes/$target/.owner"
+                                printf '1654\n' > "$root/owners/$target"
                             else
-                                printf '0\n' > "$root/volumes/$target/.owner"
+                                printf '0\n' > "$root/owners/$target"
                             fi
                             return 0
                         fi
@@ -2989,7 +3029,7 @@ public sealed class RemoteScriptContractTests
             test "$(stat -c %u "$SERVER2_ROOT/cache/recovery-$RUN/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost")" = "$(id -u)" && echo recovery-host-owned
             test "$(stat -c %a "$SERVER2_ROOT/cache/recovery-$RUN/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost")" = 755 && echo unsafe-mode-masked
             test ! -e "$SERVER2_ROOT/cache/recovery-$RUN/packages/incomplete/1.0" && echo incomplete-pruned
-            grep -q '^1654$' "$root/volumes/packages/.owner" && grep -q '^1654$' "$root/volumes/npm/.owner" && echo live-cache-owned-by-1654
+            grep -q '^1654$' "$root/owners/packages" && grep -q '^1654$' "$root/owners/npm" && echo live-cache-owned-by-1654
             printf 'idle-count=%s smoke-count=%s\n' "$(grep -c '^idle$' "$root/trace")" "$(grep -c '^smoke$' "$root/trace")"
             mv "$C849_READY" "$root/accepted-marker"
             RUN=smoke
@@ -3483,6 +3523,7 @@ public sealed class RemoteScriptContractTests
             docker() {
                 local args="$*" target
                 if [ "$1" = image ]; then return 0; fi
+                if [[ "$args" == *'--entrypoint sha256sum'* ]]; then sha256sum "$SERVER2_ROOT/cache/recovery-fixture/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost"; return; fi
                 [ "$1" = run ] || return 2
                 case "$args" in
                     *"source=$C849_PACKAGES,target=/cache"*) target="$root/volumes/packages" ;;
@@ -3495,8 +3536,8 @@ public sealed class RemoteScriptContractTests
                     printf 'clear %s\n' "$target" >> "$root/docker-trace"
                 elif [[ "$args" == *'cp -a'* ]]; then
                     mkdir -p "$target/microsoft.netcore.app.host.linux-x64" "$target/microsoft.netcore.app.ref"
-                    cp -a "$root/recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20" "$target/microsoft.netcore.app.host.linux-x64/"
-                    cp -a "$root/recovery/packages/microsoft.netcore.app.ref/9.0.20" "$target/microsoft.netcore.app.ref/"
+                    cp -a "$SERVER2_ROOT/cache/recovery-fixture/packages/microsoft.netcore.app.host.linux-x64/9.0.20" "$target/microsoft.netcore.app.host.linux-x64/"
+                    cp -a "$SERVER2_ROOT/cache/recovery-fixture/packages/microsoft.netcore.app.ref/9.0.20" "$target/microsoft.netcore.app.ref/"
                     printf 'refill %s\n' "$target" >> "$root/docker-trace"
                 fi
             }
@@ -3510,7 +3551,7 @@ public sealed class RemoteScriptContractTests
             printf 'exit=%s\n' "$code"
             [ -d "$root/volumes/packages" ] && [ "$(stat -c %a "$root/volumes/packages")" = 700 ] && echo root-retained
             [ ! -e "$root/volumes/packages/unrelated" ] && [ ! -e "$root/volumes/scratch/lock" ] && [ ! -e "$root/volumes/npm/content" ] && echo selected-cleared
-            [ -s "$root/recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata" ] && echo recovery-retained
+            [ -s "$SERVER2_ROOT/cache/recovery-fixture/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata" ] && echo recovery-retained
             cat "$root/docker-trace"
             """);
         output.ShouldContain("exit=0");
@@ -4235,7 +4276,8 @@ public sealed class RemoteScriptContractTests
         return """
             root="$(mktemp -d)"
             trap 'rm -rf "$root"' EXIT
-            mkdir -p "$root/case" "$root/server2/cache/previews" "$root/recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native" "$root/recovery/packages/microsoft.netcore.app.ref/9.0.20"
+            SERVER2_ROOT="$root/server2"
+            mkdir -p "$root/case" "$root/server2/cache/previews" "$SERVER2_ROOT/cache/recovery-fixture/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native" "$SERVER2_ROOT/cache/recovery-fixture/packages/microsoft.netcore.app.ref/9.0.20"
             CASE_DIR="$root/case"
             SERVER2_ROOT="$root/server2"
             C849_READY="$SERVER2_ROOT/cache/seed-accepted"
@@ -4246,18 +4288,18 @@ public sealed class RemoteScriptContractTests
             SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             LANE=host
             : > "$root/docker-trace"
-            printf 'host\n' > "$root/recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost"
-            printf 'metadata\n' > "$root/recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata"
-            printf 'metadata\n' > "$root/recovery/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata"
-            hash="$(sha256sum "$root/recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" | cut -d' ' -f1)"
-            printf 'recovery=%s\npayload-sha256=%s\nimage=sha256:%064d\n' "$root/recovery" "$hash" 0 > "$C849_READY"
+            printf 'host\n' > "$SERVER2_ROOT/cache/recovery-fixture/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost"
+            printf 'metadata\n' > "$SERVER2_ROOT/cache/recovery-fixture/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata"
+            printf 'metadata\n' > "$SERVER2_ROOT/cache/recovery-fixture/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata"
+            hash="$(sha256sum "$SERVER2_ROOT/cache/recovery-fixture/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" | cut -d' ' -f1)"
+            mkdir -p "$SERVER2_ROOT/cache/recovery-fixture/npm"
+            printf 'donor=saved\nimage=sha256:%064d\ntime=2026-10-04T00:00:00Z\npayload-sha256=%s\nreference-sha256=%064d\npackage-bytes=1\nnpm-bytes=0\nrecovery=%s\n' 0 "$hash" 0 "$SERVER2_ROOT/cache/recovery-fixture" > "$C849_READY"
             require_lane() { [ "$1" = "$LANE" ]; }
             c849_lock() { :; }
             c849_prune_idle() { :; }
-            c849_require_ready() { :; }
             c849_image() { echo image; }
             sudo() { [ "$1" = -n ] && shift; "$@"; }
-            docker() { printf '%s\n' "$*" >> "$root/docker-trace"; [ "$1" = image ] && return 0; return 2; }
+            docker() { printf '%s\n' "$*" >> "$root/docker-trace"; [ "$1" = image ] && return 0; if [[ "$*" == *'--entrypoint sha256sum'* ]]; then sha256sum "$SERVER2_ROOT/cache/recovery-fixture/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost"; return; fi; return 2; }
             write_result() { printf 'DIAGNOSIS=%s\n' "$2"; exit "$3"; }
             c849_observe_volume() {
                 local path="$root/volumes/packages"
@@ -4276,7 +4318,7 @@ public sealed class RemoteScriptContractTests
                 hash="$(sha256sum "$receipt/volumes.txt" | cut -d' ' -f1)"
                 printf 'run=%s\nsource-sha=%s\nvolume-sha256=%s\ncreated-at=%s\n' "$C590_PREVIEW_RUN" "$SHA" "$hash" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$receipt/preview.txt"
             }
-            """ + "\n" + Block(text, "c849_prune_validate_tree") + "\n" + Block(text, "c849_prune") + "\n";
+            """ + "\n" + Block(text, "c849_require_ready") + "\n" + Block(text, "c849_prune_validate_tree") + "\n" + Block(text, "c849_prune") + "\n";
     }
 
     // The real Codex-home variables and function over a throwaway server2 root. sudo is a plain
