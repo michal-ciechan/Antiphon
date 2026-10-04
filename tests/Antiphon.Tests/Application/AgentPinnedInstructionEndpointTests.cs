@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Antiphon.Server.Api.Endpoints;
+using Antiphon.Server.Api.Middleware;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Exceptions;
@@ -13,6 +14,7 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 using TUnit.Core;
 
@@ -58,13 +60,15 @@ public sealed class AgentPinnedInstructionEndpointTests
         var (ownToken, ownSession) = await SeedLiveSessionAsync(owner);
         var (wrongToken, _) = await SeedLiveSessionAsync(foreignOwner);
         var stoppedOwner = await CreateAgentAsync();
-        var (stoppedToken, _) = await SeedLiveSessionAsync(stoppedOwner, SessionStatus.Stopped);
+        var (stoppedToken, stoppedSession) = await SeedLiveSessionAsync(stoppedOwner, SessionStatus.Stopped);
         var expiredOwner = await CreateAgentAsync();
         var (expiredToken, expiredSession) = await SeedLiveSessionAsync(expiredOwner);
         using (var scope = _factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             (await db.AgentSessions.SingleAsync(s => s.Id == expiredSession)).EndedAt = DateTime.UtcNow;
+            // Independently exercise status and expiry; neither guard masks the other.
+            (await db.AgentSessions.SingleAsync(s => s.Id == stoppedSession)).EndedAt = null;
             await db.SaveChangesAsync();
         }
         var taskToken = await SeedTaskTokenAsync(owner, orchestrator: true);
@@ -99,10 +103,13 @@ public sealed class AgentPinnedInstructionEndpointTests
             var http = new DefaultHttpContext();
             http.Request.Headers[AgentTaskEndpoints.TokenHeader] = "";
             http.Request.Headers.ContainsKey(AgentTaskEndpoints.TokenHeader).ShouldBeTrue("c262-g098 setup");
+            await new CurrentUserMiddleware(_ => Task.CompletedTask, NullLogger<CurrentUserMiddleware>.Instance)
+                .InvokeAsync(http);
+            var currentUser = (ICurrentUser)http.Items["CurrentUser"]!;
             await Should.ThrowAsync<ForbiddenException>(() => AgentPinnedInstructionEndpoints.ResolvePrincipalAsync(
                 owner, http, scope.ServiceProvider.GetRequiredService<AgentTaskService>(),
                 scope.ServiceProvider.GetRequiredService<AppDbContext>(),
-                scope.ServiceProvider.GetRequiredService<ICurrentUser>(), CancellationToken.None));
+                currentUser, CancellationToken.None));
         }
         using var own = _factory.CreateClient();
         own.DefaultRequestHeaders.Add(AgentTaskEndpoints.TokenHeader, ownToken);
