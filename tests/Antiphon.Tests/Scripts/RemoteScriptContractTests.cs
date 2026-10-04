@@ -885,7 +885,7 @@ public sealed class RemoteScriptContractTests
             var output = LinuxShell("wslpath() { echo C980_UNEXPECTED_CONVERTER; return 23; }\n" + program);
             output.Trim().ShouldBe("VALUE=" + Convert.ToBase64String(Encoding.UTF8.GetBytes(nativeRoot)),
                 "c980-linux-value");
-            output.ShouldNotContain("C980_UNEXPECTED_CONVERTER", "c980-linux-value: no Linux conversion");
+            output.ShouldNotContain("C980_UNEXPECTED_CONVERTER", customMessage: "c980-linux-value: no Linux conversion");
         }
     }
 
@@ -942,8 +942,8 @@ public sealed class RemoteScriptContractTests
         {
             var exception = Should.Throw<InvalidOperationException>(
                 () => PrepareLinuxShellScript(body, variable, nativeRoot, true), "c980-raw-root-rejected");
-            exception.Message.ShouldContain("RepoRoot", "c980-raw-root-rejected");
-            exception.Message.ShouldContain("repository-variable", "c980-raw-root-rejected");
+            exception.Message.ShouldContain("RepoRoot", customMessage: "c980-raw-root-rejected");
+            exception.Message.ShouldContain("repository-variable", customMessage: "c980-raw-root-rejected");
 
             string? linux = null;
             Should.NotThrow(() => { linux = PrepareLinuxShellScript(body, variable, nativeRoot, false); },
@@ -995,17 +995,17 @@ public sealed class RemoteScriptContractTests
             var output = LinuxShell("(\n" + setup + program + ") 2>&1\nprintf 'C980_EXIT=%s\\n' \"$?\"\n");
             if (status == 0 && converted.StartsWith('/'))
             {
-                output.ShouldContain("C980_BODY_RAN", "c980-success-ran");
-                output.ShouldContain("C980_EXIT=0", "c980-success-ran");
-                output.ShouldNotContain("C980_REPO_ROOT_CONVERSION_FAILED", "c980-success-ran");
+                output.ShouldContain("C980_BODY_RAN", customMessage: "c980-success-ran");
+                output.ShouldContain("C980_EXIT=0", customMessage: "c980-success-ran");
+                output.ShouldNotContain("C980_REPO_ROOT_CONVERSION_FAILED", customMessage: "c980-success-ran");
             }
             else
             {
                 var label = status != 0 ? "c980-status-refused" : converted.Length == 0
                     ? "c980-empty-refused" : "c980-relative-refused";
-                output.ShouldNotContain("C980_BODY_RAN", label);
-                output.ShouldContain("C980_REPO_ROOT_CONVERSION_FAILED", label);
-                output.ShouldNotContain("C980_EXIT=0", label);
+                output.ShouldNotContain("C980_BODY_RAN", customMessage: label);
+                output.ShouldContain("C980_REPO_ROOT_CONVERSION_FAILED", customMessage: label);
+                output.ShouldNotContain("C980_EXIT=0", customMessage: label);
             }
         }
     }
