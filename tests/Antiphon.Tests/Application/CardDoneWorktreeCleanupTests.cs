@@ -78,9 +78,16 @@ public sealed class CardDoneWorktreeCleanupTests
         }
         await using var first = Connect(schema);
         await using var second = Connect(schema);
+        var arrived = 0;
+        var bothReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task Barrier(CancellationToken ct)
+        {
+            if (Interlocked.Increment(ref arrived) == 2) bothReady.TrySetResult();
+            await bothReady.Task.WaitAsync(ct);
+        }
         await Task.WhenAll(
-            new CardWorktreeCleanupService(first, TimeProvider.System).DiscoverAsync(cardId, CancellationToken.None),
-            new CardWorktreeCleanupService(second, TimeProvider.System).DiscoverAsync(cardId, CancellationToken.None));
+            new CardWorktreeCleanupService(first, TimeProvider.System) { BeforeInventorySaveAsync = Barrier }.DiscoverAsync(cardId, CancellationToken.None),
+            new CardWorktreeCleanupService(second, TimeProvider.System) { BeforeInventorySaveAsync = Barrier }.DiscoverAsync(cardId, CancellationToken.None));
         await using var observer = Connect(schema);
         var generationRows = await observer.CardWorktreeCleanups.ToListAsync();
         generationRows.Count.ShouldBe(1);
