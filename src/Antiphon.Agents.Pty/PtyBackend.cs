@@ -8,13 +8,16 @@ public enum PtyBackend
     /// The historical path. Strips bracketed-paste markers, so every delivery arrives as typing and
     /// the byte ceilings (<c>BriefInlineMaxBytes</c>, spill-and-pointer) are load-bearing.
     /// </summary>
-    InboxConhost,
+    InboxConhost = 0,
 
     /// <summary>
     /// The shipped redistributable <c>conpty.dll</c> → its sibling <c>OpenConsole.exe</c>
     /// (<see cref="ConPtyRedistributable"/>). Delivers the markers, so the TUI takes its paste path.
     /// </summary>
-    ModernConPty,
+    ModernConPty = 1,
+
+    /// <summary>Porta's Unix PTY transport; no Windows console host is involved.</summary>
+    UnixPty = 2,
 }
 
 /// <summary>What was asked for, what was resolved, and why — kept so the log and the tests can both
@@ -29,6 +32,8 @@ public sealed record PtyBackendDecision(
     string Requested,
     string Reason)
 {
+    public bool Deprecated => Backend == PtyBackend.InboxConhost;
+
     /// <summary>True when the modern backend was asked for and could not be given.</summary>
     public bool FellBack =>
         Backend == PtyBackend.InboxConhost
@@ -69,10 +74,19 @@ public static class PtyBackendPolicy
     /// Resolves the backend for one spawn. <paramref name="requested"/> overrides the environment;
     /// null means "read <see cref="EnvVar"/>".
     /// </summary>
-    public static PtyBackendDecision Resolve(string? requested = null)
+    public static PtyBackendDecision Resolve(string? requested = null) =>
+        Resolve(requested, Environment.GetEnvironmentVariable(EnvVar), OperatingSystem.IsWindows(),
+            () =>
+            {
+                ConPtyRedistributable.TryLocate(out var dll, out var reason);
+                return (dll, reason);
+            });
+
+    internal static PtyBackendDecision Resolve(string? requested, string? environment, bool isWindows,
+        Func<(string? DllPath, string Reason)> locate)
     {
         var raw = requested
-                  ?? Environment.GetEnvironmentVariable(EnvVar)
+                  ?? environment
                   ?? string.Empty;
 
         if (Parse(raw) == PtyBackend.InboxConhost)
@@ -82,7 +96,8 @@ public static class PtyBackendPolicy
                     ? $"{EnvVar} unset — default"
                     : $"{EnvVar}='{raw}'");
 
-        if (ConPtyRedistributable.TryLocate(out var dll, out var why))
+        var (dll, why) = locate();
+        if (dll is not null)
             return new PtyBackendDecision(PtyBackend.ModernConPty, dll, raw, why);
 
         // The card's explicit requirement: a machine without the redistributable keeps working, on
