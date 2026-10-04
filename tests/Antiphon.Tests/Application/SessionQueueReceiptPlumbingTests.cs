@@ -533,6 +533,18 @@ public sealed class SessionQueueReceiptPlumbingTests
             Sequence = stale ? 0 : 2, Kind = TranscriptKinds.UserPrompt,
             Text = stale ? body : body[..220], CreatedAt = DateTime.UtcNow,
         });
+        if (!stale)
+        {
+            // A current UserPrompt makes the session Working. Recovery is idle-only, so
+            // finish this synthetic receipt's turn before flushing (the native pump is stopped).
+            // The stale prompt is already below the initial TurnEnd at sequence 1.
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(), AgentSessionId = sessionId,
+                Sequence = 3, Kind = TranscriptKinds.TurnEnd, StopReason = "end_turn",
+                CreatedAt = DateTime.UtcNow,
+            });
+        }
         await db.SaveChangesAsync();
     }
 
