@@ -1304,7 +1304,7 @@ available producer; CP-9/24 recheck it after the dependent discovery/receipt cha
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1n-a | tests/Antiphon.Tests -> bin-c1039-s1na/ | native-containment | /*/*/NightlyNativeOwnershipTests/(C1039_AssignBeforeResume)\|(C1039_DescendantExit)\|(C1039_DrainBeforeReturn) | V-5 | all 3 listed, 0 failed/skipped | 3 | 10 |
+| CP-1 | S1n-a | tests/Antiphon.Tests -> bin-c1039-s1na/ | native-containment | /*/*/NightlyNativeOwnershipTests/(C1039_AssignBeforeResume*)\|(C1039_DescendantExit*)\|(C1039_DrainBeforeReturn*) | V-5 | all 3 listed, 0 failed/skipped | 3 | 10 |
 | CP-2 | S1n-b | tests/Antiphon.Tests -> bin-c1039-s1nb/ | native-faults | /*/*/NightlyNativeOwnershipTests/(C1039_NativeTimeout)\|(C1039_CleanupUnknownHolds)\|(C1039_NativeFixtureLoop) | V-5 | all 3 listed, 0 failed/skipped | 3 | 12 |
 | CP-3 | S1n-c | tests/Antiphon.Tests -> bin-c1039-s1nc/ | interpreter-hop | /*/*/NightlyInterpreterTests/(C1039_BootstrapUsesPwsh)\|(C1039_DirectEntryHopsOnce)\|(C1039_MissingPwshRefuses) | V-5 | all 3 listed, 0 failed/skipped | 3 | 9 |
 | CP-4 | S1n-c | CP-3 | bootstrap-early | /*/*/NightlyScriptsTests/(The_three_scripts_are_ascii_only)\|(Shared_tree_WhatIf_exits_3_naming_the_guard) | V-5, R-5 | all 2 listed, 0 failed/skipped | 2 | 2 |

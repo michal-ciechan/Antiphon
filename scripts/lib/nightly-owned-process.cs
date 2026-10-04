@@ -26,6 +26,12 @@ namespace Antiphon.Nightly
             File.WriteAllText(Path.Combine(BarrierDirectory, phase + ".entered"), "entered");
             while (!File.Exists(Path.Combine(BarrierDirectory, phase + ".release"))) Thread.Sleep(10);
         }
+        internal bool HoldRootWait()
+        {
+            if (!Barriers.Contains("root-wait")) return false;
+            File.WriteAllText(Path.Combine(BarrierDirectory, "root-wait.entered"), "entered");
+            return !File.Exists(Path.Combine(BarrierDirectory, "root-wait.release"));
+        }
     }
 
     public sealed class NativeProcessResult
@@ -147,11 +153,9 @@ namespace Antiphon.Nightly
                     int active = _hooks.ZeroCountAtRootWait ? 0 : Count(job);
                     CaptureDescendants(job);
                     Observation.RemainingProcessCount = active;
-                    if (active == 0)
-                    {
-                        _hooks.Pause("root-wait");
-                        if (RootExited(root) && active == 0) break;
-                    }
+                    bool rootExited = !_hooks.HoldRootWait() && RootExited(root);
+                    Observation.ChildrenExited = rootExited && active == 0;
+                    if (Observation.ChildrenExited) break;
                     if (execution.ElapsedMilliseconds >= timeout) { Observation.TimedOut = true; break; }
                     Thread.Sleep(10);
                 }
