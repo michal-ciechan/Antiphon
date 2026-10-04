@@ -113,7 +113,7 @@ public sealed class CodexCliVersionProbeTests
             ("codex-cli 0.159.1-.beta", 10), ("codex-cli 0.159.1+_", 9)
         };
         foreach (var (output, guard) in invalid)
-            Parse(output).ShouldBeNull($"C959-pc-{guard:000} {output}");
+            Parse(output).ShouldBeNull($"C1031-whole-line C959-pc-{guard:000} {output}");
         foreach (var separator in new[] { "\n", "\r\n" })
         foreach (var terminator in new[] { "", separator })
             (Parse(string.Join(separator, "notice", "", "codex-cli banana", "codex-cli 0.160.0", "notice",
@@ -322,7 +322,7 @@ public sealed class CodexCliVersionProbeTests
         foreach (var (mode, version, error, label) in new (string, string?, string?, string)[]
         {
             ("stderr-4096", "0.160.0", "stderr_output", "C1031-byte-cap"),
-            ("stderr-4097", "0.160.0", "output_truncated", "C1031-byte-cap C1031-stderr-overflow"),
+            ("stderr-4097", "0.160.0", "output_truncated", "C1031-byte-cap C1031-stderr-overflow C1031-truncation-priority"),
             ("stdout-notices", "0.160.0", "output_truncated", "C1031-stdout-overflow C1031-truncation-priority"),
             ("outside-cap", null, "output_truncated", "C1031-byte-cap outside"),
             ("fragment", null, "output_truncated", "C1031-no-fragment"),
