@@ -149,8 +149,23 @@ internal static class CodexCliRemoteDeliveryFixture
                 {
                     withheld.Add((id, submitted));
                     if (negative == "clipped") runtime.Append(id, TranscriptKinds.UserPrompt, submitted[..200]);
-                    if (negative == "other-session")
-                        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, submitted, sessionId: h.SessionId);
+                    if (negative is "other-session" or "baseline")
+                    {
+                        await using var adversarial = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+                        var attempted = await adversarial.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == queued.Id);
+                        var floor = attempted.LastDeliveryBaselineSequence.ShouldNotBeNull("C959-negative-original-floor");
+                        if (negative == "other-session")
+                            adversarial.TranscriptEntries.Add(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = h.SessionId,
+                                Sequence = floor + 100, Kind = TranscriptKinds.UserPrompt, Text = submitted,
+                                Timestamp = DateTime.UtcNow, CreatedAt = DateTime.UtcNow });
+                        else
+                        {
+                            var atFloor = await adversarial.TranscriptEntries.SingleAsync(e => e.AgentSessionId == id && e.Sequence == floor);
+                            atFloor.Kind = TranscriptKinds.UserPrompt;
+                            atFloor.Text = submitted;
+                        }
+                        await adversarial.SaveChangesAsync();
+                    }
                 };
             launches.Release(h.Provider.GetRequiredService<AgentSessionLaunchQueue>());
             await h.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
@@ -165,7 +180,7 @@ internal static class CodexCliRemoteDeliveryFixture
             }
             if (negative is not null)
             {
-                var label = negative switch { "clipped" => "C959-pc-222", "other-session" => "C959-pc-224", _ => "C959-pc-218" };
+                var label = negative switch { "clipped" => "C959-pc-222", "baseline" => "C959-pc-223", "other-session" => "C959-pc-224", _ => "C959-observable-ack-only" };
                 var retained = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == queued.Id);
                 retained.RemoteSpillBody.ShouldBe(expectedFull, label + " retain durable E without a complete recipient receipt");
                 retained.DeliveryVerdict.ShouldNotBe(DeliveryVerdict.LateConfirmed, label);
@@ -198,7 +213,10 @@ internal static class CodexCliRemoteDeliveryFixture
             await h.Runtime.CatchUpTranscriptAsync(task.AgentSessionId.Value, CancellationToken.None);
             peer.RequestCount(PhoneHomeOperation.Transcript).ShouldBeGreaterThan(0,
                 "C959-v21-actual-remote-transcript-pull " + vector);
-            var receipts = await db.TranscriptEntries.AsNoTracking().Where(e => e.AgentSessionId == task.AgentSessionId && e.Kind == TranscriptKinds.UserPrompt && e.Text == expectedWire).ToListAsync();
+            queued = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == queued.Id);
+            var originalBaseline = queued.LastDeliveryBaselineSequence ?? 0;
+            var receipts = await db.TranscriptEntries.AsNoTracking().Where(e => e.AgentSessionId == task.AgentSessionId
+                && e.Kind == TranscriptKinds.UserPrompt && e.Text == expectedWire && e.Sequence > originalBaseline).ToListAsync();
             receipts.Count.ShouldBe(1, "C959-v21-remote-no-duplicate " + vector);
             receipts.Single().Text.ShouldBe(expectedWire, "C959-v21-remote-pulled-receipt " + vector);
             queued = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == queued.Id);

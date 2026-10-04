@@ -58,7 +58,7 @@ public sealed class RunnerCodexCliEvidenceTests
         {
             await io.Probe.RefreshDefaultAsync(CancellationToken.None);
             await using var receiver = await PhoneHomeTestHost.StartAsync(io.Clock);
-            await using var sender = await receiver.ConnectPeerAsync(capabilities: Caps("0.160.0", T));
+            await using var sender = await receiver.ConnectPeerAsync(capabilities: Caps("0.159.1", T.AddMinutes(-1)));
             var connected = await receiver.WaitLiveAsync();
             receiver.Directory.MarkRecovered(connected);
             using var controlled = new ControlledSendSocket(sender.Socket);
@@ -84,6 +84,8 @@ public sealed class RunnerCodexCliEvidenceTests
                 await Task.WhenAll(hold, heartbeat).WaitAsync(TimeSpan.FromSeconds(5));
             }
             await new PhoneHomeRunnerClient(connected).GetHealthAsync(CancellationToken.None);
+            Text(Shape(receiver.Directory.Status(receiver.AllowedRunnerId)), "codexCliVersion")
+                .ShouldBe("0.160.0", "C959-pc-074 C959-pc-079 actual recipient snapshot");
             Text(Shape(receiver.Directory.Status(receiver.AllowedRunnerId)), "codexCliVersionCheckedAtUtc")
                 .ShouldBe(T.ToString("yyyy-MM-ddTHH:mm:sszzz"), "C959-v09-producer-original-time");
             controlled.PeakSends.ShouldBe(1, "C959-v09-one-writer");
@@ -95,7 +97,7 @@ public sealed class RunnerCodexCliEvidenceTests
             controlled.AfterFailure = true;
             await Should.ThrowAsync<IOException>(() => producer.SendHeartbeatAsync(writer, sender.Epoch, CancellationToken.None));
             await new PhoneHomeRunnerClient(connected).GetHealthAsync(CancellationToken.None);
-            Text(Shape(receiver.Directory.Status(receiver.AllowedRunnerId)), "codexCliVersion").ShouldBeNull("C959-v09-accepted-frame-clears");
+            Text(Shape(receiver.Directory.Status(receiver.AllowedRunnerId)), "codexCliVersion").ShouldBeNull("C959-pc-076");
             Text(Shape(receiver.Directory.Status(receiver.AllowedRunnerId)), "codexCliVersionError").ShouldBe("nonzero_exit", "C959-v09-production-failure-snapshot");
             var completed = io.Probe.Snapshot.CodexCliVersionCheckedAtUtc;
             io.Clock.Advance(TimeSpan.FromMinutes(1));
@@ -103,6 +105,18 @@ public sealed class RunnerCodexCliEvidenceTests
             await new PhoneHomeRunnerClient(connected).GetHealthAsync(CancellationToken.None);
             Text(Shape(receiver.Directory.Status(receiver.AllowedRunnerId)), "codexCliVersionCheckedAtUtc")
                 .ShouldBe(completed!.Value.ToString("yyyy-MM-ddTHH:mm:sszzz"), "C959-v09-repeat-original-time");
+            sender.Socket.Abort();
+            var disconnectWait = Stopwatch.StartNew();
+            while (connected.SocketOpen && disconnectWait.Elapsed < TimeSpan.FromSeconds(5)) await Task.Delay(10);
+            connected.SocketOpen.ShouldBeFalse("C959-v09-original-connection-ended");
+            var registrationProducer = new PhoneHomeRuntimeAdapter(io.Runtime,
+                new RunnerBuildDto("test", "d40c1670", T.UtcDateTime, T.UtcDateTime));
+            await using var reconnected = await receiver.ConnectPeerAsync(capabilities: registrationProducer.Capabilities());
+            receiver.Directory.MarkRecovered(await receiver.WaitLiveAsync());
+            var recovered = Shape(receiver.Directory.Status(receiver.AllowedRunnerId));
+            Text(recovered, "codexCliVersion").ShouldBeNull("C959-pc-080");
+            Text(recovered, "codexCliVersionError").ShouldBe("nonzero_exit", "C959-pc-080 completed failure reacquired");
+            Text(recovered, "codexCliVersionCheckedAtUtc").ShouldBe(completed.Value.ToString("yyyy-MM-ddTHH:mm:sszzz"), "C959-pc-080 no time renewal");
         }
         var clock = new FakeTimeProvider(T);
         await using var host = await PhoneHomeTestHost.StartAsync(clock);
@@ -120,13 +134,17 @@ public sealed class RunnerCodexCliEvidenceTests
         clock.Advance(TimeSpan.FromMinutes(1));
         await Heartbeat(host, peer, 2, null);
         Text(Shape(host.Directory.Status(host.AllowedRunnerId)), "codexCliVersionCheckedAtUtc")
-            .ShouldBe(Text(status, "codexCliVersionCheckedAtUtc"), "C959-pc-078");
+            .ShouldBe(Text(status, "codexCliVersionCheckedAtUtc"), "C959-pc-077");
         await Heartbeat(host, peer, 2, Sample("0.9.0", T));
-        Text(Shape(host.Directory.Status(host.AllowedRunnerId)), "codexCliVersion").ShouldBe("0.160.0", "C959-pc-080");
+        Text(Shape(host.Directory.Status(host.AllowedRunnerId)), "codexCliVersion").ShouldBe("0.160.0", "C959-v09-old-success-ignored");
         await Heartbeat(host, peer, 2, Sample(null, T.AddMinutes(2), "nonzero_exit"));
         status = Shape(host.Directory.Status(host.AllowedRunnerId));
-        Text(status, "codexCliVersion").ShouldBeNull("C959-pc-077");
+        Text(status, "codexCliVersion").ShouldBeNull("C959-v09-failure-clears");
         Text(status, "codexCliVersionError").ShouldBe("nonzero_exit", "C959-v09-failure");
+        await Heartbeat(host, peer, 2, Sample("0.159.1", T));
+        var retainedFailure = Shape(host.Directory.Status(host.AllowedRunnerId));
+        Text(retainedFailure, "codexCliVersion").ShouldBeNull("C959-pc-078");
+        Text(retainedFailure, "codexCliVersionError").ShouldBe("nonzero_exit", "C959-pc-078 retain failure");
     }
 
     [Test]
@@ -205,6 +223,34 @@ public sealed class RunnerCodexCliEvidenceTests
             (await pending.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeNull("C959-pc-097");
         }
 
+        foreach (var keepLive in new[] { true, false })
+        {
+            var clock = new FakeTimeProvider(T);
+            await using var guarded = await PhoneHomeTestHost.StartAsync(clock);
+            var registered = guarded.Directory.Register(guarded.Registration() with { Capabilities = Caps("0.160.0", T) });
+            using var socket = WebSocket.CreateFromStream(new MemoryStream(), new WebSocketCreationOptions { IsServer = true });
+            var held = keepLive ? guarded.Directory.AcceptConnect(guarded.AllowedRunnerId, registered.Ticket, socket) : null;
+            guarded.Directory.ApplyState(guarded.AllowedRunnerId, new RunnerState(true, T, "C959", null, false, null, T, "C959"));
+            guarded.Directory.ApplyState(guarded.AllowedRunnerId, new RunnerState(false, null, null, null, false, null, null, null));
+            clock.Advance(TimeSpan.FromSeconds(keepLive ? 91 : 89));
+            held?.NoteHeartbeat(clock.GetUtcNow());
+            var label = keepLive ? "C959-pc-201" : "C959-pc-202";
+            var failure = Should.Throw<ConflictException>(() => guarded.Directory.Register(guarded.Registration(storeId: Guid.NewGuid())), label);
+            failure.Code.ShouldBe(PhoneHomeProblemTypes.StoreMismatch, label);
+            Text(Shape(guarded.Directory.Status(guarded.AllowedRunnerId)), "codexCliVersion")
+                .ShouldBe("0.160.0", label + " original observation preserved");
+        }
+        foreach (var sameStore in new[] { true, false })
+        {
+            await using var retired = await PhoneHomeTestHost.StartAsync(new FakeTimeProvider(T));
+            retired.Directory.Register(retired.Registration() with { Capabilities = Caps("0.160.0", T) });
+            retired.Directory.ApplyState(retired.AllowedRunnerId, new RunnerState(true, T, "C959", null, false, null, T, "C959"));
+            var failure = Should.Throw<ConflictException>(() => retired.Directory.Register(
+                retired.Registration(storeId: sameStore ? retired.StoreId : Guid.NewGuid())), "C959-pc-203");
+            failure.Code.ShouldBe(PhoneHomeProblemTypes.RunnerRetired, "C959-pc-203");
+            Text(Shape(retired.Directory.Status(retired.AllowedRunnerId)), "codexCliVersion")
+                .ShouldBe("0.160.0", "C959-pc-203 refused observation does not replace current");
+        }
         foreach (var change in new[] { "boot", "epoch" })
         {
             var clock = new FakeTimeProvider(T);
@@ -225,7 +271,7 @@ public sealed class RunnerCodexCliEvidenceTests
             }
             await generation.RegisterAsync(bootId: change == "boot" ? Guid.NewGuid() : generation.BootId);
             Text(Shape(generation.Directory.Status(generation.AllowedRunnerId)), "codexCliVersion")
-                .ShouldBeNull("C959-v11-identity-clear " + change);
+                .ShouldBeNull(change == "boot" ? "C959-pc-092" : "C959-pc-093");
             oldLive.NoteHeartbeat(clock.GetUtcNow());
             Text(Shape(generation.Directory.Status(generation.AllowedRunnerId)), "codexCliVersion")
                 .ShouldBeNull("C959-v11-no-prior-evidence " + change);
@@ -257,7 +303,7 @@ public sealed class RunnerCodexCliEvidenceTests
             {
                 ownership.Directory.Register(replacement).RunnerStoreId.ShouldBe(replacement.RunnerStoreId, "C959-v11-authorized-store");
                 Text(Shape(ownership.Directory.Status(ownership.AllowedRunnerId)), "codexCliVersion")
-                    .ShouldBeNull("C959-v11-replacement-clears");
+                    .ShouldBeNull("C959-pc-094");
             }
             else
                 Should.Throw<ConflictException>(() => ownership.Directory.Register(replacement)).Code.ShouldBe(PhoneHomeProblemTypes.StoreMismatch, "C959-pc-208-full-expiry");
@@ -269,13 +315,13 @@ public sealed class RunnerCodexCliEvidenceTests
         // Registration itself must clear CLI evidence, even while retaining general capabilities.
         await host.RegisterAsync();
         var descriptor = await host.Directory.DescribeAsync(host.AllowedRunnerId, CancellationToken.None);
-        descriptor!.Capabilities!.CodexCliVersion.ShouldBeNull("C959-v11-register-clear");
+        descriptor!.Capabilities!.CodexCliVersion.ShouldBeNull("C959-pc-095");
         await using var next = await host.ConnectPeerAsync();
         var live = await host.WaitLiveAsync();
         host.Directory.MarkRecovered(live);
         live.Epoch.ShouldBeGreaterThan(old.Epoch, "C959-v11-epoch");
         await Heartbeat(host, next, 1, Sample("0.160.0", T.AddMinutes(1)), old.Epoch);
-        Text(Shape(host.Directory.Status(host.AllowedRunnerId)), "codexCliVersion").ShouldBeNull("C959-v11-old-epoch");
+        Text(Shape(host.Directory.Status(host.AllowedRunnerId)), "codexCliVersion").ShouldBeNull("C959-pc-096");
         await Heartbeat(host, next, 1, Sample("0.159.1", T));
         Text(Shape(host.Directory.Status(host.AllowedRunnerId)), "codexCliVersion").ShouldBe("0.159.1", "C959-v11-new-epoch");
         using var refused = new HttpRequestMessage(HttpMethod.Post, PhoneHomeProtocol.RegisterPath);
@@ -283,7 +329,7 @@ public sealed class RunnerCodexCliEvidenceTests
         refused.Content = JsonContent.Create(host.Registration(storeId: Guid.NewGuid()), options: Json);
         using var response = await host.Http.SendAsync(refused);
         response.StatusCode.ShouldBe(HttpStatusCode.Conflict, "C959-v11-store-owner");
-        Text(Shape(host.Directory.Status(host.AllowedRunnerId)), "codexCliVersion").ShouldBe("0.159.1", "C959-v11-refusal-preserves");
+        Text(Shape(host.Directory.Status(host.AllowedRunnerId)), "codexCliVersion").ShouldBe("0.159.1", "C959-pc-098");
     }
 
     [Test]
@@ -369,6 +415,68 @@ public sealed class RunnerCodexCliEvidenceTests
     [Test]
     public async Task C959_Exact_probe_transport_is_bound()
     {
+        ((int)PhoneHomeOperation.Capabilities).ShouldBe(1, "C959-pc-119");
+        ((int)PhoneHomeOperation.CodexCliVersion).ShouldBe(33, "C959-pc-119 additive operation");
+        var twoSettings = new PhoneHomeRunnerSettings { Enabled = true };
+        foreach (var id in new[] { "runner-a", "runner-b" })
+            twoSettings.Runners[id] = new() { Enabled = true, AllowDelegatedTasks = true,
+                HostWorkspaceRoot = @"C:\work", RunnerWorkspace = "/work/" + id, SharedSecret = "c959-two",
+                RunnerRepository = "/work/repos/antiphon", CallbackOrigin = "https://antiphon.test" };
+        await using (var two = await PhoneHomeTestHost.StartAsync(new FakeTimeProvider(T), configured: twoSettings))
+        {
+            await using var a = await two.ConnectPeerAsync(runnerId: "runner-a", secret: "c959-two", capabilities: Caps("0.160.0", T));
+            await using var b = await two.ConnectPeerAsync(runnerId: "runner-b", secret: "c959-two", capabilities: Caps("0.156.1", T));
+            two.Directory.MarkRecovered(await two.WaitLiveAsync(runnerId: "runner-a"));
+            two.Directory.MarkRecovered(await two.WaitLiveAsync(runnerId: "runner-b"));
+            a.Reply = request => request.Operation == PhoneHomeOperation.CodexCliVersion
+                ? new(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation, Shape(Sample("0.160.0", T))) : null;
+            b.Reply = request => request.Operation == PhoneHomeOperation.CodexCliVersion
+                ? new(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation, Shape(Sample("0.156.1", T))) : null;
+            var selected = await new RunnerScopedSessionRunnerClient(two.Directory, "runner-a")
+                .GetCodexCliVersionAsync(new("/isolated/codex", "/isolated"), CancellationToken.None);
+            a.RequestCount(PhoneHomeOperation.CodexCliVersion).ShouldBe(1, "C959-pc-111 selected recipient");
+            selected!.CodexCliVersion.ShouldBe("0.160.0", "C959-pc-111");
+            b.RequestCount(PhoneHomeOperation.CodexCliVersion).ShouldBe(0, "C959-pc-111 no reroute");
+        }
+        var lostClock = new FakeTimeProvider(T);
+        await using (var lostHost = await PhoneHomeTestHost.StartAsync(lostClock))
+        {
+            await using var lostPeer = await lostHost.ConnectPeerAsync(capabilities: Caps("0.160.0", T));
+            var lostConnection = await lostHost.WaitLiveAsync();
+            lostHost.Directory.MarkRecovered(lostConnection);
+            lostPeer.Reply = frame => frame.Operation == PhoneHomeOperation.CodexCliVersion
+                ? new(PhoneHomeFrameKind.Result, frame.Epoch, frame.RequestId, frame.Operation, Shape(Sample("0.156.1", T))) : null;
+            var selected = new RunnerScopedSessionRunnerClient(lostHost.Directory, lostHost.AllowedRunnerId);
+            var installationB = new RunnerCodexCliProbeRequest("/isolated/package-b/codex", "/isolated/package-b");
+            (await selected.GetCodexCliVersionAsync(installationB, CancellationToken.None))!.CodexCliVersion
+                .ShouldBe("0.156.1", "C959-diagnostic-B-differs-from-default-A");
+            lostPeer.AutoReply = false;
+            lostPeer.Reply = _ => null;
+            var pending = selected.GetCodexCliVersionAsync(installationB, CancellationToken.None);
+            var arrival = Stopwatch.StartNew();
+            while (lostPeer.RequestCount(PhoneHomeOperation.CodexCliVersion) < 2 && arrival.Elapsed < TimeSpan.FromSeconds(5)) await Task.Delay(10);
+            lostPeer.RequestCount(PhoneHomeOperation.CodexCliVersion).ShouldBe(2, "C959-lost-response-request-reached-recipient");
+            lostClock.Advance(TimeSpan.FromSeconds(8));
+            (await Task.WhenAny(pending, Task.Delay(TimeSpan.FromSeconds(5))) == pending).ShouldBeTrue("C959-pc-123 bounded loss");
+            (await pending).ShouldBeNull("C959-pc-123 no advertised-A fallback");
+            lostPeer.AutoReply = true;
+            lostPeer.Reply = frame => frame.Operation == PhoneHomeOperation.CodexCliVersion
+                ? new(PhoneHomeFrameKind.Result, frame.Epoch, frame.RequestId, frame.Operation, Shape(Sample("0.156.1", lostClock.GetUtcNow()))) : null;
+            (await selected.GetCodexCliVersionAsync(installationB, CancellationToken.None))!.CodexCliVersion
+                .ShouldBe("0.156.1", "C959-new-explicit-request-reacquires-B");
+        }
+        using (var wire = new MemoryStream())
+        using (var socket = WebSocket.CreateFromStream(wire, new WebSocketCreationOptions { IsServer = true }))
+        using (var failureSocket = new ControlledSendSocket(socket) { BeforeSocketFailure = true })
+        {
+            failureSocket.Release.TrySetResult();
+            await using var failedConnection = new PhoneHomeLiveConnection("runner-a", Guid.NewGuid(), Guid.NewGuid(),
+                1, failureSocket, new(), new FakeTimeProvider(T), capabilities: Caps("0.160.0", T));
+            (await new PhoneHomeRunnerClient(failedConnection).GetCodexCliVersionAsync(
+                new("/different/codex", "/different"), CancellationToken.None)).ShouldBeNull("C959-pc-122");
+            wire.Length.ShouldBe(0, "C959-pc-122 failed before frame write");
+            failureSocket.Abort();
+        }
         foreach (var variant in new[] { "request-id", "epoch", "operation", "503", "error-payload", "cancel" })
         {
             var correlationClock = new FakeTimeProvider(T);
@@ -385,7 +493,7 @@ public sealed class RunnerCodexCliEvidenceTests
                 if (variant == "cancel")
                 {
                     caller.Cancel();
-                    await Should.ThrowAsync<OperationCanceledException>(() => pending);
+                    await Should.ThrowAsync<OperationCanceledException>(() => pending, "C959-pc-116");
                 }
                 else
                 {
@@ -409,9 +517,9 @@ public sealed class RunnerCodexCliEvidenceTests
                     try { observed = await pending.WaitAsync(TimeSpan.FromSeconds(5)); }
                     catch (Exception ex) { failure = ex; }
                     failure.ShouldBeNull("C959-pc-248 diagnostic errors do not throw " + variant);
-                    observed.ShouldBeNull(variant == "operation" ? "C959-pc-247" : "C959-v13-refused-reply " + variant);
+                    observed.ShouldBeNull(variant == "operation" ? "C959-pc-247" : variant == "request-id" ? "C959-pc-109" : "C959-v13-refused-reply " + variant);
                 }
-                correlationPeer.RequestCount((PhoneHomeOperation)33).ShouldBe(1, "C959-v13-no-retry " + variant);
+                correlationPeer.RequestCount((PhoneHomeOperation)33).ShouldBe(1, variant == "503" ? "C959-pc-115" : "C959-v13-no-retry " + variant);
             }
             finally
             {
@@ -460,7 +568,7 @@ public sealed class RunnerCodexCliEvidenceTests
         requests[0].ShouldBe(descriptor, "C959-v13-descriptor");
         var legacy = host.Local;
         (await (Task<RunnerCodexCliVersionDto?>)method!.Invoke(legacy, [descriptor, CancellationToken.None])!)
-            .ShouldBeNull("C959-v13-legacy-default");
+            .ShouldBeNull("C959-pc-113");
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
         await Should.ThrowAsync<OperationCanceledException>(async () =>
@@ -476,7 +584,7 @@ public sealed class RunnerCodexCliEvidenceTests
             { BaseUrl = actual.Http.BaseAddress!.ToString() }), time: io.Clock);
         var exact = new RunnerCodexCliProbeRequest(io.Executable, io.Root);
         var throughHttp = await (Task<RunnerCodexCliVersionDto?>)method.Invoke(localClient, [exact, CancellationToken.None])!;
-        (throughHttp?.CodexCliVersion).ShouldBe("0.160.0", "C959-v13-http-route");
+        (throughHttp?.CodexCliVersion).ShouldBe("0.160.0", "C959-pc-120");
         io.Starts.Single().FileName.ShouldBe(io.Executable, "C959-v13-selected-native");
         io.Starts.Single().ArgumentList.ShouldBe(["--version"], "C959-v13-version-only");
         throughHttp!.CodexCliLauncherFingerprint!.Length.ShouldBe(64, "C959-v13-opaque");
@@ -491,6 +599,19 @@ public sealed class RunnerCodexCliEvidenceTests
         var throughSocket = await (Task<RunnerCodexCliVersionDto?>)method.Invoke(bound, [exact, CancellationToken.None])!;
         throughSocket.ShouldBe(throughHttp, "C959-v13-actual-dispatch");
         io.Starts.Count.ShouldBe(1, "C959-v13-shared-exact-cache");
+        var liveWriter = actual.Directory.SnapshotLive(actual.AllowedRunnerId)!;
+        var sendGate = (SemaphoreSlim)typeof(PhoneHomeLiveConnection).GetField("_send", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(liveWriter)!;
+        await sendGate.WaitAsync();
+        Task<RunnerCodexCliVersionDto?> queuedDiagnostic;
+        try
+        {
+            queuedDiagnostic = bound.GetCodexCliVersionAsync(exact, CancellationToken.None);
+            queuedDiagnostic.IsCompleted.ShouldBeFalse("C959-diagnostic-queues-behind-real-writer");
+        }
+        finally { sendGate.Release(); }
+        (await queuedDiagnostic.WaitAsync(TimeSpan.FromSeconds(5)))!.CodexCliVersion
+            .ShouldBe("0.160.0", "C959-diagnostic-reaches-real-recipient-after-writer-release");
+        io.Starts.Count.ShouldBe(1, "C959-diagnostic-busy-writer-preserves-probe-cache");
         actual.Local.Calls.ShouldBeEmpty("C959-pc-108");
         (await actual.Directory.DescribeAsync(actual.AllowedRunnerId, CancellationToken.None))!
             .Capabilities!.CodexCliVersion.ShouldBeNull("C959-v13-exact-does-not-overwrite-default");
@@ -521,7 +642,8 @@ public sealed class RunnerCodexCliEvidenceTests
         var silent = (Task<RunnerCodexCliVersionDto?>)method.Invoke(bound, [exact, CancellationToken.None])!;
         await actualPeer.WaitForAsync((PhoneHomeOperation)33);
         io.Clock.Advance(TimeSpan.FromSeconds(8));
-        (await silent.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeNull("C959-pc-114");
+        (await Task.WhenAny(silent, Task.Delay(TimeSpan.FromSeconds(5))) == silent).ShouldBeTrue("C959-pc-114");
+        (await silent).ShouldBeNull("C959-pc-114 C959-pc-123");
     }
 
     private sealed class ControlledSendSocket(WebSocket inner) : WebSocket
@@ -531,6 +653,7 @@ public sealed class RunnerCodexCliEvidenceTests
         private int _sends;
         public int PeakSends { get; private set; }
         public bool BeforeFailure { get; set; }
+        public bool BeforeSocketFailure { get; set; }
         public bool AfterFailure { get; set; }
         public override WebSocketCloseStatus? CloseStatus => inner.CloseStatus;
         public override string? CloseStatusDescription => inner.CloseStatusDescription;
@@ -548,6 +671,7 @@ public sealed class RunnerCodexCliEvidenceTests
             try
             {
                 if (!Entered.Task.IsCompleted) { Entered.TrySetResult(); await Release.Task.WaitAsync(ct); }
+                if (BeforeSocketFailure) { BeforeSocketFailure = false; throw new WebSocketException("C959 before frame write"); }
                 if (BeforeFailure) { BeforeFailure = false; throw new IOException("C959 before send"); }
                 await inner.SendAsync(buffer, type, end, ct);
                 if (AfterFailure) { AfterFailure = false; throw new IOException("C959 lost send acknowledgment"); }
