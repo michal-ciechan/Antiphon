@@ -24,7 +24,7 @@ namespace Antiphon.Tests.Application;
 
 // Only the terminal/provider is scripted. Producer, git mirror, launch queue, adapter,
 // phone-home frames, runner spill writer, delivery queue and transcript pull are real.
-internal static class CodexCliRemoteDeliveryFixture
+internal static partial class CodexCliRemoteDeliveryFixture
 {
     public static Task RunAsync(string body, string version, bool busy) =>
         RunAsync(body, new RunnerCodexCliVersionDto(version, DateTimeOffset.UtcNow, null, new string('a', 64)), busy);
@@ -245,9 +245,10 @@ internal static class CodexCliRemoteDeliveryFixture
         finally { System.IO.Directory.Delete(root, recursive: true); }
     }
 
-    private sealed class HeldLaunches : IAgentTaskLaunchSink
+    internal sealed class HeldLaunches : IAgentTaskLaunchSink
     {
         private readonly List<(Guid Session, Guid Agent, DateTime Generation, AgentLaunchSpec Spec)> _items = [];
+        public void Discard() => _items.Clear();
         public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec) => _items.Add((sessionId, agentId, acceptedGeneration, spec));
         public void Release(AgentSessionLaunchQueue queue)
         {
@@ -257,7 +258,7 @@ internal static class CodexCliRemoteDeliveryFixture
         }
     }
 
-    private sealed class Freeze(string connection) : LandDeliveryBoundary
+    internal sealed class Freeze(string connection) : LandDeliveryBoundary
     {
         public DelegationSettings Settings { get; set; } = new();
         public Dictionary<Guid, AgentTask> Tasks { get; } = [];
@@ -267,9 +268,9 @@ internal static class CodexCliRemoteDeliveryFixture
             if (boundary != "dispatch-warning-claim-committed") return;
             await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
             var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId, ct);
-            Tasks.Add(taskId, task);
-            Full.Add(taskId, DelegationReportFormatter.BuildBrief(task, Settings,
-                Settings.CeilingsFor(PtyBackend.InboxConhost, "runner").ForAgentKind(task.AgentKind).ReplyInlineMaxChars, refocus: false));
+            Tasks[taskId] = task;
+            Full[taskId] = DelegationReportFormatter.BuildBrief(task, Settings,
+                Settings.CeilingsFor(PtyBackend.InboxConhost, "runner").ForAgentKind(task.AgentKind).ReplyInlineMaxChars, refocus: false);
         }
     }
 
@@ -308,13 +309,26 @@ internal static class CodexCliRemoteDeliveryFixture
         }
     }
 
-    private sealed class Recipient(RunnerCodexCliVersionDto? sample) : IPhoneHomeRuntimeSurface, IAsyncDisposable
+    internal sealed class Recipient(RunnerCodexCliVersionDto? sample) : IPhoneHomeRuntimeSurface, IAsyncDisposable
     {
         public Dictionary<Guid, FakeAgentProtocolAdapter> Terminals { get; } = [];
         private readonly Dictionary<Guid, List<RunnerTranscriptEvent>> _transcripts = [];
         public List<RunnerCodexCliProbeRequest> ProbeRequests { get; } = [];
         public Func<Guid, string, Task>? BeforeBody { get; set; }
         public Func<Guid, string, Task>? RecordPrompt { get; set; }
+        public bool Ready { get; set; } = true;
+        public bool AckRules { get; set; } = true;
+        public int SnapshotReads { get; private set; }
+        public bool WorkingScreen { get; set; }
+        private readonly Dictionary<Guid, AgentKind> _kinds = [];
+        public Dictionary<Guid, GrokRulesReceipt> Rules { get; } = [];
+        public void AppendAt(Guid id, string kind, string? text, DateTimeOffset? timestamp)
+        {
+            var entries = _transcripts[id];
+            entries.Add(new(id, entries.Count + 1, kind, Guid.NewGuid().ToString("N"), null,
+                timestamp, kind == TranscriptKinds.UserPrompt ? "user" : "assistant", text,
+                null, null, null, null, null));
+        }
         public void Append(Guid id, string kind, string? text = null, string? stopReason = null)
         {
             var entries = _transcripts[id];
@@ -322,7 +336,7 @@ internal static class CodexCliRemoteDeliveryFixture
                 kind == TranscriptKinds.UserPrompt ? "user" : null, text, null, null, null, null, stopReason));
         }
         public RunnerCapabilitiesDto Capabilities() => new("InboxConhost", "inbox", "test", false,
-            Version: "d40c1670", Platform: "linux", Features: [RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.WorkspaceRepositoryV1],
+            Version: "d40c1670", Platform: "linux", Features: [RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.WorkspaceRepositoryV1, GrokRulesTransport.Capability],
             CodexCliVersion: sample?.CodexCliVersion, CodexCliVersionCheckedAtUtc: sample?.CodexCliVersionCheckedAtUtc,
             CodexCliVersionError: sample?.CodexCliVersionError, CodexCliLauncherFingerprint: sample?.CodexCliLauncherFingerprint);
         public Task<RunnerCodexCliVersionDto?> GetCodexCliVersionAsync(RunnerCodexCliProbeRequest request, CancellationToken ct)
@@ -334,6 +348,7 @@ internal static class CodexCliRemoteDeliveryFixture
         public IReadOnlyList<RunnerSessionDto> List() => Terminals.Keys.Select(Session).ToList();
         private RunnerSessionDto Session(Guid id) => new(id, 1234, Terminals[id].StartedAcceptedGeneration!.Value,
             Terminals[id].Killed ? "Exited" : "Running", Terminals[id].Killed ? 0 : null, "Unknown", _transcripts[id].Count,
+            GrokRulesReceipt: Rules.GetValueOrDefault(id),
             AcceptedStartedAt: Terminals[id].StartedAcceptedGeneration);
         public Task<RunnerSessionDto> GetAsync(Guid id, CancellationToken ct) => Task.FromResult(Session(id));
         public async Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct)
@@ -341,13 +356,19 @@ internal static class CodexCliRemoteDeliveryFixture
             var terminal = new FakeAgentProtocolAdapter();
             Terminals.Add(request.SessionId, terminal);
             _transcripts.Add(request.SessionId, []);
+            var kind = request.TranscriptFormat switch { "grok" => AgentKind.Grok, "claude" => AgentKind.ClaudeCode, _ => AgentKind.Codex };
+            _kinds.Add(request.SessionId, kind);
+            terminal.ClaudeComposerChrome = kind == AgentKind.ClaudeCode;
+            if (request.InstalledGrokRulesReceipt is { } receipt) Rules.Add(request.SessionId, receipt);
             terminal.OnSubmitted = async text =>
             {
                 if (RecordPrompt is { } record) await record(request.SessionId, text);
                 else Append(request.SessionId, TranscriptKinds.UserPrompt, text);
+                if (text.StartsWith("[antiphon-grok-rules:", StringComparison.Ordinal) && AckRules)
+                    AppendRulesAck(request.SessionId, text);
                 Append(request.SessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn");
             };
-            await terminal.StartAsync(new AgentLaunchSpec("codex", AgentKind.Codex, request.Exe, request.Args, request.Env, request.Cwd,
+            await terminal.StartAsync(new AgentLaunchSpec("recipient", kind, request.Exe, request.Args, request.Env, request.Cwd,
                 request.Cols, request.Rows,
                 SessionId: request.SessionId, AcceptedStartedAt: request.AcceptedStartedAt), ct);
             return Session(request.SessionId);
@@ -355,14 +376,34 @@ internal static class CodexCliRemoteDeliveryFixture
         public RunnerBufferDto GetBuffer(Guid id) => new(id, Terminals[id].SnapshotRawOutput(), _transcripts[id].Count);
         public RunnerSnapshotDto GetSnapshot(Guid id)
         {
+            SnapshotReads++;
             var terminal = Terminals[id];
-            return new(id, terminal.SnapshotRawOutput(), terminal.Inputs.Count == 0 ? CodexStartupFixtures.P3 : terminal.SnapshotRenderedScreen(),
-                _transcripts[id].Count, terminal.StartedAcceptedGeneration!.Value, terminal.StartedAcceptedGeneration);
+            var screen = terminal.SnapshotRenderedScreen();
+            if (_kinds[id] == AgentKind.Grok && terminal.Inputs.Count == 0)
+            {
+                using var doc = GrokStartupFixture.Read();
+                screen = Ready ? GrokStartupFixture.ReadyScreen() : GrokStartupFixture.Screen(GrokStartupFixture.Capture(doc, "startup-"), 15);
+            }
+            else if (_kinds[id] == AgentKind.Codex && terminal.Inputs.Count == 0) screen = CodexStartupFixtures.P3;
+            if (WorkingScreen && terminal.SubmittedBodies.Count > 0) screen = "• Working (1s • esc to interrupt)";
+            return new(id, terminal.SnapshotRawOutput(), screen,
+                terminal.Inputs.Count + _transcripts[id].Count, terminal.StartedAcceptedGeneration!.Value, terminal.StartedAcceptedGeneration);
+        }
+        public void AppendRulesAck(Guid id, string actualRulesPrompt)
+        {
+            var receipt = Rules[id];
+            var promptId = actualRulesPrompt[21..actualRulesPrompt.IndexOf(']')];
+            Append(id, TranscriptKinds.AssistantText, $"ANTIPHON_RULES_ACK id={promptId} generation={receipt.Generation:N} sha256={receipt.Sha256}");
         }
         public RunnerTranscriptDto GetTranscript(Guid id) => new(id, _transcripts[id].ToArray(), _transcripts[id].Count);
         public async Task SendInputAsync(Guid id, string input, CancellationToken ct)
         {
             if (BeforeBody is { } check) await check(id, input);
+            if (input == ComposerInputProbe.KillLine && _kinds[id] == AgentKind.ClaudeCode)
+            {
+                Terminals[id].PrimeComposer("");
+                return;
+            }
             await Terminals[id].SendInputAsync(input, ct);
         }
         public Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid id, RunnerConditionalInputRequest request, CancellationToken ct) => throw new NotSupportedException();
