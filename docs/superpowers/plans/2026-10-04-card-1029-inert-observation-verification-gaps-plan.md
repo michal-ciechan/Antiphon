@@ -890,9 +890,19 @@ receipt result. No vectors or controls are retired by this staged budget.
 
 ### Checkpoints
 
-Code task `bed39f89` budget split (operator brief, 2026-10-04): implement S1
+Continuation `a284cf76` authored S2/S3's seven methods and ran CP-5..8.
+Ordinary acceptance remains red: the final `bfd30a706a6dcf324bd6d4bd26a2d4aa4a50fac8`
+run executed seven methods, zero passed, seven failed, zero skipped. Fixture
+directory-proxy compatibility, current-session queue selection and the post-input
+fault seam still need Code. The earlier working fixture reproduces the separate
+screen-delivered spill-release gap against base production (CARD-1056). Full
+unedited receipts, base diagnostics and every pending PC/variant are in
+`.antiphon/task-a284cf76.md`. No ordinary or Mutation obligation is discharged by
+authoring a red method. The two authorized runtime repair rounds are exhausted.
+
+Historical Code task `bed39f89` budget split (operator brief, 2026-10-04): implement S1
 first and select CP-3, CP-4, CP-15, CP-16 and CP-17 from the unchanged closed
-table below (27 estimated row minutes plus bootstrap). S2/S3 and CP-5..8 remain
+table below (27 estimated row minutes plus bootstrap). S2/S3 and CP-5..8 then remained
 unimplemented/unrun for the next Code slice, not passed or optional. That slice
 must rerun the changed fixture consumers at its own committed source. The brief
 explicitly overrides the earlier P-1 Code hold: P-1 blocks only PC-274 in paused

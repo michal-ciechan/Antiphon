@@ -35,7 +35,13 @@ refusals do not qualify field-specific filesystem-masked mutants. Local and
 selected typed diagnostic counters are separate and observed before peer/result
 assertions. The model guard assertions precede aggregate model-loop checks.
 
-S2/S3 and CP-5..8 remain unimplemented/unrun under the authorized budget split.
+Continuation a284cf76 authored S2/S3 and executed CP-5..8, but ordinary acceptance
+remains red (seven final methods executed, zero passed, seven failed, zero skipped).
+The prior working arrangement reproduces a separate spill-release gap against
+base production, filed as CARD-1056. See `.antiphon/task-a284cf76.md` for exact
+source SHAs, receipts, remaining fixture defects and all 211 + 21 pending controls.
+Existing qualification dispositions are retained pending ordinary Code/Review;
+authoring a red method does not qualify a guard or discharge a control.
 The operator brief supersedes the historical handoff hold below: P-1 blocks only
 PC-274 in paused Mutation and does not block the ordinary Code checkpoints.
 No production mutant or red/restore/green cycle was run in this Code slice.
