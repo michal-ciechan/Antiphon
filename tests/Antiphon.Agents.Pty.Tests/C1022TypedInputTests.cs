@@ -77,7 +77,9 @@ public class C1022TypedInputTests
     {
         var found = new List<string>();
         if (!File.Exists(path)) return found;
-        foreach (var line in File.ReadAllText(path).Split('\n').SkipLast(1).Where(line => line.Length > 0))
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        foreach (var line in reader.ReadToEnd().Split('\n').SkipLast(1).Where(line => line.Length > 0))
         {
             using var json = JsonDocument.Parse(line);
             if (json.RootElement.GetProperty("type").GetString() != "user") continue;

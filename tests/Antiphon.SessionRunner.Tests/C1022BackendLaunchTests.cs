@@ -77,6 +77,23 @@ public class C1022BackendLaunchTests
                 var hashes = ConPtyRedistributable.VerifyShippedHashes(dll);
                 hashes.Ok.ShouldBeTrue(hashes.Detail);
                 var build = RunnerBuildIdentity.Resolve();
+                var sha = build.CommitSha.ShouldNotBeNull("runner build SHA is required");
+                var hostIdentity = owned.Captured.Single(p => p.Host).Process;
+                using var host = Process.GetProcessById(hostIdentity.Pid);
+                var loadedDll = host.Modules.Cast<ProcessModule>().Single(module =>
+                    module.ModuleName.Equals("conpty.dll", StringComparison.OrdinalIgnoreCase)).FileName;
+                string.Equals(loadedDll, dll, StringComparison.OrdinalIgnoreCase)
+                    .ShouldBeTrue("host-modern: loaded DLL belongs to the observed OpenConsole pair");
+                Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    os = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
+                    architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString(),
+                    sessionId, hostIdentity.Pid, hostIdentity.StartedUtc, hostIdentity.Image,
+                    childPid = dto.Pid, childStartedUtc = dto.StartedAt,
+                    runnerBuild = DescribeBuild(typeof(SessionRunnerRuntime).Assembly.Location, sha),
+                    hostBuild = DescribeBuild(Path.Combine(Path.GetDirectoryName(hostIdentity.Image)!, "Antiphon.PtyHost.dll"), sha),
+                    loadedDll, openConsole = console.Process.Image, hashes = hashes.Detail,
+                }));
                 foreach (var cap in new[] { runtime.DescribeCapabilities(build, [SessionBackends.PtyHost], []),
                              new PhoneHomeRuntimeAdapter(runtime, build).Capabilities() })
                 {
@@ -108,5 +125,13 @@ public class C1022BackendLaunchTests
             Environment.SetEnvironmentVariable(PtyBackendPolicy.EnvVar, previous);
             Directory.Delete(root, true);
         }
+    }
+
+    private static object DescribeBuild(string path, string expectedSha)
+    {
+        var version = FileVersionInfo.GetVersionInfo(path).ProductVersion;
+        version.ShouldNotBeNull().ShouldContain(expectedSha, customMessage: "loaded host/runner build SHA");
+        using var stream = File.OpenRead(path);
+        return new { path, version, sha256 = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(stream)) };
     }
 }
