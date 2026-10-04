@@ -203,6 +203,31 @@ public sealed class RetiredTempContainerHostTests
             f.ReloadDocker();f.Docker["fault"]="";var remaining=TempIds(f);
             var retry=await Cleanup(f,"C994_OPERATION=c99400000000000000000000000000000002");retry.Exit.ShouldBe(0,"c994-retry: "+retry.Output);TempIds(f).ShouldBeEmpty();
             Receipt(f)["removals"]!.AsArray().Select(x=>x!["id"]!.GetValue<string>()).ShouldBe(remaining,"c994-retry: remaining only");f.Removed.ShouldBeEmpty();}
+        foreach(var boundary in new[]{"before-intent","after-intent","after-rm","before-final-copy"}) {
+            using var f=Fixture("session-runner","state-init");var before=f.Docker["volumes"]!.ToJsonString();
+            var crash=$"""
+                original_save=$(declare -f c994_save); eval "${original_save/c994_save/c994_save_original}"
+                c994_save() {
+                    if [ '{{boundary}}' = before-intent ] && printf '%s' "$C994_RECORD" | jq -e '.removals|length==1' >/dev/null; then exit 77; fi
+                    if [ '{{boundary}}' = after-rm ] && printf '%s' "$C994_RECORD" | jq -e 'any(.removals[]; .outcome=="removed")' >/dev/null; then exit 77; fi
+                    if [ '{{boundary}}' = before-final-copy ] && printf '%s' "$C994_RECORD" | jq -e '.outcome=="completed"' >/dev/null; then exit 77; fi
+                    c994_save_original || return $?
+                    if [ '{{boundary}}' = after-intent ] && printf '%s' "$C994_RECORD" | jq -e '.removals|length==1' >/dev/null; then exit 77; fi
+                }
+                """;
+            var interrupted=await Cleanup(f,crash);interrupted.Exit.ShouldBe(77,"c994-retry crash: "+boundary+"; "+interrupted.Output);
+            var durable=Receipt(f);durable["outcome"]!.GetValue<string>().ShouldBe("pending","c994-retry: no premature success");
+            durable["removals"]!.AsArray().Count.ShouldBe(boundary=="before-intent"?0:boundary=="before-final-copy"?2:1,"c994-retry: atomic persistence");
+            f.ReloadDocker();var remaining=TempIds(f);
+            var statuses=JsonNode.Parse(File.ReadAllText(f.Root+"/statuses.json"))!.AsObject();f.Statuses.Clear();foreach(var (key,value) in statuses)f.Statuses[key]=value?.DeepClone();
+            f.Statuses["server2"]!["acceptingNewWork"]=false;
+            var drift=await Cleanup(f,"C994_OPERATION=c99400000000000000000000000000000002");drift.Exit.ShouldBe(2,"c994-retry: fresh status required");TempIds(f).ShouldBe(remaining);
+            f.ReloadDocker();f.Statuses["server2"]!["acceptingNewWork"]=true;
+            var retry=await Cleanup(f,"C994_OPERATION=c99400000000000000000000000000000003");retry.Exit.ShouldBe(0,"c994-retry: "+boundary+"; "+retry.Output);
+            Receipt(f)["removals"]!.AsArray().Select(x=>x!["id"]!.GetValue<string>()).ShouldBe(remaining,"c994-retry: freshly remaining only");
+            TempIds(f).ShouldBeEmpty();f.ReloadDocker();f.Docker["volumes"]!.ToJsonString().ShouldBe(before,"c994-retry: volumes retained");
+            retry.Output.Split("C994_TEMP_CONTAINERS").Length.ShouldBe(2,"c994-retry: one summary");
+        }
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Receipt_write_and_copy_fail_closed() {
@@ -210,6 +235,8 @@ public sealed class RetiredTempContainerHostTests
             var extra=fault=="intent"?"c994_save() { return 2; }":fault=="copy"?"cp() { return 2; }":"original_save=$(declare -f c994_save); eval \"${original_save/c994_save/c994_save_original}\"; c994_save() { if printf '%s' \"$C994_RECORD\" | jq -e 'any(.removals[]; .outcome==\"removed\")' >/dev/null; then return 2; fi; c994_save_original; }";
             var run=await Cleanup(f,extra);run.Exit.ShouldBe(2,"c994-intent-first c994-receipt-copy: "+fault+"; "+run.Output);
             if(fault!="outcome")NoMutation(f,"c994-intent-first");else TempIds(f).Length.ShouldBe(1,"c994-receipt-copy: exact progress");}
+        using var bridge=Fixture("session-runner");(await Cleanup(bridge)).Exit.ShouldBe(0,"c994-receipt-copy: real host evidence");
+        await RetiredTempContainerScriptTests.CheckLiveBridge(bridge,true);
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Host_context_is_strict() {
@@ -255,8 +282,11 @@ public sealed class RetiredTempContainerHostTests
               const link=root+'-link';fs.symlinkSync(root,link);try{refuses('linked-root',()=>ownedRoot(link));}finally{fs.unlinkSync(link);}
               refuses('sibling-daemon',()=>ownedDaemon('foreign',os.hostname(),true));
               let error;try{await boundedChild('bash',['-c','sleep 100 & wait'],{},100);}catch(e){error=e;}
-              if(!error?.reaped)throw Error('child-not-reaped');
-              try{process.kill(error.pid,0);throw Error('child-still-live');}catch(e){if(e.code!=='ESRCH')throw e;}
+              let returnedReaped=error?.reaped===true,returnedDead=false;
+              try{process.kill(error.pid,0);}catch(e){if(e.code==='ESRCH')returnedDead=true;else throw e;}
+              // Custody-independent teardown prevents a deliberate helper defect leaking its owned child.
+              if(!returnedDead&&Number.isInteger(error?.pid)){try{process.kill(-error.pid,'SIGKILL');}catch(e){if(e.code!=='ESRCH')throw e;}await new Promise(r=>setTimeout(r,100));}
+              if(!returnedReaped||!returnedDead)throw Error('child-not-reaped-at-return');
               cases.push('child-reaped');
               if(cases.sort().join(',')!=='child-reaped,foreign-label,linked-root,production,sibling-daemon')throw Error('roster');
               console.log('C994_CUSTODY cases=5 reaped=true');

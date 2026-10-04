@@ -611,8 +611,8 @@ internal sealed class C1008HostFixture : IDisposable
             build_server2_images() { write_result true '' 0; }
             c849_lock() { :; }
             c849_budget_gate() { :; }
-            c849_status_body() { node -e 'process.stdout.write(JSON.stringify(JSON.parse(require("fs").readFileSync(process.argv[1]))[process.argv[2]]))' '{{Root}}/statuses.json' "$1"; }
-            c1008_http() { node -e 'const fs=require("fs"),s=JSON.parse(fs.readFileSync(process.argv[1])),p=process.argv[2],u=new URL(p,"http://fixture.invalid"),v=u.searchParams.has("projectId")?s.scopes[u.searchParams.get("projectId")]:s.details[u.pathname.split("/").at(-1)];if(!v)process.exit(2);process.stdout.write(JSON.stringify(v))' '{{Root}}/tasks.json' "$1"; }
+            c849_status_body() { jq -ec --arg runner "$1" '.[$runner]' '{{Root}}/statuses.json'; }
+            c1008_http() { local key="$1"; if [[ "$key" == *projectId=* ]]; then key="${key#*projectId=}"; key="${key%%&*}"; jq -ec --arg key "$key" '.scopes[$key]' '{{Root}}/tasks.json'; else jq -ec --arg key "${key##*/}" '.details[$key]' '{{Root}}/tasks.json'; fi; }
             sudo() { [ "$1" = -n ] && shift; if [ "$1" = install ]; then mkdir -p "${@: -1}"; elif [ "$1" = df ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nfixture 99999999 1 25000000 1%% /fixture\n'; else "$@"; fi; }
             {{extra}}
             """;
