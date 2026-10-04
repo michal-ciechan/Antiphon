@@ -226,7 +226,7 @@ public sealed class RetiredTempContainerHostTests
             Receipt(f)["removals"]!.AsArray().Select(x=>x!["id"]!.GetValue<string>()).ShouldBe(remaining,"c994-retry: remaining only");f.Removed.ShouldBeEmpty();}
         foreach(var boundary in new[]{"before-intent","after-intent","after-rm","before-final-copy"}) {
             using var f=Fixture("session-runner","state-init");var before=f.Docker["volumes"]!.ToJsonString();
-            var crash=$"""
+            var crash=$$"""
                 original_save=$(declare -f c994_save); eval "${original_save/c994_save/c994_save_original}"
                 c994_save() {
                     if [ '{{boundary}}' = before-intent ] && printf '%s' "$C994_RECORD" | jq -e '.removals|length==1' >/dev/null; then exit 77; fi
