@@ -636,7 +636,7 @@ public class InstructionBundleTests
         bundle = bundle.Replace("\r\n", "\n");
         bundle.ShouldNotContain('\r');
         bundle.ShouldContain("Follow docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout for autonomous AppHost and runner restarts and server2 rollouts.");
-        bundle.Length.ShouldBeLessThanOrEqualTo(14_538, "CARD-0940 restored policy plus the standing Always continue rule");
+        bundle.Length.ShouldBeLessThanOrEqualTo(14_310, "CARD-0940 restored policy with minimal bundle growth");
     }
 
     [Test]
@@ -669,7 +669,8 @@ public class InstructionBundleTests
         // not a default delegate launch. The separate overflow test still requires refusal.
         var budget = new DelegationSettings().CommandLineBudgetChars;
         // Stage bundles are mutually exclusive at launch. Exercise every actual role composition
-        // with the board API and a reply style, preserving the 30,000-char guard.
+        // with the board API and a reply style, reserving CARD-0884's 500-char headroom
+        // in the whole argv estimate, including the append flag and other arguments.
         foreach (var role in Enum.GetValues<AgentTaskRole>().Where(r => !AgentTaskRoles.IsSpecialist(r)))
         foreach (var kind in Enum.GetValues<AgentTaskKind>())
         {
@@ -678,7 +679,7 @@ public class InstructionBundleTests
             composed.Text.Length.ShouldBeLessThan(budget, $"{kind}/{role}");
             Should.NotThrow(() => InstructionBundleComposer.EnsureWithinCommandLineBudget(composed,
                 ["--name", "task-1a2b3c4d", "--model", "opus", "--session-id", Guid.NewGuid().ToString("D")],
-                budget, $"{kind}/{role}"));
+                budget - 500, $"{kind}/{role} with 500-char headroom"));
         }
     }
 

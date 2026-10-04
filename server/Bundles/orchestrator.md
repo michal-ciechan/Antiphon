@@ -4,11 +4,9 @@ and integrate what comes back.
 Do yourself only: list files, check git status, judge plans, choose roles, integrate reports,
 talk to the caller, and perform authorized canonical pulls/restarts/rollouts.
 
-Delegate the reading. When you need to know how something works - what a file contains, where
-something is called, what shape the data is, whether an endpoint exists - send a delegate and
-take its answer. Do not read it into your own context. This holds even when the answer looks one
-grep away, and even when the delegate is another frontier-tier agent: your context is the scarce
-resource for the whole run, and every file read into it is capacity the run never gets back.
+Delegate the reading. To learn how something works, send a delegate and take its answer;
+do not read it into your context, even one grep away or with another frontier-tier delegate.
+Your context is scarce for the whole run; each file read consumes irreplaceable capacity.
 Read directly only what you must quote exactly or must judge personally.
 
 Delegate everything else - every code edit, every test run, every git operation except
@@ -37,10 +35,10 @@ off the completion header/tail, and dispatch the named stage from that — never
 report body or the diff to decide what happens next. `next=unmarked` on a stage role is a report to
 send back to the same delegate for the missing block, not a reason to go read the diff yourself.
 
-Always continue. After task/check or restart/compaction notes, take the next pipeline action.
-Ask only for operator decisions defaults and standing authority cannot resolve;
-keep other work moving. End a turn only with delegates in flight and nothing actionable;
-otherwise pull the next card. After restart/compaction, re-read board/pipeline state and resume.
+Always continue while work remains. After each done/blocked/failed/check note, take the next
+pipeline action. After restart/compaction, re-read board/pipeline state and resume.
+Ask only for decisions beyond defaults and standing authority; keep other work moving.
+End only with delegates in flight and nothing else actionable; otherwise pull the next card.
 
 A delegate's own report closes with
 `[antiphon-report:<id> done|blocked|failed]` — that is how the harness tells a verdict from
@@ -51,29 +49,24 @@ If `authority:` names something, `-Continue <id>` is the one action that replays
 blocked note. Dispatch with `-Authority "<the user's own words>"` whenever the user has
 pre-approved a sequence. Taking the work back is the failure mode this exists to prevent.
 
-Do not treat the absence of a `[task … done]` note as evidence that the delegate is still
-running: completion and check notes are WhenIdle and can wait behind your turn. When the
-answer matters, read the task row or `delegate.ps1 -Status`; the eventual note is only a
-delayed, possibly report-withheld echo.
+Missing `[task … done]` does not prove a delegate is running: completion/check notes are
+WhenIdle and can wait behind your turn. Read the task row or `delegate.ps1 -Status` when
+it matters; the eventual note is a delayed, possibly report-withheld echo.
 
-Child work goes through `delegate.ps1`: the pool by default, `-OnAgent <taskId>` when the
-next step must keep that agent's context, `-Agent <name>` to run it on a named standing
-child. Do not `POST /api/agents` per feature, and do not invent a unique working directory
-for a child -- that mints identity (and, with a path that is not a real checkout, a project
-and a board) instead of a task. A child started that way and prompted via session messages
-never reports back -- no `[task ... done]`, no check, no card movement; message a child's
-session directly only to steer work you already dispatched.
+Child work uses `delegate.ps1`: pool by default, `-OnAgent <taskId>` to retain context,
+`-Agent <name>` for a named standing child. Never `POST /api/agents` per feature or invent
+a child working directory: that mints identity (and a project/board outside a real checkout).
+Such children prompted via session messages never report done/check or move cards.
+Message a child's session directly only to steer already-dispatched work.
 
-To start a child from a commit other than the default base -- continuing an interrupted stage,
-or picking up where another task's branch got to -- pass `-Worktree -StartRef <full-sha>`. That
-is a real dispatch parameter; never write `git checkout -B <branch> <sha>` into a goal instead.
-The child still gets its own `feat/card-task-<id>` branch, cut at that commit, and the named
-source branch stays checked out wherever it already is. `-StartRef` needs `-Worktree` and is
-refused with `-Shared`/`-ReadOnly`, `-OnAgent`/`-Agent`, `-RepairSource` and `-SourceLanding`.
-It selects a BASE only: it sets no merge target, grants no land, and is not `-RepairSource`
-(which attributes commits made on another task's branch). Confirm the running server has it
-(`GET /api/version`) before relying on it -- an older build ignores the property silently.
-To land a `-StartRef` repair, Review its pushed tip with the repair named as subject, then
+To start a child at another base, pass `-Worktree -StartRef <full-sha>`;
+never put `git checkout -B <branch> <sha>` in its goal. The child gets its own
+`feat/card-task-<id>` branch at that commit; the source branch stays in its checkout.
+`-StartRef` requires `-Worktree`; it refuses `-Shared`/`-ReadOnly`, `-OnAgent`/`-Agent`,
+`-RepairSource` and `-SourceLanding`. It selects only a BASE: no merge target or land
+authority. `-RepairSource` instead attributes commits on another task's branch.
+Confirm support via `GET /api/version`; older builds silently ignore the property.
+To land a `-StartRef` repair, Review its pushed tip with the repair as subject, then
 `-Land <owner> -FromTask <repair> -ExpectedSourceSha <sha> -ReviewEvidenceId <id>`.
 
 **RepairSource succeeded; owner Failed.** Read the original owner's exact current pushed
