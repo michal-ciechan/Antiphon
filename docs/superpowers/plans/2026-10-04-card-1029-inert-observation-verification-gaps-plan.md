@@ -898,6 +898,10 @@ must rerun the changed fixture consumers at its own committed source. The brief
 explicitly overrides the earlier P-1 Code hold: P-1 blocks only PC-274 in paused
 post-land Mutation; do not repair it here. Preserve all five named follow-ups and
 the 38/38/38 matrix. No whole-Unit or Windows run is commissioned by this split.
+CP-15 filter repair: the first Code run selected zero tests with the original
+class/method OR literals. Use the owner-documented suffix wildcards for the
+pinned TUnit discovery hint extractor; require exactly the same three methods
+in the fresh TRX. This changes selection syntax, not assertions or count floors.
 The assigned plan branch predates required CARD-1031/CARD-1022; a normal merge of
 the plan-pinned M (`9b78712f6671d7ccb98bcf4a5ebea8f080d7cecd`) supplies those
 prerequisites while preserving the assigned task base as an ancestor. No rebase.
@@ -928,7 +932,7 @@ all drivers finish. A missing planned method or vector is incomplete, not a skip
 | CP-6 | all | `tests/Antiphon.Tests -> bin-c1029-active-enqueue/` | active-enqueue-retry | `/*/*/CodexCliObservationGapTests/C1029_Enqueue_fault_and_retry_keep_identity` | V-21,V-22 | 1 result; local/remote before/after save; real same-task Retry receipts; 0 failed/skipped | 1 | 6 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-7 | all | `tests/Antiphon.Tests -> bin-c1029-active-negative/` | active-receipt-floors | `/*/*/CodexCliObservationGapTests/(C1029_Old_generation_does_not_confirm)\|(C1029_Unobservable_screen_retains_spill)\|(C1029_Unobservable_timestamp_floor_is_original)` | V-21,V-22 | 3 results; all negative then actual-positive variants; 0 failed/skipped | 3 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-8 | all | `tests/Antiphon.Tests -> bin-c1029-active-recovery/` | active-durable-receipts | `/*/*/CodexCliObservationGapTests/(C1029_Durable_spill_survives_recreated_graph)\|(C1029_Post_input_crash_late_confirms_once)` | V-22 | 2 results; eligible/busy, original Id/E/path, one actual submit and settled row; 0 failed/skipped | 2 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-15 | all | `tests/Antiphon.Tests -> bin-c1029-active-auth/` | active-independent-refusals | `/*/*/(CodexPhoneHomeCreateTests)\|(ModelAvailabilityCreateTests)/(Signed_out_remote_create_refuses_with_codex_problem_details)\|(Present_unknown_and_unavailable_probe_admit)\|(Create_without_IgnoreModelDisabled_is_still_409_while_held)` | R-1 | exactly the 3 named methods; 0 failed/skipped | 3 | 4 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-15 | all | `tests/Antiphon.Tests -> bin-c1029-active-auth/` | active-independent-refusals | `/*/Antiphon.Tests.Application/(CodexPhoneHomeCreateTests*)\|(ModelAvailabilityCreateTests*)/(Signed_out_remote_create_refuses_with_codex_problem_details*)\|(Present_unknown_and_unavailable_probe_admit*)\|(Create_without_IgnoreModelDisabled_is_still_409_while_held*)` | R-1 | exactly the 3 named methods; 0 failed/skipped | 3 | 4 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-16 | all | `tests/Antiphon.Tests -> bin-c1029-active-warm/` | active-warm-claim | `/*/*/PhoneHomeTaskDispatchProjectionTests/Signed_out_codex_runner_still_claims_and_reuses_a_warm_session` | V-27,R-6 | 1 result; claim/reuse/queue only; 0 failed/skipped | 1 | 3 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-17 | all | `tests/Antiphon.SessionRunner.Tests -> bin-c1029-active-backstop/` | active-runner-auth | `/*/*/CodexProviderAuthRoutingTests/Composed_router_measures_codex_in_its_own_home_and_gates_the_launch` | R-7 | 1 result; 0 failed/skipped | 1 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
