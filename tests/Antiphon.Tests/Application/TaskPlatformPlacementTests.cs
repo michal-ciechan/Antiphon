@@ -603,9 +603,18 @@ public sealed class TaskPlatformPlacementTests
 
         await using var followDb = kit.Context();
         AgentTaskCreatedDto? created = null;
-        await Should.NotThrowAsync(async () => created = await kit.Service(followDb, defaults).CreateAsync(
-            new CreateAgentTaskRequest("c710 follow the live process", FollowUpOnTask: priorId.ToString("D")),
-            kit.Caller, CancellationToken.None), "remote-standing-follow-up-admitted");
+        Exception? failure = null;
+        try
+        {
+            created = await kit.Service(followDb, defaults).CreateAsync(
+                new CreateAgentTaskRequest("c710 follow the live process", FollowUpOnTask: priorId.ToString("D")),
+                kit.Caller, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+        }
+        failure.ShouldBeNull("remote-standing-follow-up-admitted");
         created.ShouldNotBeNull();
         var saved = await kit.ReadAsync(created.Id);
         saved.Task.RunnerId.ShouldBe("server2");
