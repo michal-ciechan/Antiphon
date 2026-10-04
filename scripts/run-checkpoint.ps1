@@ -296,6 +296,8 @@ function Invoke-Dotnet {
     # A phase log is created before the child and flushed on each line. An exit
     # receipt is written only after the child and both redirected streams finish.
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    # Bind both children to the repository certified by the source/build receipt.
+    $psi.WorkingDirectory = $root
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
