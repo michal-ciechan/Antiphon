@@ -47,6 +47,9 @@ public sealed class CodexCliObservationTests
             (AgentModelLevel.Low, "gpt-5.6-luna", (string?)null),
         })
         {
+            var entry = ModelLevelAliases.ForCodexEntry(level);
+            entry.ModelId.ShouldBe(model, "C959-pc-126 entry " + level);
+            (entry.MinimumCliVersion?.ToString()).ShouldBe(floor, "C959-pc-127 entry " + level);
             ModelLevelAliases.ForCodex(level).ShouldBe(model, "C959-v14-existing-alias " + level);
             Floor(AgentKind.Codex, model).ShouldBe(floor, "C959-v14-floor " + level);
         }
@@ -73,6 +76,23 @@ public sealed class CodexCliObservationTests
         descriptor.Request.Path.ShouldBe("B:A", "C959-pc-156");
         descriptor.Request.PathExt.ShouldBe(".CMD;.EXE", "C959-pc-157");
         descriptor.Request.ResolutionCwd.ShouldBe("/fixture/cwd", "C959-pc-205");
+        var policy = new PhoneHomeLaunchPolicy(Options.Create(new PhoneHomeRunnerSettings {
+            Enabled = true, AllowedRunnerId = "runner-a", HostWorkspaceRoot = "/host/repo",
+            RunnerWorkspace = "/runner/workspace", RunnerRepository = "/runner/repo",
+            CallbackOrigin = "https://antiphon.test", AllowDelegatedTasks = true,
+        }));
+        var remote = policy.Project(new AgentLaunchSpec("codex", AgentKind.Codex, @"C:\tools\codex.cmd",
+            ["--model", "gpt-6.1-sol"], new Dictionary<string, string> { ["PATH"] = "B:A" }, "/host/repo", 80, 24),
+            new Agent { Id = Guid.NewGuid(), Kind = AgentKind.Codex, RunnerId = "runner-a", WorkingDirectory = "/host/repo" },
+            "/runner/worktrees/selected");
+        var projected = CodexCliProbeDescriptor.FromSpec("runner-a", "gpt-6.1-sol", null,
+            remote.Exe, remote.Args, remote.Env, remote.Cwd);
+        projected.Request!.Executable.ShouldBe("codex", "C959-pc-159");
+        projected.Request.ResolutionCwd.ShouldBe("/runner/worktrees/selected", "C959-pc-159 cwd");
+        foreach (var unsafeValue in new[] { "NUL\0sentinel", "{{key:C959}}", "${secret:C959}", new string('X', 32769) })
+            CodexCliProbeDescriptor.FromSpec("desktop", "gpt-6.1-sol", null, "/fixture/codex", [],
+                new Dictionary<string,string> { ["PATH"] = unsafeValue }, "/fixture").Request
+                .ShouldBeNull("C959-descriptor-unrepresentable-input");
         foreach (var loader in new[] { "NODE_OPTIONS", "NODE_PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "DOTNET_STARTUP_HOOKS" })
         {
             var unverified = CodexCliProbeDescriptor.FromSpec("desktop", "gpt-6.1-sol", null,
@@ -104,7 +124,8 @@ public sealed class CodexCliObservationTests
             var adapter = k.Factory.Created.Single();
             await using var db = k.Context();
             var row = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
-            var queued = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.ExecutionTaskId == task.Id);
+            var queued = (await db.SessionQueuedMessages.AsNoTracking().SingleOrDefaultAsync(q => q.ExecutionTaskId == task.Id))
+                .ShouldNotBeNull("C959-pc-186 durable handoff exists");
             var frozen = k.Boundary.Briefs[task.Id];
             frozen.Full.ShouldContain(Body, customMessage: "C959-v21-oracle-literal " + vector);
             frozen.Full.ShouldNotContain("\r", customMessage: "C959-v21-oracle-LF " + vector);
@@ -157,6 +178,10 @@ public sealed class CodexCliObservationTests
         foreach (var version in new[] { "0.159.1", "0.160.0" })
         foreach (var busy in new[] { false, true })
             await CodexCliRemoteDeliveryFixture.RunAsync(Body, version, busy);
+        foreach (var negative in new[] { "ack-only", "clipped", "other-session" })
+            await CodexCliRemoteDeliveryFixture.RunAsync(Body,
+                new RunnerCodexCliVersionDto("0.156.1", DateTimeOffset.UtcNow, null, new string('a',64)),
+                busy: true, negative: negative);
     }
 
     [Test]
@@ -296,7 +321,30 @@ public sealed class CodexCliObservationTests
     public async Task C959_Old_version_with_floor_never_refuses()
     {
         foreach (var version in new[] { "0.156.1", "0.159.0", "0.159.1-beta.1" })
+        {
             await NeverRefusesAsync(now => new(version, now, null, new string('a', 64)), 234, version);
+            foreach (var (level, exact, expected) in new[] {
+                (AgentModelLevel.Medium, (string?)null, "gpt-6.1-sol"),
+                (AgentModelLevel.Frontier, (string?)null, "gpt-6-astra"),
+                (AgentModelLevel.Low, (string?)null, "gpt-5.6-luna"),
+                (AgentModelLevel.High, "gpt-6.1-sol", "gpt-6.1-sol"),
+            })
+            {
+                await using var dispatch = await DispatchKit.BuildAsync();
+                dispatch.Client.Sample = new(version, DateTimeOffset.UtcNow, null, new string('a',64));
+                AgentTaskCreatedDto? created = null;
+                Exception? failure = null;
+                try { created = await dispatch.CreateAsync(level, exact); await dispatch.TickAsync(); }
+                catch (Exception ex) { failure = ex; }
+                failure.ShouldBeNull($"C959-old-model-selection/{version}/{level}/{exact}");
+                await AssertDeliveryAsync(dispatch, created!.Id, $"C959-old-model-selection/{version}/{level}/{exact}", expected);
+                dispatch.Client.Requests.ShouldBeEmpty("C959-old-model-no-probe");
+                if (exact is null)
+                    foreach (var busy in new[] { false, true })
+                        await CodexCliRemoteDeliveryFixture.RunAsync(Body,
+                            new RunnerCodexCliVersionDto(version, DateTimeOffset.UtcNow, null, new string('a',64)), busy, level);
+            }
+        }
     }
 
     private static async Task NeverRefusesAsync(Func<DateTimeOffset, RunnerCodexCliVersionDto?> sample, int guard, string vector)
@@ -433,7 +481,7 @@ public sealed class CodexCliObservationTests
         (await File.ReadAllBytesAsync(path)).ShouldBe(Encoding.UTF8.GetBytes(full), "C959-warm-complete-E " + vector);
     }
 
-    private static async Task AssertDeliveryAsync(DispatchKit kit, Guid taskId, string label)
+    private static async Task AssertDeliveryAsync(DispatchKit kit, Guid taskId, string label, string expectedModel = "gpt-6.1-sol")
     {
         await kit.Harness.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
         await using var db = kit.Context();
@@ -453,7 +501,7 @@ public sealed class CodexCliObservationTests
         (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Blocked)).ShouldBe(0, label + " no block");
         var args = kit.Factory.Created.Single().StartedArgs.ToList();
         args.Count(a => a == "--model").ShouldBe(1, label + " single model");
-        args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.1-sol", label + " unchanged model");
+        args[args.IndexOf("--model") + 1].ShouldBe(expectedModel, label + " unchanged model");
     }
 
     private static async Task<string?> CodeAsync(Func<Task> call) => (await FailureAsync(call))?.Code;
@@ -582,11 +630,28 @@ public sealed class CodexCliObservationTests
             });
             return new() { Schema = schema, OwnsSchema = ownsSchema, Harness = h, Client = client, Factory = (Factory)h.Provider.GetRequiredService<IAgentProtocolAdapterFactory>(), Git = git, Kind = kind, Boundary = boundary };
         }
-        public async Task<AgentTaskCreatedDto> CreateAsync()
+        public async Task<AgentTaskCreatedDto> CreateAsync(AgentModelLevel level = AgentModelLevel.High, string? exactModel = null)
         {
+            Guid? agentId = null;
+            if (exactModel is not null)
+            {
+                await using var db = Context();
+                var now = DateTime.UtcNow;
+                var profile = new AgentTuiProfile { Id = Guid.NewGuid(), DisplayName = "C959 exact",
+                    Kind = AgentKind.Codex, IsEnabled = true, SourceDefinitionName = "codex", CreatedAt = now, UpdatedAt = now };
+                var revision = new AgentTuiProfileRevision { Id = Guid.NewGuid(), ProfileId = profile.Id, RevisionNumber = 1,
+                    Executable = "codex", ModelArgumentName = "--model", AuthenticationMode = AgentTuiAuthenticationMode.WrapperManaged, CreatedAt = now };
+                db.AddRange(profile, revision); await db.SaveChangesAsync();
+                profile.ActiveRevisionId = revision.Id;
+                var agent = new Agent { Id = Guid.NewGuid(), Name = "C959 exact", Slug = "c959-" + Guid.NewGuid().ToString("N"),
+                    WorkingDirectory = Git?.Path ?? Path.Combine(Harness.TempRoot, "workspace"), Kind = AgentKind.Codex,
+                    ModelLevel = level, ModelId = exactModel, TuiProfileId = profile.Id,
+                    Status = AgentStatus.Idle, CreatedAt = now, UpdatedAt = now };
+                db.Add(agent); await db.SaveChangesAsync(); agentId = agent.Id;
+            }
             using var scope = Harness.Provider.CreateScope();
             return await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CreateAsync(new(Body, Title: Body, Role: AgentTaskRole.Docs,
-                AgentKind: Kind, ModelLevel: AgentModelLevel.High, Workspace: Git is null ? WorkspaceMode.Shared : WorkspaceMode.Worktree, RunnerId: "local"),
+                AgentKind: Kind, ModelLevel: level, Workspace: Git is null ? WorkspaceMode.Shared : WorkspaceMode.Worktree, RunnerId: "local", AgentId: agentId),
                 new(null, null, Git?.Path ?? Path.Combine(Harness.TempRoot, "workspace")), CancellationToken.None);
         }
         public async Task TickAsync(CancellationToken ct = default)

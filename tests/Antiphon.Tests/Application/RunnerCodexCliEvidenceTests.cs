@@ -188,6 +188,23 @@ public sealed class RunnerCodexCliEvidenceTests
     [Test]
     public async Task C959_Generation_change_clears_version()
     {
+        await using (var correlatedHost = await PhoneHomeTestHost.StartAsync(new FakeTimeProvider(T)))
+        {
+            await using var correlatedPeer = await correlatedHost.ConnectPeerAsync(capabilities: Caps("0.160.0", T));
+            var connection = await correlatedHost.WaitLiveAsync();
+            correlatedHost.Directory.MarkRecovered(connection);
+            correlatedPeer.AutoReply = false;
+            var current = true;
+            var client = new PhoneHomeRunnerClient(connection, isCurrent: () => current);
+            var pending = client.GetCodexCliVersionAsync(new("/isolated/codex", "/isolated"), CancellationToken.None);
+            var request = await correlatedPeer.WaitForAsync(PhoneHomeOperation.CodexCliVersion);
+            current = false;
+            connection.SocketOpen.ShouldBeTrue("C959-pc-097 isolate ownership from socket");
+            await correlatedPeer.EmitAsync(new(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId,
+                request.Operation, Shape(Sample("0.160.0", T))));
+            (await pending.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeNull("C959-pc-097");
+        }
+
         foreach (var change in new[] { "boot", "epoch" })
         {
             var clock = new FakeTimeProvider(T);
@@ -402,7 +419,6 @@ public sealed class RunnerCodexCliEvidenceTests
                 try { await pending; } catch (OperationCanceledException) { }
             }
         }
-        foreach (var replace in new[] { false, true })
         {
             await using var closingHost = await PhoneHomeTestHost.StartAsync(new FakeTimeProvider(T));
             await using var closingPeer = await closingHost.ConnectPeerAsync(capabilities: Caps("0.160.0", T));
@@ -414,12 +430,11 @@ public sealed class RunnerCodexCliEvidenceTests
             var closingClient = new PhoneHomeRunnerClient(live, isCurrent: () =>
             {
                 if (++checks != 2) return true;
-                if (replace) return false;
                 live.DisposeAsync("C959 closed before projection").AsTask().GetAwaiter().GetResult();
                 return true;
             });
             (await closingClient.GetCodexCliVersionAsync(new("/isolated/codex", "/isolated"), CancellationToken.None))
-                .ShouldBeNull(replace ? "C959-pc-097 replaced connection" : "C959-pc-249 closed socket");
+                .ShouldBeNull("C959-pc-249 closed socket");
             checks.ShouldBe(2, "C959-projection-cut-after-correlated-reply");
         }
         await using var host = await PhoneHomeTestHost.StartAsync(new FakeTimeProvider(T));
