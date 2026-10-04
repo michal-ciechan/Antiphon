@@ -615,7 +615,7 @@ has insertion order and literal bytes exactly as follows (no final newline):
 
 For the unchanged Linux fake remap, fixed input
 `cd /work; printf '%s' /worktrees /work/file` must produce
-`cd /tmp/c1008-host-legacy/work; printf '%s' /worktrees /tmp/c1008-host-legacy/work/file`.
+`cd /work; printf '%s' /worktrees /tmp/c1008-host-legacy/work/file`. Freeze defect found by Code: unmodified helper and pinned fake at `a4d2d4b851fa131763f4408ee3f1f70e1b387882` produced identical actual/expected bytes (both SHA-256 `6f2d8ffdb1b894e75fb2eac24b239cb1e7864b0a2705dabfc775280617efe7c4`); replacing only the random fixture root with the fixed root gives SHA-256 `52236355fa3f00e84b998b5042edb9f88c6655ca3121d60665a7bfa151c0e28b`. The legacy regex does not match a semicolon boundary.
 Also preserve double-quoted and single-quoted `/work` operands, whitespace/end
 boundaries and CRLF byte vectors. Linux apostrophe-root execution is deliberately
 excluded: legacy interpolation cannot execute it safely and D-3 forbids changing
