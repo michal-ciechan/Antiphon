@@ -536,8 +536,8 @@ public sealed class AgentTaskService
 
                 // CARD-1037: remote pool continuations cannot reuse the retained process,
                 // and their Shared/ReadOnly fallback cannot launch on that runner either.
-                if (followAgent.IsPoolDelegate
-                    && RunnerRequestIntent.CanonicalRunnerId(retainedRunnerId) is { } poolRunnerId)
+                var poolRunnerId = RunnerRequestIntent.CanonicalRunnerId(retainedRunnerId);
+                if (followAgent.IsPoolDelegate && poolRunnerId is not null)
                 {
                     var message =
                         $"Task {DelegationReportFormatter.Short(priorId)} ran on a remote pool delegate "
