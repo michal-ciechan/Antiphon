@@ -19,6 +19,7 @@ public sealed class HostJqPrerequisiteScriptTests
             f.Existing();
             var r = await f.Helper("check"); r.Exit.ShouldBe(0, r.Output);
             var p = JsonNode.Parse(r.Stdout)!;
+            p["lookupPath"]!.GetValue<string>().ShouldBe(f.Destination, "found-path-recorded");
             p["path"]!.GetValue<string>().ShouldBe(f.Destination, "deployment-path");
             p["version"]!.GetValue<string>().ShouldBe((await f.NativeJqVersion()).Trim());
             p["digest"]!.GetValue<string>().ShouldBe(f.Hash(f.Destination));
@@ -38,6 +39,46 @@ public sealed class HostJqPrerequisiteScriptTests
         }
         using var shadow = new HostJqFixture(); shadow.Existing("true", elsewhere: true);
         (await shadow.Helper("check")).Exit.ShouldBe(2, "deployment-path: healthy privileged path does not override shadow");
+        using (var home = new HostJqFixture())
+        {
+            home.Existing(); home.HomeShadow(); await home.InitializeRepo();
+            var expectedHash = home.Hash(home.Destination); var homeHash = home.Hash(home.HomeJq);
+            homeHash.ShouldBe(expectedHash, "canonical-host-path: independently working identical bytes still cannot shadow the host path");
+            (await home.Run(home.HomeJq, "--version")).Stdout.Trim().ShouldBe("jq-1.7.1");
+            (await home.Run(home.HomeJq, "-en", "true")).Exit.ShouldBe(0);
+            (await home.Run(home.HomeJq, "-en", "false")).Exit.ShouldBe(1);
+            foreach (var mode in new[] { "check", "provision" })
+            {
+                var direct = await home.Helper(mode);
+                direct.Exit.ShouldBe(2, "canonical-host-path: a working user-home binary ahead on PATH cannot qualify");
+                var rejected = JsonNode.Parse(direct.Stdout)!;
+                rejected["reason"]!.GetValue<string>().ShouldBe("HostJqPathUnapproved");
+                rejected["lookupPath"]!.GetValue<string>().ShouldBe(home.HomeJq, "found-path-recorded");
+                rejected["path"]!.GetValue<string>().ShouldBe(home.HomeJq);
+                var phase = mode == "check" ? "check-host-jq" : "provision-host-jq";
+                var start = DateTime.UtcNow; var wrapped = await home.Wrapper(phase);
+                wrapped.Exit.ShouldBe(2, "canonical-host-path: wrapper cannot qualify user-home jq");
+                wrapped.Output.ShouldContain("HostJqPathUnapproved");
+                wrapped.Output.ShouldNotContain("Host jq qualified");
+                home.AssertRefusalReceipt(phase, mode, start, DateTime.UtcNow);
+            }
+            home.InstallEffects.ShouldBeEmpty("canonical-host-path: no replacement, download or elevation");
+            home.Receipts.ShouldBeEmpty("canonical-host-path: no success receipt");
+            home.Hash(home.Destination).ShouldBe(expectedHash); home.Hash(home.HomeJq).ShouldBe(homeHash);
+        }
+        using (var alias = new HostJqFixture())
+        {
+            alias.Existing(); File.CreateSymbolicLink(alias.OtherJq, alias.Destination); await alias.InitializeRepo();
+            var direct = await alias.Helper("check"); direct.Exit.ShouldBe(0, "canonical-host-alias: symlink resolves to canonical jq");
+            var p = JsonNode.Parse(direct.Stdout)!;
+            p["lookupPath"]!.GetValue<string>().ShouldBe(alias.OtherJq, "found-path-recorded: preserve the alias actually found");
+            p["path"]!.GetValue<string>().ShouldBe(alias.Destination, "canonical-host-alias: resolved path");
+            (await alias.Wrapper("check-host-jq")).Exit.ShouldBe(0);
+            var receipt = JsonNode.Parse(File.ReadAllText(alias.Receipts.Single()))!;
+            receipt["lookupPath"]!.GetValue<string>().ShouldBe(alias.OtherJq, "found-path-recorded: persisted alias");
+            receipt["path"]!.GetValue<string>().ShouldBe(alias.Destination);
+            alias.InstallEffects.ShouldBeEmpty();
+        }
     }
 
     [Test, ParallelLimiter<ProcessSpawnLimit>]
@@ -64,8 +105,9 @@ public sealed class HostJqPrerequisiteScriptTests
         {
             using var f = new HostJqFixture(); f.Existing(elsewhere: elsewhere);
             var path = elsewhere ? f.OtherJq : f.Destination; var bytes = File.ReadAllBytes(path); var inode = await f.Inode(path);
-            var r = await f.Helper("provision"); r.Exit.ShouldBe(0, r.Output);
-            JsonNode.Parse(r.Stdout)!["installed"]!.GetValue<bool>().ShouldBeFalse("existing-no-op");
+            var r = await f.Helper("provision"); r.Exit.ShouldBe(elsewhere ? 2 : 0, r.Output);
+            if (elsewhere) JsonNode.Parse(r.Stdout)!["reason"]!.GetValue<string>().ShouldBe("HostJqPathUnapproved", "canonical-host-path");
+            else JsonNode.Parse(r.Stdout)!["installed"]!.GetValue<bool>().ShouldBeFalse("existing-no-op");
             f.InstallEffects.ShouldBeEmpty("existing-no-op: download calls=0");
             File.ReadAllBytes(path).ShouldBe(bytes); (await f.Inode(path)).ShouldBe(inode);
         }
@@ -258,7 +300,9 @@ public sealed class HostJqPrerequisiteScriptTests
         {
             using var f = new HostJqFixture(); f.Fault(fault);
             var r = await f.Helper("provision"); r.Exit.ShouldBe(2, fault + r.Output);
-            r.Stdout.ShouldBeEmpty(fault + ": success receipts=0"); File.Exists(f.Destination).ShouldBeTrue("published file left for diagnosis");
+            if (fault == "final-path") JsonNode.Parse(r.Stdout)!["reason"]!.GetValue<string>().ShouldBe("HostJqPathUnapproved", "final-path: no successful proof");
+            else r.Stdout.ShouldBeEmpty(fault + ": success receipts=0");
+            File.Exists(f.Destination).ShouldBeTrue("published file left for diagnosis");
             f.Trace.Split('\n').Count(x => x.StartsWith("download ", StringComparison.Ordinal)).ShouldBe(1, "never retry/reinstall");
         }
         using var good = new HostJqFixture(); var accepted = await good.Helper("provision"); accepted.Exit.ShouldBe(0, accepted.Output);
@@ -367,11 +411,39 @@ public sealed class HostJqPrerequisiteScriptTests
             ("outcome", JsonValue.Create("installed")!), ("path", JsonValue.Create("relative")!), ("digest", JsonValue.Create("bad")!),
             ("version", JsonValue.Create("")!), ("uid", JsonValue.Create(-1)!), ("gid", JsonValue.Create(-1)!), ("permissions", JsonValue.Create("888")!) })
         { var bad = (JsonObject)valid.DeepClone(); bad[key] = value.DeepClone(); corruptions.Add(bad.ToJsonString()); }
+        var extra = (JsonObject)valid.DeepClone(); extra["unexpected"] = true; corruptions.Add(extra.ToJsonString());
+        var numericBoolean = (JsonObject)valid.DeepClone(); numericBoolean["installed"] = 0; corruptions.Add(numericBoolean.ToJsonString());
+        var fractionalOwner = (JsonObject)valid.DeepClone(); fractionalOwner["uid"] = 0.5; corruptions.Add(fractionalOwner.ToJsonString());
+        var unapproved = (JsonObject)valid.DeepClone();
+        unapproved["lookupPath"] = "/home/app/.local/bin/jq"; unapproved["path"] = "/home/app/.local/bin/jq";
+        corruptions.Add(unapproved.ToJsonString());
         foreach (var bad in corruptions)
         {
-            using var f = new HostJqFixture(); f.SyntheticProof = bad; await f.InitializeRepo();
+            using var f = new HostJqFixture();
+            f.SyntheticProof = bad.Replace(template.Destination, f.Destination, StringComparison.Ordinal);
+            await f.InitializeRepo();
             var r = await f.Wrapper("check-host-jq"); r.Exit.ShouldBe(2, "proof-shape: " + bad + r.Output);
             f.Receipts.ShouldBeEmpty("proof-shape: no success receipt");
+        }
+        var refusal = new JsonObject { ["schema"] = 1, ["lane"] = "host", ["mode"] = "check",
+            ["lookupPath"] = "/home/app/.local/bin/jq", ["path"] = "/home/app/.local/bin/jq", ["reason"] = "HostJqPathUnapproved" };
+        var badRefusals = new List<string> { "{", "[]", refusal.ToJsonString() + refusal.ToJsonString(),
+            refusal.ToJsonString().Replace("\"schema\":1", "\"schema\":1,\"schema\":1", StringComparison.Ordinal) };
+        foreach (var key in refusal.Select(x => x.Key))
+        {
+            var missing = (JsonObject)refusal.DeepClone(); missing.Remove(key); badRefusals.Add(missing.ToJsonString());
+            var wrong = (JsonObject)refusal.DeepClone(); wrong[key] = new JsonArray(); badRefusals.Add(wrong.ToJsonString());
+        }
+        var extraRefusal = (JsonObject)refusal.DeepClone(); extraRefusal["unexpected"] = true; badRefusals.Add(extraRefusal.ToJsonString());
+        foreach (var (key, value) in new[] { ("lane", "nested"), ("mode", "provision"), ("reason", "remote-secret"), ("lookupPath", "relative"), ("path", "relative") })
+        { var bad = (JsonObject)refusal.DeepClone(); bad[key] = value; badRefusals.Add(bad.ToJsonString()); }
+        foreach (var bad in badRefusals)
+        {
+            using var f = new HostJqFixture(); f.SyntheticProof = bad; f.Transport = "ssh-refused"; await f.InitializeRepo();
+            var result = await f.Wrapper("check-host-jq"); result.Exit.ShouldBe(2);
+            f.RefusalReceipts.ShouldBeEmpty("refusal-proof-shape: unknown or malformed diagnostic cannot become an observation");
+            f.Receipts.ShouldBeEmpty("refusal-proof-shape: no successful proof");
+            result.Output.ShouldNotContain("remote-secret", Case.Sensitive, "diagnostic-custody");
         }
     }
 
@@ -386,6 +458,13 @@ public sealed class HostJqPrerequisiteScriptTests
         f.Transport = ""; var start = DateTime.UtcNow;
         (await f.Wrapper("check-host-jq")).Exit.ShouldBe(0);
         f.AssertReceipt("check-host-jq", "check", start, DateTime.UtcNow, false);
+        using var shadow = new HostJqFixture(); shadow.Existing(); shadow.HomeShadow(); shadow.Transport = "block-refusal"; await shadow.InitializeRepo();
+        var failedObservation = await shadow.Wrapper("check-host-jq"); failedObservation.Exit.ShouldBe(2);
+        failedObservation.Output.ShouldContain("HostJqReceiptUnavailable", Case.Sensitive, "refusal-receipt-required");
+        shadow.RefusalReceipts.ShouldBeEmpty("refusal-receipt-required"); shadow.Receipts.ShouldBeEmpty();
+        shadow.Transport = ""; var fresh = DateTime.UtcNow;
+        var refused = await shadow.Wrapper("check-host-jq"); refused.Exit.ShouldBe(2);
+        shadow.AssertRefusalReceipt("check-host-jq", "check", fresh, DateTime.UtcNow);
     }
 
     [Test, ParallelLimiter<ProcessSpawnLimit>]
@@ -434,6 +513,8 @@ internal sealed class HostJqFixture : IDisposable
     internal string Parent => Root + "/destination";
     internal string Destination => Parent + "/jq";
     internal string OtherJq => Tools + "/jq";
+    internal string HomeJq => Root + "/home/app/.local/bin/jq";
+    internal string PathPrefix { get; set; } = "";
     internal string Lock => Root + "/lock";
     internal string Temp => Root + "/temporary";
     internal string Foreign => Root + "/foreign/sentinel";
@@ -448,7 +529,9 @@ internal sealed class HostJqFixture : IDisposable
     internal string? SyntheticProof { get; set; }
     internal string Trace => File.Exists(Root + "/trace") ? File.ReadAllText(Root + "/trace") : "";
     internal string[] InstallEffects => Trace.Split('\n').Where(x => new[] { "sudo ", "download ", "stage ", "publish ", "unlink " }.Any(x.StartsWith)).ToArray();
-    internal string[] Receipts => Directory.Exists(WrapperRoot + "/.antiphon/rolling-server2") ? Directory.GetFiles(WrapperRoot + "/.antiphon/rolling-server2", "host-jq-*.json", SearchOption.AllDirectories) : [];
+    internal string[] Receipts => Observations.Where(x => !x.EndsWith("-refused.json", StringComparison.Ordinal)).ToArray();
+    internal string[] RefusalReceipts => Observations.Where(x => x.EndsWith("-refused.json", StringComparison.Ordinal)).ToArray();
+    private string[] Observations => Directory.Exists(WrapperRoot + "/.antiphon/rolling-server2") ? Directory.GetFiles(WrapperRoot + "/.antiphon/rolling-server2", "host-jq-*.json", SearchOption.AllDirectories) : [];
     private readonly string _jq;
     private readonly string _pwsh;
     private readonly string _git;
@@ -484,7 +567,7 @@ internal sealed class HostJqFixture : IDisposable
         WriteTool("flock", "echo flock-request >> \"$HJ_ROOT/trace\"\nexec /usr/bin/flock \"$@\"");
         // Boundary for the planned non-atomic-copy control; production uses native ln.
         WriteTool("cp", "source=${@: -2:1}; destination=${@: -1}\nif [ \"$destination\" != \"$HJ_DEST\" ]; then exec /usr/bin/cp \"$@\"; fi\nprintf 'stage-owner %s\\n' \"$(stat -c '%u:%g:%a' -- \"$source\")\" >> \"$HJ_ROOT/trace\"\necho ready > \"$HJ_ROOT/publish-ready\"\nwhile [ ! -f \"$HJ_ROOT/publish-release\" ]; do /usr/bin/sleep .01; done\n/usr/bin/head -c 10 \"$source\" > \"$destination\"\n/usr/bin/sleep .1\n/usr/bin/cp -- \"$source\" \"$destination\"");
-        WriteTool("ssh", "printf 'ssh %s\\n' \"$*\" >> \"$HJ_ROOT/trace\"\necho $$ > \"$HJ_ROOT/ssh-pid\"\n/usr/bin/cat > \"$HJ_ROOT/stdin\"\nif [ \"$HJ_TRANSPORT\" = block-receipt ]; then\n for d in \"$HJ_WRAPPER\"/.antiphon/rolling-server2/*; do /usr/bin/mkdir \"$d/host-jq-check-host-jq.json\"; done\nfi\nprintf 'remote-C1025-secret\\n' >&2\nif [ \"$HJ_TRANSPORT\" = late ]; then /usr/bin/sleep .5; fi\nif [ \"$HJ_TRANSPORT\" = empty ]; then exit 0; fi\nif [ \"$HJ_TRANSPORT\" = truncated ]; then echo '{'; exit 0; fi\nif [ -f \"$HJ_ROOT/proof\" ]; then /usr/bin/cat \"$HJ_ROOT/proof\"; else /usr/bin/bash -s -- \"${!#}\" < \"$HJ_ROOT/stdin\"; code=$?; [ \"$code\" = 0 ] || exit \"$code\"; fi\n[ \"$HJ_TRANSPORT\" != ssh-exit ] || exit 255");
+        WriteTool("ssh", "printf 'ssh %s\\n' \"$*\" >> \"$HJ_ROOT/trace\"\necho $$ > \"$HJ_ROOT/ssh-pid\"\n/usr/bin/cat > \"$HJ_ROOT/stdin\"\nif [ \"$HJ_TRANSPORT\" = block-receipt ]; then\n for d in \"$HJ_WRAPPER\"/.antiphon/rolling-server2/*; do /usr/bin/mkdir \"$d/host-jq-check-host-jq.json\"; done\nfi\nif [ \"$HJ_TRANSPORT\" = block-refusal ]; then\n for d in \"$HJ_WRAPPER\"/.antiphon/rolling-server2/*; do /usr/bin/mkdir \"$d/host-jq-check-host-jq-refused.json\"; done\nfi\nprintf 'remote-C1025-secret\\n' >&2\nif [ \"$HJ_TRANSPORT\" = late ]; then /usr/bin/sleep .5; fi\nif [ \"$HJ_TRANSPORT\" = empty ]; then exit 0; fi\nif [ \"$HJ_TRANSPORT\" = truncated ]; then echo '{'; exit 0; fi\nif [ -f \"$HJ_ROOT/proof\" ]; then /usr/bin/cat \"$HJ_ROOT/proof\"; else /usr/bin/bash -s -- \"${!#}\" < \"$HJ_ROOT/stdin\"; code=$?; [ \"$code\" = 0 ] || exit \"$code\"; fi\n[ \"$HJ_TRANSPORT\" != ssh-exit ] || exit 255\n[ \"$HJ_TRANSPORT\" != ssh-refused ] || exit 2");
     }
 
     private string JqScript(string fault) => "#!/usr/bin/bash\nprintf 'jq-call %s\\n' \"$*\" >> \"$HJ_ROOT/trace\"\nfault=$(/usr/bin/cat \"$HJ_ROOT/fault\" 2>/dev/null)\nif [ \"$1\" = --version ]; then\n" + (fault == "version-exit" ? "exit 1\n" : fault == "version-empty" ? "exit 0\n" : fault == "version-other" ? "echo jq-other; exit 0\n" : "[ \"$fault\" != final-version ] || { echo jq-other; exit 0; }\n") +
@@ -497,6 +580,12 @@ internal sealed class HostJqFixture : IDisposable
         if (fault == "healthy") File.Copy(_jq, path, overwrite: true);
         else File.WriteAllText(path, JqScript(fault));
         File.SetUnixFileMode(path, fault == "nonexec" ? UnixFileMode.UserRead | UnixFileMode.UserWrite : (UnixFileMode)Convert.ToInt32("755", 8));
+    }
+    internal void HomeShadow()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(HomeJq)!);
+        File.Copy(_jq, HomeJq); Executable(HomeJq);
+        PathPrefix = Path.GetDirectoryName(HomeJq)! + ":";
     }
     internal void Fault(string value)
     {
@@ -519,11 +608,11 @@ internal sealed class HostJqFixture : IDisposable
     {
         var source = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/deploy-server2.ps1"));
         // The wrapper's fixed installed-path assertion follows the helper's private destination.
-        source = ReplaceOnce(source, "$proof.path -cne '/usr/local/bin/jq'", "$proof.path -cne '" + Destination + "'");
+        source = ReplaceOnce(source, "$hostJqDestination = '/usr/local/bin/jq'", "$hostJqDestination = '" + Destination + "'");
         if (shortDeadline) source = ReplaceOnce(source, "{ 30000 } else { 180000 }", "{ 100 } else { 100 }");
         File.WriteAllText(Root + "/scripts/deploy-server2.ps1", source);
         File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/lib/runner-operator-token.ps1"), Root + "/scripts/lib/runner-operator-token.ps1");
-        File.WriteAllText(Root + "/.gitignore", ".antiphon/\n/tools/\n/foreign/\n/destination/\n/lock/\n/temporary/\n/payload\n/fault\n/dockerenv\n/trace\n/stdin\n/ssh-pid\n/proof\n/token\n/*-ready\n/*-release\n");
+        File.WriteAllText(Root + "/.gitignore", ".antiphon/\n/tools/\n/home/\n/foreign/\n/destination/\n/lock/\n/temporary/\n/payload\n/fault\n/dockerenv\n/trace\n/stdin\n/ssh-pid\n/proof\n/token\n/*-ready\n/*-release\n");
         (await Git("init", "-q")).Exit.ShouldBe(0);
         (await Git("config", "user.name", "fixture")).Exit.ShouldBe(0); (await Git("config", "user.email", "fixture@example.invalid")).Exit.ShouldBe(0);
         (await Git("add", ".")).Exit.ShouldBe(0); (await Git("commit", "-qm", "private baseline")).Exit.ShouldBe(0);
@@ -547,6 +636,7 @@ internal sealed class HostJqFixture : IDisposable
         var observed = DateTime.Parse(p["observedAtUtc"]!.GetValue<string>()).ToUniversalTime();
         (observed >= start && observed <= end).ShouldBeTrue("receipt-time");
         p["sshExit"]!.GetValue<int>().ShouldBe(0); p["path"]!.GetValue<string>().ShouldBe(Destination);
+        p["lookupPath"]!.GetValue<string>().ShouldBe(Destination, "found-path-recorded");
         p["trueExit"]!.GetValue<int>().ShouldBe(0); p["falseExit"]!.GetValue<int>().ShouldBe(1);
         p["installed"]!.GetValue<bool>().ShouldBe(installed);
         p["outcome"]!.GetValue<string>().ShouldBe(installed ? "installed" : "existing");
@@ -554,11 +644,28 @@ internal sealed class HostJqFixture : IDisposable
         p["version"]!.GetValue<string>().ShouldBe("jq-1.7.1");
         p["uid"]!.GetValue<int>().ShouldBe(0); p["gid"]!.GetValue<int>().ShouldBe(0); p["permissions"]!.GetValue<string>().ShouldBe("755");
     }
+    internal void AssertRefusalReceipt(string phase, string mode, DateTime start, DateTime end)
+    {
+        var file = RefusalReceipts.Single(x => Path.GetFileName(x) == "host-jq-" + phase + "-refused.json");
+        var p = JsonNode.Parse(File.ReadAllText(file))!;
+        p["qualified"]!.GetValue<bool>().ShouldBeFalse("refusal-observation: cannot claim qualification");
+        p["reason"]!.GetValue<string>().ShouldBe("HostJqPathUnapproved");
+        p["lookupPath"]!.GetValue<string>().ShouldBe(HomeJq, "refusal-found-path");
+        p["path"]!.GetValue<string>().ShouldBe(HomeJq, "refusal-resolved-path");
+        p["sourceSha"]!.GetValue<string>().ShouldBe(RequestSha, "refusal-source-sha");
+        p["runId"]!.GetValue<string>().ShouldBe(Path.GetFileName(Path.GetDirectoryName(file)), "refusal-run-id");
+        p["selectedPhase"]!.GetValue<string>().ShouldBe(phase, "refusal-phase");
+        p["phase"]!.GetValue<string>().ShouldBe(phase, "refusal-phase");
+        p["mode"]!.GetValue<string>().ShouldBe(mode, "refusal-mode");
+        p["lane"]!.GetValue<string>().ShouldBe("host"); p["sshExit"]!.GetValue<int>().ShouldBe(2);
+        var observed = DateTime.Parse(p["observedAtUtc"]!.GetValue<string>()).ToUniversalTime();
+        (observed >= start && observed <= end).ShouldBeTrue("refusal-time");
+    }
     internal Process Start(string executable, params string[] args)
     {
         var psi = new ProcessStartInfo(executable) { UseShellExecute = false, WorkingDirectory = Root, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var arg in args) psi.ArgumentList.Add(arg);
-        psi.Environment["PATH"] = Tools + (!IncludeDestination || (File.Exists(Root + "/fault") && File.ReadAllText(Root + "/fault") == "path-absent") ? "" : ":" + Parent);
+        psi.Environment["PATH"] = PathPrefix + Tools + (!IncludeDestination || (File.Exists(Root + "/fault") && File.ReadAllText(Root + "/fault") == "path-absent") ? "" : ":" + Parent);
         psi.Environment["TMPDIR"] = Temp; psi.Environment["HJ_ROOT"] = Root; psi.Environment["HJ_DEST"] = Destination;
         psi.Environment["HJ_DEST_PARENT"] = Parent; psi.Environment["HJ_LOCK"] = Lock; psi.Environment["HJ_WRAPPER"] = WrapperRoot;
         psi.Environment["HJ_TRANSPORT"] = Transport; psi.Environment["ANTIPHON_OPERATOR_TOKEN_FILE"] = Root + "/token";
