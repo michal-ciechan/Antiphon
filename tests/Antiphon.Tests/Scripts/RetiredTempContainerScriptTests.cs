@@ -33,7 +33,9 @@ public sealed class RetiredTempContainerScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Drain_uses_one_deadline() {
         foreach(var elapsed in new[]{95,105}) {
-            using var f=new C1008WrapperFixture();f.State["cleanupElapsedMs"]=elapsed;
+            using var f=new C1008WrapperFixture();f.State["cleanupElapsedMs"]=elapsed-80;
+            var retired=f.State["statuses"]!["server2-temp"]!.DeepClone();var pending=retired.DeepClone();pending["retiredAt"]=null;pending["available"]=true;pending["dispatchEligible"]=true;pending["runnerSessions"]=0;
+            f.State["statusSequence"]=new JsonArray(new JsonObject{["clockMs"]=0,["status"]=pending},new JsonObject{["clockMs"]=80,["status"]=retired});
             var run=await f.Run("drain-temp");run.Exit.ShouldBe(elapsed==95?0:2,"c994-one-deadline: "+elapsed+"; "+run.Output);
             if(elapsed==105)run.Output.ShouldContain("TempContainerExitTimeout");
         }

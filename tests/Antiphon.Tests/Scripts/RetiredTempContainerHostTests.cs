@@ -232,7 +232,7 @@ public sealed class RetiredTempContainerHostTests
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Audit_image_is_pinned_and_required() {
-        foreach(var fault in new[]{"image-inspect-error","image-inspect-wrong"}) {using var f=Fixture("session-runner");(await Cleanup(f)).Exit.ShouldBe(0);f.ReloadDocker();f.Docker["fault"]=fault;
+        foreach(var fault in new[]{"image-inspect-error","image-inspect-wrong","original-image-missing"}) {using var f=Fixture("session-runner");if(fault=="original-image-missing")f.Docker["containers"]!.AsArray().Last()!["Image"]="sha256:"+new string('b',64);(await Cleanup(f)).Exit.ShouldBe(0);f.ReloadDocker();f.Docker["fault"]=fault;
             var run=await f.Run("retire-temp-runner","C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001");run.Exit.ShouldBe(2,"c994-image-required: "+run.Output);run.Output.ShouldContain("RecycleGitAuditUnknown");f.Removed.ShouldBeEmpty("c994-audit-required");}
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
