@@ -132,6 +132,8 @@ internal static class CodexCliRemoteDeliveryFixture
                 owned, expectedFull.Length, AgentKind.Codex).TrimEnd();
             queued.Body.ShouldBe(expectedWire, "C959-pc-186 remote " + vector);
             var spillPath = Path.Combine(task.RemoteWorktreePath!, owned);
+            if (negative == "write-failure")
+                System.IO.Directory.CreateDirectory(spillPath); // Owned directory where the file must be written.
             Guid? observedRecipient = null;
             bool? observedFileExists = null;
             byte[]? observedFileBytes = null;
@@ -144,7 +146,7 @@ internal static class CodexCliRemoteDeliveryFixture
                 if (observedFileExists.Value) observedFileBytes = await File.ReadAllBytesAsync(spillPath);
             };
             var withheld = new List<(Guid Session, string ActualSubmitted)>();
-            if (negative is not null)
+            if (negative is not null and not "write-failure")
                 runtime.RecordPrompt = async (id, submitted) =>
                 {
                     withheld.Add((id, submitted));
@@ -178,7 +180,20 @@ internal static class CodexCliRemoteDeliveryFixture
                 await h.Runtime.CatchUpTranscriptAsync(task.AgentSessionId.Value, CancellationToken.None);
                 await h.Queue.FlushSessionAsync(task.AgentSessionId.Value, CancellationToken.None);
             }
-            if (negative is not null)
+            if (negative == "write-failure")
+            {
+                terminal.SubmittedBodies.ShouldBeEmpty("C959-pc-217 failed writer allows zero pointer submission");
+                observedRecipient.ShouldBeNull("C959-pc-217 failed writer allows zero pointer input");
+                var retained = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == queued.Id);
+                retained.RemoteSpillBody.ShouldBe(expectedFull, "C959-write-failure-durable-E");
+                retained.RemoteSpillRelativePath.ShouldBe(owned, "C959-write-failure-original-owned-path");
+                (await db.TranscriptEntries.CountAsync(e => e.AgentSessionId == task.AgentSessionId
+                    && e.Kind == TranscriptKinds.UserPrompt && e.Text == expectedWire))
+                    .ShouldBe(0, "C959-write-failure-zero-receipt");
+                System.IO.Directory.Delete(spillPath); // Remove only the empty, task-owned fault directory.
+                await h.Queue.FlushSessionAsync(task.AgentSessionId!.Value, CancellationToken.None);
+            }
+            if (negative is not null and not "write-failure")
             {
                 var label = negative switch { "clipped" => "C959-pc-222", "baseline" => "C959-pc-223", "other-session" => "C959-pc-224", _ => "C959-observable-ack-only" };
                 var retained = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == queued.Id);
