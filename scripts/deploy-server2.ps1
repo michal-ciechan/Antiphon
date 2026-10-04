@@ -154,7 +154,7 @@ function Invoke-HostJq {
             $proof = $raw | ConvertFrom-Json
             if ($proof.schema -ne 1 -or $proof.lane -cne 'host' -or $proof.mode -cne $Mode -or
                 $proof.lookupPath -cnotmatch '^/[^\r\n]+$' -or
-                ($proof.lookupPath -cne $hostJqDestination -and $proof.path -cne $hostJqDestination) -or
+                $proof.path -cne $hostJqDestination -or
                 $proof.path -cnotmatch '^/[^\r\n]+$' -or [string]::IsNullOrWhiteSpace($proof.version) -or
                 $proof.version -match '[\r\n]' -or $proof.digest -cnotmatch '^[0-9a-f]{64}$' -or
                 $proof.uid -lt 0 -or $proof.gid -lt 0 -or $proof.permissions -cnotmatch '^[0-7]{3,4}$' -or
