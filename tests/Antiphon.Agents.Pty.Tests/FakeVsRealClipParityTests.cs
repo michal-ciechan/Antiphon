@@ -166,9 +166,8 @@ public class FakeVsRealClipParityTests
     }
 
     /// <summary>
-    /// The SECOND arm (CARD-0037). Everything above runs on the inbox conhost, which strips the
-    /// bracketed-paste markers, so both peers are on the TYPING path — which is what the clip model
-    /// models and what the old ceilings were built for. Through the shipped modern pseudoconsole
+    /// The paste arm (CARD-0037, explicit modern fixture since CARD-1022). Both arms use modern;
+    /// the typed arm deliberately omits markers through the shared encoding helper. On the paste arm
     /// the markers survive and the measured behaviour inverts: real Claude took 86 400 bytes in one
     /// bracketed write with zero loss, 2/2.
     ///
@@ -194,13 +193,13 @@ public class FakeVsRealClipParityTests
 
         Line("peer\tbackend\tlines\tbodyBytes\tsurvivingRuns\tverdict");
 
-        var fake = await FakeAsync(lines, backend: "modern");
+        var fake = await FakeAsync(lines, paste: true);
         Line($"fake\tmodern\t{lines}\t{Bytes(lines)}\t{fake.Runs}\t{Verdict(fake, lines)}");
 
         var real = new List<Survivors>();
         for (var rep = 0; rep < reps; rep++)
         {
-            var got = await RealClaudeAsync(lines, backend: "modern");
+            var got = await RealClaudeAsync(lines, paste: true);
             real.Add(got);
             Line($"real#{rep}\tmodern\t{lines}\t{Bytes(lines)}\t{got.Runs}\t{Verdict(got, lines)}");
         }
@@ -258,9 +257,9 @@ public class FakeVsRealClipParityTests
     }
 
     /// <summary>The clipping fake, driven exactly as the contract tests drive it.</summary>
-    private static async Task<Survivors> FakeAsync(int lines, string? backend = null)
+    private static async Task<Survivors> FakeAsync(int lines, bool paste = false)
     {
-        await using var runner = new PtyAgentRunner(backend);
+        await using var runner = new PtyAgentRunner("modern");
         await runner.StartAsync(FakeClaudeExe, [], cols: 120, rows: 250,
             env: new Dictionary<string, string>
             {
@@ -272,7 +271,7 @@ public class FakeVsRealClipParityTests
             .ShouldBeTrue("the fake must start with clipping armed");
         runner.ClearLiveBuffer();
 
-        await runner.WriteAsync(PtyInputEncoding.EncodeBody(MarkedBody(lines)));
+        await runner.WriteAsync(C1022InputMode.Encode(MarkedBody(lines), paste));
         await runner.WaitForQuietAsync(TimeSpan.FromMilliseconds(700), TimeSpan.FromSeconds(15));
 
         var raw = runner.SnapshotText();
@@ -286,9 +285,9 @@ public class FakeVsRealClipParityTests
     /// scrolled. Reusing a session made the earlier matrix alternate in lockstep with the trial
     /// index — residue, not physics.
     /// </summary>
-    private static async Task<Survivors> RealClaudeAsync(int lines, string? backend = null)
+    private static async Task<Survivors> RealClaudeAsync(int lines, bool paste = false)
     {
-        await using var runner = new PtyAgentRunner(backend);
+        await using var runner = new PtyAgentRunner("modern");
         var (app, args) = ClSession.BuildLaunch(
             ClSession.ResolveOrThrow(), "--dangerously-skip-permissions");
         await runner.StartAsync(app, args, cols: 120, rows: 250, env: ClSession.HeadedSafeEnv());
@@ -296,7 +295,7 @@ public class FakeVsRealClipParityTests
             throw new SkipTestException("real Claude TUI did not reach a ready state");
         runner.ClearLiveBuffer();
 
-        await runner.WriteAsync(PtyInputEncoding.EncodeBody(MarkedBody(lines)));
+        await runner.WriteAsync(C1022InputMode.Encode(MarkedBody(lines), paste));
         await runner.WaitForQuietAsync(TimeSpan.FromMilliseconds(700), TimeSpan.FromSeconds(15));
 
         var screen = runner.SnapshotScreen();

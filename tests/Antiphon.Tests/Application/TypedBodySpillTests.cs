@@ -37,6 +37,27 @@ public class TypedBodySpillTests
         result.Spilled.ShouldBeFalse();
         result.ToType.ShouldBe(body);
         File.Exists(path).ShouldBeFalse();
+
+        foreach (var ceiling in new[] { 900, 1024, 43200, 86400 })
+        foreach (var delta in new[] { -1, 0, 1 })
+        {
+            var bytes = ceiling + delta;
+            var unicode = new string('é', bytes / 2) + new string('x', bytes % 2);
+            var boundaryPath = TypedBodySpill.InboxAbsolutePath(tmp.Path, Guid.NewGuid().ToString("N"));
+            var boundary = TypedBodySpill.Fit(new(Body: unicode, CeilingBytes: ceiling,
+                AbsoluteSpillPath: boundaryPath, RelativeSpillPath: TypedBodySpill.InboxRelativePath("boundary")));
+            boundary.Spilled.ShouldBe(delta > 0, "UTF-8 threshold-minus/equal/plus");
+            if (delta > 0)
+            {
+                File.ReadAllText(boundaryPath).ShouldBe(unicode);
+                Encoding.UTF8.GetByteCount(boundary.ToType).ShouldBeLessThanOrEqualTo(ceiling);
+            }
+            else
+            {
+                boundary.ToType.ShouldBe(unicode);
+                File.Exists(boundaryPath).ShouldBeFalse();
+            }
+        }
     }
 
     [Test]

@@ -30,10 +30,9 @@ public class PtyInputChunkingTests
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             throw new SkipTestException("ConPTY only on Windows");
-        if (!NodeStdinProbe.NodeAvailable)
-            throw new SkipTestException("no JS runtime (node.exe) on PATH");
-        if (!File.Exists(NodeStdinProbe.ProbePath))
-            throw new SkipTestException($"probe not staged at {NodeStdinProbe.ProbePath}");
+        NodeStdinProbe.NodeAvailable.ShouldBeTrue("required node.exe");
+        File.Exists(NodeStdinProbe.ProbePath).ShouldBeTrue($"required probe at {NodeStdinProbe.ProbePath}");
+        ConPtyRedistributable.TryLocate(out _, out var why).ShouldBeTrue(why);
     }
 
     /// <summary>
@@ -48,7 +47,7 @@ public class PtyInputChunkingTests
     public async Task A_body_that_mangled_live_reaches_a_js_runtime_peer_whole(int size)
     {
         SkipIfUnavailable();
-        await using var probe = await NodeStdinProbe.StartAsync(chunkLog: false);
+        await using var probe = await NodeStdinProbe.StartAsync(chunkLog: false, backend: "modern", decset2004: true);
 
         var body = NodeStdinProbe.MarkedBodyOfBytes(size);
         var result = await probe.DeliverAsync(body);
@@ -68,7 +67,7 @@ public class PtyInputChunkingTests
     public async Task A_peer_that_blocks_between_reads_still_receives_every_byte()
     {
         SkipIfUnavailable();
-        await using var probe = await NodeStdinProbe.StartAsync(blockMs: 25, chunkLog: false);
+        await using var probe = await NodeStdinProbe.StartAsync(blockMs: 25, chunkLog: false, backend: "modern", decset2004: true);
 
         var body = NodeStdinProbe.MarkedBodyOfBytes(5185);
         var result = await probe.DeliverAsync(body, timeout: TimeSpan.FromSeconds(90));
@@ -88,10 +87,10 @@ public class PtyInputChunkingTests
     public async Task A_multi_kb_body_arrives_as_several_reads_inside_one_event_loop_turn()
     {
         SkipIfUnavailable();
-        await using var probe = await NodeStdinProbe.StartAsync(chunkLog: false);
+        await using var probe = await NodeStdinProbe.StartAsync(chunkLog: false, backend: "modern", decset2004: true);
 
         var body = NodeStdinProbe.MarkedBodyOfBytes(5185);
-        var result = await probe.DeliverAsync(body);
+        var result = await probe.DeliverAsync(body, wrap: false);
 
         result.Chunks.ShouldBeGreaterThan(1,
             "a 5 KB body is not handed over as one read — that fragmentation is what a consumer "

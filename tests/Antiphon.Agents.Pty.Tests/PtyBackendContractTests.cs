@@ -7,18 +7,9 @@ using TUnit.Core.Exceptions;
 namespace Antiphon.Agents.Pty.Tests;
 
 /// <summary>
-/// CARD-0037 step 1: the shipped modern pseudoconsole, and the flag in front of it.
-///
-/// <para>Four things have to hold, and each of them fails silently otherwise — a session on the
-/// wrong backend looks exactly like a session on the right one until a body over ~1 KB gets clipped:
-/// the flag DEFAULTS OFF; the binary we ship is the one we say we ship; asking for it actually loads
-/// it (the child's console host is OUR OpenConsole.exe, not <c>conhost.exe</c>); and going through
-/// the real production write path with it on delivers the bracketed-paste markers that the inbox
-/// conhost eats.</para>
-///
-/// <para>No Claude, no model turns — the peer is the Node probe, the same one CARD-0027/0030 used.
-/// The paired negative (production default strips the markers) lives in
-/// <see cref="PtyBracketedPasteContractTests"/> and must stay green alongside these.</para>
+/// Modern native contract: recorded package hashes, actual shipped OpenConsole, complete marked
+/// input and pair-discovery fallback. Portable policy boundaries live in PtyBackendPolicyTests.
+/// Release A excludes native inbox qualification; retained legacy fixtures belong to release B.
 /// </summary>
 [NotInParallel("Headed")]
 [Category("Pty")]
@@ -34,33 +25,8 @@ public class PtyBackendContractTests
     private static string RequireShippedDll()
     {
         SkipIfNotWindows();
-        if (!ConPtyRedistributable.TryLocate(out var dll, out var why))
-            throw new SkipTestException("no shipped conpty.dll: " + why);
+        ConPtyRedistributable.TryLocate(out var dll, out var why).ShouldBeTrue("required shipped pair: " + why);
         return dll!;
-    }
-
-    /// <summary>
-    /// The default. An unset flag — and anything unrecognised in it — is the inbox conhost, i.e.
-    /// precisely the behaviour that shipped before this card, ceilings and all. Raising
-    /// <c>BriefInlineMaxBytes</c> is gated on measurements taken with the flag ON; if the default
-    /// ever drifts to modern, those ceilings would go stale in the other direction on any machine
-    /// that lacks the redistributable.
-    /// </summary>
-    [Test]
-    [Arguments("")]
-    [Arguments("inbox")]
-    [Arguments("0")]
-    [Arguments("off")]
-    [Arguments("something-nobody-defined")]
-    public async Task The_flag_defaults_off(string requested)
-    {
-        var decision = PtyBackendPolicy.Resolve(requested);
-
-        decision.Backend.ShouldBe(PtyBackend.InboxConhost);
-        decision.ConPtyDllPath.ShouldBeNull();
-        decision.FellBack.ShouldBeFalse("this is the default, not a failure to honour a request");
-        decision.Reason.ShouldNotBeNullOrWhiteSpace();
-        await Task.CompletedTask;
     }
 
     /// <summary>
@@ -97,6 +63,7 @@ public class PtyBackendContractTests
     public async Task A_modern_request_falls_back_to_the_inbox_conhost_when_the_pair_is_incomplete()
     {
         SkipIfNotWindows();
+        RequireShippedDll();
         var dir = Path.Combine(Path.GetTempPath(), "antiphon-conpty-probe", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         var previous = Environment.GetEnvironmentVariable(ConPtyRedistributable.DirectoryEnvVar);
@@ -108,6 +75,7 @@ public class PtyBackendContractTests
             var missing = PtyBackendPolicy.Resolve("modern");
             missing.Backend.ShouldBe(PtyBackend.InboxConhost);
             missing.FellBack.ShouldBeTrue();
+            missing.Deprecated.ShouldBeTrue("empty exclusive override must fall back despite staged default pair");
 
             // A DLL with no console host beside it — the dangerous case, because it LOADS.
             File.WriteAllText(Path.Combine(dir, ConPtyRedistributable.DllName), "not really a dll");
@@ -115,6 +83,14 @@ public class PtyBackendContractTests
             halfStaged.Backend.ShouldBe(PtyBackend.InboxConhost);
             halfStaged.FellBack.ShouldBeTrue();
             halfStaged.Reason.ShouldContain(ConPtyRedistributable.ConsoleHostName);
+            halfStaged.Deprecated.ShouldBeTrue();
+
+            File.Delete(Path.Combine(dir, ConPtyRedistributable.DllName));
+            File.WriteAllText(Path.Combine(dir, ConPtyRedistributable.ConsoleHostName), "not a native host");
+            var hostOnly = PtyBackendPolicy.Resolve("modern");
+            hostOnly.Backend.ShouldBe(PtyBackend.InboxConhost, "host-only must not advertise modern");
+            hostOnly.FellBack.ShouldBeTrue();
+            hostOnly.Deprecated.ShouldBeTrue();
         }
         finally
         {
@@ -154,7 +130,7 @@ public class PtyBackendContractTests
     /// <summary>
     /// The whole point, end to end through the SHIPPED path: <see cref="PtyAgentRunner"/>, the
     /// production encoding, one write — and the child receives <c>ESC[200~</c> … <c>ESC[201~</c>
-    /// intact. On the default backend the identical call arrives with the markers eaten
+    /// intact. On the deprecated inbox backend the identical call arrives with the markers eaten
     /// (<see cref="PtyBracketedPasteContractTests.The_production_pty_delivers_no_bracketed_paste_markers"/>),
     /// which is the difference between the TUI's paste path and its typing path, and therefore
     /// between a 43 KB body landing whole and landing clipped at 1 KB.
@@ -163,10 +139,8 @@ public class PtyBackendContractTests
     public async Task The_production_write_path_delivers_the_markers_on_the_modern_backend()
     {
         RequireShippedDll();
-        if (!NodeStdinProbe.NodeAvailable)
-            throw new SkipTestException("no JS runtime (node.exe) on PATH");
-        if (!File.Exists(NodeStdinProbe.ProbePath))
-            throw new SkipTestException($"probe not staged at {NodeStdinProbe.ProbePath}");
+        NodeStdinProbe.NodeAvailable.ShouldBeTrue("required node.exe");
+        File.Exists(NodeStdinProbe.ProbePath).ShouldBeTrue($"required probe at {NodeStdinProbe.ProbePath}");
 
         await using var probe = await NodeStdinProbe.StartAsync(chunkLog: false, decset2004: true, backend: "modern");
         probe.Runner.Backend!.Backend.ShouldBe(PtyBackend.ModernConPty);

@@ -66,9 +66,9 @@ var server = builder
     // would load appsettings.Production.json.
     .WithEnvironment("ASPNETCORE_ENVIRONMENT", "Development")
     .WithEnvironment("ChannelBridge__Enabled", "true")
-    // The modern pseudoconsole, ON for this deployment (CARD-0037 step 3). The session-runner gets
-    // it from its own appsettings (SessionRunner:PtyBackend) and its detached pty-hosts inherit
-    // that; this is the server's half — its in-proc pty adapters and, through PtyDeliveryProfile,
+    // Explicit modern policy (also the Windows default since CARD-1022 release A). The runner
+    // composes SessionRunner:PtyBackend with its environment and passes that request to each host;
+    // this is the server's half — its in-proc pty adapters and, through PtyDeliveryProfile,
     // the delivery ceilings every typed body is sized against. The two are resolved independently
     // and PtyDeliveryProfile verifies they agree before it uses the raised ceilings, so a machine
     // where the redistributable is missing falls back to the inbox conhost with the old ceilings

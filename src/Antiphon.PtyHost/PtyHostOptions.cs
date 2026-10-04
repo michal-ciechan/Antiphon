@@ -36,8 +36,8 @@ public sealed record PtyHostOptions
     /// launcher's environment block, so before this the backend of a detached host was whatever the
     /// runner process — or, for a test, the test process, or the shell that started the test — had
     /// exported, invisible in the host's own command line and manifest while diagnosing it. The
-    /// resolved backend is unchanged in production (the daemon still exports the same value from
-    /// <c>SessionRunner:PtyBackend</c>); it is now simply said twice.</para>
+    /// daemon now passes its composed instance request, including explicit empty, so ambient input
+    /// cannot override the runtime's decision. Windows defaults to modern; Unix uses Porta.</para>
     /// </summary>
     public string? PtyBackend { get; init; }
 

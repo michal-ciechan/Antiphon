@@ -1,5 +1,12 @@
 # Testing and build operations
 
+CARD-1022 release A: the five PTY assembly guards clear inherited `ANTIPHON_PTY_BACKEND`;
+the isolated default is ModernConPty on Windows (both staged files required) and UnixPty
+elsewhere. A native Windows qualification with missing prerequisites fails. Explicit legacy
+fixtures are retained for release B and excluded from A's nine-row checkpoint manifest.
+Typed/paste parity peers explicitly use modern and choose unwrapped/wrapped encoding through
+the shared helper; changing the backend alone does not preserve a typed-input experiment.
+
 
 <!-- CARD-0254 preserved source begins -->
 

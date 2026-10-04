@@ -48,6 +48,8 @@ public sealed class UnixPtyArgvTests
         try
         {
             var actual = await fixture.CaptureAsync();
+            fixture.Runner.Backend!.Backend.ShouldBe(PtyBackend.UnixPty);
+            fixture.Runner.Backend.FellBack.ShouldBeFalse();
             actual.ShouldBe(expected, "native-argv-exact");
             argv.ShouldBe(original, "caller-vector-unchanged");
         }
@@ -197,7 +199,7 @@ public sealed class UnixPtyArgvTests
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "c863-" + Guid.NewGuid().ToString("N"));
         public string CapturePath => Path.Combine(Root, "argv.json");
         public Dictionary<string, string> Environment => new() { ["ANTIPHON_ARGV_CAPTURE"] = CapturePath };
-        public PtyAgentRunner Runner { get; } = new("inbox");
+        public PtyAgentRunner Runner { get; } = new();
 
         public NativeFixture() => Directory.CreateDirectory(Root);
 

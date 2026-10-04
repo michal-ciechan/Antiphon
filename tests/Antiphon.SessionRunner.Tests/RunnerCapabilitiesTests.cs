@@ -39,6 +39,7 @@ public class RunnerCapabilitiesTests
         oldRoundTrip.Build.ShouldBeNull();
         oldRoundTrip.Version.ShouldBeNull();
         oldRoundTrip.Features.ShouldBeNull();
+        oldRoundTrip.PtyBackendDeprecated.ShouldBeNull();
 
         var build = new RunnerBuildDto("1.0.0+0123456789012345678901234567890123456789",
             "0123456789012345678901234567890123456789", DateTime.UnixEpoch, DateTime.UnixEpoch.AddMinutes(1));
@@ -48,12 +49,14 @@ public class RunnerCapabilitiesTests
             Build = build,
             Version = build.CommitSha,
             Features = [RunnerCapabilityFeatures.HerdrAttach],
+            PtyBackendDeprecated = true,
         };
         var currentRoundTrip = JsonSerializer.Deserialize<RunnerCapabilitiesDto>(JsonSerializer.Serialize(current));
         currentRoundTrip!.TranscriptFormats.ShouldBe(SessionRunnerRuntime.SupportedTranscriptFormats);
         currentRoundTrip.Build.ShouldBe(build);
         currentRoundTrip.Version.ShouldBe(build.CommitSha);
         currentRoundTrip.Features.ShouldBe([RunnerCapabilityFeatures.HerdrAttach]);
+        currentRoundTrip.PtyBackendDeprecated.ShouldBe(true);
     }
 
     [Test]

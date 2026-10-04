@@ -63,7 +63,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     internal CodexCliVersionProbe? CodexCliProbe { get; set; }
 
     private string? DetectCustodyBackend() => BackendPlatformIsWindows
-        ? PtyBackendPolicy.Resolve(_settings.PtyBackend).Backend == PtyBackend.ModernConPty
+        ? BackendDecision.Backend == PtyBackend.ModernConPty
             ? VerificationCustodyBackends.WindowsJob : null
         : LinuxCgroupCustodyProbe.Detect(CustodyEnvironment);
 
@@ -752,7 +752,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     public RunnerCapabilitiesDto DescribeCapabilities(
         RunnerBuildDto build, IReadOnlyList<string> sessionBackends, IReadOnlyList<string> features)
     {
-        var decision = PtyBackendPolicy.Resolve();
+        var decision = BackendDecision;
         var advertised = features.Contains(RunnerCapabilityFeatures.RequiredPlatformV1)
             ? features
             : features.Append(RunnerCapabilityFeatures.RequiredPlatformV1).ToArray();

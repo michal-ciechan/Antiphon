@@ -26,7 +26,8 @@ public sealed record ProbeResult(
     string HeadHex,
     string TailHex,
     int[] Gaps,
-    int SpanMs)
+    int SpanMs,
+    string BodySha256 = "")
 {
     public override string ToString() =>
         $"bytes={Bytes} chunks={Chunks} lines={LinesSeen}/{HighestLine + 1} missing={MissingCount} "
@@ -104,9 +105,8 @@ public sealed class NodeStdinProbe : IAsyncDisposable
         string? backend = null)
     {
         var node = ResolveNode() ?? throw new InvalidOperationException("node.exe not on PATH");
-        // CARD-0037: the backend is a per-runner override rather than the process env var, because
-        // the contract needs BOTH arms measured in one test run — the inbox conhost stripping the
-        // markers and the shipped conpty.dll delivering them are two halves of the same fact.
+        // Null uses the platform default. Measurements must state an explicit backend;
+        // release A's Windows production/fixture default is modern.
         var runner = new PtyAgentRunner(backend);
         var env = new Dictionary<string, string>
         {
@@ -154,9 +154,7 @@ public sealed class NodeStdinProbe : IAsyncDisposable
         TimeSpan? timeout = null)
     {
         _runner.ClearLiveBuffer();
-        var payload = wrap
-            ? PtyInputEncoding.EncodeBody(body)
-            : PtyInputEncoding.NormalizeBody(body);
+        var payload = C1022InputMode.Encode(body, wrap);
         await _runner.WriteAsync(payload);
         if (delayBeforeCrMs > 0) await Task.Delay(delayBeforeCrMs);
         // The sentinel triggers the report; sent as its own write so it is never part of the body.
@@ -223,7 +221,8 @@ public sealed class NodeStdinProbe : IAsyncDisposable
             r.TryGetProperty("gaps", out var g)
                 ? g.EnumerateArray().Select(e => e.GetInt32()).ToArray()
                 : [],
-            r.TryGetProperty("spanMs", out var sp) ? sp.GetInt32() : 0);
+            r.TryGetProperty("spanMs", out var sp) ? sp.GetInt32() : 0,
+            r.TryGetProperty("bodySha256", out var hash) ? hash.GetString() ?? "" : "");
     }
 
     public async ValueTask DisposeAsync()
