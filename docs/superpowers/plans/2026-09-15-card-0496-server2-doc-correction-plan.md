@@ -264,6 +264,9 @@ and restores its snapshot under the repository verification-restoration contract
 
 The Final port brief explicitly limits ordinary verification to R-1/R-2 and manual
 V-1 through V-10; no whole Unit lane is required for this textual/script change.
+V-1's original zero-hostname requirement now applies to messaging instructions:
+master has newer unrelated runner/stack references in bootstrap and agent-kinds.
+Retain and classify those references; do not remove them to satisfy a stale count.
 Keep master's pg_stat_statements guidance and HTTP readiness retry. The merged
 test entry supports both Case and ReadinessCase. The readiness fixture supplies a
 synthetic explicit target only when the loaded deployment helper accepts it, so
