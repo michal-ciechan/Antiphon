@@ -1460,25 +1460,31 @@ test "$(id -u)" = 1654
 test "$NUGET_PACKAGES" = /home/app/.nuget/packages
 test "$NUGET_SCRATCH" = /var/cache/antiphon/nuget-scratch
 test "$NPM_CONFIG_CACHE" = /home/app/.npm
-test -s /home/app/.nuget/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata
-test -s /home/app/.nuget/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost
-test ! -d /usr/share/dotnet/packs/Microsoft.NETCore.App.Host.linux-x64/9.0.20
+for pack in Microsoft.NETCore.App.Host.linux-x64 Microsoft.NETCore.App.Ref Microsoft.AspNetCore.App.Ref; do
+    path="/usr/share/dotnet/packs/$pack/9.0.20"
+    if [ "$pack" = Microsoft.NETCore.App.Host.linux-x64 ]; then test -x "$path/runtimes/linux-x64/native/apphost"; else test -s "$path/data/FrameworkList.xml"; fi
+    printf 'C849_PACK %s\n' "$path"
+done
 curl -fsS http://build-slots:8080/build-slots >/dev/null
 root="$(mktemp -d /tmp/c849-smoke-XXXXXXXX)"
 trap 'rm -rf "$root"' EXIT
-mkdir -p "$root/empty"
+mkdir -p "$root/home/.nuget" "$root/packages" "$root/scratch"
+export HOME="$root/home" DOTNET_CLI_HOME="$root/home" NUGET_PACKAGES="$root/packages" NUGET_SCRATCH="$root/scratch"
+export DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_CLI_TELEMETRY_OPTOUT=1
 cat > "$root/Smoke.csproj" <<'EOF'
-<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework><UseAppHost>true</UseAppHost><RuntimeIdentifier>linux-x64</RuntimeIdentifier><RuntimeFrameworkVersion>9.0.20</RuntimeFrameworkVersion><TargetLatestRuntimePatch>false</TargetLatestRuntimePatch><SelfContained>false</SelfContained><NuGetAudit>false</NuGetAudit></PropertyGroup></Project>
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework><UseAppHost>true</UseAppHost><RuntimeIdentifier>linux-x64</RuntimeIdentifier><RuntimeFrameworkVersion>9.0.20</RuntimeFrameworkVersion><TargetLatestRuntimePatch>false</TargetLatestRuntimePatch><SelfContained>false</SelfContained><NuGetAudit>false</NuGetAudit></PropertyGroup><ItemGroup><FrameworkReference Include="Microsoft.AspNetCore.App" /></ItemGroup></Project>
 EOF
-printf 'System.Console.WriteLine("CARD0849_APPHOST_OK");\n' > "$root/Program.cs"
-printf '<configuration><packageSources><clear/><add key="empty" value="%s"/></packageSources></configuration>\n' "$root/empty" > "$root/NuGet.Config"
+printf 'var context = new Microsoft.AspNetCore.Http.DefaultHttpContext(); System.Console.WriteLine(context.Response.StatusCode == 200 ? "CARD0849_APPHOST_OK" : "bad-context");\n' > "$root/Program.cs"
+printf '%s\n' '<configuration><packageSources><clear/></packageSources><fallbackPackageFolders><clear/></fallbackPackageFolders></configuration>' > "$root/NuGet.Config"
 cat > "$root/driver.sh" <<'EOF'
 #!/bin/sh
 set -eu
 cd "$1"
 dotnet restore Smoke.csproj --configfile NuGet.Config --no-http-cache -p:NuGetAudit=false -nodeReuse:false -maxcpucount:1 >/dev/null
 dotnet build Smoke.csproj --no-restore -p:UseAppHost=true -p:NuGetAudit=false -nodeReuse:false -maxcpucount:1 >/dev/null
-test "$(./bin/Debug/net9.0/linux-x64/Smoke)" = CARD0849_APPHOST_OK
+output=$(./bin/Debug/net9.0/linux-x64/Smoke)
+test "$output" = CARD0849_APPHOST_OK
+test -z "$(find "$NUGET_PACKAGES" -mindepth 1 -maxdepth 1 -iname 'microsoft.*.app.*' -print -quit)"
 EOF
 export DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=true
 pwsh -NoProfile -File /work/repos/antiphon/scripts/build-slot.ps1 -Label c849-smoke -- /bin/sh "$root/driver.sh" "$root" >/dev/null
@@ -1596,36 +1602,132 @@ c849_validate_seed_relative() {
 }
 
 c849_validate_seed_tree() {
-    local stage="$1" package version entry relative
-    if [ -n "$(find "$stage" \( -type l -o -type b -o -type c -o -type p -o -type s \) -print -quit)" ] \
-        || [ -n "$(find "$stage" -type f -links +1 -print -quit)" ]; then
-        printf 'CacheDonorUnsafeEntry\n'; return 2
-    fi
+    local stage="$1" package version entry relative complete=0 unsafe
+    [ -d "$stage/packages" ] && [ -d "$stage/npm" ] || { printf 'CacheDonorVersionInvalid\n'; return 2; }
+    unsafe="$(find "$stage" \( -type l -o -type b -o -type c -o -type p -o -type s -o -type f -links +1 \) -print -quit)" || return 2
+    [ -z "$unsafe" ] || { printf 'CacheDonorUnsafeEntry\n'; return 2; }
     while IFS= read -r -d '' entry; do
         relative="${entry#"$stage"/}"
         c849_validate_seed_relative "$relative" || return 2
     done < <(find "$stage" -mindepth 1 -print0)
-    for package in "$stage/packages"/*; do
-        [ -d "$package" ] || { printf 'CacheDonorPackagesEmpty\n'; return 2; }
-        for version in "$package"/*; do
+    for package in "$stage/packages"/* "$stage/packages"/.[!.]* "$stage/packages"/..?*; do
+        [ -e "$package" ] || continue
+        [ -d "$package" ] || { printf 'CacheDonorVersionInvalid\n'; return 2; }
+        for version in "$package"/* "$package"/.[!.]* "$package"/..?*; do
+            [ -e "$version" ] || continue
             [ -d "$version" ] || { printf 'CacheDonorVersionInvalid\n'; return 2; }
             if [ ! -s "$version/.nupkg.metadata" ]; then
-                case "$version" in
-                    "$stage/packages/microsoft.netcore.app.host.linux-x64/9.0.20")
-                        printf 'AppHostDonorMetadataMissing\n'; return 2 ;;
-                    "$stage/packages/microsoft.netcore.app.ref/9.0.20")
-                        printf 'Net9ReferenceDonorMissing\n'; return 2 ;;
-                esac
                 rm -rf -- "$version" || { printf 'CacheDonorVersionIncomplete\n'; return 2; }
-            fi
+            elif [ ! -f "$version/.nupkg.metadata" ]; then
+                printf 'CacheDonorVersionInvalid\n'; return 2
+            else complete=$((complete + 1)); fi
         done
     done
-    [ -s "$stage/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" ] \
-        || { printf 'AppHostDonorMissing\n'; return 2; }
-    [ -s "$stage/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata" ] \
-        || { printf 'AppHostDonorMetadataMissing\n'; return 2; }
-    [ -s "$stage/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata" ] \
-        || { printf 'Net9ReferenceDonorMissing\n'; return 2; }
+    [ "$complete" -gt 0 ] || { printf 'CacheDonorPackagesEmpty\n'; return 2; }
+}
+
+# Versioned canonical recovery evidence. Paths remain private to the host; callers
+# export only the digest. Every scan fails closed before any ready publication.
+c849_manifest_write() {
+    local root="$1" output="$2" list path relative kind size mode digest unsafe
+    local LC_ALL=C
+    [ -d "$root/packages" ] && [ ! -L "$root/packages" ] && [ -d "$root/npm" ] && [ ! -L "$root/npm" ] || return 2
+    unsafe="$(find "$root/packages" "$root/npm" \( -type l -o -type b -o -type c -o -type p -o -type s -o -type f -links +1 \) -print -quit)" || return 2
+    [ -z "$unsafe" ] || return 2
+    list="$(mktemp)" || return 2
+    if ! find "$root/packages" "$root/npm" -print0 > "$list"; then rm -f -- "$list"; return 2; fi
+    if ! sort -z -o "$list" "$list"; then rm -f -- "$list"; return 2; fi
+    printf 'c849-manifest-v1\0' > "$output" || { rm -f -- "$list"; return 2; }
+    while IFS= read -r -d '' path; do
+        relative="${path#"$root"/}"
+        c849_validate_seed_relative "$relative" >/dev/null || { rm -f -- "$list"; return 2; }
+        if [ -d "$path" ] && [ ! -L "$path" ]; then
+            kind=D; size=0; mode=-; digest=-
+        elif [ -f "$path" ] && [ ! -L "$path" ] && [ "$(stat -c %h -- "$path")" = 1 ]; then
+            kind=F
+            size="$(stat -c %s -- "$path")" || { rm -f -- "$list"; return 2; }
+            mode="$(stat -c %a -- "$path")" || { rm -f -- "$list"; return 2; }
+            mode="$(printf '%03o' "$((8#$mode & 8#111))")"
+            digest="$(sha256sum -- "$path")" || { rm -f -- "$list"; return 2; }
+            digest="${digest%% *}"
+            [[ "$size" =~ ^[0-9]+$ && "$digest" =~ ^[0-9a-f]{64}$ ]] || { rm -f -- "$list"; return 2; }
+        else rm -f -- "$list"; return 2; fi
+        printf '%s\0%s\0%s\0%s\0%s\0' "$kind" "$relative" "$size" "$mode" "$digest" >> "$output" || { rm -f -- "$list"; return 2; }
+    done < "$list"
+    rm -f -- "$list"
+}
+
+c849_manifest_validate() {
+    local manifest="$1" header kind path size mode digest previous='' packages=0 npm=0
+    local LC_ALL=C
+    [ -f "$manifest" ] && [ ! -L "$manifest" ] && [ -s "$manifest" ] || return 2
+    {
+        IFS= read -r -d '' header && [ "$header" = c849-manifest-v1 ] || return 2
+        while :; do
+            kind=''
+            if ! IFS= read -r -d '' kind; then [ -z "$kind" ] || return 2; break; fi
+            IFS= read -r -d '' path && IFS= read -r -d '' size && IFS= read -r -d '' mode && IFS= read -r -d '' digest || return 2
+            c849_validate_seed_relative "$path" >/dev/null || return 2
+            case "$path" in packages|npm|packages/*|npm/*) ;; *) return 2 ;; esac
+            [ -z "$previous" ] || [[ "$path" > "$previous" ]] || return 2
+            previous="$path"
+            case "$kind" in
+                D) [ "$size:$mode:$digest" = '0:-:-' ] || return 2 ;;
+                F) [[ "$size" =~ ^(0|[1-9][0-9]*)$ && "$mode" =~ ^[01]{3}$ && "$digest" =~ ^[0-9a-f]{64}$ ]] || return 2 ;;
+                *) return 2 ;;
+            esac
+            if [ "$path" = packages ]; then [ "$kind" = D ] || return 2; packages=1; fi
+            if [ "$path" = npm ]; then [ "$kind" = D ] || return 2; npm=1; fi
+        done
+    } < "$manifest"
+    [ "$packages:$npm" = 1:1 ]
+}
+
+c849_manifest_compare() {
+    local root="$1" manifest="$2" actual status=0
+    c849_manifest_validate "$manifest" || return 2
+    actual="$(mktemp)" || return 2
+    c849_manifest_write "$root" "$actual" && cmp -s "$actual" "$manifest" || status=2
+    rm -f -- "$actual"
+    return "$status"
+}
+
+c849_compare_import() {
+    local stage="$1" image="$2"
+    # The helper sees only the two imported trees and the staged manifest, all read-only.
+    {
+        declare -f c849_validate_seed_relative c849_manifest_write c849_manifest_validate c849_manifest_compare
+        printf '\nc849_manifest_compare /import /snapshot/recovery.manifest\n'
+    } | docker run --rm -i --network none --user 0:0 --entrypoint /bin/bash \
+        --mount "type=bind,source=$stage,target=/snapshot,readonly" \
+        --mount "type=volume,source=$C849_PACKAGES,target=/import/packages,readonly,volume-nocopy" \
+        --mount "type=volume,source=$C849_NPM,target=/import/npm,readonly,volume-nocopy" \
+        "$image" -s
+}
+
+c849_recovery_check() {
+    local recovery="$1" expected="$2" actual
+    [ "${recovery%/*}" = "$SERVER2_ROOT/cache" ] && [[ "${recovery##*/}" =~ ^recovery-[a-z0-9-]+$ ]] \
+        || write_result false CacheRecoveryInvalid 2
+    [ -d "$recovery" ] && [ ! -L "$recovery" ] && [ "$(realpath -e -- "$recovery")" = "$recovery" ] \
+        || write_result false CacheRecoveryMissing 2
+    [ -d "$recovery/packages" ] && [ -d "$recovery/npm" ] && [ -f "$recovery/recovery.manifest" ] && [ ! -L "$recovery/recovery.manifest" ] \
+        || write_result false CacheRecoveryMissing 2
+    actual="$(sha256sum -- "$recovery/recovery.manifest")" || write_result false CacheRecoveryChanged 2
+    [ "${actual%% *}" = "$expected" ] && c849_manifest_compare "$recovery" "$recovery/recovery.manifest" \
+        || write_result false CacheRecoveryChanged 2
+}
+
+c849_contract_receipt() {
+    local smoke="$1"
+    case "$C849_SCHEMA:$C849_KIND:$C849_DIGEST_TYPE:$smoke" in
+        legacy:full:payload-sha256:passed|legacy:full:payload-sha256:not-run|3:full:manifest-sha256:passed|3:full:manifest-sha256:not-run|2:cold:none:not-run) ;;
+        *) write_result false CacheSeedMarkerInvalid 2 ;;
+    esac
+    printf 'schema=%s\nkind=%s\ndigest-type=%s\ndigest=%s\nsmoke=%s\n' \
+        "$C849_SCHEMA" "$C849_KIND" "$C849_DIGEST_TYPE" "$C849_DIGEST" "$smoke" > "$CASE_DIR/seed-contract.txt"
+    printf '%s\n' "$C849_KIND" > "$CASE_DIR/seed-kind.txt"
+    if [ "$C849_KIND" = full ]; then printf '%s\n' "$C849_DIGEST" > "$CASE_DIR/seed-hash.txt"; fi
 }
 
 # The source is an operator-selected host path. Accept only cache payload paths and
@@ -1864,6 +1966,7 @@ c849_cold_seed() {
     chmod 0600 "$C849_READY.tmp-$RUN"
     c849_cold_proof P6 yes
     mv -T -- "$C849_READY.tmp-$RUN" "$C849_READY" || write_result false CacheSeedMarkerInvalid 2
+    printf 'schema=2\nkind=cold\ndigest-type=none\ndigest=none\nsmoke=not-run\n' > "$CASE_DIR/seed-contract.txt"
     printf 'ready=true kind=cold writable=3\n' > "$CASE_DIR/seed.txt"
     write_result true '' 0
 }
@@ -1877,7 +1980,7 @@ c849_seed() {
         c849_cold_seed
     fi
     c849_prepare yes
-    local image donor donor_image stage recovery helper payload_hash reference_hash package_bytes npm_bytes now i saved name item source
+    local image donor donor_image stage recovery helper manifest_hash donor_type package_bytes npm_bytes now i saved name item source
     image="$(c849_image)" || {
         if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
         write_result false CacheHelperImageMissing 2
@@ -1894,6 +1997,7 @@ c849_seed() {
         else
             c849_require_ready allow-cold
         fi
+        c849_contract_receipt not-run
         if [ "$C849_KIND" = cold ]; then
             c849_no_temp_containers
             printf 'ready=true kind=cold writable=3\n' > "$CASE_DIR/seed.txt"
@@ -1921,7 +2025,8 @@ c849_seed() {
             || write_result false CacheHelperImageMissing 2
         [[ "$donor_image" =~ ^sha256:[0-9a-f]{64}$ ]] || write_result false CacheHelperImageMissing 2
     else
-        donor_image="$(docker inspect -f '{{.Image}}' "$donor")"
+        donor_image="$(docker image inspect -f '{{.Id}}' "$image")" || write_result false CacheHelperImageMissing 2
+        [[ "$donor_image" =~ ^sha256:[0-9a-f]{64}$ ]] || write_result false CacheHelperImageMissing 2
         c849_status_zero server2-temp || c849_seed_failure "$donor" CacheDonorNotIdleDrained
     fi
     for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
@@ -1964,8 +2069,12 @@ c849_seed() {
         cache verify --cache /npm >/dev/null 2>&1 \
         || c849_seed_failure "$donor" NpmStagedIntegrityFailed
     printf 'npm-integrity=passed\n' > "$CASE_DIR/npm-integrity.txt"
-    payload_hash="$(sha256sum "$stage/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" | cut -d' ' -f1)"
-    reference_hash="$(sha256sum "$stage/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata" | cut -d' ' -f1)"
+    c849_manifest_write "$stage" "$stage/recovery.manifest" || c849_seed_failure "$donor" CacheManifestFailed
+    manifest_hash="$(sha256sum "$stage/recovery.manifest" | cut -d' ' -f1)"
+    donor_type=live
+    if [ -n "$saved" ]; then
+        if [ -d "$saved" ]; then donor_type=saved-directory; else donor_type=saved-tar; fi
+    fi
     package_bytes="$(du -s -B1 "$stage/packages" | cut -f1)"
     npm_bytes="$(du -s -B1 "$stage/npm" | cut -f1)"
     for item in "$C849_PACKAGES:packages" "$C849_NPM:npm"; do
@@ -1977,6 +2086,7 @@ c849_seed() {
             -c 'set -eu; cp -a /seed/. /cache/; chown -R 1654:1654 /cache; find /cache -type d -exec chmod u+rwx {} +; find /cache -type f -exec chmod u+rw {} +' \
             >/dev/null || c849_seed_failure "$donor" CacheSeedImportFailed
     done
+    c849_compare_import "$stage" "$image" || c849_seed_failure "$donor" CacheSeedImportChanged
     helper="c849-seed-$RUN"
     docker run -d --name "$helper" --network antiphon-build-slots --user 1654:1654 \
         --entrypoint sleep -e HOME=/home/app \
@@ -2014,11 +2124,14 @@ c849_seed() {
     c849_status_body server2-temp | jq -c '{sessions,runnerSessions,queuedTasks,draining,retireWhenIdle,redirectTo,dispatchEligible,acceptingNewWork}' \
         > "$CASE_DIR/status.json" || write_result false CacheDonorReconnectReceiptMissing 2
     now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    printf 'donor=%s\nimage=%s\ntime=%s\npayload-sha256=%s\nreference-sha256=%s\npackage-bytes=%s\nnpm-bytes=%s\nrecovery=%s\n' \
-        "${donor:-saved}" "$donor_image" "$now" "$payload_hash" "$reference_hash" "$package_bytes" "$npm_bytes" "$recovery" > "$C849_READY.tmp-$RUN"
-    mv "$C849_READY.tmp-$RUN" "$C849_READY"
-    printf 'ready=true donor=%s payload-sha256=%s reference-sha256=%s package-bytes=%s npm-bytes=%s recovery=%s\n' \
-        "${donor:-saved}" "$payload_hash" "$reference_hash" "$package_bytes" "$npm_bytes" "$recovery" > "$CASE_DIR/seed.txt"
+    printf 'schema=3\nkind=full\nsource-sha=%s\nimage=%s\ndonor-type=%s\ndonor=%s\ntime=%s\npackages=%s\nscratch=%s\nnpm=%s\npackage-bytes=%s\nnpm-bytes=%s\nrecovery=%s\nmanifest-sha256=%s\n' \
+        "$SHA" "$donor_image" "$donor_type" "${donor:-saved}" "$now" "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM" "$package_bytes" "$npm_bytes" "$recovery" "$manifest_hash" > "$C849_READY.tmp-$RUN" \
+        || c849_seed_failure "$donor" CacheSeedMarkerInvalid
+    chmod 0600 "$C849_READY.tmp-$RUN" || c849_seed_failure "$donor" CacheSeedMarkerInvalid
+    mv -T -- "$C849_READY.tmp-$RUN" "$C849_READY" || c849_seed_failure "$donor" CacheSeedMarkerInvalid
+    C849_KIND=full; C849_SCHEMA=3; C849_DIGEST_TYPE=manifest-sha256; C849_DIGEST="$manifest_hash"
+    c849_contract_receipt passed
+    printf 'ready=true donor=%s\n' "${donor:-saved}" > "$CASE_DIR/seed.txt"
     write_result true '' 0
 }
 
@@ -2029,6 +2142,43 @@ c849_require_ready() {
         || write_result false 'CacheSeedRequired: run pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -SavedDonor /home/mc/runner-cache-donor/temp-runner-cache.tar' 2
     [ -f "$C849_READY" ] && [ ! -L "$C849_READY" ] && [ -s "$C849_READY" ] \
         || write_result false CacheSeedMarkerInvalid 2
+    C849_SCHEMA=legacy; C849_DIGEST_TYPE=payload-sha256; C849_DIGEST=''
+    if grep -Fxq schema=3 "$C849_READY"; then
+        [ "$(wc -l < "$C849_READY")" -eq 14 ] \
+            && [ "$(cut -d= -f1 "$C849_READY" | sort -u | wc -l)" -eq 14 ] \
+            && [ "$(grep -Ec '^(schema|kind|source-sha|image|donor-type|donor|time|packages|scratch|npm|package-bytes|npm-bytes|recovery|manifest-sha256)=' "$C849_READY")" -eq 14 ] \
+            && grep -Fxq kind=full "$C849_READY" \
+            && grep -Eq '^source-sha=[0-9a-f]{40}$' "$C849_READY" \
+            && grep -Eq '^image=sha256:[0-9a-f]{64}$' "$C849_READY" \
+            && grep -Eq '^time=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' "$C849_READY" \
+            && grep -Eq '^package-bytes=(0|[1-9][0-9]*)$' "$C849_READY" \
+            && grep -Eq '^npm-bytes=(0|[1-9][0-9]*)$' "$C849_READY" \
+            && grep -Eq '^manifest-sha256=[0-9a-f]{64}$' "$C849_READY" \
+            && grep -Fxq "packages=$C849_PACKAGES" "$C849_READY" \
+            && grep -Fxq "scratch=$C849_SCRATCH" "$C849_READY" \
+            && grep -Fxq "npm=$C849_NPM" "$C849_READY" \
+            || write_result false CacheSeedMarkerInvalid 2
+        local donor_type donor stamp recovery expected
+        donor_type="$(sed -n 's/^donor-type=//p' "$C849_READY")"
+        donor="$(sed -n 's/^donor=//p' "$C849_READY")"
+        case "$donor_type:$donor" in
+            saved-tar:saved|saved-directory:saved) ;;
+            live:*) [[ "$donor" =~ ^[0-9a-f]{64}$ ]] || write_result false CacheSeedMarkerInvalid 2 ;;
+            *) write_result false CacheSeedMarkerInvalid 2 ;;
+        esac
+        stamp="$(sed -n 's/^time=//p' "$C849_READY")"
+        [ "$(date -u -d "$stamp" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" = "$stamp" ] || write_result false CacheSeedMarkerInvalid 2
+        image="$(sed -n 's/^image=//p' "$C849_READY")"
+        docker image inspect "$image" >/dev/null 2>&1 || write_result false CacheRecoveryImageMissing 2
+        recovery="$(sed -n 's/^recovery=//p' "$C849_READY")"
+        expected="$(sed -n 's/^manifest-sha256=//p' "$C849_READY")"
+        c849_recovery_check "$recovery" "$expected"
+        c849_observe_volume "$C849_PACKAGES" nuget-packages 10737418240 >/dev/null
+        c849_observe_volume "$C849_SCRATCH" nuget-scratch 268435456 >/dev/null
+        c849_observe_volume "$C849_NPM" npm-content 2147483648 >/dev/null
+        C849_SCHEMA=3; C849_DIGEST_TYPE=manifest-sha256; C849_DIGEST="$expected"
+        return 0
+    fi
     if grep -Eq '^(schema|kind|cold)=' "$C849_READY"; then
         [ "$(wc -l < "$C849_READY")" -eq 8 ] \
             && [ "$(cut -d= -f1 "$C849_READY" | sort -u | wc -l)" -eq 8 ] \
@@ -2056,9 +2206,17 @@ c849_require_ready() {
             c849_cold_volume_facts "$name" "$role" no
             [ "$C849_COLD_PRESENT" = 1 ] || write_result false CacheSeedMarkerInvalid 2
         done
-        C849_KIND=cold
+        C849_KIND=cold; C849_SCHEMA=2; C849_DIGEST_TYPE=none; C849_DIGEST=none
         return 0
     fi
+    [ "$(wc -l < "$C849_READY")" -eq 8 ] \
+        && [ "$(cut -d= -f1 "$C849_READY" | sort -u | wc -l)" -eq 8 ] \
+        && [ "$(grep -Ec '^(donor|image|time|payload-sha256|reference-sha256|package-bytes|npm-bytes|recovery)=' "$C849_READY")" -eq 8 ] \
+        && grep -Eq '^image=sha256:[0-9a-f]{64}$' "$C849_READY" \
+        && grep -Eq '^reference-sha256=[0-9a-f]{64}$' "$C849_READY" \
+        && grep -Eq '^package-bytes=[0-9]+$' "$C849_READY" \
+        && grep -Eq '^npm-bytes=[0-9]+$' "$C849_READY" \
+        || write_result false CacheSeedMarkerInvalid 2
     local recovery
     recovery="$(sed -n 's/^recovery=//p' "$C849_READY" | head -n 1)"
     case "$recovery" in "$SERVER2_ROOT"/cache/recovery-[a-z0-9]*) ;; *) write_result false CacheRecoveryInvalid 2 ;; esac
@@ -2076,6 +2234,7 @@ c849_require_ready() {
         "$image" /home/app/.nuget/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost \
         2>/dev/null | cut -d' ' -f1)"
     [ "$actual" = "$expected" ] || write_result false CacheSeedPayloadChanged 2
+    C849_DIGEST="$expected"
 }
 
 # Read-only observation for preview. Do not call c849_prepare here: it can create
@@ -2383,12 +2542,16 @@ c849_prune() {
         write_result false CacheHelperImageMissing 2
     }
     recovery="$(sed -n 's/^recovery=//p' "$C849_READY" | head -n 1)"
+    if [ "$C849_SCHEMA" = 3 ]; then
+        c849_recovery_check "$recovery" "$C849_DIGEST"
+    else
     [ -d "$recovery/packages" ] && [ ! -L "$recovery" ] \
         && [ -s "$recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata" ] \
         || write_result false CacheRecoveryMissing 2
     expected_hash="$(sed -n 's/^payload-sha256=//p' "$C849_READY" | head -n 1)"
     actual_hash="$(sha256sum "$recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" 2>/dev/null | cut -d' ' -f1)"
     [ "$actual_hash" = "$expected_hash" ] || write_result false CacheRecoveryChanged 2
+    fi
     donor_image="$(sed -n 's/^image=//p' "$C849_READY" | head -n 1)"
     [[ "$donor_image" =~ ^sha256:[0-9a-f]{64}$ ]] \
         && docker image inspect "$donor_image" >/dev/null 2>&1 \
@@ -2399,7 +2562,7 @@ c849_prune() {
         c849_prune_validate_tree "$path" "$path"
         case "$role" in nuget-packages|nuget-scratch|npm-content) ;; *) write_result false CacheTargetInvalid 2 ;; esac
         required_bytes=0
-        if [ "$role" = nuget-packages ]; then
+        if [ "$role" = nuget-packages ] && [ "$C849_SCHEMA" = legacy ]; then
             required_bytes="$(du -s -B1 "$recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20" "$recovery/packages/microsoft.netcore.app.ref/9.0.20" | awk '{s+=$1} END {print s+0}')" \
                 || write_result false CacheRecoveryMissing 2
         fi
@@ -2417,6 +2580,7 @@ c849_prune() {
                     find /cache -mindepth 2 -maxdepth 2 -type d -exec sh -c '\''for v do rm -f -- "$v/.nupkg.metadata"; rm -rf -- "$v"; done'\'' sh {} +
                     find /cache -mindepth 1 -maxdepth 1 -type d -empty -delete
                     ' >/dev/null || write_result false CachePruneFailed 2
+                if [ "$C849_SCHEMA" = legacy ]; then
                 docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
                     --mount "type=bind,source=$recovery/packages,target=/seed,readonly" \
                     --mount "type=volume,source=$name,target=/cache,volume-nocopy" "$image" -c '
@@ -2426,6 +2590,7 @@ c849_prune() {
                         cp -a "/seed/$p/9.0.20" "/cache/$p/"
                         chown -R 1654:1654 "/cache/$p/9.0.20"
                     done' >/dev/null || write_result false CacheRefillFailed 2
+                fi
                 ;;
             nuget-scratch|npm-content)
                 docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
@@ -3353,7 +3518,7 @@ case_verify_runner_caches() {
     printf '%s' "$status" | jq -c '{buildVersion,dispatchEligible,acceptingNewWork,draining,sessions,runnerSessions,queuedTasks}' \
         > "$CASE_DIR/status.json" || write_result false CacheRunnerStatusInvalid 2
     printf '%s\n' "$C849_KIND" > "$CASE_DIR/seed-kind.txt"
-    if [ "$C849_KIND" = full ]; then sed -n 's/^payload-sha256=//p' "$C849_READY" > "$CASE_DIR/seed-hash.txt"; fi
+
     local project container
     project="$HOST_PROJECT"
     [ "$C590_RUNNER_ID" = server2-temp ] && project="$TEMP_PROJECT"
@@ -3361,31 +3526,57 @@ case_verify_runner_caches() {
         --filter 'label=com.docker.compose.service=session-runner')"
     [ -n "$container" ] || write_result false CacheRunnerUnavailable 2
     c849_assert_mounts "$container"
-    if [ "$C849_KIND" = full ]; then c849_smoke "$container" "$C590_RUNNER_ID"; fi
+    if [ "$C849_KIND" = full ]; then c849_smoke "$container" "$C590_RUNNER_ID"; c849_contract_receipt passed; else c849_contract_receipt not-run; fi
     write_result true '' 0
 }
 
 case_runner_cache_inventory() {
     require_lane host
     command -v jq >/dev/null || write_result false CacheInventoryToolMissing 2
-    local runner project container image status
+    local runner project container image status running previous=''
+    : > "$CASE_DIR/identities.txt"
     for runner in server2 server2-temp; do
         project="$HOST_PROJECT"
         [ "$runner" = server2-temp ] && project="$TEMP_PROJECT"
-        container="$(docker ps -aq --filter "label=com.docker.compose.project=$project" \
-            --filter 'label=com.docker.compose.service=session-runner')"
-        [ -n "$container" ] || write_result false CacheInventoryRunnerMissing 2
-        image="$(docker inspect -f '{{.Image}}' "$container")"
-        printf 'runner=%s container=%s image=%s\n' "$runner" "$container" "$image" \
-            >> "$CASE_DIR/identities.txt"
-        docker inspect -f '{{range .Mounts}}{{if eq .Type "volume"}}{{println .Type .Name .Destination .RW}}{{end}}{{end}}' \
-            "$container" > "$CASE_DIR/$runner-mounts.txt" \
-            || write_result false CacheInventoryMountsUnavailable 2
-        status="$(curl -fsS --max-time 15 "${C604_SERVER_ORIGIN:?}/api/session-runners/$runner/status")" \
-            || write_result false CacheInventoryStatusUnavailable 2
-        printf '%s' "$status" | jq -c '{sessions,runnerSessions,queuedTasks,draining,retiredAt,dispatchEligible,acceptingNewWork,buildVersion}' \
+        container="$(docker ps -aq --no-trunc --filter "label=com.docker.compose.project=$project" \
+            --filter 'label=com.docker.compose.service=session-runner')" \
+            || write_result false CacheInventoryLookupFailed 2
+        status="$(c849_status_body "$runner")" || write_result false CacheInventoryStatusUnavailable 2
+        printf '%s' "$status" | jq -e '
+            has("retiredAt") and has("runnerSessions") and
+            (.sessions | type) == "number" and .sessions >= 0 and
+            (.queuedTasks | type) == "number" and .queuedTasks >= 0 and
+            (.runnerSessions == null or ((.runnerSessions | type) == "number" and .runnerSessions >= 0)) and
+            (.available | type) == "boolean" and (.dispatchEligible | type) == "boolean" and
+            (.acceptingNewWork | type) == "boolean" and (.draining | type) == "boolean"' >/dev/null \
+            || write_result false CacheInventoryStatusInvalid 2
+        printf '%s' "$status" | jq -c '{sessions,runnerSessions,queuedTasks,draining,retiredAt,available,dispatchEligible,acceptingNewWork,buildVersion}' \
             > "$CASE_DIR/$runner-status.json" || write_result false CacheInventoryStatusInvalid 2
-        if [ "$(docker inspect -f '{{.State.Running}}' "$container")" = true ]; then
+        if [ -z "$container" ]; then
+            [ "$runner" = server2-temp ] && printf '%s' "$status" | jq -e '
+                (.retiredAt | type) == "string" and (.retiredAt | length) > 0 and
+                .sessions == 0 and .queuedTasks == 0 and (.runnerSessions == null or .runnerSessions == 0) and
+                .available == false and .dispatchEligible == false and .acceptingNewWork == false and
+                .draining == true and .retireWhenIdle == true and .redirectTo == "server2"' >/dev/null \
+                || write_result false CacheInventoryRunnerMissing 2
+            printf 'runner=%s container=absent image=none\n' "$runner" >> "$CASE_DIR/identities.txt"
+            printf 'absent\n' > "$CASE_DIR/$runner-mounts.txt"
+            printf 'absent\n' > "$CASE_DIR/$runner-cache-paths.txt"
+            continue
+        fi
+        [[ "$container" =~ ^[0-9a-f]{64}$ ]] && [ "$container" != "$previous" ] || write_result false CacheInventoryIdentityInvalid 2
+        previous="$container"
+        image="$(docker inspect -f '{{.Image}}' "$container")" || write_result false CacheInventoryLookupFailed 2
+        [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || write_result false CacheInventoryIdentityInvalid 2
+        running="$(docker inspect -f '{{.State.Running}}' "$container")" || write_result false CacheInventoryLookupFailed 2
+        case "$running" in true|false) ;; *) write_result false CacheInventoryLookupFailed 2 ;; esac
+        if [ "$running" = true ] && printf '%s' "$status" | jq -e '.retiredAt != null' >/dev/null; then
+            write_result false CacheInventoryIdentityInvalid 2
+        fi
+        printf 'runner=%s container=%s image=%s\n' "$runner" "$container" "$image" >> "$CASE_DIR/identities.txt"
+        docker inspect -f '{{range .Mounts}}{{if eq .Type "volume"}}{{println .Type .Name .Destination .RW}}{{end}}{{end}}' \
+            "$container" > "$CASE_DIR/$runner-mounts.txt" || write_result false CacheInventoryMountsUnavailable 2
+        if [ "$running" = true ]; then
             docker exec -u 1654:1654 -e HOME=/home/app "$container" /bin/sh -c '
                 dotnet nuget locals all --list
                 npm config get cache
@@ -3393,11 +3584,8 @@ case_runner_cache_inventory() {
                     if [ -d "$p" ]; then du -s -B1 "$p"; else printf "absent %s\n" "$p"; fi
                 done
                 stat -c "%u:%g %a %n" /tmp /home/app/.nuget/packages
-            ' > "$CASE_DIR/$runner-cache-paths.txt" \
-                || write_result false CacheInventoryPathsUnavailable 2
-        else
-            printf 'stopped\n' > "$CASE_DIR/$runner-cache-paths.txt"
-        fi
+            ' > "$CASE_DIR/$runner-cache-paths.txt" || write_result false CacheInventoryPathsUnavailable 2
+        else printf 'stopped\n' > "$CASE_DIR/$runner-cache-paths.txt"; fi
     done
     write_result true '' 0
 }
@@ -3425,7 +3613,7 @@ case_verify_runner_caches_retired() {
     printf '%s' "$status" | jq -c '{buildVersion,dispatchEligible,acceptingNewWork,draining,sessions,runnerSessions,queuedTasks}' \
         > "$CASE_DIR/status.json" || write_result false MainRunnerStatusInvalid 2
     printf '%s\n' "$C849_KIND" > "$CASE_DIR/seed-kind.txt"
-    if [ "$C849_KIND" = full ]; then sed -n 's/^payload-sha256=//p' "$C849_READY" > "$CASE_DIR/seed-hash.txt"; fi
+
     if [ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$TEMP_PROJECT")" ]; then
         write_result false TempContainersRemain 2
     fi
@@ -3444,7 +3632,7 @@ case_verify_runner_caches_retired() {
     c849_assert_mounts "$container"
     tmp_mode="$(docker exec "$container" stat -c %a /tmp)" || write_result false MainTmpUnavailable 2
     [ "$tmp_mode" = 1777 ] || write_result false MainTmpModeInvalid 2
-    if [ "$C849_KIND" = full ]; then c849_smoke "$container" server2; fi
+    if [ "$C849_KIND" = full ]; then c849_smoke "$container" server2; c849_contract_receipt passed; else c849_contract_receipt not-run; fi
     write_result true '' 0
 }
 

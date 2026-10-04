@@ -79,6 +79,39 @@ function Assert-C849Status {
     }
     return $status
 }
+function Read-C849Contract {
+    param([int]$Index)
+    $text = Read-C849Receipt $Index 'seed-contract.txt'
+    if ($text -cnotmatch '\Aschema=(legacy|2|3)\nkind=(full|cold)\ndigest-type=(payload-sha256|none|manifest-sha256)\ndigest=([0-9a-f]{64}|none)\nsmoke=(passed|not-run)\n\z') {
+        throw 'C849 seed contract shape invalid'
+    }
+    $contract = @{ Schema=$Matches[1]; Kind=$Matches[2]; DigestType=$Matches[3]; Digest=$Matches[4]; Smoke=$Matches[5] }
+    $tuple = "$($contract.Schema)/$($contract.Kind)/$($contract.DigestType)"
+    if ($tuple -cnotin @('legacy/full/payload-sha256','2/cold/none','3/full/manifest-sha256') -or
+        (($contract.Kind -ceq 'cold') -ne ($contract.Digest -ceq 'none')) -or
+        ($contract.Kind -ceq 'cold' -and $contract.Smoke -cne 'not-run')) { throw 'C849 seed contract tuple invalid' }
+    return $contract
+}
+function Assert-C849Smoke {
+    param([int]$Index, [hashtable]$Contract, [string]$Runner, [bool]$Required)
+    if ($Required -and $Contract.Kind -ceq 'full' -and $Contract.Smoke -cne 'passed') { throw 'C849 full smoke required' }
+    if ($Contract.Smoke -ceq 'passed') {
+        $text = Read-C849Receipt $Index 'smoke-summary.txt'
+        $pattern = '\AC849_SMOKE runner=' + [regex]::Escape($Runner) + ' uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK\n\z'
+        if ($text -cnotmatch $pattern) { throw 'C849 smoke receipt invalid' }
+    }
+}
+function Assert-C849Mounts {
+    param([int]$Index, [string]$Project)
+    $mounts = (Read-C849Receipt $Index 'runner-mounts.txt') -split "`n"
+    foreach ($line in @(
+        'volume antiphon-runner-cache-nuget-packages /home/app/.nuget/packages true',
+        'volume antiphon-runner-cache-nuget-scratch /var/cache/antiphon/nuget-scratch true',
+        'volume antiphon-runner-cache-npm-content /home/app/.npm/_cacache true',
+        "volume ${Project}_runner-tmp /tmp true")) {
+        if (@($mounts | Where-Object { $_ -ceq $line }).Count -ne 1) { throw 'C849 mount receipt invalid' }
+    }
+}
 for ($i = 0; $i -lt $cases.Count; $i++) {
     $remoteCase = $cases[$i]
     $manifest = [ordered]@{
@@ -115,8 +148,10 @@ switch ($Case) {
         Write-Output 'C849_FIXTURE groups=9 controls=26 expectedRed=26 inventories=2 failures=0 productionMutations=0'
     }
     'Seed' {
+        $contract = Read-C849Contract 0
         $seed = Read-C849Receipt 0 'seed.txt'
         if ($seed.Trim() -ceq 'ready=true kind=cold writable=3') {
+            if ($contract.Kind -cne 'cold') { throw 'C849 cold seed receipt invalid' }
             $status = Read-C849Receipt 0 'status.json' | ConvertFrom-Json
             $main = Read-C849Receipt 0 'main-status.json' | ConvertFrom-Json
             if ($null -eq $status.retiredAt -or $status.available -ne $false -or
@@ -129,17 +164,20 @@ switch ($Case) {
             break
         }
         if ($Cold) { throw 'C849 cold seed receipt invalid' }
+        if ($contract.Kind -cne 'full') { throw 'C849 full seed receipt invalid' }
+        Assert-C849Smoke 0 $contract 'seed' $false
         if ($seed -match '(?m)^ready=true donor=saved(?: |\r?$)') {
             $status = Read-C849Receipt 0 'status.json' | ConvertFrom-Json
             if ($status.sessions -ne 0 -or $status.queuedTasks -ne 0 -or
                 ($null -ne $status.runnerSessions -and $status.runnerSessions -ne 0) -or
                 $status.draining -ne $true -or $status.retireWhenIdle -ne $true -or
                 $status.redirectTo -ne 'server2') { throw 'C849 saved donor status invalid' }
-            Write-Output 'C849_SEED donor=saved ready=true smoke=passed recovery=retained'
+            Write-Output "C849_SEED donor=saved ready=true schema=$($contract.Schema) digestType=$($contract.DigestType) smoke=$($contract.Smoke) recovery=retained"
             break
         }
         if ($seed -match '(?m)^ready=true donor=\r?$') {
-            Write-Output 'C849_SEED donor=none ready=true recovery=retained'
+            if ($contract.Smoke -cne 'not-run') { throw 'C849 reuse smoke invalid' }
+            Write-Output "C849_SEED donor=none ready=true schema=$($contract.Schema) digestType=$($contract.DigestType) smoke=not-run recovery=retained"
             break
         }
         $status = Assert-C849Status (Read-C849Receipt 0 'status.json') $false $true
@@ -148,7 +186,7 @@ switch ($Case) {
         if ($status.draining -ne $true -or $status.acceptingNewWork -ne $false -or
             $status.dispatchEligible -ne $true -or $status.retireWhenIdle -ne $true -or
             $status.redirectTo -ne 'server2') { throw 'C849 donor reconnect receipt invalid' }
-        Write-Output 'C849_SEED donor=server2-temp ready=true smoke=passed recovery=retained'
+        Write-Output "C849_SEED donor=server2-temp ready=true schema=$($contract.Schema) digestType=$($contract.DigestType) smoke=$($contract.Smoke) recovery=retained"
     }
     'Reset' {
         if ((Read-C849Receipt 0 'reset.txt').Trim() -cne 'reset=true volumes=3 marker=absent') {
@@ -157,12 +195,19 @@ switch ($Case) {
         Write-Output 'C849_RESET volumes=3 marker=absent failures=0'
     }
     'Both' {
+        $contracts = @((Read-C849Contract 0), (Read-C849Contract 1))
+        foreach ($key in @('Schema','Kind','DigestType','Digest')) {
+            if ($contracts[0][$key] -cne $contracts[1][$key]) { throw 'C849 mixed seed contracts' }
+        }
         $hashes = @()
         $kinds = @((Read-C849Receipt 0 'seed-kind.txt').Trim(), (Read-C849Receipt 1 'seed-kind.txt').Trim())
         if ($kinds[0] -cnotin @('full', 'cold') -or $kinds[1] -cnotin @('full', 'cold')) { throw 'C849 marker kind invalid' }
         if ($kinds[0] -cne $kinds[1]) { throw 'C849 mixed marker kinds' }
         for ($i = 0; $i -lt 2; $i++) {
             [void](Assert-C849Status (Read-C849Receipt $i 'status.json') $true)
+            if ($kinds[$i] -cne $contracts[$i].Kind) { throw 'C849 marker kind invalid' }
+            Assert-C849Smoke $i $contracts[$i] $runners[$i] $true
+            Assert-C849Mounts $i $(if ($i -eq 0) { 'antiphon-runner' } else { 'antiphon-runner-temp' })
             $kind = $kinds[$i]
             if ($kind -eq 'full') {
                 $smoke = Read-C849Receipt $i 'smoke-summary.txt'
@@ -181,11 +226,15 @@ switch ($Case) {
             break
         }
         if ($hashes[0] -cnotmatch '^[0-9a-f]{64}$' -or $hashes[0] -cne $hashes[1]) { throw 'C849 seed payload differs' }
-        Write-Output 'C849_BOTH runners=2 smokes=2 sharedVolumes=3 privateTmpVolumes=2 tmpMode=1777 failures=0'
+        Write-Output "C849_BOTH runners=2 schema=$($contracts[0].Schema) digestType=$($contracts[0].DigestType) smokes=2 sharedVolumes=3 privateTmpVolumes=2 tmpMode=1777 failures=0"
     }
     'Retired' {
+        $contract = Read-C849Contract 0
+        Assert-C849Smoke 0 $contract 'server2' $true
+        Assert-C849Mounts 0 'antiphon-runner'
         [void](Assert-C849Status (Read-C849Receipt 0 'status.json') $true)
         $kind = (Read-C849Receipt 0 'seed-kind.txt').Trim()
+        if ($kind -cne $contract.Kind) { throw 'C849 marker kind invalid' }
         if ($kind -cnotin @('full', 'cold')) { throw 'C849 marker kind invalid' }
         $mounts = Read-C849Receipt 0 'runner-mounts.txt'
         $rollback = Read-C849Receipt 0 'rollback.txt'
@@ -201,7 +250,7 @@ switch ($Case) {
         $hash = (Read-C849Receipt 0 'seed-hash.txt').Trim()
         if ($smoke -notmatch 'uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK' -or
             $hash -cnotmatch '^[0-9a-f]{64}$') { throw 'C849 retired receipt invalid' }
-        Write-Output 'C849_RETIRED externalVolumes=3 tempPrivateVolumes=0 mainTmpRetained=true smokes=1 rollback=retained failures=0'
+        Write-Output "C849_RETIRED schema=$($contract.Schema) digestType=$($contract.DigestType) externalVolumes=3 tempPrivateVolumes=0 mainTmpRetained=true smokes=1 rollback=retained failures=0"
     }
     'PrunePreview' {
         $previewReceipt = Read-C849Receipt 0 'preview.txt'
