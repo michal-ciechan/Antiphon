@@ -346,7 +346,8 @@ function Assert-TempCleanupStatus {
         if ($Status.PSObject.Properties.Name -cnotcontains $name) { throw "RunnerCounterUnknown server2-temp $name" }
         $value = $Status.$name
         if ($name -ceq 'runnerSessions' -and $null -eq $value) { continue }
-        if (($value -isnot [int] -and $value -isnot [long]) -or $value -ne 0) { throw "RunnerCounterUnknown server2-temp $name" }
+        if (($value -isnot [int] -and $value -isnot [long]) -or $value -lt 0) { throw "RunnerCounterUnknown server2-temp $name" }
+        if ($value -ne 0) { throw "RunnerBusy server2-temp $name" }
     }
     foreach ($name in @('draining','retireWhenIdle')) {
         if ($Status.$name -isnot [bool] -or $Status.$name -ne $true) { throw 'TempRunnerNotRetired' }

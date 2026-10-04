@@ -98,7 +98,7 @@ public sealed class RetiredTempContainerHostTests
     public async Task C994_Host_task_and_land_census_is_complete() {
         foreach(var status in new[]{"Queued","Dispatched","Working","Blocked","Failed","Succeeded"}) {
             using var f=Fixture("session-runner");
-            f.TaskScopes.Values.Single()!["items"]!.AsArray().Add(new JsonObject { ["id"]="22222222-2222-2222-2222-222222222222",["status"]=status,
+            f.TaskScopes.Select(x=>x.Value).Single()!["items"]!.AsArray().Add(new JsonObject { ["id"]="22222222-2222-2222-2222-222222222222",["status"]=status,
                 ["runnerId"]="server2-temp",["projectId"]="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1",["scopeSource"]="Task",
                 ["landRequestedAt"]=status=="Succeeded"?"2026-10-04T00:00:00Z":null,["landStartedAt"]=null });
             var run=await Cleanup(f);run.Exit.ShouldBe(2,"c994-host-work: "+status);NoMutation(f,"c994-host-work");

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Antiphon.Tests.TestHelpers;
+using Antiphon.Tests.Application;
 namespace Antiphon.Tests.Scripts;
 internal static class C994ScriptProcess
 {
