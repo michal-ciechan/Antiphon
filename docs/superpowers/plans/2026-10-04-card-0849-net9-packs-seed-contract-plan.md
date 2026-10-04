@@ -334,3 +334,10 @@ assigned branch. Next **TestDesign** must resolve the explicit roster/serializat
 receipt details above into executable verification, keeping D-1 through D-8 and
 CARD-0912's cold policy intact. There is no missing operator choice preventing that
 stage; implementation refinements belong in the plan before Code is commissioned.
+
+## TestDesign appendix
+
+The [2026-10-04 verification design](2026-10-04-card-0849-net9-packs-seed-contract-test-design.md)
+freezes the executable roster, guard/control mappings, evidence formats, red-first
+order, fixture counts and costs. Its single Checkpoints table replaces the
+provisional table above for Code commissioning; D-1 through D-8 remain unchanged.
