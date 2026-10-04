@@ -41,6 +41,7 @@ New-Item -ItemType Directory -Force -Path $evidenceRoot | Out-Null
 
 function Invoke-HostJq {
     param([ValidateSet('check', 'provision')][string]$Mode, [string]$ExecutingPhase)
+    $hostJqDestination = '/usr/local/bin/jq'
     if ($Mode -eq 'provision') {
         # No worktree override: privileged provisioning uses the clean canonical source.
         try {
@@ -89,6 +90,43 @@ function Invoke-HostJq {
             throw 'HostJqTransportUnavailable'
         }
         if ($proc.ExitCode -ne 0) {
+            # Retain the found path for this specific refusal; never copy raw remote diagnostics.
+            if ($proc.ExitCode -eq 2) {
+                $pathRefusal = $null
+                try {
+                    $document = [Text.Json.JsonDocument]::Parse($stdout.GetAwaiter().GetResult())
+                    try {
+                        if ($document.RootElement.ValueKind -ne [Text.Json.JsonValueKind]::Object) { throw 'shape' }
+                        $names = @($document.RootElement.EnumerateObject() | ForEach-Object Name)
+                        $required = @('schema','lane','mode','lookupPath','path','reason')
+                        if ($names.Count -ne 6 -or @($names | Select-Object -Unique).Count -ne 6 -or
+                            @($required | Where-Object { $_ -cnotin $names }).Count -ne 0) { throw 'shape' }
+                        foreach ($key in @('lane','mode','lookupPath','path','reason')) {
+                            if ($document.RootElement.GetProperty($key).ValueKind -ne [Text.Json.JsonValueKind]::String) { throw 'shape' }
+                        }
+                        $number = 0L
+                        if (-not $document.RootElement.GetProperty('schema').TryGetInt64([ref]$number) -or $number -ne 1) { throw 'shape' }
+                        $candidate = $stdout.GetAwaiter().GetResult() | ConvertFrom-Json
+                        if ($candidate.lane -cne 'host' -or $candidate.mode -cne $Mode -or $candidate.reason -cne 'HostJqPathUnapproved' -or
+                            $candidate.lookupPath -cnotmatch '^/[^\x00-\x1f]{1,4095}$' -or $candidate.path -cnotmatch '^/[^\x00-\x1f]{1,4095}$' -or
+                            $candidate.lookupPath -ceq $hostJqDestination -or $candidate.path -ceq $hostJqDestination) { throw 'shape' }
+                        $pathRefusal = $candidate
+                    } finally { $document.Dispose() }
+                } catch { $pathRefusal = $null }
+                if ($null -ne $pathRefusal) {
+                    $observation = [ordered]@{ schema=1; qualified=$false; lane='host'; mode=$Mode; reason='HostJqPathUnapproved';
+                        lookupPath=$pathRefusal.lookupPath; path=$pathRefusal.path; sourceSha=$Sha; runId=$runId;
+                        selectedPhase=$Phase; phase=$ExecutingPhase; observedAtUtc=[DateTime]::UtcNow.ToString('o'); sshExit=$proc.ExitCode }
+                    try {
+                        $file = [IO.File]::Open((Join-Path $evidenceRoot ("host-jq-$ExecutingPhase-refused.json")), [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+                        try {
+                            $bytes = [Text.Encoding]::UTF8.GetBytes(($observation | ConvertTo-Json -Compress))
+                            $file.Write($bytes, 0, $bytes.Length); $file.Flush($true)
+                        } finally { $file.Dispose() }
+                    } catch { throw 'HostJqReceiptUnavailable' }
+                    throw 'HostJqPathUnapproved'
+                }
+            }
             # Only fixed helper diagnoses cross this boundary, never raw remote stderr.
             $diagnosis = $stderr.GetAwaiter().GetResult().Trim()
             if ($diagnosis -cin @('HostJqMissing', 'HostJqInvalid', 'HostJqWrongLane', 'HostJqLaneUnavailable')) { throw $diagnosis }
@@ -100,7 +138,7 @@ function Invoke-HostJq {
             try {
                 if ($document.RootElement.ValueKind -ne [Text.Json.JsonValueKind]::Object) { throw 'shape' }
                 $names = @($document.RootElement.EnumerateObject() | ForEach-Object Name)
-                $required = @('schema','lane','mode','path','version','digest','uid','gid','permissions','trueExit','falseExit','installed','outcome')
+                $required = @('schema','lane','mode','lookupPath','path','version','digest','uid','gid','permissions','trueExit','falseExit','installed','outcome')
                 if ($names.Count -ne $required.Count -or @($names | Select-Object -Unique).Count -ne $required.Count -or
                     @($required | Where-Object { $_ -cnotin $names }).Count -ne 0) { throw 'shape' }
                 foreach ($key in @('schema','uid','gid','trueExit','falseExit')) {
@@ -108,20 +146,22 @@ function Invoke-HostJq {
                     $number = 0L
                     if ($value.ValueKind -ne [Text.Json.JsonValueKind]::Number -or -not $value.TryGetInt64([ref]$number)) { throw 'shape' }
                 }
-                foreach ($key in @('lane','mode','path','version','digest','permissions','outcome')) {
+                foreach ($key in @('lane','mode','lookupPath','path','version','digest','permissions','outcome')) {
                     if ($document.RootElement.GetProperty($key).ValueKind -ne [Text.Json.JsonValueKind]::String) { throw 'shape' }
                 }
                 if ($document.RootElement.GetProperty('installed').ValueKind -notin @([Text.Json.JsonValueKind]::True,[Text.Json.JsonValueKind]::False)) { throw 'shape' }
             } finally { $document.Dispose() }
             $proof = $raw | ConvertFrom-Json
             if ($proof.schema -ne 1 -or $proof.lane -cne 'host' -or $proof.mode -cne $Mode -or
+                $proof.lookupPath -cnotmatch '^/[^\r\n]+$' -or
+                ($proof.lookupPath -cne $hostJqDestination -and $proof.path -cne $hostJqDestination) -or
                 $proof.path -cnotmatch '^/[^\r\n]+$' -or [string]::IsNullOrWhiteSpace($proof.version) -or
                 $proof.version -match '[\r\n]' -or $proof.digest -cnotmatch '^[0-9a-f]{64}$' -or
                 $proof.uid -lt 0 -or $proof.gid -lt 0 -or $proof.permissions -cnotmatch '^[0-7]{3,4}$' -or
                 $proof.trueExit -ne 0 -or $proof.falseExit -ne 1 -or
                 ($proof.installed -and ($Mode -ne 'provision' -or $proof.outcome -cne 'installed')) -or
                 (-not $proof.installed -and $proof.outcome -cne 'existing')) { throw 'shape' }
-            if ($proof.installed -and ($proof.path -cne '/usr/local/bin/jq' -or $proof.version -cne 'jq-1.7.1' -or
+            if ($proof.installed -and ($proof.path -cne $hostJqDestination -or $proof.version -cne 'jq-1.7.1' -or
                 $proof.digest -cne '5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5' -or
                 $proof.uid -ne 0 -or $proof.gid -ne 0 -or $proof.permissions -cne '755')) { throw 'shape' }
         } catch { throw 'HostJqProofInvalid' }

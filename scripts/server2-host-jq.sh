@@ -19,7 +19,7 @@ own=$(hostname 2>/dev/null) || refuse HostJqLaneUnavailable
 [ "$daemon" = "$own" ] && [ ! -e "$CONTAINER_MARKER" ] || refuse HostJqWrongLane
 
 qualify() {
-    local lookup truth falsehood meta
+    local truth falsehood meta
     hash -r
     if ! lookup=$(command -v jq); then
         local directory
@@ -33,6 +33,8 @@ qualify() {
     fi
     [[ "$lookup" = /* ]] && [ -f "$lookup" ] && [ -x "$lookup" ] || return 4
     resolved=$(readlink -f -- "$lookup" 2>/dev/null) || return 4
+    # CARD-1054 refinement: never qualify a user-home binary shadowing the host prerequisite.
+    [ "$lookup" = "$DESTINATION" ] || [ "$resolved" = "$DESTINATION" ] || return 5
     version=$("$resolved" --version 2>/dev/null) || return 4
     [[ "$version" =~ [^[:space:]] && "$version" != *$'\n'* ]] || return 4
     # Require the actual outputs as well as both exit codes (constant-success is invalid).
@@ -52,12 +54,22 @@ qualify() {
 }
 emit() {
     # Use the qualified executable for escaping observed path/version; no raw environment.
-    "$resolved" -cn --arg mode "$MODE" --arg path "$resolved" --arg version "$version" \
+    "$resolved" -cn --arg mode "$MODE" --arg lookupPath "$lookup" --arg path "$resolved" --arg version "$version" \
         --arg digest "$digest" --arg permissions "$permissions" --argjson uid "$uid" --argjson gid "$gid" \
         --argjson installed "$installed" --arg outcome "$outcome" \
-        '{schema:1,lane:"host",mode:$mode,path:$path,version:$version,digest:$digest,uid:$uid,gid:$gid,permissions:$permissions,trueExit:0,falseExit:1,installed:$installed,outcome:$outcome}'
+        '{schema:1,lane:"host",mode:$mode,lookupPath:$lookupPath,path:$path,version:$version,digest:$digest,uid:$uid,gid:$gid,permissions:$permissions,trueExit:0,falseExit:1,installed:$installed,outcome:$outcome}'
+}
+refuse_path() {
+    # Encode observed paths with builtins; an unapproved jq is never executed for diagnostics.
+    local found="$lookup" target="$resolved"
+    [[ "$found$target" != *[$'\001'-$'\037']* ]] || refuse HostJqInvalid
+    found=${found//\\/\\\\}; found=${found//\"/\\\"}
+    target=${target//\\/\\\\}; target=${target//\"/\\\"}
+    printf '{"schema":1,"lane":"host","mode":"%s","lookupPath":"%s","path":"%s","reason":"HostJqPathUnapproved"}\n' "$MODE" "$found" "$target"
+    refuse HostJqPathUnapproved
 }
 qualify; result=$?
+[ "$result" != 5 ] || refuse_path
 if [ "$result" = 0 ]; then installed=false; outcome=existing; emit || refuse HostJqProofUnavailable; exit 0; fi
 [ "$result" = 3 ] || refuse HostJqInvalid
 [ "$MODE" = provision ] || refuse HostJqMissing
@@ -92,6 +104,7 @@ sudo -n -- install -d -o 0 -g 0 -m 0755 -- "$LOCK_ROOT" 2>/dev/null || refuse Ho
 exec 9< "$LOCK_ROOT" || refuse HostJqLockUnavailable
 flock -w 60 9 || refuse HostJqLockUnavailable
 qualify; result=$?
+[ "$result" != 5 ] || refuse_path
 if [ "$result" = 0 ]; then installed=false; outcome=existing; emit || refuse HostJqProofUnavailable; exit 0; fi
 [ "$result" = 3 ] || refuse HostJqInvalid
 safe_parent || refuse HostJqDestinationParentUnsafe
@@ -120,6 +133,7 @@ actual=$(sudo -n -- sha256sum -- "$stage_root/jq" 2>/dev/null) || refuse HostJqD
 # Hard-link publication is atomic, same-filesystem and refuses any existing leaf.
 sudo -n -- ln -T -- "$stage_root/jq" "$DESTINATION" 2>/dev/null || refuse HostJqPublishUnavailable
 qualify; result=$?
+[ "$result" != 5 ] || refuse_path
 [ "$result" != 3 ] || refuse HostJqFinalPathInvalid
 [ "$result" = 0 ] || refuse HostJqInvalid
 [ "$resolved" = "$DESTINATION" ] || refuse HostJqFinalPathInvalid

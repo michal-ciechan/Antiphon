@@ -740,7 +740,7 @@ mutation-clean.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1025-helper/` | linux-host-jq-explicit | `/*/*/HostJqPrerequisiteScriptTests/(C1025_Check_qualifies_deployment_shell*)\|(C1025_Check_has_no_install_effects*)\|(C1025_Provision_requires_missing_jq*)\|(C1025_Provision_admits_host_prerequisites*)\|(C1025_Provision_refuses_unsafe_destination*)\|(C1025_Provision_serializes_and_rechecks*)\|(C1025_Provision_verifies_download_before_use*)\|(C1025_Provision_publishes_complete_no_clobber*)\|(C1025_Provision_cleans_only_owned_staging*)\|(C1025_Provision_requalifies_published_jq*)\|(C1025_Provision_requires_canonical_source*)\|(C1025_Transport_is_bounded_and_reaped*)\|(C1025_Receipt_requires_complete_current_proof*)\|(C1025_Receipt_persistence_is_required*)\|(C1025_Transport_preserves_secret_custody*)\|(C1025_Explicit_tool_phases_never_deploy*)` | V-1, V-2, V-3, R-1, R-2, R-3 | exactly M-1..M-16: 16 passed, 0 failed/skipped, no extra methods | 16 | 8 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1025-helper/` | linux-host-jq-explicit | `/*/*/HostJqPrerequisiteScriptTests/(C1025_Check_qualifies_deployment_shell*)\|(C1025_Check_has_no_install_effects*)\|(C1025_Provision_requires_missing_jq*)\|(C1025_Provision_admits_host_prerequisites*)\|(C1025_Provision_refuses_unsafe_destination*)\|(C1025_Provision_serializes_and_rechecks*)\|(C1025_Provision_verifies_download_before_use*)\|(C1025_Provision_publishes_complete_no_clobber*)\|(C1025_Provision_cleans_only_owned_staging*)\|(C1025_Provision_requalifies_published_jq*)\|(C1025_Provision_requires_canonical_source*)\|(C1025_Transport_is_bounded_and_reaped*)\|(C1025_Receipt_requires_complete_current_proof*)\|(C1025_Receipt_persistence_is_required*)\|(C1025_Transport_preserves_secret_custody*)\|(C1025_Explicit_tool_phases_never_deploy*)` | V-1, V-2, V-3, V-6, R-1, R-2, R-3, R-7 | exactly M-1..M-16: 16 passed, 0 failed/skipped, no extra methods | 16 | 8 |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1025-preflight/` | linux-host-jq-admission | `/*/*/HostJqPrerequisiteScriptTests/(C1025_Provision_requires_canonical_source*)\|(C1025_Transport_is_bounded_and_reaped*)\|(C1025_Receipt_requires_complete_current_proof*)\|(C1025_Receipt_persistence_is_required*)\|(C1025_Transport_preserves_secret_custody*)\|(C1025_Explicit_tool_phases_never_deploy*)\|(C1025_Preflight_precedes_every_phase*)\|(C1025_Preflight_is_fresh_for_each_entry*)\|(C1025_Final_recycle_guard_remains*)` | V-3, V-4, R-3, R-4, R-6 | exactly M-11..M-19: 9 passed, 0 failed/skipped, no extra methods | 9 | 7 |
 | CP-3 | S2 | `tests/Antiphon.Tests -> bin-c1025-legacy/` | linux-host-jq-legacy | `/*/*/RollingVolumeRecycleScriptTests/C1008_Legacy_rolling_and_jq_rosters_remain` | V-5, R-5 | exactly 1 passed, 0 failed/skipped; four 31-assertion receipts; required present T-20 | 1 | 8 |
 
@@ -829,3 +829,93 @@ explicit subsequent obligations, not claims of this documentation result.
 next: code
 handoff: Land this appended TestDesign, then commission S1 and S2 separately within 30–60 minutes each. Implement the private native-Linux seams and 19 methods; run only CP-1 after S1 and CP-2/CP-3 after S2. Ordinary V/R is 23 minutes; 50 exact-method PCs cost 308 minutes post-land. Keep host activation caller-owned and separate from CARD-1040.
 artifact: docs/superpowers/plans/2026-10-04-card-1025-host-jq-prerequisite-plan.md
+
+## Code refinement: CARD-1054 canonical host path
+
+Caller input `2a4f19bd-f3c6-450f-b56a-654a36e853ee`, applied by original Code
+owner `f92f723a-8e78-4d69-93dc-2fb0e97604e2`, supersedes D-2/D-3 and M-1/M-3's
+permission to qualify an unrelated working jq elsewhere on PATH. Accept only
+when the actual non-login shell's `command -v jq` is `/usr/local/bin/jq`, or its
+resolved path is that file. A separate user-home executable ahead on PATH
+refuses even when its bytes, pinned digest, version and predicates are healthy.
+A symlink resolving to the canonical file remains an accepted existing no-op.
+Do not change PATH, replace the shadow, install through a shadow or qualify the
+runner image. The earlier source/evidence remains historical, not evidence of
+this narrower contract.
+
+Record `lookupPath` (the literal lookup result) alongside `path` (the resolved
+path) in the schema-1 qualified proof and persisted wrapper receipt. A refused
+shadow produces a separate, typed `host-jq-<phase>-refused.json` observation with
+`qualified=false`, reason `HostJqPathUnapproved`, both observed paths, SSH exit 2
+and current source/run/phase/mode/time identity. It never produces the successful
+phase receipt or success banner. Malformed refusal output is not retained as
+an observation; raw stderr is never copied. Failure to persist the observation
+reports `HostJqReceiptUnavailable`, still refusing phase admission.
+
+This adds V-6/R-7 to the existing CP-1 selection, without adding test methods or
+broadening its literal filter. M-1 independently qualifies the private native
+home copy, then observes direct and wrapper check/provision refusal, unchanged
+bytes, zero install effects and the persisted found-path observation. It also
+observes direct and wrapper acceptance of a symlink to the canonical file and
+requires the alias actually found to survive into the receipt. M-3 replaces the
+old unrelated-existing-path no-op with refusal. M-13 tests a typed healthy
+synthetic proof with both paths unapproved, required `lookupPath` typing, and
+malformed/extra/duplicate refusal documents. Each synthetic success-shape fault
+keeps the receiving fixture's canonical path healthy, so a path mismatch cannot
+mask its intended parser fault. M-14 blocks the exact refused-observation
+filename with a directory, then requires a fresh later observation. These are
+native private boundaries, not live host activation.
+
+- V-6: Canonical host jq or its resolving alias qualifies, and found/resolved
+  paths are retained; a healthy private home copy refuses check and provision
+  without installation or qualification | CP-1, M-1/M-3/M-13/M-14.
+- R-7: PATH shadowing or a forged successful proof cannot qualify an unrelated
+  binary; malformed or unpersistable diagnostics cannot become a successful
+  receipt | CP-1, M-1/M-3/M-13/M-14.
+
+All original PC-1..PC-50 remain pending. Mutation must assess overlap introduced
+by this narrower rule (especially PC-3/PC-8/PC-27), not credit an equivalent or
+masked mutant. Extend the inventory with G-51 canonical helper-path admission,
+G-52 successful wrapper-proof path admission, G-53 found-path identity, G-54
+refusal diagnostic shape/custody, G-55 refused found/resolved path identity and
+G-56 refused observation qualification flag. The helper/wrapper emitters of
+G-53 and the found/resolved fields of G-55 have separate variants. The separate
+refusal emitter/persistence path also adds variants of G-40..G-45. Each remains
+pending for exact-method SourceLanding Mutation; Code executes no deliberate
+mutants.
+
+| PC | Guard / variant | Compiling defect | Exact method in HostJqPrerequisiteScriptTests | Required red assertion |
+|---|---|---|---|---|
+| PC-51 | G-51 | Remove the helper canonical lookup/resolution comparison. | `C1025_Check_qualifies_deployment_shell` | `canonical-host-path`: healthy home shadow must exit 2, not qualify. |
+| PC-52 | G-52 | Remove the successful wrapper-proof canonical path comparison. | `C1025_Receipt_requires_complete_current_proof` | `proof-shape`: typed healthy home-path proof must refuse with no success receipt. |
+| PC-53 | G-53 helper | Emit resolved path as lookupPath. | `C1025_Check_qualifies_deployment_shell` | `found-path-recorded`: alias lookup equals the actual alias found. |
+| PC-53-wrapper | G-53 wrapper | Overwrite receipt.lookupPath with the canonical destination before writing. | `C1025_Check_qualifies_deployment_shell` | `found-path-recorded`: persisted alias equals the actual lookup. |
+| PC-54 | G-54 | Remove refusal required-name/count/duplicate admission while retaining field-value checks. | `C1025_Receipt_requires_complete_current_proof` | `refusal-proof-shape`: extra/duplicate documents leave no refusal observation. |
+| PC-55 | G-55 lookup | Write a different absolute lookupPath in the refusal observation. | `C1025_Check_qualifies_deployment_shell` | `refusal-found-path`: persisted lookup equals the private home path. |
+| PC-55-resolved | G-55 resolved | Write a different absolute resolved path in the refusal observation. | `C1025_Check_qualifies_deployment_shell` | `refusal-resolved-path`: persisted resolved path equals the observed home binary. |
+| PC-56 | G-56 | Write qualified=true in the refusal observation. | `C1025_Check_qualifies_deployment_shell` | `refusal-observation`: qualification remains false. |
+| PC-40-refusal | G-40 refusal | Write a different valid source SHA in the refusal observation. | `C1025_Check_qualifies_deployment_shell` | `refusal-source-sha`: equals requested committed fixture SHA. |
+| PC-41-refusal | G-41 refusal | Write a different valid run ID in the refusal observation. | `C1025_Check_qualifies_deployment_shell` | `refusal-run-id`: equals the actual observation-directory run ID. |
+| PC-42-refusal | G-42 refusal | Write deploy-temp as the refusal observation phase. | `C1025_Check_qualifies_deployment_shell` | `refusal-phase`: selected/executing phase equals actual explicit invocation. |
+| PC-43-refusal | G-43 refusal | Write check on the provision refusal observation. | `C1025_Check_qualifies_deployment_shell` | `refusal-mode`: provision invocation records provision. |
+| PC-44-refusal | G-44 refusal | Write a timestamp one day before invocation. | `C1025_Check_qualifies_deployment_shell` | `refusal-time`: observation falls within invocation bounds. |
+| PC-45-refusal | G-45 refusal | Swallow refusal-observation persistence failure and continue with HostJqPathUnapproved. | `C1025_Receipt_persistence_is_required` | `refusal-receipt-required`: blocked observation reports HostJqReceiptUnavailable. |
+
+The fourteen added cycles have the same six-minute sequential method-scoped
+budget as the original controls: 84 additional minutes, 64 total cycles,
+PC floor 392 minutes (8-minute baseline plus 384-minute cycles), and 146
+method-scoped executions (18 baseline + 64 red + 64 restored green). No cycle
+is discharged by ordinary green. The amended ordinary floor is 31 minutes:
+original 23 plus one eight-minute refined S1 CP-1 selection. Setup is six
+minutes, including the rebuilt checkpoint tool after earlier cleanup. Total
+verification floor is 429 minutes, before justified repairs; no wall-clock
+saving is claimed. The existing row deadline/filter/count remains unchanged.
+
+This is a materially changed proof selection commissioned by the refinement:
+healthy home-shadow, accepted canonical-alias, found-path receipt and refusal
+observation cases are new. Run CP-1 once on the new committed SHA; no unchanged
+selection repetition is commissioned. CP-2/CP-3 and automatic rollout entry
+admission remain S2. Its healthy fake prerequisite proof must include lookupPath
+and the approved canonical path under this amended contract. Outer-host
+activation and CARD-1040 image qualification remain caller-owned after Review
+and land; no shared host operation is executed by this Code amendment.
