@@ -149,7 +149,8 @@ public sealed class C1008HostFixturePortabilityTests
         {
             entries.Add(entry);
             start.FileName.ShouldBe(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "wsl.exe"), "c1030-" + entry + "-launch");
-            start.ArgumentList.ShouldBe(new[] { "-e", "/bin/bash", "-s" }, customMessage: "c1030-" + entry + "-launch");
+            start.ArgumentList.SequenceEqual(new[] { "-e", "/bin/bash", "-s" })
+                .ShouldBeTrue("c1030-" + entry + "-launch");
             start.StandardInputEncoding!.GetPreamble().ShouldBeEmpty("c1030-stdin-bom");
             input.ShouldNotContain("\r", customMessage: "c1030-stdin-lf");
         };
