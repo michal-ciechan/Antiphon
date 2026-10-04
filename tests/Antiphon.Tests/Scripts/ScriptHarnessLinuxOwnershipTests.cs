@@ -272,14 +272,26 @@ public sealed class ScriptHarnessLinuxOwnershipTests
     {
         ScriptProcessRequest? request = null;
         LinuxScriptHarnessProcess? owner = null;
+        RootExitObservedProcess? observedOwner = null;
         var options = ScriptHarnessProcessFixture.Options() with
-        { OwnerFactory = value => { request = value; return owner = new LinuxScriptHarnessProcess(value); } };
+        {
+            OwnerFactory = value =>
+            {
+                request = value;
+                owner = new LinuxScriptHarnessProcess(value);
+                return observedOwner = new RootExitObservedProcess(owner);
+            }
+        };
         var run = ScriptHarnessProcess.RunAsync("fixture", "C806", "ExitedStdout",
             ScriptHarnessProcessFixture.ScriptPath, options, CancellationToken.None);
         var tree = await ScriptHarnessProcessFixture.WaitReadyAsync(() => request, run);
         try
         {
             await WaitDeadAsync(tree.Root.Pid);
+            // A dead root can precede the supervisor's EXIT frame. Observe that
+            // receipt before killing the supervisor so cleanup tests owner loss,
+            // rather than racing an unfinished root-exit control read.
+            (await observedOwner!.RootExit).ShouldBe(0);
             using var supervisor = Process.GetProcessById(owner!.SupervisorId);
             supervisor.Kill(entireProcessTree: false);
             await supervisor.WaitForExitAsync();
@@ -290,6 +302,19 @@ public sealed class ScriptHarnessLinuxOwnershipTests
             tree.Child.Executing().ShouldBeTrue();
         }
         finally { tree.EmergencyStop(); if (request is not null) DeletePaths(request); }
+    }
+
+    private sealed class RootExitObservedProcess(IOwnedScriptProcess process) : IOwnedScriptProcess
+    {
+        internal Task<int> RootExit { get; private set; } = null!;
+        public StreamReader Stdout => process.Stdout;
+        public StreamReader Stderr => process.Stderr;
+        public Task<int> StartAndWaitForRootAsync(CancellationToken cancellationToken) =>
+            RootExit = process.StartAndWaitForRootAsync(cancellationToken);
+        public Task TerminateAsync(CancellationToken cancellationToken) => process.TerminateAsync(cancellationToken);
+        public Task ConfirmDeadAsync(CancellationToken cancellationToken) => process.ConfirmDeadAsync(cancellationToken);
+        public void CloseStreams() => process.CloseStreams();
+        public void Dispose() => process.Dispose();
     }
 
     [Test]
