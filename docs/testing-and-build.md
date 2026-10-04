@@ -210,6 +210,13 @@ CARD-1017, outside this policy; raw artifacts gain no new durability guarantee.
 CARD-1015's separately marked normal deletion commit is checked by
 `check-evidence-deletion.ps1` against the independently recorded start-tree rule
 inventory, preserving allowed Markdown and proving historical object recovery.
+For a later cleanup, pass `-SupplementalCleanup CARD-nnnn` in both inventory and
+validation calls. This opt-in uses the later immutable `-InventoryRef` and the
+exact `Antiphon-Evidence-Deletion: CARD-nnnn` commit trailer, without requiring the
+original 108 entries at that base. It retains inventory count/bytes/digest, exact
+deletion-only set, old identities, kept Markdown, final-tree and blob-recovery
+checks. Omission preserves CARD-1015's anchored contract; `CARD-1015` is not an
+allowed supplemental label. Run the full task-range history guard separately.
 
 Use the checkpoint tool for repeated class runs. Before any ad hoc destructive shell cleanup, verify both variable components are nonempty, quote their expansions, and resolve the target inside the intended scratch root; a missing component must exit nonzero before `rm`.
 

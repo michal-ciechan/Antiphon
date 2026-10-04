@@ -252,8 +252,11 @@ function Get-EvidenceMap {
 }
 
 function Invoke-EvidenceDeletion {
-    param([string]$Repository = '.', [string]$InventoryRef, [string]$InventoryPathSha256, [string]$InventoryCount, [string]$InventoryBytes, [string]$HeadRef = 'HEAD', [switch]$InventoryOnly)
+    param([string]$Repository = '.', [string]$InventoryRef, [string]$InventoryPathSha256, [string]$InventoryCount, [string]$InventoryBytes, [string]$HeadRef = 'HEAD', [switch]$InventoryOnly, [string]$SupplementalCleanup)
     try {
+        $supplemental = $PSBoundParameters.ContainsKey('SupplementalCleanup')
+        if ($supplemental -and ($SupplementalCleanup -cnotmatch '^CARD-[0-9]{4,}$' -or $SupplementalCleanup -ceq 'CARD-1015')) { throw 'supplemental_cleanup_input' }
+        $deletionMarker = if ($supplemental) { "Antiphon-Evidence-Deletion: $SupplementalCleanup" } else { 'Antiphon-Evidence-Deletion: CARD-1015' }
         $count = 0L; $bytes = 0L
         if (-not $InventoryOnly) {
             if ($InventoryPathSha256 -cnotmatch '^[0-9a-fA-F]{64}$' -or $InventoryCount -cnotmatch '^(0|[1-9][0-9]*)$' -or $InventoryBytes -cnotmatch '^(0|[1-9][0-9]*)$' -or
@@ -261,13 +264,16 @@ function Invoke-EvidenceDeletion {
         }
         Assert-EvidenceHistory $Repository
         $base = Resolve-EvidenceCommit $Repository $InventoryRef
-        $anchorSha = Resolve-EvidenceCommit $Repository 'bb5fa774cd56f85ee6f0b1122c198192427e5ddf'
-        $anchor = @(Read-EvidenceTree $Repository $anchorSha | Where-Object { Test-EvidenceRoot $_.Path })
-        $signature = Get-EvidencePathHash $anchor -Classification
+        $anchor = @(); $signature = 'notApplicable'
+        if (-not $supplemental) {
+            $anchorSha = Resolve-EvidenceCommit $Repository 'bb5fa774cd56f85ee6f0b1122c198192427e5ddf'
+            $anchor = @(Read-EvidenceTree $Repository $anchorSha | Where-Object { Test-EvidenceRoot $_.Path })
+            $signature = Get-EvidencePathHash $anchor -Classification
+        }
         $tree = @(Read-EvidenceTree $Repository $base)
         $map = Get-EvidenceMap $tree
         $violations = 0
-        if ($anchor.Count -ne 108 -or (Get-EvidencePathHash $anchor) -cne '356edf4a223e53669d4137631e40c0f5f7d19127c2568fdd0608fa4364e5ac9c' -or $signature -cne 'f5082847ba6f5e2b1db50b407ff80b7f8cb36575ef9fe8f90c825c7b4ca09c2b') {
+        if (-not $supplemental -and ($anchor.Count -ne 108 -or (Get-EvidencePathHash $anchor) -cne '356edf4a223e53669d4137631e40c0f5f7d19127c2568fdd0608fa4364e5ac9c' -or $signature -cne 'f5082847ba6f5e2b1db50b407ff80b7f8cb36575ef9fe8f90c825c7b4ca09c2b')) {
             Write-Host 'EVIDENCE deletion violation reason=anchor_classification'; $violations++
         }
         foreach ($entry in $anchor) {
@@ -282,6 +288,10 @@ function Invoke-EvidenceDeletion {
         $total = 0L; foreach ($entry in $delete) { $total += $entry.Bytes }
         if ($InventoryOnly) {
             $result = @{ Base = $base; Delete = $delete; Keep = $keep; Count = $delete.Count; Bytes = $total; PathSha256 = $digest; KeepCount = $keep.Count; KeepBytes = ($keep | Measure-Object Bytes -Sum).Sum; KeepPathSha256 = (Get-EvidencePathHash $keep); AnchorSignature = $signature; AnchorValid = ($violations -eq 0) }
+            if ($supplemental) {
+                $result.Remove('AnchorSignature'); $result.Remove('AnchorValid')
+                $result.SupplementalCleanup = $SupplementalCleanup
+            }
             Write-Host ($result | ConvertTo-Json -Depth 5 -Compress)
             if ($violations) { return 1 }; return 0
         }
@@ -294,7 +304,7 @@ function Invoke-EvidenceDeletion {
         $marked = @(foreach ($commit in @(Read-EvidenceCommits $Repository $base $head)) {
             $message = ConvertFrom-EvidenceUtf8 (Read-EvidenceGit $Repository @('show', '-s', '--format=%B', $commit))
             $trailers = ConvertFrom-EvidenceUtf8 (Read-EvidenceGit $Repository @('show', '-s', '--format=%(trailers:only,unfold)', $commit))
-            if ($trailers.Replace("`r`n", "`n").Split("`n") -ccontains 'Antiphon-Evidence-Deletion: CARD-1015') { $commit }
+            if ($trailers.Replace("`r`n", "`n").Split("`n") -ccontains $deletionMarker) { $commit }
         })
         if ($marked.Count -ne 1) { Write-Host 'EVIDENCE deletion violation reason=deletion_unique'; return 1 }
         $deletion = $marked[0]
