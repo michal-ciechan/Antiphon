@@ -27,8 +27,8 @@ public sealed class EvidenceApprovedFixtureGuardTests
         var start = line.IndexOf(" path=", StringComparison.Ordinal) + 6;
         var end = line.LastIndexOf(" bytes=", StringComparison.Ordinal);
         JsonSerializer.Deserialize<string>(line[start..end]).ShouldBe(path, label);
-        line.ShouldContain("reason=" + reason, label);
-        result.Output.ShouldContain("entries=1 violations=1", label);
+        line.Contains("reason=" + reason, StringComparison.Ordinal).ShouldBeTrue(label);
+        result.Output.Contains("entries=1 violations=1", StringComparison.Ordinal).ShouldBeTrue(label);
     }
 
     [Test]
