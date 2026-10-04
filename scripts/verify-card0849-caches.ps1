@@ -138,7 +138,7 @@ switch ($Case) {
     'Fixture' {
         $summary = Read-C849Receipt 0 'fixture-summary.txt'
         $lines = @($summary -split "`n" | Where-Object { $_.Length -gt 0 })
-        foreach ($line in @('source-sha=' + $Sha, 'inventories=2', 'groups=9', 'controls=32',
+        foreach ($line in @(('source-sha=' + $Sha), 'inventories=2', 'groups=9', 'controls=32',
                 'expected-red=32', 'variants=47', 'expected-red-variants=47', 'production-mutations=0')) {
             if (@($lines | Where-Object { $_ -ceq $line }).Count -ne 1) { throw "C849 fixture receipt missing $line" }
         }
