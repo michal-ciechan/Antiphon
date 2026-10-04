@@ -324,14 +324,58 @@ The HTTP helper also asserts `preview-does-not-persist` before sending the execu
 
 ### Checkpoints
 
+**CARD-0892 repair continuation (2026-10-04, Code task fdb14a5c).** This task starts at
+`bb18064ba647e0ddb03cae4da437ab60ed447d98`, which already contains the test-first
+commits `c88c5dd3b` / `966febdd8` and the production repair
+`497c9fc6b55a5d422748b87ac42066eeb1f36349`. The assigned finding's whitespace/quote-only
+rule is therefore already repaired: the ASCII drive letter is masked unless its
+immediate predecessor is an ASCII letter or digit. No new production change is needed.
+The historical implementation/counts/driver instructions above remain historical;
+this continuation uses the checkpoint tool and the table below, passing its exact
+committed HEAD with `--expected-source-sha`. Run CP-1/CP-2/CP-5 here and commission
+CP-3/CP-4 on Windows at that same SHA. Windows rows remain pending until actually run.
+
+Source recount: Redaction has eight methods / **103 results** (13+4+1+1+24+58+1+1),
+Identity 35, Endpoint 14, Application 14, and both wire partials together 9.
+This continuation adds 17 argument results: the remaining ASCII uppercase/lowercase
+letter and every digit predecessor preservation witnesses; paired parentheses and
+curly quotes, a lowercase drive, and a later drive prefix after an excluded earlier
+candidate. Each compares literal preserved or masked values on all seven display
+fields in real POST, cached GET and durable Reviewed JSON. No self-comparison or
+production helper computes the expected value.
+
+V-9 is `Redaction_masks_drive_prefix_at_boundary` (58 results); V-10 is
+`Redaction_preserves_non_drive_display_text` (24). V-1..V-8 and R-1..R-3 retain
+their original meaning; R-4 now requires all 103 redaction results plus G106/G049
+on Windows. The full Unit lane is required by this task's Final profile, so CP-5
+extends the original narrow manifest without a full-assembly run. Its Min is a lane
+floor, not a predicted census; fresh TRX must report every actual result and failure.
+There is no real-pane/manual acceptance or live activation in this repair.
+
+All original PC-1..PC-13 remain pending for post-land SourceLanding Mutation.
+Additional pending variants: PC-14 restore the historical whitespace/ASCII-quote-only
+boundary (V-9's `(C:secret-home)` and curly-quote cases must fail the literal POST
+mask assertion); PC-15 remove digit exclusion while retaining letter exclusion
+(V-10's digit cases must fail literal preservation); PC-16 stop scanning after the
+first excluded drive candidate (V-9's `xC:public cwd=D:secret-home` must fail masking).
+Each later mutation selects only its exact test method, with separate red/restore/green
+evidence. Code does not deliberately inject these mutants. The inherited test-first
+commits establish source ordering, not a fresh observed red result in this task.
+
+Ordinary Linux count is 138+37 plus the full Unit census; focused Windows is 103+2.
+Estimated ordinary cost is 42 minutes (8+8+7+7+12), plus one checkpoint-tool bootstrap
+build through the host slot. No routine green repetitions; existing repeat ceilings
+apply. Unit failures are checked at the unchanged task base before assigning blame.
+
 Closed ordinary manifest; each row builds once into its own isolated output then runs exactly its literal filter through `dotnet run --project ... --no-build` (never `dotnet test`). Use direct `scripts/run-checkpoint.ps1` as this brief requires; it self-leases. Markdown `\|` becomes plain `|` in a quoted shell filter. Each class operand retains `*`. Opposite-OS rows are uncommissioned (zero selected), not passing skips. Expected final executed counts are exact, not just lower bounds; Code must recount implemented attributes and match fresh TRX names/arguments. New design count `13+4+1+1+1+1=21` is prospective, not a source/runtime result.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S1-S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c866-linux-runner/` | linux-disposal-projection | `/*/*/(HerdrPaneDisposalRedactionTests*)\|(HerdrPaneDisposalIdentityTests*)/*` | V-1..V-6, R-1 | Linux 56 = 21 new + 35 existing, 0 failed/skipped; Windows 0 selected | 56 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-1 | S1-S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c866-linux-runner/` | linux-disposal-projection | `/*/*/(HerdrPaneDisposalRedactionTests*)\|(HerdrPaneDisposalIdentityTests*)/*` | V-1..V-6, V-9, V-10, R-1 | Linux 138 = 103 redaction + 35 identity, 0 failed/skipped | 138 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-2 | S1-S2 | `tests/Antiphon.Tests -> bin-c866-linux-server/` | linux-disposal-server | `/*/*/(HerdrPaneDisposalEndpointTests*)\|(HerdrPaneDisposalApplicationTests*)\|(HerdrPaneDisposalHttpWireTests*)/*` | V-7, V-8, R-2, R-3 | Linux 37 = 14 + 14 + 9, 0 failed/skipped; Windows 0 selected | 37 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c866-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-3 | S1-S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c866-windows-runner/` | windows-disposal-projection | `/*/*/HerdrPaneDisposalRedactionTests*/*` | V-1..V-6, R-4 | Windows 21, 0 failed/skipped; Linux 0 selected | 21 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-3 | S1-S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c866-windows-runner/` | windows-disposal-projection | `/*/*/HerdrPaneDisposalRedactionTests*/*` | V-1..V-6, V-9, V-10, R-4 | Windows 103, 0 failed/skipped | 103 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-4 | S1-S2 | `tests/Antiphon.Tests -> bin-c866-windows-server/` | windows-disposal-regressions | `/*/*/(HerdrPaneDisposalEndpointTests*)\|(HerdrPaneDisposalApplicationTests*)/(C461_G106_Preview_response_redaction*)\|(C461_G049_Standing_execution_lock*)` | V-7, V-8, R-4 | Windows 2, 0 failed/skipped; Linux 0 selected | 2 | 7 | true | `C804_ORPHAN_SWEEP_ROOT=c866-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-5 | S1-S2 | CP-2 | linux-unit | `/*/*/*/*[Category=Unit]` | Final Unit lane | Whole Unit lane, at least 1 executed, 0 failed/skipped | 1 | 12 | true | `C804_ORPHAN_SWEEP_ROOT=c866-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 
 ## Execution, activation and rollback
 
