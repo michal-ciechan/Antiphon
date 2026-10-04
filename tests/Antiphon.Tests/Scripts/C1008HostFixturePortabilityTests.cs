@@ -41,6 +41,10 @@ public sealed class C1008HostFixturePortabilityTests
             var result = await f.Run(extra: "exit 0"); result.Exit.ShouldBe(0, result.Output);
             File.ReadAllBytes(Path.Combine(f.Root, "remote.sh")).ShouldBe(
                 Encoding.UTF8.GetBytes(LegacyRun(f.Root, DelegateScriptRunner.RepoRoot, source, "exit 0", false)), "c1030-linux-run: actual file");
+            f.Docker.Clear();
+            foreach (var (key, value) in JsonNode.Parse(json)!.AsObject()) f.Docker[key] = value?.DeepClone();
+            (await f.Run(extra: "exit 0")).Exit.ShouldBe(0);
+            File.ReadAllBytes(f.StatePath).ShouldBe(Encoding.UTF8.GetBytes(json), "c1030-linux-json: actual serialized file");
         }
         // Observe the actual Node fake's argv to its child; expected bytes never come from its remapper.
         using var remap = new C1008HostFixture();
@@ -52,7 +56,7 @@ public sealed class C1008HostFixturePortabilityTests
         remap.CopyFake();
         var pairs = new[]
         {
-            ("cd /work; printf '%s' /worktrees /work/file", "cd " + remapRoot + "/work; printf '%s' /worktrees " + remapRoot + "/work/file"),
+            ("cd /work; printf '%s' /worktrees /work/file", "cd /work; printf '%s' /worktrees " + remapRoot + "/work/file"),
             ("cd \"/work\"; cd '/work'; echo /work\n", "cd \"" + remapRoot + "/work\"; cd '" + remapRoot + "/work'; echo " + remapRoot + "/work\n"),
             ("cd /work\r\nprintf '/work'", "cd " + remapRoot + "/work\r\nprintf '" + remapRoot + "/work'")
         };
@@ -106,6 +110,13 @@ public sealed class C1008HostFixturePortabilityTests
             var success = status == 0 && output == "absolute";
             (failure is null).ShouldBe(success, status != 0 ? "c1030-conversion-status" : "c1030-conversion-absolute");
             File.Exists(Path.Combine(f.Root, "body")).ShouldBe(success, "c1030-conversion-status: no body on refusal");
+            // Isolate the C980 status/absolute guards from the later reachability guard.
+            // This is the same preparation function called by the fixture's actual conversion.
+            var guarded = RemoteScriptContractTests.PrepareLinuxShellScript("printf C1030_BODY_REACHED", "root", @"Q:\fixture\root", true);
+            var direct = await f.Execute("probe", "wslpath() { printf '%s' " + Q(converted) + "; return " + status + "; }\n" + guarded);
+            (direct.Exit == 0).ShouldBe(success, status != 0 ? "c1030-conversion-status" : "c1030-conversion-absolute");
+            direct.Stdout.Contains("C1030_BODY_REACHED", StringComparison.Ordinal).ShouldBe(success,
+                status != 0 ? "c1030-conversion-status" : "c1030-conversion-absolute");
         }
         foreach (var mode in new[] { "absent", "unmapped" })
         {
@@ -180,8 +191,13 @@ public sealed class C1008HostFixturePortabilityTests
             }
             finally
             {
-                try { (await holder.Release()).Exit.ShouldBe(0, "c1030-release-completed"); }
-                finally { await running; }
+                Exception? releaseFailure = null;
+                C1008Result? released = null;
+                try { released = await holder.Release(); }
+                catch (Exception ex) { releaseFailure = ex; }
+                finally { await holder.Stop(); await running; }
+                releaseFailure.ShouldBeNull("c1030-release-completed");
+                released!.Exit.ShouldBe(0, "c1030-release-completed");
             }
             var result = await running;
             result.Exit.ShouldBe(0, "c1030-release-completed; " + result.Output);
@@ -214,12 +230,20 @@ public sealed class C1008HostFixturePortabilityTests
         }
         using (var flood = LiveWindowsFixture())
         {
-            var result = await flood.Execute("probe", "head -c 1048576 /dev/zero; printf STDOUT_TAIL; head -c 1048576 /dev/zero >&2; printf STDERR_TAIL >&2");
-            result.Exit.ShouldBe(0, "c1030-stdout-drained");
-            result.Stdout.ShouldEndWith("STDOUT_TAIL", customMessage: "c1030-stdout-drained");
-            result.Stderr.ShouldEndWith("STDERR_TAIL", customMessage: "c1030-stderr-drained");
+            foreach (var stream in new[] { "stdout", "stderr" })
+            {
+                C1008Result? result = null;
+                Exception? failure = null;
+                try { result = await flood.Execute("probe", "head -c 1048576 /dev/zero" +
+                    (stream == "stderr" ? " >&2" : "") + "; printf TAIL" + (stream == "stderr" ? " >&2" : "")); }
+                catch (Exception ex) { failure = ex; }
+                failure.ShouldBeNull("c1030-" + stream + "-drained");
+                result!.Exit.ShouldBe(0, "c1030-" + stream + "-drained");
+                (stream == "stdout" ? result.Stdout : result.Stderr).ShouldEndWith("TAIL", customMessage: "c1030-" + stream + "-drained");
+            }
         }
         await CheckInputBytes();
+        await CheckOwnedTree();
         foreach (var stage in new[] { "start", "readiness" })
         {
             using var failure = LiveWindowsFixture();
@@ -255,6 +279,48 @@ public sealed class C1008HostFixturePortabilityTests
             finally { release.TrySetResult(); await stop; Rescue(child.Id, child.StartTime); }
             Alive(child.Id, child.StartTime).ShouldBeFalse("c1030-owned-tree-exited");
         }
+    }
+
+    private static async Task CheckOwnedTree()
+    {
+        using var fixture = LiveWindowsFixture();
+        _ = fixture.ShellRoot;
+        var identity = Path.Combine(fixture.Root, "descendant.identity");
+        var pwsh = OperatingSystem.IsWindows() ? "pwsh.exe" : "/usr/local/bin/pwsh";
+        fixture.Options.SelectExecutor = start =>
+        {
+            start.FileName = pwsh;
+            start.ArgumentList.Clear();
+            foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-Command",
+                "$s=[System.Diagnostics.ProcessStartInfo]::new(" + C1008HostFixture.PsQuote(pwsh) + ");" +
+                "$s.UseShellExecute=$false; $s.ArgumentList.Add('-NoProfile'); $s.ArgumentList.Add('-Command'); $s.ArgumentList.Add('Start-Sleep 60');" +
+                "$p=[System.Diagnostics.Process]::Start($s); [System.IO.File]::WriteAllText(" + C1008HostFixture.PsQuote(identity) +
+                ",([string]$p.Id+'|'+$p.StartTime.ToUniversalTime().Ticks)); $p.WaitForExit()" }) start.ArgumentList.Add(arg);
+        };
+        await using var child = await fixture.StartChild("probe", "");
+        var descendantId = 0;
+        var descendantStart = default(DateTime);
+        Task<C1008Result>? stopped = null;
+        var rootAlive = true; var descendantAlive = true;
+        try
+        {
+            await WaitForFile(identity, Task.Delay(TimeSpan.FromSeconds(10)));
+            var fields = File.ReadAllText(identity).Split('|');
+            descendantId = int.Parse(fields[0]); descendantStart = new DateTime(long.Parse(fields[1]), DateTimeKind.Utc);
+            Alive(descendantId, descendantStart).ShouldBeTrue("c1030-owned-tree-exited: live owned descendant precondition");
+            stopped = child.Stop();
+            try { await stopped.WaitAsync(TimeSpan.FromSeconds(10)); } catch (TimeoutException) { }
+            rootAlive = Alive(child.Id, child.StartTime);
+            descendantAlive = Alive(descendantId, descendantStart);
+        }
+        finally
+        {
+            if (descendantId != 0) Rescue(descendantId, descendantStart);
+            Rescue(child.Id, child.StartTime);
+            if (stopped is not null) await stopped;
+        }
+        rootAlive.ShouldBeFalse("c1030-owned-tree-exited: root");
+        descendantAlive.ShouldBeFalse("c1030-owned-tree-exited: descendant");
     }
 
     private static async Task CheckInputBytes()

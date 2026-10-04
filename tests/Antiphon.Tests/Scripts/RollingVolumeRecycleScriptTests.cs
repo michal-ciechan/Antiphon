@@ -862,7 +862,10 @@ internal sealed class C1008HostFixture : IDisposable
 // Instance-only seams expose the actual entry wiring without changing global process state.
 internal sealed class C1008FixtureOptions
 {
-    internal string ToolPath { get; set; } = "/usr/local/bin:/usr/bin:/bin";
+    // Optional, explicitly qualified tool list supplied only to an isolated test process.
+    // Ordinary Windows/WSL qualification uses the fixed Linux directories.
+    internal string ToolPath { get; set; } = Environment.GetEnvironmentVariable("C1030_FIXTURE_TOOL_PATH")
+        ?? "/usr/local/bin:/usr/bin:/bin";
     internal string? NativeRoot { get; set; }
     internal string? NativeRepo { get; set; }
     internal string ConverterPrelude { get; set; } = "";
