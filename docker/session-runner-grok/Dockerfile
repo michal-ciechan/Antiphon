@@ -48,6 +48,8 @@ FROM node:22-bookworm AS node22
 # fails before tar runs; never refresh the digest without reviewing the version pair.
 # A full side-by-side SDK would add about 564 MiB and could replace the SDK 10 host
 # when merged into /usr/share/dotnet. The selected packs add about 88 MiB.
+# The archive's apphost is owner-executable only (0744, uid 2001). Extract as the
+# image owner and make that one native template executable by runner uid 1654.
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS net9-packs
 ARG NET9_SDK_VERSION=9.0.318
 ARG NET9_PACK_VERSION=9.0.20
@@ -55,10 +57,11 @@ ARG NET9_SDK_SHA512=e8685293a3512178e0de1bb3c1663e31fdf9d761af705094bf833cc1ff6b
 RUN mkdir -p /opt/net9-packs \
  && curl -fsSL -o /tmp/net9-sdk.tar.gz "https://builds.dotnet.microsoft.com/dotnet/Sdk/${NET9_SDK_VERSION}/dotnet-sdk-${NET9_SDK_VERSION}-linux-x64.tar.gz" \
  && echo "${NET9_SDK_SHA512}  /tmp/net9-sdk.tar.gz" | sha512sum -c - \
- && tar -xzf /tmp/net9-sdk.tar.gz -C /opt/net9-packs \
+ && tar --no-same-owner -xzf /tmp/net9-sdk.tar.gz -C /opt/net9-packs \
       "./packs/Microsoft.NETCore.App.Ref/${NET9_PACK_VERSION}" \
       "./packs/Microsoft.NETCore.App.Host.linux-x64/${NET9_PACK_VERSION}" \
       "./packs/Microsoft.AspNetCore.App.Ref/${NET9_PACK_VERSION}" \
+ && chmod 0755 "/opt/net9-packs/packs/Microsoft.NETCore.App.Host.linux-x64/${NET9_PACK_VERSION}/runtimes/linux-x64/native/apphost" \
  && test -f "/opt/net9-packs/packs/Microsoft.NETCore.App.Ref/${NET9_PACK_VERSION}/data/FrameworkList.xml" \
  && test -x "/opt/net9-packs/packs/Microsoft.NETCore.App.Host.linux-x64/${NET9_PACK_VERSION}/runtimes/linux-x64/native/apphost" \
  && test -f "/opt/net9-packs/packs/Microsoft.AspNetCore.App.Ref/${NET9_PACK_VERSION}/data/FrameworkList.xml" \

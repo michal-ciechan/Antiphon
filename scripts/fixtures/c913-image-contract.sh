@@ -12,7 +12,9 @@ if [ "$mode" = archive ]; then
         mkdir -p "$root/source/packs/$pack/9.0.20/data" "$root/source/packs/$pack/9.0.20/runtimes/linux-x64/native"
         printf sentinel > "$root/source/packs/$pack/9.0.20/data/FrameworkList.xml"
         printf '#!/bin/sh\nexit 0\n' > "$root/source/packs/$pack/9.0.20/runtimes/linux-x64/native/apphost"
-        chmod 755 "$root/source/packs/$pack/9.0.20/runtimes/linux-x64/native/apphost"
+        # Microsoft's archive carries owner-only execute (0744); uid 1654 must
+        # receive a usable image apphost even when the archive owner differs.
+        chmod 744 "$root/source/packs/$pack/9.0.20/runtimes/linux-x64/native/apphost"
     done
     tar -czf "$root/good.tar.gz" -C "$root/source" ./packs
     digest=$(sha512sum "$root/good.tar.gz" | cut -d' ' -f1)
@@ -32,6 +34,8 @@ SH
     export C913_ARCHIVE="$root/good.tar.gz" C913_TRACE="$root/tar-trace"
     bash "$root/chain" > "$root/out" 2>&1 || fail archive-valid
     [ "$(wc -l < "$C913_TRACE")" = 1 ] || fail archive-extraction
+    [ "$(stat -c %a "$root/output/packs/Microsoft.NETCore.App.Host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost")" = 755 ] || fail host-pack-public-executable
+    pass host-pack-public-executable
     for pack in Microsoft.NETCore.App.Host.linux-x64 Microsoft.NETCore.App.Ref Microsoft.AspNetCore.App.Ref; do
         cmp "$root/source/packs/$pack/9.0.20/data/FrameworkList.xml" "$root/output/packs/$pack/9.0.20/data/FrameworkList.xml" || fail archive-recipient
     done

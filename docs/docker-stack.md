@@ -337,7 +337,8 @@ The `session-testing` image now carries the .NET 9.0.20 `Microsoft.NETCore.App.R
 `/usr/share/dotnet/packs`. Its SDK remains 10.0.401, selected by `global.json`. The
 packs come from Microsoft's SDK 9.0.318 Linux x64 archive, pinned to the SHA-512 in
 the [official .NET 9 release record](https://builds.dotnet.microsoft.com/dotnet/release-metadata/9.0/releases.json)
-and checked before extraction. Only those three packs are copied into the final image;
+and checked before extraction. Archive ownership is discarded and the native apphost
+template is set to 0755 so uid 1654 can execute it. Only those three packs are copied into the final image;
 the .NET 9 SDK is not installed alongside SDK 10. `scripts/verify-card0660-codex-image.ps1`
 checks eight Codex rows, Grok, jq and, for `session-testing`, `net9-offline`:
 **11 rows**. The native row runs as uid 1654 with `--network none`, fresh task-owned
