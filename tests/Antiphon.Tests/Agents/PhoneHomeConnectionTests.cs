@@ -452,21 +452,26 @@ public class PhoneHomeConnectionTests
     [Test]
     public async Task Peer_abort_is_a_warning_with_transport_abort_not_a_middleware_error()
     {
-        await using var host = await PhoneHomeTestHost.StartAsync();
+        await using var control = new PhoneHomeReceiveControl(PhoneHomeReceiveMode.ObserveOnly);
+        await using var host = await PhoneHomeTestHost.StartAsync(receiveControl: control);
         await using var peer = await host.ConnectPeerAsync();
         var live = await host.WaitLiveAsync();
 
         peer.Socket.Abort();
 
-        var ended = await WaitForLogsAsync(host, e => e.Level == LogLevel.Warning && e["Reason"] is not null);
-        ended.Count.ShouldBe(1);
-        ended[0]["Reason"].ShouldBe("transport_abort");
-        ended[0]["Epoch"].ShouldBe(live.Epoch);
-        ended[0]["LifetimeSeconds"].ShouldNotBeNull();
-        await Task.Delay(200);
-        host.Logs.Entries
-            .Where(e => e.Level >= LogLevel.Error && e.Category.EndsWith("ExceptionMiddleware", StringComparison.Ordinal))
-            .ShouldBeEmpty();
+        var ended = await AssertCompletedTransportAbortAsync(host, live, control);
+        ended["LifetimeSeconds"].ShouldNotBeNull();
+        var hasWsError = ended.Properties.ContainsKey("WsError");
+        hasWsError.ShouldBe(ended.Properties.ContainsKey("SocketError"));
+        if (hasWsError)
+        {
+            var wsError = ended["WsError"]?.ToString();
+            var socketError = ended["SocketError"]?.ToString();
+            wsError.ShouldNotBeNullOrWhiteSpace();
+            socketError.ShouldNotBeNullOrWhiteSpace();
+            Enum.GetNames<WebSocketError>().ShouldContain(wsError);
+            (socketError == "none" || Enum.GetNames<SocketError>().Contains(socketError)).ShouldBeTrue();
+        }
     }
 
     // CARD-0679 D-1: the pending-event backlog is visible before the overflow closes the socket.
@@ -601,32 +606,96 @@ public class PhoneHomeConnectionTests
         host.Directory.Status(host.AllowedRunnerId).DisconnectReason.ShouldBe("request_aborted");
     }
 
-    // CARD-0716 D-6: the accept line and the ended line share Kestrel's connection id, and a
-    // transport abort names the websocket and socket errors.
+    // CARD-0996 red reproduction: cancellation is one legal peer-abort outcome, but the old
+    // test required exception fields for every abort. Control that outcome to expose the defect.
     [Test]
-    public async Task Accept_and_end_lines_carry_the_connection_id_and_transport_codes()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Accept_and_end_lines_carry_the_connection_id_and_transport_codes(bool withInnerSocket)
     {
-        await using var host = await PhoneHomeTestHost.StartAsync();
+        await using var control = new PhoneHomeReceiveControl(PhoneHomeReceiveMode.Cancellation);
+        await using var host = await PhoneHomeTestHost.StartAsync(receiveControl: control);
         await using var peer = await host.ConnectPeerAsync();
-        await host.WaitLiveAsync();
+        var live = await host.WaitLiveAsync();
 
-        peer.Socket.Abort();
+        await control.WaitForReceiveAsync();
+        peer.Socket.State.ShouldBe(WebSocketState.Open);
+        control.CancelRequest();
+        AssertLiveAtInjection(control);
 
-        var ended = await WaitForLogsAsync(host, e => e.Level == LogLevel.Warning && e["Reason"] is not null);
-        ended.Count.ShouldBe(1);
-        var accept = host.Logs.Entries
-            .Where(e => e.Level == LogLevel.Information && e.Message.Contains("accepted:", StringComparison.Ordinal))
-            .ToList();
-        accept.Count.ShouldBe(1);
-        var connectionId = accept[0]["ConnectionId"]?.ToString();
-        connectionId.ShouldNotBeNullOrWhiteSpace();
-        ended[0]["ConnectionId"]?.ToString().ShouldBe(connectionId);
-        ended[0]["WsError"]?.ToString().ShouldBe(nameof(WebSocketError.ConnectionClosedPrematurely));
-        var socketError = ended[0]["SocketError"]?.ToString();
+        var ended = await AssertCompletedTransportAbortAsync(host, live, control);
+        control.ObservedReceiveCancellation.ShouldNotBeNull();
+        host.App.Lifetime.ApplicationStopping.IsCancellationRequested.ShouldBeFalse();
+        var wsError = ended["WsError"]?.ToString();
+        wsError.ShouldNotBeNullOrWhiteSpace();
+        wsError.ShouldBe(nameof(WebSocketError.ConnectionClosedPrematurely));
+        var socketError = ended["SocketError"]?.ToString();
         socketError.ShouldNotBeNullOrWhiteSpace();
-        var namedSocketError = socketError == "none"
-            || (Enum.TryParse<SocketError>(socketError, out var parsed) && Enum.IsDefined(parsed));
-        namedSocketError.ShouldBeTrue();
+        socketError.ShouldBe(withInnerSocket ? nameof(SocketError.ConnectionReset) : "none");
+    }
+
+    [Test]
+    public async Task Request_cancellation_logs_transport_abort_without_transport_codes()
+    {
+        await using var control = new PhoneHomeReceiveControl(PhoneHomeReceiveMode.Cancellation);
+        await using var host = await PhoneHomeTestHost.StartAsync(receiveControl: control);
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+
+        await control.WaitForReceiveAsync();
+        peer.Socket.State.ShouldBe(WebSocketState.Open);
+        control.CancelRequest();
+        AssertLiveAtInjection(control);
+
+        var ended = await AssertCompletedTransportAbortAsync(host, live, control);
+        control.ObservedReceiveCancellation.ShouldNotBeNull();
+        control.ObservedReceiveException.ShouldBeNull();
+        host.App.Lifetime.ApplicationStopping.IsCancellationRequested.ShouldBeFalse();
+        ended.Properties.ContainsKey("WsError").ShouldBeFalse();
+        ended.Properties.ContainsKey("SocketError").ShouldBeFalse();
+    }
+
+    private static void AssertLiveAtInjection(PhoneHomeReceiveControl control)
+    {
+        control.OriginalCanceledAtInjection.ShouldBeFalse();
+        control.EffectiveCanceledAtInjection.ShouldBeFalse();
+        control.HostStoppingAtInjection.ShouldBeFalse();
+        control.SocketStateAtInjection.ShouldBe(WebSocketState.Open);
+    }
+
+    private static async Task<CapturedLog> AssertCompletedTransportAbortAsync(
+        PhoneHomeTestHost host, PhoneHomeLiveConnection live, PhoneHomeReceiveControl control)
+    {
+        await control.WaitForCompletionAsync();
+        control.EndpointFault.ShouldBeNull();
+        control.PipelineFault.ShouldBeNull();
+        var snapshot = host.Logs.Entries;
+        var acceptedLines = snapshot.Where(e => e.Category == typeof(PhoneHomeLiveConnection).FullName
+            && e.Message.Contains("accepted:", StringComparison.Ordinal)).ToList();
+        var endedLines = snapshot.Where(e => e.Category == typeof(PhoneHomeLiveConnection).FullName
+            && e.Message.Contains("ended:", StringComparison.Ordinal)).ToList();
+        acceptedLines.Count.ShouldBe(1);
+        endedLines.Count.ShouldBe(1);
+        var accepted = acceptedLines.Single();
+        var ended = endedLines.Single();
+        accepted.Level.ShouldBe(LogLevel.Information);
+        ended.Level.ShouldBe(LogLevel.Warning);
+        accepted["RunnerId"].ShouldBe(host.AllowedRunnerId);
+        ended["RunnerId"].ShouldBe(host.AllowedRunnerId);
+        accepted["Epoch"].ShouldBe(live.Epoch);
+        ended["Epoch"].ShouldBe(live.Epoch);
+        var acceptedConnectionId = accepted["ConnectionId"]?.ToString();
+        var endedConnectionId = ended["ConnectionId"]?.ToString();
+        acceptedConnectionId.ShouldNotBeNullOrWhiteSpace();
+        endedConnectionId.ShouldNotBeNullOrWhiteSpace();
+        endedConnectionId.ShouldBe(acceptedConnectionId);
+        ended["Reason"].ShouldBe("transport_abort");
+        var status = host.Directory.Status(host.AllowedRunnerId);
+        status.DisconnectReason.ShouldBe("transport_abort");
+        status.Available.ShouldBeFalse();
+        snapshot.Where(e => e.Level >= LogLevel.Error
+            && e.Category.EndsWith("ExceptionMiddleware", StringComparison.Ordinal)).ShouldBeEmpty();
+        return ended;
     }
 
     // CARD-0716 repair: overflow used to send the close and then wait out the 3s handshake
