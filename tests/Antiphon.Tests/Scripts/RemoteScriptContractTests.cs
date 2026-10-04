@@ -2617,7 +2617,7 @@ public sealed class RemoteScriptContractTests
     public void C849_Cache_prepare_refuses_foreign_or_unsafe_roots()
     {
         var output = LinuxShell(CachePrepareHarness() + """
-            for fault in driver options owner schema role mode symlink file unmarked name; do
+            for fault in driver options owner schema role mode uid symlink file unmarked name; do
                 rm -rf "$root/volumes"; mkdir -p "$root/volumes"
                 FAULT="$fault"
                 if [ "$fault" = unmarked ]; then
@@ -2632,7 +2632,7 @@ public sealed class RemoteScriptContractTests
                 fi
             done
             """);
-        foreach (var fault in new[] { "driver", "options", "owner", "schema", "role", "mode", "symlink", "file", "unmarked", "name" })
+        foreach (var fault in new[] { "driver", "options", "owner", "schema", "role", "mode", "uid", "symlink", "file", "unmarked", "name" })
             output.ShouldContain(fault + " exit=2");
         output.ShouldContain("unmarked-preserved");
         var lookup = LinuxShell(Block(Remote(), "c849_empty_volume") + "\n" + """
@@ -3650,17 +3650,31 @@ public sealed class RemoteScriptContractTests
                             *'com.docker.compose.project=antiphon-runner-temp'*) return 0 ;;
                         esac
                         printf '%s\n' "$MAIN_ID"
-                        if [ "$sub" = -aq ] && { [ "$FAULT" = other-mount ] || [ "$FAULT" = stopped-mount ] || [ "$UNRELATED_BIND" = 1 ]; }; then
+                        if [ "$sub" = -aq ] && { [ "$FAULT" = other-mount ] || [ "$FAULT" = stopped-mount ] || [[ "$FAULT" == bind-* ]] || [ "$UNRELATED_BIND" = 1 ]; }; then
                             printf '%064d\n' 2
                         fi
                         return 0 ;;
                     inspect:*)
                         [ "$FAULT" = inspect-error ] && return 2
-                        if [ "$FAULT" = change-after-init ] && [ "$PHASE" = changed ]; then
+                        if [ "$FAULT" = "phase-${phase:-}" ] || { [ "$FAULT" = change-after-init ] && [ "$PHASE" = changed ]; }; then
                             printf '[{"Id":"%064d","Image":"%s","State":{"Running":true},"Config":{"Labels":{"com.docker.compose.project":"antiphon-runner","com.docker.compose.service":"session-runner"}},"Mounts":[]}]\n' 3 "$IMAGE_ID"
                             return 0
                         fi
+                        if [ "$FAULT" = change-image ] && [ "$PHASE" = changed ]; then
+                            printf '[{"Id":"%s","Image":"sha256:%064d","State":{"Running":true},"Config":{"Labels":{"com.docker.compose.project":"antiphon-runner","com.docker.compose.service":"session-runner"}},"Mounts":[]}]\n' "$MAIN_ID" 3
+                            return 0
+                        fi
+                        if [ "$FAULT" = change-mounts ] && [ "$PHASE" = changed ]; then
+                            printf '[{"Id":"%s","Image":"%s","State":{"Running":true},"Config":{"Labels":{"com.docker.compose.project":"antiphon-runner","com.docker.compose.service":"session-runner"}},"Mounts":[{"Type":"bind","Source":"%s/unrelated","Destination":"/unrelated","RW":true}]}]\n' "$MAIN_ID" "$IMAGE_ID" "$root"
+                            return 0
+                        fi
                         if [ "$2" = "$(printf '%064d' 2)" ]; then
+                            if [[ "$FAULT" == bind-* ]]; then
+                                local bind_path="$root/volumes/$C849_PACKAGES"
+                                [ "$FAULT" != bind-descendant ] || bind_path="$bind_path/_data/child"
+                                printf '[{"Id":"%064d","Image":"%s","State":{"Running":false},"Config":{"Labels":{}},"Mounts":[{"Type":"bind","Source":"%s","Destination":"/unrelated","RW":true}]}]\n' 2 "$IMAGE_ID" "$bind_path"
+                                return 0
+                            fi
                             if [ "$UNRELATED_BIND" = 1 ]; then
                                 printf '[{"Id":"%064d","Image":"%s","State":{"Running":false},"Config":{"Labels":{}},"Mounts":[{"Type":"bind","Source":"%s/unrelated-bind","Destination":"/unrelated","RW":true}]}]\n' 2 "$IMAGE_ID" "$root"
                                 return 0
@@ -3710,7 +3724,7 @@ public sealed class RemoteScriptContractTests
                         if [[ "$code" == *chown* ]]; then
                             printf 'init %s\n' "$name" >> "$root/effects"
                             rm -f "$root/uninitialized/$name"
-                            [ "$FAULT" = change-after-init ] && PHASE=changed
+                            [[ "$FAULT" == change-* ]] && PHASE=changed
                             [ "$FAULT" = init-error ] && return 2
                             return 0
                         fi
@@ -3835,7 +3849,7 @@ public sealed class RemoteScriptContractTests
             FAULT=inspect-error
             (c849_cold_seed)
             [ ! -e "$C849_READY" ] && [ ! -s "$root/effects" ] && echo preflight-no-write-inspect-error
-            for fault in main-mount other-mount stopped-mount temp-unretired temp-counter-omitted; do
+            for fault in main-mount other-mount stopped-mount bind-ancestor bind-descendant temp-unretired temp-counter-omitted; do
                 FAULT="$fault"
                 (c849_cold_seed)
                 [ ! -e "$C849_READY" ] && [ ! -s "$root/effects" ] && echo "preflight-no-write-$fault"
@@ -3856,7 +3870,7 @@ public sealed class RemoteScriptContractTests
         output.Contains("RESULT accepted=false diagnosis=CacheFirstSeedPreconditionUnknown").ShouldBeTrue("refusal-CacheFirstSeedPreconditionUnknown");
         output.Contains("preflight-no-write-census-error").ShouldBeTrue("preflight-no-write-census-error");
         output.Contains("preflight-no-write-inspect-error").ShouldBeTrue("preflight-no-write-inspect-error");
-        foreach (var fault in new[] { "main-mount", "other-mount", "stopped-mount", "temp-unretired", "temp-counter-omitted", "foreign-owner", "wrong-mode" })
+        foreach (var fault in new[] { "main-mount", "other-mount", "stopped-mount", "bind-ancestor", "bind-descendant", "temp-unretired", "temp-counter-omitted", "foreign-owner", "wrong-mode" })
             output.Contains("preflight-no-write-" + fault).ShouldBeTrue("preflight-no-write-" + fault);
         output.Contains("RESULT accepted=false diagnosis=CacheFirstSeedVolumeInUse").ShouldBeTrue("refusal-CacheFirstSeedVolumeInUse");
         output.Contains("RESULT accepted=false diagnosis=CacheFirstSeedTempNotRetired").ShouldBeTrue("refusal-CacheFirstSeedTempNotRetired");
@@ -3891,6 +3905,16 @@ public sealed class RemoteScriptContractTests
             """);
         changed.Contains("RESULT accepted=false diagnosis=CacheFirstSeedMainMountChanged").ShouldBeTrue("refusal-CacheFirstSeedMainMountChanged-id");
         changed.Contains("recheck-refused-P1").ShouldBeTrue("recheck-refused-P1");
+        foreach (var fault in new[] { "change-image", "change-mounts", "phase-P2", "phase-P3", "phase-P4", "phase-P5", "phase-P6" })
+        {
+            var refused = LinuxShell(ColdSeedHarness() + "\nFAULT=" + fault + "\n" + """
+                mkdir -p "$SERVER2_ROOT/cache"
+                (c849_cold_seed)
+                [ ! -e "$C849_READY" ] && echo boundary-no-marker
+                """);
+            refused.ShouldContain("RESULT accepted=false diagnosis=CacheFirstSeedMainMountChanged", customMessage: fault);
+            refused.ShouldContain("boundary-no-marker", customMessage: fault);
+        }
     }
 
     [Test]
