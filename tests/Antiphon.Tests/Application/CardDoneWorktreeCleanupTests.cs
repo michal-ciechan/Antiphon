@@ -36,7 +36,7 @@ public sealed class CardDoneWorktreeCleanupTests
     public async Task C1017_SourceLandingExcluded()
     {
         await using var fixture = await CompletedCardCleanupFixture.CreateAsync();
-        await fixture.ChangeTaskAsync(t => { t.SourceLandingOperationId = Guid.NewGuid(); t.Role = AgentTaskRole.Mutation; });
+        await fixture.BindSourceLandingAsync();
         await fixture.CleanupAsync();
         var verificationTreeExists = Directory.Exists(fixture.Tree);
         verificationTreeExists.ShouldBeTrue();
