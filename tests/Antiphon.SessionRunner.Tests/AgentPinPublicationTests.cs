@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -9,8 +8,8 @@ using TUnit.Core;
 
 namespace Antiphon.SessionRunner.Tests;
 
-// S3a.2 deliberately uses reflection so the committed specification builds before
-// the new dormant host primitive exists. All oracles inspect independent disk bytes.
+// The red-first commit used reflection before the dormant primitive existed.
+// The implementation now uses its typed boundary; oracles inspect independent bytes.
 [Category("Integration")]
 public class AgentPinPublicationTests
 {
@@ -233,15 +232,9 @@ public class AgentPinPublicationTests
 
         public async Task<JsonObject> Apply(JsonObject request, Func<string, Task>? boundary = null)
         {
-            var type = typeof(AgentPinWorkspaceStore).Assembly.GetType("Antiphon.SessionRunner.AgentPinWorkspacePublisher");
-            type.ShouldNotBeNull("S3a.2 host publication primitive must exist");
-            var method = type.GetMethod("ApplyAsync")!;
-            var requestType = method.GetParameters()[0].ParameterType;
-            var instance = Activator.CreateInstance(type, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-                null, new object?[] { Store, Journal, boundary }, null)!;
-            var task = (Task)method.Invoke(instance, new[] { request.Deserialize(requestType), CancellationToken.None })!;
-            await task;
-            return JsonSerializer.SerializeToNode(task.GetType().GetProperty("Result")!.GetValue(task))!.AsObject();
+            var instance = new AgentPinWorkspacePublisher(Store, Journal, boundary);
+            var result = await instance.ApplyAsync(request.Deserialize<AgentPinPublicationRequest>()!, CancellationToken.None);
+            return JsonSerializer.SerializeToNode(result)!.AsObject();
         }
         public void Dispose() => Directory.Delete(Root, recursive: true);
     }
