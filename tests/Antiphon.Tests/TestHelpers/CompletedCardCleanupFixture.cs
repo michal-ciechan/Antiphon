@@ -85,12 +85,12 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
         return f;
     }
 
-    public async Task MoveAsync(Guid column)
+    public async Task MoveAsync(Guid column, CancellationToken ct = default)
     {
         await using var db = Host.CreateContext();
         var card = await db.Cards.SingleAsync(c => c.Id == CardId);
         await new CardService(db, null!, null!, null!, new MockEventBus(), TimeProvider.System, null!)
-            .MoveAsync(CardId, new MoveCardRequest(column, card.ConcurrencyToken, "fixture"), CancellationToken.None);
+            .MoveAsync(CardId, new MoveCardRequest(column, card.ConcurrencyToken, "fixture"), ct);
     }
 
     public async Task ChangeTaskAsync(Action<AgentTask> change)
