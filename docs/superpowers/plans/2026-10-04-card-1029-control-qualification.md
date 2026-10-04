@@ -258,11 +258,11 @@ G-270..272 differ from server Create auth G-242/243.
 | G-262 | CARD-1029 S2; Grok launch does not pass kind-specific readiness before terminal ready | PC-262 |
 | G-263 | CARD-1029 S2; Grok rules acknowledgement gates durable task-brief production | PC-263 |
 | G-264 | CARD-1029 S1; Low CodexLow entry carries no minimum independently of Frontier | PC-264 |
-| G-265 | CARD-1029 D-6 / F-Matrix; failed observation cannot block retained-queue delivery independently of dispatch | PC-265 |
-| G-266 | CARD-1029 D-6 / F-Matrix; stale observation cannot block retained-queue delivery independently of dispatch | PC-266 |
-| G-267 | CARD-1029 D-6 / F-Matrix; unknown observation cannot block retained-queue delivery independently of dispatch | PC-267 |
-| G-268 | CARD-1029 D-6 / F-Matrix; old observation cannot block retained-queue delivery independently of dispatch | PC-268 |
-| G-269 | CARD-1029 D-6 / F-Matrix; retained queue recovery performs no typed selected CLI diagnostic | PC-269 |
+| G-265 | CARD-1029 D-3 / S4 / F-Matrix; failed observation cannot block retained-queue delivery independently of dispatch | PC-265 |
+| G-266 | CARD-1029 D-3 / S4 / F-Matrix; stale observation cannot block retained-queue delivery independently of dispatch | PC-266 |
+| G-267 | CARD-1029 D-3 / S4 / F-Matrix; unknown observation cannot block retained-queue delivery independently of dispatch | PC-267 |
+| G-268 | CARD-1029 D-3 / S4 / F-Matrix; old observation cannot block retained-queue delivery independently of dispatch | PC-268 |
+| G-269 | CARD-1029 D-3 / S4 / F-Matrix; retained queue recovery performs no typed selected CLI diagnostic | PC-269 |
 | G-270 | CARD-1029 R-7; runner launch rejects definite Codex signed-out independently of server admission | PC-270 |
 | G-271 | CARD-1029 R-7; composed auth router selects Codex probe independently of configured-home selection | PC-271 |
 | G-272 | CARD-1029 R-7; Codex auth metadata uses its own configured home independently of router selection | PC-272 |

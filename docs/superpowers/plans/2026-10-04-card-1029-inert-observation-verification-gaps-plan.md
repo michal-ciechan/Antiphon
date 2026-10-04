@@ -940,6 +940,8 @@ red/restored-green build+test, and 0.5-minute edit/restoration per cycle. The le
 lists every exact filter, control/variant count and phase minutes. Mutation setup
 adds **4**, giving **2,457**. Active Code setup/V/R + paused Mutation floor/setup
 = **2,516 minutes**; adding active ordinary Review/setup = **2,575**.
+These are conditional planning floors: Plan must price P-1's process fixture and
+amend the affected row/method estimates before this becomes executable scope.
 
 The five named follow-up ordinary floors sum to **101 minutes**, separate from
 active Code and paused Mutation. Completing them as budgeted brings Code plus
@@ -957,8 +959,17 @@ compiling-defect/first-assertion recipes; 53 authoring prerequisites are explici
 Executable-seam qualification is **210/211**, with **PC-274 blocked by P-1**.
 This intentionally fails the all-PCs-executable Code handoff gate; next is Plan.
 All nine active rows are one build/one filter, estimated 55 minutes, execution
-floor 21. Documentation roster/link/whitespace checks are distinct from tool
-import, builds, ordinary verification and Mutation, none of which ran here.
+floor 21. Static checks passed for the inherited roster, distinct guard mappings,
+source/method references, document links, table shape, costs and whitespace.
+The repository checkpoint importer accepted exactly nine rows with repeat=1,
+the intended filters, isolated builds and execution floors; no checkpoint ran.
+Its tool-only build used the host gate at source
+`f1b322a37e905beefde5a63f1fb65714d815d409`, with OutputPath
+`bin-c1029-design-import/`: 4.70 seconds, zero errors, one CS8602 warning at the
+unchanged TaskOwnerGuard.cs:170. This unlisted build solely validated the plan
+format; it was not an ordinary V/R build. Evidence-history validation over the
+task range passed. Generated YAML stays ignored; the owned alternate output
+was removed after import. No ordinary tests or positive controls ran.
 
 --- next stage ---
 next: plan
