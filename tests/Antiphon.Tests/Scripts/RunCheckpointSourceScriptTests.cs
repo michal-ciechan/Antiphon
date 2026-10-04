@@ -484,12 +484,17 @@ public sealed class RunCheckpointSourceScriptTests
                     $ErrorActionPreference = 'Stop'
                     $tokens = @(Get-Content -Raw -LiteralPath $ArgumentsFile | ConvertFrom-Json)
                     $scriptPath = $tokens[3]
-                    $scriptArguments = @($tokens | Select-Object -Skip 4)
+                    $parameters = @{}
+                    for ($i = 4; $i -lt $tokens.Count; $i++) {
+                        $name = ([string]$tokens[$i]).TrimStart('-')
+                        if ($name -in @('NoSlot', 'NoBuild')) { $parameters[$name] = $true }
+                        else { $parameters[$name] = $tokens[++$i] }
+                    }
                     Push-Location -LiteralPath $Repository
                     try {
                         @{ native = [Environment]::CurrentDirectory; location = (Get-Location).Path } |
                             ConvertTo-Json -Compress | Set-Content -LiteralPath $ParentObservation
-                        & $scriptPath @scriptArguments
+                        & $scriptPath @parameters
                         exit $LASTEXITCODE
                     } finally { Pop-Location }
                     """);
@@ -499,6 +504,8 @@ public sealed class RunCheckpointSourceScriptTests
                     "-ArgumentsFile", argumentsFile, "-ParentObservation", Path.Combine(External, "parent-" + round + ".json")];
             }
             var result = await RunAsync("pwsh", nativeCwd ?? Repo, args, environment);
+            if (!Directory.Exists(resultRoot))
+                throw new InvalidOperationException("Checkpoint produced no results: " + result.Output);
             var evidence = Directory.GetFiles(resultRoot, "source.json", SearchOption.AllDirectories).Single();
             using var json = JsonDocument.Parse(await File.ReadAllTextAsync(evidence));
             var lines = result.Output.Split('\n');
