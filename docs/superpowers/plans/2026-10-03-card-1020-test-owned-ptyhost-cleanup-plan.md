@@ -550,9 +550,16 @@ once green unless source changes or a demonstrated failure requires it.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1-S2 | `tests/Antiphon.Tests -> bin-c1020-linux-lifecycle/` | linux-lifecycle | `/*/*/(DirectSessionRunnerClientDisposalTests*)\|(TestOwnedPtyHostIdentityTests*)\|(TestOwnedPtyHostPolicyTests*)/*` | V-1–V-15 | all 40 listed results, 0 failed/skipped | 40 | 9 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-2 | S1-S2 | `tests/Antiphon.Tests -> bin-c1020-linux-callers/` | linux-callers | `/*/*/(RunnerGrokAdapterReadyTestsPty*)\|(HerdrLabelFollowWireTests*)/(Fake_dashboard_marker_reaches_ready_and_complete_first_prompt)\|(Launch_and_get_round_trip_follow_metadata)\|(Direct_and_http_get_refresh_and_map_the_same_follow_observation)\|(Old_peers_and_sidecars_remain_compatible_without_follow)` | R-1, R-2 | all 6 listed results, 0 failed/skipped | 6 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-2 | S1-S2 | `tests/Antiphon.Tests -> bin-c1020-linux-callers/` | linux-callers | `/*/*/(RunnerGrokAdapterReadyTestsPty*)\|(HerdrLabelFollowWireTests*)/(Fake_dashboard_marker_reaches_ready_and_complete_first_prompt*)\|(Launch_and_get_round_trip_follow_metadata*)\|(Direct_and_http_get_refresh_and_map_the_same_follow_observation*)\|(Old_peers_and_sidecars_remain_compatible_without_follow*)` | R-1, R-2 | all 6 listed results, 0 failed/skipped | 6 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-3 | S1-S2 | `tests/Antiphon.Tests -> bin-c1020-windows-lifecycle/` | windows-modern-lifecycle | `/*/*/(DirectSessionRunnerClientDisposalTests*)\|(TestOwnedPtyHostIdentityTests*)\|(TestOwnedPtyHostPolicyTests*)/*` | V-1–V-15 | all 40 listed results; required native Windows witnesses; 0 failed/skipped | 40 | 9 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-4 | S1-S2 | `tests/Antiphon.Tests -> bin-c1020-windows-grok/` | windows-modern-grok | `/*/*/RunnerGrokAdapterReadyTestsPty/Fake_dashboard_marker_reaches_ready_and_complete_first_prompt` | R-1 | both marker cases with Windows process witnesses, 0 failed/skipped | 2 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+
+**Code execution correction, 2026-10-04 (task 1d3e0d92).** CP-2's original
+method-OR selection executed zero tests at `d9be1fb113ca8233c64b5a861b5b59f9281c0c64`.
+The method operands now use trailing `*`, as required by the pinned TUnit discovery
+hint behavior in docs/testing-and-build.md. This implements the Code brief's prefix
+filter requirement. The intended roster and floor remain exactly 2 marker + 4 Herdr;
+inspect fresh TRX to reject any additional prefix matches. No Windows row changes.
 
 **Read-only importer contract audit.** `ExtractSection` chooses the first exact
 `### Checkpoints`; the planner table's heading was renamed so it cannot silently

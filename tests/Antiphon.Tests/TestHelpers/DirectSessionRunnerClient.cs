@@ -121,8 +121,14 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             PtyBackend = ptyBackend,
         };
         _runtime = BuildRuntime();
-        _ownedHosts = new TestOwnedPtyHost(_runnerSettings.ResolvedPtyHostDir,
-            new TestOwnedPtyHost.Operations { Record = (operation, _) => { if (operation == "dispose-core") OnDisposeCore?.Invoke(); } });
+        var operations = new TestOwnedPtyHost.Operations();
+        var record = operations.Record;
+        operations.Record = (operation, owned) =>
+        {
+            record(operation, owned);
+            if (operation == "dispose-core") OnDisposeCore?.Invoke();
+        };
+        _ownedHosts = new TestOwnedPtyHost(_runnerSettings.ResolvedPtyHostDir, operations);
     }
 
     /// <summary>

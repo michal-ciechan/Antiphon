@@ -212,7 +212,13 @@ internal sealed class OwnedPtyWitness : IAsyncDisposable
                     string.Equals(x.ModuleName, ConPtyRedistributable.DllName, StringComparison.OrdinalIgnoreCase)).FileName;
                 ConPtyRedistributable.VerifyShippedHashes(conpty).Ok.ShouldBeTrue("modern-package-provenance");
                 Console.WriteLine($"C1020 package={ConPtyRedistributable.PackageId} version={ConPtyRedistributable.PackageVersion}");
-                foreach (var binary in witness.Entries.Select(x => x.Image).Append(conpty).Distinct())
+                var hostImage = witness.Entries.Single(x => x.Role == "host").Image;
+                foreach (var binary in witness.Entries.Select(x => x.Image).Concat(new[]
+                {
+                    conpty, Path.Combine(Path.GetDirectoryName(hostImage)!, "Antiphon.PtyHost.dll"),
+                    typeof(Antiphon.SessionRunner.SessionRunnerRuntime).Assembly.Location,
+                    typeof(OwnedPtyWitness).Assembly.Location,
+                }).Distinct())
                 {
                     using var content = File.OpenRead(binary);
                     Console.WriteLine($"C1020 binary={binary} sha256={Convert.ToHexStringLower(SHA256.HashData(content))} version={FileVersionInfo.GetVersionInfo(binary).FileVersion}");
@@ -324,8 +330,8 @@ internal sealed class OwnedPtyFixture : IAsyncDisposable
                     ["ANTIPHON_FAKE_GROK_LINUX_COMPOSER"] = "0",
                     ["ANTIPHON_FAKE_LF_ENTER"] = OperatingSystem.IsWindows() ? "0" : "1",
                 }, Path.Combine(fixture.Root, "cwd"), 120, 30, SessionId: fixture.SessionId), deadline.Token);
-            (await fixture.Adapter.WaitForReadyAsync(deadline.Token)).ShouldBeTrue();
             fixture.Witness = OwnedPtyWitness.Capture(fixture.Client.PtyHostManifestDir, fixture.SessionId);
+            (await fixture.Adapter.WaitForReadyAsync(deadline.Token)).ShouldBeTrue();
             return fixture;
         }
         catch { await fixture.DisposeAsync(); throw; }
@@ -337,10 +343,12 @@ internal sealed class OwnedPtyFixture : IAsyncDisposable
 
     internal static async Task AssertPromptAsync(DirectSessionRunnerClient client, Guid session, CancellationToken ct)
     {
+        await using var adapter = CreateAdapter(client);
+        await adapter.AttachAsync(session, ct);
+        (await adapter.WaitForReadyAsync(ct)).ShouldBeTrue("adopted recipient ready");
         var baseline = (await client.GetTranscriptAsync(session, ct)).LastSequence;
         var body = "C1020 HEAD " + Guid.NewGuid().ToString("N") + " TAIL";
-        await client.SendInputAsync(session, "\u001b[200~" + body + "\u001b[201~", ct);
-        await client.SendInputAsync(session, "\r", ct);
+        await adapter.SendPromptAsync(body, ct);
         SessionRunnerTranscriptDto transcript;
         do
         {
