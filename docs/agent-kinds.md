@@ -328,9 +328,12 @@ outside `TranscriptTailer`.
 
 ## 5. Grok (xAI Grok Build TUI)
 
-**Runner image (CARD-0986).** The Linux runner image pins Grok 1.0.41, matching
-the captured 120x30 startup dashboard below. Other CLI versions require separate
-qualification before changing the pin.
+**Runner image (CARD-0986).** The Linux runner image installs the pinned Grok 1.0.41,
+matching the captured 120x30 startup dashboard below. This is an image build pin,
+not a live-version claim: the Windows CLI auto-updated to 1.0.46 on 2026-10-03,
+the version recorded in the accepted CARD-1011 evidence below. CARD-1023 owns
+the compatibility matrix; other CLI versions require separate qualification
+before changing the image pin.
 
 **Startup readiness (CARD-0778 / CARD-1004).** The Grok adapter waits for the captured
 120x30 Grok Build 1.0.41 dashboard with an empty complete composer box, a blank
@@ -354,8 +357,11 @@ Linux screen qualification still needs the orchestrator's post-rollout unpinned
 server2-temp real first-prompt canary with a complete matching `UserPrompt` receipt.
 CARD-0861 size qualification and the 1.0.41 runner-image pin remain separate.
 
-**Windows routing qualification (CARD-1011, pending).** The approved future
-role-wide Debug policy is gated; it is not activated by this documentation.
+**Windows routing qualification (CARD-1011).** WQ-2 and amended WQ-3 are met;
+WQ-1 is operator-excluded for CARD-1022, not passed. The prompt change landed,
+and 2026-10-04 effective pin reads confirm Review and Debug on every platform
+use Human Required Grok/High then ClaudeCode/High. WQ-4 remains post-activation
+acceptance work.
 See [the routing owner](orchestration-loop.md#windows-review-and-debug-routing)
 and [the evidence ledger](investigations/2026-10-03-card-1011-windows-grok-qualification.md).
 
@@ -363,7 +369,7 @@ and [the evidence ledger](investigations/2026-10-03-card-1011-windows-grok-quali
 |---|---|---|---|---|---|
 | 1.0.41 / `4220f3b224a6` (reported) | Unknown; WQ-1/2 attribution pending | 120x30 / ASCII `>` to confirm | Not observed | `d6e4138e` / `26d8a18c` / `5f214b0c` | Complete task UserPrompt/report accepted; runner release ownership pending |
 | Historical inbox tuple | WQ-1 operator-excluded for CARD-1022 | 120x30 / ASCII `>` | No new real inbox launch | Existing fake coverage retained | Excluded, not passed |
-| 1.0.46 / `2765805b9442` [stable] (caller-reported) | ModernConPty 1.24.260710001, WQ-2 reported met | 120x30 / ASCII `>` | WQ-3 observes trust presence/absence; Ready required | `02e5b9b7`; full identities in ledger pending reconciliation | Complete transcript, binary provenance and release required |
+| 1.0.46 / `2765805b9442` [stable] | ModernConPty 1.24.260710001; WQ-2 and amended WQ-3 met | 120x30 / ASCII `>` | WQ-3: trust not observed; startup inputs []; Ready after 6.6 s | WQ-2 `02e5b9b7`; WQ-3 `d7e561a7` at `189042da`; full identities in the ledger | WQ-2 complete UserPrompts/report and clean pty-host exit; WQ-3 exact nonce turn and confirmed release; binary provenance reconciled |
 
 Existing captures and FakeGrok cases are fixture evidence. Other sizes remain
 unqualified. Diagnose Windows startup failures using the session's server-log

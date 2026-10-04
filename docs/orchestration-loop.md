@@ -586,13 +586,14 @@ costs an hour and a merge.
 
 ## Windows Review and Debug routing
 
-**CARD-1011 publication hold.** This section records approved policy and its
-release procedure; it does not activate Debug or authorize the prompt change.
-The live Debug pin and embedded orchestrator bundle remain unchanged while
-WQ evidence is pending. Current routing comes from fresh effective pin reads.
+**CARD-1011 published policy.** The prompt change landed at `8bb0cea0` after
+WQ-2 and amended WQ-3 were met; WQ-1 was operator-excluded for CARD-1022's
+legacy inbox deprecation. The Debug pin was updated on 2026-10-04; fresh
+effective pin reads that day confirmed the ordered pair below for both roles.
+WQ-4 remains post-activation acceptance work. Re-read effective pins for current routing.
 
-Policy on release: Review and Debug on every platform, including Linux use
-Human Required pins with Grok/High then ClaudeCode/High (`grok-4.7`, then `opus`).
+Policy on release: Review and Debug on every platform, including Linux, follow
+the same policy; use Human Required pins with Grok/High then ClaudeCode/High (`grok-4.7`, then `opus`).
 The operator approved this role-wide Debug scope (D-1); pins have no OS key.
 Preserve unrelated Human card exceptions. Queued tasks retain their recorded selection.
 The role-tier table below is fallback policy; an effective Required pin precedes it.
@@ -606,7 +607,7 @@ OS needs do not authorize `-IgnoreRoutingPin`. A held/unavailable Grok candidate
 can walk to the listed Opus candidate. An exhausted Required list persists Blocked
 when the local descriptor satisfies the required platform; otherwise placement
 refuses before task insertion (for example, Linux with a Windows-only local descriptor).
-Tests seed this proposed policy only in isolated databases, never production.
+Tests seed this policy only in isolated databases, never production.
 
 ### Evidence gates
 
@@ -616,7 +617,8 @@ Delivery requires a matching complete UserPrompt transcript.
 Settlement requires a final report and confirmed release ownership.
 WQ-2 and WQ-3 gate prompt landing and Debug pin activation; WQ-1 is operator-excluded.
 The [qualification ledger](investigations/2026-10-03-card-1011-windows-grok-qualification.md)
-records pending rows and full canary identities. Backend configuration must be
+records WQ-2 and amended WQ-3 as met, WQ-1 as excluded (not passed), and the full
+canary identities; WQ-4 remains pending. Backend configuration must be
 restored and the actual restored host verified. Configured modern with inbox
 fallback, fixtures, Sent status and one successful canary cannot discharge these gates.
 
