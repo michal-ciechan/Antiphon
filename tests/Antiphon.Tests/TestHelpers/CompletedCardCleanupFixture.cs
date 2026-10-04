@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -54,7 +55,15 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
         await f.Host.InitializeAsync();
         var branch = "feat/card-task-" + f.TaskId.ToString("N")[..8];
         f.Tree = Path.Combine(f.Host.Fixture.Root, "trees", leaf ?? "card-task-" + f.TaskId.ToString("N")[..8]);
-        await f.Host.Fixture.RequiredAsync(f.Host.Fixture.Repository, "worktree", "add", "-b", branch, f.Tree, "HEAD");
+        if (leaf is null)
+        {
+            await using var lease = await f.Host.Services.GetRequiredService<IRepositoryMutationLease>()
+                .TryAcquireAsync(f.Host.Fixture.Repository, CancellationToken.None);
+            lease.ShouldNotBeNull();
+            await f.Host.Services.GetRequiredService<IWorktreeManager>().CreateVerificationAsync(
+                f.Host.Fixture.Repository, "task-" + f.TaskId.ToString("N")[..8], f.Host.Fixture.SeedSha, lease!, CancellationToken.None);
+        }
+        else await f.Host.Fixture.RequiredAsync(f.Host.Fixture.Repository, "worktree", "add", "-b", branch, f.Tree, "HEAD");
         Directory.CreateDirectory(Path.GetDirectoryName(f.Sentinel)!);
         await File.WriteAllTextAsync(f.Sentinel, f.OriginalBytes);
         await using var db = f.Host.CreateContext();
@@ -110,7 +119,9 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
             CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
         });
         await db.SaveChangesAsync();
-        var creation = new VerificationCreationCoordinates(Host.Fixture.Repository, common, Tree, admin, branch, Guid.NewGuid());
+        var recorded = await Host.Services.GetRequiredService<IWorktreeManager>().ReadVerificationCreationAsync(Tree, CancellationToken.None);
+        recorded.ShouldNotBeNull();
+        var creation = new VerificationCreationCoordinates(Host.Fixture.Repository, common, Tree, admin, branch, recorded!.CreationId);
         var seal = new VerificationCleanupSeal(Guid.NewGuid(), 0, creation, [], true, DateTime.UtcNow);
         var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == TaskId);
         var restoration = new VerificationRestoration(1, new(TaskId, operationId, Host.Fixture.SeedSha), creation.CreationId,
