@@ -67,7 +67,7 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
             {
                 Id = sessionId, DefinitionName = "codex", AgentKind = AgentKind.Codex,
                 Status = SessionStatus.Running, Cwd = workspace.Path,
-                RunnerId = host.AllowedRunnerId, RunnerCwd = "/work/c959-warm",
+                RunnerId = host.AllowedRunnerId, RunnerStoreId = host.StoreId, RunnerCwd = "/work/c959-warm",
                 Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now,
             });
             db.Agents.Add(new Agent
@@ -89,7 +89,8 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
 
         await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var claimed = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
-        claimed.Status.ShouldBe(AgentTaskStatus.Dispatched, "C959 signed-out evidence must not refuse before claim");
+        claimed.Status.ShouldBe(AgentTaskStatus.Dispatched,
+            "C959 signed-out evidence must not refuse before claim: " + claimed.FailureReason);
         claimed.AgentId.ShouldBe(agentId);
         claimed.AgentSessionId.ShouldBe(sessionId);
         claimed.RunnerId.ShouldBe(host.AllowedRunnerId);
