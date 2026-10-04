@@ -163,7 +163,7 @@ public sealed class C1008HostFixturePortabilityTests
             start.ArgumentList.SequenceEqual(new[] { "-e", "/bin/bash", "-s" })
                 .ShouldBeTrue("c1030-" + entry + "-launch");
             Path.GetRelativePath(f.Root, start.WorkingDirectory).ShouldStartWith("..",
-                "c1030-cwd-outside-fixture: WSL must not retain the directory being disposed");
+                customMessage: "c1030-cwd-outside-fixture: WSL must not retain the directory being disposed");
             start.StandardInputEncoding!.GetPreamble().ShouldBeEmpty("c1030-stdin-bom");
             input.ShouldNotContain("\r", customMessage: "c1030-stdin-lf");
         };
@@ -193,10 +193,22 @@ public sealed class C1008HostFixturePortabilityTests
         for (var i = 0; i < expected.Length; i++) values[i].ShouldBe(expected[i], "c1030-env-" + labels[i]);
         environmentProbe.Exit.ShouldBe(0, "c1030-sealed-tools; " + environmentProbe.Output);
         File.ReadAllText(Path.Combine(f.Root, "effective-path")).ShouldBe(f.Options.ToolPath, "c1030-sealed-tools");
+        // Model Git before 2.28 even when the host Git supports init -b.
+        var realGit = (await f.Execute("probe", "type -P git")).Stdout.Trim();
+        realGit.ShouldStartWith("/");
+        Directory.CreateDirectory(Path.Combine(f.Root, "git-compat"));
+        File.WriteAllText(Path.Combine(f.Root, "git-compat/git"),
+            "#!/bin/bash\nif [ \"$1\" = init ]; then for arg in \"$@\"; do " +
+            "[ \"$arg\" != -b ] || { echo C1030_GIT_INIT_B_UNSUPPORTED >&2; exit 129; }; done; fi\n" +
+            "exec " + Q(realGit) + " \"$@\"\n", new UTF8Encoding(false));
+        (await f.Execute("probe", "chmod +x " + Q(root + "/git-compat/git"))).Exit.ShouldBe(0);
+        var toolPath = f.Options.ToolPath;
+        f.Options.ToolPath = root + "/git-compat:" + toolPath;
         Exception? gitFailure = null;
         try { await RemoteScriptContractTests.C1008GitGraph(f); }
         catch (Exception ex) { gitFailure = ex; }
-        gitFailure.ShouldBeNull("c1030-sealed-tools");
+        finally { f.Options.ToolPath = toolPath; }
+        gitFailure.ShouldBeNull("c1030-sealed-tools; c1030-portable-git-init");
         File.Exists(Path.Combine(f.Root, "work/repo/.git/refs/heads/master")).ShouldBeTrue("c1030-git-launch: real commit");
         await using (var holder = await f.HoldLock())
         {
