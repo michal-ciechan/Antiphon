@@ -36,7 +36,7 @@ else if (args[0] === 'ps') {
  if(!args.some(a=>a.includes('a') && a.startsWith('-'))) items=items.filter(c=>c.State.Running);
  out(items.map(c=>c.Id).join('\n')+(items.length?'\n':''));
 } else if(args[0]==='inspect') {
- const c=state.containers.find(c=>c.Id===name); if(!c)process.exit(1);
+ const c=state.containers.find(c=>c.Id===name); if(!c){if(fault==='c994-id-absence-error')fail();process.stderr.write('Error: No such object: '+name+'\n');process.exit(1);}
  if(fault==='inspect-empty'){out('');process.exit(0);}
  if(fault==='inspect-malformed'){out('{');process.exit(0);}
  if(fault==='c994-wrong-id')c.Id='f'.repeat(64);

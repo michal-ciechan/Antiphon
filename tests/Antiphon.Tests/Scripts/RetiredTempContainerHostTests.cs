@@ -162,7 +162,7 @@ public sealed class RetiredTempContainerHostTests
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Final_absence_is_observed() {
-        foreach(var fault in new[]{"c994-rm-retains","c994-final-replacement","final-ps-error"}) {using var f=Fixture("session-runner");f.Docker["fault"]=fault;
+        foreach(var fault in new[]{"c994-rm-retains","c994-id-absence-error","c994-final-replacement","final-ps-error"}) {using var f=Fixture("session-runner");f.Docker["fault"]=fault;
             var run=await Cleanup(f);run.Exit.ShouldBe(2,"c994-id-absent c994-project-absent: "+fault+"; "+run.Output);Receipt(f)["outcome"]!.GetValue<string>().ShouldNotBe("completed");}
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
