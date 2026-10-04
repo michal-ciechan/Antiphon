@@ -602,9 +602,11 @@ public sealed class TaskPlatformPlacementTests
             current.Revision, "desktop", [], "A later desktop preference must not move the live process.", "Human"), null, CancellationToken.None);
 
         await using var followDb = kit.Context();
-        var created = await kit.Service(followDb, defaults).CreateAsync(
+        AgentTaskCreatedDto? created = null;
+        await Should.NotThrowAsync(async () => created = await kit.Service(followDb, defaults).CreateAsync(
             new CreateAgentTaskRequest("c710 follow the live process", FollowUpOnTask: priorId.ToString("D")),
-            kit.Caller, CancellationToken.None);
+            kit.Caller, CancellationToken.None), "remote-standing-follow-up-admitted");
+        created.ShouldNotBeNull();
         var saved = await kit.ReadAsync(created.Id);
         saved.Task.RunnerId.ShouldBe("server2");
         saved.Task.RequiredPlatform.ShouldBe(RequiredPlatform.Linux);
