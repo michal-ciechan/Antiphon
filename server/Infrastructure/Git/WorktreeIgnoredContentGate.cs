@@ -20,6 +20,9 @@ public sealed class WorktreeIgnoredContentGate(WorktreeIgnoredContentClassifier 
         var task = await evidence.ReadTaskAsync(request.Source.TaskId, ct);
         if (task is null || task.Id != request.Source.TaskId)
             return new(null, [], "artifact_pointers_unavailable");
+        if (request.CardDoneEndpointId is not null)
+            return await evidence.CanDisposeCardDoneAsync(request, ct)
+                ? new(null, [], null) : new(null, [], "card_done_authority_required");
         return await retention.RetainAsync(task, request.Source.WorktreePath, evidencePaths,
             request.CleanupContext?.AttemptId, ct);
     }
