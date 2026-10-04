@@ -143,13 +143,16 @@ public sealed class CardWorktreeCleanupService(AppDbContext db, TimeProvider clo
         }
     }
 
-    private static string? ClassifyOwnership(AgentTask task, string path, string branch)
+    internal static string? ClassifyOwnership(AgentTask task, string path, string branch, string? managedRoot = null)
     {
         if (task.SourceLandingOperationId is not null) return "source_landing_excluded";
         if (task.Workspace != WorkspaceMode.Worktree) return "shared_or_borrowed_workspace";
         if (string.IsNullOrWhiteSpace(task.RepoPath) || string.IsNullOrWhiteSpace(path)) return "identity_unknown";
         var shortId = task.Id.ToString("N")[..8];
         if (Path.GetFileName(path) != "card-task-" + shortId || branch != "refs/heads/feat/card-task-" + shortId)
+            return "ordinary_owner_required";
+        if (WorkspaceReservationKey.PathsEqual(path, task.RepoPath)
+            || managedRoot is not null && !WorkspaceReservationKey.PathsEqual(Path.GetDirectoryName(path) ?? "", managedRoot))
             return "ordinary_owner_required";
         return null;
     }

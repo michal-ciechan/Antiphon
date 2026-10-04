@@ -190,6 +190,8 @@ public sealed class WorktreeRemovalEvidence(IServiceScopeFactory scopes) : IWork
             || CardDoneArtifactPreservation.Digest(task.Result) != endpoint.ReportDigest
             || !SamePath(task.RepoPath, endpoint.RepositoryPath) || !SamePath(task.WorktreePath, endpoint.WorktreePath)
             || FullRef(task.WorktreeBranch) != endpoint.SourceFullRef) return false;
+        if (CardWorktreeCleanupService.ClassifyOwnership(task, endpoint.WorktreePath, endpoint.SourceFullRef) is not null)
+            return false;
         // Reopen after the committed intent does not revoke this exact command. The durable
         // reservation still fences these coordinates; another endpoint must obtain a new intent.
         if (!await db.WorkspaceUseReservations.AsNoTracking().AnyAsync(r => r.Active
