@@ -30,8 +30,8 @@ public sealed class RollingVolumeRecycleScriptTests
         }
         using var present = new C1008WrapperFixture(); present.State["tempContainer"] = true;
         var blocked = await present.Run("retire-temp");
-        blocked.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse("retire-null-stays-closed: exited container retains null refusal");
-        blocked.Output.ShouldContain("RunnerCounterUnknown");
+        blocked.Trace.Any(x => x["name"]?.GetValue<string>() == "retire-temp-runner").ShouldBeFalse("retire-null-stays-closed: live/unknown container retains volume refusal");
+        blocked.Output.ShouldContain("TempContainerStillRunning");
         foreach (var (field, value) in new (string, JsonNode?)[] {
             ("retiredAt", JsonValue.Create("not-a-date")), ("retiredAt", null),
             ("draining", JsonValue.Create(false)), ("retireWhenIdle", JsonValue.Create(false)),
@@ -47,7 +47,7 @@ public sealed class RollingVolumeRecycleScriptTests
         }
         using var failedCensus = new C1008WrapperFixture(); failedCensus.State["censusError"] = true;
         var unknown = await failedCensus.Run("retire-temp");
-        unknown.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse("retire-null-stays-closed: empty failed census is unknown");
+        unknown.Trace.Any(x => x["name"]?.GetValue<string>() == "retire-temp-runner").ShouldBeFalse("retire-null-stays-closed: empty failed census is unknown");
         unknown.Output.ShouldContain("TempContainerCensusUnavailable");
     }
 
@@ -390,7 +390,7 @@ internal sealed class C1008WrapperFixture : IDisposable
         State = new JsonObject
         {
             ["scenario"] = "c1008", ["sha"] = vectors["sourceSha"]!.DeepClone(), ["oldDeployed"] = false,
-            ["tempContainer"] = false,
+            ["tempContainer"] = false, ["clockMs"] = 0,
             ["statuses"] = new JsonObject
             {
                 ["server2"] = vectors["mainAccepting"]!.DeepClone(),
@@ -493,18 +493,22 @@ internal sealed class C1008HostFixture : IDisposable
                 { ["io.antiphon.owner"] = "server2-runner", ["io.antiphon.cache-schema"] = "1", ["io.antiphon.cache-role"] = role });
                 model[key] = new JsonObject { ["name"] = name, ["external"] = true };
             }
-            var mounts = new[] { ("work", "/work"), ("runner-state", "/state"), ("runner-tmp", "/tmp"),
-                ("dind-data", "/var/lib/docker"), ("runner-nuget-packages", "/home/app/.nuget/packages"),
-                ("runner-nuget-scratch", "/var/cache/antiphon/nuget-scratch"), ("runner-npm-content", "/home/app/.npm/_cacache") };
-            JsonArray Mounts(int count) => new(mounts.Take(count).Select(x => (JsonNode)new JsonObject
-                { ["type"] = "volume", ["source"] = x.Item1, ["target"] = x.Item2 }).ToArray());
-            models[project] = new JsonObject { ["volumes"] = model, ["services"] = new JsonObject
-                { ["session-runner"] = new JsonObject { ["volumes"] = Mounts(7) },
-                    ["state-init"] = new JsonObject { ["volumes"] = Mounts(2) } } };
+            var psi = new ProcessStartInfo("node") { UseShellExecute = false, RedirectStandardOutput = true,
+                RedirectStandardError = true, WorkingDirectory = DelegateScriptRunner.RepoRoot };
+            foreach (var arg in new[] { "scripts/fixtures/c994-production-compose-model.mjs", Root, project,
+                project == "antiphon-runner-temp" ? "true" : "false" }) psi.ArgumentList.Add(arg);
+            using var process = Process.Start(psi)!;
+            var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(30000)) { process.Kill(true); process.WaitForExit(); throw new InvalidOperationException("Compose config timeout"); }
+            if (process.ExitCode != 0) throw new InvalidOperationException("Compose config: " + stderr.GetAwaiter().GetResult());
+            models[project] = JsonNode.Parse(stdout.GetAwaiter().GetResult())!["model"]!.DeepClone();
+
         }
         foreach (var name in new[] { "antiphon-runner_work-extra", "schoolrevision-staging", "openclaw-state" })
             volumes[name] = Volume(name, new JsonObject());
-        var containers = new JsonArray();
+        Docker = new JsonObject { ["volumes"] = volumes, ["models"] = models,
+            ["containers"] = new JsonArray(), ["removed"] = new JsonArray(), ["fault"] = "" };
+        var containers = Docker["containers"]!.AsArray();
         if (main)
         {
             containers.Add(Container('1', "antiphon-runner", "session-runner", true, "work", "runner-tmp", "dind-data", "runner-state",
@@ -512,11 +516,10 @@ internal sealed class C1008HostFixture : IDisposable
             containers.Add(Container('2', "antiphon-runner", "state-init", false, "work", "runner-state"));
         }
         containers.Add(Container('3', "antiphon-runner", "build-slots", true));
-        Docker = new JsonObject { ["volumes"] = volumes, ["models"] = models,
-            ["containers"] = containers, ["removed"] = new JsonArray(), ["fault"] = "" };
+
         Directory.CreateDirectory(Path.Combine(Root, "work"));
         Directory.CreateDirectory(Path.Combine(Root, "server/cache"));
-        File.WriteAllText(Path.Combine(Root, "temp.env"), "RUNNER_GROK_STORE_DIR=/fixture/grok\n");
+        File.WriteAllText(Path.Combine(Root, "temp.env"), "RUNNER_GROK_STORE_DIR=" + Root + "/grok\n");
     }
 
     private JsonObject Volume(string name, JsonObject labels)
@@ -536,15 +539,37 @@ internal sealed class C1008HostFixture : IDisposable
         "cache-nuget-packages" => "/home/app/.nuget/packages", "cache-nuget-scratch" => "/var/cache/antiphon/nuget-scratch",
         "cache-npm-content" => "/home/app/.npm/_cacache", _ => "/unknown"
     };
-    internal JsonObject Container(char id, string project, string service, bool running, params string[] roles) =>
-        new() { ["Id"] = new string(id, 64), ["Image"] = "sha256:" + new string('a', 64),
+    internal JsonObject Container(char id, string project, string service, bool running, params string[] roles)
+    {
+        var mounts = new JsonArray();
+        var hostConfig = new JsonObject { ["Tmpfs"] = new JsonObject(), ["Mounts"] = new JsonArray() };
+        if (service is "state-init" or "session-runner")
+        {
+            var model = Docker["models"]![project]!;
+            foreach (var m in model["services"]![service]!["volumes"]!.AsArray())
+            {
+                var volume = m!["type"]!.GetValue<string>() == "volume";
+                var name = volume ? model["volumes"]![m["source"]!.GetValue<string>()]!["name"]!.GetValue<string>() : null;
+                mounts.Add(new JsonObject { ["Type"] = volume ? "volume" : "bind", ["Name"] = name,
+                    ["Source"] = volume ? Docker["volumes"]![name!]!["Mountpoint"]!.DeepClone() : m["source"]!.DeepClone(),
+                    ["Destination"] = m["target"]!.DeepClone(), ["RW"] = !(m["read_only"]?.GetValue<bool>() ?? false) });
+            }
+            foreach (var secret in model["services"]![service]!["secrets"]?.AsArray() ?? new JsonArray())
+            {
+                var source = secret!["source"]!.GetValue<string>();
+                var target = secret["target"]!.GetValue<string>();
+                mounts.Add(new JsonObject { ["Type"] = "bind", ["Source"] = model["secrets"]![source]!["file"]!.DeepClone(),
+                    ["Destination"] = target.StartsWith('/') ? target : "/run/secrets/" + target, ["RW"] = false });
+            }
+            if (service == "session-runner") hostConfig["Tmpfs"] = new JsonObject { ["/run/antiphon"] = "" };
+        }
+        else foreach (var role in roles) mounts.Add(new JsonObject { ["Type"] = "volume", ["Name"] = VolumeName(project, role),
+            ["Source"] = Path.Combine(Root, "volumes", VolumeName(project, role), "_data"), ["Destination"] = Destination(role), ["RW"] = true });
+        return new JsonObject { ["Id"] = new string(id, 64), ["Image"] = "sha256:" + new string('a', 64),
             ["State"] = new JsonObject { ["Running"] = running, ["Status"] = running ? "running" : "exited" },
-            ["Config"] = new JsonObject { ["Labels"] = new JsonObject
-                { ["com.docker.compose.project"] = project, ["com.docker.compose.service"] = service } },
-            ["Mounts"] = new JsonArray(roles.Select(role => (JsonNode)new JsonObject
-                { ["Type"] = "volume", ["Name"] = VolumeName(project, role),
-                    ["Source"] = Path.Combine(Root, "volumes", VolumeName(project, role), "_data"),
-                    ["Destination"] = Destination(role), ["RW"] = true }).ToArray()) };
+            ["Config"] = new JsonObject { ["Labels"] = new JsonObject { ["com.docker.compose.project"] = project,
+                ["com.docker.compose.service"] = service } }, ["Mounts"] = mounts, ["HostConfig"] = hostConfig };
+    }
 
     internal async Task<(int Exit, string Output)> Run(string hostCase = "deploy-parent", string extra = "", bool dryRun = false)
     {
@@ -557,8 +582,12 @@ internal sealed class C1008HostFixture : IDisposable
             C1008_FIXTURE_ROOT='{{Root}}'; export C1008_FIXTURE_ROOT
             SERVER2_ROOT='{{Root}}/server'; ROOT='{{Root}}'; EVIDENCE_ROOT='{{Root}}/evidence'; CASE_DIR="$EVIDENCE_ROOT/$CASE"
             SERVER2_ENV='{{Root}}/main.env'; SERVER2_TEMP_ENV='{{Root}}/temp.env'; mkdir -p "$CASE_DIR"
+            DEPLOY_KEY='{{Root}}/deploy-key'; PHONE_HOME_SECRET='{{Root}}/phone-home'
+            CLAUDE_OAUTH_TOKEN_PATH='{{Root}}/claude-token'; GIT_IDENTITY_PATH='{{Root}}/gitconfig'; CODEX_HOME_PATH='{{Root}}/codex'; RUNNER_GROK_STORE_DIR='{{Root}}/grok'
             RUNNER_GIT_USER_NAME=Fixture; RUNNER_GIT_USER_EMAIL=fixture@example.invalid
             C1008_OPERATION=c100800000000000000000000000000000001; C1008_CONTEXT=default; C1008_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1
+            C994_VERSION=1; C994_OPERATION=c99400000000000000000000000000000001; C994_PROJECT=antiphon-runner-temp
+            C994_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1; C994_RETIRED_AT=2026-10-03T09:30:00Z; C994_DRY_RUN={{(dryRun ? "1" : "0")}}
             C1008_DRY_RUN={{(dryRun ? "1" : "0")}}; C590_TEMP_RETIRED_AT=2026-10-03T09:30:00Z
             docker() { bash '{{DelegateScriptRunner.RepoRoot}}/scripts/fixtures/c1008-fake-docker.sh' "$@"; }
             compose_host() { docker compose -p "$HOST_PROJECT" "$@"; }

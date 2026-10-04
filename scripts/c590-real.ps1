@@ -13,7 +13,7 @@ $script:C590LiveCases = @(
     # switch are the STUB boundaries; this roster is what routes a real run to the remote instead.
     'deploy-parent',
     'deploy-temp-runner',
-    'retire-temp-runner',
+    'retire-temp-runner', 'retire-temp-containers',
     'runner-cache-inventory',
     'runner-cache-fixture',
     'runner-cache-seed',
@@ -242,12 +242,63 @@ function Get-C590PlanRow {
     }
 }
 
+function Assert-C994RawManifest {
+    param([string]$Json)
+    try {
+        $document = [System.Text.Json.JsonDocument]::Parse($Json)
+        function Assert-UniqueJsonObject($Element) {
+            if ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Object) {
+                $names = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+                foreach ($property in $Element.EnumerateObject()) {
+                    if (-not $names.Add($property.Name)) { throw 'TempContainerContextInvalid' }
+                    Assert-UniqueJsonObject $property.Value
+                }
+            } elseif ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Array) {
+                foreach ($item in $Element.EnumerateArray()) { Assert-UniqueJsonObject $item }
+            }
+        }
+        Assert-UniqueJsonObject $document.RootElement
+    } catch { throw 'TempContainerContextInvalid' }
+    finally { if ($null -ne $document) { $document.Dispose() } }
+}
+
+function ConvertTo-C994RetiredInstant {
+    param($Value)
+    $text = if ($Value -is [datetime]) { $Value.ToUniversalTime().ToString('o') }
+        elseif ($Value -is [datetimeoffset]) { $Value.ToUniversalTime().ToString('o') }
+        elseif ($Value -is [string]) { $Value } else { throw 'TempContainerContextInvalid' }
+    if ($text -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$') { throw 'TempContainerContextInvalid' }
+    $instant = [datetimeoffset]::MinValue
+    if (-not [datetimeoffset]::TryParse($text, [cultureinfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::None, [ref]$instant)) { throw 'TempContainerContextInvalid' }
+    return $instant.ToUniversalTime().ToString('o')
+}
+
+function Assert-C994BridgeContext {
+    param($Context, [string]$Case)
+    if ($Case -cne 'retire-temp-containers' -or $null -eq $Context -or $Context -is [array]) { throw 'TempContainerContextInvalid' }
+    $expected = @('version','operationId','project','projectId','dryRun','retiredAt')
+    $keys = @($Context.PSObject.Properties.Name)
+    if ($keys.Count -ne $expected.Count -or @($keys | Where-Object { $_ -cnotin $expected }).Count -ne 0 -or
+        ($Context.version -isnot [int] -and $Context.version -isnot [long]) -or $Context.version -ne 1 -or
+        $Context.operationId -isnot [string] -or $Context.operationId -cnotmatch '^c994[0-9a-f]{32}$' -or
+        $Context.project -isnot [string] -or $Context.project -cne 'antiphon-runner-temp' -or
+        $Context.projectId -isnot [string] -or $Context.projectId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or
+        $Context.dryRun -isnot [bool]) { throw 'TempContainerContextInvalid' }
+    [void](ConvertTo-C994RetiredInstant $Context.retiredAt)
+}
+
 function Assert-C1008BridgeContext {
     param($Context, [string]$Case)
     if ($null -eq $Context -or $Case -notin @('deploy-parent','retire-temp-runner')) { throw 'RecycleContextInvalid' }
     $keys = @($Context.PSObject.Properties.Name)
     $expected = @('version','project','operationId','dryRun','resume','projectId')
-    if ($keys.Count -ne $expected.Count -or @($keys | Where-Object { $_ -notin $expected }).Count) { throw 'RecycleContextInvalid' }
+    if ($keys -ccontains 'cleanupOperationId') {
+        if ($Case -cne 'retire-temp-runner' -or $Context.resume -ne $false -or
+            $Context.cleanupOperationId -isnot [string] -or $Context.cleanupOperationId -cnotmatch '^c994[0-9a-f]{32}$') { throw 'RecycleContextInvalid' }
+        $expected += 'cleanupOperationId'
+    }
+    if ($keys.Count -ne $expected.Count -or @($keys | Where-Object { $_ -cnotin $expected }).Count) { throw 'RecycleContextInvalid' }
     $project = if ($Case -eq 'deploy-parent') { 'antiphon-runner' } else { 'antiphon-runner-temp' }
     if (($Context.version -isnot [int] -and $Context.version -isnot [long]) -or $Context.version -ne 1 -or
         [string]$Context.project -cne $project -or [string]$Context.operationId -cnotmatch '^c1008[0-9a-f]{32}$' -or
@@ -259,10 +310,23 @@ function Assert-C1008BridgeContext {
 function Invoke-C590LiveCase {
     param(
         [Parameter(Mandatory = $true)][string]$Case,
-        [Parameter(Mandatory = $true)]$Manifest
+        [Parameter(Mandatory = $true)]$Manifest, [string]$RawManifest = ''
     )
     $root = [string]$Manifest.evidenceRoot
     if (-not $root) { throw 'evidenceRoot is required' }
+    $cleanup = $null
+    $cleanupExports = @()
+    $cleanupOperation = ''
+    if ($Case -ceq 'retire-temp-containers' -or $Manifest.PSObject.Properties.Name -ccontains 'tempContainerCleanup') {
+        Assert-C994RawManifest -Json $RawManifest
+        Assert-C994BridgeContext -Context $Manifest.tempContainerCleanup -Case $Case
+        $cleanup = $Manifest.tempContainerCleanup
+        $cleanupDry = if ($cleanup.dryRun) { '1' } else { '0' }
+        $cleanupStamp = ConvertTo-C994RetiredInstant $cleanup.retiredAt
+        $cleanupExports = @("export C994_VERSION='1'", "export C994_OPERATION='$($cleanup.operationId)'",
+            "export C994_PROJECT='$($cleanup.project)'", "export C994_PROJECT_ID='$($cleanup.projectId)'",
+            "export C994_DRY_RUN='$cleanupDry'", "export C994_RETIRED_AT='$cleanupStamp'")
+    }
     $recycleContext = ''
     $recycleOperation = ''
     $recycleProjectId = ''
@@ -270,6 +334,7 @@ function Invoke-C590LiveCase {
     $recycleResume = '0'
     if ($Manifest.PSObject.Properties.Name -contains 'recycle') {
         Assert-C1008BridgeContext -Context $Manifest.recycle -Case $Case
+        if ($Manifest.recycle.PSObject.Properties.Name -ccontains 'cleanupOperationId') { $cleanupOperation = $Manifest.recycle.cleanupOperationId }
         $recycleContext = 'default'
         $recycleOperation = [string]$Manifest.recycle.operationId
         $recycleProjectId = [string]$Manifest.recycle.projectId
@@ -397,7 +462,7 @@ function Invoke-C590LiveCase {
         if ($Case -eq 'runner-cache-seed') {
             & scp -o BatchMode=yes (Join-Path $PSScriptRoot 'c849-import-saved-donor.ps1') mc@server2:/home/mc/antiphon-c590/c849-import-saved-donor.ps1
         }
-        $remote = @(
+        $remote = (@($cleanupExports) + @(
             "export C590_CASE='$Case'"
             "export C590_SHA='$sha'"
             "export C590_RUN='$run'"
@@ -423,12 +488,13 @@ function Invoke-C590LiveCase {
             "export C1008_PROJECT_ID='$recycleProjectId'"
             "export C1008_DRY_RUN='$recycleDryRun'"
             "export C1008_RESUME='$recycleResume'"
+            "export C1008_CLEANUP_OPERATION='$cleanupOperation'"
             "bash /home/mc/antiphon-c590/c590-remote.sh"
-        ) -join '; '
+        )) -join '; '
         $code = Invoke-C590Ssh $remote
         $destParent = $root
         & scp -o BatchMode=yes -r ("mc@server2:/work/test-evidence/" + $run + "/" + $Case) $destParent | Out-Null
-        if ($LASTEXITCODE -ne 0 -and $recycleContext) {
+        if ($LASTEXITCODE -ne 0 -and ($recycleContext -or $null -ne $cleanup)) {
             Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'RecycleReceiptUnavailable' -ExitCode 2
         }
         $resultPath = Join-Path (Join-Path $root $Case) 'c590-result.json'

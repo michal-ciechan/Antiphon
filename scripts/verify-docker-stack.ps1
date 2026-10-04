@@ -10,7 +10,13 @@ $ErrorActionPreference = 'Stop'
 $c737RefreshClaudeToken = [bool]$RefreshClaudeToken
 . (Join-Path $PSScriptRoot 'c590-command.ps1')
 if (-not (Test-Path -LiteralPath $Manifest)) { Write-Error 'Manifest is required'; exit 2 }
-$m = Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json
+$rawManifest = Get-Content -Raw -LiteralPath $Manifest
+. (Join-Path $PSScriptRoot 'c590-real.ps1')
+Assert-C994RawManifest -Json $rawManifest
+$m = $rawManifest | ConvertFrom-Json
+if ($Case -ceq 'retire-temp-containers' -or $m.PSObject.Properties.Name -ccontains 'tempContainerCleanup') {
+    Assert-C994BridgeContext -Context $m.tempContainerCleanup -Case $Case
+}
 $root = [string]$m.evidenceRoot
 # Validate at the verifier boundary as well, before an intercepted transport can
 # bypass the live bridge's independent context check.
@@ -22,7 +28,7 @@ if (-not $env:ANTIPHON_C590_STUB) {
     . (Join-Path $PSScriptRoot 'c590-real.ps1')
     $script:C628RefreshClaudeToken = $c737RefreshClaudeToken
     if (Test-C590LiveCase -Case $Case) {
-        Invoke-C590LiveCase -Case $Case -Manifest $m
+        Invoke-C590LiveCase -Case $Case -Manifest $m -RawManifest $rawManifest
     }
 }
 

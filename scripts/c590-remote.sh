@@ -3487,6 +3487,7 @@ c1008_summary() {
 
 c1008_refuse() {
     local reason="$1" count
+    if [ "${C994_ACTIVE:-0}" = 1 ]; then c994_refuse "$reason"; fi
     if [ "${C1008_ACTIVE:-0}" = 1 ]; then
         count="$(printf '%s' "$C1008_RECORD" | jq '[.volumes[] | select(.outcome == "removed")] | length')"
         C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq --arg reason "$reason" --argjson count "$count" \
@@ -3519,21 +3520,60 @@ c1008_volume() {
          else error("identity") end' || return 2
 }
 
+# Service topology is authorized by the shipped Compose contract, not inspect labels.
 c1008_compose_model() {
-    local model role key expected
+    local model role key expected grok="${RUNNER_GROK_STORE_DIR:-}"
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then model="$(compose_temp config --format json 2>/dev/null)"
     else model="$(compose_host config --format json 2>/dev/null)"; fi || c1008_refuse RecycleComposeMismatch
-    printf '%s' "$model" | jq -e '
-        def mounted($service;$source;$target):
-          ([.services[$service].volumes[] | select(.type=="volume" and .source==$source and .target==$target and (.read_only // false)==false)]|length)==1;
-        mounted("session-runner";"work";"/work") and mounted("session-runner";"runner-state";"/state") and
-        mounted("session-runner";"runner-tmp";"/tmp") and
-        all(.services["session-runner"].volumes[] | select(.target=="/tmp"); (.volume.nocopy // false)==false) and mounted("session-runner";"dind-data";"/var/lib/docker") and
-        mounted("session-runner";"runner-nuget-packages";"/home/app/.nuget/packages") and
-        mounted("session-runner";"runner-nuget-scratch";"/var/cache/antiphon/nuget-scratch") and
-        mounted("session-runner";"runner-npm-content";"/home/app/.npm/_cacache") and
-        mounted("state-init";"work";"/work") and mounted("state-init";"runner-state";"/state")' >/dev/null \
-        || c1008_refuse RecycleComposeMismatch
+    model="$(printf '%s' "$model" | jq -ce --arg claude "$CLAUDE_OAUTH_TOKEN_PATH" --arg git "$GIT_IDENTITY_PATH" \
+        --arg codex "$CODEX_HOME_PATH" --arg grok "$grok" --arg key "$DEPLOY_KEY" --arg phone "$PHONE_HOME_SECRET" \
+        --argjson temp "$([ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && echo true || echo false)" '
+      def boolfield($k): (has($k)|not) or (.[$k]|type)=="boolean";
+      def allowed($keys): (keys - $keys | length)==0;
+      def volume($role;$target;$copy): {kind:"volume",role:$role,target:$target,rw:true,nocopy:$copy};
+      def bind($source;$target;$rw;$file): {kind:"bind",source:$source,target:$target,rw:$rw,file:$file};
+      . as $model |
+      {"state-init":[volume("work";"/work";false),volume("runner-state";"/runner-state";false),bind($codex;"/codex-home";true;false)],
+       "session-runner":([volume("work";"/work";false),volume("runner-state";"/state";false),
+         volume("dind-data";"/var/lib/docker";false),volume("runner-tmp";"/tmp";false),
+         volume("runner-nuget-packages";"/home/app/.nuget/packages";true),
+         volume("runner-nuget-scratch";"/var/cache/antiphon/nuget-scratch";true),
+         volume("runner-npm-content";"/home/app/.npm/_cacache";true),
+         bind($claude;"/run/antiphon/claude-oauth-token";false;true),
+         bind($git;"/run/antiphon/gitconfig";false;true),bind($codex;"/state/codex";true;false)] +
+         if $temp then [bind($grok;"/state/grok";true;false)] else [] end)} as $expected |
+      reduce ["state-init","session-runner"][] as $service ({};
+        ($model.services[$service]) as $svc |
+        if ($svc.volumes|type)!="array" or ($svc.volumes|length)!=($expected[$service]|length) or
+          (($svc.volumes|map(.target)|unique|length)!=($svc.volumes|length)) or
+          (($svc.configs // [])|length)!=0 then error("mount set") else . end |
+        [ $svc.volumes[] | . as $m | ($expected[$service][] | select(.target==$m.target)) as $e |
+          if ($m|allowed(["type","source","target","read_only","volume","bind"])) and ($m|boolfield("read_only")) and
+            (($m.read_only // false)|not)==$e.rw and
+            (if $e.kind=="volume" then $m.type=="volume" and $m.source==$e.role and
+              (($m.volume // {})|type)=="object" and (($m.volume // {})|allowed(["nocopy"])) and
+              (($m.volume // {})|boolfield("nocopy")) and ($m.volume.nocopy // false)==$e.nocopy and
+              ($m|has("bind")|not)
+             else $m.type=="bind" and $m.source==$e.source and ($m.source|startswith("/")) and
+              (($m.bind // {})|type)=="object" and (($m.bind // {})|allowed(["create_host_path"])) and
+              (($m.bind // {})|boolfield("create_host_path")) and ($m|has("volume")|not) end)
+          then $e + (if $e.kind=="volume" then {source:$model.volumes[$e.role].name} else {} end)
+          else error("mount contract") end ] as $mounts |
+        if ($mounts|length)!=($expected[$service]|length) then error("destination") else . end |
+        (if $service=="session-runner" then
+          if ($svc.tmpfs|type)!="array" or $svc.tmpfs!=["/run/antiphon"] or
+            ($svc.secrets|type)!="array" or ($svc.secrets|length)!=2 or
+            ($svc.secrets|map(.source)|sort)!=["antiphon-deploy-key","phone-home"] then error("ephemeral") else . end |
+          [$svc.secrets[] | . as $secret |
+            (if .source=="antiphon-deploy-key" then $key else $phone end) as $source |
+            (if (.target|startswith("/")) then .target else "/run/secrets/"+.target end) as $target |
+            if (allowed(["source","target"])) and $target==("/run/secrets/"+.source) and
+              ($model.secrets[.source]|allowed(["file","name"])) and $model.secrets[.source].file==$source and
+              ($source|startswith("/")) then {kind:"secret",source:$source,target:$target,rw:false,file:true}
+            else error("secret") end] + [{kind:"tmpfs",source:"",target:"/run/antiphon",rw:true}]
+         else if (($svc.secrets // [])|length)!=0 or (($svc.tmpfs // [])|length)!=0 then error("init ephemeral") else [] end end) as $extra |
+        .[$service]=(($mounts+$extra)|sort_by(.target))) as $topology |
+      $model + {c994Topology:{version:1,services:$topology}}')" || c1008_refuse RecycleComposeMismatch
     for role in work runner-tmp dind-data runner-state; do
         expected="${C1008_PROJECT}_$role"
         printf '%s' "$model" | jq -e --arg role "$role" --arg name "$expected" \
@@ -3550,20 +3590,24 @@ c1008_compose_model() {
 }
 
 c1008_container_census() {
-    local ids id raw result='[]'
+    local ids id raw result='[]' seen=''
     ids="$(docker ps -aq --no-trunc 2>/dev/null)" || return 2
     while IFS= read -r id; do
         [ -n "$id" ] || continue
         [[ "$id" =~ ^[0-9a-f]{64}$ ]] || return 2
+        [[ " $seen " != *" $id "* ]] || return 2
+        seen="$seen $id"
         raw="$(docker inspect "$id" 2>/dev/null)" || return 2
         raw="$(printf '%s' "$raw" | jq -ce --arg id "$id" '
           if type=="array" and length==1 and .[0].Id==$id and
              (.[0].Mounts|type)=="array" and (.[0].State.Running|type)=="boolean" and
-             (.[0].Config.Labels|type)=="object" and (.[0].Image|type)=="string"
+             (.[0].Config.Labels|type)=="object" and (.[0].Image|type)=="string" and
+             (.[0].State.Status|type)=="string"
           then .[0] | {Id,Image,State:{Running:.State.Running,Status:.State.Status},
             Config:{Labels:{"com.docker.compose.project":.Config.Labels["com.docker.compose.project"],
               "com.docker.compose.service":.Config.Labels["com.docker.compose.service"]}},
-            Mounts:[.Mounts[]|{Type,Name,Source,Destination,RW}]}
+            Mounts:[.Mounts[]|{Type,Name,Source,Destination,RW}],
+            HostConfig:{Tmpfs:.HostConfig.Tmpfs,Mounts:[.HostConfig.Mounts[]? | select(.Type=="tmpfs") | {Type,Target,ReadOnly,TmpfsOptions}]}}
           else error("container") end')" || return 2
         result="$(printf '%s' "$result" | jq -c --argjson c "$raw" '. + [$c]')" || return 2
     done <<< "$ids"
@@ -3704,13 +3748,13 @@ c1008_status_proof() {
                 any($saved.stopReceipts[]; .==$id) and ($phase=="stopped" or any($saved.removeReceipts[]; .==$id)))' >/dev/null 2>&1 \
                 || c1008_refuse RecycleResumeMismatch
             if [ "$saved" = recreating ] || [ "$saved" = verified ]; then
-                [ "$(printf '%s' "$ids" | jq -Sc '[.[]|select(.Config.Labels["com.docker.compose.service"]!="build-slots")|{Id,Image,Mounts:(.Mounts|sort_by(.Destination))}]|sort_by(.Id)')" = \
-                  "$(printf '%s' "$C1008_RECORD" | jq -Sc '[.recreated.owned[]|{Id,Image,Mounts:(.Mounts|sort_by(.Destination))}]|sort_by(.Id)')" ] || c1008_refuse RecycleResumeMismatch
+                [ "$(printf '%s' "$ids" | jq -Sc '[.[]|select(.Config.Labels["com.docker.compose.service"]!="build-slots")|{Id,Image,Mounts:(.Mounts|sort_by(.Destination)),HostConfig}]|sort_by(.Id)')" = \
+                  "$(printf '%s' "$C1008_RECORD" | jq -Sc '[.recreated.owned[]|{Id,Image,Mounts:(.Mounts|sort_by(.Destination)),HostConfig}]|sort_by(.Id)')" ] || c1008_refuse RecycleResumeMismatch
             elif [ "$saved" = stopped ]; then
                 printf '%s' "$ids" | jq -e --argjson saved "$C1008_RECORD" 'all(.[];
                     .Config.Labels["com.docker.compose.service"]=="build-slots" or
                     (. as $c | .State.Running==false and .State.Status=="exited" and
-                     any($saved.owned[]; .Id==$c.Id and .Image==$c.Image and .Mounts==$c.Mounts)))' >/dev/null || c1008_refuse RecycleResumeMismatch
+                     any($saved.owned[]; .Id==$c.Id and .Image==$c.Image and .Mounts==$c.Mounts and .Topology.version==1 and .HostConfig==$c.HostConfig)))' >/dev/null || c1008_refuse RecycleResumeMismatch
             else
                 printf '%s' "$C1008_RECORD" | jq -e '.ownedRemoved==true' >/dev/null || c1008_refuse RecycleResumeMismatch
                 [ "$(printf '%s' "$ids" | jq '[.[]|select(.Config.Labels["com.docker.compose.service"]!="build-slots")]|length')" = 0 ] || c1008_refuse RecycleResumeMismatch
@@ -3855,15 +3899,46 @@ c1008_private_identity() {
 
 # Ownership includes the actual inspected mount topology, not labels alone.
 c1008_owned_mounts() {
-    local owned="$1" model="$2" volumes="$3"
-    printf '%s' "$owned" | jq -e --argjson model "$model" --argjson volumes "$volumes" '
-      all(.[]; . as $container | .Config.Labels["com.docker.compose.service"] as $service |
-        ($model.services[$service].volumes | length)==(.Mounts|length) and
-        all($model.services[$service].volumes[]; . as $mount |
-          $model.volumes[$mount.source].name as $name |
-          ([ $container.Mounts[] | select(.Type=="volume" and .Name==$name and .Destination==$mount.target and
-             .RW==true and .Source==($volumes[$name].Mountpoint // $volumes[$name].original.Mountpoint)) ]|length)==1))' >/dev/null \
-        || c1008_refuse RecycleContainerStateUnknown
+    local owned="$1" model="$2" volumes="$3" source canonical kind file
+    # Metadata in the Docker host namespace only; no contents or inode pinning.
+    while IFS=$'\t' read -r source file; do
+        [ -n "$source" ] || continue
+        canonical="$(sudo -n readlink -e -- "$source" 2>/dev/null)" || c1008_refuse RecycleContainerStateUnknown
+        [ "$canonical" = "$source" ] || c1008_refuse RecycleContainerStateUnknown
+        kind="$(sudo -n stat -c %F -- "$source" 2>/dev/null)" || c1008_refuse RecycleContainerStateUnknown
+        if [ "$file" = true ]; then [ "$kind" = 'regular file' ] || c1008_refuse RecycleContainerStateUnknown
+        else [ "$kind" = directory ] || c1008_refuse RecycleContainerStateUnknown; fi
+    done < <(printf '%s' "$model" | jq -r '.c994Topology.services[][] | select(.kind=="bind" or .kind=="secret") | [.source,.file] | @tsv' | sort -u)
+    C1008_OWNED="$(printf '%s' "$owned" | jq -ce --argjson model "$model" --argjson volumes "$volumes" '
+      map(. as $c | .Config.Labels["com.docker.compose.service"] as $service |
+        $model.c994Topology.services[$service] as $expected |
+        [.Mounts[] | select(.Type!="tmpfs")] as $actual |
+        if ($actual|length)!=([$expected[]|select(.kind!="tmpfs")]|length) or
+           (.Mounts|map(.Destination)|unique|length)!=(.Mounts|length) then error("mount count") else . end |
+        [ $expected[] | . as $e |
+          if .kind=="tmpfs" then
+            ($c.HostConfig.Tmpfs // {}) as $t |
+            ($c.HostConfig.Mounts // []) as $hm |
+            [$c.Mounts[]|select(.Type=="tmpfs")] as $im |
+            if ($t|type)!="object" or ($hm|type)!="array" or
+              (($t|keys)-[$e.target]|length)!=0 or
+              any($hm[]; .Type!="tmpfs" or .Target!=$e.target or
+                (has("ReadOnly") and (.ReadOnly|type)!="boolean") or .ReadOnly==true or
+                (.TmpfsOptions!=null and .TmpfsOptions!={})) or
+              (if $t|has($e.target) then $t[$e.target]!="" else ($hm|length)!=1 end) or
+              any($im[]; .Destination!=$e.target or .RW!=true or (.RW|type)!="boolean" or
+                (.Source!=null and .Source!="")) then error("tmpfs proof") else $e end
+          else
+            [$actual[]|select(.Destination==$e.target)] as $found |
+            if ($found|length)!=1 then error("destination") else $found[0] end as $m |
+            if ($m.RW|type)=="boolean" and $m.RW==$e.rw and
+              (if $e.kind=="volume" then $m.Type=="volume" and $m.Name==$e.source and
+                $m.Source==($volumes[$e.source].Mountpoint // $volumes[$e.source].original.Mountpoint) and
+                ($m.Source|type)=="string"
+               else $m.Type=="bind" and $m.Source==$e.source end)
+            then $e else error("mount identity") end
+          end ] as $topology |
+        . + {Topology:{version:1,mounts:($topology|sort_by(.target))}})')" || c1008_refuse RecycleContainerStateUnknown
 }
 
 c1008_verify_tmp() {
@@ -3890,6 +3965,7 @@ c1008_audit() {
             || return 2
     fi
     [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || return 2
+    [ "$(docker image inspect -f '{{.Id}}' "$image" 2>/dev/null)" = "$image" ] || return 2
     program="$(c1008_git_program)"
     helper="$(docker create --user 1654:1654 --entrypoint /bin/bash \
         --mount "type=volume,source=$work,target=/work,readonly" "$image" -c "$program" 2>/dev/null)" \
@@ -3976,6 +4052,10 @@ c1008_record_recreated() {
     printf '%s' "$owned" | jq -e 'all(.[]; .Config.Labels["com.docker.compose.service"]=="session-runner" or .Config.Labels["com.docker.compose.service"]=="state-init")' >/dev/null \
         || c1008_refuse RecycleResumeMismatch
     c1008_references "$census" "$(printf '%s' "$owned" | jq '[.[].Id]')"
+    local model
+    model="$(c1008_compose_model)" || c1008_refuse RecycleComposeMismatch
+    c1008_owned_mounts "$owned" "$model" "$(printf '%s' "$volumes" | jq -c --argjson preserved "$(printf '%s' "$C1008_RECORD" | jq -c .preserved)" '. + $preserved')"
+    owned="$C1008_OWNED"
     C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --argjson volumes "$volumes" --argjson owned "$owned" '.recreated={volumes:$volumes,owned:$owned}|.phase="recreating"|.outcome="verificationPending"')"
     c1008_save || c1008_refuse RecycleReceiptUnavailable
 }
@@ -3993,7 +4073,7 @@ c1008_reconcile_owned() {
             C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg id "$id" '.removeReceipts=((.removeReceipts+[$id])|unique)')"
         elif printf '%s' "$current" | jq -e --argjson saved "$C1008_RECORD" '.[0] as $c |
             $c.State.Running==false and $c.State.Status=="exited" and
-            any($saved.owned[]; .Id==$c.Id and .Image==$c.Image and .Mounts==$c.Mounts) and
+            any($saved.owned[]; .Id==$c.Id and .Image==$c.Image and .Mounts==$c.Mounts and .Topology.version==1 and .HostConfig==$c.HostConfig) and
             any($saved.stopIntents[]?; .==$c.Id)' >/dev/null; then
             C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg id "$id" '.stopReceipts=((.stopReceipts+[$id])|unique)|.phase="stopped"')"
         fi
@@ -4029,10 +4109,15 @@ c1008_recycle() {
             '.schema==1 and .sourceSha==$sha and .operationId==$op and .project==$project and .context=="default" and .dryRun==false and .composeDigest==$digest' >/dev/null \
             || c1008_refuse RecycleResumeMismatch
         C1008_RECORD="$current"
+        printf '%s' "$current" | jq -e 'all(.owned[]?; .Topology.version==1)' >/dev/null || c1008_refuse RecycleResumeMismatch
         c1008_lock
         c1008_reconcile_owned
     elif [ -e "$C1008_JOURNAL" ]; then c1008_refuse RecycleResumeMismatch; fi
     c1008_status_proof
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && [ "${C1008_RESUME:-0}" = 0 ]; then
+        C994_STAMP="$C1008_RETIRED_AT"; C994_PROJECT_ID="$C1008_PROJECT_ID"
+        c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" || c1008_refuse RecycleGitAuditUnknown
+    elif [ -n "${C1008_CLEANUP_OPERATION:-}" ]; then c1008_refuse RecycleContextInvalid; fi
     if [ "${C1008_DRY_RUN:-0}" = 1 ]; then
         for name in "${C1008_TARGETS[@]}"; do printf 'C1008_PREVIEW remove=%s\n' "$name"; done
         printf 'C1008_PREVIEW preserve=%s_runner-state,antiphon-runner-cache-nuget-packages,antiphon-runner-cache-nuget-scratch,antiphon-runner-cache-npm-content auditPending=true\n' "$HOST_PROJECT"
@@ -4057,8 +4142,8 @@ c1008_recycle() {
             [ "$(printf '%s' "$facts" | jq -Sc .)" = "$(printf '%s' "$C1008_RECORD" | jq -Sc --arg name "$name" 'if .recreated.volumes|has($name) then .recreated.volumes[$name] else .preserved[$name] end')" ] \
                 || c1008_refuse RecycleResumeMismatch
         done
-        owned="$(printf '%s' "$C1008_CENSUS" | jq -Sc --arg project "$C1008_PROJECT" '[.[]|select(.Config.Labels["com.docker.compose.project"]==$project and .Config.Labels["com.docker.compose.service"]!="build-slots")|{Id,Image,Mounts:(.Mounts|sort_by(.Destination))}]|sort_by(.Id)')"
-        [ "$owned" = "$(printf '%s' "$C1008_RECORD" | jq -Sc '[.recreated.owned[]|{Id,Image,Mounts:(.Mounts|sort_by(.Destination))}]|sort_by(.Id)')" ] || c1008_refuse RecycleResumeMismatch
+        owned="$(printf '%s' "$C1008_CENSUS" | jq -Sc --arg project "$C1008_PROJECT" '[.[]|select(.Config.Labels["com.docker.compose.project"]==$project and .Config.Labels["com.docker.compose.service"]!="build-slots")|{Id,Image,Mounts:(.Mounts|sort_by(.Destination)),HostConfig}]|sort_by(.Id)')"
+        [ "$owned" = "$(printf '%s' "$C1008_RECORD" | jq -Sc '[.recreated.owned[]|{Id,Image,Mounts:(.Mounts|sort_by(.Destination)),HostConfig}]|sort_by(.Id)')" ] || c1008_refuse RecycleResumeMismatch
         c1008_references "$C1008_CENSUS" "$(printf '%s' "$owned" | jq '[.[].Id]')"
         C1008_ACTIVE=1
         return 0
@@ -4094,16 +4179,21 @@ c1008_recycle() {
     current="$originals"
     if [ "${C1008_RESUME:-0}" = 1 ]; then current="$(printf '%s' "$C1008_RECORD" | jq -c .volumes)"; fi
     c1008_owned_mounts "$owned" "$model" "$(printf '%s' "$current" | jq -c --argjson preserved "$preserved" '. + $preserved')"
+    owned="$C1008_OWNED"
     if [ "${C1008_RESUME:-0}" = 0 ]; then
         image="$(printf '%s' "$owned" | jq -r '[.[]|select(.Config.Labels["com.docker.compose.service"]=="session-runner")][0].Image // empty')"
+        if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && [ -n "${C994_IMAGE:-}" ]; then image="$C994_IMAGE"; fi
         C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --argjson volumes "$originals" --argjson preserved "$preserved" \
             --argjson owned "$owned" --argjson live "$C1008_STATUS" --argjson tasks "$C1008_TASKS" --arg image "$image" \
             --arg retiredAt "${C1008_RETIRED_AT:-}" '.volumes=$volumes|.preserved=$preserved|.owned=$owned|.liveZero=$live|.tasks=$tasks|.image=$image|.retiredAt=$retiredAt|.stopReceipts=[]|.removeReceipts=[]')"
+        if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && [ -n "${C1008_CLEANUP_OPERATION:-}" ]; then
+            C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg op "$C1008_CLEANUP_OPERATION" '.cleanupOperationId=$op')"
+        fi
     else
         [ "$(printf '%s' "$preserved" | jq -Sc .)" = "$(printf '%s' "$C1008_RECORD" | jq -Sc .preserved)" ] || c1008_refuse RecycleResumeMismatch
         printf '%s' "$C1008_RECORD" | jq -e --argjson owned "$owned" \
-            '. as $saved | all($owned[]; .Id as $id | .Image as $image | .Mounts as $mounts |
-                any($saved.owned[]; .Id==$id and .Image==$image and .Mounts==$mounts))' >/dev/null 2>&1 \
+            '. as $saved | all($owned[]; .Id as $id | .Image as $image | .Topology as $topology |
+                any($saved.owned[]; .Id==$id and .Image==$image and .Topology.version==1 and .Topology==$topology))' >/dev/null 2>&1 \
             || c1008_refuse RecycleResumeMismatch
     fi
     c1008_references "$C1008_CENSUS" "$(printf '%s' "$owned" | jq '[.[].Id]')"
@@ -4483,6 +4573,184 @@ EOF
     write_result true '' 0
 }
 
+# CARD-0994: container-only transition; the strict C1008 volume predicate is separate.
+c994_save() {
+    local tmp="$C994_RECEIPT.new.$" digest
+    printf '%s\n' "$C994_RECORD" > "$tmp" && chmod 0600 "$tmp" && mv -f -- "$tmp" "$C994_RECEIPT" || return 2
+    cp -- "$C994_RECEIPT" "$CASE_DIR/temp-containers.json" || return 2
+    digest="$(sha256sum "$C994_RECEIPT" | cut -d' ' -f1)" || return 2
+    [ "$digest" = "$(sha256sum "$CASE_DIR/temp-containers.json" | cut -d' ' -f1)" ] || return 2
+    printf '%s\n' "$digest" > "$CASE_DIR/temp-containers.sha256" || return 2
+}
+
+c994_summary() {
+    [ "${C994_SUMMARY:-0}" = 0 ] || return 0
+    C994_SUMMARY=1
+    printf 'C994_TEMP_CONTAINERS removed=%s alreadyAbsent=%s outcome=%s receipt=%s\n' \
+        "$(printf '%s' "$C994_RECORD" | jq '[.removals[]|select(.outcome=="removed")]|length')" \
+        "$(printf '%s' "$C994_RECORD" | jq '.finalCensus==[] and .candidates==[]|if . then 1 else 0 end')" \
+        "$(printf '%s' "$C994_RECORD" | jq -r .outcome)" "$C994_RECEIPT"
+}
+
+c994_refuse() {
+    local reason="$1"
+    if [ "${C994_ACTIVE:-0}" = 1 ]; then
+        C994_RECORD="$(printf '%s' "$C994_RECORD" | jq -c --arg reason "$reason" \
+            '.refusal=$reason|.outcome=(if any(.removals[]; .outcome=="removed") then "partial" else "refused" end)')"
+        c994_save || reason=TempContainerReceiptUnavailable
+        c994_summary
+    fi
+    write_result false "$reason" 2
+}
+
+c994_status_proof() {
+    local temp main stamp expected tasks code=0
+    temp="$(c849_status_body server2-temp)" || c994_refuse RunnerStatusMissing
+    printf '%s' "$temp" | jq -e '
+      .draining==true and .retireWhenIdle==true and .redirectTo=="server2" and
+      .available==false and .dispatchEligible==false and .acceptingNewWork==false and
+      .sessions==0 and (.sessions|type)=="number" and .queuedTasks==0 and (.queuedTasks|type)=="number" and
+      has("runnerSessions") and (.runnerSessions==null or (.runnerSessions==0 and (.runnerSessions|type)=="number")) and
+      (.retiredAt|type)=="string"' >/dev/null || c994_refuse TempRunnerNotRetired
+    stamp="$(printf '%s' "$temp" | jq -r .retiredAt)"
+    [[ "$stamp" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$ ]] || c994_refuse TempRunnerNotRetired
+    stamp="$(date -u -d "$stamp" +%Y-%m-%dT%H:%M:%S.%NZ 2>/dev/null)" || c994_refuse TempRunnerNotRetired
+    expected="$(date -u -d "$C994_RETIRED_AT" +%Y-%m-%dT%H:%M:%S.%NZ 2>/dev/null)" || c994_refuse TempContainerContextInvalid
+    [ "$stamp" = "$expected" ] || c994_refuse TempRunnerRetirementChanged
+    main="$(c849_status_body server2)" || c994_refuse RunnerStatusMissing
+    printf '%s' "$main" | jq -e '.available==true and .dispatchEligible==true and .acceptingNewWork==true and
+      .draining==false and has("retiredAt") and .retiredAt==null' >/dev/null || c994_refuse OldRunnerNotAcceptingNewWork
+    C1008_PROJECT_ID="$C994_PROJECT_ID"; C1008_RUNNER=server2-temp
+    tasks="$(c1008_tasks)" || code=$?
+    case "$code" in 0) ;; 3) c994_refuse RecycleLandInFlight ;; 4) c994_refuse RecycleBoundTasks ;; *) c994_refuse RecycleTaskCensusUnknown ;; esac
+    if [ "${C994_ACTIVE:-0}" = 1 ]; then
+        [ "$(printf '%s' "$tasks" | jq -Sc .)" = "$(printf '%s' "$C994_RECORD" | jq -Sc .tasks)" ] || c994_refuse RecycleTaskCensusUnknown
+    fi
+    C994_TASKS="$tasks"; C994_STAMP="$stamp"
+    C994_TEMP="$(printf '%s' "$temp" | jq -c '{available,dispatchEligible,acceptingNewWork,draining,retireWhenIdle,redirectTo,retiredAt,sessions,queuedTasks,runnerSessions}')"
+    C994_MAIN="$(printf '%s' "$main" | jq -c '{available,dispatchEligible,acceptingNewWork,draining,retiredAt,buildVersion}')"
+}
+
+# Only bound host-owned receipts can supply an offline audit image. A preview is
+# never a lookup authority. Multiple matching receipts must carry the same digest.
+c994_lookup_image() {
+    local operation="${1:-}" file record image='' candidate found='' root
+    root="$SERVER2_ROOT/temp-container-retirement"
+    [ ! -L "$root" ] || return 2
+    [ -d "$root" ] || { [ -z "$operation" ] && return 0; return 2; }
+    [ "$(sudo -n readlink -e -- "$root" 2>/dev/null)" = "$root" ] || return 2
+    if [ -n "$operation" ]; then
+        [[ "$operation" =~ ^c994[0-9a-f]{32}$ ]] || return 2
+        [ -f "$root/$operation.json" ] || return 2
+    fi
+    for file in "$root"/c994*.json; do
+        [ -e "$file" ] || continue
+        [ -f "$file" ] && [ ! -L "$file" ] || return 2
+        record="$(cat "$file")" || return 2
+        printf '%s' "$record" | jq -e '.schema==1 and (.operationId|test("^c994[0-9a-f]{32}$")) and
+            (.image|type)=="string" and (.sourceSha|type)=="string" and (.project|type)=="string" and
+            (.retiredAt|type)=="string" and (.dryRun|type)=="boolean"' >/dev/null || return 2
+        [ "$(printf '%s' "$record" | jq -r .operationId)" = "$(basename "$file" .json)" ] || return 2
+        if [ -n "$operation" ] && [ "$file" != "$root/$operation.json" ]; then continue; fi
+        if ! printf '%s' "$record" | jq -e --arg sha "$SHA" --arg project "$TEMP_PROJECT" --arg stamp "$C994_STAMP" --arg id "$C994_PROJECT_ID" \
+            '.sourceSha==$sha and .project==$project and .projectId==$id and .retiredAt==$stamp and .dryRun==false' >/dev/null; then
+            [ -z "$operation" ] && continue; return 2
+        fi
+        candidate="$(printf '%s' "$record" | jq -r .image)"
+        [ -n "$candidate" ] || continue
+        [[ "$candidate" =~ ^sha256:[0-9a-f]{64}$ ]] || return 2
+        [ -z "$image" ] || [ "$image" = "$candidate" ] || return 2
+        image="$candidate"; found="$(printf '%s' "$record" | jq -r '.originalCleanupOperationId // .operationId')"
+    done
+    C994_IMAGE="$image"; C994_ORIGINAL="$found"
+}
+
+case_retire_temp_containers() {
+    require_lane host
+    [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] && [[ "$RUN" =~ ^[a-z0-9]{1,64}$ ]] && \
+    [[ "${C994_OPERATION:-}" =~ ^c994[0-9a-f]{32}$ ]] && [ "${C994_VERSION:-}" = 1 ] && \
+    [ "${C994_PROJECT:-}" = "$TEMP_PROJECT" ] && \
+    [[ "${C994_PROJECT_ID:-}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] && \
+    [[ "${C994_RETIRED_AT:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$ ]] \
+        || c994_refuse TempContainerContextInvalid
+    case "${C994_DRY_RUN:-}" in 0|1) ;; *) c994_refuse TempContainerContextInvalid ;; esac
+    c1008_lock
+    c994_status_proof
+    C1008_PROJECT="$TEMP_PROJECT"
+    if [ -s "$SERVER2_TEMP_ENV" ]; then RUNNER_GROK_STORE_DIR="$(sed -n 's/^RUNNER_GROK_STORE_DIR=//p' "$SERVER2_TEMP_ENV" | head -n 1)"; fi
+    local model census owned volumes='{}' name facts id current expected image count
+    model="$(c1008_compose_model)" || c994_refuse RecycleComposeMismatch
+    census="$(c1008_container_census)" || c994_refuse TempContainerCensusUnavailable
+    owned="$(printf '%s' "$census" | jq -c --arg project "$TEMP_PROJECT" '[.[]|select(.Config.Labels["com.docker.compose.project"]==$project)]')"
+    printf '%s' "$owned" | jq -e 'all(.[]; .Config.Labels["com.docker.compose.service"]=="session-runner" or
+      .Config.Labels["com.docker.compose.service"]=="state-init") and
+      ([.[]|select(.Config.Labels["com.docker.compose.service"]=="session-runner")]|length)<=1' >/dev/null || c994_refuse TempContainerOwnershipUnknown
+    if printf '%s' "$owned" | jq -e 'any(.[]; .State.Running==true and .State.Status=="running")' >/dev/null; then c994_refuse TempContainerStillRunning; fi
+    printf '%s' "$owned" | jq -e 'all(.[]; .State.Running==false and .State.Status=="exited")' >/dev/null || c994_refuse TempContainerStateUnknown
+    for name in work runner-state runner-tmp dind-data; do
+        facts="$(c1008_volume "${TEMP_PROJECT}_$name")" || c994_refuse RecycleVolumeIdentityMismatch
+        c1008_private_identity "$facts" "${TEMP_PROJECT}_$name" "$TEMP_PROJECT" "$name" || c994_refuse RecycleVolumeIdentityMismatch
+        volumes="$(printf '%s' "$volumes" | jq -c --arg name "${TEMP_PROJECT}_$name" --argjson facts "$facts" '.[$name]=$facts')"
+    done
+    volumes="$(printf '%s' "$volumes" | jq -c --argjson caches "$(c1008_cache_preservation)" '. + $caches')" || c994_refuse RecycleVolumeIdentityMismatch
+    c1008_owned_mounts "$owned" "$model" "$volumes"; owned="$C1008_OWNED"
+    c994_lookup_image || c994_refuse TempContainerReceiptUnavailable
+    image="$(printf '%s' "$owned" | jq -r '[.[]|select(.Config.Labels["com.docker.compose.service"]=="session-runner")][0].Image // empty')"
+    if [ -n "$image" ]; then
+        [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || c994_refuse TempContainerStateUnknown
+        [ -z "${C994_IMAGE:-}" ] || [ "$C994_IMAGE" = "$image" ] || c994_refuse TempContainerReceiptUnavailable
+    else image="${C994_IMAGE:-}"; fi
+    C994_RECEIPT="$SERVER2_ROOT/temp-container-retirement/$C994_OPERATION.json"
+    [ ! -e "$C994_RECEIPT" ] || c994_refuse TempContainerContextInvalid
+    C994_RECORD="$(jq -cn --arg sha "$SHA" --arg run "$RUN" --arg op "$C994_OPERATION" --arg project "$TEMP_PROJECT" \
+      --arg id "$C994_PROJECT_ID" --arg stamp "$C994_STAMP" --arg image "$image" --arg original "${C994_ORIGINAL:-}" \
+      --argjson dry "$([ "$C994_DRY_RUN" = 1 ] && echo true || echo false)" --argjson owned "$owned" \
+      --argjson temp "$C994_TEMP" --argjson main "$C994_MAIN" --argjson tasks "$C994_TASKS" \
+      '{schema:1,sourceSha:$sha,runId:$run,operationId:$op,project:$project,projectId:$id,retiredAt:$stamp,dryRun:$dry,
+        temp:$temp,main:$main,tasks:$tasks,candidates:$owned,image:$image,removals:[],finalCensus:null,refusal:null,outcome:"pending"}
+        + if $original!="" then {originalCleanupOperationId:$original} else {} end')"
+    [ ! -L "$SERVER2_ROOT/temp-container-retirement" ] || c994_refuse TempContainerReceiptUnavailable
+    mkdir -p "$SERVER2_ROOT/temp-container-retirement" || c994_refuse TempContainerReceiptUnavailable
+    [ "$(sudo -n readlink -e -- "$SERVER2_ROOT/temp-container-retirement" 2>/dev/null)" = "$SERVER2_ROOT/temp-container-retirement" ] || c994_refuse TempContainerReceiptUnavailable
+    c994_save || c994_refuse TempContainerReceiptUnavailable
+    C994_ACTIVE=1
+    if [ "$C994_DRY_RUN" = 1 ]; then
+        printf '%s' "$owned" | jq -r '.[].Id|"C994_PREVIEW container="+.'
+        for name in work runner-tmp dind-data runner-state; do printf 'C994_PREVIEW volume=%s_%s\n' "$TEMP_PROJECT" "$name"; done
+        C994_RECORD="$(printf '%s' "$C994_RECORD" | jq -c '.outcome="preview"')"
+        c994_save || c994_refuse TempContainerReceiptUnavailable
+        c994_summary; write_result true '' 0
+    fi
+    while IFS= read -r id; do
+        [ -n "$id" ] || continue
+        c994_status_proof
+        current="$(c1008_container_census)" || c994_refuse TempContainerCensusUnavailable
+        current="$(printf '%s' "$current" | jq -c --arg id "$id" '[.[]|select(.Id==$id)]')"
+        c1008_owned_mounts "$current" "$model" "$volumes"; current="$C1008_OWNED"
+        expected="$(printf '%s' "$owned" | jq -Sc --arg id "$id" '[.[]|select(.Id==$id)]')"
+        [ "$(printf '%s' "$current" | jq -Sc .)" = "$expected" ] || c994_refuse TempContainerChanged
+        # Re-read every retained generation immediately before effect.
+        for name in work runner-state runner-tmp dind-data; do
+            facts="$(c1008_volume "${TEMP_PROJECT}_$name")" || c994_refuse RecycleVolumeIdentityMismatch
+            [ "$(printf '%s' "$facts" | jq -Sc .)" = "$(printf '%s' "$volumes" | jq -Sc --arg name "${TEMP_PROJECT}_$name" '.[$name]')" ] || c994_refuse RecycleVolumeIdentityMismatch
+        done
+        C994_RECORD="$(printf '%s' "$C994_RECORD" | jq -c --arg id "$id" '.removals += [{id:$id,outcome:"intent"}]')"
+        c994_save || c994_refuse TempContainerReceiptUnavailable
+        docker rm -- "$id" >/dev/null 2>&1 || c994_refuse TempContainerRemoveFailed
+        current="$(c1008_container_census)" || c994_refuse TempContainerCensusUnavailable
+        printf '%s' "$current" | jq -e --arg id "$id" 'all(.[]; .Id!=$id)' >/dev/null || c994_refuse TempContainerRemoveFailed
+        C994_RECORD="$(printf '%s' "$C994_RECORD" | jq -c --arg id "$id" '(.removals[]|select(.id==$id)).outcome="removed"')"
+        c994_save || c994_refuse TempContainerReceiptUnavailable
+    done < <(printf '%s' "$owned" | jq -r '.[].Id')
+    c994_status_proof
+    current="$(c1008_container_census)" || c994_refuse TempContainerCensusUnavailable
+    current="$(printf '%s' "$current" | jq -c --arg project "$TEMP_PROJECT" '[.[]|select(.Config.Labels["com.docker.compose.project"]==$project)]')"
+    [ "$current" = '[]' ] || c994_refuse TempContainersRemain
+    C994_RECORD="$(printf '%s' "$C994_RECORD" | jq -c '.finalCensus=[]|.outcome="completed"')"
+    c994_save || c994_refuse TempContainerReceiptUnavailable
+    c994_summary; write_result true '' 0
+}
+
 case_retire_temp_runner() {
     require_lane host
     if [ ! -s "$SERVER2_TEMP_ENV" ]; then write_result false TempStackMissing 2; fi
@@ -4706,6 +4974,7 @@ if [ "${C1008_CONTEXT:-}" = default ] && [ "${C1008_DRY_RUN:-0}" = 1 ]; then
     case "$CASE" in deploy-parent) c1008_recycle "$HOST_PROJECT" ;; retire-temp-runner) c1008_recycle "$TEMP_PROJECT" ;; *) write_result false RecycleContextInvalid 2 ;; esac
 fi
 case "$CASE" in
+    retire-temp-containers) c849_evidence_dir ;;
     deploy-parent|retire-temp-runner)
         if [ "${C1008_CONTEXT:-}" = default ]; then c849_evidence_dir; else ensure_dirs; fi
         ;;
@@ -4726,7 +4995,7 @@ case "$CASE" in
 esac
 printf '%s\n' "$LANE" > "$CASE_DIR/lane.txt"
 if [ "${C590_REEXEC:-}" != "1" ] && [[ "$CASE" != runner-cache-* ]] \
-    && [[ "$CASE" != verify-runner-caches* ]] && [ "${C1008_CONTEXT:-}" != default ]; then
+    && [[ "$CASE" != verify-runner-caches* ]] && [ "${C1008_CONTEXT:-}" != default ] && [ "$CASE" != retire-temp-containers ]; then
     ensure_checkout
     export C590_REEXEC=1
     exec bash "$CHECKOUT/scripts/c590-remote.sh"
@@ -4755,6 +5024,7 @@ case "$CASE" in
     server2-independent-handoff) case_handoff ;;
     deploy-parent) case_deploy_parent ;;
     deploy-temp-runner) case_deploy_temp_runner ;;
+    retire-temp-containers) case_retire_temp_containers ;;
     retire-temp-runner) case_retire_temp_runner ;;
     runner-cache-seed) c849_seed ;;
     runner-cache-reset) c849_reset ;;
