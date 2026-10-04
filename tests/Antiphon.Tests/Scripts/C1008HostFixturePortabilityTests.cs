@@ -302,15 +302,17 @@ public sealed class C1008HostFixturePortabilityTests
         _ = fixture.ShellRoot;
         var identity = Path.Combine(fixture.Root, "descendant.identity");
         var pwsh = OperatingSystem.IsWindows() ? "pwsh.exe" : "/usr/local/bin/pwsh";
+        var descendantProgram = "[System.IO.File]::WriteAllText(" + C1008HostFixture.PsQuote(identity) +
+            ",[string]$PID); Start-Sleep 60";
         fixture.Options.SelectExecutor = start =>
         {
             start.FileName = pwsh;
             start.ArgumentList.Clear();
             foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-Command",
                 "$s=[System.Diagnostics.ProcessStartInfo]::new(" + C1008HostFixture.PsQuote(pwsh) + ");" +
-                "$s.UseShellExecute=$false; $s.ArgumentList.Add('-NoProfile'); $s.ArgumentList.Add('-Command'); $s.ArgumentList.Add('Start-Sleep 60');" +
-                "$p=[System.Diagnostics.Process]::Start($s); [System.IO.File]::WriteAllText(" + C1008HostFixture.PsQuote(identity) +
-                ",([string]$p.Id+'|'+$p.StartTime.ToUniversalTime().Ticks)); $p.WaitForExit()" }) start.ArgumentList.Add(arg);
+                "$s.UseShellExecute=$false; $s.ArgumentList.Add('-NoProfile'); $s.ArgumentList.Add('-Command'); $s.ArgumentList.Add(" +
+                C1008HostFixture.PsQuote(descendantProgram) + ");" +
+                "$p=[System.Diagnostics.Process]::Start($s); $p.WaitForExit()" }) start.ArgumentList.Add(arg);
         };
         await using var child = await fixture.StartChild("probe", "");
         var descendantId = 0;
@@ -320,8 +322,11 @@ public sealed class C1008HostFixturePortabilityTests
         try
         {
             await WaitForFile(identity, Task.Delay(TimeSpan.FromSeconds(10)));
-            var fields = File.ReadAllText(identity).Split('|');
-            descendantId = int.Parse(fields[0]); descendantStart = new DateTime(long.Parse(fields[1]), DateTimeKind.Utc);
+            descendantId = int.Parse(File.ReadAllText(identity));
+            // The descendant publishes readiness itself. Snapshot both OS identities in
+            // this runtime, without comparing independently derived runtime boot epochs.
+            using (var descendant = Process.GetProcessById(descendantId))
+                descendantStart = descendant.StartTime.ToUniversalTime();
             Alive(descendantId, descendantStart).ShouldBeTrue("c1030-owned-tree-exited: live owned descendant precondition");
             stopped = child.Stop();
             try { await stopped.WaitAsync(TimeSpan.FromSeconds(10)); } catch (TimeoutException) { }
