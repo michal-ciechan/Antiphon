@@ -26,6 +26,7 @@ namespace Antiphon.Tests.TestHelpers;
 
 internal sealed class PhoneHomeTestHost : IAsyncDisposable
 {
+    private PhoneHomeReceiveControl? _receiveControl;
     public WebApplication App { get; private set; } = null!;
     public HttpClient Http { get; private set; } = null!;
     public PhoneHomeRunnerDirectory Directory { get; private set; } = null!;
@@ -59,9 +60,10 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         IRunnerEligibilityObserver? observer = null,
         Action<IServiceCollection>? configureServices = null,
         Action<WebApplication>? mapEndpoints = null,
-        Action<PhoneHomeRunnerSettings>? configureRunnerSettings = null)
+        Action<PhoneHomeRunnerSettings>? configureRunnerSettings = null,
+        PhoneHomeReceiveControl? receiveControl = null)
     {
-        var host = new PhoneHomeTestHost();
+        var host = new PhoneHomeTestHost { _receiveControl = receiveControl };
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
         builder.Logging.ClearProviders();
         builder.Logging.AddProvider(host.Logs);
@@ -123,12 +125,29 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         host.App = builder.Build();
         host.Directory = host.App.Services.GetRequiredService<PhoneHomeRunnerDirectory>();
         host.App.UseWebSockets();
+        bool IsControlledConnect(Microsoft.AspNetCore.Http.HttpContext context) =>
+            receiveControl is not null && context.WebSockets.IsWebSocketRequest
+            && context.Request.Path == $"/api/session-runners/{host.AllowedRunnerId}/connect";
+        if (receiveControl is not null)
+        {
+            // Observe outside the exception handler: it may log and swallow an endpoint fault.
+            host.App.Use(async (context, next) =>
+            {
+                if (IsControlledConnect(context))
+                    await receiveControl.ObservePipelineAsync(context, next);
+                else
+                    await next(context);
+            });
+        }
         host.App.UseMiddleware<ExceptionMiddleware>();
         host.App.Use(async (context, next) =>
         {
             if (host.ClientAddress is { } address)
                 context.Connection.RemoteIpAddress = address;
-            await next(context);
+            if (IsControlledConnect(context))
+                await receiveControl!.InvokeEndpointAsync(context, next, host.App.Lifetime.ApplicationStopping);
+            else
+                await next(context);
         });
         host.App.MapSessionRunnerEndpoints();
         host.App.MapOperatorEndpoints();
@@ -220,7 +239,14 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
     {
         Http?.Dispose();
         if (App is not null)
-            await App.DisposeAsync();
+        {
+            try
+            {
+                if (_receiveControl is not null)
+                    await _receiveControl.CancelAndWaitAsync();
+            }
+            finally { await App.DisposeAsync(); }
+        }
         try
         {
             System.IO.Directory.Delete(Path.GetDirectoryName(OperatorTokenPath)!, recursive: true);
