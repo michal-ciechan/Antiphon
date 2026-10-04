@@ -119,7 +119,9 @@ actual=$(sudo -n -- sha256sum -- "$stage_root/jq" 2>/dev/null) || refuse HostJqD
 [ "$(sudo -n -- stat -c '%u:%g:%a' -- "$stage_root/jq" 2>/dev/null)" = 0:0:755 ] || refuse HostJqStageUnsafe
 # Hard-link publication is atomic, same-filesystem and refuses any existing leaf.
 sudo -n -- ln -T -- "$stage_root/jq" "$DESTINATION" 2>/dev/null || refuse HostJqPublishUnavailable
-qualify || refuse HostJqInvalid
+qualify; result=$?
+[ "$result" != 3 ] || refuse HostJqFinalPathInvalid
+[ "$result" = 0 ] || refuse HostJqInvalid
 [ "$resolved" = "$DESTINATION" ] || refuse HostJqFinalPathInvalid
 [ "$digest" = "$DIGEST" ] || refuse HostJqFinalDigestInvalid
 [ "$version" = "$VERSION" ] || refuse HostJqFinalVersionInvalid
