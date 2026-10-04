@@ -833,9 +833,7 @@ public sealed class RemoteScriptContractTests
     public void C946_Green_harness_removes_root_and_failed_keep_run_retains_evidence()
     {
         RequireLinuxPwsh();
-        var repo = DelegateScriptRunner.RepoRoot.Replace("\\", "/", StringComparison.Ordinal);
-        if (OperatingSystem.IsWindows()) repo = LinuxShell("wslpath -u '" + repo + "'").Trim();
-        var output = LinuxShell("repo='" + repo + "'\n" + """
+        var output = LinuxShell("""
             set -u
             root="$(mktemp -d /tmp/c946-cleanup-XXXXXXXX)"
             printf 'C946_ROOT=%s\n' "$root"
@@ -853,11 +851,161 @@ public sealed class RemoteScriptContractTests
                 # Only the root created and printed by this invocation is removed.
                 rm -rf -- "$kept"
             fi
-            """);
+            """, "repo");
         output.ShouldContain("GREEN_EXIT=0");
         output.ShouldContain("GREEN_ROOT_REMOVED");
         output.ShouldContain("FAILED_KEEP_EXIT=1");
         output.ShouldContain("FAILED_KEEP_ROOT_RETAINED");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C980_Repo_root_assignment_preserves_linux_bytes()
+    {
+        foreach (var variable in new[] { "root", "repo" })
+        foreach (var edge in new[] { false, true })
+        {
+            var nativeRoot = edge ? "/fixture/it's $cash `tick`" : "/fixture/plain";
+            // Independent legacy literals: do not use the preparation helper's quoting logic.
+            var literal = edge ? "'/fixture/it'\\''s $cash `tick`'\n" : "'/fixture/plain'\n";
+            foreach (var body in new[] { "echo one\necho two\n", "echo one\r\necho two\r\n", "echo no-final-newline" })
+            {
+                var expected = variable + "=" + literal + body;
+                Encoding.UTF8.GetBytes(PrepareLinuxShellScript(body, variable, nativeRoot, false))
+                    .ShouldBe(Encoding.UTF8.GetBytes(expected), "c980-linux-bytes");
+                Encoding.UTF8.GetBytes(PrepareLinuxShellScript(body, null, nativeRoot, false))
+                    .ShouldBe(Encoding.UTF8.GetBytes(body), "c980-linux-bytes: omitted variable");
+            }
+
+            var program = PrepareLinuxShellScript(
+                "printf 'VALUE=%s\\n' \"$(printf '%s' \"$" + variable + "\" | base64 -w0)\"\n",
+                variable, nativeRoot, false);
+            var output = LinuxShell("wslpath() { echo C980_UNEXPECTED_CONVERTER; return 23; }\n" + program);
+            output.Trim().ShouldBe("VALUE=" + Convert.ToBase64String(Encoding.UTF8.GetBytes(nativeRoot)),
+                "c980-linux-value");
+            output.ShouldNotContain("C980_UNEXPECTED_CONVERTER", customMessage: "c980-linux-value: no Linux conversion");
+        }
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C980_Repo_root_assignment_converts_windows_paths()
+    {
+        foreach (var variable in new[] { "root", "repo" })
+        foreach (var nativeRoot in new[] { @"Q:\fixture\plain", "Q:/fixture/plain",
+                     @"Q:\fixture\it's $cash `tick`", "Q:/fixture/it's $cash `tick`" })
+        foreach (var translated in new[] { "/fixture/converted", "/fixture/it's $cash `tick`" })
+        {
+            var translatedBytes = Convert.ToBase64String(Encoding.UTF8.GetBytes(translated));
+            var setup = $$"""
+                c980_log="$(mktemp)"
+                trap 'rm -f -- "$c980_log"' EXIT
+                : > "$c980_log"
+                wslpath() {
+                    printf 'CALL=%s\n' "$#" >> "$c980_log"
+                    for c980_arg in "$@"; do
+                        printf 'ARG=%s\n' "$(printf '%s' "$c980_arg" | base64 -w0)" >> "$c980_log"
+                    done
+                    printf '%s' '{{translatedBytes}}' | base64 -d
+                }
+                """ + "\n";
+            var program = PrepareLinuxShellScript(
+                "printf 'VALUE=%s\\n' \"$(printf '%s' \"$" + variable + "\" | base64 -w0)\"\n",
+                variable, nativeRoot, true);
+            var output = LinuxShell(setup + program + "cat \"$c980_log\"\n");
+            var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            var calls = lines.Where(line => line.StartsWith("CALL=", StringComparison.Ordinal)).ToArray();
+            calls.Length.ShouldBe(1, "c980-converter-called");
+            calls[0].ShouldBe("CALL=2", "c980-converter-argc");
+            var args = lines.Where(line => line.StartsWith("ARG=", StringComparison.Ordinal)).ToArray();
+            args.Length.ShouldBe(2, "c980-converter-argc");
+            args[0].ShouldBe("ARG=" + Convert.ToBase64String(Encoding.UTF8.GetBytes("-u")), "c980-converter-mode");
+            args[1].ShouldBe("ARG=" + Convert.ToBase64String(Encoding.UTF8.GetBytes(nativeRoot)), "c980-converter-arg");
+            lines.Single(line => line.StartsWith("VALUE=", StringComparison.Ordinal))
+                .ShouldBe("VALUE=" + translatedBytes, "c980-translated-value");
+        }
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C980_Linux_shell_rejects_unconverted_repo_root()
+    {
+        const string nativeRoot = @"Q:\Fixture\It's a Repo";
+        // Four distinct spellings keep the literal and escaped guards independently observable.
+        foreach (var spelling in new[] { @"Q:\Fixture\It's a Repo", "Q:/Fixture/It's a Repo",
+                     @"Q:\Fixture\It'\''s a Repo", "Q:/Fixture/It'\\''s a Repo" })
+        foreach (var rawRoot in new[] { spelling, spelling.ToUpperInvariant() })
+        foreach (var variable in new string?[] { null, "root", "repo" })
+        foreach (var body in new[] { "# " + rawRoot + "\necho C980_BODY_RAN\n", "raw='" + rawRoot + "'\n" })
+        {
+            var exception = Should.Throw<InvalidOperationException>(
+                () => PrepareLinuxShellScript(body, variable, nativeRoot, true), "c980-raw-root-rejected");
+            exception.Message.ShouldContain("RepoRoot", customMessage: "c980-raw-root-rejected");
+            exception.Message.ShouldContain("repository-variable", customMessage: "c980-raw-root-rejected");
+
+            string? linux = null;
+            Should.NotThrow(() => { linux = PrepareLinuxShellScript(body, variable, nativeRoot, false); },
+                "c980-linux-raw-accepted");
+            var expected = variable is null ? body : variable + "='Q:\\Fixture\\It'\\''s a Repo'\n" + body;
+            Encoding.UTF8.GetBytes(linux!).ShouldBe(Encoding.UTF8.GetBytes(expected), "c980-linux-raw-accepted");
+        }
+
+        foreach (var windows in new[] { false, true })
+        foreach (var variable in new[] { "", "ROOT", "path", "root;false", "root\nrepo", "$(false)" })
+            Should.Throw<ArgumentException>(() => PrepareLinuxShellScript("echo safe\n", variable, nativeRoot, windows),
+                "c980-variable-refused");
+
+        foreach (var variable in new string?[] { null, "root", "repo" })
+        foreach (var body in new[] { "printf '%s' \"$root\"\n", "# Z:\\unrelated\\sample\necho safe\n" })
+        {
+            var accepted = Should.NotThrow(() => PrepareLinuxShellScript(body, variable, nativeRoot, true));
+            accepted.ShouldEndWith(body);
+            if (variable is null) accepted.ShouldBe(body);
+        }
+
+        if (OperatingSystem.IsWindows())
+        {
+            foreach (var variable in new string?[] { null, "root", "repo" })
+                Should.Throw<InvalidOperationException>(
+                    () => LinuxShell("# " + DelegateScriptRunner.RepoRoot + "\necho C980_BODY_RAN\n", variable),
+                    "c980-entry-raw-rejected");
+        }
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C980_Repo_root_conversion_failure_stops_before_body()
+    {
+        foreach (var variable in new[] { "root", "repo" })
+        // A nonzero converter that still prints an absolute path must be refused first.
+        foreach (var status in new[] { 23, 0 })
+        foreach (var converted in new[] { "/fixture/converted", "", "relative/path" })
+            CheckConversion(variable, status, converted, missing: false);
+        foreach (var variable in new[] { "root", "repo" })
+            CheckConversion(variable, 127, "", missing: true);
+
+        static void CheckConversion(string variable, int status, string converted, bool missing)
+        {
+            var setup = missing
+                ? "unset -f wslpath; PATH=/c980-no-commands\n"
+                : $"wslpath() {{ printf '%s' '{converted}'; return {status}; }}\n";
+            var program = PrepareLinuxShellScript("echo C980_BODY_RAN\n", variable, @"Q:\fixture\repo", true);
+            var output = LinuxShell("(\n" + setup + program + ") 2>&1\nprintf 'C980_EXIT=%s\\n' \"$?\"\n");
+            if (status == 0 && converted.StartsWith('/'))
+            {
+                output.ShouldContain("C980_BODY_RAN", customMessage: "c980-success-ran");
+                output.ShouldContain("C980_EXIT=0", customMessage: "c980-success-ran");
+                output.ShouldNotContain("C980_REPO_ROOT_CONVERSION_FAILED", customMessage: "c980-success-ran");
+            }
+            else
+            {
+                var label = status != 0 ? "c980-status-refused" : converted.Length == 0
+                    ? "c980-empty-refused" : "c980-relative-refused";
+                output.ShouldNotContain("C980_BODY_RAN", customMessage: label);
+                output.ShouldContain("C980_REPO_ROOT_CONVERSION_FAILED", customMessage: label);
+                output.ShouldNotContain("C980_EXIT=0", customMessage: label);
+            }
+        }
     }
 
     private const string NoLinuxPwshReason = "CARD-0905: pwsh is not on the Linux shell PATH (WSL has no pwsh); install pwsh in WSL to run C849 script-block tests.";
@@ -2058,8 +2206,8 @@ public sealed class RemoteScriptContractTests
         bridge.ShouldContain("CachePreviewInvalid");
         front.ShouldContain("C849_DEPLOY_SHA");
         front.ShouldContain("CachePreviewInvalid");
-        var result = LinuxShell("root='" + DelegateScriptRunner.RepoRoot.Replace("'", "'\\''") + "'\n" +
-            "pwsh -NoProfile -File \"$root/scripts/verify-card0849-caches.ps1\" -Case Inventory -Sha bad 2>&1 || true\n");
+        var result = LinuxShell(
+            "pwsh -NoProfile -File \"$root/scripts/verify-card0849-caches.ps1\" -Case Inventory -Sha bad 2>&1 || true\n", "root");
         result.ShouldContain("C849_DEPLOY_SHA must be the reviewed full lowercase SHA");
     }
 
@@ -2282,7 +2430,7 @@ public sealed class RemoteScriptContractTests
             """);
         ready.ShouldContain("seed-result=true:");
         ready.ShouldNotContain("unsafe-docker");
-        var wrapper = LinuxShell("repo='" + DelegateScriptRunner.RepoRoot.Replace("'", "'\\''") + "'\n" + """
+        var wrapper = LinuxShell("""
             root="$(mktemp -d)"
             trap 'rm -rf "$root"' EXIT
             export ANTIPHON_OPERATOR_TOKEN_FILE="$root/operator-token"
@@ -2299,7 +2447,7 @@ public sealed class RemoteScriptContractTests
                 code=$?
                 printf 'retired-container=%s exit=%s cases=%s\n' "$container" "$code" "$(sed -n 's/.*"kind":"case","name":"\([^"]*\)".*/\1/p' "$C727_TEST_TRACE" | paste -sd, -)"
             done
-            """);
+            """, "repo");
         wrapper.ShouldContain("retired-container=false exit=0 cases=runner-cache-seed,deploy-temp-runner,verify-runner-caches");
         wrapper.ShouldContain("retired-container=true exit=2 cases=\n");
         wrapper.ShouldNotContain("retired-container=true exit=2 cases=runner-cache-seed");
@@ -2427,7 +2575,7 @@ public sealed class RemoteScriptContractTests
     {
         RequireLinuxPwsh();
         var remote = Remote();
-        var output = LinuxShell("repo='" + DelegateScriptRunner.RepoRoot.Replace("'", "'\\''") + "'\n" +
+        var output = LinuxShell(
             CacheSeedTreeHarness() + "\n" + Block(remote, "c849_saved_copy") + "\n" +
             Block(remote, "c849_no_cache_attachments") + "\n" +
             Block(remote, "c849_seed_failure") + "\n" + Block(remote, "c849_seed") + "\n" +
@@ -2534,7 +2682,7 @@ public sealed class RemoteScriptContractTests
                 ( case_deploy_$([ "$target" = parent ] && echo parent || echo temp_runner) ) > "$root/deploy" 2>&1
                 printf 'deploy-%s=%s\n' "$target" "$(cat "$root/deploy")"
             done
-            """);
+            """, "repo");
         foreach (var expected in new[] { "success=0 seed-result=true:", "marker-written", "saved-identity",
             "payload-imported", "recovery-retained", "recovery-host-owned", "unsafe-mode-masked",
             "incomplete-pruned", "live-cache-owned-by-1654", "idle-count=3 smoke-count=1",
@@ -2549,7 +2697,7 @@ public sealed class RemoteScriptContractTests
     {
         RequireLinuxPwsh();
         var remote = Remote();
-        var output = LinuxShell("repo='" + DelegateScriptRunner.RepoRoot.Replace("'", "'\\''") + "'\n" +
+        var output = LinuxShell(
             CacheSeedTreeHarness() + "\n" + Block(remote, "c849_saved_copy") + "\n" +
             Block(remote, "c849_prune_idle") + "\n" +
             Block(remote, "c849_no_cache_attachments") + "\n" + """
@@ -2626,7 +2774,7 @@ public sealed class RemoteScriptContractTests
             IN_USE=no; PS_ERROR=yes
             ( c849_no_cache_attachments ) > "$root/verdict" 2>&1
             printf 'attachment-unknown code=%s verdict=%s\n' "$?" "$(cat "$root/verdict")"
-            """);
+            """, "repo");
         output.ShouldContain("traversal code=2 diagnosis=CacheDonorUnsafePath");
         output.ShouldContain("nested-traversal code=2 diagnosis=CacheDonorUnsafePath");
         output.ShouldContain("nested-traversal-no-escape");
@@ -2647,7 +2795,7 @@ public sealed class RemoteScriptContractTests
     public void C849_Saved_donor_rejects_declared_size_bomb_before_writing()
     {
         RequireLinuxPwsh();
-        var output = LinuxShell("repo='" + DelegateScriptRunner.RepoRoot.Replace("'", "'\\''") + "'\n" + """
+        var output = LinuxShell("""
             root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
             mkdir -p "$root/stage/packages" "$root/stage/npm"
             perl -e '
@@ -2669,7 +2817,7 @@ public sealed class RemoteScriptContractTests
             diagnosis="$(pwsh -NoProfile -File "$repo/scripts/c849-import-saved-donor.ps1" -Source "$root/bomb.tar" -Stage "$root/stage")"; code=$?
             printf 'size-bomb code=%s diagnosis=%s\n' "$code" "$diagnosis"
             test ! -e "$root/stage/packages/bomb" && echo size-bomb-not-written
-            """);
+            """, "repo");
         output.ShouldContain("size-bomb code=2 diagnosis=CacheBudgetExceeded");
         output.ShouldContain("size-bomb-not-written");
     }
@@ -3930,13 +4078,48 @@ public sealed class RemoteScriptContractTests
             + "\n";
     }
 
+    private static string PrepareLinuxShellScript(string body, string? repositoryVariable, string nativeRoot, bool isWindows)
+    {
+        if (repositoryVariable is not null and not "root" and not "repo")
+            throw new ArgumentException("The repository-variable argument must be root or repo.", nameof(repositoryVariable));
+
+        // Check the caller's body before inserting the trusted native-root assignment. Keep this
+        // specific to the current checkout so unrelated Windows-path fixtures remain valid.
+        if (isWindows)
+        {
+            var forwardRoot = nativeRoot.Replace('\\', '/');
+            var spellings = new[] { nativeRoot, forwardRoot,
+                nativeRoot.Replace("'", "'\\''"), forwardRoot.Replace("'", "'\\''") };
+            if (spellings.Any(root => body.Contains(root, StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException("RepoRoot in a Linux shell body needs the repository-variable argument.");
+        }
+
+        if (repositoryVariable is null) return body;
+        var prelude = repositoryVariable + "='" + nativeRoot.Replace("'", "'\\''") + "'\n";
+        if (isWindows)
+        {
+            prelude += $$"""
+                if ! {{repositoryVariable}}="$(wslpath -u "${{repositoryVariable}}")"; then
+                    printf '%s\n' 'C980_REPO_ROOT_CONVERSION_FAILED' >&2
+                    exit 1
+                fi
+                case "${{repositoryVariable}}" in
+                    /*) ;;
+                    *) printf '%s\n' 'C980_REPO_ROOT_CONVERSION_FAILED' >&2; exit 1 ;;
+                esac
+                """ + "\n";
+        }
+        return prelude + body;
+    }
+
     // The remote script only ever runs under Linux bash, and these defects are behaviour (a
     // symlink's target mode, a restart's ordering), not text. On Windows the Linux shell is WSL:
     // Git Bash can neither create a symlink without privilege nor keep a 0600 mode.
-    internal static string LinuxShell(string script)
+    internal static string LinuxShell(string script, string? repositoryVariable = null)
     {
         if (ForceNoLinuxPwsh.Value)
             throw new InvalidOperationException("A Linux script block ran before the CARD-0905 pwsh skip.");
+        script = PrepareLinuxShellScript(script, repositoryVariable, DelegateScriptRunner.RepoRoot, OperatingSystem.IsWindows());
         ProcessStartInfo start;
         if (OperatingSystem.IsWindows())
         {
