@@ -107,7 +107,10 @@
   reads while retaining ingestion serialization and restart-boundary publication. Settings are
   read at process startup. Roll back with this switch or the previous build and restart the
   canonical checkout, verifying `/api/version`; no migration or pool-setting change is needed.
-  Npgsql resets remain enabled.
+  This work does not change Npgsql pool settings. Observe the effective sanitized flags and
+  resolved driver/provider versions; do not infer the deployed reset setting from this document.
+  Matched `noResetOnClose=true` and matched `false` are both valid attribution inputs. This
+  comparison does not newly qualify either pool setting.
   Remaining metadata readers, binding/UUID caches, revision waiters and UI invalidation belong to
   Rounds 2/3. `GET /api/diagnostics/session-state` exposes metadata-only process/cache counters,
   live/unknown counts and sanitized provider/pool flags. `Antiphon.SessionState` meters and SQL tags
@@ -119,7 +122,19 @@
   desktop with an immutable evidence root and sanitized `ContextPath`; the plan owns matched
   windows and final acceptance. Context includes `openClients`, `workloadKey`, `siblingShas`; a
   pre-feature baseline also needs `runtime` identity/live/unknown/version/pool observations.
-  Compare works offline. No reset, settings mutation, restart or synthetic prompt is performed.
+  Compare works offline. CARD-0701 S0 writes schema-2 evidence with runtime/statistics/context
+  observations every 30 seconds; gaps over 60 seconds, fewer than ten live sessions at any sample,
+  changed population, settings, versions, sibling SHAs or workload observations make attribution
+  inconclusive. Context is reread at every sample: keep its `openClients`, `workloadKey` and
+  `siblingShas` observations current. Idle/activity labels come from completed transcript inserts,
+  not window order; a matched pair needs an observed idle and activity window. Natural activity
+  may require another capture. Schema-1 evidence remains readable; endpoints alone cannot certify
+  sampled population and missing provenance is reported as inconclusive. Tagged binding SQL is
+  recognized before generic classification; unmatched transcript SELECTs are counted explicitly
+  and prevent complete attribution. Query/workload and CPU gates remain separate, and the collector
+  never sets `accepted=true`. Desktop AC-1 is still owed before the first R2 activation; AC-2/AC-3,
+  ordinary Review and landed-source Mutation remain separate. No reset, settings mutation, restart
+  or synthetic prompt is performed.
 
 - **Bound channel inbound survives a failed wake (CARD-0593).** The complete normalized envelope,
   native provider/conversation/message identity and recipient binding commit before Kafka offset
