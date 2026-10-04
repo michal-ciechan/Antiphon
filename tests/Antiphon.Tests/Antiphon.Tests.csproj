@@ -56,6 +56,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\server\Antiphon.Server.csproj" Aliases="global,server" />
+    <ProjectReference Include="..\..\scripts\fixtures\nightly\owned-child\OwnedChild.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\src\Antiphon.Resilience\Antiphon.Resilience.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.HostCleanup\Antiphon.HostCleanup.csproj" />
     <ProjectReference Include="..\Antiphon.DockerStack.Fixture\Antiphon.DockerStack.Fixture.csproj" />
@@ -78,6 +79,16 @@
     <ProjectReference Include="..\..\src\Antiphon.FakeGrok\Antiphon.FakeGrok.csproj"
                       ReferenceOutputAssembly="false" />
   </ItemGroup>
+
+  <Target Name="CopyNightlyOwnedChild" AfterTargets="Build">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\scripts\fixtures\nightly\owned-child\OwnedChild.csproj"
+             Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=net9.0">
+      <Output TaskParameter="TargetOutputs" ItemName="_NightlyOwnedChildTarget" />
+    </MSBuild>
+    <PropertyGroup><_NightlyOwnedChildDir>@(_NightlyOwnedChildTarget->'%(RootDir)%(Directory)')</_NightlyOwnedChildDir></PropertyGroup>
+    <ItemGroup><_NightlyOwnedChildFiles Include="$(_NightlyOwnedChildDir)*" /></ItemGroup>
+    <Copy SourceFiles="@(_NightlyOwnedChildFiles)" DestinationFolder="$(OutDir)nightly-owned-child/" SkipUnchangedFiles="true" />
+  </Target>
 
   <Target Name="CopyCustodyChild" AfterTargets="Build">
     <MSBuild Projects="$(MSBuildThisFileDirectory)..\Antiphon.CustodyTestChild\Antiphon.CustodyTestChild.csproj"

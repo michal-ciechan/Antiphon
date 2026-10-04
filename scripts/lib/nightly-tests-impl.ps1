@@ -88,47 +88,13 @@ function Invoke-NightlyOwnedProcess {
         }
         return $r
     }
-    $stdoutPath = $LogPath + '.stdout.tmp'
-    $stderrPath = $LogPath + '.stderr.tmp'
-    foreach ($p in @($stdoutPath, $stderrPath, $LogPath)) {
-        if ($p -and (Test-Path -LiteralPath $p)) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
-    }
-    $startParams = @{
-        FilePath = $FilePath
-        WorkingDirectory = $WorkingDirectory
-        PassThru = $true
-        NoNewWindow = $true
-        RedirectStandardOutput = $stdoutPath
-        RedirectStandardError = $stderrPath
-    }
-    if ($ArgumentList -and $ArgumentList.Count -gt 0) { $startParams.ArgumentList = $ArgumentList }
-    try {
-        $proc = Start-NightlyProcess -StartParams $startParams -Environment $Environment
-    } catch {
-        $_ | Out-String | Set-Content -LiteralPath $LogPath -Encoding UTF8
-        return [pscustomobject]@{ ExitCode = 1; TimedOut = $false; Pid = 0; ChildrenExited = $true }
-    }
-    $finished = $false
-    try { $finished = $proc.WaitForExit($TimeoutMilliseconds) } catch { $finished = $false }
-    $timedOut = -not $finished
-    $exitCode = 1
-    if ($timedOut) {
-        & taskkill.exe /PID $proc.Id /T /F 2>$null | Out-Null
-        try { $null = $proc.WaitForExit(15000) } catch { }
-    } else {
-        $exitCode = [int]$proc.ExitCode
-    }
-    $chunks = @()
-    foreach ($p in @($stdoutPath, $stderrPath)) {
-        if (Test-Path -LiteralPath $p) { $chunks += Get-Content -LiteralPath $p -ErrorAction SilentlyContinue }
-    }
-    if ($timedOut) {
-        $chunks += ('TIMEOUT after {0} ms; process tree killed.' -f $TimeoutMilliseconds)
-        $exitCode = 1
-    }
-    $chunks | Set-Content -LiteralPath $LogPath -Encoding UTF8
-    Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
-    return [pscustomobject]@{ ExitCode = $exitCode; TimedOut = $timedOut; Pid = $proc.Id; ChildrenExited = $true }
+    # Import only at the actual launch boundary. The controlled-I/O seam above
+    # remains portable, and cannot earn native custody credit.
+    . (Join-Path $PSScriptRoot 'nightly-owned-process.ps1')
+    $owner = Start-NightlyNativeOwner -FilePath $FilePath -ArgumentList $ArgumentList `
+        -WorkingDirectory $WorkingDirectory -TimeoutMilliseconds $TimeoutMilliseconds `
+        -Environment $Environment -LogPath $LogPath
+    return $owner.Completion.GetAwaiter().GetResult()
 }
 
 function Wait-NightlyOwnedCleanup {
@@ -136,7 +102,7 @@ function Wait-NightlyOwnedCleanup {
     if ($script:NightlySeams -and $script:NightlySeams.WaitCleanup) {
         return [bool]$script:NightlySeams.WaitCleanup.Invoke($RunResult)
     }
-    return [bool]$RunResult.ChildrenExited
+    return [bool]$RunResult.CleanupComplete
 }
 
 function Get-NightlyNativeActiveCount {
