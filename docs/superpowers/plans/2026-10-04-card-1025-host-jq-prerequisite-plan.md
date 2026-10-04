@@ -936,7 +936,7 @@ CP-1 includes two new exact methods (18 executions total):
   unapproved jq and perform no install effects; real wrapper refusal observations
   retain canonical lookup and home resolution with qualified=false.
 - `C1025_Receipt_rejects_canonical_lookup_with_unapproved_target`: an otherwise
-  valid synthetic success proof with canonical lookup and home resolution must
+valid synthetic success proof with canonical lookup and home resolution must
   independently refuse with HostJqProofInvalid for check and provision, retaining
   no successful receipt or banner. M-1 retains regular-file and alias controls.
 
@@ -947,10 +947,22 @@ against unchanged defective production is an explicitly reported diagnostic,
 not Mutation; CP-1 runs once after the repair. No repetitions after green.
 Baseline build+tests estimate 8 minutes, repair CP-1 estimate 8 minutes.
 
-All 64 existing PC cycles remain pending. Add two independently bypassable
-variants for SourceLanding Mutation, also pending (66 total):
+All 64 existing PC cycles remain pending. Add three independently bypassable
+variants for SourceLanding Mutation, also pending (67 total):
 
 | PC | Guard / variant | Compiling defect | Exact method | Required red assertion |
 |---|---|---|---|---|
 | PC-51-leaf | G-51 canonical leaf | Restore lookup-equals-destination as an alternative to resolved-path/regular-leaf admission. | `C1025_Check_rejects_canonical_leaf_symlink` | canonical-leaf-symlink: exit 2 for working home target found at canonical leaf |
 | PC-52-target | G-52 resolved proof | Restore lookup-equals-destination as an alternative to resolved proof equality. | `C1025_Receipt_rejects_canonical_lookup_with_unapproved_target` | canonical-proof-target: exit 2, no success receipt |
+
+CP-1 at repair commit `72f7bba684713f5f10ee7721200f2aabe5e41383` ran
+18 tests: 17 passed, one failed at the unchanged strong diagnostic assertion.
+The helper now refused correctly, but the wrapper discarded its canonical-lookup
+refusal observation as malformed. Refusal admission also judges the resolved
+target, preserving the typed diagnostic and qualified=false observation. The
+same CP-1 row is rerun after committing this fix (second and final repair round);
+no assertion or deadline changes.
+
+| PC | Guard / variant | Compiling defect | Exact method | Required red assertion |
+|---|---|---|---|---|
+| PC-54-leaf | G-54 canonical-lookup refusal | Reject a typed path refusal solely because lookupPath is canonical. | `C1025_Check_rejects_canonical_leaf_symlink` | wrapper emits HostJqPathUnapproved and persists canonical lookup/home resolution with qualified=false |
