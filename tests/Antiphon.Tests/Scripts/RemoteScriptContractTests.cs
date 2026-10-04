@@ -95,9 +95,7 @@ public sealed class RemoteScriptContractTests
     {
         using (var held = new C1008HostFixture())
         {
-            Directory.CreateDirectory(Path.Combine(held.Root, "server/locks"));
-            var psi = held.ShellStart("holder", C1008HostFixture.HolderProgram(held.ShellRoot));
-            using var lease = Process.Start(psi)!;
+            await using var lease = await held.HoldLock();
             Task<(int Exit, string Output)>? running = null;
             try {
                 var ready = Stopwatch.StartNew();
@@ -110,10 +108,7 @@ public sealed class RemoteScriptContractTests
                 held.Trace.Any(a => a[0] == "stop" || a[0] == "rm").ShouldBeFalse("recycle-reference-refusal: held native lock excludes effects");
                 running.IsCompleted.ShouldBeFalse();
             } finally {
-                if (!lease.HasExited) await lease.StandardInput.WriteLineAsync("release");
-                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                try { await lease.WaitForExitAsync(deadline.Token); }
-                catch { if (!lease.HasExited) { lease.Kill(true); await lease.WaitForExitAsync(); } throw; }
+                await lease.Release();
                 if (running is not null) await running;
             }
             (await running!).Exit.ShouldBe(0, "recycle-reference-refusal: release admits the valid control");
@@ -255,7 +250,7 @@ public sealed class RemoteScriptContractTests
             .Select(x => x.Groups[1].Value).Distinct().Order().ToArray();
         var expected = new[] { "repo", "linked clean", "standalone", "bare.git" }
             .Select(x => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
-                Encoding.UTF8.GetBytes(Path.Combine(f.Root, "work", x)))).ToLowerInvariant()).Order().ToArray();
+                Encoding.UTF8.GetBytes(f.ShellPath(Path.Combine(f.Root, "work", x))))).ToLowerInvariant()).Order().ToArray();
         observed.ShouldBe(expected, "recycle-audit-uid: every materialized Git layout appears in the audit");
     }
 
@@ -301,7 +296,7 @@ public sealed class RemoteScriptContractTests
             else if (fault is "deleted" or "missing") File.Delete(Path.Combine(repo, ".git/refs/remotes/origin/master"));
             else if (fault == "stale") File.WriteAllText(Path.Combine(repo, ".git/refs/remotes/origin/master"), new string('0', 40));
             else if (fault == "broken-gitdir") File.WriteAllText(Path.Combine(bad.Root, "work/.git"), "gitdir: /missing\n");
-            else if (fault == "escaping-link") Directory.CreateSymbolicLink(Path.Combine(bad.Root, "work/escape"), bad.Root);
+            else if (fault == "escaping-link") await bad.CreateEscapingLink();
             else if (fault == "missing-object") Directory.Delete(Path.Combine(repo, ".git/objects"), true);
             var refused = await bad.Run(); bad.Removed.ShouldBeEmpty("recycle-git-unknown-refuses: " + fault);
             refused.Output.ShouldContain("RecycleGitAuditUnknown");
@@ -316,8 +311,7 @@ public sealed class RemoteScriptContractTests
         using (var linked = new C1008HostFixture())
         {
             await C1008GitGraph(linked, "layouts");
-            var gitfile = File.ReadAllText(Path.Combine(linked.Root, "work/linked clean/.git"));
-            File.WriteAllText(Path.Combine(gitfile["gitdir: ".Length..].Trim(), "index.lock"), "unknown");
+            await linked.WriteLinkedLock();
             var refused = await linked.Run();
             linked.Removed.ShouldBeEmpty("recycle-git-unknown-refuses: linked worktree index lock");
             refused.Output.ShouldContain("RecycleGitAuditUnknown");
@@ -417,9 +411,9 @@ public sealed class RemoteScriptContractTests
                 replacement[name] = partial.Docker["volumes"]![name]!.DeepClone();
                 replacement[name]!["CreatedAt"] = "2026-10-03T10:00:00Z";
             }
-            File.WriteAllText(Path.Combine(partial.Root, "recreated.json"), new JsonObject
+            partial.WriteRecreated(new JsonObject
                 { ["volumes"] = replacement, ["runner"] = partial.Container('5', "antiphon-runner", "session-runner", true,
-                    "work", "runner-tmp", "dind-data", "runner-state") }.ToJsonString());
+                    "work", "runner-tmp", "dind-data", "runner-state") });
             var interrupted = await partial.Run(extra: "build_server2_images() { node -e 'const fs=require(\"fs\"),p=process.argv[1],s=JSON.parse(fs.readFileSync(p)),r=JSON.parse(fs.readFileSync(process.argv[2]));Object.assign(s.volumes,r.volumes);s.containers.push(r.runner);fs.writeFileSync(p,JSON.stringify(s))' \"$C1008_FIXTURE_ROOT/docker.json\" \"$C1008_FIXTURE_ROOT/recreated.json\"; c1008_record_recreated; write_result false InterruptedVerification 2; }");
             interrupted.Exit.ShouldBe(2);
             partial.ReloadDocker();
@@ -483,7 +477,7 @@ public sealed class RemoteScriptContractTests
                 elif [ "$1" = install ]; then mkdir -p "${@: -1}"; else "$@"; fi; }
                 """;
             var observed = await disk.Run(extra: extra);
-            File.ReadAllText(Path.Combine(disk.Root, "df-argv")).ShouldContain("-Pk " + disk.Root, Case.Sensitive, "recycle-receipt-facts: Docker data-root filesystem");
+            File.ReadAllText(Path.Combine(disk.Root, "df-argv")).ShouldContain("-Pk " + disk.ShellRoot, Case.Sensitive, "recycle-receipt-facts: Docker data-root filesystem");
             if (fault == "reverse") { observed.Output.ShouldContain("deltaBytes=-2097152"); observed.Exit.ShouldBe(0); }
             else {
                 observed.Output.ShouldContain("RecycleDiskUnknown"); observed.Exit.ShouldBe(2);
@@ -517,8 +511,7 @@ public sealed class RemoteScriptContractTests
                         if (-not $Command.Contains("export C1008_RESUME='1'")) {throw 'resume transport missing'}
                         $env:C590_CASE='deploy-parent'; $env:C590_SHA='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
                         $env:C590_RUN='c1008fixture'; $env:C590_REEXEC='1'; $env:C1008_RESUME='1'; $env:C604_SERVER_ORIGIN='http://127.0.0.1:1'
-                        & bash '{{copied.Root}}/remote.sh' | Out-Null
-                        return $LASTEXITCODE
+                        {{copied.BridgeResumeCommand()}}
                     }
                     return 0
                 }
@@ -651,10 +644,10 @@ public sealed class RemoteScriptContractTests
 
     internal static async Task C1008GitGraph(C1008HostFixture fixture, string fault = "")
     {
-        var script = C1008GitProgram(fixture.ShellRoot, fault);
-        var psi = fixture.ShellStart("git", script);
-        using var proc = Process.Start(psi)!; var stdout = proc.StandardOutput.ReadToEndAsync(); var stderr = proc.StandardError.ReadToEndAsync();
-        await proc.WaitForExitAsync(); proc.ExitCode.ShouldBe(0, await stdout + await stderr);
+        var root = fixture.ShellRoot;
+        var script = C1008GitProgram(fixture.Windows ? root.Replace("'", "'\\''", StringComparison.Ordinal) : root, fault);
+        var result = await fixture.Execute("git", script);
+        result.Exit.ShouldBe(0, result.Output);
     }
 
     [Test]

@@ -447,17 +447,242 @@ internal sealed class C1008HostFixture : IDisposable
 {
     internal string Root { get; }
     internal bool Windows { get; }
-    internal string ShellRoot => Root;
-    internal string ShellRepo => DelegateScriptRunner.RepoRoot;
-    internal JsonObject AdaptPaths(JsonObject model) => model;
+    internal C1008FixtureOptions Options { get; }
+    private string? _shellRoot;
+    private string? _shellRepo;
+    private readonly List<C1008Child> _children = [];
+    internal string ShellRoot { get { PreparePaths(); return _shellRoot!; } }
+    internal string ShellRepo { get { PreparePaths(); return _shellRepo!; } }
+    internal static string Quote(string value) => "'" + value.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
     internal static string HolderProgram(string root) => $"exec 8>'{root}/server/locks/rollout.lock'; flock 8; touch '{root}/held'; read -r release";
+
+    private void PreparePaths()
+    {
+        if (_shellRoot is not null) return;
+        if (!Windows) { _shellRoot = Root; _shellRepo = DelegateScriptRunner.RepoRoot; return; }
+        File.WriteAllText(Path.Combine(Root, ".c1030-roundtrip"), "fixture-owned");
+        // The trusted prelude is never fed back through C980's raw-body guard.
+        var root = ConvertPath(Options.NativeRoot ?? Root, "root", ".c1030-roundtrip");
+        var repo = ConvertPath(Options.NativeRepo ?? DelegateScriptRunner.RepoRoot, "repo", "AGENTS.md");
+        _shellRepo = repo;
+        _shellRoot = root;
+    }
+
+    private string ConvertPath(string native, string variable, string probe)
+    {
+        var program = RemoteScriptContractTests.PrepareLinuxShellScript(
+            $"test -f \"${variable}/{probe}\" || {{ echo C1030_PATH_UNREACHABLE >&2; exit 24; }}\n" +
+            $"printf '%s' \"${variable}\"\n", variable, native, true);
+        var result = Execute("convert", Options.ConverterPrelude + program).GetAwaiter().GetResult();
+        if (result.Exit != 0) throw new InvalidOperationException($"C1030 conversion exit={result.Exit}: {result.Output}");
+        return result.Stdout;
+    }
+
+    internal string ShellPath(string native)
+    {
+        if (!Windows) return native;
+        foreach (var candidate in new[] { Options.NativeRoot, Root })
+        {
+            if (candidate is null) continue;
+            var root = candidate.TrimEnd('\\', '/');
+            if (native.Equals(root, StringComparison.OrdinalIgnoreCase)) return ShellRoot;
+            if (native.Length > root.Length && native.StartsWith(root, StringComparison.OrdinalIgnoreCase) &&
+                native[root.Length] is '/' or '\\')
+                return ShellRoot + native[root.Length..].Replace('\\', '/');
+        }
+        return native;
+    }
+
+    internal JsonObject AdaptPaths(JsonObject model)
+    {
+        if (!Windows) return model;
+        var clone = model.DeepClone().AsObject();
+        if (clone["volumes"] is JsonObject volumes)
+            foreach (var (_, volume) in volumes)
+                if (volume is JsonObject item) ConvertField(item, "Mountpoint");
+        if (clone["containers"] is JsonArray containers)
+            foreach (var container in containers) ConvertMounts(container);
+        ConvertMounts(clone["runner"]);
+        return clone;
+
+        void ConvertField(JsonObject item, string field)
+        {
+            if (item[field] is JsonValue value && value.TryGetValue<string>(out var path))
+                item[field] = ShellPath(path);
+        }
+        void ConvertMounts(JsonNode? container)
+        {
+            if (container is JsonObject obj && obj["Mounts"] is JsonArray mounts)
+                foreach (var mount in mounts)
+                    if (mount is JsonObject item) ConvertField(item, "Source");
+        }
+    }
+
+    internal void WriteRecreated(JsonObject model) =>
+        File.WriteAllText(Path.Combine(Root, "recreated.json"), AdaptPaths(model).ToJsonString());
+
     internal ProcessStartInfo ShellStart(string entry, string body, string? file = null)
     {
-        var start = new ProcessStartInfo("bash") { UseShellExecute = false,
-            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
-        if (file is null) { start.ArgumentList.Add("-c"); start.ArgumentList.Add(body); }
+        var start = new ProcessStartInfo(Windows
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "wsl.exe") : "/bin/bash")
+        {
+            UseShellExecute = false, RedirectStandardInput = true,
+            RedirectStandardOutput = true, RedirectStandardError = true,
+            StandardInputEncoding = new UTF8Encoding(false), StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8
+        };
+        if (Windows)
+        {
+            start.ArgumentList.Add("-e"); start.ArgumentList.Add("/bin/bash"); start.ArgumentList.Add("-s");
+        }
+        else if (file is null) { start.ArgumentList.Add("-c"); start.ArgumentList.Add(body); }
         else start.ArgumentList.Add(file);
+        start.Environment["PATH"] = Options.ToolPath;
+        if (Windows) start.WorkingDirectory = Root;
         return start;
+    }
+
+    internal Dictionary<string, string> CaseEnvironment(string hostCase = "deploy-parent") => new()
+    {
+        ["C590_CASE"] = hostCase, ["C590_SHA"] = new string('a', 40), ["C590_RUN"] = "c1008fixture",
+        ["C590_REEXEC"] = "1", ["C604_SERVER_ORIGIN"] = "http://127.0.0.1:1"
+    };
+
+    internal string PrepareInput(string entry, string body, IReadOnlyDictionary<string, string>? environment = null)
+    {
+        if (!Windows) return body;
+        var input = "export PATH=" + Quote(Options.ToolPath) + "\n";
+        foreach (var (key, value) in environment ?? new Dictionary<string, string>())
+            input += "export " + key + "=" + Quote(value) + "\n";
+        var required = entry switch { "run" or "bridge" => "bash git node flock jq pwsh", "git" => "git", "holder" => "flock", _ => "" };
+        if (required.Length > 0)
+            input += "for c1030_tool in " + required + "; do type -P \"$c1030_tool\" >/dev/null || { printf 'C1030_PREREQUISITE_MISSING %s\\n' \"$c1030_tool\" >&2; exit 127; }; done\n";
+        if (entry is "run" or "bridge") input += Options.BeforeSource;
+        return (input + body).Replace("\r\n", "\n", StringComparison.Ordinal);
+    }
+
+    internal async Task<C1008Child> StartChild(string entry, string body, string? file = null,
+        IReadOnlyDictionary<string, string>? environment = null, bool retainInput = false)
+    {
+        var start = ShellStart(entry, body, file);
+        foreach (var (key, value) in environment ?? new Dictionary<string, string>()) start.Environment[key] = value;
+        var input = PrepareInput(entry, body, environment);
+        Options.ObserveLaunch?.Invoke(entry, start, input);
+        // This seam replaces only the physical executable in Linux's Windows-preparation witness.
+        // The real entry specification is observed before that substitution.
+        Options.SelectExecutor?.Invoke(start);
+        var process = Process.Start(start) ?? throw new InvalidOperationException("C1030 child did not start");
+        var child = new C1008Child(process, Options.BeforeExitWait);
+        _children.Add(child);
+        try
+        {
+            Options.AfterStart?.Invoke(child);
+            if (Windows) { await process.StandardInput.WriteAsync(input); await process.StandardInput.FlushAsync(); }
+            if (!retainInput) process.StandardInput.Close();
+            return child;
+        }
+        catch { await child.DisposeAsync(); throw; }
+    }
+
+    internal async Task<C1008Result> Execute(string entry, string body, string? file = null,
+        IReadOnlyDictionary<string, string>? environment = null)
+    {
+        await using var child = await StartChild(entry, body, file, environment);
+        return await child.Wait(TimeSpan.FromSeconds(30));
+    }
+
+    internal async Task<C1008Child> HoldLock(string? overrideBody = null)
+    {
+        Directory.CreateDirectory(Path.Combine(Root, "server/locks"));
+        var body = overrideBody ?? HolderProgram(Windows ? ShellRoot.Replace("'", "'\\''", StringComparison.Ordinal) : ShellRoot);
+        if (Windows)
+        {
+            File.WriteAllText(Path.Combine(Root, "holder.sh"), body.Replace("\r\n", "\n"), new UTF8Encoding(false));
+            body = "source " + Quote(ShellRoot + "/holder.sh") + "\n";
+        }
+        var child = await StartChild("holder", body, retainInput: true);
+        try
+        {
+            Options.AtReadiness?.Invoke(child);
+            var ready = Stopwatch.StartNew();
+            while (!File.Exists(Path.Combine(Root, "held")) && !child.Process.HasExited && ready.Elapsed < TimeSpan.FromSeconds(10))
+                await Task.Delay(25);
+            if (!File.Exists(Path.Combine(Root, "held")))
+            {
+                var result = await child.Stop();
+                throw new InvalidOperationException($"C1030 holder not ready: exit={result.Exit}; stderr={result.Stderr}");
+            }
+            return child;
+        }
+        catch { await child.DisposeAsync(); throw; }
+    }
+
+    internal async Task CreateEscapingLink(string? target = null)
+    {
+        if (!Windows) { Directory.CreateSymbolicLink(Path.Combine(Root, "work/escape"), target ?? Root); return; }
+        var result = await Execute("git", "ln -s -- " + Quote(target ?? ShellRoot) + " " + Quote(ShellRoot + "/work/escape"));
+        if (result.Exit != 0) throw new InvalidOperationException(result.Output);
+    }
+
+    internal async Task WriteLinkedLock()
+    {
+        if (!Windows)
+        {
+            var gitfile = File.ReadAllText(Path.Combine(Root, "work/linked clean/.git"));
+            File.WriteAllText(Path.Combine(gitfile["gitdir: ".Length..].Trim(), "index.lock"), "unknown");
+            return;
+        }
+        var result = await Execute("git", "set -e\ncd " + Quote(ShellRoot + "/work/linked clean") +
+            "\nc1030_gitdir=\"$(git rev-parse --absolute-git-dir)\"\nprintf unknown > \"$c1030_gitdir/index.lock\"\n");
+        if (result.Exit != 0) throw new InvalidOperationException(result.Output);
+    }
+
+    internal string BridgeResumeCommand()
+    {
+        var file = Path.Combine(Root, "remote.sh");
+        var body = File.ReadAllText(file);
+        var environment = CaseEnvironment();
+        environment["C1008_RESUME"] = "1";
+        if (Windows) environment["C1008_FIXTURE_WINDOWS"] = "1";
+        var start = ShellStart("bridge", body, file);
+        var input = PrepareInput("bridge", body, environment);
+        Options.ObserveLaunch?.Invoke("bridge", start, input);
+        Options.SelectExecutor?.Invoke(start);
+        if (!Windows) return "& /bin/bash " + PsQuote(file) + " | Out-Null\nreturn $LASTEXITCODE";
+        var inputFile = Path.Combine(Root, "bridge-input.sh");
+        File.WriteAllText(inputFile, input, new UTF8Encoding(false));
+        var arguments = string.Join("\n", start.ArgumentList.Select(a => "$c1030Start.ArgumentList.Add(" + PsQuote(a) + ")"));
+        return $"""
+            $c1030Start=[System.Diagnostics.ProcessStartInfo]::new({{PsQuote(start.FileName)}})
+            $c1030Start.UseShellExecute=$false
+            $c1030Start.RedirectStandardInput=$true
+            $c1030Start.RedirectStandardOutput=$true
+            $c1030Start.RedirectStandardError=$true
+            $c1030Start.StandardInputEncoding=[System.Text.UTF8Encoding]::new($false)
+            {{arguments}}
+            $c1030Child=[System.Diagnostics.Process]::Start($c1030Start)
+            $c1030Out=$c1030Child.StandardOutput.ReadToEndAsync()
+            $c1030Err=$c1030Child.StandardError.ReadToEndAsync()
+            try {
+                $c1030Child.StandardInput.Write([System.IO.File]::ReadAllText({{PsQuote(inputFile)}}))
+                $c1030Child.StandardInput.Close()
+                if (-not $c1030Child.WaitForExit(30000)) { throw 'C1030 bridge child timeout' }
+                $c1030Child.WaitForExit()
+                $null=$c1030Out.GetAwaiter().GetResult()
+                [Console]::Error.Write($c1030Err.GetAwaiter().GetResult())
+                return $c1030Child.ExitCode
+            } finally {
+                if (-not $c1030Child.HasExited) { $c1030Child.Kill($true); $c1030Child.WaitForExit() }
+                $c1030Child.Dispose()
+            }
+            """;
+    }
+    internal static string PsQuote(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
+
+    internal void CopyFake(string? source = null)
+    {
+        source ??= File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1008-fake-docker.sh"));
+        File.WriteAllText(Path.Combine(Root, "fake-docker.sh"), source.Replace("\r\n", "\n"), new UTF8Encoding(false));
     }
     internal JsonObject Docker { get; }
     internal JsonObject Statuses { get; }
@@ -477,11 +702,12 @@ internal sealed class C1008HostFixture : IDisposable
     internal JsonObject TaskScopes { get; } = new();
     internal JsonObject TaskDetails { get; } = new();
 
-    internal C1008HostFixture(bool main = true, string? root = null, bool? windows = null)
+    internal C1008HostFixture(bool main = true, string? root = null, bool? windows = null, C1008FixtureOptions? options = null)
     {
         Root = root ?? Directory.CreateTempSubdirectory("c1008-host-").FullName;
         Directory.CreateDirectory(Root);
         Windows = windows ?? OperatingSystem.IsWindows();
+        Options = options ?? new C1008FixtureOptions();
         Vectors = JsonNode.Parse(File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot,
             "scripts/fixtures/c1008-recycle-cases.json")))!.AsObject();
         TaskScopes["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1"] = Vectors["emptyTasks"]!.DeepClone();
@@ -570,21 +796,23 @@ internal sealed class C1008HostFixture : IDisposable
         File.WriteAllText(Path.Combine(Root, "tasks.json"), new JsonObject
             { ["scopes"] = TaskScopes.DeepClone(), ["details"] = TaskDetails.DeepClone() }.ToJsonString());
         var source = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"));
-        source = ComposeProgram(ShellRoot, ShellRepo, source, extra, dryRun);
+        var shellRoot = ShellRoot;
+        var shellRepo = ShellRepo;
+        source = ComposeProgram(Windows ? shellRoot.Replace("'", "'\\''", StringComparison.Ordinal) : shellRoot,
+            Windows ? shellRepo.Replace("'", "'\\''", StringComparison.Ordinal) : shellRepo, source, extra, dryRun);
+        if (Windows)
+        {
+            CopyFake();
+            source = source.Replace("bash " + Quote(shellRepo + "/scripts/fixtures/c1008-fake-docker.sh"),
+                "/bin/bash " + Quote(shellRoot + "/fake-docker.sh"), StringComparison.Ordinal);
+            source = source.Replace("\r\n", "\n", StringComparison.Ordinal);
+        }
         var script = Path.Combine(Root, "remote.sh");
         File.WriteAllText(script, source);
-        var psi = ShellStart("run", source, script);
-        psi.Environment["C590_CASE"] = hostCase;
-        psi.Environment["C590_SHA"] = new string('a', 40);
-        psi.Environment["C590_RUN"] = "c1008fixture";
-        psi.Environment["C590_REEXEC"] = "1";
-        psi.Environment["C604_SERVER_ORIGIN"] = "http://127.0.0.1:1";
-        using var proc = Process.Start(psi)!;
-        var stdout = proc.StandardOutput.ReadToEndAsync(); var stderr = proc.StandardError.ReadToEndAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        try { await proc.WaitForExitAsync(deadline.Token); }
-        catch { if (!proc.HasExited) { proc.Kill(true); await proc.WaitForExitAsync(); } throw; }
-        return (proc.ExitCode, await stdout + await stderr);
+        var environment = CaseEnvironment(hostCase);
+        if (Windows) environment["C1008_FIXTURE_WINDOWS"] = "1";
+        var result = await Execute("run", source, script, environment);
+        return (result.Exit, result.Output);
     }
 
     internal static string ComposeProgram(string Root, string repoRoot, string source, string extra, bool dryRun)
@@ -617,5 +845,95 @@ internal sealed class C1008HostFixture : IDisposable
         return source;
     }
 
-    public void Dispose() => Directory.Delete(Root, recursive: true);
+    public void Dispose()
+    {
+        foreach (var child in _children.ToArray()) child.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        // Unlink the owned name; never follow its target during recursive cleanup.
+        if (Windows && _shellRoot is not null)
+        {
+            var removed = Execute("cleanup", "if [ -L " + Quote(_shellRoot + "/work/escape") +
+                " ]; then rm -- " + Quote(_shellRoot + "/work/escape") + "; fi").GetAwaiter().GetResult();
+            if (removed.Exit != 0) throw new InvalidOperationException(removed.Output);
+        }
+        Directory.Delete(Root, recursive: true);
+    }
+}
+
+// Instance-only seams expose the actual entry wiring without changing global process state.
+internal sealed class C1008FixtureOptions
+{
+    internal string ToolPath { get; set; } = "/usr/local/bin:/usr/bin:/bin";
+    internal string? NativeRoot { get; set; }
+    internal string? NativeRepo { get; set; }
+    internal string ConverterPrelude { get; set; } = "";
+    internal string BeforeSource { get; set; } = "";
+    internal Action<string, ProcessStartInfo, string>? ObserveLaunch { get; set; }
+    internal Action<ProcessStartInfo>? SelectExecutor { get; set; }
+    internal Action<C1008Child>? AfterStart { get; set; }
+    internal Action<C1008Child>? AtReadiness { get; set; }
+    internal Func<Task>? BeforeExitWait { get; set; }
+}
+
+internal sealed record C1008Result(int Exit, string Stdout, string Stderr)
+{
+    internal string Output => Stdout + Stderr;
+}
+
+internal sealed class C1008Child : IAsyncDisposable
+{
+    internal Process Process { get; }
+    internal int Id { get; }
+    internal DateTime StartTime { get; }
+    private readonly Task<string> _stdout;
+    private readonly Task<string> _stderr;
+    private readonly Func<Task>? _beforeExitWait;
+    private bool _disposed;
+    private C1008Result? _result;
+
+    internal C1008Child(Process process, Func<Task>? beforeExitWait)
+    {
+        Process = process;
+        Id = process.Id;
+        StartTime = process.StartTime.ToUniversalTime();
+        _beforeExitWait = beforeExitWait;
+        _stdout = process.StandardOutput.ReadToEndAsync();
+        _stderr = process.StandardError.ReadToEndAsync();
+    }
+
+    internal async Task<C1008Result> Wait(TimeSpan timeout)
+    {
+        if (_result is not null) return _result;
+        using var deadline = new CancellationTokenSource(timeout);
+        try { await Process.WaitForExitAsync(deadline.Token); }
+        catch { await Stop(); throw; }
+        return _result = new(Process.ExitCode, await _stdout, await _stderr);
+    }
+
+    internal async Task<C1008Result> Release()
+    {
+        if (!Process.HasExited)
+        {
+            await Process.StandardInput.WriteLineAsync("release");
+            await Process.StandardInput.FlushAsync();
+            Process.StandardInput.Close();
+        }
+        return await Wait(TimeSpan.FromSeconds(10));
+    }
+
+    internal async Task<C1008Result> Stop()
+    {
+        if (_result is not null) return _result;
+        if (!Process.HasExited) Process.Kill(entireProcessTree: true);
+        if (_beforeExitWait is not null) await _beforeExitWait();
+        await Process.WaitForExitAsync();
+        return _result = new(Process.ExitCode, await _stdout, await _stderr);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed) return;
+        await Stop();
+        Process.Dispose();
+        _disposed = true;
+    }
 }

@@ -84,7 +84,11 @@ else if(args[0]==='volume'&&args[1]==='inspect') {
 } else if(args[0]==='start') {
  const id=args.at(-1),c=state.containers.find(c=>c.Id===id);if(!c)fail();
  // Remap the mount path, preserving unrelated scratch filenames such as /worktrees.
- let program=state.auditProgram.replace(/\/work(?=[\/\s"')]|$)/g,path.join(root,'work'));
+ const quote=s=>"'"+s.replaceAll("'", "'\\''")+"'";
+ let program=process.env.C1008_FIXTURE_WINDOWS==='1'
+  ? state.auditProgram.replace(/(["'])\/work((?:\/[^"']*)?)\1|(?<![\w/])\/work(?=[/\s"')]|$)([^\s"'();]*)/g,
+    (_match,_quoted,quotedSuffix,bareSuffix)=>quote(path.join(root,'work')+(quotedSuffix??bareSuffix??'')))
+  : state.auditProgram.replace(/\/work(?=[\/\s"')]|$)/g,path.join(root,'work'));
  let gitPath=process.env.PATH;
  if(state.gitFault) {
   // timeout execs Git directly; a shell function cannot receive that call.
@@ -95,7 +99,7 @@ else if(args[0]==='volume'&&args[1]==='inspect') {
   gitPath=shim+':'+gitPath;
  }
  if(state.gitStderr)process.stderr.write(state.gitStderr+'\n');
- const run=cp.spawnSync('bash',['-c',program],{env:{...process.env,PATH:gitPath},encoding:'utf8',timeout:15000});out(run.stdout||'');c.State={Running:false,Status:'exited'};save();process.exit(run.status??2);
+ const run=cp.spawnSync(process.env.C1008_FIXTURE_WINDOWS==='1'?'/bin/bash':'bash',['-c',program],{env:{...process.env,PATH:gitPath},encoding:'utf8',timeout:15000});out(run.stdout||'');c.State={Running:false,Status:'exited'};save();process.exit(run.status??2);
 } else if(args[0]==='cp') {
  // The pinned audit helper receives only the test-materialized production program.
  const source=args[1];fs.copyFileSync(source,path.join(root,'audit.sh'));
