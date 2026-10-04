@@ -36,8 +36,11 @@ function New-NativeRun([string]$Name, [string]$Mode, [string[]]$Barriers = @(),
     $hooks.BarrierDirectory = $root; $hooks.Barriers = $Barriers
     $hooks.FailAssignment = $FailAssignment; $hooks.ZeroCountAtRootWait = $ZeroCount
     $log = Join-Path $root 'native.log'
-    $owner = Start-NightlyNativeOwner -FilePath $FixtureExecutable -ArgumentList (@($root,$Mode) + $Tokens) `
-        -WorkingDirectory $root -TimeoutMilliseconds 30000 -LogPath $log -Hooks $hooks
+    # Control identity travels independently of argv, so a quoting defect reaches
+    # the literal-token assertion rather than breaking fixture startup.
+    $owner = Start-NightlyNativeOwner -FilePath $FixtureExecutable -ArgumentList $Tokens `
+        -WorkingDirectory $root -TimeoutMilliseconds 30000 -LogPath $log -Hooks $hooks `
+        -Environment @{ C1039_FIXTURE_DIRECTORY=$root; C1039_FIXTURE_MODE=$Mode }
     $script:owners += $owner
     return [pscustomobject]@{ Root=$root; Owner=$owner; Log=$log }
 }
@@ -90,10 +93,10 @@ try {
             $refused = [Diagnostics.Process]::GetProcessById($r.Owner.Observation.Pid)
             $null = $refused.Handle; $script:handles += $refused
             Release-Native $r 'assignment'
-            Wait-Native { $r.Owner.Completion.IsCompleted } 'refused owner completion'
+            Wait-Native { $r.Owner.Completion.IsCompleted -or (Test-Path (Join-Path $r.Root 'started')) } 'assignment refusal verdict'
+            Assert-Native (-not (Test-Path (Join-Path $r.Root 'started'))) 'assignment refusal fixture marker absent'
             $result = $r.Owner.Completion.GetAwaiter().GetResult()
             Assert-Native ($result.ExitCode -ne 0 -and $result.Error -match 'AssignProcessToJobObject') 'assignment failure refuses'
-            Assert-Native (-not (Test-Path (Join-Path $r.Root 'started'))) 'assignment refusal fixture marker absent'
             Assert-Native ($refused.WaitForExit(1000)) 'assignment refusal exact root handle signalled'
         }
         'C1039_DescendantExit' {
@@ -146,6 +149,10 @@ try {
                 -WorkingDirectory $root -TimeoutMilliseconds 30000 -LogPath (Join-Path $root 'entry.log')
             Assert-Native ($result.CleanupComplete -and (Wait-NightlyOwnedCleanup $result)) 'production entry observes complete native result'
             Assert-Native (-not (Wait-NightlyOwnedCleanup ([pscustomobject]@{ ChildrenExited=$true; CleanupComplete=$false }))) 'root only result cannot discharge cleanup'
+            $script:NightlySeams = @{ StartProcess = { } }
+            Assert-Native (Wait-NightlyOwnedCleanup ([pscustomobject]@{ ChildrenExited=$true })) 'legacy controlled IO decision seam remains compatible'
+            Assert-Native (-not (Wait-NightlyOwnedCleanup ([pscustomobject]@{ ChildrenExited=$true; CleanupComplete=$false }))) 'explicit incomplete cleanup remains false in controlled IO'
+            $script:NightlySeams = $null
         }
         default { throw ('Unknown native case: '+$Case) }
     }

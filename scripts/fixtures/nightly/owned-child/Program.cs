@@ -3,8 +3,10 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 
-var directory = args[0];
-var mode = args[1];
+var modes = new[] { "child", "breakaway-child", "descendant", "breakaway", "root-held", "plain" };
+var controlArguments = args.Length >= 2 && modes.Contains(args[1]);
+var directory = controlArguments ? args[0] : Environment.GetEnvironmentVariable("C1039_FIXTURE_DIRECTORY")!;
+var mode = controlArguments ? args[1] : Environment.GetEnvironmentVariable("C1039_FIXTURE_MODE")!;
 File.WriteAllText(Path.Combine(directory, mode + ".pid"), Environment.ProcessId.ToString());
 if (mode == "child" || mode == "breakaway-child")
 {
@@ -13,7 +15,7 @@ if (mode == "child" || mode == "breakaway-child")
     return;
 }
 File.WriteAllText(Path.Combine(directory, "started"), "started");
-File.WriteAllText(Path.Combine(directory, "argv.json"), JsonSerializer.Serialize(args.Skip(2)));
+File.WriteAllText(Path.Combine(directory, "argv.json"), JsonSerializer.Serialize(controlArguments ? args.Skip(2) : args));
 if (mode == "descendant")
 {
     using var child = Process.Start(new ProcessStartInfo(Environment.ProcessPath!)
@@ -61,10 +63,12 @@ public static class NativeJobObserver
 {
     public static uint ReadLimitFlags(IntPtr job)
     {
-        var buffer = Marshal.AllocHGlobal(256);
+        // The API requires the exact JOBOBJECT_EXTENDED_LIMIT_INFORMATION size.
+        var size = IntPtr.Size == 8 ? 144 : 112;
+        var buffer = Marshal.AllocHGlobal(size);
         try
         {
-            if (!QueryInformationJobObject(job, 9, buffer, 256, out _))
+            if (!QueryInformationJobObject(job, 9, buffer, (uint)size, out _))
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             return unchecked((uint)Marshal.ReadInt32(buffer, 16));
         }

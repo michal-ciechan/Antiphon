@@ -102,6 +102,11 @@ function Wait-NightlyOwnedCleanup {
     if ($script:NightlySeams -and $script:NightlySeams.WaitCleanup) {
         return [bool]$script:NightlySeams.WaitCleanup.Invoke($RunResult)
     }
+    # Retain pre-existing controlled-I/O decision fixtures. Their synthetic
+    # ChildrenExited bit cannot establish native custody or qualification.
+    if ($script:NightlySeams -and $script:NightlySeams.StartProcess -and $null -eq $RunResult.CleanupComplete) {
+        return [bool]$RunResult.ChildrenExited
+    }
     return [bool]$RunResult.CleanupComplete
 }
 
