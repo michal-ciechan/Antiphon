@@ -382,6 +382,15 @@ footer; JSON is a separate schemaVersion 1 report with selected paths/classes,
 SHA-256 digests, obligations/matches, exclusions, diagnostics, PC statuses and counts.
 Neither form includes timestamps, source bodies or environment values.
 
+The derived inline checklist uses LF separators on every OS, preserving its final
+newline, blank lines and per-line whitespace. Its digest is therefore independent
+of the host's native newline. Plan, selected source and external checklist digests
+still hash the original decoded text as UTF-8: LF and CRLF inputs have distinct
+provenance. Comparing complete report bytes across OSes requires identical input
+bytes; the combined input digest includes the checklist digest. The seven raw
+coverage golden fixtures are individually pinned to LF in `.gitattributes`, with
+their provenance hashes unchanged (CARD-1013).
+
 Code builds the changed tool once through a leased bootstrap, then runs the verb
 before final ordinary checkpoints. For example:
 
