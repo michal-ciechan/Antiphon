@@ -807,12 +807,12 @@ R-1..R-4 ordinary obligations. Q-1 is explicitly post-Review operational scope.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S0 | `tests/Antiphon.Tests -> bin-c913-red-linux/` | linux-seed-red-first | `/*/*/RemoteScriptContractTests/C913_*` | V-2,V-3,V-4,V-5,V-6,V-7 | 6 executed; exactly the six specified assertion reds, 0 skipped; driver exit 1 intentional | 6 | 12 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-2 | S0 | CP-1 | linux-image-red-first | `/*/*/CodexRunnerImageContractTests/(Net9_packs_are_pinned_verified_before_extraction_and_available_to_session_testing)\|(C913_Net9_probe_rejects_warm_caches_and_missing_packs)\|(C913_Image_wrapper_isolates_mounts_and_qualifies_receipts)` | V-1,V-8 | 3 executed; specified T7/T8/T9 assertion reds, 0 skipped; driver exit 1 intentional | 3 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-2 | S0 | CP-1 | linux-image-red-first | `/*/*/CodexRunnerImageContractTests/(Net9_packs_are_pinned_verified_before_extraction_and_available_to_session_testing*)\|(C913_Net9_probe_rejects_warm_caches_and_missing_packs*)\|(C913_Image_wrapper_isolates_mounts_and_qualifies_receipts*)` | V-1,V-8 | 3 executed; specified T7/T8/T9 assertion reds, 0 skipped; driver exit 1 intentional | 3 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-3 | S1-S3 | `tests/Antiphon.Tests -> bin-c913-green-linux/` | linux-seed-contracts | `/*/*/RemoteScriptContractTests/(C849_*)\|(C905_*)\|(C912_*)\|(C913_*)\|(C973_*)` | V-2,V-3,V-4,V-5,V-6,V-7,R-1,R-3,R-4 | 47 executed with exact roster above, 0 failed/skipped | 47 | 15 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-4 | S1-S3 | CP-3 | linux-image-contracts | `/*/*/CodexRunnerImageContractTests/(Net9_packs_are_pinned_verified_before_extraction_and_available_to_session_testing)\|(C913_Net9_probe_rejects_warm_caches_and_missing_packs)\|(C913_Image_wrapper_isolates_mounts_and_qualifies_receipts)` | V-1,V-8 | T7/T8/T9, 3 executed, 0 failed/skipped | 3 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-4 | S1-S3 | CP-3 | linux-image-contracts | `/*/*/CodexRunnerImageContractTests/(Net9_packs_are_pinned_verified_before_extraction_and_available_to_session_testing*)\|(C913_Net9_probe_rejects_warm_caches_and_missing_packs*)\|(C913_Image_wrapper_isolates_mounts_and_qualifies_receipts*)` | V-1,V-8 | T7/T8/T9, 3 executed, 0 failed/skipped | 3 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-5 | S1-S3 | n/a | linux-rolling | `pwsh -NoProfile -File scripts/test-deploy-server2.ps1 -RequireJq` | R-2,R-3 | 24 groups / 66 invocations / 227 assertions; failures=0, no skips, exit 0 | n/a | 6 | true | n/a |
 | CP-6 | S1-S3 | n/a | linux-offline-image | `pwsh -NoProfile -File scripts/verify-card0660-codex-image.ps1 -Target session-testing -Image "${C913_IMAGE:?}" -SourceRevision "${C913_SHA:?}" -ResultsRoot "${C913_RESULTS:?}"` | V-1 | One image build; 11/11 matching rows ok; actual native receipt/empty mounted pair/network none; exit 0 | n/a | 25 | true | n/a |
-| CP-7 | S1-S3 | `tests/Antiphon.Tests -> bin-c913-green-windows/` | windows-receipts | `/*/*/RemoteScriptContractTests/(C849_front_door_passes_every_full_case_name_to_the_invoker)\|(C913_Receipts_reject_mixed_digest_types_and_false_smoke_claims)\|(C912_Cold_runner_verification_uses_mounts_and_writability_not_payloads)` | V-7,R-1 | 3 native Windows pwsh results, 0 failed/skipped | 3 | 12 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-7 | S1-S3 | `tests/Antiphon.Tests -> bin-c913-green-windows/` | windows-receipts | `/*/*/RemoteScriptContractTests/(C849_front_door_passes_every_full_case_name_to_the_invoker*)\|(C913_Receipts_reject_mixed_digest_types_and_false_smoke_claims*)\|(C912_Cold_runner_verification_uses_mounts_and_writability_not_payloads*)` | V-7,R-1 | 3 native Windows pwsh results, 0 failed/skipped | 3 | 12 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-8 | S1-S3 | n/a | windows-rolling | `pwsh -NoProfile -File scripts/test-deploy-server2.ps1 -RequireJq` | R-2,R-3 | Native Windows pwsh + WSL jq; 24 groups / 66 invocations / 227 assertions; failures=0, no skips, exit 0 | n/a | 6 | true | n/a |
 
 Execution contract:
@@ -909,3 +909,15 @@ Static validation in this TestDesign task: the on-disk document audit passed
 rows, all method bindings, the base 18/9/2/3 method census, the 80-minute row
 sum and the 32-family/47-variant arithmetic. This is documentation validation,
 not TUnit, image or mutation evidence.
+
+### Code execution correction (2026-10-04)
+
+At S0 `514878838d279f7b0cdc2830bc04f23cc8bc559b`, CP-2 produced a fresh TRX
+with zero tests. TUnit 1.44 requires trailing wildcard hints for method-segment
+OR operands, as documented in `docs/testing-and-build.md` (Combined class filters).
+CP-2, CP-4 and CP-7 now include those suffixes. The exact required method roster
+and counts are unchanged and must be checked against fresh TRX; the zero-result
+run is setup failure, not red-first evidence. CP-1 in that same run had five
+Bash extraction failures and the expected T6 receipt assertion red. The test-only
+extractor correction matches an entire closing-brace line, preserving embedded
+PowerShell/JavaScript heredocs. Production remains unchanged for the rerun.

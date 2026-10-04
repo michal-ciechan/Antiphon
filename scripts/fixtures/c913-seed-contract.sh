@@ -6,7 +6,7 @@ root=$(mktemp -d /tmp/c913-seed-XXXXXXXX)
 trap 'rm -rf -- "$root"' EXIT
 export C913_ROOT="$root"
 remote="$repo/scripts/c590-remote.sh"
-awk '/^(c849_[a-z_]+|case_runner_cache_inventory)\(\) \{/ { active=1 } active { print } active && /^}/ { active=0 }' "$remote" > "$root/functions"
+awk '/^(c849_[a-z_]+|case_runner_cache_inventory)\(\) \{/ { active=1 } active { print } active && /^}$/ { active=0 }' "$remote" > "$root/functions"
 source "$root/functions"
 SERVER2_ROOT="$root/server2"; CASE_DIR="$root/case"; CHECKOUT="$repo"
 C849_READY="$SERVER2_ROOT/cache/seed-accepted"
