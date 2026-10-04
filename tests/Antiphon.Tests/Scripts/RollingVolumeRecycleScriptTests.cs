@@ -857,6 +857,19 @@ internal sealed class C1008HostFixture : IDisposable
                 " ]; then rm -- " + Quote(_shellRoot + "/work/escape") + "; fi").GetAwaiter().GetResult();
             if (removed.Exit != 0) throw new InvalidOperationException(removed.Output);
         }
+        if (OperatingSystem.IsWindows())
+        {
+            // Git loose objects are read-only. Clear only that attribute on owned
+            // files, without traversing links, and retain loud deletion failures.
+            var enumeration = new EnumerationOptions
+                { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = false };
+            foreach (var file in Directory.EnumerateFiles(Root, "*", enumeration))
+            {
+                var attributes = File.GetAttributes(file);
+                if ((attributes & FileAttributes.ReadOnly) != 0)
+                    File.SetAttributes(file, attributes & ~FileAttributes.ReadOnly);
+            }
+        }
         Directory.Delete(Root, recursive: true);
     }
 }

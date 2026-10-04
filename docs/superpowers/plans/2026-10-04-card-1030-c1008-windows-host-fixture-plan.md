@@ -428,6 +428,13 @@ becomes 437 minutes; prior ordinary/setup estimates are unchanged (509 total).
 |---|---|---|
 | PC-53 | Set Windows ShellStart.WorkingDirectory back to Root | `C1008HostFixturePortabilityTests.C1030_Windows_transport_ignores_ambient_launchers`, `c1030-cwd-outside-fixture`: actual startup directory is outside the disposable tree |
 | PC-54 | Generate the legacy init -b command for Windows Git setup | `C1008HostFixturePortabilityTests.C1030_Windows_transport_ignores_ambient_launchers`, `c1030-portable-git-init`: compatibility wrapper rejection is captured and asserted absent; real commit is required |
+| PC-55 | Omit clearing ReadOnly on owned Windows Git objects before native deletion | `C1008HostFixturePortabilityTests.C1030_Fixture_path_data_preserves_faults_and_round_trips`, `c1030-owned-cleanup`: owned root including read-only sentinel is removed; foreign target remains |
+
+The first combined Windows run exposed read-only Git-object cleanup after init
+was repaired. PC-55 supplements the two rows above: 55 controls, estimated
+Mutation floor 446 minutes and prior combined estimate 518 minutes. Mutation
+owns validating its labeled reachability and any missing-control discovery;
+ordinary UnauthorizedAccessException evidence is not a completed PC cycle.
 
 ## Verification design
 

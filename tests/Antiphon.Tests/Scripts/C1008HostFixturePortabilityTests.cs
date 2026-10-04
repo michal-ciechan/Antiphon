@@ -100,7 +100,9 @@ public sealed class C1008HostFixturePortabilityTests
         foreach (var output in new[] { "absolute", "", "relative/path" })
         {
             using var f = PreparedWindowsFixture();
-            var converted = output == "absolute" ? f.Root : output;
+            var converted = output == "absolute"
+                ? OperatingSystem.IsWindows() ? NativeToLinux(f.Root) : f.Root
+                : output;
             f.Options.ConverterPrelude = "wslpath() { printf '%s' " + Q(converted) + "; return " + status + "; }\n";
             // On the sole successful root row, translate the independent repository correctly too.
             if (status == 0 && output == "absolute") ConfigureConverter(f);
@@ -590,6 +592,12 @@ public sealed class C1008HostFixturePortabilityTests
             var linkRefusal = await linkFixture.Run();
             linkRefusal.Output.ShouldContain("RecycleGitAuditUnknown", customMessage: "c1030-escaping-link");
             await CheckFakeRefusalsAndRemap(quoted);
+            if (OperatingSystem.IsWindows())
+            {
+                var readOnly = Path.Combine(quoted.Root, "read-only-cleanup-sentinel");
+                File.WriteAllText(readOnly, "fixture-owned");
+                File.SetAttributes(readOnly, File.GetAttributes(readOnly) | FileAttributes.ReadOnly);
+            }
         }
         finally
         {

@@ -84,3 +84,26 @@ Restart: none. Activation/landing owner: caller, using original Code task above.
 All PC-1..PC-52 and every variant stay pending SourceLanding Mutation. The plan
 amendment adds PC-53/54 for these two guards; those also remain pending. Review
 follows completed ordinary verification, before caller landing and Mutation.
+
+## First combined run exposed additional fixture defects
+
+At b4e42ea550422e5c3275d999988dbd7f1b6b723b, CP-4 executed four and failed four.
+The edited Git raw-string line carried LF within a CRLF Windows source file;
+the byte oracle correctly rejected it. Restore consistent native checkout EOL
+in the three edited C# files, preserving Git blob bytes and the oracle.
+The converter's direct positive vector incorrectly supplied native f.Root as
+an absolute Linux path; use the independently converted POSIX root on Windows.
+This new CARD-1030 test is absent at B and was previously masked by teardown.
+
+Both other failures were native deletion of Git's read-only loose objects,
+newly reached after init succeeded. Clear only the ReadOnly attribute on owned
+files before native deletion. Enumeration skips reparse points, the explicit
+escape link is still unlinked first, and deletion exceptions stay loud. Add an
+owned read-only sentinel to the existing cleanup witness; PC-55 remains pending.
+No assertion or timeout changes and no retries. Stop the first executor before
+editing; CP-5's build was interrupted and neither CP-5 nor CP-6 executed in it.
+The fresh committed run repeats all three required rows.
+
+Automatic approval review rejected manual removal of owned baseline build
+outputs with reason "blocked by policy". Those outputs are retained rather
+than deleted through another shell or workaround; final report names residue.
