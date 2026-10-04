@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Antiphon.Checkpoints.Coverage;
+using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Shouldly;
