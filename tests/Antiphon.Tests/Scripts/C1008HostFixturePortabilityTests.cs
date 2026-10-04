@@ -162,6 +162,8 @@ public sealed class C1008HostFixturePortabilityTests
             start.FileName.ShouldBe(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "wsl.exe"), "c1030-" + entry + "-launch");
             start.ArgumentList.SequenceEqual(new[] { "-e", "/bin/bash", "-s" })
                 .ShouldBeTrue("c1030-" + entry + "-launch");
+            Path.GetRelativePath(f.Root, start.WorkingDirectory).ShouldStartWith("..",
+                "c1030-cwd-outside-fixture: WSL must not retain the directory being disposed");
             start.StandardInputEncoding!.GetPreamble().ShouldBeEmpty("c1030-stdin-bom");
             input.ShouldNotContain("\r", customMessage: "c1030-stdin-lf");
         };
