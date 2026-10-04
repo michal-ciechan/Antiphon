@@ -285,3 +285,13 @@ CARD-0820 temp-root contention, CARD-0863 Unix NUL transport, unrelated Pump use
 provider behavior, product landing algorithms, database migrations and checkpoint
 driver redesign are excluded. There is no deployment or stack restart in this
 task. Publication, activation and post-land verification remain separate outcomes.
+
+## Appended TestDesign refresh (2026-10-04)
+
+The [verification companion](2026-10-04-card-0889-grouped-flaky-fixes-test-design.md)
+adds the inspection, delivery inventory, V/R assertions, guard/control inventory,
+checkpoint selection and cost without rewriting this fix design. It preserves the
+five published groups and all 54 outstanding controls. **Next: Plan**, to resolve
+its N1–N4 finite-observation/cancellation seams before Code; this document's earlier
+proposed checkpoint table is not an executable handoff. The companion records the
+fresh exact-path occupancy check and the conditions for a subsequent Code dispatch.
