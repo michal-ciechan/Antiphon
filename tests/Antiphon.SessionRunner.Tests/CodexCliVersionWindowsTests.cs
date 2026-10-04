@@ -34,7 +34,7 @@ public sealed class CodexCliVersionWindowsTests
                 CodexCliVersionTestFixture.Text(sample, "codexCliVersionError").ShouldBe(advisory, "C1031-windows-notice diagnostic");
                 sample.GetProperty("codexCliVersionCheckedAtUtc").GetDateTimeOffset().ShouldBe(CodexCliVersionTestFixture.T);
                 kit.Starts.Last().FileName.ShouldBe(expectedExecutable, "C1031-windows-notice executable");
-                kit.Starts.Last().ArgumentList.ShouldBe(argv, customMessage: "C1031-windows-notice argv");
+                kit.Starts.Last().ArgumentList.ToArray().ShouldBe(argv, "C1031-windows-notice argv");
                 kit.Children.Last().HasExited.ShouldBeTrue("C1031-windows-notice ownership");
                 kit.AuthOpens.ShouldBe(0, "C1031-windows-notice auth-free");
             }
