@@ -573,6 +573,181 @@ function Test-C487_G144 {
         -Detail ('trx=' + $trxWritten + ' results=' + $hasResults + ' fullPath=' + $hasFullPathFilename)
 }
 
+function Get-C1044ExpectedNodes {
+    # Independent fixture identities: never derive the oracle from the adapter.
+    foreach ($row in @(
+        @('SlowCases', 'SlowOne', 'SlowOne.1.1.0', 'Slow'),
+        @('SlowCases', 'SlowTwo', 'SlowTwo.1.1.0', 'Slow'),
+        @('Ordinary', 'Plain', 'Plain.1.1.0', ''),
+        @('Ordinary', 'Rows', 'Rows(System.Int32).1.1.0', ''),
+        @('Ordinary', 'Rows', 'Rows(System.Int32).2.1.0', ''),
+        @('Ordinary', 'Data', 'Data(System.Int32).1.1.0', ''),
+        @('Ordinary', 'Data', 'Data(System.Int32).1.2.0', ''),
+        @('Ordinary', 'Inherited', 'Inherited.1.1.0', ''),
+        @('Manual', 'ManualOne', 'ManualOne.1.1.0', 'OptIn')
+    )) {
+        [pscustomobject]@{ Uid = 'C487.Probe.' + $row[0] + '.1.1.' + $row[2];
+            Type = $row[0]; Method = $row[1]; Category = $row[3] }
+    }
+}
+
+function Write-C1044Diagnostic {
+    param([string]$Name, [string]$Text)
+    $path = Join-Path $ResultsDirectory ($Name + '.diag')
+    [System.IO.File]::WriteAllText($path, $Text)
+    return $path
+}
+
+function Test-C1044Inventory {
+    param([object[]]$Nodes, [switch]$Execution)
+    $expected = @(Get-C1044ExpectedNodes | Where-Object { -not $Execution -or $_.Type -ne 'Manual' } | ForEach-Object { $_.Uid } | Sort-Object)
+    $actual = @($Nodes | ForEach-Object { $_.Uid } | Sort-Object)
+    return ($actual.Count -eq $expected.Count -and ($actual -join '|') -ceq ($expected -join '|'))
+}
+
+function Test-C1044Metadata {
+    param([object[]]$Nodes)
+    if (-not (Test-C1044Inventory -Nodes $Nodes)) { return $false }
+    foreach ($expected in (Get-C1044ExpectedNodes)) {
+        $node = @($Nodes | Where-Object { $_.Uid -ceq $expected.Uid })[0]
+        if ($node.Type -cne $expected.Type -or $node.Method -cne $expected.Method -or
+            $node.Namespace -cne 'C487.Probe' -or $node.ClassName -cne ('C487.Probe.' + $expected.Type) -or
+            $node.Assembly -cne 'Probe' -or $node.State -cne 'Discovered' -or
+            (@($node.Categories) -join '|') -cne $expected.Category) { return $false }
+    }
+    return $true
+}
+
+function Get-C1044MultilineText {
+    param([string]$Newline)
+    $text = [System.IO.File]::ReadAllText((Join-Path (Get-C487ProbeRoot) 'discovery.diag'))
+    # Plain follows SlowTwo: adjacent multiline records, blank continuation,
+    # punctuation/braces, and Manual at EOF without a terminal newline.
+    foreach ($name in @('SlowTwo', 'Plain', 'ManualOne')) {
+        $text = $text.Replace(('DisplayName = ' + $name + ','),
+            ('DisplayName = ' + $name + ' { punctuation },' + $Newline + $Newline + 'continued }, [, name,'))
+    }
+    return $text.TrimEnd([char[]]"`r`n")
+}
+
+function Assert-C1044Rejects {
+    param([string]$Name, [string]$Text, [string]$Pattern)
+    $path = Write-C1044Diagnostic -Name ($Name -replace ' ', '-') -Text $Text
+    $errorText = ''
+    try { $null = ConvertFrom-NightlyDiagnosticLog -Path $path -Kind discovery }
+    catch { $errorText = $_.Exception.Message }
+    Assert-C487 -Cond ($errorText -match $Pattern) -Name ('C1044 ' + $Name) -Detail $errorText
+}
+
+function Test-C1044_MultilineDiscovery {
+    $expected = @(Get-C1044ExpectedNodes)
+    $expectedDigest = Get-NightlySha256Text -Text (ConvertTo-NightlyCanonicalJson -Object ([ordered]@{
+        required = @($expected | Where-Object { $_.Type -ne 'Manual' } | ForEach-Object { $_.Uid } | Sort-Object)
+        excluded = @($expected | Where-Object { $_.Type -eq 'Manual' } | ForEach-Object { $_.Uid } | Sort-Object)
+    }))
+    foreach ($variant in @('LF', 'CRLF')) {
+        $newline = $(if ($variant -eq 'LF') { "`n" } else { "`r`n" })
+        $path = Write-C1044Diagnostic -Name $variant -Text (Get-C1044MultilineText -Newline $newline)
+        $nodes = @()
+        $errorText = ''
+        try { $nodes = @((ConvertFrom-NightlyDiagnosticLog -Path $path -Kind discovery).Nodes) }
+        catch { $errorText = $_.Exception.Message }
+        Assert-C487 -Cond (Test-C1044Inventory -Nodes $nodes) -Name ('C1044 ' + $variant + ' complete inventory') -Detail $errorText
+        Assert-C487 -Cond (Test-C1044Metadata -Nodes $nodes) -Name ('C1044 ' + $variant + ' exact metadata')
+        $census = Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes
+        Assert-C487 -Cond ($census.Ok -and $census.RequiredCount -eq 8 -and $census.ExcludedCount -eq 1 -and
+            $census.Excluded[0].uid -ceq 'C487.Probe.Manual.1.1.ManualOne.1.1.0') -Name ('C1044 ' + $variant + ' dispositions')
+        Assert-C487 -Cond ($census.Digest -ceq $expectedDigest) -Name ('C1044 ' + $variant + ' sorted digest')
+    }
+}
+
+function Test-C1044_DiscoveryReconciliation {
+    $golden = [System.IO.File]::ReadAllText((Join-Path (Get-C487ProbeRoot) 'discovery.diag'))
+    $orphan = 'DiscoveredTestNodeStateProperty { Explanation = orphan }'
+    # Orphans first: other malformed-record checks must not mask PC-2.
+    Assert-C1044Rejects -Name 'prefix orphan refuses' -Text ($orphan + "`n" + $golden) -Pattern 'discovery-count-mismatch discovered=10 parsed=9 path='
+    Assert-C1044Rejects -Name 'suffix orphan refuses' -Text ($golden + "`n" + $orphan) -Pattern 'discovery-count-mismatch discovered=10 parsed=9 path='
+    $partial = 'TestNodeUpdateMessage { TestNode = TestNode { Uid = TestNodeUid { Value = truncated }'
+    Assert-C1044Rejects -Name 'partial cannot borrow state' -Text ($partial + "`n" + $golden) -Pattern 'malformed discovery record: missing state'
+    Assert-C1044Rejects -Name 'partial cannot borrow identity' -Text ($partial + ', DiscoveredTestNodeStateProperty { }' + "`n" + $golden) -Pattern 'truncated diagnostic record uid=truncated'
+    $record = @($golden -split "`r?`n" | Where-Object { $_ -match 'DisplayName = Plain,' })[0]
+    Assert-C1044Rejects -Name 'duplicate refuses' -Text ($golden + "`n" + $record) -Pattern 'duplicate discovery uid'
+
+    $savedSeams = $script:NightlySeams
+    try {
+        $script:NightlySeams = @{ StartProcess = {
+            param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
+            $index = [array]::IndexOf($ArgumentList, '--diagnostic-output-directory')
+            [System.IO.File]::WriteAllText((Join-Path $ArgumentList[$index + 1] 'fixture.diag'), $script:C1044ProducerText)
+            return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true }
+        } }
+        $exe = Join-Path $ResultsDirectory 'fixture.dll'
+        [System.IO.File]::WriteAllText($exe, 'private assembly hash fixture')
+        $output = Join-Path $ResultsDirectory 'producer.json'
+        $producerArgs = @{ ExePath = $exe; OutputPath = $output;
+            DiagnosticDirectory = (Join-Path $ResultsDirectory 'producer-diag');
+            LogPath = (Join-Path $ResultsDirectory 'producer.log'); WorkingDirectory = $ResultsDirectory }
+        $script:C1044ProducerText = $orphan + "`n" + $golden
+        $errorText = ''
+        try { $null = Invoke-NightlyProduceDiscovery @producerArgs } catch { $errorText = $_.Exception.Message }
+        Assert-C487 -Cond ($errorText -match 'discovery-count-mismatch discovered=10 parsed=9' -and
+            -not (Test-Path -LiteralPath $output)) -Name 'C1044 producer absent output stays absent' -Detail $errorText
+        [System.IO.File]::WriteAllText($output, 'sentinel-existing-output')
+        $errorText = ''
+        try { $null = Invoke-NightlyProduceDiscovery @producerArgs } catch { $errorText = $_.Exception.Message }
+        Assert-C487 -Cond ($errorText -match 'discovery-count-mismatch discovered=10 parsed=9' -and
+            [System.IO.File]::ReadAllText($output) -ceq 'sentinel-existing-output') -Name 'C1044 producer sentinel unchanged' -Detail $errorText
+        $script:C1044ProducerText = Get-C1044MultilineText -Newline "`n"
+        $null = Invoke-NightlyProduceDiscovery @producerArgs
+        $published = Read-NightlyDiscoveryDocument -Path $output
+        Assert-C487 -Cond (Test-C1044Metadata -Nodes $published.Nodes) -Name 'C1044 producer publishes complete multiline inventory'
+    } finally {
+        $script:NightlySeams = $savedSeams
+        Remove-Variable -Name C1044ProducerText -Scope Script -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-C1044_ParserCompatibility {
+    $root = Get-C487ProbeRoot
+    $golden = [System.IO.File]::ReadAllText((Join-Path $root 'discovery.diag'))
+    $nodes = @((ConvertFrom-NightlyDiagnosticLog -Path (Join-Path $root 'discovery.diag') -Kind discovery).Nodes)
+    Assert-C487 -Cond (Test-C1044Inventory -Nodes $nodes) -Name 'C1044 golden discovery inventory'
+    Assert-C487 -Cond (Test-C1044Metadata -Nodes $nodes) -Name 'C1044 golden discovery metadata'
+    $execText = [System.IO.File]::ReadAllText((Join-Path $root 'execution.diag'))
+    $execution = @((ConvertFrom-NightlyDiagnosticLog -Path (Join-Path $root 'execution.diag') -Kind execution).Nodes)
+    Assert-C487 -Cond (Test-C1044Inventory -Nodes $execution -Execution) -Name 'C1044 golden terminal inventory'
+    $withDiscovery = Write-C1044Diagnostic -Name 'nonterminal' -Text ($execText + "`n" + $golden)
+    $filtered = @((ConvertFrom-NightlyDiagnosticLog -Path $withDiscovery -Kind execution).Nodes)
+    Assert-C487 -Cond ((Test-C1044Inventory -Nodes $filtered -Execution) -and
+        @($filtered | Where-Object { $_.State -in @('InProgress', 'Discovered') }).Count -eq 0) -Name 'C1044 nonterminal updates filtered'
+    $prefixed = [regex]::Replace($golden, '(?m)^TestNodeUpdateMessage', '2026-10-04T12:00:00.000+00:00 Pinned.Logger INFORMATION TestNodeUpdateMessage')
+    $path = Write-C1044Diagnostic -Name 'prefixed' -Text $prefixed
+    Assert-C487 -Cond (Test-C1044Metadata -Nodes (ConvertFrom-NightlyDiagnosticLog -Path $path -Kind discovery).Nodes) -Name 'C1044 prefixed envelopes accepted'
+    $multilineExec = $execText.Replace('DisplayName = Plain,', "DisplayName = Plain { },`n`ncontinued [, name,").TrimEnd([char[]]"`r`n")
+    $path = Write-C1044Diagnostic -Name 'execution-multiline' -Text $multilineExec
+    Assert-C487 -Cond (Test-C1044Inventory -Nodes (ConvertFrom-NightlyDiagnosticLog -Path $path -Kind execution).Nodes -Execution) -Name 'C1044 multiline terminal inventory'
+    $jsonPath = Join-Path $ResultsDirectory 'roundtrip.json'
+    Write-NightlyDiscoveryDocument -Path $jsonPath -Document (ConvertTo-NightlyDiscoveryDocument -Nodes $nodes -AssemblyHash 'fixture-hash')
+    $roundtrip = ConvertFrom-NightlyDiagnosticLog -Path $jsonPath -Kind discovery
+    Assert-C487 -Cond ((Test-C1044Metadata -Nodes $roundtrip.Nodes) -and $roundtrip.AssemblyHash -ceq 'fixture-hash') -Name 'C1044 discovery JSON roundtrip'
+    $manual = @($nodes | Where-Object { $_.Type -eq 'Manual' })[0]
+    Assert-C487 -Cond ((Get-NightlyDiscoveryDisposition -Node $manual).Disposition -eq 'excluded') -Name 'C1044 default OptIn excluded'
+    Assert-C487 -Cond ((Get-NightlyDiscoveryDisposition -Node $manual -ProfileAware).Disposition -eq 'required') -Name 'C1044 profile OptIn required'
+    $exclusions = @([pscustomobject]@{ Class = 'Manual'; Methods = @('ManualOne'); Reason = 'manual fixture'; Owner = 'C1044' })
+    $disposition = Get-NightlyDiscoveryDisposition -Node $manual -ProfileAware -ProfileExclusions $exclusions
+    Assert-C487 -Cond ($disposition.Disposition -eq 'excluded' -and $disposition.Reason -eq 'manual fixture' -and
+        $disposition.Owner -eq 'C1044') -Name 'C1044 explicit profile exclusion'
+    Assert-C1044Rejects -Name 'unsupported TUnit refuses' -Text ($golden.Replace("Version: '1.44.0.0'", "Version: '9.0.0.0'")) -Pattern 'version-drift'
+    Assert-C1044Rejects -Name 'unsupported MTP refuses' -Text ($golden.Replace('Version: 2.2.2', 'Version: 9.0.0')) -Pattern 'version-drift'
+    $record = @($golden -split "`r?`n" | Where-Object { $_ -match 'DisplayName = Plain,' })[0]
+    Assert-C1044Rejects -Name 'compatibility duplicate refuses' -Text ($golden + "`n" + $record) -Pattern 'duplicate discovery uid'
+    Assert-C1044Rejects -Name 'missing type refuses' -Text ($golden.Replace('TypeName = Ordinary', 'TypeName = ')) -Pattern 'truncated diagnostic record'
+    Assert-C1044Rejects -Name 'missing method refuses' -Text ($golden.Replace('MethodName = Plain', 'MethodName = ')) -Pattern 'truncated diagnostic record'
+    $headers = (@($golden -split "`r?`n" | Where-Object { $_ -notmatch 'TestNodeUpdateMessage' }) -join "`n")
+    Assert-C1044Rejects -Name 'garbage refuses' -Text ($headers + "`n" + 'garbage payload') -Pattern 'unknown diagnostic format'
+    Assert-C1044Rejects -Name 'header only refuses' -Text $headers -Pattern 'unknown diagnostic format'
+}
+
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
     if (-not $fn) { Write-Error ('unknown case {0}' -f $Case); exit 2 }

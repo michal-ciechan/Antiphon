@@ -279,6 +279,25 @@ function ConvertFrom-NightlyExecutionJson {
     return [pscustomobject]@{ Nodes = $nodes }
 }
 
+function Get-NightlyDiagnosticRecords {
+    param([string]$Text)
+    # A record ends at the next structural node update or logging header, never
+    # at display-name punctuation. Keep the original physical line endings.
+    $record = New-Object System.Text.StringBuilder
+    foreach ($line in [regex]::Split($Text, '(?<=\n)')) {
+        $nodeStart = $line -match '^(?:[^\r\n]*?TestNodeUpdateMessage \{[^\r\n]*?TestNode = |\s*)TestNode \{ Uid = TestNodeUid'
+        $headerStart = $line -match '^\d{4}-\d{2}-\d{2}T\S+\s+\S+\s+(?:TRACE|DEBUG|INFORMATION|WARNING|ERROR|CRITICAL)\b' -or
+                       $line -match '^\s*version:\s+'
+        if ($nodeStart -or $headerStart) {
+            if ($record.Length -gt 0) { $record.ToString(); [void]$record.Clear() }
+        }
+        if ($nodeStart -or ($record.Length -gt 0 -and -not $headerStart)) {
+            [void]$record.Append($line)
+        }
+    }
+    if ($record.Length -gt 0) { $record.ToString() }
+}
+
 function ConvertFrom-NightlyDiagnosticLog {
     param([string]$Path, [string]$Kind)
     # Strict adapter for pinned TUnit 1.44 / MTP 2.2 diagnostic ToString() records.
@@ -298,20 +317,25 @@ function ConvertFrom-NightlyDiagnosticLog {
         return $obj
     }
     Test-NightlyPinnedDiagnosticVersions -Text $text
+    # Count raw markers independently of framing/acceptance. Even an orphan or
+    # an ambiguous marker in display text must prevent a partial inventory.
+    $discoveredCount = [regex]::Matches($text, 'DiscoveredTestNodeStateProperty \{').Count
     $recognized = $false
     $nodes = @()
     $seen = @{}
-    foreach ($line in ($text -split "`r?`n")) {
-        if ($line -notmatch 'TestNode \{ Uid = TestNodeUid') { continue }
-        $state = Get-NightlyDiagnosticStateName -Record $line
-        if ([string]::IsNullOrWhiteSpace($state)) { continue }
+    foreach ($record in (Get-NightlyDiagnosticRecords -Text $text)) {
+        $state = Get-NightlyDiagnosticStateName -Record $record
+        if ([string]::IsNullOrWhiteSpace($state)) {
+            if ($Kind -eq 'discovery') { throw ('malformed discovery record: missing state {0}' -f $Path) }
+            continue
+        }
         $recognized = $true
         if ($Kind -eq 'discovery') {
             if ($state -ne 'Discovered') { continue }
         } elseif ($Kind -eq 'execution') {
             if ($state -eq 'InProgress' -or $state -eq 'Discovered') { continue }
         }
-        $node = ConvertFrom-NightlyDiagnosticRecord -Record $line -State $state
+        $node = ConvertFrom-NightlyDiagnosticRecord -Record $record -State $state
         if ($seen.ContainsKey($node.Uid)) {
             throw ('duplicate {0} uid {1}' -f $Kind, $node.Uid)
         }
@@ -320,6 +344,9 @@ function ConvertFrom-NightlyDiagnosticLog {
     }
     if (-not $recognized) {
         throw ('unknown diagnostic format {0}' -f $Path)
+    }
+    if ($Kind -eq 'discovery' -and $discoveredCount -ne $nodes.Count) {
+        throw ('discovery-count-mismatch discovered={0} parsed={1} path={2}' -f $discoveredCount, $nodes.Count, $Path)
     }
     return [pscustomobject]@{ Nodes = $nodes }
 }
