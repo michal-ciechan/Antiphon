@@ -18,7 +18,7 @@ SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; RUN=c849aaaaaaaaaaaaaaaa0
 CASE=runner-cache-seed; C604_SERVER_ORIGIN=https://example.invalid
 image_id=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 donor_id=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
-FAULT=none; SOURCE=live
+FAULT=none; SOURCE=live; CRASH=''
 mkdir -p "$SERVER2_ROOT/cache" "$CASE_DIR" "$root/bin" "$root/donor/packages" "$root/donor/npm"
 for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do mkdir -m 700 -p "$root/volumes/$name/_data"; done
 printf outside > "$root/outside"
@@ -30,15 +30,28 @@ done
 pwsh_path=$(command -v pwsh)
 export PATH="$root/bin:$PATH"
 fail() { printf 'FAIL %s\n' "$*"; [ ! -e "$root/out" ] || cat "$root/out"; exit 1; }
+barrier() {
+    builtin printf 'barrier %s\n' "$1" >> "$C913_ROOT/trace"
+    if [ "${CRASH:-}" = "$1" ]; then kill -KILL "$C913_CHILD"; exit 137; fi
+}
+printf() {
+    if [[ "${1:-}" == 'schema=3'* ]] && [ -n "${C913_CHILD:-}" ]; then
+        barrier marker-write
+        builtin printf "$@"
+        barrier after-marker-write
+    else builtin printf "$@"; fi
+}
 pass() { printf 'PASS %s\n' "$1"; }
 require_lane() { [ "$1" = host ]; }
 write_result() { printf 'RESULT %s %s\n' "$1" "$2"; exit "$3"; }
 c849_lock() { :; }
 c849_prepare() { :; } # Mount/initialization has its separate A1/A2 tests.
 c849_smoke() {
+    barrier before-smoke
     printf 'smoke\n' >> "$root/trace"
     [ "$FAULT" != smoke ] || write_result false CacheSmokeFailed 2
     printf 'C849_SMOKE runner=%s uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK\n' "$2" >> "$CASE_DIR/smoke-summary.txt"
+    barrier after-smoke
 }
 c849_status_body() {
     local runner="$1" sessions=0 running=0 queued=0 retired=null available=true
@@ -46,9 +59,11 @@ c849_status_body() {
     [ "$FAULT" != status-error ] || return 1
     [ "$FAULT" != busy ] || sessions=1
     [ "$FAULT" != unknown ] || queued=null
+    if [ "$FAULT" = saved-late-busy ] && grep -q '^barrier after-saved-copy$' "$root/trace"; then sessions=1; fi
     [ "$FAULT" != absent-unretired ] || retired=null
     if [ "$FAULT" = reconnect ] && grep -q '^restart$' "$root/trace"; then available=false; fi
     printf '{"sessions":%s,"runnerSessions":%s,"queuedTasks":%s,"draining":true,"acceptingNewWork":false,"redirectTo":"server2","retireWhenIdle":true,"dispatchEligible":%s,"available":%s,"retiredAt":%s}' "$sessions" "$running" "$queued" "$available" "$available" "$retired"
+    if [ "${phase:-}" = reconnected ] && grep -q '^restart$' "$root/trace"; then barrier reconnect; fi
 }
 sudo() {
     [ "$1" != -n ] || shift
@@ -93,28 +108,32 @@ docker() {
         fi ;;
       ps:*)
         [ "$FAULT" != census-error ] || return 1
-        if [[ "$*" == *volume=* ]]; then [ "$FAULT" != attachment ] || echo foreign; return 0; fi
+        if [[ "$*" == *volume=* ]]; then
+          if [ "$FAULT" = attachment ] || { [ "$FAULT" = saved-late-attachment ] && grep -q '^barrier after-npm-verify$' "$root/trace"; }; then echo foreign; fi
+          return 0
+        fi
         if [[ "$*" == *"project=$TEMP_PROJECT"* ]]; then
-          if [ "$SOURCE" = live ]; then echo "$donor_id"; [ "$FAULT" != duplicate ] || echo duplicate; fi
+          if [ "$SOURCE" = live ]; then echo "$donor_id"; [ "$FAULT" != duplicate ] || echo duplicate
+          elif [ "$FAULT" = saved-temp-present ] && [ "$(grep -c "project=$TEMP_PROJECT" "$root/docker-trace")" -ge 2 ]; then echo "$donor_id"; fi
         else printf '%064d\n' 4; fi ;;
       inspect:*)
         [ "$FAULT" != inspect-error ] || return 1
         case "$3" in
           *'.Image'*) echo "$image_id" ;;
-          *'.Id'*) if [ "$FAULT" = donor-id ]; then echo changed; else echo "$donor_id"; fi ;;
+          *'.Id'*) if grep -q '^restart$' "$root/trace" 2>/dev/null; then barrier donor-id; fi; if [ "$FAULT" = donor-id ] && grep -q '^restart$' "$root/trace"; then echo changed; else echo "$donor_id"; fi ;;
           *'.State.Running'*) echo false ;;
           *'com.docker.compose.project'*) echo "$TEMP_PROJECT" ;;
           *'com.docker.compose.service'*) echo session-runner ;;
           *'.Mounts'*) echo '[]' ;;
           *) return 94 ;;
         esac ;;
-      stop:*) [ "$FAULT" != stop ] || return 1; printf 'stop\n' >> "$root/trace" ;;
-      start:*) [ "$FAULT" != restart ] || return 1; printf 'restart\n' >> "$root/trace" ;;
+      stop:*) barrier before-stop; [ "$FAULT" != stop ] || return 1; printf 'stop\n' >> "$root/trace"; barrier after-stop ;;
+      start:*) barrier before-restart; [ "$FAULT" != restart ] || return 1; printf 'restart\n' >> "$root/trace"; barrier after-restart ;;
       rm:*) return 0 ;;
       cp:*)
         if [[ "$2" == *'/packages/.' ]]; then source=packages; else source=npm; fi
         [ "$FAULT" != "copy-$source" ] || return 1
-        cp -a "$root/donor/$source/." "$3/" ;;
+        cp -a "$root/donor/$source/." "$3/"; barrier "after-copy-$source" ;;
       exec:*)
         if [[ "$*" == *'ps -eo uid,comm'* ]]; then
           [ "$FAULT" != process-error ] || return 1
@@ -141,9 +160,9 @@ docker() {
           esac
         done
         if [ "$entrypoint" = sleep ]; then echo helper; return; fi
-        if [ "$entrypoint" = npm ]; then [ "$FAULT" != npm-verify ]; return; fi
+        if [ "$entrypoint" = npm ]; then [ "$FAULT" != npm-verify ] || return 1; barrier after-npm-verify; return; fi
         if [ "$entrypoint" = pwsh ]; then
-          "$pwsh_path" -NoProfile -File "$repo/scripts/c849-import-saved-donor.ps1" -Source "$C590_SAVED_DONOR" -Stage "$stage"; return
+          "$pwsh_path" -NoProfile -File "$repo/scripts/c849-import-saved-donor.ps1" -Source "$C590_SAVED_DONOR" -Stage "$stage" || return $?; barrier after-saved-copy; return
         fi
         if [ "$entrypoint" = sha256sum ]; then code="sha256sum ${!#}"; fi
         if [ -z "$code" ]; then code=$(cat); fi
@@ -167,6 +186,10 @@ docker() {
           code="${code//stat -c %u:%g:%a/printf 1654:1654:700\\n #}"
         fi
         bash -c "$code" || return $?
+        if [[ "$code" == *'cp -a '* ]]; then
+          if [[ "$code" == *"$root/volumes/$C849_PACKAGES/_data"* ]]; then barrier after-import-packages; else barrier after-import-npm; fi
+        fi
+        if [[ "$code" == *'c849_manifest_compare '* ]]; then barrier after-comparison; fi
         if { [ "$FAULT" = corrupt-import ] || [ "$FAULT" = corrupt-npm-import ]; } && [[ "$code" == *'cp -a '* ]]; then
           if [ "$FAULT" = corrupt-import ]; then printf corrupted > "$root/volumes/$C849_PACKAGES/_data/c913.probe/1.0.0/data"
           else printf corrupted > "$root/volumes/$C849_NPM/_data/content"; fi
@@ -177,7 +200,11 @@ docker() {
 mv() {
     if [ "$FAULT" = recovery-save ] && [[ "$1" == "$SERVER2_ROOT/cache/stage-"* ]]; then return 1; fi
     if [ "$FAULT" = publication ] && [[ "$*" == *"$C849_READY.tmp-"* ]]; then return 1; fi
-    command mv "$@"
+    local step=''
+    if [[ "$*" == *"$C849_READY.tmp-"* ]]; then step=publication; barrier before-publication
+    elif [[ "$1" == "$SERVER2_ROOT/cache/stage-"* ]]; then step=recovery; fi
+    command mv "$@" || return $?
+    [ -z "$step" ] || barrier "after-$step"
 }
 ordinary() {
     mkdir -p "$1/packages/c913.probe/1.0.0" "$1/packages/c913.tools/2.0.0" "$1/npm/empty"
@@ -188,7 +215,7 @@ ordinary() {
     chmod 751 "$1/packages/c913.tools/2.0.0/tool"
     printf npm > "$1/npm/content"
 }
-run() { local status=0; ( "$@" ) > "$root/out" 2>&1 || status=$?; printf '%s' "$status" > "$root/exit"; }
+run() { local status=0; ( C913_CHILD="$BASHPID"; "$@" ) > "$root/out" 2>&1 || status=$?; printf '%s' "$status" > "$root/exit"; }
 accept() { [ "$(cat "$root/exit")" = 0 ] || fail "$1"; pass "$1"; }
 refuse() { [ "$(cat "$root/exit")" = 2 ] && grep -Fq "$2" "$root/out" || fail "$1"; [ "$(cat "$root/outside")" = outside ] || fail sibling-changed; pass "$1"; }
 make_full_marker() {
@@ -280,6 +307,55 @@ case "$mode" in
         npm-verify) ! grep -q '^import$' "$root/trace" || fail npm-before-manifest ;;
       esac
       pass "$FAULT-no-publication"
+    done
+    FAULT=none
+    for CRASH in before-stop after-stop after-copy-packages after-copy-npm after-npm-verify after-import-packages after-import-npm after-comparison before-smoke after-smoke after-recovery before-restart after-restart donor-id reconnect marker-write after-marker-write before-publication after-publication; do
+      rm -f "$C849_READY" "$C849_READY.tmp-$RUN"; rm -rf -- "$SERVER2_ROOT/cache/recovery-$RUN"
+      for name in "$C849_PACKAGES" "$C849_NPM"; do find "$root/volumes/$name/_data" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; done
+      : > "$root/trace"
+      run c849_seed
+      [ "$(cat "$root/exit")" = 137 ] && grep -Fxq "barrier $CRASH" "$root/trace" || fail "crash-$CRASH-reached"
+      if [ "$CRASH" = after-publication ]; then
+        before=$(sha256sum "$C849_READY")
+        run c849_require_ready; accept published-crash-reopens
+        [ "$(sha256sum "$C849_READY")" = "$before" ] || fail publication-no-rewrite
+      else
+        [ ! -e "$C849_READY" ] || fail "crash-$CRASH-no-marker"
+        run c849_require_ready; refuse "crash-$CRASH-reopens-held" CacheSeedRequired
+        if [ -n "$(find "$root/volumes/$C849_PACKAGES/_data" -type f -print -quit)" ]; then
+          CRASH=''
+          run c849_seed; refuse interrupted-import-held CacheUnmarkedContent
+        fi
+      fi
+    done
+    CRASH=''; FAULT=none; SOURCE=saved
+    mkdir -p "$root/donor/packages/incomplete/1.0.0"
+    printf unchanged > "$root/donor/packages/incomplete/1.0.0/data"
+    tar -cf "$root/saved.tar" -C "$root/donor" .
+    saved_hash=$(sha256sum "$root/saved.tar")
+    for saved_kind in directory tar; do
+      if [ "$saved_kind" = directory ]; then C590_SAVED_DONOR="$root/donor"; else C590_SAVED_DONOR="$root/saved.tar"; fi
+      for saved_fault in none smoke saved-temp-present saved-late-busy saved-late-attachment; do
+        FAULT="$saved_fault"
+        rm -f "$C849_READY"; rm -rf -- "$SERVER2_ROOT/cache/recovery-$RUN"
+        for name in "$C849_PACKAGES" "$C849_NPM"; do find "$root/volumes/$name/_data" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; done
+        : > "$root/trace"; : > "$root/docker-trace"
+        run c849_seed
+        if [ "$FAULT" = none ]; then
+          accept "ordinary-saved-$saved_kind-accepted"
+          grep -Fxq "donor-type=saved-$saved_kind" "$C849_READY" || fail saved-donor-type
+          [ ! -e "$SERVER2_ROOT/cache/recovery-$RUN/packages/incomplete/1.0.0" ] || fail incomplete-stage-only
+        else
+          [ "$(cat "$root/exit")" != 0 ] && [ ! -e "$C849_READY" ] || fail saved-smoke-failure-no-marker
+        fi
+        [ "$(sha256sum "$root/saved.tar")" = "$saved_hash" ] &&
+          [ "$(cat "$root/donor/packages/incomplete/1.0.0/data")" = unchanged ] || fail saved-source-byte-identical
+        if [[ "$saved_fault" == saved-* ]]; then
+          ! grep -q '^import$' "$root/trace" || fail "$saved_fault-no-import"
+          pass "$saved_fault-no-import"
+        fi
+        pass saved-source-byte-identical
+      done
     done
     ;;
  ready)
