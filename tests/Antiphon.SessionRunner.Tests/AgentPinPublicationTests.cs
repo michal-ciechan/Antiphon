@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -11,6 +12,7 @@ namespace Antiphon.SessionRunner.Tests;
 // The red-first commit used reflection before the dormant primitive existed.
 // The implementation now uses its typed boundary; oracles inspect independent bytes.
 [Category("Integration")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class AgentPinPublicationTests
 {
     [Test]
@@ -33,8 +35,13 @@ public class AgentPinPublicationTests
         {
             var request = f.Request();
             request[field] = JsonSerializer.SerializeToNode(value);
-            Refused(await f.Apply(request), reason);
-            Directory.GetFileSystemEntries(f.Cwd).ShouldBeEmpty("c262-g190/200/201/202/203: reject before write " + field);
+            var guard = field switch
+            {
+                "Sha256" => "c262-g190", "TargetOwnerId" => "c262-g200", "SchemaVersion" => "c262-g201",
+                "RunnerStoreId" => "c262-g202", "Action" => "c262-g203", _ => field
+            };
+            Refused(await f.Apply(request), reason, guard);
+            Directory.GetFileSystemEntries(f.Cwd).ShouldBeEmpty(guard + ": reject before write");
             Directory.GetFileSystemEntries(f.Journal).ShouldBeEmpty();
         }
         var missing = f.Request();
@@ -45,6 +52,16 @@ public class AgentPinPublicationTests
         File.WriteAllText(Path.Combine(f.Root, ".git"), "gitdir: elsewhere");
         Refused(await f.Apply(f.Request()), "pin_git_not_qualified");
         File.Delete(Path.Combine(f.Root, ".git"));
+        var large = f.Request(content: new string('x', AgentPinWorkspaceStore.MaxInspectionBytes + 1));
+        Refused(await f.Apply(large), "pin_content_invalid");
+        var invalidCleanup = f.Request();
+        invalidCleanup["Action"] = 1;
+        Refused(await f.Apply(invalidCleanup), "pin_content_invalid");
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        await Should.ThrowAsync<OperationCanceledException>(() => new AgentPinWorkspacePublisher(f.Store, f.Journal)
+            .ApplyAsync(f.Request().Deserialize<AgentPinPublicationRequest>()!, canceled.Token));
+        Directory.GetFileSystemEntries(f.Journal).ShouldBeEmpty();
         var legal = f.Request();
         Receipt(await f.Apply(legal), legal, f, "first pins\n");
         File.ReadAllText(f.Target).ShouldBe("first pins\n", "c262-g002: actual publication");
@@ -72,6 +89,24 @@ public class AgentPinPublicationTests
             Refused(await f.Apply(request), "pin_bytes_conflict");
             File.ReadAllText(f.Target).ShouldBe("editor after receipt", "c262-g151: receipts recheck disk");
         }
+        using var replacement = new Fixture();
+        var initial = replacement.Request();
+        Receipt(await replacement.Apply(initial), initial, replacement, "first pins\n");
+        var next = replacement.Request(2, "complete replacement\n", Hash("first pins\n"));
+        var failed = await replacement.Apply(next, phase =>
+        {
+            if (phase != "before-compare") return Task.CompletedTask;
+            File.ReadAllText(replacement.Target).ShouldBe("first pins\n", "c262-g043: old complete bytes before rename");
+            Directory.GetFiles(Path.GetDirectoryName(replacement.Target)!, "*.tmp").Length.ShouldBe(1);
+            return Task.FromException(new IOException("interrupted before rename"));
+        });
+        failed["Status"]!.GetValue<int>().ShouldBe(2);
+        Receipt(await replacement.Apply(next), next, replacement, "complete replacement\n");
+
+        var sameBytes = replacement.Request(3, "complete replacement\n", Hash("complete replacement\n"));
+        var modified = File.GetLastWriteTimeUtc(replacement.Target);
+        Receipt(await replacement.Apply(sameBytes), sameBytes, replacement, "complete replacement\n");
+        File.GetLastWriteTimeUtc(replacement.Target).ShouldBe(modified, "equal-byte operation preserves target mtime");
     }
 
     [Test]
@@ -82,19 +117,36 @@ public class AgentPinPublicationTests
         Receipt(await f.Apply(first), first, f, "first pins\n");
         var next = f.Request(2, "new pins\n", Hash("first pins\n"));
         Receipt(await f.Apply(next), next, f, "new pins\n");
-        Refused(await f.Apply(first), "pin_fence_stale");
+        Refused(await f.Apply(first), "pin_fence_stale"); // c262-g149
         var collision = next.DeepClone().AsObject();
         collision["OperationId"] = Guid.NewGuid();
         Refused(await f.Apply(collision), "pin_operation_conflict");
         var cleanup = f.Request(3, null, Hash("new pins\n"));
         Receipt(await f.Apply(cleanup), cleanup, f, null);
         Refused(await f.Apply(next), "pin_fence_stale");
-        File.Exists(f.Target).ShouldBeFalse("cleanup tombstone fences delayed publication");
+        File.Exists(f.Target).ShouldBeFalse("c262-g150: cleanup tombstone fences delayed publication");
         Receipt(await f.Apply(cleanup), cleanup, f, null);
         var reuse = f.Request(4, "repinned\n");
         reuse["LocationGeneration"] = Guid.NewGuid();
         Receipt(await f.Apply(reuse), reuse, f, "repinned\n");
         File.ReadAllText(f.Target).ShouldBe("repinned\n");
+        Refused(await f.Apply(cleanup), "pin_fence_stale");
+        var alias = reuse.DeepClone().AsObject();
+        alias["Cwd"] = f.Cwd + "/./";
+        Receipt(await f.Apply(alias), alias, f, "repinned\n");
+        // Higher fences can supersede interrupted old intents, with either their
+        // verified old or published bytes as expected custody.
+        foreach (var cut in new[] { "intent", "published" })
+        {
+            using var interrupted = new Fixture();
+            var old = interrupted.Request();
+            (await interrupted.Apply(old, phase => phase == cut
+                ? Task.FromException(new IOException("interrupted")) : Task.CompletedTask))["Status"]!.GetValue<int>().ShouldBe(2);
+            var newest = interrupted.Request(2, "latest", cut == "published" ? Hash("first pins\n") : null);
+            Receipt(await interrupted.Apply(newest), newest, interrupted, "latest");
+            Refused(await interrupted.Apply(old), "pin_fence_stale");
+            File.ReadAllText(interrupted.Target).ShouldBe("latest", "c262-g149: old RPC cannot regress a superseded intent");
+        }
     }
 
     [Test]
@@ -108,6 +160,7 @@ public class AgentPinPublicationTests
         File.Delete(f.Target);
         var first = f.Request();
         Receipt(await f.Apply(first), first, f, "first pins\n");
+
         var next = f.Request(2, "new pins\n", Hash("first pins\n"));
         Refused(await f.Apply(next, phase =>
         {
@@ -125,6 +178,20 @@ public class AgentPinPublicationTests
             return Task.CompletedTask;
         }), "pin_path_link");
         File.ReadAllText(outside).ShouldBe("outside", "c262-g191: final native component check");
+
+        using var corrupt = new Fixture();
+        var owned = corrupt.Request();
+        Receipt(await corrupt.Apply(owned), owned, corrupt, "first pins\n");
+        var journalFile = Directory.GetFiles(corrupt.Journal, "*.json").Single();
+        var saved = File.ReadAllText(journalFile);
+        File.WriteAllText(journalFile, "{}");
+        Refused(await corrupt.Apply(owned), "pin_journal_invalid");
+        File.WriteAllText(journalFile, "broken json");
+        (await corrupt.Apply(owned))["Status"]!.GetValue<int>().ShouldBe(2);
+        File.Delete(journalFile);
+        Refused(await corrupt.Apply(owned), "pin_custody_missing");
+        File.WriteAllText(journalFile, saved);
+        Receipt(await corrupt.Apply(owned), owned, corrupt, "first pins\n");
     }
 
     [Test]
@@ -161,6 +228,18 @@ public class AgentPinPublicationTests
         Receipt(await f.Apply(remove), remove, f, null);
         Directory.Exists(Path.GetDirectoryName(f.Target)).ShouldBeFalse("only empty owner leaf is removed");
         Directory.Exists(Path.GetDirectoryName(Path.GetDirectoryName(f.Target)!)).ShouldBeTrue();
+        using var crash = new Fixture();
+        var create = crash.Request();
+        Receipt(await crash.Apply(create), create, crash, "first pins\n");
+        var retire = crash.Request(2, null, Hash("first pins\n"));
+        (await crash.Apply(retire, phase => phase == "published"
+            ? Task.FromException(new IOException("crash after delete")) : Task.CompletedTask))["Status"]!.GetValue<int>().ShouldBe(2);
+        Directory.Exists(Path.GetDirectoryName(crash.Target)).ShouldBeTrue();
+        Receipt(await crash.Apply(retire), retire, crash, null);
+        Directory.Exists(Path.GetDirectoryName(crash.Target)).ShouldBeFalse("replay must finish empty-leaf retirement");
+        Directory.Delete(Path.Combine(crash.Cwd, ".antiphon"), recursive: true);
+        Receipt(await crash.Apply(retire), retire, crash, null);
+        Directory.GetFileSystemEntries(crash.Cwd).ShouldBeEmpty("cleanup replay must not recreate a retired subtree");
     }
 
     [Test]
@@ -184,14 +263,40 @@ public class AgentPinPublicationTests
         finally { release.TrySetResult(); await writing; }
         Receipt(await writing, first, f, "first pins\n");
         Receipt(await f.Apply(first), first, f, "first pins\n");
+        // A separate inherited native child holds the same kernel lock. This is
+        // deliberately not a second test runner or a production host process.
+        var key = Hash(f.Target);
+        var start = new ProcessStartInfo("flock")
+        {
+            RedirectStandardInput = true, RedirectStandardOutput = true,
+            RedirectStandardError = true, UseShellExecute = false
+        };
+        foreach (var argument in new[] { "-x", Path.Combine(f.Journal, key + ".lock"), "sh", "-c", "echo locked; read release" })
+            start.ArgumentList.Add(argument);
+        using var child = Process.Start(start)!;
+        try
+        {
+            (await child.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(10))).ShouldBe("locked");
+            (await f.Apply(first))["Status"]!.GetValue<int>().ShouldBe(2, "cross-process lock excludes publication");
+            await child.StandardInput.WriteLineAsync("release");
+            await child.StandardInput.FlushAsync();
+            await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            child.ExitCode.ShouldBe(0);
+        }
+        finally
+        {
+            if (!child.HasExited) child.Kill(entireProcessTree: true);
+            await child.WaitForExitAsync();
+        }
+        Receipt(await f.Apply(first), first, f, "first pins\n");
     }
 
     private static string Hash(string text) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
 
-    private static void Refused(JsonObject result, string reason)
+    private static void Refused(JsonObject result, string reason, string? guard = null)
     {
-        result["Status"]!.GetValue<int>().ShouldBe(1, reason);
-        result["Reason"]!.GetValue<string>().ShouldBe(reason);
+        result["Status"]!.GetValue<int>().ShouldBe(1, guard ?? reason);
+        result["Reason"]!.GetValue<string>().ShouldBe(reason, guard ?? reason);
         result["Receipt"].ShouldBeNull();
     }
 
@@ -202,6 +307,7 @@ public class AgentPinPublicationTests
         foreach (var field in new[] { "AgentId", "RunnerStoreId", "LocationGeneration", "OperationId", "Fence", "Revision", "SchemaVersion", "Action", "Sha256" })
             JsonNode.DeepEquals(receipt[field], request[field]).ShouldBeTrue("receipt identity " + field);
         receipt["Path"]!.GetValue<string>().ShouldBe(f.Target);
+        receipt["ByteCount"]!.GetValue<long>().ShouldBe(content is null ? 0 : Encoding.UTF8.GetByteCount(content));
         if (content is null) File.Exists(f.Target).ShouldBeFalse();
         else File.ReadAllBytes(f.Target).ShouldBe(Encoding.UTF8.GetBytes(content));
     }

@@ -39,6 +39,8 @@ public sealed class AgentPinWorkspacePublisher
         if (request.OperationId == Guid.Empty || request.LocationGeneration == Guid.Empty
             || request.Fence <= 0 || request.Revision <= 0) return Refuse("pin_operation_invalid");
         if (request.ExpectedSha256 is not null && !IsHash(request.ExpectedSha256)) return Refuse("pin_digest_invalid");
+        if (request.Content is { Length: > AgentPinWorkspaceStore.MaxInspectionBytes })
+            return Refuse("pin_content_invalid");
         // Copy caller-owned bytes before hashing/awaits: the request cannot change under the intent.
         var bytes = request.Content?.ToArray();
         if (request.Action == AgentPinFileAction.Publish)
@@ -57,7 +59,8 @@ public sealed class AgentPinWorkspacePublisher
             if (ObservationFailure(observed) is { } failure) return failure;
             var cwd = observed.Cwd!;
             var target = observed.Path!;
-            if (_journalRoot == cwd || _journalRoot.StartsWith(cwd + "/", StringComparison.Ordinal))
+            var workspacePrefix = Path.EndsInDirectorySeparator(cwd) ? cwd : cwd + "/";
+            if (_journalRoot == cwd || _journalRoot.StartsWith(workspacePrefix, StringComparison.Ordinal))
                 return Refuse("pin_journal_in_workspace");
             if (HasGitAncestor(cwd)) return Refuse("pin_git_not_qualified");
 
@@ -77,6 +80,7 @@ public sealed class AgentPinWorkspacePublisher
             if (ObservationFailure(observed) is { } lockedFailure) return lockedFailure;
             if (prior is not null)
             {
+                if (!ValidIntent(prior)) return Refuse("pin_journal_invalid");
                 if (prior.SchemaVersion != request.SchemaVersion || prior.AgentId != request.AgentId
                     || prior.RunnerStoreId != _storeId || prior.Path != target)
                     return Refuse("pin_journal_identity_mismatch");
@@ -86,6 +90,7 @@ public sealed class AgentPinWorkspacePublisher
                     if (desired != prior with { Completed = false }) return Refuse("pin_operation_conflict");
                     if (observed.Sha256 == desired.Sha256)
                     {
+                        if (desired.Action == AgentPinFileAction.Cleanup) RemoveEmptyLeaf(cwd, request.AgentId);
                         Save(journal, journalName, desired with { Completed = true });
                         return Applied(desired);
                     }
@@ -118,7 +123,8 @@ public sealed class AgentPinWorkspacePublisher
             var temp = $"antiphon.{request.OperationId:N}.{Guid.NewGuid():N}.tmp";
             try
             {
-                if (bytes is not null) owner.WriteNew(temp, bytes);
+                var changesBytes = bytes is not null && desired.Sha256 != desired.ExpectedSha256;
+                if (changesBytes) owner.WriteNew(temp, bytes!);
                 await BoundaryAsync("before-compare", ct);
                 observed = await inspector.InspectAsync(inspectRequest, ct);
                 if (ObservationFailure(observed) is { } finalFailure) return finalFailure;
@@ -126,20 +132,24 @@ public sealed class AgentPinWorkspacePublisher
                 if (observed.Sha256 != desired.ExpectedSha256) return Refuse("pin_bytes_conflict");
                 ct.ThrowIfCancellationRequested();
                 if (bytes is null) owner.Delete("antiphon.md");
-                else owner.Replace(temp, "antiphon.md");
+                else if (changesBytes) owner.Replace(temp, "antiphon.md");
                 await BoundaryAsync("published", ct);
                 observed = await inspector.InspectAsync(inspectRequest, ct);
                 if (ObservationFailure(observed) is { } receiptFailure) return receiptFailure;
                 if (observed.Sha256 != desired.Sha256) return Refuse("pin_bytes_conflict");
-                Save(journal, journalName, desired with { Completed = true });
             }
             finally { owner.Delete(temp); }
             if (bytes is null) pins.RemoveEmptyDirectory(ownerName);
+            Save(journal, journalName, desired with { Completed = true });
             return Applied(desired);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
             return new(AgentPinPublicationStatus.Unavailable, "pin_io_unavailable");
+        }
+        catch (Exception ex) when (ex is EntryPointNotFoundException or DllNotFoundException)
+        {
+            return Refuse("pin_platform_unsupported");
         }
     }
 
@@ -160,6 +170,26 @@ public sealed class AgentPinWorkspacePublisher
         }
         finally { journal.Delete(temp); }
     }
+
+    private static void RemoveEmptyLeaf(string cwd, Guid owner)
+    {
+        var pinsPath = Path.Combine(cwd, ".antiphon", "pins");
+        // Observation has already rejected links/denial. A missing parent does not
+        // authorize recreating a retired tree just to replay its cleanup receipt.
+        try { _ = File.GetAttributes(pinsPath); }
+        catch (FileNotFoundException) { return; }
+        catch (DirectoryNotFoundException) { return; }
+        using var pins = AgentPinPosixDirectory.Open(pinsPath);
+        pins.RemoveEmptyDirectory(owner.ToString("N"));
+    }
+
+    private static bool ValidIntent(Intent intent) => intent.SchemaVersion == AgentPinWorkspaceStore.PathSchemaVersion
+        && intent.AgentId != Guid.Empty && intent.RunnerStoreId != Guid.Empty
+        && intent.LocationGeneration != Guid.Empty && intent.OperationId != Guid.Empty
+        && intent.Fence > 0 && intent.Revision > 0 && intent.ByteCount is >= 0 and <= AgentPinWorkspaceStore.MaxInspectionBytes
+        && (intent.ExpectedSha256 is null || IsHash(intent.ExpectedSha256))
+        && (intent.Action == AgentPinFileAction.Publish && intent.Sha256 is not null && IsHash(intent.Sha256)
+            || intent.Action == AgentPinFileAction.Cleanup && intent.Sha256 is null && intent.ByteCount == 0);
 
     private static AgentPinPublicationResult? ObservationFailure(AgentPinInspection observed) => observed.Status switch
     {
