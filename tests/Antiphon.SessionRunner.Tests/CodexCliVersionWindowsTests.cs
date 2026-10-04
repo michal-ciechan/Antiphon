@@ -57,7 +57,7 @@ public sealed class CodexCliVersionWindowsTests
         kit.ChildMode = null;
         foreach (var prefix in new[] { layout.JsPath, Path.GetRelativePath(layout.Root, layout.JsPath) })
         {
-            var direct = await kit.Attempt(layout.SiblingNodePath, resolutionCwd: layout.Root, path: "", codexJsPrefix: prefix);
+            var direct = await kit.Attempt(layout.SiblingNodePath, resolutionCwd: layout.Root, path: kit.EmptyPath, codexJsPrefix: prefix);
             CodexCliVersionTestFixture.Text(direct, "codexCliVersion").ShouldBe("0.160.0", "C959-v07-node");
             kit.Starts.Last().ArgumentList.ShouldBe([layout.JsPath, "--version"],
                 Path.IsPathRooted(prefix) ? "C959-pc-066" : "C959-pc-067");
@@ -85,7 +85,7 @@ public sealed class CodexCliVersionWindowsTests
         {
             using var layout = new CodexNpmLayout(siblingNode: node, js: js, native: native, shimText: shim);
             if (node) File.Copy(Environment.ProcessPath!, layout.SiblingNodePath!, true);
-            var sample = await kit.Attempt(layout.ShimPath, resolutionCwd: layout.Root, path: "");
+            var sample = await kit.Attempt(layout.ShimPath, resolutionCwd: layout.Root, path: kit.EmptyPath);
             CodexCliVersionTestFixture.Text(sample, "codexCliVersion").ShouldBeNull($"C959-pc-{label:000}");
             CodexCliVersionTestFixture.Text(sample, "codexCliVersionError").ShouldNotBeNull("C959-v08-unknown");
             kit.Starts.Count.ShouldBe(0, "C959-v08-no-wrapper-child");

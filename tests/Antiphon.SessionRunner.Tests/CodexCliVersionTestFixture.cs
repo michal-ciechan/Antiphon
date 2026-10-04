@@ -20,6 +20,7 @@ internal sealed class CodexCliVersionTestFixture : IDisposable
     public string Mode { get; set; } = "success";
     public Func<ProcessStartInfo, string>? ChildMode { get; set; }
     public string Executable { get; }
+    public string EmptyPath { get; }
     public object? Probe { get; private set; }
     public SessionRunnerRuntime Runtime { get; }
     public RunnerBuildDto Build { get; } = new("test", "d40c1670", T.UtcDateTime, T.UtcDateTime);
@@ -29,6 +30,8 @@ internal sealed class CodexCliVersionTestFixture : IDisposable
     public CodexCliVersionTestFixture(TimeProvider? probeClock = null)
     {
         Directory.CreateDirectory(Root);
+        // An empty PATH value falls back to the host PATH in Windows launch resolution.
+        EmptyPath = Directory.CreateDirectory(Path.Combine(Root, "empty-path")).FullName;
         Executable = Path.Combine(Root, OperatingSystem.IsWindows() ? "codex.exe" : "codex");
         // A real native executable-format fixture; execution is redirected solely at process I/O.
         File.Copy(Environment.ProcessPath!, Executable);
