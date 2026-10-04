@@ -404,13 +404,7 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
         }
     }
 
-    private void CaptureOwnedHosts()
-    {
-        foreach (var session in _runtime.List())
-            _ownedHosts.Capture(session.SessionId, session.Backend, session.VerificationBinding is not null);
-        foreach (var request in _startRequests)
-            _ownedHosts.Capture(request.SessionId, request.Backend, request.VerificationBinding is not null);
-    }
+    private void CaptureOwnedHosts() => _ownedHosts.CaptureTracked(_runtime.List(), _startRequests);
 
     public ValueTask DisposeAsync() => new(_ownedHosts.DisposeAsync(KillOnDispose, CaptureOwnedHosts,
         async ct =>

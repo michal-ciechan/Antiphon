@@ -81,6 +81,14 @@ internal sealed class TestOwnedPtyHost
         return true;
     }
 
+    internal void CaptureTracked(IEnumerable<RunnerSessionDto> sessions, IEnumerable<RunnerLaunchRequest> requests)
+    {
+        foreach (var session in sessions)
+            Capture(session.SessionId, session.Backend, session.VerificationBinding is not null);
+        foreach (var request in requests)
+            Capture(request.SessionId, request.Backend, request.VerificationBinding is not null);
+    }
+
     internal void Capture(Guid sessionId, string? backend, bool verificationBound)
     {
         if (!Eligible(backend, verificationBound)) return;
