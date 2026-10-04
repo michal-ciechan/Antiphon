@@ -416,9 +416,10 @@ CARD-1001 retain their own ownership; no delivery/recovery guard is introduced.
   `git ls-files --eol` | all seven raw pins match, with unchanged fixture and
   provenance blobs. The Windows result uses a freshly materialized checkout.
 
-For V-1, use `PlanCoverageFixture.Plan("| V-1 | `Demo.Check()` | label `target-label` |")`
-and append the inline fence after its checkpoint row, within its Verification
-design section; do not shift the existing row at
+For V-1, spell the method as `Demo.Check()` in the row passed to
+`PlanCoverageFixture.Plan`, retaining label `target-label`. Append the inline
+fence after its checkpoint row, within its Verification design section; do not
+shift the existing row at
 line 5. Use explicit `\n` strings, never `Environment.NewLine`, `AppendLine`, or
 platform-dependent source raw-string line endings for the expected vectors.
 The exact base JSON is `{\n  "version": 1,\n  "items": []\n}\n` (escaped here).
