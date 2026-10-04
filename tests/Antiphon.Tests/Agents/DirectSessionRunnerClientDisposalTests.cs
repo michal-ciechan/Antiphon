@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Management;
+using System.Security.Cryptography;
+using Antiphon.Agents.Pty;
 using Antiphon.PtyHost.Protocol;
 using Antiphon.PtyHost.Client;
 using Antiphon.Server.Application.Dtos;
@@ -156,8 +158,10 @@ public class DirectSessionRunnerClientDisposalTests
     public async Task Dispose_awaits_exit_of_its_running_host_and_descendants()
     {
         await using var fixture = await OwnedPtyFixture.StartAsync();
+        var elapsed = Stopwatch.StartNew();
         await fixture.Client.DisposeAsync();
         fixture.Witness.AssertExited();
+        elapsed.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(10), "cleanup-before-ttl");
         fixture.DeleteRoot();
     }
 }
@@ -167,6 +171,7 @@ internal sealed class OwnedPtyWitness : IAsyncDisposable
 {
     internal sealed record Entry(Process Process, DateTime Start, string Image, string Role, int Parent);
     internal readonly List<Entry> Entries = [];
+    private string? _logPath;
     public static OwnedPtyWitness Capture(string manifestDir, Guid sessionId)
     {
         var witness = new OwnedPtyWitness();
@@ -175,6 +180,8 @@ internal sealed class OwnedPtyWitness : IAsyncDisposable
             var manifest = PtyHostManifest.TryLoad(PtyHostManifest.PathFor(manifestDir, sessionId));
             manifest.ShouldNotBeNull("independent manifest witness");
             manifest.SessionId.ShouldBe(sessionId);
+            witness._logPath = Path.Combine(Path.GetDirectoryName(manifestDir)!, "logs", sessionId.ToString("N") + ".log");
+            Console.WriteLine($"C1020 platform={System.Runtime.InteropServices.RuntimeInformation.OSDescription} session={sessionId:D} manifest={PtyHostManifest.PathFor(manifestDir, sessionId)} linger-hours=0.02 build={typeof(OwnedPtyWitness).Assembly.Location}");
             witness.Add(manifest.HostPid, "host", 0);
             manifest.ChildPid.ShouldNotBeNull("nonempty child witness");
             witness.Add(manifest.ChildPid.Value, "child", manifest.HostPid);
@@ -198,6 +205,22 @@ internal sealed class OwnedPtyWitness : IAsyncDisposable
                     }
                 } while (changed);
                 witness.Entries.ShouldContain(x => x.Role == "console", "nonempty Windows console witness");
+                var host = witness.Entries.Single(x => x.Role == "host").Process;
+                var conpty = host.Modules.Cast<ProcessModule>().Single(x =>
+                    string.Equals(x.ModuleName, ConPtyRedistributable.DllName, StringComparison.OrdinalIgnoreCase)).FileName;
+                ConPtyRedistributable.VerifyShippedHashes(conpty).Ok.ShouldBeTrue("modern-package-provenance");
+                Console.WriteLine($"C1020 package={ConPtyRedistributable.PackageId} version={ConPtyRedistributable.PackageVersion}");
+                foreach (var binary in witness.Entries.Select(x => x.Image).Append(conpty).Distinct())
+                {
+                    using var content = File.OpenRead(binary);
+                    Console.WriteLine($"C1020 binary={binary} sha256={Convert.ToHexStringLower(SHA256.HashData(content))} version={FileVersionInfo.GetVersionInfo(binary).FileVersion}");
+                }
+                using var commandQuery = new ManagementObjectSearcher($"SELECT CommandLine FROM Win32_Process WHERE ProcessId={manifest.HostPid}");
+                using var commands = commandQuery.Get();
+                var command = commands.Cast<ManagementObject>().Single()["CommandLine"]?.ToString();
+                command.ShouldNotBeNull();
+                command.ShouldContain("--linger-hours 0.02", "actual-linger-argument");
+                Console.WriteLine("C1020 host-command=" + command);
                 var log = Path.Combine(Path.GetDirectoryName(manifestDir)!, "logs", sessionId.ToString("N") + ".log");
                 File.ReadAllText(log).ShouldContain("pty backend: ModernConPty (requested 'modern')");
             }
@@ -240,6 +263,7 @@ internal sealed class OwnedPtyWitness : IAsyncDisposable
 
     public void AssertExited()
     {
+        if (_logPath is not null && File.Exists(_logPath)) Console.WriteLine("C1020 host-log-ending\n" + File.ReadAllText(_logPath));
         foreach (var entry in Entries)
         {
             var exited = Exited(entry.Process);
