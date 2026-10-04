@@ -890,6 +890,18 @@ receipt result. No vectors or controls are retired by this staged budget.
 
 ### Checkpoints
 
+Code task `bed39f89` budget split (operator brief, 2026-10-04): implement S1
+first and select CP-3, CP-4, CP-15, CP-16 and CP-17 from the unchanged closed
+table below (27 estimated row minutes plus bootstrap). S2/S3 and CP-5..8 remain
+unimplemented/unrun for the next Code slice, not passed or optional. That slice
+must rerun the changed fixture consumers at its own committed source. The brief
+explicitly overrides the earlier P-1 Code hold: P-1 blocks only PC-274 in paused
+post-land Mutation; do not repair it here. Preserve all five named follow-ups and
+the 38/38/38 matrix. No whole-Unit or Windows run is commissioned by this split.
+The assigned plan branch predates required CARD-1031/CARD-1022; a normal merge of
+the plan-pinned M (`9b78712f6671d7ccb98bcf4a5ebea8f080d7cecd`) supplies those
+prerequisites while preserving the assigned task base as an ancestor. No rebase.
+
 This is the only active Checkpoints heading/table. Active authoring scope is S1
 transport/model descriptors plus S2/S3's seven gap methods and existing fixture
 consumers. Commit all those test edits before any row; `After=all` binds every row
