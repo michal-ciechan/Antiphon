@@ -342,19 +342,22 @@ function Assert-TempSeedCounters {
 function Assert-TempCleanupStatus {
     param($Status, [string]$ExpectedRetiredAt = '')
     if ($null -eq $Status) { throw 'RunnerStatusMissing server2-temp' }
-    foreach ($name in @('draining','retireWhenIdle')) {
-        if ($Status.$name -isnot [bool] -or $Status.$name -ne $true) { throw 'TempRunnerNotRetired' }
-    }
-    foreach ($name in @('available','dispatchEligible','acceptingNewWork')) {
-        if ($Status.$name -isnot [bool] -or $Status.$name -ne $false) { throw 'TempRunnerNotRetired' }
-    }
-    if ($Status.redirectTo -isnot [string] -or $Status.redirectTo -cne 'server2') { throw 'TempRunnerDrainConflict' }
     foreach ($name in @('sessions','queuedTasks','runnerSessions')) {
         if ($Status.PSObject.Properties.Name -cnotcontains $name) { throw "RunnerCounterUnknown server2-temp $name" }
         $value = $Status.$name
         if ($name -ceq 'runnerSessions' -and $null -eq $value) { continue }
         if (($value -isnot [int] -and $value -isnot [long]) -or $value -ne 0) { throw "RunnerCounterUnknown server2-temp $name" }
     }
+    foreach ($name in @('draining','retireWhenIdle')) {
+        if ($Status.$name -isnot [bool] -or $Status.$name -ne $true) { throw 'TempRunnerNotRetired' }
+    }
+    foreach ($name in @('available','dispatchEligible','acceptingNewWork')) {
+        if ($Status.$name -isnot [bool] -or $Status.$name -ne $false) {
+            if ($null -eq $Status.runnerSessions) { throw 'RunnerCounterUnknown server2-temp runnerSessions' }
+            throw 'TempRunnerNotRetired'
+        }
+    }
+    if ($Status.redirectTo -isnot [string] -or $Status.redirectTo -cne 'server2') { throw 'TempRunnerDrainConflict' }
     $stamp = ConvertTo-C994RetiredInstant $Status.retiredAt
     if ($ExpectedRetiredAt -and $stamp -cne $ExpectedRetiredAt) { throw 'TempRunnerRetirementChanged' }
     return $stamp
