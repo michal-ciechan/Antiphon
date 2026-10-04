@@ -14,6 +14,70 @@ namespace Antiphon.Tests.Scripts;
 public sealed class RunCheckpointSourceScriptTests
 {
     [Test]
+    public async Task C1035_ChildCwdMatchesCertifiedRoot()
+    {
+        using var native = new Fixture(seed: "repository A");
+        using var certified = new Fixture(seed: "repository B", repoName: "certified source with spaces");
+        native.Head.ShouldNotBe(certified.Head, "distinct-repository-heads");
+
+        void AssertChildren(int count, params string[] phases)
+        {
+            var observations = File.ReadAllLines(certified.Observations);
+            observations.Length.ShouldBe(count, "exact-child-launch-count");
+            for (var i = 0; i < count; i++)
+            {
+                using var observation = JsonDocument.Parse(observations[i]);
+                var child = observation.RootElement;
+                child.GetProperty("phase").GetString().ShouldBe(phases[i]);
+                child.GetProperty("cwd").GetString().ShouldBe(certified.Repo,
+                    "child-cwd-matches-certified-root");
+                child.GetProperty("marker").GetString().ShouldBe("repository B", "child-reads-certified-marker");
+                child.GetProperty("arguments").EnumerateArray().Select(value => value.GetString())
+                    .ShouldContain("sample", "literal-relative-project");
+                if (phases[i] == "run")
+                    child.GetProperty("arguments").EnumerateArray().Select(value => value.GetString())
+                        .ShouldContain("/*/*/C585SampleTests/*", "literal-filter-argv");
+            }
+        }
+
+        async Task AssertReceiptAsync(Result result, string build)
+        {
+            result.Exit.ShouldBe(0, result.Output);
+            result.Line.ShouldContain("build=" + build);
+            result.Line.ShouldContain("executed=3 passed=3 failed=0 skipped=0");
+            result.Line.ShouldContain("dirty=0 source=" + certified.Head + " sourceState=clean buildSource=verified");
+            result.Source.GetProperty("start").GetProperty("commit").GetString().ShouldBe(certified.Head);
+            result.Source.GetProperty("end").GetProperty("commit").GetString().ShouldBe(certified.Head);
+            (await certified.ValidateAsync(result.Evidence)).Exit.ShouldBe(0, "certified-receipt-valid");
+        }
+
+        var built = await certified.RunAsync(expectedSha: certified.Head, nativeCwd: native.Repo);
+        // Check independently observed children before trusting their successful receipt.
+        AssertChildren(2, "build", "run");
+        await AssertReceiptAsync(built, "ok");
+        using (var stamp = JsonDocument.Parse(await File.ReadAllTextAsync(certified.Stamp)))
+        {
+            stamp.RootElement.GetProperty("repositoryRoot").GetString().ShouldBe(certified.Repo);
+            stamp.RootElement.GetProperty("project").GetString().ShouldBe(Path.Combine(certified.Repo, "sample"));
+            stamp.RootElement.GetProperty("outputPath").GetString()
+                .ShouldBe(Path.GetFullPath(Path.Combine(certified.Repo, "sample", "bin-c835/")));
+        }
+        File.Exists(native.Stamp).ShouldBeFalse("no-stamp-in-native-repository");
+
+        var reused = await certified.RunAsync(expectedSha: certified.Head, noBuild: true, nativeCwd: native.Repo);
+        AssertChildren(3, "build", "run", "run");
+        await AssertReceiptAsync(reused, "reused");
+        File.Exists(native.Stamp).ShouldBeFalse("reuse-leaves-native-repository-untouched");
+        foreach (var path in Directory.GetFiles(certified.External, "parent-*.json"))
+        {
+            using var parent = JsonDocument.Parse(await File.ReadAllTextAsync(path));
+            parent.RootElement.GetProperty("native").GetString().ShouldBe(native.Repo, "divergent-native-parent");
+            parent.RootElement.GetProperty("location").GetString().ShouldBe(certified.Repo, "certified-powershell-location");
+        }
+        Directory.GetFiles(certified.External, "parent-*.json").Length.ShouldBe(2);
+    }
+
+    [Test]
     public async Task C835_DiagnosticReceipts()
     {
         using var fixture = new Fixture();
@@ -309,8 +373,9 @@ public sealed class RunCheckpointSourceScriptTests
     private sealed class Fixture : IDisposable
     {
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "c835-script-" + Guid.NewGuid().ToString("N"));
-        public string Repo => Path.Combine(Root, "source");
+        public string Repo { get; }
         public string External => Path.Combine(Root, "external");
+        public string Observations => Path.Combine(External, "children.jsonl");
         public string Head { get; }
         public string Stamp => Path.Combine(Repo, "sample", "bin-c835", "checkpoint-build-source.json");
         public int Calls => File.Exists(Path.Combine(External, "calls.txt"))
@@ -320,8 +385,9 @@ public sealed class RunCheckpointSourceScriptTests
         private int _round;
         private static string ProjectRoot => DelegateScriptRunner.RepoRoot;
 
-        public Fixture()
+        public Fixture(string seed = "seed", string repoName = "source")
         {
+            Repo = Path.Combine(Root, repoName);
             Directory.CreateDirectory(Repo);
             Directory.CreateDirectory(External);
             Run("git", Repo, ["init", "-q"]);
@@ -329,7 +395,7 @@ public sealed class RunCheckpointSourceScriptTests
             Run("git", Repo, ["config", "user.email", "checkpoint@example.invalid"]);
             Run("git", Repo, ["config", "core.autocrlf", "false"]);
             Write(".gitignore", "bin-*/\nobj/\n.antiphon/\n");
-            Write("tracked.txt", "seed");
+            Write("tracked.txt", seed);
             Write("sample/sample.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />");
             Run("git", Repo, ["add", "."]);
             Run("git", Repo, ["commit", "-qm", "seed"]);
@@ -339,6 +405,12 @@ public sealed class RunCheckpointSourceScriptTests
                 $items = @($args)
                 Add-Content -LiteralPath $env:C835_CALLS -Value ([string]$items[0])
                 $phase = [string]$items[0]
+                if ($env:C1035_OBSERVATIONS) {
+                    $cwd = [Environment]::CurrentDirectory
+                    $marker = [IO.File]::ReadAllText([IO.Path]::Combine($cwd, 'tracked.txt'))
+                    $observation = @{ phase = $phase; cwd = $cwd; marker = $marker; arguments = $items }
+                    Add-Content -LiteralPath $env:C1035_OBSERVATIONS -Value ($observation | ConvertTo-Json -Compress)
+                }
                 if ($env:C835_DRIFT -eq $phase) {
                     Set-Content -LiteralPath (Join-Path $env:C835_REPO 'tracked.txt') -Value 'changed during driver'
                 }
@@ -378,7 +450,7 @@ public sealed class RunCheckpointSourceScriptTests
 
         public async Task<Result> RunAsync(string? expectedSha = null, bool noBuild = false,
             string? trx = "c585-green.trx", int buildExit = 0, string? driftPhase = null,
-            bool useSlot = false, bool slotDrift = false)
+            bool useSlot = false, bool slotDrift = false, string? nativeCwd = null)
         {
             var round = ++_round;
             var resultRoot = Path.Combine(External, "results-" + round);
@@ -402,8 +474,31 @@ public sealed class RunCheckpointSourceScriptTests
                 ["C589_SLOT_SHIM"] = Path.Combine(External, "slot-shim.ps1"),
                 ["C585_STAMP"] = "round-" + round,
                 ["ANTIPHON_BUILD_SLOTS_URL"] = "http://127.0.0.1:1/build-slots",
+                ["C1035_OBSERVATIONS"] = nativeCwd is null ? null : Observations,
             };
-            var result = await RunAsync("pwsh", Repo, args, environment);
+            if (nativeCwd is not null)
+            {
+                var wrapper = Path.Combine(External, "wrapper.ps1");
+                File.WriteAllText(wrapper, """
+                    param([string]$Repository, [string]$ArgumentsFile, [string]$ParentObservation)
+                    $ErrorActionPreference = 'Stop'
+                    $tokens = @(Get-Content -Raw -LiteralPath $ArgumentsFile | ConvertFrom-Json)
+                    $scriptPath = $tokens[3]
+                    $scriptArguments = @($tokens | Select-Object -Skip 4)
+                    Push-Location -LiteralPath $Repository
+                    try {
+                        @{ native = [Environment]::CurrentDirectory; location = (Get-Location).Path } |
+                            ConvertTo-Json -Compress | Set-Content -LiteralPath $ParentObservation
+                        & $scriptPath @scriptArguments
+                        exit $LASTEXITCODE
+                    } finally { Pop-Location }
+                    """);
+                var argumentsFile = Path.Combine(External, "arguments-" + round + ".json");
+                await File.WriteAllTextAsync(argumentsFile, JsonSerializer.Serialize(args));
+                args = ["-NoProfile", "-NonInteractive", "-File", wrapper, "-Repository", Repo,
+                    "-ArgumentsFile", argumentsFile, "-ParentObservation", Path.Combine(External, "parent-" + round + ".json")];
+            }
+            var result = await RunAsync("pwsh", nativeCwd ?? Repo, args, environment);
             var evidence = Directory.GetFiles(resultRoot, "source.json", SearchOption.AllDirectories).Single();
             using var json = JsonDocument.Parse(await File.ReadAllTextAsync(evidence));
             var lines = result.Output.Split('\n');
@@ -444,7 +539,17 @@ public sealed class RunCheckpointSourceScriptTests
             var stdout = process.StandardOutput.ReadToEndAsync();
             var stderr = process.StandardError.ReadToEndAsync();
             using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(90));
-            await process.WaitForExitAsync(cancel.Token);
+            try
+            {
+                await process.WaitForExitAsync(cancel.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync();
+                await Task.WhenAll(stdout, stderr);
+                throw;
+            }
             return (process.ExitCode, await stdout + await stderr);
         }
     }
