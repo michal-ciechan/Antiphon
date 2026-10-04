@@ -1452,7 +1452,7 @@ c849_assert_mounts() {
 }
 
 c849_smoke() {
-    local container="$1" runner_id="$2"
+    local container="$1" runner_id="$2" pack
     docker exec -u 1654:1654 -e HOME=/home/app -i "$container" /bin/sh -s > "$CASE_DIR/smoke.txt" <<'C849_SMOKE_SCRIPT' \
         || write_result false CacheSmokeFailed 2
 set -eu

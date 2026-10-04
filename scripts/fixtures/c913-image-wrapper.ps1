@@ -6,6 +6,18 @@ $sha = (& git -C $Repo rev-parse HEAD).Trim()
 $global:c913Calls = [Collections.Generic.List[object]]::new()
 $global:c913Fault = 'none'
 $global:c913Creates = 0
+# Git is an observed process boundary. A deliberate edit in a later Mutation
+# snapshot must reach the wrapper guard being tested, rather than fail setup.
+function global:git {
+    $global:LASTEXITCODE = 0
+    $command = @($args | ForEach-Object { [string]$_ }) -join ' '
+    if ($command -ceq 'rev-parse HEAD') { return $sha }
+    if ($command -ceq 'status --porcelain --untracked-files=no') {
+        if ($global:c913Fault -eq 'dirty') { return ' M owned-fixture' }
+        return
+    }
+    throw "Unexpected Git observation: $command"
+}
 function global:docker {
     $a = @($args | ForEach-Object { [string]$_ })
     $global:c913Calls.Add($a)
@@ -66,9 +78,10 @@ try {
     Check ($createdPair.Count -eq 2 -and $initMounts.Count -eq 2 -and
         $initMounts[0] -ceq "type=volume,source=$($createdPair[0]),target=/home/app/.nuget/packages,volume-nocopy" -and
         $initMounts[1] -ceq "type=volume,source=$($createdPair[1]),target=/var/cache/antiphon/nuget-scratch,volume-nocopy") owned-init-only
-    foreach ($fault in @('child-exit', 'wrong-row', 'duplicate-row', 'image-id', 'partial-create', 'revision')) {
+    foreach ($fault in @('child-exit', 'wrong-row', 'duplicate-row', 'image-id', 'partial-create', 'revision', 'dirty')) {
         $code = Run-Wrapper $fault
         Check ($code -ne 0) "$fault-refused"
+        if ($fault -eq 'dirty') { Check ($global:c913Calls.Count -eq 0) dirty-source-no-docker }
         $created = @($global:c913Calls | Where-Object { $_[0] -eq 'volume' -and $_[1] -eq 'create' } | ForEach-Object { $_[-1] })
         if ($fault -eq 'partial-create') { $created = @($created | Select-Object -First 1) }
         $removed = @($global:c913Calls | Where-Object { $_[0] -eq 'volume' -and $_[1] -eq 'rm' } | ForEach-Object { $_[-1] })
@@ -77,5 +90,6 @@ try {
     Write-Output 'PASS wrapper-boundaries-complete'
 } finally {
     Remove-Item Function:docker -ErrorAction SilentlyContinue
+    Remove-Item Function:git -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $root -Recurse -Force
 }
