@@ -2678,7 +2678,8 @@ c849_fixture_model() {
 }
 
 c849_fixture_control() {
-    local id="$1" diagnosis="$2" actual="$CASE_DIR/.control-$id" code=0
+    local id="$1" diagnosis="$2" actual code=0
+    actual="$CASE_DIR/.control-$id"
     shift 2
     ( write_result() { printf '%s\n' "$2"; exit "$3"; }; "$@" ) > "$actual" 2>&1 || code=$?
     [ "$code" -ne 0 ] && grep -Fxq "$diagnosis" "$actual" \
