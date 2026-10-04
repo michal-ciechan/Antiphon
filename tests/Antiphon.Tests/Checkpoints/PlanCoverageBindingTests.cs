@@ -196,8 +196,10 @@ public sealed class PlanCoverageBindingTests : CheckpointTestBase
                 var invocations = CSharpSyntaxTree.ParseText(source).GetRoot().DescendantNodes().OfType<InvocationExpressionSyntax>()
                     .Where(call => call.Expression is MemberAccessExpressionSyntax access
                         && access.Name.GetLocation().GetLineSpan().StartLinePosition.Line + 1 == match.GetProperty("line").GetInt32());
-                invocations.ShouldContain(call => call.ArgumentList.Arguments.Any(argument => argument.Expression.DescendantNodesAndSelf()
-                    .OfType<LiteralExpressionSyntax>().Any(literal => literal.IsKind(SyntaxKind.StringLiteralExpression) && literal.Token.ValueText.StartsWith(target!, StringComparison.Ordinal))), "c1046-real-plans");
+                var literalMessages = invocations.SelectMany(call => call.ArgumentList.Arguments.SelectMany(argument => argument.Expression.DescendantNodesAndSelf()
+                    .OfType<LiteralExpressionSyntax>().Where(literal => literal.IsKind(SyntaxKind.StringLiteralExpression)).Select(literal => literal.Token.ValueText))).ToArray();
+                literalMessages.ShouldContain(message => message == target || message.StartsWith(target + ":", StringComparison.Ordinal)
+                    || message.StartsWith(target + " ", StringComparison.Ordinal), "c1046-real-plans");
             }
         }
     }
