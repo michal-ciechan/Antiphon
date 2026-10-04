@@ -1,4 +1,0 @@
-BUILD SLOT granted lease=eba447ee-6127-4991-94fd-19822dcfe414 waited=0s maxcpucount=6
-C1008_GIT_MANUAL outcomes=8 evidence=/tmp/c1008-git-manual-n8XbRr
-C1008_GIT_MANUAL cleanup=absent evidence=/tmp/c1008-git-manual-n8XbRr/evidence.json
-BUILD SLOT released lease=eba447ee-6127-4991-94fd-19822dcfe414 held=5s

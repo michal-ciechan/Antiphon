@@ -1,8 +1,0 @@
-BUILD SLOT granted lease=26f71fc0-187a-4aa8-b811-acd318518931 waited=0s maxcpucount=6
-DEPRECATED: The legacy builder is deprecated and will be removed in a future release.
-            Install the buildx component to build images with BuildKit:
-            https://docs.docker.com/go/buildx/
-
-C1008_MANUAL evidence=/tmp/c1008-manual-A4h8R0 outcomes=9 Options=null
-C1008_MANUAL cleanup=absent evidence=/tmp/c1008-manual-A4h8R0/evidence.json
-BUILD SLOT released lease=26f71fc0-187a-4aa8-b811-acd318518931 held=19s

@@ -1,3 +1,0 @@
-RUN 20261003-200344-4a3f started rows=2 executor=15971
-HEARTBEAT run=20261003-200344-4a3f elapsed=0m48s | CP-3 queued | CP-4 queued | bin-c1008-cache building 0m48s | bin-c1008-docs queued
-STILL RUNNING exit=75
