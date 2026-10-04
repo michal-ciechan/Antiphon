@@ -216,4 +216,5 @@ Antiphon.Tests.Application.PhoneHomeRunnerRetirementCycleTests
 # CARD-0974: isolated migrated databases, 2,000-row transcript costs and behavior oracle matrix.
 Antiphon.Tests.Application.TaskInputAttentionCostTests
 
+# CARD-1017: real Git, isolated PostgreSQL and worktree preservation boundary vectors.
 Antiphon.Tests.Infrastructure.CompletedCardWorktreeRemovalTests
