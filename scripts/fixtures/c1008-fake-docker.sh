@@ -19,7 +19,8 @@ if (args[0] === 'info') { out(root+'\n'); }
 else if(args[0]==='image'&&args[1]==='inspect'){if(fault==='image-inspect-error'||fault==='original-image-missing'&&name==='sha256:'+'b'.repeat(64))fail();out((fault==='image-inspect-wrong'?'sha256:'+'b'.repeat(64):name.startsWith('sha256:')?name:'sha256:'+'a'.repeat(64))+'\n');}
 else if (args[0] === 'ps') {
  if(!state.containers.some(c=>['session-runner','state-init'].includes(c.Config.Labels['com.docker.compose.service']))) {
-  state.postStopPs=(state.postStopPs||0)+1;
+  // Census bookkeeping belongs only to the explicit attachment fault; reads do not mutate inventory.
+  if(fault==='late-attachment')state.postStopPs=(state.postStopPs||0)+1;
   if(fault==='late-attachment'&&state.postStopPs===3)state.containers.push({Id:'5'.repeat(64),Image:'sha256:'+'a'.repeat(64),State:{Running:false,Status:'exited'},Config:{Labels:{}},Mounts:[{Type:'volume',Name:'antiphon-runner_work',Source:state.volumes['antiphon-runner_work'].Mountpoint,Destination:'/foreign',RW:true}]});
   if(fault==='final-ps-error')fail();
   save();
