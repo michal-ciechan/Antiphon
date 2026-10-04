@@ -187,7 +187,7 @@ public class FakeVsRealClipParityTests
             throw new SkipTestException("no shipped conpty.dll: " + why);
 
         // 1 399 bytes is two read chunks — the size that loses a chunk on the typing arm above,
-        // every run, in both peers. Same body, same clip model, different pseudoconsole.
+        // every run, in both peers. Same body, same clip model, explicit typed/paste encoding.
         const int lines = 200;
         const int reps = 2;
 
