@@ -601,11 +601,22 @@ public sealed class C1008HostFixturePortabilityTests
         }
         finally
         {
-            quoted.Dispose();
+            Exception? disposalFailure = null;
+            try { quoted.Dispose(); }
+            catch (Exception ex) { disposalFailure = ex; }
             var residue = Directory.Exists(quotedRoot);
             try
             {
-                if (residue) Directory.Delete(quotedRoot, true);
+                if (residue)
+                {
+                    // Test-owned rescue must also work when fixture cleanup is the defect.
+                    var enumeration = new EnumerationOptions
+                        { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = false };
+                    foreach (var file in Directory.EnumerateFiles(quotedRoot, "*", enumeration))
+                        File.SetAttributes(file, File.GetAttributes(file) & ~FileAttributes.ReadOnly);
+                    Directory.Delete(quotedRoot, true);
+                }
+                disposalFailure.ShouldBeNull("c1030-owned-cleanup");
                 residue.ShouldBeFalse("c1030-owned-cleanup");
                 File.Exists(Path.Combine(foreign, "sentinel")).ShouldBeTrue("c1030-foreign-target-preserved");
                 File.ReadAllText(Path.Combine(foreign, "sentinel")).ShouldBe("foreign-owned", "c1030-foreign-target-preserved");
