@@ -258,6 +258,17 @@ function Assert-C994RawManifest {
             }
         }
         Assert-UniqueJsonObject $document.RootElement
+        if ($document.RootElement.ValueKind -eq [System.Text.Json.JsonValueKind]::Object) {
+            foreach ($property in $document.RootElement.EnumerateObject()) {
+                if ($property.Name -ceq 'tempContainerCleanup') {
+                    # Validate the raw string before ConvertFrom-Json turns an unzoned
+                    # timestamp into DateTime and normalization invents a UTC offset.
+                    $stamp = $property.Value.GetProperty('retiredAt')
+                    if ($stamp.ValueKind -ne [System.Text.Json.JsonValueKind]::String) { throw 'TempContainerContextInvalid' }
+                    [void](ConvertTo-C994RetiredInstant $stamp.GetString())
+                }
+            }
+        }
     } catch { throw 'TempContainerContextInvalid' }
     finally { if ($null -ne $document) { $document.Dispose() } }
 }

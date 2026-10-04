@@ -210,6 +210,8 @@ public sealed class RetiredTempContainerScriptTests
         }
         Add("preview","dryRun",JsonValue.Create(true),true);
         Add("offset","retiredAt",JsonValue.Create("2026-10-03T11:30:00+02:00"),true);
+        Add("fraction:utc","retiredAt",JsonValue.Create("2026-10-03T09:30:00.1234567Z"),true);
+        Add("fraction:offset","retiredAt",JsonValue.Create("2026-10-03T11:30:00.1234567+02:00"),true);
         foreach(var field in new[]{"version","operationId","project","projectId","dryRun","retiredAt"}) {
             var missing=JsonNode.Parse(Context)!.AsObject();missing.Remove(field);vectors.Add((field+":missing",missing.ToJsonString(),false));
             Add(field+":null",field,null);
@@ -225,9 +227,11 @@ public sealed class RetiredTempContainerScriptTests
         Add("dryRun:number","dryRun",JsonValue.Create(0));
         var stampIndex=0;
         foreach(var value in new[]{"","2026-02-30T00:00:00Z","2026-10-03T09:30:00","';touch /tmp/c994-command-sentinel;#","2026-10-03T09:30:00Z\nexport C994_FORCE=1"})Add("stamp:"+stampIndex++,"retiredAt",JsonValue.Create(value));
+        Add("stamp:fraction-without-zone","retiredAt",JsonValue.Create("2026-10-03T09:30:00.1234567"));
         foreach(var field in new[]{"force","volumes","containerId","path","image"})Add("unknown:"+field,field,JsonValue.Create("foreign"));
         vectors.Add(("array","[]",false));vectors.Add(("scalar","1",false));vectors.Add(("null","null",false));
         vectors.Add(("duplicate",Context.Replace("\"dryRun\":false","\"dryRun\":false,\"dryRun\":false",StringComparison.Ordinal),false));
+        vectors.Add(("duplicate:stamp",Context.Replace("\"retiredAt\":", "\"retiredAt\":\"2026-10-03T09:30:00\",\"retiredAt\":",StringComparison.Ordinal),false));
         return vectors;
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
