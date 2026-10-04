@@ -111,13 +111,22 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
         var common = await Host.Fixture.Git.CommonDirectoryAsync(Host.Fixture.Repository, CancellationToken.None);
         var admin = (await Host.Fixture.RequiredAsync(Tree, "rev-parse", "--absolute-git-dir")).Trim();
         var branch = "feat/card-task-" + TaskId.ToString("N")[..8];
-        db.AgentTaskLandings.Add(new AgentTaskLanding
+        var destination = await Host.Fixture.Git.DestinationAsync(Host.Fixture.Repository, "refs/heads/master", CancellationToken.None);
+        var publication = new AgentTaskLanding
         {
-            Id = operationId, TaskId = sourceTaskId, SchemaVersion = 3, Phase = LandPhase.Complete,
+            Id = operationId, TaskId = sourceTaskId, SchemaVersion = 1, Phase = LandPhase.Complete,
             Publication = LandPublicationOutcome.Landed, VerifiedSourceSha = Host.Fixture.SeedSha,
             OriginalSourceSha = Host.Fixture.SeedSha, CommonDirectory = common, RepositoryPath = Host.Fixture.Repository,
-            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
-        });
+            WorktreePath = Host.Fixture.Source, GitDirectory = admin, SourceFullRef = Host.Fixture.SourceRef,
+            TargetFullRef = "refs/heads/master", DestinationFullRef = "refs/heads/master", TargetBeforeSha = Host.Fixture.SeedSha,
+            RemoteConfirmedAt = DateTime.UtcNow, ObservedRemoteTargetSha = Host.Fixture.SeedSha,
+            RemoteFingerprint = destination.Fingerprint, SourcePinned = true, TargetPinned = true,
+            VerificationSkipReason = "exact_remote_containment", VerifiedAt = DateTime.UtcNow,
+            RecoveryRefPrefix = $"refs/antiphon/land/{sourceTaskId:N}/{operationId:N}",
+            ConfirmationMethod = "push-endpoint-read-fetch-ancestry", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+        };
+        new AgentTaskLandingState().HasPublication(publication).ShouldBeTrue();
+        db.AgentTaskLandings.Add(publication);
         await db.SaveChangesAsync();
         var recorded = await Host.Services.GetRequiredService<IWorktreeManager>().ReadVerificationCreationAsync(Tree, CancellationToken.None);
         recorded.ShouldNotBeNull();
@@ -135,6 +144,14 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
             .SetProperty(t => t.VerificationCustodyContractVersion, 1)
             .SetProperty(t => t.VerificationCreationJson, JsonSerializer.Serialize(creation, (JsonSerializerOptions?)null))
             .SetProperty(t => t.VerificationCleanupSealJson, JsonSerializer.Serialize(seal, (JsonSerializerOptions?)null)));
+        await using var lease = await Host.Services.GetRequiredService<IRepositoryMutationLease>()
+            .TryAcquireAsync(Host.Fixture.Repository, CancellationToken.None);
+        lease.ShouldNotBeNull();
+        var request = new WorktreeRemovalRequest(WorktreeRemovalPurpose.Verification,
+            new(TaskId, Host.Fixture.Repository, Tree, "refs/heads/" + branch, "refs/heads/master"), common, admin,
+            Host.Fixture.SeedSha, Host.Fixture.SeedSha, null, lease!, VerificationSealId: seal.Id);
+        (await Host.Services.GetRequiredService<IWorktreeRemovalEvidence>()
+            .ReadVerificationAsync(request, CancellationToken.None)).ShouldNotBeNull("the excluded snapshot has genuine sealed restoration authority");
     }
 
     public async Task DiscoverAsync()
