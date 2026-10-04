@@ -14,7 +14,7 @@ public sealed class RetiredTempContainerScriptTests
             $ast=[Management.Automation.Language.Parser]::ParseFile('{{DelegateScriptRunner.RepoRoot}}/'+$file,[ref]$null,[ref]$null)
             foreach($function in $ast.EndBlock.Statements | Where-Object {$_ -is [Management.Automation.Language.FunctionDefinitionAst]}) {Invoke-Expression $function.Extent.Text}
         }
-        $Sha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+        $Sha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
         """;
     private static IEnumerable<JsonObject> Cases(JsonObject[] trace) => trace.Where(x=>x["kind"]?.GetValue<string>()=="case");
     private static void NoRecycle(JsonObject[] trace,string label)=>Cases(trace).Any(x=>x["name"]?.GetValue<string>()=="retire-temp-runner").ShouldBeFalse(label);
