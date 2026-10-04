@@ -46,6 +46,6 @@ One invocation per unchanged proof selection; no loaded repetitions planned.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S0 | `tests/Antiphon.Tests -> bin-c927-red/` | red-first | `/*/*/JqRunnerImageContractTests/*` | V-1, V-2 | 14 executed, expected red before S1 | 14 | 3 | true |
-| CP-2 | S1-S2 | `tests/Antiphon.Tests -> bin-c927-contract/` | image-contracts | `/*/*/(JqRunnerImageContractTests*)\|(DockerStackContractTests*)\|(CodexRunnerImageContractTests*)\|(GrokRunnerImageContractTests*)/*` | V-1, V-2, R-1 | all four full classes, zero failed/skipped | 100 | 3 | true |
+| CP-2 | S1-S2 | `tests/Antiphon.Tests -> bin-c927-contract/` | image-contracts | `/*/*/(JqRunnerImageContractTests*)\|(DockerStackContractTests*)\|(CodexRunnerImageContractTests*)\|(GrokRunnerImageContractTests*)/*` | V-1, V-2, R-1 | all four full classes, zero failed/skipped | 163 | 3 | true |
 | CP-3 | S1-S2 | `tests/Antiphon.Tests -> bin-c927-shell/` | real-jq-shell | `/*/*/RemoteScriptContractTests/*` | V-4 | all 84 cases, zero failed or jq skips | 84 | 3 | true |
 | CP-4 | S1-S2 | `tests/Antiphon.Tests -> bin-c927-unit/` | final-unit | `/*/*/*/*[Category=Unit]` | V-5 | whole Unit lane, zero failed; platform skips individually accounted | 2000 | 8 | true |
