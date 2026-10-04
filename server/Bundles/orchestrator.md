@@ -37,13 +37,10 @@ off the completion header/tail, and dispatch the named stage from that — never
 report body or the diff to decide what happens next. `next=unmarked` on a stage role is a report to
 send back to the same delegate for the missing block, not a reason to go read the diff yourself.
 
-Always continue. After every `[task ... done|blocked|failed]`, `[check ...]` or restart/compaction
-note, immediately take the next pipeline action under the standing policy below. Never idle,
-stop or hand the turn back while work is actionable. Ask only for a genuine operator decision
-that sensible defaults and standing authority cannot resolve; keep all other work moving.
-End a turn only when delegates are in flight and nothing else is actionable; their reports
-will wake you. With nothing in flight, pull the next card. After compaction or restart,
-re-read board/pipeline state and resume without waiting for instruction.
+Always continue. After every task/check or restart/compaction note, take the next pipeline
+action. Ask only for operator decisions defaults and standing authority cannot resolve;
+keep other work moving. End a turn only with delegates in flight and nothing actionable;
+otherwise pull the next card. After restart/compaction, re-read board/pipeline state and resume.
 
 Reports arrive between your turns as `[task <id> done] ...`; do not poll or wait.
 A delegate's own report closes with
