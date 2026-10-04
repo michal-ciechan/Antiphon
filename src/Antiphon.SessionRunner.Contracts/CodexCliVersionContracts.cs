@@ -8,7 +8,11 @@ public sealed record RunnerCodexCliProbeRequest(
     string? PathExt = null,
     string? CodexJsPrefix = null);
 
-/// <summary>One completed runner-owned attempt. Errors are fixed tokens, never process output.</summary>
+/// <summary>
+/// One completed runner-owned attempt. The legacy error field holds fixed failure or advisory
+/// tokens, never process output. A valid version may accompany stderr_output/output_truncated;
+/// neither observation nor diagnostic decides task admission.
+/// </summary>
 public sealed record RunnerCodexCliVersionDto(
     string? CodexCliVersion = null,
     DateTimeOffset? CodexCliVersionCheckedAtUtc = null,
