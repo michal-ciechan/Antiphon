@@ -144,6 +144,13 @@ If implementation discovers that this fixture cannot reach both endpoint branche
 production changes, return that concrete finding to Plan. Do not quietly switch to D-1's
 rejected all-aborts logging policy.
 
+S2 clarification: the ops-http contract now states that transport keys are conditional on
+a captured WebSocket exception. This corrects the universal reading of historical
+CARD-0716 D-6/V-2 without changing those historical artifacts or production behavior.
+The Code reproduction first drives request cancellation while retaining the old mandatory
+transport-code expectation; the repair then supplies controlled exceptions to that test
+and preserves separate cancellation and real peer-abort coverage.
+
 ## Provisional verification design (superseded by TestDesign below)
 
 Historical proposal only. The appended **Verification design** is the executable authority,
