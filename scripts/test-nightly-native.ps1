@@ -8,12 +8,14 @@ if (-not $IsWindows) { throw 'Windows native fixture required; this case cannot 
 . (Join-Path $PSScriptRoot 'lib/nightly-common.ps1')
 . (Join-Path $PSScriptRoot 'lib/nightly-tests-impl.ps1')
 . (Join-Path $PSScriptRoot 'lib/nightly-owned-process.ps1')
+. (Join-Path $PSScriptRoot 'lib/nightly-policy.ps1')
 Add-Type -LiteralPath ([IO.Path]::ChangeExtension($FixtureExecutable, '.dll'))
 $null = New-Item -ItemType Directory -Path $ResultsDirectory -Force
 $script:owners = @()
 $script:handles = @()
 $script:roots = @()
 $script:passed = 0
+$script:parentEnvironment = @{}
 function Assert-Native([bool]$Condition, [string]$Label) {
     if (-not $Condition) { throw ('FAIL C1039 ' + $Label) }
     $script:passed++
@@ -68,9 +70,107 @@ function Assert-Held($Run, [string]$Label) {
     Start-Sleep -Milliseconds 300
     Assert-Native (-not $Run.Owner.Completion.IsCompleted) ($Label+' owner has not returned')
 }
+function Set-EnvironmentSentinel([string]$Name, [string]$Value) {
+    if (-not $script:parentEnvironment.ContainsKey($Name)) {
+        $script:parentEnvironment[$Name] = [Environment]::GetEnvironmentVariable($Name, 'Process')
+    }
+    [Environment]::SetEnvironmentVariable($Name, $Value, 'Process')
+}
+function Assert-Environment([bool]$Condition, [string]$Label) {
+    if (-not $Condition) { throw ('FAIL C1045 ' + $Label) }
+    $script:passed++
+    Write-Host ('PASS C1045 ' + $Label)
+}
+function Read-ChildEnvironment([string]$Name, [string[]]$Names,
+                               [hashtable]$Environment = $null, [switch]$OmitEnvironment) {
+    $root = Join-Path $ResultsDirectory $Name
+    $null = New-Item -ItemType Directory -Path $root
+    $log = Join-Path $root 'entry.log'
+    $launch = @{ FilePath=$FixtureExecutable; ArgumentList=(@($root,'environment') + $Names)
+        WorkingDirectory=$root; TimeoutMilliseconds=30000; LogPath=$log }
+    if (-not $OmitEnvironment) { $launch.Environment = $Environment }
+    # This is the production entry, with no controlled-I/O or native-operation seams.
+    $result = Invoke-NightlyOwnedProcess @launch
+    $result | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $root 'result.json')
+    Assert-Native ($result.ExitCode -eq 0 -and $result.Error -eq '') 'environment fixture exit zero'
+    Assert-Native ($result.ChildrenExited -and $result.OutputDrained -and $result.CleanupComplete -and
+        (Wait-NightlyOwnedCleanup $result)) 'environment fixture cleanup complete'
+    $text = Get-Content -LiteralPath $log -Raw
+    Assert-Native ($text.Contains('ROOT-STDOUT-END') -and $text.Contains('ROOT-STDERR-END')) 'environment fixture both final output sentinels'
+    $observation = Join-Path $root 'environment.json'
+    Assert-Native (Test-Path -LiteralPath $observation) 'environment fixture observation exists'
+    return @(Get-Content -LiteralPath $observation -Raw | ConvertFrom-Json)
+}
+function Find-EnvironmentEntries($Observation, [string]$Name) {
+    return @($Observation | Where-Object { $_.Name -ieq $Name })
+}
+function Assert-ParentEnvironment {
+    Assert-Environment ([Environment]::GetEnvironmentVariable('C1045_PARENT_ONLY','Process') -ceq 'parent-only-value') 'parent-only sentinel unchanged'
+    Assert-Environment ([Environment]::GetEnvironmentVariable('C1045_OVERRIDE','Process') -ceq 'parent-override-value') 'parent override unchanged'
+    Assert-Environment ([Environment]::GetEnvironmentVariable('C1045_EMPTY','Process') -ceq 'parent-empty-value') 'parent empty sentinel unchanged'
+    Assert-Environment ([Environment]::GetEnvironmentVariable('C1045_NULL','Process') -ceq 'parent-null-value') 'parent null sentinel unchanged'
+}
 $exitCode = 0
 try {
+    if ($Case.StartsWith('C1045_')) {
+        $script:NightlySeams = $null
+        Set-EnvironmentSentinel 'C1045_PARENT_ONLY' 'parent-only-value'
+        Set-EnvironmentSentinel 'C1045_OVERRIDE' 'parent-override-value'
+        Set-EnvironmentSentinel 'C1045_EMPTY' 'parent-empty-value'
+        Set-EnvironmentSentinel 'C1045_NULL' 'parent-null-value'
+    }
     switch ($Case) {
+        'C1045_NullEnvironmentInherits' {
+            foreach ($omit in @($true,$false)) {
+                $observed = @(Read-ChildEnvironment ('null-'+$omit) @('C1045_PARENT_ONLY') -Environment $null -OmitEnvironment:$omit)
+                $entries = @(Find-EnvironmentEntries $observed 'C1045_PARENT_ONLY')
+                Assert-Environment ($entries.Count -eq 1 -and $entries[0].Value -ceq 'parent-only-value') 'null inherits parent sentinel'
+                Assert-ParentEnvironment
+            }
+        }
+        'C1045_SuppliedEnvironmentReplaces' {
+            $value = 'supplied spaces=unicode ' + [char]0x03A9
+            $observed = @(Read-ChildEnvironment 'replacement' @('C1045_PARENT_ONLY','C1045_OVERRIDE','C1045_NEW') `
+                -Environment @{ c1045_override='child-override-value'; C1045_NEW=$value })
+            Assert-Environment (@(Find-EnvironmentEntries $observed 'C1045_PARENT_ONLY').Count -eq 0) 'supplied map excludes parent sentinel'
+            $entries = @(Find-EnvironmentEntries $observed 'C1045_OVERRIDE')
+            Assert-Environment ($entries.Count -eq 1 -and $entries[0].Value -ceq 'child-override-value') 'case-insensitive single override exact value'
+            $entries = @(Find-EnvironmentEntries $observed 'C1045_NEW')
+            Assert-Environment ($entries.Count -eq 1 -and $entries[0].Value -ceq $value) 'new value preserves spaces equals and Unicode'
+            Assert-ParentEnvironment
+        }
+        'C1045_EmptyEnvironmentDoesNotInherit' {
+            $observed = @(Read-ChildEnvironment 'empty' @('C1045_PARENT_ONLY','C1045_OVERRIDE') -Environment @{})
+            Assert-Environment (@(Find-EnvironmentEntries $observed 'C1045_PARENT_ONLY').Count -eq 0) 'empty map excludes parent sentinel'
+            Assert-Environment (@(Find-EnvironmentEntries $observed 'C1045_OVERRIDE').Count -eq 0) 'empty map excludes parent override'
+            Assert-ParentEnvironment
+        }
+        'C1045_ClearedEntriesAreAbsent' {
+            $observed = @(Read-ChildEnvironment 'cleared' @('C1045_EMPTY','C1045_NULL','C1045_KEEP') `
+                -Environment @{ C1045_EMPTY=''; C1045_NULL=$null; C1045_KEEP='retained-value' })
+            Assert-Environment (@(Find-EnvironmentEntries $observed 'C1045_EMPTY').Count -eq 0 -and
+                @(Find-EnvironmentEntries $observed 'C1045_NULL').Count -eq 0) 'cleared names absent from child block'
+            $entries = @(Find-EnvironmentEntries $observed 'C1045_KEEP')
+            Assert-Environment ($entries.Count -eq 1 -and $entries[0].Value -ceq 'retained-value') 'retained value exact'
+            $observed = @(Read-ChildEnvironment 'all-cleared' @('C1045_PARENT_ONLY','C1045_EMPTY','C1045_NULL') `
+                -Environment @{ C1045_EMPTY=''; C1045_NULL=$null })
+            Assert-Environment ($observed.Count -eq 0) 'all-cleared map excludes parent and cleared names'
+            Assert-ParentEnvironment
+            Set-EnvironmentSentinel 'ANTIPHON_HEADED_TESTS' '1'
+            $policyPath = Get-NightlyPolicyPath -RepoRoot (Split-Path $PSScriptRoot -Parent)
+            $policy = Get-Content -LiteralPath $policyPath -Raw | ConvertFrom-Json
+            $map = Get-NightlySafeChildEnvironment -PolicyObject $policy -SuiteId 'antiphon'
+            $cleared = @($policy.safeEnvironment.clear | Where-Object { [string]$map[$_] -eq '' })
+            Assert-Native ($cleared.Count -gt 0) 'real policy clear list admitted'
+            $observed = @(Read-ChildEnvironment 'policy' (@('C1045_PARENT_ONLY') + $cleared) -Environment $map)
+            foreach ($name in $cleared) {
+                Assert-Environment (@(Find-EnvironmentEntries $observed $name).Count -eq 0) ('policy cleared name absent '+$name)
+            }
+            $entries = @(Find-EnvironmentEntries $observed 'C1045_PARENT_ONLY')
+            Assert-Environment ($entries.Count -eq 1 -and $entries[0].Value -ceq 'parent-only-value') 'full policy map retains unrelated parent sentinel'
+            Assert-Environment ([Environment]::GetEnvironmentVariable('ANTIPHON_HEADED_TESTS','Process') -ceq '1') 'parent headed opt-in unchanged'
+            Assert-ParentEnvironment
+        }
         'C1039_AssignBeforeResume' {
             $tokens = @('path with spaces','', 'a"b', 'C:\tail\', '/*/*/(A)|(B)/*', '*', '$literal')
             $r = New-NativeRun 'suspended root' 'descendant' @('assignment') $false $false $tokens
@@ -160,6 +260,9 @@ try {
     $exitCode = 1
     Write-Host ($_ | Out-String)
 } finally {
+    foreach ($name in $script:parentEnvironment.Keys) {
+        [Environment]::SetEnvironmentVariable($name, $script:parentEnvironment[$name], 'Process')
+    }
     # Release every fixture barrier even when the guarded assertion goes red.
     foreach ($root in $script:roots) {
         foreach ($phase in @('assignment','root-wait','stdout','stderr','log-write','root','child')) {

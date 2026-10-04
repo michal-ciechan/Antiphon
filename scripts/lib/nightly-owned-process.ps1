@@ -9,8 +9,10 @@ function Start-NightlyNativeOwner {
           [Antiphon.Nightly.NativeProcessHooks]$Hooks = $null)
     if (-not $IsWindows) { throw 'Nightly native custody requires Windows.' }
     $command = Get-Command $FilePath -CommandType Application -ErrorAction Stop | Select-Object -First 1
-    $entries = @()
-    if ($Environment) { $entries = @($Environment.Keys | ForEach-Object { '{0}={1}' -f $_, $Environment[$_] }) }
+    [string[]]$entries = $null
+    if ($null -ne $Environment) {
+        $entries = [string[]]@($Environment.Keys | ForEach-Object { '{0}={1}' -f $_, $Environment[$_] })
+    }
     return [Antiphon.Nightly.NativeProcessOwner]::Start($command.Source, $ArgumentList,
         $WorkingDirectory, $TimeoutMilliseconds, $LogPath, [string[]]$entries, $Hooks)
 }

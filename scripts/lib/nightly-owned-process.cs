@@ -126,15 +126,20 @@ namespace Antiphon.Nightly
                 startup.Startup.flags = 0x100; // USESTDHANDLES
                 startup.Startup.stdin = inputRead; startup.Startup.stdout = outWrite; startup.Startup.stderr = errWrite;
                 startup.Attributes = attributes;
-                var env = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                foreach (System.Collections.DictionaryEntry item in Environment.GetEnvironmentVariables()) env[(string)item.Key] = (string)item.Value;
-                foreach (string item in environment ?? Array.Empty<string>())
+                // Null inherits via CreateProcess; even an empty explicit map replaces.
+                if (environment != null)
                 {
-                    int eq = item.IndexOf('=');
-                    if (eq <= 0) throw new ArgumentException("Invalid native environment entry.");
-                    env[item.Substring(0, eq)] = item.Substring(eq + 1);
+                    var env = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (string item in environment)
+                    {
+                        int eq = item.IndexOf('=');
+                        if (eq <= 0) throw new ArgumentException("Invalid native environment entry.");
+                        string name = item.Substring(0, eq), value = item.Substring(eq + 1);
+                        if (value.Length == 0) env.Remove(name);
+                        else env[name] = value;
+                    }
+                    envBlock = Marshal.StringToHGlobalUni(string.Join("\0", env.Select(x => x.Key + "=" + x.Value)) + "\0\0");
                 }
-                envBlock = Marshal.StringToHGlobalUni(string.Join("\0", env.Select(x => x.Key + "=" + x.Value)) + "\0\0");
                 var command = new StringBuilder(Quote(executable) + " " + string.Join(" ", (arguments ?? Array.Empty<string>()).Select(Quote)));
                 ProcessInfo info;
                 Check(CreateProcessW(executable, command, IntPtr.Zero, IntPtr.Zero, true,

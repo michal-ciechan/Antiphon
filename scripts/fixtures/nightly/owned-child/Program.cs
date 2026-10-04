@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 
-var modes = new[] { "child", "breakaway-child", "descendant", "breakaway", "root-held", "plain" };
+var modes = new[] { "child", "breakaway-child", "descendant", "breakaway", "root-held", "plain", "environment" };
 var controlArguments = args.Length >= 2 && modes.Contains(args[1]);
 var directory = controlArguments ? args[0] : Environment.GetEnvironmentVariable("C1039_FIXTURE_DIRECTORY")!;
 var mode = controlArguments ? args[1] : Environment.GetEnvironmentVariable("C1039_FIXTURE_MODE")!;
@@ -16,6 +16,32 @@ if (mode == "child" || mode == "breakaway-child")
 }
 File.WriteAllText(Path.Combine(directory, "started"), "started");
 File.WriteAllText(Path.Combine(directory, "argv.json"), JsonSerializer.Serialize(controlArguments ? args.Skip(2) : args));
+if (mode == "environment")
+{
+    var selected = args.Skip(2).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    var observations = new List<object>();
+    var block = Native.GetEnvironmentStringsW();
+    if (block == IntPtr.Zero)
+        throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+    try
+    {
+        var cursor = block;
+        while (Marshal.ReadInt16(cursor) != 0)
+        {
+            var entry = Marshal.PtrToStringUni(cursor)!;
+            cursor = IntPtr.Add(cursor, (entry.Length + 1) * sizeof(char));
+            var separator = entry.IndexOf('=');
+            if (separator <= 0) continue;
+            var name = entry[..separator];
+            if (!selected.Contains(name)) continue;
+            // Only synthetic values are disclosed. Policy names expose presence only.
+            observations.Add(new { Name = name,
+                Value = name.StartsWith("C1045_", StringComparison.OrdinalIgnoreCase) ? entry[(separator + 1)..] : null });
+        }
+    }
+    finally { Native.FreeEnvironmentStringsW(block); }
+    File.WriteAllText(Path.Combine(directory, "environment.json"), JsonSerializer.Serialize(observations));
+}
 if (mode == "descendant")
 {
     using var child = Process.Start(new ProcessStartInfo(Environment.ProcessPath!)
@@ -44,6 +70,10 @@ Console.WriteLine("ROOT-STDOUT-END"); Console.Error.WriteLine("ROOT-STDERR-END")
 
 internal static class Native
 {
+    [DllImport("kernel32.dll", SetLastError=true)]
+    internal static extern IntPtr GetEnvironmentStringsW();
+    [DllImport("kernel32.dll")]
+    internal static extern bool FreeEnvironmentStringsW(IntPtr block);
     [StructLayout(LayoutKind.Sequential)] internal struct Startup
     {
         public int Size; public IntPtr Reserved, Desktop, Title;
