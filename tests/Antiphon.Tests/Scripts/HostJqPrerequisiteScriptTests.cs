@@ -146,7 +146,11 @@ public sealed class HostJqPrerequisiteScriptTests
             using var held = f.Start("/usr/bin/bash", "-c", "exec 9<\"$HJ_LOCK\"; /usr/bin/flock 9; echo ready; read -r release");
             (await held.StandardOutput.ReadLineAsync()).ShouldBe("ready");
             var a = f.Helper("provision"); var b = f.Helper("provision");
-            try { await Task.Delay(200); f.Trace.ShouldNotContain("download", Case.Sensitive, "lock-held"); }
+            try
+            {
+                await f.WaitTrace("flock-request", 2);
+                f.Trace.ShouldNotContain("download", Case.Sensitive, "lock-held");
+            }
             finally { held.StandardInput.WriteLine("release"); held.StandardInput.Close(); await held.WaitForExitAsync(); }
             var results = await Task.WhenAll(a, b);
             foreach (var r in results) r.Exit.ShouldBe(0, r.Output);
@@ -157,7 +161,7 @@ public sealed class HostJqPrerequisiteScriptTests
         {
             using var held = f.Start("/usr/bin/bash", "-c", "exec 9<\"$HJ_LOCK\"; /usr/bin/flock 9; echo ready; read -r release");
             (await held.StandardOutput.ReadLineAsync()).ShouldBe("ready");
-            var pending = f.Helper("provision"); await Task.Delay(200); f.Existing("true");
+            var pending = f.Helper("provision"); await f.WaitTrace("flock-request", 1); f.Existing("true");
             held.StandardInput.WriteLine("release"); held.StandardInput.Close(); await held.WaitForExitAsync();
             (await pending).Exit.ShouldBe(2, "lock-recheck: invalid destination appeared"); f.Trace.ShouldNotContain("download");
         }
@@ -296,7 +300,19 @@ public sealed class HostJqPrerequisiteScriptTests
         foreach (var fault in new[] { "", "ssh-exit", "empty", "truncated", "late", "start" })
         {
             using var f = new HostJqFixture(); f.Existing(); f.Transport = fault; await f.InitializeRepo(shortDeadline: fault == "late");
-            var r = await f.Wrapper("check-host-jq"); r.Exit.ShouldBe(fault == "" ? 0 : 2, "ssh-exit/ssh-deadline: " + fault + r.Output);
+            Process? observer = null;
+            var execution = f.Wrapper("check-host-jq");
+            try
+            {
+                if (fault == "late")
+                {
+                    await f.WaitMarker("ssh-pid");
+                    observer = Process.GetProcessById(int.Parse(File.ReadAllText(f.Root + "/ssh-pid")));
+                    observer.StartTime.ToUniversalTime().ShouldBeGreaterThan(DateTime.UtcNow.AddSeconds(-10), "owned child start identity");
+                }
+                var r = await execution;
+                r.Exit.ShouldBe(fault == "" ? 0 : 2, "ssh-exit/ssh-deadline: " + fault + r.Output);
+                if (observer is not null) observer.HasExited.ShouldBeTrue("ssh-reaped: independent child handle exited before wrapper return");
             if (fault == "late") r.Output.ShouldContain("HostJqTransportTimeout", Case.Sensitive, "ssh-deadline");
             if (fault != "start")
             {
@@ -305,6 +321,16 @@ public sealed class HostJqPrerequisiteScriptTests
                 File.ReadAllText(f.Root + "/stdin").ShouldBe(File.ReadAllText(f.HelperPath), "streamed reviewed helper");
                 var pid = int.Parse(File.ReadAllText(f.Root + "/ssh-pid"));
                 HostJqFixture.Alive(pid).ShouldBeFalse("ssh-reaped: recorded child exited when wrapper returned");
+            }
+            }
+            finally
+            {
+                if (observer is not null)
+                {
+                    if (!observer.HasExited) observer.Kill(entireProcessTree: true);
+                    await observer.WaitForExitAsync(); observer.Dispose();
+                }
+                await execution;
             }
         }
     }
@@ -385,9 +411,9 @@ public sealed class HostJqPrerequisiteScriptTests
             using var f = new HostJqFixture(); if (state != "missing") f.Existing(state == "invalid" ? "true" : "healthy");
             await f.InitializeRepo();
             var r = await f.Wrapper(phase);
-            r.Exit.ShouldBe(state == "invalid" || (phase == "check-host-jq" && state == "missing") ? 2 : 0, r.Output);
             f.Trace.ShouldNotContain("HTTP", Case.Sensitive, "explicit-only: HTTP/case/POST count=0");
             f.Trace.ShouldNotContain("case", Case.Sensitive, "explicit-only");
+            r.Exit.ShouldBe(state == "invalid" || (phase == "check-host-jq" && state == "missing") ? 2 : 0, r.Output);
             f.Trace.Split('\n').Count(x => x.StartsWith("ssh ", StringComparison.Ordinal)).ShouldBe(1);
             f.Trace.ShouldContain("bash -s -- " + (phase == "check-host-jq" ? "check" : "provision"));
         }
@@ -437,6 +463,8 @@ internal sealed class HostJqFixture : IDisposable
         helper = ReplaceOnce(helper, "LOCK_ROOT=/var/lock/antiphon-host-jq", "LOCK_ROOT=" + Lock);
         helper = ReplaceOnce(helper, "CONTAINER_MARKER=/.dockerenv", "CONTAINER_MARKER=" + Root + "/dockerenv");
         File.WriteAllText(HelperPath, helper);
+        File.WriteAllText(Root + "/scripts/fake-http.ps1", "param($Method,$RunnerId,$Suffix,$BodyJson,$Path)\n[IO.File]::AppendAllText($env:HJ_ROOT+'/trace', 'HTTP '+$Method+[Environment]::NewLine)\n'__503__'\nexit 0\n");
+        File.WriteAllText(Root + "/scripts/fake-verify.ps1", "param($Case,$Manifest)\n[IO.File]::AppendAllText($env:HJ_ROOT+'/trace', 'case '+$Case+[Environment]::NewLine)\nexit 2\n");
         foreach (var tool in ProvisionTools.Concat(new[] { "bash", "git", "pwsh" })) File.CreateSymbolicLink(Tools + "/" + tool, Locate(tool));
         File.WriteAllText(Payload, JqScript("healthy")); Executable(Payload);
         WriteTool("docker", "[ \"$fault\" != no-daemon ] || exit 1\n[ \"$fault\" != sibling ] || { echo sibling; exit 0; }\necho fixture-host");
@@ -449,6 +477,9 @@ internal sealed class HostJqFixture : IDisposable
         WriteTool("install", "original=\"$*\"\nargs=(); owner=false; group=false\nwhile [ \"$#\" -gt 0 ]; do case \"$1\" in -o) owner=true; shift 2;; -g) group=true; shift 2;; *) args+=(\"$1\"); shift;; esac; done\nlast=${args[${#args[@]}-1]}\nif [[ \"$last\" = */.antiphon-jq.*/jq ]]; then\n printf 'stage %s\\n' \"$original\" >> \"$HJ_ROOT/trace\"\n [ \"$fault\" != stage-exit ] || exit 1\n if $owner && $group; then echo root > \"${last%/*}/owner\"; fi\nfi\n/usr/bin/install \"${args[@]}\" || exit $?\nif [ \"$fault\" = tamper ] && [[ \"$last\" = */.antiphon-jq.*/jq ]]; then printf corrupt >> \"$last\"; fi");
         WriteTool("ln", "printf 'publish %s\\n' \"$*\" >> \"$HJ_ROOT/trace\"\nsource=$3\nprintf 'stage-owner %s\\n' \"$(stat -c '%u:%g:%a' -- \"$source\")\" >> \"$HJ_ROOT/trace\"\nif [ \"$fault\" = publish-barrier ]; then echo ready > \"$HJ_ROOT/publish-ready\"; while [ ! -f \"$HJ_ROOT/publish-release\" ]; do /usr/bin/sleep .01; done; fi\n[ \"$fault\" != publish-exit ] || exit 1\n/usr/bin/ln \"$@\" || exit $?\nif [ \"$fault\" = final-path ]; then /usr/bin/cp \"$HJ_ROOT/payload\" \"$HJ_ROOT/tools/jq\"; /usr/bin/chmod 755 \"$HJ_ROOT/tools/jq\"; fi");
         WriteTool("rm", "printf 'unlink %s\\n' \"$*\" >> \"$HJ_ROOT/trace\"\nexec /usr/bin/rm \"$@\"");
+        WriteTool("flock", "echo flock-request >> \"$HJ_ROOT/trace\"\nexec /usr/bin/flock \"$@\"");
+        // Boundary for the planned non-atomic-copy control; production uses native ln.
+        WriteTool("cp", "source=${@: -2:1}; destination=${@: -1}\nif [ \"$destination\" != \"$HJ_DEST\" ]; then exec /usr/bin/cp \"$@\"; fi\nprintf 'stage-owner %s\\n' \"$(stat -c '%u:%g:%a' -- \"$source\")\" >> \"$HJ_ROOT/trace\"\necho ready > \"$HJ_ROOT/publish-ready\"\nwhile [ ! -f \"$HJ_ROOT/publish-release\" ]; do /usr/bin/sleep .01; done\n/usr/bin/head -c 10 \"$source\" > \"$destination\"\n/usr/bin/sleep .1\n/usr/bin/cp -- \"$source\" \"$destination\"");
         WriteTool("ssh", "printf 'ssh %s\\n' \"$*\" >> \"$HJ_ROOT/trace\"\necho $$ > \"$HJ_ROOT/ssh-pid\"\n/usr/bin/cat > \"$HJ_ROOT/stdin\"\nif [ \"$HJ_TRANSPORT\" = block-receipt ]; then\n for d in \"$HJ_WRAPPER\"/.antiphon/rolling-server2/*; do /usr/bin/mkdir \"$d/host-jq-check-host-jq.json\"; done\nfi\nprintf 'remote-C1025-secret\\n' >&2\nif [ \"$HJ_TRANSPORT\" = late ]; then /usr/bin/sleep .5; fi\nif [ \"$HJ_TRANSPORT\" = empty ]; then exit 0; fi\nif [ \"$HJ_TRANSPORT\" = truncated ]; then echo '{'; exit 0; fi\nif [ -f \"$HJ_ROOT/proof\" ]; then /usr/bin/cat \"$HJ_ROOT/proof\"; else /usr/bin/bash -s -- \"${!#}\" < \"$HJ_ROOT/stdin\"; code=$?; [ \"$code\" = 0 ] || exit \"$code\"; fi\n[ \"$HJ_TRANSPORT\" != ssh-exit ] || exit 255");
     }
 
@@ -528,7 +559,8 @@ internal sealed class HostJqFixture : IDisposable
         psi.Environment["HJ_DEST_PARENT"] = Parent; psi.Environment["HJ_LOCK"] = Lock; psi.Environment["HJ_WRAPPER"] = WrapperRoot;
         psi.Environment["HJ_TRANSPORT"] = Transport; psi.Environment["ANTIPHON_OPERATOR_TOKEN_FILE"] = Root + "/token";
         psi.Environment["ANTIPHON_TASK_TOKEN"] = "task-C1025-secret";
-        psi.Environment.Remove("C727_TEST_VERIFY_STUB"); psi.Environment.Remove("C727_TEST_HTTP_STUB");
+        psi.Environment["C727_TEST_VERIFY_STUB"] = Root + "/scripts/fake-verify.ps1";
+        psi.Environment["C727_TEST_HTTP_STUB"] = Root + "/scripts/fake-http.ps1";
         return Process.Start(psi)!;
     }
     internal async Task<HostJqRun> Run(string executable, params string[] args)
@@ -545,6 +577,12 @@ internal sealed class HostJqFixture : IDisposable
         var deadline = DateTime.UtcNow.AddSeconds(5);
         while (!File.Exists(Root + "/" + name) && DateTime.UtcNow < deadline) await Task.Delay(10);
         File.Exists(Root + "/" + name).ShouldBeTrue("barrier reached: " + name + Trace);
+    }
+    internal async Task WaitTrace(string text, int count)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (Trace.Split(text, StringSplitOptions.None).Length - 1 < count && DateTime.UtcNow < deadline) await Task.Delay(10);
+        (Trace.Split(text, StringSplitOptions.None).Length - 1).ShouldBeGreaterThanOrEqualTo(count, "barrier reached: " + text);
     }
     internal static bool Alive(int pid) { try { using var p = Process.GetProcessById(pid); return !p.HasExited; } catch (ArgumentException) { return false; } }
     private static string ReplaceOnce(string source, string before, string after)
