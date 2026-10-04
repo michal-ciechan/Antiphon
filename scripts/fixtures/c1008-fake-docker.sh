@@ -16,7 +16,7 @@ if (fault === 'ps-error' && args[0] === 'ps') fail();
 if (fault === 'inspect-error' && args[0] === 'inspect') fail();
 if (fault === 'volume-ls-error' && args[0] === 'volume' && args[1] === 'ls') fail();
 if (args[0] === 'info') { out(root+'\n'); }
-else if(args[0]==='image'&&args[1]==='inspect')out('sha256:'+'a'.repeat(64)+'\n');
+else if(args[0]==='image'&&args[1]==='inspect'){if(fault==='image-inspect-error')fail();out('sha256:'+(fault==='image-inspect-wrong'?'b':'a').repeat(64)+'\n');}
 else if (args[0] === 'ps') {
  if(!state.containers.some(c=>['session-runner','state-init'].includes(c.Config.Labels['com.docker.compose.service']))) {
   state.postStopPs=(state.postStopPs||0)+1;
@@ -24,6 +24,8 @@ else if (args[0] === 'ps') {
   if(fault==='final-ps-error')fail();
   save();
  }
+ if(fault==='c994-ps-partial'){out(state.containers[0].Id+'\n');fail();}
+ if(fault==='c994-duplicate-id'){out(state.containers[0].Id+'\n'+state.containers[0].Id+'\n');process.exit(0);}
  let items = state.containers;
  const filter = args[args.indexOf('--filter')+1];
  if(args.includes('--filter')) {
@@ -37,6 +39,8 @@ else if (args[0] === 'ps') {
  const c=state.containers.find(c=>c.Id===name); if(!c)process.exit(1);
  if(fault==='inspect-empty'){out('');process.exit(0);}
  if(fault==='inspect-malformed'){out('{');process.exit(0);}
+ if(fault==='c994-wrong-id')c.Id='f'.repeat(64);
+ if(fault==='c994-missing-state')delete c.State;
  out([c]);
 } else if(args[0]==='stop') {
  if(fault==='stop-failed')fail(); const c=state.containers.find(c=>c.Id===name);if(!c)fail();
@@ -50,7 +54,18 @@ else if (args[0] === 'ps') {
  if(args.some(a=>a==='-f'||a==='--force'||a==='-v'))fail();
  const c=state.containers.find(c=>c.Id===name);if(!c||c.State.Running||fault==='helper-rm-failed'&&c.Config.Labels['io.antiphon.audit'])fail();
  if(fault==='owned-rm-failed'&&c.Config.Labels['com.docker.compose.service']==='session-runner')fail();
- state.containers=state.containers.filter(c=>c.Id!==name);save();out(name+'\n');
+ state.cleanupRm=(state.cleanupRm||0)+1;
+ if(fault==='c994-rm-'+state.cleanupRm){save();fail();}
+ if(fault!=='c994-rm-retains')state.containers=state.containers.filter(c=>c.Id!==name);
+ const next=state.containers.find(c=>c.Config.Labels['com.docker.compose.project']==='antiphon-runner-temp');
+ if(next&&fault==='c994-late-image')next.Image='sha256:'+'b'.repeat(64);
+ if(next&&fault==='c994-late-mount')next.Mounts[0].Source='/foreign';
+ if(next&&fault==='c994-late-state')next.State={Running:true,Status:'running'};
+ if(fault==='c994-late-main'||fault==='c994-late-stamp') {const p=path.join(root,'statuses.json'),v=JSON.parse(fs.readFileSync(p));
+  if(fault==='c994-late-main')v.server2.acceptingNewWork=false;else v['server2-temp'].retiredAt='2026-10-03T10:30:00Z';fs.writeFileSync(p,JSON.stringify(v));}
+ if(fault==='c994-late-land'){const p=path.join(root,'tasks.json'),v=JSON.parse(fs.readFileSync(p));v.scopes[Object.keys(v.scopes)[0]].excluded.total=1;fs.writeFileSync(p,JSON.stringify(v));}
+ if(fault==='c994-final-replacement') {const replacement=structuredClone(c);replacement.Id='e'.repeat(64);state.containers.push(replacement);}
+ save();out(name+'\n');
 } else if(args[0]==='volume'&&args[1]==='ls')out(Object.keys(state.volumes).join('\n')+'\n');
 else if(args[0]==='volume'&&args[1]==='inspect') {
  if(fault==='generation-after-stop'&&!state.generationChanged&&name==='antiphon-runner_work'&&
