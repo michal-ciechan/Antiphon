@@ -16,10 +16,13 @@ No production budget, timeout or assertion is loosened.
 ## Verification design
 
 V-1: whole InstructionBundleTests class, including all non-specialist role/kind
-compositions with board API, explanatory style, Telegram append and six other argv
+compositions with board API, explanatory style, CRLF Telegram append and six other argv
 entries. The real budget guard must accept them at budget minus 500. The original
 30,001-character estimate fails this guard at both 30,000 and 29,500; the repaired
-worst case is 29,295. LF and simulated CRLF size checks retain the old ceiling.
+worst case is 29,295. ChannelPreamble uses AppendLine, so the CRLF append exercises
+the larger Windows estimate on Linux too. The unmodified baseline test passes on
+Linux at its old 30,000 guard; the Windows estimate is 30,001. LF and simulated
+CRLF bundle size checks retain the old ceiling.
 
 V-2: whole CheckpointRepeatDocumentationTests class (one method), including the
 repeat_budget_reaches_code_briefs_without_bundle_growth raw SHA-256 pin.
