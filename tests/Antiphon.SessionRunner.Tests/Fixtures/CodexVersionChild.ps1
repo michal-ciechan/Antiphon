@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('success','nonzero','stderr','stdout-flood','stderr-flood','stdin','timeout','tree','parent-exits','leaf','diagnostic')]
+    [ValidateSet('success','nonzero','stderr','stdout-flood','stderr-flood','stdin','timeout','tree','parent-exits','leaf','diagnostic','notice','notice-held')]
     [string]$Mode = 'success',
     [Parameter(Mandatory=$true)][string]$ReceiptRoot
 )
@@ -18,6 +18,13 @@ $receipt = @{
     mode = $Mode
 } | ConvertTo-Json -Compress
 [IO.File]::WriteAllText((Join-Path $ReceiptRoot ($Mode + '.json')), $receipt)
+if ($Mode -eq 'notice-held') {
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    while (-not [IO.File]::Exists((Join-Path $ReceiptRoot 'release'))) {
+        if ([DateTime]::UtcNow -ge $deadline) { throw 'owned notice was not released' }
+        [Threading.Thread]::Sleep(10)
+    }
+}
 if ($Mode -eq 'leaf' -or $Mode -eq 'timeout') {
     [Threading.Thread]::Sleep(20000)
     exit 0
@@ -61,5 +68,8 @@ if ($Mode -eq 'stdin') {
 [Console]::Out.WriteLine('codex-cli 0.160.0')
 if ($Mode -eq 'stderr') { [Console]::Error.Write('E') }
 if ($Mode -eq 'diagnostic') { [Console]::Error.Write('C959-diagnostic-sentinel') }
+if ($Mode -eq 'notice' -or $Mode -eq 'notice-held') {
+    [Console]::Error.Write('npm notice synthetic update; C:\Users\C1031\private; /home/C1031/private; C1031-token-canary')
+}
 if ($Mode -eq 'nonzero') { exit 1 }
 exit 0

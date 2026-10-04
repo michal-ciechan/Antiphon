@@ -14,6 +14,74 @@ namespace Antiphon.SessionRunner.Tests;
 public sealed class CodexCliVersionProbeTests
 {
     [Test]
+    [NotInParallel]
+    public async Task C1031_Stderr_notice_preserves_version()
+    {
+        using var kit = new CodexCliVersionTestFixture { Mode = "nonzero" };
+        var probe = (CodexCliVersionProbe)kit.Probe!;
+        await kit.Refresh();
+        probe.Snapshot.CodexCliVersionError.ShouldBe("nonzero_exit");
+        var failure = probe.Snapshot;
+        kit.Clock.Advance(TimeSpan.FromMinutes(1));
+        kit.Mode = "notice-held";
+        var originalOut = Console.Out;
+        var originalError = Console.Error;
+        using var capturedOut = new StringWriter();
+        using var capturedError = new StringWriter();
+        try
+        {
+            Console.SetOut(capturedOut);
+            Console.SetError(capturedError);
+            var pending = kit.Refresh();
+            try
+            {
+                await kit.WaitForReceiptAsync("notice-held");
+                kit.Clock.Advance(TimeSpan.FromSeconds(1));
+                pending.IsCompleted.ShouldBeFalse("C1031-completed-at held child");
+                probe.Snapshot.ShouldBe(failure, "C1031-completed-at no early publication");
+            }
+            finally
+            {
+                File.WriteAllText(Path.Combine(kit.Root, "receipts-2", "release"), "release");
+                await pending.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+            Console.SetError(originalError);
+        }
+        probe.Snapshot.CodexCliVersion.ShouldBe("0.160.0", "C1031-notice-version");
+        probe.Snapshot.CodexCliVersionError.ShouldBe("stderr_output", "C1031-fixed-diagnostic");
+        probe.Snapshot.CodexCliVersionCheckedAtUtc.ShouldBe(CodexCliVersionTestFixture.T.AddMinutes(1).AddSeconds(1),
+            "C1031-completed-at");
+        probe.Snapshot.CodexCliLauncherFingerprint.ShouldNotBeNull();
+        probe.Snapshot.CodexCliLauncherFingerprint.Length.ShouldBe(64);
+        probe.Snapshot.CodexCliLauncherFingerprint.All(Uri.IsHexDigit).ShouldBeTrue();
+        kit.Children.Last().HasExited.ShouldBeTrue();
+        kit.AuthOpens.ShouldBe(0);
+        foreach (var secret in new[] { @"C:\Users\C1031\private", "/home/C1031/private", "C1031-token-canary" })
+        {
+            (capturedOut.ToString() + capturedError).ShouldNotContain(secret, customMessage: "C1031-no-console-leak");
+            foreach (var json in new[] { JsonSerializer.Serialize(probe.Snapshot), kit.Local().GetRawText(), kit.Registration().GetRawText() })
+                json.ShouldNotContain(secret, customMessage: "C1031-fixed-diagnostic no raw data");
+        }
+        var completed = probe.Snapshot.CodexCliVersionCheckedAtUtc;
+        kit.Clock.Advance(TimeSpan.FromMinutes(1));
+        for (var read = 0; read < 10; read++)
+        {
+            kit.Local().GetProperty("codexCliVersionCheckedAtUtc").GetDateTimeOffset().ShouldBe(completed!.Value);
+            kit.Registration().GetProperty("codexCliVersionCheckedAtUtc").GetDateTimeOffset().ShouldBe(completed.Value);
+        }
+        kit.Starts.Count.ShouldBe(2);
+        kit.Mode = "success";
+        await kit.Refresh();
+        probe.Snapshot.CodexCliVersion.ShouldBe("0.160.0");
+        probe.Snapshot.CodexCliVersionError.ShouldBeNull("C1031-clear-advisory");
+        probe.Snapshot.CodexCliVersionCheckedAtUtc.ShouldBe(CodexCliVersionTestFixture.T.AddMinutes(2).AddSeconds(1));
+    }
+
+    [Test]
     public void C959_Parses_and_orders_versions()
     {
         // Late binding permits this behavioral contract to run on the unchanged baseline.
