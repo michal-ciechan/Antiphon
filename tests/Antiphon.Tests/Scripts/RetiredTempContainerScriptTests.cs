@@ -152,6 +152,10 @@ public sealed class RetiredTempContainerScriptTests
               $c.dryRun=$value;$ok=$true;try{Assert-C994BridgeContext $c 'retire-temp-containers'}catch{$ok=$false};if($ok){throw 'c994-bridge-context'}
             }
             """);run.Exit.ShouldBe(0,"c994-bridge-context c994-literal-transport: "+run.Output);
+        using var host=new C1008HostFixture(main:false);
+        host.Docker["containers"]!.AsArray().Add(host.Container('7',"antiphon-runner-temp","session-runner",false));
+        var cleaned=await host.Run("retire-temp-containers");cleaned.Exit.ShouldBe(0,"c994-literal-transport: host evidence; "+cleaned.Output);
+        await CheckLiveBridge(host,false);
         foreach(var file in new[]{"scripts/deploy-server2.ps1","scripts/c590-real.ps1","scripts/verify-docker-stack.ps1"})File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot,file)).All(b=>b<128).ShouldBeTrue("c994-literal-transport: ASCII");
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
@@ -163,5 +167,77 @@ public sealed class RetiredTempContainerScriptTests
         var ops=Cases(retire.Trace).Where(x=>x["name"]?.GetValue<string>()=="retire-temp-containers").Select(x=>x["cleanup"]!["operationId"]!.GetValue<string>()).ToArray();ops.Distinct().Count().ShouldBe(2);
         using var present=new C1008WrapperFixture();present.State["tempContainer"]=true;
         var refused=await present.Run("deploy-temp");refused.Exit.ShouldBe(2,"c994-cross-run-image: leftover");refused.Trace.Any(x=>x["method"]?.GetValue<string>()=="POST").ShouldBeFalse();
+    }
+    internal static async Task CheckLiveBridge(C1008HostFixture host, bool copyFailure)
+    {
+        var hostEvidence = Path.Combine(host.Root, "evidence/retire-temp-containers");
+        var receipt = JsonNode.Parse(File.ReadAllText(hostEvidence + "/temp-containers.json"))!;
+        var root = host.Root + "/live-bridge";
+        Directory.CreateDirectory(root + "/bin");
+        var shim = """
+            #!/usr/bin/env node
+            const fs=require('fs'),path=require('path'),cp=require('child_process');
+            const root=process.env.C994_TEST_BRIDGE_ROOT,kind=path.basename(process.argv[1]),args=process.argv.slice(2);
+            fs.appendFileSync(root+'/arguments.jsonl',JSON.stringify({kind,args})+'\n');
+            if(kind==='ssh'&&args.at(-1).startsWith('export ')) {
+              const remote=args.at(-1),end='bash /home/mc/antiphon-c590/c590-remote.sh';
+              if(!remote.endsWith(end))throw Error('unexpected host executable');
+              const script=remote.slice(0,-end.length)+"printf '%s\\n' \"$C994_VERSION\" \"$C994_OPERATION\" \"$C994_PROJECT\" \"$C994_PROJECT_ID\" \"$C994_DRY_RUN\" \"$C994_RETIRED_AT\"";
+              const child=cp.spawnSync('bash',['-c',script],{encoding:'utf8',timeout:5000});
+              if(child.status!==0)process.exit(2);
+              fs.writeFileSync(root+'/host-values.json',JSON.stringify(child.stdout.trimEnd().split('\n')));
+            }
+            if(kind==='scp'&&args.includes('-r')) {
+              if(process.env.C994_TEST_COPY_FAILURE==='1')process.exit(37);
+              fs.cpSync(process.env.C994_TEST_HOST_EVIDENCE,args.at(-1)+'/retire-temp-containers',{recursive:true});
+            }
+            """;
+        foreach (var name in new[] { "ssh", "scp" }) {
+            var file = root + "/bin/" + name;
+            File.WriteAllText(file, shim);
+            File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+        foreach (var offset in new[] { false, true }) {
+            var destination = root + (offset ? "/offset" : "/utc");
+            Directory.CreateDirectory(destination + "/retire-temp-containers");
+            // A failed copy must remain red even when an earlier valid local reply exists.
+            if (copyFailure) File.Copy(hostEvidence + "/c590-result.json", destination + "/retire-temp-containers/c590-result.json", true);
+            var context = new JsonObject {
+                ["version"] = 1, ["operationId"] = receipt["operationId"]!.DeepClone(),
+                ["project"] = receipt["project"]!.DeepClone(), ["projectId"] = receipt["projectId"]!.DeepClone(),
+                ["dryRun"] = false, ["retiredAt"] = offset ? "2026-10-03T11:30:00+02:00" : "2026-10-03T09:30:00Z"
+            };
+            var manifest = new JsonObject { ["evidenceRoot"] = destination,
+                ["sourceSha"] = receipt["sourceSha"]!.DeepClone(), ["runId"] = receipt["runId"]!.DeepClone(),
+                ["tempContainerCleanup"] = context };
+            File.WriteAllText(root + "/manifest.json", manifest.ToJsonString());
+            var run = await C994ScriptProcess.Run("pwsh", "-NoProfile", "-Command", $$"""
+                $ErrorActionPreference='Stop'
+                $env:PATH='{{root}}/bin'+[IO.Path]::PathSeparator+$env:PATH
+                $env:C994_TEST_BRIDGE_ROOT='{{root}}'
+                $env:C994_TEST_HOST_EVIDENCE='{{hostEvidence}}'
+                $env:C994_TEST_COPY_FAILURE='{{(copyFailure ? "1" : "0")}}'
+                . '{{DelegateScriptRunner.RepoRoot}}/scripts/c590-command.ps1'
+                . '{{DelegateScriptRunner.RepoRoot}}/scripts/c590-real.ps1'
+                $raw=Get-Content -Raw '{{root}}/manifest.json'
+                $m=$raw|ConvertFrom-Json
+                Invoke-C590LiveCase -Case 'retire-temp-containers' -Manifest $m -RawManifest $raw
+                """);
+            run.Exit.ShouldBe(copyFailure ? 2 : 0, "c994-receipt-copy c994-literal-transport: " + run.Output);
+            if (copyFailure) run.Output.ShouldContain("RecycleReceiptUnavailable", customMessage: "c994-receipt-copy");
+            var values = JsonNode.Parse(File.ReadAllText(root + "/host-values.json"))!.AsArray().Select(x => x!.GetValue<string>()).ToArray();
+            values.ShouldBe(new[] { "1", context["operationId"]!.GetValue<string>(), "antiphon-runner-temp",
+                context["projectId"]!.GetValue<string>(), "0", "2026-10-03T09:30:00.0000000+00:00" }, "c994-literal-transport");
+            if (!copyFailure) File.ReadAllText(destination + "/retire-temp-containers/temp-containers.json")
+                .ShouldBe(File.ReadAllText(hostEvidence + "/temp-containers.json"), "c994-receipt-copy: identical content");
+        }
+        var calls = File.ReadAllLines(root + "/arguments.jsonl").Select(x => JsonNode.Parse(x)!).ToArray();
+        var ssh = calls.Where(x => x["kind"]!.GetValue<string>() == "ssh").ToArray();
+        ssh.Length.ShouldBe(4, "c994-literal-transport: exact transport calls");
+        foreach (var call in ssh) {
+            var args = call["args"]!.AsArray().Select(x => x!.GetValue<string>()).ToArray();
+            args.Length.ShouldBe(10, "c994-literal-transport: remote command is one literal argument");
+            args[^2].ShouldBe("mc@server2");
+        }
     }
 }
