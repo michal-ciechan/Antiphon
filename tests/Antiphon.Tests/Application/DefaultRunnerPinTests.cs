@@ -144,8 +144,8 @@ public sealed class DefaultRunnerPinTests
         (await kit.TaskCountAsync()).ShouldBe(before, "a pin conflict inserts nothing");
         kit.Directory.ResolveCalls.ShouldBeEmpty("a pin conflict refuses before any runner selection");
 
-        // Every Required candidate held: the exhausted walk is Blocked on the desktop, and the
-        // failed head is not presented as a selected remote candidate.
+        // Every Required candidate held: placement still follows the remote default.
+        // The metadata head is not a chosen provider; the durable task remains Blocked.
         await SeedHoldAsync(db, AgentKind.ClaudeCode, "fable");
         await SeedHoldAsync(db, AgentKind.ClaudeCode, "opus");
         var blocked = await service.CreateAsync(Code("c659 exhausted"), kit.Caller, CancellationToken.None);
@@ -153,13 +153,13 @@ public sealed class DefaultRunnerPinTests
         var saved = await kit.ReadAsync(blocked.Id);
         saved.Task.Status.ShouldBe(AgentTaskStatus.Blocked);
         saved.Task.FailureReason.ShouldNotBeNull().ShouldStartWith(ComplexityRoutingService.RoutingExhaustedPrefix);
-        saved.Task.RunnerId.ShouldBeNull("routing exhaustion keeps the task local");
+        saved.Task.RunnerId.ShouldBe("server2", "any-runner");
         saved.Created.ShouldContain(
-            "runner source=default requested=unset default=server2 selected=local reason=routing_exhausted", Case.Sensitive);
-        kit.Directory.ResolveCalls.ShouldBeEmpty("an exhausted walk never consults the readiness gate");
+            "runner source=default requested=unset default=server2 selected=server2 reason=eligible", Case.Sensitive);
+        kit.Directory.ResolveCalls.ShouldBe(["server2"], "normal readiness observation");
+        kit.Directory.Client.Providers.ShouldBeEmpty("provider-probe-count");
 
-        // CARD-0660: explicit remote + Codex is admitted and keeps the named runner, while the
-        // automatic choice above still keeps Codex on the desktop.
+        // CARD-0660: explicit remote + Codex is admitted and keeps the named runner.
         var codexRemote = await service.CreateAsync(
             new CreateAgentTaskRequest("c659 codex remote", Role: AgentTaskRole.Review, AgentKind: AgentKind.Codex,
                 Workspace: WorkspaceMode.Worktree, RunnerId: "server2"),
