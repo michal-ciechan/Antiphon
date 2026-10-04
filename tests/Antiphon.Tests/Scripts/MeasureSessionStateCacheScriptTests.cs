@@ -42,12 +42,13 @@ public sealed class MeasureSessionStateCacheScriptTests
     [Test]
     public async Task Missing_settings_are_inconclusive()
     {
+        foreach (var reset in new[] { true, false })
         foreach (var field in new[] { "pooling", "noResetOnClose", "maxAutoPrepare", "multiplexing", "driverVersion", "providerVersion" })
         {
-            var after = Evidence(true);
+            var after = Evidence(true, reset);
             var runtime = Middle(after)["runtime"]!.AsObject();
             (field.EndsWith("Version") ? runtime : runtime["pool"]!.AsObject()).Remove(field);
-            await InconclusiveAsync(Evidence(false), after, "effective_configuration_missing_or_changed");
+            await InconclusiveAsync(Evidence(false, reset), after, "effective_configuration_missing_or_changed");
         }
     }
 
@@ -83,6 +84,9 @@ public sealed class MeasureSessionStateCacheScriptTests
             before[field] = field switch { "phase" => "After", "round" => "R2", "card" => "CARD-0700", _ => "unknown" };
             await RefusedAsync(before, Evidence(true), "baseline identity");
         }
+        var relabeled = Evidence(true);
+        relabeled["round"] = "R2";
+        await RefusedAsync(relabeled, Evidence(true), "baseline identity");
         var root = Path.Combine(Path.GetTempPath(), "c701-missing-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try
@@ -280,7 +284,7 @@ public sealed class MeasureSessionStateCacheScriptTests
     private static string ScriptPath => Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "measure-session-state-cache.ps1");
     private static string PsQuote(string value) => value.Replace("'", "''");
 
-    private static Task<(int ExitCode, string Output)> RunFunctionsAsync(string body) => RunAsync("-Command", $"""
+    private static Task<(int ExitCode, string Output)> RunFunctionsAsync(string body) => RunAsync("-Command", $$"""
         $ErrorActionPreference = 'Stop'
         Set-StrictMode -Version Latest
         $tokens = $null; $errors = $null
