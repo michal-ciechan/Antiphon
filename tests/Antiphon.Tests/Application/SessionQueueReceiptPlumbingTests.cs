@@ -36,7 +36,7 @@ public sealed class SessionQueueReceiptPlumbingTests
     public async Task C475_QueueCommitAndTransportRecovery(string cut)
     {
         if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
-        if (!File.Exists(FakeClaudeExe)) throw new SkipTestException("fakeclaude missing");
+        File.Exists(FakeClaudeExe).ShouldBeTrue("fakeclaude is required for the Windows lane");
         await using var world = await PtyWorld.StartAsync();
         const string body = "CARD-0475 complete recipient body for ";
         var text = body + cut;
@@ -61,6 +61,8 @@ public sealed class SessionQueueReceiptPlumbingTests
             pending.Status.ShouldBe(QueuedMessageStatus.Pending);
             pending.DeliveryAttempts.ShouldBe(0);
             world.Forward.Writes.ShouldBeEmpty();
+            SessionQueueTranscriptPump.FileUserPrompts(world.TranscriptPath).ShouldBeEmpty();
+            (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(world.SessionId, 0)).ShouldBeEmpty();
             world.RecreateQueue();
             await world.AddActivityAsync(TranscriptKinds.TurnEnd);
             await world.Queue.FlushSessionAsync(world.SessionId, CancellationToken.None);
@@ -164,7 +166,7 @@ public sealed class SessionQueueReceiptPlumbingTests
     public async Task C475_AlreadyIdleWhenIdleHasRecipientReceipt()
     {
         if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
-        if (!File.Exists(FakeClaudeExe)) throw new SkipTestException("fakeclaude missing");
+        File.Exists(FakeClaudeExe).ShouldBeTrue("fakeclaude is required for the Windows lane");
         await using var world = await PtyWorld.StartAsync();
         var dto = await world.Queue.EnqueueAsync(world.SessionId, "already idle", MessageSendMode.WhenIdle, CancellationToken.None);
         dto.Messages.ShouldBeEmpty();
@@ -379,7 +381,7 @@ public sealed class SessionQueueReceiptPlumbingTests
     private static void RequireFakeClaude()
     {
         if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
-        if (!File.Exists(FakeClaudeExe)) throw new SkipTestException("fakeclaude missing");
+        File.Exists(FakeClaudeExe).ShouldBeTrue("fakeclaude is required for the Windows lane");
     }
 
     private static async Task<System.Diagnostics.Process> RecipientProcessAsync(PtyWorld world)
@@ -407,7 +409,7 @@ public sealed class SessionQueueReceiptPlumbingTests
     public async Task C475_ProactiveAndReactiveRecoveryShareOneEscBudget()
     {
         if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
-        if (!File.Exists(FakeClaudeExe)) throw new SkipTestException("fakeclaude missing");
+        File.Exists(FakeClaudeExe).ShouldBeTrue("fakeclaude is required for the Windows lane");
         await using var world = await PtyWorld.StartAsync(overlay: true);
         await world.Queue.EnqueueAsync(world.SessionId, "/usage", MessageSendMode.Now, CancellationToken.None);
         await WaitUntilAsync(async () => (await world.Client.GetSnapshotAsync(world.SessionId, CancellationToken.None)).RawOutput.Contains("OVERLAY:open"));
@@ -422,19 +424,150 @@ public sealed class SessionQueueReceiptPlumbingTests
     }
 
     [Test]
+    public async Task C1022_Incomplete_or_stale_receipts_do_not_confirm()
+    {
+        if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
+        File.Exists(FakeClaudeExe).ShouldBeTrue("fakeclaude is required for the Windows lane");
+        foreach (var stale in new[] { true, false })
+        {
+            await using var world = await PtyWorld.StartAsync();
+            var body = $"C1022 receipt {Guid.NewGuid():N} " + new string('x', 300) + " COMPLETE TAIL";
+            world.Forward.BeginBlockingWrites();
+            var attempt = world.Queue.EnqueueAsync(world.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
+            SessionQueuedMessage claimed;
+            try
+            {
+                await world.Forward.WriteReached.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                claimed = (await world.RowsAsync()).ShouldHaveSingleItem();
+                claimed.Status.ShouldBe(QueuedMessageStatus.Sent);
+                claimed.DeliveryAttempts.ShouldBe(1);
+                claimed.LastDeliveryBaselineSequence.ShouldBe(1);
+            }
+            finally
+            {
+                world.Forward.CutBeforeWrite = true;
+                world.Fault.FailRevert = true;
+                world.Forward.BlockWrites = false;
+                world.Forward.ReleaseWrites();
+                await Should.ThrowAsync<InvalidOperationException>(() => attempt);
+            }
+            world.Fault.FailRevert = false;
+            world.Forward.CutBeforeWrite = false;
+            await world.StopPumpAsync();
+            await SeedReceiptTurnAsync(world.SessionId, body, stale);
+            world.Clock.Offset = TimeSpan.FromMinutes(2);
+            world.RecreateQueue();
+            if (stale)
+            {
+                world.StartPump();
+                world.Forward.BeginBlockingWrites();
+                var flush = world.Queue.FlushSessionAsync(world.SessionId, CancellationToken.None);
+                try
+                {
+                    await Task.WhenAny(flush, world.Forward.WriteReached.Task).WaitAsync(TimeSpan.FromSeconds(15));
+                    var owed = (await world.RowsAsync()).ShouldHaveSingleItem();
+                    owed.Id.ShouldBe(claimed.Id);
+                    owed.DeliveryVerdict.ShouldNotBe(DeliveryVerdict.LateConfirmed, "stale receipt is below the attempt baseline");
+                    owed.DeliveryAttempts.ShouldBe(2, "stale receipt leaves the complete body owed");
+                    world.Forward.Writes.ShouldBeEmpty();
+                    SessionQueueTranscriptPump.FileUserPrompts(world.TranscriptPath).ShouldBeEmpty("no fabricated native receipt");
+                }
+                finally
+                {
+                    world.Forward.BlockWrites = false;
+                    world.Forward.ReleaseWrites();
+                    await flush;
+                }
+                await world.WaitForReceiptAsync(body);
+                SessionQueueTranscriptPump.FileUserPrompts(world.TranscriptPath).ShouldBe([body]);
+                (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(world.SessionId, 1)).ShouldBe([body]);
+                (await world.RowsAsync()).Single().DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+            }
+            else
+            {
+                await world.Queue.FlushSessionAsync(world.SessionId, CancellationToken.None);
+                var parked = (await world.RowsAsync()).ShouldHaveSingleItem();
+                parked.Id.ShouldBe(claimed.Id);
+                parked.Status.ShouldBe(QueuedMessageStatus.Pending, "partial-current receipt must park");
+                parked.DeliveryVerdict.ShouldBe(DeliveryVerdict.Truncated, "partial-current is never LateConfirmed");
+                parked.DeliveryAttempts.ShouldBe(new DeliveryVerificationSettings().MaxDeliveryAttempts);
+                parked.LastDeliveryBaselineSequence.ShouldBe(claimed.LastDeliveryBaselineSequence);
+                world.Forward.Writes.ShouldBeEmpty();
+                SessionQueueTranscriptPump.FileUserPrompts(world.TranscriptPath).ShouldBeEmpty("no fabricated native receipt");
+                (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(world.SessionId, 1)).ShouldBe([body[..220]]);
+            }
+        }
+    }
+
+    [Test]
+    public async Task C1022_Partial_receipt_turn_parks_interrupted_attempt()
+    {
+        // Reproduce the native fixture's persisted state through the real queue without a PTY.
+        await using var world = await BridgeQueueHarness.CreateAsync();
+        const string body = "C1022 portable receipt " + "identity prefix ";
+        var complete = body + new string('x', 300) + " COMPLETE TAIL";
+        await world.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var id = await world.SeedPendingMessageAsync(complete, deliveryAttempts: 1,
+            baselineSequence: 1, status: QueuedMessageStatus.Sent,
+            lastDeliveryStartedAt: world.Now - TimeSpan.FromMinutes(2));
+        await SeedReceiptTurnAsync(world.SessionId, complete, stale: false);
+
+        await world.Queue.FlushSessionAsync(world.SessionId, CancellationToken.None);
+
+        await using var db = BridgeQueueHarness.CreateContext();
+        var parked = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+        parked.Status.ShouldBe(QueuedMessageStatus.Pending, "partial-current receipt must park");
+        parked.DeliveryVerdict.ShouldBe(DeliveryVerdict.Truncated);
+        parked.DeliveryAttempts.ShouldBe(new DeliveryVerificationSettings().MaxDeliveryAttempts);
+        parked.LastDeliveryBaselineSequence.ShouldBe(1);
+        world.Adapter.Inputs.ShouldBeEmpty("partial receipt must never trigger retyping or Enter");
+        (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(world.SessionId, 1)).ShouldBe([complete[..220]]);
+    }
+
+    private static async Task SeedReceiptTurnAsync(Guid sessionId, string body, bool stale)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(), AgentSessionId = sessionId,
+            Sequence = stale ? 0 : 2, Kind = TranscriptKinds.UserPrompt,
+            Text = stale ? body : body[..220], CreatedAt = DateTime.UtcNow,
+        });
+        if (!stale)
+        {
+            // A current UserPrompt makes the session Working. Recovery is idle-only, so
+            // finish this synthetic receipt's turn before flushing (the native pump is stopped).
+            // The stale prompt is already below the initial TurnEnd at sequence 1.
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(), AgentSessionId = sessionId,
+                Sequence = 3, Kind = TranscriptKinds.TurnEnd, StopReason = "end_turn",
+                CreatedAt = DateTime.UtcNow,
+            });
+        }
+        await db.SaveChangesAsync();
+    }
+
+    [Test]
     public async Task C475_MultilineWritesKeepPasteMarkers()
     {
         if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
-        if (!File.Exists(FakeClaudeExe)) throw new SkipTestException("fakeclaude missing");
+        File.Exists(FakeClaudeExe).ShouldBeTrue("fakeclaude is required for the Windows lane");
         await using var world = await PtyWorld.StartAsync();
-        const string body = "line one\nline two";
-        var dto = await world.Queue.EnqueueAsync(world.SessionId, body, MessageSendMode.Now, CancellationToken.None);
+        const string body = "line one é\r\nline two 世界";
+        const string normalized = "line one é\nline two 世界";
+        var enqueue = world.Queue.EnqueueAsync(world.SessionId, body, MessageSendMode.Now, CancellationToken.None);
+        Exception? failure = null;
+        try { await enqueue; }
+        catch (Exception error) { failure = error; }
+        world.Forward.Payloads.ShouldBe(["\u001b[200~" + normalized + "\u001b[201~", "\r"],
+            "normalized LF, both paste markers, then a separate Enter write");
+        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        var dto = await enqueue;
         dto.LastDelivery.ShouldNotBeNull().ConfirmedBy.ShouldBe(DeliveryConfirmedBy.Transcript);
-        await world.WaitForReceiptAsync(body);
-        world.Forward.Payloads.ShouldContain(p => p.Contains("\u001b[200~") && p.Contains("line one\nline two") && p.Contains("\u001b[201~"));
-        world.Forward.Payloads.ShouldContain("\r");
-        SessionQueueTranscriptPump.FileUserPrompts(world.TranscriptPath).ShouldBe([body.Replace("\r\n", "\n")]);
-        (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(world.SessionId, 1)).ShouldBe([body]);
+        await world.WaitForReceiptAsync(normalized);
+        SessionQueueTranscriptPump.FileUserPrompts(world.TranscriptPath).ShouldBe([normalized]);
+        (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(world.SessionId, 1)).ShouldBe([normalized]);
     }
 
     private static async Task WaitUntilAsync(Func<Task<bool>> condition)
@@ -474,7 +607,7 @@ public sealed class SessionQueueReceiptPlumbingTests
             Directory.CreateDirectory(cwd);
             var transcript = Path.Combine(Path.GetTempPath(), $"c475-plumb-{sessionId:N}.jsonl");
             var logDirectory = Path.Combine(Path.GetTempPath(), $"c475-plumb-log-{sessionId:N}");
-            var client = new DirectSessionRunnerClient(logDirectory, ptyBackend: "inbox");
+            var client = new DirectSessionRunnerClient(logDirectory, ptyBackend: "modern");
             var inner = client;
             var forward = new ForwardingClient(inner);
             var fault = new InsertFault();
@@ -520,6 +653,14 @@ public sealed class SessionQueueReceiptPlumbingTests
                 }
                 if (checkpoint is not null) await checkpoint("seeded", world);
                 await WaitUntilAsync(async () => (await inner.GetSnapshotAsync(sessionId, CancellationToken.None)).RawOutput.Contains("Fake Claude ready"));
+                using var hostLogStream = new FileStream(Path.Combine(logDirectory, "pty-hosts", "logs", $"{sessionId:N}.log"),
+                    FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var hostLogReader = new StreamReader(hostLogStream);
+                var hostLog = await hostLogReader.ReadToEndAsync();
+                hostLog.ShouldContain("pty backend: ModernConPty (requested 'modern')", customMessage: "host-modern");
+                hostLog.ShouldContain("Microsoft.Windows.Console.ConPTY 1.24.260710001");
+                // This shared client's capabilities are intentionally synthetic. V-3 separately
+                // compares the real runtime's HTTP/phone-home projections with its owned host.
                 if (checkpoint is not null) await checkpoint("ready", world);
                 world.StartPump();
                 if (checkpoint is not null) await checkpoint("pumping", world);
@@ -565,13 +706,24 @@ public sealed class SessionQueueReceiptPlumbingTests
             StartPump();
         }
 
-        public Task WaitForReceiptAsync(string text) => WaitUntilAsync(async () =>
+        public async Task WaitForReceiptAsync(string text)
         {
-            if (_pumping.IsFaulted) await _pumping;
-            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
-            return await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == SessionId && t.Kind == TranscriptKinds.UserPrompt && t.Text == text)
-                && await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == SessionId && t.Sequence > 1 && t.Kind == TranscriptKinds.TurnEnd);
-        });
+            var received = false;
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            try
+            {
+                while (!received)
+                {
+                    if (_pumping.IsFaulted) await _pumping;
+                    await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+                    received = await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == SessionId && t.Kind == TranscriptKinds.UserPrompt && t.Text == text)
+                        && await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == SessionId && t.Sequence > 1 && t.Kind == TranscriptKinds.TurnEnd);
+                    if (!received) await Task.Delay(50, deadline.Token);
+                }
+            }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
+            received.ShouldBeTrue("recipient-receipt: the whole native UserPrompt must reach the destination");
+        }
 
         /// <summary>
         /// Killing the SESSION leaves the detached pty-host alive on purpose: the runner keeps it
@@ -663,9 +815,14 @@ public sealed class SessionQueueReceiptPlumbingTests
         public bool CutBeforeWrite { get; set; }
         public bool WithholdBodiesAfterEsc { get; set; }
         private bool _escaped;
-        public TaskCompletionSource WriteReached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource WriteReached { get; private set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private TaskCompletionSource _writeGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public void ReleaseWrites() { _writeGate.TrySetResult(); _writeGate = new(TaskCreationOptions.RunContinuationsAsynchronously); }
+        public void BeginBlockingWrites()
+        {
+            WriteReached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            BlockWrites = true;
+        }
         public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) => inner.ListAsync(ct);
         public Task<SessionRunnerSessionDto> StartAsync(Guid id, AgentLaunchSpec spec, CancellationToken ct) => inner.StartAsync(id, spec, ct);
         public Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct) => inner.GetCapabilitiesAsync(ct);

@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted (step 1 of CARD-0037; the flag defaults OFF and the ceilings are untouched)
+Accepted. CARD-1022 release A supersedes CARD-0037's default-off policy: Windows defaults
+to modern, Unix reports `UnixPty` and retains Porta transport and conservative ceilings.
+Explicit `inbox`/`0`/`off`/`false`/`no` and missing-pair fallback remain available but deprecated.
+Default and unknown Windows requests try modern; unknown requests warn. Missing either shipped
+file warns and falls back in A. Explicit refusal and removal belong to later releases B/C.
 
 ## Date
 
@@ -93,26 +97,27 @@ Native tests on Windows 10.0.19045 showed that new-console descendants can add a
 console host to the job count. A descendant fixture must prove nonzero while its
 leaf lives, rather than assume exactly three active processes.
 
-### 2. One switch, process-wide, inherited — the runner and the pty-hosts move together
+### 2. One composed runtime request — the runner and the pty-hosts move together
 
-`ANTIPHON_PTY_BACKEND` (`inbox`, the default, or `modern`), also settable as
-`SessionRunner:PtyBackend` in appsettings, which the runner exports into its own environment at
-startup. `PtyHostLauncher` starts hosts with `UseShellExecute=false` and no environment override, so
-every detached pty-host inherits the runner's choice for free.
+Windows unset/empty/whitespace requests select modern; `modern`, `conpty`, `1`, `on`, `true`,
+and `yes` remain aliases. The daemon composes nonempty `ANTIPHON_PTY_BACKEND` before
+`SessionRunner:PtyBackend` at startup, then the runtime retains one decision. A direct runtime's
+explicit request (including empty) wins over ambient input; null reads it once. Host argv carries
+the retained raw request. HTTP, phone-home and Windows custody use that same instance decision.
+`PtyBackendDeprecated` is nullable on the wire: true for legacy/fallback, false for modern/Unix,
+null for an older peer. Existing Codex CLI observation fields are unchanged. Startup and host logs
+warn on deprecated/fallback and unknown selection; capability polling does not repeat the warning.
 
 They move **together** because they all deliver bodies sized against **one** set of ceilings. A
 per-session backend would make `BriefInlineMaxBytes` correct for some sessions and a data-loss bug
 for others, with nothing downstream able to tell which kind it was holding.
 
-**Tests move independently**, by construction: the contract *is* the pair (the inbox conhost strips
-the markers, the shipped one delivers them), so both have to be pinnable in one process.
-`PtyAgentRunner` therefore takes a per-instance override rather than only reading the environment.
+`PtyAgentRunner` retains its per-instance override. Release A qualifies modern native hosts only;
+explicit inbox fixtures remain as historical/B migration work, outside A's verification lane.
 
-The **E2E fixtures** need nothing of their own. `AntiphonAppFixture` hosts the server in-process
-(`WebApplicationFactory`), so the `PtyAgentRunner` its adapters create reads the *test process's*
-environment: unset in CI, so E2E keeps measuring the default, and a run that wants the modern
-backend sets the same one variable. That is the same switch, applied at a different process — not a
-second mechanism.
+All five PTY test assemblies clear inherited backend input. Their default is modern on Windows
+with the staged pair, UnixPty elsewhere. `IsolatedSessionRunner(modernPty: false)` omits config;
+it does not select inbox. Typed-versus-paste experiments use explicit backend and encoding choices.
 
 ### 3. Missing redistributable falls back to the inbox conhost, ceilings still in force
 
@@ -184,8 +189,7 @@ Three things follow:
 
 ## Consequences
 
-- Default behaviour is unchanged: flag unset ⇒ Porta.Pty ⇒ kernel32 ⇒ inbox conhost, ceilings and
-  all.
+- Windows unset now selects the shipped modern host. Unix remains Porta with conservative limits.
 - `PtyAgentRunner.Backend` records the resolved decision; the runner logs it once at startup and each
   pty-host logs it per session. A silent fallback is the one failure mode that is invisible from
   everywhere else, right up until a body over ~1 KB is clipped.
@@ -195,7 +199,7 @@ Three things follow:
 
 ## Step 3 — the backend is ON here, and the ceilings follow the pty (2026-08-12)
 
-The flag still defaults OFF in code. What changed is this deployment: the session runner asks for
+Historical CARD-0037 state (superseded by CARD-1022 release A above): the flag defaulted OFF in code. This deployment asked for
 `modern` in its own `appsettings.json` (its detached pty-hosts inherit that through the environment
 it exports), and the AppHost sets `ANTIPHON_PTY_BACKEND=modern` on the server. A standalone server
 started without that variable resolves `inbox` and keeps every old ceiling — which is the point.
@@ -332,6 +336,9 @@ as a settled session.
 <!-- CARD-0254 preserved source begins -->
 
 ## CARD-0254 preserved operational detail
+
+The default-off and config-to-environment statements in these preserved CARD-0037 entries
+describe their original dates. Current selection and fixture policy is section 2 above.
 
 ### Preserved Gotcha #42
 

@@ -52,6 +52,152 @@ public sealed class RunnerCodexCliEvidenceTests
     }
 
     [Test]
+    public async Task C1031_Advisory_diagnostics_preserve_freshness()
+    {
+        // Actual producer bytes read by frozen old shapes, independent literal expected values.
+        using (var io = new ProbeIo())
+        {
+            foreach (var (mode, token) in new[] { ("notice", "stderr_output"), ("stderr-4097", "output_truncated") })
+            {
+                io.Mode = mode;
+                await io.Probe.RefreshDefaultAsync(CancellationToken.None);
+                var adapter = new PhoneHomeRuntimeAdapter(io.Runtime, new RunnerBuildDto("test", "d40c1670", T.UtcDateTime, T.UtcDateTime));
+                var shapes = new[] { Shape(io.Probe.Snapshot), Shape(adapter.Capabilities()),
+                    Shape(io.Runtime.DescribeCapabilities(new("test", "d40c1670", T.UtcDateTime, T.UtcDateTime), [SessionBackends.PtyHost], [])),
+                    Shape(new PhoneHomeCapacityHeartbeat(2, io.Probe.Snapshot)).GetProperty("codexCli") };
+                foreach (var shape in shapes)
+                {
+                    foreach (var name in new[] { "codexCliVersion", "codexCliVersionCheckedAtUtc", "codexCliVersionError", "codexCliLauncherFingerprint" })
+                        shape.TryGetProperty(name, out _).ShouldBeTrue("C1031-wire-members " + name);
+                    var old = shape.Deserialize<LegacyC959Sample>(Json)!;
+                    old.CodexCliVersion.ShouldBe("0.160.0", "C1031-old-reader");
+                    old.CodexCliVersionCheckedAtUtc.ShouldBe(T, "C1031-old-reader time");
+                    old.CodexCliVersionError.ShouldBe(token, "C1031-wire-members");
+                    old.CodexCliLauncherFingerprint!.Length.ShouldBe(64, "C1031-old-reader fingerprint");
+                    LegacyStale(old, T).ShouldBeNull("C1031-old-reader advisory freshness");
+                    shape.Deserialize<PreC959Reader>(Json).ShouldNotBeNull("C1031-old-reader ignores new fields");
+                }
+            }
+        }
+
+        var vectors = new List<(RunnerCapabilitiesDto Caps, bool? Stale, string? Error, string Label)>();
+        foreach (var advisory in new[] { "stderr_output", "output_truncated" })
+        {
+            vectors.AddRange(new (RunnerCapabilitiesDto, bool?, string?, string)[]
+            {
+                (Caps("0.160.0", T, advisory), false, advisory, "C1031-advisory-fresh"),
+                (Caps("0.160.0", T.AddMinutes(-15), advisory), false, advisory, "C1031-age-boundary"),
+                (Caps("0.160.0", T.AddMinutes(-15).AddTicks(-1), advisory), true, advisory, "C1031-age-boundary after"),
+                (Caps("0.160.0", T.AddMinutes(1), advisory), false, advisory, "C1031-skew equality"),
+                (Caps("0.160.0", T.AddMinutes(1).AddTicks(1), advisory), null, "clock_skew", "C1031-skew"),
+                (Caps("0.160.0", T.AddMinutes(1).AddTicks(1), advisory) with { CodexCliLauncherFingerprint = "bad" }, null, "clock_skew", "C1031-skew priority"),
+                (Caps("0.160.0", T, advisory) with { CodexCliLauncherFingerprint = null }, false, advisory, "C1031-legacy-fingerprint"),
+                (Caps(null, T, advisory), null, advisory, "C1031-version-required absent"),
+                (Caps("banana", T, advisory), null, advisory, "C1031-version-required"),
+                (Caps("0.160.0", null, advisory), null, advisory, "C1031-time-required"),
+            });
+            foreach (var fingerprint in new[] { "", new string('a', 63), new string('a', 65), new string('z', 64) })
+                vectors.Add((Caps("0.160.0", T, advisory) with { CodexCliLauncherFingerprint = fingerprint },
+                    null, "launcher_mismatch", "C1031-fingerprint"));
+        }
+        foreach (var error in new[] { "invalid_output", "executable_missing", "nonzero_exit", "timeout", "cancelled",
+                     "cleanup_unconfirmed", "launcher_unverified", "probe_busy", "probe_unavailable" })
+        {
+            vectors.Add((Caps("0.160.0", T, error), null, error, "C1031-failure-null"));
+            vectors.Add((Caps("0.160.0", T.AddMinutes(2), error) with { CodexCliLauncherFingerprint = "bad" },
+                null, error, "C1031-failure-null priority"));
+        }
+        foreach (var error in new[] { "STDERR_OUTPUT", "Output_Truncated", "clock_skew", "launcher_mismatch",
+                     @"C:\Users\C1031\private; /home/C1031/private; C1031-token-canary" })
+            vectors.Add((Caps("0.160.0", T, error), null, "probe_unavailable", "C1031-unknown-token"));
+
+        const string oldRunnerJson = """
+            {"ptyBackend":"PortaPty","ptyBackendRequested":"PortaPty","ptyBackendReason":"legacy","ptyBackendFellBack":false}
+            """;
+        var oldRunner = JsonSerializer.Deserialize<RunnerCapabilitiesDto>(oldRunnerJson, Json)!;
+        oldRunner.CodexCliVersion.ShouldBeNull("C1031-old-runner absent members");
+        vectors.Add((oldRunner, null, null, "C1031-old-runner absent members"));
+        foreach (var (wire, stale, error) in new (string, bool?, string?)[]
+        {
+            ("""{"codexCliVersion":"0.160.0","codexCliVersionCheckedAtUtc":"2026-10-03T12:00:00Z"}""", false, null),
+            ("""{"codexCliVersion":null,"codexCliVersionCheckedAtUtc":"2026-10-03T12:00:00Z","codexCliVersionError":"stderr_output"}""", null, "stderr_output"),
+        })
+        {
+            var sample = JsonSerializer.Deserialize<RunnerCodexCliVersionDto>(wire, Json)!;
+            vectors.Add((Caps(sample.CodexCliVersion, sample.CodexCliVersionCheckedAtUtc, sample.CodexCliVersionError)
+                with { CodexCliLauncherFingerprint = null }, stale, error, "C1031-old-runner retained meaning"));
+        }
+
+        foreach (var (caps, stale, error, label) in vectors)
+        {
+            var clock = new FakeTimeProvider(T);
+            await using var host = await PhoneHomeTestHost.StartAsync(clock);
+            host.Local.Capabilities = caps;
+            await using var peer = await host.ConnectPeerAsync(capabilities: caps);
+            host.Directory.MarkRecovered(await host.WaitLiveAsync());
+            async Task CheckProjection()
+            {
+                using var response = await host.Http.GetAsync("/api/session-runners");
+                response.EnsureSuccessStatusCode();
+                var rows = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+                using var status = await host.Http.GetAsync($"/api/session-runners/{host.AllowedRunnerId}/status");
+                status.EnsureSuccessStatusCode();
+                var remote = JsonDocument.Parse(await status.Content.ReadAsStringAsync()).RootElement;
+                foreach (var shape in rows.EnumerateArray().Append(remote))
+                {
+                    shape.TryGetProperty("codexCliLauncherFingerprint", out _).ShouldBeFalse("C1031-public-private");
+                    foreach (var secret in new[] { new string('a', 64), @"C:\Users\C1031\private", "/home/C1031/private", "C1031-token-canary" })
+                        shape.GetRawText().ShouldNotContain(secret, customMessage: "C1031-public-private");
+                    Text(shape, "codexCliVersion").ShouldBe(caps.CodexCliVersion, label + " version");
+                    Text(shape, "codexCliVersionError").ShouldBe(error, label + " token");
+                    Flag(shape, "codexCliVersionStale").ShouldBe(stale, label);
+                    var at = shape.GetProperty("codexCliVersionCheckedAtUtc");
+                    (at.ValueKind == JsonValueKind.Null ? (DateTimeOffset?)null : at.GetDateTimeOffset())
+                        .ShouldBe(caps.CodexCliVersionCheckedAtUtc, label + " original time");
+                }
+            }
+            await CheckProjection();
+            await Heartbeat(host, peer, 2, new(caps.CodexCliVersion, caps.CodexCliVersionCheckedAtUtc,
+                caps.CodexCliVersionError, caps.CodexCliLauncherFingerprint));
+            await CheckProjection();
+            foreach (var log in host.Logs.Entries)
+            foreach (var secret in new[] { @"C:\Users\C1031\private", "/home/C1031/private", "C1031-token-canary" })
+                (log.Message + log.Exception + string.Join(";", log.Properties.Select(p => p.Key + "=" + p.Value)))
+                    .ShouldNotContain(secret, customMessage: "C1031-public-private logs");
+        }
+        foreach (var advisory in new[] { "stderr_output", "output_truncated" })
+        {
+            var clock = new FakeTimeProvider(T);
+            await using var host = await PhoneHomeTestHost.StartAsync(clock);
+            await using var peer = await host.ConnectPeerAsync(capabilities: Caps("0.160.0", T, advisory));
+            host.Directory.MarkRecovered(await host.WaitLiveAsync());
+            clock.Advance(TimeSpan.FromMinutes(15));
+            await Heartbeat(host, peer, 2, null);
+            Flag(Shape(host.Directory.Status(host.AllowedRunnerId)), "codexCliVersionStale").ShouldBe(false, "C1031-age-boundary reads do not renew");
+            clock.Advance(TimeSpan.FromTicks(1));
+            await Heartbeat(host, peer, 2, null);
+            var aged = Shape(host.Directory.Status(host.AllowedRunnerId));
+            Flag(aged, "codexCliVersionStale").ShouldBe(true, "C1031-age-boundary reads do not renew");
+            aged.GetProperty("codexCliVersionCheckedAtUtc").GetDateTimeOffset().ShouldBe(T);
+        }
+    }
+
+    // C959 wire/reader semantics frozen from 6a88d8ce, intentionally unaware of advisories.
+    private sealed record LegacyC959Sample(string? CodexCliVersion = null,
+        DateTimeOffset? CodexCliVersionCheckedAtUtc = null, string? CodexCliVersionError = null,
+        string? CodexCliLauncherFingerprint = null);
+    private sealed record PreC959Reader(string? PtyBackend = null);
+    private static bool? LegacyStale(LegacyC959Sample sample, DateTimeOffset now)
+    {
+        if (sample.CodexCliVersionCheckedAtUtc is not { } completed
+            || CodexCliVersion.Parse(sample.CodexCliVersion) is null || sample.CodexCliVersionError is not null
+            || completed - now > TimeSpan.FromMinutes(1)
+            || sample.CodexCliLauncherFingerprint is { } fingerprint && (fingerprint.Length != 64 || !fingerprint.All(Uri.IsHexDigit)))
+            return null;
+        return now - completed > TimeSpan.FromMinutes(15);
+    }
+
+    [Test]
     public async Task C959_Heartbeat_updates_only_probe_evidence()
     {
         using (var io = new ProbeIo())
@@ -117,6 +263,81 @@ public sealed class RunnerCodexCliEvidenceTests
             Text(recovered, "codexCliVersion").ShouldBeNull("C959-pc-080");
             Text(recovered, "codexCliVersionError").ShouldBe("nonzero_exit", "C959-pc-080 completed failure reacquired");
             Text(recovered, "codexCliVersionCheckedAtUtc").ShouldBe(completed.Value.ToString("yyyy-MM-ddTHH:mm:sszzz"), "C959-pc-080 no time renewal");
+        }
+        foreach (var (mode, advisory) in new[] { ("notice", "stderr_output"), ("stderr-4097", "output_truncated") })
+        {
+            using var io = new ProbeIo { Mode = mode };
+            await io.Probe.RefreshDefaultAsync(CancellationToken.None);
+            await using var receiver = await PhoneHomeTestHost.StartAsync(io.Clock);
+            await using var sender = await receiver.ConnectPeerAsync(capabilities: Caps("0.159.1", T.AddMinutes(-1)));
+            var connected = await receiver.WaitLiveAsync();
+            receiver.Directory.MarkRecovered(connected);
+            using var controlled = new ControlledSendSocket(sender.Socket);
+            var settings = new PhoneHomeSettings { RunnerId = receiver.AllowedRunnerId, Capacity = 2,
+                CapacityStatePath = Path.Combine(io.Root, "capacity"), AllowedCwd = io.Root };
+            var adapter = new PhoneHomeRuntimeAdapter(io.Runtime, new RunnerBuildDto("test", "d40c1670", T.UtcDateTime, T.UtcDateTime));
+            using var producer = new PhoneHomeConnectionService(Options.Create(settings), new PhoneHomeAdoptionGate(),
+                new PhoneHomeCommandDispatcher(adapter, settings), io.Runtime, new UnusedHttpFactory(), io.Clock,
+                NullLogger<PhoneHomeConnectionService>.Instance);
+            var writer = new PhoneHomeConnectionWriter(controlled, PhoneHomeProtocol.DefaultMaxMessageUtf8Bytes);
+            async Task Receipt(DateTimeOffset at, string? token, string label)
+            {
+                await new PhoneHomeRunnerClient(receiver.Directory.SnapshotLive(receiver.AllowedRunnerId)!)
+                    .GetHealthAsync(CancellationToken.None);
+                using var list = await receiver.Http.GetAsync("/api/session-runners");
+                list.EnsureSuccessStatusCode();
+                var rows = JsonDocument.Parse(await list.Content.ReadAsStringAsync()).RootElement;
+                using var status = await receiver.Http.GetAsync($"/api/session-runners/{receiver.AllowedRunnerId}/status");
+                status.EnsureSuccessStatusCode();
+                foreach (var shape in new[] { rows.EnumerateArray().Single(r => Text(r, "runnerId") == receiver.AllowedRunnerId),
+                             JsonDocument.Parse(await status.Content.ReadAsStringAsync()).RootElement })
+                {
+                    Text(shape, "codexCliVersion").ShouldBe("0.160.0", label);
+                    Text(shape, "codexCliVersionError").ShouldBe(token, label);
+                    shape.GetProperty("codexCliVersionCheckedAtUtc").GetDateTimeOffset().ShouldBe(at, label);
+                }
+            }
+            var hold = writer.SendAsync(new(PhoneHomeFrameKind.Heartbeat, sender.Epoch, Guid.NewGuid(),
+                Payload: Shape(new { capacity = 2 })), CancellationToken.None);
+            await controlled.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var heartbeat = producer.SendHeartbeatAsync(writer, sender.Epoch, CancellationToken.None);
+            try
+            {
+                heartbeat.IsCompleted.ShouldBeFalse("C1031-writer-original-time held");
+                io.Clock.Advance(TimeSpan.FromMinutes(5));
+            }
+            finally
+            {
+                controlled.Release.TrySetResult();
+                await Task.WhenAll(hold, heartbeat).WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            await Receipt(T, advisory, "C1031-heartbeat-receipt C1031-writer-original-time");
+            await io.Probe.RefreshDefaultAsync(CancellationToken.None);
+            controlled.BeforeFailure = true;
+            await Should.ThrowAsync<IOException>(() => producer.SendHeartbeatAsync(writer, sender.Epoch, CancellationToken.None));
+            await Receipt(T, advisory, "C1031-before-send-recovery unchanged");
+            await producer.SendHeartbeatAsync(writer, sender.Epoch, CancellationToken.None);
+            await Receipt(T.AddMinutes(5), advisory, "C1031-before-send-recovery");
+            io.Clock.Advance(TimeSpan.FromMinutes(1));
+            await io.Probe.RefreshDefaultAsync(CancellationToken.None);
+            controlled.AfterFailure = true;
+            await Should.ThrowAsync<IOException>(() => producer.SendHeartbeatAsync(writer, sender.Epoch, CancellationToken.None));
+            await Receipt(T.AddMinutes(6), advisory, "C1031-after-send-recovery already received");
+            io.Clock.Advance(TimeSpan.FromMinutes(1));
+            await producer.SendHeartbeatAsync(writer, sender.Epoch, CancellationToken.None);
+            await Receipt(T.AddMinutes(6), advisory, "C1031-after-send-recovery no renewal");
+            sender.Socket.Abort();
+            var disconnect = Stopwatch.StartNew();
+            while (connected.SocketOpen && disconnect.Elapsed < TimeSpan.FromSeconds(5)) await Task.Delay(10);
+            connected.SocketOpen.ShouldBeFalse("C1031-reconnect-receipt old connection ended");
+            await using var reconnected = await receiver.ConnectPeerAsync(capabilities: adapter.Capabilities());
+            receiver.Directory.MarkRecovered(await receiver.WaitLiveAsync());
+            await Receipt(T.AddMinutes(6), advisory, "C1031-reconnect-receipt");
+            io.Mode = "success";
+            await io.Probe.RefreshDefaultAsync(CancellationToken.None);
+            var reconnectWriter = new PhoneHomeConnectionWriter(reconnected.Socket, PhoneHomeProtocol.DefaultMaxMessageUtf8Bytes);
+            await producer.SendHeartbeatAsync(reconnectWriter, reconnected.Epoch, CancellationToken.None);
+            await Receipt(T.AddMinutes(7), null, "C1031-heartbeat-receipt recovered quiet");
         }
         var clock = new FakeTimeProvider(T);
         await using var host = await PhoneHomeTestHost.StartAsync(clock);
@@ -400,6 +621,24 @@ public sealed class RunnerCodexCliEvidenceTests
         var unavailable = Shape(many.Directory.Status("runner-b"));
         Text(unavailable, "codexCliVersion").ShouldBe("0.156.1", "C959-v12-retained-display");
         unavailable.GetProperty("dispatchEligible").GetBoolean().ShouldBeFalse("C959-v12-disconnected-not-admitted");
+        foreach (var advisory in new[] { "stderr_output", "output_truncated" })
+        {
+            clock.Advance(TimeSpan.FromMinutes(1));
+            host.Local.Capabilities = Caps("0.160.0", clock.GetUtcNow(), advisory);
+            await Heartbeat(host, peer, 1, Sample("0.160.0", clock.GetUtcNow(), advisory));
+            using var catalogue = await host.Http.GetAsync("/api/session-runners");
+            catalogue.EnsureSuccessStatusCode();
+            var observed = JsonDocument.Parse(await catalogue.Content.ReadAsStringAsync()).RootElement;
+            using var received = await host.Http.GetAsync($"/api/session-runners/{host.AllowedRunnerId}/status");
+            received.EnsureSuccessStatusCode();
+            foreach (var shape in observed.EnumerateArray().Append(JsonDocument.Parse(await received.Content.ReadAsStringAsync()).RootElement))
+            {
+                Text(shape, "codexCliVersion").ShouldBe("0.160.0", "C1031-heartbeat-receipt catalogue");
+                Text(shape, "codexCliVersionError").ShouldBe(advisory, "C1031-heartbeat-receipt catalogue");
+                Flag(shape, "codexCliVersionStale").ShouldBe(false, "C1031-advisory-fresh catalogue");
+            }
+        }
+        clock.Advance(TimeSpan.FromMinutes(1));
         await Heartbeat(host, peer, 1, Sample(null, clock.GetUtcNow(), "C959-diagnostic-sentinel"));
         using var sanitized = await host.Http.GetAsync("/api/session-runners");
         var sanitizedRows = JsonDocument.Parse(await sanitized.Content.ReadAsStringAsync()).RootElement;

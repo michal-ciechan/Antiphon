@@ -6,11 +6,47 @@ using TUnit.Core;
 
 namespace Antiphon.SessionRunner.Tests;
 
-// CP-2 is commissioned separately on Windows; portable Code never selects this class.
+// CP-4 is commissioned separately on native Windows; portable Code never selects this class.
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CodexCliVersionWindowsTests
 {
+    [Test]
+    public async Task C1031_Npm_notice_preserves_version()
+    {
+        OperatingSystem.IsWindows().ShouldBeTrue("C1031-windows-notice native host");
+        using var kit = new CodexCliVersionTestFixture();
+        Directory.Exists(kit.EmptyPath).ShouldBeTrue("C1031-sealed-path exists");
+        Directory.EnumerateFileSystemEntries(kit.EmptyPath).ShouldBeEmpty("C1031-sealed-path empty");
+        foreach (var (mode, advisory) in new[] { ("notice", "stderr_output"), ("stderr-4097", "output_truncated") })
+        {
+            kit.Mode = mode;
+            using var layout = new CodexNpmLayout(rootName: "C1031 npm rôot α " + Guid.NewGuid().ToString("N"));
+            File.Copy(Environment.ProcessPath!, layout.SiblingNodePath!, true);
+            var pathNodeDir = layout.PathNodeDir();
+            var pathNode = Path.Combine(pathNodeDir, "node.exe");
+            File.Copy(Environment.ProcessPath!, pathNode, true);
+            async Task Check(string executable, string path, string expectedExecutable, string[] argv, string? prefix = null)
+            {
+                var sample = await kit.Attempt(executable, resolutionCwd: layout.Root, path: path,
+                    pathExt: ".EXE;.CMD", codexJsPrefix: prefix);
+                CodexCliVersionTestFixture.Text(sample, "codexCliVersion").ShouldBe("0.160.0", "C1031-windows-notice");
+                CodexCliVersionTestFixture.Text(sample, "codexCliVersionError").ShouldBe(advisory, "C1031-windows-notice diagnostic");
+                sample.GetProperty("codexCliVersionCheckedAtUtc").GetDateTimeOffset().ShouldBe(CodexCliVersionTestFixture.T);
+                kit.Starts.Last().FileName.ShouldBe(expectedExecutable, "C1031-windows-notice executable");
+                kit.Starts.Last().ArgumentList.ToArray().ShouldBe(argv, "C1031-windows-notice argv");
+                kit.Children.Last().HasExited.ShouldBeTrue("C1031-windows-notice ownership");
+                kit.AuthOpens.ShouldBe(0, "C1031-windows-notice auth-free");
+            }
+            await Check(layout.ShimPath, kit.EmptyPath, layout.SiblingNodePath!, [layout.JsPath, "--version"]);
+            foreach (var prefix in new[] { layout.JsPath, Path.GetRelativePath(layout.Root, layout.JsPath) })
+                await Check(layout.SiblingNodePath!, kit.EmptyPath, layout.SiblingNodePath!, [layout.JsPath, "--version"], prefix);
+            await Check(kit.Executable, kit.EmptyPath, kit.Executable, ["--version"]);
+            File.Delete(layout.SiblingNodePath!);
+            await Check(layout.ShimPath, pathNodeDir, pathNode, [layout.JsPath, "--version"]);
+        }
+    }
+
     [Test]
     public async Task C959_Npm_probe_uses_launch_resolution()
     {
@@ -44,8 +80,8 @@ public sealed class CodexCliVersionWindowsTests
         Directory.CreateDirectory(Path.GetDirectoryName(otherNative)!);
         File.Copy(kit.Executable, otherNative);
         kit.ChildMode = info => info.FileName == otherNative ? "version-old" : "success";
-        var current = await kit.Attempt(kit.Executable);
-        var older = await kit.Attempt(otherNative);
+        var current = await kit.Attempt(kit.Executable, path: kit.EmptyPath);
+        var older = await kit.Attempt(otherNative, path: kit.EmptyPath);
         CodexCliVersionTestFixture.Text(current, "codexCliVersion").ShouldBe("0.160.0", "C959-v07-current");
         CodexCliVersionTestFixture.Text(older, "codexCliVersion").ShouldBe("0.156.1", "C959-pc-065");
         kit.Starts.Last().FileName.ShouldBe(otherNative, "C959-v07-selected-native");
@@ -63,7 +99,7 @@ public sealed class CodexCliVersionWindowsTests
                 Path.IsPathRooted(prefix) ? "C959-pc-066" : "C959-pc-067");
         }
         kit.Mode = "tree";
-        var pending = kit.Attempt(kit.Executable);
+        var pending = kit.Attempt(kit.Executable, path: kit.EmptyPath);
         await kit.WaitForReceiptAsync("leaf");
         kit.Clock.Advance(TimeSpan.FromSeconds(5));
         var timedOut = await pending.WaitAsync(TimeSpan.FromSeconds(10));

@@ -30,7 +30,7 @@ internal interface IPtySession : IDisposable
     void Kill();
 }
 
-/// <summary>The default backend: Porta.Pty → kernel32 → the inbox <c>conhost.exe</c>.</summary>
+/// <summary>Porta transport: Unix PTY, or the deprecated Windows kernel32/inbox path.</summary>
 internal sealed class PortaPtySession : IPtySession
 {
     private readonly IPtyConnection _connection;

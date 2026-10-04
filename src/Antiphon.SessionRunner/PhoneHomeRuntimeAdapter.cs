@@ -33,7 +33,7 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
 
     public RunnerCapabilitiesDto Capabilities()
     {
-        var decision = PtyBackendPolicy.Resolve();
+        var decision = _runtime.BackendDecision;
         IReadOnlyList<string> backends = [SessionBackends.PtyHost];
         IReadOnlyList<string> features = StaticFeatures;
         // CARD-0604 D-17 (Cut B). Phone-home advertises the LINUX custody backend, and only
@@ -57,7 +57,8 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
             CodexCliVersion: cli?.CodexCliVersion,
             CodexCliVersionCheckedAtUtc: cli?.CodexCliVersionCheckedAtUtc,
             CodexCliVersionError: cli?.CodexCliVersionError,
-            CodexCliLauncherFingerprint: cli?.CodexCliLauncherFingerprint);
+            CodexCliLauncherFingerprint: cli?.CodexCliLauncherFingerprint,
+            PtyBackendDeprecated: decision.Deprecated);
     }
 
     public string? VerificationCustodyBackend =>

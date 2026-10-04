@@ -31,6 +31,7 @@ public class ProcessSpawnLimitTests
             typeof(HerdrNamedTabPlacementLiveTests),
             typeof(HerdrPaneChildKillTests),
             typeof(PtyBackendSeamTests),
+            typeof(C1022BackendLaunchTests),
             typeof(PtyHostAdoptionTests),
             typeof(RunnerRestartHealthTests),
             typeof(RunnerRestartScriptCompatibilityTests),

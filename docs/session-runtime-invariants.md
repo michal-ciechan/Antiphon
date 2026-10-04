@@ -1,5 +1,14 @@
 # Session runtime invariants
 
+- **CARD-1022 release A uses one runtime backend decision.** Windows defaults to modern;
+  Unix uses Porta and reports UnixPty without Windows discovery. The daemon composes nonempty
+  environment before config; explicit direct-runtime requests, including empty, override ambient
+  input. Local/phone-home capabilities, Windows custody and host argv agree. Legacy selectors and
+  missing-pair fallback remain deprecated with warnings. Nullable wire deprecation preserves old
+  peers; it grants no delivery authority. Conservative limits, spill, separate Enter and complete
+  native UserPrompt confirmation remain required. Historical default-off statements below describe
+  their original releases; B/C separately own refusal/removal.
+
 - **Echo-gated SendLine keeps a minimum post-evidence pause (CARD-0977).**
   `EchoGatedLineSender` waits for composer evidence (or its bounded fallback), then
   waits at least `PreSubmitPause` on a monotonic clock before its one separate CR.

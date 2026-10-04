@@ -77,22 +77,8 @@ public sealed class WindowsGrokRoutingPolicyTests
                 Workspace: WorkspaceMode.Worktree, RequiredPlatform: platform),
             kit.Caller, CancellationToken.None);
 
-        if (held == 2 && platform == RequiredPlatform.Linux)
-        {
-            await using var before = kit.Context();
-            var taskIds = await before.AgentTasks.AsNoTracking().OrderBy(x => x.Id).Select(x => x.Id).ToArrayAsync();
-            var eventIds = await before.AgentTaskEvents.AsNoTracking().OrderBy(x => x.Id).Select(x => x.Id).ToArrayAsync();
-            var refused = await Should.ThrowAsync<ConflictException>(() => CreateAsync(), "remote-exhaustion-refusal");
-            refused.StatusCode.ShouldBe(409);
-            refused.Code.ShouldBe("runner_platform_unavailable");
-            refused.Message.ShouldBe("No eligible runner can run a Linux task.");
-            await using var after = kit.Context();
-            (await after.AgentTasks.AsNoTracking().OrderBy(x => x.Id).Select(x => x.Id).ToArrayAsync())
-                .ShouldBe(taskIds, "remote-refusal-no-task");
-            (await after.AgentTaskEvents.AsNoTracking().OrderBy(x => x.Id).Select(x => x.Id).ToArrayAsync())
-                .ShouldBe(eventIds, "remote-refusal-no-event");
-        }
-        else
+        await using var before = kit.Context();
+        var taskIds = await before.AgentTasks.AsNoTracking().Select(x => x.Id).ToArrayAsync();
         {
             var created = await CreateAsync();
             var saved = await kit.ReadAsync(created.Id);
@@ -122,7 +108,14 @@ public sealed class WindowsGrokRoutingPolicyTests
             if (held == 2)
             {
                 created.Status.ShouldBe(AgentTaskStatus.Blocked);
-                saved.Task.Status.ShouldBe(AgentTaskStatus.Blocked);
+                saved.Task.Status.ShouldBe(AgentTaskStatus.Blocked, "durable-blocked");
+                await using var after = kit.Context();
+                (await after.AgentTasks.AsNoTracking().Select(x => x.Id).ToArrayAsync())
+                    .Except(taskIds).ShouldBe([created.Id], "one-new-task");
+                (await after.AgentTaskEvents.CountAsync(x => x.AgentTaskId == created.Id
+                    && x.Type == AgentTaskEventType.Created)).ShouldBe(1, "created-event");
+                (await after.AgentTaskEvents.CountAsync(x => x.AgentTaskId == created.Id
+                    && x.Type == AgentTaskEventType.Blocked)).ShouldBe(1, "blocked-event");
                 saved.Task.FailureReason.ShouldContain(ComplexityRoutingService.RoutingExhaustedPrefix);
                 saved.Task.FailureReason.ShouldContain($"stage {role} pin (human, required)");
                 saved.Created.ShouldContain("exhausted");

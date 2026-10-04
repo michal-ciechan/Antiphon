@@ -24,7 +24,7 @@ namespace Antiphon.Tests.Application;
 /// CARD-0659 V-3. The default host is chosen from the kind the routing pins and walks actually
 /// settled on, never from the raw request: a pin that lands on Codex, Grok or Claude takes the
 /// default, a Required-pin conflict refuses before any placement,
-/// and an exhausted walk stays local. SourceLanding uses the SELECTED host's custody: a valid
+/// and an exhausted walk preserves normal placement while remaining Blocked. SourceLanding uses the SELECTED host's custody: a valid
 /// Mutation shape can take the default, the dispatch gate admits it, and custody admission asks
 /// that runner and refuses rather than falling back.
 /// </summary>
@@ -144,8 +144,8 @@ public sealed class DefaultRunnerPinTests
         (await kit.TaskCountAsync()).ShouldBe(before, "a pin conflict inserts nothing");
         kit.Directory.ResolveCalls.ShouldBeEmpty("a pin conflict refuses before any runner selection");
 
-        // Every Required candidate held: the exhausted walk is Blocked on the desktop, and the
-        // failed head is not presented as a selected remote candidate.
+        // Every Required candidate held: placement still follows the remote default.
+        // The metadata head is not a chosen provider; the durable task remains Blocked.
         await SeedHoldAsync(db, AgentKind.ClaudeCode, "fable");
         await SeedHoldAsync(db, AgentKind.ClaudeCode, "opus");
         var blocked = await service.CreateAsync(Code("c659 exhausted"), kit.Caller, CancellationToken.None);
@@ -153,13 +153,13 @@ public sealed class DefaultRunnerPinTests
         var saved = await kit.ReadAsync(blocked.Id);
         saved.Task.Status.ShouldBe(AgentTaskStatus.Blocked);
         saved.Task.FailureReason.ShouldNotBeNull().ShouldStartWith(ComplexityRoutingService.RoutingExhaustedPrefix);
-        saved.Task.RunnerId.ShouldBeNull("routing exhaustion keeps the task local");
+        saved.Task.RunnerId.ShouldBe("server2", "any-runner");
         saved.Created.ShouldContain(
-            "runner source=default requested=unset default=server2 selected=local reason=routing_exhausted", Case.Sensitive);
-        kit.Directory.ResolveCalls.ShouldBeEmpty("an exhausted walk never consults the readiness gate");
+            "runner source=default requested=unset default=server2 selected=server2 reason=eligible", Case.Sensitive);
+        kit.Directory.ResolveCalls.ShouldBe(["server2"], "normal readiness observation");
+        kit.Directory.Client.Providers.ShouldBeEmpty("provider-probe-count");
 
-        // CARD-0660: explicit remote + Codex is admitted and keeps the named runner, while the
-        // automatic choice above still keeps Codex on the desktop.
+        // CARD-0660: explicit remote + Codex is admitted and keeps the named runner.
         var codexRemote = await service.CreateAsync(
             new CreateAgentTaskRequest("c659 codex remote", Role: AgentTaskRole.Review, AgentKind: AgentKind.Codex,
                 Workspace: WorkspaceMode.Worktree, RunnerId: "server2"),
@@ -181,7 +181,7 @@ public sealed class DefaultRunnerPinTests
         {
             var decision = policy.Decide(unset, new DefaultRunnerShape(
                 WorkspaceMode.Worktree, kind, AgentTaskKind.Worker, AgentTaskRole.Mutation,
-                ExistingProcess: false, SourceLanding: true, RoutingExhausted: false)).ShouldNotBeNull();
+                ExistingProcess: false, SourceLanding: true)).ShouldNotBeNull();
             decision.SelectedRunnerId.ShouldBe("server2", kind.ToString());
             decision.AuditSegment.ShouldBe(
                 "runner source=default requested=unset default=server2 selected=server2 reason=eligible", kind.ToString());
@@ -191,12 +191,12 @@ public sealed class DefaultRunnerPinTests
         // An invalid SourceLanding role never selects a runner (create refuses that shape anyway).
         policy.Decide(unset, new DefaultRunnerShape(
                 WorkspaceMode.Worktree, AgentKind.Grok, AgentTaskKind.Worker, AgentTaskRole.Code,
-                ExistingProcess: false, SourceLanding: true, RoutingExhausted: false))
+                ExistingProcess: false, SourceLanding: true))
             .ShouldNotBeNull().SelectedRunnerId.ShouldBeNull("a non-Mutation SourceLanding shape stays local");
         // Codex SourceLanding stays local.
         policy.Decide(unset, new DefaultRunnerShape(
                 WorkspaceMode.Worktree, AgentKind.Codex, AgentTaskKind.Worker, AgentTaskRole.Mutation,
-                ExistingProcess: false, SourceLanding: true, RoutingExhausted: false))
+                ExistingProcess: false, SourceLanding: true))
             .ShouldNotBeNull().Reason.ShouldBe("kind_not_supported");
 
         // The dispatch gate admits the runner-bound SourceLanding Mutation that create admitted

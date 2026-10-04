@@ -5,8 +5,8 @@ namespace Antiphon.Agents.Pty;
 
 /// <param name="backendOverride">
 /// Which pseudoconsole to spawn under, overriding <c>ANTIPHON_PTY_BACKEND</c> for this runner only
-/// (see <see cref="PtyBackendPolicy"/>). Null = read the environment, which defaults to the inbox
-/// conhost. Tests pass this because they must pin BOTH backends in one process.
+/// (see <see cref="PtyBackendPolicy"/>). Null reads the environment; Windows defaults to modern,
+/// Unix to Porta. Explicit empty overrides ambient input and selects the platform default.
 /// </param>
 public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDisposable
 {
@@ -137,9 +137,8 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
 
         _screen = new TerminalScreen(cols, rows);
 
-        // The ONLY difference between the two arms is which module provides CreatePseudoConsole.
-        // Default (flag unset) is the inbox conhost via Porta.Pty — byte-identical to what shipped
-        // before CARD-0037, ceilings and all.
+        // Windows defaults to the shipped modern pair; release A retains deprecated inbox
+        // selection/fallback. Unix keeps Porta transport without Windows discovery.
         var backend = PtyBackendPolicy.Resolve(backendOverride);
         Backend = backend;
         // CARD-0604 D-17. Windows containment IS the modern-ConPTY spawn job, so the two are

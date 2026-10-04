@@ -408,6 +408,8 @@ foreground processes — anything that is not our recorded child or shell pid �
 ## 5. Delivery
 
 Herdr is **a different transport**, so it gets its own ceilings — not a `PtyBackend` value.
+CARD-1022's Windows default-modern policy and UnixPty identity do not raise Herdr limits:
+an unreachable or uncertain Herdr capability remains conservative (900 / 3 000 / 1 024).
 `SessionDeliveryProfile` keys them on the session's `SessionBackend` snapshot:
 
 | Ceiling | Herdr pane | (modern ConPTY, for comparison) |

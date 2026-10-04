@@ -9,6 +9,7 @@ namespace Antiphon.Agents.Pty.Tests;
 /// CARD-0027 bench. Not assertions — a measuring instrument. Each experiment varies ONE thing and
 /// records what the Node peer received, including the negative results. Run it explicitly:
 /// <c>dotnet run --project tests/Antiphon.Agents.Pty.Tests --treenode-filter "/*/*/PtyInputLossExperiments/*"</c>
+/// CARD-1022: future Node measurements explicitly select modern; historical inbox tables stay dated.
 /// Results land in <c>TestOutput/card-0027/</c> next to the test binary.
 /// </summary>
 [NotInParallel("Headed")]
@@ -56,7 +57,7 @@ public class PtyInputLossExperiments
         Line("sent\tgot\tchunks\tturns\tmaxPerTurn\tmissing\tdistinctChunkSizes");
         foreach (var size in new[] { 500, 1024, 1366, 2320, 4000, 4262, 5185, 5471, 8192, 16384, 43000 })
         {
-            await using var probe = await NodeStdinProbe.StartAsync(chunkLog: false);
+            await using var probe = await NodeStdinProbe.StartAsync(backend: "modern", chunkLog: false);
             var body = NodeStdinProbe.MarkedBodyOfBytes(size);
             var r = await probe.DeliverAsync(body);
             Line($"{body.Length}\t{r.Bytes}\t{r.Chunks}\t{r.Turns}\t{r.MaxChunksPerTurn}\t{r.MissingCount}\t[{string.Join(",", r.DistinctSizes)}]");
@@ -73,7 +74,7 @@ public class PtyInputLossExperiments
         Line("sent\tgot\tchunks\tturns\tmaxPerTurn\tmissing\tdistinctChunkSizes");
         foreach (var size in new[] { 1366, 4262, 5185, 16384, 43000 })
         {
-            await using var probe = await NodeStdinProbe.StartAsync(blockMs: 25, chunkLog: false);
+            await using var probe = await NodeStdinProbe.StartAsync(backend: "modern", blockMs: 25, chunkLog: false);
             var body = NodeStdinProbe.MarkedBodyOfBytes(size);
             var r = await probe.DeliverAsync(body, timeout: TimeSpan.FromSeconds(90));
             Line($"{body.Length}\t{r.Bytes}\t{r.Chunks}\t{r.Turns}\t{r.MaxChunksPerTurn}\t{r.MissingCount}\t[{string.Join(",", r.DistinctSizes)}]");
@@ -88,7 +89,7 @@ public class PtyInputLossExperiments
         SkipIfUnavailable();
         Line("E3 phase/session age — 12 deliveries down one session, cumulative bytes tracked");
         Line("i\tcumulativeBefore\tsent\tgot\tchunks\tturns\tmaxPerTurn\tmissing");
-        await using var probe = await NodeStdinProbe.StartAsync(chunkLog: false);
+        await using var probe = await NodeStdinProbe.StartAsync(backend: "modern", chunkLog: false);
         var cumulative = 0;
         for (var i = 0; i < 12; i++)
         {
@@ -114,7 +115,7 @@ public class PtyInputLossExperiments
             {
                 foreach (var raw in new[] { true, false })
                 {
-                    await using var probe = await NodeStdinProbe.StartAsync(raw: raw, chunkLog: false);
+                    await using var probe = await NodeStdinProbe.StartAsync(backend: "modern", raw: raw, chunkLog: false);
                     var body = NodeStdinProbe.MarkedBodyOfBytes(size);
                     var r = await probe.DeliverAsync(body, wrap: wrap);
                     Line($"wrap={wrap},raw={raw}\t{body.Length}\t{r.Bytes}\t{r.Chunks}\t{r.MissingCount}\t{r.HasPasteStart}\t{r.HasPasteEnd}");
@@ -133,7 +134,7 @@ public class PtyInputLossExperiments
         Line("case\tsent\tgot\tchunks\tmissing");
         foreach (var size in new[] { 1402, 5185 })
         {
-            await using var probe = await NodeStdinProbe.StartAsync(chunkLog: false);
+            await using var probe = await NodeStdinProbe.StartAsync(backend: "modern", chunkLog: false);
             var body = NodeStdinProbe.MarkedBodyOfBytes(size);
             var racer = Task.Run(async () =>
             {
@@ -159,7 +160,7 @@ public class PtyInputLossExperiments
         Line("prefixBytes\tsent\tgot\tchunks\tmissing");
         foreach (var prefix in new[] { 0, 1, 2, 100, 1022, 1024 })
         {
-            await using var probe = await NodeStdinProbe.StartAsync(chunkLog: false);
+            await using var probe = await NodeStdinProbe.StartAsync(backend: "modern", chunkLog: false);
             if (prefix > 0) await probe.WriteRawAsync(new string('p', prefix));
             await Task.Delay(50);
             var body = NodeStdinProbe.MarkedBodyOfBytes(5185);

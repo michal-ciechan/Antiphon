@@ -47,17 +47,10 @@ public sealed class SessionRunnerSettings
     public string? PtyHostSourceDir { get; set; }
 
     /// <summary>
-    /// Which pseudoconsole every session on this runner spawns under: <c>inbox</c> (default, the
-    /// kernel32/conhost path that strips bracketed-paste markers) or <c>modern</c> (the shipped
-    /// conpty.dll + OpenConsole.exe, which delivers them). Exported to <c>ANTIPHON_PTY_BACKEND</c>
-    /// at startup so the detached pty-hosts inherit it; an env var already set wins. A machine
-    /// without the redistributable falls back to <c>inbox</c> — see <c>PtyBackendPolicy</c>.
-    ///
-    /// <para>CARD-0045: <see cref="SessionRunnerRuntime"/> also passes this value to each host as
-    /// <c>--pty-backend</c>. In the daemon that is the same answer stated twice (the export already
-    /// reached the host by inheritance); it exists because a runtime built in-process — a test's
-    /// <c>DirectSessionRunnerClient</c> — has no daemon to do the export, and previously had no way
-    /// at all to reach the backend of a pty three processes down.</para>
+    /// Instance backend request. Null reads ambient input once; explicit empty selects the platform
+    /// default (Windows modern, Unix Porta). The daemon composes nonempty environment before config
+    /// at startup. Runtime capabilities, custody and every host's <c>--pty-backend</c> use that same
+    /// frozen request. Explicit inbox and missing-pair fallback remain deprecated in release A.
     /// </summary>
     public string? PtyBackend { get; set; }
 

@@ -985,7 +985,8 @@ public sealed record RunnerCapabilitiesDto(
     string? CodexCliVersion = null,
     DateTimeOffset? CodexCliVersionCheckedAtUtc = null,
     string? CodexCliVersionError = null,
-    string? CodexCliLauncherFingerprint = null);
+    string? CodexCliLauncherFingerprint = null,
+    bool? PtyBackendDeprecated = null);
 
 /// <summary>Build identity of the running session-runner process (CARD-0112).</summary>
 public sealed record RunnerBuildDto(

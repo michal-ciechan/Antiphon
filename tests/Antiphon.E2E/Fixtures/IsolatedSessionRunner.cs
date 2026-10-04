@@ -154,6 +154,7 @@ internal sealed class IsolatedSessionRunner : IAsyncDisposable, IIsolatedSession
         startInfo.Environment["SessionRunner__SessionLogPath"] = Path.Combine(RunDirectory, "logs");
         startInfo.Environment["SessionRunner__PtyHostDir"] = Path.Combine(RunDirectory, "pty-hosts");
         startInfo.Environment["SessionRunner__PtyHostLingerHours"] = "0.02";
+        // false omits configuration: the platform default is modern on Windows, UnixPty on Unix.
         if (_modernPty) startInfo.Environment["SessionRunner__PtyBackend"] = "modern";
         startInfo.Environment["Serilog__LogPath"] = RunDirectory;
 

@@ -216,6 +216,8 @@ public sealed class HostSession : IAsyncDisposable
         // Which pseudoconsole this session got is the difference between a 43 KB body arriving whole
         // and arriving clipped at 1 KB, and it is invisible everywhere else — record it per host.
         _log.Info($"Launched {launch.Exe} (child pid {childPid}); pty backend: {_runner.Backend}");
+        if (_runner.Backend is { RequiresWarning: true } decision)
+            _log.Warn($"PTY backend migration: {decision}");
 
         _exitObserver = ObserveExitAsync();
         return new LaunchedMessage(childPid, childStart, launch.AcceptedStartedAt);

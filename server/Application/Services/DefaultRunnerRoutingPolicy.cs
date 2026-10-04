@@ -83,8 +83,7 @@ public sealed record DefaultRunnerShape(
     AgentTaskKind TaskKind,
     AgentTaskRole Role,
     bool ExistingProcess,
-    bool SourceLanding,
-    bool RoutingExhausted);
+    bool SourceLanding);
 
 /// <summary>
 /// One create-time placement decision. <see cref="AuditSegment"/> is the bounded, deterministic
@@ -120,7 +119,6 @@ public sealed class DefaultRunnerRoutingPolicy
     public const string ReasonEligible = "eligible";
     public const string ReasonRequested = "requested";
     public const string ReasonLocalRequested = "local_requested";
-    public const string ReasonRoutingExhausted = "routing_exhausted";
     public const string ReasonExistingProcess = "existing_process";
     public const string ReasonWorkspaceNotWorktree = "workspace_not_worktree";
     public const string ReasonKindNotSupported = "kind_not_supported";
@@ -236,8 +234,6 @@ public sealed class DefaultRunnerRoutingPolicy
     /// </summary>
     public static string? ExclusionFor(DefaultRunnerShape shape)
     {
-        if (shape.RoutingExhausted)
-            return ReasonRoutingExhausted;
         if (shape.ExistingProcess)
             return ReasonExistingProcess;
         if (shape.Workspace != WorkspaceMode.Worktree)

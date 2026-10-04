@@ -66,7 +66,7 @@ public class PtyPasteMarkerExperiments
 
         foreach (var decset in new[] { false, true })
         {
-            await using var probe = await NodeStdinProbe.StartAsync(chunkLog: false, decset2004: decset);
+            await using var probe = await NodeStdinProbe.StartAsync(backend: "modern", chunkLog: false, decset2004: decset);
             var body = NodeStdinProbe.MarkedBodyOfBytes(300);
             var r = await probe.DeliverAsync(body);
             Line($"wrapped\t{decset}\t{r.Bytes}\t{r.Chunks}\t{r.HasPasteStart}\t{r.HasPasteEnd}\t"
@@ -76,7 +76,7 @@ public class PtyPasteMarkerExperiments
         // Control: the same body with no markers written at all. If the "wrapped" arms above look
         // identical to this one, the markers are being stripped somewhere between our WriteFile and
         // the child's read.
-        await using (var probe = await NodeStdinProbe.StartAsync(chunkLog: false, decset2004: true))
+        await using (var probe = await NodeStdinProbe.StartAsync(backend: "modern", chunkLog: false, decset2004: true))
         {
             var body = NodeStdinProbe.MarkedBodyOfBytes(300);
             var r = await probe.DeliverAsync(body, wrap: false);
@@ -86,7 +86,7 @@ public class PtyPasteMarkerExperiments
 
         // And the marker on its own, with nothing else in the write: rules out "the body's first
         // bytes displaced it" as an explanation for a missing prefix.
-        await using (var probe = await NodeStdinProbe.StartAsync(chunkLog: false, decset2004: true))
+        await using (var probe = await NodeStdinProbe.StartAsync(backend: "modern", chunkLog: false, decset2004: true))
         {
             await probe.WriteRawAsync(PtyInputEncoding.PasteStart + "L0000 hello" + PtyInputEncoding.PasteEnd);
             await Task.Delay(50);
@@ -490,7 +490,7 @@ public class PtyPasteMarkerExperiments
 
         foreach (var (cols, rows) in new[] { (120, 30), (200, 50), (400, 100) })
         {
-            await using var probe = await NodeStdinProbe.StartAsync(
+            await using var probe = await NodeStdinProbe.StartAsync(backend: "modern",
                 chunkLog: false, cols: cols, rows: rows, decset2004: true);
             var body = NodeStdinProbe.MarkedBodyOfBytes(5185);
             var r = await probe.DeliverAsync(body);

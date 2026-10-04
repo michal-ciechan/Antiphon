@@ -95,6 +95,8 @@ process.stdin.on('data', (d) => {
 
 function report() {
   const text = acc.toString('utf8');
+  const sentinel = acc.indexOf('\nPROBE-REPORT');
+  const body = sentinel >= 0 ? acc.subarray(0, sentinel) : acc;
   // Which marked lines arrived? A gap names the exact span that vanished.
   const seen = new Set();
   for (const m of text.matchAll(/L(\d{4}) /g)) seen.add(Number(m[1]));
@@ -112,6 +114,7 @@ function report() {
   for (const t of ticks) perTick.set(t, (perTick.get(t) || 0) + 1);
   out('PROBE-SUMMARY ' + JSON.stringify({
     bytes: byteTotal,
+    bodySha256: require('crypto').createHash('sha256').update(body).digest('hex'),
     chunks: chunkCount,
     turns: perTick.size,
     maxChunksPerTurn: perTick.size ? Math.max(...perTick.values()) : 0,

@@ -1245,8 +1245,7 @@ public sealed class AgentTaskService
             request.Role,
             ExistingProcess: askedForExistingProcess || liveFollowUp || followUpOfTaskId is not null
                 || request.AgentId is not null,
-            SourceLanding: request.SourceLandingOperationId is not null,
-            RoutingExhausted: routingExhausted);
+            SourceLanding: request.SourceLandingOperationId is not null);
         var runnerDecision = _defaultRunner.Decide(runnerIntent, placementShape);
         if (runnerIntent.Source == RunnerRequestSource.Unset && runnerDecision?.SelectedRunnerId is { } selectedRunner)
             remoteRunnerId = selectedRunner;

@@ -27,6 +27,7 @@ public class ProcessSpawnLimitTests
             typeof(PtyInputChunkingTests),
             typeof(PtyLargeWriteTests),
             typeof(PtyBackendContractTests),
+            typeof(C1022TypedInputTests),
             typeof(PtyBracketedPasteContractTests),
             typeof(ModernPtyDa1Tests),
             typeof(ClaudeVerifiedDeliveryTests),

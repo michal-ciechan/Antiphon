@@ -9,6 +9,7 @@ public sealed class HostLog(string? path)
     private readonly object _gate = new();
 
     public void Info(string message) => Write("INF", message);
+    public void Warn(string message) => Write("WRN", message);
 
     public void Error(string message, Exception? ex = null) =>
         Write("ERR", ex is null ? message : $"{message}: {ex}");

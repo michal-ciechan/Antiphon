@@ -63,6 +63,16 @@ and remote status responses. These describe the default installed Codex launcher
 independently of build SHA, capacity and connection liveness. Checked-at is the
 completed probe attempt time; reads and heartbeats do not renew it. A successful
 observation is fresh through exactly fifteen minutes, a fixed display threshold.
+CARD-1031 permits a valid stdout version alongside the fixed `stderr_output` or
+`output_truncated` advisory in the legacy `codexCliVersionError` field. These two
+advisories permit freshness; skew and malformed fingerprints still override them.
+Other errors, or absent/invalid versions or attempt times, remain unknown. Only
+complete retained stdout lines count after truncation; stderr never supplies a
+version and its raw content is never returned or logged. Nonzero exit and timeout
+remain failed observations. Wire members and types are unchanged: an old server
+can show the new version/advisory with null freshness until its reader is updated.
+Old runners' missing fields still mean unknown. This feeds CARD-1023's observation
+data and introduces no compatibility or admission policy.
 Stale is null without a valid successful observation. A timestamp more than one
 minute in the future reports `clock_skew`; a malformed non-null launcher fingerprint
 reports `launcher_mismatch`. Unknown peer error text becomes `probe_unavailable`.
@@ -585,3 +595,22 @@ operator debt/publish state and audit comment IDs. A task or capability token ca
 authorized board/project. The response omits the operator conversation address, secrets and
 transcript bodies. An absent or stale successful scan is not proof that the minute Hangfire job is
 protecting the board. The route is read-only; ACKs come from the standing agent transcript.
+
+## Routing exhaustion at task creation (CARD-1021)
+
+An otherwise admissible walked-list request with no available approved candidate
+follows normal runner selection, including kind/global defaults for Any.
+`POST /api/agent-tasks` returns **201 Created**, `status=Blocked`, a durable task
+ID, routing warning and frozen placement fields. Blocked creation launches no
+session. Created/Blocked events and a source-linked parent note commit with the
+task; a queued note is not a delivery receipt. Grouped RoutingExhausted/Error
+attention exposes task/card/board evidence. Explicit card binding does not force
+a column move or invent a dispatch timestamp.
+
+Track the returned task instead of resubmitting the work or inventing a provider
+fallback. The approved list can recover the same task on its frozen host and
+platform. Explicit `refuseIfExhausted: true` (delegate.ps1 `-RefuseIfExhausted`)
+retains 409 `routing_exhausted` with no task inserted. Single-candidate holds, pin
+conflicts and independent placement failures, including no eligible required-OS
+host, retain their existing refusals. `runner_platform_unavailable` still means
+placement failed; exhaustion alone no longer causes it when a suitable host exists.
