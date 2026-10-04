@@ -597,3 +597,46 @@ one concrete executable PC; ordinary floor=18, PC floor=9, setup=8, total=35
 minutes. Code may begin S1; required S2 execution waits for the explicit image
 activation prerequisite. No human policy choice or new implementation seam is
 needed to use this design.
+
+TestDesign validation at committed `561d3591a` (this final validation note changes
+documentation only): real `PlanTableImporter.ImportFile(..., isWindows: false)`
+and `ManifestValidator.Validate` accepted the table; source census found exactly
+the fifteen literal, non-parameterized methods with no prefix over-selection.
+
+```text
+IMPORT CP-1 executions=12 minutes=6 timeout=18 expectTokens=12
+IMPORT CP-2 executions=2 minutes=4 timeout=15 expectTokens=2
+IMPORT CP-3 executions=1 minutes=8 timeout=24 expectTokens=1
+IMPORT rows=3 builds=3 min=15 minutes=18 warnings=0 validation=ok
+PC C# syntax=ok; full method compile and red/green remain Mutation work
+```
+
+Validation used one explicitly scoped tool bootstrap, not an Antiphon.Tests
+build: `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1040-testdesign-import
+-- dotnet build tools/Antiphon.Checkpoints
+--property:OutputPath=bin-c1040-design-tool/ --property:UseAppHost=false --nologo`.
+It completed with zero errors and one CS8602 warning in `TaskOwnerGuard.cs:170`;
+build wall was 5.05 seconds, lease held 6 seconds, waited=0s. The CLI `import`
+also accepted all three rows. An initial scratch validation adapter attempted to
+load the tool's Roslyn assembly into PowerShell's already-loaded Roslyn context
+and was rejected before its checks; the corrected adapter uses PowerShell's
+existing parser. The final mutated C# text has zero syntax errors.
+
+A separate slot-gated, private-root bash check executed the exact PC PATH setup
+and extracted production `c1008_recycle` function, substituting only its
+`require_lane`/`write_result` boundaries. It completed with the expected child
+exit 2 and these lines:
+
+```text
+C1040_PC_JQ_ABSENT
+SEAM accepted=false diagnosis=RecycleToolsMissing exit=2
+SEAM syntax/lookup/refusal valid; this is not a TUnit PC result
+```
+
+That check proves the sealed PATH and real guard are reachable, not the TUnit
+assertion, deployment, or an executed PC cycle. TUnit executions in TestDesign=0;
+Code V/R and Mutation baseline/red/green remain pending their own stages. No
+runtime source, tests, fixtures, production PATH or live image was modified.
+All validation children exited; the single task-owned tool output directory is
+removed before handoff. The entire landed fix-design prefix is byte-for-byte
+unchanged.
