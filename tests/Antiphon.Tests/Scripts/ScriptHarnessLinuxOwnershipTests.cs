@@ -356,13 +356,14 @@ public sealed class ScriptHarnessLinuxOwnershipTests
         try
         {
             clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(4));
+            var supervisorPid = owner!.SupervisorId;
             caller.Cancel();
             var error = await ScriptHarnessProcessFixture.CaptureAsync(run);
             error.ShouldBeOfType<OperationCanceledException>().Data["ScriptHarnessDiagnostics"]
                 .ToString().ShouldContain("terminate:");
             clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(8));
             Directory.Exists(request!.ResultsDirectory).ShouldBeTrue();
-            await WaitDeadAsync(owner!.SupervisorId);
+            await WaitDeadAsync(supervisorPid);
             tree.Root.Executing().ShouldBeFalse();
             tree.Child.Executing().ShouldBeFalse();
         }

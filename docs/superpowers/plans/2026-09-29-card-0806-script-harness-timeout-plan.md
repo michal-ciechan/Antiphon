@@ -346,6 +346,18 @@ No production rollout or full-assembly integration run is needed.
 
 ## Verification design
 
+Port qualification (2026-10-04, Code task `929f4620`): this dispatch ports the
+existing implementation to master and commissions Linux CP-1/CP-2/CP-3 only,
+without a whole-Unit run. Windows CP-4/CP-5/CP-6, V-4 and R-7 are excluded;
+`ScriptHarnessWindowsOwnershipTests` still has zero `[Test]` methods. The caller
+owns its Backlog follow-up. All PC-1..PC-70 and both OS variants of PC-13/PC-14
+remain pending for post-land Mutation. Master's existing BuildSlotScriptTests
+now has 17 methods, so Linux CP-3 runs 24+17=41 instead of the pinned base's
+24+8=32. The filter is unchanged and its execution floor is raised accordingly.
+The inherited L16 test captures the supervisor PID before cancellation rather
+than reading its disposed Process wrapper after cleanup; its deadlines and
+assertions stay unchanged.
+
 Finalized 2026-09-29 by TestDesign task `b5dff6bc`, against Plan commit
 `c8e1970541c08ea3513bdc3b8325e42f1394fc9f`. **Ready for Code.** D-1 through
 D-5 and S1-S3 remain the implementation design. This section replaces the proposed
@@ -474,7 +486,7 @@ is independently exercised by L21 and never carries protocol frames.
 | V-6 | Native bounded termination: N1-N4/N8/N9 | Ready trees are dead before return, including logical root already exited, cancellation and success with silent descendants. |
 | V-7 | Repetition: N11 | Three invocations, no process/owner/control/path residue; per-invocation receipts, not one aggregate kill at test end. |
 | V-8 | C487 rejection: U24, N6/N7 | Nonzero exit, FAIL line, missing trailer, wrong count, missing required name and wrong summary all remain failures. |
-| V-9 | Existing callers: all methods in RunCheckpointScriptTests and BuildSlotScriptTests | Exactly 24 + 8 executions per OS, expected PASS names/counts, zero failures/skips. |
+| V-9 | Existing callers: all methods in RunCheckpointScriptTests and BuildSlotScriptTests | Linux port: exactly 24 + 17 executions, expected PASS names/counts, zero failures/skips. Original pinned-base roster: 24 + 8 per OS. |
 | V-10 | Classification: U25 plus ProcessSpawnLimitTests, TestLaneCategoryGuardTests, SlowTestTripwireTests | New spawners are Integration, one-wide limiter; U is Unit. Add exact Slow allowlist reasons for measured >=5s cases. |
 
 #### Unit roster (U: 26 results on each OS)
@@ -850,7 +862,8 @@ total **49 minutes** plus slot/runner queue waits. CP-1/CP-4 include one tool
 bootstrap and one isolated test-graph build per OS. Unit filters cover the 26 new
 contract methods and 6 named classification methods, not the whole Unit category.
 Native filters cover 32 Linux and 21 Windows results; compatibility filters cover
-32 each. No broad-suite cost is hidden in these estimates.
+41 on current master for the Linux port (32 per OS at the original pinned base).
+No broad-suite cost is hidden in these estimates.
 
 Allow **180-240 minutes** authoring/setup for the owner, helper, deterministic
 fault seams and native fixtures; Code estimate including ordinary V/R is
@@ -898,8 +911,9 @@ row, the six existing classification methods, and the 24/8 existing caller
 methods inspected above. A missing/substituted/extra test, skip, early-return OS
 stub or zero count is a failed checkpoint roster even if the driver exits zero.
 If Code intentionally changes method expansion or names, update this design and
-the counts before accepting evidence. The exact ordinary total is **181 results**
-(96 Linux, 85 Windows), not the number of assertions or distinct source methods.
+the counts before accepting evidence. The original ordinary total was **181
+results** (96 Linux, 85 Windows). This port's Linux total is **105 results**;
+Windows is excluded from this dispatch. These are executions, not assertions.
 
 Use the required CHECKPOINT line for each row with SHA, build state, exact filter,
 executed/passed/failed/skipped, TRX and reruns. Native evidence also records
@@ -914,7 +928,7 @@ is asserted by this documentation's static roster audit.
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c806-linux/` | linux-unit | `/*/*/(ScriptHarnessProcessContractTests*)\|(ProcessSpawnLimitTests*)\|(TestLaneCategoryGuardTests*)\|(SlowTestTripwireTests*)/*` | V-1/V-2/V-8/V-10, R-1..R-6/R-11 | U1-U26 plus 3+1+2 classification methods: exactly 32, 0 failed/skipped | 32 | 6 | true |
 | CP-2 | S1-S3 | CP-1 | linux-native | `/*/*/(ScriptHarnessProcessTests*)\|(ScriptHarnessLinuxOwnershipTests*)/*` | V-3/V-5/V-6/V-7/V-8, R-1..R-6/R-8/R-9/R-10 | N1-N11 plus L1-L21: exactly 32, 0 failed/skipped | 32 | 6 | true |
-| CP-3 | S1-S3 | CP-1 | linux-existing-callers | `/*/*/(RunCheckpointScriptTests*)\|(BuildSlotScriptTests*)/*` | V-9, R-6 | All 24+8 existing methods: exactly 32, 0 failed/skipped | 32 | 10 | true |
+| CP-3 | S1-S3 | CP-1 | linux-existing-callers | `/*/*/(RunCheckpointScriptTests*)\|(BuildSlotScriptTests*)/*` | V-9, R-6 | All 24+17 existing methods: exactly 41, 0 failed/skipped | 41 | 10 | true |
 | CP-4 | S1-S3 | `tests/Antiphon.Tests -> bin-c806-windows/` | windows-unit | `/*/*/(ScriptHarnessProcessContractTests*)\|(ProcessSpawnLimitTests*)\|(TestLaneCategoryGuardTests*)\|(SlowTestTripwireTests*)/*` | V-1/V-2/V-8/V-10, R-1..R-6/R-11 | U1-U26 plus 3+1+2 classification methods: exactly 32, 0 failed/skipped | 32 | 8 | true |
 | CP-5 | S1-S3 | CP-4 | windows-native | `/*/*/(ScriptHarnessProcessTests*)\|(ScriptHarnessWindowsOwnershipTests*)/*` | V-3/V-4/V-6/V-7/V-8, R-1..R-7 | N1-N11 plus W1-W10: exactly 21, 0 failed/skipped | 21 | 5 | true |
 | CP-6 | S1-S3 | CP-4 | windows-existing-callers | `/*/*/(RunCheckpointScriptTests*)\|(BuildSlotScriptTests*)/*` | V-9, R-6 | All 24+8 existing methods: exactly 32, 0 failed/skipped | 32 | 14 | true |
