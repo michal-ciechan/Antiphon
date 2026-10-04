@@ -606,25 +606,30 @@ public class PhoneHomeConnectionTests
         host.Directory.Status(host.AllowedRunnerId).DisconnectReason.ShouldBe("request_aborted");
     }
 
-    // CARD-0996 red reproduction: cancellation is one legal peer-abort outcome, but the old
-    // test required exception fields for every abort. Control that outcome to expose the defect.
+    // CARD-0996: exception fields describe a captured exception, not every peer abort.
+    // Drive both formatter cases at the real endpoint's receive boundary.
     [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task Accept_and_end_lines_carry_the_connection_id_and_transport_codes(bool withInnerSocket)
     {
-        await using var control = new PhoneHomeReceiveControl(PhoneHomeReceiveMode.Cancellation);
+        await using var control = new PhoneHomeReceiveControl(PhoneHomeReceiveMode.Fault);
         await using var host = await PhoneHomeTestHost.StartAsync(receiveControl: control);
         await using var peer = await host.ConnectPeerAsync();
         var live = await host.WaitLiveAsync();
 
         await control.WaitForReceiveAsync();
         peer.Socket.State.ShouldBe(WebSocketState.Open);
-        control.CancelRequest();
+        var exception = withInnerSocket
+            ? new WebSocketException(WebSocketError.ConnectionClosedPrematurely,
+                new IOException("controlled receive", new SocketException((int)SocketError.ConnectionReset)))
+            : new WebSocketException(WebSocketError.ConnectionClosedPrematurely);
+        control.ThrowOnReceive(exception);
         AssertLiveAtInjection(control);
 
         var ended = await AssertCompletedTransportAbortAsync(host, live, control);
-        control.ObservedReceiveCancellation.ShouldNotBeNull();
+        control.ObservedReceiveException.ShouldBeSameAs(exception);
+        control.ObservedReceiveCancellation.ShouldBeNull();
         host.App.Lifetime.ApplicationStopping.IsCancellationRequested.ShouldBeFalse();
         var wsError = ended["WsError"]?.ToString();
         wsError.ShouldNotBeNullOrWhiteSpace();
