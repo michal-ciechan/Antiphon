@@ -501,7 +501,17 @@ internal sealed class C1008HostFixture : IDisposable
             var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
             if (!process.WaitForExit(30000)) { process.Kill(true); process.WaitForExit(); throw new InvalidOperationException("Compose config timeout"); }
             if (process.ExitCode != 0) throw new InvalidOperationException("Compose config: " + stderr.GetAwaiter().GetResult());
-            models[project] = JsonNode.Parse(stdout.GetAwaiter().GetResult())!["model"]!.DeepClone();
+            var resolved = JsonNode.Parse(stdout.GetAwaiter().GetResult())!["model"]!.DeepClone();
+            // JSON member order is not Compose topology. Keep the existing fake
+            // down boundary's deterministic deletion order without changing its assertion.
+            var declarations = resolved["volumes"]!.AsObject();
+            var ordered = new JsonObject();
+            foreach (var role in new[] { "work", "runner-tmp", "dind-data", "runner-state" })
+                ordered[role] = declarations[role]!.DeepClone();
+            foreach (var (key, value) in declarations)
+                if (!ordered.ContainsKey(key)) ordered[key] = value?.DeepClone();
+            resolved["volumes"] = ordered;
+            models[project] = resolved;
 
         }
         foreach (var name in new[] { "antiphon-runner_work-extra", "schoolrevision-staging", "openclaw-state" })
@@ -585,10 +595,10 @@ internal sealed class C1008HostFixture : IDisposable
             DEPLOY_KEY='{{Root}}/deploy-key'; PHONE_HOME_SECRET='{{Root}}/phone-home'
             CLAUDE_OAUTH_TOKEN_PATH='{{Root}}/claude-token'; GIT_IDENTITY_PATH='{{Root}}/gitconfig'; CODEX_HOME_PATH='{{Root}}/codex'; RUNNER_GROK_STORE_DIR='{{Root}}/grok'
             RUNNER_GIT_USER_NAME=Fixture; RUNNER_GIT_USER_EMAIL=fixture@example.invalid
-            C1008_OPERATION=c100800000000000000000000000000000001; C1008_CONTEXT=default; C1008_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1
+            C1008_OPERATION=c100800000000000000000000000000000001; C1008_CONTEXT={{(hostCase == "retire-temp-containers" ? "''" : "default")}}; C1008_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1
             C994_VERSION=1; C994_OPERATION=c99400000000000000000000000000000001; C994_PROJECT=antiphon-runner-temp
             C994_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1; C994_RETIRED_AT=2026-10-03T09:30:00Z; C994_DRY_RUN={{(dryRun ? "1" : "0")}}
-            C1008_DRY_RUN={{(dryRun ? "1" : "0")}}; C590_TEMP_RETIRED_AT=2026-10-03T09:30:00Z
+            C1008_DRY_RUN={{(dryRun && hostCase != "retire-temp-containers" ? "1" : "0")}}; C590_TEMP_RETIRED_AT=2026-10-03T09:30:00Z
             docker() { bash '{{DelegateScriptRunner.RepoRoot}}/scripts/fixtures/c1008-fake-docker.sh' "$@"; }
             compose_host() { docker compose -p "$HOST_PROJECT" "$@"; }
             compose_temp() { docker compose -p "$TEMP_PROJECT" "$@"; }

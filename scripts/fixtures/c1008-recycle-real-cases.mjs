@@ -177,7 +177,7 @@ async function host(f,name,version='C',options={}) {
   const injected=`
 SERVER2_ROOT='${f.root}/server'; ROOT='${f.root}'; EVIDENCE_ROOT='${f.root}/evidence'; CASE_DIR="$EVIDENCE_ROOT/$CASE"
 SERVER2_ENV='${f.root}/main.env'; SERVER2_TEMP_ENV='${f.root}/temp.env'; C849_READY="$SERVER2_ROOT/cache/seed-accepted"
-C1008_CONTEXT=default; C1008_OPERATION="\${C1008_OPERATION:-${f.op}}"; C1008_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1; C1008_RESUME=${options.resume?1:0}; C1008_DRY_RUN=${options.dryRun?1:0}; C1008_CLEANUP_OPERATION='${options.cleanupOperation||''}'
+C1008_CONTEXT=${hostCase==='retire-temp-containers'?"''":'default'}; C1008_OPERATION="\${C1008_OPERATION:-${f.op}}"; C1008_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1; C1008_RESUME=${options.resume?1:0}; C1008_DRY_RUN=${options.dryRun&&hostCase!=='retire-temp-containers'?1:0}; C1008_CLEANUP_OPERATION='${options.cleanupOperation||''}'
 C994_VERSION=1; C994_OPERATION="\${C994_OPERATION:-${f.cleanupOp}}"; C994_PROJECT='${f.temp}'; C994_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1; C994_RETIRED_AT=2026-10-03T09:30:00Z; C994_DRY_RUN=${options.dryRun?1:0}
 DEPLOY_KEY='${f.root}/deploy-key'; PHONE_HOME_SECRET='${f.root}/phone-home'; CLAUDE_OAUTH_TOKEN_PATH='${f.root}/claude-token'; GIT_IDENTITY_PATH='${f.root}/gitconfig'; CODEX_HOME_PATH='${f.root}/codex'; RUNNER_GROK_STORE_DIR='${f.root}/grok'
 C590_TEMP_RETIRED_AT=2026-10-03T09:30:00Z; RUNNER_GIT_USER_NAME=Fixture; RUNNER_GIT_USER_EMAIL=fixture@example.invalid
@@ -294,7 +294,7 @@ if($Case -eq 'retire-temp-containers'){
  Invoke-RestMethod -Method POST -Uri '${originUrl}/fixture/register' -ContentType application/json -Body $body|Out-Null
 }elseif($Case -in @('runner-cache-seed','verify-runner-caches')){exit 0}else{exit 2}
 $dest=Join-Path $m.evidenceRoot $Case;New-Item -ItemType Directory -Force $dest|Out-Null
-if(Test-Path '${f.root}/evidence/'+$Case){Copy-Item -LiteralPath ('${f.root}/evidence/'+$Case) -Destination $m.evidenceRoot -Recurse -Force}
+if(Test-Path -LiteralPath ('${f.root}/evidence/'+$Case)){Copy-Item -LiteralPath ('${f.root}/evidence/'+$Case) -Destination $m.evidenceRoot -Recurse -Force}
 exit $code
 `);
   const env={...process.env,ANTIPHON_API:originUrl,ANTIPHON_TASK_TOKEN:'',ANTIPHON_OPERATOR_TOKEN_FILE:f.root+'/operator-token',

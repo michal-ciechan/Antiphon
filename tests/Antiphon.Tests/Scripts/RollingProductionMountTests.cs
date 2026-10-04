@@ -37,15 +37,15 @@ public sealed class RollingProductionMountTests
                 (
                     input="$(printf '%s' "$vector" | jq -c .input)"
                     C1008_PROJECT="$(printf '%s' "$input" | jq -r .project)"
-                    model="$(printf '%s' "$input" | jq -c .model)"
+                    C994_FIXTURE_COMPOSE_JSON="$(printf '%s' "$input" | jq -c .model)"
                     owned="$(printf '%s' "$input" | jq -c .owned)"
                     volumes="$(printf '%s' "$input" | jq -c .volumes)"
                     override="$(printf '%s' "$input" | jq -r '.codexOverride // empty')"
                     [ -z "$override" ] || CODEX_HOME_PATH="$override"
                     override="$(printf '%s' "$input" | jq -r '.gitOverride // empty')"
                     [ -z "$override" ] || GIT_IDENTITY_PATH="$override"
-                    compose_host() { printf '%s' "$model"; }
-                    compose_temp() { printf '%s' "$model"; }
+                    compose_host() { printf '%s' "$C994_FIXTURE_COMPOSE_JSON"; }
+                    compose_temp() { printf '%s' "$C994_FIXTURE_COMPOSE_JSON"; }
                     c1008_refuse() { exit 2; }
                     model="$(c1008_compose_model)" || exit 2
                     for role in work runner-state runner-tmp dind-data; do
