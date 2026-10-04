@@ -3542,7 +3542,7 @@ c1008_compose_model() {
          bind($claude;"/run/antiphon/claude-oauth-token";false;true),
          bind($git;"/run/antiphon/gitconfig";false;true),bind($codex;"/state/codex";true;false)] +
          if $temp then [bind($grok;"/state/grok";true;false)] else [] end)} as $expected |
-      reduce ["state-init","session-runner"][] as $service ({};
+      (reduce ["state-init","session-runner"][] as $service ({};
         ($model.services[$service]) as $svc |
         if ($svc.volumes|type)!="array" or ($svc.volumes|length)!=($expected[$service]|length) or
           (($svc.volumes|map(.target)|unique|length)!=($svc.volumes|length)) or
@@ -3572,7 +3572,7 @@ c1008_compose_model() {
               ($source|startswith("/")) then {kind:"secret",source:$source,target:$target,rw:false,file:true}
             else error("secret") end] + [{kind:"tmpfs",source:"",target:"/run/antiphon",rw:true}]
          else if (($svc.secrets // [])|length)!=0 or (($svc.tmpfs // [])|length)!=0 then error("init ephemeral") else [] end end) as $extra |
-        .[$service]=(($mounts+$extra)|sort_by(.target))) as $topology |
+        .[$service]=(($mounts+$extra)|sort_by(.target)))) as $topology |
       $model + {c994Topology:{version:1,services:$topology}}')" || c1008_refuse RecycleComposeMismatch
     for role in work runner-tmp dind-data runner-state; do
         expected="${C1008_PROJECT}_$role"
@@ -3930,7 +3930,7 @@ c1008_owned_mounts() {
                 (.Source!=null and .Source!="")) then error("tmpfs proof") else $e end
           else
             [$actual[]|select(.Destination==$e.target)] as $found |
-            if ($found|length)!=1 then error("destination") else $found[0] end as $m |
+            (if ($found|length)!=1 then error("destination") else $found[0] end) as $m |
             if ($m.RW|type)=="boolean" and $m.RW==$e.rw and
               (if $e.kind=="volume" then $m.Type=="volume" and $m.Name==$e.source and
                 $m.Source==($volumes[$e.source].Mountpoint // $volumes[$e.source].original.Mountpoint) and

@@ -41,8 +41,8 @@ the drain redirect cannot promote temp for it: stop and report the missing routi
 | 5. Wait up to four hours | `drain-old -WaitIdleMinutes 240` performs this wait. Check `pwsh -NoProfile -File scripts/runner-slots.ps1 list -RunnerId server2` and old status at the deadline. Proceed to `redeploy-old` only when all three counters are zero. | `OldRunnerStillBusy` at 240 minutes is a reportable cap, not permission to redeploy a busy runner. The operator explicitly authorizes stopping the remaining **server2** sessions at this cap: prefer a resumable owner/session stop; for each exact remaining seat, use `pwsh -NoProfile -File scripts/runner-slots.ps1 release -RunnerId server2 -SessionId <guid> -Reason 'CARD-0934 four-hour drain cap'`. Record the IDs and effects, recheck all counters, and rerun `drain-old`; if anything remains or a stop refuses, stop and report. Do not kill sessions on other runners. |
 | 6. Upgrade old | Run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase redeploy-old` only after step 5's zero gate. The phase runs `deploy-parent`, verifies mounts/cache and `buildVersion`, then clears old's drain. | If it refuses, keep temp accepting and old drained; use the retained rollback image and the [rollback procedure](#shared-server2-runner-caches-card-0849) only through a reviewed recovery. Do not clear an unverified old runner. |
 | 7. Smoke upgraded old | Run the command block below for `server2`, a sanctioned `Plan` canary pinned with `-Runner server2`, and `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Both -Sha <sha>`. | `redeploy-old` already clears old's drain after its own host checks, before this separate canary. If this gate fails, immediately drain old toward accepting temp with `pwsh -NoProfile -File scripts/runner-drain.ps1 drain -RunnerId server2 -RedirectTo server2-temp -Reason 'post-upgrade smoke failed'`; stop and report. CARD-0935 tracks a separate canary-before-promotion gate. |
-| 8. Return scheduling and drain temp | Once old passes step 7 and accepts work, run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase drain-temp -WaitIdleMinutes 240`. This sets temp `redirectTo=server2` and `retireWhenIdle=true`; automatic placement uses old again. Verify old accepting and temp drained/retired. | If the phase refuses, leave old accepting and temp in its observed state; report the code. If a rollback is needed before temp retires, clear temp's drain only after verifying old remains accepting; do not start two drains. |
-| 9. Retire temp | Always retire temp once scheduling is back on main, after drain and the zero-work gate; reclaim its volumes under [Volume recycling and disk reclaim](#volume-recycling-and-disk-reclaim-card-1008). Retain the rollout receipts. | The retired, offline, absent placeholder may have null live inventory only with the complete host proof. Other refusals stop the rollout. |
+| 8. Return scheduling and drain temp | Once old passes step 7 and accepts work, run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase drain-temp -WaitIdleMinutes 240`. This sets temp `redirectTo=server2` and `retireWhenIdle=true`; automatic placement uses old again. Verify old accepting and temp drained/retired/offline, then prove temp container absence. The phase observes exit and removes only proven owned exited runner/state-init IDs without volumes. Retirement and exit share one deadline from `WaitIdleMinutes`; `TempContainerExitTimeout` removes nothing live. | If the phase refuses, leave old accepting and temp in its observed state; report the code. If a rollback is needed before temp retires, clear temp's drain only after verifying old remains accepting; do not start two drains. |
+| 9. Retire temp | Always run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase retire-temp` immediately after successful gate 8, including already-absent cleanup; reclaim its volumes under [Volume recycling and disk reclaim](#volume-recycling-and-disk-reclaim-card-1008). Retain the rollout receipts. | The retired, offline, absent placeholder may have null live inventory only with the complete host proof. Other refusals stop the rollout. |
 
 At gate 1, `deploy-temp` accepts either a retired temp placeholder or a cleared offline
 one, whether its drain is set or clear. For a retired start it checks offline zero work,
@@ -263,66 +263,40 @@ container ID/start time is unchanged and it remains up, and record disk free spa
 before/after with `df -Pk` in the container. This procedure does not remove volumes
 or stop main before `redeploy-old`.
 
-#### Manual retired-temp volume removal
+#### Retired-temp recovery (CARD-0994)
 
-Until the scripts implement this policy, an orchestrator uses this manual temp
-equivalent from the canonical desktop checkout, recording every check in the rollout receipt:
+For an exited retired temp left by an older rollout, run normal `retire-temp`
+from the canonical desktop checkout. Its container-only `retire-temp-containers`
+host case rechecks typed retirement, main admission, complete task/land census,
+all-state Docker ownership and production mount topology under the rollout lock.
+Only exited runner/state-init IDs are removed, using `docker rm -- <full-id>`
+without force or a volume flag. A live container refuses `TempContainerStillRunning`;
+wait for normal shutdown and rerun. This does not stop, kill or sweep containers.
+A non-retiring failed-deploy hold uses the abandonment procedure above.
 
-1. Read `GET /api/session-runners`, the target's status, and
-   `GET /api/agent-tasks/pipeline` (fleet-wide). Inspect routing
-   preferences/pins and the complete project/board-scoped task listing for Blocked/Failed tasks bound to
-   the runner; a capped pipeline preview cannot prove absence. Verify the other runner
-   is accepting, drain/zero-work conditions above, and no queued or executing land.
-   Complete the unpublished-work inventory before teardown.
-2. Census the target project (replace `<project>` with exactly `antiphon-runner-temp`),
-   record volume names/sizes and disk free space:
+After retaining the matching cleanup receipt, the wrapper re-reads status and
+requires fresh host absence before the independent C1008 volume gate. Explicit
+null live inventory is accepted only for a retired, offline, absent temp with
+zero bound/queued work. The pinned original image from the source/project/retirement
+receipt supplies the offline UID-1654 publication audit; unavailable image or
+unpublished/dirty work preserves the volumes. A separate gate-9 invocation uses
+the matching receipt across run IDs. Container removal retains all four private
+volumes, provider binds, caches and images until this audit passes.
 
-   ```powershell
-   Invoke-RestMethod 'http://localhost:17202/api/session-runners'
-   pwsh -NoProfile -File scripts/runner-drain.ps1 status -RunnerId <runner>
-   Invoke-RestMethod 'http://localhost:17202/api/agent-tasks/pipeline'
-   Invoke-RestMethod 'http://localhost:17202/api/agent-tasks?boardId=<board-guid>&status=Blocked,Failed'
-   ssh mc@server2 'docker ps -a --filter label=com.docker.compose.project=<project> --format "{{.ID}} {{.Names}} {{.Status}}"'
-   ssh mc@server2 'docker volume ls --filter label=com.docker.compose.project=<project> --format "{{.Name}}"'
-   ssh mc@server2 'docker system df -v'
-   ssh mc@server2 'df -Pk "$(docker info -f "{{.DockerRootDir}}")"'
-   ```
+`retire-temp -DryRun` previews exact container IDs and four volume targets.
+With exited containers present, volume proof is pending confirmed absence and the
+offline audit is pending; no audit helper, removal or routing change occurs.
+An absent project uses the existing C1008 preview. `-ResumeRecycle` uses only its
+original journal and strict absence proof; it never starts new container cleanup
+or removes a replacement generation. A failed container stage has not started
+recycling: retry normal `retire-temp`, preserving exact partial removal receipts.
 
-   Follow every task-list page using the owner HTTP guide; record task runner bindings.
-   Match the exact volume names to `docker system df -v` sizes. Record main's container
-   ID/start time and its retained state/cache volume identities before retiring temp.
-3. Once stopped, remove only the target project's stopped containers by their exact
-   census IDs (`ssh mc@server2 'docker rm <exact-container-id>'`, one at a time).
-   Include stopped state-init containers: stopped is not the same as unreferenced.
-   Do not remove main's containers when retiring temp. For each proposed volume, run
-   `ssh mc@server2 'docker ps -a --filter volume=<exact-full-volume-name>'` and require
-   an empty container listing (header only). Recheck runner/task/routing/land state
-   immediately before removal. Never remove a referenced volume.
-4. For manual temp retirement, execute each command separately, after its own reference
-   check. These exact removals are the disk-reclaim equivalent of temp `compose down -v`:
-
-   ```powershell
-   ssh mc@server2 'docker volume rm antiphon-runner-temp_work'
-   ssh mc@server2 'docker volume rm antiphon-runner-temp_runner-tmp'
-   ssh mc@server2 'docker volume rm antiphon-runner-temp_dind-data'
-   ssh mc@server2 'docker volume rm antiphon-runner-temp_runner-state'
-   ```
-
-   Remove by **exact full name**, one at a time; never prune or use a glob. The prefix
-   collision `antiphon-runner_*` versus `antiphon-runner-temp_*` can destroy the standing
-   workspace if a name is shortened or inferred.
-5. Repeat the project census, volume listing and `df` command. After temp retirement,
-   prove its four private volumes and containers are absent, main's container ID/start
-   time and state/cache volumes are unchanged, and main remains accepting; temp must
-   remain retired/offline with zero bound work. Record a receipt line:
-   `VOLUME_RECYCLE runner=<id> removed=<exact-names> dfFreeKiBBefore=<n> dfFreeKiBAfter=<n>`.
-
-**Current retire-temp guard caveat:** `Assert-ZeroCounters` in
-`scripts/deploy-server2.ps1` (lines 69-78 at this revision) refuses a retired row with
-`runnerSessions=null`, the normal state after `drain-temp` removes the container.
-Until CARD-0994/CARD-1008's guard fix lands, the phase cannot finish that normal path.
-Use the manual equivalent above only for the confirmed retired/absent shape; keep
-the refusal for a retired row that still has a container. Retain the row and receipt.
+After gate 9, prove all four temp private volumes and containers absent, main's
+container ID/start time and retained main state/cache identities unchanged, main
+accepting, and temp still retired/offline without bound work. Keep cleanup and
+volume/disk receipts outside the removed volumes. The next `deploy-temp` retains
+its independent absence-before-retirement-clear admission. Docker prune, other
+volumes, markers and donor archives remain human-gated.
 
 Evidence, 2026-10-02/03: server2 reached 98% disk with 17.6 GiB free, below the
 20 GiB `CacheDiskLow` gate. Main work occupied 218 GB (116 stale terminal worktrees

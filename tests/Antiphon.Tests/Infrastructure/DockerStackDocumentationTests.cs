@@ -9,6 +9,18 @@ namespace Antiphon.Tests.Infrastructure;
 public sealed class DockerStackDocumentationTests
 {
     [Test]
+    public void Retired_temp_cleanup_and_retirement_gates_match()
+    {
+        var text = Read("docs/docker-stack.md");
+        foreach (var expected in new[] { "temp container absence", "including already-absent cleanup", "one deadline",
+            "TempContainerExitTimeout", "exited retired temp", "normal shutdown", "pending confirmed absence",
+            "never starts new container cleanup", "Docker prune, other volumes, markers and donor archives remain human-gated" })
+            text.ShouldContain(expected, Case.Sensitive, "c994-runbook: " + expected);
+        text.ShouldNotContain("Current retire-temp guard caveat", Case.Sensitive, "c994-runbook: obsolete null guard caveat");
+        text.ShouldNotContain("Until CARD-0994/CARD-1008", Case.Sensitive, "c994-runbook: obsolete implementation caveat");
+    }
+
+    [Test]
     public void Main_volume_recycling_is_scripted_only()
     {
         var text = Read("docs/docker-stack.md");
