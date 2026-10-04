@@ -209,10 +209,20 @@ The allowlist is `tests/Antiphon.Tests/slow-tests-allowlist.txt` (exact simple o
 
 **Evidence Git policy (CARD-1015).** Keep generated TRX, JSON receipts, logs,
 archives and checkpoint output ignored; the generic slice-commit requirement does
-not include them. Under root `.antiphon/` (case-insensitive), only regular Markdown
-blobs up to 1,048,576 bytes outside directories containing `checkpoints`
-(case-insensitive) may be committed, individually. The leaf `checkpoints.md` is
-allowed. Do not relocate generated payloads elsewhere to evade the rule; the
+not include them. Under root `.antiphon/` (case-insensitive), permitted formats are
+Markdown and the named `approved-json-fixture` exception (CARD-1036), matching the
+case-sensitive complete Git path
+`\A\.antiphon/fixtures/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+\.approved\.json\z`.
+Both require regular mode `100644`/`100755`, at most 1,048,576 committed bytes,
+and no directory component containing `checkpoints` (case-insensitive).
+The leaf `checkpoints.md` is allowed. An approved fixture is an intentionally
+retained expected input/result consumed by a named regression test; its Code/Review
+description identifies that consumer. The guard enforces path/type/size, not semantic
+approval or JSON provenance. Keep `.gitignore` defaults and stage each exact reviewed
+fixture individually; never unignore or force-add an evidence directory. Receipts,
+source JSON, TRX, logs, archives and actual results remain run output, including
+inside `fixtures/`; moving or renaming them does not confer fixture approval.
+Do not relocate generated payloads elsewhere to evade the rule; the
 canonical `.antiphon/reports/` store remains runtime-owned and ignored.
 
 Code and read-only Review run `scripts/check-evidence-diff.ps1 -BaseRef <recorded

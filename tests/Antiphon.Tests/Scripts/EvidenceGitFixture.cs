@@ -171,7 +171,17 @@ internal sealed class EvidenceGitFixture : IAsyncDisposable
         var parts = e.Path.Split('/');
         if (!string.Equals(parts[0], ".antiphon", StringComparison.OrdinalIgnoreCase)) return false;
         return parts.Skip(1).SkipLast(1).Any(p => p.Contains("checkpoints", StringComparison.OrdinalIgnoreCase)) ||
-            e.Mode is not ("100644" or "100755") || !parts[^1].EndsWith(".md", StringComparison.OrdinalIgnoreCase) || e.Bytes > 1_048_576;
+            e.Mode is not ("100644" or "100755") ||
+            (!parts[^1].EndsWith(".md", StringComparison.OrdinalIgnoreCase) && !ApprovedFixture(parts)) || e.Bytes > 1_048_576;
+    }
+    private static bool ApprovedFixture(string[] parts)
+    {
+        const string suffix = ".approved.json";
+        if (parts.Length < 3 || parts[0] != ".antiphon" || parts[1] != "fixtures" ||
+            !parts[^1].EndsWith(suffix, StringComparison.Ordinal)) return false;
+        var names = parts.Skip(2).SkipLast(1).Append(parts[^1][..^suffix.Length]);
+        return names.All(name => name.Length > 0 && name.All(c =>
+            c is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '0' and <= '9' or '_' or '-'));
     }
     internal static bool Scoped(Entry e) => e.Path.Split('/')[0].Equals(".antiphon", StringComparison.OrdinalIgnoreCase);
     internal async Task<Inventory> InventoryAsync(string commit)
