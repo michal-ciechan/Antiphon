@@ -178,7 +178,7 @@ public sealed class CodexCliObservationTests
         foreach (var version in new[] { "0.159.1", "0.160.0" })
         foreach (var busy in new[] { false, true })
             await CodexCliRemoteDeliveryFixture.RunAsync(Body, version, busy);
-        foreach (var negative in new[] { "ack-only", "clipped", "baseline", "other-session" })
+        foreach (var negative in new[] { "ack-only", "clipped", "baseline", "other-session", "write-failure" })
             await CodexCliRemoteDeliveryFixture.RunAsync(Body,
                 new RunnerCodexCliVersionDto("0.156.1", DateTimeOffset.UtcNow, null, new string('a',64)),
                 busy: true, negative: negative);
