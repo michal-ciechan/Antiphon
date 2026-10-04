@@ -379,6 +379,7 @@ internal sealed partial class CheckpointSourceScriptFixture
         using System.Security;
         using System.Text;
         public sealed class C886Host : PSHost {
+            public static void RemoveEnvironment(string name) { Environment.SetEnvironmentVariable(name, null); }
             public readonly C886UI Screen = new C886UI();
             public int ExitCode;
             public bool Exited;
@@ -433,7 +434,8 @@ internal sealed partial class CheckpointSourceScriptFixture
             $identity = [Guid]::Empty
             try {
                 foreach ($key in $request.environment.Keys) {
-                    [Environment]::SetEnvironmentVariable($key, $request.environment[$key])
+                    if ($null -eq $request.environment[$key]) { [C886Host]::RemoveEnvironment($key) }
+                    else { [Environment]::SetEnvironmentVariable($key, [string]$request.environment[$key]) }
                 }
                 [Environment]::CurrentDirectory = $request.cwd
                 $space = [runspacefactory]::CreateRunspace($hostCapture)
@@ -470,7 +472,7 @@ internal sealed partial class CheckpointSourceScriptFixture
                 if ($null -ne $pipeline) { $pipeline.Dispose() }
                 if ($null -ne $space) { $space.Dispose() }
                 foreach ($key in @([Environment]::GetEnvironmentVariables().Keys)) {
-                    if (-not $before.Contains($key)) { [Environment]::SetEnvironmentVariable($key, $null) }
+                    if (-not $before.Contains($key)) { [C886Host]::RemoveEnvironment($key) }
                 }
                 foreach ($key in $before.Keys) { [Environment]::SetEnvironmentVariable($key, [string]$before[$key]) }
                 [Environment]::CurrentDirectory = $cwd

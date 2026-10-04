@@ -201,7 +201,13 @@ public sealed class CheckpointSourceApprovalReuseTests
         var counterfeit = new IsolatedTestSchema(new NpgsqlConnectionStringBuilder(connection).Database!, connection);
         Should.Throw<InvalidOperationException>(() => family.ValidateDatabaseTarget(counterfeit, connection, () => destructiveCalls++), "family-foreign-target-untouched");
         var image = CheckpointSourceFixtureImage.Capture(root);
-        Should.Throw<InvalidOperationException>(() => image.ValidateTarget(Path.GetTempPath(), () => destructiveCalls++), "family-foreign-target-untouched");
+        var foreign = Path.Combine(Path.GetTempPath(), "c886-foreign-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(foreign);
+        try
+        {
+            Should.Throw<InvalidOperationException>(() => image.ValidateTarget(foreign, () => destructiveCalls++), "family-foreign-target-untouched");
+        }
+        finally { Directory.Delete(foreign); }
         destructiveCalls.ShouldBe(0, "family-foreign-target-untouched");
         await family.DisposeAsync();
         await family.DisposeAsync();

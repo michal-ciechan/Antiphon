@@ -135,7 +135,7 @@ internal sealed class CheckpointSourceApprovalFamily : IAsyncDisposable
         var model = db.Model.GetRelationalModel();
         var expected = model.Tables.SelectMany(t => t.Columns.Where(c => c.Name != "xmin").Select(c => t.Name + "/" + c.Name)).ToHashSet(StringComparer.Ordinal);
         var actual = new HashSet<string>(StringComparer.Ordinal);
-        await using (var command = new NpgsqlCommand("SELECT table_name,column_name FROM information_schema.columns WHERE table_schema='public' AND table_name <> '__EFMigrationsHistory'", connection))
+        await using (var command = new NpgsqlCommand("SELECT table_name,column_name FROM information_schema.columns WHERE table_schema='public' AND table_name <> '__EFMigrationsHistory' AND table_name IN (SELECT tablename FROM pg_tables WHERE schemaname='public')", connection))
         await using (var reader = await command.ExecuteReaderAsync())
             while (await reader.ReadAsync()) actual.Add(reader.GetString(0) + "/" + reader.GetString(1));
         if (!expected.SetEquals(actual)) throw new InvalidOperationException("family EF/PostgreSQL columns disagree: missing=" + string.Join(',', expected.Except(actual)) + "; extra=" + string.Join(',', actual.Except(expected)));
