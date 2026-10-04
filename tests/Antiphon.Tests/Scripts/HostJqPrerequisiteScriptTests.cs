@@ -99,7 +99,8 @@ public sealed class HostJqPrerequisiteScriptTests
         foreach (var fault in new[] { "nested", "sibling", "no-daemon", "hostname", "os", "arch", "sudo" })
         {
             using var f = new HostJqFixture(); f.Fault(fault);
-            var r = await f.Helper("provision"); r.Exit.ShouldBe(2, "lane/os/arch/privilege-refused: " + fault + r.Output);
+            var label = fault switch { "os" => "os-refused", "arch" => "arch-refused", "sudo" => "privilege-refused", _ => "lane-refused" };
+            var r = await f.Helper("provision"); r.Exit.ShouldBe(2, label + ": " + fault + r.Output);
             r.Stdout.ShouldBeEmpty("lane-refused: success receipts=0"); f.Trace.ShouldNotContain("download");
         }
         foreach (var tool in HostJqFixture.ProvisionTools)
@@ -119,7 +120,8 @@ public sealed class HostJqPrerequisiteScriptTests
     {
         foreach (var vector in new[] { "file", "symlink", "dangling", "directory", "fifo", "parent-link", "parent-stat", "parent-write" })
         {
-            using var f = new HostJqFixture();
+            // Reach destination admission with missing jq; lookup must not mask this guard.
+            using var f = new HostJqFixture { IncludeDestination = false };
             switch (vector)
             {
                 case "file": File.WriteAllText(f.Destination, "foreign"); break;
@@ -182,6 +184,7 @@ public sealed class HostJqPrerequisiteScriptTests
         {
             using var f = new HostJqFixture(); f.Fault(fault);
             var r = await f.Helper("provision"); r.Exit.ShouldBe(2, fault + r.Output);
+            if (fault != "tamper") f.Trace.ShouldNotContain("stage ", Case.Sensitive, "digest-before-use: rejected download cannot reach staging");
             f.Trace.ShouldNotContain("publish", Case.Sensitive, fault == "curl-exit" ? "transfer-refused" : "digest-before-use");
             f.Trace.ShouldNotContain("jq-call", Case.Sensitive, "rejected artifact must not execute");
             File.Exists(f.Destination).ShouldBeFalse();
@@ -425,7 +428,7 @@ internal sealed class HostJqFixture : IDisposable
 {
     internal const string Pin = "5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5";
     internal const string Url = "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64";
-    internal static readonly string[] ProvisionTools = ["curl", "sha256sum", "install", "mktemp", "flock", "ln", "stat", "readlink", "rm", "uname", "test"];
+    internal static string[] ProvisionTools => ["curl", "sha256sum", "install", "mktemp", "flock", "ln", "stat", "readlink", "rm", "uname", "test"];
     internal string Root { get; } = Path.Combine(Path.GetTempPath(), "c1025-" + Guid.NewGuid().ToString("N"));
     internal string Tools => Root + "/tools";
     internal string Parent => Root + "/destination";
@@ -441,6 +444,7 @@ internal sealed class HostJqFixture : IDisposable
     internal string? Linked { get; set; }
     internal string RequestSha { get; set; } = "";
     internal string Transport { get; set; } = "";
+    internal bool IncludeDestination { get; set; } = true;
     internal string? SyntheticProof { get; set; }
     internal string Trace => File.Exists(Root + "/trace") ? File.ReadAllText(Root + "/trace") : "";
     internal string[] InstallEffects => Trace.Split('\n').Where(x => new[] { "sudo ", "download ", "stage ", "publish ", "unlink " }.Any(x.StartsWith)).ToArray();
@@ -554,7 +558,7 @@ internal sealed class HostJqFixture : IDisposable
     {
         var psi = new ProcessStartInfo(executable) { UseShellExecute = false, WorkingDirectory = Root, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var arg in args) psi.ArgumentList.Add(arg);
-        psi.Environment["PATH"] = Tools + (File.Exists(Root + "/fault") && File.ReadAllText(Root + "/fault") == "path-absent" ? "" : ":" + Parent);
+        psi.Environment["PATH"] = Tools + (!IncludeDestination || (File.Exists(Root + "/fault") && File.ReadAllText(Root + "/fault") == "path-absent") ? "" : ":" + Parent);
         psi.Environment["TMPDIR"] = Temp; psi.Environment["HJ_ROOT"] = Root; psi.Environment["HJ_DEST"] = Destination;
         psi.Environment["HJ_DEST_PARENT"] = Parent; psi.Environment["HJ_LOCK"] = Lock; psi.Environment["HJ_WRAPPER"] = WrapperRoot;
         psi.Environment["HJ_TRANSPORT"] = Transport; psi.Environment["ANTIPHON_OPERATOR_TOKEN_FILE"] = Root + "/token";
