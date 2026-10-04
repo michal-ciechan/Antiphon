@@ -4,11 +4,14 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Antiphon.Server.Api.Endpoints;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
@@ -66,13 +69,20 @@ public sealed class AgentPinnedInstructionEndpointTests
         }
         var taskToken = await SeedTaskTokenAsync(owner, orchestrator: true);
         var capabilityToken = await SeedCapabilityTokenAsync();
-        foreach (var token in new[] { wrongToken, stoppedToken, expiredToken, taskToken, capabilityToken, "invalid", "" })
+        // HttpClient omits a zero-length default header. Whitespace exercises the HTTP path;
+        // the exact present-but-empty header is also tested at the endpoint boundary below.
+        foreach (var (token, target, label) in new[]
+        {
+            (wrongToken, owner, "c262-g099"), (stoppedToken, stoppedOwner, "c262-g100"),
+            (expiredToken, expiredOwner, "c262-g101"), (taskToken, owner, "c262-g102"),
+            (capabilityToken, owner, "c262-g103"), ("invalid", owner, "c262-g098"), (" ", owner, "c262-g098")
+        })
         {
             using var client = _factory.CreateClient();
             client.DefaultRequestHeaders.TryAddWithoutValidation(AgentTaskEndpoints.TokenHeader, token);
             foreach (var action in new[] { "get", "capture", "revoke", "reconcile" })
             {
-                var url = $"/api/agents/{owner}/pinned-instructions";
+                var url = $"/api/agents/{target}/pinned-instructions";
                 using var response = action switch
                 {
                     "get" => await client.GetAsync(url),
@@ -80,13 +90,37 @@ public sealed class AgentPinnedInstructionEndpointTests
                     "revoke" => await client.PostAsJsonAsync(url + $"/{operatorPin}/revoke", new { requestId = Guid.NewGuid(), expectedRevision = 1 }),
                     _ => await client.PostAsJsonAsync(url + "/reconcile", new { expectedRevision = 1 })
                 };
-                response.StatusCode.ShouldBe(HttpStatusCode.Forbidden, action);
+                response.StatusCode.ShouldBe(HttpStatusCode.Forbidden, label + " " + action);
                 (await response.Content.ReadAsStringAsync()).ShouldNotContain("PRINCIPAL_PRIVATE_CANARY");
             }
+        }
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var http = new DefaultHttpContext();
+            http.Request.Headers[AgentTaskEndpoints.TokenHeader] = "";
+            http.Request.Headers.ContainsKey(AgentTaskEndpoints.TokenHeader).ShouldBeTrue("c262-g098 setup");
+            await Should.ThrowAsync<ForbiddenException>(() => AgentPinnedInstructionEndpoints.ResolvePrincipalAsync(
+                owner, http, scope.ServiceProvider.GetRequiredService<AgentTaskService>(),
+                scope.ServiceProvider.GetRequiredService<AppDbContext>(),
+                scope.ServiceProvider.GetRequiredService<ICurrentUser>(), CancellationToken.None));
         }
         using var own = _factory.CreateClient();
         own.DefaultRequestHeaders.Add(AgentTaskEndpoints.TokenHeader, ownToken);
         (await own.GetAsync($"/api/agents/{owner}/pinned-instructions")).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await own.PostAsJsonAsync($"/api/agents/{owner}/pinned-instructions/{operatorPin}/revoke",
+            new { requestId = Guid.NewGuid(), expectedRevision = 1 })).StatusCode.ShouldBe(HttpStatusCode.Forbidden, "c262-g104");
+        (await own.PostAsJsonAsync($"/api/agents/{owner}/pinned-instructions", new
+        {
+            requestId = Guid.NewGuid(), expectedRevision = 1, text = "forged", source = "Operator"
+        })).StatusCode.ShouldBe(HttpStatusCode.Forbidden, "c262-g105");
+        (await own.PostAsJsonAsync($"/api/agents/{owner}/pinned-instructions", new
+        {
+            requestId = Guid.NewGuid(), expectedRevision = 1, text = "forged", pinClaudeImportMode = "Dedicated"
+        })).StatusCode.ShouldBe(HttpStatusCode.Forbidden, "c262-g107");
+        (await own.PostAsJsonAsync($"/api/agents/{owner}/pinned-instructions", new
+        {
+            requestId = Guid.NewGuid(), expectedRevision = 1, text = "replace operator", replacesPinId = operatorPin
+        })).StatusCode.ShouldBe(HttpStatusCode.Forbidden, "c262-g104 replace");
         var forgedActor = Guid.NewGuid();
         var capture = await own.PostAsJsonAsync($"/api/agents/{owner}/pinned-instructions", new
         {
@@ -99,7 +133,7 @@ public sealed class AgentPinnedInstructionEndpointTests
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var stored = await db.AgentPinnedInstructions.SingleAsync(p => p.AgentId == owner && p.Text == "own pin");
-            stored.CreatedBySessionId.ShouldBe(ownSession);
+            stored.CreatedBySessionId.ShouldBe(ownSession, "c262-g106");
             stored.CreatedByUserId.ShouldBeNull();
             stored.Source.ShouldBe(PinInstructionSource.Agent);
             ownPin = stored.Id;
@@ -109,7 +143,10 @@ public sealed class AgentPinnedInstructionEndpointTests
         (await op.PostAsJsonAsync($"/api/agents/{owner}/pinned-instructions",
             new { requestId = Guid.NewGuid(), expectedRevision = 3, text = "" })).StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
         _factory.SessionRunner.LaunchAttempts.ShouldBeEmpty();
-        // Full class retains source/import-mode forgery, operator-pin refusal, foreign 404 and stale 409.
+        (await op.PostAsJsonAsync($"/api/agents/{foreignOwner}/pinned-instructions/{operatorPin}/revoke",
+            new { requestId = Guid.NewGuid(), expectedRevision = 0 })).StatusCode.ShouldBe(HttpStatusCode.NotFound);
+        (await op.PostAsJsonAsync($"/api/agents/{owner}/pinned-instructions",
+            new { requestId = Guid.NewGuid(), expectedRevision = 0, text = "stale" })).StatusCode.ShouldBe(HttpStatusCode.Conflict);
     }
 
     [Test]

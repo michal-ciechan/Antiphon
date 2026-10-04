@@ -18,6 +18,7 @@ public sealed class AgentPinnedInstructionServiceTests
     [Test]
     public async Task V01_RestartMigration()
     {
+        await V01_failure_before_commit_leaves_nothing_and_skips_io();
         await using var world = await World.CreateAsync();
         (await world.Db.AgentPinnedInstructionStates.CountAsync()).ShouldBe(0);
         var agent = await world.SeedAgentAsync();
@@ -32,11 +33,11 @@ public sealed class AgentPinnedInstructionServiceTests
             var result = await resumed.CaptureAsync(agent.Id, request, world.Operator, CancellationToken.None);
             result.Set.Revision.ShouldBe(1);
             result.Set.Pins.Single().Text.ShouldBe("survives lost wakeup");
-            result.Set.Reconciliation!.Status.ShouldBe(PinProjectionStatus.Pending);
+            result.Set.Reconciliation!.Status.ShouldBe(PinProjectionStatus.Pending, "c262-g061");
             observer.Calls.ShouldBe(0);
             var conflict = await Should.ThrowAsync<ConflictException>(() => resumed.CaptureAsync(
                 agent.Id, request with { Text = "changed fingerprint" }, world.Operator, CancellationToken.None));
-            conflict.Code.ShouldBe(AgentPinnedInstructionService.RequestConflict);
+            conflict.Code.ShouldBe(AgentPinnedInstructionService.RequestConflict, "c262-g109");
         }
         await using var next = world.FreshDb();
         var checkedReconciler = new TransactionCheckingReconciler(() => world.FreshDb());
@@ -67,7 +68,12 @@ public sealed class AgentPinnedInstructionServiceTests
         }
         foreach (var request in invalid)
         {
-            await Should.ThrowAsync<ValidationException>(() => world.Service.CaptureAsync(agent.Id, request, world.Operator, CancellationToken.None));
+            var label = request.Text is null ? "c262-g112" : string.IsNullOrWhiteSpace(request.Text) ? "c262-g113"
+                : request.Text.Length > 500 ? "c262-g114" : request.Text != "valid" ? "c262-g115"
+                : request.SourceNamespace?.Length == 65 ? "c262-g116" : request.SourceKey?.Length == 201 ? "c262-g117"
+                : request.SourceRef?.Length == 201 ? "c262-g118"
+                : request.SourceNamespace == "namespace-only" || request.SourceKey == "key-only" ? "c262-g199" : "c262-g198";
+            await Should.ThrowAsync<ValidationException>(() => world.Service.CaptureAsync(agent.Id, request, world.Operator, CancellationToken.None), label);
             (await world.Db.AgentPinnedInstructions.CountAsync()).ShouldBe(0);
             (await world.Db.AgentPinnedInstructionStates.CountAsync()).ShouldBe(0);
             world.Events.PublishedEvents.ShouldBeEmpty();
@@ -83,7 +89,11 @@ public sealed class AgentPinnedInstructionServiceTests
             result.Set.Pins.Last().Text.ShouldBe(valid[revision].Replace("\r\n", "\n"));
         }
         (await world.Db.AgentPinnedInstructions.CountAsync()).ShouldBe(4);
-        // Races, 19/20/21, replace/re-pin and two-owner source identity remain in the full inherited class.
+        // Reuse the real cloned-DB scenarios so method-scoped controls reach these guards too.
+        await V02_race_two_captures_one_wins_and_retry_cannot_exceed_20();
+        await V02_race_replace_and_revoke_never_duplicates_or_drops_both();
+        await V02_changed_text_requires_replace_and_delayed_replay_does_not_resurrect();
+        await V02_two_agents_may_share_a_source_key();
     }
 
     private sealed class TransactionCheckingReconciler(Func<AppDbContext> freshDb) : IAgentPinnedInstructionReconciler
@@ -94,7 +104,7 @@ public sealed class AgentPinnedInstructionServiceTests
             // Another connection sees the revision only after the mutation committed.
             await using var verify = freshDb();
             (await verify.AgentPinnedInstructionStates.SingleAsync(s => s.AgentId == agentId, ct))
-                .Revision.ShouldBe(revision);
+                .Revision.ShouldBe(revision, "c262-g156");
             Calls++;
         }
     }
@@ -370,7 +380,7 @@ public sealed class AgentPinnedInstructionServiceTests
         var t1 = left.CaptureAsync(agent.Id, new CapturePinnedInstructionRequest(Guid.NewGuid(), 19, "race-a"), world.Operator, CancellationToken.None);
         var t2 = right.CaptureAsync(agent.Id, new CapturePinnedInstructionRequest(Guid.NewGuid(), 19, "race-b"), world.Operator, CancellationToken.None);
         var results = await Task.WhenAll(Wrap(t1), Wrap(t2));
-        results.Count(r => r.Ok).ShouldBe(1);
+        results.Count(r => r.Ok).ShouldBe(1, "c262-g108");
         results.Count(r => r.Error is ConflictException { Code: AgentPinnedInstructionService.RevisionConflict }).ShouldBe(1);
 
         await using var verify = world.FreshDb();
@@ -386,7 +396,7 @@ public sealed class AgentPinnedInstructionServiceTests
                 new CapturePinnedInstructionRequest(Guid.NewGuid(), state.Revision, "twenty-first"),
                 world.Operator,
                 CancellationToken.None));
-        retry.StatusCode.ShouldBe(422);
+        retry.StatusCode.ShouldBe(422, "c262-g111");
         (await verify.AgentPinnedInstructions.CountAsync(p => p.AgentId == agent.Id && p.RevokedAt == null)).ShouldBe(20);
     }
 
@@ -448,7 +458,7 @@ public sealed class AgentPinnedInstructionServiceTests
                 new CapturePinnedInstructionRequest(Guid.NewGuid(), 1, "v2", "kb", "same"),
                 world.Operator,
                 CancellationToken.None));
-        conflict.Code.ShouldBe(AgentPinnedInstructionService.SourceConflict);
+        conflict.Code.ShouldBe(AgentPinnedInstructionService.SourceConflict, "c262-g110");
 
         var replaced = await world.Service.CaptureAsync(
             agent.Id,
