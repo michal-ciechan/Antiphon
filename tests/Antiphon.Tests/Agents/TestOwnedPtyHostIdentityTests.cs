@@ -180,7 +180,7 @@ public class TestOwnedPtyHostPolicyTests
         fixture.Manager.Retain(fixture.Record(12) with { Host = false, Attributed = false }, fixture.SessionId).ShouldBeFalse();
         fixture.Dead.Add(10);
         await fixture.Manager.CleanupAsync();
-        fixture.Killed.ShouldBe(new[] { 11 }, customMessage: "surviving-descendant-killed-and-awaited");
+        fixture.Killed.SequenceEqual(new[] { 11 }).ShouldBeTrue("surviving-descendant-killed-and-awaited");
         fixture.Waits.ShouldContain(x => x.Pid == 11 && fixture.Dead.Contains(x.Pid), "surviving-descendant-killed-and-awaited");
     }
 
@@ -226,7 +226,7 @@ public class TestOwnedPtyHostPolicyTests
         var error = await Should.ThrowAsync<AggregateException>(() => fixture.Manager.DisposeAsync(true, () => { },
             _ => Task.CompletedTask, () => { runtimeCalls++; return scenario == "runtime-dispose-throws" ? Task.FromException(fault) : Task.CompletedTask; }));
         runtimeCalls.ShouldBe(1, "runtime-dispose-attempted-once");
-        fixture.Released.ShouldBe(new[] { 10 }, customMessage: "all-observer-handles-released-once");
+        fixture.Released.SequenceEqual(new[] { 10 }).ShouldBeTrue("all-observer-handles-released-once");
         Contains(error, fault).ShouldBeTrue("original error retained");
     }
 
