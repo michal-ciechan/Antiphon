@@ -13,9 +13,27 @@ namespace Antiphon.Server.Application.Services;
 /// Inventories exact task attempts for a Done generation. Discovery never grants deletion
 /// authority and continues after every known endpoint completes, including after restart.
 /// </summary>
-public sealed class CardWorktreeCleanupService(AppDbContext db, TimeProvider clock)
+public sealed class CardWorktreeCleanupService(AppDbContext db, TimeProvider clock, CardWorktreeCleanupExecutor? executor = null)
 {
     internal Func<CancellationToken, Task>? BeforeInventorySaveAsync { get; set; }
+
+    public async Task<WorktreeRemoval> TryCleanupLocalAsync(Guid targetId, Guid? runId, CancellationToken ct)
+    {
+        if (executor is null) return new(false, false, false, "cleanup_executor_unavailable");
+        var target = await db.CardWorktreeCleanupTargets.Include(t => t.Endpoints).SingleAsync(t => t.Id == targetId, ct);
+        var endpoint = target.Endpoints.SingleOrDefault(e => e.EndpointIdentity == "local");
+        if (endpoint is null)
+        {
+            endpoint = new CardWorktreeCleanupEndpoint
+            {
+                Id = Guid.NewGuid(), TargetId = target.Id, EndpointIdentity = "local", RepositoryPath = target.RepositoryPath,
+                WorktreePath = target.WorktreePath, SourceFullRef = target.SourceFullRef, UpdatedAt = clock.GetUtcNow().UtcDateTime
+            };
+            target.Endpoints.Add(endpoint);
+            await db.SaveChangesAsync(ct);
+        }
+        return await executor.TryAsync(endpoint.Id, runId, ct);
+    }
 
     public async Task<IReadOnlyList<Guid>> DiscoverAsync(Guid cardId, CancellationToken ct)
     {
