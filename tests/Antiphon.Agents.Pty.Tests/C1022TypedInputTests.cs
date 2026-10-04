@@ -108,9 +108,13 @@ public class C1022TypedInputTests
         {
             using var json = JsonDocument.Parse(line);
             if (json.RootElement.GetProperty("type").GetString() != "user") continue;
-            found.Add(string.Concat(json.RootElement.GetProperty("message").GetProperty("content")
-                .EnumerateArray().Where(p => p.GetProperty("type").GetString() == "text")
-                .Select(p => p.GetProperty("text").GetString())));
+            var content = json.RootElement.GetProperty("message").GetProperty("content");
+            // FakeClaude writes a string; native Claude may write an array of content blocks.
+            found.Add(content.ValueKind == JsonValueKind.String
+                ? content.GetString()!
+                : string.Concat(content.EnumerateArray()
+                    .Where(p => p.GetProperty("type").GetString() == "text")
+                    .Select(p => p.GetProperty("text").GetString())));
         }
         return found;
     }
