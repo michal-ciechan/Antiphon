@@ -1026,7 +1026,7 @@ public sealed class RemoteScriptContractTests
         var selectors = entry == "harness" && mode == "absent"
             ? new string?[] { "host-saved", null, "retired-start", "cleared-offline-start", "host-race",
                 "host-absence", "host-recovery", "cleanup-failure", "all" }
-            : new string?[] { entry == "harness" ? "host-saved" : null };
+            : new string?[] { null };
         foreach (var only in selectors)
         foreach (var keep in new[] { false, true })
         foreach (var external in entry == "harness" ? new[] { false, true } : new[] { false })
