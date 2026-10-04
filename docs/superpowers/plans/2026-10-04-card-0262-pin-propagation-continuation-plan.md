@@ -386,6 +386,27 @@ Names must remain exact (escape Markdown OR pipes). Split oversized regression g
 methods/classes if measurement exceeds a foreground window; do not widen to the whole assembly.
 Rows sharing a build have identical After groups. Estimates include builds and are not measurements.
 
+**Budgeted S3a.2 split (Code f9183542, 2026-10-04).** Next in S3a order is the
+dormant Linux x64 publication/custody/fence primitive. CP-29 specifies six native
+publication methods, the complete three-method inspection class and the two adjacent
+phone-home admission methods (11 executions). Commit the executable failing tests
+before implementing the primitive, then rerun the same row. File intent lives in a
+runner-owned journal outside workspace discovery, keyed by canonical owner path;
+its monotonic fence survives reconstruction and cleanup. Exact operation replay must
+verify current disk bytes. Only journal-proven custody permits replacement/deletion;
+marker-shaped content never grants custody. Final comparisons preserve editor bytes,
+and cleanup removes only the file and an empty owner leaf. This is process-crash
+recovery with file/directory flushes, not ACL isolation from same-user edits.
+
+This part accepts non-Git workspaces only: any ancestor `.git` refuses publication
+until the native exclude/tracked-target implementation lands. No transport, capability,
+DI activation, server intent/CAS, legacy upgrade, import custody or Windows support is
+added. CP-3–6 and full V/R remain owed; CP-29 covers host portions of V-13–15/V-34,
+R-5/R-6 and the existing inspection portions of V-32 only. All PC-1–207 and native
+variants remain pending SourceLanding Mutation. Whole Unit and Windows remain
+explicitly deferred by this dispatch. Added ordinary estimated cost: 10 minutes per
+CP-29 run; red then green planned, no repeats after green.
+
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S2-core | `tests/Antiphon.Tests -> bin-c262-core/` | portable-snapshot-store | `/*/*/(AgentPinnedInstructionCompositionTests)\|(AgentPinnedInstructionServiceTests)\|(AgentPinnedInstructionEndpointTests)\|(InstructionBundleTests)/*` | A1 | all selected methods/data, 0 failed/skipped | 1 | 10 | false | n/a |
@@ -1122,6 +1143,7 @@ deferred by this task's explicit budget instruction, not passed.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-28 | S3a.1 | `tests/Antiphon.SessionRunner.Tests -> bin-c262-inspect/` | linux-native-inspection | `/*/*/(AgentPinWorkspaceStoreTests*)\|(PhoneHomeCommandDispatcherTests*)/(V*)\|(Unsupported_operation_or_launch_never_enters_runtime*)\|(Workspace_ops_are_admitted_only_under_allowed_cwd*)` | V-13, V-32, V-34, R-5, R-6 read-only portions | all 5 roster executions; 0 failed/skipped | 5 | 10 | true | `n/a` |
+| CP-29 | S3a.2 | `tests/Antiphon.SessionRunner.Tests -> bin-c262-publish/` | linux-native-publication | `/*/*/(AgentPinPublicationTests*)\|(AgentPinWorkspaceStoreTests*)\|(PhoneHomeCommandDispatcherTests*)/(V*)\|(Unsupported_operation_or_launch_never_enters_runtime*)\|(Workspace_ops_are_admitted_only_under_allowed_cwd*)` | V-13–15, V-32, V-34, R-5, R-6 host portions | all 11 roster executions; 0 failed/skipped | 11 | 10 | true | `n/a` |
 | CP-1 | S2-core | `tests/Antiphon.Tests -> bin-c262-core/` | portable-snapshot-store | `/*/*/(AgentPinnedInstructionCompositionTests*)\|(AgentPinnedInstructionServiceTests*)\|(AgentPinnedInstructionEndpointTests*)/*` | V-1–5, V-32, R-7, R-11 | all 32 roster executions; 0 failed/skipped | 32 | 10 | true | `n/a` |
 | CP-2 | S2-core | `CP-1` | portable-bundle-regression | `/*/*/InstructionBundleTests/*` | V-4, V-5, R-7 | all 71 roster executions; 0 failed/skipped | 71 | 4 | true | `n/a` |
 | CP-3 | S3a | `tests/Antiphon.Tests -> bin-c262-projection/` | portable-projection | `/*/*/(AgentPinWorkspaceTests*)\|(AgentPinLocationTests*)\|(AgentPinTransportTests*)/*` | V-6, V-7, V-13–17, V-32–34, R-1, R-2, R-5, R-6 | all 16 roster executions; 0 failed/skipped | 16 | 12 | true | `n/a` |
