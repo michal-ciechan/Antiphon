@@ -36,6 +36,7 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var host = await PhoneHomeTestHost.StartAsync();
+        host.Capacity = 2; // The existing warm session must not fill the runner's admission budget.
         await using var peer = await host.ConnectPeerAsync();
         var live = await host.WaitLiveAsync();
         host.Directory.MarkRecovered(live);
