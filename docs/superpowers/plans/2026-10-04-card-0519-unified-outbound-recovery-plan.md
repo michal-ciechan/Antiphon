@@ -433,3 +433,606 @@ Succeeded task; a running delegate cannot truthfully report its own plan already
 landed. Do not bypass that protocol with a direct master push or rewrite this
 fast-forward-only task branch. Implementation and migration generation start
 only after TestDesign has made the verification manifest executable.
+
+
+## Verification design
+
+TestDesign task `86fa9c01`, 2026-10-04, inspected landed plan/source
+`0e9ce38484148e38428da540d901b29f4a0796e5`. This appendix is the
+executable verification contract; the fix design above is unchanged. The earlier
+checkpoint allocation is superseded by the table here. New method names below are
+Code deliverables, not claims of existing tests or passing results. Code runs V/R;
+ordinary Review judges the diff and pending controls before land; SourceLanding
+Mutation runs the controls after land.
+
+### Inspection
+
+Paths below are under `tests/Antiphon.Tests/` unless qualified.
+“Bodies” identifies the inspected boundaries; source rosters are counts, not execution evidence.
+
+| Bodies read | Boundaries -> verification or exclusion |
+|---|---|
+| `Application/ChannelOutboundDispatchIntegrationTests.cs` dispatcher/converter body; `ChannelOutboundSendShapeTests.cs` complete eight-argument body; `ChannelOutboundGateTests.cs` admission/control bodies and `OutboundGateWorld` | Optional outbound registration, immediate-send assumptions, qualifying/nonqualifying shapes and control recursion -> V-3/V-4, R-1/R-5. |
+| `ChannelOutboundDeliveryTests.cs` staging-failure setup, admission barriers, MaxPending race and expired-lease takeover; `ChannelOutboundPolicyTests.cs` frozen-prompt and revocation/rebinding bodies; `ChannelOutboundDeadlineTests.cs` Held-resume body and `ChannelOutboundDeadlineMatrixTests.cs` complete Fixture | Commit/lease/order/converter boundaries -> V-2/V-3/V-7/V-9, R-5/R-6. Partial file names are not TUnit classes. |
+| `ChannelOutboundStorageTests.cs` partial/complete/rename/disk/access failure, frozen bytes and exact wire-budget bodies; `ChannelOutboundMigrationTests.cs` upgrade body; `ChannelOutboundContractTests.cs` both bodies | Filesystem versus DB transition, generated migration and existing schema constraints -> V-1/V-3, R-5/R-7. |
+| `ChannelOutboundRecoveryTests.cs` Held ordering, native Slack route restart, broker-accepted crash, definite-refusal and expired Publishing bodies; `tests/Antiphon.ChannelOutbound.Probe/Program.cs` admission/pump/dispatch modes, file evidence and commit interceptor | Fresh process, independent PostgreSQL/consumer observations, manual uncertainty and native handles -> V-7/V-11/V-12/V-13, R-8. File evidence is not an adapter receipt. |
+| `ChannelOutboundComposedTransportTests.cs` complete body; `AgentTaskReplyIntegrationTests.ChannelOutboundRuntime.cs` complete conversion settlement and Deferred bodies | Existing transport starts at Ready; runtime test holds real conversion observation and sees next UserPrompt -> V-4/V-13, R-1/R-9. |
+| `TestHelpers/BridgeQueueHarness.cs` complete DI, attach/preserve, receipt insertion, seeding and disposal; `TestHelpers/TestDbFixture.cs` complete body | Required production graph, restarts, real queue, isolated DB, clocks -> all new database tests. `IsolatedTestSchema` now creates a cloned database, not SearchPath isolation. |
+| `ChannelBridgeTests.cs` complete HarnessAsync/Harness; `ChannelReplyDurabilityTests.cs` fixture and runtime late-confirm success/failure bodies; `ChannelPromptCorrelationTests.cs` fixture/normalizer replay and joined-reply, common-head and pre-attempt bodies; `ChannelMachineTurnMatchTests.cs` complete body | Required service absent in old bridge graphs, full prompt receipt versus screen evidence, historical matcher reuse -> V-4/V-5/V-13, R-2/R-3. |
+| `ChannelMachineTurnTextTests.cs` incident/check/flattened-turn setup and machine/bundle/producer helpers; `ChannelFollowUpAttachmentTests.cs` incident/flattened/quoted-channel setup and complete machine/bundle/producer helpers; `ChannelBatchingTests.cs` complete body | All-member capture, tail/machine policy, implied bundles, absent catalog fixtures and generic-exception retry assumptions -> V-2/V-4/V-6/V-9, R-4/R-10. |
+| `DataRetentionServiceTests.cs` queue-retention body and CreateService/session/task/queue/transcript/cleanup helpers | Independent pruning and removal of unrelated protections -> V-10, R-11. |
+| `HerdrAlwaysOnChannelParityTests.cs` AlwaysOn_channel_bound_survives_child_death_and_replies, ConfirmHerdrDeliveryAsync, complete BuildHarness/Harness/cleanup/clock helpers | Two backend arguments; Linux skip; Herdr transcript inserted by fixture and PtyHost arm uses fake adapters -> R-12, explicitly limited evidence below. |
+| Server `ChannelOutboundService` and `ChannelOutboundDeliveryPump` full bodies; landed D-1..D-14 and transition/slice inventory; old e30eb42 test-design V/PC inventory; owner docs `project-context.md`, outbound `telegram.md`, session delivery and Herdr delivery/restart contracts; `testing-and-build.md` manifest/slot/mutation sections; checkpoint tool row-timeout/selection code | Shared ownership and every safety guard listed below. Operational rollout, untouched native transport internals and provider acknowledgement are excluded explicitly, not inferred from green application tests. |
+
+Missing setup to deliver in Code:
+
+- Add `TestHelpers/ChannelOutboundRecoveryFixture.cs` using the inspected
+  BridgeQueueHarness/OutboundGateWorld/Deadline Fixture patterns. Register the required
+  outbound service, concrete preparation/discovery/failure/pump services, file store,
+  settings and the real hosted loop exactly as production composes them. Every
+  context/interceptor/restarted provider receives the same isolated connection string.
+  Add explicit bounded drain helpers; never restore a legacy producer fallback.
+- Adapt all existing selected fixtures to capture -> pump -> outcome. Seed legitimate
+  catalog/binding/project context where older batching fixtures used a conversation
+  string alone. Missing-catalog tests must keep the catalog absent. Shared-store cleanup
+  removes test-owned source/converter references, children and roots before channels.
+  The new fixture owns its clone and all scratch directories.
+- Use a controllable outbound clock for due times/deadlines. Keep the queue confirmation
+  clock system/scaled, or advance all its timers deliberately; a frozen shared clock
+  must not hang its confirmation loop. Await observable cycle/barrier completion,
+  not arbitrary sleeps. No transaction remains held across file or producer I/O.
+- Extend the existing ChannelOutbound.Probe, not a new crash executable. Add capture,
+  preparation and hosted-discovery modes plus per-delivery barriers. Record child
+  PID/start identity, assembly MVID and source/build SHA. Parent independently reads
+  the committed DB and receiver evidence, kills only its owned child, awaits process
+  exit and drains both streams before restart. Each cut wait/restart is at most 30s,
+  cleanup at most 10s, each scenario at most 120s. Process tests retain
+  `ParallelLimiter<ProcessSpawnLimit>`.
+- Reuse Redpanda/FakeSlackServer/production Kafka producer/GatewayOutboundService and
+  SlackChannelAdapter from the composed test. Use one owned broker per test method,
+  distinct topics/groups per internal case, bounded 30s receive/start/stop waits and
+  a method deadline. Persist recipient observations to a parent-owned receipt file
+  before acknowledging the fake API; never use producer counters as the receipt.
+- Add fault injection only at attachment-reader I/O, EF commit/command interceptors,
+  existing per-instance barriers and producer I/O. Every fault must assert it fired.
+  Inject the specified statement/transaction, not all SaveChanges. Keep all production
+  policy in concrete services. A transport-shaped fake exception does not establish
+  broker behavior; V-13 supplies the real refusal.
+- Each new unique class/method in the PC table is a required test. All are one
+  unparameterized TUnit execution except the seven X methods, each with explicit
+  main/trailing/machine arguments (three executions). Internal matrices below are
+  mandatory assertions, not additional Min executions. W adds the three methods
+  specified in V-13: three path arguments for Queue_to_adapter; one result each for
+  Size_refusal and Converter_handoff. No dynamic/unbounded data sources.
+- No native program, live messaging broker or production runner is used by portable
+  tests. R-12 runs with `-Platform Windows`, no host pin; portable dispatch omits
+  both Platform and Runner. Preserve its Linux skip but never count it as execution.
+
+### Delivery inventory
+
+Durable join K is delivery ID + SourceSessionId + owning PromptSequence + captured
+provider/conversation/native reply handle + all queue/task member IDs; a tail adds
+RootDeliveryId and its reserved interval. Before capture, source queue IDs and the
+complete owning transcript identify K's future obligation. Include K in receipt
+metadata or a fixture-only unique payload sentinel and hash-to-ID ledger; do not
+change public message wire contracts merely for testing.
+
+| Producer -> destination | Persistence boundary / recovery | Recipient evidence joined to K |
+|---|---|---|
+| ChannelBridge/real SessionMessageQueueService -> source agent | Inbound and queue commit before submit; busy WhenIdle waits; eligible recipient submits now; failed queue insert retains durable inbound for its real recovery path | V-13 Queue_to_adapter: complete matching UserPrompt, same session/generation and after original attempt floor, exact full body including middle/tail; then answer goes through dispatcher, capture, pump, real Kafka, gateway and fake Slack. Queue/Sent/input call alone fails the oracle. |
+| Main answer -> channel adapter | Source remains open before capture; Captured owns preparation; materialized payload owns publish; committed attempt owns uncertainty | V-11/V-12 kill at every handoff; V-13 receives full text/kind/route/attachment hashes at fake Slack, for both already-running and delayed gateway. |
+| Trailing fragment -> original adapter route | Root reservation + cursor + child insertion one commit; startup/timer rediscovers open roots and committed children | Same matrix, baseline initial reply separately counted. Receipt contains only reserved fragment; initial reply/source settlement unchanged, newer prompt excluded. |
+| Eligible Delegation/Check/System/Scheduled answer -> captured adapter route | Original injection and prior channel context; all machine member IDs captured before preparation | Same matrix; K includes source task IDs and inbound native handle. No later chat can authorize pre-chat history. |
+| Captured qualifying reply -> conversion worker -> Ready -> adapter | Materialization and frozen policy; conversion task linked by OutboundDeliveryId; dispatch/launch and worker result are separate committed handoffs | V-13 Converter_handoff uses actual task service/dispatcher/launch queue with a fake protocol adapter and real session queue where input is delivered. Require complete worker UserPrompt containing the frozen goal/request identity, linked worker result, then final fake Slack receipt. Creation, task status and launch ack alone are insufficient. |
+| Accepted delivery -> catalog/bundle projections | Published + all source settlements commit first; MetadataAppliedAt marks later idempotent repair | V-9 reloads accepted state and repaired projections independently; V-13 receiver saw original envelope. Projection completion is not a second delivery receipt. |
+| Terminal/uncertain obligation -> durable incident + Alert; optional originating-chat notice | State/source outcome + incident + alert + episode stamp one transaction, with nullable owner; only recording repair can continue at spent budget | V-8 independent DB queries establish durable attention data. V-13 transport companion receives enabled control notice via gateway; disabled/refused notices are best effort and do not promise receipt. No session notification is introduced. |
+
+Required handoff matrix (each applies to main/tail/machine unless stated):
+
+| Cut/failure | Persisted fact and recovery verdict | Evidence |
+|---|---|---|
+| Upstream queue insert fails; queue committed before submit; submit before confirm save | Inbound/queue remains durable; real inbound/queue recovery runs. Never seed a Sent row to stand for this leg. After partial receipt only, obligation stays unconfirmed. | W.Queue_to_adapter runs idle/busy cases, exact complete UserPrompt and one eventual adapter receipt. Reuse the inbound recovery service, do not expand its contract. |
+| Before capture commit; capture commit before signal | Before commit: no delivery visible, open source survives. After commit: one Captured owner. Fresh hosted discovery, no OnTurnEnd call or manual re-admission. | X.Before_capture / X.Captured, independent store and adapter receipt. |
+| Attachment/prompt read; partial stage; complete stage before DB transition | Retry retained descriptors within prep age/cap; complete validated directory adopted; partial/mismatched data never sendable. | C/M plus X.Partial_stage / X.Complete_stage; reader and stage refusal subcases. |
+| Converter task creation commit; dispatch/launch enqueue; completed output before Ready commit | Same OutboundDeliveryId/task identity recovered, not a second conversion. Failed launch enqueue remains recoverable through real dispatch recovery; complete matching worker UserPrompt required. | W.Converter_handoff, with busy/eligible adapter and owned child death at task-committed/dispatch-committed/result-committed barriers; final adapter receipt. |
+| Publishing commit; attempt commit; producer entry | Expired Publishing => Uncertain even when test knows no acceptance. No automatic replay, no source settlement, visible loss episode. | X.Attempt_death, B attempt/fence/uncertainty controls. Acknowledged retry then receives the original payload. |
+| Definite queue refusal; refusal-state save fails | Persist due Ready only on known queue refusal; failed save leaves conservative Publishing/Uncertain. Budget never resets. | B retry matrix and W.Queue_to_adapter real transport after scripted definite refusal. |
+| Broker accepts before return/outcome; outcome commit fails | Consumer/adapter may already have one receipt. Uncertain, zero automatic additional sends. Only explicit duplicate acknowledgement allows another identical attempt. | X.Accepted_death covers both acceptance and outcome-commit-refusal cuts with real broker consumption and adapter receipt. |
+| Published commit; projection commit/notice fails | No resend. Repair metadata/attention without re-entering agent publication. | X.Published_death, P/F, W receipt count remains unchanged. |
+
+Substitutes: the fake protocol adapter writes a complete UserPrompt through the
+fixture's transcript path; that proves server queue/correlation behavior, not real
+Claude/Grok/Codex input. FakeSlackServer proves the real gateway and adapter issued
+the complete API request and uploads, not native Slack receipt or human reading.
+The probe file producer proves deterministic I/O entry/acceptance only; it is
+insufficient alone for V-11/V-12 final delivery, which must also observe the real
+broker/gateway recipient. R-12's Herdr receipt is synthesized by
+ConfirmHerdrDeliveryAsync and its PtyHost arm uses fake adapters; Windows execution
+qualifies those backend integration paths, not an additional native typing claim.
+No assertion of exactly-once delivery crosses broker acceptance/outcome commit.
+
+### Proves it works now
+
+Aliases expand to exact class names below, all under Application. `C519_`
+is part of every new method name. The unique methods in the positive-control
+table are the exact per-class rosters; their red assertions also define required
+ordinary assertions. Passing names/counts without those bodies do not qualify.
+
+| Alias | Exact class |
+|---|---|
+| S | `ChannelOutboundDurabilitySchemaTests` |
+| C | `ChannelOutboundCaptureTests` |
+| M | `ChannelOutboundMaterializationTests` |
+| U | `ChannelOutboundUnifiedPathTests` |
+| D | `ChannelOutboundDiscoveryTests` |
+| T | `ChannelOutboundTrailingRecoveryTests` |
+| B | `ChannelOutboundRetryPolicyTests` |
+| F | `ChannelOutboundFailureRecordingTests` |
+| P | `ChannelOutboundMetadataRepairTests` |
+| L | `ChannelOutboundRetentionTests` |
+| X | `ChannelOutboundUnifiedCrashTests` |
+| W | `ChannelOutboundUnifiedTransportTests` |
+
+| ID | Layer / exact test selection | Required behavior and decisive expected result |
+|---|---|---|
+| V-1 | Schema/migration; `ChannelOutboundDurabilitySchemaTests`, roster below | fresh empty migration and actual predecessor upgrade; all eight legacy states, settled/unsettled sources, nullable fields, enum ordinals, unique constraints with different SourceKeys, restrictive root FK. No old migration edited. |
+| V-2 | PostgreSQL capture/race; `ChannelOutboundCaptureTests`, roster below | main/tail/machine; reader, prompt-read, capture-commit and stage failures; three-member batch and overlapping batches; independent readers at barriers; loser returns existing owner without re-preparation. |
+| V-3 | PostgreSQL/files/conversion; `ChannelOutboundMaterializationTests`, roster below | capture versions invalid/valid; partial/full/wrong-identity/tampered snapshots; source mutation/removal after staging; preparation attempts 0/1/2/3; TTL minus-one/equality/after; profile edited/revoked; MaxPending and converter/global seats raced using independent contexts. |
+| V-4 | Dispatcher/runtime; `ChannelOutboundUnifiedPathTests`, roster below | all three paths with no profile, MarkdownSources and EveryAgentReply; main/tail NO_REPLY versus surrounding prose; machine origins default/custom plus explicit/implied attachments; API stub anywhere in window; A accepted/B fails; nullable/missing catalog; Deferred does not block next complete queue receipt. |
+| V-5 | Real hosted discovery/clock; `ChannelOutboundDiscoveryTests`, roster below | old answer behind newer turns; startup with timer held, timer after empty startup; each mismatch alone plus valid companion; prior/absent/later channel context; open/next-prompt/terminal-incomplete/terminal-complete machine closure; >320 withheld sources and >32 idle roots; due-send and metadata-repair work each make progress; TTL race and original-age answer preferred. |
+| V-6 | PostgreSQL trailing ownership; `ChannelOutboundTrailingRecoveryTests`, roster below | reserve failed interval, append additional text before recapture so overlapping intervals have different keys; recreate providers, then newer prompt in same batch; concurrent callers; suppressed main followed by valid tail; suppression advances cursor without PublishedAt. |
+| V-7 | Pump/service/clock; `ChannelOutboundRetryPolicyTests`, roster below | attempt commit, claims, pre-entry and outcome fences; cancellation before/after entry/after acceptance; held producer completion; timeout with host live; queue refusal versus generic failures/size; persisted due/cap; explicit retry and all original-binding holds; CreatedAt ties resolved by Id. |
+| V-8 | EF transaction/fault/attention; `ChannelOutboundFailureRecordingTests`, roster below | incident insert and alert insert faults separately for Failed/Uncertain/TTL/unroutable/terminal-provider routes; captured/current/deleted/no owner; notice disabled/refused; prune incident history and restart; spent budget forbids more I/O while recording repairs. |
+| V-9 | Acceptance/projection; `ChannelOutboundMetadataRepairTests`, roster below | acceptance/member-save fault; catalog/filesystem/bundle-save faults independently; multiple main/machine members and implied tasks; complete/missing/hash-mismatched/over-cap/partial-zip actual attachments; delete current files after acceptance; old repair after newer published preview. |
+| V-10 | Real DataRetentionService passes; `ChannelOutboundRetentionTests`, roster below | remove all incidental persistent-agent/task/inbound protections; stale sessions/transcripts/queue/task trees and files across Captured/Pending/Converting/Ready/Publishing/Held/Uncertain/Failed, incomplete repair and open roots; closed ineligible/fully examined companions prune; transcript-lock race. |
+| V-11 | Owned process death before publish; `ChannelOutboundUnifiedCrashTests`, roster below | Before_capture_death_is_discovered, Captured_death_needs_no_wake_signal, Partial_stage_death_retries_preparation, Complete_stage_death_preserves_snapshot; each main/tail/machine. Fresh process starts real hosted recovery; exact original adapter receipt. |
+| V-12 | Owned process death during/after publish; `ChannelOutboundUnifiedCrashTests`, roster below | Attempt_death_stays_uncertain (Publishing, attempt and producer-entry cuts), Accepted_death_stays_uncertain (acceptance and outcome-commit-failure cuts), Published_death_never_replays; each main/tail/machine. Receiver count 0 or 1 before manual retry, never automatic duplicate. |
+| V-13 | Real queue -> broker -> recipient; `ChannelOutboundUnifiedTransportTests`, roster below | C519_Queue_to_adapter has explicit main/tail/machine arguments, each looping idle/busy recipient x gateway already eligible/late, with named upstream/capture/definite-refusal handoff faults above. C519_Size_refusal uses broker max.message.bytes below serialized envelope, actual MsgSizeTooLarge, Failed+loss, no automatic retry; distinct valid companion reaches fake Slack. C519_Converter_handoff exercises task/create/dispatch/result crash and enqueue refusal recovery, worker full UserPrompt and resulting converted adapter receipt. Counts: 3+1+1=5. |
+
+The matrices are mandatory within the named tests, even when implemented as internal
+loops. Isolate every negative from masking guards: different SourceKeys for root/start
+constraint tests; same-project rebind for owner tests; unchanged owner moved to a
+different project for project tests; valid matching body but wrong session/floor for
+matcher tests; all other binding/profile/lease predicates valid when mutating one.
+One valid sibling confirms the path was exercised in every refusal/policy test.
+Cancellation before durable attempt need not be uncertain; any ambiguity after
+committed Publishing must remain manual. Generic fake exceptions in older tests
+must change their expectations to Uncertain/explicit retry, never automatic replay.
+
+### Guards the regression
+
+| ID | Existing selected tests | Decisive retained assertion / required adaptation |
+|---|---|---|
+| R-1 | ChannelOutboundDispatchIntegrationTests (1); AgentTaskReplyIntegrationTests.Deferred_is_durable_and_releases_runtime (1) | Qualifying conversion/source bytes/native handle survive. Nonqualifying reply also has capture and explicit pump drain. Held conversion leaves settlement/LastReplyAt null; next prompt has one complete UserPrompt. |
+| R-2 | ChannelBridgeTests (40); ChannelReplyDurabilityTests (25) | Routing/late-confirm/attachment/TTL/API-withhold/terminal-provider behavior remains observable after pump. Inspect stored delivery outcome, not old immediate return. Incident/alert assertions strengthen to atomic outcome. |
+| R-3 | ChannelPromptCorrelationTests (24), ChannelPromptCorrelationUnitTests (8), ChannelMachineTurnMatchTests (10) | Complete joined prompt and batch/spill membership; wrong marker/tail/session/floor/next turn cannot own answer; channel receipt cannot be borrowed by quoted machine output. |
+| R-4 | ChannelMachineTurnTextTests (19), ChannelFollowUpAttachmentTests (26) | All allowed origins, NO_REPLY, flattened headers, marker/implied attachments and actual bundle completeness preserved. Generic failure remains uncertain until acknowledged. |
+| R-5 | ChannelOutboundDeliveryTests (38 across five partial files); ChannelOutboundPolicyTests (29); ChannelOutboundContractTests (2) | Existing capture/lease/publication/shape/gate/conversion/binding/source guards remain; rewrite direct-route and “no delivery for passthrough” assertions for universal admission. Control notices remain outside agent capture. |
+| R-6 | ChannelOutboundDeadlineTests (13 across two partial files) | Original conversion deadline, held resume, final create/dispatch checks, converter/global capacity and fallback original bytes unchanged. |
+| R-7 | ChannelOutboundStorageTests (28) | Atomic staging, byte/hash integrity, wire size, manifest/zip/path/link validation and frozen routing retained. V-3 adds capture-aware adoption rather than treating directory presence as success. |
+| R-8 | ChannelOutboundRecoveryTests: Expired_publishing_lease_is_uncertain_until_explicit_retry; Held_head_blocks_later_reply_until_original_binding_is_repaired_and_resumed; Restart_preserves_two_inbound_slack_routes_behind_an_uncertain_head; Broker_ack_before_process_death_remains_uncertain_without_replay (4) | No send from Uncertain without acknowledgement; Held order; native inbound Slack handles after restart; independent consumer observed accepted message and no automatic replay. |
+| R-9 | ChannelOutboundComposedTransportTests.Sealed_four_source_pdf_crosses_pump_broker_gateway_and_fake_slack (1) | Fake Slack receives original four source byte arrays and PDF on exact native thread; one publication attempt. This Ready-seeded test supplements V-13, not a substitute for it. |
+| R-10 | ChannelBatchingTests (10) | Same-chat members share real queue delivery and one answer; mixed origin/chat boundaries; intentional silence and batching kill switch. Add bound catalog to positive reply fixtures. |
+| R-11 | DataRetentionServiceTests.Queue_keeps_Pending_and_unsettled_channel_rows_and_deletes_settled_old_ones (1) | Pending/owed/unpurged-inbound retention still works; old classified non-obligations remain prunable. |
+| R-12 | HerdrAlwaysOnChannelParityTests.AlwaysOn_channel_bound_survives_child_death_and_replies (2 backend arguments, Windows only) | Restart/adoption/death recovery, complete matching source UserPrompt, required outbound capture/pump and expected channel reply. Deadline 15 minutes for row including build; 0 skips. No whole parity-class/Linux attempt. |
+
+Reference reconciliation: old V-1/2/4/13 -> V-2/3/7/8/11/12; old V-3/12 ->
+V-5; old V-5/6/16 -> V-1/2/7/4; old V-7 -> V-8/9/12; old V-8/9 -> V-3/6/13;
+old V-10 -> V-8; old V-11 -> V-1/5; old V-14 -> V-4; old V-15/20 -> V-13;
+old V-17/18 -> V-11/12; old V-19 -> V-10; old V-21 -> V-4/R-1/R-2;
+old V-22 -> V-7. Old PC-1..52 behaviors are accounted for by those replacements.
+Their separate publication/membership schema, automatic Unknown retry, send despite
+rebind, Held-as-exhaustion and publication-time-ranked tail scan are superseded by
+D-1/4/6/7/8/13. No old branch code, 71/18/3/99/40 results or Linux hang qualifies here.
+
+
+### Guard inventory
+
+Every row names one independently bypassable safety behavior and its distinct PC.
+The destination lock plus root version are redundant enforcement of the single
+reservation invariant in G-99; that control removes both, so one surviving fence
+cannot mask the defect. Existing native transport internals are not changed by this
+card and are not claimed as newly qualified guards. Shared production helpers must
+serve all main/tail/machine callers; if Code creates separate guards, split and
+budget their PCs before Review.
+
+| Guard | Plan reference + safety-critical invariant | Positive control |
+|---|---|---|
+| G-1 | D-2/D-11: Persisted enum ordinals and legacy states survive upgrade. | PC-1 |
+| G-2 | D-4: One root per session/prompt/destination, independent of current interval end. | PC-2 |
+| G-3 | D-4: One reservation per root/start. | PC-3 |
+| G-4 | D-12: A retained child prevents root deletion. | PC-4 |
+| G-5 | D-10: Historical Published rows do not become fresh metadata repair work. | PC-5 |
+| G-6 | D-2: Commit capture before attachment/prompt/staging I/O. | PC-6 |
+| G-7 | D-2: Capture commit failure cannot enter preparation. | PC-7 |
+| G-8 | D-4: Capture claims every batch member atomically. | PC-8 |
+| G-9 | D-4: Conditional source assignment never overwrites an existing owner. | PC-9 |
+| G-10 | D-4: A growing main response does not remint its root. | PC-10 |
+| G-11 | D-4: Delivery insertion and root cursor advancement share a transaction. | PC-11 |
+| G-12 | D-2: Malformed/unsupported capture cannot become sendable. | PC-12 |
+| G-13 | D-3: Adopt staged data only for the same delivery and capture hash. | PC-13 |
+| G-14 | D-3: Every retained staged file must validate. | PC-14 |
+| G-15 | D-3: Validated staged bytes are immutable after a crash. | PC-15 |
+| G-16 | D-3/D-8: Materialized prompt revision and profile parameters stay frozen. | PC-16 |
+| G-17 | D-7: Preparation cap persists independently of publication count. | PC-17 |
+| G-18 | D-7: Preparation age is measured from original obligation. | PC-18 |
+| G-19 | D-1: Main, tail and machine have no direct/optional-service escape. | PC-19 |
+| G-20 | D-8/D-9: Missing catalog never authorizes an unchecked send. | PC-20 |
+| G-21 | D-11: Whole main NO_REPLY deliberately suppresses without publication. | PC-21 |
+| G-22 | D-11: Machine NO_REPLY does not publish or settle. | PC-22 |
+| G-23 | D-11: MachineTurnTextOrigins gates plain text independently of attachments. | PC-23 |
+| G-24 | D-11: Any API stub withholds its complete answer window. | PC-24 |
+| G-25 | D-5/D-13: Hosted startup performs discovery and recovery. | PC-25 |
+| G-26 | D-5/D-13: Periodic discovery works after an empty startup. | PC-26 |
+| G-27 | D-5: Historical discovery uses complete marker/body matcher. | PC-27 |
+| G-28 | D-5: Historical evidence must belong to source session. | PC-28 |
+| G-29 | D-5: Sequence and native-time attempt floors exclude old receipts. | PC-29 |
+| G-30 | D-5: Next UserPrompt or submitted QueuedUserPrompt caps historical answer. | PC-30 |
+| G-31 | D-5: Later chat cannot authorize pre-chat machine history. | PC-31 |
+| G-32 | D-11: Settled direct history never gets invented receipts/roots. | PC-32 |
+| G-33 | D-12: Ineligible machine closure cannot discard late text. | PC-33 |
+| G-34 | D-13: Source scans obey page size and maximum pages. | PC-34 |
+| G-35 | D-13: Withheld rows and idle roots cannot starve later work. | PC-35 |
+| G-36 | D-7/D-9: TTL cannot settle a source before its historical answer is examined. | PC-36 |
+| G-37 | D-4/D-9: TTL classification rechecks source ownership under the capture lock. | PC-37 |
+| G-38 | D-4: Reserve from durable last-reserved cursor, not last-published end. | PC-38 |
+| G-39 | D-4/D-5: Restart enumerates roots and reserved tails without in-memory cache. | PC-39 |
+| G-40 | D-4/D-5: New prompt caps old tail but never discards a reserved fragment. | PC-40 |
+| G-41 | D-4/D-11: Suppressed tail advances durable cursor with honest outcome. | PC-41 |
+| G-42 | D-6: Publishing and lifetime attempt commit before producer entry. | PC-42 |
+| G-43 | D-4: An unexpired lease excludes competing owners. | PC-43 |
+| G-44 | D-6: Final producer entry requires current owner/version/unexpired lease. | PC-44 |
+| G-45 | D-10: Outcome commit is fenced against stale owner/version. | PC-45 |
+| G-46 | D-6/D-10: Producer Task completion precedes accepted outcome. | PC-46 |
+| G-47 | D-6: Cancellation/unknown fault after entry remains uncertain. | PC-47 |
+| G-48 | D-13: Send timeout completes while host remains uncanceled. | PC-48 |
+| G-49 | D-6: Unknown and expired Publishing require explicit authorization. | PC-49 |
+| G-50 | D-6: Explicit uncertain retry requires acknowledgement. | PC-50 |
+| G-51 | D-6/D-7: Acknowledged retry starts a new bounded authorization without resetting lifetime count. | PC-51 |
+| G-52 | D-7: Only documented non-acceptance permits automatic retry. | PC-52 |
+| G-53 | D-7: Unchanged over-cap payload is Failed, not uncertain/retryable. | PC-53 |
+| G-54 | D-7: No automatic send before persisted due time. | PC-54 |
+| G-55 | D-7/D-9: Three attempts per authorization; loss-save failure does not grant a fourth. | PC-55 |
+| G-56 | D-8: Disabled binding cannot publish. | PC-56 |
+| G-57 | D-8: Rebound/unbound agent cannot publish. | PC-57 |
+| G-58 | D-8: Changed project cannot publish. | PC-58 |
+| G-59 | D-8: Revocation immediately before converter creation sends original via policy. | PC-59 |
+| G-60 | D-8: Revocation immediately before publication excludes converted output. | PC-60 |
+| G-61 | D-8: Captured/Held/Uncertain heads block later passthrough in CreatedAt/Id order. | PC-61 |
+| G-62 | D-8: Resume revalidates binding and selects Captured/Pending/Ready correctly. | PC-62 |
+| G-63 | D-8: MaxPending remains a hard per-destination conversion limit. | PC-63 |
+| G-64 | D-8: One active conversion per converter. | PC-64 |
+| G-65 | D-8: Two global conversion seats. | PC-65 |
+| G-66 | D-8: Original conversion deadline still governs final creation and late output. | PC-66 |
+| G-67 | D-9: Failed/Uncertain/TTL/unroutable/provider outcome cannot outlive missing incident. | PC-67 |
+| G-68 | D-9: Alert persistence shares the loss transaction. | PC-68 |
+| G-69 | D-9: Critical ChannelReplyLost names durable source, target, stage and attempt. | PC-69 |
+| G-70 | D-9/D-12: Failure dedupe survives incident retention. | PC-70 |
+| G-71 | D-9: Captured owner used when available, nullable when deleted/unowned. | PC-71 |
+| G-72 | D-9: Best-effort notice occurs after loss commit and never recursively admits itself. | PC-72 |
+| G-73 | D-6/D-9: Unknown wording acknowledges possible acceptance. | PC-73 |
+| G-74 | D-10: Acceptance and every main/machine member settle atomically. | PC-74 |
+| G-75 | D-10: Projection faults cannot resend or erase accepted state. | PC-75 |
+| G-76 | D-10: Older repair cannot overwrite newer accepted preview. | PC-76 |
+| G-77 | D-10: Only complete actual accepted attachments authorize bundle stamp. | PC-77 |
+| G-78 | D-10: All eligible implied bundles get their accepted stamp. | PC-78 |
+| G-79 | D-12: Unresolved/discoverable session cannot cascade away. | PC-79 |
+| G-80 | D-12: Transcript evidence retained through mutation-lock recheck. | PC-80 |
+| G-81 | D-12: Independent queue prune keeps eligible machine and Channel sources. | PC-81 |
+| G-82 | D-12: Task tree/bundle evidence retained while preparation/discovery/repair needs it. | PC-82 |
+| G-83 | D-12: Captured/active/Held/Uncertain/Failed and incomplete repairs preserve journal/files. | PC-83 |
+| G-84 | D-12: Root windows close only after complete next-prompt/terminal evidence; closed history prunes. | PC-84 |
+| G-85 | D-13: Worker/retry limits validated before worker starts. | PC-85 |
+| G-86 | D-13: Timeout strictly below lease. | PC-86 |
+| G-87 | D-8/D-10: A's committed acceptance survives B's refusal/unroutable failure. | PC-87 |
+| G-88 | D-1/D-10: Deferred is durable ownership, not Published or a runtime wait. | PC-88 |
+| G-89 | D-6/D-10: A committed Published outcome is final across process death. | PC-89 |
+| G-90 | D-2/D-5: Pre-capture process death recovers original source without re-admission. | PC-90 |
+| G-91 | D-2/D-13: Committed Captured row recovers without notification. | PC-91 |
+| G-92 | D-3: Partial staging is not successful preparation. | PC-92 |
+| G-93 | D-3: Complete staging before DB transition adopts frozen bytes. | PC-93 |
+| G-94 | D-6: Publishing/attempt-commit death is uncertain even with no observed entry. | PC-94 |
+| G-95 | D-6/D-10: Accepted-before-outcome crash never automatically duplicates. | PC-95 |
+| G-96 | D-8: A committed converter task survives dispatch/launch enqueue failure without a second task. | PC-96 |
+| G-97 | D-13: Discovery cannot monopolize due-send or metadata-repair capacity. | PC-97 |
+| G-98 | D-13: Each query is bounded independently of maximum page count. | PC-98 |
+| G-99 | D-4: Destination lock and root version jointly prevent competing reservations. | PC-99 |
+| G-100 | D-9: An explicitly authorized retry may report one new failure episode. | PC-100 |
+
+### Positive controls
+
+Each row means **break G-n by the compiling production defect shown; expect the
+exact method red at the specified assertion**. Prefix aliases expand through the
+class table above. Run only `/*/*/ClassName/ExactTestMethod`;
+parameterized X and W.Queue_to_adapter use that method's complete three-result
+selection, never a whole class. If TUnit needs its documented argument-name suffix,
+append `*` to the exact method name only, retain all three expected argument results,
+and record the resolved filter. No test/fixture/assertion mutations.
+
+Mutation runs baseline green, break/red, exact restore/fresh build/green. Compiler
+errors, timeout, missing fixture, zero results or failure at a different assertion
+are invalid controls, never red evidence. All PCs are executable specifications:
+defect site, method, state setup and decisive assertion are supplied; the methods
+and supporting seams are Code deliverables. Review checks this inventory before
+land; execution is explicitly pending until the landed SourceLanding snapshot.
+
+| PC | Compiling defect | Exact detecting method | Intended assertion red |
+|---|---|---|---|
+| PC-1 | insert Captured before Pending in the enum. | S.`C519_Upgrade_preserves_ordinals_and_history` | old numeric states equal their pre-upgrade meanings. |
+| PC-2 | remove only root uniqueness from the model and regenerated migration. | S.`C519_Database_rejects_duplicate_roots` | second root insert fails at the root unique constraint; distinct target succeeds. |
+| PC-3 | remove only trailing-start uniqueness from model and regenerated migration. | S.`C519_Database_rejects_duplicate_tail_starts` | duplicate start with a different end fails at the trailing unique constraint. |
+| PC-4 | change only the root FK from Restrict to Cascade in model and regenerated migration. | S.`C519_Database_preserves_root_references` | direct root delete fails and child still exists. |
+| PC-5 | leave MetadataAppliedAt null for historical Published rows in the new migration. | S.`C519_Upgrade_preserves_ordinals_and_history` | old preview and delivered stamps remain byte-for-byte unchanged after recovery. |
+| PC-6 | invoke attachment reader before capture commit. | C.`C519_Capture_precedes_all_preparation` | first reader callback independently sees Captured plus every source link. |
+| PC-7 | continue to preparation after a failed capture commit. | C.`C519_Capture_precedes_all_preparation` | capture-commit fault yields zero reader/stage calls and open sources. |
+| PC-8 | link only the first member. | C.`C519_Batch_members_share_one_owner` | all three member IDs reload with the same delivery ID. |
+| PC-9 | assign ChannelOutboundDeliveryId unconditionally. | C.`C519_Existing_source_owner_is_not_replaced` | racing overlapping batches preserve the original member owner; loser has no orphan root. |
+| PC-10 | dedupe roots by the full start/end SourceKey alone. | C.`C519_Growing_main_window_reuses_its_root` | two captures with different end sequences yield exactly one root. |
+| PC-11 | commit cursor advancement separately before inserting child. | C.`C519_Reservation_and_cursor_commit_together` | insertion failure leaves cursor at original value and later recovery receives the fragment. |
+| PC-12 | treat an unsupported version as an empty valid capture. | M.`C519_Malformed_capture_is_visible_failure` | invalid JSON/version/oversize DTO produces Failed plus loss evidence and zero sends. |
+| PC-13 | omit capture-identity comparison during adoption. | M.`C519_Complete_stage_requires_matching_capture` | another delivery or capture's complete directory is rejected, never published. |
+| PC-14 | skip retained attachment hash validation during adoption. | M.`C519_Complete_stage_requires_valid_file_hashes` | one tampered retained file yields no send; unchanged companion adopts. |
+| PC-15 | restage a complete directory from current source paths. | M.`C519_Complete_stage_is_adopted_without_reopening_sources` | recovered envelope contains original bytes after original files change/disappear. |
+| PC-16 | reload same-name prompt text/settings when preparing an already materialized delivery. | M.`C519_Frozen_prompt_and_policy_survive_restart` | worker goal/hash/deadline use original revision while a new capture uses edited revision. |
+| PC-17 | reset PreparationAttempts on reconstructing the pump. | M.`C519_Preparation_budget_survives_restart` | three failed preparations, zero fourth I/O call, Failed and one loss episode. |
+| PC-18 | refresh PreparationDeadlineAt on each retry. | M.`C519_Preparation_deadline_uses_original_obligation` | at original TTL equality preparation stops and loss persists. |
+| PC-19 | restore passthrough PublishDirectAsync for nonqualifying agent replies. | U.`C519_Every_agent_shape_is_captured` | for each shape producer entry sees committed delivery; pre-pump sent count is zero. |
+| PC-20 | send directly when channel lookup returns null. | U.`C519_Missing_catalog_records_loss` | zero producer calls and atomic unroutable incident/alert with original source identity. |
+| PC-21 | admit exact NO_REPLY as Ready. | U.`C519_Main_silence_keeps_a_suppressed_root` | zero sends; Suppressed root, settled sources, PublishedAt null; prose companion sends. |
+| PC-22 | settle machine sources when response is exact NO_REPLY. | U.`C519_Machine_silence_leaves_source_unsettled` | machine settlement and delivery link remain null before definitive discovery closure. |
+| PC-23 | allow default System plain text. | U.`C519_Machine_origins_and_attachments_keep_policy` | System text produces zero replies; explicit attachment and configured System companions succeed. |
+| PC-24 | filter error rows out and send remaining prose. | U.`C519_Api_error_withholds_the_whole_window` | main/tail/machine mixed window yields zero agent replies and no Published timestamp. |
+| PC-25 | remove startup discovery call while retaining timer loop. | D.`C519_Startup_recovers_without_signal` | with timer held, old completed answer reaches receiver. |
+| PC-26 | omit discovery from timed cycles. | D.`C519_Timer_recovers_without_signal` | source inserted after startup reaches receiver on observed scheduled cycle. |
+| PC-27 | replace full matcher with first-120-character containment. | D.`C519_Historical_match_requires_complete_prompt` | same-head/different-tail and wrong-marker cases never borrow the answer; joined valid receipt succeeds. |
+| PC-28 | drop session restriction from discovery prompt lookup. | D.`C519_Historical_match_requires_source_session` | identical receipt in another session produces no capture. |
+| PC-29 | ignore attempt floors in discovery's matcher call. | D.`C519_Historical_match_obeys_attempt_floors` | at/below sequence floor or native time before attempt produces no capture; above-floor companion does. |
+| PC-30 | remove next-prompt upper bound. | D.`C519_Historical_answer_stops_at_next_prompt` | later answer text is absent from the old delivery. |
+| PC-31 | resolve machine destination from newest current channel context. | D.`C519_Machine_context_must_predate_injection` | pre-chat output has zero captures after a later chat; prior-context companion recovers. |
+| PC-32 | include settled unowned sources in discovery. | D.`C519_Legacy_settled_sources_are_not_replayed` | old settled source remains untouched with zero new root/send; old open eligible source recovers. |
+| PC-33 | stamp ChannelReplyDiscoveryClosedAt for open NO_REPLY/no-attachment window. | D.`C519_Discovery_closure_waits_for_complete_window` | late eligible text before next prompt still gets a delivery; source was not prematurely closed. |
+| PC-34 | remove the maximum-pages break. | D.`C519_Discovery_has_a_finite_cycle_budget` | counted rows/pages stay within 32 per page and 10 pages per cycle. |
+| PC-35 | restart every tick at the first page. | D.`C519_Fair_cursors_reach_work_behind_idle_prefixes` | candidate beyond withheld prefix and tail beyond idle roots are examined by the calculated wrap bound. |
+| PC-36 | allow TTL loss on candidates not yet examined this cycle. | D.`C519_Ttl_waits_for_discovery_and_serializes_with_capture` | beyond-budget old answer survives TTL pass and is later captured. |
+| PC-37 | skip locked ownership recheck in TTL path. | D.`C519_Ttl_waits_for_discovery_and_serializes_with_capture` | capture/TTL barrier race yields capture or atomic loss, never settlement of a live captured answer. |
+| PC-38 | use published watermark while a preparation-failed interval exists. | T.`C519_Pending_intervals_never_overlap` | two intervals with different ends are disjoint and every fragment is received once. |
+| PC-39 | enumerate only in-memory dispatched roots. | T.`C519_Restart_recovers_reserved_tail` | late fragment recovers after provider reconstruction with no new event. |
+| PC-40 | drop pending tail when a newer prompt exists. | T.`C519_Next_prompt_keeps_an_already_reserved_tail` | same-batch tail is received; initial and next-turn texts are not replayed. |
+| PC-41 | return on tail NO_REPLY without advancing reservation cursor. | T.`C519_Suppressed_tail_advances_cursor_without_publication` | cursor advances exactly to silent fragment end; later legitimate fragment survives; PublishedAt stays null. |
+| PC-42 | move PublicationAttempts save after SendAsync. | B.`C519_Attempt_commit_precedes_producer` | entry observer sees Publishing and incremented count; commit refusal yields zero entries. |
+| PC-43 | omit lease-expiry predicate in claim update. | B.`C519_Only_one_live_lease_can_claim` | held winning producer has exactly one entry after a second independent pump tick. |
+| PC-44 | remove final lease/version/state check after entry barrier. | B.`C519_Final_entry_checks_current_lease` | old owner sends zero messages after takeover. |
+| PC-45 | reload latest version and commit old owner's success without owner check. | B.`C519_Late_outcome_cannot_overwrite_new_owner` | late accepted result cannot replace new owner's Uncertain state or settle sources. |
+| PC-46 | fire-and-forget SendAsync then commit Published. | B.`C519_Producer_completion_is_awaited` | while producer task is held PublishedAt and settlement are null. |
+| PC-47 | map OperationCanceledException after entry to Published. | B.`C519_Cancellation_is_never_success` | before-entry zero attempts; after-entry cancellation/lost result => Uncertain, no automatic extra calls. |
+| PC-48 | remove linked send deadline. | B.`C519_Send_deadline_bounds_the_attempt` | after advancing send timeout attempt task is complete and Uncertain while host token is live. |
+| PC-49 | include PublishUncertain in automatic Ready send candidates. | B.`C519_Uncertain_never_automatically_retries` | two timer cycles and restart add zero calls to an uncertain delivery. |
+| PC-50 | remove acknowledgePossibleDuplicate rejection. | B.`C519_Retry_requires_duplicate_acknowledgement` | false acknowledgement throws validation and state/attempt budget stay unchanged. |
+| PC-51 | set PublicationAttempts to zero in RetryUncertainAsync. | B.`C519_Explicit_retry_keeps_lifetime_attempts` | lifetime 3 becomes 4 on next entry; new budget base remains 3. |
+| PC-52 | classify generic IOException/timeout as queue refusal. | B.`C519_Only_definite_queue_refusal_is_automatic` | sync/async/serialization/accepted-then-fault all become Uncertain; Local_QueueFull becomes due Ready. |
+| PC-53 | route MsgSizeTooLarge through generic uncertain handling. | B.`C519_Size_refusal_is_terminal` | broker size refusal is Failed with one loss episode and zero automatic retry. |
+| PC-54 | remove NextAttemptAt comparison. | B.`C519_Retry_waits_until_persisted_due_time` | at due-minus-one tick producer entries unchanged; equality adds one attempt after restart. |
+| PC-55 | reset budget base after each refusal. | B.`C519_Publication_cap_survives_restart` | three queue refusals then no fourth call across failed incident save and restart. |
+| PC-56 | omit Enabled comparison in final binding validation. | B.`C519_Binding_disabled_holds_at_final_entry` | disable after early validation => Held and zero sends. |
+| PC-57 | omit inbound-agent comparison in final binding validation. | B.`C519_Binding_owner_holds_at_final_entry` | rebind to same-project agent after early validation => Held and zero sends. |
+| PC-58 | omit current-project comparison in final binding validation. | B.`C519_Binding_project_holds_at_final_entry` | move same agent to different project after early validation => Held and zero sends. |
+| PC-59 | skip final profile revalidation before creating task. | M.`C519_Revocation_prevents_converter_creation` | revoked capture creates zero converter tasks and later sends original bytes. |
+| PC-60 | skip final profile revalidation before publication. | B.`C519_Revocation_prevents_converted_publication` | revoked Ready delivery sends original only; converted PDF absent. |
+| PC-61 | exclude those states from older-head query. | B.`C519_Captured_held_and_uncertain_heads_preserve_order` | later Ready has zero sends while each head blocks, including equal timestamps. |
+| PC-62 | always set resumed Held to Ready. | B.`C519_Resume_held_restores_the_original_phase` | unmaterialized Held resumes Captured; unconverted staged resumes Pending; converted resumes Ready. |
+| PC-63 | omit destination admission lock around conversion admission count. | M.`C519_Concurrent_materialization_respects_max_pending` | two competing qualifying captures with MaxPending=1 yield one Pending and one annotated overflow. |
+| PC-64 | remove same-converter active check. | M.`C519_Converter_capacity_is_serialized` | second delivery remains Pending while first owns converter; no second task. |
+| PC-65 | remove global Converting count limit. | M.`C519_Global_conversion_capacity_is_bounded` | third distinct converter remains Pending while first two are active. |
+| PC-66 | replace frozen DeadlineAt with NextAttemptAt or refresh it on preparation retry. | M.`C519_Conversion_deadline_is_not_retry_time` | deadline equality creates no worker; late output ignored; original annotated fallback sends. |
+| PC-67 | commit state/settlement before incident transaction. | F.`C519_Loss_and_source_outcome_are_atomic` | injected incident insert failure rolls back loss transition and settlement; retry records once. |
+| PC-68 | commit incident/state before Alert insertion. | F.`C519_Loss_requires_its_alert` | alert insert failure leaves no committed terminal transition/incident stamp. |
+| PC-69 | emit Warning instead of Critical. | F.`C519_Loss_is_critical_and_identifiable` | independent incident/alert query reads Critical and original delivery/source identity. |
+| PC-70 | dedupe only by querying existing incident rows. | F.`C519_Failure_episode_survives_history_pruning` | prune incidents then scan/restart twice: no new alert or episode. |
+| PC-71 | return without recording when current owner lookup fails. | F.`C519_Missing_owner_still_records_loss` | deleted/unowned cases still have one incident and alert with nullable AgentId and source identity. |
+| PC-72 | await control notice before committing loss and return on its error. | F.`C519_Notice_failure_cannot_erase_loss` | notice refusal/disabled channel retains incident+alert and creates zero agent obligations. |
+| PC-73 | format Uncertain with the definite no-answer loss wording. | F.`C519_Uncertainty_message_does_not_claim_nondelivery` | accepted-before-result message says acceptance unknown/may have published and not no turn completed. |
+| PC-74 | save Published before source-settlement transaction. | P.`C519_Acceptance_and_all_settlements_commit_together` | member-save failure leaves no Published commit, all member settlements null, then Uncertain without resend. |
+| PC-75 | move catalog/bundle repair into send-retry catch and requeue Published. | P.`C519_Projection_repair_never_reenters_producer` | catalog/filesystem/bundle-save failures repair after restart with exactly one accepted envelope. |
+| PC-76 | apply old preview without accepted-order comparison. | P.`C519_Projection_repair_cannot_regress_preview` | newer LastReplyAt/preview remain after old repair. |
+| PC-77 | stamp whenever a SourceTaskId/manifest exists. | P.`C519_Bundle_stamp_uses_frozen_complete_actual_payload` | omitted/wrong-hash/partial-zip payloads have null delivered stamps; complete actual payload stamps despite later file deletion. |
+| PC-78 | repair only delivery.SourceTaskId and ignore other captured members. | P.`C519_Projection_repairs_every_implied_task` | two complete implied tasks stamp; omitted third remains null. |
+| PC-79 | remove outbound exclusion from session pruning. | L.`C519_Session_retention_preserves_recovery_evidence` | stale terminal session survives without persistent-pointer/task/inbound protections. |
+| PC-80 | omit outbound predicate in locked transcript-delete recheck. | L.`C519_Transcript_retention_rechecks_under_lock` | capture/retention race keeps original prompt/window rows. |
+| PC-81 | protect Channel only, dropping machine predicate. | L.`C519_Queue_retention_keeps_open_machine_and_channel_sources` | old eligible machine queue rows survive; conclusively ineligible closed companion prunes. |
+| PC-82 | drop outbound-reference exclusion from task-tree pruning. | L.`C519_Task_and_bundle_retention_keeps_referenced_inputs` | all referenced task rows/bundle paths remain readable while unrelated stale tree prunes. |
+| PC-83 | treat Failed or Published-with-pending-repair as immediately prunable. | L.`C519_Delivery_and_file_retention_keeps_unresolved_ownership` | each unresolved delivery and hash-validated staged file survives retention. |
+| PC-84 | mark root TailClosedAt merely because session is terminal. | L.`C519_Closed_roots_eventually_become_prunable` | terminal-but-incompletely-ingested tail remains open and later text recovers; fully examined companion prunes. |
+| PC-85 | return success from finite-positive recovery-settings validation. | B.`C519_Settings_require_finite_positive_bounds` | individually invalid scan/page/pages/retry/send/lease/preparation/publication settings are rejected with property names. |
+| PC-86 | change timeout >= lease rejection to timeout > lease. | B.`C519_Send_timeout_must_be_less_than_lease` | timeout==lease rejected; timeout one tick shorter accepted. |
+| PC-87 | requeue all target deliveries when any target fails. | U.`C519_Accepted_target_is_independent_of_failed_sibling` | A has exactly one receipt across B retry; only B remains unresolved. |
+| PC-88 | translate Deferred to Published in dispatcher/runtime outcome. | U.`C519_Deferred_runtime_releases_without_claiming_publication` | held converter leaves source unsettled/preview null and next queued prompt has complete UserPrompt. |
+| PC-89 | include Published rows in recovery send selection. | X.`C519_Published_death_never_replays` | after published-committed kill and two fresh recoveries recipient count remains one. |
+| PC-90 | discovery enumerates delivery rows only. | X.`C519_Before_capture_death_is_discovered` | after capture-before-commit kill, fresh hosted recovery finds original answer and receiver gets it. |
+| PC-91 | drain only in-memory capture notifications. | X.`C519_Captured_death_needs_no_wake_signal` | captured-before-signal kill still yields one recovered receiver receipt. |
+| PC-92 | treat existing incomplete directory as staged and skip preparation. | X.`C519_Partial_stage_death_retries_preparation` | partial-stage kill recovers complete original attachment receipt, never empty/partial payload. |
+| PC-93 | delete completed directory before recovery preparation. | X.`C519_Complete_stage_death_preserves_snapshot` | after complete-stage kill and source replacement receipt retains original bytes. |
+| PC-94 | convert expired Publishing to Ready. | X.`C519_Attempt_death_stays_uncertain` | after attempt-committed or producer-entered kill, zero automatic sends and visible Uncertain. |
+| PC-95 | automatically retry expired Publishing after acceptance. | X.`C519_Accepted_death_stays_uncertain` | real consumer saw one; two recovery processes and gateway observe no second receipt before acknowledged retry. |
+| PC-96 | exclude already-linked queued conversion tasks from dispatch recovery. | W.`C519_Converter_handoff` | after failed enqueue/restart, exactly the original task receives its complete UserPrompt and final converted payload reaches adapter. |
+| PC-97 | spend the whole tick budget on discovery before considering other work. | D.`C519_Each_work_kind_gets_a_bounded_share` | with a continuously full discovery prefix, due reply and pending metadata repair each complete within one cycle's reserved share. |
+| PC-98 | remove Take(PageSize) from source discovery query. | D.`C519_Each_discovery_page_is_bounded` | reader/interceptor records at most 32 returned candidates per page. |
+| PC-99 | remove both destination lock and root version comparison on tail reservation, retaining exact-key uniqueness. | T.`C519_Concurrent_reservation_has_one_winner` | barrier-raced different-end intervals have one owner for overlapping text and no duplicate fragment receipt. |
+| PC-100 | leave FailureEpisode unchanged on acknowledged retry. | F.`C519_Acknowledged_retry_starts_a_new_failure_episode` | second authorized failed attempt yields a second episode/alert; repeated scans add no third. |
+
+For schema controls, change only the named model/enum/migration behavior. Generate
+migration changes through the EF CLI and use a freshly migrated isolated database
+for every phase; different SourceKeys prevent the older exact-key constraint from
+masking a missing root/start index. Restore all generated tracked files exactly.
+For guarded early returns, keep valid companion setup and assert the target barrier
+was reached before the decisive negative assertion. Mutation is serial for shared
+production files; optional method-level batching is permitted only for independent
+files/methods and still needs separate per-PC receipts.
+
+Inventory: **guards=100, mapped=100, missing=0, duplicate PC maps=0**.
+All guards are mapped; none is exempted for inconvenience. All 100 PCs have an exact
+detecting method and compiling defect. No PC execution is claimed by TestDesign.
+
+### Out of scope
+
+- Native provider acknowledgement, gateway crash/offset-loss durability and human
+  reading: D-1 promises producer acceptance. Real queue-to-adapter receipt remains
+  mandatory evidence for this card; no test may stop at enqueue/ack/Published.
+- Paid agents, live broker/runner, operational deployment, UI changes and native
+  transport implementation changes. Windows R-12 is retained at its actual fixture
+  evidence boundary, not relabeled as real provider input.
+- Automatic uncertainty retry, reconstruction of settled direct-send history, a
+  second publication journal, new filesystem cleanup service, and backward binary
+  activation after admitting Captured/Suppressed: excluded by the landed decisions.
+- The Cartesian product of every filesystem fault with every origin/profile is
+  not required: C/M cover common capture/preparation guards on all three send paths;
+  U plus existing shape/gate tests cover profile/origin combinations. X covers every
+  persistence cut on all three paths. Boundary/binding mutants isolate each predicate.
+  A Code branch that bypasses a shared helper invalidates this reduction.
+- Whole Unit/namespace/assembly, whole Herdr class and repeated Linux parity hang:
+  no additional changed invariant justifies their cost. Existing selected classes
+  still run in full where the shared fixture or dispatcher contract changes.
+
+
+### Checkpoints
+
+This is the closed ordinary scope. Every row owns one isolated build and exactly
+one filter; no reused build or whole-Unit run. All rows are serial (including
+builds); keep process assemblies sequential. Run on the slice commit named by
+After, once its dependencies exist. Materialization assertions that need atomic loss wait for S8;
+discovery/tail/retry/unified assertions that need projection work or outcome fencing
+wait for S9. This schedules verification after its prerequisites, without rewriting the
+implementation slices. Move fixture adaptation next to its first consuming slice
+as the plan already permits.
+
+All invocations must pass `--row-timeout 15m --total-timeout 60m --serial`.
+Fifteen minutes includes each row's build and test; a timeout is incomplete, never
+a pass. No automatic deadline widening. Estimates are warm-cache elapsed minutes,
+not a timeout. If a method cannot fit, stop and revise this manifest before another
+run. CP-29 alone requires Windows; run CP-1..CP-28 without a host/OS pin. Do not
+select CP-29 in a Linux invocation. A missing Windows lane leaves R-12 outstanding.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
+|---|---|---|---|---|---|---|---:|---:|---|---|
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c519-cp01/` | schema | `/*/*/ChannelOutboundDurabilitySchemaTests/*` | V-1 | all 4 listed results, 0 failed/skipped | 4 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c519-cp02/` | capture | `/*/*/ChannelOutboundCaptureTests/*` | V-2 | all 5 listed results, 0 failed/skipped | 5 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-3 | S3 | `tests/Antiphon.Tests -> bin-c519-cp03/` | storage | `/*/*/ChannelOutboundStorageTests/*` | R-7 | all 28 listed results, 0 failed/skipped | 28 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-4 | S4 | `tests/Antiphon.Tests -> bin-c519-cp04/` | dispatch | `/*/*/ChannelOutboundDispatchIntegrationTests/*` | R-1 | all 1 listed results, 0 failed/skipped | 1 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-5 | S4 | `tests/Antiphon.Tests -> bin-c519-cp05/` | runtime | `/*/*/AgentTaskReplyIntegrationTests/Deferred_is_durable_and_releases_runtime` | R-1 | all 1 listed results, 0 failed/skipped | 1 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-6 | S8 | `tests/Antiphon.Tests -> bin-c519-cp06/` | materialize | `/*/*/ChannelOutboundMaterializationTests/*` | V-3 | all 12 listed results, 0 failed/skipped | 12 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-7 | S8 | `tests/Antiphon.Tests -> bin-c519-cp07/` | loss | `/*/*/ChannelOutboundFailureRecordingTests/*` | V-8 | all 8 listed results, 0 failed/skipped | 8 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-8 | S9 | `tests/Antiphon.Tests -> bin-c519-cp08/` | discovery | `/*/*/ChannelOutboundDiscoveryTests/*` | V-5 | all 14 listed results, 0 failed/skipped | 14 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-9 | S9 | `tests/Antiphon.Tests -> bin-c519-cp09/` | tails | `/*/*/ChannelOutboundTrailingRecoveryTests/*` | V-6 | all 5 listed results, 0 failed/skipped | 5 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-10 | S9 | `tests/Antiphon.Tests -> bin-c519-cp10/` | retry | `/*/*/ChannelOutboundRetryPolicyTests/*` | V-7 | all 22 listed results, 0 failed/skipped | 22 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-11 | S9 | `tests/Antiphon.Tests -> bin-c519-cp11/` | projections | `/*/*/ChannelOutboundMetadataRepairTests/*` | V-9 | all 5 listed results, 0 failed/skipped | 5 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-12 | S9 | `tests/Antiphon.Tests -> bin-c519-cp12/` | unified | `/*/*/ChannelOutboundUnifiedPathTests/*` | V-4 | all 8 listed results, 0 failed/skipped | 8 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-13 | S10 | `tests/Antiphon.Tests -> bin-c519-cp13/` | retention | `/*/*/ChannelOutboundRetentionTests/*` | V-10 | all 6 listed results, 0 failed/skipped | 6 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-14 | S10 | `tests/Antiphon.Tests -> bin-c519-cp14/` | old-queue-retention | `/*/*/DataRetentionServiceTests/Queue_keeps_Pending_and_unsettled_channel_rows_and_deletes_settled_old_ones` | R-11 | all 1 listed results, 0 failed/skipped | 1 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-15 | S11a | `tests/Antiphon.Tests -> bin-c519-cp15/` | bridge | `/*/*/ChannelBridgeTests/*` | R-2 | all 40 listed results, 0 failed/skipped | 40 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-16 | S11a | `tests/Antiphon.Tests -> bin-c519-cp16/` | reply-durability | `/*/*/ChannelReplyDurabilityTests/*` | R-2 | all 25 listed results, 0 failed/skipped | 25 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-17 | S11a | `tests/Antiphon.Tests -> bin-c519-cp17/` | correlation | `/*/*/(ChannelPromptCorrelationTests*)\|(ChannelPromptCorrelationUnitTests*)\|(ChannelMachineTurnMatchTests*)/*` | R-3 | all 42 listed results, 0 failed/skipped | 42 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-18 | S11b | `tests/Antiphon.Tests -> bin-c519-cp18/` | machine-attachments | `/*/*/(ChannelMachineTurnTextTests*)\|(ChannelFollowUpAttachmentTests*)/*` | R-4 | all 45 listed results, 0 failed/skipped | 45 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-19 | S11b | `tests/Antiphon.Tests -> bin-c519-cp19/` | outbound-partials | `/*/*/ChannelOutboundDeliveryTests/*` | R-5 | all 38 listed results, 0 failed/skipped | 38 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-20 | S11b | `tests/Antiphon.Tests -> bin-c519-cp20/` | profile-contract | `/*/*/(ChannelOutboundPolicyTests*)\|(ChannelOutboundContractTests*)/*` | R-5 | all 31 listed results, 0 failed/skipped | 31 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-21 | S11b | `tests/Antiphon.Tests -> bin-c519-cp21/` | batching | `/*/*/ChannelBatchingTests/*` | R-10 | all 10 listed results, 0 failed/skipped | 10 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-22 | S11b | `tests/Antiphon.Tests -> bin-c519-cp22/` | deadlines | `/*/*/ChannelOutboundDeadlineTests/*` | R-6 | all 13 listed results, 0 failed/skipped | 13 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-23 | S12a | `tests/Antiphon.Tests -> bin-c519-cp23/` | crash-preparation | `/*/*/ChannelOutboundUnifiedCrashTests/(C519_Before_capture_death_is_discovered*)\|(C519_Captured_death_needs_no_wake_signal*)\|(C519_Partial_stage_death_retries_preparation*)\|(C519_Complete_stage_death_preserves_snapshot*)` | V-11 | all 12 listed results, 0 failed/skipped | 12 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-24 | S12a | `tests/Antiphon.Tests -> bin-c519-cp24/` | crash-publication | `/*/*/ChannelOutboundUnifiedCrashTests/(C519_Attempt_death_stays_uncertain*)\|(C519_Accepted_death_stays_uncertain*)\|(C519_Published_death_never_replays*)` | V-12 | all 9 listed results, 0 failed/skipped | 9 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-25 | S12b | `tests/Antiphon.Tests -> bin-c519-cp25/` | queue-recipient | `/*/*/ChannelOutboundUnifiedTransportTests/C519_Queue_to_adapter*` | V-13 | all 3 listed results, 0 failed/skipped | 3 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-26 | S12b | `tests/Antiphon.Tests -> bin-c519-cp26/` | transport-handoffs | `/*/*/ChannelOutboundUnifiedTransportTests/(C519_Size_refusal*)\|(C519_Converter_handoff*)` | V-13 | all 2 listed results, 0 failed/skipped | 2 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-27 | S12b | `tests/Antiphon.Tests -> bin-c519-cp27/` | composed-files | `/*/*/ChannelOutboundComposedTransportTests/*` | R-9 | all 1 listed results, 0 failed/skipped | 1 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-28 | S12b | `tests/Antiphon.Tests -> bin-c519-cp28/` | manual-recovery | `/*/*/ChannelOutboundRecoveryTests/(Expired_publishing_lease_is_uncertain_until_explicit_retry*)\|(Held_head_blocks_later_reply_until_original_binding_is_repaired_and_resumed*)\|(Restart_preserves_two_inbound_slack_routes_behind_an_uncertain_head*)\|(Broker_ack_before_process_death_remains_uncertain_without_replay*)` | R-8 | all 4 listed results, 0 failed/skipped | 4 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-29 | S13 | `tests/Antiphon.Tests -> bin-c519-cp29/` | windows-parity | `/*/*/HerdrAlwaysOnChannelParityTests/AlwaysOn_channel_bound_survives_child_death_and_replies*` | R-12 | all 2 listed results, 0 failed/skipped | 2 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+
+Floors come from the specified new roster and inspected source attributes:
+S=4, C=5, M=12, U=8, D=14, T=5, B=22, F=8, P=5, L=6, X=21, W=5.
+The seven X methods each expand to three path results; cut variants remain internal
+assertions. Existing Delivery has 18 methods / 38 results across its five partial
+files, including SendShape and Gate. Existing Deadline has nine methods / 13 results
+across its two files. All other existing floors are shown in R-1..R-12.
+Table total = **397 minimum executed TUnit results**; no loop/child/assertion counts
+are smuggled into Min. If Code adds/removes arguments, update the explicit roster,
+floor and cost before running; do not lower a floor to excuse skipped tests.
+
+Run the checkpoint tool per committed slice group through the build-slot gate.
+The first group command is concrete:
+
+```powershell
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c519-s1 -- dotnet run --project tools/Antiphon.Checkpoints -- run --plan docs/superpowers/plans/2026-10-04-card-0519-unified-outbound-recovery-plan.md --after S1 --expected-source-sha (git rev-parse HEAD) --row-timeout 15m --total-timeout 60m --serial
+```
+
+Use the corresponding literal After value for later groups; select CP-29 only on
+the Windows Code dispatch. Await every exit-75 run with the checkpoint tool's
+wait command (`--max-wait 50s`) until terminal, also through the gate.
+Never end a task with its executor still running. Slot refusal/timeout is reported,
+never bypassed. Tool bootstrap and EF migration generation are the only planned
+non-CP build/setup drivers; gate them and report them separately.
+
+Freeze source during every run. Preserve unedited CHECKPOINT lines, method roster,
+actual source/build SHA and counts; validate clean receipts for the exact reviewed
+SHA. Early slice receipts retain their own SHA. Final qualification cannot relabel
+them as the final candidate: if later source changes invalidate their build binding,
+rerun those CP rows on the final frozen candidate and report that required rerun
+cost separately. Keep generated receipts/TRX ignored. Code/Review run
+`scripts/check-evidence-diff.ps1` over the full task range. Remove only the
+manifest-owned alternate outputs. Diagnose inherited red at the recorded base
+using the failing exact method, never a whole assembly.
+
+### Cost
+
+All numbers below are **estimates**, not measured test results. The ordinary
+Code V/R floor is **177 minutes**, exactly the sum of CP-1..CP-29
+EstimatedMinutes. It includes **58 build minutes** (29 isolated warm builds at
+2 minutes each) and **119 test minutes**. Setup/tool bootstrap and EF migration
+generation add **12 minutes**. No additional whole-suite run is budgeted.
+
+The exact ordinary filters are in the table; by group:
+schema/capture 8; storage 5; dispatch/runtime 8; materialize/discovery/loss 17;
+tails/retry/projections/unified 23; retention pair 9; bridge/durability/correlation
+20; machine-attachments/outbound-partials/profile-contract/batching/deadlines 33;
+crash preparation/publication 16; queue-recipient/transport-handoffs/composed-files/
+manual-recovery 30; Windows parity 8. Sum **177**.
+
+The 177-minute floor is one execution of every row. It can qualify one final frozen
+candidate if Code defers these full rows until all source is ready. If Code uses
+the intended per-slice checkpoints before later source edits, commission a final
+frozen-candidate qualification of the same 29 rows as well: **177 additional
+minutes**, **354 ordinary minutes total**. This is a source-provenance rerun, not
+discretionary broadening. Record both receipts at their real SHAs. Changed/failing
+rows may add further measured repair runs; never quietly count them as zero.
+
+Mutation method filters are exactly the 100 class/method mappings in the PC table:
+
+| PC filters | Controls | Per-control baseline/build + red/build + restore/build/green | Estimated minutes |
+|---|---:|---|---:|
+| PC-1..PC-5 (S methods; schema regeneration and fresh migration each phase) | 5 | 4 + 4 + 4 = 12 | 60 |
+| PC-89..PC-95 (X methods; three path results plus internal crash cuts per phase) | 7 | 6 + 6 + 6 = 18 | 126 |
+| PC-96 (W.C519_Converter_handoff; real queue/broker/recipient per phase) | 1 | 6 + 6 + 6 = 18 | 18 |
+| PC-6..PC-88 and PC-97..PC-100 (the remaining exact methods) | 87 | 2 + 2 + 2 = 6 | 522 |
+| **Mutation execution floor** | **100** | **300 method-scoped phase runs; no class/suite PCs** | **726** |
+
+Each phase estimate includes its isolated warm incremental build and method run;
+the restore/green phase includes byte restoration and fresh build. Mutation
+discovery, schema tooling, receipt inspection and external restoration report add
+**25 minutes**: commission Mutation for at least **751 minutes** plus slot waits.
+No parallel-shard saving is assumed; most controls touch the same production files.
+
+Verification execution total = setup 12 + ordinary builds 58 + ordinary tests 119
++ PC cycles 726 = **915 minutes**. With intended early slices and one required final
+source qualification, that becomes **1,092 minutes**. Add Code authoring **885**
+(the landed 30–60 minute slices), ordinary Review **30**, and Mutation setup/report
+**25**: end-to-end planning floor **1,855 minutes**, or **2,032 minutes** with the
+explicit final qualification pass. Slot waits, cold image pulls, native capacity
+waits and repair are additional measured costs, not passing evidence.
+
+Assumed savings are **0 minutes**: every checkpoint owns a build, every independent
+guard gets a control and the native row remains. Narrow filters prevent the old
+whole-Unit/whole-parity cost without pretending an unmeasured hang is saved runtime.
+If a row exceeds its estimate, record actual time and split its named scope within
+the same bounded manifest; do not expand timeout or replace an assertion.
+
+TestDesign handoff audit: inspected bodies and nearest new-file fixtures recorded;
+**guards=100, mapped=100, missing=0, duplicate PC maps=0; all PCs executable** as
+specified Code deliverables; **29 CP rows, 397 ordinary result floor, 177 ordinary
+minutes, 726 PC minutes**. No build/test/PC result is claimed by this documentation
+stage. Commit/push this appendix on the assigned TestDesign branch; caller lands
+the Succeeded task promptly, then commissions Code with this exact artifact.
