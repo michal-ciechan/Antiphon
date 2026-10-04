@@ -175,9 +175,26 @@ public sealed class C1008HostFixturePortabilityTests
         }
         // Poison is supplied to each physical parent environment; the stdin bootstrap must seal it.
         var executor = f.Options.SelectExecutor;
-        f.Options.SelectExecutor = start => { executor?.Invoke(start); start.Environment["PATH"] = poison; };
-        f.Options.BeforeSource = "printf '%s\\n' \"$C590_CASE\" \"$C590_SHA\" \"$C590_RUN\" \"$C590_REEXEC\" \"$C604_SERVER_ORIGIN\" > " + Q(root + "/environment") + "\n";
-        await RemoteScriptContractTests.C1008GitGraph(f);
+        f.Options.SelectExecutor = start =>
+        {
+            executor?.Invoke(start); start.Environment["PATH"] = poison;
+            foreach (var key in new[] { "C590_CASE", "C590_SHA", "C590_RUN", "C590_REEXEC", "C604_SERVER_ORIGIN" })
+                start.Environment.Remove(key);
+        };
+        f.Options.BeforeSource = "printf '%s\\n' \"$C590_CASE\" \"$C590_SHA\" \"$C590_RUN\" \"$C590_REEXEC\" \"$C604_SERVER_ORIGIN\" > " + Q(root + "/environment") +
+            "\nprintf '%s' \"$PATH\" > " + Q(root + "/effective-path") + "\n";
+        // Observe exports before real source reads them; inherited process variables cannot rescue omissions.
+        var environmentProbe = await f.Run(extra: "exit 0");
+        var values = File.ReadAllLines(Path.Combine(f.Root, "environment"));
+        var expected = new[] { "deploy-parent", new string('a', 40), "c1008fixture", "1", "http://127.0.0.1:1" };
+        var labels = new[] { "case", "sha", "run", "reexec", "origin" };
+        for (var i = 0; i < expected.Length; i++) values[i].ShouldBe(expected[i], "c1030-env-" + labels[i]);
+        environmentProbe.Exit.ShouldBe(0, "c1030-sealed-tools; " + environmentProbe.Output);
+        File.ReadAllText(Path.Combine(f.Root, "effective-path")).ShouldBe(f.Options.ToolPath, "c1030-sealed-tools");
+        Exception? gitFailure = null;
+        try { await RemoteScriptContractTests.C1008GitGraph(f); }
+        catch (Exception ex) { gitFailure = ex; }
+        gitFailure.ShouldBeNull("c1030-sealed-tools");
         File.Exists(Path.Combine(f.Root, "work/repo/.git/refs/heads/master")).ShouldBeTrue("c1030-git-launch: real commit");
         await using (var holder = await f.HoldLock())
         {
@@ -202,9 +219,7 @@ public sealed class C1008HostFixturePortabilityTests
             var result = await running;
             result.Exit.ShouldBe(0, "c1030-release-completed; " + result.Output);
         }
-        var values = File.ReadAllLines(Path.Combine(f.Root, "environment"));
-        var expected = new[] { "deploy-parent", new string('a', 40), "c1008fixture", "1", "http://127.0.0.1:1" };
-        var labels = new[] { "case", "sha", "run", "reexec", "origin" };
+        values = File.ReadAllLines(Path.Combine(f.Root, "environment"));
         for (var i = 0; i < expected.Length; i++) values[i].ShouldBe(expected[i], "c1030-env-" + labels[i]);
         File.Exists(Path.Combine(f.Root, "poison-ran")).ShouldBeFalse("c1030-sealed-tools");
         var bridge = await NativePwsh("$r=& {\n" + f.BridgeResumeCommand() + "\n}; exit $r");
@@ -318,6 +333,8 @@ public sealed class C1008HostFixturePortabilityTests
             if (descendantId != 0) Rescue(descendantId, descendantStart);
             Rescue(child.Id, child.StartTime);
             if (stopped is not null) await stopped;
+            fixture.Options.SelectExecutor = null;
+            if (!OperatingSystem.IsWindows()) UseLinuxExecutor(fixture.Options);
         }
         rootAlive.ShouldBeFalse("c1030-owned-tree-exited: root");
         descendantAlive.ShouldBeFalse("c1030-owned-tree-exited: descendant");
@@ -529,8 +546,10 @@ public sealed class C1008HostFixturePortabilityTests
             var journal = JsonNode.Parse(File.ReadAllText(Path.Combine(quoted.Root, "server/recycle/c100800000000000000000000000000000001.json")))!;
             var hashes = System.Text.RegularExpressions.Regex.Matches(journal["audit"]!.GetValue<string>(), "repo=([0-9a-f]{64})")
                 .Select(m => m.Groups[1].Value).Distinct().Order().ToArray();
-            hashes.ShouldBe(new[] { "repo", "linked clean", "standalone", "bare.git" }
-                .Select(name => Hash(quoted.ShellRoot + "/work/" + name)).Order().ToArray(), "c1030-audit-hashes");
+            var independentHashes = new[] { "repo", "linked clean", "standalone", "bare.git" }
+                .Select(name => Hash(quoted.ShellRoot + "/work/" + name)).Order().ToArray();
+            RemoteScriptContractTests.C1008ExpectedAuditHashes(quoted).ShouldBe(independentHashes, "c1030-audit-hashes");
+            hashes.ShouldBe(independentHashes, "c1030-audit-hashes");
             File.Exists(Path.Combine(quoted.Root, "injected")).ShouldBeFalse("c1030-quoted-audit");
             using var lockedFixture = LiveWindowsFixture();
             await RemoteScriptContractTests.C1008GitGraph(lockedFixture, "layouts");
@@ -556,9 +575,12 @@ public sealed class C1008HostFixturePortabilityTests
         finally
         {
             quoted.Dispose();
+            var residue = Directory.Exists(quotedRoot);
             try
             {
-                Directory.Exists(quotedRoot).ShouldBeFalse("c1030-owned-cleanup");
+                if (residue) Directory.Delete(quotedRoot, true);
+                residue.ShouldBeFalse("c1030-owned-cleanup");
+                File.Exists(Path.Combine(foreign, "sentinel")).ShouldBeTrue("c1030-foreign-target-preserved");
                 File.ReadAllText(Path.Combine(foreign, "sentinel")).ShouldBe("foreign-owned", "c1030-foreign-target-preserved");
             }
             finally { if (Directory.Exists(foreign)) Directory.Delete(foreign, true); }

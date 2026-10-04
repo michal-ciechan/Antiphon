@@ -248,9 +248,7 @@ public sealed class RemoteScriptContractTests
         var record = JsonNode.Parse(File.ReadAllText(Path.Combine(f.Root, "server/recycle/c100800000000000000000000000000000001.json")))!;
         var observed = Regex.Matches(record["audit"]!.GetValue<string>(), "repo=([0-9a-f]{64})")
             .Select(x => x.Groups[1].Value).Distinct().Order().ToArray();
-        var expected = new[] { "repo", "linked clean", "standalone", "bare.git" }
-            .Select(x => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
-                Encoding.UTF8.GetBytes(f.ShellPath(Path.Combine(f.Root, "work", x))))).ToLowerInvariant()).Order().ToArray();
+        var expected = C1008ExpectedAuditHashes(f);
         observed.ShouldBe(expected, "recycle-audit-uid: every materialized Git layout appears in the audit");
     }
 
@@ -611,6 +609,11 @@ public sealed class RemoteScriptContractTests
             f.Removed.ShouldBeEmpty();
         }
     }
+
+    internal static string[] C1008ExpectedAuditHashes(C1008HostFixture fixture) =>
+        new[] { "repo", "linked clean", "standalone", "bare.git" }
+            .Select(x => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                Encoding.UTF8.GetBytes(fixture.ShellPath(Path.Combine(fixture.Root, "work", x))))).ToLowerInvariant()).Order().ToArray();
 
     internal static string C1008GitProgram(string root, string fault)
     {
