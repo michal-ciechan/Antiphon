@@ -88,8 +88,10 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
     public async Task MoveAsync(Guid column, CancellationToken ct = default)
     {
         await using var db = Host.CreateContext();
+        await using var scope = Host.Services.CreateAsyncScope();
         var card = await db.Cards.SingleAsync(c => c.Id == CardId);
-        var cards = new CardService(db, null!, null!, null!, new MockEventBus(), TimeProvider.System, null!);
+        var cards = new CardService(db, null!, null!, null!, new MockEventBus(), TimeProvider.System, null!,
+            workspaceUse: scope.ServiceProvider.GetRequiredService<WorkspaceUseAdmission>());
         if (card.Status == CardStatus.Done && column != DoneColumnId)
             await cards.ReopenAsync(CardId, new ReopenCardRequest(card.ConcurrencyToken, "fixture reopen", column), ct);
         else await cards.MoveAsync(CardId, new MoveCardRequest(column, card.ConcurrencyToken, "fixture"), ct);
