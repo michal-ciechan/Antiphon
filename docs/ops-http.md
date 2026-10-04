@@ -595,3 +595,22 @@ operator debt/publish state and audit comment IDs. A task or capability token ca
 authorized board/project. The response omits the operator conversation address, secrets and
 transcript bodies. An absent or stale successful scan is not proof that the minute Hangfire job is
 protecting the board. The route is read-only; ACKs come from the standing agent transcript.
+
+## Routing exhaustion at task creation (CARD-1021)
+
+An otherwise admissible walked-list request with no available approved candidate
+follows normal runner selection, including kind/global defaults for Any.
+`POST /api/agent-tasks` returns **201 Created**, `status=Blocked`, a durable task
+ID, routing warning and frozen placement fields. Blocked creation launches no
+session. Created/Blocked events and a source-linked parent note commit with the
+task; a queued note is not a delivery receipt. Grouped RoutingExhausted/Error
+attention exposes task/card/board evidence. Explicit card binding does not force
+a column move or invent a dispatch timestamp.
+
+Track the returned task instead of resubmitting the work or inventing a provider
+fallback. The approved list can recover the same task on its frozen host and
+platform. Explicit `refuseIfExhausted: true` (delegate.ps1 `-RefuseIfExhausted`)
+retains 409 `routing_exhausted` with no task inserted. Single-candidate holds, pin
+conflicts and independent placement failures, including no eligible required-OS
+host, retain their existing refusals. `runner_platform_unavailable` still means
+placement failed; exhaustion alone no longer causes it when a suitable host exists.

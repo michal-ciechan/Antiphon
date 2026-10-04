@@ -604,9 +604,14 @@ OS placement is independent of the provider pair. A Windows requirement uses
 defaults/inventory. `-Platform Any` removes an inherited platform constraint.
 Normally omit `-Kind` and `-Level` to preserve ordered availability walking.
 OS needs do not authorize `-IgnoreRoutingPin`. A held/unavailable Grok candidate
-can walk to the listed Opus candidate. An exhausted Required list persists Blocked
-when the local descriptor satisfies the required platform; otherwise placement
-refuses before task insertion (for example, Linux with a Windows-only local descriptor).
+can walk to the listed Opus candidate. An exhausted walked list follows normal
+host selection, including Any defaults, and persists a durable Blocked task on
+the selected eligible host (CARD-1021). It starts no session. The response carries
+a task ID and routing warning; track that task and its grouped attention instead
+of resubmitting or choosing an unlisted provider. `-RefuseIfExhausted` retains
+the opt-in 409 `routing_exhausted`; independent invalid or unavailable placement
+still refuses before insertion. Recovery may use only the approved list and
+preserves the task's frozen host and platform requirement.
 Tests seed this policy only in isolated databases, never production.
 
 ### Evidence gates
@@ -659,8 +664,8 @@ Preserve task/session/failure-code and the bounded named startup capture before
 recovering. The authorized recipe keeps `-Role Review` or `-Role Debug`,
 `-Platform Windows`, `-Kind ClaudeCode -Level High`, and no -IgnoreRoutingPin.
 Explicit kind narrows to that already-listed fallback; a conflicting card pin
-needs an operator decision. Exhausted availability produces local Blocked or
-pre-insert placement refusal as described above. Startup
+needs an operator decision. Exhausted availability produces durable Blocked after
+normal placement, subject to the independent admission rules above. Startup
 failure does not promise a new automatic retry or authorize login/settings changes.
 See [agent kinds](agent-kinds.md#5-grok-xai-grok-build-tui) for `screenReason` and
 capture diagnosis; captures and screen redraws do not prove recipient delivery.

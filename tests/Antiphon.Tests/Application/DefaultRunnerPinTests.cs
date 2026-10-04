@@ -181,7 +181,7 @@ public sealed class DefaultRunnerPinTests
         {
             var decision = policy.Decide(unset, new DefaultRunnerShape(
                 WorkspaceMode.Worktree, kind, AgentTaskKind.Worker, AgentTaskRole.Mutation,
-                ExistingProcess: false, SourceLanding: true, RoutingExhausted: false)).ShouldNotBeNull();
+                ExistingProcess: false, SourceLanding: true)).ShouldNotBeNull();
             decision.SelectedRunnerId.ShouldBe("server2", kind.ToString());
             decision.AuditSegment.ShouldBe(
                 "runner source=default requested=unset default=server2 selected=server2 reason=eligible", kind.ToString());
@@ -191,12 +191,12 @@ public sealed class DefaultRunnerPinTests
         // An invalid SourceLanding role never selects a runner (create refuses that shape anyway).
         policy.Decide(unset, new DefaultRunnerShape(
                 WorkspaceMode.Worktree, AgentKind.Grok, AgentTaskKind.Worker, AgentTaskRole.Code,
-                ExistingProcess: false, SourceLanding: true, RoutingExhausted: false))
+                ExistingProcess: false, SourceLanding: true))
             .ShouldNotBeNull().SelectedRunnerId.ShouldBeNull("a non-Mutation SourceLanding shape stays local");
         // Codex SourceLanding stays local.
         policy.Decide(unset, new DefaultRunnerShape(
                 WorkspaceMode.Worktree, AgentKind.Codex, AgentTaskKind.Worker, AgentTaskRole.Mutation,
-                ExistingProcess: false, SourceLanding: true, RoutingExhausted: false))
+                ExistingProcess: false, SourceLanding: true))
             .ShouldNotBeNull().Reason.ShouldBe("kind_not_supported");
 
         // The dispatch gate admits the runner-bound SourceLanding Mutation that create admitted
