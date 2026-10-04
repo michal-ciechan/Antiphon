@@ -2573,7 +2573,7 @@ public sealed class RemoteScriptContractTests
             bridge.ShouldContain("'" + name + "'");
             remote.ShouldContain(name + ")");
         }
-        remote.ShouldContain("if [ \"$LANE\" != host ]; then printf 'DIAGNOSIS=WrongLane");
+        remote.ShouldContain("if [ \"$LANE\" != host ]; then printf 'DIAGNOSIS=WrongLane", customMessage: "wrong-lane-no-effect");
         remote.ShouldContain("c849_evidence_dir");
         bridge.ShouldContain("CacheEvidencePathInvalid");
         bridge.ShouldContain("CachePreviewInvalid");
@@ -2633,7 +2633,7 @@ public sealed class RemoteScriptContractTests
             done
             """);
         foreach (var fault in new[] { "driver", "options", "owner", "schema", "role", "mode", "uid", "symlink", "file", "unmarked", "name" })
-            output.ShouldContain(fault + " exit=2");
+            output.ShouldContain(fault + " exit=2", customMessage: fault == "uid" ? "uid-owner-refused" : fault + " exit=2");
         output.ShouldContain("unmarked-preserved");
         var lookup = LinuxShell(Block(Remote(), "c849_empty_volume") + "\n" + """
             docker() { return 1; }
@@ -2647,6 +2647,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C849_Prune_refuses_stale_or_busy_authority()
     {
+        C913Run("maintenance", "schema3-prune-success");
         // The second target is an escaping symlink. The first target has a prune
         // candidate, so this catches a delete-before-whole-set-validation bug.
         var output = LinuxShell(CachePruneHarness() + """
@@ -2690,6 +2691,11 @@ public sealed class RemoteScriptContractTests
                 case "$1" in
                     ps)
                         [ "$PS_FAIL" = yes ] && return 1
+                        if [ "$LATE_ATTACHMENT" = yes ] && [ "$2" = -aq ] && [[ "$*" == *volume=* ]]; then
+                            count=$(cat "$root/late-attachment-probes"); count=$((count+1))
+                            printf '%s' "$count" > "$root/late-attachment-probes"
+                            if [ "$count" -gt 3 ]; then echo consumer; return 0; fi
+                        fi
                         if [[ "$*" == *volume=* ]] && [ "$IN_USE" = yes ]; then echo consumer
                         elif [[ "$*" == *volume=* ]] && [ "$2" = -aq ] && [ "$STOPPED_ONLY" = yes ]; then echo consumer
                         elif [[ "$*" == *'project=main'* ]]; then echo main; fi ;;
@@ -2707,13 +2713,15 @@ public sealed class RemoteScriptContractTests
                 esac
                 return 0
             }
-            for fault in sessions null unknown broker inuse stopped lookup foreign marker success; do
-                STATUS=zero; BROKER_BUSY=no; IN_USE=no; STOPPED_ONLY=no; LABELS_OK=yes; PS_FAIL=no
+            for fault in sessions null unknown broker inuse stopped late-attachment lookup foreign marker success; do
+                STATUS=zero; BROKER_BUSY=no; IN_USE=no; STOPPED_ONLY=no; LABELS_OK=yes; PS_FAIL=no; LATE_ATTACHMENT=no
+                printf 0 > "$root/late-attachment-probes"
                 case "$fault" in
                     sessions|null|unknown) STATUS="$fault" ;;
                     broker) BROKER_BUSY=yes ;;
                     inuse) IN_USE=yes ;;
                     stopped) STOPPED_ONLY=yes ;;
+                    late-attachment) LATE_ATTACHMENT=yes ;;
                     lookup) PS_FAIL=yes ;;
                     foreign) LABELS_OK=no ;;
                     marker) printf 'ready\n' > "$C849_READY" ;;
@@ -2721,7 +2729,9 @@ public sealed class RemoteScriptContractTests
                 ( c849_reset ) > "$root/result" 2>&1
                 printf '%s verdict=%s\n' "$fault" "$(cat "$root/result")"
                 if [ "$fault" != success ]; then
-                    [ -f "$root/volumes/packages/payload" ] || echo unsafe-clear
+                    for name in packages scratch npm; do
+                        [ -f "$root/volumes/$name/payload" ] || echo "unsafe-clear-$fault-$name"
+                    done
                 fi
                 rm -f "$C849_READY"
             done
@@ -2732,10 +2742,15 @@ public sealed class RemoteScriptContractTests
         foreach (var (fault, diagnosis) in new[] {
             ("sessions", "CacheConsumersBusy"), ("null", "CacheConsumersBusy"),
             ("unknown", "CacheConsumersBusy"), ("broker", "CacheBuildSlotsBusy"),
-            ("inuse", "CacheConsumersBusy"), ("stopped", "CacheResetInUse"), ("lookup", "CacheConsumerUnknown"),
+            ("inuse", "CacheConsumersBusy"), ("stopped", "CacheResetInUse"), ("late-attachment", "CacheResetInUse"), ("lookup", "CacheConsumerUnknown"),
             ("foreign", "CacheVolumeForeign"),
             ("marker", "CacheSeedAlreadyReady") })
-            reset.ShouldContain(fault + " verdict=reset-result=false:" + diagnosis);
+            reset.ShouldContain(fault + " verdict=reset-result=false:" + diagnosis, customMessage: fault switch
+            {
+                "marker" => "reset-marker-no-delete",
+                "late-attachment" => "reset-late-attachment-no-delete",
+                _ => "maintenance-refused-" + fault
+            });
         reset.ShouldContain("success verdict=reset-result=true:");
         reset.ShouldContain("cleared");
         reset.ShouldContain("root-retained");
@@ -3164,11 +3179,11 @@ public sealed class RemoteScriptContractTests
             printf 'attachment-unknown code=%s verdict=%s\n' "$?" "$(cat "$root/verdict")"
             """, "repo");
         output.ShouldContain("traversal code=2 diagnosis=CacheDonorUnsafePath");
-        output.ShouldContain("nested-traversal code=2 diagnosis=CacheDonorUnsafePath");
+        output.ShouldContain("nested-traversal code=2 diagnosis=CacheDonorUnsafePath", customMessage: "nested-traversal-refused");
         output.ShouldContain("nested-traversal-no-escape");
         output.ShouldContain("duplicate code=2 diagnosis=CacheDonorDuplicateEntry", customMessage: "duplicate-archive-refused");
         output.ShouldContain("unsupported code=2 diagnosis=CacheDonorUnsafeEntry", customMessage: "unsupported-tar-refused");
-        output.ShouldContain("directory-fifo code=2 diagnosis=CacheDonorUnsafeEntry");
+        output.ShouldContain("directory-fifo code=2 diagnosis=CacheDonorUnsafeEntry", customMessage: "directory-fifo-refused");
         output.ShouldContain("directory-fifo-not-copied");
         output.ShouldContain("symlink code=2 diagnosis=CacheDonorUnsafeEntry");
         output.ShouldContain("missing code=2 diagnosis=CacheDonorPackagesEmpty");
@@ -3264,7 +3279,7 @@ public sealed class RemoteScriptContractTests
         foreach (var name in new[] { "case_deploy_parent", "case_deploy_temp_runner" })
         {
             var body = Block(remote, name);
-            Order(body, "c849_prepare yes", "seed_runner_checkout").ShouldBeTrue(name);
+            Order(body, "c849_prepare yes", "seed_runner_checkout").ShouldBeTrue("deploy-prepare-before-checkout: " + name);
             Order(body, "c849_require_ready", "seed_runner_checkout").ShouldBeTrue(name);
             Order(body, "c849_assert_mounts", "c849_smoke").ShouldBeTrue(name);
         }
@@ -3505,7 +3520,7 @@ public sealed class RemoteScriptContractTests
         foreach (var value in new[] { "79=OK", "80=WARN", "99=WARN", "100=OVER", "101=OVER", "below=LOW", "at=OK" })
             output.ShouldContain(value);
         var preview = Block(text, "c849_preview");
-        preview.ShouldNotContain("c849_prepare");
+        preview.ShouldNotContain("c849_prepare", customMessage: "preview-read-only");
         preview.ShouldNotContain("docker stop");
         preview.ShouldNotContain("docker volume create");
         preview.ShouldNotContain("chmod ");
@@ -3877,7 +3892,7 @@ public sealed class RemoteScriptContractTests
         output.Contains("preflight-no-write-census-error").ShouldBeTrue("preflight-no-write-census-error");
         output.Contains("preflight-no-write-inspect-error").ShouldBeTrue("preflight-no-write-inspect-error");
         foreach (var fault in new[] { "main-mount", "other-mount", "stopped-mount", "bind-ancestor", "bind-descendant", "temp-unretired", "temp-counter-omitted", "foreign-owner", "wrong-mode" })
-            output.Contains("preflight-no-write-" + fault).ShouldBeTrue("preflight-no-write-" + fault);
+            output.Contains("preflight-no-write-" + fault).ShouldBeTrue(fault.StartsWith("bind-", StringComparison.Ordinal) ? "cold-bind-overlap-refused: " + fault : "preflight-no-write-" + fault);
         output.Contains("RESULT accepted=false diagnosis=CacheFirstSeedVolumeInUse").ShouldBeTrue("refusal-CacheFirstSeedVolumeInUse");
         output.Contains("RESULT accepted=false diagnosis=CacheFirstSeedTempNotRetired").ShouldBeTrue("refusal-CacheFirstSeedTempNotRetired");
         output.Contains("RESULT accepted=false diagnosis=CacheVolumeForeign").ShouldBeTrue("refusal-CacheVolumeForeign");
@@ -3918,8 +3933,9 @@ public sealed class RemoteScriptContractTests
                 (c849_cold_seed)
                 [ ! -e "$C849_READY" ] && echo boundary-no-marker
                 """);
-            refused.ShouldContain("RESULT accepted=false diagnosis=CacheFirstSeedMainMountChanged", customMessage: fault);
-            refused.ShouldContain("boundary-no-marker", customMessage: fault);
+            var witness = fault switch { "change-image" => "changed-image-refused", "change-mounts" => "changed-mounts-refused", _ => fault };
+            refused.ShouldContain("RESULT accepted=false diagnosis=CacheFirstSeedMainMountChanged", customMessage: witness);
+            refused.ShouldContain("boundary-no-marker", customMessage: witness);
         }
     }
 

@@ -4,7 +4,22 @@ set -eu
 mode="$1"; repo="$2"
 root=$(mktemp -d /tmp/c913-image-XXXXXXXX)
 trap 'rm -rf -- "$root"' EXIT
-fail() { printf 'FAIL %s\n' "$*"; exit 1; }
+fail() {
+    local witness="$1"
+    case "$1" in
+      archive-corruption-accepted|archive-digest-gates-extraction) witness=bad-archive-no-extract ;;
+      project-contract) witness=native-project-contract ;;
+      no-workload-traffic|no-audit-traffic) witness=audit-and-workload-disabled ;;
+      missing-Microsoft.NETCore.App.Host.linux-x64*) witness=missing-host-refused ;;
+      missing-Microsoft.NETCore.App.Ref*) witness=missing-core-ref-refused ;;
+      missing-Microsoft.AspNetCore.App.Ref*) witness=missing-aspnet-ref-refused ;;
+      restore-refused) witness=restore-exit-refused ;;
+      build-refused) witness=build-exit-refused ;;
+      probe-success|not-executable-refused|native-exit-refused|token-refused) witness=native-run-required ;;
+      post-cache-refused) witness=downloaded-framework-refused ;;
+    esac
+    printf 'FAIL %s [case=%s]\n' "$witness" "$*"; exit 1
+}
 pass() { printf 'PASS %s\n' "$1"; }
 if [ "$mode" = archive ]; then
     mkdir -p "$root/source/packs" "$root/bin"
