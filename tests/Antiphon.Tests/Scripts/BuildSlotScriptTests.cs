@@ -9,6 +9,7 @@ namespace Antiphon.Tests.Scripts;
 /// runner's <c>/build-slots</c> and whose command shim stands in for the wrapped build/test
 /// driver, so no runner is contacted and nothing is built. Exit 0 plus the case's named PASS
 /// inventory is the verdict.
+/// CARD-1048 uses real Windows PowerShell 5.1 and PowerShell 7 children, faking only the slot broker.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -129,6 +130,43 @@ public sealed class BuildSlotScriptTests
     public Task C845_WrapperPreservesScriptPathsAndValues() => RunC845CaseAsync(
         "WrapperPreservesScriptPathsAndValues", ["absolute", "pushed-relative"],
         ["exits zero", "payload parses", "preserves literal values", "uses caller location", "resolves relative input", "does not evaluate text"]);
+
+    [Test]
+    public Task C1048_WrapperWindowsPowerShellGetFileHash()
+    {
+        if (!OperatingSystem.IsWindows()) throw new TUnit.Core.Exceptions.SkipTestException("Windows PowerShell 5.1 qualification requires Windows");
+        return ScriptHarness.RunHarnessCaseAsync("test-build-slot.ps1", "C1048", "C1048_WrapperWindowsPowerShellGetFileHash", 18,
+            "C1048 WindowsPowerShell bare exits zero",
+            "C1048 WindowsPowerShell bare runs 5.1 Desktop",
+            "C1048 WindowsPowerShell bare hash matches",
+            "C1048 WindowsPowerShell bare uses Windows modules",
+            "C1048 WindowsPowerShell bare preserves parent path",
+            "C1048 WindowsPowerShell bare releases lease",
+            "C1048 WindowsPowerShell absolute exits zero",
+            "C1048 WindowsPowerShell absolute runs 5.1 Desktop",
+            "C1048 WindowsPowerShell absolute hash matches",
+            "C1048 WindowsPowerShell absolute uses Windows modules",
+            "C1048 WindowsPowerShell absolute preserves parent path",
+            "C1048 WindowsPowerShell absolute releases lease",
+            "C1048 WindowsPowerShell mixed exits zero",
+            "C1048 WindowsPowerShell mixed runs 5.1 Desktop",
+            "C1048 WindowsPowerShell mixed hash matches",
+            "C1048 WindowsPowerShell mixed uses Windows modules",
+            "C1048 WindowsPowerShell mixed preserves parent path",
+            "C1048 WindowsPowerShell mixed releases lease");
+    }
+
+    [Test]
+    public Task C1048_WrapperPwshModulePathUnchanged()
+    {
+        if (!OperatingSystem.IsWindows()) throw new TUnit.Core.Exceptions.SkipTestException("Windows module-path qualification requires Windows");
+        return ScriptHarness.RunHarnessCaseAsync("test-build-slot.ps1", "C1048", "C1048_WrapperPwshModulePathUnchanged", 5,
+            "C1048 Pwsh exits zero",
+            "C1048 Pwsh runs Core",
+            "C1048 Pwsh module path matches baseline",
+            "C1048 Pwsh custom module survives",
+            "C1048 Pwsh releases lease");
+    }
 
     private static Task RunC845CaseAsync(string stem, string[] scenarios, string[] suffixes) =>
         ScriptHarness.RunHarnessCaseAsync("test-build-slot.ps1", "C845", "C845_" + stem,

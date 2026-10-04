@@ -627,7 +627,195 @@ $payload = @{ spaces=$Spaces; quotes=$Quotes; empty=$Empty; literal=$Literal; wi
     }
 }
 
-$script:C589ExpectedRows = 39 + 16 + 50 + $(if ($IsLinux) { 3 } else { 0 })
+function Get-C1048Payload {
+    param($Result, [string]$Prefix = 'PAYLOAD')
+    $lines = @($Result.Lines | Where-Object { $_ -clike ($Prefix + ' *') })
+    if ($lines.Count -ne 1) { return [pscustomobject]@{ Valid = $false; Data = $null } }
+    try {
+        $data = ([string]$lines[0]).Substring($Prefix.Length + 1) | ConvertFrom-Json -ErrorAction Stop
+        if ($null -eq $data) { throw 'empty JSON' }
+        return [pscustomobject]@{ Valid = $true; Data = $data }
+    } catch { return [pscustomobject]@{ Valid = $false; Data = $null } }
+}
+
+function Test-C1048Lease {
+    param($Result)
+    return ((Test-C845Lease -Result $Result -Order 'POST,CMD,DELETE') -and
+        (Get-C589Line -Result $Result -Pattern ('^BUILD SLOT granted lease=' + $script:Lease + ' ')) -eq 1 -and
+        (Get-C589Line -Result $Result -Pattern ('^BUILD SLOT released lease=' + $script:Lease + ' ')) -eq 1)
+}
+
+function Test-C1048_WrapperWindowsPowerShellGetFileHash {
+    if (-not $IsWindows) {
+        Assert-C487 -Cond $false -Name 'C1048 WindowsPowerShell requires Windows' -Detail 'Explicit selection cannot qualify on this OS.'
+        return
+    }
+    $native = Get-Command powershell.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    foreach ($scenario in @('bare', 'absolute', 'mixed')) {
+        $fx = New-C589Case -Name ('c1048-winps-' + $scenario)
+        $child = Join-Path $fx.Root 'probe.ps1'
+        $caller = Join-Path $fx.Root 'caller.ps1'
+        $inputPath = Join-Path $fx.Root 'input.txt'
+        [IO.File]::WriteAllBytes($inputPath, [byte[]]@(97, 98, 99))
+        Set-Content -LiteralPath $child -Encoding ASCII -Value @'
+param([string]$InputPath)
+$ErrorActionPreference = 'Stop'
+[IO.File]::AppendAllText($env:C589_SLOT_LOG, "CMD hash`n")
+$payload = [ordered]@{
+    major = $PSVersionTable.PSVersion.Major; minor = $PSVersionTable.PSVersion.Minor
+    version = $PSVersionTable.PSVersion.ToString(); edition = $PSVersionTable.PSEdition
+    home = $PSHOME; modulePath = $env:PSModulePath; moduleFile = ''; hash = ''; error = ''
+}
+$code = 0
+try {
+    $payload.hash = (Get-FileHash -LiteralPath $InputPath -Algorithm SHA256).Hash
+    $payload.moduleFile = (Get-Command Get-FileHash).Module.Path
+} catch {
+    $payload.error = $_.ToString()
+    [Console]::Error.WriteLine('HASH ERROR: ' + $payload.error)
+    $code = 1
+}
+try { [Console]::Out.WriteLine('PAYLOAD ' + (ConvertTo-Json -InputObject $payload -Compress)) }
+catch { [Console]::Error.WriteLine('PAYLOAD ERROR: ' + $_.ToString()); $code = 1 }
+exit $code
+'@
+        Set-Content -LiteralPath $caller -Encoding ASCII -Value @'
+param([string]$Wrapper, [string]$Executable, [string]$Probe, [string]$InputPath)
+$ErrorActionPreference = 'Stop'
+$injected = [IO.Path]::Combine($PSHOME, 'Modules')
+$env:PSModulePath = $injected + [IO.Path]::PathSeparator + $env:PSModulePath
+[IO.File]::WriteAllText([IO.Path]::Combine($PSScriptRoot, 'injected.txt'), $injected)
+[IO.File]::WriteAllText([IO.Path]::Combine($PSScriptRoot, 'before.txt'), $env:PSModulePath)
+[Console]::Out.WriteLine('CALLER Core ' + $PSVersionTable.PSVersion.ToString())
+& $Wrapper -Label c1048-winps -- $Executable -NoProfile -NonInteractive -File $Probe $InputPath
+$code = $LASTEXITCODE
+[IO.File]::WriteAllText([IO.Path]::Combine($PSScriptRoot, 'after.txt'), [string]$env:PSModulePath)
+exit $code
+'@
+        $executable = 'powershell.exe'
+        if ($native -and $scenario -eq 'absolute') { $executable = $native.Source }
+        if ($native -and $scenario -eq 'mixed') {
+            $executable = Join-Path ([IO.Path]::GetDirectoryName($native.Source)) 'PoWeRsHeLl.ExE'
+        }
+        $r = Invoke-C589Wrapper -Fx $fx -DisableCommandShim -CallerPath $caller -DeadlineSeconds 30 `
+            -WrapperArgs @($script:Wrapper, $executable, $child, $inputPath)
+        $payload = Get-C1048Payload -Result $r
+        $d = $payload.Data
+        $hasFields = $payload.Valid -and $null -ne $d.major -and $null -ne $d.minor -and
+            $null -ne $d.edition -and $null -ne $d.home -and $null -ne $d.modulePath -and
+            $null -ne $d.moduleFile -and $null -ne $d.hash
+        $before = $null; $after = $null; $injected = $null
+        try {
+            $before = [IO.File]::ReadAllText((Join-Path $fx.Root 'before.txt'))
+            $after = [IO.File]::ReadAllText((Join-Path $fx.Root 'after.txt'))
+            $injected = [IO.File]::ReadAllText((Join-Path $fx.Root 'injected.txt'))
+        } catch { }
+        $snapshots = -not [string]::IsNullOrEmpty($before) -and $null -ne $after -and
+            -not [string]::IsNullOrEmpty($injected)
+        $usesWindowsModules = $false
+        if ($hasFields -and $snapshots) {
+            $paths = @(([string]$d.modulePath).Split([IO.Path]::PathSeparator))
+            $windowsRoot = [IO.Path]::Combine([string]$d.home, 'Modules') + [IO.Path]::DirectorySeparatorChar
+            $usesWindowsModules = $paths -inotcontains $injected -and
+                ([string]$d.moduleFile).StartsWith($windowsRoot, [StringComparison]::OrdinalIgnoreCase)
+        }
+        Write-Host ('OBSERVED C1048 WindowsPowerShell {0}: {1}' -f $scenario, $r.Text)
+        $base = 'C1048 WindowsPowerShell ' + $scenario + ' '
+        Assert-C487 -Cond (-not $r.TimedOut -and $r.Exit -eq 0 -and $hasFields) -Name ($base + 'exits zero') -Detail $r.Text
+        Assert-C487 -Cond ($hasFields -and $d.major -eq 5 -and $d.minor -eq 1 -and $d.edition -ceq 'Desktop') -Name ($base + 'runs 5.1 Desktop') -Detail $r.Text
+        Assert-C487 -Cond ($hasFields -and $d.hash -ceq 'BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD') -Name ($base + 'hash matches') -Detail $r.Text
+        Assert-C487 -Cond $usesWindowsModules -Name ($base + 'uses Windows modules') -Detail $r.Text
+        Assert-C487 -Cond ($snapshots -and [string]::Equals($before, $after, [StringComparison]::Ordinal) -and
+            ($before.Split([IO.Path]::PathSeparator)[0] -ceq $injected)) -Name ($base + 'preserves parent path') -Detail ('before={0} after={1}' -f $before, $after)
+        Assert-C487 -Cond (Test-C1048Lease -Result $r) -Name ($base + 'releases lease') -Detail ($r.Calls -join ' | ')
+    }
+}
+
+function Test-C1048_WrapperPwshModulePathUnchanged {
+    if (-not $IsWindows) {
+        Assert-C487 -Cond $false -Name 'C1048 Pwsh requires Windows' -Detail 'Explicit selection cannot qualify on this OS.'
+        return
+    }
+    $fx = New-C589Case -Name 'c1048-pwsh'
+    $child = Join-Path $fx.Root 'probe.ps1'
+    $caller = Join-Path $fx.Root 'caller.ps1'
+    $moduleRoot = Join-Path $fx.Root 'custom-modules'
+    $moduleDir = Join-Path $moduleRoot 'C1048Fixture'
+    New-Item -ItemType Directory -Path $moduleDir -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $moduleDir 'C1048Fixture.psm1') -Encoding ASCII -Value @'
+function Get-C1048Sentinel { return 'c1048-custom-module-loaded' }
+Export-ModuleMember -Function Get-C1048Sentinel
+'@
+    Set-Content -LiteralPath $child -Encoding ASCII -Value @'
+param([string]$Mode)
+$ErrorActionPreference = 'Stop'
+if ($Mode -eq 'wrapped') { [IO.File]::AppendAllText($env:C589_SLOT_LOG, "CMD pwsh`n") }
+$payload = [ordered]@{
+    major = $PSVersionTable.PSVersion.Major; edition = $PSVersionTable.PSEdition
+    version = $PSVersionTable.PSVersion.ToString(); modulePath = $env:PSModulePath
+    sentinel = ''; error = ''
+}
+$code = 0
+try { Import-Module C1048Fixture; $payload.sentinel = Get-C1048Sentinel }
+catch { $payload.error = $_.ToString(); $code = 1 }
+$prefix = $(if ($Mode -eq 'raw') { 'BASELINE ' } else { 'PAYLOAD ' })
+[Console]::Out.WriteLine($prefix + (ConvertTo-Json -InputObject $payload -Compress))
+exit $code
+'@
+    Set-Content -LiteralPath $caller -Encoding ASCII -Value @'
+param([string]$Wrapper, [string]$Probe, [string]$ModuleRoot)
+$ErrorActionPreference = 'Stop'
+$env:PSModulePath = $ModuleRoot + [IO.Path]::PathSeparator + $env:PSModulePath
+$binary = [IO.Path]::Combine($PSHOME, 'pwsh.exe')
+# Independent raw launcher: do not call the wrapper or its helpers for the baseline.
+$psi = [Diagnostics.ProcessStartInfo]::new()
+$psi.FileName = $binary
+$psi.UseShellExecute = $false
+$psi.WorkingDirectory = $PSScriptRoot
+$psi.RedirectStandardOutput = $true
+$psi.RedirectStandardError = $true
+foreach ($token in @('-NoProfile', '-NonInteractive', '-File', $Probe, 'raw')) { [void]$psi.ArgumentList.Add($token) }
+$proc = [Diagnostics.Process]::new()
+$proc.StartInfo = $psi
+$rawExit = -1
+try {
+    [void]$proc.Start()
+    $stdout = $proc.StandardOutput.ReadToEndAsync()
+    $stderr = $proc.StandardError.ReadToEndAsync()
+    if (-not $proc.WaitForExit(30000)) {
+        $proc.Kill($true)
+        [void]$proc.WaitForExit(5000)
+        throw 'Raw pwsh baseline exceeded 30 seconds.'
+    }
+    $rawExit = $proc.ExitCode
+    [Console]::Out.Write($stdout.Result)
+    [Console]::Error.Write($stderr.Result)
+} finally {
+    if ($proc.Id -and -not $proc.HasExited) { $proc.Kill($true); [void]$proc.WaitForExit(5000) }
+    $proc.Dispose()
+}
+[Console]::Out.WriteLine('BASELINE_EXIT ' + $rawExit)
+& $Wrapper -Label c1048-pwsh -- $binary -NoProfile -NonInteractive -File $Probe wrapped
+$code = $LASTEXITCODE
+exit $code
+'@
+    $r = Invoke-C589Wrapper -Fx $fx -DisableCommandShim -CallerPath $caller -DeadlineSeconds 30 `
+        -WorkingDirectory $fx.Root -WrapperArgs @($script:Wrapper, $child, $moduleRoot)
+    $wrapped = Get-C1048Payload -Result $r
+    $baseline = Get-C1048Payload -Result $r -Prefix 'BASELINE'
+    $w = $wrapped.Data; $b = $baseline.Data
+    $hasFields = $wrapped.Valid -and $baseline.Valid -and $null -ne $w.modulePath -and $null -ne $b.modulePath -and
+        $null -ne $w.major -and $null -ne $b.major -and $null -ne $w.edition -and $null -ne $b.edition
+    $baselineSucceeded = (Get-C589Line -Result $r -Pattern '^BASELINE_EXIT 0$') -eq 1
+    Write-Host ('OBSERVED C1048 Pwsh: ' + $r.Text)
+    Assert-C487 -Cond (-not $r.TimedOut -and $r.Exit -eq 0 -and $hasFields -and $baselineSucceeded) -Name 'C1048 Pwsh exits zero' -Detail $r.Text
+    Assert-C487 -Cond ($hasFields -and $w.major -ge 7 -and $b.major -ge 7 -and $w.edition -ceq 'Core' -and $b.edition -ceq 'Core') -Name 'C1048 Pwsh runs Core' -Detail $r.Text
+    Assert-C487 -Cond ($hasFields -and [string]::Equals($w.modulePath, $b.modulePath, [StringComparison]::Ordinal)) -Name 'C1048 Pwsh module path matches baseline' -Detail $r.Text
+    Assert-C487 -Cond ($hasFields -and $baselineSucceeded -and $w.sentinel -ceq 'c1048-custom-module-loaded' -and $b.sentinel -ceq 'c1048-custom-module-loaded') -Name 'C1048 Pwsh custom module survives' -Detail $r.Text
+    Assert-C487 -Cond (Test-C1048Lease -Result $r) -Name 'C1048 Pwsh releases lease' -Detail ($r.Calls -join ' | ')
+}
+
+$script:C589ExpectedRows = 39 + 16 + 50 + $(if ($IsLinux) { 3 } else { 0 }) + $(if ($IsWindows) { 23 } else { 0 })
 
 foreach ($required in @($script:Wrapper, $script:Lib)) {
     if (-not (Test-Path -LiteralPath $required)) { throw ('missing ' + $required) }
@@ -641,6 +829,7 @@ if ($Case) {
     foreach ($fn in (Get-C487CaseFunctions -Prefix 'C589_')) { & $fn }
     foreach ($fn in (Get-C487CaseFunctions -Prefix 'C800_')) { & $fn }
     foreach ($fn in (Get-C487CaseFunctions -Prefix 'C845_')) { & $fn }
+    if ($IsWindows) { foreach ($fn in (Get-C487CaseFunctions -Prefix 'C1048_')) { & $fn } }
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'build-slot-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }
 Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { $script:C589ExpectedRows })

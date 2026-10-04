@@ -101,6 +101,10 @@ function Start-AntiphonWrappedCommand {
     $psi.UseShellExecute = $false
     $psi.WorkingDirectory = (Get-Location).ProviderPath
     foreach ($token in $Arguments) { [void]$psi.ArgumentList.Add([string]$token) }
+    # Windows PowerShell rebuilds its own module path instead of inheriting PowerShell 7's.
+    if ($IsWindows -and [IO.Path]::GetFileName($FileName) -ieq 'powershell.exe') {
+        [void]$psi.Environment.Remove('PSModulePath')
+    }
     $proc = [Diagnostics.Process]::new()
     $proc.StartInfo = $psi
     try { [void]$proc.Start() }
