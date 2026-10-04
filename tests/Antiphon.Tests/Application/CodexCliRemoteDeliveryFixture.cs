@@ -29,7 +29,7 @@ internal static class CodexCliRemoteDeliveryFixture
     public static Task RunAsync(string body, string version, bool busy) =>
         RunAsync(body, new RunnerCodexCliVersionDto(version, DateTimeOffset.UtcNow, null, new string('a', 64)), busy);
 
-    public static async Task RunAsync(string body, RunnerCodexCliVersionDto? sample, bool busy)
+    public static async Task RunAsync(string body, RunnerCodexCliVersionDto? sample, bool busy, AgentModelLevel level = AgentModelLevel.High, string? negative = null)
     {
         var vector = $"remote/{sample?.CodexCliVersion}/{sample?.CodexCliVersionError}/busy={busy}";
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -104,7 +104,7 @@ internal static class CodexCliRemoteDeliveryFixture
             using (var scope = h.Provider.CreateScope())
                 created = await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CreateAsync(
                     new(body, Title: body, Role: AgentTaskRole.Docs, AgentKind: AgentKind.Codex,
-                        ModelLevel: AgentModelLevel.High, Workspace: WorkspaceMode.Worktree, RunnerId: host.AllowedRunnerId),
+                        ModelLevel: level, Workspace: WorkspaceMode.Worktree, RunnerId: host.AllowedRunnerId),
                     new(null, null, git.Path), CancellationToken.None);
             async Task Tick()
             {
@@ -119,7 +119,8 @@ internal static class CodexCliRemoteDeliveryFixture
             task.Status.ShouldBe(AgentTaskStatus.Dispatched, "C959-v21-remote-claim " + vector);
             task.RunnerId.ShouldBe(host.AllowedRunnerId, "C959-pc-185 " + vector);
             System.IO.Directory.Exists(task.RemoteWorktreePath).ShouldBeTrue("C959-v21-real-runner-worktree " + vector);
-            var queued = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.ExecutionTaskId == task.Id);
+            var queued = (await db.SessionQueuedMessages.AsNoTracking().SingleOrDefaultAsync(q => q.ExecutionTaskId == task.Id))
+                .ShouldNotBeNull("C959-pc-186 durable handoff exists");
             var expectedFull = freeze.Full[task.Id];
             expectedFull.ShouldContain(body, customMessage: "C959-v21-remote-literal " + vector);
             expectedFull.ShouldNotContain("\r");
@@ -142,6 +143,15 @@ internal static class CodexCliRemoteDeliveryFixture
                 observedFileExists = File.Exists(spillPath);
                 if (observedFileExists.Value) observedFileBytes = await File.ReadAllBytesAsync(spillPath);
             };
+            var withheld = new List<(Guid Session, string ActualSubmitted)>();
+            if (negative is not null)
+                runtime.RecordPrompt = async (id, submitted) =>
+                {
+                    withheld.Add((id, submitted));
+                    if (negative == "clipped") runtime.Append(id, TranscriptKinds.UserPrompt, submitted[..200]);
+                    if (negative == "other-session")
+                        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, submitted, sessionId: h.SessionId);
+                };
             launches.Release(h.Provider.GetRequiredService<AgentSessionLaunchQueue>());
             await h.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
             var terminal = runtime.Terminals[task.AgentSessionId!.Value];
@@ -153,6 +163,26 @@ internal static class CodexCliRemoteDeliveryFixture
                 await h.Runtime.CatchUpTranscriptAsync(task.AgentSessionId.Value, CancellationToken.None);
                 await h.Queue.FlushSessionAsync(task.AgentSessionId.Value, CancellationToken.None);
             }
+            if (negative is not null)
+            {
+                var label = negative switch { "clipped" => "C959-pc-222", "other-session" => "C959-pc-224", _ => "C959-pc-218" };
+                var retained = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == queued.Id);
+                retained.RemoteSpillBody.ShouldBe(expectedFull, label + " retain durable E without a complete recipient receipt");
+                retained.DeliveryVerdict.ShouldNotBe(DeliveryVerdict.LateConfirmed, label);
+                var baseline = retained.LastDeliveryBaselineSequence.ShouldNotBeNull("C959-negative-observable-baseline");
+                (await db.TranscriptEntries.CountAsync(e => e.AgentSessionId == task.AgentSessionId
+                    && e.Kind == TranscriptKinds.UserPrompt && e.Sequence > baseline && e.Text == expectedWire))
+                    .ShouldBe(0, label + " no qualifying receipt");
+                withheld.ShouldHaveSingleItem(label + " exactly one actual input");
+                // Delayed ingestion publishes what the recipient actually submitted, never the oracle.
+                runtime.RecordPrompt = null;
+                foreach (var received in withheld)
+                    runtime.Append(received.Session, TranscriptKinds.UserPrompt, received.ActualSubmitted);
+                runtime.Append(task.AgentSessionId!.Value, TranscriptKinds.TurnEnd, stopReason: "end_turn");
+                await h.Runtime.CatchUpTranscriptAsync(task.AgentSessionId.Value, CancellationToken.None);
+                await h.Queue.FlushSessionAsync(task.AgentSessionId.Value, CancellationToken.None);
+                terminal.SubmittedBodies.Count.ShouldBe(1, label + " late-confirm without another submit");
+            }
             observedRecipient.ShouldBe(task.AgentSessionId, "C959-v21-remote-recipient-identity " + vector);
             observedFileExists.ShouldBe(true, "C959-pc-217 " + vector);
             observedFileBytes.ShouldBe(Encoding.UTF8.GetBytes(expectedFull), "C959-pc-211 " + vector);
@@ -162,11 +192,13 @@ internal static class CodexCliRemoteDeliveryFixture
             runtime.ProbeRequests.ShouldBeEmpty("C959-v21-zero-version-operations " + vector);
             var args = terminal.StartedArgs.ToList();
             args.Count(a => a == "--model").ShouldBe(1, "C959-pc-184 remote " + vector);
-            args[args.IndexOf("--model") + 1].ShouldBe("gpt-6.1-sol");
+            args[args.IndexOf("--model") + 1].ShouldBe(level switch {
+                AgentModelLevel.Frontier => "gpt-6-astra", AgentModelLevel.Low => "gpt-5.6-luna", _ => "gpt-6.1-sol",
+            }, "C959-remote-selected-model");
             await h.Runtime.CatchUpTranscriptAsync(task.AgentSessionId.Value, CancellationToken.None);
             peer.RequestCount(PhoneHomeOperation.Transcript).ShouldBeGreaterThan(0,
                 "C959-v21-actual-remote-transcript-pull " + vector);
-            var receipts = await db.TranscriptEntries.AsNoTracking().Where(e => e.AgentSessionId == task.AgentSessionId && e.Kind == TranscriptKinds.UserPrompt).ToListAsync();
+            var receipts = await db.TranscriptEntries.AsNoTracking().Where(e => e.AgentSessionId == task.AgentSessionId && e.Kind == TranscriptKinds.UserPrompt && e.Text == expectedWire).ToListAsync();
             receipts.Count.ShouldBe(1, "C959-v21-remote-no-duplicate " + vector);
             receipts.Single().Text.ShouldBe(expectedWire, "C959-v21-remote-pulled-receipt " + vector);
             queued = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == queued.Id);
@@ -249,6 +281,7 @@ internal static class CodexCliRemoteDeliveryFixture
         private readonly Dictionary<Guid, List<RunnerTranscriptEvent>> _transcripts = [];
         public List<RunnerCodexCliProbeRequest> ProbeRequests { get; } = [];
         public Func<Guid, string, Task>? BeforeBody { get; set; }
+        public Func<Guid, string, Task>? RecordPrompt { get; set; }
         public void Append(Guid id, string kind, string? text = null, string? stopReason = null)
         {
             var entries = _transcripts[id];
@@ -275,11 +308,11 @@ internal static class CodexCliRemoteDeliveryFixture
             var terminal = new FakeAgentProtocolAdapter();
             Terminals.Add(request.SessionId, terminal);
             _transcripts.Add(request.SessionId, []);
-            terminal.OnSubmitted = text =>
+            terminal.OnSubmitted = async text =>
             {
-                Append(request.SessionId, TranscriptKinds.UserPrompt, text);
+                if (RecordPrompt is { } record) await record(request.SessionId, text);
+                else Append(request.SessionId, TranscriptKinds.UserPrompt, text);
                 Append(request.SessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn");
-                return Task.CompletedTask;
             };
             await terminal.StartAsync(new AgentLaunchSpec("codex", AgentKind.Codex, request.Exe, request.Args, request.Env, request.Cwd,
                 request.Cols, request.Rows,
