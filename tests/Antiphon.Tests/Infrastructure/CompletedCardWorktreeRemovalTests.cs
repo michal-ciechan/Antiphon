@@ -219,11 +219,35 @@ public sealed class CompletedCardWorktreeRemovalTests
             }
             else
             {
-                if (!result.IsClean) await f.Host.RunQueuedAsync();
+                Guid requestId;
+                await using (var observer = f.Host.CreateContext())
+                {
+                    var endpoint = await observer.CardWorktreeCleanupEndpoints.AsNoTracking().Include(e => e.Target)
+                        .SingleAsync(e => e.Id == f.EndpointId);
+                    requestId = endpoint.OperationId.ShouldNotBeNull();
+                    endpoint.Target.LandingOperationId.ShouldBe(op.Id);
+                    endpoint.Target.RetirementId.ShouldBeNull();
+                    var request = await observer.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == requestId);
+                    request.CleanupOnly.ShouldBeTrue();
+                    request.RequiredLandingOperationId.ShouldBe(op.Id);
+                    request.Origin.ShouldBe(LandRequestOrigin.ScheduledCleanup);
+                    request.ReplyTo.ShouldBe(AgentTaskReplyTo.None);
+                }
+                await f.Host.RunQueuedAsync();
                 Directory.Exists(f.Tree).ShouldBeFalse();
+                Directory.Exists(WorktreeSetAside.SetAsidePath(f.Tree)).ShouldBeFalse();
+                (await f.Host.Fixture.Git.LiveRegistrationsAsync(f.Host.Fixture.Repository, CancellationToken.None))
+                    .ShouldNotContain(r => r.Path == f.Tree);
                 var after = (await f.Host.OperationAsync()).ShouldNotBeNull();
                 after.Id.ShouldBe(op.Id); after.Publication.ShouldBe(op.Publication);
                 after.VerifiedSourceSha.ShouldBe(op.VerifiedSourceSha);
+                await using var settled = f.Host.CreateContext();
+                var completed = await settled.CardWorktreeCleanupEndpoints.AsNoTracking().SingleAsync(e => e.Id == f.EndpointId);
+                completed.State.ShouldBe(CardWorktreeCleanupEndpointState.Complete);
+                completed.OperationId.ShouldBe(requestId);
+                var report = await settled.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == f.TaskId);
+                (await File.ReadAllTextAsync(report.ResultFilePath!)).ShouldBe(report.Result);
+                (await f.Host.Fixture.RequiredAsync(f.Host.Fixture.Remote, "rev-parse", op.SourceFullRef)).Trim().ShouldBe(op.OriginalSourceSha);
                 f.Host.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("rebase"));
             }
         }

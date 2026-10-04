@@ -15,7 +15,7 @@ namespace Antiphon.Server.Application.Services;
 public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git,
     CardDoneArtifactPreservation artifacts, TaskWorktreeRetirementService retirement,
     WorkspaceUseAdmission admission, TimeProvider clock, IOptions<WorktreeResidueSettings> settings,
-    IOptions<GitSettings> gitSettings)
+    IOptions<GitSettings> gitSettings, AgentTaskLandService land)
 {
     internal Func<CancellationToken, Task>? BeforeIntentAsync { get; set; }
     internal Func<CancellationToken, Task>? AfterIntentAsync { get; set; }
@@ -29,10 +29,13 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
             return new(endpoint.RegistrationRemoved == true, endpoint.DirectoryRemoved == true, endpoint.BranchRemoved == true, null);
         if (endpoint.OperationId is not null && endpoint.Target.RetirementId is Guid prior)
             return await ExecuteAsync(endpoint, await db.TaskWorktreeRetirements.SingleAsync(r => r.Id == prior, ct), runId, ct);
+        if (endpoint.OperationId is not null && endpoint.Target.LandingOperationId is not null)
+            return await QueuePublicationAsync(endpoint, runId, ct);
 
         var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == endpoint.Target.TaskId, ct);
         var reason = await EligibilityAsync(task, endpoint, ct);
         if (reason is not null) return await RefuseAsync(endpoint, reason, ct);
+        var publication = await ConfirmedPublicationAsync(task, endpoint, ct);
         var source = new LandSourceCoordinates(task.Id, endpoint.RepositoryPath, endpoint.WorktreePath,
             endpoint.SourceFullRef, WorkspaceReservationKey.NormalizeRef(task.MergeTargetRef ?? "master"));
         var inspected = await git.InspectAsync(source, LandInspectionScope.Full, ct);
@@ -40,14 +43,22 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
         var snapshot = inspected.Snapshot!;
         var destination = await git.DestinationAsync(source.RepositoryPath, source.TargetFullRef, ct);
         var retirementId = Guid.NewGuid();
-        var observed = await git.ObserveRetirementAsync(source.RepositoryPath, destination, snapshot.HeadSha,
-            retirementId, "cleanup-observed", ct);
+        if (publication is not null && (snapshot.HeadSha != publication.ExpectedDeletionSha
+            || !WorkspaceReservationKey.PathsEqual(snapshot.CommonDirectory, publication.CommonDirectory)
+            || !WorkspaceReservationKey.PathsEqual(snapshot.GitDirectory, publication.GitDirectory)
+            || destination != new LandingDestination(publication.RemoteName, publication.DestinationFullRef, publication.RemoteFingerprint)))
+            return await RefuseAsync(endpoint, "publication_identity_changed", ct);
+        var observed = publication is null
+            ? await git.ObserveRetirementAsync(source.RepositoryPath, destination, snapshot.HeadSha, retirementId, "cleanup-observed", ct)
+            : await git.ObserveAsync(source.RepositoryPath, destination, publication.VerifiedSourceSha!,
+                publication.RecoveryRefPrefix + "/cleanup-observed", ct);
         if (observed.Reason is not null || !observed.ContainsSource)
             return await RefuseAsync(endpoint, observed.Reason ?? "unlanded_work", ct);
         var roots = await CardDoneArtifactRoots.ReadAsync(db, endpoint.Target.CleanupId, ct);
         var priorRelease = await db.TaskWorktreeRetirements.AsNoTracking()
             .SingleOrDefaultAsync(r => r.TaskId == task.Id && r.TaskAttempt == task.Attempt && r.Active, ct);
-        var missingReviewed = priorRelease?.MissingReportReviewed == true;
+        var missingReviewed = publication is null && priorRelease?.MissingReportReviewed == true;
+        var recordedReportPath = task.ResultFilePath;
         reason = await artifacts.EnsureAsync(task, roots, missingReviewed, ct);
         if (reason is not null) return await RefuseAsync(endpoint, reason, ct);
         var digest = CardDoneArtifactPreservation.Digest(task.Result);
@@ -71,11 +82,15 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
                     || fresh.ConcurrencyToken != task.ConcurrencyToken
                     || !CoordinatesMatch(fresh, endpoint) ? "task_snapshot_changed"
                 : CardDoneArtifactPreservation.Digest(fresh.Result) != digest ? "report_changed"
+                : fresh.ResultFilePath != recordedReportPath || fresh.DeliverablePath != task.DeliverablePath
+                    || fresh.DeliverablePdfPath != task.DeliverablePdfPath || fresh.DeliverableBundleDir != task.DeliverableBundleDir
+                    ? "artifact_changed"
                 : CardWorktreeCleanupService.ClassifyOwnership(fresh, endpoint.WorktreePath, endpoint.SourceFullRef, ManagedRoot());
             if (reason is null)
             {
-                if (await HasActiveConsumerAsync(fresh, endpoint, ct))
-                    reason = "workspace_in_use";
+                reason = await EligibilityAsync(fresh, endpoint, ct);
+                if (reason is null && (await ConfirmedPublicationAsync(fresh, endpoint, ct))?.Id != publication?.Id)
+                    reason = "publication_identity_changed";
             }
             if (reason is not null)
             {
@@ -95,36 +110,42 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
             var now = clock.GetUtcNow().UtcDateTime;
             var operationId = Guid.NewGuid();
             var attemptId = Guid.NewGuid();
-            var row = new TaskWorktreeRetirement
+            TaskWorktreeRetirement? row = null;
+            if (publication is null)
             {
-                Id = retirementId, TaskId = task.Id, TaskAttempt = task.Attempt, TerminalStatus = task.Status,
-                TaskCompletedAt = task.CompletedAt!.Value, ReportDigest = digest, MissingReportReviewed = missingReviewed,
-                ReleasedTaskRevision = task.ConcurrencyToken, CallerIdentity = "card-done",
-                ReleaseReason = "Done generation " + currentGeneration, ReleasedAt = now,
-                RepositoryPath = source.RepositoryPath, WorktreePath = source.WorktreePath,
-                CommonDirectory = snapshot.CommonDirectory, GitDirectory = snapshot.GitDirectory,
-                SourceFullRef = source.SourceFullRef, SourceSha = snapshot.HeadSha, TargetFullRef = source.TargetFullRef,
-                RemoteName = destination.RemoteName, DestinationFullRef = destination.FullRef,
-                RemoteFingerprint = destination.Fingerprint, ObservedTargetSha = observed.Sha,
-                ResultPreservationPath = task.ResultFilePath, ClaimedAt = now, ClaimAttemptId = attemptId,
-                CommandIntentId = operationId, CommandStartedAt = now, State = WorktreeRetirementState.CommandStarted,
-                UpdatedAt = now
-            };
-            db.TaskWorktreeRetirements.Add(row);
-            db.TaskWorktreeRetirementAttempts.Add(new TaskWorktreeRetirementAttempt
-            {
-                Id = attemptId, RetirementId = row.Id, SweepRunId = runId, AttemptNumber = 1,
-                CreatedAt = now, StartedAt = now, NotBefore = now, ReleasedTaskRevision = task.ConcurrencyToken,
-                CommandIntentId = operationId, CommandIntentAt = now
-            });
+                row = new TaskWorktreeRetirement
+                {
+                    Id = retirementId, TaskId = task.Id, TaskAttempt = task.Attempt, TerminalStatus = task.Status,
+                    TaskCompletedAt = task.CompletedAt!.Value, ReportDigest = digest, MissingReportReviewed = missingReviewed,
+                    ReleasedTaskRevision = task.ConcurrencyToken, CallerIdentity = "card-done",
+                    ReleaseReason = "Done generation " + currentGeneration, ReleasedAt = now,
+                    RepositoryPath = source.RepositoryPath, WorktreePath = source.WorktreePath,
+                    CommonDirectory = snapshot.CommonDirectory, GitDirectory = snapshot.GitDirectory,
+                    SourceFullRef = source.SourceFullRef, SourceSha = snapshot.HeadSha, TargetFullRef = source.TargetFullRef,
+                    RemoteName = destination.RemoteName, DestinationFullRef = destination.FullRef,
+                    RemoteFingerprint = destination.Fingerprint, ObservedTargetSha = observed.Sha,
+                    ResultPreservationPath = task.ResultFilePath, ClaimedAt = now, ClaimAttemptId = attemptId,
+                    CommandIntentId = operationId, CommandStartedAt = now, State = WorktreeRetirementState.CommandStarted,
+                    UpdatedAt = now
+                };
+                db.TaskWorktreeRetirements.Add(row);
+                db.TaskWorktreeRetirementAttempts.Add(new TaskWorktreeRetirementAttempt
+                {
+                    Id = attemptId, RetirementId = row.Id, SweepRunId = runId, AttemptNumber = 1,
+                    CreatedAt = now, StartedAt = now, NotBefore = now, ReleasedTaskRevision = task.ConcurrencyToken,
+                    CommandIntentId = operationId, CommandIntentAt = now
+                });
+            }
             db.WorkspaceUseReservations.Add(new WorkspaceUseReservation
             {
                 Id = Guid.NewGuid(), Generation = 1, CanonicalPath = source.WorktreePath,
                 SourceFullRef = source.SourceFullRef, CommonDirectory = source.RepositoryPath,
-                TaskId = task.Id, RetirementId = row.Id, Kind = WorkspaceReservationKind.Retirement,
+                TaskId = task.Id, RetirementId = row?.Id,
+                Kind = publication is null ? WorkspaceReservationKind.Retirement : WorkspaceReservationKind.HistoricalFence,
                 Active = true, CreatedAt = now
             });
-            endpoint.Target.RetirementId = row.Id;
+            endpoint.Target.RetirementId = row?.Id;
+            endpoint.Target.LandingOperationId = publication?.Id;
             endpoint.SourceSha = snapshot.HeadSha;
             endpoint.CommonDirectory = snapshot.CommonDirectory;
             endpoint.GitDirectory = snapshot.GitDirectory;
@@ -141,6 +162,7 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
             await tx.CommitAsync(ct);
         }
         if (AfterIntentAsync is not null) await AfterIntentAsync(ct);
+        if (publication is not null) return await QueuePublicationAsync(endpoint, runId, ct);
         return await ExecuteAsync(endpoint, await db.TaskWorktreeRetirements.SingleAsync(r => r.Id == retirementId, ct), runId, ct);
     }
 
@@ -154,7 +176,8 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
         var ownership = CardWorktreeCleanupService.ClassifyOwnership(task, endpoint.WorktreePath, endpoint.SourceFullRef, ManagedRoot());
         if (ownership is not null) return ownership;
         if (await db.AgentTaskLandRequests.AnyAsync(r => r.TaskId == task.Id && r.IsPending, ct)
-            || await db.AgentTaskLandings.AnyAsync(r => r.TaskId == task.Id && r.Active, ct)) return "recovery_debt";
+            || await db.AgentTaskLandings.AnyAsync(r => r.TaskId == task.Id && r.Active, ct)
+                && await ConfirmedPublicationAsync(task, endpoint, ct) is null) return "recovery_debt";
         if (await HasActiveConsumerAsync(task, endpoint, ct)) return "live_owner";
         // An ended DB row alone does not certify that a bound process is gone.
         if (task.AgentId is not null) return "process_ownership_unknown";
@@ -163,6 +186,27 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
         if (owners.Any(t => WorkspaceReservationKey.PathsEqual(t.WorktreePath ?? "", endpoint.WorktreePath)
             || WorkspaceReservationKey.NormalizeRef(t.WorktreeBranch) == endpoint.SourceFullRef)) return "identity_ambiguous";
         return null;
+    }
+
+    private async Task<AgentTaskLanding?> ConfirmedPublicationAsync(AgentTask task, CardWorktreeCleanupEndpoint endpoint, CancellationToken ct)
+    {
+        if (task.ActiveLandingId is not Guid id || task.Status != AgentTaskStatus.Succeeded
+            || task.Role == AgentTaskRole.Mutation || task.SourceLandingOperationId is not null || task.RepairSourceTaskId is not null)
+            return null;
+        var op = await db.AgentTaskLandings.AsNoTracking().SingleOrDefaultAsync(o => o.Id == id && o.TaskId == task.Id, ct);
+        return op is not null && op.Active && new AgentTaskLandingState().HasPublication(op)
+            && op.Cleanup != LandCleanupStatus.Complete && op.ExpectedDeletionSha is not null
+            && op.SourceFullRef == endpoint.SourceFullRef && op.TargetFullRef == WorkspaceReservationKey.NormalizeRef(task.MergeTargetRef ?? "master")
+            && WorkspaceReservationKey.PathsEqual(op.RepositoryPath, endpoint.RepositoryPath)
+            && WorkspaceReservationKey.PathsEqual(op.WorktreePath, endpoint.WorktreePath) ? op : null;
+    }
+
+    private async Task<WorktreeRemoval> QueuePublicationAsync(CardWorktreeCleanupEndpoint endpoint, Guid? runId, CancellationToken ct)
+    {
+        await land.RequestCardDoneCleanupRetryAsync(endpoint.Id, runId, ct);
+        await db.Entry(endpoint).ReloadAsync(ct);
+        return new(endpoint.RegistrationRemoved == true, endpoint.DirectoryRemoved == true, endpoint.BranchRemoved == true,
+            endpoint.State == CardWorktreeCleanupEndpointState.Complete ? null : endpoint.Reason ?? "publication_cleanup_queued");
     }
 
     private async Task<bool> HasActiveConsumerAsync(AgentTask task, CardWorktreeCleanupEndpoint endpoint, CancellationToken ct)

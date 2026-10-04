@@ -329,13 +329,43 @@ public sealed class AgentTaskLandService
 
     /// <summary>Queue cleanup-only retry of a confirmed publication. Never publishes.</summary>
     public async Task<LandRequestResult> RequestCleanupRetryAsync(Guid taskId, Guid operationId, Guid? sweepRunId, CancellationToken ct)
+        => await RequestCleanupRetryCoreAsync(taskId, operationId, sweepRunId, null, ct);
+
+    internal async Task<LandRequestResult> RequestCardDoneCleanupRetryAsync(Guid endpointId, Guid? sweepRunId, CancellationToken ct)
+    {
+        var endpoint = await _db.CardWorktreeCleanupEndpoints.AsNoTracking().Include(e => e.Target)
+            .SingleAsync(e => e.Id == endpointId, ct);
+        if (endpoint.Target.LandingOperationId is not Guid operationId)
+            throw new ConflictException("CardDone cleanup requires a bound publication.", "publication_unconfirmed");
+        return await RequestCleanupRetryCoreAsync(endpoint.Target.TaskId, operationId, sweepRunId, endpointId, ct);
+    }
+
+    private async Task<LandRequestResult> RequestCleanupRetryCoreAsync(Guid taskId, Guid operationId,
+        Guid? sweepRunId, Guid? endpointId, CancellationToken ct)
     {
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
         await _db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM \"AgentTasks\" WHERE \"Id\" = {taskId} FOR UPDATE", ct);
         var task = await _db.AgentTasks.SingleOrDefaultAsync(t => t.Id == taskId, ct)
             ?? throw new NotFoundException(nameof(AgentTask), taskId.ToString());
+        var endpoint = endpointId is Guid boundEndpoint
+            ? await _db.CardWorktreeCleanupEndpoints.AsNoTracking().Include(e => e.Target)
+                .SingleAsync(e => e.Id == boundEndpoint, ct) : null;
+        if (endpoint is not null && (endpoint.OperationId is null || endpoint.IntentAt is null
+            || endpoint.Target.TaskId != taskId || endpoint.Target.LandingOperationId != operationId
+            || endpoint.Target.RetirementId is not null || endpoint.State == CardWorktreeCleanupEndpointState.Revoked))
+            throw new ConflictException("CardDone intent changed.", "card_done_authority_required");
+        if (endpoint?.OperationId is Guid existingId
+            && await _db.AgentTaskLandRequests.AsNoTracking().SingleOrDefaultAsync(r => r.Id == existingId, ct) is { } existing)
+        {
+            if (!existing.CleanupOnly || existing.RequiredLandingOperationId != operationId || existing.TaskId != taskId)
+                throw new ConflictException("CardDone request changed.", "card_done_authority_required");
+            await transaction.CommitAsync(ct);
+            if (existing.IsPending && !_boundary.DropWakeup("land-request", existing.Id))
+                _queue.TryEnqueue(taskId, existing.VerifyFilter, existing.Id);
+            return new LandRequestResult(taskId, existing.IsPending ? "queued" : "complete", existing.Id, "not-required");
+        }
         var op = await _db.AgentTaskLandings.AsNoTracking().SingleOrDefaultAsync(o => o.Id == operationId, ct);
-        if (op is null || !op.Active || op.TaskId != taskId || !new AgentTaskLandingState().HasPublication(op)
+        if (op is null || !op.Active || op.TaskId != taskId || task.ActiveLandingId != op.Id || !new AgentTaskLandingState().HasPublication(op)
             || op.Cleanup == LandCleanupStatus.Complete)
             throw new ConflictException("Cleanup retry requires the exact confirmed active operation.", "publication_unconfirmed");
         if (await _db.AgentTaskLandRequests.AnyAsync(r => r.TaskId == taskId && r.IsPending, ct))
@@ -344,6 +374,7 @@ public sealed class AgentTaskLandService
         var now = _clock.GetUtcNow().UtcDateTime;
         var request = NewRequest(task, now, task.LandVerifyFilter, op.OriginalSourceSha, op.ReviewEvidenceId,
             LandApprovalKind.InheritedResume);
+        if (endpoint?.OperationId is Guid requestId) request.Id = requestId;
         request.CleanupOnly = true;
         request.RequiredLandingOperationId = operationId;
         request.RecoveryMode = op.RecoveryMode;
@@ -1281,6 +1312,23 @@ public sealed class AgentTaskLandService
             }
         }
         var terminal = Event(task.Id, type, outcome, now);
+        if (op is not null && request.CleanupOnly)
+        {
+            var endpoint = await _db.CardWorktreeCleanupEndpoints.SingleOrDefaultAsync(e =>
+                e.OperationId == request.Id && e.Target.LandingOperationId == op.Id && e.Target.TaskId == task.Id, ct);
+            if (endpoint is not null)
+            {
+                endpoint.DirectoryRemoved = op.DirectoryRemoved;
+                endpoint.RegistrationRemoved = op.RegistrationRemoved;
+                endpoint.BranchRemoved = op.BranchRemoved;
+                endpoint.State = op.Cleanup == LandCleanupStatus.Complete ? CardWorktreeCleanupEndpointState.Complete
+                    : op.DirectoryRemoved || op.RegistrationRemoved || op.BranchRemoved ? CardWorktreeCleanupEndpointState.Partial
+                    : CardWorktreeCleanupEndpointState.Refused;
+                endpoint.Reason = op.LastReason;
+                endpoint.UpdatedAt = now;
+                endpoint.ConcurrencyToken = Guid.NewGuid();
+            }
+        }
         if (cleanupAttempt is not null && op is not null)
         {
             cleanupAttempt.DirectoryGone = op.DirectoryRemoved;

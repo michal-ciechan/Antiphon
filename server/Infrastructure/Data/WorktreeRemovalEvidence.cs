@@ -183,9 +183,7 @@ public sealed class WorktreeRemovalEvidence(IServiceScopeFactory scopes) : IWork
             || !SamePath(endpoint.CommonDirectory, request.CommonDirectory)
             || !SamePath(endpoint.GitDirectory, request.GitDirectory)) return false;
         var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == endpoint.Target.TaskId, ct);
-        var retirement = await db.TaskWorktreeRetirements.AsNoTracking().SingleOrDefaultAsync(r => r.Id == request.RetirementId, ct);
-        if (task is null || retirement?.CommandIntentId != operationId || !retirement.Active
-            || task.CardId != endpoint.Target.Cleanup.CardId || task.Attempt != endpoint.Target.TaskAttempt
+        if (task is null || task.CardId != endpoint.Target.Cleanup.CardId || task.Attempt != endpoint.Target.TaskAttempt
             || task.Status is not (AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled)
             || CardDoneArtifactPreservation.Digest(task.Result) != endpoint.ReportDigest
             || !SamePath(task.RepoPath, endpoint.RepositoryPath) || !SamePath(task.WorktreePath, endpoint.WorktreePath)
@@ -194,11 +192,29 @@ public sealed class WorktreeRemovalEvidence(IServiceScopeFactory scopes) : IWork
             return false;
         // Reopen after the committed intent does not revoke this exact command. The durable
         // reservation still fences these coordinates; another endpoint must obtain a new intent.
-        if (!await db.WorkspaceUseReservations.AsNoTracking().AnyAsync(r => r.Active
-                && r.RetirementId == retirement.Id && r.Kind == WorkspaceReservationKind.Retirement, ct)) return false;
+        var missingReviewed = false;
+        if (endpoint.Target.LandingOperationId is Guid publicationId)
+        {
+            if (request.Purpose != WorktreeRemovalPurpose.Publication || request.LandingId != publicationId
+                || task.ActiveLandingId != publicationId || request.CleanupContext?.RequestId != operationId
+                || !await db.AgentTaskLandRequests.AsNoTracking().AnyAsync(r => r.Id == operationId
+                    && r.TaskId == task.Id && r.IsPending && r.CleanupOnly && r.RequiredLandingOperationId == publicationId, ct)) return false;
+            var fences = await db.WorkspaceUseReservations.AsNoTracking().Where(r => r.Active
+                && r.TaskId == task.Id && r.Kind == WorkspaceReservationKind.HistoricalFence).ToListAsync(ct);
+            var key = WorkspaceReservationKey.For(endpoint.WorktreePath, endpoint.SourceFullRef, endpoint.RepositoryPath);
+            if (!fences.Any(r => WorkspaceReservationKey.Same(r.CanonicalPath, r.SourceFullRef, r.CommonDirectory, key))) return false;
+        }
+        else
+        {
+            var retirement = await db.TaskWorktreeRetirements.AsNoTracking().SingleOrDefaultAsync(r => r.Id == request.RetirementId, ct);
+            if (request.Purpose != WorktreeRemovalPurpose.SettledTask || retirement?.CommandIntentId != operationId || !retirement.Active
+                || !await db.WorkspaceUseReservations.AsNoTracking().AnyAsync(r => r.Active
+                    && r.RetirementId == retirement.Id && r.Kind == WorkspaceReservationKind.Retirement, ct)) return false;
+            missingReviewed = retirement.MissingReportReviewed;
+        }
         var artifacts = scope.ServiceProvider.GetService<CardDoneArtifactPreservation>();
         return artifacts is not null && await artifacts.VerifyAsync(task,
-            await CardDoneArtifactRoots.ReadAsync(db, endpoint.Target.CleanupId, ct), retirement.MissingReportReviewed, ct);
+            await CardDoneArtifactRoots.ReadAsync(db, endpoint.Target.CleanupId, ct), missingReviewed, ct);
     }
 
     public async Task<AgentTask?> ReadTaskAsync(Guid taskId, CancellationToken ct)

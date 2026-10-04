@@ -378,9 +378,13 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     op.RepositoryPath, op.WorktreePath, op.CommonDirectory, op.GitDirectory,
                     op.SourceFullRef, op.TargetFullRef, op.ExpectedDeletionSha!, op.TargetBeforeSha), ct);
                 var context = new WorktreeCleanupContext(attempt.Id, request.Id, op.Id, op.TaskId);
+                var cardDone = request.CleanupOnly ? await db.CardWorktreeCleanupEndpoints.AsNoTracking()
+                    .SingleOrDefaultAsync(e => e.OperationId == request.Id && e.Target.TaskId == op.TaskId
+                        && e.Target.LandingOperationId == op.Id, ct) : null;
                 removed = await worktrees.TryRemoveAsync(new(WorktreeRemovalPurpose.Publication, Coordinates(op),
                     op.CommonDirectory, op.GitDirectory, op.ExpectedDeletionSha!, op.TargetBeforeSha, op.Id, lease,
-                    CleanupContext: context, LandedSha: op.VerifiedSourceSha), ct);
+                    CleanupContext: context, LandedSha: op.VerifiedSourceSha,
+                    CardDoneEndpointId: cardDone?.Id, HasDeletionIntent: cardDone?.IntentAt is not null), ct);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
