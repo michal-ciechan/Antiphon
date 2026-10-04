@@ -96,9 +96,7 @@ public sealed class RemoteScriptContractTests
         using (var held = new C1008HostFixture())
         {
             Directory.CreateDirectory(Path.Combine(held.Root, "server/locks"));
-            var psi = new ProcessStartInfo("bash") { UseShellExecute = false, RedirectStandardInput = true };
-            psi.ArgumentList.Add("-c");
-            psi.ArgumentList.Add($"exec 8>'{held.Root}/server/locks/rollout.lock'; flock 8; touch '{held.Root}/held'; read -r release");
+            var psi = held.ShellStart("holder", C1008HostFixture.HolderProgram(held.ShellRoot));
             using var lease = Process.Start(psi)!;
             Task<(int Exit, string Output)>? running = null;
             try {
@@ -621,9 +619,8 @@ public sealed class RemoteScriptContractTests
         }
     }
 
-    private static async Task C1008GitGraph(C1008HostFixture fixture, string fault = "")
+    internal static string C1008GitProgram(string root, string fault)
     {
-        var root = fixture.Root;
         var script = $$"""
             set -e
             git init -q --bare '{{root}}/origin'
@@ -649,8 +646,13 @@ public sealed class RemoteScriptContractTests
         if (fault is "dirty" or "staged") script += $"\necho B >> '{root}/work/repo/file'\n";
         if (fault == "staged") script += $"git -C '{root}/work/repo' add file\n";
         if (fault == "untracked") script += $"\necho B > '{root}/work/repo/new'\n";
-        var psi = new ProcessStartInfo("bash") { RedirectStandardOutput = true, RedirectStandardError = true };
-        psi.ArgumentList.Add("-c"); psi.ArgumentList.Add(script);
+        return script;
+    }
+
+    internal static async Task C1008GitGraph(C1008HostFixture fixture, string fault = "")
+    {
+        var script = C1008GitProgram(fixture.ShellRoot, fault);
+        var psi = fixture.ShellStart("git", script);
         using var proc = Process.Start(psi)!; var stdout = proc.StandardOutput.ReadToEndAsync(); var stderr = proc.StandardError.ReadToEndAsync();
         await proc.WaitForExitAsync(); proc.ExitCode.ShouldBe(0, await stdout + await stderr);
     }
@@ -4360,7 +4362,7 @@ public sealed class RemoteScriptContractTests
             + "\n";
     }
 
-    private static string PrepareLinuxShellScript(string body, string? repositoryVariable, string nativeRoot, bool isWindows)
+    internal static string PrepareLinuxShellScript(string body, string? repositoryVariable, string nativeRoot, bool isWindows)
     {
         if (repositoryVariable is not null and not "root" and not "repo")
             throw new ArgumentException("The repository-variable argument must be root or repo.", nameof(repositoryVariable));

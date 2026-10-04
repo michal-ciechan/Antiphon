@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Antiphon.Tests.Application;
@@ -444,7 +445,20 @@ internal sealed class C1008WrapperFixture : IDisposable
 
 internal sealed class C1008HostFixture : IDisposable
 {
-    internal string Root { get; } = Directory.CreateTempSubdirectory("c1008-host-").FullName;
+    internal string Root { get; }
+    internal bool Windows { get; }
+    internal string ShellRoot => Root;
+    internal string ShellRepo => DelegateScriptRunner.RepoRoot;
+    internal JsonObject AdaptPaths(JsonObject model) => model;
+    internal static string HolderProgram(string root) => $"exec 8>'{root}/server/locks/rollout.lock'; flock 8; touch '{root}/held'; read -r release";
+    internal ProcessStartInfo ShellStart(string entry, string body, string? file = null)
+    {
+        var start = new ProcessStartInfo("bash") { UseShellExecute = false,
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        if (file is null) { start.ArgumentList.Add("-c"); start.ArgumentList.Add(body); }
+        else start.ArgumentList.Add(file);
+        return start;
+    }
     internal JsonObject Docker { get; }
     internal JsonObject Statuses { get; }
     internal string StatePath => Path.Combine(Root, "docker.json");
@@ -463,8 +477,11 @@ internal sealed class C1008HostFixture : IDisposable
     internal JsonObject TaskScopes { get; } = new();
     internal JsonObject TaskDetails { get; } = new();
 
-    internal C1008HostFixture(bool main = true)
+    internal C1008HostFixture(bool main = true, string? root = null, bool? windows = null)
     {
+        Root = root ?? Directory.CreateTempSubdirectory("c1008-host-").FullName;
+        Directory.CreateDirectory(Root);
+        Windows = windows ?? OperatingSystem.IsWindows();
         Vectors = JsonNode.Parse(File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot,
             "scripts/fixtures/c1008-recycle-cases.json")))!.AsObject();
         TaskScopes["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1"] = Vectors["emptyTasks"]!.DeepClone();
@@ -548,11 +565,30 @@ internal sealed class C1008HostFixture : IDisposable
 
     internal async Task<(int Exit, string Output)> Run(string hostCase = "deploy-parent", string extra = "", bool dryRun = false)
     {
-        File.WriteAllText(StatePath, Docker.ToJsonString());
+        File.WriteAllText(StatePath, AdaptPaths(Docker).ToJsonString());
         File.WriteAllText(Path.Combine(Root, "statuses.json"), Statuses.ToJsonString());
         File.WriteAllText(Path.Combine(Root, "tasks.json"), new JsonObject
             { ["scopes"] = TaskScopes.DeepClone(), ["details"] = TaskDetails.DeepClone() }.ToJsonString());
         var source = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"));
+        source = ComposeProgram(ShellRoot, ShellRepo, source, extra, dryRun);
+        var script = Path.Combine(Root, "remote.sh");
+        File.WriteAllText(script, source);
+        var psi = ShellStart("run", source, script);
+        psi.Environment["C590_CASE"] = hostCase;
+        psi.Environment["C590_SHA"] = new string('a', 40);
+        psi.Environment["C590_RUN"] = "c1008fixture";
+        psi.Environment["C590_REEXEC"] = "1";
+        psi.Environment["C604_SERVER_ORIGIN"] = "http://127.0.0.1:1";
+        using var proc = Process.Start(psi)!;
+        var stdout = proc.StandardOutput.ReadToEndAsync(); var stderr = proc.StandardError.ReadToEndAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        try { await proc.WaitForExitAsync(deadline.Token); }
+        catch { if (!proc.HasExited) { proc.Kill(true); await proc.WaitForExitAsync(); } throw; }
+        return (proc.ExitCode, await stdout + await stderr);
+    }
+
+    internal static string ComposeProgram(string Root, string repoRoot, string source, string extra, bool dryRun)
+    {
         var injection = $$"""
             C1008_FIXTURE_ROOT='{{Root}}'; export C1008_FIXTURE_ROOT
             SERVER2_ROOT='{{Root}}/server'; ROOT='{{Root}}'; EVIDENCE_ROOT='{{Root}}/evidence'; CASE_DIR="$EVIDENCE_ROOT/$CASE"
@@ -560,7 +596,7 @@ internal sealed class C1008HostFixture : IDisposable
             RUNNER_GIT_USER_NAME=Fixture; RUNNER_GIT_USER_EMAIL=fixture@example.invalid
             C1008_OPERATION=c100800000000000000000000000000000001; C1008_CONTEXT=default; C1008_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1
             C1008_DRY_RUN={{(dryRun ? "1" : "0")}}; C590_TEMP_RETIRED_AT=2026-10-03T09:30:00Z
-            docker() { bash '{{DelegateScriptRunner.RepoRoot}}/scripts/fixtures/c1008-fake-docker.sh' "$@"; }
+            docker() { bash '{{repoRoot}}/scripts/fixtures/c1008-fake-docker.sh' "$@"; }
             compose_host() { docker compose -p "$HOST_PROJECT" "$@"; }
             compose_temp() { docker compose -p "$TEMP_PROJECT" "$@"; }
             detect_lane() { LANE=host; }
@@ -578,21 +614,7 @@ internal sealed class C1008HostFixture : IDisposable
             {{extra}}
             """;
         source = source.Replace("trap 'ec=$?;", injection + "\ntrap 'ec=$?;", StringComparison.Ordinal);
-        var script = Path.Combine(Root, "remote.sh");
-        File.WriteAllText(script, source);
-        var psi = new ProcessStartInfo("bash") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-        psi.ArgumentList.Add(script);
-        psi.Environment["C590_CASE"] = hostCase;
-        psi.Environment["C590_SHA"] = new string('a', 40);
-        psi.Environment["C590_RUN"] = "c1008fixture";
-        psi.Environment["C590_REEXEC"] = "1";
-        psi.Environment["C604_SERVER_ORIGIN"] = "http://127.0.0.1:1";
-        using var proc = Process.Start(psi)!;
-        var stdout = proc.StandardOutput.ReadToEndAsync(); var stderr = proc.StandardError.ReadToEndAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        try { await proc.WaitForExitAsync(deadline.Token); }
-        catch { if (!proc.HasExited) { proc.Kill(true); await proc.WaitForExitAsync(); } throw; }
-        return (proc.ExitCode, await stdout + await stderr);
+        return source;
     }
 
     public void Dispose() => Directory.Delete(Root, recursive: true);
