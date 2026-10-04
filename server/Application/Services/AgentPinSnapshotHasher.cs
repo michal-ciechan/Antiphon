@@ -12,6 +12,11 @@ public static class AgentPinSnapshotHasher
             .Where(p => p.RevokedAt is null)
             .OrderBy(p => p.CreatedAt)
             .ThenBy(p => p.Id);
+        return HashOrdered(ordered.Select(p => new AgentPinValue(p.Id, p.Text)));
+    }
+
+    public static string HashOrdered(IEnumerable<AgentPinValue> ordered)
+    {
         var builder = new StringBuilder();
         foreach (var pin in ordered)
         {

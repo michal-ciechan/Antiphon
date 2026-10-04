@@ -326,6 +326,7 @@ public class InstructionBundleTests
             // CARD-0146 S3: one standing-rule block per pipeline-stage role. Adding a stage is
             // meant to cost this one line plus the ForDelegate map.
             "stage-code", "stage-investigate", "stage-mutation", "stage-plan", "stage-review", "stage-test-design",
+            "standing-instructions",
             // One per AgentReplyStyle value (CARD-0060), style-normal included — see AgentReplyStyles
             // for why the one that is never composed still ships as a file.
             "style-brief", "style-caveman", "style-explanatory", "style-normal", "style-phone", "style-terse",

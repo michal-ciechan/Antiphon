@@ -57,7 +57,7 @@ public static class AgentBundleAttachments
             var keys = new List<string>();
             foreach (var row in group)
             {
-                if (InstructionBundles.Exists(row.BundleKey))
+                if (InstructionBundles.Exists(row.BundleKey) && !InstructionBundles.IsImplicit(row.BundleKey))
                 {
                     keys.Add(row.BundleKey);
                     continue;
@@ -147,6 +147,9 @@ public static class AgentBundleAttachments
 
             if (!InstructionBundles.Exists(key))
                 unknown.Add(key);
+            else if (InstructionBundles.IsImplicit(key))
+                throw new ValidationException(nameof(Dtos.UpdateAgentRequest.BundleKeys),
+                    "The standing-instructions protocol is implicit and cannot be attached manually.");
             // A style is a real bundle, so Exists() says yes — it is simply not attachable, and the
             // message has to say WHY or an operator reads it as a typo they did not make.
             else if (InstructionBundles.IsStyle(key))
