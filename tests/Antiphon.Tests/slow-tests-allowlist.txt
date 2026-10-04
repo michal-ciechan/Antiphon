@@ -218,3 +218,5 @@ Antiphon.Tests.Application.TaskInputAttentionCostTests
 
 # CARD-1008: isolated real Docker/Git volume recycle comparison.
 Antiphon.Tests.Scripts.RollingVolumeRecycleDockerTests
+
+Antiphon.Tests.Infrastructure.CompletedCardWorktreeRemovalTests
