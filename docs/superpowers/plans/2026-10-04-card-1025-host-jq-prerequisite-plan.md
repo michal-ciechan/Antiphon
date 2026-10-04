@@ -740,7 +740,7 @@ mutation-clean.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1025-helper/` | linux-host-jq-explicit | `/*/*/HostJqPrerequisiteScriptTests/(C1025_Check_qualifies_deployment_shell*)\|(C1025_Check_has_no_install_effects*)\|(C1025_Provision_requires_missing_jq*)\|(C1025_Provision_admits_host_prerequisites*)\|(C1025_Provision_refuses_unsafe_destination*)\|(C1025_Provision_serializes_and_rechecks*)\|(C1025_Provision_verifies_download_before_use*)\|(C1025_Provision_publishes_complete_no_clobber*)\|(C1025_Provision_cleans_only_owned_staging*)\|(C1025_Provision_requalifies_published_jq*)\|(C1025_Provision_requires_canonical_source*)\|(C1025_Transport_is_bounded_and_reaped*)\|(C1025_Receipt_requires_complete_current_proof*)\|(C1025_Receipt_persistence_is_required*)\|(C1025_Transport_preserves_secret_custody*)\|(C1025_Explicit_tool_phases_never_deploy*)` | V-1, V-2, V-3, V-6, R-1, R-2, R-3, R-7 | exactly M-1..M-16: 16 passed, 0 failed/skipped, no extra methods | 16 | 8 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1025-helper/` | linux-host-jq-explicit | `/*/*/HostJqPrerequisiteScriptTests/(C1025_Check_qualifies_deployment_shell*)\|(C1025_Check_has_no_install_effects*)\|(C1025_Provision_requires_missing_jq*)\|(C1025_Provision_admits_host_prerequisites*)\|(C1025_Provision_refuses_unsafe_destination*)\|(C1025_Provision_serializes_and_rechecks*)\|(C1025_Provision_verifies_download_before_use*)\|(C1025_Provision_publishes_complete_no_clobber*)\|(C1025_Provision_cleans_only_owned_staging*)\|(C1025_Provision_requalifies_published_jq*)\|(C1025_Provision_requires_canonical_source*)\|(C1025_Transport_is_bounded_and_reaped*)\|(C1025_Receipt_requires_complete_current_proof*)\|(C1025_Receipt_persistence_is_required*)\|(C1025_Transport_preserves_secret_custody*)\|(C1025_Explicit_tool_phases_never_deploy*)\|(C1025_Check_rejects_canonical_leaf_symlink*)\|(C1025_Receipt_rejects_canonical_lookup_with_unapproved_target*)` | V-1, V-2, V-3, V-6, R-1, R-2, R-3, R-7 | exactly M-1..M-16 plus the two canonical-leaf repair methods: 18 passed, 0 failed/skipped, no extra methods | 18 | 8 |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1025-preflight/` | linux-host-jq-admission | `/*/*/HostJqPrerequisiteScriptTests/(C1025_Provision_requires_canonical_source*)\|(C1025_Transport_is_bounded_and_reaped*)\|(C1025_Receipt_requires_complete_current_proof*)\|(C1025_Receipt_persistence_is_required*)\|(C1025_Transport_preserves_secret_custody*)\|(C1025_Explicit_tool_phases_never_deploy*)\|(C1025_Preflight_precedes_every_phase*)\|(C1025_Preflight_is_fresh_for_each_entry*)\|(C1025_Final_recycle_guard_remains*)` | V-3, V-4, R-3, R-4, R-6 | exactly M-11..M-19: 9 passed, 0 failed/skipped, no extra methods | 9 | 7 |
 | CP-3 | S2 | `tests/Antiphon.Tests -> bin-c1025-legacy/` | linux-host-jq-legacy | `/*/*/RollingVolumeRecycleScriptTests/C1008_Legacy_rolling_and_jq_rosters_remain` | V-5, R-5 | exactly 1 passed, 0 failed/skipped; four 31-assertion receipts; required present T-20 | 1 | 8 |
 
@@ -919,3 +919,38 @@ admission remain S2. Its healthy fake prerequisite proof must include lookupPath
 and the approved canonical path under this amended contract. Outer-host
 activation and CARD-1040 image qualification remain caller-owned after Review
 and land; no shared host operation is executed by this Code amendment.
+
+### Review repair: canonical leaf symlink (Code c8655038)
+
+Review d3e917ce found that the canonical lookup string masked a resolved home
+binary. Supersede the earlier lookup-or-resolution admission: the resolved path
+must equal the canonical destination, whose leaf must be a non-symlink regular
+file. An alias to that file remains valid. The wrapper independently rejects
+success proofs with any other resolved path. No real host installation is in
+scope. The original unsafe-destination symlink vector now keeps the destination
+on PATH; the new executable-home vector proves qualification actually judges it.
+
+CP-1 includes two new exact methods (18 executions total):
+- `C1025_Check_rejects_canonical_leaf_symlink`: native check and provision
+  must exit 2 with HostJqPathUnapproved, preserve the leaf/target, execute no
+  unapproved jq and perform no install effects; real wrapper refusal observations
+  retain canonical lookup and home resolution with qualified=false.
+- `C1025_Receipt_rejects_canonical_lookup_with_unapproved_target`: an otherwise
+  valid synthetic success proof with canonical lookup and home resolution must
+  independently refuse with HostJqProofInvalid for check and provision, retaining
+  no successful receipt or banner. M-1 retains regular-file and alias controls.
+
+V-6/R-7 include these two vectors. This repair brief overrides the generic Final
+profile with CP-1 only; CP-2/CP-3, V-4/V-5, R-4/R-5/R-6, whole Unit and live
+activation stay pending. A method-scoped baseline run of the two new tests
+against unchanged defective production is an explicitly reported diagnostic,
+not Mutation; CP-1 runs once after the repair. No repetitions after green.
+Baseline build+tests estimate 8 minutes, repair CP-1 estimate 8 minutes.
+
+All 64 existing PC cycles remain pending. Add two independently bypassable
+variants for SourceLanding Mutation, also pending (66 total):
+
+| PC | Guard / variant | Compiling defect | Exact method | Required red assertion |
+|---|---|---|---|---|
+| PC-51-leaf | G-51 canonical leaf | Restore lookup-equals-destination as an alternative to resolved-path/regular-leaf admission. | `C1025_Check_rejects_canonical_leaf_symlink` | canonical-leaf-symlink: exit 2 for working home target found at canonical leaf |
+| PC-52-target | G-52 resolved proof | Restore lookup-equals-destination as an alternative to resolved proof equality. | `C1025_Receipt_rejects_canonical_lookup_with_unapproved_target` | canonical-proof-target: exit 2, no success receipt |
