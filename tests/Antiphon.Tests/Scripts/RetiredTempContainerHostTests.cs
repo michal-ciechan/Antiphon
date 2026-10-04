@@ -398,7 +398,7 @@ public sealed class RetiredTempContainerHostTests
             File.WriteAllText(f.Root+"/codex/auth.json","C994_SECRET_SENTINEL");File.WriteAllText(f.Root+"/grok/auth.json","C994_SECRET_SENTINEL");
             f.Docker["dockerStderr"]="C994_SECRET_SENTINEL";if(refuse)c["State"]!["Status"]="created";
             var run=await Cleanup(f);run.Exit.ShouldBe(refuse?2:0,"c994-redaction: "+run.Output);
-            foreach(var text in new[]{run.Output,Receipt(f).ToJsonString(),File.ReadAllText(f.Root+"/server/temp-container-retirement/c99400000000000000000000000000000001.json")})text.ShouldNotContain("C994_SECRET_SENTINEL","c994-redaction: success/refusal/stdout/host/copy");
+            foreach(var text in new[]{run.Output,Receipt(f).ToJsonString(),File.ReadAllText(f.Root+"/server/temp-container-retirement/c99400000000000000000000000000000001.json")})text.ShouldNotContain("C994_SECRET_SENTINEL",customMessage:"c994-redaction: success/refusal/stdout/host/copy");
             File.ReadAllText(f.Root+"/codex/auth.json").ShouldBe("C994_SECRET_SENTINEL","c994-redaction: bind untouched");
             if(!refuse)Receipt(f)["candidates"]![0]!["Id"]!.GetValue<string>().ShouldBe(new string('7',64),"c994-redaction: approved identity retained");
         }
