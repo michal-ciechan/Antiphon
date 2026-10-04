@@ -89,8 +89,10 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
     {
         await using var db = Host.CreateContext();
         var card = await db.Cards.SingleAsync(c => c.Id == CardId);
-        await new CardService(db, null!, null!, null!, new MockEventBus(), TimeProvider.System, null!)
-            .MoveAsync(CardId, new MoveCardRequest(column, card.ConcurrencyToken, "fixture"), ct);
+        var cards = new CardService(db, null!, null!, null!, new MockEventBus(), TimeProvider.System, null!);
+        if (card.Status == CardStatus.Done && column != DoneColumnId)
+            await cards.ReopenAsync(CardId, new ReopenCardRequest(card.ConcurrencyToken, "fixture reopen", column), ct);
+        else await cards.MoveAsync(CardId, new MoveCardRequest(column, card.ConcurrencyToken, "fixture"), ct);
     }
 
     public async Task ChangeTaskAsync(Action<AgentTask> change)
@@ -99,6 +101,39 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
         var task = await db.AgentTasks.SingleAsync(t => t.Id == TaskId);
         change(task);
         await db.SaveChangesAsync();
+    }
+
+    public async Task BindRepairOwnerAsync(bool borrowed)
+    {
+        await using var db = Host.CreateContext();
+        var ownerId = Guid.NewGuid();
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = ownerId, RootTaskId = ownerId, Title = "repair source", Goal = "fixture",
+            Status = AgentTaskStatus.Succeeded, Workspace = WorkspaceMode.Worktree,
+            WorktreePath = borrowed ? Tree : Host.Fixture.Source,
+            WorktreeBranch = borrowed ? "feat/card-task-" + TaskId.ToString("N")[..8] : Host.Fixture.SourceRef,
+            CreatedAt = DateTime.UtcNow
+        });
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == TaskId);
+        task.RepairSourceTaskId = ownerId;
+        if (borrowed) task.Workspace = WorkspaceMode.Shared;
+        await db.SaveChangesAsync();
+    }
+
+    public async Task RebindProtectedRootAsync(string kind)
+    {
+        if (kind == "canonical") Tree = Host.Fixture.Repository;
+        else
+        {
+            var relocated = Path.Combine(Host.Fixture.Root, "trees", kind, Path.GetFileName(Tree));
+            Directory.CreateDirectory(Path.GetDirectoryName(relocated)!);
+            await Host.Fixture.RequiredAsync(Host.Fixture.Repository, "worktree", "move", Tree, relocated);
+            Tree = relocated;
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(Sentinel)!);
+        await File.WriteAllTextAsync(Sentinel, OriginalBytes);
+        await ChangeTaskAsync(t => { t.WorktreePath = Tree; t.WorkingDirectory = Tree; });
     }
 
     public async Task BindSourceLandingAsync()
