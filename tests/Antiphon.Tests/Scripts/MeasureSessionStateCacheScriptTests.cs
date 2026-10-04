@@ -38,6 +38,27 @@ public sealed class MeasureSessionStateCacheScriptTests
             foreach (var window in before["windows"]!.AsArray()) window!.AsObject().Remove("samples");
             await InconclusiveAsync(before, after, "intermediate_observations_missing");
         }
+        // Old servers supply runtime observations in ContextPath. Exercise the production
+        // snapshot builder with external reads substituted, so startup facts cannot hide a dip.
+        var path = Path.Combine(Path.GetTempPath(), "c701-context-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            var context = Context();
+            context["runtime"] = new JsonObject { ["liveSessions"] = 9 };
+            await File.WriteAllTextAsync(path, context.ToJsonString());
+            var result = await RunFunctionsAsync($$"""
+                $ContextPath = '{{PsQuote(path)}}'
+                function Read-Api { param([string]$Path) return @{ version = 'observed' } }
+                function Read-Runtime { param($Context) return $Context.runtime }
+                function Read-Statistics { return @{ statistics = @{} } }
+                $startup = @{ runtime = @{ liveSessions = 12 } }
+                New-Snapshot $startup | ConvertTo-Json -Depth 10 -Compress
+                """);
+            result.ExitCode.ShouldBe(0, result.Output);
+            JsonNode.Parse(result.Output)!["runtime"]!["liveSessions"]!.GetValue<int>().ShouldBe(9,
+                "each pre-feature observation must reload current context instead of retaining startup population");
+        }
+        finally { File.Delete(path); }
     }
 
     [Test]
