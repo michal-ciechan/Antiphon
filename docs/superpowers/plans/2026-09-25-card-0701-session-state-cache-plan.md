@@ -2,6 +2,11 @@
 
 Date: 2026-09-25. Stage: Plan. Next stage: Code, **Round 1 first**.
 
+**Historical R1 plan.** R1 has since landed. For remaining R2/R3 work, use the
+[2026-10-04 reconciled plan](2026-10-04-card-0701-remaining-session-state-plan.md),
+whose next stage is TestDesign. Its remaining scope/checkpoints and acceptance
+instructions supersede this document's; preserve the R1 design and evidence here.
+
 ## Decision and scope
 
 Keep PostgreSQL as the record. Maintain a DI-owned, in-process projection of each active session's **committed** transcript, updated by one serialized ingestion boundary. Read working state from that projection. Publish changes after publication of the new snapshot, first to in-process waiters and then through `IEventBus` to SignalR. Cache immutable runner bindings separately from connection liveness. Preserve every CARD-0679 R6 live/unknown/gone distinction and every transcript-confirmed delivery rule.
