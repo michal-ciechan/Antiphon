@@ -7,6 +7,8 @@ namespace Antiphon.SessionRunner;
 public interface IPhoneHomeRuntimeSurface
 {
     RunnerCapabilitiesDto Capabilities();
+    Task<RunnerCodexCliVersionDto?> GetCodexCliVersionAsync(RunnerCodexCliProbeRequest request, CancellationToken ct) =>
+        Task.FromResult<RunnerCodexCliVersionDto?>(null);
     string Health();
     IReadOnlyList<RunnerSessionDto> List();
     Task<RunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct);
@@ -202,6 +204,9 @@ public sealed class PhoneHomeCommandDispatcher
             return request.Operation.Value switch
             {
                 PhoneHomeOperation.Capabilities => Result(request, _runtime.Capabilities()),
+                PhoneHomeOperation.CodexCliVersion => Result(request, await _runtime.GetCodexCliVersionAsync(
+                    request.Payload?.Deserialize<RunnerCodexCliProbeRequest>(PhoneHomeFraming.Json)
+                        ?? throw new ArgumentException("Version descriptor is required."), ct)),
                 PhoneHomeOperation.Health => Result(request, new { status = _runtime.Health() }),
                 PhoneHomeOperation.List => Result(request, _runtime.List()),
                 PhoneHomeOperation.Get => Result(request, await _runtime.GetAsync(ReadSessionId(request), ct)),

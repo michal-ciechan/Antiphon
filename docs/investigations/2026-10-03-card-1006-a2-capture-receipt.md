@@ -116,6 +116,13 @@ Caveats (none hidden):
    4.2 s window. After the window the installed CLI was unchanged: SHA-256
    `9ce03ed23e16ea01072b4496263d6213a27899e1e3e107f008d36edf82e70407`, version
    `grok 1.0.41 (4220f3b224a6)`; the updater setting was not touched.
+
+   **Correction (2026-10-04, CARD-1019):** Row 1 of both retained decoded
+   `A2-connecting` and `A2-sign-in` frames spells the cwd `/s/run/cwd`, not
+   `/scratch/run/cwd` as stated above. This corrects only the receipt's frame
+   description; rows 0 and 2-29, sign-in anchors and the nine-cell `<CODE-9> `
+   replacement at row 15, columns 56-64 are unchanged.
+
 7. **Safety.** Input calls 0, input bytes 0. No login, no `grok login`, no
    credential or auth-file read, no model turn, no browser approval, no
    following of any sign-in address or code, no trust answer. Fresh `GROK_HOME`,

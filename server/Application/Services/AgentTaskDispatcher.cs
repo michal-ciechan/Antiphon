@@ -4394,7 +4394,6 @@ public sealed class AgentTaskDispatcher
         // change the task's kind, so the pre-claim answer is the one the claim applies.
         var claudeAuth = await ReadClaudeProviderAuthBeforeClaimAsync(task, ct);
         var grokAuth = await ReadGrokProviderAuthBeforeClaimAsync(task, ct);
-
         // Admission and landing read running claims under the same common-directory lease.
         // Hold through commit of the claim, including warm-agent and follow-up paths.
         // CARD-0672 D-1 (invariant I-A): a runner session never writes the desktop checkout; only
@@ -4438,7 +4437,6 @@ public sealed class AgentTaskDispatcher
         // FOR UPDATE reuses the tick's tracked instance; reload so Capture sees the locked row
         // (a pre-claim route edit) rather than the outer snapshot. PC-71.
         await _db.Entry(claimed).ReloadAsync(ct);
-
         // CARD-0644 D-3. Revalidate the create-time pin before any checkout is cut. A queued
         // explicit Worktree that still names an existing agent is the conflict create should
         // have refused; a Shared/ReadOnly pin follows the agent's checkout if it has moved.

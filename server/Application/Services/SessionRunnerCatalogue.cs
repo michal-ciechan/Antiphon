@@ -23,7 +23,8 @@ public static class SessionRunnerCatalogue
     {
         var rows = new List<SessionRunnerCatalogueEntryDto>();
         var desktop = await directory.DescribeAsync(null, ct);
-        rows.Add(await DesktopAsync(desktop, db, delegation, ct));
+        rows.Add(ProjectCli(await DesktopAsync(desktop, db, delegation, ct), desktop?.Capabilities,
+            directory.CodexCliEvidenceNow));
         foreach (var id in directory.KnownRunnerIds.Where(id => !RunnerRequestIntent.IsDesktopAlias(id)))
         {
             try
@@ -43,6 +44,20 @@ public static class SessionRunnerCatalogue
         }
 
         return rows;
+    }
+
+    private static SessionRunnerCatalogueEntryDto ProjectCli(SessionRunnerCatalogueEntryDto row,
+        RunnerCapabilitiesDto? caps, DateTimeOffset now)
+    {
+        RunnerCodexCliVersionDto? sample = caps is null ? null : new(caps.CodexCliVersion,
+            caps.CodexCliVersionCheckedAtUtc, caps.CodexCliVersionError, caps.CodexCliLauncherFingerprint);
+        return row with
+        {
+            CodexCliVersion = sample?.CodexCliVersion,
+            CodexCliVersionCheckedAtUtc = sample?.CodexCliVersionCheckedAtUtc,
+            CodexCliVersionError = CodexCliObservation.DisplayError(sample, now),
+            CodexCliVersionStale = CodexCliObservation.DisplayStale(sample, now),
+        };
     }
 
     private static async Task<SessionRunnerCatalogueEntryDto> DesktopAsync(
@@ -96,8 +111,9 @@ public static class SessionRunnerCatalogue
 
         var name = described?.DisplayName ?? id;
         var state = directory.DrainState(id);
-        return Row(described, id, name, "sessions", capacity, occupied, observed,
-            state is { Draining: true }, state?.RetiredAt is not null);
+        return ProjectCli(Row(described, id, name, "sessions", capacity, occupied, observed,
+            state is { Draining: true }, state?.RetiredAt is not null), described?.Capabilities,
+            directory.CodexCliEvidenceNow);
     }
 
     private static SessionRunnerCatalogueEntryDto Row(

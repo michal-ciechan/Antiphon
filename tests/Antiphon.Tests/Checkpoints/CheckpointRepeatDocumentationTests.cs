@@ -25,7 +25,9 @@ public sealed class CheckpointRepeatDocumentationTests : CheckpointTestBase
         System.Text.Encoding.UTF8.GetString(stage).ShouldContain("next: review");
         stage.Length.ShouldBeLessThan(2410, "stage-code-net-shorter-than-code-base");
         stage.All(value => value < 128).ShouldBeTrue("stage-code-ascii");
+        // CARD-1011's approved routing paragraph changes the bundle to 14,116 characters.
+        // Keep the exact byte pin; all repeat-policy, size and ASCII guards above still apply.
         Convert.ToHexString(SHA256.HashData(orchestrator)).ToLowerInvariant()
-            .ShouldBe("62b51e5cc7e20110fe00ed3530ce1d2a5a7400506bd52ffa0a2244f311f50aee", "orchestrator-unchanged");
+            .ShouldBe("15f9660f2c09be8e32cddc98ab6d995f927d7a7b398da14e3b34256ef4d1d335", "orchestrator-approved-bytes");
     }
 }

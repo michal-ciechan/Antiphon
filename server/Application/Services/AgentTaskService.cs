@@ -2642,7 +2642,6 @@ public sealed class AgentTaskService
             allowUnauthenticated: false, task.RunnerId, ct);
         await RefuseUnauthenticatedRunnerCodexAsync(
             task.AgentKind, allowUnauthenticated: false, task.RunnerId, ct);
-
         await RequeueAsync(
             task, AgentTaskEventType.Retried, task.ModelLevel,
             $"Retried at {ModelLevelAliases.For(task.AgentKind, task.ModelLevel)}.", ct, abandonCommitRecovery);
@@ -4029,7 +4028,7 @@ public sealed class AgentTaskService
     /// whose runner reports no Codex login. Only the selected runner is asked, only a definite
     /// Codex-attributed "no" refuses, and a desktop Codex task is never probed: no desktop store
     /// stands in for the runner's. Unknown, unavailable and timed-out answers admit (the
-    /// dispatcher and runner backstops remain); the caller's own cancellation propagates.
+    /// runner launch backstop remains); the caller's own cancellation propagates.
     /// </summary>
     private async Task RefuseUnauthenticatedRunnerCodexAsync(
         AgentKind agentKind,

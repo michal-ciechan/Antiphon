@@ -981,7 +981,11 @@ public sealed record RunnerCapabilitiesDto(
     string? VerificationCustodyBackend = null,
     Guid? RunnerStoreId = null,
     // CARD-0710. Canonical windows/linux. Null on an older runner, or when the OS is neither.
-    string? Platform = null);
+    string? Platform = null,
+    string? CodexCliVersion = null,
+    DateTimeOffset? CodexCliVersionCheckedAtUtc = null,
+    string? CodexCliVersionError = null,
+    string? CodexCliLauncherFingerprint = null);
 
 /// <summary>Build identity of the running session-runner process (CARD-0112).</summary>
 public sealed record RunnerBuildDto(

@@ -21,6 +21,10 @@ public interface ISessionRunnerClient
     Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct) =>
         Task.FromResult<RunnerCapabilitiesDto?>(null);
 
+    /// <summary>Old clients have no descriptor-specific CLI evidence. Caller cancellation propagates.</summary>
+    Task<RunnerCodexCliVersionDto?> GetCodexCliVersionAsync(RunnerCodexCliProbeRequest request, CancellationToken ct) =>
+        Task.FromResult<RunnerCodexCliVersionDto?>(null);
+
     Task<RunnerProviderAuthDto?> GetProviderAuthAsync(string provider, CancellationToken ct) =>
         Task.FromResult<RunnerProviderAuthDto?>(null);
 

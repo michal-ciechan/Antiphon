@@ -1200,6 +1200,41 @@ recounted when siblings re-baseline. No unchanged fixture count was reduced.
 
 ### Checkpoints
 
+Code admission (task `0c0689e5`, 2026-10-03, source
+`f0fadc61635e3d977f045876d65e1e09ef06b17a`): the policy commit
+`af6d03f19f9fc8298301187cecebee2c4b4f5d90` is an ancestor. Recounted source
+rosters: Remote 66 methods / 84 results; cache selection 36 / 54; CP-4
+112 + 23 + 35 + 11 + 20 + 6 = 207. These match the retained freeze (delta 0).
+The plan has 156 represented guard IDs, 31 moved, 125 retained (delta 0);
+20 retained V designs (delta 0), with zero implemented C1008 methods at admission
+(implementation deficit 20). The retained RD expansion is 5 base + 27 changed
+= 32 designs (delta 0), with zero implemented outcomes (implementation deficit
+32). No execution is claimed by this census. Platform routes were reread: defaults
+revision 2, available Linux and Windows runners, unavailable retired temp. No host
+pin is added. jq is absent from this runner; Code will provide a task-local jq
+for qualified C1008/cache fixtures, without changing CARD-0983's qualification
+behavior. The explicitly commissioned Final whole Unit lane is an additional
+run to this table; the dispatch brief overrides the older exclusion below.
+Shared files remain owned by CARD-1008 ahead of CARD-0980/0983 and CARD-1010.
+
+Continuation admission (Code task `b3777342-2f88-4f7c-8266-86fbbc22d1c9`,
+2026-10-03): new landing owner; FF-only base `b0d5c552d0dccf9d85e9a7a0e04465a29eeb2b57`.
+Read current master `edb96aecd93cbe90fe8887c1a8d1523527bd49d9` through local Git objects,
+without fetch/merge/rebase. CARD-0927 adds jq to the image/verifier and tests in other
+classes; retained cache census remains 36 methods/54 results, six CP-4 classes remain
+112+23+35+11+20+6=207, Remote remains 77/95 with this draft. Retained designs remain
+20 V methods, 32 RD outcomes and 125 guard/PC mappings: all deltas zero.
+The process image still lacks jq; supplied task-local jq 1.7.1 has SHA-256
+`5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5`, independently
+matched to CARD-0927's committed Dockerfile pin. Platform routes were reread:
+defaults revision 2, live Linux/Windows and unavailable temp; no placement pin.
+CP-2 at this continuation base completed 19/19 passed, 0 failed/skipped, clean
+source and verified build provenance; measured build+row wall was 29 minutes,
+above the table's 15-minute estimate. This proves the existing implemented vectors,
+not the predecessor report's remaining guard/resume/real-Docker obligations.
+The Final brief additionally requires whole Unit and every full affected class;
+it overrides the older implementation-profile exclusion below.
+
 Closed Code list. Each row owns one isolated build and one literal TUnit filter.
 Group names name the lane; no unsupported `Lane` column is added to the importer.
 CP-1 is the explicit expected-red preparatory row, not a final green certificate.
@@ -1373,3 +1408,7 @@ duplicate card is needed. CARD-0980/0983 re-baseline after CARD-1008 lands.
 next: code
 handoff: Implement the retained freeze: default main recycle with its own stop, retired-absent temp acceptance and temp down -v; preview remains. 125 executable PCs, 20 V methods, 32 RD outcomes; CP minima 1/19/54/207-derived/1. B-2 import passed. Require policy land af6d03f1 and admission recount. CARD-1008 lands before 0980/0983 re-baseline and 1010 starts.
 artifact: docs/superpowers/plans/2026-10-03-card-1008-rolling-volume-recycle-and-retire-temp-plan.md
+
+### Continuation platform identity correction (b3777342)
+
+A plain local Docker volume reports `Options:null` on this nested daemon. The identity predicate accepts explicit null and an empty object; omitted, array, scalar and nonempty option values remain unknown. The new literal-null V-1 vector failed at its removal assertion on committed 9342aca57d79c4276b3251bbe04605f240f41937 (one executed/failed, successful build). This is ordinary defect qualification, not a deliberate Mutation cycle.

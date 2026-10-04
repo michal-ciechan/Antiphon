@@ -53,8 +53,9 @@ public sealed class ProviderSignInRequiredException : HttpException
     private static string MessageFor(string grokHome, string? runnerId)
     {
         if (string.IsNullOrWhiteSpace(runnerId))
-            return "Grok is not signed in on this host. Run `grok login` as the Windows user that runs "
-                + "the session-runner, pick another agentKind, or re-send with "
+            return "Grok is not signed in on this host (GROK_HOME=" + grokHome
+                + "). Run `grok login` as the user that runs the session-runner, using that GROK_HOME, "
+                + "pick another agentKind, or re-send with "
                 + "allowUnauthenticatedProvider=true to queue anyway.";
         return "Grok is not signed in on runner '" + runnerId + "' (GROK_HOME=" + grokHome
             + "). Run `grok login` inside that runner, pick another agentKind, or re-send with "

@@ -13,19 +13,38 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
     private readonly PhoneHomeLiveConnection _connection;
     private readonly RunnerContractMapper _mapper = new();
     private readonly Antiphon.Server.Application.Services.RemoteSpillCourier? _spills;
+    private readonly Func<bool>? _isCurrent;
 
     public PhoneHomeRunnerClient(
         PhoneHomeLiveConnection connection,
-        Antiphon.Server.Application.Services.RemoteSpillCourier? spills = null)
+        Antiphon.Server.Application.Services.RemoteSpillCourier? spills = null, Func<bool>? isCurrent = null)
     {
         _connection = connection;
         _spills = spills;
+        _isCurrent = isCurrent;
     }
 
     public async Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct)
     {
         var frame = await _connection.RequestAsync(PhoneHomeOperation.Capabilities, null, ct);
         return Read<RunnerCapabilitiesDto>(frame);
+    }
+
+    public async Task<RunnerCodexCliVersionDto?> GetCodexCliVersionAsync(RunnerCodexCliProbeRequest request, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (_isCurrent?.Invoke() == false) return null;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8), _connection.Clock);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
+        try
+        {
+            var frame = await _connection.RequestAsync(PhoneHomeOperation.CodexCliVersion, request, linked.Token);
+            if (_isCurrent?.Invoke() == false || !_connection.SocketOpen || frame.Epoch != _connection.Epoch
+                || frame.Operation != PhoneHomeOperation.CodexCliVersion || frame.Kind != PhoneHomeFrameKind.Result) return null;
+            return Read<RunnerCodexCliVersionDto>(frame);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested && ex is PhoneHomeTransportException or JsonException or OperationCanceledException)
+        { return null; }
     }
 
     public async Task<RunnerProviderAuthDto?> GetProviderAuthAsync(string provider, CancellationToken ct)

@@ -1,0 +1,13 @@
+b8f12606294e57532a3d7eb759295f9926236e29 CARD-0959 add exact probe reply correlation and in-flight cancellation guards; CP-3 pending
+c443a6e1e150d85ae828c933e822c15f6a83d0f3 CARD-0959 repair evidence fixture variable scopes after CP-3 compile failure
+8535b5aebe09ff466e07aee4be82e18179a5beee CARD-0959 extend producer heartbeat, freshness and lease guards; verification pending
+e6a7e365a577b1ffb496c561ee51de179fc3fdb8 CARD-0959 gate the actual registry model and document scoped CLI exceptions; Final verification pending
+42256d12c2b90c3a2144e03d46b700e33ada5620 CARD-0959 refresh worktree launcher outside claim and block late CLI refusals; verification pending
+f7589a03e94c735b4609ec65dc5d882f33303584 CARD-0959 expand HTTP, deadline, scope and real worktree proofs; late identity red pending
+d0be81a0cbc14d11ae058b952b504884db629454 CARD-0959 reject wildcard CLI overrides and preserve delivery fixture body; CP4 rerun pending
+9e8687c224cbb140cf169343c531e2d06853d48e CARD-0959 gate create retry and preclaim with selected launcher evidence; green verification pending
+460803229529e7be5e7f02dd6162cf7a0a01545f CARD-0959 correct retry refusal oracle type; no admission behavior changed
+48c2c086b842f0156102c53b1184d38b453e9d38 CARD-0959 make negative oracles unconditional and admit the remote fixture shape
+4af3e6f4224d104e3f9630aa9d6ee86007360c07 CARD-0959 correct concrete test DTO and assertion overloads; red run pending
+5e0c8e536ab4918e992017ede9b4ef1107db4de7 CARD-0959 fix admission fixture factory signature; red proof still pending
+3164b88459469d5e1f6fd9b1e2653670d9e0671e CARD-0959 add missing admission proof methods; feature-red verification pending

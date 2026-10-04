@@ -1289,4 +1289,3 @@ public enum DiagnoseLabelMode
     Apply = 0,
     Shadow = 1,
 }
-

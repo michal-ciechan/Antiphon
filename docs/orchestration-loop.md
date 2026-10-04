@@ -584,6 +584,87 @@ costs an hour and a merge.
 
 ---
 
+## Windows Review and Debug routing
+
+**CARD-1011 published policy.** The prompt change landed at `8bb0cea0` after
+WQ-2 and amended WQ-3 were met; WQ-1 was operator-excluded for CARD-1022's
+legacy inbox deprecation. The Debug pin was updated on 2026-10-04; fresh
+effective pin reads that day confirmed the ordered pair below for both roles.
+WQ-4 remains post-activation acceptance work. Re-read effective pins for current routing.
+
+Policy on release: Review and Debug on every platform, including Linux, follow
+the same policy; use Human Required pins with Grok/High then ClaudeCode/High (`grok-4.7`, then `opus`).
+The operator approved this role-wide Debug scope (D-1); pins have no OS key.
+Preserve unrelated Human card exceptions. Queued tasks retain their recorded selection.
+The role-tier table below is fallback policy; an effective Required pin precedes it.
+Grok orchestrators remain unsupported; this policy concerns their worker dispatches.
+
+OS placement is independent of the provider pair. A Windows requirement uses
+`-Platform Windows`; otherwise omit `-Runner` and `-Platform` and read runtime
+defaults/inventory. `-Platform Any` removes an inherited platform constraint.
+Normally omit `-Kind` and `-Level` to preserve ordered availability walking.
+OS needs do not authorize `-IgnoreRoutingPin`. A held/unavailable Grok candidate
+can walk to the listed Opus candidate. An exhausted Required list persists Blocked
+when the local descriptor satisfies the required platform; otherwise placement
+refuses before task insertion (for example, Linux with a Windows-only local descriptor).
+Tests seed this policy only in isolated databases, never production.
+
+### Evidence gates
+
+Actual ModernConPty requires real Review evidence; WQ-1 is excluded by the operator for CARD-1022.
+A fresh worktree must reach Ready. Record whether trust appeared; send no startup input without observed trust, or exactly one y if it appeared, then require cleared trust and Ready.
+Delivery requires a matching complete UserPrompt transcript.
+Settlement requires a final report and confirmed release ownership.
+WQ-2 and WQ-3 gate prompt landing and Debug pin activation; WQ-1 is operator-excluded.
+The [qualification ledger](investigations/2026-10-03-card-1011-windows-grok-qualification.md)
+records WQ-2 and amended WQ-3 as met, WQ-1 as excluded (not passed), and the full
+canary identities; WQ-4 remains pending. Backend configuration must be
+restored and the actual restored host verified. Configured modern with inbox
+fallback, fixtures, Sent status and one successful canary cannot discharge these gates.
+
+### Activation after qualification and independent Final/Full Review
+
+1. Record confirmed land of the reviewed implementation and its publication SHA.
+2. Advance the canonical source, perform canonical restart and /api/version
+   verification against that SHA. Never deploy/restart from the Code worktree.
+3. Serialize affected dispatches; re-read role/card pins, `/api/runner-defaults`,
+   `/api/session-runners`, pipeline and host occupancy. Save complete old pin rows.
+   Perform the approved Debug pin write and readback, checking scope, strength,
+   provenance, aliases and order. Keep Review unless an authorized drift correction
+   is required. Do not overwrite unrelated exceptions or newer edits.
+4. Confirm bundle stamp and idle-gated refresh of the standing orchestrator;
+   inspect its composed stamp and `BundlesOutOfDate`. Audit only the relevant
+   custom append for an old Windows exception. Notify is not composition evidence.
+5. Require WQ-4 complete receipt and release from Windows Debug with no kind,
+   level or bypass override. Record acceptance, then commission SourceLanding PCs.
+
+The following write is for the activation owner **after** the gates, never a
+Code test, tracker tick or automatic fleet migration:
+
+```powershell
+pwsh -NoProfile -File scripts/routing-pin.ps1 get -Role Debug -Json
+pwsh -NoProfile -File scripts/routing-pin.ps1 get -Role Review -Json
+pwsh -NoProfile -File scripts/routing-pin.ps1 set -Role Debug -Provenance Human -Strength Required -Candidates 'Grok/High,ClaudeCode/High' -Reason 'CARD-1011: qualified Windows Grok; approved role-wide Debug policy, Grok first and Opus fallback.'
+```
+
+Read both pins back after the write. If activation fails, pause new affected
+dispatches and restore only this activation's saved pin edits after checking
+for newer writes. Restore backend settings canonically and verify the actual host.
+Source rollback requires a reviewed revert, normal land/restart and policy refresh.
+
+### Explicit startup recovery
+
+Startup failure requires explicit authorized recovery; do not retry Grok automatically.
+Preserve task/session/failure-code and the bounded named startup capture before
+recovering. The authorized recipe keeps `-Role Review` or `-Role Debug`,
+`-Platform Windows`, `-Kind ClaudeCode -Level High`, and no -IgnoreRoutingPin.
+Explicit kind narrows to that already-listed fallback; a conflicting card pin
+needs an operator decision. Exhausted availability produces local Blocked or
+pre-insert placement refusal as described above. Startup
+failure does not promise a new automatic retry or authorize login/settings changes.
+See [agent kinds](agent-kinds.md#5-grok-xai-grok-build-tui) for `screenReason` and
+capture diagnosis; captures and screen redraws do not prove recipient delivery.
+
 ## 2. Tiers
 
 The role sets the model. Do not override without a reason stated in the goal.

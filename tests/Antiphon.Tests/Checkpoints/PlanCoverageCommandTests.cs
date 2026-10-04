@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Runtime.InteropServices;
 using Antiphon.Checkpoints;
@@ -33,6 +35,87 @@ public sealed class PlanCoverageCommandTests : CheckpointTestBase
         var changed = new StringWriter(); command.Run(root, world.Plan, format: "json", output: changed);
         using var nextJson = JsonDocument.Parse(changed.ToString());
         nextJson.RootElement.GetProperty("inputsSha256").GetString().ShouldNotBe(firstJson.RootElement.GetProperty("inputsSha256").GetString(), "coverage-digest-change");
+
+        const string checklist = "{\n  \"version\": 1,\n  \"items\": []\n}\n";
+        const string lfHash = "da6fa0fb6dc64a3faf1f81f830b8696ccf02b9c654135111429090fa240870f8";
+        const string crlfHash = "79f2f76348e92b2903f7a7e371d28a1e951cf465a1ec68a1f1ee2221a871a200";
+        const string source = "class Demo { void Check() { value.ShouldBe(1, \"target-label\"); } }\n";
+        string RawHash(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+        var byteRoot = TempDir();
+        var byteWorld = PlanCoverageFixture.WriteWorld(byteRoot);
+        var checklistPath = Path.Combine(byteRoot, "checklist.json");
+        var utf8 = new UTF8Encoding(false);
+        var digests = new Dictionary<(bool Inline, bool PlanCrlf, bool SourceCrlf, bool ChecklistCrlf),
+            (string Plan, string Source, string Checklist, string Inputs)>();
+        foreach (var inline in new[] { true, false })
+        foreach (var planCrlf in new[] { false, true })
+        foreach (var sourceCrlf in new[] { false, true })
+        foreach (var checklistCrlf in inline ? new[] { false } : new[] { false, true })
+        {
+            var planBytes = PlanCoverageFixture.Plan() + (inline ? "\n```plan-coverage-v1\n" + checklist + "```\n" : "");
+            if (planCrlf) planBytes = planBytes.Replace("\n", "\r\n");
+            var sourceBytes = sourceCrlf ? source.Replace("\n", "\r\n") : source;
+            var checklistBytes = checklistCrlf ? checklist.Replace("\n", "\r\n") : checklist;
+            File.WriteAllText(byteWorld.Plan, planBytes, utf8);
+            File.WriteAllText(byteWorld.Source, sourceBytes, utf8);
+            if (!inline) File.WriteAllText(checklistPath, checklistBytes, utf8);
+            var output = new StringWriter();
+            command.Run(byteRoot, byteWorld.Plan, format: "json", checklist: inline ? null : checklistPath, output: output)
+                .ShouldBe(0, "c1013-command-exit");
+            using var parsed = JsonDocument.Parse(output.ToString());
+            var result = parsed.RootElement;
+            result.GetProperty("invalid").GetBoolean().ShouldBeFalse("c1013-command-valid");
+            result.GetProperty("schemaVersion").GetInt32().ShouldBe(1, "c1013-command-schema");
+            result.GetProperty("summary").GetProperty("result").GetString().ShouldBe("clean", "c1013-command-clean");
+            result.GetProperty("summary").GetProperty("matched").GetInt32().ShouldBe(2, "c1013-command-matched");
+            result.GetProperty("diagnostics").GetArrayLength().ShouldBe(0, "c1013-command-diagnostics");
+            var obligations = result.GetProperty("obligations").EnumerateArray().ToArray();
+            obligations.Select(o => (o.GetProperty("id").GetString(), o.GetProperty("kind").GetString(), o.GetProperty("name").GetString()))
+                .ShouldBe([("V-1", "method", "Demo.Check"), ("V-1", "label", "target-label")], "c1013-command-obligations");
+            obligations.ShouldAllBe(o => o.GetProperty("matches").GetArrayLength() == 1, "c1013-command-matches");
+            var selected = result.GetProperty("sources").EnumerateArray().Single();
+            selected.GetProperty("path").GetString().ShouldBe("tests/Sample/Demo.cs", "c1013-command-source-path");
+            var expectedPlanHash = RawHash(planBytes);
+            var expectedSourceHash = RawHash(sourceBytes);
+            var expectedChecklistHash = checklistCrlf ? crlfHash : lfHash;
+            var expectedInputsHash = RawHash(expectedPlanHash + "\n" + expectedChecklistHash + "\n" + "tests/Sample/Demo.cs\0" + expectedSourceHash);
+            var actualPlanHash = result.GetProperty("planSha256").GetString()!;
+            var actualSourceHash = selected.GetProperty("sha256").GetString()!;
+            var actualChecklistHash = result.GetProperty("checklistSha256").GetString()!;
+            var actualInputsHash = result.GetProperty("inputsSha256").GetString()!;
+            actualPlanHash.ShouldBe(expectedPlanHash, "c1013-command-raw-plan");
+            actualSourceHash.ShouldBe(expectedSourceHash, "c1013-command-raw-source");
+            actualChecklistHash.ShouldBe(expectedChecklistHash, "c1013-command-checklist");
+            actualInputsHash.ShouldBe(expectedInputsHash, "c1013-command-inputs");
+            digests.Add((inline, planCrlf, sourceCrlf, checklistCrlf), (actualPlanHash, actualSourceHash, actualChecklistHash, actualInputsHash));
+            if (inline && !planCrlf && !sourceCrlf)
+            {
+                var repeated = new StringWriter();
+                command.Run(byteRoot, byteWorld.Plan, format: "json", output: repeated).ShouldBe(0, "c1013-command-repeat-exit");
+                repeated.ToString().ShouldBe(output.ToString(), "c1013-command-repeat-json");
+            }
+        }
+        foreach (var (key, value) in digests)
+        {
+            if (key.PlanCrlf)
+            {
+                var lf = digests[(key.Inline, false, key.SourceCrlf, key.ChecklistCrlf)];
+                value.Plan.ShouldNotBe(lf.Plan, "c1013-command-raw-plan");
+                value.Inputs.ShouldNotBe(lf.Inputs, "c1013-command-inputs");
+            }
+            if (key.SourceCrlf)
+            {
+                var lf = digests[(key.Inline, key.PlanCrlf, false, key.ChecklistCrlf)];
+                value.Source.ShouldNotBe(lf.Source, "c1013-command-raw-source");
+                value.Inputs.ShouldNotBe(lf.Inputs, "c1013-command-inputs");
+            }
+            if (key.ChecklistCrlf)
+            {
+                var lf = digests[(key.Inline, key.PlanCrlf, key.SourceCrlf, false)];
+                value.Checklist.ShouldNotBe(lf.Checklist, "c1013-command-checklist");
+                value.Inputs.ShouldNotBe(lf.Inputs, "c1013-command-inputs");
+            }
+        }
     }
     [Test]
     public void invalid_inputs_cannot_produce_clean_summary()

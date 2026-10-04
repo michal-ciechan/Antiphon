@@ -38,7 +38,7 @@ public sealed class CodexPhoneHomeCreateTests
         await using var db = kit.Context();
 
         var ex = await Should.ThrowAsync<ProviderSignInRequiredException>(() =>
-            kit.Service(db).CreateAsync(Remote("c660 signed out"), kit.Caller, CancellationToken.None));
+            kit.Service(db).CreateAsync(Remote("c660 signed out"), kit.Caller, CancellationToken.None), "C959-pc-242");
 
         ex.StatusCode.ShouldBe(409);
         ex.Code.ShouldBe("provider_sign_in_required");
@@ -83,10 +83,14 @@ public sealed class CodexPhoneHomeCreateTests
             var kit = Kit.Create(schema, probe);
             await using var db = kit.Context();
 
-            var created = await kit.Service(db).CreateAsync(Remote("c660 admit " + name), kit.Caller, CancellationToken.None);
+            AgentTaskCreatedDto? created = null;
+            Exception? failure = null;
+            try { created = await kit.Service(db).CreateAsync(Remote("c660 admit " + name), kit.Caller, CancellationToken.None); }
+            catch (Exception ex) { failure = ex; }
+            failure.ShouldBeNull("C959-pc-243 " + name);
 
             await using var verify = kit.Context();
-            var stored = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
+            var stored = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created!.Id);
             stored.RunnerId.ShouldBe(Runner, name);
             stored.AgentKind.ShouldBe(AgentKind.Codex, name);
             stored.Status.ShouldBe(AgentTaskStatus.Queued, name);
@@ -396,7 +400,6 @@ public sealed class CodexPhoneHomeCreateTests
     {
         public string? CurrentRunner { get; set; }
         public List<(string? Runner, string Provider)> Calls { get; } = [];
-
         public Task<RunnerProviderAuthDto?> GetProviderAuthAsync(string provider, CancellationToken ct)
         {
             Calls.Add((CurrentRunner, provider));

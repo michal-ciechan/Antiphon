@@ -12,6 +12,11 @@ tick by tick, and the specific traps that cost real time when missed.
 
 ## 0. Policy defaults, unless the user says otherwise
 
+Windows Review/Debug routing and the pending CARD-1011 release gates are owned by
+[Windows Review and Debug routing](../../../docs/orchestration-loop.md#windows-review-and-debug-routing).
+OS placement does not authorize a routing-pin bypass. Read effective pins and
+defaults; omit kind/level for ordered fallback. The future Debug pair stays gated.
+
 For runner-bound Worktree tasks, never ask the delegate to rebase, amend or force-push its task
 branch. It must advance the owned branch by fast-forward pushes. Land performs the target rebase;
 use a fresh task with `-StartRef` when a different base is needed. A confirmation-only step is a

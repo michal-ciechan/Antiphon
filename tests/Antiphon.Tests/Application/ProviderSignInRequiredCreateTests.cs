@@ -41,6 +41,18 @@ public class ProviderSignInRequiredCreateTests
         ex.GrokHome.ShouldBe(grokHome.Path);
         ex.Extensions.ShouldNotBeNull()["remedy"].ShouldBe("grok login");
         ex.Extensions["agentKind"].ShouldBe("Grok");
+        ex.StatusCode.ShouldBe(409);
+        ex.AgentKind.ShouldBe("Grok");
+        ex.Extensions["grokHome"].ShouldBe(grokHome.Path);
+        ex.RunnerId.ShouldBeNull();
+        ex.Extensions.ContainsKey("runnerId").ShouldBeFalse();
+        ex.Message.ShouldContain("GROK_HOME=" + grokHome.Path);
+        ex.Message.ShouldContain("grok login");
+        ex.Message.ShouldContain("as the user that runs the session-runner");
+        ex.Message.ShouldNotContain("Windows");
+        ex.Message.ShouldContain("using that GROK_HOME");
+        ex.Message.ShouldContain("pick another agentKind");
+        ex.Message.ShouldContain("allowUnauthenticatedProvider=true");
 
         await using var verify = CreateContext();
         (await verify.AgentTasks.CountAsync(t => t.Goal == "run on grok"))

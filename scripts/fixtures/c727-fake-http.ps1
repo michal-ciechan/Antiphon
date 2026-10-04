@@ -1,10 +1,52 @@
 # Offline CARD-0727 deploy wrapper fixture. No network or real server2 access.
-param([string]$Method, [string]$RunnerId, [string]$Suffix, [string]$BodyJson)
+param([string]$Method, [string]$RunnerId, [string]$Suffix, [string]$BodyJson, [string]$Path)
 $ErrorActionPreference = 'Stop'
 $state = Get-Content -Raw -LiteralPath $env:C727_TEST_STATE | ConvertFrom-Json
 $body = if ($BodyJson) { $BodyJson | ConvertFrom-Json } else { $null }
-$trace = [ordered]@{ kind = 'http'; method = $Method; runnerId = $RunnerId; suffix = $Suffix; body = $body }
+$trace = [ordered]@{ kind = 'http'; method = $Method; runnerId = $RunnerId; suffix = $Suffix; path = $Path; body = $body }
 Add-Content -LiteralPath $env:C727_TEST_TRACE -Value ($trace | ConvertTo-Json -Compress -Depth 5)
+
+if ($Path) {
+    if ($Path -eq '/api/projects?includeArchived=true') {
+        Write-Output '[{"id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1","gitRepositoryUrl":"https://github.com/michal-ciechan/Antiphon.git"}]'
+        exit 0
+    }
+    if ($state.taskError) { [Console]::Error.WriteLine([string]$state.taskError); exit 2 }
+    if ($Path.StartsWith('/api/agent-tasks?', [StringComparison]::Ordinal)) {
+        $scopeId = ([regex]::Match($Path, 'projectId=([^&]+)')).Groups[1].Value
+        if ($state.taskScopes -and $state.taskScopes.PSObject.Properties.Name -contains $scopeId) { $state.taskScopes.$scopeId | ConvertTo-Json -Compress -Depth 20 }
+        elseif ($state.tasks) { $state.tasks | ConvertTo-Json -Compress -Depth 20 }
+        else { Write-Output '{"items":[],"scope":{"projectId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1","unscoped":"include"},"excluded":{"total":0,"unscoped":0,"byProject":[]}}' }
+        exit 0
+    }
+    if ($Path -like '/api/agent-tasks/*') {
+        $id = $Path.Substring('/api/agent-tasks/'.Length)
+        if ($state.details -and $state.details.PSObject.Properties.Name -contains $id) { $state.details.$id | ConvertTo-Json -Compress -Depth 20 }
+        else {
+            $summary = @($state.tasks.items | Where-Object id -eq $id) | Select-Object -First 1
+            if (-not $summary) { $summary = @{ id=$id } }
+            @{ summary = $summary; landRequest = $null } | ConvertTo-Json -Compress -Depth 20
+        }
+        exit 0
+    }
+    exit 2
+}
+
+if ($state.scenario -eq 'c1008') {
+    if ($Method -eq 'POST' -and $state.allowClear -and $Suffix -eq '/drain/clear') {
+        $state.statuses.$RunnerId.draining = $false
+        $state.statuses.$RunnerId.acceptingNewWork = $true
+        $state | ConvertTo-Json -Compress -Depth 20 | Set-Content -LiteralPath $env:C727_TEST_STATE
+        Write-Output '{}'
+        exit 0
+    }
+    if ($Method -ne 'GET') { exit 2 }
+    if ($Suffix -eq '/status' -and $state.statuses.PSObject.Properties.Name -contains $RunnerId) {
+        $state.statuses.$RunnerId | ConvertTo-Json -Compress -Depth 20
+        exit 0
+    }
+    exit 2
+}
 
 if ($Method -eq 'POST') {
     if ($Suffix -notin @('/drain', '/drain/clear') -or $RunnerId -notin @('server2', 'server2-temp')) { exit 2 }

@@ -25,6 +25,15 @@ Configure terminal AI runners (Claude Code, Codex, OpenCode, Grok Build TUI) thr
 
 Windows Codex profiles that still name `codex.cmd` (the default in `Agents:Definitions:codex`) do not need a profile migration: the session runner rewrites a recognized npm shim to `node.exe` plus the installed `codex.js` and refuses with 409 `codex_command_line_too_long` / `codex_launcher_unavailable` / `codex_launcher_unsupported` when the fully quoted line, including the longer Node-to-native hop, would overflow. Custom wrappers are not rewritten. See [agent-kinds.md](agent-kinds.md).
 
+CARD-0959's CLI observation on a runner row covers its default launcher. An explicit
+launcher diagnostic can observe another native installation or recognized Node/Codex
+package through a descriptor-specific probe. It never executes profile `VersionArguments`
+or opens authentication files. Profile validation's `RunnerVersion` remains a separate
+diagnostic. Unknown wrappers stay unverified; no version observation blocks create,
+retry, reuse or dispatch, and those paths start no CLI probe. Existing launcher safety
+and authentication rules remain in force. The [CARD-0959 plan](superpowers/plans/2026-10-03-card-0959-runner-codex-version-plan.md)
+defines reporting-only rollout; future compatibility enforcement belongs to CARD-1023.
+
 ## UI
 
 1. Open **Settings → AI Agent TUI**.
@@ -52,9 +61,12 @@ Assign Atlas (or any agent) to that profile. Leave model empty to omit `--model`
 
 ## Local Grok Build TUI profile
 
-The Linux runner image pins Grok 1.0.41 (CARD-0986), matching the startup
-classifier's captured 120x30 dashboard. Other versions or terminal geometries
-require separate qualification.
+The Linux runner image installs the pinned Grok 1.0.41 (CARD-0986), matching the
+startup classifier's captured 120x30 dashboard. This image build pin does not
+describe every running CLI: the Windows CLI auto-updated to 1.0.46 on 2026-10-03,
+as recorded in the accepted CARD-1011 evidence below. CARD-1023 owns the
+compatibility matrix. Other versions or terminal geometries require separate
+qualification.
 
 **Startup screen qualification (CARD-0778 / CARD-1004).** The empty composer
 marker is ASCII `>` on Windows ConPTY and `❯` (U+276F) in Linux runner containers.
@@ -69,6 +81,27 @@ trust screens cannot authorize a first prompt. The ready region must still settl
 | 1.0.41 | Windows modern ConPTY | 120x30 | ASCII `>` | CARD-0778 captured screen replay and measured complete prompt |
 | 1.0.41 | Linux server2-temp container | 120x30 | U+276F `❯` | CARD-1004 real startup frame; real first-prompt canary pending after server activation |
 | 1.0.40 | Linux server2 container | 120x30 | U+276F `❯` | CARD-1004 matching real startup frame; this does not change the image pin |
+
+**CARD-1011 Windows routing qualification: WQ-2 and amended WQ-3 met.** WQ-1 is
+operator-excluded for CARD-1022, not passed. The prompt change landed, and the
+Debug pin was updated on 2026-10-04; effective reads that day confirmed Human
+Required Grok/High then ClaudeCode/High for Review and Debug on every platform.
+WQ-4 remains post-activation acceptance work under the
+[routing owner](orchestration-loop.md#windows-review-and-debug-routing).
+The historical `d6e4138e` canary's backend remains unidentified.
+
+| CLI/build | Actual backend | Geometry/marker | Trust | Task/session/SHA | Receipt/release |
+|---|---|---|---|---|---|
+| 1.0.41 / `4220f3b224a6` (reported) | Unknown; attribution pending | 120x30 / `>` to confirm | Not observed | `d6e4138e` / `26d8a18c` / `5f214b0c` | UserPrompt/report accepted; runner release ownership pending |
+| 1.0.46 / `2765805b9442` [stable] | ModernConPty 1.24.260710001; WQ-2 and amended WQ-3 met | 120x30 / `>` | WQ-3: trust not observed; startup inputs []; Ready after 6.6 s | WQ-2 `02e5b9b7`; WQ-3 `d7e561a7` at `189042da`; full identities/receipts in [ledger](investigations/2026-10-03-card-1011-windows-grok-qualification.md) | WQ-2 complete UserPrompts/report and clean pty-host exit; WQ-3 exact nonce turn and confirmed release; loaded binary provenance reconciled |
+
+Backend requests and advertised capabilities do not establish actual execution;
+use each session's host log and reject modern fallback. Restore and verify any
+temporary backend configuration before accepting WQ-2/3. Diagnose failures
+with server-log `screenReason` and the named
+`%TEMP%\antiphon-grok-startup\grok-startup-*.txt` (or configured capture directory):
+the file keys are `outcome`/`lastScreenReason`. Sign-in content stays suppressed;
+captures are diagnostics, and complete UserPrompt transcripts own delivery.
 
 Windows captures live in `tests/Antiphon.Tests/Agents/Fixtures/card0778/`;
 the two decoded Linux frames and their dated provenance live in

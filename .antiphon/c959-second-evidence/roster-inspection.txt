@@ -1,0 +1,6 @@
+Fresh TRX TestDefinitions joined to UnitTestResult by testId; all result IDs resolved.
+19 intended portable V methods individually present and Passed; V-6/7/8 intentionally not run (native Windows CP-2).
+CP-1/3/4 exact class/method rosters match plan (5/5/9). CP-5 full classes 6/2/11/3. CP-6 full classes 4/7/9. CP-7 full class 76.
+CP-8 3961 Passed, 33 NotExecuted; all exclusions have explicit platform reason, matching plan groups 2+3+5+12+5+4+2=33.
+C973 marker readers 6, helper readers 5, saved-donor/prune 1 and C912 required seven methods all Passed. No missing-jq skip.
+Counts unchanged: 19 portable feature methods +118 portable regression results =137; 3 Windows feature methods +26 Windows regression results =29 pending; expected ordinary integration total166. No new Test methods or Checkpoints census edits.

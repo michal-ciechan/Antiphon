@@ -1,0 +1,4 @@
+CP-4 20261003-190721-c37b: CHECKPOINT SOURCE VALID source=3ccc171bdaedffaf48838dfa744c6129d82c06ef rows=1
+CP-1,3,5,6,7 20261003-191547-0744: CHECKPOINT SOURCE VALID source=3ccc171bdaedffaf48838dfa744c6129d82c06ef rows=5
+CP-8 same run: CHECKPOINT SOURCE INVALID reason=row_failed (exit 2). ReportValidator forbids any skipped results; plan explicitly allows the 33 Windows exclusions. Tool run green, fresh TRX 3961 Passed/33 NotExecuted verified separately. No validator/code/plan change or waived new skip.
+CP-4 20261003-193706-c6b6: CHECKPOINT SOURCE VALID source=6d2e6fb6fe51e0f32c3073b4936ff965775e6452 rows=1

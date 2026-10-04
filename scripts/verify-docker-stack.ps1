@@ -12,6 +12,12 @@ $c737RefreshClaudeToken = [bool]$RefreshClaudeToken
 if (-not (Test-Path -LiteralPath $Manifest)) { Write-Error 'Manifest is required'; exit 2 }
 $m = Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json
 $root = [string]$m.evidenceRoot
+# Validate at the verifier boundary as well, before an intercepted transport can
+# bypass the live bridge's independent context check.
+if ($m.PSObject.Properties.Name -contains 'recycle') {
+    . (Join-Path $PSScriptRoot 'c590-real.ps1')
+    Assert-C1008BridgeContext -Context $m.recycle -Case $Case
+}
 if (-not $env:ANTIPHON_C590_STUB) {
     . (Join-Path $PSScriptRoot 'c590-real.ps1')
     $script:C628RefreshClaudeToken = $c737RefreshClaudeToken

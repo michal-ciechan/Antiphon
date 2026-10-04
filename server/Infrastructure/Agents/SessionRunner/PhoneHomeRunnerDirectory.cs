@@ -30,6 +30,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
     private readonly ILogger _logger;
     private readonly Antiphon.Server.Application.Services.RemoteSpillCourier? _spills;
     private readonly IRunnerEligibilityObserver? _observer;
+    internal DateTimeOffset CodexCliEvidenceNow => _clock.GetUtcNow();
 
     public PhoneHomeRunnerDirectory(
         ISessionRunnerClient local,
@@ -162,7 +163,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
         // end; a client on it would only fail its first request.
         if (!live.SocketOpen)
             throw new ServiceUnavailableException("Phone-home runner connection is closed.", PhoneHomeProblemTypes.Unavailable);
-        return new PhoneHomeRunnerClient(live, _spills);
+        return new PhoneHomeRunnerClient(live, _spills, () => IsCurrent(live));
     }
 
     public async Task<RunnerProviderAuthDto?> RequestProviderAuthAsync(
@@ -335,6 +336,9 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             slot.RegisteredPlatform = platform;
             slot.PlatformObservedAt = platform is null ? slot.PlatformObservedAt : now;
             slot.Capabilities = request.Capabilities ?? slot.Capabilities;
+            slot.CodexCli = request.Capabilities is { } caps
+                ? new(caps.CodexCliVersion, caps.CodexCliVersionCheckedAtUtc,
+                    caps.CodexCliVersionError, caps.CodexCliLauncherFingerprint) : null;
             slot.RegisteredCapacity = request.Capacity;
             return new PhoneHomeRegistrationResponse(
                 ticket, now.AddSeconds(_settings.TicketTtlSeconds), request.RunnerStoreId, request.ProcessBootId, epoch);
@@ -375,7 +379,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             connection = new PhoneHomeLiveConnection(
                 runnerId, ticket.RunnerStoreId, ticket.ProcessBootId, epoch, socket, _settings.Limits, _clock,
                 ticket.Capacity, ticket.Platform, ticket.Capabilities, slot.Entry.MaxCapacity,
-                RecordHeartbeatCapacityChangeAsync);
+                RecordHeartbeatCapacityChangeAsync, ObserveCodexCli);
             slot.Live = connection;
             slot.LeaseUntil = _clock.GetUtcNow().AddSeconds(_settings.LeaseSeconds);
             slot.Reconnects++;
@@ -414,7 +418,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             || ticket.ExpiresAtUtc < now
             || !string.Equals(ticket.RunnerId, runnerId, StringComparison.Ordinal)
             || ticket.RunnerStoreId != slot.StoreId
-            || ticket.ProcessBootId != slot.BootId)
+            || ticket.ProcessBootId != slot.BootId || ticket.Epoch != slot.Epoch)
             throw new ConflictException("Connection ticket is bound, expired, or already used.", PhoneHomeProblemTypes.InvalidTicket);
     }
 
@@ -637,11 +641,13 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
         var leaseExpired = live is not null && live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds));
         var available = live is not null && !leaseExpired && live.SocketOpen;
         LastDisconnectRecord? last;
+        RunnerCodexCliVersionDto? cli;
         long reconnects;
         lock (_gate)
         {
             last = slot.LastDisconnect;
             reconnects = slot.Reconnects;
+            cli = slot.CodexCli;
         }
 
         // CARD-0679 D-1: name why the runner is not available instead of a constant: the live
@@ -687,7 +693,11 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             RetireReason: state?.RetireReason,
             Sessions: sessions,
             QueuedTasks: queued,
-            RunnerSessions: live?.ListedNonExited);
+            RunnerSessions: live?.ListedNonExited,
+            CodexCliVersion: cli?.CodexCliVersion,
+            CodexCliVersionCheckedAtUtc: cli?.CodexCliVersionCheckedAtUtc,
+            CodexCliVersionError: CodexCliObservation.DisplayError(cli, _clock.GetUtcNow()),
+            CodexCliVersionStale: CodexCliObservation.DisplayStale(cli, _clock.GetUtcNow()));
     }
 
     /// <summary>Null when this process has no database. Otherwise every non-terminal bound session and every queued unlaunched task.</summary>
@@ -752,7 +762,42 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
         return new RunnerDescriptor(
             slot.Id, display, observed,
             observed is null ? null : slot.PlatformObservedAt ?? live?.LastHeartbeatUtc ?? _clock.GetUtcNow(),
-            eligible, eligible, !eligible, eligible ? live?.Capacity : null, live?.Capabilities ?? slot.Capabilities);
+            eligible, eligible, !eligible, eligible ? live?.Capacity : null, LatestCapabilities(slot, live));
+    }
+
+    private bool IsCurrent(PhoneHomeLiveConnection connection)
+    {
+        lock (_gate)
+            return _slots.TryGetValue(connection.RunnerId, out var slot)
+                && ReferenceEquals(slot.Live, connection) && slot.Epoch == connection.Epoch
+                && slot.StoreId == connection.RunnerStoreId && slot.BootId == connection.ProcessBootId;
+    }
+
+    private void ObserveCodexCli(PhoneHomeLiveConnection connection, RunnerCodexCliVersionDto sample)
+    {
+        lock (_gate)
+        {
+            if (!IsCurrent(connection)) return;
+            var slot = _slots[connection.RunnerId];
+            if (sample.CodexCliVersionCheckedAtUtc is not { } completed) return;
+            if (slot.CodexCli?.CodexCliVersionCheckedAtUtc is { } previous && completed < previous) return;
+            slot.CodexCli = sample;
+        }
+    }
+
+    private RunnerCapabilitiesDto? LatestCapabilities(RunnerSlot slot, PhoneHomeLiveConnection? live)
+    {
+        lock (_gate)
+        {
+            var caps = live?.Capabilities ?? slot.Capabilities;
+            return caps is null ? null : caps with
+            {
+                CodexCliVersion = slot.CodexCli?.CodexCliVersion,
+                CodexCliVersionCheckedAtUtc = slot.CodexCli?.CodexCliVersionCheckedAtUtc,
+                CodexCliVersionError = slot.CodexCli?.CodexCliVersionError,
+                CodexCliLauncherFingerprint = slot.CodexCli?.CodexCliLauncherFingerprint,
+            };
+        }
     }
 
     /// <summary>The live connection for <paramref name="runnerId"/> only. Never another runner's socket.</summary>
@@ -814,6 +859,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
         public string? RegisteredPlatform;
         public DateTimeOffset? PlatformObservedAt;
         public RunnerCapabilitiesDto? Capabilities;
+        public RunnerCodexCliVersionDto? CodexCli;
         public int RegisteredCapacity;
         public RunnerState? State;
     }

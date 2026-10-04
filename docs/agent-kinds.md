@@ -260,11 +260,18 @@ Three things worth knowing about that table:
   High→Frontier change models. Earlier `gpt-6-sol` and `gpt-5.6-terra` stay selectable profile
   model ids and recognized historical aliases; bare `sol` still normalizes to `gpt-6-sol` for
   existing hold text. Frontier requires codex-cli 0.153.4+ and `gpt-6.1-sol` requires 0.159.1+.
-  Runner capabilities do not report the installed Codex CLI version, so there is no dispatch
-  version gate yet (CARD-0959). **Before activating this server change, every Codex-serving runner
-  must be at least 0.159.1.** Desktop and server2-temp are at 0.160.0; the draining standing
-  server2 runner remains at 0.156.1 until redeploy-old. Complete redeploy-old and verify its CLI
-  before the AppHost restart. The live 6.1 canary is a separate orchestrator action.
+  CARD-0959 reports runner-owned CLI observations and retains the 0.159.1 floor as model
+  metadata only. Failed, stale, missing, malformed, clock-skewed and older observations
+  never refuse create, retry, dispatch, warm reuse or final launch, and those paths start
+  no CLI version probe. Existing provider-auth, model-hold and placement rules still apply.
+  Catalogue/status fields describe the default launcher independently of the runner build.
+  Freshness uses a fixed fifteen-minute display threshold; missing or invalid evidence has
+  null freshness. Explicit launcher diagnostics are observations, not placement permission.
+  Activate reporting runners first and verify their completed observations over two refresh
+  periods, then activate server readers. Older runners display unknown and remain subject
+  to existing placement rules. No CLI upgrade is required by this reporting feature.
+  CARD-1023 owns any future compatibility matrix and evidence-backed known-broken refusal.
+  Production activation remains a separate commissioned action.
 
 `ModelLevelAliases.For(kind, level)` is what every *human-facing* string goes through — task
 events, escalation notes, the check digest, completion-note headers. Launch arguments deliberately
@@ -321,9 +328,12 @@ outside `TranscriptTailer`.
 
 ## 5. Grok (xAI Grok Build TUI)
 
-**Runner image (CARD-0986).** The Linux runner image pins Grok 1.0.41, matching
-the captured 120x30 startup dashboard below. Other CLI versions require separate
-qualification before changing the pin.
+**Runner image (CARD-0986).** The Linux runner image installs the pinned Grok 1.0.41,
+matching the captured 120x30 startup dashboard below. This is an image build pin,
+not a live-version claim: the Windows CLI auto-updated to 1.0.46 on 2026-10-03,
+the version recorded in the accepted CARD-1011 evidence below. CARD-1023 owns
+the compatibility matrix; other CLI versions require separate qualification
+before changing the image pin.
 
 **Startup readiness (CARD-0778 / CARD-1004).** The Grok adapter waits for the captured
 120x30 Grok Build 1.0.41 dashboard with an empty complete composer box, a blank
@@ -346,6 +356,27 @@ See the [platform/version/size qualification matrix](ai-agent-tui-configuration.
 Linux screen qualification still needs the orchestrator's post-rollout unpinned
 server2-temp real first-prompt canary with a complete matching `UserPrompt` receipt.
 CARD-0861 size qualification and the 1.0.41 runner-image pin remain separate.
+
+**Windows routing qualification (CARD-1011).** WQ-2 and amended WQ-3 are met;
+WQ-1 is operator-excluded for CARD-1022, not passed. The prompt change landed,
+and 2026-10-04 effective pin reads confirm Review and Debug on every platform
+use Human Required Grok/High then ClaudeCode/High. WQ-4 remains post-activation
+acceptance work.
+See [the routing owner](orchestration-loop.md#windows-review-and-debug-routing)
+and [the evidence ledger](investigations/2026-10-03-card-1011-windows-grok-qualification.md).
+
+| CLI/build | Actual host | Geometry/marker | Trust | Task/session/source | Receipt/release |
+|---|---|---|---|---|---|
+| 1.0.41 / `4220f3b224a6` (reported) | Unknown; WQ-1/2 attribution pending | 120x30 / ASCII `>` to confirm | Not observed | `d6e4138e` / `26d8a18c` / `5f214b0c` | Complete task UserPrompt/report accepted; runner release ownership pending |
+| Historical inbox tuple | WQ-1 operator-excluded for CARD-1022 | 120x30 / ASCII `>` | No new real inbox launch | Existing fake coverage retained | Excluded, not passed |
+| 1.0.46 / `2765805b9442` [stable] | ModernConPty 1.24.260710001; WQ-2 and amended WQ-3 met | 120x30 / ASCII `>` | WQ-3: trust not observed; startup inputs []; Ready after 6.6 s | WQ-2 `02e5b9b7`; WQ-3 `d7e561a7` at `189042da`; full identities in the ledger | WQ-2 complete UserPrompts/report and clean pty-host exit; WQ-3 exact nonce turn and confirmed release; binary provenance reconciled |
+
+Existing captures and FakeGrok cases are fixture evidence. Other sizes remain
+unqualified. Diagnose Windows startup failures using the session's server-log
+`screenReason` and named `%TEMP%\antiphon-grok-startup\grok-startup-*.txt`
+(`Agents:GrokStartupCaptureDirectory` overrides it); capture keys are `outcome`
+and `lastScreenReason`. Sign-in contents are suppressed. Preserve the failed
+task and use the owner's authorized same-platform Opus recovery, without a pin bypass.
 
 **Launch.** `grok.exe --always-approve --no-alt-screen [--model grok-4.7] [--rules <text>]
 (--session-id <guid> | --resume <guid>)` — decided from the on-disk session directory

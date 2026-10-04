@@ -1,0 +1,1 @@
+After checkpoint-tool clean and removal of the isolated tool bootstrap: zero bin-c959-* directories in the task source graph. bin/, obj/, workspace/, other task outputs and evidence preserved.

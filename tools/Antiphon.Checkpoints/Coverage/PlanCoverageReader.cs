@@ -32,7 +32,7 @@ public sealed class PlanCoverageReader
                 }
                 fenced = !fenced; continue;
             }
-            if (fenced) { if (checklistFence) inline.AppendLine(line); continue; }
+            if (fenced) { if (checklistFence) inline.Append(line).Append('\n'); continue; }
             if (trim.StartsWith("### ", StringComparison.Ordinal)) { checkpoint = trim == "### Checkpoints"; current = ""; continue; }
             if (checkpoint) continue;
             var idMatch = Regex.Match(trim, @"^(?:\|\s*)?(?<id>(?:V|R)-[0-9]+|PC-[0-9]+[A-Z]?)(?=\s|\||:)");

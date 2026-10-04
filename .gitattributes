@@ -14,6 +14,15 @@ tests/Antiphon.Tests/Agents/Fixtures/card1006/linux-blocking-frames.json text eo
 tests/Antiphon.Tests/Agents/Fixtures/card1006/synthetic-blocking-frames.json text eol=lf
 tests/Antiphon.Tests/Agents/Fixtures/card1006/provenance.md text eol=lf
 
+# CARD-1013: preserve the seven raw coverage golden provenance pins.
+tests/Antiphon.Tests/Checkpoints/Fixtures/PlanCoverage/c866-plan.md.txt text eol=lf
+tests/Antiphon.Tests/Checkpoints/Fixtures/PlanCoverage/c866-tests.cs.txt text eol=lf
+tests/Antiphon.Tests/Checkpoints/Fixtures/PlanCoverage/c866-fixed-tests.cs.txt text eol=lf
+tests/Antiphon.Tests/Checkpoints/Fixtures/PlanCoverage/c835-plan.md.txt text eol=lf
+tests/Antiphon.Tests/Checkpoints/Fixtures/PlanCoverage/c835-state.cs.txt text eol=lf
+tests/Antiphon.Tests/Checkpoints/Fixtures/PlanCoverage/c835-script.cs.txt text eol=lf
+tests/Antiphon.Tests/Checkpoints/Fixtures/PlanCoverage/c835-approval.cs.txt text eol=lf
+
 # CARD-0490 guest scripts: packaging must preserve LF working-file bytes.
 tests/fixtures/card0490-linux/*.sh text eol=lf
 docker/session-runner-grok/Dockerfile text eol=lf
