@@ -8,6 +8,7 @@ if (-not $IsWindows) { throw 'Windows native fixture required; this case cannot 
 . (Join-Path $PSScriptRoot 'lib/nightly-common.ps1')
 . (Join-Path $PSScriptRoot 'lib/nightly-tests-impl.ps1')
 . (Join-Path $PSScriptRoot 'lib/nightly-owned-process.ps1')
+Add-Type -LiteralPath ([IO.Path]::ChangeExtension($FixtureExecutable, '.dll'))
 $null = New-Item -ItemType Directory -Path $ResultsDirectory -Force
 $script:owners = @()
 $script:handles = @()
@@ -116,7 +117,12 @@ try {
             Assert-Native ($r.Owner.Observation.RemainingProcessCount -eq 0 -and -not $rootHandle.HasExited -and -not $r.Owner.Observation.ChildrenExited) 'zero count does not replace root wait'
             Release-Native $r 'root'; Release-Native $r 'root-wait'
             $null = Complete-Native $r
-            $r = New-NativeRun 'breakaway request' 'breakaway'
+            $r = New-NativeRun 'breakaway request' 'breakaway' @('assignment')
+            Wait-Native { Test-Path (Join-Path $r.Root 'assignment.entered') } 'private job limit readback'
+            $limits = [NativeJobObserver]::ReadLimitFlags($r.Owner.JobHandle)
+            Assert-Native (($limits -band 0x1800) -eq 0) 'independent private job readback forbids both breakaway flags'
+            Assert-Native (($limits -band 0x2000) -ne 0) 'independent private job readback enables kill on close'
+            Release-Native $r 'assignment'
             Wait-Native { Test-Path (Join-Path $r.Root 'breakaway-result') } 'breakaway result'
             Assert-Native ((Get-Content (Join-Path $r.Root 'breakaway-result') -Raw).Trim() -eq 'refused') 'job forbids breakaway request'
             Assert-Native (-not (Test-Path (Join-Path $r.Root 'breakaway-child.pid'))) 'no independently live breakaway descendant'

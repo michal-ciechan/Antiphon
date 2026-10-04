@@ -54,3 +54,22 @@ internal static class Native
         IntPtr threadAttributes, bool inherit, uint flags, IntPtr environment, string directory, ref Startup startup, out Info info);
     [DllImport("kernel32.dll")] internal static extern bool CloseHandle(IntPtr handle);
 }
+
+// Separate compiled fixture observer: read the live private job, not the adapter's
+// configured constant. An enclosing checkpoint job may independently deny escape.
+public static class NativeJobObserver
+{
+    public static uint ReadLimitFlags(IntPtr job)
+    {
+        var buffer = Marshal.AllocHGlobal(256);
+        try
+        {
+            if (!QueryInformationJobObject(job, 9, buffer, 256, out _))
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+            return unchecked((uint)Marshal.ReadInt32(buffer, 16));
+        }
+        finally { Marshal.FreeHGlobal(buffer); }
+    }
+    [DllImport("kernel32.dll", SetLastError=true)]
+    private static extern bool QueryInformationJobObject(IntPtr job, int kind, IntPtr buffer, uint size, out uint returned);
+}

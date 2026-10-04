@@ -59,6 +59,8 @@ namespace Antiphon.Nightly
         private readonly NativeProcessHooks _hooks;
         private readonly Dictionary<int, Process> _descendants = new Dictionary<int, Process>();
         public NativeProcessResult Observation { get; } = new NativeProcessResult();
+        // Live OS handle for an independent fixture observer, never part of a receipt.
+        public IntPtr JobHandle { get; private set; }
         public Task<NativeProcessResult> Completion { get; private set; }
         private NativeProcessOwner(NativeProcessHooks hooks) { _hooks = hooks; }
 
@@ -103,6 +105,7 @@ namespace Antiphon.Nightly
             {
                 job = CreateJobObjectW(IntPtr.Zero, null);
                 Check(job != IntPtr.Zero, "CreateJobObject");
+                JobHandle = job;
                 var limits = new ExtendedLimits();
                 limits.Basic.LimitFlags = 0x2000; // KILL_ON_JOB_CLOSE only; no breakaway.
                 Check(SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf<ExtendedLimits>()), "SetInformationJobObject");
@@ -239,6 +242,7 @@ namespace Antiphon.Nightly
                 Observation.DescendantIdentities = _descendants.Values.Select(p => p.Id + ":" + p.StartTime.ToUniversalTime().ToString("O")).ToArray();
                 foreach (var p in _descendants.Values) p.Dispose();
                 Close(ref job); Close(ref root); Close(ref thread);
+                JobHandle = IntPtr.Zero;
                 Close(ref outRead); Close(ref outWrite); Close(ref errRead); Close(ref errWrite); Close(ref inputRead); Close(ref inputWrite);
                 if (attributes != IntPtr.Zero) { DeleteProcThreadAttributeList(attributes); Marshal.FreeHGlobal(attributes); }
                 if (handleList != IntPtr.Zero) Marshal.FreeHGlobal(handleList);

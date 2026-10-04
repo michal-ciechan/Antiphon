@@ -1135,7 +1135,7 @@ seams/methods/oracles; they are not claims that the methods exist at this source
 | PC-90 | skip the invocation marker comparison | NightlyUnitReceiptTests.C1039_IdentityBinding | previous-invocation: receipt refused although counts match |
 | PC-91 | resume the root despite AssignProcessToJobObject failure | NightlyNativeOwnershipTests.C1039_AssignBeforeResume | assignment refused: fixture start marker absent and root handle signalled |
 | PC-92 | omit CREATE_SUSPENDED when creating the root | NightlyNativeOwnershipTests.C1039_AssignBeforeResume | assignment barrier held: neither root marker nor descendant exists |
-| PC-93 | enable JOB_OBJECT_LIMIT_BREAKAWAY_OK | NightlyNativeOwnershipTests.C1039_DescendantExit | fixture breakaway request cannot leave an independently live descendant |
+| PC-93 | enable JOB_OBJECT_LIMIT_BREAKAWAY_OK | NightlyNativeOwnershipTests.C1039_DescendantExit | independent OS readback of the private job forbids breakaway flags; fixture breakaway request cannot leave an independently live descendant (outer checkpoint containment must not mask the private-job defect) |
 | PC-94 | treat job active-count zero as sufficient without root wait | NightlyNativeOwnershipTests.C1039_DescendantExit | held root wait: ChildrenExited=false despite zero-count observation |
 | PC-95 | set ChildrenExited from root.HasExited alone | NightlyNativeOwnershipTests.C1039_DescendantExit | root exited/child held: no clean return until child handle signals |
 | PC-96 | ignore the stdout reader completion in OutputDrained | NightlyNativeOwnershipTests.C1039_DrainBeforeReturn | held stdout EOF: OutputDrained=false and no successful return |
