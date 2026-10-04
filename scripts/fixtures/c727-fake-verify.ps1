@@ -35,6 +35,43 @@ if ($Case -eq 'temp-project-absent') {
 }
 $entry = [ordered]@{ kind = 'case'; name = $Case; runnerId = $request.runnerId; sourceSha = $request.sourceSha; savedDonor = $savedDonor }
 if ($state.scenario -eq 'c1008') { $entry['recycle'] = $request.recycle; $entry['tempRetiredAt'] = $request.tempRetiredAt }
+if ($Case -eq 'retire-temp-containers') {
+    $context = $request.tempContainerCleanup
+    $entry['cleanup'] = $context
+    $entry['clockMs'] = $state.clockMs
+    Add-Content -LiteralPath $env:C727_TEST_TRACE -Value ($entry | ConvertTo-Json -Compress -Depth 20)
+    $dest = Join-Path $request.evidenceRoot $Case
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    $running = $state.tempRunning -or ($state.tempContainer -and $state.scenario -eq 'c1008' -and -not $state.tempExited)
+    if ($state.cleanupElapsedMs) { $state.clockMs += $state.cleanupElapsedMs }
+    if ($state.cleanupSequence -and $state.cleanupSequence.Count) {
+        $running = [bool]$state.cleanupSequence[0]
+        $state.cleanupSequence = @($state.cleanupSequence | Select-Object -Skip 1)
+    }
+    if ($running -or $state.cleanupFail) {
+        $diagnosis = if ($running) { 'TempContainerStillRunning' } else { 'TempContainerRemoveFailed' }
+        @{ accepted=$false; diagnosis=$diagnosis; exit=2 } | ConvertTo-Json | Set-Content (Join-Path $dest 'c590-result.json')
+        $state | ConvertTo-Json -Compress -Depth 30 | Set-Content $env:C727_TEST_STATE
+        exit 2
+    }
+    $candidates = if ($state.tempContainer) { @(@{Id=('1'*64);service='session-runner'}) } else { @() }
+    $receipt = [ordered]@{ schema=1; sourceSha=$request.sourceSha; runId=$request.runId; operationId=$context.operationId;
+        project=$context.project; projectId=$context.projectId; retiredAt=$context.retiredAt; dryRun=$context.dryRun;
+        candidates=@($candidates); removals=@(); finalCensus=@(); outcome=$(if($context.dryRun){'preview'}else{'completed'});
+        image=('sha256:' + ('a'*64)) }
+    if ($state.receiptMismatch) { $receipt.sourceSha = 'b'*40 }
+    if (-not $state.receiptMissing) {
+        $receiptPath = Join-Path $dest 'temp-containers.json'
+        $receipt | ConvertTo-Json -Compress -Depth 30 | Set-Content -Encoding utf8 $receiptPath
+        (Get-FileHash $receiptPath -Algorithm SHA256).Hash | Set-Content (Join-Path $dest 'temp-containers.sha256')
+    }
+    if (-not $context.dryRun) { $state.tempContainer = $false }
+    if ($state.driftAfterCleanup) { $state.statuses.'server2-temp'.sessions = 1 }
+    $state | ConvertTo-Json -Compress -Depth 30 | Set-Content $env:C727_TEST_STATE
+    if ($state.receiptCopyFail) { exit 2 }
+    exit 0
+}
+
 Add-Content -LiteralPath $env:C727_TEST_TRACE -Value ($entry | ConvertTo-Json -Compress -Depth 20)
 if ($Case -eq 'verify-runner-caches' -and $state.failVerify -eq $request.runnerId) { exit 1 }
 if ($state.scenario -eq 'c1008' -and $Case -eq 'deploy-parent') {
@@ -79,7 +116,7 @@ if ($Case -eq 'deploy-temp-runner') {
     }
     if ($state.tempRetiredAt) {
         Add-Content -LiteralPath $env:C727_TEST_TRACE -Value '{"kind":"registration","result":"RunnerRetired"}'
-        $state | ConvertTo-Json -Compress | Set-Content -LiteralPath $env:C727_TEST_STATE
+        $state | ConvertTo-Json -Compress -Depth 30 | Set-Content -LiteralPath $env:C727_TEST_STATE
         exit 1
     }
     $state.tempDeployed = $true

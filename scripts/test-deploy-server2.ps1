@@ -61,7 +61,7 @@ function Run-C727 {
     $sentinel = 'SENTINEL_C727_OPERATOR_TOKEN_1234567890'
     if ($TokenPresent) { Set-Content -LiteralPath $tokenPath -Value $sentinel -NoNewline }
     $state = [ordered]@{
-        scenario = $Scenario; sha = $sha; tempDeployed = $false; oldDeployed = $false
+        scenario = $Scenario; sha = $sha; clockMs = 0; tempDeployed = $false; oldDeployed = $false
         oldDraining = $false; tempDraining = $false; tempRetiredAt = $null; tempContainer = $false; tempOffline = $false
         tempRedirectTo = 'server2'; tempRetireWhenIdle = $true
         faultRunner = ''; faultField = ''; faultKind = ''; faultValue = $null; failVerify = ''
@@ -245,7 +245,7 @@ try {
     $t1 = Run-C727 -Scenario happy
     $c = Cases $t1; $p = Posts $t1
     Assert-C727 ($t1.Exit -eq 0) 'T-1 exit'
-    Assert-C727 ((@($c | ForEach-Object { "$($_.name):$($_.runnerId)" }) -join ',') -eq 'runner-cache-seed:,deploy-temp-runner:,verify-runner-caches:server2-temp,deploy-parent:,verify-runner-caches:server2,retire-temp-runner:') 'T-1 host order/targets'
+    Assert-C727 ((@($c | ForEach-Object { "$($_.name):$($_.runnerId)" }) -join ',') -eq 'runner-cache-seed:,deploy-temp-runner:,verify-runner-caches:server2-temp,deploy-parent:,verify-runner-caches:server2,retire-temp-containers:,retire-temp-containers:,retire-temp-runner:') 'T-1 host order/targets'
     Assert-C727 ($p.Count -eq 5) 'T-1 post count'
     Assert-C727 ($p[0].runnerId -eq 'server2-temp' -and $p[0].suffix -eq '/drain' -and $p[0].body.redirectTo -eq 'server2' -and $p[0].body.retireWhenIdle -eq $false -and [array]::IndexOf($t1.Trace, $p[0]) -lt [array]::IndexOf($t1.Trace, $c[0])) 'T-1 hold before seed'
     Assert-C727 ($p[1].runnerId -eq 'server2-temp' -and $p[1].suffix -eq '/drain/clear' -and [array]::IndexOf($t1.Trace, $p[1]) -gt [array]::IndexOf($t1.Trace, $c[2])) 'T-1 temp verify before clear'
@@ -341,7 +341,7 @@ try {
 
     foreach ($phase in @('deploy-temp', 'redeploy-old', 'retire-temp')) {
         $runner = if ($phase -eq 'redeploy-old') { 'server2' } else { 'server2-temp' }
-        $base = if ($phase -eq 'redeploy-old') { @{ oldDraining = $true } } elseif ($phase -eq 'retire-temp') { @{ tempDraining = $true; tempRetiredAt = '2026-09-27T10:00:00Z' } } else { @{} }
+        $base = if ($phase -eq 'redeploy-old') { @{ oldDraining = $true } } elseif ($phase -eq 'retire-temp') { @{ tempDraining = $true; tempRetiredAt = '2026-09-27T10:00:00Z'; tempRunning = $true } } else { @{} }
         foreach ($field in @('sessions', 'runnerSessions', 'queuedTasks')) {
             foreach ($kind in @('omitted', 'null')) {
                 $set = $base.Clone(); $set.faultRunner = $runner; $set.faultField = $field; $set.faultKind = $kind;

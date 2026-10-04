@@ -42,6 +42,13 @@ if ($state.scenario -eq 'c1008') {
     }
     if ($Method -ne 'GET') { exit 2 }
     if ($Suffix -eq '/status' -and $state.statuses.PSObject.Properties.Name -contains $RunnerId) {
+        if ($RunnerId -eq 'server2-temp' -and $state.statusSequence -and $state.statusSequence.Count) {
+            $observation = $state.statusSequence[0]
+            $state.clockMs = $observation.clockMs
+            $state.statuses.'server2-temp' = $observation.status
+            $state.statusSequence = @($state.statusSequence | Select-Object -Skip 1)
+            $state | ConvertTo-Json -Compress -Depth 30 | Set-Content $env:C727_TEST_STATE
+        }
         $state.statuses.$RunnerId | ConvertTo-Json -Compress -Depth 20
         exit 0
     }
@@ -58,7 +65,7 @@ if ($Method -eq 'POST') {
         $state.tempDraining = $true
         $state.tempRedirectTo = $body.redirectTo
         $state.tempRetireWhenIdle = [bool]$body.retireWhenIdle
-        if ([string]$body.reason -eq 'CARD-0727 rolling upgrade complete') { $state.tempRetiredAt = '2026-09-27T10:00:00Z' }
+        if ([string]$body.reason -eq 'CARD-0727 rolling upgrade complete') { $state.tempRetiredAt = '2026-09-27T10:00:00Z'; $state.tempOffline = $true }
     }
     if ($RunnerId -eq 'server2-temp' -and $Suffix -eq '/drain/clear') {
         $state.tempDraining = $false
@@ -80,7 +87,7 @@ if ($RunnerId -eq 'server2-temp') {
         Write-Output '__404__'
         exit 0
     }
-    $offline = (-not $state.tempContainer) -or $state.tempOffline
+    $offline = (-not $state.tempContainer) -or $state.tempOffline -or ($state.tempRetiredAt -and -not $state.tempRunning)
     $recovering = $state.scenario -eq 'recovering' -and $state.PSObject.Properties.Name -notcontains 'recoveryObserved'
     if ($recovering) { $state | Add-Member -NotePropertyName recoveryObserved -NotePropertyValue $true; $state | ConvertTo-Json -Compress | Set-Content -LiteralPath $env:C727_TEST_STATE }
     $accepting = $state.scenario -ne 'ineligible' -and -not $state.tempDraining -and -not $offline

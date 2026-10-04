@@ -19,6 +19,7 @@ if ($PSVersionTable.PSVersion.Major -lt 7) { throw 'PowerShell 7 is required' }
 if (($DryRun -or $ResumeRecycle) -and $Phase -notin @('redeploy-old', 'retire-temp')) { throw 'RecycleContextInvalid' }
 if ($DryRun -and $ResumeRecycle) { throw 'RecycleContextInvalid' }
 . (Join-Path $PSScriptRoot 'lib/runner-operator-token.ps1')
+. (Join-Path $PSScriptRoot 'c590-real.ps1')
 
 $api = $env:ANTIPHON_API
 if ([string]::IsNullOrWhiteSpace($api)) { $api = 'http://localhost:17202' }
@@ -164,7 +165,12 @@ function Assert-RecycleContext {
     if ($null -eq $Context) { throw 'RecycleContextInvalid' }
     $keys = @($Context.PSObject.Properties.Name)
     $expected = @('version', 'project', 'operationId', 'dryRun', 'resume', 'projectId')
-    if ($keys.Count -ne $expected.Count -or @($keys | Where-Object { $_ -notin $expected }).Count -ne 0) { throw 'RecycleContextInvalid' }
+    if ($keys -ccontains 'cleanupOperationId') {
+        if ($Context.project -cne 'antiphon-runner-temp' -or $Context.resume -ne $false -or
+            $Context.cleanupOperationId -isnot [string] -or $Context.cleanupOperationId -cnotmatch '^c994[0-9a-f]{32}$') { throw 'RecycleContextInvalid' }
+        $expected += 'cleanupOperationId'
+    }
+    if ($keys.Count -ne $expected.Count -or @($keys | Where-Object { $_ -cnotin $expected }).Count -ne 0) { throw 'RecycleContextInvalid' }
     if ($Context.version -ne 1 -or ($Context.version -isnot [long] -and $Context.version -isnot [int]) -or
         $Context.project -cnotin @('antiphon-runner', 'antiphon-runner-temp') -or
         $Context.operationId -cnotmatch '^c1008[0-9a-f]{32}$' -or
@@ -332,6 +338,125 @@ function Assert-TempSeedCounters {
     }
 }
 
+# Cleanup admission does not normalize inventory or authorize volume deletion.
+function Assert-TempCleanupStatus {
+    param($Status, [string]$ExpectedRetiredAt = '')
+    if ($null -eq $Status) { throw 'RunnerStatusMissing server2-temp' }
+    foreach ($name in @('draining','retireWhenIdle')) {
+        if ($Status.$name -isnot [bool] -or $Status.$name -ne $true) { throw 'TempRunnerNotRetired' }
+    }
+    foreach ($name in @('available','dispatchEligible','acceptingNewWork')) {
+        if ($Status.$name -isnot [bool] -or $Status.$name -ne $false) { throw 'TempRunnerNotRetired' }
+    }
+    if ($Status.redirectTo -isnot [string] -or $Status.redirectTo -cne 'server2') { throw 'TempRunnerDrainConflict' }
+    foreach ($name in @('sessions','queuedTasks','runnerSessions')) {
+        if ($Status.PSObject.Properties.Name -cnotcontains $name) { throw "RunnerCounterUnknown server2-temp $name" }
+        $value = $Status.$name
+        if ($name -ceq 'runnerSessions' -and $null -eq $value) { continue }
+        if (($value -isnot [int] -and $value -isnot [long]) -or $value -ne 0) { throw "RunnerCounterUnknown server2-temp $name" }
+    }
+    $stamp = ConvertTo-C994RetiredInstant $Status.retiredAt
+    if ($ExpectedRetiredAt -and $stamp -cne $ExpectedRetiredAt) { throw 'TempRunnerRetirementChanged' }
+    return $stamp
+}
+
+function Assert-TempCleanupMain {
+    param($Status, [switch]$RequireSha)
+    if ($null -eq $Status) { throw 'OldRunnerNotAcceptingNewWork' }
+    foreach ($name in @('available','dispatchEligible','acceptingNewWork')) {
+        if ($Status.$name -isnot [bool] -or $Status.$name -ne $true) { throw 'OldRunnerNotAcceptingNewWork' }
+    }
+    if ($Status.draining -isnot [bool] -or $Status.draining -ne $false -or
+        $Status.PSObject.Properties.Name -cnotcontains 'retiredAt' -or $null -ne $Status.retiredAt -or
+        ($RequireSha -and [string]$Status.buildVersion -cne $Sha)) { throw 'OldRunnerNotAcceptingNewWork' }
+}
+
+function Get-C994Now {
+    # Existing harness seams are file-backed; wall-clock time is production's budget.
+    if ($env:C727_TEST_VERIFY_STUB -and $env:C727_TEST_STATE) {
+        $state = Get-Content -Raw -LiteralPath $env:C727_TEST_STATE | ConvertFrom-Json
+        if ($state.PSObject.Properties.Name -contains 'clockMs') {
+            return [datetime]::UnixEpoch.AddMilliseconds([long]$state.clockMs)
+        }
+    }
+    return [datetime]::UtcNow
+}
+
+function Invoke-TempContainerCleanup {
+    param($Status, [string]$ProjectId, [string]$ExpectedRetiredAt = '', [switch]$Preview)
+    $stamp = Assert-TempCleanupStatus -Status $Status -ExpectedRetiredAt $ExpectedRetiredAt
+    Assert-TempCleanupMain -Status (Get-RunnerStatus 'server2')
+    [void](Assert-RecycleTaskCensus -RunnerId 'server2-temp' -ProjectId $ProjectId)
+    $operation = 'c994' + [guid]::NewGuid().ToString('N')
+    $context = [pscustomobject]@{ version=1; operationId=$operation; project='antiphon-runner-temp';
+        projectId=$ProjectId; dryRun=[bool]$Preview; retiredAt=$stamp }
+    Invoke-HostCase -Case 'retire-temp-containers' -Cleanup $context
+    $receiptPath = Join-Path $evidenceRoot 'retire-temp-containers/temp-containers.json'
+    $hashPath = Join-Path $evidenceRoot 'retire-temp-containers/temp-containers.sha256'
+    if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $hashPath -PathType Leaf)) { throw 'TempContainerReceiptUnavailable' }
+    $raw = Get-Content -Raw -LiteralPath $receiptPath
+    Assert-C994RawManifest -Json $raw
+    $receipt = $raw | ConvertFrom-Json
+    $digest = (Get-FileHash -LiteralPath $receiptPath -Algorithm SHA256).Hash
+    $storedHash = (Get-Content -Raw -LiteralPath $hashPath).Trim()
+    if ($storedHash -cnotmatch '^[0-9a-fA-F]{64}$' -or $digest -ine $storedHash -or
+        $receipt.schema -ne 1 -or [string]$receipt.sourceSha -cne $Sha -or
+        [string]$receipt.runId -cne $runId -or [string]$receipt.operationId -cne $operation -or
+        [string]$receipt.project -cne 'antiphon-runner-temp' -or [string]$receipt.projectId -cne $ProjectId -or
+        (ConvertTo-C994RetiredInstant $receipt.retiredAt) -cne $stamp -or
+        $receipt.dryRun -isnot [bool] -or $receipt.dryRun -ne [bool]$Preview -or
+        $receipt.candidates -isnot [array] -or $receipt.removals -isnot [array] -or
+        ($Preview -and $receipt.outcome -cne 'preview') -or
+        (-not $Preview -and ($receipt.outcome -cne 'completed' -or $receipt.finalCensus -isnot [array] -or $receipt.finalCensus.Count -ne 0))) {
+        throw 'TempContainerReceiptUnavailable'
+    }
+    return $receipt
+}
+
+function Wait-TempContainerRetirement {
+    param([datetime]$Deadline, [string]$ProjectId)
+    $stamp = ''; $pollMs = 30000
+    if ($env:C727_TEST_POLL_MS) { $pollMs = [int]$env:C727_TEST_POLL_MS }
+    do {
+        if ((Get-C994Now) -ge $Deadline) { throw 'TempContainerExitTimeout' }
+        $status = Get-RunnerStatus 'server2-temp'
+        Assert-TempCleanupMain -Status (Get-RunnerStatus 'server2') -RequireSha
+        if ($null -eq $status) { throw 'TempRunnerStatusMissing' }
+        if ($status.retiredAt) {
+            $observed = ConvertTo-C994RetiredInstant $status.retiredAt
+            if ($stamp -and $stamp -cne $observed) { throw 'TempRunnerRetirementChanged' }
+            $stamp = $observed
+            # A connected retirement acknowledgement is an observation, never a
+            # deletion authority. All other malformed fields refuse immediately.
+            $copy = $status | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+            foreach ($name in @('available','dispatchEligible','acceptingNewWork')) {
+                if ($copy.$name -isnot [bool]) { throw 'TempRunnerNotRetired' }
+                $copy.$name = $false
+            }
+            [void](Assert-TempCleanupStatus -Status $copy -ExpectedRetiredAt $stamp)
+            if ($status.available -ceq $false -and $status.dispatchEligible -ceq $false -and $status.acceptingNewWork -ceq $false) {
+                try {
+                    $receipt = Invoke-TempContainerCleanup -Status $status -ProjectId $ProjectId -ExpectedRetiredAt $stamp
+                    if ((Get-C994Now) -ge $Deadline) { throw 'TempContainerExitTimeout' }
+                    return $receipt
+                } catch {
+                    if ($_.Exception.Message -notlike '*TempContainerStillRunning*') { throw }
+                }
+            }
+        }
+        if ((Get-C994Now) -ge $Deadline) { throw 'TempContainerExitTimeout' }
+        Start-Sleep -Milliseconds $pollMs
+        if ($env:C727_TEST_VERIFY_STUB -and $env:C727_TEST_STATE) {
+            $clockState = Get-Content -Raw $env:C727_TEST_STATE | ConvertFrom-Json
+            if ($clockState.PSObject.Properties.Name -contains 'clockMs') {
+                $clockState.clockMs += $pollMs
+                $clockState | ConvertTo-Json -Compress -Depth 30 | Set-Content $env:C727_TEST_STATE
+            }
+        }
+    } while ($true)
+}
+
 function Wait-RunnerStatus {
     param([string]$RunnerId, [scriptblock]$Ready, [int]$Minutes, [string]$Diagnosis)
     $deadline = [datetime]::UtcNow.AddMinutes($Minutes)
@@ -347,13 +472,14 @@ function Wait-RunnerStatus {
 }
 
 function Invoke-HostCase {
-    param([string]$Case, [string]$TempRetiredAt = '', [string]$RunnerId = '', $Recycle = $null)
+    param([string]$Case, [string]$TempRetiredAt = '', [string]$RunnerId = '', $Recycle = $null, $Cleanup = $null)
     $manifest = [ordered]@{
         evidenceRoot = $evidenceRoot
         sourceSha = $Sha
         runId = $runId
         c604Branch = 'master'
     }
+    if ($null -ne $Cleanup) { Assert-C994BridgeContext -Context $Cleanup -Case $Case; $manifest.tempContainerCleanup = $Cleanup }
     if ($TempRetiredAt) { $manifest.tempRetiredAt = $TempRetiredAt }
     if ($RunnerId) { $manifest.runnerId = $RunnerId }
     if ($null -ne $Recycle) { Assert-RecycleContext -Context $Recycle; $manifest.recycle = $Recycle }
@@ -362,7 +488,16 @@ function Invoke-HostCase {
     $manifest | ConvertTo-Json -Compress -Depth 20 | Set-Content -LiteralPath $manifestPath -Encoding ascii
     $verifier = if ($env:C727_TEST_VERIFY_STUB) { $env:C727_TEST_VERIFY_STUB } else { Join-Path $PSScriptRoot 'verify-docker-stack.ps1' }
     & pwsh -NoProfile -File $verifier -Case $Case -Manifest $manifestPath
-    if ($LASTEXITCODE -ne 0) { throw "HostCaseFailed $Case exit=$LASTEXITCODE" }
+    if ($LASTEXITCODE -ne 0) {
+        $diagnosis = ''
+        $resultFile = Join-Path $evidenceRoot ($Case + '/c590-result.json')
+        if (Test-Path -LiteralPath $resultFile -PathType Leaf) {
+            try { $result = Get-Content -Raw -LiteralPath $resultFile | ConvertFrom-Json
+                if ($result.diagnosis -ceq 'TempContainerStillRunning') { $diagnosis = ' TempContainerStillRunning' }
+            } catch { }
+        }
+        throw "HostCaseFailed $Case exit=$LASTEXITCODE$diagnosis"
+    }
 }
 
 # Read-only host census before a retired slot can be cleared. Keep stopped containers
@@ -518,10 +653,10 @@ function Invoke-Phase {
             })
         }
         'drain-temp' {
+            $deadline = (Get-C994Now).AddMinutes($WaitIdleMinutes)
+            if ($env:C727_TEST_WAIT_MS) { $deadline = (Get-C994Now).AddMilliseconds([int]$env:C727_TEST_WAIT_MS) }
             $old = Get-RunnerStatus -RunnerId 'server2'
-            if ($null -eq $old -or -not $old.acceptingNewWork -or [string]$old.buildVersion -ne $Sha) {
-                throw 'OldRunnerNotAcceptingNewWork'
-            }
+            Assert-TempCleanupMain -Status $old -RequireSha
             $s = Get-RunnerStatus -RunnerId 'server2-temp'
             if ($null -eq $s) { throw 'TempRunnerStatusMissing' }
             if (-not $s.retiredAt -and -not $s.draining) {
@@ -532,19 +667,31 @@ function Invoke-Phase {
             elseif (-not $s.retiredAt -and ([string]$s.redirectTo -ne 'server2' -or -not $s.retireWhenIdle)) {
                 throw 'TempRunnerDrainConflict'
             }
-            [void](Wait-RunnerStatus -RunnerId 'server2-temp' -Minutes $WaitIdleMinutes -Diagnosis 'TempRunnerStillBusy' -Ready {
-                param($s) -not [string]::IsNullOrWhiteSpace([string]$s.retiredAt)
-            })
+            $projectId = Get-RecycleProjectId
+            [void](Wait-TempContainerRetirement -Deadline $deadline -ProjectId $projectId)
         }
         'retire-temp' {
             $s = Get-RunnerStatus -RunnerId 'server2-temp'
+            $projectId = Get-RecycleProjectId
+            $cleanup = $null
+            if (-not $ResumeRecycle) {
+                $cleanup = Invoke-TempContainerCleanup -Status $s -ProjectId $projectId -Preview:$DryRun
+                if ($DryRun -and $cleanup.candidates.Count -gt 0) {
+                    Write-Output 'C994_PREVIEW volumeProof=pending-confirmed-absence auditPending=true'
+                    return
+                }
+                $s = Get-RunnerStatus 'server2-temp'
+                [void](Assert-TempCleanupStatus -Status $s -ExpectedRetiredAt (ConvertTo-C994RetiredInstant $cleanup.retiredAt))
+            }
             $retiredAt = Assert-RetiredTempCounters -Status $s
+            Assert-TempProjectAbsent
             $old = Get-RunnerStatus -RunnerId 'server2'
-            if ($null -eq $old -or $old.acceptingNewWork -isnot [bool] -or $old.acceptingNewWork -ne $true) { throw 'OldRunnerNotAcceptingNewWork' }
+            Assert-TempCleanupMain -Status $old
             $projectId = Get-RecycleProjectId
             [void](Assert-RecycleTaskCensus -RunnerId 'server2-temp' -ProjectId $projectId)
             $operation = if ($ResumeRecycle) { $ResumeRecycle } else { 'c1008' + [guid]::NewGuid().ToString('N') }
             $context = [pscustomobject]@{ version=1; project='antiphon-runner-temp'; operationId=$operation; dryRun=[bool]$DryRun; resume=[bool]$ResumeRecycle; projectId=$projectId }
+            if ($null -ne $cleanup) { $context | Add-Member -NotePropertyName cleanupOperationId -NotePropertyValue $cleanup.operationId }
             Invoke-HostCase -Case 'retire-temp-runner' -TempRetiredAt $retiredAt -Recycle $context
         }
     }
