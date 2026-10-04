@@ -143,6 +143,7 @@ public sealed class CodexRunnerImageContractTests
     }
 
     [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public void Net9_packs_are_pinned_verified_before_extraction_and_available_to_session_testing()
     {
         var dockerfile = Read("docker/session-runner-grok/Dockerfile");
@@ -169,13 +170,36 @@ public sealed class CodexRunnerImageContractTests
 
         var probe = Read("docker/session-runner-grok/verify-codex-image.sh");
         var wrapper = Read("scripts/verify-card0660-codex-image.ps1");
+        probe.ShouldContain("<FrameworkReference Include=\"Microsoft.AspNetCore.App\"", customMessage: "aspnet-framework-reference");
         probe.ShouldContain("net9-offline)");
         probe.ShouldContain("need_uid 1654");
-        probe.ShouldContain("NUGET_PACKAGES=\"$root/packages\"");
-        probe.ShouldContain("--source \"$root/feed\"");
+        probe.ShouldContain("NUGET_PACKAGES=/home/app/.nuget/packages");
+        probe.ShouldContain("<fallbackPackageFolders><clear/></fallbackPackageFolders>");
         probe.ShouldContain("<UseAppHost>true</UseAppHost>");
         probe.ShouldContain("dotnet build \"$root/project/Offline.csproj\" --no-restore");
         wrapper.ShouldContain("$rows['net9-offline'] = Invoke-Probe 'net9-offline' '1654:1654'");
+        var output = RemoteScriptContractTests.LinuxShell("bash \"$repo/scripts/fixtures/c913-image-contract.sh\" archive \"$repo\"\n", "repo");
+        output.ShouldContain("PASS archive-digest-gates-extraction");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C913_Net9_probe_rejects_warm_caches_and_missing_packs()
+    {
+        var output = RemoteScriptContractTests.LinuxShell("bash \"$repo/scripts/fixtures/c913-image-contract.sh\" probe \"$repo\"\n", "repo");
+        output.ShouldContain("PASS sources-and-fallbacks-cleared", customMessage: "sources-and-fallbacks-cleared");
+        output.ShouldContain("PASS probe-boundaries-complete");
+        output.ShouldNotContain("FAIL ");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C913_Image_wrapper_isolates_mounts_and_qualifies_receipts()
+    {
+        var output = RemoteScriptContractTests.LinuxShell("pwsh -NoProfile -File \"$repo/scripts/fixtures/c913-image-wrapper.ps1\" -Repo \"$repo\"\n", "repo");
+        output.ShouldContain("PASS package-mount-contract", customMessage: "package-mount-contract");
+        output.ShouldContain("PASS wrapper-boundaries-complete");
+        output.ShouldNotContain("FAIL ");
     }
 
     [Test]

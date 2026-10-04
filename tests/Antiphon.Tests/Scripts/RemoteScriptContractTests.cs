@@ -20,6 +20,66 @@ public sealed class RemoteScriptContractTests
 {
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
+    public void C913_Seed_accepts_complete_ordinary_packages_without_framework_packs() =>
+        C913Run("tree", "ordinary-only-accepted");
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C913_Full_marker_binds_verified_recovery_before_publication() =>
+        C913Run("seed", "schema3-published");
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C913_Marker_versions_keep_legacy_full_and_cold_contracts_distinct() =>
+        C913Run("ready", "schema3-valid");
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C913_Prune_validates_recovery_without_refilling_image_packs() =>
+        C913Run("prune", "schema3-prune-success");
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C913_Fixture_uses_owned_payloads_and_proven_absent_temp() =>
+        C913Run("inventory", "absent-temp-accepted");
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C913_Receipts_reject_mixed_digest_types_and_false_smoke_claims()
+    {
+        var start = new ProcessStartInfo("pwsh")
+        {
+            ArgumentList = { "-NoProfile", "-File", Path.Combine(DelegateScriptRunner.RepoRoot,
+                "scripts", "fixtures", "c913-receipts.ps1"), "-Repo", DelegateScriptRunner.RepoRoot },
+            RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false
+        };
+        using var process = Process.Start(start)!;
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(60_000))
+        {
+            process.Kill(entireProcessTree: true);
+            throw new TimeoutException("the receipt harness did not finish in 60s");
+        }
+        var output = stdout.Result + stderr.Result;
+        output.ShouldContain("PASS schema3-receipt-accepted", customMessage: "schema3-receipt-accepted");
+        process.ExitCode.ShouldBe(0, output);
+        output.ShouldContain("PASS receipts-complete");
+        output.ShouldNotContain("FAIL ");
+    }
+
+    private static void C913Run(string mode, string witness)
+    {
+        RequireLinuxPwsh();
+        RequireLinuxJq();
+        var output = LinuxShell("bash \"$repo/scripts/fixtures/c913-seed-contract.sh\" " + mode + " \"$repo\"\n", "repo");
+        output.ShouldContain("PASS " + witness, customMessage: witness);
+        output.ShouldContain("PASS " + mode + "-complete");
+        output.ShouldNotContain("FAIL ");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_exact_default_volumes()
     {
         using var f = new C1008HostFixture();
