@@ -139,7 +139,7 @@ Required evidence groups for the table:
 - **T8:** controlled 10/20-session scaling with equal ingest count, and a 180-second fake-clock no-ingest interval after warmup. Zero timer/API state or unchanged receipt SELECTs; count content, cold and replay-miss work separately. Do not generate production traffic.
 - **R1:** existing working oracle, R1 commit/projection/warmup/cache tests; **R2:** runtime persistence and sequence restart; **R3:** queue receipt/immediate-refusal/R6 tests; **R4:** existing progress/context/deadline and affected recovery tests; **R5:** Unit lane for cross-cutting DI/DTO contracts.
 
-### Checkpoints
+### Proposed checkpoints (superseded by TestDesign appendix)
 
 This is the proposed ordinary Code closed list. TestDesign must finalize it and place it with the new verification section before `next: code`. T-n identifiers above define coverage requirements, not claims of implemented tests. Exact methods and independent PCs belong in that stage. New/affected cases may not skip. Whole-class selections include partial files. Floors below are conservative proposed TUnit-result floors; TestDesign must check actual selected methods/parameter expansion and increase them where the roster requires it.
 
@@ -194,7 +194,523 @@ Placement routes were read successfully on 2026-10-04 around 11:57 UTC: `/api/ru
 
 Next is TestDesign on this artifact. Finish the verification section, inspect the remaining affected consumer/recovery fixtures, verify the broadcaster destination and bounded cache sizing, finalize checkpoint rosters/floors, and make all independent controls executable. Then commission S0 and R2 (S4-S6), preserving the R1 regression scope and arranging AC-1 before R2 activation. R3 remains a later explicit Code round; full-card completion requires its implementation plus ordinary Review, publication/activation, independent controls and desktop evidence.
 
---- next stage ---
+Plan-stage handoff (historical; superseded by the appendix):
 next: test-design
 handoff: Add executable verification design to the remaining CARD-0701 plan: preserve R1, cover the 35 reader migrations, binding/replay and R3 wakes, finalize fixture-specific checkpoints and independent controls, and retain desktop baseline/after acceptance plus CARD-0720's separate ownership.
+artifact: docs/superpowers/plans/2026-10-04-card-0701-remaining-session-state-plan.md
+
+## Verification design
+
+TestDesign, 2026-10-04, inspected at `94b2bbb072bc02322df454409e0c50a7edf53897`. This appendix finalizes verification only; D-1–D-10 and S0/S4–S9 above remain the fix design. The earlier proposed checkpoint table is historical. Only the `### Checkpoints` below is executable. New test names below are implementation obligations, not claims that tests already exist or have passed. No production change, build, test, live capture or mutation was run in TestDesign.
+
+### Inspection
+
+- `SessionStateTestFixture` (entire container, event factory and cleanup), `TranscriptCommandCapture`, `TranscriptWorkingStateOracle`, `SessionStateReadFixture`; all bodies in projection/commit/cache-read/warmup tests, including cascade helpers/interceptors | committed publication, cold seed, classification, rollback, deletion -> V-2, R-1. The null factory argument creates a UUID: use `with { Uuid = null }` for actual nulls.
+- `AgentSessionRuntimeTests.Persist.cs` persistence cases and fixture/interceptors; the complete sequence-restart method in the other partial | sanitization, stubs, collision, null identity, chunking and sequence restart -> V-4, R-2. The selected restart method does not start cmd or a TUI. Its neighbouring backend-restart test is not selected.
+- `BridgeQueueHarness` graph, default/reattached `OnSubmitted`, raw insertion and cleanup; `FakeAgentProtocolAdapter.SendInputAsync`; queue service body/CR/paste/WhenIdle cases; delivery verification harness, verified-delivery, truncated late-confirm and C561 partial bodies | real queue, receipt and process-safety boundaries -> V-5/V-6, R-3. Existing generic queue semantics sometimes accept QueuedUserPrompt, question ToolResult or degraded screen evidence. Preserve those regressions; the new complete-receipt witnesses use the stricter full-inline/channel/land-note contract.
+- `PhoneHomeOutageHarness` in full; directory and pending-inventory tests in full; immediate-send outage matrix/restoration and recovered local/remote receipts; event-pump foreign-owner, catch-up and replay bodies; stranded prompt producer and `EchoSubmittedPromptsToTranscript` | binding identity versus live connection and R6 -> V-3/V-6, R-4. Remaining whole-class regression rosters were counted from source, including partials; they are not new test claims.
+- Progress policy and file-arm scenario/evaluate/probe bodies; deadline boot/dispatch-floor/time-order cases; context `Compute` formula/clear/compaction cases and persisted-shape fixture | revision facts versus time/file predicates -> V-7, R-5. Read new-file neighbours: Grok initialization/receipt fixtures and argument matrices, `LandOutcomeDeliveryHarness` in full, reply integration's producer-to-parent test, specialist publication/qualification setup, expectation late-receipt cases and direct-delivery service, and queued-input incident/closure bodies -> V-6/V-7. Those older direct SQL seed helpers are setup, not post-warm mutation hooks.
+- `EventBus`, `AntiphonHub`, `SessionEndpoints`, Program hub mapping; `AntiphonWebAppFactory` configuration/override seam; board-lookup real EventBus fill-barrier test; invalidation hook tests, transcript-panel working/merge tests and badge body | V-8, R-6. The actual destination is `Clients.All` through `PublishToAllAsync`; the hub has no per-session subscription requirement for that lane. Preserve the existing host/middleware access contract; this card does not invent a new hub authorization boundary.
+- Entire measurement collector; nearest script fixture `TestClientFilterTests` process invocation/disposal; testing owner checkpoint importer/schema, mutation and receipt rules; session runtime owner R1/delivery invariants | V-1/V-9, R-7. `Compare` runs offline. Its current `noResetOnClose != false` condition rejects matched true; its SQL classifier misses the new leading binding tag.
+
+**Required setup, owned by the corresponding Code slice:** extend command capture to all sync/async EF reader/scalar paths and count binding SQL as well as TranscriptEntries SQL; retain query text only in synthetic tests. Assert both tagged counters and an independent all-SELECT capture so a removed tag cannot make zero look true. Reset capture after setup/warmup and separate oracle/verification queries from measured calls. SessionStateTestFixture needs reader/binding/identity/facts/change-worker registrations and disposal; it currently wires only R1. BridgeQueueHarness currently lacks the store and writes `OnSubmitted` directly to SQL. Add an opt-in committed graph: local recipient accumulates actual queue input, records only after separate Enter, and submits generated events through real runtime persistence; remote recipient emits its transcript over PhoneHomeScriptedPeer and the real recovery pump. Never call a notification or manufacture the expected queue verdict in the test. Preserve old harness defaults for unrelated callers.
+
+For S0 classifier coverage, extract the production statistics SQL through a small collector function; execute that exact CASE expression against synthetic pg_stat_statements rows shadowed by a CTE on isolated PostgreSQL. Comparing canned already-classified JSON cannot test the binding tag. Compare subprocesses use temporary immutable JSON and no live Docker/API calls. For oversized identity admission, persisted UUID/kind/API-call columns are only 64/40/120 characters: exercise the production cache admission API directly at 2048/2049 and explicitly report that this unit boundary cannot prove storage of oversized keys. The separate runtime stub test proves actual database clipping/sanitization.
+
+Use isolated PostgreSQL per new integration test. Fresh request scopes must share the production singletons. Use controllable save/load/registration barriers (TaskCompletionSource with asynchronous continuations), release them in finally, and await all owned workers before disposal. A new named barrier is an observation/pause seam only, with no replacement decision. Use FakeTimeProvider with explicit timer advancement for deterministic wait/scaling tests; do not hand the queue a frozen clock with real timers. Existing scaled-clock regressions retain their settings. Script-process fixtures carry `ParallelLimiter<ProcessSpawnLimit>`; global sweeps use ungrouped `[NotInParallel]` or the isolated graph with no foreign data. Program-host tests retain ProductionRunnerGuard and RefusingSessionRunnerClient. The Unit graph witness must use the production registration function without starting hosted services or opening a database connection. Extract that registration seam if needed; copying registrations into a test-only graph would not prove the production singleton contract. Observe ambient-transaction durability through a transaction-suppressed independent scope, and assert refusal explicitly before disposing the outer transaction.
+
+For state events add a test-host WebSocket recipient using TestServer's WebSocket client, real SignalR JSON handshake and record separator framing, and the production EventBus/AntiphonHub. Subscribe the recipient before ingest; do not replace IEventBus. No transcript group join is performed. The nearest existing EventBus fixture proves only server dispatch and is insufficient alone. Client tests use MSW and rendered TanStack hooks/components with fake time. They are a declared substitute for browser transport; the server WebSocket test supplies the missing real transport destination evidence. No provider process or desktop UI is required for this seam.
+
+### Delivery inventory
+
+All session-delivery witnesses join source durable identity -> queue ID/body digest/destination -> attempt generation/time/sequence floor -> recipient complete UserPrompt. A request, Input frame, queue insert, Sent flag, rules ack or change event is not the receipt. Keep a similarly shaped wrong-session/wrong-identity canary in every strict matcher case.
+
+| Path | Producer and destination | Persistence and recovery | Recipient evidence / test |
+|---|---|---|---|
+| Committed state wake | Runtime live event/catch-up, synthetic restart, retention or cascade -> coordinator -> registered consumers | `(SessionId, ServerEpoch, ResetEpoch, Revision)` after confirmed store publication; restart reads durable rows; lost/overflowed wakes rescan outstanding work | V-5 waiter observes committed snapshot and real queue receipt; no callback-under-lease. Retention/deletion are invalidation, never invented prompt receipt. |
+| Queue flush/confirm | Enqueue/idle-boundary/runner recovery -> real SessionMessageQueueService -> local adapter or phone-home recipient | SessionQueuedMessage ID, complete bytes/digest, attempt baseline/generation/time; queue insert, attempt save, input, transcript commit and confirm save are distinct handoffs | V-6 busy and already eligible recipients; complete matching UserPrompt persisted by runtime, sequence after captured attempt floor, one logical submission. Recover without retyping once receipt exists. |
+| Grok refresh | CaptureReceipt/Reconcile -> keyed refresh queue -> Grok session | refresh key/message ID + expected generation/hash; persisted deadline survives restart; durable discovery works without a new transcript event | V-6 `Grok_refresh_recovers_to_owning_prompt_and_ack`: complete refresh UserPrompt plus its own successful-turn assistant ack. Ack alone is negative evidence. |
+| Land outcome note | Persisted outcome obligation -> AgentTaskLandNotificationService -> parent queue | notification ID/QueueMessageId/ContentDigest/immutable ParentSessionId; recover insert-before-link and link-before-wake, retry due time and existing-key collisions | V-6 `Land_note_recovers_to_parent_receipt`: actual outcome producer from LandOutcomeDeliveryHarness, real queue and matching parent UserPrompt; saved confirming sequence equals that row. CARD-0699 completion stamps stay outside this change. |
+| Deferred reply and specialist qualification | Marked delegate report / interpreter result -> existing reply/qualification owner -> configured caller queue | task/request/attempt identity and captured destination; durable discovery plus original report/dispatch floor; enqueue failure cannot clear debt | V-6 `Deferred_reply_recovers_to_parent_receipt` and `Specialist_result_recovers_to_caller_receipt`: output caused by real source report ingestion, then complete caller UserPrompt. Use production producer, never seed its final queue row. |
+| Expectation nudge (direct, no queue) | ExpectationNudgeDeliveryService -> IExpectationPromptSender -> captured owned session | nudge ID, persisted attempted generation/floor; conditional Attempting claim commits before input; interrupted claim becomes Uncertain and durable debt, never automatically sendable | V-6 `Expectation_receipt_survives_missed_wake`: complete owning prompt confirms; busy QueuedUserPrompt remains submitted until UserPrompt arrives. `Direct_nudge_crash_preserves_debt_without_retyping` preserves the no-retry rule. No new scheduling or spend authority. |
+| UI metadata | Post-commit subscriber -> IEventBus.PublishToAllAsync -> connected WebSocket client -> query hook/badge | metadata tuple above; notification is ephemeral, initial snapshot/reconnect refetch recover loss; coalescing independent of server receipt wakes | V-8 real WebSocket receives matching tuple without joining a group; rendered client reaches idle-working-idle and refetches on reconnect. Raw SessionTranscript never advances committed revision. |
+
+For each **queued** session producer in the table, exercise busy and already-eligible destinations and these controlled cuts in `SessionStateRecoveryTests`: producer durable save before enqueue; enqueue fails before commit; queue commit before producer link; link before wake; attempt save before input; recipient UserPrompt commit before confirm save. Use no-cut plus one cut at a time, reconstruct the production service graph over the same schema, and run the real recovery owner. Every recoverable queued scenario ends with the complete recipient UserPrompt, exact source/destination link and a single logical submission; negative prefixes/acks stay owed until real receipt. Local adapter receipt is a controlled provider substitute, not proof about a real TUI. Remote tests additionally traverse actual phone-home framing/pump but do not qualify live server2. Physical OS-kill testing is not substituted by an exception claim: these are deterministic process-loss simulations via dropping all volatile services after the cut. Raw SQL seeding is allowed only before warming or for the deliberately external-write/restart scenario. The queue-only API has no durable obligation before its first queue commit: a pre-commit enqueue failure returns refusal, creates zero receipts, and is retried explicitly by the test caller; it is not background-recoverable debt. Specialist Check publication saves caller queue/timeline/publication in one transaction, so queue-before-link is a rollback/atomicity case, not an artificial between-commits crash. Expectation nudges have no enqueue/link handoffs: initial busy and idle sends plus post-receipt crash must end in an owning UserPrompt, whereas post-claim/pre-input loss must remain Uncertain with operator debt and zero retry input. Those inapplicable queue-cut combinations are deliberately excluded.
+
+### Proves it works now
+
+| ID | Behaviour / layer | Exact witness and expected result |
+|---|---|---|
+| V-1 | Offline collector | All `MeasureSessionStateCacheScriptTests` methods in the control roster below plus `Matched_true_and_false_settings_compare`: run the real script against immutable synthetic pairs, both identical booleans pass attribution; changed/missing flags or versions cannot. All incompatible cases preserve bytes and refuse/invalidate. Counter/CPU reasons stay separate; accepted remains false without external acceptance. |
+| V-2 | Migrated production readers / PostgreSQL | `SessionStateConsumerTests.Migrated_sites_warm_and_disabled_parity` has 35 literal Arguments (site roster below), each internally runs enabled and disabled containers and busy/idle/empty/missing/faulted states. Invoke actual consumer methods in fresh scopes, assert their DTO/action outcome, zero warmed working SELECTs, and a positive SQL fallback count when disabled. Additional methods in the PC roster prove exact metadata, commit barriers and transaction refusal. No mocked Working result. |
+| V-3 | Binding directory / PostgreSQL + actual phone-home | All `SessionRunnerBindingCacheTests` methods below: successful identity hits avoid SQL; cold/missing/fault paths preserve semantics; creation/deletion and delayed loads converge; reconnect routes to current connection; expired/closed/recovering/store-mismatched routes cannot send. |
+| V-4 | Runtime ingest / PostgreSQL | All `SessionTranscriptIdentityCacheTests` methods below. In-capacity replay has zero membership/max-sequence queries; 0/1/511/512/513/1025 uncached UUID sets use ceiling(n/512) queries, 512 max UUID parameters, mixed kinds survive. Real null UUIDs retain sequence fallback. Capture durable rows, boundary callbacks and cache sizes independently. |
+| V-5 | Coordinator and production waits | All `SessionStateChangeTests` and `SessionStateWaitTests` methods below. Commit/read-register/cancel/delete/reset/overflow/handler-failure barriers have decisive state/receipt assertions; unchanged Working still wakes a receipt wait. Screen/re-Enter/deadline clocks run without transcript changes; one query per relevant revision plus declared initial/final-pull work. |
+| V-6 | Real producer-to-recipient recovery | All `SessionStateRecoveryTests` methods below implement the inventory and cut matrix. Durable receipt, owning floor and no duplicate submission are required even when the positive path is already eligible. Existing receipt, unavailable and interrupted-attempt contracts remain R-3/R-4. |
+| V-7 | Derived facts / real policies | All `SessionStateDerivedFactsTests` below compare actual usage/progress/deadline outputs to independent retained calculations and literal expected values. Repeated same-key reads do zero transcript SQL; clock/file/task/settings/provider/generation/reset changes are tested separately, with no append where applicable. Oversized facts fall back without truncating evidence. |
+| V-8 | HTTP + SignalR + rendered client | `SessionStateEndpointTests` and the client cases below: typed minimal state from committed snapshot, no queue/history read, actual all-client destination, ordered initial/reconnect snapshots, prompt Working/readiness transitions, <=1 usage/progress invalidation per second/session and bounded disconnected fallback. |
+| V-9 | Controlled scale / PostgreSQL | `SessionStateScalingTests.Warmed_idle_180_seconds_has_no_state_or_receipt_selects` invokes actual timer/API/receipt owners for 180 fake seconds after warmup at 10 and 20 sessions. `Equal_ingests_at_10_and_20_sessions_do_not_multiply_reads` uses 40 accepted ingests in each population and asserts state/receipt work scales with changed sessions, not idle consumers. Count cold summary loads, 512-key misses, null/boundary and retained content reads separately. No production traffic. |
+
+The 35 V-2 site arguments are stable `file:base-line` identifiers from this base, not line-number assertions: Dispatcher:2123,2264,3807,6655,7135,7291; Attention:1005,1088,1146,1427,2689; Attention.Leaks:52; Reply:2358,3621,3791; TaskService:2490; Deadline:168; Progress:79; CheckCompactionContinuation:1018; SpecialistRequest:158; SpecialistRequest.Qualification:40,133; StandingSpecialistSeat:43; ContextCompaction:260; PolicyRefresh:500; QueuedInputWatchdog:127; HerdrStatusCorroboration:123,129; RemoteControlRecovery:348,472; SessionHealthActions:86; DelegateCheckProbe:337; DiagnosticsBundle:175; Schedule:334; SubscriptionUsageMonitor:189. Each branch needs setup that reaches that site; a method returning before it is not a query-budget witness. Cover before/after pull separately in corroboration and both reply/recovery action branches. `No_unapproved_static_working_bypass_remains` fails on any static helper call outside the reader/fallback oracle and the explicitly preserved runtime no-store restart path; comments do not count. All 38 former explicit calls are reconciled, including AgentService's two disabled paths.
+
+Additional old-census inputs are exercised by `SessionStateDerivedFactsTests.Census_fact_owners_recheck_only_changed_inputs`: 12 literal Arguments: attention, reply-discovery, specialist-qualification, boot-watch, queued-input, context-compaction, policy-refresh, check-continuation, expectation-snapshot, expectation-receipt, api-error, capacity. Each invokes that production owner, repeats unchanged reads, then changes one relevant fact or external deadline and checks its real verdict. Content exports, settlement cost rollup, land-monitor and card-file queries are retained with the reasons above; they are counted separately, not hidden in zero-state totals.
+
+### Guards the regression
+
+- R-1: all 50 existing results in SessionStateProjectionTests (12), SessionStateCommitTests (8), SessionStateWarmupTests (16), SessionStateCacheReadTests (2), TranscriptWorkingStateQueryTests (12). Independent working oracle, sequence/time separation, failed/ambiguous persistence, restart, retention and existing board/project cascade invalidation remain. CARD-0720 concurrent parent-create/delete is excluded, not passed.
+- R-2: exact AgentSessionRuntimeTests C561_* (11), C698_* (3) and `Transcript_entries_from_a_new_tailer_generation_survive_a_sequence_restart` (1): 15 results. Preserve all data/sequence/stub/sanitization assertions. Existing PersistFixture does not inject R1; preserve that fallback test while the new identity fixture proves the enabled cache. Update query counts only when the test actually enables the accelerator.
+- R-3: SessionMessageQueueServiceTests 25 and both delivery verification partials 123 results, total 148. Keep full-body/identity/truncation, original attempt floors, provider-specific screen-only distinction, separate Enter, no-new-working-kill and immediate-refusal behavior. No timeout widening or assertion removal.
+- R-4: PhoneHomeDirectory 7 + PendingInventory 8 + StrandedQueue 16 + ImmediateSend 13 + SessionRouting 5 + EventPump 8 = 57 results. Unknown/Gone remains independent of cached idle; conditional generation, connection replacement and store provenance remain decisive.
+- R-5: TaskProgressPolicy 10 + FileArm 8 + Deadline 26 + ContextUsage 34 + ContextUsagePersistence 1 + GrokInitialization 24 + GrokReceipt 16 + LandNotificationRecovery (both partials) 43 + LandNotificationPersistence (both partials) 12 = 174 results. Additional census-owner witnesses are V-7, not an unbounded namespace regression sweep.
+- R-6: all existing invalidation and transcript-panel tests plus the exact new client cases below. Queue events continue to update contents; transcript token events do not reload history.
+- R-7: Unit category at each R2/R3 boundary, including a new `SessionStateContractTests.Production_graph_owns_one_of_each_accelerator_and_rejects_invalid_limits`. Floor 2000 is conservative: source census found 2018 parameterless Test methods in 273 Unit-tagged files after excluding files with SkipTest/Skip/Explicit/OS conditionals. This is a floor, not a discovery total; record the actual executed roster and explain unrelated skips. The new graph test must execute without a skip. At R2 it inspects the reader/store, binding and identity registrations and their available settings; extend the same method at R3 for facts, the coordinator and subscriber worker. Do not require an unimplemented R3 type in the S4-S6 build.
+
+Red-first authoring order: S0 first makes the matched-true collector witness fail against the old script. S4 then proves warmed consumer SQL nonzero before migration; S5 repeated binding reads; S6 repeated in-capacity identity probes; S7 unchanged-revision polling; S8 connected badge polling. These diagnostic runs use the same named method filters on a committed test-only slice, through the slot driver, and are reported separately from ordinary green checkpoints. Tests referencing new APIs require compiling scaffolding before an assertion red; a missing type/build error is not red. SourceLanding controls below supply independent proof after publication; Code does not execute those mutations.
+
+### Guard inventory
+
+Every row below has exactly one distinct control. Reused test methods are allowed; reused PC IDs are not. Cold loader and append classifiers are independently mutable and therefore have separate rows. Measurement integrity, query budgets and bounded memory controls are included alongside safety guards. No guard is silently exempted. All new-test controls are executable specifications contingent on the named Code implementation, with required setup above; no control is represented as already run.
+
+| Guard | Plan reference and invariant | Control |
+|---|---|---|
+| G-1 | D-9/S0 — Missing effective configuration never certifies attribution | PC-1 |
+| G-2 | D-9/S0 — Effective flags must match at every observation | PC-2 |
+| G-3 | D-9/S0 — Resolved driver/provider versions must match | PC-3 |
+| G-4 | D-10/AC-1 — Baseline identity/phase/round/card cannot be relabeled | PC-4 |
+| G-5 | D-10/AC-1 — Evidence files are immutable | PC-5 |
+| G-6 | AC-1/2/3 — Process continuity is checked within each window | PC-6 |
+| G-7 | AC-1/2/3 — PostgreSQL continuity is checked independently | PC-7 |
+| G-8 | AC-1/2/3 — Reset/deallocation invalidates a statistics window | PC-8 |
+| G-9 | AC-1/2/3 — Missing statements or negative counters cannot become savings | PC-9 |
+| G-10 | AC-1/2/3 — Observed workload must match | PC-10 |
+| G-11 | AC-1/2/3 — Ten live sessions is a continuous sampled floor | PC-11 |
+| G-12 | S0/diagnostics — Unknown SQL attribution cannot certify a classified zero | PC-12 |
+| G-13 | AC-3 — CPU benefit is independent of query reduction | PC-13 |
+| G-14 | AC-3 — Zero baseline does not establish a percentage reduction | PC-14 |
+| G-15 | D-1/R1 — Reads cannot return old Ready data while a writer owns the lease | PC-15 |
+| G-16 | D-1/R1 — Failed persistence does not publish proposed rows | PC-16 |
+| G-17 | D-1/R1 — Partial fallback folds only actual committed rows | PC-17 |
+| G-18 | D-1/R1 — Stored stub classification controls Working | PC-18 |
+| G-19 | D-1/R1 — Uniqueness conflict reloads actual durable identity/sequence | PC-19 |
+| G-20 | D-1/R1 — Unknown commit outcome reloads durable data | PC-20 |
+| G-21 | D-1/R1 — Seed cannot overwrite an arriving ingest | PC-21 |
+| G-22 | D-1/R1 — Caller cancellation does not cancel the shared seed | PC-22 |
+| G-23 | D-1/R1 — A load fault cannot be cached as idle | PC-23 |
+| G-24 | D-1/R1 — Restart epoch distinguishes rebuilt snapshots | PC-24 |
+| G-25 | D-1/R1 — Synthetic restart appends once at the durable boundary | PC-25 |
+| G-26 | D-1/R1 — Held and waiting gates survive eviction | PC-26 |
+| G-27 | D-1/R1 — Outstanding durable reply keeps terminal state pinned | PC-27 |
+| G-28 | D-1/R1 — Committed board cascade invalidates state | PC-28 |
+| G-29 | D-1/R1 — Committed project cascade invalidates state independently | PC-29 |
+| G-30 | D-1/R1 — Rollback leaves the old snapshot intact | PC-30 |
+| G-31 | D-1/R1 — Ambiguous delete commit cannot leave Ready state | PC-31 |
+| G-32 | D-1/R1 — Deletion waits for held ingest gates | PC-32 |
+| G-33 | D-1/R1 — Retention reseeds committed maxima and Working | PC-33 |
+| G-34 | D-1/R1 — post-end activity is row-correlated (append) | PC-34 |
+| G-35 | D-1/R1 — post-end activity is row-correlated (cold load) | PC-35 |
+| G-36 | D-1/R1 — equal activity timestamps preserve conservative Working (append) | PC-36 |
+| G-37 | D-1/R1 — equal activity timestamps preserve conservative Working (cold load) | PC-37 |
+| G-38 | D-1/R1 — end timestamp maximum is independent of last end sequence (append) | PC-38 |
+| G-39 | D-1/R1 — end timestamp maximum is independent of last end sequence (cold load) | PC-39 |
+| G-40 | D-1/R1 — interrupt prefix is exact and ordinal (append) | PC-40 |
+| G-41 | D-1/R1 — interrupt prefix is exact and ordinal (cold load) | PC-41 |
+| G-42 | D-1/R1 — manual compact ends work (append) | PC-42 |
+| G-43 | D-1/R1 — manual compact ends work (cold load) | PC-43 |
+| G-44 | D-1/R1 — automatic compact is not an end (append) | PC-44 |
+| G-45 | D-1/R1 — automatic compact is not an end (cold load) | PC-45 |
+| G-46 | D-1/R1 — local stdout wrapper does not create phantom work (append) | PC-46 |
+| G-47 | D-1/R1 — local stdout wrapper does not create phantom work (cold load) | PC-47 |
+| G-48 | D-1/R1 — queue housekeeping does not become work (append) | PC-48 |
+| G-49 | D-1/R1 — queue housekeeping does not become work (cold load) | PC-49 |
+| G-50 | D-1/R1 — unknown real activity defaults to working (append) | PC-50 |
+| G-51 | D-1/R1 — unknown real activity defaults to working (cold load) | PC-51 |
+| G-52 | D-1/R1 — SessionRestartBoundary ends activity (append) | PC-52 |
+| G-53 | D-1/R1 — SessionRestartBoundary ends activity (cold load) | PC-53 |
+| G-54 | D-1/S4 — Ambient transaction cannot publish an uncommitted append | PC-54 |
+| G-55 | D-1/S4 — Retention under a shared EF transaction cannot publish before its owner commits | PC-55 |
+| G-56 | D-2/S4 — All admitted consumers use the real common read selector | PC-56 |
+| G-57 | D-2/S4 — Disabled selector retains SQL freshness | PC-57 |
+| G-58 | D-2/S4 — Metadata rows retain timestamp/sequence/null/tie correlation | PC-58 |
+| G-59 | D-2/S4 — Load errors cannot authorize action as idle | PC-59 |
+| G-60 | D-3/S5 — Missing is distinct from Local | PC-60 |
+| G-61 | D-3/S5 — Concurrent cold binding loads are single-flight | PC-61 |
+| G-62 | D-3/S5 — Missing expiry is measured from completion | PC-62 |
+| G-63 | D-3/S5 — Committed creation invalidates negative identity | PC-63 |
+| G-64 | D-3/S5 — Late loader cannot overwrite a created binding | PC-64 |
+| G-65 | D-3/S5 — Committed deletion invalidates positive binding | PC-65 |
+| G-66 | D-3/S5 — Failed deletion cannot publish Missing | PC-66 |
+| G-67 | D-3/S5 — Binding loader failures propagate | PC-67 |
+| G-68 | D-3/S5 — Route resolves the current connection on every RPC | PC-68 |
+| G-69 | D-3/S5 — Cached identity cannot bypass current store provenance | PC-69 |
+| G-70 | D-3/S5 — Cached identity cannot bypass closed sockets | PC-70 |
+| G-71 | D-3/S5 — Cached identity cannot bypass lease expiry | PC-71 |
+| G-72 | D-3/S5 — Recovery readiness is independent of identity hits | PC-72 |
+| G-73 | D-8/S5 — Unknown must never be transformed into Gone by cache expiry | PC-73 |
+| G-74 | D-8/S5 — Generation tombstones survive cached presence | PC-74 |
+| G-75 | D-4/S6 — UUID and Kind jointly identify durable rows | PC-75 |
+| G-76 | D-4/S6 — Positive evidence is session scoped | PC-76 |
+| G-77 | D-4/S6 — Null UUID keeps sequence-based dedup | PC-77 |
+| G-78 | D-4/S6 — Failed rows cannot be positive cache entries | PC-78 |
+| G-79 | D-4/S6 — Negative membership is not durable evidence | PC-79 |
+| G-80 | D-4/S6 — Ambiguous commit reconciles identity and max sequence | PC-80 |
+| G-81 | D-4/S6 — Stub admission uses stored sanitized keys/classification | PC-81 |
+| G-82 | D-4/S6 — Leased committed max rebases live/catch-up ingestion | PC-82 |
+| G-83 | D-4/S6 — First boundary novelty is captured before its insertion | PC-83 |
+| G-84 | D-4/S6 — TurnEnd API-call identity suppresses duplicate effects independently | PC-84 |
+| G-85 | D-4/S6 — Catch-up never recursively flushes the queue | PC-85 |
+| G-86 | D-4/S6 — Boundary-check failure preserves existing fail-open semantics | PC-86 |
+| G-87 | D-5/S6 — Per-session identity count is a hard admission bound | PC-87 |
+| G-88 | D-5/S6 — Process identity count is an independent bound | PC-88 |
+| G-89 | D-5/S6 — Accounted bytes independently bound retained identities | PC-89 |
+| G-90 | D-5/S6 — Oversized identity keys bypass admission | PC-90 |
+| G-91 | D-4/S6 — Retention/reset invalidates positive evidence | PC-91 |
+| G-92 | D-5/S6 — Identity pressure cannot evict a held state lease | PC-92 |
+| G-93 | D-6/S7a — Raw events cannot publish committed changes | PC-93 |
+| G-94 | D-6/S7a — Working-unchanged commits still wake receipt waiters | PC-94 |
+| G-95 | D-6/S7a — Read/register/recheck closes the lost-wake gap | PC-95 |
+| G-96 | D-6/S7a — Cancellation releases a waiter without harming others | PC-96 |
+| G-97 | D-6/S7a — Deletion terminates waits with reset/deleted evidence | PC-97 |
+| G-98 | D-6/S7a — Server epoch changes invalidate a numeric revision watermark | PC-98 |
+| G-99 | D-6/S7a — Callbacks execute after releasing state lease | PC-99 |
+| G-100 | D-6/S7a — Dirty-queue overflow preserves outstanding work | PC-100 |
+| G-101 | D-6/S7a — Handler failure preserves retryable work | PC-101 |
+| G-102 | D-6/S7a — Held waiters cannot be silently evicted | PC-102 |
+| G-103 | D-6/S7b — Receipt reads are keyed by full committed version | PC-103 |
+| G-104 | D-6/S7b — Strict receipt requires complete body | PC-104 |
+| G-105 | D-6/S7b — Strict receipt requires UserPrompt kind | PC-105 |
+| G-106 | D-6/S7b — Receipt destination identity is retained | PC-106 |
+| G-107 | D-6/S7b — Original sequence floor survives recovery | PC-107 |
+| G-108 | D-6/S7b — Original attempted generation is not recaptured | PC-108 |
+| G-109 | D-6/S7b — Null-baseline receipt retains original time fence | PC-109 |
+| G-110 | D-6/S7b — Final pull begins after caller freshness floor | PC-110 |
+| G-111 | D-6/S7b — Missed stream still gets final durable check | PC-111 |
+| G-112 | D-7/S7b — Deadline and Enter clocks survive notification waits | PC-112 |
+| G-113 | D-8/S7b — Immediate safe refusal restores original attempt | PC-113 |
+| G-114 | D-6/S7b — Dual wake owners do not submit twice | PC-114 |
+| G-115 | D-6/S7b — Every producer survives producer-save handoff | PC-115 |
+| G-116 | D-6/S7b — Every producer survives enqueue-failure handoff | PC-116 |
+| G-117 | D-6/S7b — Every producer survives queue-before-link handoff | PC-117 |
+| G-118 | D-6/S7b — Every producer survives link-before-wake handoff | PC-118 |
+| G-119 | D-6/S7b — Every producer survives attempt-before-input handoff | PC-119 |
+| G-120 | D-6/S7b — Every producer survives receipt-before-confirm handoff | PC-120 |
+| G-121 | D-6/S7b — Grok wake preserves owning prompt/ack/turn conjunction | PC-121 |
+| G-122 | D-6/S7b — Land note retains immutable destination and digest | PC-122 |
+| G-123 | D-6/S7b — Deferred report discovery keeps task/report correlation | PC-123 |
+| G-124 | D-6/S7b — Specialist result retains request/attempt identity | PC-124 |
+| G-125 | D-6/S7b — Expectation recovery keeps nudge destination/floor | PC-125 |
+| G-126 | D-6/S7b — Fresh durable work is discovered without transcript change | PC-126 |
+| G-127 | D-7/S7b — Fact load cannot publish under a newer revision | PC-127 |
+| G-128 | D-7/S7b — Task identity separates warm-seat facts | PC-128 |
+| G-129 | D-7/S7b — Generation change invalidates cached facts | PC-129 |
+| G-130 | D-7/S7b — Settings revision invalidates cached facts | PC-130 |
+| G-131 | D-7/S7b — Provider accounting invalidates usage facts | PC-131 |
+| G-132 | D-7/S7b — Retention/reset invalidates facts separately from revision | PC-132 |
+| G-133 | D-7/S7b — Clock-dependent verdicts are evaluated now | PC-133 |
+| G-134 | D-7/S7b — Workspace changes remain an external input | PC-134 |
+| G-135 | D-7/S7b — Dispatch novelty is not pruned to the rolling window | PC-135 |
+| G-136 | D-5/S7b — Fact per-session accounted budget cannot truncate evidence | PC-136 |
+| G-137 | D-5/S7b — Fact process budget is independent of per-session bound | PC-137 |
+| G-138 | D-7/S7b — All old-census consumers retain their non-transcript clocks | PC-138 |
+| G-139 | D-2/S8 — State endpoint reads committed metadata without queue history | PC-139 |
+| G-140 | D-6/S8 — State metadata reaches non-group clients | PC-140 |
+| G-141 | D-6/S8 — Metadata payload excludes transcript and runner path | PC-141 |
+| G-142 | D-6/S8 — UI coalescing cannot throttle server receipt wakes | PC-142 |
+| G-143 | D-6/S8 — Usage/progress coalescing has a per-session rate bound | PC-143 |
+| G-144 | D-2/D-5/D-6 rollback — Startup-disabled accelerators preserve durable ingestion and polling | PC-144 |
+| G-145 | D-5/settings — Invalid cache limits fail startup instead of disabling bounds | PC-145 |
+| G-146 | S8 — Subscribe precedes initial fetch | PC-146 |
+| G-147 | S8 — Same-epoch stale event cannot roll back state | PC-147 |
+| G-148 | S8 — Reconnect/new epoch requires a new snapshot | PC-148 |
+| G-149 | S8 — Connected badge has no polling | PC-149 |
+| G-150 | S8 — Disconnected badge retains bounded fallback | PC-150 |
+| G-151 | S8 — Queue changes still update queue contents | PC-151 |
+| G-152 | S8 — Transcript token events do not refetch history | PC-152 |
+| G-153 | D-3/S5 — Control-created sessions invalidate negative bindings independently | PC-153 |
+| G-154 | D-3/S5 — Dispatcher-created sessions invalidate negative bindings independently | PC-154 |
+| G-155 | D-3/S5 — Dispatcher resume/rebind invalidates old bindings independently | PC-155 |
+| G-156 | D-3/S5 — Late positive binding load cannot resurrect a deleted row | PC-156 |
+| G-157 | D-5/S5 — Binding cache admission has the session count bound | PC-157 |
+| G-158 | D-4/S6 — Uncached membership probes stay bounded | PC-158 |
+| G-159 | D-4/S6 — Positive replay does not repeat membership or max reads | PC-159 |
+| G-160 | D-1/S4 — Unapproved static bypasses cannot silently survive migration | PC-160 |
+| G-161 | D-8/S7b — Attempted expectation nudge never retries after process loss | PC-161 |
+| G-162 | D-6/S7b — Failed recipient persistence remains recoverable rather than confirming | PC-162 |
+| G-163 | D-5 rollback — Identity disable flag is respected independently | PC-163 |
+| G-164 | D-5 rollback — Binding disable flag is respected independently | PC-164 |
+| G-165 | D-5 rollback — Fact disable flag is respected independently | PC-165 |
+| G-166 | S8 — Agent connected safety refresh remains sixty seconds | PC-166 |
+| G-167 | D-1/R1 — Null timestamp activity is conservative (append) | PC-167 |
+| G-168 | D-1/R1 — Synthetic continuation is excluded independently (append) | PC-168 |
+| G-169 | D-1/R1 — Local command prefix is excluded independently (append) | PC-169 |
+| G-170 | D-1/R1 — TurnEnd ends work independently (append) | PC-170 |
+| G-171 | D-1/R1 — Null timestamp activity is conservative (cold) | PC-171 |
+| G-172 | D-1/R1 — Synthetic continuation is excluded independently (cold) | PC-172 |
+| G-173 | D-1/R1 — Local command prefix is excluded independently (cold) | PC-173 |
+| G-174 | D-1/R1 — TurnEnd ends work independently (cold) | PC-174 |
+| G-175 | D-1/R1 — Null end timestamp cannot prove later activity stale | PC-175 |
+| G-176 | D-1/R1 — Cold null end timestamp cannot prove later activity stale | PC-176 |
+
+| G-177 | D-8/S7b — An uncertain body write keeps its charged attempt | PC-177 |
+| G-178 | D-7/S7b — Dispatch floor invalidates facts independently of task ID | PC-178 |
+| G-179 | D-7/S7b — Model accounting invalidates facts independently of provider | PC-179 |
+| G-180 | D-6/S7a — Reset epoch invalidates a watermark independently of server epoch | PC-180 |
+| G-181 | D-1/DI — Fresh scopes share one production state authority | PC-181 |
+
+### Positive controls
+
+Mutation runs **baseline green -> compiling defect -> intended assertion red -> exact restoration -> same method green** after land; Code runs ordinary V/R; Review judges this design and ordinary results before land. For each C# row use `/*/*/ClassName/ExactMethod` from the fully qualified witness below, `-MinExecuted 1`. Every PC witness is unparameterized and executes exactly once; scenario loops name their cases in assertions. The two parameterized ordinary matrices are not PC filters. Never widen a control to its class. Add a stable PC-n assertion message to the targeted assertion without changing its predicate; a fixture exception, unobserved task failure, deadlock timeout from setup, build error or zero tests is not a red. For the lock-order control, explicitly assert the subscriber-completion signal under a bounded test deadline and then cancel/join workers; do not accept a hung test host.
+
+Copy the unchanged run-checkpoint driver and its lib/build-slot helper to the assigned external evidence root before changing SourceLanding bytes, as the testing owner requires. Use one new `bin-c701-pcN-phase/` and external results directory per baseline/red/green, execute through that driver/slot, refresh restored source timestamps and verify fresh build provenance. No commits, pushes, external executor or extra snapshot worktrees in SourceLanding. Keep every receipt and restoration record outside the snapshot. Changes needed to production/test code return to a separately commissioned Code/Review/land cycle.
+
+For client controls use the existing wrapper under build-slot with exactly the named file and `-t` equal to the complete C701 test title after `::`; assert exactly one executed Vitest case in each phase. They prove client behaviour, not server transport; the real WebSocket C# control is separate. Baseline/green are exit 0, red exit 1 at the specified expect assertion.
+
+| PC | Break its same-numbered guard by this compiling defect | Exact method red at decisive assertion |
+|---|---|---|
+| PC-1 | scripts/measure-session-state-cache.ps1: Default a missing pool setting to false before comparison. | `MeasureSessionStateCacheScriptTests.Missing_settings_are_inconclusive`: attributionValid is false for a removed field. |
+| PC-2 | scripts/measure-session-state-cache.ps1: Remove the pool-flag equality rejection. | `MeasureSessionStateCacheScriptTests.Changed_settings_are_inconclusive`: attributionValid is false when only one intermediate flag differs. |
+| PC-3 | scripts/measure-session-state-cache.ps1: Remove resolved-version equality rejection. | `MeasureSessionStateCacheScriptTests.Changed_versions_are_inconclusive`: attributionValid is false for either changed version. |
+| PC-4 | scripts/measure-session-state-cache.ps1: Admit an After R2 object as the baseline. | `MeasureSessionStateCacheScriptTests.Wrong_baseline_identity_is_refused`: nonzero exit; no successful comparison artifact. |
+| PC-5 | scripts/measure-session-state-cache.ps1: Change FileMode.CreateNew to FileMode.Create. | `MeasureSessionStateCacheScriptTests.Baseline_files_are_immutable`: original baseline SHA256 is unchanged after overwrite attempt. |
+| PC-6 | scripts/measure-session-state-cache.ps1: Remove server processStartedAt comparison. | `MeasureSessionStateCacheScriptTests.Server_restart_invalidates_window`: nonzero exit for same PID with a new start time. |
+| PC-7 | scripts/measure-session-state-cache.ps1: Remove container/postmaster identity comparison. | `MeasureSessionStateCacheScriptTests.Postgres_restart_invalidates_window`: nonzero exit for replaced PostgreSQL instance. |
+| PC-8 | scripts/measure-session-state-cache.ps1: Remove stats_reset/dealloc equality rejection. | `MeasureSessionStateCacheScriptTests.Statistics_reset_invalidates_window`: nonzero exit for reset or eviction despite positive deltas. |
+| PC-9 | scripts/measure-session-state-cache.ps1: Clamp a negative calls delta to zero instead of rejecting. | `MeasureSessionStateCacheScriptTests.Invalid_deltas_are_refused`: nonzero exit for the negative-delta fixture. |
+| PC-10 | scripts/measure-session-state-cache.ps1: Remove workloadKey/openClients comparison. | `MeasureSessionStateCacheScriptTests.Workload_mismatch_is_inconclusive`: queryAndWorkloadGates false or nonzero refusal for mismatch. |
+| PC-11 | scripts/measure-session-state-cache.ps1: Validate only start and end population. | `MeasureSessionStateCacheScriptTests.Population_dip_between_endpoints_is_inconclusive`: false attribution when middle sample has nine live sessions. |
+| PC-12 | scripts/measure-session-state-cache.ps1: Classify unmatched TranscriptEntries SELECTs as excluded. | `MeasureSessionStateCacheScriptTests.Tagged_binding_and_unknown_work_are_attributed`: unknown SELECT count is one and attribution is incomplete; tagged binding count is one. |
+| PC-13 | scripts/measure-session-state-cache.ps1: Set cpuGate to true. | `MeasureSessionStateCacheScriptTests.Cpu_and_query_gates_remain_separate`: cpuGate false with 99 percent fewer queries and higher CPU. |
+| PC-14 | scripts/measure-session-state-cache.ps1: Treat zero-before/zero-after as a 100 percent reduction. | `MeasureSessionStateCacheScriptTests.Zero_baseline_is_not_percentage_evidence`: percentage gate false and absolute after count zero. |
+| PC-15 | SessionStateStore.ReadCoreAsync: Return an existing Ready snapshot before acquiring its gate. | `SessionStateCommitTests.Readers_wait_for_commit_and_then_observe_the_published_revision`: reader.IsCompleted is false at the save barrier. |
+| PC-16 | AgentSessionRuntime persistence publication: Publish the proposed append before awaiting its SaveChangesAsync. | `SessionStateCommitTests.Failed_save_does_not_advance_snapshot_or_revision`: snapshot equals before and durable rows are empty. |
+| PC-17 | AgentSessionRuntime persistence outcome: Include the rejected TurnEnd in CommittedRows. | `SessionStateCommitTests.Partial_fallback_folds_only_successful_rows_once`: state.Count equals 2 and EndSequence is null. |
+| PC-18 | AgentSessionRuntime stub publication: Fold the original manual compact text instead of the stored stub. | `SessionStateCommitTests.Persist_stub_uses_stored_classification_and_preserves_source_callback_flags`: Working true and EndSequence null. |
+| PC-19 | AgentSessionRuntime collision branch: Return the proposed sequence after the unique violation without reconciliation. | `SessionStateCommitTests.Unique_collision_recovers_actual_durable_row_and_sequence`: LastStoredSeq equals 17. |
+| PC-20 | AgentSessionRuntime ambiguous outcome branch: Keep the pre-save snapshot after a SavedChanges exception. | `SessionStateCommitTests.Ambiguous_post_commit_exception_reloads_durable_state`: state.Count equals 1. |
+| PC-21 | SessionStateStore.BeginWriteAsync: Skip the held seed gate when a load is in progress. | `SessionStateWarmupTests.Delayed_seed_cannot_overwrite_an_arriving_ingest`: ingest is incomplete while seed is paused. |
+| PC-22 | SessionStateStore.ReadBatchAsync: Pass caller cancellation to the shared loader in place of the host token. | `SessionStateWarmupTests.Cancelled_waiter_does_not_cancel_or_poison_the_shared_load`: surviving reader Ready with one seed query. |
+| PC-23 | SessionStateStore.LoadAsync catch: Clear Fault and install a Ready empty snapshot instead of propagating. | `SessionStateWarmupTests.Failed_load_throttles_from_completion_then_retries_without_caching_idle`: first and throttled calls throw; retry succeeds after six seconds. |
+| PC-24 | SessionStateStore.ServerEpoch: Initialize ServerEpoch to Guid.Empty. | `SessionStateWarmupTests.New_container_rebuilds_committed_state_with_a_new_epoch`: new ServerEpoch differs from old. |
+| PC-25 | AgentSessionRuntime.WriteRestartBoundaryIfInterruptedAsync: Return false before writing the restart boundary. | `SessionStateCommitTests.Synthetic_restart_boundary_uses_the_commit_gate_and_is_idempotent`: first return true; second false; count 2 and Working false. |
+| PC-26 | SessionStateStore.EvictIdleLocked: Remove the Users == 0 guard. | `SessionStateWarmupTests.Terminal_eviction_preserves_active_and_waiting_gates`: CachedCount equals 2 while the terminal gate is held. |
+| PC-27 | SessionStateLoader.LoadPinnedIdsAsync: Omit the sent channel reply arm from pinned IDs. | `SessionStateWarmupTests.Warmup_pins_a_terminal_session_owing_a_channel_reply`: Pinned true and zero seed queries after idle interval. |
+| PC-28 | BoardService.DeleteAsync: Omit mutation.PublishCommittedAsync after committed board deletion. | `SessionStateWarmupTests.Committed_board_delete_evicts_the_cached_working_entry`: Readiness Missing, Working false, Count zero. |
+| PC-29 | ProjectService.DeleteAsync: Omit mutation.PublishCommittedAsync after committed project deletion. | `SessionStateWarmupTests.Committed_project_delete_evicts_the_cached_working_entry`: Readiness Missing, Working false, Count zero. |
+| PC-30 | SessionStateDeletion transaction boundary: Publish deleted state before the transaction commit. | `SessionStateWarmupTests.Rolled_back_board_delete_leaves_the_cached_snapshot`: snapshot equals the pre-delete snapshot. |
+| PC-31 | SessionStateDeletion exception reconciliation: Omit mutation.ReconcileAsync from the ambiguous commit path. | `SessionStateWarmupTests.Ambiguous_project_commit_reloads_instead_of_keeping_working`: Readiness Missing after the commit exception. |
+| PC-32 | SessionStateDeletion gate acquisition: Use InactiveMutation instead of acquiring the existing session gates. | `SessionStateWarmupTests.Cascade_delete_does_not_resurrect_a_committed_ingest`: gate-wait signal wins over delete completion. |
+| PC-33 | DataRetentionService.PruneTranscriptsAsync: Omit post-delete state publication. | `SessionStateWarmupTests.Retention_prune_drops_cached_working_state`: Count zero and Working false for all warmed reads. |
+| PC-34 | SessionStateSnapshot: retain pre-end ActivityTimestamp after an end. | `SessionStateProjectionTests.Activity_sequence_and_time_must_belong_to_one_row`: Working false on the stale row after the end. |
+| PC-35 | SessionStateLoader: remove the activity Sequence > end sequence predicate. | `SessionStateProjectionTests.Activity_sequence_and_time_must_belong_to_one_row`: fresh-container seeded.Working equals the accumulated state; Working false on the stale row after the end. |
+| PC-36 | SessionStateSnapshot: change ActivityTimestamp >= EndTimestamp to >. | `SessionStateProjectionTests.Null_and_equal_timestamps_are_conservative`: Working true on the equal timestamp activity. |
+| PC-37 | SessionStateLoader: change activity timestamp >= end timestamp to >. | `SessionStateProjectionTests.Null_and_equal_timestamps_are_conservative`: fresh-container seeded.Working equals the accumulated state; Working true on the equal timestamp activity. |
+| PC-38 | SessionStateSnapshot: assign EndTimestamp = row.Timestamp instead of Max. | `SessionStateProjectionTests.End_maxima_are_independent_and_never_decrease`: Working false for activity at 50 after end timestamps 100 then 20. |
+| PC-39 | SessionStateLoader: load timestamp from the latest-sequence end rather than MAX. | `SessionStateProjectionTests.End_maxima_are_independent_and_never_decrease`: fresh-container seeded.Working equals the accumulated state; Working false for activity at 50 after end timestamps 100 then 20. |
+| PC-40 | SessionStateSnapshot: call TrimStart before the interrupt prefix check. | `SessionStateProjectionTests.Interrupt_prefix_is_ordinal_and_exact`: Working true on the leading-space prompt. |
+| PC-41 | SessionStateLoader: trim text before matching the interrupt prefix. | `SessionStateProjectionTests.Interrupt_prefix_is_ordinal_and_exact`: fresh-container seeded.Working equals the accumulated state; Working true on the leading-space prompt. |
+| PC-42 | SessionStateSnapshot: remove the manual CompactBoundary end arm. | `SessionStateProjectionTests.Manual_compact_and_continuation_end_work`: Working false immediately after manual boundary. |
+| PC-43 | SessionStateLoader: remove the manual CompactBoundary end predicate. | `SessionStateProjectionTests.Manual_compact_and_continuation_end_work`: fresh-container seeded.Working equals the accumulated state; Working false immediately after manual boundary. |
+| PC-44 | SessionStateSnapshot: treat every CompactBoundary as an end. | `SessionStateProjectionTests.Auto_and_unknown_compact_leave_working`: Working true after automatic compact. |
+| PC-45 | SessionStateLoader: treat every CompactBoundary as an end in the seed. | `SessionStateProjectionTests.Auto_and_unknown_compact_leave_working`: fresh-container seeded.Working equals the accumulated state; Working true after automatic compact. |
+| PC-46 | SessionStateSnapshot: remove the local-command-stdout exclusion. | `SessionStateProjectionTests.Local_wrappers_are_inert_raw_slash_is_activity`: Working false after local stdout wrapper. |
+| PC-47 | SessionStateLoader: remove the local-command-stdout SQL exclusion. | `SessionStateProjectionTests.Local_wrappers_are_inert_raw_slash_is_activity`: fresh-container seeded.Working equals the accumulated state; Working false after local stdout wrapper. |
+| PC-48 | SessionStateSnapshot: remove QueueEnqueue from inactive kinds. | `SessionStateProjectionTests.No_end_housekeeping_is_idle`: Working false after QueueEnqueue. |
+| PC-49 | SessionStateLoader: remove QueueEnqueue from inactive SQL kinds. | `SessionStateProjectionTests.No_end_housekeeping_is_idle`: fresh-container seeded.Working equals the accumulated state; Working false after QueueEnqueue. |
+| PC-50 | SessionStateSnapshot: exclude FutureActivity from activity. | `SessionStateConsumerTests.Unknown_activity_alone_is_working`: first and only FutureActivity row makes append Working true. |
+| PC-51 | SessionStateLoader: exclude FutureActivity from SQL activity. | `SessionStateConsumerTests.Unknown_activity_alone_is_working`: cold container seeded only with FutureActivity has Working true. |
+| PC-52 | SessionStateSnapshot: remove SessionRestartBoundary from end kinds. | `SessionStateProjectionTests.Turn_end_and_restart_end_work`: Working false after restart boundary. |
+| PC-53 | SessionStateLoader: remove SessionRestartBoundary from SQL end kinds. | `SessionStateProjectionTests.Turn_end_and_restart_end_work`: fresh-container seeded.Working equals the accumulated state; Working false after restart boundary. |
+| PC-54 | AgentSessionRuntime transaction admission: Remove the ambient Transaction.Current refusal. | `SessionStateConsumerTests.Ambient_ingest_transaction_is_refused`: no committed revision or row becomes visible before outer commit. |
+| PC-55 | DataRetentionService transaction admission: Remove the CurrentTransaction refusal. | `SessionStateConsumerTests.Shared_retention_transaction_is_refused`: no committed revision or row becomes visible before outer commit. |
+| PC-56 | SessionStateReader enabled branch: Always call the SQL oracle. | `SessionStateConsumerTests.Common_selector_warm_reads_avoid_sql`: repeated production-reader calls on a warmed committed session issue zero working SELECTs. |
+| PC-57 | SessionStateReader disabled branch: Return cached snapshot when Enabled is false. | `SessionStateConsumerTests.Disabled_reader_uses_current_durable_metadata`: two repeated calls perform two fallback reads and see changed durable metadata. |
+| PC-58 | SessionStateReader metadata projection: Use LastKind with NewestEffectiveTimestamp for deadline last entry. | `SessionStateConsumerTests.Metadata_preserves_row_order_null_fallback_and_ties`: deadline Kind equals actual latest-by-time row; ID/sequence/time tuple matches durable query. |
+| PC-59 | SessionStateReader failure path: Catch loader failure and return Working false. | `SessionStateConsumerTests.Faulted_reader_cannot_authorize_idle_action`: no Input, stop or release on fault; error remains observable. |
+| PC-60 | SessionRunnerBindingCache loader: Map absent session to Local. | `SessionRunnerBindingCacheTests.Missing_local_and_incomplete_remote_are_distinct`: absent Binding kind Missing; local and incomplete fields match previous directory behavior. |
+| PC-61 | SessionRunnerBindingCache load gate: Remove the in-flight task reuse branch. | `SessionRunnerBindingCacheTests.Concurrent_binding_readers_share_one_load`: 32 readers cause exactly one tagged binding SELECT. |
+| PC-62 | SessionRunnerBindingCache retry timestamp: Set missing deadline at load start. | `SessionRunnerBindingCacheTests.Missing_expiry_starts_at_completion`: one load at completion+4999ms; second at +5000ms. |
+| PC-63 | session creation hooks: Omit post-commit invalidation in AgentSessionService creation. | `SessionRunnerBindingCacheTests.Every_creation_path_invalidates_a_warm_missing_binding`: each create/control/dispatch/resume row immediately returns committed binding before TTL. |
+| PC-64 | SessionRunnerBindingCache version comparison: Accept a load despite changed binding version. | `SessionRunnerBindingCacheTests.Late_missing_load_cannot_overwrite_create`: released stale loader cannot make the created session Missing. |
+| PC-65 | SessionRunnerBindingCache committed-delete hook: Keep the positive entry after committed deletion. | `SessionRunnerBindingCacheTests.Committed_delete_and_late_positive_load_stay_missing`: post-delete binding is Missing before expiry and after late load release. |
+| PC-66 | SessionRunnerBindingCache delete hook: Publish Missing before delete commit. | `SessionRunnerBindingCacheTests.Rolled_back_delete_preserves_binding`: old binding survives rejected commit. |
+| PC-67 | SessionRunnerBindingCache load failure: Convert SQL exception into Missing. | `SessionRunnerBindingCacheTests.Binding_load_failure_never_becomes_local_or_missing`: load throws and no route/input occurs. |
+| PC-68 | PhoneHomeRunnerDirectory route resolution: Reuse the first resolved remote client for subsequent RPCs. | `SessionRunnerBindingCacheTests.Warm_binding_routes_to_replacement_connection`: replacement peer receives Input and old peer receives none. |
+| PC-69 | PhoneHomeRecoveryPump.OwnerMatchesAsync: Remove RunnerStoreId equality check. | `SessionRunnerBindingCacheTests.Warm_binding_rejects_foreign_store`: foreign-store event creates zero rows and gets zero Input. |
+| PC-70 | PhoneHomeRunnerDirectory.Resolve: Remove SocketOpen predicate. | `SessionRunnerBindingCacheTests.Warm_binding_refuses_closed_socket`: unavailable result and zero Input with warmed positive binding. |
+| PC-71 | PhoneHomeRunnerDirectory.SnapshotLive: Remove IsLeaseExpired predicate. | `SessionRunnerBindingCacheTests.Warm_binding_refuses_expired_lease`: unavailable result and zero Input after fake lease expiry. |
+| PC-72 | PhoneHomeRunnerDirectory.Resolve: Remove recovered/dispatch-eligible predicate. | `SessionRunnerBindingCacheTests.Warm_binding_refuses_unrecovered_peer`: zero Input before catch-up commit and recovery completion. |
+| PC-73 | pending inventory/recovery integration: Treat absent fresh inventory as confirmed absence. | `SessionRunnerBindingCacheTests.Unknown_cached_idle_stays_owed_until_recovery`: pending row/card claim preserved and later matching UserPrompt delivered once. |
+| PC-74 | phone-home inventory integration: Admit same-generation late inventory over a tombstone. | `SessionRunnerBindingCacheTests.Cached_binding_cannot_revive_tombstoned_generation`: generation stays Gone and receives zero input. |
+| PC-75 | SessionTranscriptIdentityCache key: Use UUID alone as key. | `SessionTranscriptIdentityCacheTests.Same_uuid_different_kinds_and_sessions_survive`: each session retains all three kinds and distinct stored rows. |
+| PC-76 | SessionTranscriptIdentityCache lookup: route every session to the first session's sidecar instead of its own lease-owned sidecar. | `SessionTranscriptIdentityCacheTests.Same_uuid_different_kinds_and_sessions_survive`: second session retains all three own rows. |
+| PC-77 | AgentSessionRuntime null branch: Treat every null UUID as one cached identity. | `SessionTranscriptIdentityCacheTests.Actual_null_uuid_preserves_sequence_dedup`: durable null sequences 5 and 6 both exist, no UUID probes. |
+| PC-78 | identity publication after persistence: Admit every proposed identity before SaveChangesAsync. | `SessionTranscriptIdentityCacheTests.Failed_append_is_retryable_without_false_positive_hit`: retry writes the previously failed UUID; row count one. |
+| PC-79 | identity miss handling: Cache an absent UUID as present after its membership query. | `SessionTranscriptIdentityCacheTests.Miss_then_external_commit_is_reconciled`: later persisted row is loaded with actual sequence/text, not suppressed. |
+| PC-80 | identity uncertain-outcome branch: Retain the precommit sidecar and sequence floor after an unknown outcome. | `SessionTranscriptIdentityCacheTests.Ambiguous_commit_rebuilds_identity_and_sequence`: replay duplicates nothing and next low source sequence exceeds durable max. |
+| PC-81 | identity stub publication: Cache original unsanitized UUID/kind instead of stored row key. | `SessionTranscriptIdentityCacheTests.Stub_and_sanitized_identity_are_the_only_cached_evidence`: sanitized replay is a zero-probe hit and no nonexistent original key is admitted. |
+| PC-82 | AgentSessionRuntime sequence calculation: Assign incoming low Sequence unchanged. | `SessionTranscriptIdentityCacheTests.Concurrent_live_and_catchup_rebase_monotonically`: all durable stored sequences unique and strictly increasing; no lost identities. |
+| PC-83 | AgentSessionRuntime.ObserveTranscriptAsync: Check novelty only after identity publication. | `SessionTranscriptIdentityCacheTests.First_boundary_flushes_once_and_replay_does_not`: first committed boundary produces one recipient prompt; replay still one. |
+| PC-84 | boundary API-call membership: Remove existing ApiCallId membership check. | `SessionTranscriptIdentityCacheTests.Distinct_uuid_same_api_call_has_one_completed_turn_effect`: two UUID rows persist and completed-turn effect count equals one. |
+| PC-85 | AgentSessionRuntime.CatchUpTranscriptAsync: Call OnTurnEndAsync while processing catch-up rows. | `SessionTranscriptIdentityCacheTests.Catchup_persists_without_recursive_flush`: receipt remains owed during catch-up; zero recursive queue actions. |
+| PC-86 | boundary novelty exception branch: Return already-seen on membership failure. | `SessionTranscriptIdentityCacheTests.Boundary_probe_failure_preserves_first_effect`: one first-boundary effect after the controlled query failure. |
+| PC-87 | SessionTranscriptIdentityCache admission: Remove per-session entry-count check. | `SessionTranscriptIdentityCacheTests.Identity_capacity_limits_preserve_durable_fallback`: configured per-session count never exceeded; oversized replay rows all persist. |
+| PC-88 | SessionTranscriptIdentityCache admission: Remove process entry-count check. | `SessionTranscriptIdentityCacheTests.Identity_capacity_limits_preserve_durable_fallback`: configured process count never exceeded across sessions. |
+| PC-89 | SessionTranscriptIdentityCache admission: Ignore accounted-byte limit. | `SessionTranscriptIdentityCacheTests.Identity_capacity_limits_preserve_durable_fallback`: accounted bytes within configured process limit with long keys. |
+| PC-90 | SessionTranscriptIdentityCache admission: Remove key-length > 2048 rejection. | `SessionTranscriptIdentityCacheTests.Oversized_keys_are_not_retained_by_admission`: direct production admission rejects 2049-character synthetic key and retains 2048; no truncation. |
+| PC-91 | identity reset hook: Leave sidecar populated after committed transcript prune. | `SessionTranscriptIdentityCacheTests.Retention_reset_and_restart_start_from_durable_evidence`: reused identity after prune performs durable check and is not falsely dropped. |
+| PC-92 | identity eviction callback: Remove state entry when its identity budget is exceeded. | `SessionTranscriptIdentityCacheTests.Identity_pressure_preserves_held_state_lease`: held gate remains same; reader cannot complete before release. |
+| PC-93 | AgentSessionRuntime.ObserveTranscriptAsync: Publish SessionStateChanges before persist finishes. | `SessionStateChangeTests.Raw_event_and_failed_save_do_not_wake_committed_waiters`: wait remains incomplete at save gate and after rejected save. |
+| PC-94 | SessionStateChanges publication: Skip publication when Working did not change. | `SessionStateChangeTests.Unchanged_working_append_wakes_revision_waiter`: wait completes at new revision after assistant or UserPrompt append. |
+| PC-95 | SessionStateChanges.WaitForChangeAsync: Remove the post-registration revision recheck. | `SessionStateChangeTests.Commit_between_read_and_registration_is_observed`: wait completes without second append or timer advance. |
+| PC-96 | SessionStateChanges cancellation registration: Cancel the shared session signal when one token cancels. | `SessionStateChangeTests.Cancelled_waiter_leaves_other_waiters_live`: survivor observes next commit; waiter count returns to zero. |
+| PC-97 | SessionStateChanges deletion publication: Do not complete registered waiters on deletion. | `SessionStateChangeTests.Deletion_completes_waiters_as_deleted`: deleted result received, no stale Working snapshot. |
+| PC-98 | SessionStateChanges.WaitForChangeAsync: omit ServerEpoch comparison while retaining reset and revision comparisons. | `SessionStateChangeTests.New_epoch_or_reset_invalidates_old_watermark`: old watermark immediately re-reads a new server epoch even at smaller revision. |
+| PC-99 | state lease release/subscriber worker: Execute the subscriber synchronously before disposing the lease. | `SessionStateChangeTests.Subscriber_can_read_state_and_take_queue_lock`: subscriber completes its state read and queue action before test deadline. |
+| PC-100 | SessionStateChanges bounded queue overflow: Drop overflow without setting recovery-rescan flag. | `SessionStateChangeTests.Overflow_rescans_outstanding_durable_work`: all owed sessions finish with matching receipt after drain. |
+| PC-101 | committed-change subscriber worker: Mark dirty session complete after a handler throws. | `SessionStateChangeTests.Handler_failure_is_recovered_without_new_append`: owed receipt arrives on recovery tick without another transcript append. |
+| PC-102 | SessionStateChanges capacity eviction: Evict registered waiter on capacity pressure. | `SessionStateChangeTests.Capacity_pressure_keeps_registered_waiters`: oldest registered waiter completes on its own session commit. |
+| PC-103 | SessionMessageQueueService confirmation wait: Execute receipt SELECT on every timer tick. | `SessionStateWaitTests.Unchanged_wait_does_not_repeat_receipt_selects`: unchanged interval has zero receipt SELECTs after initial query. |
+| PC-104 | strict queue/note prompt matcher: Use prefix match instead of complete match. | `SessionStateWaitTests.Prefix_receipt_stays_owed_until_complete_prompt`: no confirmation at prefix; full prompt then confirms once. |
+| PC-105 | strict queue/note receipt query: Allow QueuedUserPrompt as complete recipient proof. | `SessionStateWaitTests.Non_user_prompt_is_not_strict_delivery`: queued/assistant/ack rows remain unconfirmed; UserPrompt confirms. |
+| PC-106 | strict receipt query: Remove destination session predicate. | `SessionStateWaitTests.Other_session_prompt_cannot_confirm`: foreign complete prompt remains owed; target prompt confirms. |
+| PC-107 | late-confirm query: Use sequence zero instead of saved attempt floor. | `SessionStateWaitTests.Receipt_before_original_sequence_floor_cannot_confirm`: old complete body does not confirm or suppress intended delivery. |
+| PC-108 | late-confirm generation validation: Use current session generation instead of LastDeliveryGeneration. | `SessionStateWaitTests.Replacement_generation_cannot_confirm_old_attempt`: replacement-generation matching body does not confirm old attempt. |
+| PC-109 | unobservable confirm query: Remove original attempt time lower bound. | `SessionStateWaitTests.Old_timestamp_cannot_confirm_unobservable_attempt`: old/null timestamp body not accepted; fresh complete UserPrompt accepted. |
+| PC-110 | runtime shared-pull selection: Reuse a pull that started before caller send. | `SessionStateWaitTests.Final_pull_cannot_reuse_pre_send_negative`: second pull starts after send; its complete prompt is confirmed. |
+| PC-111 | queue confirm deadline: Return failure without mandatory final pull. | `SessionStateWaitTests.Missed_stream_final_pull_confirms_without_retype`: pulled complete UserPrompt confirms with one body submission. |
+| PC-112 | queue wait scheduling: Await only transcript-change signal, omitting nearest deadline/Enter timer. | `SessionStateWaitTests.No_append_still_runs_deadline_and_reenter`: Enter-only retries occur on original cadence; deadline settles the wait. |
+| PC-113 | queue immediate-send refusal handler: Keep provisional attempt values after body-not-written refusal. | `SessionStateWaitTests.Safe_refusal_preserves_attempt_and_uncertain_send_is_not_refunded`: before/after saved attempt identical on safe refusal; uncertain send retains charged attempt. |
+| PC-114 | queue scheduling/claim guard: Bypass per-session duplicate-delivery claim on change callback. | `SessionStateRecoveryTests.Concurrent_boundary_and_worker_submit_once`: one logical recipient UserPrompt and one body submission under concurrent wakes. |
+| PC-115 | producer/queue recovery at producer-save: Remove durable producer discovery from recovery. | `SessionStateRecoveryTests.Producer_commit_before_enqueue_recovers`: for every producer and busy/eligible state: one matching complete recipient UserPrompt, correct durable links, exactly one body submission. |
+| PC-116 | producer/queue recovery at enqueue-failure: Mark producer complete in the enqueue exception handler. | `SessionStateRecoveryTests.Enqueue_failure_keeps_durable_obligation`: for every producer and busy/eligible state: one matching complete recipient UserPrompt, correct durable links, exactly one body submission. |
+| PC-117 | producer/queue recovery at queue-before-link: Disable existing-key adoption and return a new queue row. | `SessionStateRecoveryTests.Queue_commit_before_link_recovers_existing_identity`: for every producer and busy/eligible state: one matching complete recipient UserPrompt, correct durable links, exactly one body submission. |
+| PC-118 | producer/queue recovery at link-before-wake: Exclude linked awaiting-receipt work from recovery. | `SessionStateRecoveryTests.Producer_link_before_wake_recovers`: for every producer and busy/eligible state: one matching complete recipient UserPrompt, correct durable links, exactly one body submission. |
+| PC-119 | producer/queue recovery at attempt-before-input: Treat an interrupted attempt with no receipt as terminally delivered. | `SessionStateRecoveryTests.Attempt_commit_before_input_recovers`: for every producer and busy/eligible state: one matching complete recipient UserPrompt, correct durable links, exactly one body submission. |
+| PC-120 | producer/queue recovery at receipt-before-confirm: Retype before checking the retained attempt receipt. | `SessionStateRecoveryTests.Receipt_commit_before_confirmation_recovers_without_retype`: for every producer and busy/eligible state: one matching complete recipient UserPrompt, correct durable links, exactly one body submission. |
+| PC-121 | GrokRulesRefreshService receipt branch: Accept assistant ack without confirmed owning UserPrompt. | `SessionStateRecoveryTests.Grok_refresh_recovers_to_owning_prompt_and_ack`: Ready false before owning prompt and true only after its successful-turn ack. |
+| PC-122 | AgentTaskLandNotificationService receipt branch: Accept an existing queue key with different destination. | `SessionStateRecoveryTests.Land_note_recovers_to_parent_receipt`: wrong-destination collision remains owed; correct parent prompt confirms own note. |
+| PC-123 | AgentTaskReplyService deferred discovery: Drop task marker predicate when selecting report. | `SessionStateRecoveryTests.Deferred_reply_recovers_to_parent_receipt`: unrelated report never settles task; owning report yields matching parent receipt. |
+| PC-124 | SpecialistRequestService qualification wake: Accept result from the preceding attempt. | `SessionStateRecoveryTests.Specialist_result_recovers_to_caller_receipt`: old-attempt result cannot release request; own result reaches caller transcript. |
+| PC-125 | ExpectationNudgeDeliveryService receipt wake: Confirm from old same-text prompt below the nudge floor. | `SessionStateRecoveryTests.Expectation_receipt_survives_missed_wake`: old prompt leaves Uncertain; fresh owning prompt confirms without retyping. |
+| PC-126 | notification/recovery work discovery: Schedule only on transcript events and skip new-work wake/recovery. | `SessionStateRecoveryTests.New_work_without_transcript_change_is_discovered`: already eligible destination receives complete prompt with unchanged pre-enqueue revision. |
+| PC-127 | SessionStateDerivedFacts publication fence: Label paused old load with current revision. | `SessionStateDerivedFactsTests.Late_fact_load_cannot_claim_new_revision`: result reflects new committed rows, never old facts at new revision. |
+| PC-128 | SessionStateDerivedFacts task key: omit task ID while retaining dispatch floor. | `SessionStateDerivedFactsTests.Task_and_dispatch_change_invalidate_facts`: second task excludes previous occupant novelty and receipt baseline. |
+| PC-129 | SessionStateDerivedFacts key: Omit accepted generation from key. | `SessionStateDerivedFactsTests.Generation_change_invalidates_facts`: new-generation boot/progress facts exclude old generation evidence. |
+| PC-130 | SessionStateDerivedFacts key: Omit settings revision from key. | `SessionStateDerivedFactsTests.Settings_change_invalidates_facts`: changed context ceiling/policy threshold changes result without append. |
+| PC-131 | SessionStateDerivedFacts key: omit provider identity while retaining model accounting identity. | `SessionStateDerivedFactsTests.Provider_usage_matches_independent_compute`: Claude/Codex/Grok and model override values match literal fixtures and Compute. |
+| PC-132 | SessionStateDerivedFacts reset hook: Keep old facts after reset with recycled revision. | `SessionStateDerivedFactsTests.Reset_and_restart_invalidate_facts`: pruned content absent and restarted epoch recomputes from durable rows. |
+| PC-133 | TaskProgressPolicy/TaskDeadlinePolicy fact integration: Cache the final verdict keyed only by transcript revision. | `SessionStateDerivedFactsTests.Advancing_clock_changes_deadline_and_stall_without_append`: deadline crosses boundary and stall severity/window changes at fixed revision. |
+| PC-134 | TaskProgressPolicy fact integration: Reuse cached workspace progress arm. | `SessionStateDerivedFactsTests.File_and_git_progress_change_verdict_without_append`: new file/commit withholds stall without a transcript append. |
+| PC-135 | SessionStateDerivedFacts progress aggregation: Discard all novel fingerprints before lookback start. | `SessionStateDerivedFactsTests.Old_dispatch_novelty_survives_rolling_window`: literal long-stall duration and escalation unchanged versus independent policy. |
+| PC-136 | SessionStateDerivedFacts admission: Truncate facts to fit per-session budget instead of durable fallback. | `SessionStateDerivedFactsTests.Oversized_facts_fall_back_without_truncation`: full-content/verdict parity at budget-1, budget and budget+1. |
+| PC-137 | SessionStateDerivedFacts admission: Ignore process accounted-byte limit. | `SessionStateDerivedFactsTests.Process_fact_budget_preserves_parity`: accounted process bytes within budget and overflow session uses correct durable fallback. |
+| PC-138 | fact/wake integration of QueuedInputWatchdogService: Suppress sweep when revision is unchanged. | `SessionStateDerivedFactsTests.Queued_input_deadline_rechecks_without_append`: real watchdog emits its timed incident at the deadline without a transcript append. |
+| PC-139 | SessionEndpoints state handler: Implement state by loading the entire queue DTO. | `SessionStateEndpointTests.State_endpoint_is_committed_and_metadata_only`: zero queue/content SELECTs, correct committed state tuple and no body/path fields. |
+| PC-140 | committed state broadcaster: Call PublishToGroupAsync for the session group instead of PublishToAllAsync. | `SessionStateEndpointTests.Committed_event_reaches_real_client_without_group_join`: real WebSocket receives SessionStateChanged matching committed session/epoch/revision. |
+| PC-141 | committed state DTO/broadcaster: add a string Text property initialized to the literal C701-content-canary to the serialized metadata DTO. | `SessionStateEndpointTests.Public_metadata_excludes_content_and_runner_paths`: received JSON has exactly the metadata property allowlist and contains neither C701-content-canary nor the fixture runner-path canary. |
+| PC-142 | committed change subscriber split: Apply the one-second UI throttle to all coordinator wakeups. | `SessionStateChangeTests.Receipt_wakes_are_independent_of_ui_coalescing`: two subsecond receipt revisions both reach server waiters. |
+| PC-143 | UI metadata coalescer: Publish every token as an invalidating metadata event. | `SessionStateEndpointTests.Usage_events_are_coalesced_but_working_transitions_are_prompt`: <=1 usage/progress refresh per second/session; Working transitions immediate. |
+| PC-144 | accelerator settings selection: Ignore notification-disabled flag when constructing queue waits. | `SessionStateRecoveryTests.Disabled_accelerators_keep_polling_and_durable_receipts`: each singly-disabled accelerator and all-disabled graph delivers one complete receipt; bounded polling remains. |
+| PC-145 | SessionStateSettings validation: Permit a negative identity byte limit. | `SessionStateContractTests.Production_graph_owns_one_of_each_accelerator_and_rejects_invalid_limits`: invalid option throws before hosted consumers start; one singleton per production accelerator. |
+| PC-146 | client state connection hook: Start initial request before attaching event handler. | `SessionWorkingBadge.test.tsx::C701 subscribe before initial snapshot`: event during paused fetch wins; rendered badge Working. |
+| PC-147 | useSignalRInvalidation.ts: Remove revision comparison. | `useSignalRInvalidation.test.ts::C701 stale revision is ignored`: newest cached tuple and rendered Working remain unchanged. |
+| PC-148 | client state connection hook: Keep old epoch watermark and skip reconnect refetch. | `SessionWorkingBadge.test.tsx::C701 reconnect replaces epoch`: one reconnect refetch and new-epoch Idle rendered despite smaller revision. |
+| PC-149 | SessionWorkingBadge.tsx: Restore refetchInterval 3000. | `SessionWorkingBadge.test.tsx::C701 connected idle working idle without polling`: initial one request; zero additional polls over 180 fake seconds; events render both transitions. |
+| PC-150 | SessionWorkingBadge.tsx: Set disconnected refetchInterval to false. | `SessionWorkingBadge.test.tsx::C701 disconnected fallback is thirty seconds`: no request at 29999ms; one at 30000ms. |
+| PC-151 | useSignalRInvalidation.ts: Remove SessionQueueChanged handler. | `useSignalRInvalidation.test.ts::C701 queue changes keep queue contents current`: queue query refetches and renders new message. |
+| PC-152 | SessionTranscriptPanel.tsx: Invalidate whole transcript query on every text event. | `SessionTranscriptPanel.test.tsx::C701 token events do not refetch history`: 100 token events merge rendered text with zero history refetches. |
+| PC-153 | AgentControlService creation hook: Omit its post-commit binding invalidation. | `SessionRunnerBindingCacheTests.Every_creation_path_invalidates_a_warm_missing_binding`: control creation immediately returns positive identity before missing TTL. |
+| PC-154 | AgentTaskDispatcher fresh-session creation hook: Omit its post-commit binding invalidation. | `SessionRunnerBindingCacheTests.Every_creation_path_invalidates_a_warm_missing_binding`: dispatch creation immediately returns positive identity before missing TTL. |
+| PC-155 | AgentTaskDispatcher resume/rebind hook: Omit its post-commit binding invalidation. | `SessionRunnerBindingCacheTests.Every_creation_path_invalidates_a_warm_missing_binding`: resume/rebind returns new durable identity and never the old owner. |
+| PC-156 | SessionRunnerBindingCache version fence: Accept stale positive load after delete invalidation. | `SessionRunnerBindingCacheTests.Committed_delete_and_late_positive_load_stay_missing`: released positive load leaves binding Missing. |
+| PC-157 | SessionRunnerBindingCache admission: Remove configured entry-count bound. | `SessionRunnerBindingCacheTests.Binding_capacity_uses_correct_uncached_lookup`: configured count never exceeded; overflow lookup uses current SQL result. |
+| PC-158 | AgentSessionRuntime incoming UUID chunking: Change Chunk(512) to Chunk(1024). | `SessionTranscriptIdentityCacheTests.Uncached_uuid_chunks_and_positive_replay_have_exact_budgets`: 513 uncached keys make two queries with parameter counts 512 and 1. |
+| PC-159 | AgentSessionRuntime identity-hit path: Ignore positive cache hits and perform original membership/max queries. | `SessionTranscriptIdentityCacheTests.Uncached_uuid_chunks_and_positive_replay_have_exact_budgets`: fully fitting replay has zero membership and maximum-sequence SELECTs. |
+| PC-160 | consumer migration outside SessionStateReader: Restore Dispatcher:2123 static IsWorkingAsync call. | `SessionStateConsumerTests.No_unapproved_static_working_bypass_remains`: source allowlist contains no consumer helper call; its V-2 branch still returns correct result. |
+| PC-161 | ExpectationNudgeDeliveryService.ReconcileAsync: Make interrupted Attempting state sendable again. | `SessionStateRecoveryTests.Direct_nudge_crash_preserves_debt_without_retyping`: post-claim/pre-input crash remains Uncertain with zero new Input and durable debt. |
+| PC-162 | queue committed receipt wait: Confirm from raw event while its recipient SaveChanges throws. | `SessionStateWaitTests.Failed_recipient_commit_cannot_confirm_delivery`: strict verdict unconfirmed until persistence retry yields the complete UserPrompt. |
+| PC-163 | identity accelerator startup selection: Ignore identity-enabled setting. | `SessionStateRecoveryTests.Disabled_accelerators_keep_polling_and_durable_receipts`: identity-disabled row issues fallback probes and retains complete receipt. |
+| PC-164 | binding accelerator startup selection: Ignore binding-enabled setting. | `SessionStateRecoveryTests.Disabled_accelerators_keep_polling_and_durable_receipts`: binding-disabled row issues binding SQL on repeated calls and delivers correctly. |
+| PC-165 | fact accelerator startup selection: Ignore facts-enabled setting. | `SessionStateRecoveryTests.Disabled_accelerators_keep_polling_and_durable_receipts`: facts-disabled row computes from durable data on repeated reads. |
+| PC-166 | client/src/api/agents.ts: Restore five-second connected interval. | `useSignalRInvalidation.test.ts::C701 agent refresh is sixty connected thirty disconnected`: zero early poll; connected fetch at 60000ms, disconnected fetch at 30000ms. |
+| PC-167 | SessionStateSnapshot: Ignore HasNullTimestampActivity in Working. | `SessionStateProjectionTests.Null_and_equal_timestamps_are_conservative`: Working true on null activity after an end. |
+| PC-168 | SessionStateSnapshot: Remove the compaction-continuation activity exclusion. | `SessionStateProjectionTests.Manual_compact_and_continuation_end_work`: Working false after the synthetic continuation. |
+| PC-169 | SessionStateSnapshot: Remove the command-name activity exclusion. | `SessionStateProjectionTests.Local_wrappers_are_inert_raw_slash_is_activity`: Working false after the command-name wrapper. |
+| PC-170 | SessionStateSnapshot: Remove TurnEnd from end classification. | `SessionStateProjectionTests.Turn_end_and_restart_end_work`: Working false at the first TurnEnd. |
+| PC-171 | SessionStateLoader: Remove the activity Timestamp IS NULL qualifying arm. | `SessionStateProjectionTests.Null_and_equal_timestamps_are_conservative`: fresh-container Working equals true on null activity. |
+| PC-172 | SessionStateLoader: Remove the compaction-continuation activity exclusion. | `SessionStateProjectionTests.Manual_compact_and_continuation_end_work`: fresh-container Working false after the synthetic continuation. |
+| PC-173 | SessionStateLoader: Remove the command-name activity exclusion. | `SessionStateProjectionTests.Local_wrappers_are_inert_raw_slash_is_activity`: fresh-container Working false after the command-name wrapper. |
+| PC-174 | SessionStateLoader: Remove TurnEnd from end classification. | `SessionStateProjectionTests.Turn_end_and_restart_end_work`: fresh-container Working false at the first TurnEnd. |
+| PC-175 | SessionStateSnapshot.Working: Remove the EndTimestamp is null acceptance arm. | `SessionStateConsumerTests.Null_end_timestamp_keeps_later_activity_working`: end with null timestamp followed by stamped activity is Working in append and cold container. |
+| PC-176 | SessionStateLoader: Remove the end timestamp IS NULL acceptance arm. | `SessionStateConsumerTests.Null_end_timestamp_keeps_later_activity_working`: cold container Working true for null-timestamp end then stamped activity. |
+
+| PC-177 | queue uncertain-send handler: restore pre-attempt values after a body write whose outcome is unknown. | `SessionStateWaitTests.Safe_refusal_preserves_attempt_and_uncertain_send_is_not_refunded`: uncertain send retains the charged attempt and original freshness floor. |
+| PC-178 | SessionStateDerivedFacts task key: omit dispatch floor while retaining task ID. | `SessionStateDerivedFactsTests.Task_and_dispatch_change_invalidate_facts`: same task with a new dispatch floor excludes old receipt/novelty evidence. |
+| PC-179 | SessionStateDerivedFacts key: omit model accounting identity while retaining provider. | `SessionStateDerivedFactsTests.Provider_usage_matches_independent_compute`: same provider with changed model accounting produces the new literal expected fullness without append. |
+| PC-180 | SessionStateChanges.WaitForChangeAsync: omit ResetEpoch comparison while retaining server epoch and revision comparisons. | `SessionStateChangeTests.New_epoch_or_reset_invalidates_old_watermark`: same server epoch with changed reset epoch immediately re-reads even at an equal revision. |
+| PC-181 | production DI registration: change SessionStateStore from AddSingleton to AddTransient. | `SessionStateContractTests.Production_graph_owns_one_of_each_accelerator_and_rejects_invalid_limits`: state authority resolved through two fresh production scopes is the same instance. |
+
+The **new/changed witness roster** is the distinct methods named in V-1–V-9 and the PC table, with the following exact expansion. Existing R-1–R-5 counts come from source attributes, not a test run. New tests are single unparameterized executions with named internal scenario loops except the two literal-Arguments methods identified below. `Unknown_activity_alone_is_working` starts with an empty session containing only FutureActivity; the inherited projection test already has a UserPrompt and cannot kill that exclusion mutation. `Common_selector_warm_reads_avoid_sql` and `Queued_input_deadline_rechecks_without_append` are unparameterized method-scoped controls, separate from the broader site/owner matrices. No implicit data generators or inherited tests are allowed to make these floors ambiguous.
+
+| New class / path | Method count | TUnit results | Expansion / extra methods outside the PC table |
+|---|---:|---:|---|
+| `tests/Antiphon.Tests/Scripts/MeasureSessionStateCacheScriptTests.cs` | 16 | 16 | `Matched_true_and_false_settings_compare`, `Schema1_compatible_and_insufficient_pairs_are_distinguished` |
+| `tests/Antiphon.Tests/Application/SessionStateConsumerTests.cs` | 10 | 44 | 35 site Arguments + 9 single methods |
+| `tests/Antiphon.Tests/Application/SessionRunnerBindingCacheTests.cs` | 16 | 16 | All distinct PC-table methods, one result each |
+| `tests/Antiphon.Tests/Application/SessionTranscriptIdentityCacheTests.cs` | 16 | 16 | All distinct PC-table methods, one result each |
+| `tests/Antiphon.Tests/Application/SessionStateChangeTests.cs` | 11 | 11 | All distinct PC-table methods, one result each |
+| `tests/Antiphon.Tests/Application/SessionStateWaitTests.cs` | 12 | 12 | All distinct PC-table methods, one result each |
+| `tests/Antiphon.Tests/Application/SessionStateDerivedFactsTests.cs` | 13 | 24 | 12 owner Arguments + 12 single methods |
+| `tests/Antiphon.Tests/Application/SessionStateRecoveryTests.cs` | 15 | 15 | All distinct PC-table methods, one result each |
+| `tests/Antiphon.Tests/Api/SessionStateEndpointTests.cs` | 4 | 4 | All distinct PC-table methods, one result each |
+| `tests/Antiphon.Tests/Application/SessionStateContractTests.cs` | 1 | 1 | All distinct PC-table methods, one result each |
+| `tests/Antiphon.Tests/Application/SessionStateScalingTests.cs` | 2 | 2 | `Warmed_idle_180_seconds_has_no_state_or_receipt_selects`, `Equal_ingests_at_10_and_20_sessions_do_not_multiply_reads` |
+
+Boundary combinations are deliberate: run 0/1/511/512/513/1025 UUID misses; count/byte admission at limit-1/limit/limit+1; reset before/during/after a held read; cold/Ready/Missing/faulted; Enabled false and each accelerator singly off; local/remote and busy/idle; matching/nonmatching session/generation/body/sequence/time independently. Use small configured memory budgets to reach limits cheaply, and pin default 16,384/session, 262,144/process, 64 MiB identity, 4 MiB/session and 64 MiB facts, 4096 bindings in the contract test. Internal loops must name the scenario in assertion messages; they do not inflate Min. Do not take a Cartesian product of unrelated provider accounting and phone-home socket states: their joins are covered separately through the common reader plus the producer-to-recipient paths.
+
+### Out of scope
+
+- **CARD-0720** owns the parent-row membership-recheck/delete race and concurrent new-child-create acceptance. Existing retained-session cascade/rollback controls above are in scope and must not be described as solving that race.
+- R1 is retained and independently controlled, not reimplemented. CARD-0699 completion-stamp selection and CARD-0700 Boards amplification remain separate ownership. No pool reset switch, live retry-policy change, schema summary migration, native TUI/Pty canary, runner CPU kill policy or production load generation is commissioned.
+- AC-1/AC-2/AC-3 remain **pending desktop PostgreSQL acceptance** at the owner's host. Neither Linux tests, cache metrics nor a fake recipient proves desktop CPU improvement. Capture AC-1 before the first R2 activation; do not manufacture a Before from changed code. Full-card closure also needs ordinary Review, publication/activation SHA and independent landed-source controls.
+- Native process crash custody and real-provider receipt transport are not certified by service-graph recreation. The deterministic crash matrix proves durable handoff recovery. Existing provider-specific degraded verdicts remain regressions but are never counted as complete session receipt evidence. Direct expectation sends and atomic Specialist publication exclude impossible queue handoffs as specified in the inventory.
+
+### Checkpoints
+
+This is the ordinary **closed list**. Each row is one exact filter plus one isolated build (or same-After certified reuse); union covers V-1–V-9/R-1–R-7. Run S0, S4-S6, then the separately commissioned S7-S8 group. All selected integration rows are portable and use synthetic runners/isolated PostgreSQL; no OS-only method was found in these selected rosters. An unexpected skip in a new/affected method is failure. The Unit lanes may report unrelated established platform skips separately; zero missing affected tests is required. The listed floors include every new witness.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
+|---|---|---|---|---|---|---|---:|---:|---|---|
+| CP-1 | S0 | `tests/Antiphon.Tests -> bin-c701-measure/` | collector | `/*/*/MeasureSessionStateCacheScriptTests/*` | V-1 | all 16 new results, 0 failed/skipped | 16 | 8 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-2 | S4-S6 | `tests/Antiphon.Tests -> bin-c701-r2/` | r2-readers | `/*/*/(SessionStateConsumerTests*)\|(SessionStateCacheReadTests*)\|(SessionStateProjectionTests*)\|(SessionStateCommitTests*)\|(SessionStateWarmupTests*)\|(TranscriptWorkingStateQueryTests*)/*` | V-2, R-1 | all 44 new and 50 retained results, 0 failed/skipped | 94 | 10 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-3 | S4-S6 | `CP-2` | r2-queue | `/*/*/(SessionMessageQueueServiceTests*)\|(SessionMessageQueueDeliveryVerificationTests*)/*` | R-3 | all 148 retained results, 0 failed/skipped | 148 | 10 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-4 | S4-S6 | `CP-2` | r2-binding-replay | `/*/*/(SessionRunnerBindingCacheTests*)\|(SessionTranscriptIdentityCacheTests*)\|(PhoneHomeDirectoryTests*)\|(PhoneHomePendingInventoryTests*)\|(PhoneHomeStrandedQueueTests*)\|(PhoneHomeImmediateSendTests*)\|(PhoneHomeSessionRoutingTests*)\|(PhoneHomeEventPumpTests*)/*` | V-3, V-4, R-4 | all 32 new and 57 retained results, 0 failed/skipped | 89 | 12 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-5 | S4-S6 | `CP-2` | r2-persistence | `/*/*/AgentSessionRuntimeTests/(C561_*)\|(C698_*)\|(Transcript_entries_from_a_new_tailer_generation_survive_a_sequence_restart)` | R-2 | all 15 exact results, 0 failed/skipped | 15 | 5 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-6 | S4-S6 | `CP-2` | r2-unit | `/*/*/*/*[Category=Unit]` | R-7 | all selected Unit, >= 2000 executed, 0 failed; new graph test executes | 2000 | 9 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-7 | S7-S8 | `tests/Antiphon.Tests -> bin-c701-r3/` | r3-changes-waits | `/*/*/(SessionStateChangeTests*)\|(SessionStateWaitTests*)\|(SessionStateScalingTests*)\|(SessionStateEndpointTests*)/*` | V-5, V-8, V-9 | all 29 new results, 0 failed/skipped | 29 | 10 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-8 | S7-S8 | `CP-7` | r3-facts-readers | `/*/*/(SessionStateDerivedFactsTests*)\|(SessionStateConsumerTests*)/*` | V-2, V-7 | all 24 fact and 44 consumer results, 0 failed/skipped | 68 | 8 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-9 | S7-S8 | `CP-7` | r3-delivery-recovery | `/*/*/SessionStateRecoveryTests/*` | V-6 | all 15 methods; each required producer/state/cut receipt asserted, 0 failed/skipped | 15 | 14 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-10 | S7-S8 | `CP-7` | r3-queue | `/*/*/(SessionMessageQueueServiceTests*)\|(SessionMessageQueueDeliveryVerificationTests*)/*` | R-3 | all 148 retained results, 0 failed/skipped | 148 | 10 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-11 | S7-S8 | `CP-7` | r3-phone-home | `/*/*/(PhoneHomeDirectoryTests*)\|(PhoneHomePendingInventoryTests*)\|(PhoneHomeStrandedQueueTests*)\|(PhoneHomeImmediateSendTests*)\|(PhoneHomeSessionRoutingTests*)\|(PhoneHomeEventPumpTests*)/*` | R-4 | all 57 retained results, 0 failed/skipped | 57 | 6 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-12 | S7-S8 | `CP-7` | r3-policy-recovery | `/*/*/(TaskProgressPolicyTests*)\|(TaskProgressPolicyFileArmTests*)\|(TaskDeadlinePolicyTests*)\|(SessionContextUsageTests*)\|(SessionContextUsagePersistenceTests*)\|(GrokRulesInitializationTests*)\|(GrokRulesReceiptTests*)\|(AgentTaskLandNotificationRecoveryTests*)\|(AgentTaskLandNotificationPersistenceTests*)/*` | R-5 | all 174 retained results, 0 failed/skipped | 174 | 15 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-13 | S7-S8 | `CP-7` | r3-unit | `/*/*/*/*[Category=Unit]` | R-7 | all selected Unit, >= 2000 executed, 0 failed; new graph test executes | 2000 | 9 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-14 | S7-S8 | `n/a` | r3-client | `pwsh -NoProfile -File scripts/test-client.ps1 useSignalRInvalidation.test SessionWorkingBadge.test SessionTranscriptPanel.test` | V-8, R-6 | exactly 3 files; all existing cases and 8 named new cases, 0 failed/skipped | n/a | 4 | true | n/a |
+
+Resolve `$c701SourceSha = (git rev-parse HEAD).Trim()` in PowerShell after committing the Code slice, then run `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c701-checkpoints -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c701-tool/ -- run --plan docs/superpowers/plans/2026-10-04-card-0701-remaining-session-state-plan.md --rows CP-1 --expected-source-sha $c701SourceSha` for S0. Use `--rows CP-2,CP-3,CP-4,CP-5,CP-6` for the committed R2 group and `--rows CP-7,CP-8,CP-9,CP-10,CP-11,CP-12,CP-13,CP-14` for committed R3. The SHA argument is the actual clean Code commit, never the TestDesign SHA. Continue foreground wait while exit is 75, and preserve unedited CHECKPOINT lines/source/build certificates. Run groups serially; the Environment column also bounds each test host. Do not reuse CP-2 output for R3 or across a source edit. No broad integration assembly run is authorized by this table. Full task-range evidence-diff checks remain mandatory for Code/Review. No production output paths are used; clean the task-owned bin-c701-tool/ directories plus only recorded producer-owned checkpoint outputs before settlement.
+
+The authoring baseline-red diagnostics mentioned above are the sole explicitly enumerated additional runs, not green qualification: `MeasureSessionStateCacheScriptTests.Matched_true_and_false_settings_compare`, `SessionStateConsumerTests.Migrated_sites_warm_and_disabled_parity*`, `SessionRunnerBindingCacheTests.Concurrent_binding_readers_share_one_load`, `SessionTranscriptIdentityCacheTests.Uncached_uuid_chunks_and_positive_replay_have_exact_budgets`, `SessionStateWaitTests.Unchanged_wait_does_not_repeat_receipt_selects`, and Vitest `C701 connected idle working idle without polling`. Use one isolated output per committed diagnostic source, exact method filters, and report the intended nonzero assertion red; fixtures/new APIs are made compilable first. A baseline diagnostic does not run an independent PC. Never edit while a driver is in flight.
+
+### Cost
+
+All numbers below are **estimated**, not measured timings or timeout changes.
+
+- Ordinary V/R floor (Code) = **130 minutes**, the exact sum of CP EstimatedMinutes: collector CP-1 8; R2 reader/queue/binding-replay/persistence/Unit CP-2–CP-6 10+10+12+5+9 = 46; R3 changes-waits/facts-readers/recovery/queue/phone-home/policy/Unit/client CP-7–CP-14 10+8+14+10+6+15+9+4 = 76. Three builds are included: 2 minutes S0, 3 R2, 3 R3 = 8; test execution component = 122. Tool/setup allowance = 2 additional minutes, so ordinary preparation + green V/R = **132 minutes**. Authoring diagnostics add 18 (six exact filters above at 3 minutes each, build included): **150 minutes** before implementation authoring.
+- Separate PC floor (Mutation) = **1170 minutes**: 155 non-recovery C# controls × 6 (each baseline/red/restore-green: 1.5-minute isolated build + 0.5-minute exact test, three phases); 18 SessionStateRecoveryTests controls × 12 (each phase: 2-minute build + 2-minute producer/cut matrix); 8 client controls × 3 (one-minute wrapper execution for each of three phases). Each filter is the exact method/title in its PC row; no class-scoped PC runs. This includes baseline and red/restore/green rebuilds, not authoring repairs. Mutation setup/custody copy and cleanup add 5, giving **1175 minutes**.
+- Total planned verification = setup/build 10 + ordinary tests 122 + diagnostic authoring runs 18 + PC cycles 1170 + mutation setup 5 = **1325 minutes**, excluding implementation authoring, ordinary Review repetition, slot waits and required recapture after fixes. Desktop AC-1/AC-2/AC-3 add 30 (10 each), so verification plus the three acceptance captures = **1355 minutes**; activation and mismatched-window repeats are additional. S0/R2 may be commissioned now; later R3 and Mutation are separate tasks with these explicit budgets.
+- Build reuse avoids rebuilding on each TUnit row: 13 TUnit rows minus 3 builds = 10 avoided builds; at 2 minutes each, **20 estimated minutes saved**. PCs remain method-scoped. No additional PC batching savings are budgeted: most controls share production files, and independent receipt/restoration evidence is required. The larger floor versus the Plan-stage 99-minute estimate buys complete counted rosters and producer recovery coverage; no coverage is dropped to meet that earlier estimate.
+
+Handoff audit: inspected bodies and missing setup are recorded; **guards=181, mapped=181, missing=0, duplicate PC maps=0**. Every control specifies a production target, compiling defect, exact method/title and decisive assertion; all are executable after their named Code tests/scaffolding land. Execution remains pending. There is no unowned verification seam or human design choice; if Code discovers an unreachable seam, return to Plan before claiming its checkpoint green. Desktop acceptance and CARD-0720 remain explicit pending full-card obligations.
+
+--- next stage ---
+next: code
+handoff: Implement S0 then R2 S4-S6 from this plan, including the counted fixtures and CP-1–CP-6. Arrange desktop AC-1 before R2 activation. Keep R3 as a later Code commission, preserve R1 and CARD-0720 ownership, and retain all landed-source controls and desktop after captures before full-card closure.
 artifact: docs/superpowers/plans/2026-10-04-card-0701-remaining-session-state-plan.md
