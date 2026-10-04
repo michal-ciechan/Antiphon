@@ -1,5 +1,0 @@
-BUILD SLOT granted lease=96e6b5a2-54f2-4ee1-a97e-ebaf12c5ca04 waited=0s maxcpucount=6
-C1008_HOST_MANUAL {"name":"base-absent-null","exit":2,"diagnosis":"TempRunnerNotIdle","accepted":false,"scriptDigest":"ed0729a9ad003166b4c5e9390329cec7cf033dd9f3dd56587dcc7de870bb34da","operation":"c1008fac9bf6161d46d028b4ec112950b28aa","absent":false}
-changed host rejected: RecycleToolsMissing
-C1008_HOST_MANUAL cleanup=absent evidence=/tmp/c1008-host-real-manual-qiX3IB/evidence.json
-BUILD SLOT released lease=96e6b5a2-54f2-4ee1-a97e-ebaf12c5ca04 held=4s

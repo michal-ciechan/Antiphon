@@ -1,2 +1,0 @@
-dotnet run --project tools/Antiphon.Checkpoints -- row --name CP-3 --project tests/Antiphon.Tests --output-path bin-c1008-cache/ --filter "/*/*/RemoteScriptContractTests/C849_Deploy_prepares_and_verifies_before_acceptance" --no-build
-dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c1008-cache/ -- --treenode-filter "/*/*/RemoteScriptContractTests/C849_Deploy_prepares_and_verifies_before_acceptance"
