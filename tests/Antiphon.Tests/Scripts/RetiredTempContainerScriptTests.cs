@@ -85,7 +85,7 @@ public sealed class RetiredTempContainerScriptTests
     public async Task C994_Wrapper_task_and_land_census_is_complete(){
         using(var batch=new C1008HostFixture()) {
             var vectors=C994TaskVectors.Build(batch.Vectors["emptyTasks"]!.AsObject());File.WriteAllText(batch.Root+"/task-vectors.json",vectors.ToJsonString());
-            var proof=await C994ScriptProcess.Run("pwsh","-NoProfile","-Command",LoadFunctions+$"""
+            var proof=await C994ScriptProcess.Run("pwsh","-NoProfile","-Command",LoadFunctions+$$"""
                 $vectors=Get-Content -Raw '{{batch.Root}}/task-vectors.json'|ConvertFrom-Json
                 foreach($v in $vectors){
                     $script:vector=$v.input
