@@ -9,13 +9,13 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet(C496-TargetRequired,C496-TargetValidation,C496-TargetRouting,C496-WriteGate,C496-FixedLayout)][string]$Case,
+    [ValidateSet('C496-TargetRequired','C496-TargetValidation','C496-TargetRouting','C496-WriteGate','C496-FixedLayout')][string]$Case,
     [string]$ReadinessCase,
     [string]$FixtureDirectory,
     [string]$DeploymentScript
 )
 if ($ReadinessCase) {
-    & (Join-Path $PSScriptRoot test-deploy-am-service-readiness.ps1) -ReadinessCase $ReadinessCase -FixtureDirectory $FixtureDirectory -DeploymentScript $DeploymentScript
+    & (Join-Path $PSScriptRoot 'test-deploy-am-service-readiness.ps1') -ReadinessCase $ReadinessCase -FixtureDirectory $FixtureDirectory -DeploymentScript $DeploymentScript
     exit $LASTEXITCODE
 }
 $selectedCase = $Case
