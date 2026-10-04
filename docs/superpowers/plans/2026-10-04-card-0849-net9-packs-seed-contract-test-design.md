@@ -768,6 +768,16 @@ break/red/restore/green **after land**. No snapshot commit/push.
 | PC-164 | Break G-164: Remove host-lane refusal before cache case dispatch | `RemoteScriptContractTests.C849_Cache_cases_use_only_the_validated_host_lane` | `wrong-lane-no-effect` |
 | PC-165 | Break G-165: Move prepare after seed_runner_checkout in case_deploy_temp_runner | `RemoteScriptContractTests.C849_Deploy_prepares_and_verifies_before_acceptance` | `deploy-prepare-before-checkout` |
 
+**PC-3 extraction variants added from real CP-6 evidence:** keep both pending
+for SourceLanding Mutation, using the same exact T7 method above. Independently
+remove only the host-apphost `chmod 0755` (expect `host-pack-public-executable`
+from a real 0744 archive fixture), and remove only `--no-same-owner` (expect
+`host-pack-image-owner`). CP-6 at `0cdfb5cd9f9658f7279837924ac5f19f39af762b`
+built the exact pinned archive but observed mode 0744 / uid 2001 in the final
+image; uid 1654 could not satisfy the required executable image-pack guard.
+The pins and narrow three-pack extraction stay unchanged. No deliberate
+mutation of either variant has been run in Code.
+
 ### Out of scope
 
 - No production Seed/Reset/Prune, fleet restart, board mutation or rollout in

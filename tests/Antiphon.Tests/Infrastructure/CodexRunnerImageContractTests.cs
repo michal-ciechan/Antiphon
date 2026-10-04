@@ -157,8 +157,8 @@ public sealed class CodexRunnerImageContractTests
         var install = Run(packs, "dotnet-sdk-${NET9_SDK_VERSION}-linux-x64.tar.gz");
         install.ShouldContain("https://builds.dotnet.microsoft.com/dotnet/Sdk/${NET9_SDK_VERSION}/dotnet-sdk-${NET9_SDK_VERSION}-linux-x64.tar.gz");
         install.ShouldContain("&& echo \"${NET9_SDK_SHA512}  /tmp/net9-sdk.tar.gz\" | sha512sum -c -");
-        install.ShouldContain("&& tar -xzf /tmp/net9-sdk.tar.gz");
-        Order(install, "sha512sum -c -", "tar -xzf").ShouldBeTrue("the hash must pass before extraction");
+        install.ShouldContain("&& tar --no-same-owner -xzf /tmp/net9-sdk.tar.gz", customMessage: "host-pack-image-owner");
+        Order(install, "sha512sum -c -", "tar --no-same-owner -xzf").ShouldBeTrue("the hash must pass before extraction");
         foreach (var pack in new[] { "Microsoft.NETCore.App.Ref", "Microsoft.NETCore.App.Host.linux-x64", "Microsoft.AspNetCore.App.Ref" })
             install.ShouldContain("./packs/" + pack + "/${NET9_PACK_VERSION}");
         install.ShouldContain("&& rm /tmp/net9-sdk.tar.gz");
@@ -180,6 +180,7 @@ public sealed class CodexRunnerImageContractTests
         wrapper.ShouldContain("$rows['net9-offline'] = Invoke-Probe 'net9-offline' '1654:1654'");
         var output = RemoteScriptContractTests.LinuxShell("bash \"$repo/scripts/fixtures/c913-image-contract.sh\" archive \"$repo\"\n", "repo");
         output.ShouldContain("PASS archive-digest-gates-extraction");
+        output.ShouldContain("PASS host-pack-public-executable");
     }
 
     [Test]
