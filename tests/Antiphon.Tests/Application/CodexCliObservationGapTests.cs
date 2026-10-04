@@ -21,9 +21,12 @@ public sealed class CodexCliObservationGapTests
     [Test]
     public async Task C1029_Per_kind_receipts()
     {
+        var failures = new List<Exception>();
         foreach (var remote in new[] { false, true })
         foreach (var busy in new[] { false, true })
         {
+          try
+          {
             await using var w = await World.CreateAsync(remote, busy);
             w.Recipient.Ready = false;
             w.Recipient.AckRules = false;
@@ -66,16 +69,31 @@ public sealed class CodexCliObservationGapTests
                 await w.AssertReceiptAsync($"C1029 Grok remote={remote} busy={busy}");
                 w.Terminal.SubmittedBodies.Count(b => b.StartsWith("[antiphon-grok-rules:", StringComparison.Ordinal)).ShouldBe(1);
             }
-            finally { w.Recipient.Ready = true; w.Recipient.AckRules = true; await starting; }
+            finally
+            {
+                w.Recipient.Ready = true; w.Recipient.AckRules = true;
+                if (w.Recipient.Terminals.TryGetValue(w.SessionId, out var terminal) && w.Recipient.Rules.ContainsKey(w.SessionId))
+                {
+                    var prompt = terminal.SubmittedBodies.FirstOrDefault(b => b.StartsWith("[antiphon-grok-rules:", StringComparison.Ordinal));
+                    if (prompt is not null) w.Recipient.AppendRulesAck(w.SessionId, prompt);
+                }
+                await starting;
+            }
+          }
+          catch (Exception ex) { failures.Add(new Exception($"C1029 Grok remote={remote} busy={busy}", ex)); }
         }
         foreach (var busy in new[] { false, true })
         foreach (var spill in new[] { false, true })
         {
+          try
+          {
             await using var w = await World.CreateAsync(true, busy);
             await w.ProduceAsync(AgentKind.ClaudeCode, spill);
             await w.StartAsync();
             if (busy) w.Terminal.SubmittedBodies.ShouldBeEmpty("C1029 remote Claude busy");
             await w.ReadyToFlushAsync(); await w.FlushAsync();
+            if (!spill) System.Text.Encoding.UTF8.GetByteCount(w.Full).ShouldBeLessThanOrEqualTo(w.Limits.BriefInlineMaxBytes,
+                "C1029 Claude inline witness must fit the unchanged selected ceiling");
             await w.AssertReceiptAsync($"C1029 Claude spill={spill} busy={busy}", spill);
             var row = await w.RowAsync();
             var wire = w.Wire(row);
@@ -83,7 +101,10 @@ public sealed class CodexCliObservationGapTests
             bodyIndex.ShouldBeGreaterThanOrEqualTo(0);
             w.Terminal.Inputs[bodyIndex + 1].ShouldBe("\r", "C1029 separate Enter");
             if (!spill) w.Terminal.Inputs[bodyIndex].ShouldBe("\x1b[200~" + wire + "\x1b[201~", "C1029 LF bracketed paste");
+          }
+          catch (Exception ex) { failures.Add(new Exception($"C1029 Claude spill={spill} busy={busy}", ex)); }
         }
+        if (failures.Count != 0) throw new AggregateException("C1029 kind vector failures", failures);
     }
 
     [Test]
@@ -119,6 +140,7 @@ public sealed class CodexCliObservationGapTests
                 // The real producer persisted its claim but could not persist a handoff. The
                 // launch is intentionally lost; watchdog and explicit Retry own the new attempt.
                 w.Clock.Advance(TimeSpan.FromMinutes(w.H.Delegation.DeliveryFailTimeoutMinutes + 1));
+                await w.RefreshHeartbeatAsync();
                 using (var scope = w.H.Provider.CreateScope())
                 {
                     await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().FailNeverStartedAsync(CancellationToken.None);
@@ -144,6 +166,28 @@ public sealed class CodexCliObservationGapTests
         {
             await using var w = await World.CreateAsync(remote, busy: true);
             await w.ProduceAsync(); await w.StartAsync();
+            await w.ReadyToFlushAsync(); await w.FlushAsync();
+            await w.AssertReceiptAsync("C1029 real prior generation receipt");
+            var priorSession = w.SessionId;
+            var priorWire = w.Wire(await w.RowAsync());
+            DateTime priorGeneration;
+            await using (var priorDb = w.Db())
+                priorGeneration = (await priorDb.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == priorSession)).StartedAt;
+            w.Clock.Advance(TimeSpan.FromSeconds(1));
+            using (var scope = w.H.Provider.CreateScope())
+                await scope.ServiceProvider.GetRequiredService<AgentTaskService>().RetryAsync(w.TaskId, CancellationToken.None);
+            w.AssertNoProbes("old-generation Retry");
+            await w.DispatchAsync(); await w.StartAsync();
+            w.SessionId.ShouldNotBe(priorSession, "C1029 real Retry selected a new generation");
+            await using (var currentDb = w.Db())
+            {
+                (await currentDb.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == w.SessionId)).StartedAt.ShouldNotBe(priorGeneration);
+                (await currentDb.TranscriptEntries.CountAsync(e => e.AgentSessionId == priorSession &&
+                    e.Kind == TranscriptKinds.UserPrompt && e.Text == priorWire)).ShouldBe(1, "C1029 actual prior whole W remains stored");
+            }
+            // Both histories are real. Keep the previous record below the new floor;
+            // the separate at-floor same-session adversary isolates the sequence guard.
+            await w.ReadyToFlushAsync();
             string? held = null;
             w.Recipient.RecordPrompt = async (_, text) =>
             {
@@ -165,6 +209,8 @@ public sealed class CodexCliObservationGapTests
             await w.ReadyToFlushAsync(); await w.FlushAsync();
             w.Terminal.SubmittedBodies.Count.ShouldBe(1, "C1029 old-floor late receipt avoids duplicate input");
             await w.AssertReceiptAsync("C1029 old-floor then actual-current receipt");
+            w.Recipient.Terminals[priorSession].SubmittedBodies.Count(b => b == priorWire).ShouldBe(1,
+                "C1029 Retry never submits current work to the prior recipient");
         }
     }
 
@@ -198,8 +244,11 @@ public sealed class CodexCliObservationGapTests
     [Test]
     public async Task C1029_Unobservable_timestamp_floor_is_original()
     {
+        var failures = new List<Exception>();
         foreach (var offset in new long?[] { -1, null, 0, 1 })
         {
+          try
+          {
             await using var w = await World.CreateAsync(true);
             await w.ProduceAsync();
             string? held = null;
@@ -226,7 +275,10 @@ public sealed class CodexCliObservationGapTests
             else recovered.RemoteSpillBody.ShouldBeNull("C1029 equality and plus-one source timestamp qualify");
             w.Terminal.SubmittedBodies.Count.ShouldBe(1);
             await w.AssertReceiptAsync("C1029 timestamp boundary " + offset);
+          }
+          catch (Exception ex) { failures.Add(new Exception("C1029 timestamp offset=" + (offset?.ToString() ?? "null"), ex)); }
         }
+        if (failures.Count != 0) throw new AggregateException("C1029 timestamp vector failures", failures);
     }
 
     [Test]
@@ -276,10 +328,11 @@ public sealed class CodexCliObservationGapTests
         {
             await using var w = await World.CreateAsync(remote, busy: true);
             await w.ProduceAsync(); await w.StartAsync();
-            if (!busy) await w.ReadyToFlushAsync();
             var original = await w.RowAsync();
+            original.Status.ShouldBe(QueuedMessageStatus.Pending, $"C1029 crash setup remote={remote} busy={busy}");
+            original.DeliveryAttempts.ShouldBe(0);
             w.Fault.Point = "after-input";
-            if (busy) await w.ReadyToFlushAsync();
+            await w.ReadyToFlushAsync();
             await Should.ThrowAsync<InjectedFault>(() => w.FlushAsync());
             w.Fault.Fired.ShouldBeTrue();
             w.Terminal.SubmittedBodies.Single().ShouldBe(w.Wire(original), "C1029-pc-220 actual terminal submit before loss");

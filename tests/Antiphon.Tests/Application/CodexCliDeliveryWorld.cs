@@ -1,4 +1,7 @@
 using System.Text;
+using System.Reflection;
+using System.Runtime.ExceptionServices;
+using System.Collections.Concurrent;
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
@@ -44,6 +47,8 @@ internal static partial class CodexCliRemoteDeliveryFixture
         private readonly List<string> _graphRoots = [];
         private readonly Guid _store = Guid.NewGuid();
         private readonly Guid _boot = Guid.NewGuid();
+        public ConcurrentDictionary<string, int> ProbeCalls { get; } = new();
+        private int _oldProbeFrames;
         public Guid TaskId { get; private set; }
         public Guid SessionId { get; private set; }
         public string RunnerId => Remote ? Host!.AllowedRunnerId : "local";
@@ -75,9 +80,10 @@ internal static partial class CodexCliRemoteDeliveryFixture
                     RunnerCloneSource = (await Git.GitReadAsync("remote", "get-url", "origin")).Trim(),
                     CapacityStatePath = Path.Combine(Root, "capacity"), LaunchGenerationsPath = Path.Combine(Root, "generations"),
                 }, new SignedIn());
-                Host = await PhoneHomeTestHost.StartAsync(connectionString: Schema.ConnectionString,
+                Host = await PhoneHomeTestHost.StartAsync(clock: Clock, connectionString: Schema.ConnectionString,
                     configureRunnerSettings: s =>
                     {
+                        services.AddSingleton<TimeProvider>(Clock);
                         s.AllowDelegatedTasks = true; s.HostWorkspaceRoot = Git.Path; s.RunnerWorkspace = Root;
                         s.RunnerRepository = Path.Combine(Root, "repo"); s.CallbackOrigin = "https://antiphon.test";
                     }, configureServices: services =>
@@ -85,13 +91,18 @@ internal static partial class CodexCliRemoteDeliveryFixture
                         services.AddSingleton<RemoteSpillCourier>();
                         services.AddSingleton(sp => new PhoneHomeRunnerDirectory(
                             sp.GetRequiredService<ISessionRunnerClient>(), sp.GetRequiredService<IOptions<PhoneHomeRunnerSettings>>(),
-                            sp.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System, sp.GetRequiredService<RemoteSpillCourier>()));
+                            sp.GetRequiredService<IServiceScopeFactory>(), Clock, sp.GetRequiredService<RemoteSpillCourier>()));
                     });
                 Peer = await Host.ConnectPeerAsync(capabilities: Recipient.Capabilities(), storeId: _store, bootId: _boot);
                 Peer.Reply = r => dispatcher.DispatchAsync(r, CancellationToken.None).GetAwaiter().GetResult();
                 Host.Directory.MarkRecovered(await Host.WaitLiveAsync());
                 directory = Host.Directory;
             }
+            var counted = DispatchProxy.Create<ISessionRunnerDirectory, DirectoryCounter>();
+            ((DirectoryCounter)counted).Inner = directory;
+            ((DirectoryCounter)counted).Owner = this;
+            directory = counted;
+            ISessionRunnerClient selected = Remote ? new RunnerScopedSessionRunnerClient(directory, RunnerId) : directory.Local;
             var registry = CodexCliObservationTests.Registry();
             var authHome = Path.Combine(Root, "grok-home");
             System.IO.Directory.CreateDirectory(authHome);
@@ -108,13 +119,13 @@ internal static partial class CodexCliRemoteDeliveryFixture
                 ConfigureServices = services =>
                 {
                     services.AddSingleton<ISessionRunnerDirectory>(directory);
-                    services.AddSingleton<ISessionRunnerClient>(Remote ? new RoutingSessionRunnerClient(directory) : local);
+                    services.AddSingleton<ISessionRunnerClient>(selected);
                     if (Remote) services.AddSingleton(Host!.App.Services.GetRequiredService<IOptions<PhoneHomeRunnerSettings>>());
                     services.AddSingleton<PhoneHomeLaunchPolicy>();
                     services.AddSingleton<IOptions<AgentRegistrySettings>>(Options.Create(registry));
                     services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new BridgeQueueHarness.OptionsMonitorStub<AgentRegistrySettings>(registry));
                     services.AddSingleton<IAgentProtocolAdapterFactory>(sp => _factory = new(
-                        Remote ? new RunnerScopedSessionRunnerClient(directory, RunnerId) : local, registry,
+                        selected, registry,
                         sp.GetRequiredService<IOptions<SupervisionSettings>>()));
                     services.AddSingleton<LandDeliveryBoundary>(Freeze);
                     services.AddSingleton<IAgentTaskLaunchSink>(_launches);
@@ -140,14 +151,16 @@ internal static partial class CodexCliRemoteDeliveryFixture
             var body = "C959 delivery α\nsecond line\nEND-C959" + (longBody ? new string('x', 20000) : "");
             using var scope = H.Provider.CreateScope();
             TaskId = (await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CreateAsync(
-                new(body, Title: body, Role: AgentTaskRole.Docs, AgentKind: kind, ModelLevel: AgentModelLevel.High,
+                new(body, Title: "C1029 controlled delivery", Role: AgentTaskRole.Docs, AgentKind: kind, ModelLevel: AgentModelLevel.High,
                     Workspace: WorkspaceMode.Worktree, RunnerId: RunnerId), new(null, null, Git.Path), CancellationToken.None)).Id;
             Fault.TaskId = TaskId;
+            AssertNoProbes("Create");
             await DispatchAsync();
         }
 
         public async Task DispatchAsync()
         {
+            await RefreshHeartbeatAsync();
             async Task Tick()
             {
                 using var scope = H.Provider.CreateScope();
@@ -156,7 +169,24 @@ internal static partial class CodexCliRemoteDeliveryFixture
             await Tick();
             if (Remote) { await H.Provider.GetRequiredService<RemoteWorkspacePreparer>().WhenIdleAsync(); await Tick(); }
             await using var db = Db();
-            SessionId = (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == TaskId)).AgentSessionId!.Value;
+            var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == TaskId);
+            var events = await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == TaskId)
+                .OrderBy(e => e.At).Select(e => e.Detail).ToListAsync();
+            AssertNoProbes("dispatch");
+            SessionId = task.AgentSessionId.ShouldNotBeNull($"C1029 dispatch status={task.Status}: {task.FailureReason}; {string.Join("; ", events)}");
+        }
+        public async Task RefreshHeartbeatAsync()
+        {
+            if (!Remote) return;
+            var sent = Clock.GetUtcNow();
+            await Peer!.EmitAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Heartbeat, Peer.Epoch, Guid.NewGuid()));
+            var deadline = DateTime.UtcNow.AddSeconds(3);
+            while ((Host!.Directory.SnapshotLive()?.LastHeartbeatUtc ?? DateTimeOffset.MinValue) < sent)
+            {
+                if (DateTime.UtcNow >= deadline) throw new TimeoutException("C1029 framed heartbeat was not received");
+                await Task.Delay(20);
+            }
+            await Host!.Directory.Resolve(RunnerId).ListAsync(CancellationToken.None);
         }
         public void DiscardUnstartedLaunch() => _launches.Discard();
 
@@ -168,6 +198,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
         }
         public async Task AssertStartedAsync()
         {
+            AssertNoProbes("launch");
             await using var db = Db();
             var session = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == SessionId);
             var events = await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == TaskId)
@@ -187,9 +218,21 @@ internal static partial class CodexCliRemoteDeliveryFixture
             Recipient.Append(SessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn");
             await H.Runtime.CatchUpTranscriptAsync(SessionId, CancellationToken.None);
         }
-        public Task FlushAsync() => H.Queue.FlushSessionAsync(SessionId, CancellationToken.None);
+        public async Task FlushAsync()
+        {
+            try { await H.Queue.FlushSessionAsync(SessionId, CancellationToken.None); }
+            finally { AssertNoProbes("queue flush"); }
+        }
+        public void AssertNoProbes(string at)
+        {
+            foreach (var count in ProbeCalls) count.Value.ShouldBe(0, $"C1029 typed observation at {at}, {count.Key}");
+            Recipient.ProbeRequests.ShouldBeEmpty("C1029 recipient typed observation at " + at);
+            (_oldProbeFrames + (Peer?.RequestCount(PhoneHomeOperation.CodexCliVersion) ?? 0)).ShouldBe(0,
+                "C1029 typed observation frames at " + at);
+        }
 
         public string Full => Freeze.Full[TaskId];
+        public PtyDeliveryCeilings Limits => H.Delegation.CeilingsFor(PtyBackend.InboxConhost, "runner").ForAgentKind(Freeze.Tasks[TaskId].AgentKind);
         public string Wire(SessionQueuedMessage row)
         {
             var task = Freeze.Tasks[TaskId];
@@ -198,7 +241,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
                 return Full.TrimEnd();
             return DelegationReportFormatter.BuildBriefPointer(task, H.Delegation,
                 Remote ? TypedBodySpill.InboxRelativePath(row.Id.ToString("D")) : LocalSpillPath,
-                Full.Length, task.AgentKind).TrimEnd();
+                Full.Length, task.AgentKind, maxWireBytes: Remote ? limits.SingleWriteMaxBytes : null).TrimEnd();
         }
         public string LocalSpillPath => Path.Combine(Freeze.Tasks[TaskId].WorkingDirectory, ".antiphon", $"task-{DelegationReportFormatter.Short(TaskId)}-brief.md");
         public string SpillPath(SessionQueuedMessage row) => Remote
@@ -207,8 +250,10 @@ internal static partial class CodexCliRemoteDeliveryFixture
 
         public async Task AssertReceiptAsync(string label, bool spilled = true)
         {
+            AssertNoProbes(label);
             var row = await RowAsync();
             var wire = Wire(row);
+            Encoding.UTF8.GetByteCount(wire).ShouldBeLessThanOrEqualTo(Limits.SingleWriteMaxBytes, label + " single-write ceiling");
             Full.ShouldContain("C959 delivery α\nsecond line\nEND-C959", customMessage: label);
             Full.ShouldNotContain("\r");
             Terminal.SubmittedBodies.Count(b => b == wire).ShouldBe(1, label + " actual submissions");
@@ -230,7 +275,6 @@ internal static partial class CodexCliRemoteDeliveryFixture
                 (await File.ReadAllBytesAsync(SpillPath(row))).ShouldBe(Encoding.UTF8.GetBytes(Full), label + " independent E bytes");
             }
             if (Remote) Peer!.RequestCount(PhoneHomeOperation.Transcript).ShouldBeGreaterThan(0, label);
-            Recipient.ProbeRequests.ShouldBeEmpty(label + " inert observation");
         }
 
         public async Task RecreateAsync()
@@ -243,6 +287,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
             await ((IAttachableProtocolAdapter)adapter).AttachAsync(id, CancellationToken.None);
             H.Runtime.Register(id, adapter);
             await H.Runtime.CatchUpTranscriptAsync(id, CancellationToken.None);
+            AssertNoProbes("recreated graph");
             Recipient.Terminals[id].Killed.ShouldBeFalse("C1029 retained recipient survived graph disposal");
         }
         private async Task CloseGraphAsync()
@@ -252,7 +297,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
                 await H.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
                 await H.DisposeAsync(); H = null!;
             }
-            if (Peer is not null) { await Peer.DisposeAsync(); Peer = null; }
+            if (Peer is not null) { _oldProbeFrames += Peer.RequestCount(PhoneHomeOperation.CodexCliVersion); await Peer.DisposeAsync(); Peer = null; }
             if (Host is not null) { await Host.DisposeAsync(); Host = null; }
         }
         public async ValueTask DisposeAsync()
@@ -291,7 +336,9 @@ internal static partial class CodexCliRemoteDeliveryFixture
                     if (Point == "before-insert") Throw();
                     _afterInsert = true;
                 }
-                if (entry.State == EntityState.Modified && entry.Entity.DeliveryVerdict == DeliveryVerdict.Delivered && Point == "after-input") Throw();
+                if (entry.State == EntityState.Modified
+                    && entry.Entity.DeliveryVerdict is (DeliveryVerdict.Delivered or DeliveryVerdict.LateConfirmed)
+                    && Point == "after-input") Throw();
             }
             return ValueTask.FromResult(result);
         }
@@ -301,6 +348,44 @@ internal static partial class CodexCliRemoteDeliveryFixture
             return ValueTask.FromResult(result);
         }
         private void Throw() { var point = Point!; Point = null; Fired = true; throw new InjectedFault(point); }
+    }
+
+    // Forward every interface member, including additive defaults, while counting typed
+    // calls before transport/refusal. Counts belong to the world and survive graph loss.
+    internal class ClientCounter : DispatchProxy
+    {
+        public ClientCounter() { }
+        public ISessionRunnerClient Inner = null!;
+        public World Owner = null!;
+        public string Lane = "";
+        protected override object? Invoke(MethodInfo? method, object?[]? args)
+        {
+            if (method!.Name == nameof(ISessionRunnerClient.GetCodexCliVersionAsync))
+                Owner.ProbeCalls.AddOrUpdate(Lane, 1, (_, n) => n + 1);
+            return Forward(method, Inner, args);
+        }
+    }
+    internal class DirectoryCounter : DispatchProxy
+    {
+        public DirectoryCounter() { }
+        public ISessionRunnerDirectory Inner = null!;
+        public World Owner = null!;
+        protected override object? Invoke(MethodInfo? method, object?[]? args)
+        {
+            var result = Forward(method!, Inner, args);
+            if (result is not ISessionRunnerClient client) return result;
+            var proxy = DispatchProxy.Create<ISessionRunnerClient, ClientCounter>();
+            var counter = (ClientCounter)proxy;
+            counter.Inner = client; counter.Owner = Owner;
+            counter.Lane = method!.Name == "get_Local" ? "local" : "selected:" + (args?[0] as string ?? "local");
+            return proxy;
+        }
+    }
+    private static object? Forward(MethodInfo method, object inner, object?[]? args)
+    {
+        try { return method.Invoke(inner, args); }
+        catch (TargetInvocationException ex) when (ex.InnerException is not null)
+        { ExceptionDispatchInfo.Capture(ex.InnerException).Throw(); throw; }
     }
 
     private sealed class SignedIn : IProviderAuthProbe
