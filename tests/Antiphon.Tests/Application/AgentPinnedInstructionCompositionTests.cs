@@ -39,7 +39,7 @@ public sealed class AgentPinnedInstructionCompositionTests
             var pin = Pin(agent.Id, "10000000000000000000000000000001", "prefer short replies");
             var snapshot = AgentPinSnapshot.Create(agent.Id, revision, revision != 0, revision == 1 ? [pin] : []);
             var selection = NamedAgentInstructionSelection.Select(agent, kind, toolsAllowed: true);
-            selection.RuntimeSupported.ShouldBeTrue();
+            selection.RuntimeSupported.ShouldBeTrue("c262-g188");
             selection.CanReadLive.ShouldBeTrue();
             var composed = InstructionBundleComposer.ComposeNamed(selection, snapshot, systemPromptAppend: append);
             composed.Text.ShouldContain("[bundle:standing-instructions v");
@@ -84,7 +84,7 @@ public sealed class AgentPinnedInstructionCompositionTests
         {
             selection.RequiresFile(snapshot).ShouldBeFalse();
             var composed = InstructionBundleComposer.ComposeNamed(selection, snapshot);
-            composed.Text.ShouldBeEmpty();
+            composed.Text.ShouldBeEmpty("c262-g054");
             composed.PinSnapshot.ShouldBeNull();
         }
         foreach (var kind in new[] { AgentKind.Raw, AgentKind.OpenCode })
@@ -99,9 +99,12 @@ public sealed class AgentPinnedInstructionCompositionTests
             var selection = NamedAgentInstructionSelection.Select(agent, kind, toolsAllowed: false);
             selection.RuntimeSupported.ShouldBeTrue();
             selection.CanReadLive.ShouldBeFalse();
-            var text = InstructionBundleComposer.ComposeNamed(selection, snapshot).Text;
+            var composed = InstructionBundleComposer.ComposeNamed(selection, snapshot);
+            composed.Bundles.Single().Key.ShouldBe("standing-instructions");
+            composed.Bundles.Single().Version.ShouldNotBe(InstructionBundles.Get("standing-instructions").Version);
+            var text = composed.Text;
             text.ShouldContain("OWNER_ONLY");
-            text.ShouldContain("Live reread is unavailable");
+            text.ShouldContain("Live reread is unavailable", customMessage: "c262-g124");
             text.ShouldNotContain("Invoke-RestMethod");
             text.ShouldNotContain("ANTIPHON_TASK_TOKEN");
             text.ShouldNotContain("read the file");
@@ -127,10 +130,10 @@ public sealed class AgentPinnedInstructionCompositionTests
             string.Join("\n", Enumerable.Range(1, 8).Select(n => new string('`', n) + " " + new string('~', n))));
         var snapshot = AgentPinSnapshot.Create(agent.Id, 4, true, [b, a]);
         var expectedHash = Hash(a.Id.ToString("N") + "\n" + a.Text + "\n" + b.Id.ToString("N") + "\n" + b.Text + "\n");
-        snapshot.ContentHash.ShouldBe(expectedHash);
+        snapshot.ContentHash.ShouldBe(expectedHash, "c262-g185");
         snapshot.Pins.Select(p => p.Id).ShouldBe([a.Id, b.Id]);
         var expected = ExpectedBlock(agent.Id, 4, [a, b]);
-        AgentPinRenderer.Render(snapshot).ShouldBe(expected);
+        AgentPinRenderer.Render(snapshot).ShouldBe(expected, "c262-g055");
         const string append = "  final {agentName}\r\ncontract  ";
         var composed = InstructionBundleComposer.ComposeNamed(
             NamedAgentInstructionSelection.Select(agent, AgentKind.ClaudeCode, true), snapshot,
@@ -144,7 +147,7 @@ public sealed class AgentPinnedInstructionCompositionTests
         protocolAt.ShouldBeGreaterThan(bundleAt);
         styleAt.ShouldBeGreaterThan(protocolAt);
         pinsAt.ShouldBeGreaterThan(styleAt);
-        composed.Text.ShouldContain(expected);
+        composed.Text.ShouldContain(expected, customMessage: "c262-g056");
         composed.Text.ShouldEndWith(append);
         composed.Bundles.Count(bu => bu.Key == InstructionBundles.BoardApi).ShouldBe(1);
         composed.Text.ShouldNotContain("PAYLOAD_FILE_CONTENT_CANARY");
@@ -159,7 +162,9 @@ public sealed class AgentPinnedInstructionCompositionTests
         AgentPinSnapshot.Create(agent.Id, 4, true, [b, metadata]).ContentHash.ShouldBe(expectedHash);
         var revoked = AgentPinSnapshot.Create(agent.Id, 5, true, []);
         revoked.ContentHash.ShouldBe("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
-        AgentPinRenderer.Render(revoked).ShouldContain("No active pins. This empty set replaces all previous pins.");
+        AgentPinRenderer.Render(revoked).ShouldContain("No active pins. This empty set replaces all previous pins.", customMessage: "c262-g186");
+        InstructionBundleComposer.ComposeNamed(NamedAgentInstructionSelection.Select(agent, AgentKind.ClaudeCode, true), revoked)
+            .Stamps.ShouldContain("pinned ve3b0c442", customMessage: "c262-g186");
         AgentPinRenderer.Render(AgentPinSnapshot.Create(agent.Id, 0, false, [])).ShouldBeEmpty();
     }
 
@@ -181,16 +186,16 @@ public sealed class AgentPinnedInstructionCompositionTests
             var bytes = Encoding.UTF8.GetByteCount(composed.Text);
             bytes.ShouldBeGreaterThan(composed.Text.Length);
             if (kind == AgentKind.Grok)
-                Should.Throw<GrokRulesTransportException>(() => InstructionBundleComposer.BuildPinPayload(composed, kind, "provider", otherArgs, 30000, bytes - 1));
+                Should.Throw<GrokRulesTransportException>(() => InstructionBundleComposer.BuildPinPayload(composed, kind, "provider", otherArgs, 30000, bytes - 1), "c262-g059");
             else
-                Should.Throw<InvalidOperationException>(() => InstructionBundleComposer.BuildPinPayload(composed, kind, "provider", otherArgs, chars - 1, 262144));
+                Should.Throw<InvalidOperationException>(() => InstructionBundleComposer.BuildPinPayload(composed, kind, "provider", otherArgs, chars - 1, 262144), kind == AgentKind.ClaudeCode ? "c262-g057" : "c262-g058");
             var payload = InstructionBundleComposer.BuildPinPayload(composed, kind, "provider", otherArgs, chars, bytes);
             if (kind == AgentKind.Grok) payload.GrokRulesPayload!.Content.ShouldBe(composed.Text);
             else payload.Args.ShouldBe(argv);
             var grown = composed with { Text = composed.Text + "x" };
             Should.Throw<Exception>(() => InstructionBundleComposer.BuildPinPayload(grown, kind, "provider", otherArgs, chars, bytes));
             Should.Throw<InvalidOperationException>(() => InstructionBundleComposer.BuildPinPayload(
-                composed with { Text = composed.Text + "{{key:CANARY}}" }, kind, "provider", otherArgs, 30000, 262144));
+                composed with { Text = composed.Text + "{{key:CANARY}}" }, kind, "provider", otherArgs, 30000, 262144), "c262-g060");
             if (kind != AgentKind.Grok)
                 Should.Throw<InvalidOperationException>(() => InstructionBundleComposer.BuildPinPayload(
                     composed with { Text = new string('x', 30001) }, kind, "provider", [], 40000, 262144));
@@ -249,7 +254,7 @@ public sealed class AgentPinnedInstructionCompositionTests
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         scope.ServiceProvider.GetRequiredService<IAgentPinnedInstructionReconciler>()
-            .ShouldBeOfType<NoOpAgentPinnedInstructionReconciler>();
+            .ShouldBeOfType<NoOpAgentPinnedInstructionReconciler>("c262-g180");
         var root = Path.Combine(Path.GetTempPath(), "c262-dormant-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try

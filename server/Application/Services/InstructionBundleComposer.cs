@@ -152,8 +152,14 @@ public static class InstructionBundleComposer
         if (selection.CanReadLive)
             AddBundle(InstructionBundles.StandingInstructions);
         else
-            blocks.Add("Apply the current complete pinned set below, including an empty replacement. "
-                + "Respect the operator's contract and tool restrictions. Live reread is unavailable for this tool-disabled session.");
+        {
+            const string injectionOnly = "Apply the current complete pinned set below, including an empty replacement. "
+                + "Respect the operator's contract and tool restrictions. Live reread is unavailable for this tool-disabled session.";
+            var protocol = new InstructionBundle(InstructionBundles.StandingInstructions,
+                AgentPinSnapshotHasher.Sha256Hex(injectionOnly)[..8], injectionOnly);
+            bundles.Add(protocol);
+            blocks.Add(protocol.Render());
+        }
 
         if (styleBundleKey is not null && !InstructionBundles.IsImplicit(styleBundleKey)) AddBundle(styleBundleKey);
         var pins = AgentPinRenderer.Render(snapshot);
