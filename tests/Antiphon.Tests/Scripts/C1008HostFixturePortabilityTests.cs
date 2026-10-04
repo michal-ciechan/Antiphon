@@ -149,7 +149,7 @@ public sealed class C1008HostFixturePortabilityTests
         {
             entries.Add(entry);
             start.FileName.ShouldBe(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "wsl.exe"), "c1030-" + entry + "-launch");
-            start.ArgumentList.ShouldBe(new[] { "-e", "/bin/bash", "-s" }, "c1030-" + entry + "-launch");
+            start.ArgumentList.ShouldBe(new[] { "-e", "/bin/bash", "-s" }, customMessage: "c1030-" + entry + "-launch");
             start.StandardInputEncoding!.GetPreamble().ShouldBeEmpty("c1030-stdin-bom");
             input.ShouldNotContain("\r", customMessage: "c1030-stdin-lf");
         };
@@ -215,8 +215,8 @@ public sealed class C1008HostFixturePortabilityTests
         {
             var result = await flood.Execute("probe", "head -c 1048576 /dev/zero; printf STDOUT_TAIL; head -c 1048576 /dev/zero >&2; printf STDERR_TAIL >&2");
             result.Exit.ShouldBe(0, "c1030-stdout-drained");
-            result.Stdout.ShouldEndWith("STDOUT_TAIL", "c1030-stdout-drained");
-            result.Stderr.ShouldEndWith("STDERR_TAIL", "c1030-stderr-drained");
+            result.Stdout.ShouldEndWith("STDOUT_TAIL", customMessage: "c1030-stdout-drained");
+            result.Stderr.ShouldEndWith("STDERR_TAIL", customMessage: "c1030-stderr-drained");
         }
         await CheckInputBytes();
         foreach (var stage in new[] { "start", "readiness" })
