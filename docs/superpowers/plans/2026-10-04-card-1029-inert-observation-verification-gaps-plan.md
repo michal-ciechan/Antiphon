@@ -416,7 +416,7 @@ Success counts, build errors, wrong assertions and skipped/zero tests are distin
 Evidence/restoration stays at the assigned external verification root, never
 committed from that snapshot. CARD-1031's own control IDs stay separately scoped.
 
-### Checkpoints
+### Archived checkpoint proposal (superseded by TestDesign)
 
 All current-source rows have `After=all` and bind C1029; CP-2 instead binds
 L0959 in its own native Debug checkout. Its prior receipt may satisfy the row
@@ -523,7 +523,444 @@ Relative document links and referenced existing test paths resolve; whitespace
 check passed. These are text/structure checks only: the checkpoint importer,
 builds, tests and deliberate mutations were not executed.
 
+## Verification design
+
+TestDesign qualification, 2026-10-04, task `da4026d2`. The operator's explicit
+30–60 minute budget supersedes the earlier execution selection and 144-minute
+ordinary estimate. It does **not** change D-1..D-8's product contract or discharge
+any unexecuted obligation. This section is the active execution authority. The
+previous checkpoint proposal and completion text remain historical design input.
+The proposed next Code slice has **55 estimated ordinary minutes**, no whole-Unit run,
+and one ordinary execution per selected method. No repeat proof is required after
+green; at most three total proof rounds, with a documented failure or change
+justifying a repeat. Do not run Mutation under the ordinary budget.
+
+The [control qualification ledger](2026-10-04-card-1029-control-qualification.md)
+contains every original 192 ID plus PC-256, all paused for post-land Mutation.
+It also separates eighteen independently bypassable guards as PC-257..274; these
+are additional obligations, not renumbering or replacement of inherited IDs.
+No ordinary test or deliberate mutation was run during this TestDesign task.
+**Code handoff is held:** the interrupted Grok initialization cut below cannot
+be proved by cooperative graph disposal. Next stage is Plan for this specific
+fixture seam; it does not reopen I0 or require a human product choice.
+
+### Inspection
+
+Source B is the assigned `90abbba99d431f0ead268a07916470763bf60025` checkout.
+Source M is the plan-pinned `9b78712f6671d7ccb98bcf4a5ebea8f080d7cecd` Git object.
+B predates CARD-1031. The full probe/parser/Windows/child-fixture and observation
+projection B-to-M changes were inspected, including M's three new portable
+methods and native notice method. A new Code task must use a caller-commissioned
+current target containing CARD-1031/CARD-1022, preserving both; it must not author
+obsolete stderr or multiline rejection expectations from B. No rebase of this
+assigned TestDesign branch is required or authorized.
+
+| Bodies read | Boundaries -> verification / regression or exclusion |
+|---|---|
+| All eight `CodexCliObservationTests` bodies; `NeverRefusesAsync`, `AssertWarmReuseAsync`, `AssertDeliveryAsync`, `DispatchKit`, `BriefBoundary`, `Factory`, `Kit`, `RecoveryClock`, `BusyEventBus` | V-14/V-19/V-21..26, R-1; independent task-derived E/W, real local watchdog/Retry, actual input, selected-model and no-probe checks. Existing local pinned warm is not the remote pool producer. |
+| Entire `CodexCliRemoteDeliveryFixture`: `RunAsync`, `Freeze`, `HeldLaunches`, `RemoteFactory`, `BusyBus`, `Recipient` | V-21/V-22; real Create Worktree/preparer/claim/launch/queue/phone-home writer/Transcript pull. Missing separate lifetimes, other kinds, mutable registration samples, Retry, seeded pool and DI recovery. |
+| All six `RunnerCodexCliEvidenceTests` bodies and `ProbeIo`, `ControlledSendSocket` | V-9..13; writer before/after loss, immutable checked-at, generation/store/epoch refusal, routing, correlated diagnostic replies and real local POST. Only exact transport method is changed/run in the active slice; the other five move to F-Observation. |
+| Entire B probe tests, `CodexCliVersionTestFixture`, Windows tests, `CodexNpmLayout`, `CodexVersionChild.ps1`; M additions and changed bodies | V-1..8; auth-free bounded child, native selector, first whole banner and stdout/stderr cap reconciliation. F-Observation/F-Native own assertion-order and native missing witnesses, including second node package for PC-206. |
+| `PhoneHomeTaskDispatchProjectionTests.Signed_out_codex_runner_still_claims_and_reuses_a_warm_session`, `SeedAsync`, `CreateDispatcher`, `RecordingLaunchSink`; historical inverse diff `c57e1980` | V-27/R-6/PC-256; seeded Shared/non-worktree pool, capacity 2, reservation retained, definite signed-out framed answer, persisted Dispatched, original agent/session, queue and zero launches. No recipient receipt. |
+| `CodexPhoneHomeCreateTests.Signed_out_remote_create_refuses_with_codex_problem_details`, `Present_unknown_and_unavailable_probe_admit`, their Kit/directory/client; `ModelAvailabilityCreateTests.Create_without_IgnoreModelDisabled_is_still_409_while_held`, hold/service/workspace helpers | R-1, PC-241..243. Definite signed-out versus null/unavailable/provider-mismatch; active filter selects these three bodies only. Existing shared hold fixture runs serially. |
+| `CodexProviderAuthRoutingTests.Composed_router_measures_codex_in_its_own_home_and_gates_the_launch` | R-7; real composed auth probes over synthetic owned homes, cold launch denied/allowed by correct provider; RoutingProviderAuthProbe.ProbeAsync, CodexAuthProbe.AuthPath and RejectSignedOutCodexAsync read for G-270..272. No live credentials. |
+| Entire `GrokStartupReadyOrderingTests`, including Factory/ScriptedRunner; `DurableRunnerSpillReceiptTests` bodies; `SessionMessageQueueDeliveryVerificationTests.Card0164_*` unobservable cases | V-21/V-22; readiness before rules before task, screen fallback, actual timestamp versus ingestion time. Borrow readiness frames and rules ACK grammar, **not** that fixture's disabled delivery verification or its nonce-only final assertion. The direct writer and test-inserted prompt variants are lower-layer substitutes, not full journey evidence. |
+| `BridgeQueueHarness.HarnessOptions`, DB registration, attach/new-session setup, OnSubmitted and DisposeAsync; `FakeAgentProtocolAdapter.StartAsync/SendInputAsync`, BeforeInput/OnSubmitted and composer handling | S2/S3 setup: isolated schema, save interceptors, explicit ownership, retain roots; AttachSessionId creates a new fake and cannot by itself preserve the remote recipient. Do not edit these shared helpers in this slice. |
+| `CodexCliProbeDescriptor.FromSpec`; runner `Resolve/RunAsync/ProbeAsync/CaptureAsync`; `CodexCliVersion.ParseBanner/Parse/CompareTo`; refresh/settings; directory Register/ObserveCodexCli/LatestCapabilities; framed client pre/post ownership checks | V-1..19; all-five-field matrix, two separate validation layers, shared stream cap, early versus late current-connection checks. RoutingSessionRunnerClient's non-session diagnostic correctly uses Local; remote diagnostic control uses RunnerScopedSessionRunnerClient. |
+| `AgentTaskDispatcher.DispatchOneAsync`, cold claim/launch/queue catch, `FitBriefForTyping`, pool selection and reused-session handoff; service Create/Retry auth helper; queue staging/binding, attempt save, DeliverAsync, LateConfirm, sequence/timestamp matchers; `RemoteSpillCourier.FindDurableAsync`; runtime transcript persistence/restart boundary; `RunnerCodexAdapter.AttachAsync/DisposeAsync`; launch readiness/rules production | V-21..26 and F1..F11 below. TranscriptEntry has no generation column: old-generation evidence is excluded by original session/floor, not by an invented per-record generation predicate. |
+| I0 report; CARD-0959 active guard/PC tables and repair; testing/build checkpoint, source receipt, slots and Mutation owners; project, orchestration and session runtime owners | Keep 193 inherited obligations, current-source identity, scoped ordinary run and native separation. CARD-1037 continuation and eligible pool provenance are excluded claims. |
+
+Missing setup is concrete Code work, not an implicit fixture assumption:
+
+- S1 changes the exact transport body and the two pure observation bodies. Add
+  all-five-field descriptor cases, separately decorated local/selected typed-call
+  counters, corrected floor/alias labels and direct assertions. A local counter
+  alone cannot detect an operation routed exclusively to a remote client.
+- S2 makes `CodexCliRemoteDeliveryFixture` an owned recipient world plus disposable
+  server graph, keeping its existing RunAsync entry point for all eight original
+  consumers. The world owns schema, git origin, mirror, scripted terminal state,
+  transcript records and task-submission counts. A graph owns Kestrel/peer,
+  directory, adapters, launch queue and courier. Disposal joins graph work and
+  stops watchers but must not call world.StopAsync until the final assertion.
+  `RunnerCodexAdapter.DisposeAsync` stops its watcher; it does not kill the peer.
+  Reattach through the real attachable adapter and runtime, or
+  `ResumeInterruptedLaunchAsync` for an actually Starting delegate. Do not start
+  the old recipient again or substitute BridgeQueueHarness's attach fake.
+- Add proper Claude/Codex/Grok adapters, registry definitions and scripted
+  readiness screens. For Grok retain the real rules payload/receipt validation,
+  queue, transcript ACK and launch-brief producer. Supply only an isolated
+  successful auth probe; do not disable auth or rules. Count rules and task
+  submissions independently. Keep queue delivery verification enabled.
+- S3 adds test-local EF save/transaction interceptors keyed to exact task/queue
+  IDs and state transitions. After-commit faults must first prove the committed
+  row from a fresh un-intercepted context. Keep recipient input/transcript release
+  latches outside the graph, and await every pending operation on cleanup.
+  `ConfigureDbContext` reaches the real harness contexts. No production hook,
+  mock queue, overwritten positive transcript or modified shared helper is needed.
+- The ledger records 53 missing-witness authoring rows, seven contract retargets
+  and 151 qualified designs. F-Observation/F-Native/F-Matrix own the deferred
+  edits; active Code must not edit their files and silently skip their checks.
+
+Descriptor boundary combinations: for each of Executable, ResolutionCwd, Path,
+PathExt and CodexJsPrefix test 32768, 32769, NUL, literal/mixed-case `${secret:...}`
+and literal/mixed-case `{{key:...}}` in the pure FromSpec body (35 vectors).
+For each rejected value exercise both real local POST and framed phone-home
+command dispatch. Expect launcher_unverified and unchanged owned child count.
+The valid absolute executable plus PATH 32768/32769 is the direct runner length
+predicate oracle; inert PATHEXT is another feasible positive boundary. Pure
+FromSpec equality proves representability for the other fields, not OS support
+for a 32-KiB filename. Filesystem/native-node rejection can mask a per-field
+runner mutant; do not count it as a positive control. No need to multiply the
+five fields by unrelated version samples. Native prefix resolution stays in
+F-Native, with real owned complete npm packages and sealed PATH.
+
+### Delivery inventory
+
+E is frozen LF-only BuildBrief output from the persisted task, its settings and
+selected delivery ceilings before handoff. It contains the literal three-line
+`C959 delivery α\nsecond line\nEND-C959`. W is independently computed inline text
+or BuildBriefPointer output using the eventual row Id solely for its owned path.
+Never use queue.Body, file contents or the transcript to create expected E/W.
+For long pointers assert UTF-8 length after `.antiphon/inbox/{queueId:D}.md`
+expansion against the selected single-write ceiling. Assert file existence before
+bytes and bytes before aggregate receipt; inline LF wrapper/separate Enter have
+ordered input assertions. Do not require the three-line body inside a pointer.
+
+| Path / producer | Destination and durable identity | Persistence boundary / recovery | Observable recipient evidence |
+|---|---|---|---|
+| Local and remote real Create Worktree -> workspace preparer -> DispatchOneAsync -> launch sink / real launch queue | task Id + Attempt + selected RunnerId/store + agent/session Id + normalized accepted StartedAt | Task and claim transaction, then actual queue Id/E/path and attempt floor. Before durable queue, recover persisted task through actual watchdog failure and explicit Retry; after durable queue, fresh graph flushes original row. | Exactly one ordinal complete UserPrompt W on selected session above original floor; same accepted generation; local or runner UTF-8 file equals E. Remote also observes actual Transcript request frames. CP-4/5/6/8. |
+| Grok provider ready -> GrokRulesRefreshService.InitializeAsync -> QueueLaunchBriefAsync -> real queue | same task/session identity plus rules generation/hash/byte count; task row uses SourceTaskId while cold ordinary brief uses ExecutionTaskId | Rules receipt/ACK persisted before durable task brief; recovery via RecoverSessionAsync and unique SourceTaskId existence check. Include withheld readiness, withheld ACK, enqueue failure before save and lost return after save in eligible/busy variants. | Zero writes before provider ready; zero task-associated row before ACK; rules UserPrompt and matching ACK are prerequisites. Task receipt still requires its own complete W and E file. CP-5; G-262/G-263/G-273/G-274 and G-186/G-191/G-220. The interrupted initialization seam below is a release blocker. |
+| Real failed remote Worktree task -> RetryAsync -> cold dispatch | same task Id/RunnerId/Workspace, Attempt+1, exactly one Retried event, new session/generation | Failure is produced by lost committed launch and FailNeverStartedAsync, never a seeded Failed row. Old session retained for negative receipt query. | Full W/E only on the new recipient; exact canonical cold launch model/cwd, zero selected typed diagnostic calls. CP-6 now; all 38 matrix Retry vectors in F-Matrix. |
+| Explicitly seeded eligible non-worktree remote Shared pool -> production claim/reuse -> real queue | frozen seeded task/agent/session/runner/store/generation, tier/model/project/env/reservation | Seed once before dispatch. Busy variant first qualifies the pool while idle; after the reuse claim commits, a test-local SavedChanges/TransactionCommitted callback appends real scripted activity before the queued brief can flush. Do not make the pool ineligible before selection. | Original session/generation, zero launch specs, pending while busy, then actual TurnEnd makes queue eligible; complete actual W/E. All 38 warm vectors in F-Matrix. Seed is not admission or historical lineage proof. |
+| Same seeded reused queue, then disposed/recreated server graph | original queue Id/E/path/floor plus same seeded recipient identity | Already-eligible variant stops at committed queue save before Enqueue continues; busy variant holds until after recreation. New graph has no staged E; durable courier rewrites missing owned file, then real queue delivers/late-confirms. Never reseed the queue or rerun an already-claimed task as if queued. | Actual W UserPrompt and original E/file; one task submission across graphs. All 38 recreated-warm vectors in F-Matrix. This proves queue recovery, not another DispatchOneAsync claim. |
+| Probe/refresh snapshot -> heartbeat writer or fresh registration | runner Id/store/boot/epoch + completed-at + selected launcher fingerprint | Bounded completed snapshot survives a failed send in runner memory; serialized writer queues while busy, reconnect republishes. New boot clears memory. No durable outbox is claimed. | Real receiving directory/catalogue holds that exact completed sample after framed receipt. Explicit diagnostic request additionally joins request Id/epoch/operation to result. Existing E/P methods; F-Observation. A write/ack without receiving projection is insufficient. |
+
+Every task-delivery path runs at least one already eligible and one busy recipient
+through the real queue. Negative receipt cases keep actual current submission
+withheld, prove E retained and no qualifying receipt, then release the actual
+captured submission through the recipient transcript and production ingestion.
+Ack, request, queue insertion, event, Sent, screen advance or adapter input return
+never alone establishes delivery. CP-16 deliberately stops at claim/reuse/queue
+and cannot discharge any row above.
+
+Null-baseline setup for CP-7 uses a fresh already eligible recipient with no
+transcript records; hold publication of its actual submitted text. Assert the
+persisted LastDeliveryBaselineSequence is null **before** the first body input.
+Do not insert busy TurnEnd/activity records in this variant. Script Codex's real
+working-indicator/settled-screen evidence while withholding UserPrompt; assert
+the degraded Screen delivery and DeliveryUnverified evidence, then E retention.
+For PC-246 append the old-timestamp adversary only after this null baseline was
+saved, with current CreatedAt and large Sequence. Preserve the original attempt
+start across recreation. Test timestamp floor minus one tick, equality, plus one
+tick and null timestamp; equality/current are positives, older/null are negatives.
+Never advance the floor to recreation time. Old-generation CP-7 uses a real prior
+session/generation's already-stored whole W at or below the new attempt's original
+sequence floor, and the timestamp arm for delayed old records. It does not invent
+a generation field on TranscriptEntry or claim arbitrary untagged records can be
+attributed to a generation.
+
+The remote sample setter must cross the real directory boundary. For fresh failures,
+old versions, null/malformed version or bad fingerprint, publish a framed heartbeat
+with an accepted checked-at, then a Health receive-order barrier and assert the
+selected directory sample. For stale evidence advance the controlled clock to
+15m+tick/16m while retaining the original checked-at; sending an older heartbeat
+would be correctly ignored. For omitted fields or missing timestamp, reconnect
+with a real legacy/missing-time registration and assert the cleared snapshot
+before dispatch; a null-timestamp heartbeat is ignored and is not the test input.
+Keep the recipient world alive across connection changes. Change observations
+between actual Create and dispatch, and before Retry. Read the advertised sample
+back at each operation before accepting its zero-query oracle.
+
+Bind typed-probe counters at two levels: a forwarding selected-client decorator
+counts every GetCodexCliVersionAsync (including refusal before a frame); the real
+peer counts PhoneHomeOperation.CodexCliVersion and Recipient.ProbeRequests. Record
+local separately. Assert zero deltas before receipt/model assertions at Create,
+Retry, cold claim, reused-session handoff, retained-queue flush and final cold
+BuildLaunchSpec. Never clear counters after those operations. PC-240 keeps its
+original `_runners.Local` mutant; remote reuse calls the selected client; independently mapped PC-269 covers
+the recreated queue call. PC-253's remote variant observes cold final cwd and launch
+argv; zero-launch warm reuse does not execute it.
+
+Substitutes and limits: scripted terminal/provider records only text actually
+submitted after a separate CR; it cannot prove a vendor CLI's live behavior.
+Local adapter OnSubmitted -> isolated DB proves local queue/encoding integration,
+not a phone-home transport or native PTY. Remote frames/dispatcher/writer/pull are
+real but in one test host and cannot prove WAN/power-loss durability. DI recreation
+proves loss of server services/cache while external schema and recipient survive;
+retain and report any cooperative exception cleanup. Synthetic old/clipped/other
+session records are negative adversaries only. Native launcher checks remain
+separately commissioned Windows evidence. No proxy assertion is promoted to a
+complete recipient result.
+
+The full fault census is preserved in F-Faults. Active CP-5/6/8 exercise its key
+handoffs now; CP-9/10's exhaustive 44 vectors are explicitly deferred. Each cut
+has before/after evidence and an existing injection point, not a new production
+hook. All faults are armed for one identified task/queue transition and disarmed
+before recovery; independent contexts read committed facts.
+
+| Cut | Concrete injection / before and after evidence | Recovery and guard controls |
+|---|---|---|
+| F1 | Test-local SaveChangesInterceptor on Added AgentTask: SavingChanges before; SavedChanges after implicit commit, verified in fresh context | No task means explicit new Create; committed task resumes its own dispatch. No phantom receipt. G-191/G-194; CP-9. |
+| F2 | LandDeliveryBoundary `dispatch-warning-claim-before-commit` / `dispatch-warning-claim-committed`; explicit transaction interceptor distinguishes save from commit | No committed claim/session versus original committed claim; lost launch -> real FailNeverStartedAsync -> Retry. G-221/G-194; CP-6/9. |
+| F3 | Test-owned IAgentTaskLaunchSink before accepting tuple / after accepting it into HeldLaunches; discard only the old held sink on graph recreation | Confirm absent recipient and zero launches before retry; after releasing to real launch queue, its own outcome controls recovery. G-190/G-221; CP-9. |
+| F4 | Recipient.StartAsync before terminal start / after actual terminal start and recorded accepted generation, before returning frame; hold/lost response via peer | Inspect real runner List/Get and generation first. Production launch transport-loss reattach or ResumeInterruptedLaunchAsync when Starting; if cooperative cleanup killed it, report absent and real failure/Retry, never count that as surviving-process crash recovery. G-190/G-192/G-221; CP-9. |
+| F5 | Before FitBriefForSession: final launch-sink callback; after StageRemoteSpill and before queue binding: test-local ILogger callback for FitBriefForTyping's `brief is ... delivering a pointer` message, throwing OperationCanceledException | Before: no staged E; after: courier.IsStaged true and no queue row. Local counterpart observes owned file at same log boundary. After graph loss regenerate from persisted task via real failure/Retry, never from expected E. G-216/G-219; CP-9. |
+| F6 | Queue Added row SavingChanges / SavedChanges plus actual transaction commit where applicable; fresh read joins Id, task/session, E/path | Before insert: no recipient input or Working; explicit real Retry. Committed row: flush original Id once. G-191/G-192/G-213/G-216/G-219; CP-5/6/8/9. |
+| F7 | Owned directory at intended spill-file path fails actual WriteSpillAsync; after-write hook is Recipient.BeforeBody entered from PhoneHomeCommandDispatcher.Input | Failure: no pointer input. Completed write/lost input reply: preserve original path/bytes, then recovery receipt. G-211/G-217/G-219; CP-4/8/10. |
+| F8 | FakeAgentProtocolAdapter.BeforeInput on separate CR (typed composer held); OnSubmitted after actual composer submit (not body-write ack) | Before submit: real composer evidence/Enter-only or new-generation recovery. After submit: retained actual W, one submission across graphs. G-214/G-215/G-220; CP-8/10. |
+| F9 | Recipient.RecordPrompt latch before adding its actual captured W to retained transcript; after append before Transcript response | Append/release only actual submitted text, keeping source timestamp/uuid. E remains until complete ingested current W. G-218/G-222/G-223/G-224/G-246; CP-7/8/10. |
+| F10 | Real peer Transcript reply held/dropped; test-local EF interceptor on Added TranscriptEntry before/after save | Pull again through CatchUpTranscriptAsync; retain original attempt and E, deduplicate actual source records. G-220/G-223/G-246; CP-8/10. |
+| F11 | Queue verdict transition SavingChanges / committed SavedChanges, armed only after attempt save and actual submission | Precommit: recreate, ingest actual W, late-confirm original row. Postcommit lost return: same settled row, zero re-enqueue/re-submit. Assert settlement AND count. G-218/G-220; CP-8/10. |
+
+F-Faults keeps the original 11 seams × two sides × local/remote = 44 vectors:
+F1–F6 24 and F7–F11 20. Its local before/after eligible/busy and old/unknown
+pairing, reversed remotely, stays as specified above the appendix. F5's logger
+interception is a test observation of production staging, not an alternate spill
+implementation. F4's abrupt server-process death witness and the Grok interrupted initialization
+case have a concrete unresolved seam, recorded below. DI disposal alone is not
+an abrupt crash.
+
+**Plan return P-1: interrupted launch/initialization cannot use the proposed
+exception-and-dispose substitute.** The inspected
+AgentSessionService.LaunchInteractiveProcessAsync calls InitializeGrokRulesAsync
+inside a catch-all `catch (Exception)` that awaits KillAndDisposeAsync before
+rethrow. This also catches OperationCanceledException. Therefore an EF/log/peer
+exception at Grok QueueLaunchBriefAsync before/after its committed enqueue, or
+cancelling a held InitializeAsync while rules ACK is pending, kills the very
+recipient that S2/S3 promise to retain. A still-blocked launch cannot simply be
+abandoned when disposing DI: its pending operation must be owned and joined.
+RecoverSessionAsync also returns while ILaunchOwnership owns the session, so
+calling it alongside that blocked live launch is not the crash-recovery witness.
+G-274 currently has no valid positive setup under these combined constraints.
+
+The next Plan task must specify a test-owned server-process boundary (existing
+real queue/producer in the child, independent schema and recipient in the parent),
+with an exact cut acknowledgement after durable commit/before return, process
+identity/start-time verified termination of only that owned child, and a fresh
+child attaching the same recipient. It must bind fixture executable, startup,
+handshake, cleanup and build/filter cost, or demonstrate another existing seam
+that lets every old operation terminate without changing the recipient's state.
+No production change, suppressed KillAsync, manually rewritten positive state,
+synthetic positive UserPrompt or leaked background launch is authorized as the
+substitute. Before/after terminal-start F4 needs the same qualification in
+F-Faults. Plan must retain the 30–60 minute ordinary budget by explicit slicing
+if its process fixture changes these estimates; it may not silently drop cases.
+This is an implementation-design blocker, not a human preference or a reason to
+repair CARD-1037. The closed table below is the exact proposed roster; do not
+start Code from it until P-1 and the PC-274 setup are resolved and reviewed.
+
+For CP-8's ordinary post-input cases, run the actual queue flush after the launch
+has returned (hold boot delivery with actual busy state, then emit the real
+TurnEnd) so an exception cannot enter launch cleanup. This proves queue/cache
+recreation after completed startup. It cannot discharge interrupted-launch P-1.
+
+### Proves it works now
+
+The V identifiers retain CARD-0959/CARD-1029 meaning. These are acceptance cases
+for Code, not claims of a TestDesign execution.
+
+- V-13/V-19: all-field diagnostic validation | pure descriptor + real POST and
+  framed dispatcher | CP-3 and CP-4 | each boundary outcome distinguished from
+  filesystem failure; rejected descriptors create no child, exact routing preserved.
+- V-14: model metadata stays inert | pure model selection | CP-4 | Sol floor
+  0.159.1, Frontier/Low null floors, canonical lookup and unchanged High/Medium aliases.
+- V-21: per-kind complete delivery | producer/real queue/recipient | CP-4/5/6/7 |
+  existing Claude/Codex plus eight Grok/remote Claude vectors; full W/E, separate
+  Enter, busy holds, actual eligibility release, negative receipts followed by real
+  positive receipt. Grok includes the two queue save/return cuts after ACK.
+- V-22: durable handoff and late confirmation | isolated Postgres, recreated DI,
+  retained remote recipient | CP-6/7/8 | same durable Id/E/path/floor; new Retry
+  generation only when real failure requires Retry; settlement plus one submission.
+- V-23..26 existing cases: changing diagnostic metadata cannot refuse work |
+  original local/remote producer journeys | CP-4 | eight original methods remain,
+  zero selected probes, no model or runner drift. This does not complete the 114
+  deferred remote matrix vectors.
+- V-27: signed-out seeded warm regression | actual dispatcher/queue | CP-16 |
+  persisted Dispatched, original agent/session/runner, queue handoff, zero launches,
+  auth call count exactly the one independent test observation; no receipt claim.
+
+### Guards the regression
+
+- R-1: independent provider authentication and model holds remain effective |
+  CP-15 | exact Should.ThrowAsync<ModelDisabledException> and
+  Should.ThrowAsync<ProviderSignInRequiredException>, while unknown/unavailable
+  auth yields no captured exception and a persisted task.
+- R-2: diagnostic transport cannot borrow another runner or leak unrepresentable
+  fields | CP-3 | selected-peer/local typed counters, exact result/descriptor,
+  correlation and zero children after refusals.
+- R-3: refactoring the delivery fixture preserves all existing consumers | CP-4 |
+  all eight original methods and their internal cases, whole recipient E/W rather
+  than a queue/status count. The class filter is justified because they all call
+  the changed fixture or share its observation arrangement.
+- R-6: no pre-claim Codex auth regression for an existing seeded warm process |
+  CP-16's exact signed-out method | claim-status assertion detects PC-256; full
+  projection class remainder belongs to F-Regression.
+- R-7: cold runner launch still checks its own Codex auth home | CP-17 |
+  composed probe refusal has zero starts and inverse owned-home case starts once.
+- R-4 native launcher and the rest of V-1..12 remain F-Native/F-Observation
+  obligations; current scope does not claim their old receipts at the new SHA.
+
+### Guard inventory
+
+The linked ledger's **211 individually enumerated G-n -> PC-n rows** are normative
+here. It lists every retained safety/process/delivery/recovery guard, including
+untested guards and authoring work. Counts: original guards=192, repair guard=1,
+new independent guards=18; **guards=211, mapped=211, missing=0, duplicate PC maps=0**.
+Do not omit guards because their checkpoints or Mutation execution are paused.
+The ledger splits independently bypassable FromSpec/runner validation, early/late
+connection ownership, provider readiness/rules ACK, and Frontier/Low metadata. Recreated-queue sample gates/no-probe checks get
+G-265..269; runner launch/router/home auth assertions get G-270..272.
+Grok durable producer deduplication and recovery ACK gating get G-273/G-274.
+
+Old-generation CP-7 is a witness for G-223/G-246's session/floor guards; there is
+no additional asserted per-transcript generation guard to mutate. Boundary checks
+not claiming a new guard are explicitly named limits rather than phantom controls.
+Every handoff in the inventory names its existing PC or the additional Grok controls.
+
+### Positive controls
+
+The ledger specifies production member, compiling defect, exact method/filter,
+fixture input, direct detecting assertion, masks, missing setup, lane and slice
+for every PC. **All 192 original IDs and PC-256 are retained and paused for
+post-land Mutation**; PC-257..274 are paused with them. Seven explicit retargets
+preserve current CARD-1031 behavior. PC-97's old combined early/late defect is
+split between PC-97 and PC-261 so the independently bypassable checks each have a
+control. Fifty-three witness changes are authoring prerequisites, not controls
+already demonstrated red. The 21 remote-only variants are separately costed.
+
+Mutation runs break/red/restore/green after land; Code runs V/R; Review judges
+before land. Baseline once per exact method and landed SHA; each mutation has an
+isolated build, exact `/*/*/Class/Method` red, exact restoration and newly built
+same-method green. Expected assertion failure is required; build/setup failure,
+wrong assertion, skipped/zero tests and a mere timeout are not red. Keep each
+phase's source/build/TRX receipt outside the SourceLanding snapshot, await every
+child, and leave exact tracked/index bytes restored. Mutation remains paused
+until explicitly commissioned; ordinary Code or Review cannot silently run it.
+
+### Out of scope
+
+- CARD-1037 failed Shared continuations: separate producer/dispatcher repair,
+  not a way to create a qualifying warm pool or an acceptance dependency here.
+- Provenance of the seeded eligible remote pool; neither standing adoption nor
+  a post-Create Workspace rewrite is a substitute for the unproven producer.
+- Full provider/model/fault Cartesian product, live CLI/provider spend, fleet
+  traffic, production deployment and wholesale Unit/assembly reruns. Boundary
+  pairings and the named representatives cover the decisions without that product.
+- Native Windows and historical exact-L0959 evidence in portable Code. The
+  original native obligations are retained in F-Native, not counted as skipped.
+- New production hooks, retries, CLI admission gates or changed timeouts/ceilings.
+  A genuine product defect is reproduced at base and returned for separate repair.
+
+The following are **named follow-up slices**, not active rows or optional skips.
+The original proposed filters remain in the archived proposal for traceability.
+Their manifests must be commissioned separately, with current-source/affected
+consumer qualification; CARD-1029 remains partially open until they are evidenced.
+
+| Follow-up slice | Former checkpoint(s) and exact scope | Estimated ordinary floor | Still owed |
+|---|---|---:|---|
+| F-Observation | CP-1 `CodexCliVersionProbeTests/*` (8 at M); CP-3 remainder: RunnerCodexCliEvidenceTests methods `C959_Heartbeat_updates_only_probe_evidence`, `C959_Freshness_boundaries`, `C959_Generation_change_clears_version`, `C959_Catalogue_and_status_project_version`, `C1031_Advisory_diagnostics_preserve_freshness` | 14 | Probe 8 + exact wire remainder 5; masking repairs and early-current PC-261. |
+| F-Faults | CP-9 `G/C1029_Faults_before_durable_queue_recover`; CP-10 `G/C1029_Faults_after_durable_queue_recover` | 20 | All 44 vectors, including any separately qualified abrupt-process-death seam. |
+| F-Matrix | CP-11 `G/C1029_Remote_failed_samples_keep_retry_and_reuse`; CP-12 `G/C1029_Remote_stale_samples_keep_retry_and_reuse`; CP-13 `G/C1029_Remote_unknown_samples_keep_retry_and_reuse`; CP-14 `G/C1029_Remote_old_samples_keep_retry_and_reuse` | 43 | 18/12/36/48 vectors, partition below; selected-client Mutation variants and ordinary full receipts. |
+| F-Regression | CP-15 remaining exact pinned-profile/model-dispatch/auth methods; CP-16 seven projection methods outside the signed-out method | 8 | The old class-wide regression obligation is retained, not replaced by CP-16's receipt-free claim test. |
+| F-Native | CP-2 original exact L0959 native filter; CP-18 current-source Windows launcher filter | 16 | Original 29-result L0959 receipt validation/run; current 30-result M-derived roster, plus any newly added cases. Portable absence cannot discharge either. |
+
+Body recount: B has five RunnerCodexCliEvidenceTests methods; the inspected M
+CARD-1031 diff adds C1031_Advisory_diagnostics_preserve_freshness, giving six.
+Active CP-3 selects only C959_Exact_probe_transport_is_bound. The follow-up owns
+the five exact methods listed above. F-Regression retains the archived 22-result
+auth class group minus the three active methods (19) and projection class group
+minus its signed-out method (7). Those unchanged groups are deferred scope, not
+permission for an active broad run; their follow-up manifest will select this
+explicit set difference against its commissioned current source.
+The 101-minute total is a follow-up planning floor, not permission to run an open
+filter or claim a final source certificate from mixed slices.
+
+| Preserved matrix witness | Worktree Retry | Seeded warm | Seeded recreated-warm | Total |
+|---|---:|---:|---:|---:|
+| CP-11 / failed | 6 | 6 | 6 | 18 |
+| CP-12 / stale | 4 | 4 | 4 | 12 |
+| CP-13 / unknown | 12 | 12 | 12 | 36 |
+| CP-14 / old | 16 | 16 | 16 | 48 |
+| Total | **38** | **38** | **38** | **114** |
+
+The sample/tier/eligible/busy combinations above this appendix remain unchanged.
+These are four methods with 114 labelled internal outcomes, never MinExecuted=114.
+A vector report must name path, sample, tier, eligibility, task/queue/session and
+receipt result. No vectors or controls are retired by this staged budget.
+
+### Checkpoints
+
+This is the only active Checkpoints heading/table. Active authoring scope is S1
+transport/model descriptors plus S2/S3's seven gap methods and existing fixture
+consumers. Commit all those test edits before any row; `After=all` binds every row
+to one clean C1029 source. F-Observation/F-Matrix/F-Faults/F-Native/F-Regression edits
+and their runs are separate commissioned slices. Do not edit source during a run.
+
+Bootstrap the checkpoint tool once through the build-slot gate into
+`bin-c1029-tool/` (estimated 4 minutes). Then use its built entry point for
+`run --plan docs/superpowers/plans/2026-10-04-card-1029-inert-observation-verification-gaps-plan.md
+--rows CP-3,CP-4,CP-5,CP-6,CP-7,CP-8,CP-15,CP-16,CP-17 --serial
+--expected-source-sha` followed by the actual full committed Code SHA. Await
+terminal `wait` (exit not 75), without ending the turn while children run. Each
+row builds its own isolated output and selects one exact filter. Slot timeout
+exit 4 is not run; never bypass the gate. Preserve unedited CHECKPOINT lines and
+validate source/build/clean/roster receipts. Evidence stays ignored. Run the full
+Code task-range evidence-diff guard and remove only owned alternate outputs after
+all drivers finish. A missing planned method or vector is incomplete, not a skip.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
+|---|---|---|---|---|---|---|---:|---:|---|---|
+| CP-3 | all | `tests/Antiphon.Tests -> bin-c1029-active-wire/` | active-exact-transport | `/*/*/RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound` | V-13,R-2 | 1 result; all descriptor/transport cases; 0 failed/skipped | 1 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-4 | all | `tests/Antiphon.Tests -> bin-c1029-active-existing/` | active-fixture-consumers | `/*/*/CodexCliObservationTests/*` | V-14,V-19,V-21..26 existing,R-3 | 8 original methods, all internal cases; 0 failed/skipped | 8 | 9 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-5 | all | `tests/Antiphon.Tests -> bin-c1029-active-kinds/` | active-kind-receipts | `/*/*/CodexCliObservationGapTests/C1029_Per_kind_receipts` | V-21 | 1 result; 8 kind vectors plus Grok handoff fault subcases; 0 failed/skipped | 1 | 6 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-6 | all | `tests/Antiphon.Tests -> bin-c1029-active-enqueue/` | active-enqueue-retry | `/*/*/CodexCliObservationGapTests/C1029_Enqueue_fault_and_retry_keep_identity` | V-21,V-22 | 1 result; local/remote before/after save; real same-task Retry receipts; 0 failed/skipped | 1 | 6 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-7 | all | `tests/Antiphon.Tests -> bin-c1029-active-negative/` | active-receipt-floors | `/*/*/CodexCliObservationGapTests/(C1029_Old_generation_does_not_confirm)\|(C1029_Unobservable_screen_retains_spill)\|(C1029_Unobservable_timestamp_floor_is_original)` | V-21,V-22 | 3 results; all negative then actual-positive variants; 0 failed/skipped | 3 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-8 | all | `tests/Antiphon.Tests -> bin-c1029-active-recovery/` | active-durable-receipts | `/*/*/CodexCliObservationGapTests/(C1029_Durable_spill_survives_recreated_graph)\|(C1029_Post_input_crash_late_confirms_once)` | V-22 | 2 results; eligible/busy, original Id/E/path, one actual submit and settled row; 0 failed/skipped | 2 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-15 | all | `tests/Antiphon.Tests -> bin-c1029-active-auth/` | active-independent-refusals | `/*/*/(CodexPhoneHomeCreateTests)\|(ModelAvailabilityCreateTests)/(Signed_out_remote_create_refuses_with_codex_problem_details)\|(Present_unknown_and_unavailable_probe_admit)\|(Create_without_IgnoreModelDisabled_is_still_409_while_held)` | R-1 | exactly the 3 named methods; 0 failed/skipped | 3 | 4 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-16 | all | `tests/Antiphon.Tests -> bin-c1029-active-warm/` | active-warm-claim | `/*/*/PhoneHomeTaskDispatchProjectionTests/Signed_out_codex_runner_still_claims_and_reuses_a_warm_session` | V-27,R-6 | 1 result; claim/reuse/queue only; 0 failed/skipped | 1 | 3 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-17 | all | `tests/Antiphon.SessionRunner.Tests -> bin-c1029-active-backstop/` | active-runner-auth | `/*/*/CodexProviderAuthRoutingTests/Composed_router_measures_codex_in_its_own_home_and_gates_the_launch` | R-7 | 1 result; 0 failed/skipped | 1 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+
+### Cost
+
+All figures are estimates, not measured timings. Ordinary Code V/R floor =
+8+9+6+6+8+8+4+3+3 = **55 minutes**, including nine isolated row builds and 21
+TUnit executions. Bootstrap adds **4**, so active setup/build/V/R = **59 minutes**.
+The exact filters and costs are in the closed table. Authoring, host-slot waits,
+failure investigation and repairs are additional; stop and amend the manifest if
+a measured row exceeds its foreground budget, never drop its vectors.
+
+Separate ordinary Review of this active slice has the same **55-minute** floor;
+its setup allowance is **4** if needed. No loaded-repeat allowance or reassurance
+rerun is hidden in either floor. At most three proof rounds, with one planned;
+failures require targeted diagnosis and exact-base reproduction before attribution.
+
+The paused Mutation floor is **2,453 minutes** for 211 guard IDs plus 21 explicitly
+retained remote-only cycles: 38 exact method baselines, each cycle's isolated
+red/restored-green build+test, and 0.5-minute edit/restoration per cycle. The ledger
+lists every exact filter, control/variant count and phase minutes. Mutation setup
+adds **4**, giving **2,457**. Active Code setup/V/R + paused Mutation floor/setup
+= **2,516 minutes**; adding active ordinary Review/setup = **2,575**.
+
+The five named follow-up ordinary floors sum to **101 minutes**, separate from
+active Code and paused Mutation. Completing them as budgeted brings Code plus
+follow-up ordinary scope to **156 minutes**, before their extra bootstrap,
+current-source consumer reruns or review. This is not a 55-minute claim for full
+CARD-1029 closure. Compared with the old 144-minute dispatch, the active closed
+scope saves **89 minutes (61.8%) now by explicit deferral**; whole-plan runtime
+savings are **zero** claimed (the split adds at least 12 minutes of isolation and
+more conservative estimates). No cost is hidden by silently deleting PCs or the
+38/38/38 matrix.
+
+Before handoff audit: bodies read as listed; inherited controls=193, additional=18;
+guards=211, mapped=211, missing=0, duplicate PC maps=0. All 211 have concrete
+compiling-defect/first-assertion recipes; 53 authoring prerequisites are explicit.
+Executable-seam qualification is **210/211**, with **PC-274 blocked by P-1**.
+This intentionally fails the all-PCs-executable Code handoff gate; next is Plan.
+All nine active rows are one build/one filter, estimated 55 minutes, execution
+floor 21. Documentation roster/link/whitespace checks are distinct from tool
+import, builds, ordinary verification and Mutation, none of which ran here.
+
 --- next stage ---
-next: test-design
-handoff: Qualify the amended plan's 192 original controls plus PC-256 and write Verification design. Preserve 38 real Worktree Retry, 38 seeded warm and 38 seeded recreated-warm vectors; CP-16 proves claim/reuse/queue only. Bind selected-client counters and receipt seams; keep the separately filed continuation defect out of scope.
+next: plan
+handoff: Resolve P-1: launch catch-all kills the retained Grok recipient, and launch ownership blocks recovery while initialization is held. Bind an owned server-process crash/reattach fixture and PC-274 setup without production hooks, then requalify the proposed nine-row 55-minute scope. Preserve all 193 inherited PCs, additional guards and 38/38/38 follow-ups; CP-16 stays claim/reuse/queue only.
 artifact: docs/superpowers/plans/2026-10-04-card-1029-inert-observation-verification-gaps-plan.md
