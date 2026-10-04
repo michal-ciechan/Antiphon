@@ -915,8 +915,14 @@ parallel work this turn. Other projects' work never counts against yours.
 
 **Default: `delegate.ps1`.** Unrelated new work needs nothing special — the warm pool reuses an idle
 agent in the same directory (compacted first) and spawns a fresh ephemeral delegate only when none
-fits. Sequential follow-up that must keep context: `-OnAgent <taskId>` (already on the script and in
-the skill). Parallelism on one model: let the pool spawn another, or pass `-Worktree`. That *is* the
+fits. Sequential follow-up that must keep context: `-OnAgent <taskId>` for a local pool delegate
+or a standing agent (already on the script and in the skill). An extant remote pool delegate
+refuses follow-up Create with HTTP 422 `follow_up_remote_pool_unsupported`, before inserting a
+task: remote pool continuations cannot reuse that process. Publish the intended source, then
+create a fresh task with `-Worktree -StartRef <published-sha>` without `-OnAgent`. This refusal
+also applies to explicit `-Shared` and `-ReadOnly`; explicit `-Worktree` retains
+`workspace_existing_agent_conflict`. A retired Worktree delegate follows the frozen-tip path
+described below. Parallelism on one model: let the pool spawn another, or pass `-Worktree`. That *is* the
 "2–3 reusable workers per directory+model+tier, scale only for real parallelism" policy, implemented
 by the pool rather than by named rows.
 
