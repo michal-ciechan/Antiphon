@@ -240,6 +240,16 @@ public class AgentPinPublicationTests
         Directory.Delete(Path.Combine(crash.Cwd, ".antiphon"), recursive: true);
         Receipt(await crash.Apply(retire), retire, crash, null);
         Directory.GetFileSystemEntries(crash.Cwd).ShouldBeEmpty("cleanup replay must not recreate a retired subtree");
+
+        using var absent = new Fixture();
+        var interrupted = absent.Request();
+        (await absent.Apply(interrupted, phase => phase == "intent"
+            ? Task.FromException(new IOException("crash before first workspace I/O")) : Task.CompletedTask))["Status"]!.GetValue<int>().ShouldBe(2);
+        Directory.GetFileSystemEntries(absent.Cwd).ShouldBeEmpty();
+        var retireAbsent = absent.Request(2, null);
+        Receipt(await absent.Apply(retireAbsent), retireAbsent, absent, null);
+        Directory.GetFileSystemEntries(absent.Cwd).ShouldBeEmpty("retiring an unpublished intent must not create directories");
+        Refused(await absent.Apply(interrupted), "pin_fence_stale");
     }
 
     [Test]
