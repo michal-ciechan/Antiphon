@@ -166,8 +166,8 @@ TUnit result each; internal case loops are not additional executions.
 
 | ID | Test | Cases and decisive assertions |
 |---|---|---|
-| V-1 | `RemotePoolFollowUpAdmissionTests.Remote_pool_follow_up_refuses_before_insert` | Base case: real remote Worktree predecessor, extant pool agent, omitted runner/workspace. Loop omitted/Shared/ReadOnly across Grok/ClaudeCode/Codex (9 cases). Add individual cases for blank agent runner inheriting prior remote, differing agent/prior remote (agent wins), unknown/disabled remote binding, and explicit `local` request against the remote process (4 cases). For each: `ValidationException.StatusCode == 422`, Code `follow_up_remote_pool_unsupported`, error field `FollowUpOnTask`, text contains predecessor short ID, actual runner, `-Worktree`, `-StartRef`, `-OnAgent`; fresh-context task/event/session counts unchanged and no Added follow-up entry. Assert the refusal with label `remote-pool-refused-before-insert`. |
-| V-2 | `RemotePoolFollowUpAdmissionTests.Local_pool_follow_up_keeps_admission` | Agent/prior runner null, whitespace, `local`, mixed-case `DESKTOP`, and an explicitly local agent over a remote predecessor (5 internal cases); request runner omitted. Real Create succeeds with same AgentId/FollowUpOfTaskId, Shared workspace and same working directory. Do not add normalization changes to stored legacy alias behavior. Label `local-pool-follow-up-admitted`. |
+| V-1 | `RemotePoolFollowUpAdmissionTests.Remote_pool_follow_up_refuses_before_insert` | Base case: real remote Worktree predecessor, extant pool agent, omitted runner/workspace. Loop omitted/Shared/ReadOnly across Grok/ClaudeCode/Codex (9 cases). Add individual cases for blank agent runner inheriting prior remote, differing agent/prior remote (agent wins), unknown/disabled remote binding, and explicit local request against the remote process (4 cases). For each: `ValidationException.StatusCode == 422`, Code `follow_up_remote_pool_unsupported`, error field `FollowUpOnTask`, text contains predecessor short ID, actual runner, `-Worktree`, `-StartRef`, `-OnAgent`; fresh-context task/event/session counts unchanged and no Added follow-up entry. Assert the refusal with label `remote-pool-refused-before-insert`. |
+| V-2 | `RemotePoolFollowUpAdmissionTests.Local_pool_follow_up_keeps_admission` | Agent/prior runner null, whitespace, local, mixed-case DESKTOP, and an explicitly local agent over a remote predecessor (5 internal cases); request runner omitted. Real Create succeeds with same AgentId/FollowUpOfTaskId, Shared workspace and same working directory. Do not add normalization changes to stored legacy alias behavior. Label `local-pool-follow-up-admitted`. |
 | V-3 | `RemotePoolFollowUpAdmissionTests.Explicit_worktree_follow_up_keeps_existing_conflict` | Extant remote pool agent plus explicit Worktree still throws 422 `workspace_existing_agent_conflict`; task/event/session counts unchanged. Establishes the D-3 location, rather than changing an existing error contract. |
 
 V-1's unsupported/unknown cases set the stored remote binding after predecessor
@@ -211,11 +211,93 @@ sequentially. Zero tests, compilation or fixture errors do not count as red.
 |---|---|---|---|
 | PC-1 | Remove only the new refusal block, leaving existing workspace rewrite intact. | `/*/*/RemotePoolFollowUpAdmissionTests/Remote_pool_follow_up_refuses_before_insert` | Base omitted-runner case no longer throws at `remote-pool-refused-before-insert`; it admits a follow-up. |
 | PC-2 | Replace only the new canonical remote-binding condition with `true`, retaining `IsPoolDelegate`. | `/*/*/RemotePoolFollowUpAdmissionTests/Local_pool_follow_up_keeps_admission` | A local pool Create throws the new refusal instead of satisfying `local-pool-follow-up-admitted`. Capture/assert the no-exception outcome under that label so the red is an intended assertion. |
-| PC-3 | Remove only `followAgent.IsPoolDelegate` from the new condition. | `/*/*/TaskPlatformPlacementTests/Existing_process_is_never_relocated` | The no-exception assertion `remote-standing-follow-up-admitted` fails because Create throws `follow_up_remote_pool_unsupported`. |
+| PC-3 | Remove only `followAgent.IsPoolDelegate` from the new condition. | `/*/*/TaskPlatformPlacementTests/Existing_process_is_never_relocated` | The no-exception assertion `remote-standing-follow-up-admitted` fails because Create throws the new remote-pool refusal. |
 
 Code executes ordinary V/R only. Review assesses ordinary evidence and this
 pending PC design; it does not claim PC-clean. Mutation owns all three cycles,
 retains external receipts/restoration, and makes no snapshot commits.
+
+Typed mappings retain the exact legacy clauses above as assertion expectations.
+
+```plan-coverage-v1
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "V-1",
+      "test": "RemotePoolFollowUpAdmissionTests.Remote_pool_follow_up_refuses_before_insert",
+      "kind": "member",
+      "name": "StatusCode",
+      "planLine": 169,
+      "maps": "ValidationException.StatusCode == 422"
+    },
+    {
+      "id": "V-1",
+      "test": "RemotePoolFollowUpAdmissionTests.Remote_pool_follow_up_refuses_before_insert",
+      "kind": "value",
+      "name": "422",
+      "planLine": 169,
+      "maps": "ValidationException.StatusCode == 422"
+    },
+    {
+      "id": "V-1",
+      "test": "RemotePoolFollowUpAdmissionTests.Remote_pool_follow_up_refuses_before_insert",
+      "kind": "value",
+      "name": "follow_up_remote_pool_unsupported",
+      "planLine": 169,
+      "maps": "follow_up_remote_pool_unsupported"
+    },
+    {
+      "id": "V-1",
+      "test": "RemotePoolFollowUpAdmissionTests.Remote_pool_follow_up_refuses_before_insert",
+      "kind": "value",
+      "name": "FollowUpOnTask",
+      "planLine": 169,
+      "maps": "FollowUpOnTask"
+    },
+    {
+      "id": "V-1",
+      "test": "RemotePoolFollowUpAdmissionTests.Remote_pool_follow_up_refuses_before_insert",
+      "kind": "value",
+      "name": "-Worktree",
+      "planLine": 169,
+      "maps": "-Worktree"
+    },
+    {
+      "id": "V-1",
+      "test": "RemotePoolFollowUpAdmissionTests.Remote_pool_follow_up_refuses_before_insert",
+      "kind": "value",
+      "name": "-StartRef",
+      "planLine": 169,
+      "maps": "-StartRef"
+    },
+    {
+      "id": "V-1",
+      "test": "RemotePoolFollowUpAdmissionTests.Remote_pool_follow_up_refuses_before_insert",
+      "kind": "value",
+      "name": "without -OnAgent",
+      "planLine": 169,
+      "maps": "-OnAgent"
+    },
+    {
+      "id": "V-3",
+      "test": "RemotePoolFollowUpAdmissionTests.Explicit_worktree_follow_up_keeps_existing_conflict",
+      "kind": "value",
+      "name": "workspace_existing_agent_conflict",
+      "planLine": 171,
+      "maps": "workspace_existing_agent_conflict"
+    },
+    {
+      "id": "R-4",
+      "test": "PhoneHomeTaskRoutingTests.Shared_workspace_is_refused",
+      "kind": "value",
+      "name": "phone_home_worktree_refused",
+      "planLine": 186,
+      "maps": "phone_home_worktree_refused"
+    }
+  ]
+}
+```
 
 ### Out of scope
 

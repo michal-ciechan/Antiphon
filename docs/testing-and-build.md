@@ -363,6 +363,18 @@ clause. Its schema is `{version:1, items:[{id,test,kind,name,planLine,maps?}]}`;
 kinds are `method`, `label`, `canary`, `member`, `empty`, `null`, `value`.
 `test` is class-qualified; mappings supplement extraction and cannot remove a label
 or canary. The empty string is a valid expected `value`, but never a label.
+For prose expectations, map each exact original clause with `maps`, its current
+`planLine` and the row's bound `test`; use separate typed items for a member and
+its expected value. Remove code formatting from input spellings only. Keep labels
+and canaries as obligations and distinguish future mutation errors from baseline
+assertions. Stale clause text or coordinates refuse the checklist.
+
+A PC table's separate detecting-filter cell binds one literal method using
+`/*/*/Class/Method` or `/*/Exact.Namespace/Class/Method`. Qualified class names
+are supported. Wildcards in class/method, OR/category/command selections, multiple
+filters and conflicts with explicit methods remain binding findings. Mutation
+cells supply no promises; target coordinates still refer to the expected-red cell.
+Legacy explicit-method and V-reference bindings remain supported.
 
 Declared V/R census promises are checked against distinct successfully bound method
 obligations for the same ID, including continuation rows and additive checklist items.
@@ -418,6 +430,14 @@ syntax/helper dispatch is unmapped. A member must occur in the asserted actual;
 a canary must occur in an exclusion assertion; an expected value must occur in the
 expected expression. Null and empty are separate obligations. No general dataflow,
 whole-object expansion, semantic compilation or helper execution is performed.
+Called local functions expand in place, resolving the nearest enclosing block
+including declarations after the call. Uncalled bodies, sibling blocks and other
+tests supply no evidence; local names shadow class helpers and member-access calls
+cannot bind local functions. Block/expression bodies, literal positional/named/
+default arguments and terminal params arrays (zero, explicit array or multiple
+trailing arguments) are supported. Captured literal aliases and parameters retain
+lexical ownership and shadowing. Cycles, depth overflow and ambiguous dispatch
+remain findings. Class/partial helper expansion and the test census are unchanged.
 
 Every PC prints its method/target and predecessor findings. Unlabeled predecessors
 are issues; earlier different stable labels are advisories. Every PC, including

@@ -49,6 +49,17 @@ public sealed class PlanCoverageReader
                     method = CodeSpans(cells[1], i + 1, report).Select(s => NormalizeMethod(s.Value)).FirstOrDefault(s => s is not null && !s.EndsWith("Tests", StringComparison.Ordinal)) ?? "";
                 if (current.StartsWith("PC-", StringComparison.Ordinal) && method.Length == 0)
                     method = "@" + Regex.Match(body, @"\bV-\d+\b").Value;
+                if (current.StartsWith("PC-", StringComparison.Ordinal) && cells.Count > 3)
+                {
+                    var filters = cells.Skip(2).SkipLast(1).SelectMany(c => CodeSpans(c, i + 1, report)).ToArray();
+                    var filter = filters.Length == 1 ? ExactPcMethod(filters[0].Value) : null;
+                    if (filter is null || !method.StartsWith('@') && method.Length > 0 && !SameMethod(method, filter))
+                    {
+                        report.Diagnostics.Add(new("METHOD_UNMAPPED", i + 1, Id: current, Detail: "unsupported or conflicting PC filter binding"));
+                        method = "";
+                    }
+                    else method = filter;
+                }
                 rows.Add(new(current, body, i + 1, method, current.StartsWith("PC-", StringComparison.Ordinal), line.IndexOf(body, StringComparison.Ordinal)));
             }
             else if (current.Length > 0 && !trim.StartsWith('|') && !trim.StartsWith('#')
@@ -136,6 +147,18 @@ public sealed class PlanCoverageReader
         var name = Regex.Replace(value, @"\([^)]*\)$", "");
         return Regex.IsMatch(name, @"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$") ? name : null;
     }
+
+    private static string? ExactPcMethod(string value)
+    {
+        var parts = value.Split('/');
+        const string identifier = @"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$";
+        if (parts.Length != 5 || parts[0] != "" || parts[1] != "*"
+            || parts[2] != "*" && !Regex.IsMatch(parts[2], identifier)
+            || !Regex.IsMatch(parts[3], identifier) || !Regex.IsMatch(parts[4], @"^[A-Za-z_][A-Za-z0-9_]*$")) return null;
+        return (parts[2] == "*" ? "" : parts[2] + ".") + parts[3] + "." + parts[4];
+    }
+    private static bool SameMethod(string left, string right) => left == right
+        || left.EndsWith("." + right, StringComparison.Ordinal) || right.EndsWith("." + left, StringComparison.Ordinal);
 
     private static void ReadCounts(PlanCoverageReport report, string id, IReadOnlyList<string> cells, string text, int line)
     {
