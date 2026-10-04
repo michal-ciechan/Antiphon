@@ -16,7 +16,7 @@ if (fault === 'ps-error' && args[0] === 'ps') fail();
 if (fault === 'inspect-error' && args[0] === 'inspect') fail();
 if (fault === 'volume-ls-error' && args[0] === 'volume' && args[1] === 'ls') fail();
 if (args[0] === 'info') { out(root+'\n'); }
-else if(args[0]==='image'&&args[1]==='inspect'){if(fault==='image-inspect-error')fail();out('sha256:'+(fault==='image-inspect-wrong'?'b':'a').repeat(64)+'\n');}
+else if(args[0]==='image'&&args[1]==='inspect'){if(fault==='image-inspect-error'||fault==='original-image-missing'&&name==='sha256:'+'b'.repeat(64))fail();out((fault==='image-inspect-wrong'?'sha256:'+'b'.repeat(64):name.startsWith('sha256:')?name:'sha256:'+'a'.repeat(64))+'\n');}
 else if (args[0] === 'ps') {
  if(!state.containers.some(c=>['session-runner','state-init'].includes(c.Config.Labels['com.docker.compose.service']))) {
   state.postStopPs=(state.postStopPs||0)+1;
