@@ -54,11 +54,18 @@ try {
     $probe = @($global:c913Calls | Where-Object { $_[-1] -eq 'net9-offline' })[0]
     $mounts = @(); for ($i = 0; $i -lt $probe.Count - 1; $i++) { if ($probe[$i] -eq '--mount') { $mounts += $probe[$i + 1] } }
     Check (@($mounts | Where-Object { $_ -cmatch '^type=volume,source=c660q-[a-zA-Z0-9-]+-packages,target=/home/app/\.nuget/packages,volume-nocopy$' }).Count -eq 1) package-mount-contract
-    Check (@($mounts | Where-Object { $_ -cmatch '^type=volume,source=c660q-[a-zA-Z0-9-]+-scratch,target=/var/cache/antiphon/nuget-scratch,volume-nocopy$' }).Count -eq 1) scratch-mount-contract
-    Check (($probe[[Array]::IndexOf($probe, '--network') + 1] -ceq 'none') -and ($probe[[Array]::IndexOf($probe, '--user') + 1] -ceq '1654:1654')) child-network-uid
+    Check (@($mounts | Where-Object { $_ -cmatch '^type=volume,source=c660q-[a-zA-Z0-9-]+-scratch,target=/var/cache/antiphon/nuget-scratch,volume-nocopy$' }).Count -eq 1) private-scratch-contract
+    Check ($probe[[Array]::IndexOf($probe, '--network') + 1] -ceq 'none') network-none
+    Check ($probe[[Array]::IndexOf($probe, '--user') + 1] -ceq '1654:1654') uid-1654
     Check (($probe -contains 'PhoneHome__Enabled=false') -and ($probe -join ' ') -cnotmatch '(docker.sock|/state/codex|target=/state[, ]|target=/work[, ])') no-sensitive-child-mounts
     $initializers = @($global:c913Calls | Where-Object { ($_ -join ' ') -match 'chown 1654:1654' })
     Check ($initializers.Count -eq 1 -and $initializers[0][-1] -ceq 'set -eu; for p in /home/app/.nuget/packages /var/cache/antiphon/nuget-scratch; do test -d "$p"; test -z "$(find "$p" -mindepth 1 -print -quit)"; chown 1654:1654 "$p"; chmod 0700 "$p"; done') owned-roots-only
+    $initMounts = @(); $init = $initializers[0]
+    for ($i = 0; $i -lt $init.Count - 1; $i++) { if ($init[$i] -eq '--mount') { $initMounts += $init[$i + 1] } }
+    $createdPair = @($global:c913Calls | Where-Object { $_[0] -eq 'volume' -and $_[1] -eq 'create' -and $_[-1] -match '-(packages|scratch)$' } | ForEach-Object { $_[-1] })
+    Check ($createdPair.Count -eq 2 -and $initMounts.Count -eq 2 -and
+        $initMounts[0] -ceq "type=volume,source=$($createdPair[0]),target=/home/app/.nuget/packages,volume-nocopy" -and
+        $initMounts[1] -ceq "type=volume,source=$($createdPair[1]),target=/var/cache/antiphon/nuget-scratch,volume-nocopy") owned-init-only
     foreach ($fault in @('child-exit', 'wrong-row', 'duplicate-row', 'image-id', 'partial-create', 'revision')) {
         $code = Run-Wrapper $fault
         Check ($code -ne 0) "$fault-refused"

@@ -37,6 +37,7 @@ barrier() {
 printf() {
     if [[ "${1:-}" == 'schema=3'* ]] && [ -n "${C913_CHILD:-}" ]; then
         barrier marker-write
+        [ "$FAULT" != marker-write ] || return 1
         builtin printf "$@"
         barrier after-marker-write
     else builtin printf "$@"; fi
@@ -64,6 +65,11 @@ c849_status_body() {
     if [ "$FAULT" = status-omitted ]; then printf '{}'; return; fi
     if [ "$FAULT" = status-malformed ]; then printf '{"sessions":"unknown"}'; return; fi
     [ "$FAULT" != busy ] || sessions=1
+    if [ "$FAULT" = busy-main ] && [ "$runner" = server2 ]; then sessions=1; fi
+    [ "$FAULT" != busy-runner ] || running=1
+    [ "$FAULT" != busy-queue ] || queued=1
+    [ "$FAULT" != unknown-sessions ] || sessions=null
+    [ "$FAULT" != unknown-runner ] || running=null
     [ "$FAULT" != unknown ] || queued=null
     if [ "$FAULT" = saved-late-busy ] && grep -q '^barrier after-saved-copy$' "$root/trace"; then sessions=1; fi
     [ "$FAULT" != absent-unretired ] || retired=null
@@ -196,6 +202,9 @@ docker() {
         for arg in "${mappings[@]}"; do source="${arg#*|}"; code="${code//"__C913_MOUNT_${i}__"/"$source"}"; i=$((i+1)); done
         if [[ "$code" == *'cp -a '* ]]; then
           [ "$FAULT" != import ] || return 1
+          if [[ "$code" == *"$root/volumes/$C849_PACKAGES/_data"* ]]; then
+            [ "$FAULT" != import-packages ] || return 1
+          else [ "$FAULT" != import-npm ] || return 1; fi
           printf 'import\n' >> "$root/trace"
         fi
         bash -c "$code" "${script_args[@]}" || return $?
@@ -273,6 +282,14 @@ case "$mode" in
       esac
       run c849_validate_seed_tree "$root/stage"; refuse "$fault-refused" "$diagnosis"
     done
+    ordinary "$root/mode-source"
+    chmod 6751 "$root/mode-source/packages/c913.tools/2.0.0/tool"
+    tar -cf "$root/mode.tar" -C "$root/mode-source" .
+    mkdir -p "$root/mode-stage/packages" "$root/mode-stage/npm"
+    run "$pwsh_path" -NoProfile -File "$repo/scripts/c849-import-saved-donor.ps1" -Source "$root/mode.tar" -Stage "$root/mode-stage"
+    accept unsafe-mode-imported
+    [ "$(stat -c %a "$root/mode-stage/packages/c913.tools/2.0.0/tool")" = 751 ] || fail unsafe-mode-masked
+    pass unsafe-mode-masked
     ;;
  seed)
     ordinary "$root/donor"
@@ -308,7 +325,7 @@ case "$mode" in
       [ "$(cat "$root/exit")" = 2 ] || fail "manifest-$change-bound"
       pass "manifest-$change-bound"
     done
-    for FAULT in stop copy-packages copy-npm npm-verify import corrupt-import corrupt-npm-import smoke recovery-save restart donor-id reconnect publication busy unknown process-error writer; do
+    for FAULT in stop copy-packages copy-npm npm-verify import-packages import-npm corrupt-import corrupt-npm-import smoke recovery-save restart donor-id reconnect marker-write publication busy busy-runner busy-queue unknown unknown-sessions unknown-runner process-error writer; do
       rm -f "$C849_READY"; rm -rf -- "$SERVER2_ROOT/cache/recovery-$RUN"
       for name in "$C849_PACKAGES" "$C849_NPM"; do find "$root/volumes/$name/_data" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; done
       : > "$root/trace"
@@ -316,7 +333,7 @@ case "$mode" in
       [ "$(cat "$root/exit")" != 0 ] && [ ! -e "$C849_READY" ] || fail "$FAULT-no-publication"
       [ "$(cat "$root/outside")" = outside ] || fail seed-cleanup-scope
       case "$FAULT" in
-        busy|unknown|process-error|writer) ! grep -q '^stop$' "$root/trace" || fail "$FAULT-no-stop" ;;
+        busy*|unknown*|process-error|writer) ! grep -q '^stop$' "$root/trace" || fail "$FAULT-no-stop" ;;
         npm-verify) ! grep -q '^import$' "$root/trace" || fail npm-before-manifest ;;
       esac
       pass "$FAULT-no-publication"
@@ -370,6 +387,11 @@ case "$mode" in
         pass saved-source-byte-identical
       done
     done
+    SOURCE=live; FAULT=busy-main
+    rm -f "$C849_READY"; rm -rf -- "$SERVER2_ROOT/cache/recovery-$RUN"
+    for name in "$C849_PACKAGES" "$C849_NPM"; do find "$root/volumes/$name/_data" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; done
+    : > "$root/trace"
+    run c849_seed; accept busy-main-live-donor-accepted
     ;;
  ready)
     make_full_marker
