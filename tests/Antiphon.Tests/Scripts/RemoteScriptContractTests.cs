@@ -104,7 +104,7 @@ public sealed class RemoteScriptContractTests
             var expected = Encoding.UTF8.GetBytes(golden.ToString());
             var actual = Convert.FromBase64String(Regex.Match(output, @"(?m)^MANIFEST_BASE64=(\S+)$").Groups[1].Value);
             actual.ShouldBe(expected, "manifest-covers-npm; manifest-binds-bytes; manifest-binds-exec");
-            output.ShouldContain("MANIFEST_DIGEST=" + Digest(expected), "independent manifest digest");
+            output.ShouldContain("MANIFEST_DIGEST=" + Digest(expected), customMessage: "independent manifest digest");
         }
     }
 
