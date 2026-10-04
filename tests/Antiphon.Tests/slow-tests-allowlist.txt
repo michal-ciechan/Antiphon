@@ -225,3 +225,6 @@ Antiphon.Tests.Scripts.RollingVolumeRecycleDockerTests
 
 # CARD-1017: real Git, isolated PostgreSQL and worktree preservation boundary vectors.
 Antiphon.Tests.Infrastructure.CompletedCardWorktreeRemovalTests
+
+# CARD-0519 S1: complete empty-database migration chain and predecessor upgrade in isolated PostgreSQL.
+Antiphon.Tests.Application.ChannelOutboundDurabilitySchemaTests
