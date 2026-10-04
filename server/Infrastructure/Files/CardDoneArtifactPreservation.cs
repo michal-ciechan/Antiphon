@@ -11,6 +11,9 @@ public sealed class CardDoneArtifactPreservation(IAgentReportStore reports)
     public async Task<string?> EnsureAsync(AgentTask task, IReadOnlyList<string> roots, bool missingReviewed, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(task.Result)) return missingReviewed && await CheckDeliverablesAsync(task, roots, ct) ? null : "artifact_unpreserved";
+        // A recorded artifact is evidence, not permission to silently repair or relocate it.
+        if (task.ResultFilePath is { } existing && (!Outside(existing, roots)
+            || !await reports.IsUsableAsync(existing, task.Result, ct))) return "artifact_unpreserved";
         var stored = await reports.StoreAsync(task, ct);
         if (!stored.Succeeded || !Outside(stored.Path!, roots)
             || !await reports.IsUsableAsync(stored.Path, task.Result, ct)) return "artifact_unpreserved";
@@ -33,7 +36,7 @@ public sealed class CardDoneArtifactPreservation(IAgentReportStore reports)
         {
             var pointers = new[] { task.DeliverablePath, task.DeliverablePdfPath, task.DeliverableBundleDir };
             foreach (var pointer in pointers.Where(p => !string.IsNullOrWhiteSpace(p)))
-                if (!Outside(pointer!, roots) || !Path.Exists(pointer)) return false;
+                if (!Outside(pointer!, roots) || !await ReadableAsync(pointer!, ct)) return false;
             // An author's task report can contain detail absent from the canonical Result.
             // Distinct bytes need an existing external deliverable, never a retention copy.
             foreach (var root in roots)
@@ -59,13 +62,33 @@ public sealed class CardDoneArtifactPreservation(IAgentReportStore reports)
 
     public static string Digest(string? value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value ?? "")));
 
+    private static async Task<bool> ReadableAsync(string path, CancellationToken ct)
+    {
+        var attributes = File.GetAttributes(path);
+        if (attributes.HasFlag(FileAttributes.ReparsePoint)) return false;
+        if (attributes.HasFlag(FileAttributes.Directory))
+        {
+            foreach (var entry in Directory.EnumerateFileSystemEntries(path))
+                if (!await ReadableAsync(entry, ct)) return false;
+            return true;
+        }
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
+            81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await stream.CopyToAsync(Stream.Null, ct);
+        return true;
+    }
+
     private static bool Outside(string path, IReadOnlyList<string> roots)
     {
+        try
+        {
         if (!Path.IsPathFullyQualified(path) || !NoLinks(path)) return false;
         var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         return roots.All(root => !full.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)), comparison)
             && !full.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar, comparison));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException) { return false; }
     }
 
     private static bool NoLinks(string path)
