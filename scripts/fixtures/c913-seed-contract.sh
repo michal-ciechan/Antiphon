@@ -29,7 +29,62 @@ done
 # Preserve the actual interpreter for the admitted saved-import child; every other invocation is denied.
 pwsh_path=$(command -v pwsh)
 export PATH="$root/bin:$PATH"
-fail() { printf 'FAIL %s\n' "$*"; [ ! -e "$root/out" ] || cat "$root/out"; exit 1; }
+# Canonical design witnesses annotate the existing predicate that failed.
+# This changes diagnostics only; no predicate or refusal is bypassed.
+fail() {
+    local witness="$1"
+    case "$mode:$1" in
+      tree:empty-refused|tree:incomplete-refused|tree:metadata-empty-refused) witness=empty-full-refused ;;
+      tree:incomplete-pruned-only-in-stage) witness=incomplete-stage-only ;;
+      tree:version-file-refused) witness=invalid-layout-refused ;;
+      tree:fifo-refused) witness=special-entry-refused ;;
+      seed:corrupt-import-no-publication) witness=package-import-corruption-no-marker ;;
+      seed:corrupt-npm-import-no-publication) witness=npm-import-corruption-no-marker ;;
+      seed:smoke-no-publication) witness=smoke-failure-no-marker ;;
+      seed:recovery-save-no-publication) witness=recovery-save-failure-no-marker ;;
+      seed:restart-no-publication) witness=restart-failure-no-marker ;;
+      seed:donor-id-no-publication) witness=donor-id-change-no-marker ;;
+      seed:reconnect-no-publication) witness=reconnect-failure-no-marker ;;
+      seed:publication-no-publication|seed:marker-write-no-publication) witness=publication-failure-no-partial-marker ;;
+      seed:busy*-no-publication|seed:busy*-no-stop) witness=busy-donor-no-stop ;;
+      seed:unknown*-no-publication|seed:unknown*-no-stop|seed:process-error-no-publication|seed:process-error-no-stop) witness=unknown-process-no-stop ;;
+      seed:writer-no-publication) witness=writer-no-stop ;;
+      seed:saved-temp-present-no-import) witness=saved-temp-present-no-copy ;;
+      ready:absolute-record-refused|ready:type-record-refused|ready:truncated-record-refused|ready:unsorted-record-refused) witness=unsafe-record-refused ;;
+      ready:schema-value-refused) witness=unknown-schema-refused ;;
+      ready:marker-symlink) witness=symlink-marker-refused ;;
+      ready:digest-refused|ready:manifest-sha256-value-refused) witness=manifest-digest-refused ;;
+      ready:recovery-bytes-changed|ready:recovery-execute-changed) witness=recovery-bytes-refused ;;
+      ready:image-missing-refused) witness=recovery-image-refused ;;
+      ready:packages-value-refused|ready:scratch-value-refused|ready:npm-value-refused) witness=marker-volume-refused ;;
+      ready:mutable-cache-churn) witness=cache-churn-accepted ;;
+      *:image-missing-no-delete) witness=missing-image-no-delete ;;
+      *:source-no-delete) witness=stale-source-no-delete ;;
+      *:volume-facts-no-delete) witness=changed-volume-no-delete ;;
+      *:second-target-no-delete) witness=second-target-invalid-no-delete ;;
+      *:refill-no-success) witness=refill-failure-no-success ;;
+      *:refill-receipt-no-success) witness=refill-receipt-required ;;
+      *:budget-no-success) witness=over-budget-no-success ;;
+      maintenance:busy-no-delete|maintenance:unknown-no-delete) witness=maintenance-busy-no-delete ;;
+      maintenance:writer-no-delete|maintenance:process-error-no-delete) witness=maintenance-process-no-delete ;;
+      maintenance:attachment-no-delete) witness=maintenance-attachment-no-delete ;;
+      maintenance:broker-busy-no-delete|maintenance:broker-error-no-delete) witness=maintenance-broker-no-delete ;;
+      inventory:inventory-census-error-refused|inventory:inventory-partial-census-refused) witness=failed-census-refused ;;
+      inventory:inventory-status-*-refused|inventory:inventory-absent-unretired-refused) witness=unknown-status-refused ;;
+      inventory:inventory-duplicate-refused|inventory:inventory-retired-running-refused) witness=contradictory-container-refused ;;
+      inventory:inventory-inspect-error-refused) witness=failed-inspect-refused ;;
+      ready:mixed-marker) if [ "$extra" = schema=3 ]; then witness=duplicate-marker-refused; else witness=mixed-marker-refused; fi ;;
+      seed:saved-smoke-failure-no-marker)
+        case "$FAULT" in
+          saved-temp-present) witness=saved-temp-present-no-copy ;;
+          saved-late-busy) witness=saved-late-busy-no-import ;;
+          saved-late-attachment) witness=saved-late-attachment-no-import ;;
+        esac ;;
+    esac
+    printf 'FAIL %s [case=%s]\n' "$witness" "$*"
+    [ ! -e "$root/out" ] || cat "$root/out"
+    exit 1
+}
 barrier() {
     builtin printf 'barrier %s\n' "$1" >> "$C913_ROOT/trace"
     if [ "${CRASH:-}" = "$1" ]; then kill -KILL "$C913_CHILD"; exit 137; fi
@@ -481,7 +536,7 @@ case "$mode" in
     run c849_require_ready allow-cold; accept cold-valid-with-cache-churn
     run c849_require_ready; refuse cold-full-context-refused CacheFullSeedRequired
     ;;
- prune)
+ prune|maintenance)
     CASE=runner-cache-prune
     C590_PREVIEW_RUN="$RUN"; receipt="$SERVER2_ROOT/cache/previews/$RUN"; mkdir -p "$receipt"
     # Volume size and disk facts are external boundaries; execute all authority,
@@ -542,6 +597,7 @@ case "$mode" in
       ! grep -q 'rm -rf --' "$root/docker-trace" || fail "$bad-no-delete-trace"
       [ ! -e "$CASE_DIR/prune.txt" ] || fail "$bad-no-success"
     done
+    if [ "$mode" = maintenance ]; then [ ! -e "$root/denied" ] || fail unexpected-external-call; pass maintenance-complete; exit 0; fi
     for FAULT_CASE in refill refill-receipt main-smoke budget; do
       reset_prune; FAULT="$FAULT_CASE"
       case "$FAULT" in refill) diagnosis=CacheRefillFailed;; refill-receipt) diagnosis=CacheRefillReceiptMissing;; main-smoke) diagnosis=CacheSmokeFailed;; budget) diagnosis=CacheBudgetExceeded;; esac

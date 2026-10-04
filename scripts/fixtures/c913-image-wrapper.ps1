@@ -54,7 +54,19 @@ function global:docker {
         }
     }
 }
-function Check([bool]$condition, [string]$label) { if (-not $condition) { throw "FAIL $label" }; Write-Output "PASS $label" }
+function Check([bool]$condition, [string]$label) {
+    $witness = switch -Wildcard ($label) {
+        no-sensitive-child-mounts { 'isolated-child-allowlist' }
+        revision-refused { 'revision-mismatch-refused' }
+        child-exit-refused { 'child-exit-required' }
+        wrong-row-refused { 'matching-row-required' }
+        duplicate-row-refused { 'matching-row-required' }
+        '*-owned-cleanup' { 'cleanup-owned-volumes-only' }
+        default { $label }
+    }
+    if (-not $condition) { throw "FAIL $witness [case=$label]" }
+    Write-Output "PASS $label"
+}
 function Run-Wrapper([string]$fault) {
     $global:c913Calls.Clear(); $global:c913Creates = 0; $global:c913Fault = $fault
     & (Join-Path $Repo 'scripts/verify-card0660-codex-image.ps1') -Target session-testing -Image "c913-test:$fault" -SourceRevision $sha -ResultsRoot (Join-Path $root $fault) -SkipBuild:($fault -eq 'revision') | Out-Null

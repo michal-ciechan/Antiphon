@@ -149,10 +149,10 @@ public sealed class CodexRunnerImageContractTests
         var dockerfile = Read("docker/session-runner-grok/Dockerfile");
         var stages = DockerStackDocuments.Stages(dockerfile);
         var packs = stages.Single(stage => stage.Name == "net9-packs").Body;
-        packs.ShouldContain("ARG NET9_SDK_VERSION=9.0.318\n");
-        packs.ShouldContain("ARG NET9_PACK_VERSION=9.0.20\n");
+        packs.ShouldContain("ARG NET9_SDK_VERSION=9.0.318\n", customMessage: "pin-pair");
+        packs.ShouldContain("ARG NET9_PACK_VERSION=9.0.20\n", customMessage: "pin-pair");
         Regex.Match(packs, @"ARG NET9_SDK_SHA512=([0-9a-f]{128})\n").Groups[1].Value
-            .ShouldBe(Net9SdkSha512, "the digest must match Microsoft's pinned SDK archive");
+            .ShouldBe(Net9SdkSha512, "pin-pair: the digest must match Microsoft's pinned SDK archive");
 
         var install = Run(packs, "dotnet-sdk-${NET9_SDK_VERSION}-linux-x64.tar.gz");
         install.ShouldContain("https://builds.dotnet.microsoft.com/dotnet/Sdk/${NET9_SDK_VERSION}/dotnet-sdk-${NET9_SDK_VERSION}-linux-x64.tar.gz");
@@ -160,12 +160,18 @@ public sealed class CodexRunnerImageContractTests
         install.ShouldContain("&& tar --no-same-owner -xzf /tmp/net9-sdk.tar.gz", customMessage: "host-pack-image-owner");
         Order(install, "sha512sum -c -", "tar --no-same-owner -xzf").ShouldBeTrue("the hash must pass before extraction");
         foreach (var pack in new[] { "Microsoft.NETCore.App.Ref", "Microsoft.NETCore.App.Host.linux-x64", "Microsoft.AspNetCore.App.Ref" })
-            install.ShouldContain("./packs/" + pack + "/${NET9_PACK_VERSION}");
+            install.ShouldContain("./packs/" + pack + "/${NET9_PACK_VERSION}", customMessage: pack switch
+            {
+                "Microsoft.NETCore.App.Host.linux-x64" => "host-pack-member",
+                "Microsoft.NETCore.App.Ref" => "core-ref-member",
+                _ => "aspnet-ref-member"
+            });
         install.ShouldContain("&& rm /tmp/net9-sdk.tar.gz");
 
+        stages.Single(stage => stage.Name == "build").From.ShouldContain("sdk:10.0", customMessage: "sdk10-policy");
         var testing = stages.Single(stage => stage.Name == "session-testing").Body;
         Order(testing, "COPY --from=build /usr/share/dotnet /usr/share/dotnet",
-            "COPY --from=net9-packs /opt/net9-packs/packs/ /usr/share/dotnet/packs/").ShouldBeTrue();
+            "COPY --from=net9-packs /opt/net9-packs/packs/ /usr/share/dotnet/packs/").ShouldBeTrue("packs-visible-after-sdk-copy");
         dockerfile.ShouldContain("dotnet --list-sdks | grep -E '^10\\.'");
 
         var probe = Read("docker/session-runner-grok/verify-codex-image.sh");

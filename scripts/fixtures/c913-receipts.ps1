@@ -75,7 +75,25 @@ function global:pwsh {
     foreach ($entry in $files.GetEnumerator()) { [IO.File]::WriteAllText((Join-Path $dir $entry.Key), $entry.Value) }
     $global:LASTEXITCODE = 0
 }
-function Check([bool]$value, [string]$label) { if (-not $value) { throw "FAIL $label" }; Write-Output "PASS $label" }
+function Check([bool]$value, [string]$label) {
+    $witness = $label
+    if ($label -like 'tuple-*') { $witness = 'both-schema-refused' }
+    elseif ($label -eq 'reuse-not-run') { $witness = 'reuse-smoke-not-run' }
+    elseif ($label -like '*-refused') {
+        $witness = switch ($global:c913Fault) {
+            type { 'both-digest-type-refused' }
+            digest { 'both-digest-value-refused' }
+            { $_ -in 'duplicate','missing' } { 'receipt-shape-refused' }
+            { $_ -in 'smoke','smoke-evidence' } { 'full-smoke-evidence-required' }
+            toxic { 'toxic-receipt-refused' }
+            mount { 'wrong-mount-refused' }
+            { $_ -in 'group-duplicate','family-duplicate','variant-duplicate','variant-missing' } { 'fixture-roster-refused' }
+            default { $label }
+        }
+    }
+    if (-not $value) { throw "FAIL $witness [case=$label]" }
+    Write-Output "PASS $label"
+}
 function Invoke-Front([string]$FrontCase = 'Both') {
     & (Join-Path $Repo 'scripts/verify-card0849-caches.ps1') -Case $FrontCase -Sha $sha | Out-String
 }
