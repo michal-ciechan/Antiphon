@@ -292,6 +292,8 @@ reconciliation; their historical runtime evidence remains historical.
 
 ### Checkpoints
 
+Code reconciled CP-2/3/4 OR operands after fresh zero-test TRX results: the pinned TUnit discovery requires a trailing wildcard in each operand (CARD-0403). The intended class/method roster and execution floors remain exact; inspect every executed name for suffix-pattern over-selection.
+
 All rows close the same committed S1. CP-1 through CP-5: portable checkpoint-tool
 Unit lane. CP-6: portable script Integration lane. Roster counts below count
 native TUnit results, not fixture loops or the script's copied three-result TRX.
@@ -299,9 +301,9 @@ native TUnit results, not fixture loops or the script's copied three-result TRX.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1046/` | binding-regressions | `/*/Antiphon.Tests.Checkpoints/PlanCoverageBindingTests/*` | V-1, V-2, V-3, V-4, V-5 | all 5 named methods, 0 failed/skipped | 5 | 8 |
-| CP-2 | S1 | CP-1 | binder-legacy-contract | `/*/Antiphon.Tests.Checkpoints/(PlanCoverageAssertionTests)\|(PlanCoverageParserTests)\|(PlanCoveragePcTests)\|(PlanCoverageGoldenTests)/*` | R-1 | all 21 existing methods, 0 failed/skipped | 21 | 1 |
-| CP-3 | S1 | CP-1 | coverage-cli-contract | `/*/Antiphon.Tests.Checkpoints/PlanCoverageCommandTests/(coverage_command_preserves_existing_import_contract)\|(renders_stable_text_json_and_exit_codes)\|(coverage_never_starts_driver_or_writes_run_state)` | R-2, R-3, R-4 | all 3 named methods, 0 failed/skipped | 3 | 1 |
-| CP-4 | S1 | CP-1 | coverage-census-identity | `/*/Antiphon.Tests.Checkpoints/PlanCoverageCensusTests/(census_excludes_helpers_and_counts_parameterized_method_once)\|(census_unions_overlapping_filters_and_partial_declarations)\|(opt_out_preserves_legacy_reports_and_declared_counts)` | R-5, R-6, R-7 | all 3 named methods, 0 failed/skipped | 3 | 1 |
+| CP-2 | S1 | CP-1 | binder-legacy-contract | `/*/Antiphon.Tests.Checkpoints/(PlanCoverageAssertionTests*)\|(PlanCoverageParserTests*)\|(PlanCoveragePcTests*)\|(PlanCoverageGoldenTests*)/*` | R-1 | all 21 existing methods, 0 failed/skipped | 21 | 1 |
+| CP-3 | S1 | CP-1 | coverage-cli-contract | `/*/Antiphon.Tests.Checkpoints/PlanCoverageCommandTests/(coverage_command_preserves_existing_import_contract*)\|(renders_stable_text_json_and_exit_codes*)\|(coverage_never_starts_driver_or_writes_run_state*)` | R-2, R-3, R-4 | all 3 named methods, 0 failed/skipped | 3 | 1 |
+| CP-4 | S1 | CP-1 | coverage-census-identity | `/*/Antiphon.Tests.Checkpoints/PlanCoverageCensusTests/(census_excludes_helpers_and_counts_parameterized_method_once*)\|(census_unions_overlapping_filters_and_partial_declarations*)\|(opt_out_preserves_legacy_reports_and_declared_counts*)` | R-5, R-6, R-7 | all 3 named methods, 0 failed/skipped | 3 | 1 |
 | CP-5 | S1 | CP-1 | checkpoint-census | `/*/Antiphon.Tests.Checkpoints/CheckpointNamespaceCensusUsageTests/namespace_census_matches_compiled_checkpoint_cases` | R-8 | named method, 0 failed/skipped | 1 | 1 |
 | CP-6 | S1 | CP-1 | child-phase-label | `/*/Antiphon.Tests.Scripts/RunCheckpointSourceScriptTests/C1035_ChildCwdMatchesCertifiedRoot` | R-9 | named method, 0 failed/skipped | 1 | 2 |
 

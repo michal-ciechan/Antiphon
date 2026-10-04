@@ -102,7 +102,7 @@ public sealed class TestAssertionIndex
                     var helper = helpers[0]; var bindings = Bind(helper, method, call, parameters)!;
                     Expand(helper, bindings, stack, assertions, unknown, depth + 1);
                 }
-                else if (name.StartsWith("Assert", StringComparison.Ordinal)) unknown.Add(new("HELPER_UNMAPPED", TestPath: method.Path, TestLine: Line(call), Name: name, Detail: "unresolved or ambiguous assertion helper"));
+                else if (locals.Count > 0 || name.StartsWith("Assert", StringComparison.Ordinal)) unknown.Add(new("HELPER_UNMAPPED", TestPath: method.Path, TestLine: Line(call), Name: name, Detail: "unresolved or ambiguous assertion helper"));
             }
         }
         finally { stack.Remove(method.Syntax); }
@@ -141,7 +141,8 @@ public sealed class TestAssertionIndex
         foreach (var arg in call.ArgumentList.Arguments)
         {
             if (arg.RefKindKeyword.RawKind != 0) return null;
-            var index = arg.NameColon is null ? position : parameters.IndexOf(parameters.FirstOrDefault(p => p.Identifier.ValueText == arg.NameColon.Name.Identifier.ValueText)!);
+            var index = arg.NameColon is null ? position : parameters.Select((p, i) => (p, i))
+                .Where(x => x.p.Identifier.ValueText == arg.NameColon.Name.Identifier.ValueText).Select(x => x.i).DefaultIfEmpty(-1).Single();
             if (index < 0 || index >= parameters.Count) return null;
             var parameter = parameters[index]; var name = parameter.Identifier.ValueText;
             var isParams = parameter.Modifiers.Any(SyntaxKind.ParamsKeyword) && index == parameters.Count - 1;
@@ -154,11 +155,26 @@ public sealed class TestAssertionIndex
         var bindings = new Dictionary<string, ExpressionSyntax>(StringComparer.Ordinal);
         if (helper.Syntax is LocalFunctionStatementSyntax)
         {
-            foreach (var pair in inherited) bindings[pair.Key] = pair.Value;
-            foreach (var variable in VisibleVariables(call).DistinctBy(v => v.Identifier.ValueText))
+            // Captures belong to the declaration's scopes, not the caller's inner blocks.
+            var captured = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var scope in helper.Syntax.Ancestors())
             {
-                var literals = variable.Initializer is null ? [] : Literals(variable.Initializer.Value, caller.Syntax, call, inherited, [], 0);
-                bindings[variable.Identifier.ValueText] = literals.Count > 0 ? SyntheticLiterals(literals) : SyntaxFactory.IdentifierName("__unknown_capture");
+                if (scope is BlockSyntax block)
+                    foreach (var variable in block.Statements.OfType<LocalDeclarationStatementSyntax>().SelectMany(s => s.Declaration.Variables))
+                    {
+                        var name = variable.Identifier.ValueText;
+                        if (!captured.Add(name)) continue;
+                        var literals = variable.Initializer is null || variable.SpanStart >= call.SpanStart ? []
+                            : Literals(variable.Initializer.Value, caller.Syntax, variable, inherited, [], 0);
+                        bindings[name] = literals.Count > 0 ? SyntheticLiterals(literals)
+                            : variable.SpanStart >= call.SpanStart && inherited.TryGetValue(name, out var value) ? value : SyntaxFactory.IdentifierName("__unknown_capture");
+                    }
+                var enclosingParameters = scope switch { LocalFunctionStatementSyntax l => l.ParameterList, MethodDeclarationSyntax m => m.ParameterList, _ => null };
+                foreach (var parameter in enclosingParameters?.Parameters ?? [])
+                    if (captured.Add(parameter.Identifier.ValueText))
+                        bindings[parameter.Identifier.ValueText] = inherited.TryGetValue(parameter.Identifier.ValueText, out var value)
+                            ? value : SyntaxFactory.IdentifierName("__unknown_capture");
+                if (scope is MethodDeclarationSyntax) break;
             }
         }
         foreach (var parameter in parameters)
@@ -173,6 +189,7 @@ public sealed class TestAssertionIndex
             }
             var literals = args.SelectMany(a => Literals(a, caller.Syntax, call, inherited, [], 0)).ToList();
             bindings[name] = literals.Count > 0 || isParams ? SyntheticLiterals(literals)
+                : args.Count == 1 && args[0] is IdentifierNameSyntax id ? inherited.GetValueOrDefault(id.Identifier.ValueText, SyntaxFactory.IdentifierName("__unknown_argument"))
                 : args.Count == 1 ? args[0] : SyntaxFactory.IdentifierName("__unknown_argument");
         }
         return bindings;

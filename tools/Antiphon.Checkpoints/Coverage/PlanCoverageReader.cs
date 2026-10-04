@@ -7,7 +7,7 @@ namespace Antiphon.Checkpoints.Coverage;
 /// <summary>Reads promises, never commands. All coordinates refer to the original Markdown.</summary>
 public sealed class PlanCoverageReader
 {
-    private sealed record Row(string Id, string Text, int Line, string Test, bool Pc, int Offset = 0);
+    private sealed record Row(string Id, string Text, int Line, string Test, bool Pc, int Offset = 0, string Reference = "");
     private sealed record Span(string Value, int Column, int Start, int End);
 
     public PlanCoverageReport Read(string plan, string text, string? checklist = null)
@@ -49,6 +49,7 @@ public sealed class PlanCoverageReader
                     method = CodeSpans(cells[1], i + 1, report).Select(s => NormalizeMethod(s.Value)).FirstOrDefault(s => s is not null && !s.EndsWith("Tests", StringComparison.Ordinal)) ?? "";
                 if (current.StartsWith("PC-", StringComparison.Ordinal) && method.Length == 0)
                     method = "@" + Regex.Match(body, @"\bV-\d+\b").Value;
+                var reference = "";
                 if (current.StartsWith("PC-", StringComparison.Ordinal) && cells.Count > 3)
                 {
                     var filters = cells.Skip(2).SkipLast(1).SelectMany(c => CodeSpans(c, i + 1, report)).ToArray();
@@ -58,9 +59,9 @@ public sealed class PlanCoverageReader
                         report.Diagnostics.Add(new("METHOD_UNMAPPED", i + 1, Id: current, Detail: "unsupported or conflicting PC filter binding"));
                         method = "";
                     }
-                    else method = filter;
+                    else { reference = method.StartsWith('@') ? method[1..] : ""; method = filter; }
                 }
-                rows.Add(new(current, body, i + 1, method, current.StartsWith("PC-", StringComparison.Ordinal), line.IndexOf(body, StringComparison.Ordinal)));
+                rows.Add(new(current, body, i + 1, method, current.StartsWith("PC-", StringComparison.Ordinal), line.IndexOf(body, StringComparison.Ordinal), reference));
             }
             else if (current.Length > 0 && !trim.StartsWith('|') && !trim.StartsWith('#')
                 && (Regex.IsMatch(trim, @"^(For each |[0-9]+\. )") || Regex.IsMatch(trim, @"^(Verify|Check|Assert|Preserve)\b", RegexOptions.IgnoreCase)))
@@ -77,6 +78,11 @@ public sealed class PlanCoverageReader
             var test = row.Test;
             if (test.StartsWith('@')) test = Resolve(test[1..]);
             if (test.Length == 0) test = Resolve(row.Id);
+            if (row.Reference.Length > 0 && Resolve(row.Reference) is string referenced && referenced.Length > 0 && !SameMethod(test, referenced))
+            {
+                report.Diagnostics.Add(new("METHOD_UNMAPPED", row.Line, Id: row.Id, Detail: "conflicting PC V-reference and filter binding"));
+                test = "";
+            }
             // A qualified matrix declaration refines an earlier unqualified paragraph.
             if (!test.Contains('.') && bindings.TryGetValue(row.Id, out var bound))
                 test = bound.FirstOrDefault(t => t.EndsWith("." + test, StringComparison.Ordinal)) ?? test;
@@ -155,7 +161,7 @@ public sealed class PlanCoverageReader
         if (parts.Length != 5 || parts[0] != "" || parts[1] != "*"
             || parts[2] != "*" && !Regex.IsMatch(parts[2], identifier)
             || !Regex.IsMatch(parts[3], identifier) || !Regex.IsMatch(parts[4], @"^[A-Za-z_][A-Za-z0-9_]*$")) return null;
-        return (parts[2] == "*" ? "" : parts[2] + ".") + parts[3] + "." + parts[4];
+        return (parts[2] == "*" || parts[3].StartsWith(parts[2] + ".", StringComparison.Ordinal) ? "" : parts[2] + ".") + parts[3] + "." + parts[4];
     }
     private static bool SameMethod(string left, string right) => left == right
         || left.EndsWith("." + right, StringComparison.Ordinal) || right.EndsWith("." + left, StringComparison.Ordinal);
