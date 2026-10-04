@@ -234,7 +234,8 @@ exit $code
         [pscustomobject]@{ExitCode=$code;Log=$output;Report=(Get-Content -Raw -LiteralPath $report | ConvertFrom-Json)}
     } finally {
         $resolved = [IO.Path]::GetFullPath($directory)
-        $tempPrefix = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+        $separator = [IO.Path]::DirectorySeparatorChar
+        $tempPrefix = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd($separator) + $separator
         if (-not $resolved.StartsWith($tempPrefix, [StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $resolved) -notmatch '^c496-[a-f0-9]{32}$') { throw 'Unsafe fixture cleanup path.' }
         Remove-Item -LiteralPath $resolved -Recurse -Force
     }
