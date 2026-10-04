@@ -62,8 +62,17 @@ public sealed class RemotePoolFollowUpAdmissionTests
                 schema.ConnectionString, AgentKind.ClaudeCode, agentRunner, priorRunner, taskDirectory: false);
             await using var db = seed.Kit.Context();
             AgentTaskCreatedDto? created = null;
-            await Should.NotThrowAsync(async () => created = await seed.Kit.Service(db).CreateAsync(
-                seed.Follow(), seed.Kit.Caller, CancellationToken.None), "local-pool-follow-up-admitted");
+            Exception? failure = null;
+            try
+            {
+                created = await seed.Kit.Service(db).CreateAsync(
+                    seed.Follow(), seed.Kit.Caller, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+            }
+            failure.ShouldBeNull("local-pool-follow-up-admitted");
             created.ShouldNotBeNull();
             var saved = await seed.Kit.ReadAsync(created.Id);
             saved.Task.AgentId.ShouldBe(seed.AgentId);
@@ -105,7 +114,7 @@ public sealed class RemotePoolFollowUpAdmissionTests
             "remote-pool-refused-before-insert: " + row);
         refused.StatusCode.ShouldBe(422, row);
         refused.Code.ShouldBe("follow_up_remote_pool_unsupported", row);
-        refused.Errors.Keys.ShouldBe([nameof(CreateAgentTaskRequest.FollowUpOnTask)], row);
+        refused.Errors.Keys.ShouldHaveSingleItem().ShouldBe(nameof(CreateAgentTaskRequest.FollowUpOnTask), row);
         var fieldError = string.Join(" ", refused.Errors[nameof(CreateAgentTaskRequest.FollowUpOnTask)]);
         foreach (var text in new[] { refused.Message, fieldError })
         foreach (var token in new[]
