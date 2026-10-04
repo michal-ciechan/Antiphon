@@ -1,5 +1,5 @@
 # CARD-0849 frozen offline rolling roster. No network or live runner access.
-param([ValidateSet('all', 'retired-start', 'cleared-offline-start', 'host-race', 'host-absence', 'host-recovery', 'host-saved', 'cleanup-failure')][string]$Only = 'all', [switch]$AlreadyAtSha, [switch]$KeepTemp)
+param([ValidateSet('all', 'retired-start', 'cleared-offline-start', 'host-race', 'host-absence', 'host-recovery', 'host-saved', 'cleanup-failure')][string]$Only = 'all', [switch]$AlreadyAtSha, [switch]$KeepTemp, [switch]$RequireJq)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $driver = Join-Path $PSScriptRoot 'deploy-server2.ps1'
