@@ -20,6 +20,8 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     public LandingSafetyHarness(string? root = null, Guid? taskId = null) => Fixture = new(root, taskId);
     public IsolatedTestSchema Schema { get; private set; } = null!;
     public ServiceProvider Services { get; private set; } = null!;
+    private readonly bool _borrowed;
+    internal Action? CaseDisposed { get; set; }
     public TimeProvider Clock { get; set; } = TimeProvider.System;
     public AgentTaskLandQueue Queue { get; private set; } = new();
     public ControlledVerifier Verifier { get; } = new();
@@ -38,10 +40,18 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     public DelegationSettings LandSettings { get; set; } = new();
     public Microsoft.Extensions.Logging.ILogger<AgentTaskLandService> Logger { get; set; } = NullLogger<AgentTaskLandService>.Instance;
 
+    internal LandingSafetyHarness(IsolatedTestSchema schema, LandingGitFixture fixture)
+    {
+        Schema = schema;
+        Fixture = fixture;
+        _borrowed = true;
+        Clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero));
+    }
+
     public async Task InitializeAsync()
     {
-        await Fixture.InitializeAsync();
-        Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        if (!_borrowed) await Fixture.InitializeAsync();
+        if (!_borrowed) Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         BuildServices();
         await SeedAsync();
     }
@@ -91,7 +101,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
             Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Worktree,
             WorkingDirectory = Fixture.Repository, RepoPath = Fixture.Repository, WorktreePath = Fixture.Source,
             WorktreeBranch = Fixture.SourceRef[11..], MergeTargetRef = "master", Status = AgentTaskStatus.Succeeded,
-            ReplyTo = AgentTaskReplyTo.None, CreatedAt = DateTime.UtcNow, CompletedAt = DateTime.UtcNow,
+            ReplyTo = AgentTaskReplyTo.None, CreatedAt = Clock.GetUtcNow().UtcDateTime, CompletedAt = Clock.GetUtcNow().UtcDateTime,
         });
         await db.SaveChangesAsync();
     }
@@ -425,8 +435,9 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (Services is not null) await Services.DisposeAsync();
-        if (Schema is not null) await Schema.DisposeAsync();
-        await Fixture.DisposeAsync();
+        if (!_borrowed && Schema is not null) await Schema.DisposeAsync();
+        if (!_borrowed) await Fixture.DisposeAsync();
+        CaseDisposed?.Invoke();
     }
 
     internal sealed class ControlledVerifier : ILandingVerifier

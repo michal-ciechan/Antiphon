@@ -16,7 +16,7 @@ public sealed class RunCheckpointSourceScriptTests
     [Test]
     public async Task C835_DiagnosticReceipts()
     {
-        using var fixture = new Fixture();
+        using var fixture = new CheckpointSourceScriptFixture();
         var clean = await fixture.RunAsync();
         clean.Exit.ShouldBe(0, clean.Output);
         clean.Source.GetProperty("state").GetString().ShouldBe("clean", "clean-receipt");
@@ -45,12 +45,12 @@ public sealed class RunCheckpointSourceScriptTests
     [Test]
     public async Task C835_StrictAdmission()
     {
-        using var fixture = new Fixture();
+        using var fixture = new CheckpointSourceScriptFixture();
         var control = await fixture.RunAsync(expectedSha: fixture.Head);
         control.Exit.ShouldBe(0, control.Output);
         var calls = fixture.Calls;
         var wrong = await fixture.RunAsync(expectedSha: new string('f', 40), useSlot: true);
-        wrong.Exit.ShouldBe(2, wrong.Output);
+        wrong.Exit.ShouldBe(2, "wrong-sha-no-lease " + wrong.Output);
         wrong.Line.ShouldContain("reason=source_mismatch", Case.Sensitive, "wrong-sha-no-driver");
         fixture.Calls.ShouldBe(calls, "wrong-sha-no-driver");
         fixture.SlotCalls.ShouldBe(0, "wrong-sha-no-lease");
@@ -61,7 +61,7 @@ public sealed class RunCheckpointSourceScriptTests
         fixture.Calls.ShouldBe(calls, "64-character-mismatch-no-driver");
         fixture.Write("tracked.txt", "dirty");
         var dirty = await fixture.RunAsync(expectedSha: fixture.Head, useSlot: true);
-        dirty.Exit.ShouldBe(2, dirty.Output);
+        dirty.Exit.ShouldBe(2, "dirty-preflight-no-lease " + dirty.Output);
         dirty.Line.ShouldContain("reason=source_dirty", Case.Sensitive, "dirty-no-driver");
         fixture.Calls.ShouldBe(calls, "dirty-no-driver");
         fixture.SlotCalls.ShouldBe(0, "dirty-preflight-no-lease");
@@ -78,10 +78,10 @@ public sealed class RunCheckpointSourceScriptTests
         }
         finally { Directory.Move(displaced, git); }
 
-        using var slotFixture = new Fixture();
+        using var slotFixture = new CheckpointSourceScriptFixture();
         var slotDrift = await slotFixture.RunAsync(expectedSha: slotFixture.Head, useSlot: true,
             slotDrift: true);
-        slotDrift.Exit.ShouldBe(2, slotDrift.Output);
+        slotDrift.Exit.ShouldBe(2, "slot-edit-no-driver " + slotDrift.Output);
         slotFixture.SlotCalls.ShouldBe(1, "slot-edit-acquired-once");
         slotFixture.Calls.ShouldBe(0, "slot-edit-no-driver");
         slotDrift.Source.GetProperty("state").GetString().ShouldBe("changed");
@@ -92,89 +92,85 @@ public sealed class RunCheckpointSourceScriptTests
     [Test]
     public async Task C835_DriftAndReuse()
     {
-        using var fixture = new Fixture();
+        using var fixture = new CheckpointSourceScriptFixture();
         var built = await fixture.RunAsync(expectedSha: fixture.Head);
-        built.Exit.ShouldBe(0, built.Output);
+        built.Exit.ShouldBe(0, "S01 " + (built.Output));
         var reused = await fixture.RunAsync(expectedSha: fixture.Head, noBuild: true);
-        reused.Exit.ShouldBe(0, reused.Output);
-        reused.Line.ShouldContain("build=reused", Case.Sensitive, "matching-stamp-reused");
-        reused.Line.ShouldContain("buildSource=verified", Case.Sensitive, "matching-stamp-verified");
-        File.Exists(fixture.Stamp).ShouldBeTrue("successful-build-stamp");
+        reused.Exit.ShouldBe(0, "S02 " + (reused.Output));
+        reused.Line.ShouldContain("build=reused", Case.Sensitive, "S03 " + ("matching-stamp-reused"));
+        reused.Line.ShouldContain("buildSource=verified", Case.Sensitive, "S04 " + ("matching-stamp-verified"));
+        File.Exists(fixture.Stamp).ShouldBeTrue( "S05 " + ("successful-build-stamp"));
         File.Delete(fixture.Stamp);
         var calls = fixture.Calls;
         var missing = await fixture.RunAsync(expectedSha: fixture.Head, noBuild: true);
-        missing.Exit.ShouldBe(2, missing.Output);
-        missing.Line.ShouldContain("reason=build_source_mismatch", Case.Sensitive, "missing-stamp-no-tests");
-        fixture.Calls.ShouldBe(calls, "missing-stamp-no-tests");
+        missing.Exit.ShouldBe(2, "S06 invalid-stamp-no-tests " + (missing.Output));
+        missing.Line.ShouldContain("reason=build_source_mismatch", Case.Sensitive, "S07 " + ("invalid-stamp-no-tests missing-stamp-no-tests"));
+        fixture.Calls.ShouldBe(calls, "S08 " + ("invalid-stamp-no-tests missing-stamp-no-tests"));
 
-        using (var tampered = new Fixture())
+        using (var tampered = new CheckpointSourceScriptFixture())
         {
-            (await tampered.RunAsync(expectedSha: tampered.Head)).Exit.ShouldBe(0);
+            (await tampered.RunAsync(expectedSha: tampered.Head)).Exit.ShouldBe(0, "S09 ");
             var stamp = JsonNode.Parse(await File.ReadAllTextAsync(tampered.Stamp))!.AsObject();
             stamp["fingerprint"] = new string('f', 64);
             await File.WriteAllTextAsync(tampered.Stamp, stamp.ToJsonString());
             var before = tampered.Calls;
             var mismatch = await tampered.RunAsync(expectedSha: tampered.Head, noBuild: true);
-            mismatch.Exit.ShouldBe(2, mismatch.Output);
-            mismatch.Line.ShouldContain("reason=build_source_mismatch", Case.Sensitive, "invalid-stamp-no-tests");
-            tampered.Calls.ShouldBe(before);
+            mismatch.Exit.ShouldBe(2, "S10 invalid-stamp-no-tests " + (mismatch.Output));
+            mismatch.Line.ShouldContain("reason=build_source_mismatch", Case.Sensitive, "S11 " + ("invalid-stamp-no-tests"));
+            tampered.Calls.ShouldBe(before, "S12 invalid-stamp-no-tests ");
             stamp["fingerprint"] = mismatch.Source.GetProperty("start").GetProperty("fingerprint").GetString();
             stamp["sourceState"] = "dirty";
             await File.WriteAllTextAsync(tampered.Stamp, stamp.ToJsonString());
-            (await tampered.RunAsync(expectedSha: tampered.Head, noBuild: true)).Exit.ShouldBe(2,
-                "dirty-stamp-no-tests");
-            tampered.Calls.ShouldBe(before);
+            (await tampered.RunAsync(expectedSha: tampered.Head, noBuild: true)).Exit.ShouldBe(2, "S13 " + ("invalid-stamp-no-tests dirty-stamp-no-tests"));
+            tampered.Calls.ShouldBe(before, "S14 invalid-stamp-no-tests ");
         }
 
-        using (var failedRebuild = new Fixture())
+        using (var failedRebuild = new CheckpointSourceScriptFixture())
         {
-            (await failedRebuild.RunAsync(expectedSha: failedRebuild.Head)).Exit.ShouldBe(0);
+            (await failedRebuild.RunAsync(expectedSha: failedRebuild.Head)).Exit.ShouldBe(0, "S15 ");
             var failure = await failedRebuild.RunAsync(expectedSha: failedRebuild.Head, buildExit: 37);
-            failure.Exit.ShouldBe(2);
-            File.Exists(failedRebuild.Stamp).ShouldBeFalse("failed-rebuild-invalidates-stamp");
+            failure.Exit.ShouldBe(2, "S16 ");
+            File.Exists(failedRebuild.Stamp).ShouldBeFalse( "S17 " + ("failed-rebuild-invalidates-stamp"));
             var before = failedRebuild.Calls;
-            (await failedRebuild.RunAsync(expectedSha: failedRebuild.Head, noBuild: true)).Exit.ShouldBe(2);
-            failedRebuild.Calls.ShouldBe(before, "failed-rebuild-cannot-reuse-stale-output");
+            (await failedRebuild.RunAsync(expectedSha: failedRebuild.Head, noBuild: true)).Exit.ShouldBe(2, "S18 ");
+            failedRebuild.Calls.ShouldBe(before, "S19 " + ("failed-rebuild-cannot-reuse-stale-output"));
         }
 
-        using var driftFixture = new Fixture();
+        using var driftFixture = new CheckpointSourceScriptFixture();
         var drift = await driftFixture.RunAsync(driftPhase: "run");
-        drift.Exit.ShouldBe(2, drift.Output);
-        drift.Source.GetProperty("state").GetString().ShouldBe("changed", "driver-drift-is-changed");
-        drift.Line.ShouldContain("executed=3 passed=3", Case.Sensitive, "driver-drift-retains-counts");
-        using var sameCountFixture = new Fixture();
+        drift.Exit.ShouldBe(2, "S20 driver-drift-is-changed " + (drift.Output));
+        drift.Source.GetProperty("state").GetString().ShouldBe("changed", "S21 " + ("driver-drift-is-changed"));
+        drift.Line.ShouldContain("executed=3 passed=3", Case.Sensitive, "S22 " + ("driver-drift-retains-counts"));
+        using var sameCountFixture = new CheckpointSourceScriptFixture();
         sameCountFixture.Write("tracked.txt", "first dirty value");
         var sameCount = await sameCountFixture.RunAsync(driftPhase: "same-count-run");
-        sameCount.Exit.ShouldBe(2, sameCount.Output);
-        sameCount.Source.GetProperty("start").GetProperty("dirtyFiles").GetInt32().ShouldBe(1);
-        sameCount.Source.GetProperty("end").GetProperty("dirtyFiles").GetInt32().ShouldBe(1);
+        sameCount.Exit.ShouldBe(2, "S23 " + (sameCount.Output));
+        sameCount.Source.GetProperty("start").GetProperty("dirtyFiles").GetInt32().ShouldBe(1, "S24 ");
+        sameCount.Source.GetProperty("end").GetProperty("dirtyFiles").GetInt32().ShouldBe(1, "S25 ");
         sameCount.Source.GetProperty("start").GetProperty("fingerprint").GetString()
-            .ShouldNotBe(sameCount.Source.GetProperty("end").GetProperty("fingerprint").GetString(),
-                "same-count-content-change-has-new-fingerprint");
-        sameCount.Source.GetProperty("state").GetString().ShouldBe("changed",
-            "same-count-driver-drift-is-changed");
-        using var buildDriftFixture = new Fixture();
+            .ShouldNotBe(sameCount.Source.GetProperty("end").GetProperty("fingerprint").GetString(), "S26 " + ("same-count-content-change-has-new-fingerprint"));
+        sameCount.Source.GetProperty("state").GetString().ShouldBe("changed", "S27 " + ("same-count-driver-drift-is-changed"));
+        using var buildDriftFixture = new CheckpointSourceScriptFixture();
         var buildDrift = await buildDriftFixture.RunAsync(driftPhase: "build");
-        buildDrift.Exit.ShouldBe(2, buildDrift.Output);
-        buildDrift.Source.GetProperty("state").GetString().ShouldBe("changed", "build-drift");
-        using var headDriftFixture = new Fixture();
+        buildDrift.Exit.ShouldBe(2, "S28 " + (buildDrift.Output));
+        buildDrift.Source.GetProperty("state").GetString().ShouldBe("changed", "S29 " + ("build-drift"));
+        using var headDriftFixture = new CheckpointSourceScriptFixture();
         var headDrift = await headDriftFixture.RunAsync(driftPhase: "head-run");
-        headDrift.Exit.ShouldBe(2, headDrift.Output);
-        headDrift.Source.GetProperty("state").GetString().ShouldBe("changed", "head-movement");
-        using var restoreFixture = new Fixture();
+        headDrift.Exit.ShouldBe(2, "S30 " + (headDrift.Output));
+        headDrift.Source.GetProperty("state").GetString().ShouldBe("changed", "S31 " + ("head-movement"));
+        using var restoreFixture = new CheckpointSourceScriptFixture();
         restoreFixture.Write("tracked.txt", "dirty before driver");
         var restored = await restoreFixture.RunAsync(driftPhase: "restore-run");
-        restored.Exit.ShouldBe(2, restored.Output);
-        restored.Source.GetProperty("start").GetProperty("dirtyFiles").GetInt32().ShouldBe(1);
-        restored.Source.GetProperty("end").GetProperty("dirtyFiles").GetInt32().ShouldBe(0);
-        restored.Source.GetProperty("state").GetString().ShouldBe("changed",
-            "dirty-to-clean-is-source-drift");
+        restored.Exit.ShouldBe(2, "S32 " + (restored.Output));
+        restored.Source.GetProperty("start").GetProperty("dirtyFiles").GetInt32().ShouldBe(1, "S33 ");
+        restored.Source.GetProperty("end").GetProperty("dirtyFiles").GetInt32().ShouldBe(0, "S34 ");
+        restored.Source.GetProperty("state").GetString().ShouldBe("changed", "S35 " + ("dirty-to-clean-is-source-drift"));
     }
 
     [Test]
     public async Task C835_TerminalEvidence()
     {
-        using var fixture = new Fixture();
+        using var fixture = new CheckpointSourceScriptFixture();
         var build = await fixture.RunAsync(buildExit: 37);
         build.Exit.ShouldBe(2, build.Output);
         build.Line.ShouldContain("build=failed", Case.Sensitive, "failed-build-receipt");
@@ -204,7 +200,7 @@ public sealed class RunCheckpointSourceScriptTests
     [Test]
     public async Task C835_ReceiptValidation()
     {
-        using var fixture = new Fixture();
+        using var fixture = new CheckpointSourceScriptFixture();
         var clean = await fixture.RunAsync(expectedSha: fixture.Head);
         clean.Exit.ShouldBe(0, clean.Output);
         var valid = await fixture.ValidateAsync(clean.Evidence);
@@ -216,6 +212,7 @@ public sealed class RunCheckpointSourceScriptTests
         var duplicate = await fixture.ValidateAsync(tampered);
         duplicate.Exit.ShouldBe(2, "duplicate-receipt-token: " + duplicate.Output);
         duplicate.Output.ShouldContain("reason=duplicate_receipt_token", Case.Sensitive, "duplicate-receipt-token");
+        json["receipt"] = clean.Line;
         json.Remove("start");
         await File.WriteAllTextAsync(tampered, json.ToJsonString());
         var legacy = await fixture.ValidateAsync(tampered);
@@ -306,148 +303,4 @@ public sealed class RunCheckpointSourceScriptTests
         helperVerdict.Exit.ShouldBe(1, "source-helper-expected-sha-shape: " + helperVerdict.Output);
     }
 
-    private sealed class Fixture : IDisposable
-    {
-        public string Root { get; } = Path.Combine(Path.GetTempPath(), "c835-script-" + Guid.NewGuid().ToString("N"));
-        public string Repo => Path.Combine(Root, "source");
-        public string External => Path.Combine(Root, "external");
-        public string Head { get; }
-        public string Stamp => Path.Combine(Repo, "sample", "bin-c835", "checkpoint-build-source.json");
-        public int Calls => File.Exists(Path.Combine(External, "calls.txt"))
-            ? File.ReadAllLines(Path.Combine(External, "calls.txt")).Length : 0;
-        public int SlotCalls => File.Exists(Path.Combine(External, "slot-calls.txt"))
-            ? File.ReadAllLines(Path.Combine(External, "slot-calls.txt")).Length : 0;
-        private int _round;
-        private static string ProjectRoot => DelegateScriptRunner.RepoRoot;
-
-        public Fixture()
-        {
-            Directory.CreateDirectory(Repo);
-            Directory.CreateDirectory(External);
-            Run("git", Repo, ["init", "-q"]);
-            Run("git", Repo, ["config", "user.name", "Checkpoint Test"]);
-            Run("git", Repo, ["config", "user.email", "checkpoint@example.invalid"]);
-            Run("git", Repo, ["config", "core.autocrlf", "false"]);
-            Write(".gitignore", "bin-*/\nobj/\n.antiphon/\n");
-            Write("tracked.txt", "seed");
-            Write("sample/sample.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />");
-            Run("git", Repo, ["add", "."]);
-            Run("git", Repo, ["commit", "-qm", "seed"]);
-            Head = Run("git", Repo, ["rev-parse", "HEAD"]).Output.Trim();
-            File.WriteAllText(Path.Combine(External, "shim.ps1"), """
-                param()
-                $items = @($args)
-                Add-Content -LiteralPath $env:C835_CALLS -Value ([string]$items[0])
-                $phase = [string]$items[0]
-                if ($env:C835_DRIFT -eq $phase) {
-                    Set-Content -LiteralPath (Join-Path $env:C835_REPO 'tracked.txt') -Value 'changed during driver'
-                }
-                if ($env:C835_DRIFT -eq ('head-' + $phase)) {
-                    git -C $env:C835_REPO commit --allow-empty -qm 'move head during driver'
-                }
-                if ($env:C835_DRIFT -eq ('restore-' + $phase)) {
-                    git -C $env:C835_REPO restore -- tracked.txt
-                }
-                if ($env:C835_DRIFT -eq ('same-count-' + $phase)) {
-                    Set-Content -LiteralPath (Join-Path $env:C835_REPO 'tracked.txt') -Value 'second dirty value'
-                }
-                if ($phase -eq 'build') { exit [int]$env:C835_BUILD_EXIT }
-                $result = ''
-                for ($i = 0; $i -lt $items.Count; $i++) {
-                    if ($items[$i] -eq '--results-directory') { $result = [string]$items[$i + 1] }
-                }
-                if ($env:C835_TRX -and $result) { Copy-Item -LiteralPath $env:C835_TRX -Destination (Join-Path $result 'run.trx') }
-                exit 0
-                """);
-            File.WriteAllText(Path.Combine(External, "slot-shim.ps1"), """
-                param([string]$Method, [string]$Uri, [string]$BodyJson)
-                Add-Content -LiteralPath $env:C835_SLOT_CALLS -Value $Method
-                if ($env:C835_SLOT_DRIFT -eq '1') {
-                    Set-Content -LiteralPath (Join-Path $env:C835_REPO 'tracked.txt') -Value 'changed while waiting for slot'
-                }
-                return @{ Status = 200; Body = '{"unlimited":true,"maxCpuCount":4}' }
-                """);
-        }
-
-        public void Write(string path, string value)
-        {
-            var target = Path.Combine(Repo, path);
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            File.WriteAllText(target, value);
-        }
-
-        public async Task<Result> RunAsync(string? expectedSha = null, bool noBuild = false,
-            string? trx = "c585-green.trx", int buildExit = 0, string? driftPhase = null,
-            bool useSlot = false, bool slotDrift = false)
-        {
-            var round = ++_round;
-            var resultRoot = Path.Combine(External, "results-" + round);
-            var args = new List<string> { "-NoProfile", "-NonInteractive", "-File",
-                Path.Combine(ProjectRoot, "scripts", "run-checkpoint.ps1"), "-Name", "CP-2",
-                "-Project", "sample", "-OutputPath", "bin-c835/", "-Filter", "/*/*/C585SampleTests/*",
-                "-ResultsRoot", resultRoot, "-MinExecuted", "1", "-DotnetShim",
-                Path.Combine(External, "shim.ps1") };
-            if (!useSlot) args.Add("-NoSlot");
-            if (expectedSha is not null) args.AddRange(["-ExpectedSourceSha", expectedSha]);
-            if (noBuild) args.Add("-NoBuild");
-            var environment = new Dictionary<string, string?>
-            {
-                ["C835_CALLS"] = Path.Combine(External, "calls.txt"),
-                ["C835_REPO"] = Repo,
-                ["C835_BUILD_EXIT"] = buildExit.ToString(),
-                ["C835_TRX"] = trx is null ? null : Path.Combine(ProjectRoot, "scripts", "fixtures", trx),
-                ["C835_DRIFT"] = driftPhase,
-                ["C835_SLOT_CALLS"] = Path.Combine(External, "slot-calls.txt"),
-                ["C835_SLOT_DRIFT"] = slotDrift ? "1" : null,
-                ["C589_SLOT_SHIM"] = Path.Combine(External, "slot-shim.ps1"),
-                ["C585_STAMP"] = "round-" + round,
-                ["ANTIPHON_BUILD_SLOTS_URL"] = "http://127.0.0.1:1/build-slots",
-            };
-            var result = await RunAsync("pwsh", Repo, args, environment);
-            var evidence = Directory.GetFiles(resultRoot, "source.json", SearchOption.AllDirectories).Single();
-            using var json = JsonDocument.Parse(await File.ReadAllTextAsync(evidence));
-            var lines = result.Output.Split('\n');
-            var line = lines.Single(value => value.StartsWith("CHECKPOINT CP-2 commit=", StringComparison.Ordinal));
-            return new Result(result.Exit, result.Output, line, evidence, json.RootElement.Clone());
-        }
-
-        public Task<(int Exit, string Output)> ValidateAsync(string evidence, string? expectedSha = null) =>
-            RunAsync("pwsh", Repo, ["-NoProfile", "-NonInteractive", "-File",
-                Path.Combine(ProjectRoot, "scripts", "validate-checkpoint-receipt.ps1"),
-                "-Evidence", evidence, "-ExpectedSourceSha", expectedSha ?? Head], null);
-
-        public Task<(int Exit, string Output)> CheckSourceHelperAsync(string evidence, string expectedSha)
-        {
-            static string Quote(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
-            var helper = Path.Combine(ProjectRoot, "scripts", "lib", "checkpoint-source.ps1");
-            var command = ". " + Quote(helper) + "; $e = Get-Content -LiteralPath " + Quote(evidence) +
-                " -Raw | ConvertFrom-Json; if (Test-CheckpointSourceEvidence $e " + Quote(expectedSha) +
-                ") { exit 0 } else { exit 1 }";
-            return RunAsync("pwsh", Repo, ["-NoProfile", "-NonInteractive", "-Command", command], null);
-        }
-
-        public void Dispose() => GitFixtureCleanup.Delete(Root);
-
-        private static (int Exit, string Output) Run(string file, string cwd, IReadOnlyList<string> args) =>
-            RunAsync(file, cwd, args, null).GetAwaiter().GetResult();
-
-        private static async Task<(int Exit, string Output)> RunAsync(string file, string cwd,
-            IReadOnlyList<string> args, IReadOnlyDictionary<string, string?>? environment)
-        {
-            using var process = new Process();
-            process.StartInfo = new ProcessStartInfo(file) { WorkingDirectory = cwd,
-                RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-            foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
-            if (environment is not null)
-                foreach (var (key, value) in environment) process.StartInfo.Environment[key] = value;
-            process.Start();
-            var stdout = process.StandardOutput.ReadToEndAsync();
-            var stderr = process.StandardError.ReadToEndAsync();
-            using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(90));
-            await process.WaitForExitAsync(cancel.Token);
-            return (process.ExitCode, await stdout + await stderr);
-        }
-    }
-
-    private sealed record Result(int Exit, string Output, string Line, string Evidence, JsonElement Source);
 }

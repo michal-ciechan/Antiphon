@@ -30,7 +30,7 @@ public sealed class CheckpointSourceApprovalTests
             var settled = await world.SettleReviewAsync(reviewedSourceClean: assertion);
             settled.Outcome.ShouldBe(StageOutcomeKind.Clean);
             settled.OrdinaryScopeCompleted.ShouldBe(VerificationScope.Full);
-            settled.ReviewedSourceClean.ShouldBe(assertion, $"settlement-{assertion}");
+            settled.ReviewedSourceClean.ShouldBe(assertion, $"settled-source-assertion-roundtrip settlement-{assertion}");
             await using (var fresh = world.CreateContext())
             {
                 var saved = await fresh.StageOutcomes.AsNoTracking().SingleAsync(o => o.Id == settled.Id);
@@ -68,7 +68,7 @@ public sealed class CheckpointSourceApprovalTests
             else
             {
                 var error = await Should.ThrowAsync<ConflictException>(() =>
-                    land.RequestAsync(world.Owner.Id, request, CancellationToken.None));
+                    land.RequestAsync(world.Owner.Id, request, CancellationToken.None), "unclean-evidence-no-request");
                 error.Code.ShouldBe("review_evidence_source_not_clean", $"unclean-evidence-no-request assertion-{assertion}");
                 (await db.AgentTaskLandRequests.CountAsync(r => r.TaskId == world.Owner.Id)).ShouldBe(0);
                 queue.TryDequeue(out _).ShouldBeFalse();
@@ -90,22 +90,43 @@ public sealed class CheckpointSourceApprovalTests
         foreach (LandPhase? cut in new LandPhase?[] { null, LandPhase.Prepared, LandPhase.Verified, LandPhase.PushStarted })
         foreach (bool? assertion in new bool?[] { false, null, true })
         {
-            var label = $"ordinary latched={latched} cut={cut?.ToString() ?? "queued"} clean={assertion?.ToString() ?? "null"}";
             await using var h = new LandingProtocolHarness();
             await h.InitializeAsync();
+            await OrdinaryCaseAsync(h, latched, cut, assertion);
+        }
+        foreach (var mode in new[] { "self", "adoption" })
+        foreach (var timing in new[] { "admission", "resume" })
+        foreach (bool? assertion in new bool?[] { false, null, true })
+        {
+            await using var h = new LandingSafetyHarness();
+            await h.InitializeAsync();
+            await RecoveryCaseAsync(h, mode, timing, assertion);
+        }
+        foreach (var mode in new[] { "ordinary", "self", "adoption" })
+        foreach (bool? assertion in new bool?[] { false, null })
+        {
+            await using var h = new LandingSafetyHarness();
+            await h.InitializeAsync();
+            await PublishedCleanupCaseAsync(h, mode, assertion);
+        }
+    }
+
+    internal static async Task OrdinaryCaseAsync(LandingProtocolHarness h, bool latched, LandPhase? cut, bool? assertion)
+    {
+            var label = $"ordinary latched={latched} cut={cut?.ToString() ?? "queued"} clean={assertion?.ToString() ?? "null"}";
             var sha = await h.AddSourceAsync();
             await SetLatchAsync(h, latched);
             var evidence = await SeedEvidenceAsync(h, sha, true);
             var request = await h.RequestAsync(expectedSourceSha: sha, reviewEvidenceId: evidence.Id);
-            request.Status.ShouldBe("queued", label);
+            request.Status.ShouldBe("queued", "L01 " + (label));
             if (cut is LandPhase phase)
             {
                 h.Fault.Phase = phase;
                 h.Fault.AfterCommit = true;
-                await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunAsync(), label);
+                await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunAsync(), "L02 " + (label));
                 h.Fault.Phase = null;
                 h.Fault.AfterCommit = false;
-                (await h.OperationAsync()).ShouldNotBeNull(label).Phase.ShouldBe(phase, label);
+                (await h.OperationAsync()).ShouldNotBeNull( "L03 " + (label)).Phase.ShouldBe(phase, "L04 " + (label));
             }
             await using (var db = h.CreateContext())
                 await db.StageOutcomes.Where(o => o.Id == evidence.Id)
@@ -120,41 +141,35 @@ public sealed class CheckpointSourceApprovalTests
             var op = await h.OperationAsync();
             if (assertion == true)
             {
-                op.ShouldNotBeNull(label);
-                new AgentTaskLandingState().HasPublication(op).ShouldBeTrue(label);
+                op.ShouldNotBeNull( "L05 " + (label));
+                new AgentTaskLandingState().HasPublication(op).ShouldBeTrue( "L06 " + (label));
             }
             else
             {
-                h.Git.TargetHead.ShouldBe(target, label);
-                h.Git.RemoteTarget.ShouldBe(remote, label);
-                h.Verifier.Calls.ShouldBe(verifierCalls, label);
+                h.Git.TargetHead.ShouldBe(target, "L07 unlatched-resume-refuses-unclean " + (label));
+                h.Git.RemoteTarget.ShouldBe(remote, "L08 unlatched-resume-refuses-unclean " + (label));
+                h.Verifier.Calls.ShouldBe(verifierCalls, "L09 unlatched-resume-refuses-unclean " + (label));
                 h.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("update-ref") ||
-                    a.Contains("--ff-only") || a.Contains("rebase"), label);
+                    a.Contains("--ff-only") || a.Contains("rebase"), "L10 unlatched-resume-refuses-unclean " + (label));
                 if (op is not null)
                 {
-                    new AgentTaskLandingState().HasPublication(op).ShouldBeFalse(label);
-                    op.LastReason.ShouldBe("review_evidence_source_not_clean",
-                        !latched && assertion == false ? "unlatched-resume-refuses-unclean " + label : label);
+                    new AgentTaskLandingState().HasPublication(op).ShouldBeFalse( "L11 unlatched-resume-refuses-unclean " + (label));
+                    op.LastReason.ShouldBe("review_evidence_source_not_clean", "L12 unlatched-resume-refuses-unclean " + (!latched && assertion == false ? "unlatched-resume-refuses-unclean " + label : label));
                 }
                 await using var db = h.CreateContext();
                 var stored = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
-                stored.ReviewEvidenceId.ShouldBe(evidence.Id, label);
-                stored.ExpectedSourceSha.ShouldBe(sha, label);
-                stored.IsPending.ShouldBeFalse(label);
+                stored.ReviewEvidenceId.ShouldBe(evidence.Id, "L13 unlatched-resume-refuses-unclean " + (label));
+                stored.ExpectedSourceSha.ShouldBe(sha, "L14 unlatched-resume-refuses-unclean " + (label));
+                stored.IsPending.ShouldBeFalse( "L15 unlatched-resume-refuses-unclean " + (label));
                 (await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == h.Git.TaskId &&
                     e.Type == AgentTaskEventType.LandRefused).SingleAsync()).Detail
-                    .ShouldContain("review_evidence_source_not_clean", Case.Sensitive,
-                        !latched && assertion == false ? "unlatched-resume-refuses-unclean " + label : label);
+                    .ShouldContain("review_evidence_source_not_clean", Case.Sensitive, "L16 unlatched-resume-refuses-unclean " + (!latched && assertion == false ? "unlatched-resume-refuses-unclean " + label : label));
             }
-        }
+            }
 
-        foreach (var mode in new[] { "self", "adoption" })
-        foreach (var timing in new[] { "admission", "resume" })
-        foreach (bool? assertion in new bool?[] { false, null, true })
-        {
+    internal static async Task RecoveryCaseAsync(LandingSafetyHarness h, string mode, string timing, bool? assertion)
+    {
             var label = $"{mode} {timing} clean={assertion?.ToString() ?? "null"}";
-            await using var h = new LandingSafetyHarness();
-            await h.InitializeAsync();
             var (reviewed, evidenceId, sourceId) = await SeedRecoveryAsync(h, mode,
                 timing == "admission" ? assertion : true);
             Task<LandRequestResult> Request() => h.RequestAsync(expectedSourceSha: reviewed,
@@ -163,17 +178,17 @@ public sealed class CheckpointSourceApprovalTests
             var traceStart = h.Fixture.Git.Trace.Count;
             if (timing == "admission" && assertion != true)
             {
-                var error = await Should.ThrowAsync<ConflictException>(Request, label);
-                error.Code.ShouldBe("review_evidence_source_not_clean", label);
+                var error = await Should.ThrowAsync<ConflictException>(Request, "L17 " + (label));
+                error.Code.ShouldBe("review_evidence_source_not_clean", "L18 " + (label));
                 await using var db = h.CreateContext();
-                (await db.AgentTaskLandRequests.CountAsync()).ShouldBe(0, label);
+                (await db.AgentTaskLandRequests.CountAsync()).ShouldBe(0, "L19 " + (label));
                 h.Fixture.Git.Trace.Skip(traceStart).ShouldNotContain(a => a.Contains("update-ref") ||
-                    a.Contains("reset") || a.Contains("rebase") || a.Contains("merge") || a.Contains("push"), label);
-                continue;
+                    a.Contains("reset") || a.Contains("rebase") || a.Contains("merge") || a.Contains("push"), "L20 " + (label));
+                return;
             }
 
             var accepted = await Request();
-            accepted.Status.ShouldBe("queued", label);
+            accepted.Status.ShouldBe("queued", "L21 " + (label));
             if (timing == "resume")
             {
                 await using var db = h.CreateContext();
@@ -190,31 +205,28 @@ public sealed class CheckpointSourceApprovalTests
             else await h.RunQueuedAsync();
             if (assertion == true)
             {
-                var op = (await h.OperationAsync()).ShouldNotBeNull(label);
-                new AgentTaskLandingState().HasPublication(op).ShouldBeTrue(label);
+                var op = (await h.OperationAsync()).ShouldNotBeNull( "L22 " + (label));
+                new AgentTaskLandingState().HasPublication(op).ShouldBeTrue( "L23 " + (label));
             }
             else
             {
                 (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse",
-                    h.Fixture.SourceRef)).Trim().ShouldBe(remoteSource, label);
+                    h.Fixture.SourceRef)).Trim().ShouldBe(remoteSource, "L24 " + (label));
                 (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse",
-                    h.Fixture.TargetRef)).Trim().ShouldBe(remoteTarget, label);
+                    h.Fixture.TargetRef)).Trim().ShouldBe(remoteTarget, "L25 " + (label));
                 h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("update-ref") || a.Contains("reset") ||
-                    a.Contains("rebase") || a.Contains("merge") || a.Contains("push"), label);
+                    a.Contains("rebase") || a.Contains("merge") || a.Contains("push"), "L26 " + (label));
                 await using var db = h.CreateContext();
                 var stored = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == accepted.RequestId);
-                stored.ReviewEvidenceId.ShouldBe(evidenceId, label);
-                stored.IsPending.ShouldBeFalse(label);
-                (await db.AgentTaskLandings.CountAsync()).ShouldBe(0, label);
+                stored.ReviewEvidenceId.ShouldBe(evidenceId, "L27 " + (label));
+                stored.IsPending.ShouldBeFalse( "L28 " + (label));
+                (await db.AgentTaskLandings.CountAsync()).ShouldBe(0, "L29 " + (label));
             }
-        }
+            }
 
-        foreach (var mode in new[] { "ordinary", "self", "adoption" })
-        foreach (bool? assertion in new bool?[] { false, null })
-        {
+    internal static async Task PublishedCleanupCaseAsync(LandingSafetyHarness h, string mode, bool? assertion)
+    {
             var label = $"published-cleanup {mode} clean={assertion?.ToString() ?? "null"}";
-            await using var h = new LandingSafetyHarness();
-            await h.InitializeAsync();
             string reviewed;
             Guid evidenceId;
             Guid? sourceId;
@@ -246,9 +258,9 @@ public sealed class CheckpointSourceApprovalTests
             await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidenceId,
                 recoverReviewedSource: mode == "self", adoptFromTaskId: sourceId);
             await h.RunQueuedAsync();
-            var published = (await h.OperationAsync()).ShouldNotBeNull(label);
-            new AgentTaskLandingState().HasPublication(published).ShouldBeTrue(label);
-            published.Cleanup.ShouldBe(LandCleanupStatus.Refused, label);
+            var published = (await h.OperationAsync()).ShouldNotBeNull( "L30 " + (label));
+            new AgentTaskLandingState().HasPublication(published).ShouldBeTrue( "L31 " + (label));
+            published.Cleanup.ShouldBe(LandCleanupStatus.Refused, "L32 " + (label));
             await using (var db = h.CreateContext())
                 await db.StageOutcomes.Where(o => o.Id == evidenceId)
                     .ExecuteUpdateAsync(s => s.SetProperty(o => o.ReviewedSourceClean, assertion));
@@ -258,14 +270,13 @@ public sealed class CheckpointSourceApprovalTests
             File.Delete(sentinel);
             await h.RequestCleanupRetryAsync(published.Id);
             await h.RunQueuedAsync();
-            var after = (await h.OperationAsync()).ShouldNotBeNull(label);
-            after.Id.ShouldBe(published.Id, label);
-            after.Cleanup.ShouldBe(LandCleanupStatus.Complete, label);
-            h.Verifier.Calls.ShouldBe(verifierCalls, label);
+            var after = (await h.OperationAsync()).ShouldNotBeNull( "L33 " + (label));
+            after.Id.ShouldBe(published.Id, "L34 " + (label));
+            after.Cleanup.ShouldBe(LandCleanupStatus.Complete, "L35 " + (label));
+            h.Verifier.Calls.ShouldBe(verifierCalls, "L36 " + (label));
             h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase") || a.Contains("merge") ||
-                a.Contains("push"), label);
-        }
-    }
+                a.Contains("push"), "L37 " + (label));
+            }
 
     private static async Task<(string Reviewed, Guid EvidenceId, Guid? SourceId)> SeedRecoveryAsync(
         LandingSafetyHarness h, string mode, bool? clean)

@@ -24,6 +24,8 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
     public ProtocolFixture Fixture { get; }
     public IsolatedTestSchema Schema { get; private set; } = null!;
     public ServiceProvider Services { get; private set; } = null!;
+    private readonly bool _borrowed;
+    internal Action? CaseDisposed { get; set; }
     public TimeProvider Clock { get; set; } = TimeProvider.System;
     public AgentTaskLandQueue Queue { get; private set; } = new();
     public ControlledVerifier Verifier { get; } = new();
@@ -45,9 +47,16 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
         Worktrees = new ControlledWorktreeManager(Git);
     }
 
+    internal LandingProtocolHarness(IsolatedTestSchema schema) : this()
+    {
+        Schema = schema;
+        _borrowed = true;
+        Clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero));
+    }
+
     public async Task InitializeAsync()
     {
-        Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        if (!_borrowed) Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         BuildServices();
         await SeedAsync();
     }
@@ -93,7 +102,7 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
             Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Worktree,
             WorkingDirectory = Git.Repository, RepoPath = Git.Repository, WorktreePath = Git.Source,
             WorktreeBranch = Git.SourceRef[11..], MergeTargetRef = "master", Status = AgentTaskStatus.Succeeded,
-            ReplyTo = AgentTaskReplyTo.None, CreatedAt = DateTime.UtcNow, CompletedAt = DateTime.UtcNow,
+            ReplyTo = AgentTaskReplyTo.None, CreatedAt = Clock.GetUtcNow().UtcDateTime, CompletedAt = Clock.GetUtcNow().UtcDateTime,
         });
         await db.SaveChangesAsync();
     }
@@ -212,8 +221,9 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (Services is not null) await Services.DisposeAsync();
-        if (Schema is not null) await Schema.DisposeAsync();
+        if (!_borrowed && Schema is not null) await Schema.DisposeAsync();
         Git.Dispose();
+        CaseDisposed?.Invoke();
     }
 
     internal sealed class ProtocolFixture(ControlledLandingGit git)
