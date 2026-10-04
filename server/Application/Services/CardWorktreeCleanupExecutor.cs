@@ -14,7 +14,8 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>CardDone admission into the existing typed retirement executor.</summary>
 public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git,
     CardDoneArtifactPreservation artifacts, TaskWorktreeRetirementService retirement,
-    WorkspaceUseAdmission admission, TimeProvider clock, IOptions<WorktreeResidueSettings> settings)
+    WorkspaceUseAdmission admission, TimeProvider clock, IOptions<WorktreeResidueSettings> settings,
+    IOptions<GitSettings> gitSettings)
 {
     internal Func<CancellationToken, Task>? BeforeIntentAsync { get; set; }
     internal Func<CancellationToken, Task>? AfterIntentAsync { get; set; }
@@ -64,17 +65,16 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
                 .OrderByDescending(r => r.RevisionNumber).Select(r => r.Id).FirstOrDefaultAsync(ct);
             var fresh = await db.AgentTasks.FromSqlInterpolated($"SELECT * FROM \"AgentTasks\" WHERE \"Id\" = {task.Id} FOR UPDATE")
                 .AsNoTracking().SingleAsync(ct);
-            reason = card.Status != CardStatus.Done || currentGeneration != endpoint.Target.Cleanup.DoneRevisionId
+            reason = !DoneAuthorizes(card) || currentGeneration != endpoint.Target.Cleanup.DoneRevisionId
                 ? "done_generation_revoked"
                 : fresh.Attempt != task.Attempt || fresh.Status != task.Status
                     || fresh.ConcurrencyToken != task.ConcurrencyToken
                     || !CoordinatesMatch(fresh, endpoint) ? "task_snapshot_changed"
-                : CardDoneArtifactPreservation.Digest(fresh.Result) != digest ? "report_changed" : null;
+                : CardDoneArtifactPreservation.Digest(fresh.Result) != digest ? "report_changed"
+                : CardWorktreeCleanupService.ClassifyOwnership(fresh, endpoint.WorktreePath, endpoint.SourceFullRef, ManagedRoot());
             if (reason is null)
             {
-                var key = WorkspaceReservationKey.For(endpoint.WorktreePath, endpoint.SourceFullRef, endpoint.RepositoryPath);
-                var reservations = await db.WorkspaceUseReservations.AsNoTracking().Where(r => r.Active).ToListAsync(ct);
-                if (reservations.Any(r => WorkspaceReservationKey.Same(r.CanonicalPath, r.SourceFullRef, r.CommonDirectory, key)))
+                if (await HasActiveConsumerAsync(fresh, endpoint, ct))
                     reason = "workspace_in_use";
             }
             if (reason is not null)
@@ -147,14 +147,15 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
     private async Task<string?> EligibilityAsync(AgentTask task, CardWorktreeCleanupEndpoint endpoint, CancellationToken ct)
     {
         var card = await db.Cards.AsNoTracking().SingleAsync(c => c.Id == endpoint.Target.Cleanup.CardId, ct);
-        if (card.Status != CardStatus.Done) return "done_required";
+        if (!DoneAuthorizes(card)) return "done_required";
         if (task.Status is not (AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled)) return "terminal_required";
         if (task.CompletedAt is null || clock.GetUtcNow().UtcDateTime - task.CompletedAt < TimeSpan.FromMinutes(settings.Value.MinSettledMinutes)) return "settling";
         if (task.CardId != card.Id || task.Attempt != endpoint.Target.TaskAttempt || !CoordinatesMatch(task, endpoint)) return "task_snapshot_changed";
+        var ownership = CardWorktreeCleanupService.ClassifyOwnership(task, endpoint.WorktreePath, endpoint.SourceFullRef, ManagedRoot());
+        if (ownership is not null) return ownership;
         if (await db.AgentTaskLandRequests.AnyAsync(r => r.TaskId == task.Id && r.IsPending, ct)
             || await db.AgentTaskLandings.AnyAsync(r => r.TaskId == task.Id && r.Active, ct)) return "recovery_debt";
-        if (await admission.HasLiveTaskConsumerAsync(endpoint.WorktreePath, endpoint.SourceFullRef, task.Id, ct)
-            || await admission.HasLiveSessionOwnerAsync(endpoint.WorktreePath, ct)) return "live_owner";
+        if (await HasActiveConsumerAsync(task, endpoint, ct)) return "live_owner";
         // An ended DB row alone does not certify that a bound process is gone.
         if (task.AgentId is not null) return "process_ownership_unknown";
         var owners = await db.AgentTasks.AsNoTracking().Where(t => t.Id != task.Id)
@@ -162,6 +163,15 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
         if (owners.Any(t => WorkspaceReservationKey.PathsEqual(t.WorktreePath ?? "", endpoint.WorktreePath)
             || WorkspaceReservationKey.NormalizeRef(t.WorktreeBranch) == endpoint.SourceFullRef)) return "identity_ambiguous";
         return null;
+    }
+
+    private async Task<bool> HasActiveConsumerAsync(AgentTask task, CardWorktreeCleanupEndpoint endpoint, CancellationToken ct)
+    {
+        if (await admission.HasLiveTaskConsumerAsync(endpoint.WorktreePath, endpoint.SourceFullRef, task.Id, ct)
+            || await admission.HasLiveSessionOwnerAsync(endpoint.WorktreePath, ct)) return true;
+        var key = WorkspaceReservationKey.For(endpoint.WorktreePath, endpoint.SourceFullRef, endpoint.RepositoryPath);
+        var reservations = await db.WorkspaceUseReservations.AsNoTracking().Where(r => r.Active).ToListAsync(ct);
+        return reservations.Any(r => WorkspaceReservationKey.Same(r.CanonicalPath, r.SourceFullRef, r.CommonDirectory, key));
     }
 
     private async Task<WorktreeRemoval> ExecuteAsync(CardWorktreeCleanupEndpoint endpoint, TaskWorktreeRetirement row, Guid? runId, CancellationToken ct)
@@ -195,4 +205,8 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
         WorkspaceReservationKey.PathsEqual(task.RepoPath ?? "", endpoint.RepositoryPath)
         && WorkspaceReservationKey.PathsEqual(task.WorktreePath ?? "", endpoint.WorktreePath)
         && WorkspaceReservationKey.NormalizeRef(task.WorktreeBranch) == endpoint.SourceFullRef;
+
+    private string ManagedRoot() => Path.GetFullPath(gitSettings.Value.WorktreeBasePath);
+
+    private static bool DoneAuthorizes(Card card) => card.Status == CardStatus.Done;
 }

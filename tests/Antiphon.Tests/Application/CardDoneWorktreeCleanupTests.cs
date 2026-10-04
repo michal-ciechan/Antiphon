@@ -20,7 +20,7 @@ public sealed class CardDoneWorktreeCleanupTests
     [Test]
     public async Task C1017_OnlyDoneAuthorizes()
     {
-        foreach (var status in new[] { CardStatus.InProgress, CardStatus.Review, CardStatus.Canceled })
+        foreach (var (status, archiveOnly) in new[] { (CardStatus.InProgress, false), (CardStatus.Review, false), (CardStatus.Canceled, false), (CardStatus.Review, true) })
         {
             await using var f = await CompletedCardCleanupFixture.CreateAsync();
             await f.DiscoverAsync();
@@ -28,6 +28,7 @@ public sealed class CardDoneWorktreeCleanupTests
             {
                 var card = await writer.Cards.SingleAsync(c => c.Id == f.CardId);
                 card.Status = status;
+                if (archiveOnly) card.ArchivedAt = DateTime.UtcNow;
                 await writer.SaveChangesAsync();
             }
             await f.CleanupAsync();
@@ -139,15 +140,40 @@ public sealed class CardDoneWorktreeCleanupTests
         foreach (var kind in new[] { "follow-up", "child", "repair", "land", "session" })
         {
             await using var f = await CompletedCardCleanupFixture.CreateAsync();
+            var consumerId = Guid.NewGuid();
+            await using (var writer = f.Host.CreateContext())
+            {
+                if (kind == "session") writer.AgentSessions.Add(new AgentSession
+                {
+                    Id = consumerId, Status = SessionStatus.Running, Cwd = f.Tree,
+                    CreatedAt = DateTime.UtcNow, StartedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow
+                });
+                else writer.AgentTasks.Add(new AgentTask
+                {
+                    Id = consumerId, RootTaskId = f.TaskId, ParentTaskId = kind == "child" ? f.TaskId : null,
+                    RepairSourceTaskId = kind == "repair" ? f.TaskId : null,
+                    Role = kind == "land" ? AgentTaskRole.Merge : AgentTaskRole.Code,
+                    Status = AgentTaskStatus.Working, Workspace = WorkspaceMode.Shared, WorkingDirectory = f.Tree,
+                    Title = kind, Goal = "real workspace consumer", CreatedAt = DateTime.UtcNow
+                });
+                await writer.SaveChangesAsync();
+            }
             await using var scope = f.Host.Services.CreateAsyncScope();
             var journal = scope.ServiceProvider.GetRequiredService<IWorkspaceReservationJournal>();
             var key = WorkspaceReservationKey.For(f.Tree, "feat/card-task-" + f.TaskId.ToString("N")[..8], f.Host.Fixture.Repository);
-            var owner = await journal.TryAdmitConsumerAsync(new(key, WorkspaceReservationKind.Launch, f.TaskId, null, null), CancellationToken.None);
+            var owner = await journal.TryAdmitConsumerAsync(new(key, WorkspaceReservationKind.Launch,
+                kind == "session" ? null : consumerId, kind == "session" ? consumerId : null, null), CancellationToken.None);
             owner.Accepted.ShouldBeTrue(kind);
             await f.CleanupAsync();
             var admittedIntents = await f.IntentsAsync();
             admittedIntents.ShouldBe(0, kind);
             (await f.SentinelAsync()).ShouldBe(f.OriginalBytes);
+            await using (var writer = f.Host.CreateContext())
+            {
+                if (kind == "session")
+                    await writer.AgentSessions.Where(s => s.Id == consumerId).ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, SessionStatus.Stopped));
+                else await writer.AgentTasks.Where(t => t.Id == consumerId).ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, AgentTaskStatus.Succeeded));
+            }
             await journal.ReleaseConsumerAsync(owner.Snapshot!.Id, owner.Snapshot.Generation, CancellationToken.None);
             (await f.CleanupAsync()).IsClean.ShouldBeTrue();
             await f.AssertRemovedAsync();
@@ -211,16 +237,18 @@ public sealed class CardDoneWorktreeCleanupTests
     [Test]
     public async Task C1017_SharedAndBorrowedExcluded()
     {
-        foreach (var mode in new[] { WorkspaceMode.Shared, WorkspaceMode.ReadOnly })
+        foreach (var mode in new[] { WorkspaceMode.Shared, WorkspaceMode.ReadOnly, WorkspaceMode.Worktree })
         {
             await using var fixture = await CompletedCardCleanupFixture.CreateAsync();
-            await fixture.ChangeTaskAsync(t => t.Workspace = mode);
+            if (mode == WorkspaceMode.Worktree) await fixture.BindRepairOwnerAsync(borrowed: true);
+            else await fixture.ChangeTaskAsync(t => t.Workspace = mode);
             await fixture.CleanupAsync();
             var originalBytes = fixture.OriginalBytes;
             var borrowedBytes = await fixture.SentinelAsync();
             borrowedBytes.ShouldBe(originalBytes);
         }
         await using var owned = await CompletedCardCleanupFixture.CreateAsync();
+        await owned.BindRepairOwnerAsync(borrowed: false);
         (await owned.CleanupAsync()).IsClean.ShouldBeTrue();
         await owned.AssertRemovedAsync();
     }
@@ -248,6 +276,14 @@ public sealed class CardDoneWorktreeCleanupTests
         var originalBytes = fixture.OriginalBytes;
         var slotSentinel = await fixture.SentinelAsync();
         slotSentinel.ShouldBe(originalBytes);
+        foreach (var root in new[] { "canonical", "land", "external-evidence", "runner-state" })
+        {
+            await using var protectedRoot = await CompletedCardCleanupFixture.CreateAsync();
+            await protectedRoot.RebindProtectedRootAsync(root);
+            await protectedRoot.CleanupAsync();
+            (await protectedRoot.SentinelAsync()).ShouldBe(protectedRoot.OriginalBytes, root);
+            (await protectedRoot.IntentsAsync()).ShouldBe(0, root);
+        }
         await using var ordinary = await CompletedCardCleanupFixture.CreateAsync();
         (await ordinary.CleanupAsync()).IsClean.ShouldBeTrue();
         await ordinary.AssertRemovedAsync();
