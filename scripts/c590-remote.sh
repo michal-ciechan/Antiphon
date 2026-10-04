@@ -3793,7 +3793,7 @@ c1008_compose_model() {
         --arg codex "$CODEX_HOME_PATH" --arg grok "$grok" --arg key "$DEPLOY_KEY" --arg phone "$PHONE_HOME_SECRET" \
         --argjson temp "$([ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && echo true || echo false)" '
       def boolfield($k): (has($k)|not) or (.[$k]|type)=="boolean";
-      def allowed($keys): (keys - $keys | length)==0;
+      def allowed($approved): (keys - $approved | length)==0;
       def volume($role;$target;$copy): {kind:"volume",role:$role,target:$target,rw:true,nocopy:$copy};
       def bind($source;$target;$rw;$file): {kind:"bind",source:$source,target:$target,rw:$rw,file:$file};
       . as $model |

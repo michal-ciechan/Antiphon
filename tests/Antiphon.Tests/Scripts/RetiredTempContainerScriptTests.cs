@@ -144,14 +144,14 @@ public sealed class RetiredTempContainerScriptTests
             c1008_owned_mounts "$fresh" "$model" "$volumes";saved="$C1008_OWNED"
             for variant in valid version bind tmpfs; do
                 (
-                    current="$fresh";original="$saved"
+                    C994_FIXTURE_RESUME_CENSUS="$fresh";original="$saved"
                     case "$variant" in
                       version) original="$(printf '%s' "$saved"|jq -c '.[0].Topology|=del(.version)')" ;;
-                      bind) current="$(printf '%s' "$fresh"|jq -c '(.[0].Mounts[]|select(.Type=="bind")).Source="/foreign"')" ;;
+                      bind) C994_FIXTURE_RESUME_CENSUS="$(printf '%s' "$fresh"|jq -c '(.[0].Mounts[]|select(.Type=="bind")).Source="/foreign"')" ;;
                       tmpfs) current="$(printf '%s' "$fresh"|jq -c '.[0].HostConfig.Tmpfs["/run/antiphon"]="ro"')" ;;
                     esac
                     C1008_RECORD="$(jq -cn --argjson owned "$original" --argjson volumes "$volumes" '{owned:$owned,volumes:$volumes,preserved:{},stopIntents:[],stopReceipts:[],removeIntents:[],removeReceipts:[],phase:"preflight"}')"
-                    c1008_container_census(){ printf '%s' "$current"; }
+                    c1008_container_census(){ printf '%s' "$C994_FIXTURE_RESUME_CENSUS"; }
                     c1008_refuse(){ printf '%s\n' "$1";exit 2; }
                     c1008_save(){ printf '%s' "$C1008_RECORD"|jq -e '.removeIntents==[]' >/dev/null; }
                     c1008_reconcile_owned "$model"

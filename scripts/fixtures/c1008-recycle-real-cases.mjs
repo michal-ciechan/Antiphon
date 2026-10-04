@@ -329,7 +329,7 @@ exit $code
   return result;
 }
 async function c994Cases() {
-  function capture(name,r,check){check(r);preservation(r.f);results.push({name,version:name==='RD-1'?'B':'C',exit:r.exit,diagnosis:r.diagnosis,accepted:r.accepted,cleanup:r.cleanup,journal:r.journal});}
+  function capture(name,r,check){check(r);preservation(r.f);results.push({name,version:name==='RD-1'?'B':'C',exit:r.exit,diagnosis:r.diagnosis,accepted:r.accepted,cleanup:r.cleanup,journal:r.journal,cleanupAttempts:r.cleanupAttempts,retirementSequence:r.retirementSequence});}
   const tempPrivate=f=>roles.map(role=>f.temp+'_'+role);
   const absent=f=>{if(containers(f.temp).length)throw Error('TempContainersRemain');};
   const stillVolumes=f=>{for(const name of tempPrivate(f))payload(f,name);};
@@ -350,12 +350,15 @@ async function c994Cases() {
     if(!f.sequenceEvidence.some(s=>s.retiredAt&&s.available&&!s.exited)||!f.sequenceEvidence.some(s=>s.retiredAt&&!s.available&&!s.exited)||!f.exitedByFixture)throw Error('RetirementExitSequenceMissing');
     f.retirementSequence=false;
     const receipts=fs.readdirSync(f.root+'/server/temp-container-retirement').filter(n=>n.endsWith('.json')).map(n=>JSON.parse(fs.readFileSync(f.root+'/server/temp-container-retirement/'+n)));
-    if(receipts.length!==1||receipts[0].outcome!=='completed')throw Error('DrainReceiptMissing');
-    capture('RD-2',{f,exit:0,accepted:true,cleanup:receipts[0]},()=>{});
+    const completed=receipts.filter(r=>r.outcome==='completed');
+    const refusedAttempts=receipts.filter(r=>r.outcome==='refused'&&r.refusal==='TempContainerStillRunning');
+    if(completed.length!==1||refusedAttempts.length!==1||receipts.length!==2)throw Error('DrainReceiptMissing');
+    const completedCleanup=completed[0];
+    capture('RD-2',{f,exit:0,accepted:true,cleanup:completedCleanup,cleanupAttempts:receipts,retirementSequence:f.sequenceEvidence},()=>{});
     await c994Wrapper(f,'retire-temp');absent(f);sameMain(f);
     if(tempPrivate(f).some(n=>allVolumes().includes(n)))throw Error('PrivateVolumesRetained');
     const journals=fs.readdirSync(f.root+'/server/recycle').filter(n=>n.endsWith('.json')).map(n=>JSON.parse(fs.readFileSync(f.root+'/server/recycle/'+n)));
-    if(journals.length!==1||!journals[0].cleanupOperationId||journals[0].image!==receipts[0].image)throw Error('CrossRunImageBindingMissing');
+    if(journals.length!==1||!journals[0].cleanupOperationId||journals[0].image!==completedCleanup.image)throw Error('CrossRunImageBindingMissing');
     capture('RD-3',{f,exit:0,accepted:true,journal:journals[0]},()=>{});
     await c994Wrapper(f,'deploy-temp');sameMain(f);
     if(!containers(f.temp).length||f.statuses['server2-temp'].retiredAt!==null||!f.httpEvents.some(e=>e.path.endsWith('/drain/clear')))throw Error('NextDeployAdmissionMissing');
