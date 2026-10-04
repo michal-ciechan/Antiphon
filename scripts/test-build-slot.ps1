@@ -680,14 +680,14 @@ catch { [Console]::Error.WriteLine('PAYLOAD ERROR: ' + $_.ToString()); $code = 1
 exit $code
 '@
         Set-Content -LiteralPath $caller -Encoding ASCII -Value @'
-param([string]$Wrapper, [string]$Executable, [string]$Probe, [string]$InputPath)
+param([string]$Executable, [string]$Probe, [string]$InputPath)
 $ErrorActionPreference = 'Stop'
 $injected = [IO.Path]::Combine($PSHOME, 'Modules')
 $env:PSModulePath = $injected + [IO.Path]::PathSeparator + $env:PSModulePath
 [IO.File]::WriteAllText([IO.Path]::Combine($PSScriptRoot, 'injected.txt'), $injected)
 [IO.File]::WriteAllText([IO.Path]::Combine($PSScriptRoot, 'before.txt'), $env:PSModulePath)
 [Console]::Out.WriteLine('CALLER Core ' + $PSVersionTable.PSVersion.ToString())
-& $Wrapper -Label c1048-winps -- $Executable -NoProfile -NonInteractive -File $Probe $InputPath
+& $env:C845_WRAPPER -Label c1048-winps -- $Executable -NoProfile -NonInteractive -File $Probe $InputPath
 $code = $LASTEXITCODE
 [IO.File]::WriteAllText([IO.Path]::Combine($PSScriptRoot, 'after.txt'), [string]$env:PSModulePath)
 exit $code
@@ -697,8 +697,8 @@ exit $code
         if ($native -and $scenario -eq 'mixed') {
             $executable = Join-Path ([IO.Path]::GetDirectoryName($native.Source)) 'PoWeRsHeLl.ExE'
         }
-        $r = Invoke-C589Wrapper -Fx $fx -DisableCommandShim -CallerPath $caller -DeadlineSeconds 30 `
-            -WrapperArgs @($script:Wrapper, $executable, $child, $inputPath)
+        $r = Invoke-C845Wrapper -Fx $fx -Scenario $scenario -CallerPath $caller `
+            -WrapperArgs @($executable, $child, $inputPath)
         $payload = Get-C1048Payload -Result $r
         $d = $payload.Data
         $hasFields = $payload.Valid -and $null -ne $d.major -and $null -ne $d.minor -and
@@ -763,7 +763,7 @@ $prefix = $(if ($Mode -eq 'raw') { 'BASELINE ' } else { 'PAYLOAD ' })
 exit $code
 '@
     Set-Content -LiteralPath $caller -Encoding ASCII -Value @'
-param([string]$Wrapper, [string]$Probe, [string]$ModuleRoot)
+param([string]$Probe, [string]$ModuleRoot)
 $ErrorActionPreference = 'Stop'
 $env:PSModulePath = $ModuleRoot + [IO.Path]::PathSeparator + $env:PSModulePath
 $binary = [IO.Path]::Combine($PSHOME, 'pwsh.exe')
@@ -795,12 +795,12 @@ try {
     $proc.Dispose()
 }
 [Console]::Out.WriteLine('BASELINE_EXIT ' + $rawExit)
-& $Wrapper -Label c1048-pwsh -- $binary -NoProfile -NonInteractive -File $Probe wrapped
+& $env:C845_WRAPPER -Label c1048-pwsh -- $binary -NoProfile -NonInteractive -File $Probe wrapped
 $code = $LASTEXITCODE
 exit $code
 '@
-    $r = Invoke-C589Wrapper -Fx $fx -DisableCommandShim -CallerPath $caller -DeadlineSeconds 30 `
-        -WorkingDirectory $fx.Root -WrapperArgs @($script:Wrapper, $child, $moduleRoot)
+    $r = Invoke-C845Wrapper -Fx $fx -Scenario 'pwsh' -CallerPath $caller `
+        -WorkingDirectory $fx.Root -WrapperArgs @($child, $moduleRoot)
     $wrapped = Get-C1048Payload -Result $r
     $baseline = Get-C1048Payload -Result $r -Prefix 'BASELINE'
     $w = $wrapped.Data; $b = $baseline.Data
