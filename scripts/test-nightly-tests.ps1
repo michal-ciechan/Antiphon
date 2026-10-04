@@ -738,7 +738,7 @@ function Test-C1044_ParserCompatibility {
     Assert-C487 -Cond ($disposition.Disposition -eq 'excluded' -and $disposition.Reason -eq 'manual fixture' -and
         $disposition.Owner -eq 'C1044') -Name 'C1044 explicit profile exclusion'
     Assert-C1044Rejects -Name 'unsupported TUnit refuses' -Text ($golden.Replace("Version: '1.44.0.0'", "Version: '9.0.0.0'")) -Pattern 'version-drift'
-    Assert-C1044Rejects -Name 'unsupported MTP refuses' -Text ($golden.Replace('Version: 2.2.2', 'Version: 9.0.0')) -Pattern 'version-drift'
+    Assert-C1044Rejects -Name 'unsupported MTP refuses' -Text ($golden.Replace('2.2.2', '9.0.0')) -Pattern 'version-drift'
     $record = @($golden -split "`r?`n" | Where-Object { $_ -match 'DisplayName = Plain,' })[0]
     Assert-C1044Rejects -Name 'compatibility duplicate refuses' -Text ($golden + "`n" + $record) -Pattern 'duplicate discovery uid'
     Assert-C1044Rejects -Name 'missing type refuses' -Text ($golden.Replace('TypeName = Ordinary', 'TypeName = ')) -Pattern 'truncated diagnostic record'
