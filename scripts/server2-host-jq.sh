@@ -34,7 +34,7 @@ qualify() {
     [[ "$lookup" = /* ]] && [ -f "$lookup" ] && [ -x "$lookup" ] || return 4
     resolved=$(readlink -f -- "$lookup" 2>/dev/null) || return 4
     version=$("$resolved" --version 2>/dev/null) || return 4
-    [ -n "$version" ] && [[ "$version" != *$'\n'* ]] || return 4
+    [[ "$version" =~ [^[:space:]] && "$version" != *$'\n'* ]] || return 4
     # Require the actual outputs as well as both exit codes (constant-success is invalid).
     local predicate='($items|type)=="array" and all($items[]; .ready==true) and any($items[]; .name=="jq")'
     truth=$("$resolved" -en --argjson items '[{"name":"jq","ready":true}]' "$predicate" 2>/dev/null)
@@ -64,7 +64,7 @@ if [ "$result" = 0 ]; then installed=false; outcome=existing; emit || refuse Hos
 
 # All admission is before transfer. Missing is the sole install authority.
 for tool in curl sha256sum install mktemp flock ln stat readlink rm uname test; do
-    command -v "$tool" >/dev/null || refuse "HostJqToolMissing:$tool"
+    type -P "$tool" >/dev/null || refuse "HostJqToolMissing:$tool"
 done
 [ "$(uname -s)" = Linux ] || refuse HostJqUnsupportedOS
 [ "$(uname -m)" = x86_64 ] || refuse HostJqUnsupportedArchitecture
