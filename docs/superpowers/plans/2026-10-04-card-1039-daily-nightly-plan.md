@@ -533,7 +533,6 @@ boundaries. No Code admission follows merely from this amendment or the old
 candidate checkpoint table.
 
 
-
 ## Verification design
 
 Re-verification task `da49d22e`, source
@@ -1359,6 +1358,19 @@ qualification are separately bounded commissions, never zero-cost omitted rows.
 - Reuse saves 7 duplicate builds x 2 = **14 minutes** versus one build per TUnit row. No PC build/batching saving is assumed: controls predominantly share production files. Narrow selections replace a whole-Unit run; no invented historical runtime saving is claimed for the waiver.
 - Measurement allowance: M-0 30 + M-1 60 + M-3 30 = **120 minutes maximum commissioned fixed allowance**, plus M-2 dispatches **30-60 minutes each**. Exact M-2 total is calculated from accepted M-1 class roster before those dispatches are authorized. A 20-minute class cap is a diagnostic lower-bound stop, not a fabricated full timing. For planning scale only, 10 such dispatches would reserve 300-600 additional minutes (420-720 total measurement); this example is not a roster, forecast or admitted run.
 - Operational Q-0..Q-6/Q-R: reserve **600 active minutes plus two scheduled boundaries**, including the carried CARD-0545 S6 work and Q-R. The two actual full-nightly execution durations remain measurement-derived, not this active-work reserve; admission requires each genuine scheduled run fit 00:30-08:00 London (450 minutes including queue/build/cleanup). A conservative budget envelope is **1,500 minutes** (600 active + two 450-minute execution windows), excluding calendar wait and additional failure diagnosis. It grants no timeout extension and is not a claim the workload fits. Fixed measurement plus this envelope plus engineering verification is **3326 minutes**, with M-2 additions disclosed above; a measured full-card total cannot be claimed before M-1/M-2.
+
+TestDesign validation on 2026-10-04 at source
+`928779e294dc28e4bdf8262195ddf0e5de2559dd`: one host-gated isolated build of
+`tools/Antiphon.Checkpoints` succeeded (0 errors, one CS8602 warning at
+`TaskOwnerGuard.cs:170`; measured build 3.76 seconds, lease held 5 seconds).
+The actual `PlanTableImporter.ImportFile` and `ManifestValidator.Validate`
+accepted this manifest with both Windows and non-Windows interpretation:
+27 rows, 19 builds, Min sum 100, EstimatedMinutes sum 209, zero import warnings.
+The unchanged fix-design prefix, unique required sections, sequential 203-to-203
+guard/PC map and PC-method coverage in the checkpoint roster were checked.
+Whitespace and full-range evidence-diff checks passed through that source commit.
+This was a tool/manifest validation only: **0 TUnit executions, 0 mutation cycles**;
+it supplies no Windows timing, native ownership or recipient-delivery evidence.
 
 Admission audit: bodies above read; **guards=203, mapped=203, missing=0, duplicate PC maps=0**. All 203 PC recipes have a compiling defect, named exact method and decisive red assertion in the ordinary roster; all are executable specifications after their implementation slice lands. Native and recipient seams are specified, not unresolved. Whole ordinary scope is V-1..V-8/R-1..R-6; its union is the manifest above. M/Q evidence has separate acceptance and cost, not blank Min cells or substituted unit tests.
 
