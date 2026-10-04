@@ -17,7 +17,16 @@ public sealed class NightlyNativeOwnershipTests
     [Test]
     public Task C1039_DrainBeforeReturn() => RunAsync(nameof(C1039_DrainBeforeReturn));
 
-    private static async Task RunAsync(string name)
+    [Test]
+    public Task C1045_NullEnvironmentInherits() => RunAsync(nameof(C1045_NullEnvironmentInherits), "C1045 null inherits parent sentinel");
+    [Test]
+    public Task C1045_SuppliedEnvironmentReplaces() => RunAsync(nameof(C1045_SuppliedEnvironmentReplaces), "C1045 supplied map excludes parent sentinel");
+    [Test]
+    public Task C1045_EmptyEnvironmentDoesNotInherit() => RunAsync(nameof(C1045_EmptyEnvironmentDoesNotInherit), "C1045 empty map excludes parent sentinel");
+    [Test]
+    public Task C1045_ClearedEntriesAreAbsent() => RunAsync(nameof(C1045_ClearedEntriesAreAbsent), "C1045 cleared names absent from child block");
+
+    private static async Task RunAsync(string name, string? witness = null)
     {
         OperatingSystem.IsWindows().ShouldBeTrue("This native checkpoint requires Windows; missing prerequisites are not skips.");
         var fixture = Path.Combine(AppContext.BaseDirectory, "nightly-owned-child", "OwnedChild.exe");
@@ -40,6 +49,8 @@ public sealed class NightlyNativeOwnershipTests
             process.ExitCode.ShouldBe(0, output + "\nRetained evidence: " + root);
             output.ShouldContain("C1039 NATIVE " + name, Case.Sensitive);
             output.ShouldNotContain("FAIL C1039", Case.Sensitive);
+            output.ShouldNotContain("FAIL C1045", Case.Sensitive);
+            if (witness is not null) output.ShouldContain("PASS " + witness, Case.Sensitive);
             Directory.Delete(root, recursive: true);
         }
         finally
