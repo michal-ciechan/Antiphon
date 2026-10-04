@@ -46,6 +46,7 @@ public sealed class WorkspaceReservationJournal(
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await LockAdmissionAsync(db, ct);
         var blocking = await db.WorkspaceUseReservations
             .Where(r => r.Active && (r.Kind == WorkspaceReservationKind.Retirement || r.Kind == WorkspaceReservationKind.HistoricalFence))
             .ToListAsync(ct);
@@ -82,6 +83,7 @@ public sealed class WorkspaceReservationJournal(
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await LockAdmissionAsync(db, ct);
         var existing = await db.WorkspaceUseReservations
             .Where(r => r.Active)
             .ToListAsync(ct);
@@ -244,4 +246,9 @@ public sealed class WorkspaceReservationJournal(
 
     private static bool Same(WorkspaceUseReservation row, WorkspaceReservationKey key) =>
         WorkspaceReservationKey.Same(row.CanonicalPath, row.SourceFullRef, row.CommonDirectory, key);
+
+    // Also acquired by CardDone intent admission. A short transaction serializes readers
+    // with insertion even when no reservation row exists yet. Never held during external I/O.
+    internal static Task LockAdmissionAsync(AppDbContext db, CancellationToken ct) =>
+        db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(1017, 459)", ct);
 }

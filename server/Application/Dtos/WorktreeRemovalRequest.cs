@@ -11,4 +11,4 @@ public sealed record WorktreeRemovalRequest(WorktreeRemovalPurpose Purpose,
     bool TargetCheckoutRecorded = false, string? TargetCheckoutPath = null, Guid? VerificationSealId = null,
     WorktreeCleanupContext? CleanupContext = null, string? ManagedRoot = null,
     Guid? RetirementId = null, bool HasDeletionIntent = false,
-    string? LandedSha = null);
+    string? LandedSha = null, Guid? CardDoneEndpointId = null);
