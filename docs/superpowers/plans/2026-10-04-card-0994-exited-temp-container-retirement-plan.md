@@ -3,6 +3,9 @@
 Date: 2026-10-04. Plan task: `f1713f40-5ba3-4231-a775-4ced7680c60c`.
 Source baseline: `bb18064ba647e0ddb03cae4da437ab60ed447d98`.
 Card: Antiphon / CARD-0994, revision 1, read in full through `card.ps1 get`.
+P-1 amendment: 2026-10-04, task `693fd5d6-960d-4c24-be97-136b2550d294`,
+based on `e3d5c81715e53aae26bd965e830d7bb91d98326a`; card revision 6 re-read.
+This amendment includes the verification changes and makes **Code** the next stage.
 
 ## Outcome and authority
 
@@ -20,7 +23,9 @@ This Plan task changes documentation only and performs no rollout or Docker muta
 CARD-1008 has already implemented the retired/absent/null-inventory volume path in
 this baseline. Do not implement that fix again. Its historical plan is
 [the CARD-1008 plan](2026-10-03-card-1008-rolling-volume-recycle-and-retire-temp-plan.md).
-CARD-0994 owns the preceding exited-container transition and its integration.
+CARD-0994 owns the preceding exited-container transition, its integration, and the
+bounded shared mount-validation repair in D-7/D-8. That repair is part of this card,
+not a prerequisite card; it does not reimplement C1008's volume-removal policy.
 Coordinate shared script changes with CARD-1008 follow-ups and CARD-1010; do not
 include main state/cache opt-ins, routing settings, or runner runtime changes.
 
@@ -43,6 +48,9 @@ harness), `docs/project-context.md`, and `docs/agent-card-lifecycle.md`.
 | A stopped container does not affect volume deletion. | Docker references remain until container removal; C1008 explicitly includes exited state-init containers in its custody checks. | Census all states and inspect every selected ID. Container removal uses no volume flag. |
 | Retirement needs fresh human confirmation / rollback retention. | Current gate 9 and orchestration autonomy already say always retire temp. The manual subsection still claims that the absent-null guard is unimplemented and incorrectly describes `drain-temp` as removing the container. | Correct the stale caveat and document the new container step without reinstating an approval gate. |
 | Tests already cover the requested recovery. | `RollingVolumeRecycleScriptTests.C1008_Present_or_unknown_temp_keeps_null_refusal` and `RemoteScriptContractTests.C1008_Retire_temp_rechecks_absence_and_retirement` deliberately reject a present container with null inventory. | Retain that strict volume predicate while testing the new cleanup entry point separately and through the wrapper. |
+| C1008's Compose model is production-shaped. | `c1008_compose_model` requires state-init runner-state at `/state`; production uses `/runner-state`. Both C1008 fixtures repeat the incorrect target. Read-only `docker compose config --format json` on the checked-in main and temp files reproduces `/runner-state`. | Fix the shared predicate and fixtures in S1. Keep session-runner's distinct `/state` target. No Compose deployment change. |
+| Matching `.services[service].volumes` to `.Mounts` proves all custody. | `c1008_owned_mounts` assumes every entry is a writable named volume. Production adds read-only file binds, provider directory binds, two file-backed secrets and `/run/antiphon` tmpfs; temp adds the Grok directory bind. `c1008_container_census` drops HostConfig. | Normalize all declared mount sources and retain the approved tmpfs configuration fields; validate by kind and destination. Reject omission/extra/ambiguity rather than discarding non-volumes. |
+| Existing real-Docker successes qualify those helpers. | `c1008-recycle-real-cases.mjs` hand-builds volume-only services; `C1008HostFixture` builds the same synthetic model. | Preserve historical outcomes but derive replacement fixtures from actual Compose, with inert owned paths. RD evidence must include production topology, not a weakened model. |
 
 The premise is partly superseded, but the retained-exited gap remains directly
 visible in both implementations and their tests. No further investigation stage is
@@ -216,6 +224,123 @@ absent/null retirement is unimplemented, and explain the new recovery command fo
 an exited retired temp. Preserve human gates for prune, other volumes, markers,
 donor archives and work outside the approved recycling policy.
 
+### D-7: repair the shared production mount contract in this card
+
+P-1 is resolved as an implementation decision, not claimed fixed code. Extend
+`c1008_compose_model`, `c1008_container_census` and `c1008_owned_mounts` together;
+both C1008 recycling and C994 container cleanup consume the same normalized mount
+proof. Include their receipt/recheck consumers (`c1008_reconcile_owned` and the
+recycle preflight/recreated observations) in the review footprint. The caller must
+admit this shared-script scope before Code alongside any concurrent C1008 work.
+
+The checked-in Compose files remain the topology authority. Obtain the resolved
+main or main+temp model through the existing Compose functions, then validate the
+following service-specific contract. Do not derive authorization solely from a
+container's labels or let an arbitrary Compose mount authorize itself.
+
+| Service / kind | Required topology and match |
+|---|---|
+| Both projects, `state-init` volumes | `work` -> `/work`, `runner-state` -> **`/runner-state`**, writable private volumes. `/state` is invalid for this service. |
+| Both projects, `session-runner` volumes | `work` -> `/work`, `runner-state` -> `/state`, `dind-data` -> `/var/lib/docker`, `runner-tmp` -> `/tmp`; the three existing external caches at their current exact targets. All writable; preserve tmp copy-up and cache `nocopy` requirements. |
+| Both projects, file binds | `CLAUDE_OAUTH_TOKEN_PATH` -> `/run/antiphon/claude-oauth-token` and `GIT_IDENTITY_PATH` -> `/run/antiphon/gitconfig`, read-only. Source must equal the corresponding path supplied by the host Compose function and be a regular file. |
+| Both projects, provider directory binds | `CODEX_HOME_PATH` -> `/codex-home` on state-init and `/state/codex` on session-runner, writable directories. Temp alone additionally binds the resolved `RUNNER_GROK_STORE_DIR` -> `/state/grok`, writable. Main's Grok directory remains inside runner-state. |
+| Both projects, session-runner secrets | Exactly `antiphon-deploy-key` and `phone-home`, resolved through top-level `secrets.<source>.file` to `DEPLOY_KEY` and `PHONE_HOME_SECRET`, at `/run/secrets/antiphon-deploy-key` and `/run/secrets/phone-home`, read-only regular-file binds. Accept the resolved absolute target or normalize the supported short secret target to `/run/secrets/<target>` before exact comparison. |
+| Both projects, session-runner tmpfs | Exactly `/run/antiphon`, writable, source-less. Prove the declared tmpfs configuration even for an exited container. State-init has no secrets/tmpfs. |
+
+Normalize `services[*].volumes`, `services[*].secrets` and `services[*].tmpfs`
+into a destination-keyed expected map with explicit kind, source identity and
+writability. Distinguish a file-backed secret from an ordinary bind in the expected
+map even though Docker represents both as bind mounts. A missing read_only in the
+resolved Compose model means false; an explicitly malformed value is rejected.
+For each inspected Mounts entry, RW must be a Boolean, never defaulted. Require exact destination sets
+and one mount per target; ordering is immaterial. The intended parent/child pairs
+(`/state` plus provider binds, `/run/antiphon` plus read-only files) are valid.
+Unexpected destinations, duplicates, anonymous volumes, external secrets/configs,
+unrecognized mount kinds/options or extra topology refuse before any mutation.
+
+Named-volume checks retain exact resolved Name, canonical Mountpoint, Compose
+owner/role labels, private-versus-external policy and current/saved generation.
+Bind/secret checks require exact canonical absolute Source, correct file/directory
+kind and expected RW. Use metadata-only `readlink -e`/`stat` in the **Docker host
+namespace**, with existing checked privilege helpers. Reject noncanonical/symlink
+sources or missing/uninspectable paths; never create a source during proof.
+Re-read canonical path and file kind before removal. Do not pin credential inode,
+mtime or bytes: provider token refresh can replace files inside a retained home.
+Do not enumerate provider contents or read/hash real secret files. Those mounts
+never enter C1008_TARGETS and are never unlinked by either cleanup operation.
+
+Tmpfs requires more than comparing `.Mounts` counts. Retain a narrow projection of
+`HostConfig.Tmpfs` and tmpfs entries in `HostConfig.Mounts`, plus any inspected
+`Mounts` tmpfs records. Normalize the supported Docker encodings to one logical
+destination; corroborating records must agree, and contradictory/missing proof
+refuses. For this Compose declaration the option map is empty/default writable;
+reject explicit read-only, additional options and extra tmpfs targets. An empty or
+omitted inspected tmpfs record on an exited container is permitted only with its
+matching persisted HostConfig declaration. A bind/volume at that destination is
+never a substitute. Do not start a container to inspect ephemeral contents.
+Code's real fixture must record the actual Engine/Compose representation, including
+the exited case, and prove this normalization; an unsupported encoding fails the row
+instead of being silently ignored. Docker documents source-less tmpfs and loss of
+its contents at stop in [tmpfs mounts](https://docs.docker.com/engine/storage/tmpfs/);
+Compose file-backed secret mounting is described in
+[service secrets](https://docs.docker.com/reference/compose-file/services/#secrets).
+
+Persist the approved normalized topology (including tmpfs) with a format version
+in new ownership observations. Per-ID rechecks and resume compare that topology,
+not only the old `.Mounts` projection. Retain source/image/volume-generation checks.
+A saved owned-container record without the new proof cannot authorize mutation:
+return `RecycleResumeMismatch`; do not upgrade old evidence by inventing fields.
+Already-absent journal paths still need their original strict absence and saved
+removal intents. Model errors retain `RecycleComposeMismatch`; inspected or host
+metadata errors retain `RecycleContainerStateUnknown`. Neither means already absent.
+
+Rejected: a new C994-only validator (leaves the mandatory recycler broken), editing
+Compose to use `/state` (changes the init-state contract to fit a defective test),
+ignoring binds/secrets/tmpfs, or a second prerequisite landing (splits a small shared
+predicate/fixture repair from its only usable integration). In-card scope is bounded
+to these helpers and consumers, fixture fidelity and their focused regressions;
+no broader mount framework, secret handling change or C1010 opt-in is authorized.
+
+### D-8: production-derived fixtures and a bounded ordinary selection
+
+Add a shared fixture model materializer at
+`scripts/fixtures/c994-production-compose-model.mjs`. Use real `docker compose
+config --format json` on the checked-in base and temp override with an isolated
+environment file and inert absolute fixture paths. It is read-only and requires no
+daemon. Cache that immutable config within the test fixture, not a handwritten
+topology. Relocate project/cache names and paths through explicit recorded maps.
+For real containers, replace only build/image/command/entrypoint, health/provider
+startup, privilege and network wiring needed for the lightweight owned runner;
+leave mount type/source/target/RW, secrets and tmpfs intact. Re-run Compose config
+on the transformed model and assert mount-signature equivalence after only the
+recorded name/path mapping. Both C1008 and C994 use it; fake inspect fixtures retain
+the same full topology and expose independently injectable faults. Accept the
+shipped empty volume option objects, cache nocopy and bind create_host_path fields
+with their exact types; create_host_path never permits a proof routine to create a
+missing source. Generated models, Docker projections and receipts stay gitignored.
+
+The real lane measures file payload preservation using **inert fixture** sentinels,
+not real credentials. It verifies main and temp service topologies, including
+state-init and tmpfs configuration after exit. Never call the production host daemon.
+Keep C1008's 32 named outcomes and baseline commit. Corrected topology can change
+the earliest baseline refusal: report the actual code instead of rewriting the
+baseline script to pass `/runner-state`. C994 RD-1 records that distinction explicitly.
+
+Ordinary selection below is **58 estimated minutes**, one shared build, exact
+classes/methods, one pass. It includes five shared-helper methods and both real-Docker
+rows. CP-5 runs required-jq `present` once (all 24 rolling groups) rather than the
+unchanged four-mode meta-test. Preserve the four-mode method and jq-driver code;
+the three unavailable-jq modes concern unchanged probe/fallback behavior. This saves
+six estimated minutes without dropping a rolling phase or mount kind. There is no
+new product default or operator decision: this is the requested repair/scope choice.
+
+One positive control per independently bypassable behavior remains the rule, with
+input variants inside its named method, not one mutation per encoding. Existing
+PC-13..15 move to the shared predicates they now own; PC-56..58 add only canonical
+bind, secret-RW and tmpfs-proof behaviors. No duplicate C994 and C1008 mutations for
+the same shared predicate. Mutation is separately commissioned after land; it is
+not part of the 30-60 minute ordinary-verification budget.
+
 ## Implementation slices
 
 Commit and push each slice on the assigned Code branch. Shared files are a scope
@@ -225,121 +350,38 @@ restart policy. Freeze all S1-S3 commits before the ordinary checkpoint group.
 
 | Slice | Files | Work and required tests |
 |---|---|---|
-| S1: host container proof and receipt | `scripts/c590-remote.sh`; `scripts/verify-docker-stack.ps1`; `scripts/c590-real.ps1`; new `tests/Antiphon.Tests/Scripts/RetiredTempContainerHostTests.cs`; `scripts/fixtures/c1008-fake-docker.sh` and shared fixture helpers as needed | Implement the strict new host case, typed transport, locked full census, exact non-force removal, checked receipt and preview. Cover exited runner plus state-init, absence, disallowed states/ownership, observation/removal races, partial failure and retry. Test the real host branch, not a success-only fake. |
+| S1: shared mount repair, host proof and receipt | `scripts/c590-remote.sh`; `scripts/verify-docker-stack.ps1`; `scripts/c590-real.ps1`; new `tests/Antiphon.Tests/Scripts/RetiredTempContainerHostTests.cs`; new `tests/Antiphon.Tests/Scripts/RollingProductionMountTests.cs`; `tests/Antiphon.Tests/Scripts/RollingVolumeRecycleScriptTests.cs` (`C1008HostFixture`); `scripts/fixtures/c1008-fake-docker.sh`; new `scripts/fixtures/c994-production-compose-model.mjs` | First repair the shared model/census/mount predicates and receipt comparisons per D-7, then add the strict host case. Five R-5 methods cover production mount kinds; V-2 covers C994 integration. Implement typed transport, full locked census, exact non-force removal, checked receipt and preview. Test exit, absence, ownership, races, partial failure and retry against the production host branch. |
 | S2: phase composition | `scripts/deploy-server2.ps1`; `scripts/fixtures/c727-fake-http.ps1`; `scripts/fixtures/c727-fake-verify.ps1`; `scripts/test-deploy-server2.ps1`; new `tests/Antiphon.Tests/Scripts/RetiredTempContainerScriptTests.cs`; affected C1008 wrapper tests | Add bounded exit observation to drain completion, standalone retirement recovery, preview composition, fresh strict-volume revalidation, receipt linkage/audit-image transport and resume isolation. Update fixture phase order/counts explicitly. Keep deployment, main counters, strict volume guard and non-retiring-hold refusals. |
-| S3: real lifecycle proof and documentation | new `scripts/fixtures/c994-retired-temp-real-cases.mjs`; new `tests/Antiphon.Tests/Scripts/RetiredTempContainerDockerTests.cs`; shared owned-cleanup helper if required; `docs/docker-stack.md`; `docs/orchestration-loop.md`; `tests/Antiphon.Tests/Infrastructure/DockerStackDocumentationTests.cs` | Run the production shell logic against uniquely named fixture resources. Prove drain/exit/removal/retire/redeploy admission, failure preservation and no fixture residue. Document gates and recovery; add one focused runbook-contract test. Preserve existing C1008 real-Docker proofs. |
+| S3: real lifecycle proof and documentation | new `scripts/fixtures/c994-retired-temp-real-cases.mjs`; new `tests/Antiphon.Tests/Scripts/RetiredTempContainerDockerTests.cs`; `scripts/fixtures/c1008-recycle-real-cases.mjs`; `scripts/fixtures/c1008-recycle-cleanup.mjs` if new owned bind roots need cleanup; `tests/Antiphon.Tests/Scripts/RollingVolumeRecycleDockerTests.cs`; shared model materializer from S1; `docs/docker-stack.md`; `docs/orchestration-loop.md`; `tests/Antiphon.Tests/Infrastructure/DockerStackDocumentationTests.cs` | Both real fixtures use production-derived topology and inert owned paths. Preserve all 32 C1008 outcomes and add the 10 C994 outcomes; prove physical effects, failure preservation and no fixture residue. Update gates/recovery and add the focused runbook-contract test. |
 
-## TestDesign handoff
+## Placement and completion
 
-Verification is a separate stage in this dispatch. TestDesign must add the complete
-`## Verification design`, map each invariant to named assertions, freeze exact
-expanded rosters and controls, and make this manifest executable before Code.
-No build, test or live deployment was run by Plan. Proposed new test names below
-are implementation targets, not claims of existing coverage.
+At 2026-10-04 14:16 UTC, GET /api/runner-defaults returned revision 2 with an
+automatic Linux preference; GET /api/session-runners returned eligible Linux and
+Windows runners and an unavailable/draining temp. Re-read both at dispatch. Omit
+-Runner; use -Platform Linux for Bash/jq and owned Docker verification. Omit
+-Platform for documentation work; -Platform Any unpins. Product project/runner
+identifiers in this plan describe the deployment contract, not fleet placement.
+Each executable checkpoint below names the Linux lane.
 
-Required coverage:
-
-| ID | Boundary / required evidence | Intended owner |
-|---|---|---|
-| V-1 | Exact exited runner/state-init deletion and idempotent absence; all volumes retained during container cleanup | `RetiredTempContainerHostTests.C994_Exited_owned_containers_are_removed_without_volumes` |
-| V-2 | Running/paused/restarting/created/dead, unexpected service, duplicate/foreign IDs, mount mismatch, failed/partial census or inspect: no unsafe removal | `RetiredTempContainerHostTests.C994_Unsafe_or_unknown_census_refuses` |
-| V-3 | Recheck every removal; changed retirement, main admission, task/land state, ID or state; partial removal, receipt loss and recovery | `RetiredTempContainerHostTests.C994_Races_and_partial_failures_preserve_custody` |
-| V-4 | Preview and malformed transport cannot mutate; context/stamp/image evidence independently checked | `RetiredTempContainerHostTests.C994_Preview_and_transport_are_strict` |
-| V-5 | Retirement acknowledgement before exit: wait within one deadline, no stop/kill, timed refusal, final absence before success | `RetiredTempContainerScriptTests.C994_Drain_waits_for_exit_and_removes_containers` |
-| V-6 | Standalone retire removes exited leftovers before strict absent/null admission and guarded volume retirement | `RetiredTempContainerScriptTests.C994_Retire_recovers_exited_and_absent_temp` |
-| V-7 | Missing/invalid/nonzero counters, non-retiring hold, wrong redirect, accepting/live status, changed retirement: no cleanup | `RetiredTempContainerScriptTests.C994_Invalid_retirement_cannot_cleanup` |
-| V-8 | Preview has no side effects; resume never removes a replacement; failure ordering and image-hint/receipt linkage | `RetiredTempContainerScriptTests.C994_Preview_resume_and_receipts_preserve_boundaries` |
-| V-9 | Real Docker lifecycle: retained exited runner/state-init -> containers absent -> four volumes absent -> next deployment admission; negative and partial cases; main/cache sentinels unchanged; checked cleanup | `RetiredTempContainerDockerTests.C994_Real_retired_temp_lifecycle` |
-| R-1 | C1008 absent/null, strict present/null volume guard, publication audit, volume references, preview, receipts and main resume remain enforced | Existing `RollingVolumeRecycleScriptTests` and `RemoteScriptContractTests` C1008 methods; adjust wrapper expectations only for the new preceding host step |
-| R-2 | CARD-0957 deployment census/hold race still refuses all leftovers before state change; legacy rolling/jq roster reconciled | `scripts/test-deploy-server2.ps1` T-21/T-22 and the C1008 legacy rolling harness consumer |
-| R-3 | Gate 8 cleanup, mandatory gate 9 and human-only exclusions are accurate | Proposed `DockerStackDocumentationTests.Retired_temp_cleanup_and_retirement_gates_match` |
-| R-4 | Real existing recycler, publication audit and preservation behavior | `RollingVolumeRecycleDockerTests.C1008_Real_docker_comparison` |
-
-For R-1, preserve a direct test of `Assert-RetiredTempCounters` with present/null
-input: it must still refuse. A public `retire-temp` invocation may now first remove
-proven exited containers, so its old assertion of no host-case invocation must be
-replaced with checks of ordering and the independent strict boundary. Keep the
-direct host `c1008_status_proof` regression unchanged.
-
-The new real-Docker fixture must isolate every project, container, volume, network,
-Git remote and receipt with a unique test prefix; refuse production identifiers.
-Use only owned local children and await them, including timeout cleanup. Compare
-the baseline refusal with changed success for the central exited/null case; assert
-actual Docker/volume/sentinel state and exact removals, not just stdout. Reuse the
-existing process limiter and build-slot gate. TestDesign should separate individual
-mutation targets into precise method filters rather than a monolithic PC suite.
-
-Placement observation at 2026-10-04 12:13 UTC: `GET /api/runner-defaults` revision 2
-selected an automatic Linux runner; `GET /api/session-runners` showed eligible Linux
-and Windows runners and an unavailable/draining temp entry. These are live
-observations, not a fleet location embedded in the plan. Re-read both routes at
-dispatch. Omit `-Runner`; use `-Platform Linux` only for the Bash/jq/real-Docker
-verification lane. Omit `-Platform` for plan/design work; `-Platform Any` unpins.
-Existing deployment IDs in this document describe the product contract, not task
-placement. TestDesign must check Windows transport compatibility using the existing
-literal-argument fixture conventions; any required native Windows row is added
-explicitly, not silently treated as Linux evidence.
-
-### Proposed checkpoints (superseded by Verification design)
-
-Proposed ordinary scope for TestDesign to freeze. All rows name the Linux lane and
-run after one committed S1-S3 group; TUnit rows share one isolated build. Eight proposed new
-single-result methods give CP-1 its floor; CP-2's 19 methods and CP-5's existing one
-come from the current C1008 roster. CP-3 is a non-TUnit harness command with two
-invocations and six assertions; it has no TUnit execution floor.
-This scripts-only change uses the affected script/host Unit classes instead of the
-entire application Unit lane: the named boundary is the rolling shell/PowerShell
-contract, with no server/domain/client implementation change.
-
-| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
-|---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c994/` | linux-temp-container-contract | `/*/*/(RetiredTempContainerHostTests*)\|(RetiredTempContainerScriptTests*)/C994_*` | V-1..V-8 | 8 proposed methods, 0 failed/skipped; freeze argument expansion in TestDesign | 8 | 10 | true |
-| CP-2 | S1-S3 | CP-1 | linux-recycle-regression | `/*/*/(RemoteScriptContractTests*)\|(RollingVolumeRecycleScriptTests*)/C1008_*` | R-1, R-2 | All 19 baseline methods plus any explicit additions, 0 failed/skipped; report internal harness roster separately | 19 | 12 | true |
-| CP-3 | S1-S3 | n/a | linux-deploy-absence-regression | `pwsh -NoProfile -File scripts/test-deploy-server2.ps1 -Only host-absence -RequireJq` | R-2 | T-22: 2 invocations, 6 assertions, exit 0, no skipped prerequisite | n/a | 4 | true |
-| CP-4 | S1-S3 | CP-1 | linux-retirement-doc-contract | `/*/*/DockerStackDocumentationTests/Retired_temp_cleanup_and_retirement_gates_match` | R-3 | 1 proposed result, 0 failed/skipped | 1 | 1 | true |
-| CP-5 | S1-S3 | CP-1 | linux-isolated-docker-lifecycle | `/*/*/(RetiredTempContainerDockerTests*)\|(RollingVolumeRecycleDockerTests*)/*` | V-9, R-4 | 2 TUnit results, all named native outcomes, 0 failed/skipped and zero fixture residue | 2 | 12 | true |
-
-Estimated ordinary execution floor: 39 minutes plus authoring, not measured runtime.
-TestDesign may split a row by its named classes if it exceeds a foreground window;
-freeze that split before Code. Keep Code and Review receipts per CP with counts and
-exact source SHA. Use the checkpoint tool once per committed slice group and await
-completion; do not run unlisted builds/tests without recording a reason. Build-slot
-timeout is not permission to bypass the gate. Clean producer-owned `bin-c994/`
-outputs after all owned children finish. Generated evidence remains gitignored.
-
-## Completion and next stage
-
-The Plan deliverable is this committed/pushed artifact. Next is **test-design**:
-freeze adversarial vectors, typed transport/image receipt shape, timing and failure
-oracles, exact checkpoint rosters and method-scoped positive controls. Code follows
-only after the verification design is added. No operator decision or new approval
-is outstanding for the behavior selected above. Live rollout remains a caller-owned
-post-land operation from the canonical checkout under the existing rollout gates.
+The original Plan -> TestDesign handoff is complete. This amendment resolves P-1
+and refreshes its verification manifest in place; next is **code**. No separate
+prerequisite card or unanswered product default remains. All new tests and controls
+are implementation targets, not existing green evidence. No build, test, container
+creation or live rollout was performed by this amendment. The read-only Compose
+config observation used inert paths, and both required platform routes were read.
+Live rollout remains a caller-owned post-land operation from the canonical checkout.
 
 ## Verification design
 
-TestDesign task `cef1a2a9-a166-4f55-a1db-becddcd9f04e`, inspected at
-`157dd95ad3468cfb641647ccd26504347cb38a92`. This addition freezes verification;
-D-1 through D-6 above are unchanged. The earlier proposed checkpoint heading was
-renamed because `PlanTableImporter.ExtractSection` reads the **first** exact
-`### Checkpoints` heading. Only the table below is executable authority.
-
-**Readiness: next is Plan, not Code.** P-1 is a concrete production-topology seam:
-`c1008_compose_model` requires state-init's runner-state target to be `/state`, but
-`docker-compose.server2-runner.yml` mounts it at `/runner-state`.
-`c1008_owned_mounts` also requires every model mount to be a named volume, every
-inspected mount to be writable, and equal mount counts. Production has read-only
-file binds, provider-directory binds, Compose secrets and tmpfs; the temp override
-adds the Grok bind. Both C1008 fixtures substitute a volumes-only model with the
-incorrect `/state` destination. Reusing that model cannot prove D-2 or D-6.
-This is established by reading the predicates and Compose files, not a claim of a
-live-host failure. Plan must specify how the existing helpers validate the actual
-mount kinds/destinations without reading secret contents, and whether the shared
-C1008 correction lands here or in a prerequisite. Do not drop those mounts from
-inspection or weaken the match to make the fixture pass. V-2's production-topology
-method and V-9 are the required closure evidence. No human policy choice is needed.
-If that repair expands the shared scope, refresh this manifest before Code;
-unchanged helper internals remain owned by CARD-1008's verification.
+TestDesign task `cef1a2a9-a166-4f55-a1db-becddcd9f04e` originally inspected
+`157dd95ad3468cfb641647ccd26504347cb38a92`. Plan amendment task
+`693fd5d6-960d-4c24-be97-136b2550d294` inspected its committed design at
+`e3d5c81715e53aae26bd965e830d7bb91d98326a`. D-1..D-6 remain in effect;
+D-7/D-8 resolve P-1 in this card and supersede the old readiness/budget gate.
+There is exactly one executable `### Checkpoints` table. **Ready for Code** means
+the scope and proof are specified, not that production mount behavior has passed.
+V-2, R-5 and both real-Docker rows must pass before ordinary Review can accept it.
 
 ### Inspection
 
@@ -354,6 +396,7 @@ unchanged helper internals remain owned by CARD-1008's verification.
 | `deploy-server2.ps1`: Assert-ZeroCounters, Assert-RecycleContext, Assert-RetiredTempCounters, Assert-TempSeedCounters, Wait-RunnerStatus, Invoke-HostCase, Assert-TempProjectAbsent and drain/retire phase bodies | Separate cleanup admission, strict volume admission, bounded waiting, no rearm on retirement -> V-5..V-8, R-1/R-2 |
 | `c590-real.ps1`: Assert-C1008BridgeContext and live manifest/export/copy path; verifier predispatch validation; `c590-remote.sh`: rollout/cache locks, save/refuse, container/volume census, status proof, Compose/private/cache/mount helpers, audit, recycle admission and retire entry | Independent transport gates, image custody and physical receipts -> V-1..V-4/V-8; P-1 is not covered by the simplified fixtures |
 | Production main/temp Compose mount definitions; docker-stack gates 8/9, recycling and manual caveat; orchestration autonomy/stage rules; project context; testing guide checkpoint/PC/receipt rules; importer and coverage-reader bodies | Preservation, correct stage handoff, single recognized checkpoint manifest, strict source receipts -> V-9/R-3/Checkpoints |
+| P-1 amendment: shared Compose/census/mount/reconcile helpers, Compose function environment, both fixture model constructors, jq consumer and driver; read-only resolved main/temp config | Actual state-init `/runner-state`, runner bind/secret/tmpfs topology, lost HostConfig projection, historical fixture drift and unchanged jq fallback scope -> D-7/D-8/R-5 |
 
 Missing setup is implementation work, not existing coverage: extend the fake Docker
 boundary with deterministic numbered read/remove barriers, full Compose topology,
@@ -428,7 +471,8 @@ An absent retry never overwrites a known original image with an empty observatio
 
 All methods below are **new, single-result TUnit methods** with internal case
 vectors, not Arguments expansion: 20 host methods, 13 wrapper/transport methods,
-and one real-Docker method. Names in the earlier handoff are refined by this roster.
+five shared-mount methods (R-5), and one real-Docker method. The documentation
+method is listed in R-3; CP-5 is a non-TUnit command. These are the exact rosters.
 Every vector emits its key on failure; expected case-key sets are compared for
 exact equality so early return cannot silently drop a boundary. Assertions listed
 here are required labels in the corresponding test body.
@@ -442,7 +486,7 @@ here are required labels in the corresponding test body.
 | V-2 | `RetiredTempContainerHostTests.C994_Host_task_and_land_census_is_complete` | Matrix C through existing host census plus new cleanup entry; `c994-host-work`: no removal for bound work, pending land or incomplete census. |
 | V-2 | `RetiredTempContainerHostTests.C994_Census_and_inspect_fail_closed` | Nonzero ps with empty/partial output; truncated/duplicate/nonhex ID; inspect nonzero, empty, malformed, wrong ID, multirow or omitted State/Image/Mounts/Labels. `c994-census-known`: no rm even when stdout looks empty. |
 | V-2 | `RetiredTempContainerHostTests.C994_Container_service_and_state_are_restricted` | Both allowed services crossed with running, paused, restarting, created, dead, exited and inconsistent Running/Status; exited is sole success. Unknown/broker service, duplicate runner, foreign project and prefix-neighbour inputs refuse or remain unselected as appropriate. `c994-service`, `c994-state`, `c994-project`, `c994-cardinality`. |
-| V-2 | `RetiredTempContainerHostTests.C994_Production_mount_topology_is_proven` | P-1 gate: materialize real main+temp Compose config with fixture-owned provider/secret paths. Valid `/runner-state`, named volumes, read-only binds, provider binds, secrets and tmpfs succeed; wrong type/source/destination/RW, omitted/extra/duplicate mount, foreign volume labels/generation, symlink source and external-private mismatch refuse. `c994-mounts`, `c994-private-identity`, `c994-compose`. Never inspect file contents. |
+| V-2 | `RetiredTempContainerHostTests.C994_Production_mount_topology_is_proven` | Integration with the shared D-7 helpers: real resolved main+temp Compose config with fixture-owned paths. Valid state-init `/runner-state`, named volumes, binds, secrets and tmpfs succeed. One invalid bind and one missing tmpfs proof each refuse the complete cleanup entry before rm; R-5 owns exhaustive one-field vectors. `c994-mounts`, `c994-private-identity`, `c994-compose`. Compare the normalized logical roster: state-init 3, main runner 13, temp runner 14; never equate raw `.volumes` and `.Mounts` lengths. No secret content reads. |
 | V-3 | `RetiredTempContainerHostTests.C994_Whole_candidate_set_precedes_removal` | Valid first runner plus invalid last state-init, in both enumeration orders; `c994-whole-set`: zero rm before all candidates pass. |
 | V-3 | `RetiredTempContainerHostTests.C994_Rollout_lock_covers_final_census` | Hold a real flock in an owned child, observe lock-request barrier, release and await success. Second entrant cannot validate/remove until first final census/receipt completes; cache lock, if needed, is second and acquired once. `c994-lock`, `c994-lock-order`. |
 | V-3 | `RetiredTempContainerHostTests.C994_Each_removal_rechecks_live_proofs` | Before first and second rm separately change retirement instant, main admission, task/land snapshot, ID, state, image or mounts. `c994-recheck-status`, `c994-recheck-work`, `c994-recheck-container`: no next rm; prior progress truthful. Replacement ID is never swept. |
@@ -463,7 +507,7 @@ here are required labels in the corresponding test body.
 | V-7 | `RetiredTempContainerScriptTests.C994_Wrapper_task_and_land_census_is_complete` | Matrix C independently through wrapper with host replaced by a recording boundary; zero cleanup calls for invalid work facts. `c994-wrapper-work`. |
 | V-8 | `RetiredTempContainerScriptTests.C994_Strict_volume_admission_remains_independent` | AST-load actual Assert-RetiredTempCounters with present/null and failed census, then absent/null control. Direct host c1008_status_proof gets same pair. Also call shared Assert-ZeroCounters and c849_status_zero: null refuses, integer zero accepts. `c994-wrapper-strict-null`, `c994-host-strict-null`, `c994-shared-null`. Input status remains explicit null after call. |
 | V-8 | `RetiredTempContainerScriptTests.C994_Preview_reports_pending_volume_proof` | DryRun present/absent x null/zero; present previews exact four targets and pending absence/audit without invoking a destructive recycler or claiming strict admission; absent uses existing C1008 preview. `c994-preview-pending`; no POST/helper/clear/removal. |
-| V-8 | `RetiredTempContainerScriptTests.C994_Resume_never_runs_container_cleanup` | Matching C1008 partial journal+absent control; replacement runner or state-init refuses. No new c994 operation for any ResumeRecycle; failed cleanup uses normal retry instead. `c994-resume-isolation`. |
+| V-8 | `RetiredTempContainerScriptTests.C994_Resume_never_runs_container_cleanup` | Matching C1008 partial journal+absent control; replacement runner or state-init refuses. Include direct shared reconcile vectors: present saved owned record lacking topology version, or changed tmpfs/bind tuple, refuses RecycleResumeMismatch with no new removal intent. No new c994 operation for any ResumeRecycle; failed cleanup uses normal retry instead. `c994-resume-isolation`. |
 | V-8 | `RetiredTempContainerScriptTests.C994_Cleanup_receipt_is_required_before_recycle` | Cleanup child failure, missing/corrupt/mismatched copied receipt, copy failure after removal, and fresh busy/stamp/task drift before recycle. `c994-receipt-before-recycle`, `c994-fresh-volume-proof`: zero recycler calls and unchanged retirement. |
 | V-4 | `RetiredTempContainerScriptTests.C994_Verifier_manifest_is_strict` | Real verifier predispatch boundary; all raw transport vectors, duplicate members and unknown C1008 fields; only defined cleanupOperationId addition admitted in normal temp context. `c994-verifier-context`, `c994-recycle-addition`. |
 | V-4 | `RetiredTempContainerScriptTests.C994_Bridge_transport_preserves_literal_context` | Direct bridge validator and actual live-case export builder with SSH/scp replaced. DateTime and offset timestamps normalize equally; invalid strings/quotes/newline/metacharacters fail before transport. Capture ArgumentList and parsed host values; sentinel command never executes. `c994-bridge-context`, `c994-literal-transport`; all touched PowerShell remains ASCII. |
@@ -499,7 +543,7 @@ RD roster is **10 internal outcomes**, one TUnit execution, in the new C994 fixt
 
 | RD | Physical evidence |
 |---|---|
-| RD-1 | Baseline script at 157dd95 refuses retained exited/null temp through existing retire-temp-runner; containers and all private volumes remain. |
+| RD-1 | Unmodified baseline script at 157dd95 against the same production-derived topology refuses at RecycleComposeMismatch (`/runner-state`), retaining containers and all private volumes. Record this actual first failure; do not claim it reached the null guard. The existing direct c1008_status_proof R-1/V-8 tests independently prove retained/null refusal. Do not patch baseline topology to conceal P-1. |
 | RD-2 | Changed drain-temp with local HTTP retirement/exit sequence reaches cleanup against real exited runner+state-init with production-shaped mounts. Before volume retirement all four volumes and provider bind sentinels remain, selected IDs are absent, main ID/StartedAt unchanged. |
 | RD-3 | Separate normal retire-temp consumes RD-2 receipt, audits as uid 1654, removes exactly four private volumes and leaves temp retired/offline; main/broker/caches/provider binds unchanged. |
 | RD-4 | Next deploy-temp absence/admission sequence reaches permitted fixture Compose creation; explicit retirement clear occurs only after fresh absence and safe hold. This proves script admission, not server registration lease semantics. |
@@ -520,9 +564,25 @@ Fake status server may drive states; it cannot fake Docker ps/inspect/rm/volume 
 success. Failure wrappers delegate to real Docker except at the named barrier.
 The existing C1008 32-case real comparison remains an independent R-4 row.
 
+R-5's offline methods use production shell function bodies, the shared materialized
+Compose config and file-backed inspected metadata. Batch pure predicate vectors in
+one owned Bash child per method; model generation is read-only Compose CLI, not a
+Docker daemon connection. This also keeps their exact methods usable in SourceLanding
+Mutation. Each method includes a valid main and temp observation and reports an
+exact case-key set. No fixture-side copy of the acceptance predicate is allowed.
+
+| ID | Exact method | Vectors / decisive assertion |
+|---|---|---|
+| R-5 | `RollingProductionMountTests.C994_Compose_model_preserves_service_specific_mounts` | Real base and base+temp config accept state-init `/runner-state` and runner `/state`; swapping either target, external private volume, wrong cache nocopy, unsupported kind/options, missing/extra/duplicate destination refuses. Prove the fixture transform preserves the production mount signature. `c994-model-targets`. |
+| R-5 | `RollingProductionMountTests.C994_Named_volume_identity_and_topology_are_exact` | Correct normalized unordered inventory passes; one-at-a-time wrong Name, Source/Mountpoint, Destination, type, missing/non-Boolean/opposite RW, owner/role/generation, anonymous or duplicate mount refuses. Preserve private/external distinctions. `c994-volume-mount`, `c994-volume-owner`. |
+| R-5 | `RollingProductionMountTests.C994_Bind_sources_are_canonical_and_typed` | File ro and directory rw binds, including temp Grok and state-init Codex, pass. Wrong/missing source, symlink at source or ancestor, file-directory swap, source-resolution/stat failure, wrong target/RW and provider bind omitted/extra refuse. Parent mount plus declared child binds pass. Check metadata only and zero content reads. `c994-bind-proof`. |
+| R-5 | `RollingProductionMountTests.C994_Secrets_match_read_only_files` | Resolve both service secrets via top-level file entries, actual short/resolved targets and host environment source. Wrong secret source/target, nonfile/external secret, RW=true, missing/malformed RW, omission/extra/duplicate refuses. Sentinel values never appear in receipt/stdout and files remain unchanged. `c994-secret-proof`. |
+| R-5 | `RollingProductionMountTests.C994_Tmpfs_configuration_survives_exit` | Running/exited supported HostConfig forms, with corroborating Mounts record present/absent, normalize to one `/run/antiphon` proof. Missing/contradictory HostConfig, extra target, bind/volume impostor, malformed options, read-only or nondefault options refuse. Reordered records compare equal; changed tmpfs after initial proof does not. `c994-tmpfs-proof`. |
+
 ### Guards the regression
 
-- R-1: Keep all **19 existing single-result C1008 methods**: the eleven
+- R-1: Preserve all **19 existing single-result C1008 methods**; ordinary selection
+  runs **18** plus CP-5's one-mode command in place of the four-mode meta-test. The eleven
   RemoteScriptContractTests methods are Recycle_exact_default_volumes,
   Recycle_refuses_references_and_unknown_census, Recycle_audits_work_as_1654,
   Recycle_refuses_unpublished_and_dirty_work, Recycle_refuses_uninspectable_git,
@@ -538,16 +598,19 @@ The existing C1008 32-case real comparison remains an independent R-4 row.
   Retired_absent_null_is_accepted. Preserve outcome assertions; change only wrapper
   ordering expectations made obsolete by the preceding cleanup. Direct host
   present/null refusal stays unchanged. V-8 supplies direct wrapper strict proof.
-- R-2: `RollingVolumeRecycleScriptTests.C1008_Legacy_rolling_and_jq_rosters_remain`
-  still runs all four jq modes. Preserve 24 groups/66 invocations/227 assertions
-  when jq is present, 23/62/218 for each intentionally unavailable mode, and
-  31 driver assertions per mode: **252 wrapper invocations, 881 harness assertions,
-  124 jq-driver assertions**, one TUnit result. Update T-1's existing order assertion
+- R-2: The unchanged `RollingVolumeRecycleScriptTests.C1008_Legacy_rolling_and_jq_rosters_remain`
+  retains all four jq modes for broader regression. This card's CP-5 instead runs
+  `pwsh -NoProfile -File scripts/test-deploy-server2-jq.ps1 -Case present -RequireJq`
+  once: **24 groups, 66 wrapper invocations, 227 harness assertions and 31 driver
+  assertions**, exit 0, no skip; it contributes no TUnit result. The absent,
+  missing-shell and failing-shell modes are excluded from ordinary scope because
+  their probe/fallback implementation is unchanged. Their existing 23/62/218 and
+  31-assertion contracts remain intact. Update T-1's existing order assertion
   to include cleanup at gate 8 and its idempotent recheck at gate 9. Update fixture
   shutdown state for T-4; T-12's explicit null counter case must deliberately stay
   live/unknown and refuse, while new V-6 owns exited/null success. Reuse existing
   assertions so roster counts remain exact. T-21 (3 invocations/9 assertions) and
-  T-22 (2/6) remain included in each full harness; no duplicate ordinary command row.
+  T-22 (2/6) remain included in the required-jq harness; no duplicate ordinary row.
 - R-3: New `DockerStackDocumentationTests.Retired_temp_cleanup_and_retirement_gates_match`
   requires gate 8 container absence, mandatory gate 9, normal exited-temp recovery,
   one-budget wait, preview/resume boundaries and human gates for prune/other volumes.
@@ -556,18 +619,24 @@ The existing C1008 32-case real comparison remains an independent R-4 row.
   manual main-volume deletion remains absent. Documentation is not physical proof.
 - R-4: `RollingVolumeRecycleDockerTests.C1008_Real_docker_comparison` remains **1 result,
   32 internal outcomes (5 baseline, 27 changed)** with checked Docker cleanup and
-  Git/disk evidence. Do not replace its baseline ref or silently shrink its roster.
+  Git/disk evidence. Both versions use the D-8 production-derived model; preserve
+  named physical outcomes and document any earlier baseline refusal truthfully.
+  Add assertions to existing outcomes for unchanged bind/secret sentinels and
+  normalized mount metadata. Do not replace its baseline ref or shrink its roster.
+- R-5: The five methods above qualify the **changed shared C1008 helpers**, not just
+  a C994 call site. R-4 tests their main replacement/resume effects with real Docker;
+  V-9 tests temp cleanup/retirement. These are now CARD-0994 obligations.
 
 ### Guard inventory
 
-These are the decision-bearing guards introduced or crossed by D-1..D-6, separated
+These are the decision-bearing guards introduced or crossed by D-1..D-8, separated
 where wrapper/host, per-removal/final proof, or durable/local receipt checks can be
 bypassed independently. A row may validate a compound typed proof object; its test
 varies every conjunct independently, while its PC breaks one decisive conjunct.
 This keeps one control per behavior without treating dozens of input encodings as
 separate controls. Unchanged C1008 audit/reference/generation internals retain their
-own plan's controls; this card adds controls at the new integration boundaries.
-No guard is untested; all controls remain pending execution after land.
+own plan's controls; the changed shared mount predicates are explicitly owned here.
+Every guard has a planned test; all controls remain pending execution after land.
 
 | Guard | Plan reference and invariant | Control |
 |---|---|---|
@@ -583,9 +652,9 @@ No guard is untested; all controls remain pending execution after land.
 | G-10 | D-2 only allowed services | PC-10 |
 | G-11 | D-2 at most one runner | PC-11 |
 | G-12 | D-2 both Running=false and Status=exited | PC-12 |
-| G-13 | D-2 complete actual mount topology (P-1) | PC-13 |
-| G-14 | D-2 retained private-volume ownership/generation | PC-14 |
-| G-15 | D-2 actual Compose model owns the targets | PC-15 |
+| G-13 | D-2/D-7 exact named-volume source in normalized topology | PC-13 |
+| G-14 | D-2/D-7 retained private-volume ownership/generation | PC-14 |
+| G-15 | D-7 actual service-specific Compose targets, including state-init | PC-15 |
 | G-16 | D-2 validate entire candidate set before first removal | PC-16 |
 | G-17 | D-5 rollout lock held through final census | PC-17 |
 | G-18 | D-5 rollout then cache lock; no recursive acquisition | PC-18 |
@@ -626,15 +695,20 @@ No guard is untested; all controls remain pending execution after land.
 | G-53 | D-6 fixture ownership prevents touching production/foreign objects | PC-53 |
 | G-54 | D-6 test child timeout reaps all owned children before cleanup | PC-54 |
 | G-55 | D-5 bridge copy independently checked despite successful host persistence | PC-55 |
+| G-56 | D-7 canonical bind source and file/directory metadata | PC-56 |
+| G-57 | D-7 file-backed secret is an exact read-only mount | PC-57 |
+| G-58 | D-7 complete, noncontradictory persisted tmpfs proof | PC-58 |
 
 ### Positive controls
 
 Each row is a distinct compiling/syntactically valid defect in the named production
 script, except PCs 53/54 which mutate the new fixture's custody checks. Mutate one
 row at a time. Direct validator tests isolate the boundary so a later guard cannot
-mask its red. Whole-entry tests also assert effects. For controls on shared helpers,
-mutate the C994 call site/argument where possible; do not repair unrelated C1008
-behavior. Each row's exact method runs with
+mask its red. Whole-entry tests also assert effects. PC-13..15 and PC-56..58 mutate
+the shared D-7 helper predicates directly and each run one R-5 method. Do not add a
+second C994 mutation of the same predicate. Other shared-helper controls mutate
+the C994 call site/argument where possible; unrelated C1008 behavior remains out of
+scope. Each row's exact method runs with
 `--treenode-filter "/*/*/ClassName/ExactTestMethod"`, MinExecuted=1 and exact
 Class.Method expectation; no whole-class or ordinary CP filter is a PC selector.
 
@@ -652,9 +726,9 @@ Class.Method expectation; no whole-class or ordinary CP filter is a PC selector.
 | PC-10 | Add build-slots to disposable service allowlist. | `RetiredTempContainerHostTests.C994_Container_service_and_state_are_restricted` at `c994-service` |
 | PC-11 | Remove one-runner cardinality check. | `RetiredTempContainerHostTests.C994_Container_service_and_state_are_restricted` at `c994-cardinality` |
 | PC-12 | Accept any Running=false status, including created. | `RetiredTempContainerHostTests.C994_Container_service_and_state_are_restricted` at `c994-state` |
-| PC-13 | Skip inspected mount-source equality in cleanup topology predicate. | `RetiredTempContainerHostTests.C994_Production_mount_topology_is_proven` at `c994-mounts` |
-| PC-14 | Skip private-volume Compose-owner label equality at cleanup call site. | `RetiredTempContainerHostTests.C994_Production_mount_topology_is_proven` at `c994-private-identity` |
-| PC-15 | Admit external=true on temp work in cleanup model validation. | `RetiredTempContainerHostTests.C994_Production_mount_topology_is_proven` at `c994-compose` |
+| PC-13 | Skip named-volume Source/Mountpoint equality in shared c1008_owned_mounts. | `RollingProductionMountTests.C994_Named_volume_identity_and_topology_are_exact` at `c994-volume-mount` |
+| PC-14 | Skip private-volume Compose-owner label equality in shared identity proof. | `RollingProductionMountTests.C994_Named_volume_identity_and_topology_are_exact` at `c994-volume-owner` |
+| PC-15 | Restore the defective state-init target `/state` in c1008_compose_model. | `RollingProductionMountTests.C994_Compose_model_preserves_service_specific_mounts` at `c994-model-targets` (valid production model is refused) |
 | PC-16 | Move first rm before validating the last candidate. | `RetiredTempContainerHostTests.C994_Whole_candidate_set_precedes_removal` at `c994-whole-set` |
 | PC-17 | Release rollout lock immediately before final census. | `RetiredTempContainerHostTests.C994_Rollout_lock_covers_final_census` at `c994-lock` |
 | PC-18 | Swap cache/rollout lock acquisition at cleanup entry. | `RetiredTempContainerHostTests.C994_Rollout_lock_covers_final_census` at `c994-lock-order` |
@@ -695,6 +769,9 @@ Class.Method expectation; no whole-class or ordinary CP filter is a PC selector.
 | PC-53 | Remove exact ownership-label check in new fixture cleanup guard. | `RetiredTempContainerHostTests.C994_Fixture_custody_is_bounded` at `c994-fixture-ownership` |
 | PC-54 | Return from fixture child timeout before kill-tree and await. | `RetiredTempContainerHostTests.C994_Fixture_custody_is_bounded` at `c994-child-reaped` |
 | PC-55 | Ignore bridge scp failure while a valid host receipt exists. | `RetiredTempContainerHostTests.C994_Receipt_write_and_copy_fail_closed` at `c994-receipt-copy` |
+| PC-56 | Accept a bind source when canonical readlink differs from declared Source. | `RollingProductionMountTests.C994_Bind_sources_are_canonical_and_typed` at `c994-bind-proof` |
+| PC-57 | Ignore inspected RW for normalized file-backed secrets. | `RollingProductionMountTests.C994_Secrets_match_read_only_files` at `c994-secret-proof` |
+| PC-58 | Treat missing persisted tmpfs configuration as an empty accepted set. | `RollingProductionMountTests.C994_Tmpfs_configuration_survives_exit` at `c994-tmpfs-proof` |
 
 Mutation runs baseline/break/red/restore/green **after land**; Code runs ordinary
 V/R; Review judges this pending design and Code evidence before land. Snapshot
@@ -726,65 +803,78 @@ credit is claimed. At most three ordinary rounds; no repeats after green.
   null/zero x present/absent and late-change combinations cover distinct branches.
 - Reexecuting the entire historical C1008 PC inventory: unchanged internals already
   have their own companion; R-1/R-4 and new boundary PCs cover this integration.
-
-### Checkpoints
-
-Closed ordinary scope after one committed S1-S3 group **and P-1's Plan disposition**.
-Run on the Linux lane with Bash, jq, pwsh, node, Git and an owned nested Docker daemon.
-One isolated Antiphon.Tests build; all other TUnit rows reuse it, unchanged source.
-All rows are serial. No Antiphon.Agents.Pty.Tests or live deployment is scheduled.
-Use the checkpoint tool through `scripts/build-slot.ps1` with `run --plan` pointing
-at this file, `--after S1-S3 --expected-source-sha` set to the committed Code SHA;
-await completion (repeat wait on exit 75). A slot timeout is not permission to run
-unleased. Retain exact CHECKPOINT lines, roster/TRX and validated clean source/build
-receipts. Driver/tool bootstrap is included in CP-1's build allowance, not a hidden
-extra application test run. Remove producer-owned alternate outputs after children
-finish. EstimatedMinutes includes build where applicable; Min counts TUnit results.
-
-| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
-|---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c994/` | c994-host | `/*/*/RetiredTempContainerHostTests/C994_*` | V-1,V-2,V-3,V-4,V-8,V-9 | exact 20 listed methods, 0 failed/skipped | 20 | 12 | true |
-| CP-2 | S1-S3 | CP-1 | c994-wrapper | `/*/*/RetiredTempContainerScriptTests/C994_*` | V-4,V-5,V-6,V-7,V-8 | exact 13 listed methods, 0 failed/skipped | 13 | 6 | true |
-| CP-3 | S1-S3 | CP-1 | c1008-host-regression | `/*/*/RemoteScriptContractTests/C1008_*` | R-1 | exact 11 existing methods, 0 failed/skipped | 11 | 8 | true |
-| CP-4 | S1-S3 | CP-1 | c1008-wrapper-regression | `/*/*/RollingVolumeRecycleScriptTests/(C1008_Present_or_unknown_temp_keeps_null_refusal*)\|(C1008_Busy_routed_and_land_in_flight_refuse*)\|(C1008_Same_sha_and_partial_retries_are_safe*)\|(C1008_Option_manifest_is_strict*)\|(C1008_Documentation_and_transport_pins_match*)\|(C1008_Refusal_receipts_do_not_leak_secrets*)\|(C1008_Retired_absent_null_is_accepted*)` | R-1 | exact 7 existing methods, 0 failed/skipped | 7 | 4 | true |
-| CP-5 | S1-S3 | CP-1 | c994-rolling-roster | `/*/*/RollingVolumeRecycleScriptTests/C1008_Legacy_rolling_and_jq_rosters_remain` | R-1,R-2 | 1 result; four modes and exact internal rosters above, 0 failed/skipped | 1 | 8 | true |
-| CP-6 | S1-S3 | CP-1 | c994-docs | `/*/*/DockerStackDocumentationTests/(Retired_temp_cleanup_and_retirement_gates_match*)\|(Main_volume_recycling_is_scripted_only*)` | R-3 | exact 2 methods, 0 failed/skipped | 2 | 1 | true |
-| CP-7 | S1-S3 | CP-1 | c994-real-lifecycle | `/*/*/RetiredTempContainerDockerTests/C994_Real_retired_temp_lifecycle` | V-9 | 1 result; RD-1..RD-10, 0 failed/skipped, owned residue=0 | 1 | 9 | true |
-| CP-8 | S1-S3 | CP-1 | c1008-real-regression | `/*/*/RollingVolumeRecycleDockerTests/C1008_Real_docker_comparison` | R-4 | 1 result; 32 outcomes (5 base, 27 changed), 0 failed/skipped, owned residue=0 | 1 | 12 | true |
+  The changed shared mount behavior is included in R-5 and PC-13..15/56..58.
+- The unchanged unavailable-jq probe modes: D-8 replaces their repeated rolling
+  harness executions with one required-jq present run. If implementation changes
+  probe or fallback logic, revise the manifest before running it; do not claim
+  the one-mode row proves those changes.
 
 ### Cost
 
-All values are **estimates**, not measured by TestDesign. Ordinary Code floor is
-**60 minutes**: CP-1 12 + CP-2 6 + CP-3 8 + CP-4 4 + CP-5 8 + CP-6 1 + CP-7 9 +
-CP-8 12. This comprises 4 minutes setup/tool/application build plus 56 minutes V/R.
-There are **56 TUnit executions**, not 56 minutes or 56 internal cases. No repeat
-round is required; a failure-driven repeat is reported and consumes the operator's
-budget. If P-1 broadens scope or a row's measured cost overruns, split the prerequisite
-into **C994-production-mount-proof** and refresh the manifest; do not remove its
-acceptance claim or compensate by omitting another row.
+All values are estimates, not measured test runtimes. Ordinary Code floor is
+**58 minutes**: CP-1 13 + CP-2 6 + CP-3 8 + CP-4 4 + CP-5 2 + CP-6 1 +
+CP-7 9 + CP-8 12 + CP-9 3. This includes 4 minutes setup/tool/application build
+and 54 minutes ordinary V/R. There are **60 TUnit executions**, plus CP-5's
+non-TUnit command (66 wrapper invocations, 227 harness and 31 driver assertions).
+No mandatory repeat round. P-1 gets one extra minute in CP-1 and three in CP-9;
+CP-5 saves six versus the prior four-mode eight-minute row: 60 + 1 + 3 - 6 = 58.
+Use batched direct predicate vectors; do not spawn an entire rollout per input field.
 
-Separate Mutation floor: **224 minutes**, comprising 4 minutes initial setup and
-**55 x 4 = 220 minutes** for the exact PC method filters above. Per control allowance
-is baseline build/test 1 minute + defect/edit and red build/test 1.5 minutes + exact
-restore and green build/test 1.5 minutes. These include isolated incremental builds,
-not a hidden reuse of a mutant binary. PC-1 through PC-55 each use that 4-minute
-allowance, MinExecuted=1 per phase, no suite run. The 55 controls are separate from
-the 60-minute ordinary budget; they do not fit a 60-minute total including Mutation.
-Combined planned setup/build + ordinary V/R + Mutation is **284 minutes**, excluding
-implementation authoring and unpredictable build-slot queue time. If the operator
-intends 60 minutes inclusive of Mutation, a new scope decision is required; this
-artifact does not silently promise that total.
+This fits the requested 30-60 minute ordinary-verification allocation with only
+two estimated minutes of headroom. Report observed row runtimes and queue time
+separately. Failure-driven repeats consume additional time and require exact
+failure triage; do not silently shrink scope, loosen a test or add retry loops.
+If measured execution cannot fit, report remaining CP rows and measured cost to the
+caller for a revised dispatch before buying extra broad work. A cost overrun is
+not an automatic new prerequisite and does not license leaving a row unreported.
+No whole-Unit/application namespace run is selected.
 
-Savings: one shared ordinary build avoids seven duplicate 4-minute builds
-(**28 minutes**); omitting the proposed duplicate T-22 command saves its **4-minute**
-row because CP-5 already runs it in all modes. No whole-Unit baseline run is bought.
-No estimated PC savings are claimed: controls share source files and must retain
-independent red/restore/green evidence. Broader stress/repeat or native Windows work
-belongs to the named follow-up slice, not a hidden extra run.
+Separate post-land Mutation floor is **236 minutes**: 4 initial setup plus
+**58 x 4 = 232 minutes**, one exact-method baseline/break/red/restore/green cycle
+per behavior. Each allowance includes baseline build/test 1 minute, compiling
+mutation plus red build/test 1.5, and exact restore plus green build/test 1.5.
+MinExecuted=1 per phase. No suite selector or reused mutant binary; no control per
+invalid input encoding. Combined ordinary plus Mutation estimate is **294 minutes**,
+excluding authoring and unpredictable slot queue time. PCs are not ordinary Code
+work. The same full ordinary selection applies to Final Review; validated Code
+receipts may be assessed under the normal Review policy without claiming a rerun.
 
-Handoff audit: bodies above read; **guards=55, mapped=55, missing=0, duplicate PC
-maps=0**. All 55 PC recipes name a concrete executable input, source defect, exact
-method and decisive assertion; execution is pending implementation/land. P-1 is an
-explicit Plan gate, not unrecorded setup or a green claim. No build/test/Docker/live
-rollout was run by this documentation task. The next Plan task must resolve the
-production mount proof and reconcile the ordinary budget before authorizing Code.
+One shared ordinary build avoids seven extra application builds (28 estimated
+minutes) across the eight TUnit rows. The single required-jq command removes 186
+duplicate wrapper invocations and six estimated minutes; the unchanged unavailable
+probe modes retain their historical tests. Both real-Docker rosters and all newly
+changed mount behaviors stay in the selection. No PC batching savings are claimed.
+
+Handoff audit: **guards=58, mapped=58, missing=0, duplicate PC maps=0**. P-1 has a
+concrete in-card repair and five shared-helper methods; its real semantics remain
+an explicit Code acceptance obligation. No build/test/Docker mutation/live rollout
+was run by this documentation task. Only plan structure, source reads, inert
+read-only Compose config and live placement GETs were checked. Next: **code**.
+
+### Checkpoints
+
+Closed ordinary scope after one committed S1-S3 group, including D-7/D-8's shared
+repair. All groups name the Linux lane, which requires Bash, jq, pwsh, node, Git,
+Compose and an owned nested Docker daemon. One isolated Antiphon.Tests build; every
+other TUnit row reuses it without source changes. All rows are serial. No
+Antiphon.Agents.Pty.Tests or live deployment is scheduled.
+
+Use the checkpoint tool through scripts/build-slot.ps1 with run --plan pointing
+at this file, --after S1-S3 and --expected-source-sha set to the committed Code SHA;
+await completion (repeat wait on exit 75). A slot timeout is not permission to run
+unleased. Retain exact CHECKPOINT lines, roster/TRX and validated clean source/build
+receipts. Tool bootstrap is included in CP-1, not a hidden extra application run.
+Producer-owned bin-c994/ outputs are removed only after owned children finish.
+Min counts TUnit results; CP-5 instead has exact command/roster expectations.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
+|---|---|---|---|---|---|---|---:|---:|---|
+| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c994/` | linux-c994-host | `/*/*/RetiredTempContainerHostTests/C994_*` | V-1,V-2,V-3,V-4,V-8,V-9 | exact 20 listed methods, 0 failed/skipped | 20 | 13 | true |
+| CP-2 | S1-S3 | CP-1 | linux-c994-wrapper | `/*/*/RetiredTempContainerScriptTests/C994_*` | V-4,V-5,V-6,V-7,V-8 | exact 13 listed methods, 0 failed/skipped | 13 | 6 | true |
+| CP-3 | S1-S3 | CP-1 | linux-c1008-host | `/*/*/RemoteScriptContractTests/C1008_*` | R-1 | exact 11 existing methods, 0 failed/skipped | 11 | 8 | true |
+| CP-4 | S1-S3 | CP-1 | linux-c1008-wrapper | `/*/*/RollingVolumeRecycleScriptTests/(C1008_Present_or_unknown_temp_keeps_null_refusal*)\|(C1008_Busy_routed_and_land_in_flight_refuse*)\|(C1008_Same_sha_and_partial_retries_are_safe*)\|(C1008_Option_manifest_is_strict*)\|(C1008_Documentation_and_transport_pins_match*)\|(C1008_Refusal_receipts_do_not_leak_secrets*)\|(C1008_Retired_absent_null_is_accepted*)` | R-1 | exact 7 existing methods, 0 failed/skipped | 7 | 4 | true |
+| CP-5 | S1-S3 | n/a | linux-c994-rolling-jq | `pwsh -NoProfile -File scripts/test-deploy-server2-jq.ps1 -Case present -RequireJq` | R-1,R-2 | exit 0; 24 groups, 66 invocations, 227 harness + 31 driver assertions, no skip | n/a | 2 | true |
+| CP-6 | S1-S3 | CP-1 | linux-c994-docs | `/*/*/DockerStackDocumentationTests/(Retired_temp_cleanup_and_retirement_gates_match*)\|(Main_volume_recycling_is_scripted_only*)` | R-3 | exact 2 methods, 0 failed/skipped | 2 | 1 | true |
+| CP-7 | S1-S3 | CP-1 | linux-c994-real | `/*/*/RetiredTempContainerDockerTests/C994_Real_retired_temp_lifecycle` | V-9,R-5 | 1 result; RD-1..RD-10, 0 failed/skipped, owned residue=0 | 1 | 9 | true |
+| CP-8 | S1-S3 | CP-1 | linux-c1008-real | `/*/*/RollingVolumeRecycleDockerTests/C1008_Real_docker_comparison` | R-4,R-5 | 1 result; 32 outcomes (5 base, 27 changed), 0 failed/skipped, owned residue=0 | 1 | 12 | true |
+| CP-9 | S1-S3 | CP-1 | linux-c994-mounts | `/*/*/RollingProductionMountTests/C994_*` | V-2,R-5 | exact 5 listed methods, 0 failed/skipped | 5 | 3 | true |
