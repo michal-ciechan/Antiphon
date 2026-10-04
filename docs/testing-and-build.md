@@ -138,6 +138,27 @@ dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c
 dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c475/ -- --treenode-filter '/*/*/(AgentTaskLandBoundaryControlledTests*)|(AgentTaskLandAdmissionControlledTests*)|(AgentTaskLandConcurrencyControlledTests*)/*' --report-trx --report-trx-filename controlled.trx --results-directory .antiphon/c475-controlled
 ```
 
+### Offline rolling harness jq receipts (CARD-0983)
+
+On a jq-expected host, run `scripts/test-deploy-server2.ps1 -RequireJq` or
+`scripts/test-deploy-server2-jq.ps1 -Case present -RequireJq` through the build-slot
+wrapper. For example:
+
+```powershell
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label rolling-required-jq -- pwsh -NoProfile -File scripts/test-deploy-server2-jq.ps1 -Case present -RequireJq
+```
+
+The marker-reader shell needs jq: native bash on Linux, the default WSL bash on
+Windows. Native Windows jq does not qualify WSL. The regression lane also needs
+pwsh in that shell. `-RequireJq` rejects an unavailable probe with
+`C983_JQ_REQUIRED`, exit 1, before any rolling group, including `-Only` selections.
+An available required run includes T-20 and reports 24 groups / 66 invocations /
+227 assertions. Without the switch jq remains optional: unavailable probes keep
+the named skip and 23 / 62 / 218 roster. Successful jq-driver runs retain 31
+assertions. The absent, missing-shell and failing-shell driver cases remain
+optional unless explicitly required. The C1008 Unit consumer requires jq in its
+present invocation; a missing prerequisite is a failure of that proof.
+
 ### Offline Pty provider oracles (CARD-1007)
 
 The Codex `debug prompt-input` and Grok `inspect --json` methods in

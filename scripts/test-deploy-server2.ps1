@@ -212,6 +212,9 @@ function Assert-HostSaved {
 }
 
 try {
+    if ($RequireJq -and -not $hasJq) {
+        throw 'C983_JQ_REQUIRED jq-unavailable: -RequireJq requires jq in the marker-reader shell; T-20 cannot be skipped.'
+    }
     if ($Only -eq 'cleanup-failure') { throw 'C946 requested cleanup failure' }
     switch ($Only) {
         host-race { Assert-HostRace; $success = $true; exit 0 }

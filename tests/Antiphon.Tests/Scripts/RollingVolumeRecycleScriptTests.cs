@@ -269,8 +269,15 @@ public sealed class RollingVolumeRecycleScriptTests
     {
         foreach (var mode in new[] { "present", "absent", "missing-shell", "failing-shell" })
         {
-            var run = await C1008Process("pwsh", "-NoProfile", "-File",
-                Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/test-deploy-server2-jq.ps1"), "-Case", mode);
+            var arguments = new List<string> { "-NoProfile", "-File",
+                Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/test-deploy-server2-jq.ps1"), "-Case", mode };
+            if (mode == "present")
+            {
+                arguments.Add("-RequireJq");
+                arguments.ShouldContain("-RequireJq", customMessage: "c983-consumer-requires-jq");
+            }
+            var run = await C1008Process("pwsh", arguments.ToArray());
+            Console.WriteLine(run.Output);
             run.Output.ShouldContain($"C973_JQ case={mode} assertions=31 failures=0", Case.Sensitive, "rolling-regressions-preserved: " + run.Output);
             if (mode == "present") run.Output.ShouldNotContain("C973_JQ_SKIPPED");
             run.Exit.ShouldBe(0);
