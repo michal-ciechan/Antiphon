@@ -89,8 +89,10 @@ public class TestOwnedPtyHostPolicyTests
             fixture.Manifest = fixture.NewManifest(11) with { LaunchPending = true, ChildPid = null };
         }
         var capturedAtStop = 0;
+        var observed = new RunnerSessionDto(fixture.SessionId, null, DateTime.UtcNow, "Exited", 0, "test", 0);
+        var pending = new RunnerLaunchRequest(fixture.SessionId, "owned", [], new Dictionary<string, string>(), fixture.Root, 80, 24);
         await fixture.Manager.DisposeAsync(true,
-            () => fixture.Manager.Capture(fixture.SessionId, SessionBackends.PtyHost, false),
+            () => fixture.Manager.CaptureTracked(scenario == "partial-start" ? [] : [observed], scenario == "partial-start" ? [pending] : []),
             _ => { capturedAtStop = fixture.Manager.Captured.Count; fixture.Events.Add("stop"); return Task.CompletedTask; },
             () => Task.CompletedTask);
         var expected = scenario == "manifest-missing" ? 1 : 2;
