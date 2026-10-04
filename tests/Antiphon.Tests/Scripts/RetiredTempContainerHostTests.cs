@@ -130,7 +130,8 @@ public sealed class RetiredTempContainerHostTests
 
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Census_and_inspect_fail_closed() {
-        foreach(var fault in new[]{"ps-error","inspect-error","inspect-empty","inspect-malformed","c994-ps-partial","c994-duplicate-id","c994-wrong-id","c994-missing-state"}){
+        foreach(var fault in new[]{"ps-error","inspect-error","inspect-empty","inspect-malformed","c994-ps-partial","c994-duplicate-id","c994-wrong-id","c994-missing-state",
+            "c994-ps-empty-error","c994-truncated-id","c994-nonhex-id","c994-inspect-multirow","c994-missing-image","c994-missing-mounts","c994-missing-labels"}){
             using var f=Fixture("session-runner");f.Docker["fault"]=fault;var run=await Cleanup(f);
             run.Exit.ShouldBe(2,"c994-census-known: "+fault+"; "+run.Output);NoMutation(f,"c994-census-known: "+fault);
         }
@@ -206,15 +207,46 @@ public sealed class RetiredTempContainerHostTests
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Each_removal_rechecks_live_proofs() {
-        foreach(var fault in new[]{"c994-late-main","c994-late-stamp","c994-late-land","c994-late-image","c994-late-mount","c994-late-state"}){
+        foreach(var fault in new[]{"c994-late-main","c994-late-stamp","c994-late-land","c994-late-image","c994-late-mount","c994-late-state","c994-late-id","c994-late-task"}){
             using var f=Fixture("session-runner","state-init");f.Docker["fault"]=fault;var run=await Cleanup(f);
             run.Exit.ShouldBe(2,"c994-recheck-status c994-recheck-work c994-recheck-container: "+fault+"; "+run.Output);
             f.Trace.Count(a=>a[0]=="rm").ShouldBe(1,"c994-recheck-container: prior progress only");
         }
+        foreach(var fault in new[]{"main","stamp","land","task","id","state","image","mount"}) {
+            using var f=Fixture("session-runner","state-init");
+            var extra=$$"""
+                original_save=$(declare -f c994_save); eval "${original_save/c994_save/c994_save_original}"
+                c994_save() {
+                    c994_save_original || return $?
+                    if [ ! -f "$C1008_FIXTURE_ROOT/drift-injected" ] && printf '%s' "$C994_RECORD" | jq -e '.outcome=="pending" and (.candidates|length)>0 and (.removals|length)==0' >/dev/null; then
+                        touch "$C1008_FIXTURE_ROOT/drift-injected"
+                        node - "$C1008_FIXTURE_ROOT" '{{fault}}' <<'DRIFT'
+                const fs=require('fs'),root=process.argv[2],fault=process.argv[3];
+                const read=name=>JSON.parse(fs.readFileSync(root+'/'+name+'.json'));
+                const save=(name,body)=>fs.writeFileSync(root+'/'+name+'.json',JSON.stringify(body));
+                if(fault==='main'||fault==='stamp') {
+                  const s=read('statuses');if(fault==='main')s.server2.acceptingNewWork=false;else s['server2-temp'].retiredAt='2026-10-03T10:30:00Z';save('statuses',s);
+                } else if(fault==='land'||fault==='task') {
+                  const t=read('tasks'),row=t.scopes[Object.keys(t.scopes)[0]];
+                  row.items.push({id:'22222222-2222-2222-2222-222222222222',status:fault==='task'?'Working':'Succeeded',runnerId:'server2-temp',projectId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',scopeSource:'Task',landRequestedAt:fault==='land'?'2026-10-04T00:00:00Z':null,landStartedAt:null});save('tasks',t);
+                } else {
+                  const d=read('docker'),c=d.containers.find(c=>c.Config.Labels['com.docker.compose.project']==='antiphon-runner-temp');
+                  if(fault==='id')c.Id='e'.repeat(64);if(fault==='state')c.State={Running:true,Status:'running'};
+                  if(fault==='image')c.Image='sha256:'+'b'.repeat(64);if(fault==='mount')c.Mounts[0].Source='/foreign';save('docker',d);
+                }
+                DRIFT
+                    fi
+                }
+                """;
+            var run=await Cleanup(f,extra);
+            run.Exit.ShouldBe(2,"c994-recheck-status c994-recheck-work c994-recheck-container: before-first "+fault+"; "+run.Output);
+            File.Exists(f.Root+"/drift-injected").ShouldBeTrue("c994-recheck-container: reached admitted-candidate barrier");
+            NoMutation(f,"c994-recheck-container: before-first "+fault);
+        }
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Final_absence_is_observed() {
-        foreach(var fault in new[]{"c994-rm-retains","c994-id-absence-error","c994-final-replacement","final-ps-error"}) {using var f=Fixture("session-runner");f.Docker["fault"]=fault;
+        foreach(var fault in new[]{"c994-rm-retains","c994-id-absence-error","c994-final-replacement","final-ps-error","c994-final-ps-partial"}) {using var f=Fixture("session-runner");f.Docker["fault"]=fault;
             var run=await Cleanup(f);run.Exit.ShouldBe(2,"c994-id-absent c994-project-absent: "+fault+"; "+run.Output);Receipt(f)["outcome"]!.GetValue<string>().ShouldNotBe("completed");}
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
@@ -269,12 +301,55 @@ public sealed class RetiredTempContainerHostTests
         foreach(var present in new[]{false,true})foreach(var zero in new[]{false,true}) {using var f=present?Fixture("session-runner","state-init"):Fixture();if(zero)f.Statuses["server2-temp"]!["runnerSessions"]=0;
             var before=f.Docker.ToJsonString();var run=await Cleanup(f,preview:true);run.Exit.ShouldBe(0,"c994-host-preview: "+run.Output);NoMutation(f,"c994-host-preview");f.ReloadDocker();f.Docker.ToJsonString().ShouldBe(before);
             Receipt(f)["outcome"]!.GetValue<string>().ShouldBe("preview");run.Output.ShouldContain("C994_PREVIEW volume="+Project+"_work");}
+        using var drift=Fixture("session-runner");(await Cleanup(drift,preview:true)).Exit.ShouldBe(0);
+        drift.ReloadDocker();drift.Statuses["server2"]!["acceptingNewWork"]=false;
+        (await Cleanup(drift,"C994_OPERATION=c99400000000000000000000000000000002")).Exit.ShouldBe(2,"c994-host-preview: apply rechecks changed facts");
+        NoMutation(drift,"c994-host-preview: no inherited preview authority");
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Image_receipt_lookup_is_bound() {
         using var f=Fixture("session-runner");(await Cleanup(f)).Exit.ShouldBe(0,"c994-image-binding");var image=Receipt(f)["image"]!.GetValue<string>();
         f.ReloadDocker();var retry=await Cleanup(f,"C994_OPERATION=c99400000000000000000000000000000002");retry.Exit.ShouldBe(0,"c994-image-retention: "+retry.Output);
         Receipt(f)["image"]!.GetValue<string>().ShouldBe(image,"c994-image-retention");Receipt(f)["originalCleanupOperationId"]!.GetValue<string>().ShouldBe("c99400000000000000000000000000000001");
+        File.WriteAllText(f.Root+"/lookup-seed.json",Receipt(f).ToJsonString());
+        var lookup=await Cleanup(f,"""
+            LANE=host
+            C994_STAMP="$(date -u -d "$C994_RETIRED_AT" +%Y-%m-%dT%H:%M:%S.%NZ)"
+            for variant in matching retained fallback corrupt symlink traversal foreign-operation foreign-source foreign-project foreign-projectid foreign-stamp conflicting unrelated-newest; do
+                (
+                    SERVER2_ROOT="$C1008_FIXTURE_ROOT/lookup-$variant"
+                    root="$SERVER2_ROOT/temp-container-retirement";mkdir -p "$root"
+                    op=c99400000000000000000000000000000002
+                    file="$root/$op.json";cp "$C1008_FIXTURE_ROOT/lookup-seed.json" "$file"
+                    case "$variant" in
+                      matching|retained) ;;
+                      fallback) rm -- "$file";op='' ;;
+                      corrupt) printf '{' > "$file" ;;
+                      symlink) mv "$file" "$SERVER2_ROOT/saved.json";ln -s "$SERVER2_ROOT/saved.json" "$file" ;;
+                      traversal) op='../lookup-seed' ;;
+                      foreign-operation) jq '.operationId="c99400000000000000000000000000000009"' "$file" > "$file.new";mv "$file.new" "$file" ;;
+                      foreign-source) jq '.sourceSha="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' "$file" > "$file.new";mv "$file.new" "$file" ;;
+                      foreign-project) jq '.project="antiphon-runner"' "$file" > "$file.new";mv "$file.new" "$file" ;;
+                      foreign-projectid) jq '.projectId="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"' "$file" > "$file.new";mv "$file.new" "$file" ;;
+                      foreign-stamp) jq '.retiredAt="2026-10-04T09:30:00.000000000Z"' "$file" > "$file.new";mv "$file.new" "$file" ;;
+                      conflicting|unrelated-newest)
+                        jq --arg variant "$variant" '.operationId="c99400000000000000000000000000000009" | .image="sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" | del(.originalCleanupOperationId) | if $variant=="unrelated-newest" then .retiredAt="2026-10-04T09:30:00.000000000Z" else . end' "$file" > "$root/c99400000000000000000000000000000009.json"
+                        op='' ;;
+                    esac
+                    code=0;c994_lookup_image "$op" || code=$?
+                    case "$variant" in
+                      matching|retained|unrelated-newest)
+                        [ "$code" = 0 ] && [ "$C994_IMAGE" = sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ] && [ "$C994_ORIGINAL" = c99400000000000000000000000000000001 ] || exit 3 ;;
+                      fallback) [ "$code" = 0 ] && [ -z "$C994_IMAGE" ] || exit 3 ;;
+                      *) [ "$code" = 2 ] || exit 3 ;;
+                    esac
+                    printf 'LOOKUP_CASE %s\n' "$variant"
+                ) || exit 2
+            done
+            write_result true '' 0
+            """);
+        lookup.Exit.ShouldBe(0,"c994-image-binding c994-image-retention: "+lookup.Output);
+        lookup.Output.Split('\n').Where(x=>x.StartsWith("LOOKUP_CASE ")).Select(x=>x[12..]).ShouldBe(new[]{"matching","retained","fallback","corrupt","symlink","traversal","foreign-operation","foreign-source","foreign-project","foreign-projectid","foreign-stamp","conflicting","unrelated-newest"},"c994-image-binding: exact receipt roster");
         f.ReloadDocker();var file=f.Root+"/server/temp-container-retirement/c99400000000000000000000000000000001.json";var record=JsonNode.Parse(File.ReadAllText(file))!;record["sourceSha"]=new string('b',40);File.WriteAllText(file,record.ToJsonString());
         var foreign=await f.Run("retire-temp-runner","C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001");foreign.Exit.ShouldBe(2,"c994-image-binding: foreign source");f.Removed.ShouldBeEmpty();
     }
@@ -282,11 +357,51 @@ public sealed class RetiredTempContainerHostTests
     public async Task C994_Audit_image_is_pinned_and_required() {
         foreach(var fault in new[]{"image-inspect-error","image-inspect-wrong","original-image-missing"}) {using var f=Fixture("session-runner");if(fault=="original-image-missing")f.Docker["containers"]!.AsArray().Last()!["Image"]="sha256:"+new string('b',64);(await Cleanup(f)).Exit.ShouldBe(0);f.ReloadDocker();f.Docker["fault"]=fault;
             var run=await f.Run("retire-temp-runner","C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001");run.Exit.ShouldBe(2,"c994-image-required: "+run.Output);run.Output.ShouldContain("RecycleGitAuditUnknown");f.Removed.ShouldBeEmpty("c994-audit-required");}
+        foreach(var work in new[]{"published","dirty","unpublished"}) {
+            using var f=Fixture("session-runner");f.Docker["containers"]!.AsArray().Last()!["Image"]="sha256:"+new string('b',64);
+            var setup=await C994ScriptProcess.Run("bash","-c",$$"""
+                set -euo pipefail
+                git init -q --bare '{{f.Root}}/origin'
+                git init -q -b main '{{f.Root}}/work/repo'
+                git -C '{{f.Root}}/work/repo' config user.name Fixture
+                git -C '{{f.Root}}/work/repo' config user.email fixture@example.invalid
+                printf published > '{{f.Root}}/work/repo/sentinel'
+                git -C '{{f.Root}}/work/repo' add sentinel
+                git -C '{{f.Root}}/work/repo' commit -qm published
+                git -C '{{f.Root}}/work/repo' remote add origin '{{f.Root}}/origin'
+                git -C '{{f.Root}}/work/repo' push -qu origin main
+                """);setup.Exit.ShouldBe(0,"c994-audit-required: real Git setup; "+setup.Output);
+            (await Cleanup(f)).Exit.ShouldBe(0,"c994-image-required: preserve original digest");f.ReloadDocker();
+            if(work=="dirty")File.WriteAllText(f.Root+"/work/repo/dirty","unpublished-sentinel");
+            if(work=="unpublished") {
+                File.WriteAllText(f.Root+"/work/repo/local","unpublished-sentinel");
+                var commit=await C994ScriptProcess.Run("git","-C",f.Root+"/work/repo","add","local");commit.Exit.ShouldBe(0);
+                commit=await C994ScriptProcess.Run("git","-C",f.Root+"/work/repo","commit","-qm","unpublished");commit.Exit.ShouldBe(0);
+            }
+            var before=f.Docker["volumes"]!.ToJsonString();
+            var run=await f.Run("retire-temp-runner","C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001");
+            run.Exit.ShouldBe(work=="published"?0:2,"c994-image-required c994-audit-required: "+work+"; "+run.Output);
+            f.Trace.Where(a=>a[0]=="create").ShouldNotBeEmpty("c994-image-required: offline audit reached");
+            f.Trace.Where(a=>a[0]=="create").All(a=>a.Contains("sha256:"+new string('b',64))&&a.Contains("1654:1654")&&a.Any(x=>x.EndsWith(",readonly"))).ShouldBeTrue("c994-image-required: exact pinned readonly uid-1654 helper");
+            if(work!="published") {
+                run.Output.ShouldContain(work=="dirty"?"RecycleWorktreeDirty":"RecycleUnpublishedWork",customMessage:"c994-audit-required");
+                f.Removed.ShouldBeEmpty("c994-audit-required");f.ReloadDocker();f.Docker["volumes"]!.ToJsonString().ShouldBe(before,"c994-audit-required: generations retained");
+                File.ReadAllText(f.Root+"/work/repo/"+(work=="dirty"?"dirty":"local")).ShouldBe("unpublished-sentinel","c994-audit-required: work retained");
+            }
+        }
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Cleanup_receipts_redact_unapproved_fields() {
-        using var f=Fixture("session-runner");var c=f.Docker["containers"]!.AsArray().Last()!;c["Config"]!["Env"]=new JsonArray("C994_SECRET_SENTINEL");c["Config"]!["Labels"]!["unapproved"]="C994_SECRET_SENTINEL";
-        var run=await Cleanup(f);run.Exit.ShouldBe(0,"c994-redaction: "+run.Output);run.Output.ShouldNotContain("C994_SECRET_SENTINEL");Receipt(f).ToJsonString().ShouldNotContain("C994_SECRET_SENTINEL");
+        foreach(var refuse in new[]{false,true}) {
+            using var f=Fixture("session-runner");var c=f.Docker["containers"]!.AsArray().Last()!;
+            c["Config"]!["Env"]=new JsonArray("C994_SECRET_SENTINEL");c["Config"]!["Labels"]!["unapproved"]="C994_SECRET_SENTINEL";
+            File.WriteAllText(f.Root+"/codex/auth.json","C994_SECRET_SENTINEL");File.WriteAllText(f.Root+"/grok/auth.json","C994_SECRET_SENTINEL");
+            f.Docker["dockerStderr"]="C994_SECRET_SENTINEL";if(refuse)c["State"]!["Status"]="created";
+            var run=await Cleanup(f);run.Exit.ShouldBe(refuse?2:0,"c994-redaction: "+run.Output);
+            foreach(var text in new[]{run.Output,Receipt(f).ToJsonString(),File.ReadAllText(f.Root+"/server/temp-container-retirement/c99400000000000000000000000000000001.json")})text.ShouldNotContain("C994_SECRET_SENTINEL","c994-redaction: success/refusal/stdout/host/copy");
+            File.ReadAllText(f.Root+"/codex/auth.json").ShouldBe("C994_SECRET_SENTINEL","c994-redaction: bind untouched");
+            if(!refuse)Receipt(f)["candidates"]![0]!["Id"]!.GetValue<string>().ShouldBe(new string('7',64),"c994-redaction: approved identity retained");
+        }
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Fixture_custody_is_bounded() {

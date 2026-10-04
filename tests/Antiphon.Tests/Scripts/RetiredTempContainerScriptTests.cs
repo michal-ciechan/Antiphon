@@ -66,6 +66,11 @@ public sealed class RetiredTempContainerScriptTests
                 Add(field+":"+(value?.ToJsonString()??"null"),expected,copy);
             }
         }
+        if(!main) {
+            var zero=valid.DeepClone().AsObject();zero["runnerSessions"]=0;Add("zero",true,zero);
+            var offset=valid.DeepClone().AsObject();offset["retiredAt"]="2026-10-03T11:30:00+02:00";Add("offset",true,offset);
+            foreach(var stamp in new[]{"","2026-02-30T00:00:00Z"}){var invalid=valid.DeepClone().AsObject();invalid["retiredAt"]=stamp;Add("invalid-stamp:"+stamp,false,invalid);}
+        }
         File.WriteAllText(f.Root+"/vectors.json",vectors.ToJsonString());
         var run=await C994ScriptProcess.Run("pwsh","-NoProfile","-Command",LoadFunctions+$$"""
             $vectors=Get-Content -Raw '{{f.Root}}/vectors.json'|ConvertFrom-Json
@@ -123,6 +128,33 @@ public sealed class RetiredTempContainerScriptTests
             """);run.Exit.ShouldBe(0,"c994-wrapper-strict-null c994-shared-null: "+run.Output);
         using var host=new C1008HostFixture(main:false);host.Docker["containers"]!.AsArray().Add(host.Container('7',"antiphon-runner-temp","session-runner",false));
         var present=await host.Run("retire-temp-runner");present.Exit.ShouldBe(2,"c994-host-strict-null");present.Output.ShouldContain("RunnerCounterUnknown");
+        var strict=await host.Run("retire-temp-runner","""
+            LANE=host;C1008_PROJECT="$TEMP_PROJECT";C1008_RUNNER=server2-temp
+            original_census=$(declare -f c1008_container_census);eval "${original_census/c1008_container_census/c994_original_census}"
+            original_status=$(declare -f c849_status_body);eval "${original_status/c849_status_body/c994_original_status}"
+            for variant in present-null absent-null shared-null shared-zero;do
+                (
+                    c1008_refuse(){ printf '%s\n' "$1";exit 2; }
+                    if [ "$variant" = absent-null ];then c1008_container_census(){ printf '[]'; };fi
+                    if [ "$variant" = shared-zero ];then c849_status_body(){ c994_original_status "$1" | jq '.runnerSessions=0'; };fi
+                    code=0
+                    case "$variant" in
+                      present-null|absent-null) (c1008_status_proof) > "$C1008_FIXTURE_ROOT/strict-$variant.log" 2>&1 || code=$? ;;
+                      *) c849_status_zero server2-temp || code=$? ;;
+                    esac
+                    case "$variant" in
+                      present-null) [ "$code" = 2 ] && grep -q RunnerCounterUnknown "$C1008_FIXTURE_ROOT/strict-$variant.log" || exit 3 ;;
+                      shared-null) [ "$code" = 1 ] || exit 3 ;;
+                      *) [ "$code" = 0 ] || exit 3 ;;
+                    esac
+                    printf 'STRICT_CASE %s\n' "$variant"
+                ) || exit 2
+            done
+            write_result true '' 0
+            """);
+        strict.Exit.ShouldBe(0,"c994-host-strict-null c994-shared-null: direct predicates; "+strict.Output);
+        strict.Output.Split('\n').Where(x=>x.StartsWith("STRICT_CASE ")).Select(x=>x[12..]).ShouldBe(new[]{"present-null","absent-null","shared-null","shared-zero"},"c994-host-strict-null: exact controls");
+        host.Trace.Any(a=>a[0] is "rm" or "stop" or "create"||a.Take(2).SequenceEqual(new[]{"volume","rm"})).ShouldBeFalse("c994-shared-null: read-only proof");
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Preview_reports_pending_volume_proof(){
@@ -148,7 +180,7 @@ public sealed class RetiredTempContainerScriptTests
                     case "$variant" in
                       version) original="$(printf '%s' "$saved"|jq -c '.[0].Topology|=del(.version)')" ;;
                       bind) C994_FIXTURE_RESUME_CENSUS="$(printf '%s' "$fresh"|jq -c '(.[0].Mounts[]|select(.Type=="bind")).Source="/foreign"')" ;;
-                      tmpfs) current="$(printf '%s' "$fresh"|jq -c '.[0].HostConfig.Tmpfs["/run/antiphon"]="ro"')" ;;
+                      tmpfs) C994_FIXTURE_RESUME_CENSUS="$(printf '%s' "$fresh"|jq -c '.[0].HostConfig.Tmpfs["/run/antiphon"]="ro"')" ;;
                     esac
                     C1008_RECORD="$(jq -cn --argjson owned "$original" --argjson volumes "$volumes" '{owned:$owned,volumes:$volumes,preserved:{},stopIntents:[],stopReceipts:[],removeIntents:[],removeReceipts:[],phase:"preflight"}')"
                     c1008_container_census(){ printf '%s' "$C994_FIXTURE_RESUME_CENSUS"; }
@@ -171,24 +203,93 @@ public sealed class RetiredTempContainerScriptTests
             var run=await f.Run("retire-temp");run.Exit.ShouldBe(2,"c994-receipt-before-recycle c994-fresh-volume-proof: "+fault+"; "+run.Output);NoRecycle(run.Trace,"c994-receipt-before-recycle");}
     }
     private static string Context=>"{\"version\":1,\"operationId\":\"c99400000000000000000000000000000001\",\"project\":\"antiphon-runner-temp\",\"projectId\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1\",\"dryRun\":false,\"retiredAt\":\"2026-10-03T09:30:00Z\"}";
+    private static List<(string Key,string Json,bool Accepted)> CleanupContextVectors() {
+        var vectors=new List<(string,string,bool)>{("valid",Context,true)};
+        void Add(string key,string field,JsonNode? value,bool accepted=false) {
+            var c=JsonNode.Parse(Context)!.AsObject();c[field]=value?.DeepClone();vectors.Add((key,c.ToJsonString(),accepted));
+        }
+        Add("preview","dryRun",JsonValue.Create(true),true);
+        Add("offset","retiredAt",JsonValue.Create("2026-10-03T11:30:00+02:00"),true);
+        foreach(var field in new[]{"version","operationId","project","projectId","dryRun","retiredAt"}) {
+            var missing=JsonNode.Parse(Context)!.AsObject();missing.Remove(field);vectors.Add((field+":missing",missing.ToJsonString(),false));
+            Add(field+":null",field,null);
+            Add(field+":array",field,new JsonArray());
+            Add(field+":object",field,new JsonObject());
+            Add(field+":type",field,field=="version"?JsonValue.Create("1"):field=="dryRun"?JsonValue.Create("false"):JsonValue.Create(1));
+        }
+        Add("version:unsupported","version",JsonValue.Create(2));Add("version:fraction","version",JsonValue.Create(1.5));
+        Add("operation:path","operationId",JsonValue.Create("../receipt"));
+        Add("operation:case","operationId",JsonValue.Create("C994"+new string('a',32)));
+        Add("project:foreign","project",JsonValue.Create("antiphon-runner"));
+        Add("projectId:case","projectId",JsonValue.Create("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"));
+        Add("dryRun:number","dryRun",JsonValue.Create(0));
+        var stampIndex=0;
+        foreach(var value in new[]{"","2026-02-30T00:00:00Z","2026-10-03T09:30:00","';touch /tmp/c994-command-sentinel;#","2026-10-03T09:30:00Z\nexport C994_FORCE=1"})Add("stamp:"+stampIndex++,"retiredAt",JsonValue.Create(value));
+        foreach(var field in new[]{"force","volumes","containerId","path","image"})Add("unknown:"+field,field,JsonValue.Create("foreign"));
+        vectors.Add(("array","[]",false));vectors.Add(("scalar","1",false));vectors.Add(("null","null",false));
+        vectors.Add(("duplicate",Context.Replace("\"dryRun\":false","\"dryRun\":false,\"dryRun\":false",StringComparison.Ordinal),false));
+        return vectors;
+    }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Verifier_manifest_is_strict(){
-        using var f=new C1008WrapperFixture();var input=new JsonObject{["tempContainerCleanup"]=JsonNode.Parse(Context),["evidenceRoot"]=f.Root};
-        foreach(var field in new[]{"version","operationId","project","projectId","dryRun","retiredAt"}) {
-            var missing=input.DeepClone().AsObject();missing["tempContainerCleanup"]!.AsObject().Remove(field);File.WriteAllText(f.Root+"/manifest.json",missing.ToJsonString());
-            var run=await C994ScriptProcess.Run("pwsh","-NoProfile","-File","scripts/verify-docker-stack.ps1","-Case","retire-temp-containers","-Manifest",f.Root+"/manifest.json");run.Exit.ShouldNotBe(0,"c994-verifier-context: "+field);
+        using var f=new C1008WrapperFixture();
+        foreach(var name in new[]{"c590-command.ps1","c590-real.ps1"})File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot,"scripts",name),Path.Combine(f.Root,name));
+        var verifier=File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot,"scripts/verify-docker-stack.ps1"));
+        // Intercept only the outbound bridge; keep each actual verifier admission check.
+        var boundary=". (Join-Path $PSScriptRoot 'c590-real.ps1')";
+        verifier=verifier.Replace(boundary,boundary+$$"""
+
+            function Invoke-C590LiveCase {param($Case,$Manifest,$RawManifest) Set-Content -LiteralPath '{{f.Root}}/dispatched' -Value $Case;exit 0}
+            """,StringComparison.Ordinal);
+        File.WriteAllText(f.Root+"/verifier.ps1",verifier);
+        var checkedKeys=new List<string>();
+        foreach(var (key,json,accepted) in CleanupContextVectors()) {
+            File.Delete(f.Root+"/dispatched");
+            File.WriteAllText(f.Root+"/manifest.json","{\"sourceSha\":\""+new string('a',40)+"\",\"runId\":\"fixture\",\"evidenceRoot\":"+System.Text.Json.JsonSerializer.Serialize(f.Root)+",\"tempContainerCleanup\":"+json+"}");
+            var run=await C994ScriptProcess.Run("pwsh","-NoProfile","-File",f.Root+"/verifier.ps1","-Case","retire-temp-containers","-Manifest",f.Root+"/manifest.json");
+            (run.Exit==0).ShouldBe(accepted,"c994-verifier-context: "+key+"; "+run.Output);
+            File.Exists(f.Root+"/dispatched").ShouldBe(accepted,"c994-verifier-context: predispatch "+key);
+            if(!accepted)run.Output.ShouldContain("TempContainerContextInvalid",customMessage:"c994-verifier-context: specific refusal "+key);
+            checkedKeys.Add(key);
         }
+        checkedKeys.ShouldBe(CleanupContextVectors().Select(x=>x.Key),"c994-verifier-context: complete raw roster");
         var duplicate=Context.Replace("\"dryRun\":false","\"dryRun\":false,\"dryRun\":false",StringComparison.Ordinal);
         var raw=await C994ScriptProcess.Run("pwsh","-NoProfile","-Command",LoadFunctions+"Assert-C994RawManifest '"+duplicate+"'");raw.Exit.ShouldNotBe(0,"c994-verifier-context: duplicate");
         var addition=await C994ScriptProcess.Run("pwsh","-NoProfile","-Command",LoadFunctions+"""
             $c=[pscustomobject]@{version=1;project='antiphon-runner-temp';operationId=('c1008'+('a'*32));projectId='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1';dryRun=$false;resume=$false;cleanupOperationId=('c994'+('a'*32))}
             Assert-C1008BridgeContext $c 'retire-temp-runner'
+            Assert-RecycleContext $c
+            foreach($variant in @('main','resume','unknown','operation')) {
+              $bad=$c.PSObject.Copy()
+              switch($variant){main{$bad.project='antiphon-runner'} resume{$bad.resume=$true} unknown{$bad|Add-Member -NotePropertyName foreign -NotePropertyValue $true} operation{$bad.cleanupOperationId='../receipt'}}
+              $ok=$true;try{Assert-RecycleContext $bad}catch{$ok=$false};if($ok){throw ('c994-recycle-addition: wrapper '+$variant)}
+            }
+            foreach($case in @('deploy-parent','retire-temp-runner')) {
+              $c.resume=$case -eq 'retire-temp-runner';$ok=$true;try{Assert-C1008BridgeContext $c $case}catch{$ok=$false};if($ok){throw 'c994-recycle-addition: wrong lane or resume'}
+            }
+            $c.resume=$false
             $c|Add-Member -NotePropertyName foreign -NotePropertyValue $true
             $ok=$true;try{Assert-C1008BridgeContext $c 'retire-temp-runner'}catch{$ok=$false};if($ok){throw 'c994-recycle-addition'}
             """);addition.Exit.ShouldBe(0,"c994-recycle-addition: "+addition.Output);
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Bridge_transport_preserves_literal_context(){
+        using(var vectorsRoot=new C1008WrapperFixture()) {
+            var vectors=new JsonArray();foreach(var (key,json,accepted) in CleanupContextVectors())vectors.Add(new JsonObject{["key"]=key,["raw"]="{\"tempContainerCleanup\":"+json+"}",["accepted"]=accepted});
+            File.WriteAllText(vectorsRoot.Root+"/transport-vectors.json",vectors.ToJsonString());
+            var proof=await C994ScriptProcess.Run("pwsh","-NoProfile","-Command",LoadFunctions+$$"""
+                $vectors=Get-Content -Raw '{{vectorsRoot.Root}}/transport-vectors.json'|ConvertFrom-Json
+                foreach($v in $vectors){
+                  $ok=$true;try{Assert-C994RawManifest $v.raw;$m=$v.raw|ConvertFrom-Json;Assert-C994BridgeContext $m.tempContainerCleanup 'retire-temp-containers'}catch{$ok=$false}
+                  if($ok -ne $v.accepted){throw ('c994-bridge-context: '+$v.key)}
+                  Write-Output ('BRIDGE_CASE '+$v.key)
+                }
+                $c='{{Context}}'|ConvertFrom-Json
+                $ok=$true;try{Assert-C994BridgeContext $c 'retire-temp-runner'}catch{$ok=$false};if($ok){throw 'c994-bridge-context: wrong case'}
+                """);
+            proof.Exit.ShouldBe(0,"c994-bridge-context: independent raw matrix; "+proof.Output);
+            proof.Output.Split('\n').Where(x=>x.StartsWith("BRIDGE_CASE ")).Select(x=>x[12..].TrimEnd('\r')).ShouldBe(CleanupContextVectors().Select(x=>x.Key),"c994-bridge-context: exact roster");
+        }
         var run=await C994ScriptProcess.Run("pwsh","-NoProfile","-Command",LoadFunctions+"$c='"+Context+"'|ConvertFrom-Json\n"+"""
             Assert-C994BridgeContext $c 'retire-temp-containers'
             $a=ConvertTo-C994RetiredInstant $c.retiredAt
