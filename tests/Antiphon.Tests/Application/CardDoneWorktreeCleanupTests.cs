@@ -16,6 +16,80 @@ namespace Antiphon.Tests.Application;
 public sealed class CardDoneWorktreeCleanupTests
 {
     [Test]
+    public async Task C1017_DiscoverPostDoneAttempts()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var (cardId, doneId) = await SeedAsync(schema);
+        var taskId = await SeedTaskAsync(schema, cardId);
+        await DoneAsync(schema, cardId, doneId);
+        await using (var first = Connect(schema))
+        {
+            var ids = await new CardWorktreeCleanupService(first, TimeProvider.System).DiscoverAsync(cardId, CancellationToken.None);
+            ids.ShouldHaveSingleItem();
+            var endpoint = await first.CardWorktreeCleanupEndpoints.SingleAsync();
+            endpoint.State = CardWorktreeCleanupEndpointState.Complete;
+            await first.SaveChangesAsync();
+        }
+        await using (var writer = Connect(schema))
+        {
+            var task = await writer.AgentTasks.SingleAsync(t => t.Id == taskId);
+            task.Attempt = 2;
+            task.Status = AgentTaskStatus.Working;
+            await writer.SaveChangesAsync();
+        }
+        await using (var restarted = Connect(schema))
+            await new CardWorktreeCleanupService(restarted, TimeProvider.System).DiscoverAsync(cardId, CancellationToken.None);
+        await using var observer = Connect(schema);
+        var targetAttempts = await observer.CardWorktreeCleanupTargets.OrderBy(t => t.TaskAttempt).Select(t => t.TaskAttempt).ToArrayAsync();
+        targetAttempts.ShouldBe(new[] { 1, 2 });
+        (await observer.AgentTasks.SingleAsync(t => t.Id == taskId)).Status.ShouldBe(AgentTaskStatus.Working);
+        (await observer.CardWorktreeCleanupEndpoints.CountAsync(e => e.OperationId != null)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C1017_ExactCardBinding()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var (cardId, doneId) = await SeedAsync(schema);
+        var (foreignCardId, _) = await SeedAsync(schema);
+        var ownTaskId = await SeedTaskAsync(schema, cardId);
+        var foreignTaskId = await SeedTaskAsync(schema, foreignCardId);
+        await DoneAsync(schema, cardId, doneId);
+        await using (var writer = Connect(schema))
+            await new CardWorktreeCleanupService(writer, TimeProvider.System).DiscoverAsync(cardId, CancellationToken.None);
+        await using var observer = Connect(schema);
+        var targets = await observer.CardWorktreeCleanupTargets.Select(t => t.TaskId).ToArrayAsync();
+        targets.ShouldNotContain(foreignTaskId);
+        targets.ShouldBe(new[] { ownTaskId });
+    }
+
+    [Test]
+    public async Task C1017_DuplicateDoneIsIdempotent()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var (cardId, doneId) = await SeedAsync(schema);
+        await SeedTaskAsync(schema, cardId);
+        await DoneAsync(schema, cardId, doneId);
+        await using (var simulateOldVersion = Connect(schema))
+        {
+            // A historical Done revision whose callback was absent still needs discovery.
+            simulateOldVersion.CardWorktreeCleanups.RemoveRange(await simulateOldVersion.CardWorktreeCleanups.ToListAsync());
+            await simulateOldVersion.SaveChangesAsync();
+        }
+        await using var first = Connect(schema);
+        await using var second = Connect(schema);
+        await Task.WhenAll(
+            new CardWorktreeCleanupService(first, TimeProvider.System).DiscoverAsync(cardId, CancellationToken.None),
+            new CardWorktreeCleanupService(second, TimeProvider.System).DiscoverAsync(cardId, CancellationToken.None));
+        await using var observer = Connect(schema);
+        var generationRows = await observer.CardWorktreeCleanups.ToListAsync();
+        generationRows.Count.ShouldBe(1);
+        (await observer.CardWorktreeCleanupTargets.CountAsync()).ShouldBe(1);
+        (await observer.CardWorktreeCleanupEndpoints.CountAsync()).ShouldBe(1);
+        (await observer.CardWorktreeCleanupEndpoints.CountAsync(e => e.OperationId != null)).ShouldBe(0);
+    }
+
+    [Test]
     public async Task C1017_DoneSaveIsAtomic()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -54,6 +128,31 @@ public sealed class CardDoneWorktreeCleanupTests
 
     private static CardService Cards(AppDbContext db) =>
         new(db, null!, null!, null!, new MockEventBus(), TimeProvider.System, null!);
+
+    private static async Task DoneAsync(IsolatedTestSchema schema, Guid cardId, Guid doneId)
+    {
+        await using var db = Connect(schema);
+        var card = await db.Cards.SingleAsync(c => c.Id == cardId);
+        await Cards(db).MoveAsync(cardId, new MoveCardRequest(doneId, card.ConcurrencyToken, "completed"), CancellationToken.None);
+    }
+
+    private static async Task<Guid> SeedTaskAsync(IsolatedTestSchema schema, Guid cardId)
+    {
+        var id = Guid.NewGuid();
+        var path = Path.Combine(Path.GetTempPath(), "c1017-" + cardId.ToString("N"), "card-task-" + id.ToString("N")[..8]);
+        await using var db = Connect(schema);
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = id, RootTaskId = id, CardId = cardId, Title = "CARD-1017 cleanup", Goal = "fixture",
+            Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Worktree,
+            RepoPath = Path.GetDirectoryName(path), WorktreePath = path, WorkingDirectory = path,
+            WorktreeBranch = "feat/card-task-" + id.ToString("N")[..8], Attempt = 1,
+            Status = AgentTaskStatus.Succeeded, CreatedAt = DateTime.UtcNow.AddHours(-5),
+            CompletedAt = DateTime.UtcNow.AddHours(-3), Result = "fixture report", ReplyTo = AgentTaskReplyTo.None
+        });
+        await db.SaveChangesAsync();
+        return id;
+    }
 
     private static async Task<(Guid CardId, Guid DoneId)> SeedAsync(IsolatedTestSchema schema)
     {
