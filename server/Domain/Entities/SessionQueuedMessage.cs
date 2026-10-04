@@ -35,6 +35,8 @@ public class SessionQueuedMessage
     public Guid? SourceChannelInboundId { get; set; }
     /// <summary>The outbound intent that owns publication of this reply, until terminal settlement.</summary>
     public Guid? ChannelOutboundDeliveryId { get; set; }
+    /// <summary>Complete historical window classified as ineligible; not publication or settlement.</summary>
+    public DateTime? ChannelReplyDiscoveryClosedAt { get; set; }
     public Guid AgentSessionId { get; set; }
 
     /// <summary>The text delivered into the agent's terminal (a carriage return is appended on send).</summary>

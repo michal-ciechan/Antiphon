@@ -379,6 +379,21 @@ public class AppDbContext : DbContext
             entity.HasIndex(d => d.SourceKey).IsUnique();
             entity.HasIndex(d => new { d.ChannelId, d.CreatedAt });
             entity.HasIndex(d => new { d.State, d.LeaseUntil });
+            entity.Property(d => d.CaptureJson).HasColumnType("text");
+            entity.HasIndex(d => new { d.SourceSessionId, d.PromptSequence, d.ChannelId })
+                .HasDatabaseName("IX_ChannelOutboundDeliveries_RootLookup");
+            entity.HasIndex(d => new { d.SourceSessionId, d.PromptSequence, d.ChannelId }, "RootIdentity")
+                .IsUnique().HasDatabaseName("IX_ChannelOutboundDeliveries_RootIdentity")
+                .HasFilter("\"CaptureJson\" IS NOT NULL AND \"RootDeliveryId\" IS NULL AND \"SendKind\" IN ('main', 'machine')");
+            entity.HasIndex(d => new { d.RootDeliveryId, d.FirstTextSequence }).IsUnique()
+                .HasFilter("\"RootDeliveryId\" IS NOT NULL")
+                .HasDatabaseName("IX_ChannelOutboundDeliveries_TailStart");
+            entity.HasOne<ChannelOutboundDelivery>().WithMany().HasForeignKey(d => d.RootDeliveryId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(d => new { d.State, d.NextAttemptAt });
+            entity.HasIndex(d => new { d.PublishedAt, d.Id })
+                .HasFilter("\"State\" = 4 AND \"MetadataAppliedAt\" IS NULL")
+                .HasDatabaseName("IX_ChannelOutboundDeliveries_MetadataRepair");
             entity.Property(d => d.ProfileName).IsRequired().HasMaxLength(100);
             entity.Property(d => d.PromptRevision).IsRequired().HasMaxLength(64);
             entity.Property(d => d.PromptText).IsRequired().HasColumnType("text");

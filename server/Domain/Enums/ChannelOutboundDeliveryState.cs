@@ -10,4 +10,7 @@ public enum ChannelOutboundDeliveryState
     Held,
     PublishUncertain,
     Failed,
+    // Append only: existing values are persisted as integers.
+    Captured,
+    Suppressed,
 }
