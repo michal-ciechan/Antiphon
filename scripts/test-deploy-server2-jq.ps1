@@ -39,6 +39,9 @@ try {
     Assert-Jq ($proc.ExitCode -eq 0) "harness exit=$($proc.ExitCode)"
     Assert-Jq ([regex]::Matches($output, '(?m)^C973_JQ_PROBE ').Count -eq 1) 'one jq probe'
     $jqAvailable = $output.Contains('C973_JQ_PROBE available=True')
+    if ($RequireJq -and -not $jqAvailable) {
+        throw 'C983_JQ_REQUIRED jq-unavailable: -RequireJq requires jq in the marker-reader shell; T-20 cannot be skipped.'
+    }
     $expectPresent = $Case -eq 'present' -and $jqAvailable
     if ($Case -eq 'present' -and -not $jqAvailable) {
         Write-Output 'C973_JQ_SKIPPED present jq-missing: real probe unavailable; present proof needs jq'
