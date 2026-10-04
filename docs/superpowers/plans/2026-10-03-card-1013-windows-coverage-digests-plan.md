@@ -705,10 +705,10 @@ No new test cases: floors are 24/24/3/3, **54 overall**.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S1-S2 | `tests/Antiphon.Tests -> bin-c1013-windows/` | windows-checklist-goldens | `/*/*/(PlanCoverageParserTests)\|(PlanCoverageGoldenTests)\|(PlanCoverageCensusTests)/*` | V-1, V-3, R-1 | exactly 24 executed, 0 failed/skipped | 24 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-2 | S1-S2 | `tests/Antiphon.Tests -> bin-c1013-linux/` | linux-checklist-goldens | `/*/*/(PlanCoverageParserTests)\|(PlanCoverageGoldenTests)\|(PlanCoverageCensusTests)/*` | V-1, V-3, R-1 | exactly 24 executed, 0 failed/skipped | 24 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-3 | S1-S2 | CP-1 | windows-public-command | `/*/*/PlanCoverageCommandTests/(renders_stable_text_json_and_exit_codes)\|(coverage_never_starts_driver_or_writes_run_state)\|(frozen_checklist_preserves_all_72_obligations)` | V-2, R-2 | exactly 3 executed, 0 failed/skipped | 3 | 1 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-4 | S1-S2 | CP-2 | linux-public-command | `/*/*/PlanCoverageCommandTests/(renders_stable_text_json_and_exit_codes)\|(coverage_never_starts_driver_or_writes_run_state)\|(frozen_checklist_preserves_all_72_obligations)` | V-2, R-2 | exactly 3 executed, 0 failed/skipped | 3 | 1 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-1 | S1-S2 | `tests/Antiphon.Tests -> bin-c1013-windows/` | windows-checklist-goldens | `/*/*/(PlanCoverageParserTests*)\|(PlanCoverageGoldenTests*)\|(PlanCoverageCensusTests*)/*` | V-1, V-3, R-1 | exactly 24 executed, 0 failed/skipped | 24 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-2 | S1-S2 | `tests/Antiphon.Tests -> bin-c1013-linux/` | linux-checklist-goldens | `/*/*/(PlanCoverageParserTests*)\|(PlanCoverageGoldenTests*)\|(PlanCoverageCensusTests*)/*` | V-1, V-3, R-1 | exactly 24 executed, 0 failed/skipped | 24 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-3 | S1-S2 | CP-1 | windows-public-command | `/*/*/PlanCoverageCommandTests*/(renders_stable_text_json_and_exit_codes*)\|(coverage_never_starts_driver_or_writes_run_state*)\|(frozen_checklist_preserves_all_72_obligations*)` | V-2, R-2 | exactly 3 executed, 0 failed/skipped | 3 | 1 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-4 | S1-S2 | CP-2 | linux-public-command | `/*/*/PlanCoverageCommandTests*/(renders_stable_text_json_and_exit_codes*)\|(coverage_never_starts_driver_or_writes_run_state*)\|(frozen_checklist_preserves_all_72_obligations*)` | V-2, R-2 | exactly 3 executed, 0 failed/skipped | 3 | 1 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
 The importer unescapes literal pipes and expands S1-S2 to `[S1,S2]`; CP-3/4 share
 the respective earlier build and identical After. It does **not** enforce Group
@@ -718,12 +718,13 @@ and `--rows CP-1,CP-3` with the same other arguments on Windows. Use `wait` unti
 the final exit is not 75; own/join every executor. If a tool bootstrap is needed,
 reuse the named AQ-1 bootstrap. Code must freeze S1-S2 and push before these runs.
 
-Importer `RosterTokens` returns **empty** Expect for the exact non-star combined
-class filter and only `PlanCoverageCommandTests` for the method union. Therefore
-`Min` alone cannot certify the roster: preserve and inspect the emitted EXECUTED
-list/TRX and require exactly the 8 Parser, 4 Golden, 12 Census bodies read above
-and exactly the three named Command methods. Do not quietly add `*` and expand
-the scope to get automatic Expect tokens. Validate structured source receipts at
+The original non-star filters returned **empty** importer Expect for the combined
+class row and only `PlanCoverageCommandTests` for the method union. Code's runtime
+correction below uses the prefix filters requested by its brief. Regardless of
+importer Expect tokens, preserve and inspect the emitted EXECUTED list/TRX and
+require exactly the 8 Parser, 4 Golden, 12 Census bodies read above and exactly
+the three named Command methods. No additional class or method is admitted.
+Validate structured source receipts at
 C, with dirty=0, sourceState=clean and buildSource=verified, retaining unedited
 CHECKPOINT lines; report skipped/failed/zero counts honestly. Code/Review run
 `check-evidence-diff.ps1` over the full candidate range. Clean task-owned alternate
@@ -774,6 +775,18 @@ All figures are **estimated**, except this task's observed zero builds/tests.
   ordinary filters avoid an otherwise unnecessary ~25.5-minute Antiphon.Tests
   assembly run. Mutation batching savings are **0** because controls share
   methods/files or provenance-loop failure order; independence requires isolation.
+
+### Code checkpoint filter correction (2c35a27d)
+
+Run `20261004-000119-e370` at `df6c76bcd0ba91b994d1d34ca1fd5e20984d3d5c`
+built successfully with verified clean source, but both CP-2 and CP-4 returned
+zero executed tests and exit 3. This is a discovery refusal, not a passing run
+or an assertion-level baseline red. The Code brief explicitly requires prefix
+filters; the executable table above now uses the documented trailing-star
+operands for class and method selection. Literal pipes, OS separation, row
+IDs, counts, assertions, timeouts and serial execution remain the same. Code
+reruns both red Linux rows and checks the exact 24/3 roster in fresh TRX; the
+Windows task uses the corresponding corrected CP-1/CP-3 selection at final C.
 
 Before handoff: touched bodies/helpers read; **guards=15, mapped=15, missing=0,
 duplicate PC maps=0**. Every PC has an exact method, valid defect and decisive
