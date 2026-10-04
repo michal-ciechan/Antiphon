@@ -538,8 +538,8 @@ internal sealed class C1008HostFixture : IDisposable
         else if (file is null) { start.ArgumentList.Add("-c"); start.ArgumentList.Add(body); }
         else start.ArgumentList.Add(file);
         start.Environment["PATH"] = Options.ToolPath;
-        // WSL can retain its startup directory beyond the shell's exit. Keep that
-        // directory outside the owned tree that Dispose removes; shell paths are absolute.
+        // Keep WSL's startup directory outside the owned tree that Dispose removes,
+        // so startup-directory handles cannot block cleanup. Shell paths are absolute.
         if (Windows) start.WorkingDirectory = Path.GetTempPath();
         return start;
     }

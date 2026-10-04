@@ -615,12 +615,12 @@ public sealed class RemoteScriptContractTests
             .Select(x => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
                 Encoding.UTF8.GetBytes(fixture.ShellPath(Path.Combine(fixture.Root, "work", x))))).ToLowerInvariant()).Order().ToArray();
 
-    internal static string C1008GitProgram(string root, string fault)
+    internal static string C1008GitProgram(string root, string fault, bool windows = false)
     {
         var script = $$"""
             set -e
             git init -q --bare '{{root}}/origin'
-            git init -q -b master '{{root}}/work/repo'
+            {{(windows ? $"git init -q '{root}/work/repo'\ngit -C '{root}/work/repo' symbolic-ref HEAD refs/heads/master" : $"git init -q -b master '{root}/work/repo'")}}
             git -C '{{root}}/work/repo' config user.name Fixture
             git -C '{{root}}/work/repo' config user.email fixture@example.invalid
             git -C '{{root}}/work/repo' remote add origin '{{root}}/origin'
@@ -648,7 +648,7 @@ public sealed class RemoteScriptContractTests
     internal static async Task C1008GitGraph(C1008HostFixture fixture, string fault = "")
     {
         var root = fixture.ShellRoot;
-        var script = C1008GitProgram(fixture.Windows ? root.Replace("'", "'\\''", StringComparison.Ordinal) : root, fault);
+        var script = C1008GitProgram(fixture.Windows ? root.Replace("'", "'\\''", StringComparison.Ordinal) : root, fault, fixture.Windows);
         var result = await fixture.Execute("git", script);
         result.Exit.ShouldBe(0, result.Output);
     }

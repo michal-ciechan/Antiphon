@@ -401,6 +401,34 @@ next: test-design
 handoff: Freeze CARD-1030's test-only WSL fixture repair after CARD-0980: paths/data/Git/lock transport, four portability witnesses, Linux byte preservation, and six checkpoints (4/99/4 per OS). Require separate final-SHA native Windows Debug, preserve 377, and serialize before CARD-0983 and CARD-1010 S1.
 artifact: docs/superpowers/plans/2026-10-04-card-1030-c1008-windows-host-fixture-plan.md
 
+### Native Windows triage amendment, task 94914cdf
+
+The explicit Windows repair brief at source `9f1cd6d398f572f179c9983b78d52e987b9d6663`
+authorizes replacing Windows fixture `git init -b` for Git 2.25.1 compatibility,
+superseding only that restriction in D-3. Native Linux program bytes remain
+frozen. Use init followed by symbolic-ref to select master before the first
+commit. WSL startup must use a stable directory outside the disposable fixture
+tree; owned children still exit before deletion. No timeout/retry change.
+
+Ordinary scope for this repair is the brief's Windows CP-4..CP-6, plus exact
+base replay and red-first repair guards. No whole Unit or Linux rerun is claimed.
+V-3 now also observes the actual startup directory and runs Git setup through
+a fixture-owned pre-2.28 compatibility wrapper, which rejects init -b and
+forwards other operations to the resolved real Git. Both guards have ordinary
+pre-repair assertion-red evidence; deliberate mutants remain Mutation's work.
+Details: `docs/investigations/2026-10-04-card-1030-windows-triage-94914cdf.md`.
+
+Two additional controls supplement the frozen inventory; all earlier PCs and
+variants remain pending. This supersedes the earlier 52-control census with
+54 controls. Each new control costs the same estimated nine minutes as P3's
+existing controls (method-scoped baseline/red/restore-green). Mutation floor
+becomes 437 minutes; prior ordinary/setup estimates are unchanged (509 total).
+
+| PC | Compiling defect | Exact method red at assertion |
+|---|---|---|
+| PC-53 | Set Windows ShellStart.WorkingDirectory back to Root | `C1008HostFixturePortabilityTests.C1030_Windows_transport_ignores_ambient_launchers`, `c1030-cwd-outside-fixture`: actual startup directory is outside the disposable tree |
+| PC-54 | Generate the legacy init -b command for Windows Git setup | `C1008HostFixturePortabilityTests.C1030_Windows_transport_ignores_ambient_launchers`, `c1030-portable-git-init`: compatibility wrapper rejection is captured and asserted absent; real commit is required |
+
 ## Verification design
 
 Frozen by TestDesign `9888335c-a881-4b9e-b21d-05a7216a3fd4`, 2026-10-04.
