@@ -22,12 +22,12 @@ public sealed class CheckpointSourceScriptReuseTests
         fixture.SessionMode = true;
         var offset = fixture.Invocations.Count;
         var session = await ReplayAsync(fixture);
-        session.ShouldBe(process, "script-process-parity");
         var workers = fixture.Invocations.Skip(offset).ToArray();
         workers.Length.ShouldBe(18, "script-process-parity");
         workers.Select(w => (w.ProcessId, w.StartTicks)).Distinct().Count().ShouldBe(1, "script-worker-created-once");
         workers.Select(w => w.RunspaceId).Distinct().Count().ShouldBe(18, "script-worker-created-once");
         workers.ShouldNotContain(w => w.RunspaceId == Guid.Empty, "script-worker-created-once");
+        session.ShouldBe(process, "script-process-parity");
     }
 
     private static async Task<string[]> ReplayAsync(CheckpointSourceScriptFixture fixture)
@@ -39,6 +39,12 @@ public sealed class CheckpointSourceScriptReuseTests
             var result = await fixture.RunAsync(sha, reuse, trx, build, drift, slot, busySlot: busy);
             var json = JsonNode.Parse(result.Source.GetRawText())!.AsObject();
             json.Remove("timings");
+            foreach (var point in new[] { "start", "end" })
+                if (json[point] is JsonObject snapshot)
+                {
+                    DateTimeOffset.TryParse((string?)snapshot["observedAtUtc"], out _).ShouldBeTrue("script-process-parity timestamp shape");
+                    snapshot["observedAtUtc"] = "<time>";
+                }
             var artifacts = Directory.GetFiles(Path.GetDirectoryName(result.Evidence)!).Select(Path.GetFileName).Order(StringComparer.Ordinal);
             observations.Add(Normalize($"{result.Exit}|{fixture.Calls}|{json.ToJsonString()}|{string.Join(',', artifacts)}|{result.Output}", fixture));
             result.Output.Split('\n').Count(l => l.StartsWith("CHECKPOINT CP-2 commit=", StringComparison.Ordinal)).ShouldBe(1, "script-process-parity");
@@ -110,7 +116,7 @@ public sealed class CheckpointSourceScriptReuseTests
             Set-Alias -Scope Global C835LeakedAlias Get-Item
             $global:LASTEXITCODE = 91
             $global:ErrorActionPreference = 'SilentlyContinue'
-            if ($Terminate) { throw 'fixture-primary-failure' }
+            if ($Terminate) { $ErrorActionPreference = 'Stop'; throw 'fixture-primary-failure' }
             exit 2
             """);
         await File.WriteAllTextAsync(probe, """
