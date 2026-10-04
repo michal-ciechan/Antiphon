@@ -147,10 +147,41 @@ public sealed class RetiredTempContainerHostTests
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Rollout_lock_covers_final_census() {
-        using var f=Fixture("session-runner");Directory.CreateDirectory(f.Root+"/server/locks");
-        var run=await Cleanup(f,"c849_lock() { [ \"$C1008_LOCK_HELD\" = 1 ] || exit 2; printf 'C994_LOCK_ORDER rollout-cache\\n'; }");
-        run.Exit.ShouldBe(0,"c994-lock c994-lock-order: "+run.Output);run.Output.ShouldContain("C994_LOCK_ORDER rollout-cache");
-        Receipt(f)["finalCensus"]!.AsArray().ShouldBeEmpty("c994-lock");
+        using var first=Fixture("session-runner");using var second=Fixture("session-runner");
+        var finalBarrier=first.Root+"/final-barrier";var release=first.Root+"/final-release";
+        var firstExtra=$$"""
+            original_save=$(declare -f c994_save); eval "${original_save/c994_save/c994_save_original}"
+            c849_lock() { [ "$C1008_LOCK_HELD" = 1 ] || exit 2; printf 'C994_LOCK_ORDER rollout-cache\n'; }
+            c994_save() {
+                if printf '%s' "$C994_RECORD" | jq -e '.outcome=="completed"' >/dev/null; then
+                    touch '{{finalBarrier}}'
+                    while [ ! -f '{{release}}' ]; do sleep 0.02; done
+                fi
+                c994_save_original
+            }
+            """;
+        var firstRun=Cleanup(first,firstExtra);
+        Task<(int Exit,string Output)>? secondRun=null;
+        try {
+            var deadline=DateTime.UtcNow.AddSeconds(15);
+            while(!File.Exists(finalBarrier)&&!firstRun.IsCompleted&&DateTime.UtcNow<deadline)await Task.Delay(20);
+            File.Exists(finalBarrier).ShouldBeTrue("c994-lock: first final-census persistence barrier");
+            var requested=second.Root+"/lock-request";
+            secondRun=Cleanup(second,$$"""
+                SERVER2_ROOT='{{first.Root}}/server'
+                C994_OPERATION=c99400000000000000000000000000000002
+                flock() { touch '{{requested}}'; command flock "$@"; }
+                """);
+            deadline=DateTime.UtcNow.AddSeconds(10);
+            while(!File.Exists(requested)&&!secondRun.IsCompleted&&DateTime.UtcNow<deadline)await Task.Delay(20);
+            File.Exists(requested).ShouldBeTrue("c994-lock: second entrant requested the real flock");
+            second.Trace.ShouldBeEmpty("c994-lock: second cannot census before first receipt completes");
+        } finally {
+            File.WriteAllText(release,"release");
+            var firstResult=await firstRun;firstResult.Exit.ShouldBe(0,"c994-lock c994-lock-order: "+firstResult.Output);
+            firstResult.Output.ShouldContain("C994_LOCK_ORDER rollout-cache");
+            if(secondRun is not null){var secondResult=await secondRun;secondResult.Exit.ShouldBe(0,"c994-lock: second after release; "+secondResult.Output);}
+        }
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Each_removal_rechecks_live_proofs() {
