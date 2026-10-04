@@ -359,8 +359,12 @@ public sealed class HerdrPaneDisposalRedactionTests
     [Arguments("build:1")][Arguments("CARD-0866 12:30")]
     [Arguments("Å:notes")][Arguments("Review： notes")]
     [Arguments("Review＼ notes")][Arguments("Review∕ notes")][Arguments("Review\u202e notes")]
-    // A letter immediately before the candidate drive letter is indistinguishable from word-final text.
-    [Arguments("xC:secret-home")]
+    // ASCII letters and digits before the candidate drive letter are part of ordinary display text.
+    [Arguments("xC:secret-home")][Arguments("XC:secret-home")][Arguments("xc:secret-home")]
+    [Arguments("0C:secret-home")][Arguments("1C:secret-home")][Arguments("2C:secret-home")]
+    [Arguments("3C:secret-home")][Arguments("4C:secret-home")][Arguments("5C:secret-home")]
+    [Arguments("6C:secret-home")][Arguments("7C:secret-home")][Arguments("8C:secret-home")]
+    [Arguments("9C:secret-home")][Arguments("1c:secret-home")]
     public async Task Redaction_preserves_non_drive_display_text(string value)
     {
         await AssertDisplayValueAsync(value, value, "preserved");
@@ -393,6 +397,10 @@ public sealed class HerdrPaneDisposalRedactionTests
     [Arguments("cwd=D:secret")][Arguments("--dir=C:secret-home")]
     [Arguments("work (C:secret-home) selected")][Arguments("\"(C:secret-home)\"")]
     [Arguments("file:C:secret")]
+    [Arguments("(C:secret-home)")][Arguments("“C:secret-home”")]
+    [Arguments("cwd=d:secret")]
+    // An excluded earlier candidate must not prevent detection of a later drive prefix.
+    [Arguments("xC:public cwd=D:secret-home")]
     // Separator-bearing variants remain whole-value masked regardless of the drive boundary.
     [Arguments(@"=C:\Users\secret-home")][Arguments("foo/C:/Users/secret-home")]
     [Arguments(@"name:C:\Users\secret-home")][Arguments(@"a,C:\secret-home")]
