@@ -345,7 +345,7 @@ filenames resolve under `scripts/fixtures/`. No `scripts/**` or `tests/**` scope
 grant. Do not change Compose topology, Docker daemon settings, provider homes,
 queue semantics, runtime session adoption or workspace deletion services.
 
-## Verification design
+## Verification proposal (historical Plan input)
 
 This is not a completed TestDesign freeze. TestDesign must name each independent
 guard, exact positive-control method/input/assertion, preserve the transfer IDs,
@@ -431,7 +431,7 @@ or style. Never relabel failed/missing required checkpoints as green. Post-land
 SourceLanding Mutation is separately commissioned, method-scoped red/restore/green,
 with external evidence and no commits from its snapshot; S1 does not discharge S2 PCs.
 
-### Checkpoints
+### Proposed checkpoints (superseded by the freeze below)
 
 Proposed closed **S1-only** ordinary scope. All rows use the portable lane; CP-3
 additionally needs the established isolated Postgres test fixture. No Windows
@@ -518,4 +518,382 @@ executed in this Plan task. Static document checks are not an importer receipt.
 --- next stage ---
 next: test-design
 handoff: Freeze S1 only: the server-owned storeReplacementAdmission contract, ten proposed tests and CP-1..3. Rebaseline after CARD-0959's overlapping directory/contracts work lands. Preserve all 31 transferred controls for later state/cache slices, fixtures-only nested Docker, CARD-1025 host jq and explicit human opt-in activation gates.
+artifact: docs/superpowers/plans/2026-10-04-card-1010-runner-state-cache-optins-plan.md
+
+## Verification design
+
+**S1 TestDesign freeze, 2026-10-04, task fd423b29.** This appendix supersedes
+only the verification proposal above; D-1 through D-7 and the fix slices are
+unchanged. Only S1 is admitted to Code. No builds, tests, mutations, restarts or
+rollouts were run for this freeze. The two historical heading changes make this
+the sole exact `### Checkpoints` section: the real importer reads the first one.
+
+Current master inspected read-only: **c9e9c4b505dcf2d9a8ec6c9aa00107b0a6eeb307**.
+No merge/rebase of this FF-only branch. CARD-0959 is present: retain the CLI
+observation fields, `IsCurrent`, epoch ticket validation and `ObserveCodexCli`.
+Append the nullable admission DTO parameter after the existing CLI parameters;
+do not restore the pre-CARD-0959 files. CARD-1020's test cleanup does not authorize
+changes to production detach/linger. Selected existing S1 tests and
+PhoneHomeTestHost have no diff between this branch and inspected master.
+
+**Sequence: CARD-0980 (landed) -> CARD-1030 -> CARD-0983 -> CARD-1010 S1.** Await
+the two pending predecessors' lands and required native Windows qualification
+before S1 Code. CARD-1030 owns C1008 WSL stdin/path/Git/lock fixture repair;
+CARD-0983 owns required jq qualification and Remote/Rolling assertions. S1 needs
+the integrated baseline, not copies of their patches, and does not edit their
+files. 8b690c54 and 608ed47c are task IDs, not Git SHAs: their inspected plan/code
+commits are 740245f4d and cb95a4c3c; CARD-0983 freeze is 15a2601b8. Re-read actual
+landed footprints at admission. CARD-1024/1011/1013/1012/1018 are inherited lands,
+not new work here. Preserve LF-aware tooling, literal 377 and the unrelated 163
+floor. A changed predecessor footprint needs a scoped freeze amendment.
+
+### Inspection
+
+Bodies read (production and Remote coordinates use the master above):
+
+- `PhoneHomeRunnerDirectory.Register`, `AcceptConnect`, `ValidateTicket`,
+  `Disconnect`/`RecordDisconnect`, `Status`/`CountBoundWork`, `ApplyState`,
+  `ReadSnapshot`, `ResolveForNewWork`, `RunnerSlot`, and the CARD-0959 diff |
+  attachment, grant, deadlines, atomic observation/admission -> V-1..V-10.
+- `PhoneHomeContracts.PhoneHomeRunnerStatusDto` and registration/protocol
+  contracts; `SessionRunnerEndpoints` register/status mappings;
+  `RunnerStateService` and `RunnerRetireService` save/mirror/clear/idle-retirement
+  bodies | wire, refusal precedence, stamped clear and DB cycle -> V-4/6/8/9,
+  R-1/R-2.
+- All seven methods/helpers in nearest new-file fixture
+  `PhoneHomeRunnerRetirementIdentityTests` (nine expanded results), all seven
+  `PhoneHomeDirectoryTests`, all four `RunnerCatalogueTests`, and the single
+  `PhoneHomeRunnerRetirementCycleTests` method | R-1=20, R-2=1; source methods
+  and expanded executions are distinct.
+- `PhoneHomeTestHost.StartAsync`, registration/connect/peer/disposal and scope
+  doubles; `RollingRunnerSettings.Pair/Entry`; `TestDbFixture` assembly startup,
+  `CreateIsolatedSchemaAsync`, `IsolatedTestSchema.DisposeAsync` | random-loopback
+  host, fake clock, isolated DBs and cleanup -> all V/R. The historical schema
+  API now clones a database; it is not a shared SearchPath.
+- Remote's `C1008_Recycle_exact_default_volumes`, four C980 methods,
+  `PrepareLinuxShellScript`/`LinuxShell`; Rolling's wrapper tests, including
+  `C1008_Option_manifest_is_strict`, wrapper/host fixture construction and Run;
+  `RollingVolumeRecycleDockerTests.C1008_Real_docker_comparison` and cleanup |
+  default/unknown-switch preservation and Windows overlap -> R-3 review;
+  executable shell/Docker tests excluded from S1, retained for S2/S3 freezes.
+- `PlanTableImporter` (first section, escaped pipes, columns, Min, roster tokens),
+  `ManifestValidator`, manifest model, `Program.Import`, and testing/build owner's
+  manifest/slot/receipt rules | CP-1..3; no Checkpoints namespace addition.
+
+**Missing setup Code supplies in the new test file:** ten singleton `[Test]`
+methods, nested assertion helpers, callback/stepping TimeProvider, scope-entry
+probe and legacy status DTO. No shared PhoneHomeTestHost edit is needed. Its
+clock argument controls the directory, but DI TimeProvider defaults to System:
+V-4 must replace DI TimeProvider via `configureServices` for RunnerStateService.
+Use only synthetic credentials. Await/dispose every host/peer/socket; no provider
+or standing runner process. **CP-2 and CP-3** require TestDbFixture Postgres.
+Missing prerequisites mean not run, never an allowed skip.
+
+V-7 uses the existing directory constructor for an `IServiceScopeFactory` probe.
+It records `Monitor.IsEntered(gate)` at CreateScope and returns an empty provider;
+assert the record after Status because CountBoundWork catches exceptions. Read
+private `_gate` identity by test-only reflection, without replacing it. Arm the
+clock callback after setup, with a detached slot: the admission sample is the
+first Status clock read. It must observe that same gate held. For the one-sample
+witness return T+3599 on that read and T+3600 thereafter; ready must describe the
+reported first instant. Subsequent CARD-0959 display-clock reads are allowed.
+Review also checks the whole capture scope; a stress loop/source pin alone is
+not coherence evidence. No new production test hook is required.
+
+Use real Register/AcceptConnect/Disconnect/ApplyState for reachable states.
+For the otherwise masked retired conjunct only, a nested fault-injection helper
+sets the slot's authorization true under `_gate` after a retirement stamp;
+all other readiness conjuncts pass and ready must remain false. This is an
+explicit inconsistent-state predicate witness, not an actual service transition.
+For disabled-bound, establish a ready slot then toggle its retained configured
+entry's Enabled to false. For unbound-authorized, clear a real retired placeholder
+without registering. Timed acceptance witnesses never reflectively write a store,
+lease or live connection.
+
+### Delivery inventory
+
+**New/changed asynchronous delivery paths: zero in S1.** The producer is the
+real directory, destination the HTTP GET client, correlated by runnerId,
+boundStoreId, boundEpoch and observedAtUtc. Binding/grant/deadlines are process
+memory; persisted retirement is mirrored by the existing state service. Restart
+loses binding/grant (V-8). V-9 reads the actual HTTP response; V-1/V-2/V-10 also
+exercise real Register. No queue, durable notification or session input changes,
+so busy/eligible-recipient and crash/enqueue/UserPrompt cases are excluded for
+this slice. This evidence establishes admission, not session delivery.
+
+Substitutes and limits: fake time controls server time, not the answer; a memory
+WebSocket separates socket closure from directory detach but proves no provider
+receipt; PhoneHomeScriptedPeer proves protocol exchange only. V-4's memory state
+store does not prove durability; R-2 exercises real DB/state/retire services.
+Requests, events, acknowledgements and sent flags are never recipient evidence.
+S2 must connect its real wait to this real endpoint and accepted replacement;
+canned ready JSON cannot discharge transferred PC-121/122. Its journal/crash
+handoffs await the later freeze. Any later session-input change must exercise
+the real queue with busy/already-eligible recipients and every crash/enqueue
+handoff, ending at the matching complete UserPrompt transcript.
+
+### Proves it works now
+
+New class/file: `PhoneHomeRunnerReplacementAdmissionTests` in
+`tests/Antiphon.Tests/Application/PhoneHomeRunnerReplacementAdmissionTests.cs`.
+Each method below is one TUnit execution; vector loops do not inflate Min.
+Use fixed UTC T in 2031, visibly different from wall time, and TicketTtlSeconds
+7200 where delayed acceptance/old-ticket assertions require it. Expected values
+come from independent fixture constants, never from the new evaluator.
+
+| ID | Exact method | Layer, vectors and expected assertion labels |
+|---|---|---|
+| V-1 | `C1010_Registration_lease_uses_configured_deadline` | Directory + HTTP; lease=3600, register T without connect, stamped clear/hold. Deadline T+3600, attached=false, no disconnect deadline. False/StoreMismatch at +90, +3599 and expiry minus one tick; true/accepted exactly at expiry and on a separate host one tick after. `registration-deadline`, `registration-blocked`, `registration-equality`. |
+| V-2 | `C1010_Disconnect_lease_uses_latest_disconnect` | Lease=137; register T, connect T+20 -> registration deadline T+157 (`connect-renews`). Heartbeat T+190, disconnect T+200 -> disconnect deadline T+337, not heartbeat+lease. After stamped clear/hold, false/StoreMismatch at +290 and expiry minus one tick; true/accepted at equality and separately one tick after. Duplicate Disconnect of old live cannot move its first recorded time. A second same-store connection/disconnect cycle replaces the prior disconnect record; while its newer registration is pending but old disconnect elapsed, readiness stays false. `disconnect-deadline`, `disconnect-origin`, `disconnect-blocked`, `disconnect-equality`. |
+| V-3 | `C1010_Expired_attached_connection_remains_blocking` | Directory + HTTP; fresh-open, fresh-aborted, expired-open, expired-aborted sockets with cleared grant. All remain attached=true, ready=false, StoreMismatch. Polling may change eligibility but keeps the same live reference. Real Disconnect changes attached=false; its new deadline still blocks until equality. `attached-blocks`, `status-keeps-attachment`. |
+| V-4 | `C1010_Only_stamped_retirement_clear_authorizes` | Real ApplyState plus HTTP clear/drain with fake DI clock. Ordinary clear never grants; stamp alone blocks; removing stamp while still draining never grants; stamped clear grants once, repeat clear and hold preserve it; restamp revokes. Fault-injected retired+authorized independently blocks. `ordinary-clear-no-grant`, `draining-clear-no-grant`, `retired-blocks`, `stamp-revokes`, `hold-keeps-grant`. |
+| V-5 | `C1010_Same_store_registration_consumes_authorization` | Same-store/same-boot reconnect succeeds before expiry despite ready=false; consumes grant, increments epoch, renews deadline. At renewed expiry a foreign store still refuses. Old same-store/same-boot ticket is InvalidTicket solely due to old epoch; new ticket remains valid. `same-store-allowed`, `same-consumes`, `stale-epoch-ticket`. |
+| V-6 | `C1010_Replacement_registration_consumes_authorization` | At ready, new store/boot accepted once, exact store/newer epoch, grant consumed, old ticket invalid; third store refused after expiry. Invalid protocol, unknown/disabled runner, capacity 0/above-max, retired, conflicting platform and competing boot retain exact existing problem codes/order. Early-check vectors also carry blocked replacement; boot vector is same-store/new-boot/unexpired with no live. `replacement-consumes`, `protocol-first`, `runner-first`, `capacity-first`, `retirement-first`, `boot-owner`. |
+| V-7 | `C1010_Status_reads_are_coherent_and_non_consuming` | HTTP before/after registration/connect/disconnect/clear/hold returns independent coherent nested objects. Repeated reads preserve grant, both deadlines, epoch, ticket count/validity and mirrored retirement. Constructor scope and armed clock probes as specified above. `snapshot-gate`, `snapshot-one-instant`, `status-no-io-lock`, `status-grant`, `status-lease`, `status-epoch`, `status-ticket`, `status-retirement`. |
+| V-8 | `C1010_Unknown_local_disabled_and_unbound_statuses_are_safe` | HTTP unknown=404, local/desktop admission=null. Known unbound has null bound store/registration deadline, epoch 0, ready=false, including authorized placeholder clear. Disabled-bound with all other conjuncts passing is false. Fresh directory with persisted hold mirrored has no binding/grant, ready=false; first registration still succeeds. `unbound-identity`, `disabled-blocks`, `restart-no-grant`, `first-registration`. |
+| V-9 | `C1010_Status_wire_is_additive_and_server_timed` | Actual HTTP camelCase schema integer 1, booleans, GUID/null and UTC date/null values. Detached nested epoch retained though top-level Epoch=null. Independent old JSON omitting object and explicit-null JSON deserialize admission=null; pre-S1 test DTO reads new response ignoring extra member, preserving existing fields. Null capabilities and null/old/new/stale/error CLI observations preserve admission after equivalent transitions; CLI status fields remain. `wire-optional`, `wire-schema`, `server-time`, `bound-store`, `bound-epoch`, `cli-inert`. |
+| V-10 | `C1010_Ready_is_not_dispatch_or_a_reservation` | Ready under non-retiring hold still yields RunnerDraining from ResolveForNewWork and acceptingNewWork=false. Save ready, register old store (consumes grant), advance through renewed lease, then register foreign store/current boot: StoreMismatch despite old ready. This isolates registration arbitration from boot conflict. `hold-no-dispatch`, `stale-ready-refused`. |
+
+Boundary combinations: unbound/all deadlines absent (V-8); bound registration-only
+before/equal/after (V-1); both pending, registration elapsed/disconnect pending,
+disconnect elapsed/newer registration pending, both elapsed (V-2/3); attachment
+across socket/heartbeat/expiry combinations (V-3); grant and retirement combinations
+including masked retired conjunct (V-4); disabled with otherwise-ready state (V-8).
+Accepting a replacement consumes state, so equality/after comparisons use fresh
+hosts. Capacity/platform cross-products with every time are excluded because V-6
+pins their earlier independent refusals and neither is a snapshot input.
+
+### Guards the regression
+
+- R-1: Whole `RunnerCatalogueTests` (4), `PhoneHomeDirectoryTests` (7),
+  `PhoneHomeRunnerRetirementIdentityTests` (9 expanded) = **20**. Exact catalogue,
+  placement/capacity, binding, ticket, live-reference and one-shot-grant assertions
+  remain. V-5 additionally isolates CARD-0959's epoch-ticket check.
+- R-2: `PhoneHomeRunnerRetirementCycleTests.Retired_placeholder_supports_two_container_cycles_in_one_directory_lifetime`
+  = **1**. Real DB/state/retire services, two stores/newer epoch, verification
+  holds then acceptance; main binding remains null. Peer retirement ack is not
+  a user-delivery receipt.
+- R-3: Review whole diff alongside CP-1..3: only listed S1 source/new test/API docs
+  and plan; no protocol bump, migration, runner requirement, queue, script, volume,
+  CLI gate or provider-home changes; sibling fields retained. Remote/Rolling stay
+  byte-identical and still reject both unknown opt-ins. Zero additional build.
+
+### Guard inventory
+
+S1-local IDs below do not renumber CARD-1008. All **31** transferred pairs remain
+reserved: **13, 29, 118–144, 155, 156**, including end-to-end PC-121/122. Each S1
+guard has exactly one distinct control. Multiple observing tests do not create
+extra mappings. The under-lock and outer retirement refusals remain redundant
+checks of one unchanged Register invariant (V-6/R-1); G-3 isolates the new status
+conjunct. Unchanged auth/platform/ticket-store/boot/expiry and retirement-service
+historical controls remain with their owners, not transferred here.
+
+| Guard | Plan reference and invariant | Control |
+|---|---|---|
+| G-1 | D-2: disabled bound entry cannot advertise ready | PC-1 |
+| G-2 | D-2: unbound snapshot cannot be ready or invent store/deadline | PC-2 |
+| G-3 | D-2: retired blocks even with inconsistent grant | PC-3 |
+| G-4 | D-2: readiness requires current authorization | PC-4 |
+| G-5 | D-2: attachment blocks independently of socket/heartbeat | PC-5 |
+| G-6 | D-2: actual configured registration deadline blocks | PC-6 |
+| G-7 | D-2: AcceptConnect renewal contributes to deadline | PC-7 |
+| G-8 | D-2: independent configured disconnect lease blocks | PC-8 |
+| G-9 | D-2: recorded disconnect, not heartbeat, sets deadline | PC-9 |
+| G-10 | D-2/CARD-0953: prior retirement required for clear grant | PC-10 |
+| G-11 | D-2/CARD-0953: still-draining clear cannot grant | PC-11 |
+| G-12 | D-2/CARD-0953: new stamp revokes old grant | PC-12 |
+| G-13 | D-2: same-store registration consumes grant | PC-13 |
+| G-14 | D-2: replacement registration consumes grant | PC-14 |
+| G-15 | D-2: first registration exempt from bound-store predicate | PC-15 |
+| G-16 | D-2: same-store registration exempt from replacement predicate | PC-16 |
+| G-17 | D-2: Register rechecks current readiness | PC-17 |
+| G-18 | D-2: nested store is actual slot identity | PC-18 |
+| G-19 | D-2: nested epoch survives detach | PC-19 |
+| G-20 | D-2: whole admission capture uses admission gate | PC-20 |
+| G-21 | D-2: injected server time supplies observation | PC-21 |
+| G-22 | D-2: observedAt and ready share one time sample | PC-22 |
+| G-23 | D-2: status cannot consume grant | PC-23 |
+| G-24 | D-2: status cannot renew lease | PC-24 |
+| G-25 | D-2: status cannot advance epoch | PC-25 |
+| G-26 | D-2: status cannot mutate tickets | PC-26 |
+| G-27 | D-2: status cannot clear retirement | PC-27 |
+| G-28 | D-2: gate excludes scope/database I/O | PC-28 |
+| G-29 | D-2: ready cannot bypass dispatch hold | PC-29 |
+| G-30 | D-2: rebuilt directory cannot synthesize grant | PC-30 |
+| G-31 | D-2: optional nullable wire preserves old-server reader compatibility | PC-31 |
+| G-32 | D-2: output schema is 1 | PC-32 |
+| G-33 | D-2/CARD-0959: CLI observations remain inert | PC-33 |
+| G-34 | D-2: protocol refusal precedes replacement checks | PC-34 |
+| G-35 | D-2: unknown runner refusal precedes replacement checks | PC-35 |
+| G-36 | D-2: capacity refusal precedes replacement checks | PC-36 |
+| G-37 | D-2: unexpired competing boot refused | PC-37 |
+| G-38 | D-2/CARD-0959: stale same-store/boot ticket epoch refused | PC-38 |
+| G-39 | D-2: registration equality admitted without extra grace | PC-39 |
+| G-40 | D-2: disconnect equality admitted without extra grace | PC-40 |
+
+### Positive controls
+
+Code implements V/R; Review judges controls before land. Separately commissioned
+post-land SourceLanding Mutation performs initial green then break/red/restore/
+fresh-build/green on the landed source, retaining external evidence and never
+committing from that snapshot. No control is executed by this freeze. Zero tests,
+compile/fixture errors or unrelated assertions are not red. Never mutate tests.
+
+For every row use exactly
+`/*/*/PhoneHomeRunnerReplacementAdmissionTests/<complete method named in row>`,
+MinExecuted=1, separately for red/restored green. This expansion rule does not
+permit the class or C1010_* filter during Mutation. Required assertion labels
+below make the expected red unambiguous. Controls share production files: run
+serially, with independent receipts and full restoration between controls.
+
+| PC | Compiling break of matching guard | Exact method; decisive red |
+|---|---|---|
+| PC-1 | Drop Enabled from ready | `C1010_Unknown_local_disabled_and_unbound_statuses_are_safe`; `disabled-blocks`: false ready |
+| PC-2 | Make the evaluator's binding precondition pass for an unbound slot, comparing its default raw LeaseUntil to now; leave null wire projection intact | `C1010_Unknown_local_disabled_and_unbound_statuses_are_safe`; `unbound-identity`: ready=false after unbound placeholder clear |
+| PC-3 | Drop retiredAt from ready | `C1010_Only_stamped_retirement_clear_authorizes`; `retired-blocks`: false in fault-injected retired+authorized state |
+| PC-4 | Drop authorized from ready | `C1010_Only_stamped_retirement_clear_authorizes`; `ordinary-clear-no-grant`: false ready after expired ordinary clear |
+| PC-5 | Replace attachment blocker with socket-open AND lease-unexpired | `C1010_Expired_attached_connection_remains_blocking`; `attached-blocks`: false for closed/expired attached reference |
+| PC-6 | Compare observedAt in place of slot.LeaseUntil | `C1010_Registration_lease_uses_configured_deadline`; `registration-blocked`: false at +90 |
+| PC-7 | Remove AcceptConnect LeaseUntil update | `C1010_Disconnect_lease_uses_latest_disconnect`; `connect-renews`: T+157 |
+| PC-8 | Drop disconnect deadline conjunct | `C1010_Disconnect_lease_uses_latest_disconnect`; `disconnect-blocked`: false before T+337 |
+| PC-9 | Record LastHeartbeatUtc instead of disconnect AtUtc | `C1010_Disconnect_lease_uses_latest_disconnect`; `disconnect-origin`: T+337, not T+327 |
+| PC-10 | Remove previous RetiredAt requirement from ApplyState grant | `C1010_Only_stamped_retirement_clear_authorizes`; `ordinary-clear-no-grant`: authorized=false |
+| PC-11 | Remove !state.Draining requirement from grant | `C1010_Only_stamped_retirement_clear_authorizes`; `draining-clear-no-grant`: authorized=false |
+| PC-12 | Remove ApplyState revocation assignment on stamp | `C1010_Only_stamped_retirement_clear_authorizes`; `stamp-revokes`: authorized=false |
+| PC-13 | Consume only when registering a different store; capture comparison before StoreId assignment | `C1010_Same_store_registration_consumes_authorization`; `same-consumes`: authorized=false |
+| PC-14 | Consume only when registering same store; same capture position | `C1010_Replacement_registration_consumes_authorization`; `replacement-consumes`: authorized=false |
+| PC-15 | Apply replacement evaluator to unbound slot too | `C1010_Unknown_local_disabled_and_unbound_statuses_are_safe`; `first-registration`: successful ticket |
+| PC-16 | Apply replacement evaluator to same store too | `C1010_Same_store_registration_consumes_authorization`; `same-store-allowed`: successful unexpired reconnect |
+| PC-17 | Remove only Register's different-store readiness refusal | `C1010_Ready_is_not_dispatch_or_a_reservation`; `stale-ready-refused`: StoreMismatch after grant consumed and leases elapsed |
+| PC-18 | Project bound store as Guid.Empty | `C1010_Status_wire_is_additive_and_server_timed`; `bound-store`: exact registered GUID |
+| PC-19 | Project boundEpoch as slot.Live?.Epoch ?? 0 | `C1010_Status_wire_is_additive_and_server_timed`; `bound-epoch`: retained nonzero epoch |
+| PC-20 | Move admission capture outside _gate | `C1010_Status_reads_are_coherent_and_non_consuming`; `snapshot-gate`: armed sample saw same gate held |
+| PC-21 | Use DateTimeOffset.UtcNow for admission sample | `C1010_Status_wire_is_additive_and_server_timed`; `server-time`: exact fake UTC |
+| PC-22 | Compute ready using a second clock.GetUtcNow() | `C1010_Status_reads_are_coherent_and_non_consuming`; `snapshot-one-instant`: false at reported deadline minus one second |
+| PC-23 | Set grant=false in Status before capture | `C1010_Status_reads_are_coherent_and_non_consuming`; `status-grant`: retained true grant |
+| PC-24 | Renew LeaseUntil in Status to now+configured lease | `C1010_Status_reads_are_coherent_and_non_consuming`; `status-lease`: unchanged deadline |
+| PC-25 | Increment slot.Epoch in Status | `C1010_Status_reads_are_coherent_and_non_consuming`; `status-epoch`: unchanged registration epoch |
+| PC-26 | Clear _tickets in Status | `C1010_Status_reads_are_coherent_and_non_consuming`; `status-ticket`: unchanged count and valid original ticket |
+| PC-27 | Set slot.State=null in Status | `C1010_Status_reads_are_coherent_and_non_consuming`; `status-retirement`: same stamp |
+| PC-28 | Move CountBoundWork inside admission lock | `C1010_Status_reads_are_coherent_and_non_consuming`; `status-no-io-lock`: scope probe saw no gate held |
+| PC-29 | Remove draining refusal from ResolveForNewWork | `C1010_Ready_is_not_dispatch_or_a_reservation`; `hold-no-dispatch`: RunnerDraining, not Unavailable/client |
+| PC-30 | Initialize RunnerSlot.StoreReplacementAuthorized=true | `C1010_Unknown_local_disabled_and_unbound_statuses_are_safe`; `restart-no-grant`: false grant |
+| PC-31 | Add property-targeted JsonRequired to new DTO property, retaining default | `C1010_Status_wire_is_additive_and_server_timed`; `wire-optional`: old JSON deserializes successfully with null admission |
+| PC-32 | Emit schema 2 | `C1010_Status_wire_is_additive_and_server_timed`; `wire-schema`: integer 1 |
+| PC-33 | Add non-null CodexCliVersion as a ready conjunct | `C1010_Status_wire_is_additive_and_server_timed`; `cli-inert`: old/null-capability ready=true after valid transitions |
+| PC-34 | Delete protocol refusal | `C1010_Replacement_registration_consumes_authorization`; `protocol-first`: ProtocolVersion code |
+| PC-35 | Change unknown runner refusal code to StoreMismatch | `C1010_Replacement_registration_consumes_authorization`; `runner-first`: RunnerMismatch code |
+| PC-36 | Delete capacity-bounds refusal | `C1010_Replacement_registration_consumes_authorization`; `capacity-first`: Capacity code for 0/above-max |
+| PC-37 | Delete BootId/LeaseUntil competing-boot block; disconnected/no-live witness | `C1010_Replacement_registration_consumes_authorization`; `boot-owner`: BootConflict |
+| PC-38 | Delete ticket.Epoch != slot.Epoch from ValidateTicket | `C1010_Same_store_registration_consumes_authorization`; `stale-epoch-ticket`: InvalidTicket for same store/boot old ticket |
+| PC-39 | Change registration deadline <= now to < now | `C1010_Registration_lease_uses_configured_deadline`; `registration-equality`: true/accepted at equality |
+| PC-40 | Change disconnect deadline <= now to < now | `C1010_Disconnect_lease_uses_latest_disconnect`; `disconnect-equality`: true/accepted at equality |
+
+### Out of scope
+
+- S2/S3, all 31 transferred PCs, end-to-end PC-121/122, journal/crash recovery,
+  RD-9/RD-10, real volume removal/cache roots/marker/seed. Separate freezes precede
+  those Code stages; S1 cannot complete CARD-1010 as a whole.
+- No S1 platform-sensitive shell/native-process/path/terminal code, so **no
+  separate Windows Debug row for CP-1..3**. Catalogue platform strings are data.
+  CARD-1030 requires final-SHA Windows Debug for WSL/path/Git/lock/Remote/four
+  Rolling consumers; CARD-0983 for native PowerShell argv/required-jq shell.
+  Their Linux receipts cannot substitute. Later S2/S3 touching those surfaces
+  must freeze their own final-SHA Windows rows.
+- Future real-Docker checks stay **fixtures-only on an owned nested daemon**:
+  /.dockerenv, daemon Name=this container hostname, unique names/labels, random
+  loopback API and exact creation/cleanup ledger. Never real standing stack or
+  real volumes, host/sibling daemon, production SSH/API or secret mounts. S1 has
+  no destructive Docker fixture; DB tests use the established isolated fixture.
+- No host jq qualification here: CARD-1025 needs host command/version receipt
+  before live recycle. Runner/WSL jq does not establish host readiness.
+- Activation follows S1 Review/land: canonical server restart, /api/version exact
+  SHA and actual status schema=1. No runner upgrade is required for S1's additive
+  status. Old runners register unchanged; old servers omit admission and new
+  readers deserialize null. Future opt-ins fail closed for absent/null/malformed/
+  unsupported snapshots; ordinary registration/default rollout stays compatible.
+  Preserve **runner-first** ordering if the combined release includes runner
+  contracts, then server activation; S1 alone has no runner activation step.
+  Reboot invalidates in-memory binding/grant. Never retire/clear a live runner
+  merely to demonstrate readiness. State/cache activation remains human-gated
+  for the exact loss and maintenance window under D-7.
+
+### Checkpoints
+
+Closed Final S1 ordinary scope: **31 executions = 10 new + 20 existing + 1 cycle**.
+This is read-only source census, not runtime discovery evidence. All rows use one
+committed implementation SHA C and distinct isolated outputs. New tests are in
+Application, **zero** in Antiphon.Tests.Checkpoints: leave literal **377** alone.
+Recount after predecessor lands and record real roster drift; never lower a floor
+to fit failures. CP-2 as well as CP-3 needs isolated Postgres.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
+|---|---|---|---|---|---|---|---:|---:|---|---|
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1010-admission/` | portable-admission | `/*/*/PhoneHomeRunnerReplacementAdmissionTests/C1010_*` | V-1..V-10, R-3 | Exactly 10 passed, 0 failed/skipped; all ten singleton methods | 10 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-2 | S1 | `tests/Antiphon.Tests -> bin-c1010-directory/` | portable-directory-regression | `/*/*/(RunnerCatalogueTests*)\|(PhoneHomeDirectoryTests*)\|(PhoneHomeRunnerRetirementIdentityTests*)/*` | R-1, R-3 | Exactly 20 passed, 0 failed/skipped; class counts 4+7+9 | 20 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-3 | S1 | `tests/Antiphon.Tests -> bin-c1010-cycle/` | portable-retirement-cycle | `/*/*/PhoneHomeRunnerRetirementCycleTests/Retired_placeholder_supports_two_container_cycles_in_one_directory_lifetime` | R-2, R-3 | Exactly 1 passed, 0 failed/skipped | 1 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+
+Use checkpoint tool `run --plan` this file, `--after S1`, `--expected-source-sha C`
+and `--serial`; then `wait` until terminal, never settle at exit 75. C means full
+committed implementation SHA, not this docs tip. Bootstrap through build-slot.ps1
+only if needed with bin-c1010-tool/; rows take their own slots. Report exact
+rosters/zero skips as well as Min, missing rows and unlisted builds. Retain clean
+SHA/build-bound receipts and unedited CHECKPOINT lines. Exit 4 is not run. Remove
+only task-owned alternate outputs after all children finish. Code/Review run
+check-evidence-diff.ps1 over the full task range. Code -> ordinary Review -> land
+-> separately commissioned SourceLanding Mutation.
+
+Read-only import uses the real prebuilt tool version
+1.0.0+261500e2ff0566cc2b0c370de1cc411f715163a7 at
+`/tmp/c1005-master-261500e2/tools/Antiphon.Checkpoints/bin-c1005-master-tool/Antiphon.Checkpoints.dll`.
+Importer/manifest/Program/RowTimeout/ExitCodes sources have no diff from inspected
+master. Executed command (read-only source inspection; ignored YAML output):
+
+```sh
+dotnet /tmp/c1005-master-261500e2/tools/Antiphon.Checkpoints/bin-c1005-master-tool/Antiphon.Checkpoints.dll import --plan docs/superpowers/plans/2026-10-04-card-1010-runner-state-cache-optins-plan.md --out .antiphon/c1010-s1-import.yaml
+```
+
+Exit 0: `imported 3 rows -> .antiphon/c1010-s1-import.yaml`. Also loaded that
+same assembly in PowerShell and called actual `PlanTableImporter.ImportFile`
+with isWindows=false and true, followed by `ManifestValidator.Validate` for
+each. Both exit 0: rows=3, builds=3, Min=10/20/1, EstimatedMinutes=8/8/8,
+warnings=0. The combined-class filter imported with two literal pipes; all
+rows have After=S1, Serial=true and TUNIT_MAX_PARALLEL_TESTS=1. No source build
+or test ran. YAML is parser output, not a test receipt. Expect prose does not
+enforce exact counts/zero skips; Code must inspect TRX and validated receipts.
+
+### Cost
+
+All test times are **estimated**, none measured in TestDesign. Ordinary Code V/R
+floor = CP-1 8 + CP-2 8 + CP-3 8 = **24 minutes**, including three isolated builds
+(budget 6 build + 2 execution per row). Setup/tool allowance **4** gives **28
+minutes** ordinary execution budget, plus authoring and slot waits. R-3 adds no
+build/test driver.
+
+Mutation separately: setup **4 minutes**; pristine initial exact-method green
+baseline **6** (one isolated 4-minute build, ten V-table exact filters at 0.2 each).
+Every PC red build+exact method **4**, restore/check **1**, fresh green build+same
+method **4** = **9 minutes**. PC-1..40 cost **360**; Mutation floor **370 minutes**.
+Each named PC filter has Min=1; no class-wide mutation run. Total setup + ordinary
++ post-land PCs = **398 minutes** (4+24+4+6+40x9), excluding authoring, discovery,
+reporting and slot queues. Do not commission Mutation with the 24-minute Code
+floor. Method-specific baseline replay for inherited red is additional reported
+work, never an assembly rerun.
+
+CP-1 batching avoids nine additional ordinary builds: **54 estimated minutes
+saved** at six minutes/build. **Zero PC batching savings** assumed because these
+controls share files/transitions; every red/restored-green remains independently
+observable.
+
+Before handoff: bodies read as listed; **guards=40, mapped=40, missing=0,
+duplicate PC maps=0**. Every PC has a compiling defect, exact method and decisive
+assertion. Execution is pending Code/Review/land/Mutation, not claimed here.
+
+Static census confirmed R-1 class counts 4/7/9, R-2 count 1, ten V methods,
+40 unique PC rows, 40 one-to-one mappings, and exactly one importer-visible
+checkpoint section. No unverifiable S1 seam or product decision remains.
+
+--- next stage ---
+next: code
+handoff: Implement S1 only from this freeze's pushed tip after CARD-0980 (landed) -> CARD-1030 -> CARD-0983. Preserve CARD-0959 observations, additive compatibility and 377; run CP-1..3 (31 results), then ordinary Review. All 40 PCs await post-land Mutation; all 31 transferred controls and human-gated opt-ins await S2/S3 freezes.
 artifact: docs/superpowers/plans/2026-10-04-card-1010-runner-state-cache-optins-plan.md
