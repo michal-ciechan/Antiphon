@@ -4299,7 +4299,16 @@ public sealed class RemoteScriptContractTests
             c849_prune_idle() { :; }
             c849_image() { echo image; }
             sudo() { [ "$1" = -n ] && shift; "$@"; }
-            docker() { printf '%s\n' "$*" >> "$root/docker-trace"; [ "$1" = image ] && return 0; if [[ "$*" == *'--entrypoint sha256sum'* ]]; then sha256sum "$SERVER2_ROOT/cache/recovery-fixture/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost"; return; fi; return 2; }
+            docker() {
+                # Readiness now executes the real legacy reader. Record its read-only
+                # helper separately; the existing mutation trace remains strict.
+                if [ "$1" = image ]; then printf '%s\n' "$*" >> "$root/readonly-docker-trace"; return 0; fi
+                if [[ "$*" == *'--entrypoint sha256sum'* ]]; then
+                    printf '%s\n' "$*" >> "$root/readonly-docker-trace"
+                    sha256sum "$SERVER2_ROOT/cache/recovery-fixture/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost"; return
+                fi
+                printf '%s\n' "$*" >> "$root/docker-trace"; return 2
+            }
             write_result() { printf 'DIAGNOSIS=%s\n' "$2"; exit "$3"; }
             c849_observe_volume() {
                 local path="$root/volumes/packages"
