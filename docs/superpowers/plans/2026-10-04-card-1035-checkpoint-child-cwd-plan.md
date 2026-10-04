@@ -230,7 +230,7 @@ same DLL until terminal; own and await the run before ending the task. Lease
 timeout 4 is not run, never permission to bypass the gate.
 
 Keep the complete static-coverage output with dispositions (the existing
-PowerShell harness assertions may be statically unmapped), the unedited
+PowerShell harness findings must be reconciled individually; no blanket allowance for unmapped assertions applies), the unedited
 CHECKPOINT lines, actual SHA/counts and fresh structured receipts in the task
 report. Validate the tool `report.json` with
 `scripts/validate-checkpoint-receipt.ps1 -Evidence <report.json> -ExpectedSourceSha <sha> -Rows CP-1,CP-2`.

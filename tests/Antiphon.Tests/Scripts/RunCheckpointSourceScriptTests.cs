@@ -28,7 +28,7 @@ public sealed class RunCheckpointSourceScriptTests
             {
                 using var observation = JsonDocument.Parse(observations[i]);
                 var child = observation.RootElement;
-                child.GetProperty("phase").GetString().ShouldBe(phases[i]);
+                child.GetProperty("phase").GetString().ShouldBe(phases[i], "child-phase-matches-request");
                 child.GetProperty("cwd").GetString().ShouldBe(certified.Repo,
                     "child-cwd-matches-certified-root");
                 child.GetProperty("marker").GetString().ShouldBe("repository B", "child-reads-certified-marker");

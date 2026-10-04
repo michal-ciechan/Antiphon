@@ -15,6 +15,13 @@ internal sealed record IndexedClass(string Class, string Namespace, string Path,
 /// <summary>Bounded syntax evidence. No semantic model, loading or execution of selected code.</summary>
 public sealed class TestAssertionIndex
 {
+    private sealed record Callable(string Class, string Path, SyntaxNode Syntax, ParameterListSyntax Parameters, SyntaxNode? Body)
+    {
+        public static Callable From(IndexedMethod method) => new(method.Class, method.Path, method.Syntax,
+            method.Syntax.ParameterList, (SyntaxNode?)method.Syntax.Body ?? method.Syntax.ExpressionBody);
+        public Callable Local(LocalFunctionStatementSyntax local) => new(Class, Path, local,
+            local.ParameterList, (SyntaxNode?)local.Body ?? local.ExpressionBody);
+    }
     private readonly List<(string Path, CompilationUnitSyntax Root)> _trees = [];
     public List<IndexedMethod> Methods { get; } = [];
     internal List<IndexedClass> Declarations { get; } = [];
@@ -48,17 +55,17 @@ public sealed class TestAssertionIndex
     public List<IndexedAssertion> Assertions(IndexedMethod method, List<CoverageDiagnostic> unknown)
     {
         var result = new List<IndexedAssertion>();
-        Expand(method, new Dictionary<string, ExpressionSyntax>(StringComparer.Ordinal), new HashSet<MethodDeclarationSyntax>(), result, unknown, 0);
+        Expand(Callable.From(method), new Dictionary<string, ExpressionSyntax>(StringComparer.Ordinal), new HashSet<SyntaxNode>(), result, unknown, 0);
         return result;
     }
-    private void Expand(IndexedMethod method, Dictionary<string, ExpressionSyntax> parameters, HashSet<MethodDeclarationSyntax> stack,
+    private void Expand(Callable method, Dictionary<string, ExpressionSyntax> parameters, HashSet<SyntaxNode> stack,
         List<IndexedAssertion> assertions, List<CoverageDiagnostic> unknown, int depth)
     {
         if (depth > 12 || !stack.Add(method.Syntax)) { unknown.Add(new("HELPER_UNMAPPED", TestPath: method.Path, TestLine: Line(method.Syntax), Detail: "cyclic or deep helper")); return; }
         try
         {
-            var nodes = method.Syntax.Body?.DescendantNodes() ?? method.Syntax.ExpressionBody?.DescendantNodesAndSelf() ?? [];
-            foreach (var call in nodes.OfType<InvocationExpressionSyntax>().OrderBy(c => c.Span.End).Where(c => !c.Ancestors().OfType<LocalFunctionStatementSyntax>().Any()))
+            var nodes = method.Body?.DescendantNodesAndSelf(n => n is not LocalFunctionStatementSyntax) ?? [];
+            foreach (var call in nodes.OfType<InvocationExpressionSyntax>().OrderBy(c => c.Span.End))
             {
                 var name = CallName(call); var arguments = call.ArgumentList.Arguments;
                 var receiver = (call.Expression as MemberAccessExpressionSyntax)?.Expression;
@@ -85,25 +92,14 @@ public sealed class TestAssertionIndex
                     assertions.Add(new(method.Path, Line((call.Expression as MemberAccessExpressionSyntax)?.Name ?? call.Expression), name, members, values, messages, canaries, empty, isNull));
                     continue;
                 }
-                var helpers = Methods.Where(m => m.Name == name && m.Syntax.ParameterList.Parameters.Count(p => p.Default is null) <= arguments.Count
-                    && m.Syntax.ParameterList.Parameters.Count >= arguments.Count
-                    && (m.Class == method.Class || m.Class.StartsWith(method.Class.Split('.')[0], StringComparison.Ordinal))).ToArray();
-                // Restrict unique resolution to the same outer class. Cross-file partial declarations share its identity.
-                helpers = helpers.Where(m => OuterClass(m.Syntax) == OuterClass(method.Syntax)).ToArray();
-                if (helpers.Length == 1 && (HasAssertions(helpers[0].Syntax) || name.StartsWith("Assert", StringComparison.Ordinal)))
+                // Local names shadow class methods, including when their argument shape is unsupported.
+                var locals = call.Expression is SimpleNameSyntax ? LocalCandidates(call, name) : [];
+                var candidates = locals.Count > 0 ? locals.Select(method.Local)
+                    : Methods.Where(m => m.Name == name && OuterClass(m.Syntax) == OuterClass(method.Syntax)).Select(Callable.From);
+                var helpers = candidates.Where(h => Bind(h, method, call, parameters) is not null).ToArray();
+                if (helpers.Length == 1 && (locals.Count > 0 || HasAssertions(helpers[0]) || name.StartsWith("Assert", StringComparison.Ordinal)))
                 {
-                    var helper = helpers[0]; var bindings = new Dictionary<string, ExpressionSyntax>(StringComparer.Ordinal);
-                    for (var i = 0; i < helper.Syntax.ParameterList.Parameters.Count; i++)
-                    {
-                        var param = helper.Syntax.ParameterList.Parameters[i];
-                        var named = arguments.FirstOrDefault(a => a.NameColon?.Name.Identifier.ValueText == param.Identifier.ValueText);
-                        var arg = named?.Expression ?? (i < arguments.Count && arguments[i].NameColon is null ? arguments[i].Expression : param.Default?.Value);
-                        if (arg is null) continue;
-                        var literal = Literals(arg, method.Syntax, call, parameters, new HashSet<string>(), 0);
-                        if (literal.Count > 0) bindings[param.Identifier.ValueText] = SyntheticLiterals(literal);
-                        else if (arg is IdentifierNameSyntax id && parameters.TryGetValue(id.Identifier.ValueText, out var replacement)) bindings[param.Identifier.ValueText] = replacement;
-                        else bindings[param.Identifier.ValueText] = arg;
-                    }
+                    var helper = helpers[0]; var bindings = Bind(helper, method, call, parameters)!;
                     Expand(helper, bindings, stack, assertions, unknown, depth + 1);
                 }
                 else if (name.StartsWith("Assert", StringComparison.Ordinal)) unknown.Add(new("HELPER_UNMAPPED", TestPath: method.Path, TestLine: Line(call), Name: name, Detail: "unresolved or ambiguous assertion helper"));
@@ -112,7 +108,76 @@ public sealed class TestAssertionIndex
         finally { stack.Remove(method.Syntax); }
     }
     private static string OuterClass(SyntaxNode node) => node.Ancestors().OfType<ClassDeclarationSyntax>().LastOrDefault() is ClassDeclarationSyntax outer ? ClassName(outer) : "";
-    private static bool HasAssertions(MethodDeclarationSyntax method) => method.DescendantNodes().OfType<InvocationExpressionSyntax>()
+    private static List<LocalFunctionStatementSyntax> LocalCandidates(SyntaxNode site, string name)
+    {
+        foreach (var scope in site.Ancestors())
+        {
+            if (scope is BlockSyntax block)
+            {
+                var found = block.Statements.OfType<LocalFunctionStatementSyntax>().Where(l => l.Identifier.ValueText == name).ToList();
+                if (found.Count > 0) return found;
+            }
+            if (scope is MethodDeclarationSyntax) break;
+        }
+        return [];
+    }
+    private static IEnumerable<VariableDeclaratorSyntax> VisibleVariables(SyntaxNode site)
+    {
+        foreach (var scope in site.Ancestors())
+        {
+            if (scope is BlockSyntax block)
+                foreach (var variable in block.Statements.OfType<LocalDeclarationStatementSyntax>()
+                    .SelectMany(s => s.Declaration.Variables).Where(v => v.SpanStart < site.SpanStart).Reverse())
+                    yield return variable;
+            if (scope is MethodDeclarationSyntax or LocalFunctionStatementSyntax) yield break;
+        }
+    }
+    private Dictionary<string, ExpressionSyntax>? Bind(Callable helper, Callable caller, InvocationExpressionSyntax call,
+        Dictionary<string, ExpressionSyntax> inherited)
+    {
+        var parameters = helper.Parameters.Parameters;
+        var assigned = new Dictionary<string, List<ExpressionSyntax>>(StringComparer.Ordinal);
+        var position = 0;
+        foreach (var arg in call.ArgumentList.Arguments)
+        {
+            if (arg.RefKindKeyword.RawKind != 0) return null;
+            var index = arg.NameColon is null ? position : parameters.IndexOf(parameters.FirstOrDefault(p => p.Identifier.ValueText == arg.NameColon.Name.Identifier.ValueText)!);
+            if (index < 0 || index >= parameters.Count) return null;
+            var parameter = parameters[index]; var name = parameter.Identifier.ValueText;
+            var isParams = parameter.Modifiers.Any(SyntaxKind.ParamsKeyword) && index == parameters.Count - 1;
+            if (assigned.ContainsKey(name) && (!isParams || arg.NameColon is not null)) return null;
+            if (!assigned.TryGetValue(name, out var values)) assigned[name] = values = [];
+            values.Add(arg.Expression);
+            if (arg.NameColon is null && !isParams) position++;
+            else if (arg.NameColon is not null && index == position) position++;
+        }
+        var bindings = new Dictionary<string, ExpressionSyntax>(StringComparer.Ordinal);
+        if (helper.Syntax is LocalFunctionStatementSyntax)
+        {
+            foreach (var pair in inherited) bindings[pair.Key] = pair.Value;
+            foreach (var variable in VisibleVariables(call).DistinctBy(v => v.Identifier.ValueText))
+            {
+                var literals = variable.Initializer is null ? [] : Literals(variable.Initializer.Value, caller.Syntax, call, inherited, [], 0);
+                bindings[variable.Identifier.ValueText] = literals.Count > 0 ? SyntheticLiterals(literals) : SyntaxFactory.IdentifierName("__unknown_capture");
+            }
+        }
+        foreach (var parameter in parameters)
+        {
+            var name = parameter.Identifier.ValueText;
+            var isParams = parameter.Modifiers.Any(SyntaxKind.ParamsKeyword) && parameter == parameters.Last();
+            if (!assigned.TryGetValue(name, out var args))
+            {
+                if (parameter.Default is not null) args = [parameter.Default.Value];
+                else if (isParams) args = [];
+                else return null;
+            }
+            var literals = args.SelectMany(a => Literals(a, caller.Syntax, call, inherited, [], 0)).ToList();
+            bindings[name] = literals.Count > 0 || isParams ? SyntheticLiterals(literals)
+                : args.Count == 1 ? args[0] : SyntaxFactory.IdentifierName("__unknown_argument");
+        }
+        return bindings;
+    }
+    private static bool HasAssertions(Callable method) => (method.Body?.DescendantNodesAndSelf(n => n is not LocalFunctionStatementSyntax) ?? []).OfType<InvocationExpressionSyntax>()
         .Any(c => CallName(c).StartsWith("Should", StringComparison.Ordinal) || CallName(c) is "Throw" or "ThrowAsync" || CallName(c).StartsWith("Assert", StringComparison.Ordinal));
     private static string CallName(InvocationExpressionSyntax call) => call.Expression switch
     {
@@ -122,18 +187,20 @@ public sealed class TestAssertionIndex
     };
     private static int Line(SyntaxNode node) => node.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
     private static ExpressionSyntax SyntheticLiterals(IReadOnlyList<string> literals) => SyntaxFactory.ParseExpression("new[] { " + string.Join(", ", literals.Select(s => System.Text.Json.JsonSerializer.Serialize(s))) + " }");
-    private ExpressionSyntax? Alias(string name, MethodDeclarationSyntax method, SyntaxNode site, Dictionary<string, ExpressionSyntax> parameters)
+    private ExpressionSyntax? Alias(string name, SyntaxNode method, SyntaxNode site, Dictionary<string, ExpressionSyntax> parameters)
     {
-        if (parameters.TryGetValue(name, out var bound)) return bound;
         var loop = site.Ancestors().OfType<ForEachStatementSyntax>().FirstOrDefault(f => f.Identifier.ValueText == name);
         if (loop is not null) return loop.Expression;
-        var local = method.DescendantNodes().OfType<VariableDeclaratorSyntax>().LastOrDefault(v => v.Identifier.ValueText == name && v.SpanStart < site.SpanStart && v.Initializer is not null);
-        if (local is not null) return local.Initializer!.Value;
+        var local = VisibleVariables(site).FirstOrDefault(v => v.Identifier.ValueText == name);
+        if (local is not null) return local.Initializer?.Value;
+        if (parameters.TryGetValue(name, out var bound)) return bound;
+        var declared = method switch { MethodDeclarationSyntax m => m.ParameterList, LocalFunctionStatementSyntax l => l.ParameterList, _ => null };
+        if (declared?.Parameters.Any(p => p.Identifier.ValueText == name) == true) return null;
         // Only literal const fields in the enclosing/partial class are traced.
         return _trees.SelectMany(t => t.Root.DescendantNodes().OfType<FieldDeclarationSyntax>()).Where(f => f.Modifiers.Any(SyntaxKind.ConstKeyword)
             && OuterClass(f) == OuterClass(method)).SelectMany(f => f.Declaration.Variables).FirstOrDefault(v => v.Identifier.ValueText == name)?.Initializer?.Value;
     }
-    private List<string> Members(ExpressionSyntax expression, MethodDeclarationSyntax method, SyntaxNode site, Dictionary<string, ExpressionSyntax> parameters, HashSet<string> seen, int depth)
+    private List<string> Members(ExpressionSyntax expression, SyntaxNode method, SyntaxNode site, Dictionary<string, ExpressionSyntax> parameters, HashSet<string> seen, int depth)
     {
         var result = expression.DescendantNodesAndSelf().OfType<MemberAccessExpressionSyntax>().Select(m => m.Name.Identifier.ValueText).ToList();
         if (depth > 8) return result;
@@ -145,14 +212,14 @@ public sealed class TestAssertionIndex
         }
         return result.Distinct(StringComparer.Ordinal).ToList();
     }
-    private List<string> Values(ExpressionSyntax expression, MethodDeclarationSyntax method, SyntaxNode site, Dictionary<string, ExpressionSyntax> parameters, HashSet<string> seen, int depth)
+    private List<string> Values(ExpressionSyntax expression, SyntaxNode method, SyntaxNode site, Dictionary<string, ExpressionSyntax> parameters, HashSet<string> seen, int depth)
     {
         var result = Literals(expression, method, site, parameters, seen, depth);
         result.AddRange(expression.DescendantNodesAndSelf().OfType<MemberAccessExpressionSyntax>().Select(m => m.Name.Identifier.ValueText));
         result.AddRange(expression.DescendantNodesAndSelf().OfType<LiteralExpressionSyntax>().Where(l => !l.IsKind(SyntaxKind.StringLiteralExpression)).Select(l => l.Token.ValueText));
         return result.Distinct(StringComparer.Ordinal).ToList();
     }
-    private List<string> Literals(ExpressionSyntax expression, MethodDeclarationSyntax method, SyntaxNode site, Dictionary<string, ExpressionSyntax> parameters, HashSet<string> seen, int depth)
+    private List<string> Literals(ExpressionSyntax expression, SyntaxNode method, SyntaxNode site, Dictionary<string, ExpressionSyntax> parameters, HashSet<string> seen, int depth)
     {
         if (depth > 8) return [];
         switch (expression)
