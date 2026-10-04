@@ -132,6 +132,11 @@ public class AgentPinWorkspaceStoreTests
         Directory.CreateDirectory(Path.GetDirectoryName(pipe)!);
         MakeFifo(pipe, 0x180 /* 0600 */).ShouldBe(0);
         AssertRefused(await Inspect(fixture.Store, owner, pipeCwd), "pin_path_not_file");
+
+        var largeCwd = fixture.Directory("large-foreign-file");
+        fixture.Write(largeCwd, owner, new string('x', 1024 * 1024 + 1));
+        AssertRefused(await Inspect(fixture.Store, owner, largeCwd), "pin_file_too_large");
+        new FileInfo(fixture.Target(largeCwd, owner)).Length.ShouldBe(1024 * 1024 + 1);
     }
 
     [Test]

@@ -1111,9 +1111,10 @@ location/receipt CAS and legacy upgrade, HTTP/phone-home wiring, Windows and mix
 qualification remain S3a work. Later full-host methods must incorporate these cases
 while retaining the planned publication/concurrency cases and updating their roster.
 An observed file hash grants no ownership, Ready state, launch or cleanup authority.
-Linux opens through no-follow directory descriptors and accepts only a regular
-file (including nonblocking FIFO refusal). Windows returns explicit unsupported in
-this part. Inspection rechecks path components before and after reading; it does not claim
+Linux x64 opens through no-follow directory descriptors and accepts only a regular
+file (including nonblocking FIFO refusal), with a 1 MiB inspection bound. Windows
+and unqualified architectures return explicit unsupported in this part. Inspection
+rechecks path components before and after reading; it does not claim
 filesystem ACL isolation against concurrent same-user path replacement. No capability
 or production registration is added. Whole Unit and all other Final obligations are
 deferred by this task's explicit budget instruction, not passed.

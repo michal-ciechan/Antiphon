@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Runtime.InteropServices;
 using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.SessionRunner;
@@ -10,6 +11,8 @@ namespace Antiphon.SessionRunner;
 public sealed class AgentPinWorkspaceStore
 {
     public const int PathSchemaVersion = 1;
+    // Well above the bounded pin corpus, while keeping inspection of foreign files bounded.
+    public const int MaxInspectionBytes = 1024 * 1024;
     private readonly Guid _runnerStoreId;
     private readonly Action<string>? _beforeRead;
 
@@ -29,7 +32,8 @@ public sealed class AgentPinWorkspaceStore
         if (request.SchemaVersion != PathSchemaVersion) return Refuse("pin_schema_unsupported");
         if (request.AgentId == Guid.Empty) return Refuse("pin_owner_invalid");
         if (request.RunnerStoreId != _runnerStoreId) return Refuse("pin_store_mismatch");
-        if (!OperatingSystem.IsLinux()) return Refuse("pin_platform_unsupported");
+        if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64)
+            return Refuse("pin_platform_unsupported");
         if (string.IsNullOrWhiteSpace(request.Cwd) || request.Cwd.IndexOf('\0') >= 0
             || !Path.IsPathFullyQualified(request.Cwd)) return Refuse("pin_cwd_invalid");
 
@@ -53,10 +57,21 @@ public sealed class AgentPinWorkspaceStore
 
             var before = new FileInfo(target);
             var length = before.Length;
+            if (length > MaxInspectionBytes) return Refuse("pin_file_too_large");
             var modified = before.LastWriteTimeUtc;
             await using var stream = new AgentPinPosixReader().Open(target);
-            var hash = await SHA256.HashDataAsync(stream, ct);
-            var read = stream.Position;
+            using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            var buffer = new byte[8192];
+            long read = 0;
+            int count;
+            while ((count = await stream.ReadAsync(buffer, ct)) != 0)
+            {
+                read += count;
+                // Length can grow after opening; checking the initial length alone is not a bound.
+                if (read > MaxInspectionBytes) return Refuse("pin_file_too_large");
+                hasher.AppendData(buffer, 0, count);
+            }
+            var hash = hasher.GetHashAndReset();
 
             // Recheck after the read too. A stable substituted component yields no path/hash.
             // These checks do not claim ACL isolation against same-user swap-and-restore races.
@@ -74,6 +89,10 @@ public sealed class AgentPinWorkspaceStore
         catch (AgentPinNonRegularFileException)
         {
             return Refuse("pin_path_not_file");
+        }
+        catch (Exception ex) when (ex is EntryPointNotFoundException or DllNotFoundException)
+        {
+            return Refuse("pin_platform_unsupported");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

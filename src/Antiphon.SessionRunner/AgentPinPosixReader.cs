@@ -6,7 +6,8 @@ namespace Antiphon.SessionRunner;
 /// <summary>Open only a regular file through directories that are not links.</summary>
 internal sealed class AgentPinPosixReader
 {
-    // Linux ABI values. Callers must qualify the platform before entering this helper.
+    // Linux x64 ABI values. ARM64 overrides O_DIRECTORY/O_NOFOLLOW; the store refuses
+    // unqualified architectures. Linux UAPI: include/uapi/asm-generic/fcntl.h.
     private const int NoFollow = 0x20000;
     private const int CloseOnExec = 0x80000;
     private const int DirectoryOnly = 0x10000;
