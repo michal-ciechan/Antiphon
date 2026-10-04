@@ -82,6 +82,61 @@ public sealed class HostJqPrerequisiteScriptTests
     }
 
     [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1025_Check_rejects_canonical_leaf_symlink()
+    {
+        using var f = new HostJqFixture();
+        f.HomeShadow(); f.PathPrefix = ""; // Keep the destination ON PATH and resolve the canonical leaf.
+        File.WriteAllText(f.HomeJq, File.ReadAllText(f.Payload)); // Working jq with an execution trace.
+        File.CreateSymbolicLink(f.Destination, f.HomeJq);
+        await f.InitializeRepo();
+        var homeHash = f.Hash(f.HomeJq); var homeInode = await f.Inode(f.HomeJq);
+        foreach (var mode in new[] { "check", "provision" })
+        {
+            var direct = await f.Helper(mode);
+            direct.Exit.ShouldBe(2, "canonical-leaf-symlink: working home target cannot qualify" + direct.Output);
+            direct.Stderr.ShouldContain("HostJqPathUnapproved");
+            var proof = JsonNode.Parse(direct.Stdout)!;
+            proof["lookupPath"]!.GetValue<string>().ShouldBe(f.Destination, "canonical leaf must actually be found on PATH");
+            proof["path"]!.GetValue<string>().ShouldBe(f.HomeJq);
+            var wrapped = await f.Wrapper(mode + "-host-jq");
+            wrapped.Exit.ShouldBe(2, wrapped.Output);
+            wrapped.Output.ShouldContain("HostJqPathUnapproved");
+            wrapped.Output.ShouldNotContain("Host jq qualified");
+            var observation = JsonNode.Parse(File.ReadAllText(f.RefusalReceipts.Last()))!;
+            observation["qualified"]!.GetValue<bool>().ShouldBeFalse();
+            observation["lookupPath"]!.GetValue<string>().ShouldBe(f.Destination);
+            observation["path"]!.GetValue<string>().ShouldBe(f.HomeJq);
+        }
+        f.Receipts.ShouldBeEmpty("canonical-leaf-symlink: no success receipt");
+        f.InstallEffects.ShouldBeEmpty("canonical-leaf-symlink: no download, replacement or elevation");
+        f.Trace.ShouldNotContain("jq-call", Case.Sensitive, "unapproved target must not execute");
+        f.Hash(f.HomeJq).ShouldBe(homeHash); (await f.Inode(f.HomeJq)).ShouldBe(homeInode);
+        new FileInfo(f.Destination).LinkTarget.ShouldBe(f.HomeJq);
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1025_Receipt_rejects_canonical_lookup_with_unapproved_target()
+    {
+        foreach (var mode in new[] { "check", "provision" })
+        {
+            using var f = new HostJqFixture(); f.Existing();
+            var proof = JsonNode.Parse((await f.Helper(mode)).Stdout)!;
+            f.HomeShadow(); f.PathPrefix = "";
+            File.Delete(f.Destination); File.CreateSymbolicLink(f.Destination, f.HomeJq);
+            proof["path"] = f.HomeJq;
+            f.SyntheticProof = proof.ToJsonString(); // Otherwise valid success proof bypasses the helper guard.
+            await f.InitializeRepo();
+            var result = await f.Wrapper(mode + "-host-jq");
+            result.Exit.ShouldBe(2, "canonical-proof-target: canonical lookup alone cannot admit proof" + result.Output);
+            result.Output.ShouldContain("HostJqProofInvalid");
+            result.Output.ShouldNotContain("Host jq qualified");
+            f.Receipts.ShouldBeEmpty("canonical-proof-target: no success receipt");
+            f.RefusalReceipts.ShouldBeEmpty("synthetic success is not a trusted refusal observation");
+            f.InstallEffects.ShouldBeEmpty();
+        }
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Check_has_no_install_effects()
     {
         foreach (var state in new[] { "healthy", "missing", "true" })
@@ -162,8 +217,8 @@ public sealed class HostJqPrerequisiteScriptTests
     {
         foreach (var vector in new[] { "file", "symlink", "dangling", "directory", "fifo", "parent-link", "parent-stat", "parent-write" })
         {
-            // Reach destination admission with missing jq; lookup must not mask this guard.
-            using var f = new HostJqFixture { IncludeDestination = false };
+            // Other vectors reach missing-destination admission; the symlink stays ON PATH.
+            using var f = new HostJqFixture { IncludeDestination = vector == "symlink" };
             switch (vector)
             {
                 case "file": File.WriteAllText(f.Destination, "foreign"); break;
