@@ -24,7 +24,7 @@ namespace Antiphon.Tests.Application;
 /// CARD-0659 V-3. The default host is chosen from the kind the routing pins and walks actually
 /// settled on, never from the raw request: a pin that lands on Codex, Grok or Claude takes the
 /// default, a Required-pin conflict refuses before any placement,
-/// and an exhausted walk stays local. SourceLanding uses the SELECTED host's custody: a valid
+/// and an exhausted walk preserves normal placement while remaining Blocked. SourceLanding uses the SELECTED host's custody: a valid
 /// Mutation shape can take the default, the dispatch gate admits it, and custody admission asks
 /// that runner and refuses rather than falling back.
 /// </summary>
