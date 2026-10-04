@@ -491,8 +491,9 @@ Missing setup to deliver in Code:
 - Reuse Redpanda/FakeSlackServer/production Kafka producer/GatewayOutboundService and
   SlackChannelAdapter from the composed test. Use one owned broker per test method,
   distinct topics/groups per internal case, bounded 30s receive/start/stop waits and
-  a method deadline. Persist recipient observations to a parent-owned receipt file
-  before acknowledging the fake API; never use producer counters as the receipt.
+  a method deadline. Keep gateway/fake Slack in the surviving parent; flush its
+  complete API/upload observations to a parent-owned receipt file before the
+  corresponding child-kill assertion. Producer counters never stand for receipt.
 - Add fault injection only at attachment-reader I/O, EF commit/command interceptors,
   existing per-instance barriers and producer I/O. Every fault must assert it fired.
   Inject the specified statement/transaction, not all SaveChanges. Keep all production
@@ -579,7 +580,7 @@ ordinary assertions. Passing names/counts without those bodies do not qualify.
 | V-2 | PostgreSQL capture/race; `ChannelOutboundCaptureTests`, roster below | main/tail/machine; reader, prompt-read, capture-commit and stage failures; three-member batch and overlapping batches; independent readers at barriers; loser returns existing owner without re-preparation. |
 | V-3 | PostgreSQL/files/conversion; `ChannelOutboundMaterializationTests`, roster below | capture versions invalid/valid; partial/full/wrong-identity/tampered snapshots; source mutation/removal after staging; preparation attempts 0/1/2/3; TTL minus-one/equality/after; profile edited/revoked; MaxPending and converter/global seats raced using independent contexts. |
 | V-4 | Dispatcher/runtime; `ChannelOutboundUnifiedPathTests`, roster below | all three paths with no profile, MarkdownSources and EveryAgentReply; main/tail NO_REPLY versus surrounding prose; machine origins default/custom plus explicit/implied attachments; API stub anywhere in window; A accepted/B fails; nullable/missing catalog; Deferred does not block next complete queue receipt. |
-| V-5 | Real hosted discovery/clock; `ChannelOutboundDiscoveryTests`, roster below | old answer behind newer turns; startup with timer held, timer after empty startup; each mismatch alone plus valid companion; prior/absent/later channel context; open/next-prompt/terminal-incomplete/terminal-complete machine closure; >320 withheld sources and >32 idle roots; due-send and metadata-repair work each make progress; TTL race and original-age answer preferred. |
+| V-5 | Real hosted discovery/clock; `ChannelOutboundDiscoveryTests`, roster below | old answer behind newer turns; startup with timer held, timer after empty startup; each mismatch alone plus valid companion; prior/absent/later channel context; open/next-prompt/terminal-incomplete/terminal-complete machine closure; 321 withheld sources then one eligible source, and separately 321 idle roots then one new tail: page size 32 / maximum 10 pages means target must survive cycle one and be reached by cycle two; due-send and metadata-repair work each make progress; TTL race and original-age answer preferred. |
 | V-6 | PostgreSQL trailing ownership; `ChannelOutboundTrailingRecoveryTests`, roster below | reserve failed interval, append additional text before recapture so overlapping intervals have different keys; recreate providers, then newer prompt in same batch; concurrent callers; suppressed main followed by valid tail; suppression advances cursor without PublishedAt. |
 | V-7 | Pump/service/clock; `ChannelOutboundRetryPolicyTests`, roster below | attempt commit, claims, pre-entry and outcome fences; cancellation before/after entry/after acceptance; held producer completion; timeout with host live; queue refusal versus generic failures/size; persisted due/cap; explicit retry and all original-binding holds; CreatedAt ties resolved by Id. |
 | V-8 | EF transaction/fault/attention; `ChannelOutboundFailureRecordingTests`, roster below | incident insert and alert insert faults separately for Failed/Uncertain/TTL/unroutable/terminal-provider routes; captured/current/deleted/no owner; notice disabled/refused; prune incident history and restart; spent budget forbids more I/O while recording repairs. |
@@ -1036,3 +1037,10 @@ specified Code deliverables; **29 CP rows, 397 ordinary result floor, 177 ordina
 minutes, 726 PC minutes**. No build/test/PC result is claimed by this documentation
 stage. Commit/push this appendix on the assigned TestDesign branch; caller lands
 the Succeeded task promptly, then commissions Code with this exact artifact.
+
+TestDesign validation: append-only comparison against the landed plan, whitespace
+check, table/coverage/count audit and guard-map audit passed. The repository's real
+checkpoint importer built through the host slot gate and imported all **29 rows**
+successfully (exit 0; tool-only build, 7 seconds holding the slot). It emitted one
+existing CS8602 warning in TaskOwnerGuard.cs; no application tests or PCs ran.
+Generated YAML remains ignored and the owned alternate tool output is removed.
