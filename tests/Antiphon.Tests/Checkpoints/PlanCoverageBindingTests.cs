@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Antiphon.Checkpoints.Coverage;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Shouldly;
 using TUnit.Core;
 
@@ -46,6 +48,8 @@ public sealed class PlanCoverageBindingTests : CheckpointTestBase
             .ExitCode.ShouldBe(0, "c1046-local-bind");
         var capturedParameter = "class Demo { void Check() { AssertOuter(\"target-label\"); void AssertOuter(string label) { AssertInner(); void AssertInner() => x.ShouldBe(1, label); } } }";
         PlanCoverageFixture.Analyze(capturedParameter).ExitCode.ShouldBe(0, "c1046-local-bind");
+        PlanCoverageFixture.Analyze("class Demo { void Check() { void Helper() => x.ShouldBe(1, label); const string label = \"target-label\"; Helper(); } }")
+            .ExitCode.ShouldBe(0, "c1046-local-bind");
     }
 
     [Test]
@@ -63,6 +67,11 @@ public sealed class PlanCoverageBindingTests : CheckpointTestBase
             "class Demo { void Check() { { const string label = \"target-label\"; } void AssertDecoy() => x.ShouldBe(1, label); AssertDecoy(); } }",
             "class Demo { void Check() { const string label = \"target-label\"; void AssertDecoy(string label) => x.ShouldBe(1, label); AssertDecoy(BuildLabel()); } }",
             "class Demo { void Check() { const string label = \"target-label\"; void AssertDecoy() { string label = BuildLabel(); x.ShouldBe(1, label); } AssertDecoy(); } }",
+            "class Demo { void Check() { void AssertDecoy() => x.ShouldBe(1, label); { const string label = \"target-label\"; AssertDecoy(); } } }",
+            "class Demo { void Check() { const string label = \"other-label\"; void AssertDecoy() => x.ShouldBe(1, label); { const string label = \"target-label\"; AssertDecoy(); } } }",
+            "class Demo { void Check() { void AssertDecoy(string label) => x.ShouldBe(1, label); AssertDecoy(wrong: \"target-label\"); } }",
+            "class Demo { const string label = \"target-label\"; void Check() { var label = BuildLabel(); void AssertDecoy(string value) => x.ShouldBe(1, value); AssertDecoy(label); } }",
+            "class Demo { void Check() { const string label = \"target-label\"; void AssertOuter() { var label = BuildLabel(); void AssertInner() => x.ShouldBe(1, label); AssertInner(); } AssertOuter(); } }",
         };
         foreach (var source in worlds)
         {
@@ -85,7 +94,7 @@ public sealed class PlanCoverageBindingTests : CheckpointTestBase
     public void literal_pc_filter_binds_method_without_reading_mutation_cell()
     {
         const string source = "namespace Exact.Namespace { class Demo { void Check() { x.ShouldBe(1, \"target-label\"); } } }";
-        foreach (var (filter, identity) in new[] { ("/*/*/Demo/Check", "Demo.Check"), ("/*/Exact.Namespace/Demo/Check", "Exact.Namespace.Demo.Check") })
+        foreach (var (filter, identity) in new[] { ("/*/*/Demo/Check", "Demo.Check"), ("/*/Exact.Namespace/Demo/Check", "Exact.Namespace.Demo.Check"), ("/*/Exact.Namespace/Exact.Namespace.Demo/Check", "Exact.Namespace.Demo.Check") })
         {
             var plan = PlanCoverageFixture.Plan(row: "", pc: "| PC-1 | Remove `Decoy.Other` and `decoy-label` | `" + filter + "` | fails at `target-label` |");
             var report = PlanCoverageFixture.Analyze(source, plan);
@@ -109,6 +118,11 @@ public sealed class PlanCoverageBindingTests : CheckpointTestBase
         conflict.Diagnostics.ShouldContain(d => d.Code == "METHOD_UNMAPPED", "c1046-pc-filter");
         foreach (var pc in new[] { "| PC-1 | mutation | `Demo.Check`, `target-label` |", "| PC-1 | mutation | V-1 fails at `target-label` |" })
             PlanCoverageFixture.Analyze(source, PlanCoverageFixture.Plan(pc: pc)).ExitCode.ShouldBe(0, "c1046-pc-filter");
+        PlanCoverageFixture.Analyze(source, PlanCoverageFixture.Plan(pc: "| PC-1 | mutation | `/*/*/Demo/Check` | V-1 fails at `target-label` |"))
+            .ExitCode.ShouldBe(0, "c1046-pc-filter");
+        var referenceConflict = PlanCoverageFixture.Analyze(source, PlanCoverageFixture.Plan(pc: "| PC-1 | mutation | `/*/*/Other/Check` | V-1 fails at `target-label` |"));
+        referenceConflict.ExitCode.ShouldBe(1, "c1046-pc-filter");
+        referenceConflict.Diagnostics.ShouldContain(d => d.Code == "METHOD_UNMAPPED", "c1046-pc-filter");
     }
 
     [Test]
@@ -177,8 +191,12 @@ public sealed class PlanCoverageBindingTests : CheckpointTestBase
                 var obligation = root.GetProperty("obligations").EnumerateArray().Single(o => o.GetProperty("kind").GetString() == "label"
                     && o.GetProperty("name").GetString() == target && o.GetProperty("test").GetString() == identity && o.GetProperty("id").GetString()!.StartsWith("PC-", StringComparison.Ordinal));
                 var match = obligation.GetProperty("matches").EnumerateArray().First();
-                var source = File.ReadAllLines(Path.Combine(CheckpointFixtures.RepoRoot, match.GetProperty("path").GetString()!));
-                string.Join(Environment.NewLine, source.Skip(match.GetProperty("line").GetInt32() - 1).Take(3)).ShouldContain(target!, Case.Sensitive, "c1046-real-plans");
+                var source = File.ReadAllText(Path.Combine(CheckpointFixtures.RepoRoot, match.GetProperty("path").GetString()!));
+                var invocations = CSharpSyntaxTree.ParseText(source).GetRoot().DescendantNodes().OfType<InvocationExpressionSyntax>()
+                    .Where(call => call.Expression is MemberAccessExpressionSyntax access
+                        && access.Name.GetLocation().GetLineSpan().StartLinePosition.Line + 1 == match.GetProperty("line").GetInt32());
+                invocations.ShouldContain(call => call.ArgumentList.Arguments.Any(argument => argument.Expression.DescendantNodesAndSelf()
+                    .OfType<LiteralExpressionSyntax>().Any(literal => literal.IsKind(SyntaxKind.StringLiteralExpression) && literal.Token.ValueText.StartsWith(target!, StringComparison.Ordinal))), "c1046-real-plans");
             }
         }
     }
