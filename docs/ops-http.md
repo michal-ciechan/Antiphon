@@ -63,6 +63,16 @@ and remote status responses. These describe the default installed Codex launcher
 independently of build SHA, capacity and connection liveness. Checked-at is the
 completed probe attempt time; reads and heartbeats do not renew it. A successful
 observation is fresh through exactly fifteen minutes, a fixed display threshold.
+CARD-1031 permits a valid stdout version alongside the fixed `stderr_output` or
+`output_truncated` advisory in the legacy `codexCliVersionError` field. These two
+advisories permit freshness; skew and malformed fingerprints still override them.
+Other errors, or absent/invalid versions or attempt times, remain unknown. Only
+complete retained stdout lines count after truncation; stderr never supplies a
+version and its raw content is never returned or logged. Nonzero exit and timeout
+remain failed observations. Wire members and types are unchanged: an old server
+can show the new version/advisory with null freshness until its reader is updated.
+Old runners' missing fields still mean unknown. This feeds CARD-1023's observation
+data and introduces no compatibility or admission policy.
 Stale is null without a valid successful observation. A timestamp more than one
 minute in the future reports `clock_skew`; a malformed non-null launcher fingerprint
 reports `launcher_mismatch`. Unknown peer error text becomes `probe_unavailable`.
