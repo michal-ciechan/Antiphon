@@ -123,7 +123,28 @@ public class C1022BackendLaunchTests
         {
             foreach (var process in handles) process.Dispose();
             Environment.SetEnvironmentVariable(PtyBackendPolicy.EnvVar, previous);
-            Directory.Delete(root, true);
+            await DeleteRootAsync(root);
+        }
+    }
+
+    private static async Task DeleteRootAsync(string root)
+    {
+        // Owned teardown above has already killed/waited the host tree and released its
+        // handles. Windows can still briefly deny deletion of an exited host's images.
+        // Retry only this fixture's directory; never hide a persistent cleanup failure.
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                Directory.Delete(root, recursive: true);
+                Console.WriteLine($"C1022_CLEANUP deleted={root} attempts={attempt}");
+                return;
+            }
+            catch (Exception ex) when (attempt < 20 && ex is IOException or UnauthorizedAccessException)
+            {
+                Console.WriteLine($"C1022_CLEANUP retry={attempt} root={root} error={ex.GetType().Name}: {ex.Message}");
+                await Task.Delay(100);
+            }
         }
     }
 
