@@ -166,12 +166,16 @@ public sealed class CodexCliVersionProbe : IDisposable
             }
             var output = await stdout;
             var diagnostic = await stderr;
-            if (output.Truncated || diagnostic.Truncated) error = "output_truncated";
-            else if (process.ExitCode != 0) error = "nonzero_exit";
-            else if (diagnostic.Bytes.Length != 0) error = "stderr_output";
-            var version = error is null ? CodexCliVersion.ParseBanner(Encoding.UTF8.GetString(output.Bytes)) : null;
-            if (version is null) return Unknown(error ?? "invalid_output", resolved.Fingerprint);
-            return new(version.ToString(), _clock.GetUtcNow(), null, resolved.Fingerprint);
+            if (process.ExitCode != 0) return Unknown("nonzero_exit", resolved.Fingerprint);
+            // A truncated terminal fragment could be only the prefix of a different version.
+            // Only stdout truncation removes EOF evidence; stderr is never version evidence.
+            var length = output.Truncated ? Array.LastIndexOf(output.Bytes, (byte)'\n') + 1 : output.Bytes.Length;
+            var version = CodexCliVersion.ParseBanner(Encoding.UTF8.GetString(output.Bytes, 0, length));
+            if (version is null)
+                return Unknown(output.Truncated ? "output_truncated" : "invalid_output", resolved.Fingerprint);
+            var advisory = output.Truncated || diagnostic.Truncated ? "output_truncated"
+                : diagnostic.Bytes.Length != 0 ? "stderr_output" : null;
+            return new(version.ToString(), _clock.GetUtcNow(), advisory, resolved.Fingerprint);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception

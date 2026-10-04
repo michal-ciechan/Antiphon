@@ -22,16 +22,21 @@ public sealed class CodexCliVersion : IComparable<CodexCliVersion>, IComparable
     public int Minor { get; }
     public int Patch { get; }
 
-    /// <summary>Exactly one recognized whole banner, with at most one LF/CRLF terminator.</summary>
+    /// <summary>The first valid whole banner line in bounded LF/CRLF stdout; EOF may end the last line.</summary>
     public static CodexCliVersion? ParseBanner(string? output)
     {
         if (output is null || output.Length > 4096)
             return null;
-        var record = output.EndsWith("\r\n", StringComparison.Ordinal) ? output[..^2]
-            : output.EndsWith('\n') ? output[..^1] : output;
-        var match = Regex.Match(record, @"\Acodex(?:-cli)? (?:version )?v?([^\r\n ]+)\z",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        return match.Success ? Parse(match.Groups[1].Value) : null;
+        var lines = output.Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var record = i < lines.Length - 1 && lines[i].EndsWith('\r') ? lines[i][..^1] : lines[i];
+            var match = Regex.Match(record, @"\Acodex(?:-cli)? (?:version )?v?([^\r\n ]+)\z",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (match.Success && Parse(match.Groups[1].Value) is { } version)
+                return version;
+        }
+        return null;
     }
 
     public static CodexCliVersion? Parse(string? text)
