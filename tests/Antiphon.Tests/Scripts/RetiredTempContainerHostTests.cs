@@ -68,7 +68,9 @@ public sealed class RetiredTempContainerHostTests
         }
         if(!main){var zero=valid.DeepClone().AsObject();zero["runnerSessions"]=0;Add("zero",true,zero);
             var offset=valid.DeepClone().AsObject();offset["retiredAt"]="2026-10-03T11:30:00+02:00";Add("offset",true,offset);
-            var changed=valid.DeepClone().AsObject();changed["retiredAt"]="2026-10-03T10:30:00Z";Add("changed-stamp",false,changed);}
+            var changed=valid.DeepClone().AsObject();changed["retiredAt"]="2026-10-03T10:30:00Z";Add("changed-stamp",false,changed);
+            foreach(var stamp in new[]{"","2026-02-30T00:00:00Z"}){var invalid=valid.DeepClone().AsObject();invalid["retiredAt"]=stamp;Add("invalid-stamp-"+stamp,false,invalid);}
+            var hold=valid.DeepClone().AsObject();hold["retireWhenIdle"]=false;hold["retiredAt"]=null;Add("failed-deploy-hold",false,hold);}
         File.WriteAllText(f.Root+"/status-vectors.json",cases.ToJsonString());
         var extra=$$"""
             LANE=host
@@ -96,6 +98,25 @@ public sealed class RetiredTempContainerHostTests
 
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Host_task_and_land_census_is_complete() {
+        using(var batch=Fixture()) {
+            var vectors=C994TaskVectors.Build(batch.Vectors["emptyTasks"]!.AsObject());File.WriteAllText(batch.Root+"/task-vectors.json",vectors.ToJsonString());
+            var proof=await Cleanup(batch,"""
+                LANE=host;C1008_RUNNER=server2-temp
+                while IFS= read -r vector; do
+                    input="$(printf '%s' "$vector"|jq -c .input)"
+                    (
+                        c1008_http() { local key="$1"; if [[ "$key" == *projectId=* ]]; then key="${key#*projectId=}";key="${key%%&*}";printf '%s' "$input"|jq -ec --arg key "$key" '.scopes[$key]';else printf '%s' "$input"|jq -ec --arg key "${key##*/}" '.details[$key]';fi; }
+                        c1008_tasks >/dev/null
+                    ) && code=0 || code=$?
+                    printf 'TASK_CASE %s %s\n' "$(printf '%s' "$vector"|jq -r .key)" "$code"
+                done < <(jq -c '.[]' "$C1008_FIXTURE_ROOT/task-vectors.json")
+                write_result true '' 0
+                """);
+            proof.Exit.ShouldBe(0,"c994-host-work: batched real census; "+proof.Output);
+            var actual=proof.Output.Split('\n').Where(x=>x.StartsWith("TASK_CASE ")).Select(x=>x.Split(' ')).ToDictionary(x=>x[1],x=>x[2]=="0");
+            actual.Count.ShouldBe(vectors.Count,"c994-host-work: complete matrix");foreach(var v in vectors)actual[v!["key"]!.GetValue<string>()].ShouldBe(v["accepted"]!.GetValue<bool>(),"c994-host-work: "+v["key"]);
+            NoMutation(batch,"c994-host-work");
+        }
         foreach(var status in new[]{"Queued","Dispatched","Working","Blocked","Failed","Succeeded"}) {
             using var f=Fixture("session-runner");
             f.TaskScopes.Select(x=>x.Value).Single()!["items"]!.AsArray().Add(new JsonObject { ["id"]="22222222-2222-2222-2222-222222222222",["status"]=status,
@@ -116,8 +137,8 @@ public sealed class RetiredTempContainerHostTests
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Container_service_and_state_are_restricted() {
-        foreach(var service in new[]{"session-runner","state-init","build-slots","foreign"})foreach(var state in new[]{"running","paused","restarting","created","dead","exited"}) {
-            using var f=Fixture(service);var c=f.Docker["containers"]!.AsArray().Last()!;c["State"]!["Status"]=state;c["State"]!["Running"]=state=="running";
+        foreach(var service in new[]{"session-runner","state-init","build-slots","foreign"})foreach(var state in new[]{"running","paused","restarting","created","dead","exited","running-false","exited-true"}) {
+            using var f=Fixture(service);var c=f.Docker["containers"]!.AsArray().Last()!;c["State"]!["Status"]=state=="running-false"?"running":state=="exited-true"?"exited":state;c["State"]!["Running"]=state is "running" or "exited-true";
             var good=service is "session-runner" or "state-init"&&state=="exited";var run=await Cleanup(f);
             run.Exit.ShouldBe(good?0:2,"c994-service c994-state: "+service+":"+state+"; "+run.Output);if(!good)NoMutation(f,"c994-state");
         }

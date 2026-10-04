@@ -83,6 +83,23 @@ public sealed class RetiredTempContainerScriptTests
     public async Task C994_Wrapper_main_admission_is_required(){await TypedStatus(true);using var f=new C1008WrapperFixture();f.State["statuses"]!["server2"]!["buildVersion"]=new string('b',40);var run=await f.Run("drain-temp");run.Exit.ShouldBe(2,"c994-drain-sha");Cases(run.Trace).ShouldBeEmpty();}
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Wrapper_task_and_land_census_is_complete(){
+        using(var batch=new C1008HostFixture()) {
+            var vectors=C994TaskVectors.Build(batch.Vectors["emptyTasks"]!.AsObject());File.WriteAllText(batch.Root+"/task-vectors.json",vectors.ToJsonString());
+            var proof=await C994ScriptProcess.Run("pwsh","-NoProfile","-Command",LoadFunctions+$"""
+                $vectors=Get-Content -Raw '{{batch.Root}}/task-vectors.json'|ConvertFrom-Json
+                foreach($v in $vectors){
+                    $script:vector=$v.input
+                    function Invoke-RecycleRead {param([string]$Path)
+                        if($Path -match 'projectId=([^&]+)'){$value=$script:vector.scopes.($Matches[1])}else{$value=$script:vector.details.($Path.Split('/')[-1])}
+                        if($null -eq $value){throw 'api failed'};return $value
+                    }
+                    $script:called=0;function Invoke-HostCase {$script:called++}
+                    $accepted=$true;try{[void](Assert-RecycleTaskCensus 'server2-temp' '{{C994TaskVectors.Project}}');Invoke-HostCase}catch{$accepted=$false}
+                    if($accepted -ne $v.accepted -or $script:called -ne [int]$v.accepted){throw ('c994-wrapper-work: '+$v.key)}
+                }
+                """);
+            proof.Exit.ShouldBe(0,"c994-wrapper-work: independent matrix; "+proof.Output);
+        }
         foreach(var fault in new[]{"api","incomplete","bound","land"}) {
             using var f=new C1008WrapperFixture();
             if(fault=="api")f.State["taskError"]="failure";
@@ -118,6 +135,35 @@ public sealed class RetiredTempContainerScriptTests
     public async Task C994_Resume_never_runs_container_cleanup(){
         foreach(var present in new[]{false,true}){using var f=new C1008WrapperFixture();f.State["tempContainer"]=present;
             var run=await f.Run("retire-temp","-ResumeRecycle","c100800000000000000000000000000000001");run.Exit.ShouldBe(present?2:0,"c994-resume-isolation: "+run.Output);Cases(run.Trace).Any(x=>x["name"]?.GetValue<string>()=="retire-temp-containers").ShouldBeFalse("c994-resume-isolation");}
+        using var host=new C1008HostFixture();
+        var proof=await host.Run(extra:"""
+            LANE=host;C1008_PROJECT="$HOST_PROJECT"
+            model="$(c1008_compose_model)" || exit 2
+            volumes="$(jq -c .volumes "$C1008_FIXTURE_ROOT/docker.json")"
+            fresh="$(c1008_container_census | jq -c '[.[]|select(.Config.Labels["com.docker.compose.service"]!="build-slots")]')"
+            c1008_owned_mounts "$fresh" "$model" "$volumes";saved="$C1008_OWNED"
+            for variant in valid version bind tmpfs; do
+                (
+                    current="$fresh";original="$saved"
+                    case "$variant" in
+                      version) original="$(printf '%s' "$saved"|jq -c '.[0].Topology|=del(.version)')" ;;
+                      bind) current="$(printf '%s' "$fresh"|jq -c '(.[0].Mounts[]|select(.Type=="bind")).Source="/foreign"')" ;;
+                      tmpfs) current="$(printf '%s' "$fresh"|jq -c '.[0].HostConfig.Tmpfs["/run/antiphon"]="ro"')" ;;
+                    esac
+                    C1008_RECORD="$(jq -cn --argjson owned "$original" --argjson volumes "$volumes" '{owned:$owned,volumes:$volumes,preserved:{},stopIntents:[],stopReceipts:[],removeIntents:[],removeReceipts:[],phase:"preflight"}')"
+                    c1008_container_census(){ printf '%s' "$current"; }
+                    c1008_refuse(){ printf '%s\n' "$1";exit 2; }
+                    c1008_save(){ printf '%s' "$C1008_RECORD"|jq -e '.removeIntents==[]' >/dev/null; }
+                    c1008_reconcile_owned "$model"
+                ) > "$C1008_FIXTURE_ROOT/resume-$variant.log" 2>&1 && code=0 || code=$?
+                if [ "$variant" = valid ];then [ "$code" = 0 ] || exit 2;else [ "$code" = 2 ] && grep -q RecycleResumeMismatch "$C1008_FIXTURE_ROOT/resume-$variant.log" || exit 2;fi
+                printf 'RESUME_CASE %s %s\n' "$variant" "$code"
+            done
+            write_result true '' 0
+            """);
+        proof.Exit.ShouldBe(0,"c994-resume-isolation: direct shared reconcile; "+proof.Output);
+        proof.Output.Split('\n').Count(x=>x.StartsWith("RESUME_CASE ")).ShouldBe(4,"c994-resume-isolation: complete tuple vectors");
+        host.Trace.Any(a=>a[0] is "rm" or "stop" or "create").ShouldBeFalse("c994-resume-isolation: no new intent effects");
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Cleanup_receipt_is_required_before_recycle(){
