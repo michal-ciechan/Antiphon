@@ -35,6 +35,8 @@ $workVolume = "$owner-work"
 # CARD-0660 (amended): stands in for the server2 host directory RUNNER_CODEX_HOME_DIR, mounted where
 # docker-compose.server2-runner.yml binds it: /codex-home in state-init, /state/codex in the runner.
 $codexVolume = "$owner-codex"
+$packagesVolume = "$owner-packages"
+$scratchVolume = "$owner-scratch"
 $rows = [ordered]@{
     'version' = 'unknown'; 'layout' = 'unknown'; 'install-readonly' = 'unknown'; 'no-baked-auth' = 'unknown'
     'fresh-home' = 'unknown'; 'trust' = 'unknown'; 'preserve' = 'unknown'; 'config-accepted' = 'unknown'
@@ -43,7 +45,7 @@ $rows = [ordered]@{
 }
 if ($Target -eq 'session-testing') { $rows['net9-offline'] = 'unknown' }
 $imageId = 'none'
-$volumesCreated = $false
+$createdVolumes = [System.Collections.Generic.List[string]]::new()
 
 $resultsPath = if ([System.IO.Path]::IsPathRooted($ResultsRoot)) { $ResultsRoot } else { Join-Path $repoRoot $ResultsRoot }
 
@@ -61,8 +63,8 @@ function Invoke-Docker([string[]] $dockerArgs, [string] $evidenceName) {
 }
 
 function Exit-Qualification([int] $code, [string] $reason) {
-    if ($script:volumesCreated) {
-        foreach ($volume in @($stateVolume, $workVolume, $codexVolume)) { & docker volume rm -f $volume 2>&1 | Out-Null }
+    foreach ($volume in $createdVolumes) {
+        & docker volume rm -f $volume 2>&1 | Out-Null
     }
     $okCount = @($rows.Values | Where-Object { $_ -eq 'ok' }).Count
     $summary = @()
@@ -113,14 +115,33 @@ if ($SkipBuild) {
         '--target', $Target, '--build-arg', "SOURCE_REVISION=$SourceRevision", '--tag', $Image, $repoRoot) 'build.log'
     if ($build.ExitCode -ne 0) { Exit-Qualification 2 'docker build failed; see build.log.' }
 }
-$imageId = (Invoke-Docker @('image', 'inspect', '--format', '{{.Id}}', $Image) 'image-id.txt').Output.Trim()
+$identity = Invoke-Docker @('image', 'inspect', '--format', '{{.Id}}', $Image) 'image-id.txt'
+$imageId = $identity.Output.Trim()
+if ($identity.ExitCode -ne 0 -or $imageId -cnotmatch '^sha256:[0-9a-f]{64}$') {
+    Exit-Qualification 2 'Image identity is invalid.'
+}
+$revision = Invoke-Docker @('image', 'inspect', '--format',
+    '{{index .Config.Labels "org.opencontainers.image.revision"}}', $imageId) 'image-revision.txt'
+if ($revision.ExitCode -ne 0 -or $revision.Output.Trim() -cne $SourceRevision) {
+    Exit-Qualification 2 'Image revision does not match SourceRevision.'
+}
 
 # --- throwaway volumes and probes -------------------------------------------------------------
-foreach ($volume in @($stateVolume, $workVolume, $codexVolume)) {
+$volumes = @($stateVolume, $workVolume, $codexVolume)
+if ($Target -eq 'session-testing') { $volumes += @($packagesVolume, $scratchVolume) }
+foreach ($volume in $volumes) {
     if ((Invoke-Docker @('volume', 'create', '--label', "antiphon.c660.owner=$owner", $volume) $null).ExitCode -ne 0) {
         Exit-Qualification 2 "cannot create volume $volume"
     }
-    $script:volumesCreated = $true
+    $createdVolumes.Add($volume)
+}
+
+if ($Target -eq 'session-testing') {
+    $initCaches = Invoke-Docker @('run', '--rm', '--network', 'none', '--user', '0:0', '--entrypoint', '/bin/sh',
+        '--mount', "type=volume,source=$packagesVolume,target=/home/app/.nuget/packages,volume-nocopy",
+        '--mount', "type=volume,source=$scratchVolume,target=/var/cache/antiphon/nuget-scratch,volume-nocopy",
+        $imageId, '-c', 'set -eu; for p in /home/app/.nuget/packages /var/cache/antiphon/nuget-scratch; do test -d "$p"; test -z "$(find "$p" -mindepth 1 -print -quit)"; chown 1654:1654 "$p"; chmod 0700 "$p"; done') 'cache-init.txt'
+    if ($initCaches.ExitCode -ne 0) { Exit-Qualification 2 'Owned cache initialization failed.' }
 }
 
 $initScript = Join-Path $repoRoot 'docker/stack/init-state.sh'
@@ -139,16 +160,21 @@ function Invoke-Init([string] $evidenceName) {
 }
 
 function Invoke-Probe([string] $row, [string] $user, [string[]] $extra) {
-    $probeArgs = @('run') + $isolation + @('--user', $user,
-        '--tmpfs', '/c660-home:exec,uid=1654,gid=1654,mode=0700',
+    $mounts = if ($row -eq 'net9-offline') { @(
+        '--mount', "type=volume,source=$packagesVolume,target=/home/app/.nuget/packages,volume-nocopy",
+        '--mount', "type=volume,source=$scratchVolume,target=/var/cache/antiphon/nuget-scratch,volume-nocopy")
+    } else { @(
         '--mount', "type=volume,source=$workVolume,target=/work",
         '--mount', "type=volume,source=$stateVolume,target=/state",
-        '--mount', "type=volume,source=$codexVolume,target=/state/codex",
+        '--mount', "type=volume,source=$codexVolume,target=/state/codex") }
+    $probeArgs = @('run') + $isolation + @('--user', $user,
+        '--tmpfs', '/c660-home:exec,uid=1654,gid=1654,mode=0700') + $mounts + @(
         '--mount', "type=bind,source=$probeScript,target=/c660/verify-codex-image.sh,readonly",
-        $Image, '/c660/verify-codex-image.sh', $row) + $extra
+        $imageId, '/c660/verify-codex-image.sh', $row) + $extra
     $result = Invoke-Docker $probeArgs "row-$row.txt"
-    $line = ($result.Output -split "`n" | Where-Object { $_ -like "C660_ROW $row *" } | Select-Object -Last 1)
-    if ($result.ExitCode -eq 0 -and $line -like "C660_ROW $row ok *") { return 'ok' }
+    $lines = @($result.Output -split "`n" | Where-Object { $_ -cmatch '^C660_ROW ' })
+    if ($result.ExitCode -eq 0 -and $lines.Count -eq 1 -and
+        $lines[0] -cmatch ('^C660_ROW ' + [regex]::Escape($row) + ' ok .+\r?$')) { return 'ok' }
     return 'fail'
 }
 

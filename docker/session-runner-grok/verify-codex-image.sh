@@ -196,35 +196,59 @@ case "$row" in
     ;;
   net9-offline)
     need_uid 1654
-    root=$PROBE_HOME/net9-offline
-    mkdir -p "$root/home/.nuget" "$root/packages" "$root/feed" "$root/project" || result fail "cannot create empty restore directories"
-    [ -z "$(find "$root/packages" -mindepth 1 -print -quit)" ] || result fail "NuGet packages cache is not empty"
-    [ -z "$(find "$root/home/.nuget" -mindepth 1 -print -quit)" ] || result fail "NuGet home is not empty"
-    [ "$(dotnet --version)" = 10.0.401 ] || result fail "default SDK is not 10.0.401"
+    # The wrapper mounts fresh, task-owned volumes at the real cache destinations.
+    # Their emptiness is checked before creating a home, project or restore output.
+    export NUGET_PACKAGES=/home/app/.nuget/packages
+    export NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch
+    [ -d "$NUGET_PACKAGES" ] && [ -z "$(find "$NUGET_PACKAGES" -mindepth 1 -print -quit)" ] || result fail "NuGet packages cache is not empty"
+    [ -d "$NUGET_SCRATCH" ] && [ -z "$(find "$NUGET_SCRATCH" -mindepth 1 -print -quit)" ] || result fail "NuGet scratch is not empty"
+    [ -d "$PROBE_HOME" ] && [ -z "$(find "$PROBE_HOME" -mindepth 1 -print -quit)" ] || result fail "NuGet home is not empty"
+    for pack in Microsoft.NETCore.App.Host.linux-x64 Microsoft.NETCore.App.Ref Microsoft.AspNetCore.App.Ref; do
+      path="/usr/share/dotnet/packs/$pack/9.0.20"
+      if [ "$pack" = Microsoft.NETCore.App.Host.linux-x64 ]; then
+        [ -x "$path/runtimes/linux-x64/native/apphost" ] || result fail "ImagePackMissing:$pack"
+      else
+        [ -s "$path/data/FrameworkList.xml" ] || result fail "ImagePackMissing:$pack"
+      fi
+      printf 'C913_PACK %s\n' "$path"
+    done
+    sdk="$(dotnet --version)" || result fail "SDK query failed"
+    [ "$sdk" = 10.0.401 ] || result fail "default SDK is not 10.0.401"
     dotnet --list-sdks | grep -q '^10\.0\.401 ' || result fail "SDK 10.0.401 missing"
-    cat > "$root/project/Offline.csproj" <<'EOF'
+    dotnet --list-runtimes || result fail "runtime query failed"
+    root=$PROBE_HOME/net9-offline
+    mkdir -p "$root/home/.nuget" "$root/project" || result fail "cannot create empty restore directories"
+    export HOME="$root/home" DOTNET_CLI_HOME="$root/home"
+    export DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=true DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_CLI_TELEMETRY_OPTOUT=1
+    cat > "$root/project/Offline.csproj" <<'PROJECT'
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net9.0</TargetFramework>
     <UseAppHost>true</UseAppHost>
+    <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
     <RuntimeFrameworkVersion>9.0.20</RuntimeFrameworkVersion>
     <TargetLatestRuntimePatch>false</TargetLatestRuntimePatch>
+    <SelfContained>false</SelfContained>
+    <NuGetAudit>false</NuGetAudit>
   </PropertyGroup>
+  <ItemGroup><FrameworkReference Include="Microsoft.AspNetCore.App" /></ItemGroup>
 </Project>
-EOF
-    printf '%s\n' 'System.Console.WriteLine("net9-offline-ok");' > "$root/project/Program.cs"
-    output=$(env HOME="$root/home" DOTNET_CLI_HOME="$root/home" NUGET_PACKAGES="$root/packages" \
-      dotnet restore "$root/project/Offline.csproj" --source "$root/feed" --nologo 2>&1)
+PROJECT
+    printf '%s\n' 'var context = new Microsoft.AspNetCore.Http.DefaultHttpContext(); System.Console.WriteLine(context.Response.StatusCode == 200 ? "net9-offline-ok" : "bad-context");' > "$root/project/Program.cs"
+    printf '%s\n' '<configuration><packageSources><clear/></packageSources><fallbackPackageFolders><clear/></fallbackPackageFolders></configuration>' > "$root/project/NuGet.Config"
+    output=$(dotnet restore "$root/project/Offline.csproj" --configfile "$root/project/NuGet.Config" --no-http-cache -p:NuGetAudit=false -nodeReuse:false -maxcpucount:1 --nologo 2>&1)
     code=$?
     [ "$code" -eq 0 ] || result fail "offline restore exit=$code: $(printf '%s' "$output" | tail -c 500)"
-    output=$(env HOME="$root/home" DOTNET_CLI_HOME="$root/home" NUGET_PACKAGES="$root/packages" \
-      dotnet build "$root/project/Offline.csproj" --no-restore --nologo 2>&1)
+    output=$(dotnet build "$root/project/Offline.csproj" --no-restore -p:NuGetAudit=false -nodeReuse:false -maxcpucount:1 --nologo 2>&1)
     code=$?
     [ "$code" -eq 0 ] || result fail "offline apphost build exit=$code: $(printf '%s' "$output" | tail -c 500)"
-    [ -x "$root/project/bin/Debug/net9.0/Offline" ] || result fail "native apphost missing"
-    [ "$("$root/project/bin/Debug/net9.0/Offline")" = net9-offline-ok ] || result fail "native apphost did not run"
-    result ok "SDK=10.0.401 net9 apphost restore+build+run uid=1654 empty NuGet cache and home"
+    [ -x "$root/project/bin/Debug/net9.0/linux-x64/Offline" ] || result fail "native apphost missing"
+    output=$("$root/project/bin/Debug/net9.0/linux-x64/Offline")
+    code=$?
+    [ "$code" -eq 0 ] && [ "$output" = net9-offline-ok ] || result fail "native apphost exit=$code or stdout mismatch"
+    [ -z "$(find "$NUGET_PACKAGES" -mindepth 1 -maxdepth 1 -iname 'microsoft.*.app.*' -print -quit)" ] || result fail "framework package appeared in empty cache"
+    result ok "SDK=$sdk uid=1654 restore=0 build=0 native-run=0 stdout=net9-offline-ok empty-mounted-pair network=none"
     ;;
   *)
     echo "usage: verify-codex-image.sh version|grok-version|jq-version|layout|install-readonly|no-baked-auth|fresh-home|trust|config-accepted|preserve-arm <nonce>|preserve-check|net9-offline" >&2

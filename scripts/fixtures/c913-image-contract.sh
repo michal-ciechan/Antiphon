@@ -20,7 +20,7 @@ if [ "$mode" = archive ]; then
         sed -e '1s/^RUN //' -e "s|/opt/net9-packs|$root/output|g" -e "s|/tmp/net9-sdk.tar.gz|$root/download.tar.gz|g" > "$root/chain"
     cat > "$root/bin/curl" <<'SH'
 #!/bin/sh
-cp "$C913_ARCHIVE" "$4"
+cp "$C913_ARCHIVE" "$3"
 SH
     cat > "$root/bin/tar" <<'SH'
 #!/bin/sh
