@@ -160,5 +160,15 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
         (await File.ReadAllTextAsync(task.ResultFilePath!)).ShouldBe(task.Result);
         (await Host.Fixture.RequiredAsync(Host.Fixture.Remote, "rev-parse", "refs/heads/master")).Trim().ShouldBe(Host.Fixture.SeedSha);
     }
-    public ValueTask DisposeAsync() => Host.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        await Host.Services.DisposeAsync();
+        await Host.Schema.DisposeAsync();
+        var root = Path.GetFullPath(Host.Fixture.Root);
+        if (Path.GetFileName(Path.GetDirectoryName(root)) != "c1017"
+            || !Guid.TryParseExact(Path.GetFileName(root), "N", out _)
+            || (await File.ReadAllTextAsync(Path.Combine(Host.Fixture.Repository, "fixture-owner.txt"))).Trim() != TaskId.ToString("N"))
+            throw new InvalidOperationException("C1017 fixture ownership changed");
+        Antiphon.Server.Infrastructure.Git.WorktreeNoFollowDelete.Delete(root);
+    }
 }
