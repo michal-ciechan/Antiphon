@@ -212,14 +212,14 @@ case "$row" in
       fi
       printf 'C913_PACK %s\n' "$path"
     done
-    sdk="$(dotnet --version)" || result fail "SDK query failed"
-    [ "$sdk" = 10.0.401 ] || result fail "default SDK is not 10.0.401"
-    dotnet --list-sdks | grep -q '^10\.0\.401 ' || result fail "SDK 10.0.401 missing"
-    dotnet --list-runtimes || result fail "runtime query failed"
     root=$PROBE_HOME/net9-offline
     mkdir -p "$root/home/.nuget" "$root/project" || result fail "cannot create empty restore directories"
     export HOME="$root/home" DOTNET_CLI_HOME="$root/home"
     export DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=true DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_CLI_TELEMETRY_OPTOUT=1
+    sdk="$(dotnet --version)" || result fail "SDK query failed"
+    [ "$sdk" = 10.0.401 ] || result fail "default SDK is not 10.0.401"
+    dotnet --list-sdks | grep -q '^10\.0\.401 ' || result fail "SDK 10.0.401 missing"
+    dotnet --list-runtimes || result fail "runtime query failed"
     cat > "$root/project/Offline.csproj" <<'PROJECT'
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>

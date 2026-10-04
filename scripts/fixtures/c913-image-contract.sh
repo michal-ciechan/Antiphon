@@ -68,7 +68,6 @@ case "$1" in
     find "$C913_ROOT/home" -name NuGet.Config -exec cp {} "$C913_ROOT/config" \;
     ;;
  build)
-    [ "$C913_FAULT" != build ] || exit 18
     directory=$(dirname "$2")
     for suffix in net9.0 net9.0/linux-x64; do
         mkdir -p "$directory/bin/Debug/$suffix"
@@ -80,6 +79,8 @@ NATIVE
         [ "$C913_FAULT" = not-executable ] || chmod 755 "$directory/bin/Debug/$suffix/Offline"
     done
     if [ "$C913_FAULT" = post-cache ]; then mkdir -p "$NUGET_PACKAGES/microsoft.netcore.app.ref/9.0.20"; fi
+    # A failed build can leave an executable. Its exit must gate acceptance itself.
+    [ "$C913_FAULT" != build ] || exit 18
     ;;
  *) exit 91 ;;
 esac
@@ -115,6 +116,7 @@ for directory in packages scratch home; do
     fresh; printf warm > "$root/$directory/.warm"
     if bash "$root/probe.sh" net9-offline > "$root/out" 2>&1; then fail "warm-$directory-refused"; fi
     ! grep -q '^restore ' "$root/trace" || fail "warm-$directory-before-restore"
+    grep -Fq "NuGet $directory" "$root/out" || fail "warm-$directory-diagnosis"
     pass "warm-$directory-refused"
 done
 for pack in Microsoft.NETCore.App.Host.linux-x64 Microsoft.NETCore.App.Ref Microsoft.AspNetCore.App.Ref; do
@@ -122,6 +124,7 @@ for pack in Microsoft.NETCore.App.Host.linux-x64 Microsoft.NETCore.App.Ref Micro
         fresh; rm -rf -- "$root/dotnet/packs/$pack/9.0.20"
         if [ "$warm" = yes ]; then mkdir -p "$root/packages/$(printf '%s' "$pack" | tr '[:upper:]' '[:lower:]')/9.0.20"; fi
         if bash "$root/probe.sh" net9-offline > "$root/out" 2>&1; then fail "missing-$pack"; fi
+        if [ "$warm" = no ]; then grep -Fq "ImagePackMissing:$pack" "$root/out" || fail missing-pack-diagnosis; fi
         ! grep -q '^restore ' "$root/trace" || fail missing-pack-before-restore
     done
     pass "missing-$pack-refused"
@@ -132,4 +135,46 @@ for C913_FAULT in restore build not-executable native-exit token post-cache; do
     grep -q '^restore ' "$root/trace" || fail fault-setup
     pass "$C913_FAULT-refused"
 done
+! grep -q unexpected-call "$root/trace" || fail offline-no-inner-lease
+pass offline-no-inner-lease
+# Execute the deployment heredoc with only process/environment/filesystem boundaries remapped.
+awk '/^c849_smoke\(\) \{/ { active=1; next } active && /^set -eu$/ { body=1 } body && /^C849_SMOKE_SCRIPT$/ { exit } body { print }' "$repo/scripts/c590-remote.sh" |
+    sed -e "s|/usr/share/dotnet|$root/dotnet|g" -e "s|/tmp/c849-smoke-XXXXXXXX|$root/deployment-XXXXXXXX|g" > "$root/smoke.sh"
+cat > "$root/bin/curl" <<'CURL'
+#!/bin/sh
+printf 'broker-read\n' >> "$C913_ROOT/trace"
+printf '{}\n'
+CURL
+cat > "$root/bin/pwsh" <<'LEASE'
+#!/bin/sh
+printf 'lease %s\n' "$*" >> "$C913_ROOT/trace"
+[ "$1 $2 $3" = '-NoProfile -File /work/repos/antiphon/scripts/build-slot.ps1' ] || exit 92
+while [ "$1" != -- ]; do shift; done
+shift
+"$@"
+LEASE
+cat > "$root/bin/dotnet" <<'DOTNET'
+#!/bin/sh
+printf '%s\n' "$*" >> "$C913_ROOT/trace"
+case "$1" in
+restore) [ "$NUGET_PACKAGES" != /home/app/.nuget/packages ] && [ "$NUGET_SCRATCH" != /var/cache/antiphon/nuget-scratch ] || exit 93 ;;
+build)
+    mkdir -p bin/Debug/net9.0/linux-x64
+    printf '#!/bin/sh\nprintf "CARD0849_APPHOST_OK\\n"\n' > bin/Debug/net9.0/linux-x64/Smoke
+    chmod 755 bin/Debug/net9.0/linux-x64/Smoke ;;
+*) exit 94 ;;
+esac
+DOTNET
+export NUGET_PACKAGES=/home/app/.nuget/packages NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch NPM_CONFIG_CACHE=/home/app/.npm
+fresh
+sh "$root/smoke.sh" > "$root/out" 2>&1 || { cat "$root/out"; fail deployment-smoke-positive; }
+grep -Fq 'lease -NoProfile -File /work/repos/antiphon/scripts/build-slot.ps1' "$root/trace" || fail smoke-lease-required
+grep -Fxq 'C849_SMOKE uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK' "$root/out" || fail deployment-smoke-receipt
+pass smoke-lease-required
+for variable in NUGET_PACKAGES NUGET_SCRATCH NPM_CONFIG_CACHE; do
+    : > "$root/trace"
+    if env "$variable=/foreign" sh "$root/smoke.sh" > "$root/out" 2>&1; then fail smoke-environment-refused; fi
+    [ ! -s "$root/trace" ] || fail smoke-environment-before-driver
+done
+pass smoke-environment-refused
 pass probe-boundaries-complete

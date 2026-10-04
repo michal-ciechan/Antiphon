@@ -35,7 +35,11 @@ case "$variant" in
     saved) C590_SAVED_DONOR=/fixture/saved ;;
     full)
         mkdir -p "$SERVER2_ROOT/cache/recovery-fixture/packages" "$SERVER2_ROOT/cache/recovery-fixture/npm"
-        printf 'donor=saved\nimage=%s\ntime=2026-10-04T00:00:00Z\npayload-sha256=%064d\nreference-sha256=%064d\npackage-bytes=1\nnpm-bytes=0\nrecovery=%s\n' "$seed_image" 0 0 "$SERVER2_ROOT/cache/recovery-fixture" > "$C849_READY" ;;
+        payload="$root/volumes/$C849_PACKAGES/_data/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost"
+        mkdir -p "${payload%/*}"; printf 'legacy-native-payload\n' > "$payload"
+        cp -a "$root/volumes/$C849_PACKAGES/_data/." "$SERVER2_ROOT/cache/recovery-fixture/packages/"
+        digest="$(sha256sum "$payload" | cut -d' ' -f1)"
+        printf 'donor=saved\nimage=%s\ntime=2026-10-04T00:00:00Z\npayload-sha256=%s\nreference-sha256=%064d\npackage-bytes=22\nnpm-bytes=0\nrecovery=%s\n' "$seed_image" "$digest" 0 "$SERVER2_ROOT/cache/recovery-fixture" > "$C849_READY" ;;
     *) exit 2 ;;
 esac
 extract() {
@@ -116,7 +120,7 @@ docker() {
                 if [ "$arg" = --mount ]; then i=$((i+1)); mount="${!i}"; fi
                 if [ "$arg" = -c ]; then i=$((i+1)); code="${!i}"; fi
             done
-            if [[ "$*" == *'--entrypoint sha256sum'* ]]; then printf '%064d  apphost\n' 0; return 0; fi
+            if [[ "$*" == *'--entrypoint sha256sum'* ]]; then sha256sum "$payload"; return $?; fi
             name="${mount#*source=}"; name="${name%%,*}"
             if [[ "$code" == *'stat -c'* ]]; then
                 [ "$variant" = unwritable ] && printf '1654:1654:755\n' || printf '1654:1654:700\n'

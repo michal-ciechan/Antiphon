@@ -47,6 +47,7 @@ c849_status_body() {
     [ "$FAULT" != busy ] || sessions=1
     [ "$FAULT" != unknown ] || queued=null
     [ "$FAULT" != absent-unretired ] || retired=null
+    if [ "$FAULT" = reconnect ] && grep -q '^restart$' "$root/trace"; then available=false; fi
     printf '{"sessions":%s,"runnerSessions":%s,"queuedTasks":%s,"draining":true,"acceptingNewWork":false,"redirectTo":"server2","retireWhenIdle":true,"dispatchEligible":%s,"available":%s,"retiredAt":%s}' "$sessions" "$running" "$queued" "$available" "$available" "$retired"
 }
 sudo() {
@@ -61,6 +62,7 @@ sudo() {
 chown() { :; }
 export -f chown
 compose_host() { printf 'main\n'; }
+sleep() { :; } # injected reconnect state is constant; do not wait on a synthetic status
 findmnt() { printf '/\n'; }
 docker() {
     printf '%s\n' "$*" >> "$root/docker-trace"
@@ -150,7 +152,10 @@ docker() {
           cp -a "$root/volumes/$C849_NPM/_data" "$root/import-view/npm"
           code="${code//\/import/$root/import-view}"
         fi
-        for arg in "${mappings[@]}"; do target="${arg%%|*}"; source="${arg#*|}"; code="${code//"$target"/"$source"}"; done
+        i=0
+        for arg in "${mappings[@]}"; do target="${arg%%|*}"; code="${code//"$target"/"__C913_MOUNT_${i}__"}"; i=$((i+1)); done
+        i=0
+        for arg in "${mappings[@]}"; do source="${arg#*|}"; code="${code//"__C913_MOUNT_${i}__"/"$source"}"; i=$((i+1)); done
         if [[ "$code" == *'cp -a '* ]]; then
           [ "$FAULT" != import ] || return 1
           printf 'import\n' >> "$root/trace"
@@ -160,11 +165,17 @@ docker() {
           code="${code//stat -c %u:%g:%a/printf 1654:1654:700\\n #}"
         fi
         bash -c "$code" || return $?
-        if [ "$FAULT" = corrupt-import ] && [[ "$code" == *'cp -a '* ]]; then
-          printf corrupted > "$root/volumes/$C849_PACKAGES/_data/c913.probe/1.0.0/data"
+        if { [ "$FAULT" = corrupt-import ] || [ "$FAULT" = corrupt-npm-import ]; } && [[ "$code" == *'cp -a '* ]]; then
+          if [ "$FAULT" = corrupt-import ]; then printf corrupted > "$root/volumes/$C849_PACKAGES/_data/c913.probe/1.0.0/data"
+          else printf corrupted > "$root/volumes/$C849_NPM/_data/content"; fi
         fi ;;
       *) return 94 ;;
     esac
+}
+mv() {
+    if [ "$FAULT" = recovery-save ] && [[ "$1" == "$SERVER2_ROOT/cache/stage-"* ]]; then return 1; fi
+    if [ "$FAULT" = publication ] && [[ "$*" == *"$C849_READY.tmp-"* ]]; then return 1; fi
+    command mv "$@"
 }
 ordinary() {
     mkdir -p "$1/packages/c913.probe/1.0.0" "$1/packages/c913.tools/2.0.0" "$1/npm/empty"
@@ -202,6 +213,9 @@ case "$mode" in
     cp -a "$root/donor" "$root/stage"
     run c849_validate_seed_tree "$root/stage"; accept incomplete-pruned-only-in-stage
     [ -f "$root/donor/packages/incomplete/1.0/data" ] && [ ! -e "$root/stage/packages/incomplete/1.0" ] || fail incomplete-pruned-only-in-stage
+    for unsafe in /absolute ./leading ../leading interior/../escape interior/./same trailing/. trailing/.. $'line\nbreak' $'carriage\rreturn'; do
+      run c849_validate_seed_relative "$unsafe"; refuse unsafe-relative-refused CacheDonorUnsafePath
+    done
     for fault in empty incomplete metadata-empty symlink hardlink fifo version-file newline; do
       rm -rf -- "$root/stage"; mkdir -p "$root/stage"; ordinary "$root/stage"
       diagnosis=CacheDonorUnsafeEntry
@@ -225,13 +239,44 @@ case "$mode" in
     pass schema3-published
     for part in packages npm; do diff -r "$root/donor/$part" "$root/volumes/$([ "$part" = packages ] && echo "$C849_PACKAGES" || echo "$C849_NPM")/_data" || fail recipient-bytes; done
     [ "$(stat -c %a "$SERVER2_ROOT/cache/recovery-$RUN/packages/c913.tools/2.0.0/tool")" = 751 ] || fail recipient-executable
-    base64 -w0 "$SERVER2_ROOT/cache/recovery-$RUN/recovery.manifest"; printf '\n'
-    for FAULT in stop copy-packages copy-npm npm-verify import corrupt-import smoke restart donor-id busy unknown process-error writer; do
+    printf 'MANIFEST_BASE64='; base64 -w0 "$SERVER2_ROOT/cache/recovery-$RUN/recovery.manifest"; printf '\n'
+    printf 'MANIFEST_DIGEST=%s\n' "$(sha256sum "$SERVER2_ROOT/cache/recovery-$RUN/recovery.manifest" | cut -d' ' -f1)"
+    cp "$SERVER2_ROOT/cache/recovery-$RUN/recovery.manifest" "$root/golden"
+    mkdir -p "$root/reordered/npm/empty" "$root/reordered/packages/c913.tools/2.0.0" "$root/reordered/packages/c913.probe/1.0.0"
+    cp -a "$root/donor/npm/." "$root/reordered/npm/"
+    cp -a "$root/donor/packages/c913.tools/." "$root/reordered/packages/c913.tools/"
+    cp -a "$root/donor/packages/c913.probe/." "$root/reordered/packages/c913.probe/"
+    touch -t 200001010000 "$root/reordered/packages/c913.probe/1.0.0/data"
+    mkdir "$root/reordered/scratch"; printf ignored > "$root/reordered/scratch/lock"
+    c849_manifest_write "$root/reordered" "$root/actual"
+    cmp -s "$root/golden" "$root/actual" || fail manifest-order-independent
+    pass manifest-order-independent
+    for change in package npm size executable rename remove add; do
+      rm -rf "$root/modified"; cp -a "$root/donor" "$root/modified"
+      case "$change" in
+        package) printf PROBE > "$root/modified/packages/c913.probe/1.0.0/data" ;;
+        npm) printf NPM > "$root/modified/npm/content" ;;
+        size) printf x >> "$root/modified/npm/content" ;;
+        executable) chmod 644 "$root/modified/packages/c913.tools/2.0.0/tool" ;;
+        rename) mv "$root/modified/npm/content" "$root/modified/npm/renamed" ;;
+        remove) rm "$root/modified/npm/content" ;;
+        add) printf added > "$root/modified/npm/extra" ;;
+      esac
+      run c849_manifest_compare "$root/modified" "$root/golden"
+      [ "$(cat "$root/exit")" = 2 ] || fail "manifest-$change-bound"
+      pass "manifest-$change-bound"
+    done
+    for FAULT in stop copy-packages copy-npm npm-verify import corrupt-import corrupt-npm-import smoke recovery-save restart donor-id reconnect publication busy unknown process-error writer; do
       rm -f "$C849_READY"; rm -rf -- "$SERVER2_ROOT/cache/recovery-$RUN"
       for name in "$C849_PACKAGES" "$C849_NPM"; do find "$root/volumes/$name/_data" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; done
+      : > "$root/trace"
       run c849_seed
       [ "$(cat "$root/exit")" != 0 ] && [ ! -e "$C849_READY" ] || fail "$FAULT-no-publication"
       [ "$(cat "$root/outside")" = outside ] || fail seed-cleanup-scope
+      case "$FAULT" in
+        busy|unknown|process-error|writer) ! grep -q '^stop$' "$root/trace" || fail "$FAULT-no-stop" ;;
+        npm-verify) ! grep -q '^import$' "$root/trace" || fail npm-before-manifest ;;
+      esac
       pass "$FAULT-no-publication"
     done
     ;;
@@ -239,6 +284,27 @@ case "$mode" in
     make_full_marker
     run c849_require_ready allow-cold; accept schema3-valid
     cp "$C849_READY" "$root/marker"
+    recovery="$SERVER2_ROOT/cache/recovery-$RUN"
+    cp "$recovery/recovery.manifest" "$root/manifest"
+    for bad in duplicate absolute type truncated unsorted; do
+      cp "$root/manifest" "$root/bad-manifest"
+      case "$bad" in
+        duplicate) printf 'D\0packages\0000\0-\0-\0' >> "$root/bad-manifest" ;;
+        absolute) printf 'D\0/escape\0000\0-\0-\0' >> "$root/bad-manifest" ;;
+        type) printf 'L\0zz\0000\0-\0-\0' >> "$root/bad-manifest" ;;
+        truncated) truncate -s -1 "$root/bad-manifest" ;;
+        unsorted) printf 'D\0npm\0000\0-\0-\0' >> "$root/bad-manifest" ;;
+      esac
+      run c849_manifest_validate "$root/bad-manifest"
+      [ "$(cat "$root/exit")" = 2 ] || fail "$bad-record-refused"
+      pass "$bad-record-refused"
+    done
+    for row in 'schema|4' 'kind|cold' 'source-sha|bad' 'image|bad' 'time|2026-99-99T00:00:00Z' 'package-bytes|-1' 'npm-bytes|01' 'donor-type|unknown' 'donor|short' 'packages|foreign' 'scratch|foreign' 'npm|foreign' 'manifest-sha256|bad'; do
+      key="${row%|*}"; value="${row#*|}"
+      sed "s|^$key=.*|$key=$value|" "$root/marker" > "$C849_READY"
+      run c849_require_ready allow-cold; refuse "$key-value-refused" CacheSeedMarkerInvalid
+    done
+    cp "$root/marker" "$C849_READY"
     printf churn > "$root/volumes/$C849_PACKAGES/_data/new-package"
     run c849_require_ready allow-cold; accept mutable-cache-churn
     for key in schema kind source-sha image donor-type donor time packages scratch npm package-bytes npm-bytes recovery manifest-sha256; do

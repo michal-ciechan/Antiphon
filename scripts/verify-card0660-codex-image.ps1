@@ -155,7 +155,7 @@ function Invoke-Init([string] $evidenceName) {
         '--mount', "type=volume,source=$stateVolume,target=/runner-state",
         '--mount', "type=volume,source=$codexVolume,target=/codex-home",
         '--mount', "type=bind,source=$initScript,target=/stack/init-state.sh,readonly",
-        $Image, '/stack/init-state.sh')
+        $imageId, '/stack/init-state.sh')
     return (Invoke-Docker $initArgs $evidenceName).ExitCode
 }
 
