@@ -55,15 +55,18 @@ c849_smoke() {
     barrier before-smoke
     printf 'smoke\n' >> "$C913_ROOT/trace"
     [ "$FAULT" != smoke ] || write_result false CacheSmokeFailed 2
+    if [ "$FAULT" = main-smoke ] && [ "$2" = server2 ]; then write_result false CacheSmokeFailed 2; fi
     printf 'C849_SMOKE runner=%s uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK\n' "$2" >> "$CASE_DIR/smoke-summary.txt"
     barrier after-smoke
 }
 c849_status_body() {
     local runner="$1" sessions=0 running=0 queued=0 retired=null available=true
-    if [ "$runner" = server2-temp ] && { [ "$SOURCE" != live ] || [ "$FAULT" = retired-running ]; }; then retired='"2026-10-04T00:00:00Z"'; available=false; fi
-    [ "$FAULT" != status-error ] || return 1
-    if [ "$FAULT" = status-omitted ]; then printf '{}'; return; fi
-    if [ "$FAULT" = status-malformed ]; then printf '{"sessions":"unknown"}'; return; fi
+    if [ "$runner" = server2-temp ] && { [ "$SOURCE" != live ] || [ "$FAULT" = retired-running ] || [ "$FAULT" = inspect-error ]; }; then retired='"2026-10-04T00:00:00Z"'; available=false; fi
+    if [ "$runner" = server2-temp ]; then
+      [ "$FAULT" != status-error ] || return 1
+      if [ "$FAULT" = status-omitted ]; then printf '{}'; return; fi
+      if [ "$FAULT" = status-malformed ]; then printf '{"sessions":"unknown"}'; return; fi
+    fi
     [ "$FAULT" != busy ] || sessions=1
     if [ "$FAULT" = busy-main ] && [ "$runner" = server2 ]; then sessions=1; fi
     [ "$FAULT" != busy-runner ] || running=1
@@ -74,7 +77,9 @@ c849_status_body() {
     if [ "$FAULT" = saved-late-busy ] && grep -q '^barrier after-saved-copy$' "$root/trace"; then sessions=1; fi
     [ "$FAULT" != absent-unretired ] || retired=null
     if [ "$FAULT" = reconnect ] && grep -q '^restart$' "$root/trace"; then available=false; fi
-    printf '{"sessions":%s,"runnerSessions":%s,"queuedTasks":%s,"draining":true,"acceptingNewWork":false,"redirectTo":"server2","retireWhenIdle":true,"dispatchEligible":%s,"available":%s,"retiredAt":%s}' "$sessions" "$running" "$queued" "$available" "$available" "$retired"
+    local body
+    body=$(printf '{"sessions":%s,"runnerSessions":%s,"queuedTasks":%s,"draining":true,"acceptingNewWork":false,"redirectTo":"server2","retireWhenIdle":true,"dispatchEligible":%s,"available":%s,"retiredAt":%s}' "$sessions" "$running" "$queued" "$available" "$available" "$retired")
+    if [ "$runner" = server2-temp ] && [ "$FAULT" = status-no-retired ]; then printf '%s' "$body" | jq 'del(.retiredAt)'; else printf '%s' "$body"; fi
     if [ "${phase:-}" = reconnected ] && grep -q '^restart$' "$root/trace"; then barrier reconnect; fi
 }
 sudo() {
@@ -124,8 +129,10 @@ docker() {
           printf '[{"Name":"%s","Driver":"local","Options":{},"Mountpoint":"%s/volumes/%s/_data","Labels":{"io.antiphon.owner":"server2-runner","io.antiphon.cache-schema":"1","io.antiphon.cache-role":"%s"}}]\n' "$name" "$root" "$name" "$role"
         fi ;;
       ps:*)
-        [ "$FAULT" != census-error ] || return 1
-        if [ "$FAULT" = partial-census ]; then echo "$donor_id"; return 1; fi
+        if [[ "$*" == *"project=$TEMP_PROJECT"* ]]; then
+          [ "$FAULT" != census-error ] || return 1
+          if [ "$FAULT" = partial-census ]; then echo "$donor_id"; return 1; fi
+        fi
         if [[ "$*" == *volume=* ]]; then
           if [ "$FAULT" = attachment ] || { [ "$FAULT" = saved-late-attachment ] && grep -q '^barrier after-npm-verify$' "$root/trace"; }; then echo foreign; fi
           return 0
@@ -135,7 +142,7 @@ docker() {
           elif [ "$FAULT" = saved-temp-present ] && [ "$(grep -c "project=$TEMP_PROJECT" "$root/docker-trace")" -ge 2 ]; then echo "$donor_id"; fi
         else [ "$FAULT" = main-missing ] || printf '%064d\n' 4; fi ;;
       inspect:*)
-        [ "$FAULT" != inspect-error ] || return 1
+        if [ "$FAULT" = inspect-error ] && [ "${@: -1}" = "$donor_id" ]; then return 1; fi
         case "$3" in
           *'.Image'*) echo "$image_id" ;;
           *'.Id'*) if grep -q '^restart$' "$root/trace" 2>/dev/null; then barrier donor-id; fi; if [ "$FAULT" = donor-id ] && grep -q '^restart$' "$root/trace"; then echo changed; else echo "$donor_id"; fi ;;
@@ -387,7 +394,7 @@ case "$mode" in
         pass saved-source-byte-identical
       done
     done
-    SOURCE=live; FAULT=busy-main
+    SOURCE=live; FAULT=busy-main; C590_SAVED_DONOR=''
     rm -f "$C849_READY"; rm -rf -- "$SERVER2_ROOT/cache/recovery-$RUN"
     for name in "$C849_PACKAGES" "$C849_NPM"; do find "$root/volumes/$name/_data" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; done
     : > "$root/trace"
@@ -497,10 +504,13 @@ case "$mode" in
       printf sentinel > "$root/volumes/$C849_NPM/_data/sentinel"
       for pair in "$C849_PACKAGES:nuget-packages" "$C849_SCRATCH:nuget-scratch" "$C849_NPM:npm-content"; do c849_observe_volume "${pair%:*}" "${pair#*:}" 100000; done > "$receipt/volumes.txt"
       printf 'run=%s\nsource-sha=%s\ncreated-at=%s\nvolume-sha256=%s\n' "$RUN" "$SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(sha256sum "$receipt/volumes.txt" | cut -d' ' -f1)" > "$receipt/preview.txt"
-      : > "$root/trace"; : > "$root/docker-trace"; rm -f "$CASE_DIR/prune.txt"
+      : > "$root/trace"; : > "$root/docker-trace"; rm -f "$CASE_DIR/prune.txt" "$CASE_DIR/smoke-summary.txt"
     }
     reset_prune
     run c849_prune; accept schema3-prune-success
+    for runner in server2 server2-temp; do
+      grep -Fxq "C849_SMOKE runner=$runner uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK" "$CASE_DIR/smoke-summary.txt" || fail prune-smoke-required
+    done
     grep -Fq admission=held "$CASE_DIR/prune.txt" || fail admission-held
     [ -d "$root/volumes/$C849_PACKAGES/_data" ] && [ -d "$SERVER2_ROOT/cache/recovery-$RUN" ] || fail roots-and-recovery-retained
     [ ! -e "$root/volumes/$C849_PACKAGES/_data/ordinary/1.0.0/data" ] && [ ! -e "$root/volumes/$C849_NPM/_data/sentinel" ] || fail selected-contents-cleared
@@ -532,9 +542,9 @@ case "$mode" in
       ! grep -q 'rm -rf --' "$root/docker-trace" || fail "$bad-no-delete-trace"
       [ ! -e "$CASE_DIR/prune.txt" ] || fail "$bad-no-success"
     done
-    for FAULT_CASE in refill refill-receipt smoke budget; do
+    for FAULT_CASE in refill refill-receipt main-smoke budget; do
       reset_prune; FAULT="$FAULT_CASE"
-      case "$FAULT" in refill) diagnosis=CacheRefillFailed;; refill-receipt) diagnosis=CacheRefillReceiptMissing;; smoke) diagnosis=CacheSmokeFailed;; budget) diagnosis=CacheBudgetExceeded;; esac
+      case "$FAULT" in refill) diagnosis=CacheRefillFailed;; refill-receipt) diagnosis=CacheRefillReceiptMissing;; main-smoke) diagnosis=CacheSmokeFailed;; budget) diagnosis=CacheBudgetExceeded;; esac
       run c849_prune
       refuse "$FAULT-no-success" "$diagnosis"
       [ ! -e "$CASE_DIR/prune.txt" ] || fail "$FAULT-no-success"
@@ -597,12 +607,18 @@ case "$mode" in
     curl() { if [[ "$*" == *server2-temp/status* ]]; then c849_status_body server2-temp; else c849_status_body server2; fi; }
     run case_runner_cache_inventory; accept absent-temp-accepted
     grep -Fq 'runner=server2-temp container=absent' "$CASE_DIR/identities.txt" || fail absent-temp-recipient
-    for FAULT in census-error partial-census main-missing inspect-error status-error status-omitted status-malformed absent-unretired duplicate retired-running; do
+    for FAULT in census-error partial-census main-missing inspect-error status-error status-omitted status-malformed status-no-retired absent-unretired duplicate retired-running; do
       SOURCE=saved
-      case "$FAULT" in duplicate|retired-running) SOURCE=live ;; esac
+      case "$FAULT" in duplicate|retired-running|inspect-error) SOURCE=live ;; esac
       run case_runner_cache_inventory
-      [ "$(cat "$root/exit")" != 0 ] || fail "inventory-$FAULT-refused"
-      pass "inventory-$FAULT-refused"
+      case "$FAULT" in
+        census-error|partial-census|inspect-error) diagnosis=CacheInventoryLookupFailed ;;
+        main-missing|absent-unretired) diagnosis=CacheInventoryRunnerMissing ;;
+        status-error) diagnosis=CacheInventoryStatusUnavailable ;;
+        status-*) diagnosis=CacheInventoryStatusInvalid ;;
+        duplicate|retired-running) diagnosis=CacheInventoryIdentityInvalid ;;
+      esac
+      refuse "inventory-$FAULT-refused" "$diagnosis"
     done
     SOURCE=live; FAULT=none
     run case_runner_cache_inventory; accept present-temp-accepted
