@@ -58,7 +58,8 @@ public sealed class CardDoneWorktreeCleanupTests
     private static async Task<(Guid CardId, Guid DoneId)> SeedAsync(IsolatedTestSchema schema)
     {
         await using var db = Connect(schema);
-        var board = new Board { Id = Guid.NewGuid(), Name = "cleanup fixture", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var project = new Project { Id = Guid.NewGuid(), Name = "cleanup fixture", GitRepositoryUrl = "https://example.test/c1017.git", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var board = new Board { Id = Guid.NewGuid(), Project = project, Name = "cleanup fixture", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
         var review = new BoardColumn { Id = Guid.NewGuid(), Board = board, StateKey = "review", Name = "Review", CardStatus = CardStatus.Review, ColumnOrder = 0 };
         var done = new BoardColumn { Id = Guid.NewGuid(), Board = board, StateKey = "done", Name = "Done", CardStatus = CardStatus.Done, IsTerminal = true, ColumnOrder = 1 };
         board.Columns.Add(review);
