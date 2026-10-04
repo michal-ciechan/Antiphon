@@ -1,10 +1,13 @@
 # CARD-1029: close the inert-observation verification gaps
 
-Status: Plan complete; a narrow reachability investigation precedes TestDesign.
+Status: Plan amended after I0; ready for separate TestDesign qualification.
 No production change, build, ordinary test, or positive control was run by this
 Plan task. The verification-design stage is separate, not folded into this brief.
 The checkpoint selection below is the proposed closed scope for that stage to
 qualify; it is not permission to claim the missing variants already pass.
+This amendment resolves the reachability classification, preserves all 192
+original controls plus PC-256, and does not plan the separately filed continuation
+defect.
 
 ## Authority and inspected sources
 
@@ -16,13 +19,18 @@ Source identities, observed 2026-10-04:
 
 | Identity | SHA / provenance |
 |---|---|
-| Assigned Plan branch base | `bb18064ba647e0ddb03cae4da437ab60ed447d98` |
+| Original Plan branch base | `bb18064ba647e0ddb03cae4da437ab60ed447d98` |
 | CARD-0959 reviewed source C0959 | `9011b62ca7b5548eeeaa61261b1533a364c6c583` |
 | CARD-0959 published source L0959 | `6a88d8ceaedb5934bb3a466802a622a4b56e5b37` |
 | Fetched `origin/master` M inspected for this plan | `9b78712f6671d7ccb98bcf4a5ebea8f080d7cecd` |
+| Original plan on `feat/card-task-c389db24` | `faa86d73833343ef9225c6aa766be19314848aca` |
+| I0 report on `feat/card-task-0293f857`; amendment branch base | `dde45da524a0db70c659c3397626efd4b01b9892` |
 
-The assigned branch is not rebased or reset. Inspection of M uses pinned Git
-objects; this document is the only implementation artifact of the Plan task.
+The amendment branch `feat/card-task-93eea7de` advances the I0 report commit
+without rebase or reset. Inspection of M used pinned Git objects; this document
+is the only changed artifact of this Plan task. Reachability mechanisms and the
+seeded regression were rechecked at the amendment base; I0's production census
+is attributed to that investigation, not a new run or census by this amendment.
 Future authoring starts from a caller-commissioned current-target checkout and
 rechecks the listed paths, preserving CARD-1031 and CARD-1022 changes.
 
@@ -33,6 +41,10 @@ Primary references:
   Earlier gate/override designs are archived.
 - [Final continuation evidence](../../investigations/2026-10-04-card-0959-final-verification-859094b8.md)
   and [PATH/dispatch repair](../../investigations/2026-10-04-card-0959-path-and-dispatch-repair.md).
+- [I0 remote warm reachability](../../investigations/2026-10-04-card-1029-warm-reachability.md)
+  at `dde45da524a0db70c659c3397626efd4b01b9892`: request/Retry/dispatch
+  mechanisms, five stored Shared follow-up failures, and the seeded pool's
+  unproven producer. This supersedes the original D-3/I0 premise below.
 - At M, `docs/investigations/2026-10-04-card-1031-code-b491b9c4.md` and the
   actual parser/probe/projection/test diffs. These facts supersede incompatible
   CARD-0959 expectations; historical receipts retain their original SHA.
@@ -49,10 +61,12 @@ dispatcher cold/reuse/queue handoffs, queue spill binding and confirmation helpe
 `DurableRunnerSpillReceiptTests`, `GrokStartupReadyOrderingTests`, and the
 unobservable-baseline cases in `SessionMessageQueueDeliveryVerificationTests`.
 
-GET `/api/runner-defaults` returned revision 2, no per-kind overrides, and a Linux
-default. GET `/api/session-runners` showed available eligible Linux and Windows
-lanes and an unavailable temporary lane. These are observations, not placement
-constants. Read both again at dispatch. Omit `-Runner`; omit `-Platform` for
+The amendment re-read GET `/api/runner-defaults` and GET `/api/session-runners`
+on 2026-10-04 at 12:46 UTC. Defaults remained revision 2, no per-kind overrides,
+with the default runner observed as Linux in the catalogue. The catalogue showed
+available eligible Linux and Windows lanes and an unavailable temporary lane.
+These are observations, not placement constants. Read both again at dispatch.
+Omit `-Runner`; omit `-Platform` for
 portable work, use `-Platform Windows` only for native rows. `-Platform Any`
 removes an inherited OS constraint. No fleet address belongs in this plan.
 
@@ -64,8 +78,12 @@ removes an inherited OS constraint. No fleet address belongs in this plan.
 | V-21 per-kind success is complete | Local Claude/Codex eligible/busy and Codex Shared/Worktree/floor/current run through real producer/queues. Remote fixture hard-codes `RunnerCodexAdapter`, Codex launch kind and pointer formatting. | Local Grok rules-ready; remote Claude/Grok eligible/busy, exact E/W and kind-specific readiness. |
 | Enqueue/retry and all negative receipts are covered | Remote ack-only, clipped, sequence-at-baseline, other-session and write-failure variants exist. No PC-191/192/218 assertions; ack-only requires a non-null sequence floor. | Enqueue fault before persistence, retry session identity, old-generation negative, genuinely unobservable screen/degraded branch. |
 | V-22 recovery covers remote durable delivery | Current V-22 recreates local DI after claim-before-launch loss, runs the watchdog and explicit Retry, and checks pre-task-save cancellation. Remote fixture owns and disposes schema, recipient and root in one call. | Retain remote DB/workspace/recipient separately from server DI; same queue Id/E/path recovery; actual-input crash and late confirmation; all handoff cuts; PC-246 timestamp adversary. |
-| V-23..26 cover all remote paths | `NeverRefusesAsync` covers local/remote Create, local cold/Retry/warm and remote cold eligible/busy. Old-version method adds remote tier cold cases, not remote Retry/warm. | Remote Retry and explicitly qualified retained-row warm/recovery cases for every sample family and model roster below. |
-| Fresh remote Create can lead to warm reuse | `CreateAsync` requires remote Worktree and rejects agent pins/follow-ups; `DispatchOneAsync` calls warm reuse only for Shared. `CreateAgentTaskRequest` has no arbitrary exact model field. Existing signed-out warm regression explicitly seeds an already queued remote Shared row. Same guards are present at M. | **Premise mismatch:** measure reachable producer/state paths before treating a seeded warm row as create-to-recipient proof. Do not make remote Worktree reuse legal in this card. |
+| V-23..26 cover all remote paths | `NeverRefusesAsync` covers local/remote Create, local cold/Retry/warm and remote cold eligible/busy. Old-version method adds remote tier cold cases, not remote Retry/warm. | CP-11..14 retain 114 vectors: 38 real Worktree Retry, 38 seeded warm, 38 seeded recreated-warm. Classify their claims separately. |
+| Fresh remote Create/Retry can produce a warm pool handoff | The explicit remote Create guard requires Worktree and rejects pins/follow-ups; fresh automatic Shared placement excludes remote runners. `RetryAsync/RequeueAsync` retains Workspace and RunnerId. `DispatchOneAsync` enters reuse only for Shared. | Real remote Create/Retry-to-recipient evidence stays on the cold Worktree path. No post-Create Shared rewrite or follow-up substitution qualifies it. |
+| All remote Shared rows must be legacy state | With an omitted runner, a live follow-up rewrites workspace to Shared and inherits its existing runner after the explicit-remote guard. I0 found five such stored production rows, all Failed before a session existed. Their predecessor pool agents have task-worktree directories; reuse excludes them and cold fallback requires Worktree. | A real Shared task producer exists, but these failures do not establish an eligible warm-pool producer. Continuation repair is separately filed and outside this plan. |
+| The signed-out warm regression establishes production provenance or recipient delivery | `PhoneHomeTaskDispatchProjectionTests.Signed_out_codex_runner_still_claims_and_reuses_a_warm_session` directly seeds Shared plus an unpinned eligible remote Codex pool/session in a non-worktree directory. It asserts claim/reuse/queue identity and zero launches, without a complete recipient UserPrompt. No production or historical producer for that pool state was demonstrated. | CP-16 retains V-27/R-6 and PC-256's claim regression. CP-11..14 must add complete E/W receipt and recreated-DI evidence for explicitly seeded state; neither claim becomes admission or historical-producer proof. |
+| Standing adoption can qualify the remote Codex pool matrix | An omitted-runner standing pin can retain a remote Grok/Claude agent and enter `PlaceOnStandingAgentAsync`, a different branch from pool-candidate selection; named remote Codex is excluded. I0 has source reachability, not a positive standing receipt. | Do not replace a Codex pool vector with standing Grok/Claude or local warm coverage. No standing-journey expansion is commissioned. |
+| Remote exact-profile pins can provide arbitrary model coverage | `CreateAgentTaskRequest` has no arbitrary exact model field; the remote fixture uses admitted tier requests. | Keep local exact-profile regression and assert remote canonical High/Medium/Frontier/Low models within their actual path, without inventing remote profile admission. |
 | V-13 tests every descriptor field at the boundary | Current runner cases include oversized executable/cwd/PATH; equality 32768 only for PATH; placeholder/NUL cases are partial. | Each of five fields at 32768/32769 and both placeholders/NUL, with an outcome that distinguishes validation from incidental filesystem failure. |
 | A PC label qualifies its production guard | Example: V-14 labels 126/127 annotate entry model/floor while the ledger describes canonical lookup/alias defects; 124/125 are not directly labelled there. Several delivery PC labels are absent. | Read and map all original 192 rows to actual guard, fixture, first detecting assertion, and variant; do not certify a grep count. |
 | Original 192 guards still have identical semantics | M contains CARD-1031: first valid whole stdout banner line is accepted; valid versions survive stderr/truncation with fixed advisory tokens. PC-11/29 old expected rejections conflict; PC-30/31 and diagnostic assertion sites need reconciliation. Repair additionally defines PC-256. | Preserve 192 original IDs as obligations with explicit retarget/supersession dispositions; track PC-256 separately (193 inherited IDs total). No PC is discharged here. |
@@ -86,15 +104,19 @@ removes an inherited OS constraint. No fleet address belongs in this plan.
   second implementation of production delivery or a full provider/model/fault
   Cartesian product. A helper may arrange a fault; only a production outcome can
   discharge its assertion.
-- **D-3 — Resolve remote warm reachability first.** Remote Retry of a real failed
-  Worktree task is an ordinary supported path. Remote Shared warm delivery is a
-  retained-state dispatcher regression, not a newly admitted task. Before
-  TestDesign freezes that matrix, Investigate must establish whether a supported
-  producer can persist that state, or document it as legacy-state-only coverage.
-  Reject changing Workspace after a successful create and calling it admission
-  coverage. Remote exact pinned profiles are not an admitted request shape;
-  retain local exact-profile regression and assert exact canonical argv for
-  remote High/Medium/Frontier/Low instead.
+- **D-3 — Separate producer and seeded-state evidence (I0 resolved).** Real
+  failed-task Retry preserves remote Worktree and exercises cold launch. The
+  warm and recreated-warm Codex columns deliberately seed Shared task/agent/session
+  state, then exercise production dispatch/queue/receipt paths. Retain them because
+  they guard those consumers even though no producer for the eligible non-worktree
+  remote pool was demonstrated. Do not call this proven legacy admission. A live
+  omitted-runner follow-up does produce Shared, but its task-worktree pool agent
+  fails reuse and cold fallback; it supplies no positive warm witness. Reject a
+  post-Create workspace rewrite as admission evidence, standing-agent substitution,
+  and continuation repair under this card. Remote exact pinned profiles are not
+  an admitted request shape; retain local exact-profile regression and exact
+  canonical remote tier argv on real cold launches. Seeded warm tests verify
+  retained tier/model identity and zero new launches, not recomposed launch argv.
 - **D-4 — E and W have independent oracles.** Freeze producer task/settings/limits
   before the handoff. E is LF-only `BuildBrief` output containing literal
   `C959 delivery α\nsecond line\nEND-C959`; W is the exact inline/pointer body.
@@ -118,19 +140,22 @@ removes an inherited OS constraint. No fleet address belongs in this plan.
   edit a shared helper outside this scope, add its actual affected consumers with
   a reason before the Code dispatch; do not run an unbounded suite speculatively.
 - **D-8 — No hidden acceptance defaults.** All required variants and manual
-  qualification remain open until evidenced. The only unresolved premise is D-3,
-  assigned to investigation, not silently assumed away. TestDesign follows that
-  result and writes `## Verification design` before any `next: code` handoff.
+  qualification remain open until evidenced. I0's coverage classification is
+  resolved; the eligible seeded pool's producer remains unproven and is an explicit
+  limit, not a prerequisite to testing its consumers. Reject both deleting these
+  vectors and claiming a successful production journey. TestDesign qualifies the
+  separate claims and writes `## Verification design` before any `next: code`
+  handoff; this amendment discharges no ordinary or Mutation obligation.
 
 ## Slices and file ownership
 
 | Slice | Files and work | Tests / exit condition |
 |---|---|---|
-| I0: reachability prerequisite | Read `server/Application/Services/AgentTaskService.cs`, `AgentTaskDispatcher.cs`, request DTO, warm projection fixture and producer history. Record findings in this plan or a linked investigation. No production writes. | Show remote Shared create refusal, admitted Worktree dispatch path, actual Retry workspace, and provenance/limits of an existing remote Shared warm row. Record whether each can originate from a real producer, with method/branch evidence. |
+| I0: completed reachability classification | Linked `docs/investigations/2026-10-04-card-1029-warm-reachability.md`; reads `server/Application/Services/AgentTaskService.cs`, `AgentTaskDispatcher.cs`, `DefaultRunnerRoutingPolicy.cs`, `PhoneHomeLaunchPolicy.cs`, warm projection fixture and stored task/events. No production writes. | Explicit remote Shared refusal; Create/Retry Worktree preservation; real inherited-runner Shared follow-ups fail pool/worktree guards; seeded eligible pool producer unproven. Findings classify coverage and execute no tests. No continuation repair slice. |
 | S1: descriptor and control qualification | `tests/Antiphon.Tests/Application/RunnerCodexCliEvidenceTests.cs`, `CodexCliObservationTests.cs`; labels/assertion order as needed in the original probe/Windows tests, `ModelAvailabilityCreateTests.cs`, `CodexPhoneHomeCreateTests.cs`. Create `docs/superpowers/plans/2026-10-04-card-1029-control-qualification.md`. | V-13 field matrix; direct V-14 floor/alias assertions; all 192 IDs plus PC-256 receive a manual disposition. No label-only closure. |
 | S2: faithful per-kind delivery | `CodexCliRemoteDeliveryFixture.cs`, new `CodexCliObservationGapTests.cs`; extract reusable local arrangement to new `CodexCliLocalDeliveryFixture.cs` only as needed. Borrow setup from `GrokStartupReadyOrderingTests` without editing its production behavior. | New per-kind, enqueue/retry, old-generation and degraded-screen methods; existing eight observation methods remain green. |
 | S3: durable handoff recovery | Same fixtures and gap class. Use `BridgeQueueHarness.HarnessOptions.ConfigureDbContext`, preserve/attach options, existing `LandDeliveryBoundary`, launch sink and adapter/phone-home callbacks. Prefer test-local EF interceptors over shared helper changes. | PC-219/220/246 witnesses and all fault cuts below survive disposed/recreated DI with retained schema and recipient. |
-| S4: remote inertness matrix | Same gap class/fixtures, sample setters feeding actual capabilities/directory and prompt-counting typed-probe spies. | Four sample-family methods cover remote Retry and the I0-qualified warm/recovery contract; all sample/model rows below. |
+| S4: remote inertness matrix | Same gap class/fixtures, sample setters feeding actual capabilities/directory and selected-client typed-probe counters. Keep seeded-state setup visibly separate from the fixture's real Create/Retry entry points. | Four sample-family methods cover 38 real Worktree Retry vectors, 38 seeded remote pool vectors and 38 seeded recreated-pool vectors, with separate labels/receipt claims. CP-16 remains its existing claim/queue regression. All sample/model rows below. |
 | S5: qualification and evidence | This plan, control ledger, optional individual Markdown evidence under `docs/investigations/`; generated receipts/TRX/logs remain ignored. No production edits. | Exact-source ordinary rows, native L0959 obligation, final native C1029 qualification, separate Review, publication, then commissioned SourceLanding Mutation. |
 
 Commit/push each meaningful slice before its long run. S1-S4 should be authored
@@ -140,6 +165,28 @@ there are no repeated green runs for reassurance. Never edit source while a run
 is in flight.
 
 ## Verification scope for TestDesign
+
+### Reachability and evidence boundaries
+
+I0 is complete for this plan's classification. Its source reconstruction and
+five scoped production failure rows are not a new successful execution receipt.
+The unresolved producer claim would require retained task/agent/session lineage
+for an eligible non-worktree remote pool, or an admitted request sequence reaching
+it without fixture-only workspace mutation. No such evidence is assumed here;
+TestDesign can proceed with the explicit seeded-state boundary.
+
+| Checkpoint | Evidence to qualify | Claim that it cannot discharge |
+|---|---|---|
+| CP-4 | Existing local warm and real remote Create/cold consumers, with the current sample assertions and original detecting methods. | Remote pool provenance or remote Retry coverage by analogy to local behavior. |
+| CP-6, CP-9, CP-10 | Real remote Worktree Create/failure/Retry and the existing enqueue/fault cuts; preserve actual workspace, runner and task identity. Counts/filters unchanged. | A Shared conversion or live follow-up substituted for the failed Worktree task. |
+| CP-11..14 Retry columns | Real admitted remote Worktree task, actual failure boundary, same task retried, then cold recipient with complete current W and spilled E. | Warm pool eligibility or a new task passed off as Retry. |
+| CP-11..14 warm/recreated-warm columns | Explicitly seeded remote Shared task plus eligible non-worktree Codex pool/session; production reuse, queue, full recipient E/W and preserved identity across recreated DI. | Create/Retry admission, historic pool provenance, standing-agent placement or a new cold launch. |
+| CP-16 | Existing eight-result projection class; its signed-out Codex warm method establishes pre-claim non-refusal, claim/reuse, original agent/session/runner, queue handoff, zero new launches and no extra auth call. | Complete recipient receipt, recreated-DI recovery, an admitted Create/Retry sequence or a proven eligible-pool producer. |
+| CP-1..3, CP-5, CP-7..8, CP-15, CP-17..18 | Existing scope and counts remain. Native qualification, independent auth rules and durable cold-queue recovery keep their own witnesses. | Reachability-based discharge, retirement or substitution by the warm regression. |
+
+The observed Shared continuation failures are evidence explaining the boundary,
+not a new success/failure test target for CARD-1029. Their separately filed defect
+has no implementation, acceptance or repair dependency in this plan.
 
 ### Per-kind and receipt witnesses
 
@@ -173,11 +220,13 @@ Check pointer bytes after `.antiphon/inbox/{queueId:D}.md` expansion against the
 existing single-write ceiling. Assert file existence before reading bytes and
 bytes before aggregate receipt. Do not require literal B inside a pointer.
 
-Successful remote rows must observe actual framed Transcript requests and one
-whole ordinal-equal W on the selected session above the original sequence or
-timestamp floor, with the accepted generation retained. Keep existing clipped,
+New successful remote receipt vectors must observe actual framed Transcript
+requests and one whole ordinal-equal W on the selected session above the original
+sequence or timestamp floor, with the accepted generation retained. Keep existing clipped,
 baseline-equal, other-session and write-failure adversaries. Synthetic negative
 transcript inputs are allowed; synthesizing the expected positive W is not.
+CP-16 keeps its narrower existing claim/queue contract; its green result cannot
+stand in for these new recipient assertions.
 
 ### Fault cuts and recovery identity
 
@@ -199,7 +248,8 @@ Closed fault set: 11 seams × 2 sides × 2 lanes = 44 vectors. At each seam,
 use eligible/old sample for before and busy/unknown for after on local; reverse
 these pairings remotely, so every seam covers both availability and sample
 conditions without multiplying unrelated dimensions. Run local Shared and
-Worktree retained-claim success pairs already in V-22; no remote Shared create.
+Worktree retained-claim success pairs already in V-22; the remote producer
+vectors use Worktree, without a Shared follow-up or fixture conversion.
 Special PC-219/220/246 witnesses remain distinct because they prove the specific
 detecting assertion and original identity, not merely a generic crash outcome.
 
@@ -212,17 +262,37 @@ DI graph models application recovery, not power-loss durability.
 
 ### Remote sample/model matrix
 
-Every row below runs (a) real failed-task Retry, (b) I0-qualified retained-row
-warm reuse, and (c) the same warm handoff across recreated DI, each eligible and
-busy. Mutable samples feed actual registered capabilities/status, with successful
-auth left enabled. Change a good observation to the row's sample between create
-and dispatch, and between watchdog failure and Retry. No typed version operation
-may occur in create, Retry, cold dispatch, warm reuse or final launch composition.
+Every row below runs (a) real failed-Worktree-task Retry, (b) seeded remote Shared
+pool reuse, and (c) the same seeded pool handoff across recreated DI, each eligible
+and busy. These are three separate arrangements, not steps of a Create-to-pool
+journey. Mutable samples feed actual registered capabilities/status, with successful
+auth left enabled. On the producer path, change a good observation to the row's
+sample between Create and dispatch, and between watchdog failure and Retry.
+On seeded paths, change the registered observation before production claim/reuse
+and retain it across recreation; do not invent a preceding Create or Retry.
+No typed version operation may occur in Create, Retry, cold dispatch, warm reuse
+or final launch composition. Record the selected remote client's counter separately
+from the local counter so a remote-only probe cannot escape the oracle.
+
+The Retry setup must call real CreateAsync with Worktree, use the real failure
+boundary/watchdog, then RetryAsync on that task Id. Assert Workspace=Worktree and
+the same RunnerId before/after Retry, incremented Attempt, one Retried event and
+the new recipient session/generation; do not manufacture Failed or mutate Workspace.
+The warm setup explicitly seeds the Shared task and eligible pool/session with
+matching runner/kind/tier/project/env/reservation in a non-task-worktree directory.
+After setup, production dispatch and queue code must select and deliver to it:
+same agent/session/generation, zero launch specs, real input and whole W receipt.
+Recreated-warm retains the original queue Id/E/path and recipient across disposed
+DI. It may not reseed the queue, restage E or manufacture the expected transcript.
+TestDesign must locate the eligible/busy transition so it exercises actual queue
+handoff without bypassing warm candidate or working-session guards.
 
 H=High, M=Medium (both exact canonical argv `gpt-6.1-sol`), F=Frontier
 (`gpt-6-astra`), L=Low (`gpt-5.6-luna`). There is no invented remote profile pin.
+Cold Retry asserts actual canonical launch argv; warm vectors assert the seeded
+process's retained model/tier and no launch, not an argv composition they never run.
 
-| V | Sample | Retry / warm / recreated-warm tier |
+| V | Sample | Worktree Retry / seeded warm / seeded recreated-warm tier |
 |---|---|---|
 | V-23 | timeout | H / M / F |
 | V-23 | nonzero_exit | F / L / H |
@@ -241,8 +311,20 @@ This is 66 non-old vectors plus 48 old vectors = 114; four TUnit methods with
 labelled internal cases, **not 114 executions**. Existing local exact 6.1
 profile and remote tier cold tests remain. Do not multiply these rows by F1-F11:
 the recovery mechanism uses failed/unknown and old representatives above.
-The warm columns are expressly contingent on the I0 coverage classification;
-they must never be reported as real Create-to-warm admission proof.
+I0 fixes the warm columns' classification as seeded retained-state consumers;
+they must never be reported as real Create-to-warm admission or historic-producer
+proof. Preserve all vectors and the four method filters with this partition:
+
+| Checkpoint / witness | Real Worktree Retry | Seeded warm | Seeded recreated-warm | Total vectors |
+|---|---:|---:|---:|---:|
+| CP-11 / V-23 | 6 | 6 | 6 | 18 |
+| CP-12 / V-24 | 4 | 4 | 4 | 12 |
+| CP-13 / V-25 | 12 | 12 | 12 | 36 |
+| CP-14 / V-26 | 16 | 16 | 16 | 48 |
+| Total | 38 | 38 | 38 | 114 |
+
+Report each vector's path, sample, tier, availability and receipt outcome; four
+green TUnit results alone cannot show that all three coverage claims were exercised.
 
 ### Descriptor and manual control qualification
 
@@ -270,6 +352,10 @@ mutant description, exact method/filter, fixture branch and variant inputs, firs
 direct detecting assertion/label, earlier assertions that can mask it, lane,
 and status (`qualified design`, `missing witness`, `retargeted contract`, or
 `blocked seam`). Every missing witness must map to a Code slice before closure.
+For affected remote rows, also record whether the arrangement is a real Worktree
+producer or seeded pool state, its task/agent/session provenance and the exact
+limit of the detecting assertion. No obligation is removed because I0 found no
+eligible-pool producer; all 192 original IDs and PC-256 remain pending.
 
 Minimum explicit reconciliations:
 
@@ -290,6 +376,36 @@ Minimum explicit reconciliations:
   never-refuses PCs retain their original detecting methods and list the remote
   gap methods as additional scenario witnesses; a local mutant failure does not
   establish that a remote-only variant was exercised.
+- PC-225/228/231/234 (Create): remote Create witnesses must use admitted Worktree
+  requests with the advertised sample present at Create. Keep CP-4's original
+  detecting methods; seeded warm setup and the matrix's initially good Create
+  cannot witness these refusal guards.
+- PC-226/229/232/235 (Retry): qualify the real failed Worktree task's Retry in
+  CP-11..14, preserving workspace/runner/task identity. A retained Shared seed or
+  the separately seeded auth-Retry test is not a real-Create-to-Retry witness.
+- PC-227/230/233/236 (dispatch): name separate cold producer-to-recipient and
+  seeded pool/recreated-pool variants, with actual selected-client samples and
+  complete E/W receipts. A masked/earlier Create failure does not qualify dispatch.
+- PC-240 (zero warm probes): retain the original `_runners.Local` mutation and
+  its detecting method. Qualify a remote-only selected-client variant separately
+  against the seeded warm/recreated-warm rows, naming the actual remote typed
+  operation, counter and first assertion. A zero local counter is insufficient.
+- PC-253 (final launch): the remote witness is cold Worktree launch, including
+  actual final cwd and selected-client probe count. Preserve the original local
+  mutation and identify the remote-only variant separately. Zero-launch warm reuse
+  never executes this guard and cannot qualify it.
+- PC-256: retain the exact historical compiling defect: restore the removed
+  pre-claim auth invocation and the helper's internal visibility together. Bind
+  only `PhoneHomeTaskDispatchProjectionTests.Signed_out_codex_runner_still_claims_and_reuses_a_warm_session`
+  with filter `/*/*/PhoneHomeTaskDispatchProjectionTests/Signed_out_codex_runner_still_claims_and_reuses_a_warm_session`.
+  Its claim-status assertion must fail for signed-out refusal; build failure,
+  zero tests or another assertion is not red. This additional control covers
+  seeded pre-claim/reuse/queue behavior, not Create/Retry or complete recipient
+  delivery. CP-16's ordinary class run is not its method-scoped Mutation cycle.
+
+All other IDs retain their existing obligations and variants; I0 authorizes no
+retirement or silent retargeting. In particular archived admission PC-204 is not
+revived, and CP-16 cannot discharge the independent delivery/recovery controls.
 
 Manual mapping is design qualification, not an executed positive control. Static
 plan coverage remains a useful lint and always has reachability unproven. Run all
@@ -328,12 +444,12 @@ with a committed manifest amendment before execution, never an omitted vector.
 | CP-8 | all | `tests/Antiphon.Tests -> bin-c1029-recreate/` | portable-durable-recovery | `/*/*/CodexCliObservationGapTests/(C1029_Durable_spill_survives_recreated_graph)\|(C1029_Post_input_crash_late_confirms_once)` | V-22 identity/late-confirm | 2 results, 0 failed/skipped | 2 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-9 | all | `tests/Antiphon.Tests -> bin-c1029-early-cuts/` | portable-early-faults | `/*/*/CodexCliObservationGapTests/C1029_Faults_before_durable_queue_recover` | V-22 F1-F6 | 1 result, 24 vectors, 0 failed/skipped | 1 | 10 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-10 | all | `tests/Antiphon.Tests -> bin-c1029-late-cuts/` | portable-late-faults | `/*/*/CodexCliObservationGapTests/C1029_Faults_after_durable_queue_recover` | V-22 F7-F11 | 1 result, 20 vectors, 0 failed/skipped | 1 | 10 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-11 | all | `tests/Antiphon.Tests -> bin-c1029-failed/` | portable-remote-failed | `/*/*/CodexCliObservationGapTests/C1029_Remote_failed_samples_keep_retry_and_reuse` | V-23 remote matrix | 1 result, 18 vectors, 0 failed/skipped | 1 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-12 | all | `tests/Antiphon.Tests -> bin-c1029-stale/` | portable-remote-stale | `/*/*/CodexCliObservationGapTests/C1029_Remote_stale_samples_keep_retry_and_reuse` | V-24 remote matrix | 1 result, 12 vectors, 0 failed/skipped | 1 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-13 | all | `tests/Antiphon.Tests -> bin-c1029-unknown/` | portable-remote-unknown | `/*/*/CodexCliObservationGapTests/C1029_Remote_unknown_samples_keep_retry_and_reuse` | V-25 remote matrix | 1 result, 36 vectors, 0 failed/skipped | 1 | 12 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-14 | all | `tests/Antiphon.Tests -> bin-c1029-old/` | portable-remote-old | `/*/*/CodexCliObservationGapTests/C1029_Remote_old_samples_keep_retry_and_reuse` | V-26 remote matrix | 1 result, 48 vectors, 0 failed/skipped | 1 | 15 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-11 | all | `tests/Antiphon.Tests -> bin-c1029-failed/` | portable-remote-failed | `/*/*/CodexCliObservationGapTests/C1029_Remote_failed_samples_keep_retry_and_reuse` | V-23 Worktree Retry and seeded pool/recreated-pool receipts | 1 result, 18 vectors (6 Retry + 6 seeded warm + 6 seeded recreated-warm), 0 failed/skipped | 1 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-12 | all | `tests/Antiphon.Tests -> bin-c1029-stale/` | portable-remote-stale | `/*/*/CodexCliObservationGapTests/C1029_Remote_stale_samples_keep_retry_and_reuse` | V-24 Worktree Retry and seeded pool/recreated-pool receipts | 1 result, 12 vectors (4 Retry + 4 seeded warm + 4 seeded recreated-warm), 0 failed/skipped | 1 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-13 | all | `tests/Antiphon.Tests -> bin-c1029-unknown/` | portable-remote-unknown | `/*/*/CodexCliObservationGapTests/C1029_Remote_unknown_samples_keep_retry_and_reuse` | V-25 Worktree Retry and seeded pool/recreated-pool receipts | 1 result, 36 vectors (12 Retry + 12 seeded warm + 12 seeded recreated-warm), 0 failed/skipped | 1 | 12 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-14 | all | `tests/Antiphon.Tests -> bin-c1029-old/` | portable-remote-old | `/*/*/CodexCliObservationGapTests/C1029_Remote_old_samples_keep_retry_and_reuse` | V-26 Worktree Retry and seeded pool/recreated-pool receipts | 1 result, 48 vectors (16 Retry + 16 seeded warm + 16 seeded recreated-warm), 0 failed/skipped | 1 | 15 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-15 | all | `tests/Antiphon.Tests -> bin-c1029-auth/` | portable-existing-auth | `/*/*/(CodexPhoneHomeCreateTests*)\|(PinnedCodexProfileDispatchLaunchTests*)\|(ModelAvailabilityCreateTests*)\|(ModelAvailabilityDispatcherTests*)/*` | R-1 | 22 results, 0 failed/skipped | 22 | 7 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-16 | all | `tests/Antiphon.Tests -> bin-c1029-warm-auth/` | portable-warm-auth-regression | `/*/*/PhoneHomeTaskDispatchProjectionTests/*` | V-27,R-6,PC-256 design baseline | 8 results, 0 failed/skipped | 8 | 5 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-16 | all | `tests/Antiphon.Tests -> bin-c1029-warm-auth/` | portable-warm-auth-regression | `/*/*/PhoneHomeTaskDispatchProjectionTests/*` | V-27,R-6; PC-256 seeded claim/reuse/queue design baseline, no recipient/provenance claim | 8 results, 0 failed/skipped | 8 | 5 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-17 | all | `tests/Antiphon.SessionRunner.Tests -> bin-c1029-backstop/` | portable-auth-backstop | `/*/*/CodexProviderAuthRoutingTests/*` | R-7 | 1 result, 0 failed/skipped | 1 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-18 | all | `tests/Antiphon.SessionRunner.Tests -> bin-c1029-final-windows/` | windows-final-launcher | `/*/*/(CodexCliVersionWindowsTests*)\|(CodexWindowsLaunchPolicyTests*)/*` | V-6..V-8,R-4,CARD-1031 native preservation | 30 current results, full roster, 0 failed/skipped | 30 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
@@ -348,6 +464,10 @@ current-target recount at TestDesign. No silent lowering or accepted new skips.
 TestDesign must append the executable `## Verification design`, move the single
 active Checkpoints table into it, bind each fault to its real seam, and manually
 qualify every control as above. Do not create two active Checkpoints headings.
+Carry the Worktree-producer versus seeded-state classification into the manual
+ledger and vector reports; preserve CP-16's narrower assertion contract. Read
+the linked I0 report, but do not re-open its resolved classification or plan the
+separately filed continuation repair as a prerequisite to this verification work.
 Use coverage lint against actual methods/checklist after authoring; include its
 full findings and disposition without treating a static pass as mutation proof.
 
@@ -386,15 +506,24 @@ and final Windows evidence. Actual PC completion is separately recorded on the
 post-land verification companion at L1029, with restoration evidence; ordinary
 success cannot close that obligation. No restart is required for tests/docs.
 
-Immediate next stage is **Investigate**, narrowly because the parent plan's
-fresh-remote-to-warm path conflicts with the current admission/workspace guards.
-Measure the four I0 paths and record the real producer or explicit retained-state
-limit; reconcile the old exact-profile wording without altering production.
-Then **TestDesign** freezes this plan's closed ordinary roster and all control
-bindings, followed by Code -> independent Review -> land -> SourceLanding Mutation.
+Immediate next stage is **TestDesign**. I0 and this amendment resolve the
+reachability premise by separating real Worktree producer evidence, observed
+Shared continuation failure, and deliberately seeded eligible-pool coverage.
+TestDesign freezes the closed ordinary roster and all 192+1 control bindings,
+followed by Code -> independent Review -> land -> SourceLanding Mutation.
+Unknown eligible-pool provenance remains a stated coverage limit, not permission
+to claim admission or reduce the required matrix.
 
-Plan-stage validation: one active Checkpoints heading, 18 unique 11-column rows,
-125 total proposed/historical execution floor, 144 estimated minutes, and 192
-unique original PC table rows plus separately recorded PC-256. Referenced existing
-test paths exist; whitespace check passed. This was a text/structure check only:
-checkpoint importer, builds, tests and deliberate mutations were not executed.
+Amendment validation: one active Checkpoints heading, 18 unique 11-column rows,
+unchanged filters/lanes/execution floors/costs, 125 total proposed/historical
+execution floor and 144 estimated minutes. The 114 remote matrix vectors remain
+38 Worktree Retry + 38 seeded warm + 38 seeded recreated-warm. The 192-ID roster
+matches the parent's active control table, with PC-256 separately retained.
+Relative document links and referenced existing test paths resolve; whitespace
+check passed. These are text/structure checks only: the checkpoint importer,
+builds, tests and deliberate mutations were not executed.
+
+--- next stage ---
+next: test-design
+handoff: Qualify the amended plan's 192 original controls plus PC-256 and write Verification design. Preserve 38 real Worktree Retry, 38 seeded warm and 38 seeded recreated-warm vectors; CP-16 proves claim/reuse/queue only. Bind selected-client counters and receipt seams; keep the separately filed continuation defect out of scope.
+artifact: docs/superpowers/plans/2026-10-04-card-1029-inert-observation-verification-gaps-plan.md
