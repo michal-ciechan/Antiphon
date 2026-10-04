@@ -1,4 +1,5 @@
-using System.Reflection;
+using Antiphon.SessionRunner.Contracts;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -121,6 +122,16 @@ public class AgentPinWorkspaceStoreTests
         deniedResult.Reason.ShouldBe("pin_io_unavailable");
         deniedResult.Sha256.ShouldBeNull();
         deniedResult.Path.ShouldBeNull();
+
+        var directoryLeaf = fixture.Directory("directory-leaf");
+        Directory.CreateDirectory(fixture.Target(directoryLeaf, owner));
+        AssertRefused(await Inspect(fixture.Store, owner, directoryLeaf), "pin_path_not_file");
+
+        var pipeCwd = fixture.Directory("pipe-leaf");
+        var pipe = fixture.Target(pipeCwd, owner);
+        Directory.CreateDirectory(Path.GetDirectoryName(pipe)!);
+        MakeFifo(pipe, 0x180 /* 0600 */).ShouldBe(0);
+        AssertRefused(await Inspect(fixture.Store, owner, pipeCwd), "pin_path_not_file");
     }
 
     [Test]
@@ -143,6 +154,11 @@ public class AgentPinWorkspaceStoreTests
             "literal inspection bytes");
         reads.ShouldBe(1);
         File.ReadAllText(fixture.Target(cwd, owner)).ShouldBe("literal inspection bytes");
+
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        await Should.ThrowAsync<OperationCanceledException>(() => new AgentPinWorkspaceStore(fixture.Store)
+            .InspectAsync(new AgentPinInspectRequest(1, owner, fixture.Store, cwd), canceled.Token));
     }
 
     private static void AssertRefused(View result, string reason)
@@ -167,31 +183,21 @@ public class AgentPinWorkspaceStoreTests
         result.ByteCount.ShouldBe(bytes.Length);
     }
 
-    // Reflection lets the red-first commit execute and fail on the absent product contract,
-    // rather than failing compilation. Replaced by typed calls with implementation.
     private static async Task<View> Inspect(Guid store, Guid owner, string cwd, int schema = 1,
         Guid? expectedStore = null, Action<string>? beforeRead = null)
     {
-        var assembly = typeof(PhoneHomeCommandDispatcher).Assembly;
-        var type = assembly.GetType("Antiphon.SessionRunner.AgentPinWorkspaceStore");
-        type.ShouldNotBeNull("S3a.1 requires a host-native pin inspection operation");
-        var method = type.GetMethod("InspectAsync")!;
-        var requestType = method.GetParameters()[0].ParameterType;
-        var request = JsonSerializer.Deserialize(JsonSerializer.Serialize(new
-        {
-            SchemaVersion = schema, AgentId = owner, RunnerStoreId = expectedStore ?? store, Cwd = cwd
-        }), requestType)!;
-        var instance = Activator.CreateInstance(type, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-            binder: null, args: [store, beforeRead], culture: null)!;
-        var task = (Task)method.Invoke(instance, [request, CancellationToken.None])!;
-        await task;
-        var result = task.GetType().GetProperty("Result")!.GetValue(task)!;
+        var instance = new AgentPinWorkspaceStore(store, beforeRead);
+        var result = await instance.InspectAsync(new AgentPinInspectRequest(
+            schema, owner, expectedStore ?? store, cwd), CancellationToken.None);
         return JsonSerializer.Deserialize<View>(JsonSerializer.Serialize(result,
             new JsonSerializerOptions { Converters = { new JsonStringEnumConverter() } }))!;
     }
 
     private sealed record View(string Status, string? Reason, Guid AgentId, Guid RunnerStoreId,
         string? Cwd, string? Path, string? Sha256, long? ByteCount);
+
+    [DllImport("libc", EntryPoint = "mkfifo", SetLastError = true)]
+    private static extern int MakeFifo(string path, uint mode);
 
     private sealed class Fixture : IDisposable
     {
