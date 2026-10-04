@@ -16,6 +16,51 @@ namespace Antiphon.Tests.Application;
 public sealed class CardDoneWorktreeCleanupTests
 {
     [Test]
+    public async Task C1017_SharedAndBorrowedExcluded()
+    {
+        foreach (var mode in new[] { WorkspaceMode.Shared, WorkspaceMode.ReadOnly })
+        {
+            await using var fixture = await CompletedCardCleanupFixture.CreateAsync();
+            await fixture.ChangeTaskAsync(t => t.Workspace = mode);
+            await fixture.CleanupAsync();
+            var originalBytes = fixture.OriginalBytes;
+            var borrowedBytes = await fixture.SentinelAsync();
+            borrowedBytes.ShouldBe(originalBytes);
+        }
+        await using var owned = await CompletedCardCleanupFixture.CreateAsync();
+        (await owned.CleanupAsync()).IsClean.ShouldBeTrue();
+        await owned.AssertRemovedAsync();
+    }
+
+    [Test]
+    public async Task C1017_SourceLandingExcluded()
+    {
+        await using var fixture = await CompletedCardCleanupFixture.CreateAsync();
+        await fixture.ChangeTaskAsync(t => { t.SourceLandingOperationId = Guid.NewGuid(); t.Role = AgentTaskRole.Mutation; });
+        await fixture.CleanupAsync();
+        var verificationTreeExists = Directory.Exists(fixture.Tree);
+        verificationTreeExists.ShouldBeTrue();
+        (await fixture.SentinelAsync()).ShouldBe(fixture.OriginalBytes);
+        await using var ordinary = await CompletedCardCleanupFixture.CreateAsync();
+        await ordinary.ChangeTaskAsync(t => t.Role = AgentTaskRole.Mutation);
+        (await ordinary.CleanupAsync()).IsClean.ShouldBeTrue();
+        await ordinary.AssertRemovedAsync();
+    }
+
+    [Test]
+    public async Task C1017_SlotAndCanonicalExcluded()
+    {
+        await using var fixture = await CompletedCardCleanupFixture.CreateAsync("reusable-slot");
+        await fixture.CleanupAsync();
+        var originalBytes = fixture.OriginalBytes;
+        var slotSentinel = await fixture.SentinelAsync();
+        slotSentinel.ShouldBe(originalBytes);
+        await using var ordinary = await CompletedCardCleanupFixture.CreateAsync();
+        (await ordinary.CleanupAsync()).IsClean.ShouldBeTrue();
+        await ordinary.AssertRemovedAsync();
+    }
+
+    [Test]
     public async Task C1017_DiscoverPostDoneAttempts()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
