@@ -30,7 +30,7 @@ internal sealed class TestOwnedPtyHost
         public Action<ProcessIdentity> Kill { get; set; } = p => p.Handle!.Kill(entireProcessTree: true);
         public Func<ProcessIdentity, TimeSpan, CancellationToken, Task>? Wait { get; set; }
         public Action<ProcessIdentity> Release { get; set; } = p => p.Handle?.Dispose();
-        public Action<string, Owned?> Record { get; set; } = (_, _) => { };
+        public Action<string, Owned?> Record { get; set; } = (operation, owned) => Console.WriteLine($"C1020 cleanup operation={operation} session={owned?.SessionId} pid={owned?.Process.Pid} generation={owned?.Process.Generation} at={DateTime.UtcNow:O}");
         public bool VerifyHostCommand { get; init; } = true;
     }
 
@@ -65,7 +65,7 @@ internal sealed class TestOwnedPtyHost
 
     internal bool Retain(Owned candidate, Guid expectedSession)
     {
-        if (candidate.SessionId != expectedSession || !Authorized(candidate, _io.Observe(candidate.Process)))
+        if (candidate.SessionId != expectedSession || !Authorized(candidate, Observe(candidate.Process)))
         {
             _io.Record("rejected", candidate);
             _io.Release(candidate.Process);
@@ -132,6 +132,7 @@ internal sealed class TestOwnedPtyHost
             if (kill)
             {
                 try { supplement(); } catch (Exception ex) { failures.Add(ex); }
+                _io.Record("stop-sessions", null);
                 using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2), _io.Clock))
                 {
                     try { await stop(deadline.Token); }
@@ -172,7 +173,8 @@ internal sealed class TestOwnedPtyHost
         {
             try
             {
-                var observed = _io.Observe(record.Process);
+                var observed = Observe(record.Process);
+                if (observed.State == State.Dead) _io.Record("observed-exit", record);
                 if (observed.State != State.Dead)
                     failures.Add(Failure(record, "survivor/" + observed.State, started));
             }
@@ -184,7 +186,7 @@ internal sealed class TestOwnedPtyHost
 
     internal void Force(Owned record)
     {
-        var current = _io.Observe(record.Process);
+        var current = Observe(record.Process);
         if (current.State == State.Dead) return;
         // Recheck the generation at the control boundary, including retained descendants.
         if (!Authorized(record, current))
@@ -219,11 +221,17 @@ internal sealed class TestOwnedPtyHost
     private IOException Failure(Owned record, string phase, long started, Exception? inner = null) =>
         new($"session={record.SessionId:D} pid={record.Process.Pid} generation={record.Process.Generation} phase={phase} elapsed={_io.Clock.GetElapsedTime(started)}", inner);
 
+    private Observation Observe(ProcessIdentity identity)
+    {
+        try { return _io.Observe(identity); }
+        catch (Exception ex) { return new(State.Unknown, identity.Generation, ex.GetType().Name); }
+    }
+
     private async Task WaitNativeAsync(ProcessIdentity identity, TimeSpan remaining, CancellationToken ct)
     {
         while (true)
         {
-            var observation = _io.Observe(identity);
+            var observation = Observe(identity);
             if (observation.State == State.Dead) return;
             if (observation.State != State.Alive) throw new IOException($"process observation {observation.State}: {observation.Reason}");
             await Task.Delay(TimeSpan.FromMilliseconds(20), _io.Clock, ct);
@@ -313,7 +321,6 @@ internal sealed class TestOwnedPtyHost
         catch (ArgumentException) { return new(State.Dead, identity.Generation); }
         catch (FileNotFoundException) { return new(State.Dead, identity.Generation); }
         catch (DirectoryNotFoundException) { return new(State.Dead, identity.Generation); }
-        catch (Exception ex) { return new(State.Unknown, identity.Generation, ex.GetType().Name); }
     }
 
     private static (long Generation, char State, int Parent) Proc(int pid)

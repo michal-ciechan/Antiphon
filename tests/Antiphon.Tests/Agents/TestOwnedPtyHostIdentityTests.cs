@@ -200,7 +200,7 @@ public class TestOwnedPtyHostPolicyTests
         fixture.Manager.Retain(fixture.Record(11), fixture.SessionId).ShouldBeTrue();
         var observe = fixture.Io.Observe;
         var kill = fixture.Io.Kill;
-        if (scenario == "probe-denied") fixture.Io.Observe = p => p.Pid == 10 ? new(State.Unknown, p.Generation, "denied") : observe(p);
+        if (scenario == "probe-denied") fixture.Io.Observe = p => p.Pid == 10 ? throw new UnauthorizedAccessException("probe denied") : observe(p);
         if (scenario == "kill-denied") fixture.Io.Kill = p =>
         {
             kill(p); // It exits independently; only the denied operation makes the result unresolved.
