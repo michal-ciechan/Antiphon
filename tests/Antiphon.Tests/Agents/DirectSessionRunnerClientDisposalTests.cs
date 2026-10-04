@@ -132,9 +132,11 @@ public class DirectSessionRunnerClientDisposalTests
         fixture.Client.OnDisposeCore = () => calls++;
         var first = fixture.Client.DisposeAsync().AsTask();
         var second = fixture.Client.DisposeAsync().AsTask();
-        ReferenceEquals(first, second).ShouldBeTrue("second call shares completion");
-        await Task.WhenAll(first, second);
+        Exception? failure = null;
+        try { await Task.WhenAll(first, second); } catch (Exception ex) { failure = ex; }
         calls.ShouldBe(1, "dispose-core-once");
+        ReferenceEquals(first, second).ShouldBeTrue("second call shares completion");
+        failure.ShouldBeNull();
         fixture.Witness.AssertExited();
         fixture.DeleteRoot();
     }
@@ -219,7 +221,7 @@ internal sealed class OwnedPtyWitness : IAsyncDisposable
                 using var commands = commandQuery.Get();
                 var command = commands.Cast<ManagementObject>().Single()["CommandLine"]?.ToString();
                 command.ShouldNotBeNull();
-                command.ShouldContain("--linger-hours 0.02", "actual-linger-argument");
+                command.ShouldContain("--linger-hours 0.02", customMessage: "actual-linger-argument");
                 Console.WriteLine("C1020 host-command=" + command);
                 var log = Path.Combine(Path.GetDirectoryName(manifestDir)!, "logs", sessionId.ToString("N") + ".log");
                 File.ReadAllText(log).ShouldContain("pty backend: ModernConPty (requested 'modern')");

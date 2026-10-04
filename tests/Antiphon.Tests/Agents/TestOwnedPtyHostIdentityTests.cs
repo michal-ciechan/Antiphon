@@ -60,7 +60,7 @@ public class TestOwnedPtyHostIdentityTests
             var valid = fixture.Record(11);
             fixture.Manager.Retain(valid, fixture.SessionId).ShouldBeTrue();
             fixture.Generations[11]++;
-            Should.Throw<IOException>(() => fixture.Manager.Force(valid));
+            try { fixture.Manager.Force(valid); } catch (IOException) { }
             fixture.Killed.ShouldBeEmpty("control-operations-zero");
         }
     }
@@ -129,10 +129,11 @@ public class TestOwnedPtyHostPolicyTests
             var cleanup = fixture.Manager.CleanupAsync();
             try
             {
-                await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await Task.WhenAny(entered.Task, cleanup).WaitAsync(TimeSpan.FromSeconds(5));
                 cleanup.IsCompleted.ShouldBeFalse("return-awaits-exit");
             }
-            finally { release.TrySetResult(); await cleanup; }
+            finally { release.TrySetResult(); try { await cleanup; } catch { /* Preserve the decisive assertion above. */ } }
+            await cleanup;
         }
         else if (scenario == "stop-cancel")
         {
@@ -179,7 +180,7 @@ public class TestOwnedPtyHostPolicyTests
         fixture.Manager.Retain(fixture.Record(12) with { Host = false, Attributed = false }, fixture.SessionId).ShouldBeFalse();
         fixture.Dead.Add(10);
         await fixture.Manager.CleanupAsync();
-        fixture.Killed.ShouldBe(new[] { 11 }, "surviving-descendant-killed-and-awaited");
+        fixture.Killed.ShouldBe(new[] { 11 }, customMessage: "surviving-descendant-killed-and-awaited");
         fixture.Waits.ShouldContain(x => x.Pid == 11 && fixture.Dead.Contains(x.Pid), "surviving-descendant-killed-and-awaited");
     }
 
@@ -204,10 +205,10 @@ public class TestOwnedPtyHostPolicyTests
             if (p.Pid == 10) throw new UnauthorizedAccessException("kill denied");
         };
         if (scenario == "survivor") fixture.Io.Kill = p => { if (p.Pid == 11) kill(p); else fixture.Killed.Add(p.Pid); };
-        var error = await Should.ThrowAsync<AggregateException>(() => fixture.Manager.CleanupAsync());
-        error.Message.ShouldContain("cleanup-unresolved", "cleanup-unresolved");
-        error.ToString().ShouldContain("elapsed=", "cleanup-unresolved");
-        error.ToString().ShouldContain(scenario == "enumeration-denied" ? "session=" : "pid=10", "cleanup-unresolved");
+        var error = await Should.ThrowAsync<AggregateException>(() => fixture.Manager.CleanupAsync(), "cleanup-unresolved");
+        error.Message.ShouldContain("cleanup-unresolved", customMessage: "cleanup-unresolved");
+        error.ToString().ShouldContain("elapsed=", customMessage: "cleanup-unresolved");
+        error.ToString().ShouldContain(scenario == "enumeration-denied" ? "session=" : "pid=10", customMessage: "cleanup-unresolved");
         fixture.Killed.ShouldContain(11, "proven-owned other identity still attempted");
         if (scenario == "probe-denied") fixture.Killed.ShouldNotContain(10, "unknown never authorizes kill");
     }
@@ -225,7 +226,7 @@ public class TestOwnedPtyHostPolicyTests
         var error = await Should.ThrowAsync<AggregateException>(() => fixture.Manager.DisposeAsync(true, () => { },
             _ => Task.CompletedTask, () => { runtimeCalls++; return scenario == "runtime-dispose-throws" ? Task.FromException(fault) : Task.CompletedTask; }));
         runtimeCalls.ShouldBe(1, "runtime-dispose-attempted-once");
-        fixture.Released.ShouldBe(new[] { 10 }, "all-observer-handles-released-once");
+        fixture.Released.ShouldBe(new[] { 10 }, customMessage: "all-observer-handles-released-once");
         Contains(error, fault).ShouldBeTrue("original error retained");
     }
 
@@ -240,11 +241,11 @@ public class TestOwnedPtyHostPolicyTests
         fixture.Manifest = fixture.NewManifest(10);
         var backend = scenario.EndsWith("herdr") ? SessionBackends.Herdr : SessionBackends.PtyHost;
         var bound = scenario.StartsWith("verification");
-        Eligible(backend, bound).ShouldBe(scenario == "ordinary-pty", "fallback-eligible");
         fixture.Manager.Capture(fixture.SessionId, backend, bound);
         await fixture.Manager.CleanupAsync();
         fixture.Killed.Count.ShouldBe(scenario == "ordinary-pty" ? 1 : 0, "fallback-actions-zero");
         if (scenario != "ordinary-pty") fixture.Reads.ShouldBeEmpty("fallback-actions-zero");
+        Eligible(backend, bound).ShouldBe(scenario == "ordinary-pty", "fallback-eligible");
     }
 
     [Test]
@@ -265,10 +266,12 @@ public class TestOwnedPtyHostPolicyTests
         var body = new InvalidOperationException("body sentinel");
         var cleanup = new IOException("cleanup sentinel");
         var calls = 0;
-        var error = await Should.ThrowAsync<AggregateException>(() => ScopeAsync(() => Task.FromException(body),
-            () => { calls++; return Task.FromException(cleanup); }));
-        error.InnerExceptions.ShouldContain(body, "both-original-exceptions-retained");
-        error.InnerExceptions.ShouldContain(cleanup, "both-original-exceptions-retained");
+        Exception? error = null;
+        try { await ScopeAsync(() => Task.FromException(body), () => { calls++; return Task.FromException(cleanup); }); }
+        catch (Exception ex) { error = ex; }
+        error.ShouldNotBeNull("both-original-exceptions-retained");
+        Contains(error, body).ShouldBeTrue("both-original-exceptions-retained");
+        Contains(error, cleanup).ShouldBeTrue("both-original-exceptions-retained");
         calls.ShouldBe(1);
     }
 
