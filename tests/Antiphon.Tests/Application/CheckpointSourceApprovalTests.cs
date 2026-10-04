@@ -86,29 +86,45 @@ public sealed class CheckpointSourceApprovalTests
     [Test]
     public async Task recovery_and_resume_recheck_source_assertion()
     {
-        foreach (var latched in new[] { false, true })
-        foreach (LandPhase? cut in new LandPhase?[] { null, LandPhase.Prepared, LandPhase.Verified, LandPhase.PushStarted })
-        foreach (bool? assertion in new bool?[] { false, null, true })
+        var failures = new List<ShouldAssertException>();
+        async Task Observe(Task action)
         {
-            await using var h = new LandingProtocolHarness();
-            await h.InitializeAsync();
-            await OrdinaryCaseAsync(h, latched, cut, assertion);
+            try { await action; }
+            catch (ShouldAssertException failure) { failures.Add(failure); }
+        }
+        await using (var family = await CheckpointSourceApprovalFamily.CreateAsync())
+        {
+            foreach (var latched in new[] { false, true })
+            foreach (LandPhase? cut in new LandPhase?[] { null, LandPhase.Prepared, LandPhase.Verified, LandPhase.PushStarted })
+            foreach (bool? assertion in new bool?[] { false, null, true })
+            {
+                await family.ResetAsync();
+                await using var h = await family.OpenProtocolAsync();
+                await Observe(OrdinaryCaseAsync(h, latched, cut, assertion));
+            }
         }
         foreach (var mode in new[] { "self", "adoption" })
-        foreach (var timing in new[] { "admission", "resume" })
-        foreach (bool? assertion in new bool?[] { false, null, true })
         {
-            await using var h = new LandingSafetyHarness();
-            await h.InitializeAsync();
-            await RecoveryCaseAsync(h, mode, timing, assertion);
+            await using var family = await CheckpointSourceApprovalFamily.CreateAsync(native: true);
+            foreach (var timing in new[] { "admission", "resume" })
+            foreach (bool? assertion in new bool?[] { false, null, true })
+            {
+                await family.ResetAsync();
+                await using var h = await family.OpenNativeAsync();
+                await Observe(RecoveryCaseAsync(h, mode, timing, assertion));
+            }
         }
         foreach (var mode in new[] { "ordinary", "self", "adoption" })
-        foreach (bool? assertion in new bool?[] { false, null })
         {
-            await using var h = new LandingSafetyHarness();
-            await h.InitializeAsync();
-            await PublishedCleanupCaseAsync(h, mode, assertion);
+            await using var family = await CheckpointSourceApprovalFamily.CreateAsync(native: true);
+            foreach (bool? assertion in new bool?[] { false, null })
+            {
+                await family.ResetAsync();
+                await using var h = await family.OpenNativeAsync();
+                await Observe(PublishedCleanupCaseAsync(h, mode, assertion));
+            }
         }
+        if (failures.Count != 0) throw new AggregateException("C886 case assertions", failures);
     }
 
     internal static async Task OrdinaryCaseAsync(LandingProtocolHarness h, bool latched, LandPhase? cut, bool? assertion)
@@ -161,8 +177,10 @@ public sealed class CheckpointSourceApprovalTests
                 stored.ReviewEvidenceId.ShouldBe(evidence.Id, "L13 unlatched-resume-refuses-unclean " + (label));
                 stored.ExpectedSourceSha.ShouldBe(sha, "L14 unlatched-resume-refuses-unclean " + (label));
                 stored.IsPending.ShouldBeFalse( "L15 unlatched-resume-refuses-unclean " + (label));
-                (await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == h.Git.TaskId &&
-                    e.Type == AgentTaskEventType.LandRefused).SingleAsync()).Detail
+                var refusals = await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == h.Git.TaskId &&
+                    e.Type == AgentTaskEventType.LandRefused).ToListAsync();
+                refusals.Count.ShouldBe(1, "L16-cardinality unlatched-resume-refuses-unclean " + label);
+                refusals[0].Detail
                     .ShouldContain("review_evidence_source_not_clean", Case.Sensitive, "L16 unlatched-resume-refuses-unclean " + (!latched && assertion == false ? "unlatched-resume-refuses-unclean " + label : label));
             }
             }
@@ -242,7 +260,7 @@ public sealed class CheckpointSourceApprovalTests
                     StageTaskId = Guid.NewGuid(), ReviewedSourceSha = reviewed, ReviewedSourceClean = true,
                     ReviewedSourceRef = h.Fixture.SourceRef, ReviewedRepositoryPath = h.Fixture.Repository,
                     CommissionedRound = VerificationRound.Final, OrdinaryScopeCompleted = VerificationScope.Full,
-                    RecordedAt = DateTime.UtcNow,
+                    RecordedAt = h.Clock.GetUtcNow().UtcDateTime,
                 };
                 db.StageOutcomes.Add(evidence);
                 await db.SaveChangesAsync();
@@ -305,7 +323,7 @@ public sealed class CheckpointSourceApprovalTests
         owner.Status = AgentTaskStatus.Failed;
         if (sourceId is Guid sid)
         {
-            var now = DateTime.UtcNow;
+            var now = h.Clock.GetUtcNow().UtcDateTime;
             var projectId = Guid.NewGuid();
             var boardId = Guid.NewGuid();
             var columnId = Guid.NewGuid();
@@ -347,7 +365,7 @@ public sealed class CheckpointSourceApprovalTests
             Source = StageOutcomeSource.Delegate, SubjectTaskId = sourceId ?? owner.Id, StageTaskId = Guid.NewGuid(),
             ReviewedSourceSha = reviewed, ReviewedSourceClean = clean, ReviewedSourceRef = sourceRef,
             ReviewedRepositoryPath = h.Fixture.Repository, CommissionedRound = VerificationRound.Final,
-            OrdinaryScopeCompleted = VerificationScope.Full, RecordedAt = DateTime.UtcNow,
+            OrdinaryScopeCompleted = VerificationScope.Full, RecordedAt = h.Clock.GetUtcNow().UtcDateTime,
         };
         db.StageOutcomes.Add(evidence);
         await db.SaveChangesAsync();

@@ -1,6 +1,9 @@
 using System.Security.Cryptography;
 using System.Text;
 using Npgsql;
+using Microsoft.EntityFrameworkCore;
+using Antiphon.Server.Infrastructure.Data;
+using System.Text.Json;
 
 namespace Antiphon.Tests.TestHelpers;
 
@@ -30,11 +33,13 @@ internal sealed class CheckpointSourceApprovalFamily : IAsyncDisposable
     private CheckpointSourceFixtureImage? _image;
     private string[] _tables = [];
     private string _database = "";
+    private string _metadata = "";
+    private bool _qualified = true;
     private string _connection = "";
     private bool _caseOpen;
     private bool _disposed;
 
-    public static async Task<CheckpointSourceApprovalFamily> CreateAsync(bool native = false)
+    public static async Task<CheckpointSourceApprovalFamily> CreateAsync(bool native = false, Guid? taskId = null)
     {
         var family = new CheckpointSourceApprovalFamily();
         try
@@ -55,10 +60,24 @@ internal sealed class CheckpointSourceApprovalFamily : IAsyncDisposable
             var digest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', family._tables.Where(t => t != "__EFMigrationsHistory")) + "\n")));
             if (family._tables.Count(t => t != "__EFMigrationsHistory") != 111 || digest != "92e850b6825f14e2af278ce71b04736c3496322524457d5facb8e2730aa28231")
                 throw new InvalidOperationException("C886 schema inventory changed: " + digest);
+            await family.QualifyMetadataAsync(connection);
+            family._metadata = await MetadataAsync(connection);
             family.Baseline = await family.ReadRowsAsync();
+            foreach (var (table, rows) in family.Baseline)
+                if (table != "Users" && table != "__EFMigrationsHistory" && rows != "[]")
+                    throw new InvalidOperationException("unexpected family seed in " + table);
+            using (var users = JsonDocument.Parse(family.Baseline["Users"]))
+            {
+                var row = users.RootElement.EnumerateArray().Single();
+                if (row.GetProperty("Id").GetGuid() != Guid.Parse("a0000000-0000-0000-0000-000000000001") ||
+                    row.GetProperty("UserName").GetString() != "admin" || row.GetProperty("Email").GetString() != "admin@antiphon.local" ||
+                    !row.GetProperty("IsAdmin").GetBoolean() || row.GetProperty("CreatedAt").GetDateTime().ToUniversalTime() != new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc))
+                    throw new InvalidOperationException("unexpected family admin seed");
+            }
             if (native)
             {
-                family.Fixture = new LandingGitFixture();
+                family.Fixture = new LandingGitFixture(taskId: taskId);
+                family.Fixture.Git.FixedCommitTime = "2026-10-01T00:00:00Z";
                 await family.Fixture.InitializeAsync();
                 family.NativeInitializations++;
                 family._image = CheckpointSourceFixtureImage.Capture(family.Fixture.Root);
@@ -99,17 +118,73 @@ internal sealed class CheckpointSourceApprovalFamily : IAsyncDisposable
         destructiveAction();
     }
 
-    public Task ResetAsync()
+    private static async Task<string> MetadataAsync(NpgsqlConnection connection)
     {
-        if (_caseOpen || _disposed) throw new InvalidOperationException("family case still owns resources");
-        ValidateDatabaseTarget(Schema, _connection, () => { });
-        // S1: image restoration is deliberately not wired until the contract goes red.
-        return Task.CompletedTask; // S1: preserve real dirty state for the named reset assertions.
+        const string sql = """
+            SELECT jsonb_build_object(
+              'columns', (SELECT jsonb_agg(to_jsonb(c) ORDER BY table_name, ordinal_position) FROM information_schema.columns c WHERE table_schema='public'),
+              'constraints', (SELECT jsonb_agg(jsonb_build_array(n.nspname,t.relname,c.conname,pg_get_constraintdef(c.oid)) ORDER BY n.nspname,t.relname,c.conname)
+                FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname='public'))::text
+            """;
+        return (string)(await new NpgsqlCommand(sql, connection).ExecuteScalarAsync())!;
     }
+
+    private async Task QualifyMetadataAsync(NpgsqlConnection connection)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(_connection));
+        var model = db.Model.GetRelationalModel();
+        var expected = model.Tables.SelectMany(t => t.Columns.Select(c => t.Name + "/" + c.Name)).ToHashSet(StringComparer.Ordinal);
+        var actual = new HashSet<string>(StringComparer.Ordinal);
+        await using (var command = new NpgsqlCommand("SELECT table_name,column_name FROM information_schema.columns WHERE table_schema='public' AND table_name <> '__EFMigrationsHistory'", connection))
+        await using (var reader = await command.ExecuteReaderAsync())
+            while (await reader.ReadAsync()) actual.Add(reader.GetString(0) + "/" + reader.GetString(1));
+        if (!expected.SetEquals(actual)) throw new InvalidOperationException("family EF/PostgreSQL columns disagree");
+        var foreignKeys = model.Tables.SelectMany(t => t.ForeignKeyConstraints.Select(c => t.Name + "/" + c.Name)).ToHashSet(StringComparer.Ordinal);
+        var actualForeignKeys = new HashSet<string>(StringComparer.Ordinal);
+        await using (var command = new NpgsqlCommand("SELECT t.relname,c.conname FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname='public' AND c.contype='f'", connection))
+        await using (var reader = await command.ExecuteReaderAsync())
+            while (await reader.ReadAsync()) actualForeignKeys.Add(reader.GetString(0) + "/" + reader.GetString(1));
+        if (!foreignKeys.SetEquals(actualForeignKeys)) throw new InvalidOperationException("family EF/PostgreSQL foreign keys disagree");
+        const string guards = """
+            SELECT (SELECT count(*) FROM pg_constraint c JOIN pg_class child ON child.oid=c.conrelid JOIN pg_class parent ON parent.oid=c.confrelid
+              WHERE c.contype='f' AND parent.relname = ANY(@tables) AND NOT(child.relname = ANY(@tables))) +
+              (SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name = ANY(@tables)
+                AND (is_identity='YES' OR column_default LIKE '%nextval%'))
+            """;
+        await using var guard = new NpgsqlCommand(guards, connection);
+        guard.Parameters.AddWithValue("tables", Closure);
+        if ((long)(await guard.ExecuteScalarAsync())! != 0) throw new InvalidOperationException("family closure or sequence changed");
+    }
+
+    public async Task ResetAsync()
+    {
+        if (_caseOpen || _disposed || !_qualified) throw new InvalidOperationException("family case still owns resources or reset unqualified");
+        _qualified = false;
+        ValidateDatabaseTarget(Schema, _connection, () => { });
+        await using (var connection = new NpgsqlConnection(_connection))
+        {
+            await connection.OpenAsync();
+            if ((string)(await new NpgsqlCommand("SELECT current_database()", connection).ExecuteScalarAsync())! != _database)
+                throw new InvalidOperationException("family database identity changed");
+            if (await MetadataAsync(connection) != _metadata) throw new InvalidOperationException("family metadata changed");
+            await using var transaction = await connection.BeginTransactionAsync();
+            await using var truncate = new NpgsqlCommand("TRUNCATE TABLE " + string.Join(',', Closure.Select(t => "public.\"" + t + "\"")) + " CONTINUE IDENTITY RESTRICT", connection, transaction);
+            await truncate.ExecuteNonQueryAsync();
+            if (!MatchesBaseline(await ReadRowsAsync(connection, transaction))) return;
+            await transaction.CommitAsync();
+        }
+        if (!MatchesBaseline(await ReadRowsAsync())) return;
+        _image?.Restore();
+        Fixture?.RenewRecorder();
+        _qualified = _image is null || _image.Matches();
+    }
+
+    private bool MatchesBaseline(IReadOnlyDictionary<string, string> rows) =>
+        Baseline.All(pair => rows.TryGetValue(pair.Key, out var actual) && actual == pair.Value);
 
     private void OpenCase()
     {
-        if (_caseOpen || _disposed) throw new InvalidOperationException("family already in use");
+        if (_caseOpen || _disposed || !_qualified) throw new InvalidOperationException("family already in use or reset unqualified");
         _caseOpen = true;
     }
 

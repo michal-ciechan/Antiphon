@@ -52,6 +52,14 @@ public sealed class CheckpointSourceApprovalReuseTests
             next.Fault.Phase.ShouldBeNull("family-fault-unarmed");
             next.Fault.Triggered.ShouldBeFalse("family-fault-unarmed");
             next.Fault.AfterCommit.ShouldBeFalse("family-fault-unarmed");
+            next.Fault.AfterSave.ShouldBeFalse("family-fault-unarmed");
+            next.Fault.AwaitingCommit.ShouldBeFalse("family-fault-unarmed");
+            next.Fault.Matches.ShouldBeNull("family-fault-unarmed");
+            next.Fault.TerminalCut.ShouldBeNull("family-fault-unarmed");
+            next.Fault.AfterAcknowledged.ShouldBeNull("family-fault-unarmed");
+            next.Fault.AfterSaveAcknowledged.ShouldBeNull("family-fault-unarmed");
+            next.Fault.OnTransactionStarted.ShouldBeNull("family-fault-unarmed");
+            next.Verifier.Invocations.ShouldBeEmpty("family-case-services-fresh");
             next.Verifier.Passed.ShouldBeTrue("family-case-services-fresh");
             next.Verifier.Barrier.ShouldBeNull("family-case-services-fresh");
             next.Verifier.Calls.ShouldBe(0, "family-case-services-fresh");
@@ -122,12 +130,13 @@ public sealed class CheckpointSourceApprovalReuseTests
     {
         foreach (var kind in new[] { "ordinary", "self", "adoption", "cleanup-ordinary", "cleanup-self", "cleanup-adoption" })
         {
+            var ownerId = Guid.NewGuid();
             bool?[] sequence = kind.StartsWith("cleanup-", StringComparison.Ordinal)
                 ? [false, null, null, false] : [true, false, null, null, false, true];
             var oracle = new Dictionary<string, string>();
             foreach (var assertion in sequence.Distinct())
             {
-                await using var fresh = await CheckpointSourceApprovalFamily.CreateAsync(kind != "ordinary");
+                await using var fresh = await CheckpointSourceApprovalFamily.CreateAsync(kind != "ordinary", ownerId);
                 oracle[assertion?.ToString() ?? "null"] = await ObserveCaseAsync(fresh, kind, assertion);
             }
             await using var reused = await CheckpointSourceApprovalFamily.CreateAsync(kind != "ordinary");
@@ -163,7 +172,13 @@ public sealed class CheckpointSourceApprovalReuseTests
         var requests = await freshDb.AgentTaskLandRequests.OrderBy(r => r.RequestedAt).ToListAsync();
         var operation = await native.OperationAsync();
         var remote = await native.Fixture.RequiredAsync(native.Fixture.Remote, "rev-parse", native.Fixture.TargetRef);
-        return $"{string.Join(',', requests.Select(r => r.IsPending))}|{operation?.Phase}|{operation?.Cleanup}|{operation?.LastReason}|{native.Verifier.Calls}|{remote.Trim() == native.Fixture.SeedSha}|" +
+        var source = await native.Fixture.RequiredAsync(native.Fixture.Remote, "rev-parse", native.Fixture.SourceRef);
+        foreach (var request in requests.Where(r => r.ReviewEvidenceId != null))
+        {
+            var evidence = await freshDb.StageOutcomes.SingleAsync(o => o.Id == request.ReviewEvidenceId);
+            request.ExpectedSourceSha.ShouldBe(evidence.ReviewedSourceSha, "family-order-independent approval coordinates");
+        }
+        return $"{string.Join(',', requests.Select(r => r.IsPending))}|{operation?.Phase}|{operation?.Cleanup}|{operation?.LastReason}|{native.Verifier.Calls}|{remote.Trim()}|{source.Trim()}|" +
             string.Join(',', native.Fixture.Git.Trace.Select(a => a[0]));
     }
 

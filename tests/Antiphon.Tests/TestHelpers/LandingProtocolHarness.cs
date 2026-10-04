@@ -102,7 +102,8 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
             Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Worktree,
             WorkingDirectory = Git.Repository, RepoPath = Git.Repository, WorktreePath = Git.Source,
             WorktreeBranch = Git.SourceRef[11..], MergeTargetRef = "master", Status = AgentTaskStatus.Succeeded,
-            ReplyTo = AgentTaskReplyTo.None, CreatedAt = Clock.GetUtcNow().UtcDateTime, CompletedAt = Clock.GetUtcNow().UtcDateTime,
+            ReplyTo = AgentTaskReplyTo.None, CreatedAt = _borrowed ? Clock.GetUtcNow().UtcDateTime : DateTime.UtcNow,
+            CompletedAt = _borrowed ? Clock.GetUtcNow().UtcDateTime : DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
     }

@@ -36,6 +36,21 @@ internal sealed class CheckpointSourceFixtureImage
         destructiveAction();
     }
 
+    public bool Matches()
+    {
+        if (!Directory.Exists(_root)) return false;
+        var paths = ReadTree(_root).Select(p => Path.GetRelativePath(_root, p)).ToHashSet(StringComparer.Ordinal);
+        if (!paths.SetEquals(_entries.Select(e => e.Path))) return false;
+        foreach (var entry in _entries)
+        {
+            var path = Path.Combine(_root, entry.Path);
+            if (File.GetAttributes(path) != entry.Attributes) return false;
+            if (!OperatingSystem.IsWindows() && File.GetUnixFileMode(path) != entry.Mode) return false;
+            if (entry.Bytes is not null && !File.ReadAllBytes(path).AsSpan().SequenceEqual(entry.Bytes)) return false;
+        }
+        return true;
+    }
+
     public void Restore()
     {
         ValidateTarget(_root, () =>

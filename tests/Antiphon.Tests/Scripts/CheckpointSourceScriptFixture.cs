@@ -74,7 +74,9 @@ internal sealed partial class CheckpointSourceScriptFixture : IDisposable
 
     public void ResetScenario()
     {
-        // S1: the test observes the old image/counters before any next invocation.
+        if (_activeCompleted is { Task.IsCompleted: false } || _active is { HasExited: false })
+            throw new InvalidOperationException("script case still owns a process");
+        RestoreSeedForParity();
     }
 
     internal void RestoreSeedForParity()
@@ -150,12 +152,23 @@ internal sealed partial class CheckpointSourceScriptFixture : IDisposable
     }
 
     internal Action? BeforeRootDeletion { get; set; }
+    internal Action? DisposalStarted { get; set; }
+    internal Func<Task>? BeforeInvocationCompletion { get; set; }
+    private readonly List<Task<DriverResult>> _owned = [];
     private bool _disposed;
     private Process? _active;
     private bool _failed;
     public void Dispose()
     {
         if (_disposed) return;
+        DisposalStarted?.Invoke();
+        if (_activeCompleted is { Task.IsCompleted: false }) StopWorkerAsync(force: true).GetAwaiter().GetResult();
+        if (_active is { HasExited: false }) _active.Kill(entireProcessTree: true);
+        Task<DriverResult>[] owned;
+        lock (_owned) owned = _owned.ToArray();
+        try { Task.WhenAll(owned).GetAwaiter().GetResult(); } catch (Exception) { /* primary failure remains on each owned invocation */ }
+        StopWorkerAsync(force: false).GetAwaiter().GetResult();
+        if (_worker is not null) _worker.StandardOutput.ReadToEnd();
         BeforeRootDeletion?.Invoke();
         GitFixtureCleanup.Delete(Root);
         _disposed = true;
@@ -164,11 +177,26 @@ internal sealed partial class CheckpointSourceScriptFixture : IDisposable
     internal void FailActiveInvocation()
     {
         _failed = true;
+        if (_worker is { HasExited: false }) _worker.Kill(entireProcessTree: true);
         if (_active is { HasExited: false }) _active.Kill(entireProcessTree: true);
     }
 
     internal async Task<JsonElement> ProbeIdleAsync()
     {
+        if (SessionMode)
+        {
+            await _serial.WaitAsync();
+            try
+            {
+                StartWorker();
+                await _worker!.StandardInput.WriteLineAsync("{\"kind\":\"idle\"}");
+                await _worker.StandardInput.FlushAsync();
+                var response = await _worker.StandardOutput.ReadLineAsync();
+                using var idle = JsonDocument.Parse(response ?? throw new IOException("idle worker response missing"));
+                return idle.RootElement.Clone();
+            }
+            finally { _serial.Release(); }
+        }
         var script = Path.Combine(External, "idle.ps1");
         await File.WriteAllTextAsync(script, "[ordered]@{cwd=[Environment]::CurrentDirectory;probe=$env:C835_PROBE;empty=$env:C835_EMPTY;absent=[Environment]::GetEnvironmentVariables().Contains('C835_ABSENT')} | ConvertTo-Json -Compress");
         var result = await InvokeAsync(script);
@@ -211,7 +239,16 @@ internal sealed partial class CheckpointSourceScriptFixture
         public string Output => Stdout + Stderr;
     }
 
-    internal async Task<DriverResult> InvokeAsync(string script, IReadOnlyList<string>? arguments = null,
+    internal Task<DriverResult> InvokeAsync(string script, IReadOnlyList<string>? arguments = null,
+        IReadOnlyDictionary<string, string?>? environment = null, CancellationToken cancellationToken = default)
+    {
+        var invocation = SessionMode ? InvokeSessionAsync(script, arguments, environment, cancellationToken)
+            : InvokeProcessAsync(script, arguments, environment, cancellationToken);
+        lock (_owned) _owned.Add(invocation);
+        return invocation;
+    }
+
+    private async Task<DriverResult> InvokeProcessAsync(string script, IReadOnlyList<string>? arguments = null,
         IReadOnlyDictionary<string, string?>? environment = null, CancellationToken cancellationToken = default)
     {
         using var process = new Process { StartInfo = new ProcessStartInfo("pwsh")
@@ -246,4 +283,194 @@ internal sealed partial class CheckpointSourceScriptFixture
         Invocations.Add(result);
         return result;
     }
+    private Process? _worker;
+    private Task<string>? _workerStderr;
+    private readonly SemaphoreSlim _serial = new(1, 1);
+    private TaskCompletionSource? _activeCompleted;
+
+    private void StartWorker()
+    {
+        if (_worker is not null) return;
+        var asset = Path.Combine(External, "worker.ps1");
+        File.WriteAllText(asset, WorkerScript);
+        _worker = new Process { StartInfo = new ProcessStartInfo("pwsh")
+        {
+            WorkingDirectory = Repo, RedirectStandardInput = true, RedirectStandardOutput = true,
+            RedirectStandardError = true, UseShellExecute = false,
+        } };
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-File", asset })
+            _worker.StartInfo.ArgumentList.Add(argument);
+        _worker.StartInfo.Environment["GIT_AUTHOR_DATE"] = "2026-10-01T00:00:00Z";
+        _worker.StartInfo.Environment["GIT_COMMITTER_DATE"] = "2026-10-01T00:00:00Z";
+        _worker.Start();
+        _workerStderr = _worker.StandardError.ReadToEndAsync();
+    }
+
+    private async Task<DriverResult> InvokeSessionAsync(string script, IReadOnlyList<string>? arguments,
+        IReadOnlyDictionary<string, string?>? environment, CancellationToken cancellationToken)
+    {
+        await _serial.WaitAsync(cancellationToken);
+        _activeCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            if (_disposed) throw new ObjectDisposedException(nameof(CheckpointSourceScriptFixture));
+            StartWorker();
+            var parameters = new List<object>();
+            var args = arguments ?? [];
+            for (var index = 0; index < args.Count; index++)
+            {
+                var name = args[index].TrimStart('-');
+                object value = true;
+                if (index + 1 < args.Count && !args[index + 1].StartsWith('-')) value = args[++index];
+                parameters.Add(new { name, value });
+            }
+            var request = JsonSerializer.Serialize(new { kind = "invoke", script, parameters, cwd = Repo,
+                environment = environment ?? new Dictionary<string, string?>() });
+            await _worker!.StandardInput.WriteLineAsync(request);
+            await _worker.StandardInput.FlushAsync();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+            using var cancel = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token, cancellationToken);
+            var line = await _worker.StandardOutput.ReadLineAsync(cancel.Token);
+            if (line is null) throw new IOException("fixture-primary-failure: worker exited: " + await _workerStderr!);
+            using var json = JsonDocument.Parse(line);
+            var response = json.RootElement;
+            var result = new DriverResult(response.GetProperty("exit").GetInt32(), response.GetProperty("stdout").GetString()!,
+                response.GetProperty("stderr").GetString()!, _worker.Id, _worker.StartTime.ToUniversalTime().Ticks,
+                response.GetProperty("runspace").GetGuid(), response.GetProperty("terminated").GetBoolean());
+            Invocations.Add(result);
+            return result;
+        }
+        catch
+        {
+            await StopWorkerAsync(force: true);
+            throw;
+        }
+        finally
+        {
+            if (BeforeInvocationCompletion is not null) await BeforeInvocationCompletion();
+            _activeCompleted.TrySetResult();
+            _serial.Release();
+        }
+    }
+
+    private async Task StopWorkerAsync(bool force)
+    {
+        if (_worker is null) return;
+        if (!_worker.HasExited)
+        {
+            if (force) _worker.Kill(entireProcessTree: true);
+            else { await _worker.StandardInput.WriteLineAsync("{\"kind\":\"stop\"}"); await _worker.StandardInput.FlushAsync(); }
+        }
+        await _worker.WaitForExitAsync();
+        await _workerStderr!;
+    }
+
+    private const string WorkerScript = """"
+        $ErrorActionPreference = 'Stop'
+        Add-Type -TypeDefinition @'
+        using System;
+        using System.Collections.Generic;
+        using System.Collections.ObjectModel;
+        using System.Globalization;
+        using System.Management.Automation;
+        using System.Management.Automation.Host;
+        using System.Security;
+        using System.Text;
+        public sealed class C886Host : PSHost {
+            public readonly C886UI Screen = new C886UI();
+            public int ExitCode;
+            public bool Exited;
+            private readonly Guid id = Guid.NewGuid();
+            public override Guid InstanceId => id;
+            public override string Name => "C886";
+            public override Version Version => new Version(1,0);
+            public override CultureInfo CurrentCulture => CultureInfo.InvariantCulture;
+            public override CultureInfo CurrentUICulture => CultureInfo.InvariantCulture;
+            public override PSHostUserInterface UI => Screen;
+            public override void SetShouldExit(int code) { ExitCode = code; Exited = true; }
+            public override void EnterNestedPrompt() { throw new InvalidOperationException("nested prompt"); }
+            public override void ExitNestedPrompt() { }
+            public override void NotifyBeginApplication() { }
+            public override void NotifyEndApplication() { }
+        }
+        public sealed class C886UI : PSHostUserInterface {
+            public readonly StringBuilder Output = new StringBuilder();
+            public readonly StringBuilder Error = new StringBuilder();
+            public override PSHostRawUserInterface RawUI => null;
+            public override string ReadLine() { throw new InvalidOperationException("interactive prompt"); }
+            public override SecureString ReadLineAsSecureString() { throw new InvalidOperationException("interactive prompt"); }
+            public override void Write(string value) { Output.Append(value); }
+            public override void Write(ConsoleColor fg, ConsoleColor bg, string value) { Write(value); }
+            public override void WriteLine(string value) { Output.AppendLine(value); }
+            public override void WriteErrorLine(string value) { Error.AppendLine(value); }
+            public override void WriteDebugLine(string value) { Output.AppendLine("DEBUG: " + value); }
+            public override void WriteVerboseLine(string value) { Output.AppendLine("VERBOSE: " + value); }
+            public override void WriteWarningLine(string value) { Output.AppendLine("WARNING: " + value); }
+            public override void WriteProgress(long id, ProgressRecord value) { }
+            public override Dictionary<string,PSObject> Prompt(string caption, string message, Collection<FieldDescription> descriptions) { throw new InvalidOperationException("interactive prompt"); }
+            public override PSCredential PromptForCredential(string caption, string message, string user, string target) { throw new InvalidOperationException("interactive prompt"); }
+            public override PSCredential PromptForCredential(string caption, string message, string user, string target, PSCredentialTypes types, PSCredentialUIOptions options) { throw new InvalidOperationException("interactive prompt"); }
+            public override int PromptForChoice(string caption, string message, Collection<ChoiceDescription> choices, int defaultChoice) { throw new InvalidOperationException("interactive prompt"); }
+        }
+        '@
+        $workerCwd = [Environment]::CurrentDirectory
+        while ($null -ne ($line = [Console]::In.ReadLine())) {
+            $request = $line | ConvertFrom-Json -AsHashtable
+            if ($request.kind -eq 'stop') { break }
+            if ($request.kind -eq 'idle') {
+                $idle = @{cwd=[Environment]::CurrentDirectory;probe=$env:C835_PROBE;empty=$env:C835_EMPTY;absent=[Environment]::GetEnvironmentVariables().Contains('C835_ABSENT')}
+                [Console]::Out.WriteLine(($idle | ConvertTo-Json -Compress))
+                continue
+            }
+            $before = [Environment]::GetEnvironmentVariables()
+            $cwd = [Environment]::CurrentDirectory
+            $hostCapture = [C886Host]::new()
+            $space = $null
+            $pipeline = $null
+            $terminated = $false
+            $identity = [Guid]::Empty
+            try {
+                foreach ($key in $request.environment.Keys) {
+                    [Environment]::SetEnvironmentVariable($key, $request.environment[$key])
+                }
+                [Environment]::CurrentDirectory = $request.cwd
+                $space = [runspacefactory]::CreateRunspace($hostCapture)
+                $space.Open()
+                $identity = $space.InstanceId
+                $space.SessionStateProxy.Path.SetLocation($request.cwd) | Out-Null
+                $pipeline = [powershell]::Create()
+                $pipeline.Runspace = $space
+                $null = $pipeline.AddCommand($request.script)
+                foreach ($parameter in $request.parameters) {
+                    $null = $pipeline.AddParameter([string]$parameter.name, $parameter.value)
+                }
+                try {
+                    $values = $pipeline.Invoke()
+                    foreach ($value in $values) { $hostCapture.Screen.Output.AppendLine([string]$value) | Out-Null }
+                    if ($pipeline.InvocationStateInfo.State -eq 'Failed') { $terminated = $true }
+                } catch {
+                    $terminated = $true
+                    $hostCapture.Screen.Error.AppendLine([string]$_) | Out-Null
+                }
+                foreach ($errorRecord in $pipeline.Streams.Error) {
+                    $hostCapture.Screen.Error.AppendLine([string]$errorRecord) | Out-Null
+                }
+            } catch {
+                $terminated = $true
+                $hostCapture.Screen.Error.AppendLine([string]$_) | Out-Null
+            } finally {
+                if ($null -ne $pipeline) { $pipeline.Dispose() }
+                if ($null -ne $space) { $space.Dispose() }
+                foreach ($key in @([Environment]::GetEnvironmentVariables().Keys)) {
+                    if (-not $before.Contains($key)) { [Environment]::SetEnvironmentVariable($key, $null) }
+                }
+                foreach ($key in $before.Keys) { [Environment]::SetEnvironmentVariable($key, [string]$before[$key]) }
+                [Environment]::CurrentDirectory = $cwd
+            }
+            $exitCode = if ($terminated) { 1 } elseif ($hostCapture.Exited) { $hostCapture.ExitCode } else { 0 }
+            $response = @{exit=$exitCode;stdout=$hostCapture.Screen.Output.ToString();stderr=$hostCapture.Screen.Error.ToString();runspace=$identity;terminated=$terminated}
+            [Console]::Out.WriteLine(($response | ConvertTo-Json -Compress -Depth 8))
+        }
+        """";
+
 }

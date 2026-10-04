@@ -96,7 +96,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         var rowRun = NewRun(CommandManifest(), before);
         var rowExit = await CheckpointApp.ExecuteAsync(rowRun, CancellationToken.None,
             Runtime(during, _ => ++observations <= 2 ? before : after));
-        rowExit.ShouldBe(ExitCodes.Invalid, "driver-boundary-drift");
+        rowExit.ShouldBe(ExitCodes.Invalid, "driver-drift-stops-next-row driver-boundary-drift");
         Read(rowRun).Source.State.ShouldBe("changed");
 
         var sameCountAfter = new SourceObservation(Sha, 0, new string('3', 64),
@@ -105,7 +105,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         var sameCountRun = NewRun(CommandManifest(), before);
         (await CheckpointApp.ExecuteAsync(sameCountRun, CancellationToken.None,
             Runtime(new FakeDriver(), _ => ++sameCountObservations <= 2 ? before : sameCountAfter)))
-            .ShouldBe(ExitCodes.Invalid, "driver-same-count-fingerprint-drift");
+            .ShouldBe(ExitCodes.Invalid, "driver-drift-stops-next-row driver-same-count-fingerprint-drift");
         var sameCountReport = Read(sameCountRun);
         sameCountReport.Source.Start.Commit.ShouldBe(sameCountReport.Source.End!.Commit);
         sameCountReport.Source.Start.DirtyFiles.ShouldBe(sameCountReport.Source.End.DirtyFiles);
@@ -156,7 +156,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         });
         var queuedRun = NewRun(queuedManifest, before);
         (await CheckpointApp.ExecuteAsync(queuedRun, CancellationToken.None,
-            Runtime(queuedDriver, _ => queuedSource))).ShouldBe(ExitCodes.Invalid);
+            Runtime(queuedDriver, _ => queuedSource))).ShouldBe(ExitCodes.Invalid, "driver-drift-stops-next-row");
         queuedDriver.Calls.Count.ShouldBe(1, "driver-drift-stops-next-row");
         Read(queuedRun).Source.Start.Commit.ShouldBe(Sha);
 

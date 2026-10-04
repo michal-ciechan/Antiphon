@@ -223,7 +223,7 @@ public sealed class CheckpointSourceStateTests
             script.GetProperty("captureStatus").GetString().ShouldBe("known", kind);
             script.GetProperty("commit").GetString().ShouldBe(tool.Commit, kind);
             script.GetProperty("dirtyFiles").GetInt32().ShouldBe(tool.DirtyFiles!.Value, kind);
-            script.GetProperty("fingerprint").GetString().ShouldBe(tool.Fingerprint, kind);
+            script.GetProperty("fingerprint").GetString().ShouldBe(tool.Fingerprint, "fixed-vector-parity " + kind);
         }
 
         repo.Git("restore", "--staged", "--worktree", "seed.txt");

@@ -92,7 +92,7 @@ public sealed class RunCheckpointSourceScriptTests
     [Test]
     public async Task C835_DriftAndReuse()
     {
-        using var fixture = new CheckpointSourceScriptFixture();
+        using var fixture = new CheckpointSourceScriptFixture { SessionMode = true };
         var built = await fixture.RunAsync(expectedSha: fixture.Head);
         built.Exit.ShouldBe(0, "S01 " + (built.Output));
         var reused = await fixture.RunAsync(expectedSha: fixture.Head, noBuild: true);
@@ -107,7 +107,9 @@ public sealed class RunCheckpointSourceScriptTests
         missing.Line.ShouldContain("reason=build_source_mismatch", Case.Sensitive, "S07 " + ("invalid-stamp-no-tests missing-stamp-no-tests"));
         fixture.Calls.ShouldBe(calls, "S08 " + ("invalid-stamp-no-tests missing-stamp-no-tests"));
 
-        using (var tampered = new CheckpointSourceScriptFixture())
+        fixture.ResetScenario();
+        var tampered = fixture;
+        
         {
             (await tampered.RunAsync(expectedSha: tampered.Head)).Exit.ShouldBe(0, "S09 ");
             var stamp = JsonNode.Parse(await File.ReadAllTextAsync(tampered.Stamp))!.AsObject();
@@ -125,7 +127,9 @@ public sealed class RunCheckpointSourceScriptTests
             tampered.Calls.ShouldBe(before, "S14 invalid-stamp-no-tests ");
         }
 
-        using (var failedRebuild = new CheckpointSourceScriptFixture())
+        fixture.ResetScenario();
+        var failedRebuild = fixture;
+        
         {
             (await failedRebuild.RunAsync(expectedSha: failedRebuild.Head)).Exit.ShouldBe(0, "S15 ");
             var failure = await failedRebuild.RunAsync(expectedSha: failedRebuild.Head, buildExit: 37);
@@ -136,12 +140,14 @@ public sealed class RunCheckpointSourceScriptTests
             failedRebuild.Calls.ShouldBe(before, "S19 " + ("failed-rebuild-cannot-reuse-stale-output"));
         }
 
-        using var driftFixture = new CheckpointSourceScriptFixture();
+        fixture.ResetScenario();
+        var driftFixture = fixture;
         var drift = await driftFixture.RunAsync(driftPhase: "run");
         drift.Exit.ShouldBe(2, "S20 driver-drift-is-changed " + (drift.Output));
         drift.Source.GetProperty("state").GetString().ShouldBe("changed", "S21 " + ("driver-drift-is-changed"));
         drift.Line.ShouldContain("executed=3 passed=3", Case.Sensitive, "S22 " + ("driver-drift-retains-counts"));
-        using var sameCountFixture = new CheckpointSourceScriptFixture();
+        fixture.ResetScenario();
+        var sameCountFixture = fixture;
         sameCountFixture.Write("tracked.txt", "first dirty value");
         var sameCount = await sameCountFixture.RunAsync(driftPhase: "same-count-run");
         sameCount.Exit.ShouldBe(2, "S23 " + (sameCount.Output));
@@ -150,15 +156,18 @@ public sealed class RunCheckpointSourceScriptTests
         sameCount.Source.GetProperty("start").GetProperty("fingerprint").GetString()
             .ShouldNotBe(sameCount.Source.GetProperty("end").GetProperty("fingerprint").GetString(), "S26 " + ("same-count-content-change-has-new-fingerprint"));
         sameCount.Source.GetProperty("state").GetString().ShouldBe("changed", "S27 " + ("same-count-driver-drift-is-changed"));
-        using var buildDriftFixture = new CheckpointSourceScriptFixture();
+        fixture.ResetScenario();
+        var buildDriftFixture = fixture;
         var buildDrift = await buildDriftFixture.RunAsync(driftPhase: "build");
         buildDrift.Exit.ShouldBe(2, "S28 " + (buildDrift.Output));
         buildDrift.Source.GetProperty("state").GetString().ShouldBe("changed", "S29 " + ("build-drift"));
-        using var headDriftFixture = new CheckpointSourceScriptFixture();
+        fixture.ResetScenario();
+        var headDriftFixture = fixture;
         var headDrift = await headDriftFixture.RunAsync(driftPhase: "head-run");
         headDrift.Exit.ShouldBe(2, "S30 " + (headDrift.Output));
         headDrift.Source.GetProperty("state").GetString().ShouldBe("changed", "S31 " + ("head-movement"));
-        using var restoreFixture = new CheckpointSourceScriptFixture();
+        fixture.ResetScenario();
+        var restoreFixture = fixture;
         restoreFixture.Write("tracked.txt", "dirty before driver");
         var restored = await restoreFixture.RunAsync(driftPhase: "restore-run");
         restored.Exit.ShouldBe(2, "S32 " + (restored.Output));

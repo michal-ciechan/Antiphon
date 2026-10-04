@@ -132,3 +132,7 @@ The check extracts V-matrix class/method names, backtick-quoted PC witness label
 | CP-12 | `AgentTaskLandApprovalRecoveryTests` | `tests/Antiphon.Tests/Application/AgentTaskLandApprovalRecoveryTests.cs:17` | yes |
 | CP-12 | `C488_OriginalApprovalNeverAdoptsHead` | `tests/Antiphon.Tests/Application/AgentTaskLandApprovalRecoveryTests.cs:238` | yes |
 | CP-12 | `C488_ChangedSourceNeedsNewApproval` | `tests/Antiphon.Tests/Application/AgentTaskLandApprovalRecoveryTests.cs:415` | yes |
+
+### CARD-0886 fixture extraction
+
+The V-21 public test retains 42 cases. Its unchanged behavioral assertions now live in `CheckpointSourceApprovalTests.OrdinaryCaseAsync` (L01–L16), `RecoveryCaseAsync` (L17–L29), and `PublishedCleanupCaseAsync` (L30–L37). L16 also checks event cardinality before indexing the event. The V-8 public test retains its eight scenario boundaries, fourteen real invocations and S01–S35 assertions; only its fixture ownership and execution transport change. New reset/worker contracts are the eight F-1–F-8 methods named in the CARD-0886 plan. Every inherited and new PC remains pending SourceLanding Mutation; preparatory reset omissions are not PC completion.

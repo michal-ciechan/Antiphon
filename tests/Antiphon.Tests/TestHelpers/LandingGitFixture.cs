@@ -16,7 +16,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
     public string SourceRef => $"refs/heads/feat/card-task-{TaskId:N}";
     public string TargetRef => "refs/heads/master";
     public Guid TaskId { get; }
-    public FixtureGit Git { get; }
+    public FixtureGit Git { get; private set; }
     public string SeedSha { get; private set; } = "";
     public LandSourceCoordinates Coordinates => new(TaskId, Repository, Source, SourceRef, TargetRef);
     public string ObservationRef => $"refs/antiphon/land/{TaskId:N}/{Guid.NewGuid():N}/remote-observed";
@@ -31,6 +31,8 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         Directory.CreateDirectory(Path.Combine(Root, "home"));
         Git = new FixtureGit(Path.Combine(Root, "home"), TaskId);
     }
+
+    internal void RenewRecorder() => Git = new FixtureGit(Path.Combine(Root, "home"), TaskId) { FixedCommitTime = Git.FixedCommitTime };
 
     public async Task InitializeAsync()
     {
@@ -155,6 +157,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
 
     internal class FixtureGit(string home, Guid taskId) : LandingGit
     {
+        public string? FixedCommitTime { get; set; }
         public List<string[]> Trace { get; } = [];
         public string? HooksPathOverride { get; set; }
         /// <summary>CARD-0688: every command with the directory it ran in.</summary>
@@ -168,6 +171,11 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         protected override void ConfigureProcess(ProcessStartInfo start)
         {
             start.Environment["HOME"] = home;
+            if (FixedCommitTime is not null)
+            {
+                start.Environment["GIT_AUTHOR_DATE"] = FixedCommitTime;
+                start.Environment["GIT_COMMITTER_DATE"] = FixedCommitTime;
+            }
             start.Environment["GIT_EDITOR"] = ":";
             start.Environment["GIT_SEQUENCE_EDITOR"] = ":";
             start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";

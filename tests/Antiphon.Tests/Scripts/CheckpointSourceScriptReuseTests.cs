@@ -185,37 +185,74 @@ public sealed class CheckpointSourceScriptReuseTests
         foreach (var workerFailure in new[] { false, true })
         {
             var fixture = new CheckpointSourceScriptFixture { SessionMode = true };
-            using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+            using var cancel = new CancellationTokenSource();
             var script = Path.Combine(fixture.External, "child.ps1");
             var ready = Path.Combine(fixture.External, "child-ready");
             await File.WriteAllTextAsync(script, """
                 param([string]$Ready)
-                [IO.File]::WriteAllText(($Ready + '.tmp'), [string]$PID)
+                $start = [Diagnostics.ProcessStartInfo]::new('pwsh')
+                $start.UseShellExecute = $false
+                $start.RedirectStandardInput = $true
+                foreach ($arg in @('-NoProfile','-NonInteractive','-Command','[Console]::In.ReadLine() | Out-Null')) { $start.ArgumentList.Add($arg) }
+                $child = [Diagnostics.Process]::Start($start)
+                [IO.File]::WriteAllText(($Ready + '.tmp'), ([string]$child.Id + '|' + $child.StartTime.ToUniversalTime().Ticks))
                 [IO.File]::Move(($Ready + '.tmp'), $Ready)
-                [Console]::In.ReadLine() | Out-Null
+                $child.WaitForExit()
                 """);
             var readySignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             using var watcher = new FileSystemWatcher(fixture.External) { EnableRaisingEvents = true };
             watcher.Renamed += (_, e) => { if (e.FullPath == ready) readySignal.TrySetResult(); };
             watcher.Created += (_, e) => { if (e.FullPath == ready) readySignal.TrySetResult(); };
-            var running = fixture.InvokeAsync(script, ["-Ready", ready], cancellationToken: cancel.Token);
-            await readySignal.Task.WaitAsync(cancel.Token);
-            var pid = int.Parse(await File.ReadAllTextAsync(ready, cancel.Token));
-            using var child = Process.GetProcessById(pid);
+            var disposalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var finishing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var joinedAtDeletion = false;
-            fixture.BeforeRootDeletion = () => joinedAtDeletion = child.HasExited && running.IsCompleted;
+            fixture.DisposalStarted = () => disposalStarted.TrySetResult();
+            fixture.BeforeInvocationCompletion = async () => { finishing.TrySetResult(); await releaseFinish.Task; };
+            using var sentinel = new Process { StartInfo = new ProcessStartInfo("pwsh")
+            {
+                RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
+                UseShellExecute = false,
+            } };
+            foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-Command", "[Console]::In.ReadLine() | Out-Null" }) sentinel.StartInfo.ArgumentList.Add(arg);
+            sentinel.Start();
+            var sentinelOut = sentinel.StandardOutput.ReadToEndAsync();
+            var sentinelError = sentinel.StandardError.ReadToEndAsync();
+            Process? child = null;
+            Task<CheckpointSourceScriptFixture.DriverResult>? running = null;
+            Task? disposal = null;
             try
             {
+                running = fixture.InvokeAsync(script, ["-Ready", ready], cancellationToken: cancel.Token);
+                await readySignal.Task.WaitAsync(deadline.Token);
+                var identity = (await File.ReadAllTextAsync(ready, deadline.Token)).Split('|');
+                child = Process.GetProcessById(int.Parse(identity[0]));
+                child.StartTime.ToUniversalTime().Ticks.ShouldBe(long.Parse(identity[1]), "script-owned-children-joined identity");
+                fixture.BeforeRootDeletion = () => joinedAtDeletion = child.HasExited && running.IsCompleted;
                 if (workerFailure) fixture.FailActiveInvocation(); else cancel.Cancel();
-                await Should.ThrowAsync<Exception>(async () => await running, "script-primary-failure-preserved");
-                fixture.Dispose();
+                await finishing.Task.WaitAsync(deadline.Token);
+                disposal = Task.Run(fixture.Dispose);
+                await disposalStarted.Task.WaitAsync(deadline.Token);
+                Directory.Exists(fixture.Root).ShouldBeTrue("script-owned-children-joined root survives until completion");
+                releaseFinish.TrySetResult();
+                if (workerFailure)
+                    (await Should.ThrowAsync<IOException>(async () => await running, "script-primary-failure-preserved")).Message.ShouldContain("fixture-primary-failure");
+                else await Should.ThrowAsync<OperationCanceledException>(async () => await running, "script-primary-failure-preserved");
+                await disposal.WaitAsync(deadline.Token);
                 joinedAtDeletion.ShouldBeTrue("script-owned-children-joined");
+                sentinel.HasExited.ShouldBeFalse("script-owned-children-joined unrelated sentinel remains alive");
             }
             finally
             {
+                releaseFinish.TrySetResult();
                 cancel.Cancel();
-                try { await running; } catch (Exception) { }
-                if (!child.HasExited) { child.Kill(entireProcessTree: true); await child.WaitForExitAsync(); }
+                if (running is not null) { try { await running; } catch (Exception) { } }
+                if (disposal is not null) await disposal;
+                if (child is { HasExited: false }) { child.Kill(entireProcessTree: true); await child.WaitForExitAsync(); }
+                child?.Dispose();
+                if (!sentinel.HasExited) { sentinel.Kill(); await sentinel.WaitForExitAsync(); }
+                await Task.WhenAll(sentinelOut, sentinelError);
                 fixture.Dispose();
             }
         }
