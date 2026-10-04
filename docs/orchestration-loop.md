@@ -40,8 +40,11 @@ main as the runner user, and remove the retired temp project's volumes. They
 must ALWAYS retire temp (`retire-temp`) once scheduling is back on main, under the
 [volume recycling policy](docker-stack.md#volume-recycling-and-disk-reclaim-card-1008).
 Every drain, zero-work, routing, land, unpublished-work and unreferenced-volume
-precondition for volume removal in that procedure must pass; use its manual temp
-equivalent until the script fixes land. Main volume recycling by hand is not
+precondition for volume removal in that procedure must pass. Gate 8 observes exit
+and removes only proven owned exited temp containers; always run gate 9
+`retire-temp` afterward, including already-absent cleanup. Normal `retire-temp`
+also recovers older exited retirement; its pinned offline publication audit and
+strict volume proof remain mandatory. Main volume recycling by hand is not
 authorized or documented: it is scripted only, to be implemented inside
 `redeploy-old` / `deploy-parent` by CARD-1008. Stopping main by hand makes
 `Assert-ZeroCounters` refuse with `RunnerCounterUnknown` before deployment.

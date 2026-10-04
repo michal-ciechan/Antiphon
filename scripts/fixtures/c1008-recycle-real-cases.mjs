@@ -5,6 +5,9 @@ import cp from 'node:child_process';
 import crypto from 'node:crypto';
 import http from 'node:http';
 import util from 'node:util';
+import {materialize,mountSignature} from './c994-production-compose-model.mjs';
+import {ownedRoot,ownedObject,ownedDaemon,boundedChild} from './c994-real-custody.mjs';
+const c994=process.env.C994_REAL==='1';
 
 // Ordinary RD evidence only. This fixture never runs from a SourceLanding snapshot.
 const exec = util.promisify(cp.execFile);
@@ -15,14 +18,15 @@ const docker = (...args) => {
   finally { commandTimings.push({args, milliseconds:performance.now()-start}); }
 };
 if (!fs.existsSync('/.dockerenv') || docker('info','--format','{{.Name}}') !== os.hostname()) throw Error('SiblingDaemonRefused');
-const root = fs.mkdtempSync('/tmp/c1008-real-');
-console.log('C1008_REAL_ROOT=' + root);
-const prefix = 'c1008rd' + crypto.randomBytes(8).toString('hex');
-const label = 'io.antiphon.c1008-real';
+const root = fs.mkdtempSync(c994?'/tmp/c994-real-':'/tmp/c1008-real-');
+console.log((c994?'C994_REAL_ROOT=':'C1008_REAL_ROOT=') + root);
+const prefix = (c994?'c994rd':'c1008rd') + crypto.randomBytes(8).toString('hex');
+const label = c994?'io.antiphon.c994-real':'io.antiphon.c1008-real';
 const source = cp.execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
 fs.writeFileSync(root+'/ownership.json',JSON.stringify({schema:1,prefix,source}));
+if(c994){ownedRoot(root);ownedDaemon(docker('info','--format','{{.Name}}'),os.hostname(),fs.existsSync('/.dockerenv'));}
 const base = 'c6d5d56b5b4c565d36157e21de9c85029cc45b53';
-const scripts = {B:cp.execFileSync('git',['show',base+':scripts/c590-remote.sh'],{encoding:'utf8'}), C:fs.readFileSync('scripts/c590-remote.sh','utf8')};
+const scripts = {D:cp.execFileSync('git',['show','157dd95:scripts/c590-remote.sh'],{encoding:'utf8'}),B:cp.execFileSync('git',['show',base+':scripts/c590-remote.sh'],{encoding:'utf8'}), C:fs.readFileSync('scripts/c590-remote.sh','utf8')};
 const roles = ['work','runner-tmp','dind-data','runner-state'];
 const cacheRoles = ['nuget-packages','nuget-scratch','npm-content'];
 const mounts = ['/work','/tmp','/var/lib/docker','/state','/home/app/.nuget/packages','/var/cache/antiphon/nuget-scratch','/home/app/.npm/_cacache'];
@@ -43,12 +47,21 @@ const allVolumes = () => runDocker('volume','ls','-q').split('\n').filter(Boolea
 const containers = project => runDocker('ps','-aq','--no-trunc','--filter','label=com.docker.compose.project='+guard(project)).split('\n').filter(Boolean);
 let helper, active, failure, realDf;
 const vectors = JSON.parse(fs.readFileSync('scripts/fixtures/c1008-recycle-cases.json','utf8'));
-const endpoint = http.createServer((req,res) => {
+const endpoint = http.createServer(async (req,res) => {
   const u=new URL(req.url,'http://fixture.invalid'); res.setHeader('Content-Type','application/json');
   let body;
-  if (u.pathname === '/api/agent-tasks') body={...vectors.emptyTasks,scope:{projectId:u.searchParams.get('projectId'),unscoped:'include'}};
+  if(u.pathname==='/fixture/register') {let raw='';for await(const chunk of req)raw+=chunk;Object.assign(active.statuses['server2-temp'],JSON.parse(raw));body={};}
+  else if(u.pathname==='/api/projects')body=[{id:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',gitRepositoryUrl:'https://github.com/michal-ciechan/Antiphon.git'}];
+  else if (u.pathname === '/api/agent-tasks') body={...vectors.emptyTasks,scope:{projectId:u.searchParams.get('projectId'),unscoped:'include'}};
   else if (u.pathname.startsWith('/api/session-runners/')) {
-    const runner=u.pathname.split('/')[3]; body=structuredClone(active.statuses[runner]);
+    const runner=u.pathname.split('/')[3];
+    if(req.method==='POST') {
+      let raw='';for await(const chunk of req)raw+=chunk;
+      const command=JSON.parse(raw);active.httpEvents??=[];active.httpEvents.push({runner,path:u.pathname,command});
+      if(u.pathname.endsWith('/drain/clear'))Object.assign(active.statuses[runner],{draining:false,retireWhenIdle:false,retiredAt:null,redirectTo:null});
+      else Object.assign(active.statuses[runner],{draining:true,retireWhenIdle:command.retireWhenIdle,redirectTo:command.redirectTo});
+    }
+    body=structuredClone(active.statuses[runner]);
     if (runner === 'server2' && active.mainReplacement) {
       const ids=containers(active.main).filter(id=>JSON.parse(docker('inspect',id))[0].Config.Labels['com.docker.compose.service']==='session-runner');
       const live=ids.some(id=>JSON.parse(docker('inspect',id))[0].State.Running);
@@ -68,7 +81,15 @@ function createVolume(name, labels) {
 function createContainer(f, service, running, names, project=f.main, overrideName='') {
   const args=['run','-d','--init','--network','none','--name',guard(overrideName||f.prefix+'-'+service+'-'+crypto.randomBytes(3).toString('hex')),
     '--label',label+'='+prefix,'--label','com.docker.compose.project='+guard(project),'--label','com.docker.compose.service='+service];
-  names.forEach((name,i)=>args.push('--mount','type=volume,source='+guard(name)+',target='+mounts[i]));
+  if(c994&&['session-runner','state-init'].includes(service)) {
+    const model=JSON.parse(fs.readFileSync(f.root+'/'+project+'.json'));
+    for(const m of model.services[service].volumes) {
+      if(m.type==='volume')args.push('--mount','type=volume,source='+guard(model.volumes[m.source].name)+',target='+m.target+(m.volume?.nocopy?',volume-nocopy':''));
+      else args.push('--mount','type=bind,source='+m.source+',target='+m.target+(m.read_only?',readonly':''));
+    }
+    for(const secret of model.services[service].secrets||[])args.push('--mount','type=bind,source='+model.secrets[secret.source].file+',target='+secret.target+',readonly');
+    for(const tmpfs of model.services[service].tmpfs||[])args.push('--tmpfs',tmpfs);
+  } else names.forEach((name,i)=>args.push('--mount','type=volume,source='+guard(name)+',target='+mounts[i]));
   const id=runDocker(...args,image,'sleep','infinity'); objects.containers.add(id);
   if (!running) runDocker('stop','--time','1','--',id);
   return id;
@@ -78,6 +99,7 @@ function cleanupCase(f) {
   const ids=runDocker('ps','-aq','--no-trunc','--filter','label='+label+'='+prefix,'--filter','name='+f.prefix).split('\n').filter(Boolean);
   if (ids.length) {
     const facts=JSON.parse(runDocker('inspect',...ids));
+    if(c994)for(const fact of facts)ownedObject(ownedRoot(root),fact);
     if (facts.length!==ids.length || facts.some(c=>c.Config.Labels[label]!==prefix || !c.Name.startsWith('/'+f.prefix))) throw Error('CleanupOwnershipMismatch');
     facts.forEach(c=>objects.containers.add(c.Id));
     runDocker('rm','-f','--',...facts.map(c=>c.Id));
@@ -94,26 +116,36 @@ function cleanupCase(f) {
 function fixture(mainReplacement=true) {
   cleanupCase(active);
   const p=prefix+'c'+crypto.randomBytes(4).toString('hex');
-  const f={prefix:p,main:p+'main',temp:p+'temp',root:path.join(root,p),mainReplacement,op:'c1008'+crypto.randomBytes(16).toString('hex')};
+  const f={prefix:p,main:p+'main',temp:p+'temp',root:path.join(root,p),mainReplacement,op:'c1008'+crypto.randomBytes(16).toString('hex'),cleanupOp:'c994'+crypto.randomBytes(16).toString('hex')};
   f.caches=cacheRoles.map(r=>p+'cache-'+r);
   f.names=[...roles.map(r=>f.main+'_'+r),...roles.map(r=>f.temp+'_'+r),...f.caches,p+'main_work-extra',p+'schoolrevision-staging',p+'openclaw-state'];
   f.origin=p+'origin'; f.statuses={'server2':structuredClone(vectors[mainReplacement?'mainDrained':'mainAccepting']), 'server2-temp':structuredClone(vectors[mainReplacement?'tempAccepting':'tempRetiredAbsent'])};
   f.statuses.server2.buildVersion=mainReplacement?'old':source;
   fs.mkdirSync(f.root+'/server/cache',{recursive:true}); fs.mkdirSync(f.root+'/evidence',{recursive:true});
-  fs.writeFileSync(f.root+'/temp.env','RUNNER_GROK_STORE_DIR=/fixture/grok\n');
+  fs.writeFileSync(f.root+'/temp.env','RUNNER_GROK_STORE_DIR='+f.root+'/grok\n');
   fs.writeFileSync(f.root+'/server/cache/seed-accepted','schema=2\nkind=cold\nsentinel='+p+'\n');
   for (const project of [f.main,f.temp]) {
     for (const role of roles) createVolume(project+'_'+role,['com.docker.compose.project='+project,'com.docker.compose.volume='+role]);
-    const volumes=Object.fromEntries([...roles.map(r=>[r,{name:project+'_'+r}]),...cacheRoles.map((r,i)=>['runner-'+r,{name:f.caches[i],external:true}])]);
-    const services={'session-runner':{image,init:true,command:['sleep','infinity'],labels:{[label]:prefix},volumes:[...roles,...cacheRoles.map(r=>'runner-'+r)].map((r,i)=>r+':'+mounts[i])},
-      'state-init':{image,command:['true'],labels:{[label]:prefix},volumes:['work:/work','runner-state:/state']}};
-    fs.writeFileSync(f.root+'/'+project+'.json',JSON.stringify({services,volumes,networks:{default:{labels:{[label]:prefix}}}}));
+    const production=materialize(f.root,project,project===f.temp);
+    const model=structuredClone(production.model);
+    cacheRoles.forEach((r,i)=>model.volumes['runner-'+r].name=f.caches[i]);
+    delete model.services['build-slots'];
+    for(const [name,service] of Object.entries(model.services)) {
+      for(const key of ['build','healthcheck','environment','depends_on','privileged','stop_grace_period','restart','user','entrypoint'])delete service[key];
+      Object.assign(service,{image,init:true,command:name==='state-init'?['true']:['sleep','infinity'],labels:{[label]:prefix},networks:{default:null}});
+    }
+    model.networks={default:{name:project+'_default',labels:{[label]:prefix}}};
+    fs.writeFileSync(f.root+'/'+project+'.json',JSON.stringify(model));
+    const resolved=JSON.parse(runDocker('compose','-p',project,'-f',f.root+'/'+project+'.json','config','--format','json'));
+    if(JSON.stringify(mountSignature(resolved))!==JSON.stringify(mountSignature(model)))throw Error('ProductionMountSignatureChanged');
+    fs.writeFileSync(f.root+'/'+project+'.mount-proof.json',JSON.stringify({productionSignature:production.signature,transformedSignature:mountSignature(resolved),maps:{caches:f.caches,paths:production.paths}}));
   }
   cacheRoles.forEach((r,i)=>createVolume(f.caches[i],['io.antiphon.owner=server2-runner','io.antiphon.cache-schema=1','io.antiphon.cache-role='+r]));
   f.names.slice(11).forEach(n=>createVolume(n,[])); createVolume(f.origin,[]);
   const args=f.names.flatMap((n,i)=>['--mount','type=volume,source='+guard(n)+',target=/v'+i]);
   runDocker('run','--rm','--network','none','--label',label+'='+prefix,...args,image,'bash','-c',f.names.map((n,i)=>`printf 'sentinel:${n}:old\\n' > /v${i}/sentinel; chown 1654:1654 /v${i}; chmod 0700 /v${i}`).join('; '));
   f.before=Object.fromEntries(JSON.parse(runDocker('volume','inspect',...f.names.map(guard))).map(v=>[v.Name,v]));
+  f.bindHashes=Object.fromEntries(['deploy-key','phone-home','claude-token','gitconfig'].map(n=>[n,hash(fs.readFileSync(f.root+'/'+n))]));
   f.marker=fs.readFileSync(f.root+'/server/cache/seed-accepted','utf8');
   runDocker('compose','-p',f.main,'-f',f.root+'/'+f.main+'.json','up','-d');
   f.originalRunner=containers(f.main).find(id=>JSON.parse(docker('inspect',id))[0].Config.Labels['com.docker.compose.service']==='session-runner');
@@ -132,19 +164,22 @@ function preservation(f) {
     ...retained.flatMap((n,i)=>['--mount','type=volume,source='+guard(n)+',target=/v'+i+',readonly']),image,'bash','-c',
     retained.map((n,i)=>'cat /v'+i+'/sentinel').join('; ')).split('\n');
   if (values.length!==retained.length || values.some((v,i)=>v!==`sentinel:${retained[i]}:old`)) throw Error('PreservedPayloadChanged');
+  for(const [name,digest] of Object.entries(f.bindHashes))if(hash(fs.readFileSync(f.root+'/'+name))!==digest)throw Error('BindPayloadChanged:'+name);
   if (fs.readFileSync(f.root+'/server/cache/seed-accepted','utf8')!==f.marker) throw Error('MarkerChanged');
   if (!JSON.parse(runDocker('inspect',f.broker))[0].State.Running) throw Error('BrokerStopped');
 }
 async function host(f,name,version='C',options={}) {
   active=f;
-  const hostCase=f.mainReplacement?'deploy-parent':'retire-temp-runner';
+  const hostCase=options.hostCase||(f.mainReplacement?'deploy-parent':'retire-temp-runner');
   const dest=f.root+'/evidence/'+hostCase; fs.mkdirSync(dest,{recursive:true});
   const transformed=scripts[version].replaceAll('antiphon-runner-temp',f.temp).replaceAll('antiphon-runner-cache-',f.prefix+'cache-').replaceAll('antiphon-runner',f.main);
   const compose = project => `command docker compose -p '${project}' -f '${f.root}/${project}.json' "$@"`;
   const injected=`
 SERVER2_ROOT='${f.root}/server'; ROOT='${f.root}'; EVIDENCE_ROOT='${f.root}/evidence'; CASE_DIR="$EVIDENCE_ROOT/$CASE"
 SERVER2_ENV='${f.root}/main.env'; SERVER2_TEMP_ENV='${f.root}/temp.env'; C849_READY="$SERVER2_ROOT/cache/seed-accepted"
-C1008_CONTEXT=default; C1008_OPERATION=${f.op}; C1008_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1; C1008_RESUME=${options.resume?1:0}
+C1008_CONTEXT=default; C1008_OPERATION="\${C1008_OPERATION:-${f.op}}"; C1008_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1; C1008_RESUME=${options.resume?1:0}; C1008_DRY_RUN=${options.dryRun?1:0}; C1008_CLEANUP_OPERATION='${options.cleanupOperation||''}'
+C994_VERSION=1; C994_OPERATION="\${C994_OPERATION:-${f.cleanupOp}}"; C994_PROJECT='${f.temp}'; C994_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1; C994_RETIRED_AT=2026-10-03T09:30:00Z; C994_DRY_RUN=${options.dryRun?1:0}
+DEPLOY_KEY='${f.root}/deploy-key'; PHONE_HOME_SECRET='${f.root}/phone-home'; CLAUDE_OAUTH_TOKEN_PATH='${f.root}/claude-token'; GIT_IDENTITY_PATH='${f.root}/gitconfig'; CODEX_HOME_PATH='${f.root}/codex'; RUNNER_GROK_STORE_DIR='${f.root}/grok'
 C590_TEMP_RETIRED_AT=2026-10-03T09:30:00Z; RUNNER_GIT_USER_NAME=Fixture; RUNNER_GIT_USER_EMAIL=fixture@example.invalid
 mkdir -p "$CASE_DIR"
 exec 3>'${f.root}/${name}.trace'; export BASH_XTRACEFD=3; set -x
@@ -164,6 +199,13 @@ docker() {
     if [ '${options.failAt||0}' -gt 0 ] && [ "$n" = '${(options.failAt||0)-1}' ]; then return 77; fi
     command docker "$@" || return $?
     printf '%s\\n' "$((n+1))" > '${f.root}/rm-count'
+  elif [ "$1" = rm ] && [ "${options.containerFailAt||0}" -gt 0 ]; then
+    n=0; [ ! -f '${f.root}/container-rm-count' ] || n="$(cat '${f.root}/container-rm-count')"
+    if [ "$n" = '${(options.containerFailAt||0)-1}' ]; then return 77; fi
+    command docker "$@" || return $?; printf '%s\n' "$((n+1))" > '${f.root}/container-rm-count'
+  elif [ "$1" = rm ] && [ '${options.replaceAfterRm?1:0}' = 1 ]; then
+    command docker "$@" || return $?
+    command docker compose -p '${f.temp}' -f '${f.root}/${f.temp}.json' up -d >> "$CASE_DIR/command.log" 2>&1
   elif [ "$1" = create ]; then
     shift
     if [ '${options.rootAudit?1:0}' = 1 ]; then arguments=(); for a in "$@"; do if [ "$a" = 1654:1654 ]; then a=0:0; fi; arguments+=("$a"); done; set -- "\${arguments[@]}"; fi
@@ -181,13 +223,15 @@ build_server2_images() {
 }
 `;
   const script=f.root+'/'+name+'.sh'; fs.writeFileSync(script,transformed.replace("trap 'ec=$?;",injected+"\ntrap 'ec=$?;"));
+  if(options.prepareOnly)return script;
   const env={...process.env,C590_CASE:hostCase,C590_SHA:source,C590_RUN:'c1008real',C590_REEXEC:'1',C604_SERVER_ORIGIN:originUrl};
-  let outcome; try {outcome=await exec('bash',[script],{env,timeout:90000,maxBuffer:1024*1024});outcome.code=0;} catch(e){outcome=e;}
+  let outcome; try {outcome=await boundedChild('bash',[script],{env},90000);} catch(e){outcome=e;}
   fs.writeFileSync(f.root+'/'+name+'.log',(outcome.stdout||'')+(outcome.stderr||''));
   const result=JSON.parse(fs.readFileSync(dest+'/c590-result.json','utf8'));
   const journalPath=f.root+'/server/recycle/'+f.op+'.json';
   const journal=fs.existsSync(journalPath)?JSON.parse(fs.readFileSync(journalPath)):null;
-  return {name,version,exit:outcome.code,diagnosis:result.diagnosis,accepted:result.accepted,journal,output:outcome.stdout||'',f};
+  const cleanupPath=dest+'/temp-containers.json';const cleanup=fs.existsSync(cleanupPath)?JSON.parse(fs.readFileSync(cleanupPath)):null;
+  return {cleanup,name,version,exit:outcome.code,diagnosis:result.diagnosis,accepted:result.accepted,journal,output:outcome.stdout||'',f};
 }
 function record(result,check) {
   check(result); preservation(result.f);
@@ -197,8 +241,8 @@ function record(result,check) {
 const refused = r => {if(r.exit!==2||r.accepted!==false)throw Error('ExpectedRefusal:'+r.name); for(const n of roles.slice(0,3).map(x=>(r.f.mainReplacement?r.f.main:r.f.temp)+'_'+x)) payload(r.f,n);};
 const reclaimed = r => {if(r.exit!==0||!r.accepted)throw Error('ExpectedSuccess:'+r.name+':'+r.diagnosis);};
 function assertRemovals(r,count) {if(Object.values(r.journal.volumes).filter(v=>v.outcome==='removed').length!==count)throw Error('RemovalCount:'+r.name);}
-function gitGraph(f,variant) {
-  const work=f.main+'_work';
+function gitGraph(f,variant,project=f.main) {
+  const work=project+'_work';
   const args=['run','--rm','--network','none','--user','0:0','--label',label+'='+prefix,'--mount','type=volume,source='+work+',target=/work','--mount','type=volume,source='+f.origin+',target=/origin',image,'bash','-c'];
   runDocker(...args,'chown 1654:1654 /work /origin');
   const graph=`set -e; export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null; git init -q --bare /origin; git init -q -b master /work/repo; git -C /work/repo config user.name Fixture; git -C /work/repo config user.email fixture@example.invalid; git -C /work/repo remote add origin /origin; echo A > /work/repo/file; git -C /work/repo add file; git -C /work/repo commit -qm A; git -C /work/repo push -q origin master; `;
@@ -213,12 +257,126 @@ function gitGraph(f,variant) {
   else fault="git -C /work/repo worktree add -q --detach '/work/linked clean' HEAD; git clone -q /origin /work/standalone; git clone -q --mirror /origin /work/bare.git; ";
   args[args.indexOf('0:0')]='1654:1654'; runDocker(...args,graph+fault);
 }
+async function c994Wrapper(f,phase) {
+  const cleanupScript=await host(f,phase+'-cleanup-template','C',{hostCase:'retire-temp-containers',prepareOnly:true});
+  const recycleScript=await host(f,phase+'-recycle-template','C',{prepareOnly:true});
+  const dir=f.root+'/wrapper/scripts';fs.mkdirSync(dir+'/lib',{recursive:true});
+  for(const name of ['deploy-server2.ps1','c590-real.ps1']) {
+    const original=fs.readFileSync('scripts/'+name,'utf8');
+    const transformed=original.replaceAll('antiphon-runner-temp',f.temp).replaceAll('antiphon-runner',f.main);
+    fs.writeFileSync(dir+'/'+name,transformed);
+  }
+  fs.copyFileSync('scripts/lib/runner-operator-token.ps1',dir+'/lib/runner-operator-token.ps1');
+  fs.writeFileSync(f.root+'/operator-token','inert-fixture-operator');
+  const bridge=f.root+'/wrapper-bridge.ps1';
+  fs.writeFileSync(bridge,`
+param([string]$Case,[string]$Manifest)
+$ErrorActionPreference='Stop'
+if($Case -eq 'rollout-lock'){[Console]::WriteLine('C1008_LOCKED');[Console]::Out.Flush();[void][Console]::ReadLine();exit 0}
+if($Case -eq 'temp-project-absent'){& docker ps -aq --no-trunc --filter 'label=com.docker.compose.project=${f.temp}';exit $LASTEXITCODE}
+$m=Get-Content -Raw $Manifest|ConvertFrom-Json
+$env:C590_CASE=$Case;$env:C590_SHA=$m.sourceSha;$env:C590_RUN=$m.runId;$env:C590_REEXEC='1';$env:C604_SERVER_ORIGIN='${originUrl}'
+if($Case -eq 'retire-temp-containers'){
+ $env:C994_OPERATION=$m.tempContainerCleanup.operationId
+ & bash '${cleanupScript}'
+ $code=$LASTEXITCODE
+}elseif($Case -eq 'retire-temp-runner'){
+ $env:C1008_OPERATION=$m.recycle.operationId
+ $text=Get-Content -Raw '${recycleScript}'
+ $text=$text.Replace("C1008_CLEANUP_OPERATION=''",("C1008_CLEANUP_OPERATION='"+$m.recycle.cleanupOperationId+"'"))
+ $file='${f.root}/wrapper-recycle.sh';Set-Content -NoNewline -Encoding ascii $file $text
+ & bash $file
+ $code=$LASTEXITCODE
+}elseif($Case -eq 'deploy-temp-runner'){
+ & docker compose -p '${f.temp}' -f '${f.root}/${f.temp}.json' up -d
+ $code=$LASTEXITCODE
+ $body=@{available=$true;dispatchEligible=$true;acceptingNewWork=$true;buildVersion='${source}'}|ConvertTo-Json
+ Invoke-RestMethod -Method POST -Uri '${originUrl}/fixture/register' -ContentType application/json -Body $body|Out-Null
+}elseif($Case -in @('runner-cache-seed','verify-runner-caches')){exit 0}else{exit 2}
+$dest=Join-Path $m.evidenceRoot $Case;New-Item -ItemType Directory -Force $dest|Out-Null
+if(Test-Path '${f.root}/evidence/'+$Case){Copy-Item -LiteralPath ('${f.root}/evidence/'+$Case) -Destination $m.evidenceRoot -Recurse -Force}
+exit $code
+`);
+  const env={...process.env,ANTIPHON_API:originUrl,ANTIPHON_TASK_TOKEN:'',ANTIPHON_OPERATOR_TOKEN_FILE:f.root+'/operator-token',
+    C727_TEST_VERIFY_STUB:bridge,C727_TEST_POLL_MS:'5'};
+  delete env.C727_TEST_HTTP_STUB;delete env.C727_TEST_STATE;delete env.C727_TEST_WAIT_MS;
+  const result=await boundedChild('pwsh',['-NoProfile','-File',dir+'/deploy-server2.ps1','-Rolling','-Sha',source,'-Phase',phase,'-WaitIdleMinutes','1'],{env},90000);
+  fs.writeFileSync(f.root+'/wrapper-'+phase+'.log',result.stdout+result.stderr);
+  if(result.code!==0)throw Error('WrapperFailed:'+phase+':'+result.stdout+result.stderr);
+  return result;
+}
+async function c994Cases() {
+  function capture(name,r,check){check(r);preservation(r.f);results.push({name,version:name==='RD-1'?'B':'C',exit:r.exit,diagnosis:r.diagnosis,accepted:r.accepted,cleanup:r.cleanup,journal:r.journal});}
+  const tempPrivate=f=>roles.map(role=>f.temp+'_'+role);
+  const absent=f=>{if(containers(f.temp).length)throw Error('TempContainersRemain');};
+  const stillVolumes=f=>{for(const name of tempPrivate(f))payload(f,name);};
+  const sameMain=f=>{const c=JSON.parse(docker('inspect',f.originalRunner))[0];if(c.State.StartedAt!==f.mainStarted)throw Error('MainRestarted');};
+  function exitedFixture() {
+    const f=fixture(false);f.mainStarted=JSON.parse(docker('inspect',f.originalRunner))[0].State.StartedAt;
+    createContainer(f,'session-runner',false,[],f.temp);createContainer(f,'state-init',false,[],f.temp);
+    fs.writeFileSync(f.root+'/codex/provider-sentinel','inert-provider');fs.writeFileSync(f.root+'/grok/provider-sentinel','inert-grok');
+    return f;
+  }
+  {
+    const f=exitedFixture();const r=await host(f,'RD-1','D');
+    capture('RD-1',r,r=>{refused(r);if(r.diagnosis!=='RecycleComposeMismatch')throw Error('BaselineFirstRefusal:'+r.diagnosis);if(containers(f.temp).length!==2)throw Error('BaselineContainerEffect');stillVolumes(f);sameMain(f);});
+  }
+  {
+    const f=exitedFixture();await c994Wrapper(f,'drain-temp');absent(f);stillVolumes(f);sameMain(f);
+    const receipts=fs.readdirSync(f.root+'/server/temp-container-retirement').filter(n=>n.endsWith('.json')).map(n=>JSON.parse(fs.readFileSync(f.root+'/server/temp-container-retirement/'+n)));
+    if(receipts.length!==1||receipts[0].outcome!=='completed')throw Error('DrainReceiptMissing');
+    capture('RD-2',{f,exit:0,accepted:true,cleanup:receipts[0]},()=>{});
+    await c994Wrapper(f,'retire-temp');absent(f);sameMain(f);
+    if(tempPrivate(f).some(n=>allVolumes().includes(n)))throw Error('PrivateVolumesRetained');
+    const journals=fs.readdirSync(f.root+'/server/recycle').filter(n=>n.endsWith('.json')).map(n=>JSON.parse(fs.readFileSync(f.root+'/server/recycle/'+n)));
+    if(journals.length!==1||!journals[0].cleanupOperationId||journals[0].image!==receipts[0].image)throw Error('CrossRunImageBindingMissing');
+    capture('RD-3',{f,exit:0,accepted:true,journal:journals[0]},()=>{});
+    await c994Wrapper(f,'deploy-temp');sameMain(f);
+    if(!containers(f.temp).length||f.statuses['server2-temp'].retiredAt!==null||!f.httpEvents.some(e=>e.path.endsWith('/drain/clear')))throw Error('NextDeployAdmissionMissing');
+    capture('RD-4',{f,exit:0,accepted:true},()=>{});
+  }
+  {
+    const f=fixture(false);f.mainStarted=JSON.parse(docker('inspect',f.originalRunner))[0].State.StartedAt;
+    const r=await host(f,'RD-5');capture('RD-5',r,r=>{reclaimed(r);assertRemovals(r,4);absent(f);sameMain(f);});
+  }
+  {
+    const f=fixture(false),id=createContainer(f,'session-runner',true,[],f.temp);const before=JSON.parse(docker('inspect',id))[0];
+    const r=await host(f,'RD-6','C',{hostCase:'retire-temp-containers'});
+    capture('RD-6',r,r=>{refused(r);if(r.diagnosis!=='TempContainerStillRunning')throw Error('LiveContainerAdmitted');const after=JSON.parse(docker('inspect',id))[0];if(!after.State.Running||after.State.StartedAt!==before.State.StartedAt)throw Error('LiveContainerEffect');});
+  }
+  {
+    const f=exitedFixture();gitGraph(f,'dirty',f.temp);
+    reclaimed(await host(f,'RD-7-cleanup','C',{hostCase:'retire-temp-containers'}));
+    const r=await host(f,'RD-7','C',{cleanupOperation:f.cleanupOp});
+    capture('RD-7',r,r=>{refused(r);if(r.diagnosis!=='RecycleWorktreeDirty')throw Error('DirtyAuditBypassed');absent(f);stillVolumes(f);});
+  }
+  {
+    const f=exitedFixture();const first=await host(f,'RD-8-partial','C',{hostCase:'retire-temp-containers',containerFailAt:2});
+    if(first.exit!==2||first.cleanup.removals.filter(r=>r.outcome==='removed').length!==1||containers(f.temp).length!==1)throw Error('PartialProgressDishonest');
+    const remaining=containers(f.temp);f.cleanupOp='c994'+crypto.randomBytes(16).toString('hex');
+    const r=await host(f,'RD-8','C',{hostCase:'retire-temp-containers'});
+    capture('RD-8',r,r=>{reclaimed(r);if(r.cleanup.removals.map(r=>r.id).join(',')!==remaining.join(','))throw Error('RetrySweptGeneration');absent(f);stillVolumes(f);});
+  }
+  {
+    const f=exitedFixture();const first=await host(f,'RD-9-replacement','C',{hostCase:'retire-temp-containers',replaceAfterRm:true});
+    if(first.exit!==2||!containers(f.temp).length)throw Error('ReplacementNotRefused');
+    const before=containers(f.temp).join(',');const r=await host(f,'RD-9','C',{resume:true});
+    capture('RD-9',r,r=>{refused(r);if(containers(f.temp).join(',')!==before)throw Error('ResumeRemovedReplacement');stillVolumes(f);});
+  }
+  {
+    const f=exitedFixture();const before=containers(f.temp).join(',');const r=await host(f,'RD-10','C',{hostCase:'retire-temp-containers',dryRun:true});
+    capture('RD-10',r,r=>{reclaimed(r);if(r.cleanup.outcome!=='preview'||containers(f.temp).join(',')!==before)throw Error('PreviewEffect');stillVolumes(f);sameMain(f);});
+  }
+  if(results.map(r=>r.name).join(',')!==Array.from({length:10},(_,i)=>'RD-'+(i+1)).join(','))throw Error('C994OutcomeCensusWrong');
+}
+
 try {
   fs.writeFileSync(root+'/Dockerfile','FROM debian:trixie-slim\nLABEL io.antiphon.c1008-real='+prefix+'\nRUN apt-get update && apt-get install -y --no-install-recommends bash git coreutils findutils util-linux ca-certificates && rm -r /var/lib/apt/lists/* && mkdir -p /tmp/antiphon-pty-hosts && chmod 1777 /tmp && printf image-asset > /tmp/antiphon-pty-hosts/fixture\n');
   objects.images.add(image); runDocker('build','-t',image,root);
   helper=runDocker('run','-d','--privileged','--pid','host','--network','none','--name',guard(prefix+'-root'),'--label',label+'='+prefix,image,'sleep','infinity'); objects.containers.add(helper);
   shellRoot('test','-d',root);
   realDf=shellRoot('df','-Pk',docker('info','--format','{{.DockerRootDir}}'));
+  if(c994) {await c994Cases();} else {
   for (const version of ['B','C']) {
     const f=fixture(); const r=await host(f,version+'-default',version);
     record(r,r=>{reclaimed(r); if(version==='B'){roles.slice(0,3).forEach(x=>payload(f,f.main+'_'+x));}else{assertRemovals(r,3);roles.slice(0,3).forEach(x=>payload(f,f.main+'_'+x,false)); const runner=containers(f.main).find(id=>JSON.parse(docker('inspect',id))[0].Config.Labels['com.docker.compose.service']==='session-runner'); if(runDocker('exec','-u','1654:1654',runner,'cat','/tmp/antiphon-pty-hosts/fixture')!=='image-asset')throw Error('TmpCopyupMissing'); if(runDocker('exec',runner,'stat','-c','%a','/tmp')!=='1777')throw Error('TmpModeWrong');}});
@@ -270,6 +428,7 @@ try {
   }
   {const f=fixture();record(await host(f,'C-main-reclaim-low-budget','C',{lowDisk:true}),r=>{if(r.exit!==2||r.diagnosis!=='CacheDiskLow')throw Error('AllocationGateOrderWrong');assertRemovals(r,3);if(containers(f.main).some(id=>JSON.parse(docker('inspect',id))[0].Config.Labels['com.docker.compose.service']==='session-runner'))throw Error('AllocatedAfterLowBudget');});}
   if(results.length!==32||results.filter(r=>r.version==='B').length!==5||results.filter(r=>r.version==='C').length!==27||new Set(results.map(r=>r.name)).size!==32)throw Error('OutcomeCensusWrong');
+  }
 } catch(e) {failure=e;console.error(e.stack);}
 finally {
   // Discover Compose-created objects through the fixture's exact ownership label.
@@ -296,6 +455,6 @@ finally {
   if([...objects.networks].some(id=>finalNetworks.has(id)))throw Error('FixtureNetworkResidue');
   await new Promise(resolve=>endpoint.close(resolve));
   fs.writeFileSync(root+'/evidence.json',JSON.stringify({source,base,scriptDigests:{base:hash(scripts.B),changed:hash(scripts.C)},docker:docker('version','--format','{{.Server.Version}}'),compose:docker('compose','version','--short'),prefix,results,failure:failure?.message||null,cleanup:'all recorded containers, volumes, networks and fixture image absent',objects:Object.fromEntries(Object.entries(objects).map(([k,v])=>[k,[...v]])),commands,commandTimings,elapsedMilliseconds:performance.now()-startedAt,shims:['lane/root relocation','private HTTP status/task endpoint','sudo through owned nested-root namespace helper','fixed helper-image pin and origin fixture mount','expensive build/provider startup boundary with real Compose up','controlled rm/ps faults','df capacity only for RD-12'],realDf},null,2));
-  console.log('C1008_REAL cases='+results.length+' base='+results.filter(r=>r.version==='B').length+' changed='+results.filter(r=>r.version==='C').length+' failures='+(failure?1:0)+' cleanup=absent evidence='+root+'/evidence.json');
+  console.log((c994?'C994_REAL cases=':'C1008_REAL cases=')+results.length+' base='+results.filter(r=>r.version==='B').length+' changed='+results.filter(r=>r.version==='C').length+' failures='+(failure?1:0)+' cleanup=absent evidence='+root+'/evidence.json');
 }
 if(failure)process.exit(1);
