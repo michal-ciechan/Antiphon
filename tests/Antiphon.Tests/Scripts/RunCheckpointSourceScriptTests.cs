@@ -109,7 +109,7 @@ public sealed class RunCheckpointSourceScriptTests
 
         fixture.ResetScenario();
         var tampered = fixture;
-        
+
         {
             (await tampered.RunAsync(expectedSha: tampered.Head)).Exit.ShouldBe(0, "S09 ");
             var stamp = JsonNode.Parse(await File.ReadAllTextAsync(tampered.Stamp))!.AsObject();
@@ -129,7 +129,7 @@ public sealed class RunCheckpointSourceScriptTests
 
         fixture.ResetScenario();
         var failedRebuild = fixture;
-        
+
         {
             (await failedRebuild.RunAsync(expectedSha: failedRebuild.Head)).Exit.ShouldBe(0, "S15 ");
             var failure = await failedRebuild.RunAsync(expectedSha: failedRebuild.Head, buildExit: 37);

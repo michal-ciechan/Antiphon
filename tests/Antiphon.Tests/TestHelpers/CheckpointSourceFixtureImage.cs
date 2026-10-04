@@ -58,7 +58,10 @@ internal sealed class CheckpointSourceFixtureImage
             if (Directory.Exists(_root))
             {
                 foreach (var path in ReadTree(_root)) File.SetAttributes(path, FileAttributes.Normal);
-                Directory.Delete(_root, true);
+                // Keep the root inode: the standing script worker may have this exact directory as its idle CWD.
+                foreach (var child in Directory.EnumerateFileSystemEntries(_root))
+                    if (Directory.Exists(child)) Directory.Delete(child, true);
+                    else File.Delete(child);
             }
             foreach (var entry in _entries.Where(e => e.Bytes is null))
                 Directory.CreateDirectory(Path.Combine(_root, entry.Path));

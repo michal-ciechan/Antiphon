@@ -196,7 +196,12 @@ public sealed class CheckpointSourceScriptReuseTests
                 $start.RedirectStandardInput = $true
                 foreach ($arg in @('-NoProfile','-NonInteractive','-Command','[Console]::In.ReadLine() | Out-Null')) { $start.ArgumentList.Add($arg) }
                 $child = [Diagnostics.Process]::Start($start)
-                [IO.File]::WriteAllText(($Ready + '.tmp'), ([string]$child.Id + '|' + $child.StartTime.ToUniversalTime().Ticks))
+                $identity = [string]$child.StartTime.ToUniversalTime().Ticks
+                if ($IsLinux) {
+                    $stat = [IO.File]::ReadAllText('/proc/' + $child.Id + '/stat')
+                    $identity = $stat.Substring($stat.LastIndexOf(')') + 2).Split(' ', [StringSplitOptions]::RemoveEmptyEntries)[19]
+                }
+                [IO.File]::WriteAllText(($Ready + '.tmp'), ([string]$child.Id + '|' + $identity))
                 [IO.File]::Move(($Ready + '.tmp'), $Ready)
                 $child.WaitForExit()
                 """);
@@ -228,7 +233,13 @@ public sealed class CheckpointSourceScriptReuseTests
                 await readySignal.Task.WaitAsync(deadline.Token);
                 var identity = (await File.ReadAllTextAsync(ready, deadline.Token)).Split('|');
                 child = Process.GetProcessById(int.Parse(identity[0]));
-                child.StartTime.ToUniversalTime().Ticks.ShouldBe(long.Parse(identity[1]), "script-owned-children-joined identity");
+                var observedIdentity = child.StartTime.ToUniversalTime().Ticks.ToString();
+                if (OperatingSystem.IsLinux())
+                {
+                    var stat = await File.ReadAllTextAsync($"/proc/{child.Id}/stat", deadline.Token);
+                    observedIdentity = stat[(stat.LastIndexOf(')') + 2)..].Split(' ', StringSplitOptions.RemoveEmptyEntries)[19];
+                }
+                observedIdentity.ShouldBe(identity[1], "script-owned-children-joined identity");
                 fixture.BeforeRootDeletion = () => joinedAtDeletion = child.HasExited && running.IsCompleted;
                 if (workerFailure) fixture.FailActiveInvocation(); else cancel.Cancel();
                 await finishing.Task.WaitAsync(deadline.Token);

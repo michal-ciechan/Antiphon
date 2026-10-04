@@ -133,12 +133,12 @@ internal sealed class CheckpointSourceApprovalFamily : IAsyncDisposable
     {
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(_connection));
         var model = db.Model.GetRelationalModel();
-        var expected = model.Tables.SelectMany(t => t.Columns.Select(c => t.Name + "/" + c.Name)).ToHashSet(StringComparer.Ordinal);
+        var expected = model.Tables.SelectMany(t => t.Columns.Where(c => c.Name != "xmin").Select(c => t.Name + "/" + c.Name)).ToHashSet(StringComparer.Ordinal);
         var actual = new HashSet<string>(StringComparer.Ordinal);
         await using (var command = new NpgsqlCommand("SELECT table_name,column_name FROM information_schema.columns WHERE table_schema='public' AND table_name <> '__EFMigrationsHistory'", connection))
         await using (var reader = await command.ExecuteReaderAsync())
             while (await reader.ReadAsync()) actual.Add(reader.GetString(0) + "/" + reader.GetString(1));
-        if (!expected.SetEquals(actual)) throw new InvalidOperationException("family EF/PostgreSQL columns disagree");
+        if (!expected.SetEquals(actual)) throw new InvalidOperationException("family EF/PostgreSQL columns disagree: missing=" + string.Join(',', expected.Except(actual)) + "; extra=" + string.Join(',', actual.Except(expected)));
         var foreignKeys = model.Tables.SelectMany(t => t.ForeignKeyConstraints.Select(c => t.Name + "/" + c.Name)).ToHashSet(StringComparer.Ordinal);
         var actualForeignKeys = new HashSet<string>(StringComparer.Ordinal);
         await using (var command = new NpgsqlCommand("SELECT t.relname,c.conname FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname='public' AND c.contype='f'", connection))

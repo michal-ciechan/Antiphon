@@ -284,6 +284,7 @@ internal sealed partial class CheckpointSourceScriptFixture
         return result;
     }
     private Process? _worker;
+    private long _workerStartTicks;
     private Task<string>? _workerStderr;
     private readonly SemaphoreSlim _serial = new(1, 1);
     private TaskCompletionSource? _activeCompleted;
@@ -303,6 +304,7 @@ internal sealed partial class CheckpointSourceScriptFixture
         _worker.StartInfo.Environment["GIT_AUTHOR_DATE"] = "2026-10-01T00:00:00Z";
         _worker.StartInfo.Environment["GIT_COMMITTER_DATE"] = "2026-10-01T00:00:00Z";
         _worker.Start();
+        _workerStartTicks = _worker.StartTime.ToUniversalTime().Ticks;
         _workerStderr = _worker.StandardError.ReadToEndAsync();
     }
 
@@ -335,7 +337,7 @@ internal sealed partial class CheckpointSourceScriptFixture
             using var json = JsonDocument.Parse(line);
             var response = json.RootElement;
             var result = new DriverResult(response.GetProperty("exit").GetInt32(), response.GetProperty("stdout").GetString()!,
-                response.GetProperty("stderr").GetString()!, _worker.Id, _worker.StartTime.ToUniversalTime().Ticks,
+                response.GetProperty("stderr").GetString()!, _worker.Id, _workerStartTicks,
                 response.GetProperty("runspace").GetGuid(), response.GetProperty("terminated").GetBoolean());
             Invocations.Add(result);
             return result;
@@ -448,6 +450,12 @@ internal sealed partial class CheckpointSourceScriptFixture
                     $values = $pipeline.Invoke()
                     foreach ($value in $values) { $hostCapture.Screen.Output.AppendLine([string]$value) | Out-Null }
                     if ($pipeline.InvocationStateInfo.State -eq 'Failed') { $terminated = $true }
+                    # AddCommand(file) consumes the script's ExitException and exposes its actual code as LASTEXITCODE.
+                    # A hosting application must propagate that code to its PSHost before disposing the runspace.
+                    if (-not $hostCapture.Exited) {
+                        $scriptExit = $space.SessionStateProxy.GetVariable('LASTEXITCODE')
+                        if ($null -ne $scriptExit) { $hostCapture.SetShouldExit([int]$scriptExit) }
+                    }
                 } catch {
                     $terminated = $true
                     $hostCapture.Screen.Error.AppendLine([string]$_) | Out-Null
