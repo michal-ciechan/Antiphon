@@ -199,9 +199,14 @@ function Get-WindowDelta {
     $postgresCpu = ([double]$End.postgres.containerCpuSeconds - [double]$Start.postgres.containerCpuSeconds) / $seconds
     if ($serverCpu -lt 0 -or $postgresCpu -lt 0) { throw 'Negative CPU delta invalidated the window.' }
     $cacheDelta = $null; $perIngest = $null
-    $transcriptReads = [long](($deltas | Where-Object transcriptSelect | Measure-Object calls -Sum).Sum)
+    $transcriptReads = 0L
+    $unknownReads = 0L
     # Old schema-1 content rows remain readable, but their unclassified work cannot certify zero.
-    $unknownReads = [long](($deltas | Where-Object { $_.transcriptSelect -and $_.shape -notin @('working','uuid','state-seed','state-pins') } | Measure-Object calls -Sum).Sum)
+    foreach ($delta in $deltas) {
+        if (-not $delta.transcriptSelect) { continue }
+        $transcriptReads += $delta.calls
+        if ($delta.shape -notin @('working','uuid','state-seed','state-pins')) { $unknownReads += $delta.calls }
+    }
     if ($Start.runtime.ContainsKey('cache') -and $End.runtime.ContainsKey('cache')) {
         if ($Start.runtime.cache.serverEpoch -ne $End.runtime.cache.serverEpoch) { throw 'Cache epoch changed inside the window.' }
         $cacheDelta = @{}
@@ -269,7 +274,9 @@ function Capture-Evidence {
 
 function Get-Rate {
     param($Delta, [string]$Shape)
-    return [double](($Delta.statements | Where-Object shape -eq $Shape | Measure-Object calls -Sum).Sum) / $Delta.seconds
+    $calls = 0L
+    foreach ($statement in $Delta.statements) { if ($statement.shape -eq $Shape) { $calls += $statement.calls } }
+    return [double]$calls / $Delta.seconds
 }
 
 function Get-ObservedWorkload {

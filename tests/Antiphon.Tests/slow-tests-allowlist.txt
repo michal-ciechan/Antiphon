@@ -6,6 +6,8 @@ Antiphon.Tests.Checkpoints.CheckpointRecoveryLinuxTests
 # CARD-0805: native Windows child and sharing-violation recovery matrix.
 Antiphon.Tests.Checkpoints.CheckpointRecoveryWindowsTests
 # Repository entries are fully-qualified class names. Adjacent reason comments are required.
+# CARD-0701: real pwsh comparison matrices (up to twelve child processes) and isolated SQL classifier.
+Antiphon.Tests.Scripts.MeasureSessionStateCacheScriptTests
 # Tripwire still accepts caller-supplied simple names. No substring or argument matching.
 # CARD-0665: real Git and database removal matrix; server2 measured 18 rows over five seconds.
 Antiphon.Tests.Application.AgentTaskLandRemovalMatrixTests
