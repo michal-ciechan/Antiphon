@@ -32,9 +32,11 @@ public sealed class CodexCliObservationGapTests
             try
             {
                 await WaitAsync(() => w.Recipient.SnapshotReads >= 2 || starting.IsCompleted);
+                if (starting.IsCompleted) await starting;
                 w.Recipient.Terminals.Values.SelectMany(t => t.Inputs).ShouldBeEmpty("C1029-pc-262 input waits for provider ready");
                 w.Recipient.Ready = true;
                 await WaitAsync(() => w.Recipient.Terminals.Values.SelectMany(t => t.SubmittedBodies).Any(b => b.StartsWith("[antiphon-grok-rules:", StringComparison.Ordinal)) || starting.IsCompleted);
+                if (starting.IsCompleted) await starting;
                 await using (var db = w.Db())
                     (await db.SessionQueuedMessages.CountAsync(q => q.SourceTaskId == w.TaskId && q.Origin == QueuedMessageOrigin.Delegation))
                         .ShouldBe(0, "C1029-pc-263 no task queue before matching rules ACK");
@@ -143,18 +145,18 @@ public sealed class CodexCliObservationGapTests
             await using var w = await World.CreateAsync(remote, busy: true);
             await w.ProduceAsync(); await w.StartAsync();
             string? held = null;
-            w.Recipient.RecordPrompt = (_, text) => { held = text; return Task.CompletedTask; };
-            await w.ReadyToFlushAsync(); await w.FlushAsync();
-            var row = await w.RowAsync();
-            held.ShouldBe(w.Wire(row));
-            var floor = row.LastDeliveryBaselineSequence.ShouldNotBeNull("C1029 original observable floor");
-            await using (var db = w.Db())
+            w.Recipient.RecordPrompt = async (_, text) =>
             {
+                held = text;
+                var row = await w.RowAsync();
+                var floor = row.LastDeliveryBaselineSequence.ShouldNotBeNull("C1029 original observable floor");
+                await using var db = w.Db();
                 var old = await db.TranscriptEntries.SingleAsync(e => e.AgentSessionId == w.SessionId && e.Sequence == floor);
                 old.Kind = TranscriptKinds.UserPrompt; old.Text = held;
                 await db.SaveChangesAsync();
-            }
-            await w.FlushAsync();
+            };
+            await w.ReadyToFlushAsync(); await w.FlushAsync();
+            held.ShouldBe(w.Wire(await w.RowAsync()));
             var retained = await w.RowAsync();
             retained.DeliveryVerdict.ShouldNotBe(DeliveryVerdict.LateConfirmed, "C1029-pc-223 old floor cannot confirm");
             if (remote) retained.RemoteSpillBody.ShouldBe(w.Full);
@@ -248,15 +250,19 @@ public sealed class CodexCliObservationGapTests
             recovered.LastDeliveryBaselineSequence.ShouldBe(original.LastDeliveryBaselineSequence);
             var path = w.SpillPath(recovered);
             if (File.Exists(path)) File.Delete(path);
+            bool? filePresentAtInput = null;
+            byte[]? bytesAtInput = null;
             w.Recipient.BeforeBody = async (id, input) =>
             {
                 if (!input.Contains(DelegationReportFormatter.TaskMarker(w.TaskId), StringComparison.Ordinal)) return;
                 id.ShouldBe(w.SessionId);
-                File.Exists(path).ShouldBeTrue("C1029-pc-219 durable lookup writes E before pointer input");
-                (await File.ReadAllBytesAsync(path)).ShouldBe(System.Text.Encoding.UTF8.GetBytes(w.Full));
+                filePresentAtInput = File.Exists(path);
+                if (filePresentAtInput == true) bytesAtInput = await File.ReadAllBytesAsync(path);
             };
             if (busy) { await w.FlushAsync(); w.Terminal.SubmittedBodies.ShouldBeEmpty(); await w.ReadyToFlushAsync(); }
             await w.FlushAsync();
+            filePresentAtInput.ShouldBe(true, "C1029-pc-219 durable lookup writes E before pointer input");
+            bytesAtInput.ShouldBe(System.Text.Encoding.UTF8.GetBytes(w.Full));
             (await w.RowAsync()).Id.ShouldBe(original.Id);
             await w.AssertReceiptAsync("C1029-pc-219 fresh graph original queue");
         }
@@ -280,6 +286,8 @@ public sealed class CodexCliObservationGapTests
             var attempted = await w.RowAsync();
             attempted.DeliveryAttempts.ShouldBe(1);
             if (remote) attempted.RemoteSpillBody.ShouldBe(w.Full);
+            // Existing recovery admission is 3s confirmation + 3s grace + 30s tolerance.
+            w.Clock.Advance(TimeSpan.FromSeconds(37));
             await w.RecreateAsync(); await w.FlushAsync();
             var settled = await w.RowAsync();
             settled.Id.ShouldBe(original.Id);

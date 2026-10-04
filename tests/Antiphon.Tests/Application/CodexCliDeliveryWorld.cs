@@ -58,6 +58,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
             var world = new World { Schema = schema, Git = git, Remote = remote,
                 Root = System.IO.Directory.CreateTempSubdirectory("c1029-recipient-").FullName };
             world.Freeze = new(schema.ConnectionString);
+            world.Recipient.Time = world.Clock;
             try { await world.OpenGraphAsync(busy); return world; }
             catch { await world.DisposeAsync(); throw; }
         }
@@ -159,10 +160,21 @@ internal static partial class CodexCliRemoteDeliveryFixture
         }
         public void DiscardUnstartedLaunch() => _launches.Discard();
 
-        public Task StartAsync()
+        public async Task StartAsync()
         {
             _launches.Release(H.Provider.GetRequiredService<AgentSessionLaunchQueue>());
-            return H.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+            await H.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+            await AssertStartedAsync();
+        }
+        public async Task AssertStartedAsync()
+        {
+            await using var db = Db();
+            var session = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == SessionId);
+            var events = await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == TaskId)
+                .OrderBy(e => e.At).Select(e => e.Detail).ToListAsync();
+            session.Status.ShouldBe(SessionStatus.Running,
+                $"C1029 recipient launch: {session.FailureReason}; {session.GrokRulesFailure}; {string.Join("; ", events)}");
+            Recipient.Terminals.ContainsKey(SessionId).ShouldBeTrue("C1029 launch reached recipient");
         }
         public async Task<SessionQueuedMessage> RowAsync()
         {
@@ -269,6 +281,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
         public bool Fired { get; private set; }
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData e, InterceptionResult<int> result, CancellationToken ct = default)
         {
+            e.Context!.ChangeTracker.DetectChanges();
             foreach (var entry in e.Context!.ChangeTracker.Entries<SessionQueuedMessage>())
             {
                 if (entry.Entity.ExecutionTaskId != TaskId && entry.Entity.SourceTaskId != TaskId) continue;

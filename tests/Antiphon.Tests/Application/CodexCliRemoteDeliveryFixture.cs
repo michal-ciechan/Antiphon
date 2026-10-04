@@ -320,6 +320,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
         public bool AckRules { get; set; } = true;
         public int SnapshotReads { get; private set; }
         public bool WorkingScreen { get; set; }
+        public TimeProvider Time { get; set; } = TimeProvider.System;
         private readonly Dictionary<Guid, AgentKind> _kinds = [];
         public Dictionary<Guid, GrokRulesReceipt> Rules { get; } = [];
         public void AppendAt(Guid id, string kind, string? text, DateTimeOffset? timestamp)
@@ -332,7 +333,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
         public void Append(Guid id, string kind, string? text = null, string? stopReason = null)
         {
             var entries = _transcripts[id];
-            entries.Add(new(id, entries.Count + 1, kind, null, null, DateTimeOffset.UtcNow,
+            entries.Add(new(id, entries.Count + 1, kind, null, null, Time.GetUtcNow(),
                 kind == TranscriptKinds.UserPrompt ? "user" : null, text, null, null, null, null, stopReason));
         }
         public RunnerCapabilitiesDto Capabilities() => new("InboxConhost", "inbox", "test", false,
