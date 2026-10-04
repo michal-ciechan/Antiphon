@@ -8,7 +8,7 @@ export C913_ROOT="$root"
 remote="$repo/scripts/c590-remote.sh"
 awk '/^(c849_[a-z_]+|case_runner_cache_inventory)\(\) \{/ { active=1 } active { print } active && /^}$/ { active=0 }' "$remote" > "$root/functions"
 source "$root/functions"
-SERVER2_ROOT="$root/server2"; CASE_DIR="$root/case"; CHECKOUT="$repo"
+SERVER2_ROOT="$root/server2"; CASE_DIR="$root/case"; CHECKOUT="$repo"; ROOT="$repo"
 C849_READY="$SERVER2_ROOT/cache/seed-accepted"
 C849_PACKAGES=antiphon-runner-cache-nuget-packages
 C849_SCRATCH=antiphon-runner-cache-nuget-scratch
@@ -52,15 +52,17 @@ c849_smoke() {
         write_result false CacheSmokeFailed 2
     fi
     barrier before-smoke
-    printf 'smoke\n' >> "$root/trace"
+    printf 'smoke\n' >> "$C913_ROOT/trace"
     [ "$FAULT" != smoke ] || write_result false CacheSmokeFailed 2
     printf 'C849_SMOKE runner=%s uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK\n' "$2" >> "$CASE_DIR/smoke-summary.txt"
     barrier after-smoke
 }
 c849_status_body() {
     local runner="$1" sessions=0 running=0 queued=0 retired=null available=true
-    if [ "$runner" = server2-temp ] && [ "$SOURCE" != live ]; then retired='"2026-10-04T00:00:00Z"'; available=false; fi
+    if [ "$runner" = server2-temp ] && { [ "$SOURCE" != live ] || [ "$FAULT" = retired-running ]; }; then retired='"2026-10-04T00:00:00Z"'; available=false; fi
     [ "$FAULT" != status-error ] || return 1
+    if [ "$FAULT" = status-omitted ]; then printf '{}'; return; fi
+    if [ "$FAULT" = status-malformed ]; then printf '{"sessions":"unknown"}'; return; fi
     [ "$FAULT" != busy ] || sessions=1
     [ "$FAULT" != unknown ] || queued=null
     if [ "$FAULT" = saved-late-busy ] && grep -q '^barrier after-saved-copy$' "$root/trace"; then sessions=1; fi
@@ -89,10 +91,10 @@ sleep() { :; } # injected reconnect state is constant; do not wait on a syntheti
 findmnt() { printf '/\n'; [ "$FAULT" != nested-mount ] || printf '%s/child\n' "$root/volumes/$C849_SCRATCH/_data"; }
 df() { printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nfixture 999999999 0 999999999 0%% /\n'; }
 docker() {
-    printf '%s\n' "$*" >> "$root/docker-trace"
     local root="$C913_ROOT"
-    local name role format arg entrypoint='' code='' target source payload='' i
-    local -a mappings=()
+    printf '%s\n' "$*" >> "$root/docker-trace"
+    local name role format arg entrypoint='' code='' target source payload='' i j
+    local -a mappings=() script_args=()
     case "$1:${2:-}" in
       image:inspect) [ "$FAULT" != image-missing ] || return 1; printf '%s\n' "$image_id" ;;
       info:*) printf '%s\n' "$root" ;;
@@ -117,6 +119,7 @@ docker() {
         fi ;;
       ps:*)
         [ "$FAULT" != census-error ] || return 1
+        if [ "$FAULT" = partial-census ]; then echo "$donor_id"; return 1; fi
         if [[ "$*" == *volume=* ]]; then
           if [ "$FAULT" = attachment ] || { [ "$FAULT" = saved-late-attachment ] && grep -q '^barrier after-npm-verify$' "$root/trace"; }; then echo foreign; fi
           return 0
@@ -124,13 +127,13 @@ docker() {
         if [[ "$*" == *"project=$TEMP_PROJECT"* ]]; then
           if [ "$SOURCE" = live ]; then echo "$donor_id"; [ "$FAULT" != duplicate ] || echo duplicate
           elif [ "$FAULT" = saved-temp-present ] && [ "$(grep -c "project=$TEMP_PROJECT" "$root/docker-trace")" -ge 2 ]; then echo "$donor_id"; fi
-        else printf '%064d\n' 4; fi ;;
+        else [ "$FAULT" = main-missing ] || printf '%064d\n' 4; fi ;;
       inspect:*)
         [ "$FAULT" != inspect-error ] || return 1
         case "$3" in
           *'.Image'*) echo "$image_id" ;;
           *'.Id'*) if grep -q '^restart$' "$root/trace" 2>/dev/null; then barrier donor-id; fi; if [ "$FAULT" = donor-id ] && grep -q '^restart$' "$root/trace"; then echo changed; else echo "$donor_id"; fi ;;
-          *'.State.Running'*) echo false ;;
+          *'.State.Running'*) if [ "$FAULT" = retired-running ] && [ "${@: -1}" = "$donor_id" ]; then echo true; else echo false; fi ;;
           *'com.docker.compose.project'*) echo "$TEMP_PROJECT" ;;
           *'com.docker.compose.service'*) echo session-runner ;;
           *'.Mounts'*) echo '[]' ;;
@@ -165,7 +168,7 @@ docker() {
               target="${arg#*target=}"; target="${target%%,*}"
               [[ "$arg" != type=volume,* ]] || source="$root/volumes/$source/_data"
               mappings+=("$target|$source") ;;
-            -c) i=$((i+1)); code="${!i}" ;;
+            -c) i=$((i+1)); code="${!i}"; for ((j=i+1; j<=$#; j++)); do script_args+=("${!j}"); done; break ;;
           esac
         done
         if [ "$entrypoint" = sleep ]; then
@@ -195,7 +198,7 @@ docker() {
           [ "$FAULT" != import ] || return 1
           printf 'import\n' >> "$root/trace"
         fi
-        bash -c "$code" || return $?
+        bash -c "$code" "${script_args[@]}" || return $?
         if [[ "$code" == *'cp -a '* ]]; then
           if [[ "$code" == *"$root/volumes/$C849_PACKAGES/_data"* ]]; then barrier after-import-packages; else barrier after-import-npm; fi
         fi
@@ -415,6 +418,9 @@ case "$mode" in
     mv "$C849_READY" "$root/valid-marker"; ln -s "$root/valid-marker" "$C849_READY"
     run c849_require_ready allow-cold; refuse marker-symlink CacheSeedMarkerInvalid
     rm "$C849_READY"; cp "$root/marker" "$C849_READY"
+    mv "$recovery" "$root/escaped-recovery"; ln -s "$root/escaped-recovery" "$recovery"
+    run c849_require_ready allow-cold; refuse recovery-escape-refused CacheRecoveryMissing
+    rm "$recovery"; mv "$root/escaped-recovery" "$recovery"
     for bad in recovery-missing manifest-missing recovery-escape image-missing digest; do
       cp "$root/marker" "$C849_READY"; FAULT=none
       case "$bad" in
@@ -452,12 +458,13 @@ case "$mode" in
     # Volume size and disk facts are external boundaries; execute all authority,
     # recovery, whole-target preflight, destructive and final-budget guards.
     c849_observe_volume() {
-      local bytes=100000
+      local bytes=$((PERCENT * 1000))
+      [ "$SELECT_ROLE" = all ] || [ "$SELECT_ROLE" = "$2" ] || bytes=0
       if [ "$FAULT" = budget ] && grep -q '^smoke$' "$root/trace"; then bytes=100001; fi
       printf '%s %s %s 1654:1654:700 %s 100000\n' "$1" "$2" "$root/volumes/$1/_data" "$bytes"
     }
     reset_prune() {
-      FAULT=none
+      FAULT=none; PERCENT=100; SELECT_ROLE=all
       rm -rf "$SERVER2_ROOT/cache/recovery-$RUN"; make_full_marker
       for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
         rm -rf "$root/volumes/$name/_data"; mkdir -m700 "$root/volumes/$name/_data"
@@ -507,11 +514,60 @@ case "$mode" in
       reset_prune; FAULT="$FAULT_CASE"
       case "$FAULT" in refill) diagnosis=CacheRefillFailed;; refill-receipt) diagnosis=CacheRefillReceiptMissing;; smoke) diagnosis=CacheSmokeFailed;; budget) diagnosis=CacheBudgetExceeded;; esac
       run c849_prune
-      [ "$(cat "$root/exit")" != 0 ] && [ ! -e "$CASE_DIR/prune.txt" ] || fail "$FAULT-no-success"
+      refuse "$FAULT-no-success" "$diagnosis"
+      [ ! -e "$CASE_DIR/prune.txt" ] || fail "$FAULT-no-success"
       pass "$FAULT-no-success"
     done
+    # Exact clock edges use observed time facts, with no sleep or timeout changes.
+    now=$(command date -u +%s)
+    date() { if [ "$*" = '-u +%s' ]; then printf '%s\n' "$now"; else command date "$@"; fi; }
+    for age in -1 0 3600 3601; do
+      reset_prune
+      sed -i "s/^created-at=.*/created-at=$(command date -u -d "@$((now-age))" +%Y-%m-%dT%H:%M:%SZ)/" "$receipt/preview.txt"
+      run c849_prune
+      if [ "$age" = -1 ] || [ "$age" = 3601 ]; then
+        refuse "stale-time-no-delete-$age" CachePreviewStale
+        [ "$(cat "$root/volumes/$C849_SCRATCH/_data/sentinel")" = sentinel ] || fail stale-time-no-delete
+      else accept "preview-age-$age-accepted"; fi
+    done
+    unset -f date
+    for selected_role in nuget-packages nuget-scratch npm-content all; do
+      for percent in 79 80 99 100 101; do
+        reset_prune; PERCENT="$percent"; SELECT_ROLE="$selected_role"
+        for pair in "$C849_PACKAGES:nuget-packages" "$C849_SCRATCH:nuget-scratch" "$C849_NPM:npm-content"; do c849_observe_volume "${pair%:*}" "${pair#*:}" 100000; done > "$receipt/volumes.txt"
+        sed -i "s/^volume-sha256=.*/volume-sha256=$(sha256sum "$receipt/volumes.txt" | cut -d' ' -f1)/" "$receipt/preview.txt"
+        run c849_prune
+        if [ "$percent" = 79 ]; then refuse "$selected_role-79-no-candidate" CacheNoPruneCandidate
+        elif [ "$percent" = 101 ]; then refuse "$selected_role-101-over-budget" CacheBudgetExceeded
+        else accept "$selected_role-$percent-pruned"; fi
+        for pair in "$C849_PACKAGES:nuget-packages" "$C849_SCRATCH:nuget-scratch" "$C849_NPM:npm-content"; do
+          name="${pair%:*}"; role="${pair#*:}"; sentinel="$root/volumes/$name/_data/sentinel"
+          [ "$role" != nuget-packages ] || sentinel="$root/volumes/$name/_data/ordinary/1.0.0/data"
+          if [ "$percent" != 79 ] && { [ "$SELECT_ROLE" = all ] || [ "$SELECT_ROLE" = "$role" ]; }; then
+            [ ! -e "$sentinel" ] || fail "selected-role-not-cleared-$role-$percent"
+          else [ "$(cat "$sentinel")" = sentinel ] || fail "unselected-role-changed-$role-$percent"; fi
+        done
+      done
+    done
+    reset_prune
+    recovery="$SERVER2_ROOT/cache/recovery-$RUN"
+    for base in "$recovery/packages" "$root/volumes/$C849_PACKAGES/_data"; do
+      mkdir -p "$base/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native" "$base/microsoft.netcore.app.ref/9.0.20"
+      printf '{}' > "$base/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata"
+      printf '{}' > "$base/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata"
+      printf legacy-host > "$base/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost"
+    done
+    legacy_digest=$(sha256sum "$recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" | cut -d' ' -f1)
+    printf 'donor=saved\nimage=%s\ntime=2026-10-04T00:00:00Z\npayload-sha256=%s\nreference-sha256=%064d\npackage-bytes=11\nnpm-bytes=0\nrecovery=%s\n' "$image_id" "$legacy_digest" 0 "$recovery" > "$C849_READY"
+    run c849_prune; accept legacy-prune-success
+    grep -q 'for p in microsoft.netcore' "$root/docker-trace" &&
+      [ "$(cat "$root/volumes/$C849_PACKAGES/_data/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost")" = legacy-host ] || fail legacy-refill-required
+    pass legacy-refill-required
+    reset_prune; PERCENT=0
+    df() { printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nfixture 999999999 0 %s 0%% /\n' "$FREE_KB"; }
+    FREE_KB=20971519; run c849_budget_gate; refuse headroom-below-20g-refused CacheDiskLow
+    FREE_KB=20971520; run c849_budget_gate; accept headroom-at-20g-accepted
     ;;
-
  inventory)
     SOURCE=saved
     curl() { c849_status_body "${@: -1}"; }
@@ -519,14 +575,30 @@ case "$mode" in
     curl() { if [[ "$*" == *server2-temp/status* ]]; then c849_status_body server2-temp; else c849_status_body server2; fi; }
     run case_runner_cache_inventory; accept absent-temp-accepted
     grep -Fq 'runner=server2-temp container=absent' "$CASE_DIR/identities.txt" || fail absent-temp-recipient
-    for FAULT in census-error inspect-error status-error absent-unretired duplicate; do
-      [ "$FAULT" != duplicate ] || SOURCE=live
+    for FAULT in census-error partial-census main-missing inspect-error status-error status-omitted status-malformed absent-unretired duplicate retired-running; do
+      SOURCE=saved
+      case "$FAULT" in duplicate|retired-running) SOURCE=live ;; esac
       run case_runner_cache_inventory
       [ "$(cat "$root/exit")" != 0 ] || fail "inventory-$FAULT-refused"
       pass "inventory-$FAULT-refused"
     done
     SOURCE=live; FAULT=none
     run case_runner_cache_inventory; accept present-temp-accepted
+    FAULT=attachment
+    run c849_volume "$C849_PACKAGES" nuget-packages yes "$image_id"
+    refuse unmarked-consumer-refused CacheUnmarkedInUse
+    FAULT=none
+    tmp_mode_probe() {
+      docker() {
+        if [ "$1" = inspect ]; then
+          if [[ "$*" == *'.Config.Labels'* ]]; then echo "$HOST_PROJECT"; return; fi
+          printf 'volume %s /home/app/.nuget/packages true\nvolume %s /var/cache/antiphon/nuget-scratch true\nvolume %s /home/app/.npm/_cacache true\n' "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"
+          printf 'volume %s_runner-tmp /tmp true\nvolume %s_work /work true\nvolume %s_runner-state /state true\nvolume %s_dind-data /var/lib/docker true\n' "$HOST_PROJECT" "$HOST_PROJECT" "$HOST_PROJECT" "$HOST_PROJECT"
+        elif [ "$1" = exec ]; then echo 755; else return 94; fi
+      }
+      c849_assert_mounts "$donor_id"
+    }
+    run tmp_mode_probe; refuse tmp-mode-refused RunnerTmpModeInvalid
     : > "$root/cleanup-trace"
     printf 'c849%sowned-packages\nc849foreign-packages\n' "$RUN" > "$CASE_DIR/.fixture-volumes"
     (

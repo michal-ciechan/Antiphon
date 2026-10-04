@@ -3123,12 +3123,16 @@ public sealed class RemoteScriptContractTests
             mkdir -p "$root/bad"; printf 'bad\n' > "$root/bad/escape"
             tar -cf "$root/traversal.tar" -C "$root/bad" --transform='s|escape|../escape|' escape
             tar -cf "$root/nested-traversal.tar" -C "$root/bad" --transform='s|escape|packages/../../escape|' escape
+            tar -cf "$root/duplicate.tar" -C "$root/bad" --transform='s|escape|packages/probe/1.0/data|' escape
+            tar -rf "$root/duplicate.tar" -C "$root/bad" --transform='s|escape|.nuget/packages/probe/1.0/data|' escape
+            mkfifo "$root/bad/fifo"
+            tar -cf "$root/unsupported.tar" -C "$root/bad" --transform='s|fifo|packages/probe/1.0/fifo|' fifo
             ln -s "$root/outside" "$tree/packages/link"
             tar -cf "$root/symlink.tar" -C "$tree" .
             rm "$tree/packages/link"
             find "$tree/packages" -name .nupkg.metadata -delete
             tar -cf "$root/missing.tar" -C "$tree" .
-            for fault in traversal nested-traversal symlink missing; do
+            for fault in traversal nested-traversal duplicate unsupported symlink missing; do
                 stage="$root/stage-$fault"; mkdir -p "$stage/packages" "$stage/npm"
                 SOURCE="$root/$fault.tar" STAGE="$stage"
                 diagnosis="$(c849_saved_copy "$SOURCE" "$STAGE" image)"; code=$?
@@ -3162,6 +3166,8 @@ public sealed class RemoteScriptContractTests
         output.ShouldContain("traversal code=2 diagnosis=CacheDonorUnsafePath");
         output.ShouldContain("nested-traversal code=2 diagnosis=CacheDonorUnsafePath");
         output.ShouldContain("nested-traversal-no-escape");
+        output.ShouldContain("duplicate code=2 diagnosis=CacheDonorDuplicateEntry", customMessage: "duplicate-archive-refused");
+        output.ShouldContain("unsupported code=2 diagnosis=CacheDonorUnsafeEntry", customMessage: "unsupported-tar-refused");
         output.ShouldContain("directory-fifo code=2 diagnosis=CacheDonorUnsafeEntry");
         output.ShouldContain("directory-fifo-not-copied");
         output.ShouldContain("symlink code=2 diagnosis=CacheDonorUnsafeEntry");
