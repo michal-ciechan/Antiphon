@@ -61,7 +61,12 @@ $http = {
     if ($url -like '*/api/channels/consumer') { return [pscustomobject]@{StatusCode=200;Body='{"enabled":true,"consumerGroup":"antiphon-server-bridge","inboundTopic":"channels.inbound","brokers":[{"host":"am-redpanda","port":9092}]}'} }
     throw 'Unexpected HTTP runner request.'
 }
-$scp = { param($source,$destination) if ($destination -notlike 'mc@server2:/tmp/am-service-src-*') { throw 'Unexpected SCP destination.' }; return [pscustomobject]@{ExitCode=0;Output=@()} }
+$scp = {
+    param($source,$destination)
+    $expectedTarget = if ((Get-Command Invoke-AmServiceDeployment).Parameters.ContainsKey('SshTarget')) { 'operator@gateway.example.invalid' } else { 'mc@server2' }
+    if ($destination -notlike ($expectedTarget + ':/tmp/am-service-src-*')) { throw 'Unexpected SCP destination.' }
+    return [pscustomobject]@{ExitCode=0;Output=@()}
+}
 $ssh = {
     param($command)
     $script:commands.Add($command)
