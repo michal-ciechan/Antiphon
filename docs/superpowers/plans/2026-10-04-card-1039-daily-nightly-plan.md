@@ -533,304 +533,285 @@ boundaries. No Code admission follows merely from this amendment or the old
 candidate checkpoint table.
 
 
+
 ## Verification design
 
-Original TestDesign task 68138e50 inspected source
-ff57123014a952d522f8b896bb38780c73e1095b; its appendix landed in d0f4adcf6038b3a768fb1e6bec23d563d76d4fe9.
-The inspection and offline candidates below are retained. Amendment 1064523d
-supplies the previously missing design inputs, without claiming their execution.
+Re-verification task `da49d22e`, source
+`a54e03b78c6e45a9c78e8d09ca3679859c499605`. This section replaces the superseded
+TestDesign appendix from `d0f4adcf6`; the fix design, D-1..D-12, M-0..M-3 and
+Q-0..Q-6/Q-R above are unchanged. The older candidate table and stage notices
+above describe the handoff **into** this stage; the disposition here supersedes
+those notices.
 
-**Current disposition: fresh TestDesign; do not dispatch Code from this
-manifest.** The prior TestDesign rejection is preserved as history. B-1 still
-needs measurement through M-0..M-3; D-10/S1n supplies B-2's planned production
-seams, and D-11/D-12/S3c supplies B-3's recipient/queue/reader/recovery contract.
-TestDesign must validate them, replace PC-53..57 with the independent controls
-below, freeze lane-specific checkpoint rows and reprice before Code admission.
+**Admit the named implementation slices, starting with S1n-a.** B-2 and B-3 now
+have executable verification seams. B-1 remains an operational measurement gate
+on S3a and qualification, with the acceptance contract below; it is not a reason
+to repeat CARD-1021 Unit or hold S1n/S1/S2/S3b/report work. Commission M-0 then
+M-1 on Windows independently of Code. No Windows measurement, native pass,
+delivery, registration or activation is claimed by this document.
 
 ### Inspection
 
-| Bodies read | Boundaries -> coverage or exclusion |
+Bodies re-read at the source above (new classes are specifications, not existing
+tests). The nearest fixtures are named explicitly.
+
+| Bodies read | Boundaries -> V/R IDs or exclusion |
 |---|---|
-| scripts/lib/nightly-tests-impl.ps1: all function bodies; scripts/nightly-tests.ps1; Start-NightlyProcess in nightly-common.ps1 | Actual driver callsites, cleanup, chunk loop, summary -> V-1/V-2/V-3; native custody gap B-2 |
-| scripts/lib/nightly-coverage.ps1: all function bodies | Discovery versions/metadata, TRX definitions, UID joins, freshness, class membership, union -> V-2/V-3 and R-2 |
-| scripts/test-nightly-tests.ps1: all cases and New-Efx/Invoke-E; scripts/lib/c487-harness.ps1: all helpers | G037/G038 are helper checks; G039/G040/G144 reach the entry via fabricated process results; G051's first assertion is literally true -> replace that claim with V-2 production-loop evidence |
-| NightlyScriptsTests.cs; ReleaseGatePolicyTests.cs; ReleaseGateRegistrationTests.cs; Scripts/ScriptHarness.cs | Existing executed-method counts and harness result checking -> R-2/R-4/R-5; nearest fixtures for the proposed classes |
-| BuildSlotScriptTests.cs; test-build-slot.ps1 fixture launch/wait/order helpers and C589 lease/CPU/failure/timeout/unreachable/renew bodies; C800 literal-argv body; scripts/lib/build-slot.ps1 | Real library semantics, private endpoint, command recorder, renewer -> V-1/R-1; neither the shim nor wrapper tests prove nightly uses the gate |
-| BuildSlotEndToEndTests.cs, budget-one and killed-holder tests plus its child launcher | Real loopback broker example; separate test assembly. Excluded from ordinary reruns because CARD-0589 owns the broker; use its pattern for the nightly consumer, not a claim that these tests cover nightly |
-| register-release-gates.ps1: full body; Invoke-ReleaseGateWindmill; test-release-gate.ps1 New-C599Policy, policy/metadata/census/expanded cases, New-C599WindmillFx and all registration cases | Opaque revision, missing/unknown, accepted/stored, drift, enabled/disabled -> V-4/R-4. Fixture stores only a subset of posted fields today |
-| NightlyVerificationContractTests.cs; C545 ResultLine/JobResultFetch wrappers; their PowerShell case bodies, Invoke-C545ResultLineRun, New-RunFx and Test-C544FlagRequired | Existing flags and identity propagation -> R-3. ResultLine fabricates reportDelivered=true; it cannot prove report receipt |
-| nightly-run-impl.ps1 complete-green/state writer, report phase, returned result record; nightly-report.ps1 Finish-Report and green/red write paths; test-nightly-report.ps1 summary/store helpers and T7 | Exit-zero fallback and green/no-card no-op -> B-3. Reporter initializes ReportDelivered=false and never sets it true; the process caller does not consume that object |
-| C545World setup/restart; C545_ReaderFirstRetry and C545_HeldReaderNoResend bodies; CARD-0545 delivery inventory and F-1..F-6 | Separate watchdog ledger/recipient pipeline; carry its live obligation, do not count it as the nightly report's receipt |
-| scripts/fixtures/nightly/c487-probe/Probe.cs and Probe.csproj; CARD-0487 discovery report | Nearest native fixture: 9 discovered/8 default executed at historical SHA, with argument/data/inherited/partial/OptIn rows. No Unit category and no native child-custody sentinel -> B-1/B-2 |
-| tests/test-execution-policy.json; Get-NightlyPolicyHash, Get-NightlySafeChildEnvironment and profile exclusion/disposition helpers | Seven suites, no antiphon chunks, 3,600,000 ms cap, inactive reduced policy; nightly ProfileAware=false -> V-3 and B-1 |
-| CARD-1021 Code evidence; CARD-0474 full-category timing report | Linux Unit facts and incomplete old Windows timings -> B-1. Neither supplies a current compiled Windows inventory or complete class timing map |
+| `nightly-tests-impl.ps1`: owned-process/cleanup/native-argv functions, build/suite/chunk loop, union and summary writer; `nightly-tests.ps1`; `nightly-common.ps1`: atomic writer, seam declaration | Suspended containment, root/descendant/pipe completion, argv, all eight nightly driver sites, independent discovery, atomic summary -> V-1/2/5/6. `ChildrenExited=true` currently proves nothing. |
+| `nightly-coverage.ps1`: discovery document parser, discovery production, freshness, membership, disposition/census, coverage verdict, expanded UID union and TRX/diagnostic cross-check | Incomplete/malformed discovery, prefix classes, unchanged executable/DLL, eligibility, terminal outcomes -> V-2/3/7, R-2. |
+| `test-nightly-tests.ps1`: New-Efx, Invoke-E, fresh-probe helper, G037..039, G041..051, G144; `c487-harness.ps1`: owned clone, seams, TRX/execution/discovery writers | Fabricated launcher outputs and golden parser evidence are bounded substitutes. G048/G050 and G051's first constant-true assertion supply no evidence -> replace claims through V-1/2/5. |
+| `NightlyScriptsTests`, `ReleaseGatePolicyTests`, `ReleaseGateRegistrationTests`, `NightlyVerificationContractTests`, `ScriptHarness`: method and helper bodies; `Probe.cs`/`Probe.csproj` | Nearest fixtures for new Scripts classes; non-parameterized wrappers each count once. Existing probe has argument/data/inherited/partial/OptIn cases but no Unit category or owned descendant -> V-5, R-2/4/5. ScriptHarness timeout does not prove process-tree cleanup. |
+| `BuildSlotScriptTests`; `test-build-slot.ps1`: launch/wait/environment helpers, lease/CPU/refusal/renew and literal-argv cases; `lib/build-slot.ps1`: enter/renew/exit/CPU functions | Private broker, actual grant/child order, refusal, exception and renewal -> V-1/R-1. `BuildSlotEndToEndTests` budget-one/killed-holder and launcher bodies supply a fixture pattern; broker assembly rerun excluded (CARD-0589 ownership). |
+| `register-release-gates.ps1` complete body; `test-release-gate.ps1`: New-C599WindmillFx/read/failure/register helpers, four registration cases, five policy cases | Fixture currently manufactures a digest-like revision and stores too few fields. Opaque revision, unknown-vs-404, persisted field equality, concurrent drift and restart -> V-4/R-2/R-4. |
+| `nightly-run-impl.ps1`: watched child, test/report phase, complete-green predicate/state writes; `nightly-report.ps1`: HTTP retry, Finish-Report, report composition and incident selection/green/red paths | Exit-zero/summary-true fallback and green/no-incident early return -> V-6/8. Blind POST retry cannot be reused as recovery. |
+| `test-nightly-report.ps1`: summary/store/shim/invoke helpers, top-level T1..T10, G077..079 and G099..104; `test-nightly-run.ps1`: New-RunFx/Invoke-FxRun, Invoke-C545ResultLineRun and ResultLine assertions | T7's zero-write expectation changes; incident-specific assertions stay. Case selection currently still runs T1..T10 first; add case-only dispatch -> V-6/8/R-6. Fabricated delivery flag must become a negative case. |
+| `CardCommentApiTests`: seed/reset/cleanup and POST/GET/distinct-session-route cases; `AntiphonWebAppFactory`: schema, host configuration, reset/disposal; `CardCommentService`: complete body; discussion endpoint lambdas | Nearest fixture for `Application/NightlyReportRecipientTests.cs`: real stored discussion, 16,000 UTF-16 code-unit cap, trimmed body, no idempotency key; TestServer needs a loopback bridge for child PowerShell -> V-6. Refusing runner remains structural. |
+| `test-nightly-health.ps1`: ScheduledIdentity, FlagRequired, JobResultFetch; C545 ResultLine/JobResultFetch wrappers, ReaderFirstRetry/HeldReaderNoResend bodies; C545World create/restart | R-3 receipt/coverage/green gates; real SQLite with fake Telegram is a different delivery path and cannot prove this report. Retain Q-5/F-1..F-6. |
+| Nightly/RC Windmill definition bodies; policy nightly/RC profiles and existing suite/watchdog configuration; CARD-0474 timing and CARD-1021 evidence | Wrapper job/trigger propagation -> V-8/R-4. Retained Windows case sums and Linux Unit receipts are historical, not M-1/M-2. |
+| testing-and-build manifest/slots/nightly/delivery/restoration; nightly-watchdog; release-gates registration; project-context; orchestration stage/landing contracts; PlanTableImporter/ManifestValidator | Checkpoint schema, custody and qualification boundaries; no session delivery implementation changes. |
 
-Required owners read for these boundaries: testing-and-build (manifest, slots,
-nightly, delivery), nightly-watchdog, release-gates registration, project-context
-conventions, and orchestration's stage/landing contracts. No session-runtime or
-queue implementation is being changed by this documentation task.
+Missing setup is implementation work in the named slices, not a waived check:
 
-**B-1: Windows census and timing are unavailable in this checkout.** The brief
-explicitly says the desktop checkout is unreachable. The locally retained
-CARD-0474 report is an interrupted, partial Windows run at 0eff2a32: about 87 of
-320 remaining classes were reached; fifteen named land classes were not reached.
-Its case-duration sums are not current class wall-clock budgets. CARD-1021's
-4,051 executed/15 failed/52 skipped is a Linux Unit receipt, not a Windows census.
-The old nine-node probe is not the repository inventory. No current Windows
-count, roster, UID digest or chunk duration is frozen by this task.
+- S1n-a/b: staged native sentinel executable, independent root/descendant handles,
+  controllable OS-operation barriers and two output streams. Build/stage the probe
+  and sentinel as dependencies of the isolated test-project build (including the
+  necessary test-project build wiring); never run an ungated compiler inside a
+  test. New native harness must own and join its children even when a mutant fails.
+- S1/S2: private gate endpoint, saved/restored environment and ordered grant,
+  start, root-exit, descendant-zero, drain and release observations. The portable
+  controlled-I/O lane exercises consumer decisions; it cannot claim Windows exit.
+- S3c-a: genuinely case-only C1039 report harness; real file operations, restart
+  barriers and immutable bodies. Do not accidentally run T1..T10 for each method. The inspected nightly owner
+  currently has no general log-retention sweep: test D-12 retention pins by
+  applying age-based cleanup only to fixture-owned logs and asserting pending
+  manifest/body/summary evidence stays available; add no retention daemon.
+  Do not change generic ScriptHarness as an incidental repair: use an owned-child
+  helper for these fixtures, with bounded finally cleanup and retained red logs.
+- S3c-b: derive a private factory with a per-test `IsolatedTestSchema`, use the
+  inspected refusing runner overrides, expose TestServer through a loopback-only
+  HTTP bridge, and seed a private board, ledger and incident cards. POST/GET must
+  traverse the actual endpoint/service/PostgreSQL. An HTTP recorder returning
+  posted bodies is insufficient. A fresh independent client supplies the oracle.
+- S3c-d: execute the checked-in Bash wrapper with an owned `ssh` argv recorder
+  (private PATH; no network), then the real producer against the private queue.
+  Portable lane requires pwsh and Bash; DB cases also need the repository test DB
+  prerequisites. Windows rows require actual 5.1 plus supported pwsh and Job APIs.
+  Missing prerequisites mean not run, never a skipped success.
 
-**Amendment resolution:** D-9 and M-0..M-3 commission this collection, including
-the smallest first executable slice (one build and discovery, zero test cases).
-S3a now names the timing validator, files and exact negative tests. Measurement
-is still pending and gates chunk-policy/qualification admission; it does not
-block writing this plan. No invented count or 4,051 floor is admissible.
-
-The eligibility premise is corrected in the ground-truth table and D-9 inputs:
-Invoke-AntiphonNightlyTests sets profileAware to (Profile != 'nightly').
-Test-NightlyDiscoveryExcluded therefore still excludes OptIn/Explicit in the
-nightly lane. Freeze that actual behavior; changing it would be a separate policy
-change. The policy description is consistent with this implementation. S5 also
-corrects owner prose that overgeneralizes RC profile semantics to nightly.
-
-**B-2: native fixture and cleanup evidence need a planned seam.**
-Invoke-NightlyOwnedProcess calls taskkill.exe on timeout, ignores the cleanup
-wait's result, and returns ChildrenExited=true unconditionally. The StartProcess
-fixture bypasses that entire body. Neither a true return value nor G050's literal
-true assertion proves child exit before slot release. The existing probe also
-cannot be selected by the production loop without its hard-coded native path or
-the broad StartProcess replacement. **Amendment resolution:** D-10 and S1n-a/b/c
-specify executable resolution without a launcher mock, suspended job assignment,
-observed job/process/pipe completion and actual 5.1 -> 7 tests. S1 adds the native
-lease-release integration row. Fresh TestDesign freezes those proposed rows;
-Linux fixture success cannot replace Windows evidence.
-
-**B-3: report receipt and recovery have no verifiable production contract.**
-nightly-run-impl.ps1 lines 544-548 accept reporter exit zero when summary has no
-reportDelivered property. nightly-report.ps1 returns zero for green/no-open-card
-without delivering anything (T7 explicitly requires zero HTTP writes). There is
-no correlated report receipt consumed here and no durable nightly-report
-delivery/recovery queue in this path. C545_ResultLine supplies a synthetic true
-flag before launching the fake reporter. Its success cannot close this gap.
-**Amendment resolution:** D-11/D-12 choose the same-board report ledger card,
-identity/body/parts, local durable queue, exclusive consumer, bounded recovery
-front door and independent stored discussion reader. S3c-a/b/c/d name the files
-and narrow real-store/restart tests. PC-54/55 can now be decomposed against these
-contracts; the watchdog receipt remains a separate Q-5 obligation.
+All new wrappers are single, non-parameterized TUnit methods, Integration lane,
+with the assembly-local `ParallelLimiter<ProcessSpawnLimit>` when spawning a
+process. Internal fault/field loops do not inflate Min. Use fresh fixture roots
+and restore environment. No production runner, board or broker is used.
 
 ### Delivery inventory
 
-The changed scheduling/producer path and the proposed richer report traverse the
-following boundaries. All receipt claims must join the same due day, job,
-native run, source/policy/script identities and, where relevant, the whole body.
-
-| Path | Producer -> destination | Persistence and recovery | Observable recipient evidence |
+| Path / durable identity | Producer -> destination | Persistence boundary and recovery | Observable recipient evidence |
 |---|---|---|---|
-| DL-1 scheduled execution | Windmill schedule -> real Windmill queue -> desktop-tag worker -> native bootstrap/clone | Schedule/script revisions and job id persist in Windmill; native state persists run id and due date. Q-1 reconciles writes; Q-2/Q-4 must follow job -> native completion. Worker unavailable/enqueue refusal, death before native launch, and death after native completion before result persistence must remain incomplete until recovered evidence joins | Native execution evidence plus retrieved completed job result with matching native run and due day. Registration, enqueue response, running event or job success boolean alone is insufficient |
-| DL-2 Unit/duration evidence | Native children -> production suite loop -> summary.json -> report builder/final result -> readiness reader | Fresh per-invocation artifacts, build identity, summary/state write and final stdout. Missing/partial write or missing result is incomplete; retain attempt evidence and recover through the owning run, never reuse a previous green under a new identity | V-2/V-3 assert persisted summary contents, R-3 asserts final result/consumer flags. These prove local data propagation only, not human receipt |
-| DL-3 nightly report, planned D-11/12 | completed-run manifest -> immutable file-backed outbox -> locked foreground consumer -> configured same-board ledger-card discussion -> independent GET reader -> producer receipt validation | Intent precedes wake/POST; startup and explicit recovery scan the same outbox. Pending/busy/unknown reads stay durable. At-least-once parts reuse report ID/digests after lost acknowledgement. Interrupted completed jobs never get retroactive green credit | Every stored part, exact reassembled whole body, board/card and run envelope plus comment IDs/observation time. Green/no-incident uses this same path. Separate real queue + HTTP/DB tests S3c and installed recovery Q-R; POST/exit zero/watchdog receipt are insufficient |
-| DL-4 watchdog failure/recovery/qualification notices, retained | Evaluator -> SQLite Ledger intent/attempt -> Telegram transport -> recipient reader -> receipt importer | CARD-0545 outageId/nid/attempt, whole-body hash, authorized peer; restart reuses ledger, reader-first retry; distinct recovery nid links failure nid | Carry Q-5/F-1..F-6: complete recipient body plus imported receipt, held reader and already eligible reader, each intent/send/accept/reader crash cut. Existing C545World is an offline substitute only |
+| DL-1 scheduled execution: schedule path/revision, due day, Windmill jobId, nativeRunId, source/ref/policy/script identity | Windmill schedule -> real job queue -> eligible worker -> Windows bootstrap/clone -> completed job result reader | Registered schedule/job persist separately from native state. Q-R covers enqueue refusal, queued/busy worker later eligible, already eligible worker, death before native launch, native completion before job-result persistence. Missing result remains incomplete; recovery cannot invent a new successful run. | Q-2/Q-4/Q-R join independent native complete artifacts and fetched job result to the same IDs. Registration, queue insertion, running event or success boolean is insufficient. V-8 proves only offline wrapper/producer propagation. |
+| DL-2 execution evidence: nativeRunId, executable/DLL hashes, expanded UIDs, source/policy identity | Native child -> suite loop -> atomic summary -> report manifest/body and final result -> readiness reader | D-10 contains and drains children; D-12 publishes complete summary atomically. Missing/partial summary is incomplete; prelaunch producer manifest recovers a complete summary whose producer died before enqueue. | V-2/3/5 read persisted summary and actual discovery/TRX/diagnostics; R-3 pins final state/result/readiness. Local data propagation is not a delivered report. |
+| DL-3 report: D-11 reportId + whole-body digest + part ordinal/digest, configured board/card, full run envelope | Prelaunch producer manifest -> immutable real disk outbox -> exclusive foreground consumer -> board discussion POST -> separate stored discussion GET -> durable receipt -> producer validation | Publish manifest before driver, summary before enqueue, flushed immutable intent before wake, attempt before POST, receipt before received. Real directory queue survives wake loss. Same StateRoot/database on process restart; read first on retry, identical duplicates coalesce, conflicts hold. | V-6/V-8 require independently fetched every part, exact reassembled canonical bytes, stored comment IDs and observation time, matching envelope and producer-consumed receipt. Green/no-incident follows the same route. Q-R repeats installed recovery. POST/exit zero/summary flag/watchdog receipt never proves this delivery. |
+| DL-4 carried watchdog notices: outageId/nid/attempt, recipient/body hash and linked recovery nid | Evaluator -> SQLite ledger -> Telegram -> authorized reader -> receipt importer | Existing CARD-0545 durable intent, reader-first retry, held reader and crash cuts; unchanged code and PCs stay with that card. | Q-5/F-1..F-6 and production notice require complete recipient readback and correlated recovery. C545World is a substitute, not live delivery. |
 
-DL-1's real-queue qualification must include a ready worker and a queued job
-whose worker becomes eligible later, then the recovery cuts above. Observe the
-recipient native process's complete result and artifacts, not just queue depth.
-CARD-0545 F-2 covers a queued worker outage but does not prove every new native
-handoff; Q-R explicitly owns the missing native recovery checks.
+DL-3 handoff matrix below is mandatory through the **real file queue** and private
+real HTTP/DB recipient. The shorter Scripts tests also assert local intermediate
+facts; the recipient integration cases must exercise those same cuts end-to-end.
+Recovery-only invocations must record zero clone sync/test starts and preserve the
+original report identity/body. On expected failures, later successful readback is
+required as well as the pending-state assertion.
 
-For DL-3, require a producer-to-recipient test through the chosen **real queue**:
-busy recipient, already eligible recipient, persist-before-enqueue, enqueue
-failure, commit-before-wake, send-before-ack, receipt-before-final-state cuts.
-Each cut must fire and restart over the same durable identity. The selected
-destination is the board discussion store, so the oracle is D-11's independent
-whole-report readback, including green/no-incident. No session is selected and
-no session transcript is claimed. These are test/qualification design inputs,
-not permission for this Plan task to send live messages.
+| Boundary or recipient state | Exact named coverage | Decisive before/restart/recipient assertion |
+|---|---|---|
+| Prelaunch manifest cannot publish; producer dies before summary; summary partially written | DeliveryTests.C1039_IntentBeforeWake / C1039_RecoverBeforeEnqueue; RecipientTests.C1039_QueueHandoffs | No driver after manifest refusal. No report for partial/missing summary; complete atomic summary eventually recovers to exact body, without test rerun. |
+| Summary committed, enqueue fails or producer dies before enqueue | C1039_RecoverBeforeEnqueue / C1039_EnqueueFailure; C1039_QueueHandoffs | Manifest and summary remain; restart creates same reportId and independently reads complete board body. |
+| Intent temporary write/flush/rename fails; intent committed before wake; intent corrupt/conflicting; retention | C1039_IntentBeforeWake / C1039_CommitBeforeWake / C1039_IntentIntegrity / C1039_RetentionPins; C1039_QueueHandoffs | No partial published item or POST. Restart scans committed directory without wake. Pending artifacts retained; corrupt/conflicting bytes held, repaired fixture resumes original bytes only. |
+| Busy consumer or temporarily unavailable recipient, then eligible; consumer already eligible | C1039_BusyConsumer / C1039_AlreadyEligibleConsumer; RecipientTests.C1039_BusyAndEligibleRecipient | Hold actual file lock in A; B leaves committed intent pending. Release/restore endpoint and drain. Separate ready-from-start arm reaches full independent GET. |
+| Attempt persistence fails; death after attempt before send; POST fails before store | RecipientTests.C1039_AttemptBeforeSend / C1039_SendBeforeAck | No send before attempt. Restart reader-first; absent part can be sent under same reportId, then observed complete. |
+| Board commits but POST response lost; ack persisted then consumer dies | RecipientTests.C1039_SendBeforeAck | Stored bodies survive; restart GET imports them before retry. One logical report; identical delayed-commit duplicates allowed, never conflicting-body credit. |
+| GET fails or returns malformed/partial/conflicting body | RecipientTests.C1039_UnknownReadNoSend / C1039_WholeBoardReceipt | Unknown is not absence. Pending/held, no blind resend, no delivery credit. Restored reader must fetch every exact part. |
+| GET complete then receipt write fails; receipt committed before producer final state | RecipientTests.C1039_ReceiptBeforeFinalState | First cut stays pending and restart re-reads; second reuses durable matching receipt without POST. Final job/last-green do not advance retroactively. |
+| Recovery front door/startup bounds and old-run receipt | DeliveryTests.C1039_RecoveryFrontDoor / C1039_RecoveryBounds / C1039_RecoveryDoesNotPromoteGreen | Same bounded consumer; 10 intents/120s HTTP work/finite per-request limit; durable remainder. Exact old body received; no completed-job rewrite, test rerun or new-run credit. |
 
-Substitutes: C487 StartProcess can prove loop decisions and arguments, not native
-process exit, quoting, queueing or timing. Golden TRX/diagnostics can prove parser
-behavior, not current compiled discovery. The stateful Windmill fixture can prove
-reconciliation/retry logic, not installed API behavior or real scheduling.
-C545World uses the real SQLite ledger but fake transport/chat/reader; it proves
-offline persistence and matching, not Telegram receipt or independent deployment.
-Only Q-0..Q-6 supply the corresponding operational evidence. None of the offline
-rows may be credited as daily Unit complete, scheduled green or qualified.
+In this table DeliveryTests abbreviates `NightlyReportDeliveryTests` and
+RecipientTests abbreviates `NightlyReportRecipientTests`; unqualified names are
+in the class named immediately before them. No session is a destination. If a
+later implementation adds session input, this design must be amended to require
+the matching complete **UserPrompt transcript**; an input request/ack cannot close
+that path.
+
+Substitutes and limits: C487 StartProcess proves decisions, not native custody,
+quoting or elapsed time. Golden parser data proves parsing, not the current
+Windows census. OS fault seams operate below the owner; the real suspended
+launcher/wait/job/drain code and independently opened handles still run. The
+stateful Windmill fixture proves reconciliation, not the installed API or real
+scheduler. A loopback bridge with real discussion storage proves persisted board
+receipt, not human reading or production deployment. C545World proves watchdog
+persistence/matching with fake transport, not Telegram receipt. Q evidence cannot
+be replaced by any of these substitutes.
 
 ### Proves it works now
 
-These are executable test specifications for the repository slices, not claims
-of tests run in this TestDesign task. New methods are deliberately
-non-parameterized TUnit methods; internal matrix rows do not increase Min.
+These are ordinary Code obligations after implementation, not tests claimed run
+by TestDesign. Exact method rosters and commands are in Checkpoints; every PC's
+named oracle is also asserted in the corresponding ordinary method.
 
-- V-1: every nightly driver obeys admission and custody | production entry plus
-  real build-slot library and controlled broker/owned children |
-  NightlyBuildSlotTests' seven C1039 methods in CP-1 | ordered grant/start/exit/
-  drain/release trace, correct CPU argv and propagated failure. Exercise eight
-  driver sites independently, busy and memory-floor timeout, granted/unlimited/
-  unleased classification, pid/renew leases, exception and child timeout.
-  No production runner; fixture child environment explicitly supplies its private
-  slot endpoint. Unleased is diagnostic and earns no Q-0 qualification credit.
-- V-2: independent discovery admits the partition and final expanded UID union |
-  real Invoke-AntiphonNightlyTests loop with controlled I/O |
-  NightlyChunkAdmissionTests' eight C1039 methods in CP-3 | discovery once before
-  execution, no execution after invalid admission, complete later-chunk evidence
-  after ordinary red, and exact missing/duplicate UID refusal.
-- V-3: honest Unit and duration receipt | production summary writer and coverage
-  helpers, read persisted summary back independently |
-  NightlyUnitReceiptTests' seven C1039 methods in CP-4 | exact counts/digest,
-  explicit exclusions, unchanged global verdict, separate phase clocks.
-- V-4: reconcile the installed-state model | production registration entry and
-  stateful stored API fixture | six new C1039 registration methods plus four
-  inspected C599 methods in CP-7 | opaque revisions, no writes on unknown initial
-  reads, drift refusal, explicit enable readback and idempotent recovery.
-- V-5: native integration and S3a measured partition | D-10 Windows production
-  launcher, independent compiled census and class timings | planned S1n and S1
-  native methods plus S3a timing-admission methods. Fresh TestDesign must add
-  their rows and M-1/M-2 evidence; no Windows success is claimed yet.
-- V-6: delivered nightly report and restart recovery | D-11/12 real disk queue,
-  private production HTTP/discussion store and independent complete readback |
-  S3c-a/b/c/d methods and the handoff matrix below. Existing report/flag tests
-  alone cannot satisfy this obligation.
+- V-1: all nightly drivers obey the existing host gate | production entry/library
+  with private broker and controlled I/O, plus native integration | CP-5..7 |
+  grant before each of the eight starts, literal CPU argv, timeout=4 with no
+  child, renewal through custody, cleanup before release, one owner per driver.
+- V-2: independent discovery admits an exact partition | production suite loop |
+  CP-8/9 | discover once before execution; invalid census or changed executable/
+  DLL refuses; exact filters; complete expanded UID union; later chunks survive
+  ordinary red but never unresolved cleanup.
+- V-3: Unit and phase receipts are honest | production persisted summary reader |
+  CP-12 | metadata-based Unit subset, actual default nightly exclusions, exact
+  counts/digest and identity; required skipped/failed/missing/duplicate rows never
+  earn complete-green; non-Unit red remains nightly red; separate phase clocks.
+- V-4: reconciliation uses installed content and fields | real registration entry,
+  stateful disk-backed Windmill fixture | CP-26 | opaque revisions, initial full
+  census, only 404 means missing, stored field equality, no extra writes on restart,
+  disabled create and explicit enable with readback.
+- V-5: Windows custody and interpreter boundaries work | actual adapter, sentinel,
+  5.1/pwsh and staged TUnit probe | CP-1..4/7/9/24/25 | assignment before resume,
+  independent root/job/stream observations, timeout/fault hold, literal argv,
+  one hop/record, fixture never qualifies. Final integration rechecks after changed
+  discovery/receipt code rather than relying on the early adapter checkpoint.
+- V-6: complete report reaches stored board audience and recovers | real disk
+  outbox, owned producer/consumer processes, private HTTP/PostgreSQL and independent
+  GET | CP-15..20 | every DL-3 handoff and busy/ready recipient reaches exact
+  complete stored bytes; pending/error paths cannot claim delivery.
+- V-7: only measured partitions are admitted | pure production admission validator
+  plus committed policy/independent M-3 roster | CP-10/11 | missing/inapplicable/
+  incomplete inputs refuse, 2,880,000ms inclusive chunk threshold, fixed overhead
+  included and morning forecast supported. Synthetic cases prove refusal logic;
+  only M-0..M-3 receipts prove applicability and measured durations.
+- V-8: producer consumes the right receipt and recovery stays bounded | production
+  wrapper/bootstrap/report/receipt consumer | CP-21..25 | no exit-zero or summary
+  shortcut, actual job/script/profile propagation, recovery without state promotion,
+  final record remains compatible and follows all other stdout.
 
-**Fixture construction and boundary combinations.**
+**Boundary combinations.** Each valid control is constructed independently of the
+production formatter/comparator. Change one input at a time to reach the intended
+guard, plus the coupled cases below; a complete Cartesian corruption product is
+excluded because one earlier refusal would mask the later guard.
 
-V-1 uses a private clone/log/coordination root and saved/restored environment.
-The library may be shimmed at HTTP only; the gate decision and nightly consumer
-cannot be replaced. Each admitted child writes its actual PID, exact argv,
-start/exit markers and output-drain sentinel. Timeout tests distinguish never
-started due to slot timeout from started then killed by the child watchdog.
-Hold cleanup with a barrier, assert no release, then release it. Finally joins
-every fixture child. Do not inherit ScriptHarness's process cleanup as proof:
-its timeout currently does not kill/join the child before deleting results.
-The native truth comes from S1n/S1 Windows rows, not a fake ChildrenExited bit.
+For V-1/V-5 cover granted/pid, granted/renew, busy, memory-floor, unavailable and
+unlimited classifications, normal exit, nonzero exit, timeout and throw-after-start.
+Hold root, descendant, stdout EOF, stderr EOF and final log write independently.
+Fault assignment, query, termination and cleanup wait below the owner; release
+fault barriers in finally, terminate/join only fixture-owned handles. Observe
+renewals while held and no next driver or normal release. Test path spaces, empty
+arguments, quotes, trailing backslashes, literal wildcard/OR tokens and sanitized
+child environment. No process-name kill or test timeout can supply the red oracle.
 
-V-2's independent discovery contains A.Rows(1), A.Rows(2), inherited/partial cases
-and B.Plain; chunk configuration is a separate input. Test no chunks (one full
-invocation), correct A/B partition, missing B, duplicate A, unknown Z, empty
-assignment, added argument row, A versus AExtra prefix overlap, and duplicate
-UID across two chunks. With A ordinary-red, B must still execute; with A cleanup
-unresolved, B must not start. Test discovery nonzero, timeout, empty, missing,
-unsupported version and malformed record independently. Hash the built DLL
-before discovery and before execution; changing it between the two must refuse.
-Keep production TRX-basename/results-directory arguments pinned (G144); do not
-reuse the current fixture's fabricated identical TRX id and diagnostic UID as the
-only positive example. G037/G038 are useful helper boundaries, but neither proves
-entry-loop admission.
+V-2 uses separate discovery A.Rows(1), A.Rows(2), inherited/partial cases and
+B.Plain, with a distinct AExtra class. Cover unconfigured all, valid A/B, missing
+B, repeated A, unknown Z, empty configured chunk, changed DLL and changed executable,
+nonzero/timeout/empty/missing/version/malformed/duplicate discovery. Use fresh TRX
+with unrelated GUIDs, not fabricated GUID=expanded UID as the only success case.
+Ordinary A-red still executes B; A-cleanup-held forbids B. Missing+red and
+cross-chunk duplicate+missing cannot be hidden by aggregation. Pin TRX basename
+and separate results-directory arguments (G144 semantics).
 
-V-3 uses five discovered Unit UIDs (three eligible, two explicit exclusions) and
-one non-Unit UID. Category is metadata, not a name substring; include mixed
-class/method metadata and inherited Unit metadata. Three passed eligible rows
-give discovered=5, eligible=3, excluded=2, executed=3, passed=3, failed/skipped/
-missing/duplicates=0. Then alter one dimension at a time: missing expanded row,
-Failed, Skipped, NotExecuted, InProgress, unknown state, duplicate within chunk,
-duplicate across chunks, unknown UID, zero eligible, and non-Unit failure.
-Count terminal Failed/Skipped facts separately; neither earns complete-green.
-Use unrelated TRX GUIDs and diagnostic expanded UIDs, preserving independent
-TRX multiplicity/outcome cross-check. Exclusion reasons come from actual nightly
-category semantics; RC declared exclusions keep their existing behavior. Permuting
-UID order preserves digest; replacing one UID at the same count changes it.
-Independently mismatch SHA, ref, policy, assembly, native run, job and script
-identities, plus stale timestamp/wrong run directory. No Cartesian product across
-all corruptions is needed: independent single corruptions locate each guard;
-missing+red, duplicate+missing and Unit-green+non-Unit-red are required paired
-cases because aggregation can mask one with the other.
+V-3 fixture: five discovered Unit UIDs, three eligible, two default exclusions,
+one non-Unit UID. Three passes yield discovered=5, eligible=3, excluded=2,
+executed=3, passed=3 and other counts zero. Exercise Failed, Skipped, NotExecuted,
+InProgress, unknown state, unknown UID, empty eligible, duplicates within/across
+chunks, metadata inherited/mixed/misleading names and mismatch between TRX and
+diagnostics. Test UID permutation versus same-count replacement. Independently
+cross each bound identity and stale/wrong-directory/previous-invocation evidence.
+Nightly remains ProfileAware=false; RC uses its declared dispositions. Exclusions
+retain actual reason/owner; an empty nightly exclusions array changes no policy.
 
-V-4 expands New-C599WindmillFx to store every owned field and an independent
-monotonic opaque revision. Persist fixture state to disk, dispose/reopen it on
-restart, and count script revisions as well as object paths. Script fields:
-path/content/language/tag/schema/summary/description; parent_hash is concurrency
-input, not a desired stored field. Schedule fields:
-path/script_path/schedule/timezone/tag/args/is_flow/enabled. Corrupt every field
-independently at readback, including a matching content string with wrong tag.
-Exercise first/second/third definition unknown reads; distinguish 404 from
-401/403/503/transport and malformed 200. Initial unknown census prevents writes
-before applying any definition. Preview remains zero-token/zero-write and labels
-unknown instead of missing. Reapply matches objects, keeps enabled state and
-creates no revision. At script-create, schedule-create and explicit enable,
-exercise failure-before-write, commit-with-lost-response, and readback failure,
-then restart and read the stored result. Concurrent revision drift must reject
-with parent_hash; concurrent schedule drift remains untouched. Ready and
-temporarily unavailable API states are reconciliation tests, not queue-delivery
-tests.
+V-4 fixture stores every owned script and schedule field, independent monotonic
+opaque revision and durable revision count; restart over the same file. Alter
+one stored field at a time, not the write response. For each of the three definition
+positions test 401/403/503/transport/malformed-200 before writes. Exercise failed
+write, committed/lost response and unavailable readback at script-create,
+schedule-create and enable. Preserve competing parent revision and schedule drift.
+Preview with unreadable token file still sends no token and performs no write.
 
-### Amendment inputs for native and report verification
+V-6/V-8 bodies cover red and green/no-incident; framed limits 15,999/16,000/16,001
+UTF-16 units, more than two parts, Unicode at a boundary, LF canonicalization,
+trimmed outer whitespace and preserved inner whitespace. Reorder stored parts,
+omit a middle part, duplicate identical parts, conflict an ordinal, alter per-part
+or whole digest and every envelope field independently. Expected body is fixed
+input bytes after the declared canonicalization, never output of the production
+formatter used as its own oracle. Seed other board/card/run/lane reports with
+matching-looking content. Ledger never enters incident selection; Backlog,
+assigned-agent, owned-session, InProgress and RC incident cases assert actual
+stored state. Receipt plus failed incident action is still overall red.
 
-These are Plan specifications for fresh TestDesign, not another runnable
-manifest. Replace old PC-53..57 with one method-scoped control per independent
-behaviour below; TestDesign freezes suffix IDs, exact mutation sites, counts and
-cost. Proposed methods are non-parameterized: fault-arm loops do not inflate Min.
+Timing admission boundaries are 2,879,999/2,880,000/2,880,001ms including measured
+allowance, equal versus changed identity/applicability, complete ordinary-red
+versus capped/incomplete timing, finite versus unknown queue allowance and an
+otherwise valid partition forecast exceeding 08:00. PolicyPartition compares the
+shipped configuration to the independent measured roster recorded in
+`docs/investigations/2026-10-04-card-1039-partition-admission.md` during S3a, not to
+an expected roster derived from that same policy. That Markdown retains original
+receipt paths/digests and applicability; generated payloads remain external.
 
-| Old family / lane | Proposed methods (class prefix) | Independent behaviours and red defects to map one-to-one |
-|---|---|---|
-| PC-53 / Windows | `NightlyNativeOwnershipTests`: `C1039_AssignBeforeResume`, `C1039_DescendantExit`, `C1039_DrainBeforeReturn`, `C1039_NativeTimeout`, `C1039_CleanupUnknownHolds`, `C1039_LeaseAfterNativeCleanup` | Resume despite assignment refusal; equate root exit with empty job; return before EOF; omit job termination; normalize unknown query/join to clean; release lease before observed cleanup. Each defect must fail its independent OS/stream/broker assertion. Split query/join if implemented by independent guards. |
-| PC-54 / portable, recipient cases use real HTTP/DB | `NightlyReportDeliveryTests`: `C1039_ExitZeroIsNotReceipt`, `C1039_ReportParts`, `C1039_NoReportNoReceipt`; `NightlyReportRecipientTests`: `C1039_GreenWithoutIncident`, `C1039_RejectMismatchedReceipt`, `C1039_WholeBoardReceipt` | Restore exit-zero/summary-true fallback; accept missing middle part; override no-report mode; restore green/no-card no-op; bypass envelope equality; trust POST rather than stored GET body. Each gets its own PC. Envelope fields use a shared comparator or separately enumerated guards, never a hidden multi-guard PC. |
-| PC-55 / portable disk queue, recipient cases use real HTTP/DB | `NightlyReportDeliveryTests`: `C1039_IntentBeforeWake`, `C1039_RecoverBeforeEnqueue`, `C1039_EnqueueFailure`, `C1039_BusyConsumer`, `C1039_CommitBeforeWake`, `C1039_AlreadyEligibleConsumer`, `C1039_RecoveryDoesNotPromoteGreen`; `NightlyReportRecipientTests`: `C1039_SendBeforeAck`, `C1039_ReceiptBeforeFinalState`, `C1039_UnknownReadNoSend` | Publish wake before durable intent; lose committed-run manifest; swallow enqueue failure; discard work on busy lock; depend on a volatile wake after restart; fail to drain ready work; promote old recovery to green; resend before readback after a lost acknowledgement; forget durable receipt; treat unknown GET as absence. Ten separate controls, not a combined restart test PC. |
-| PC-56 / portable validator, Windows measurement prerequisite | `NightlyPartitionTimingTests`: `C1039_MissingTimingRefuses`, `C1039_OverBudgetRefuses`, `C1039_TimingIdentity` | Admit a missing class timing; omit headroom comparison; accept stale/inapplicable evidence. Three controls. Synthetic invalid inputs test admission, not the accuracy/completeness of M-1/M-2 measurements. |
-| PC-57 / Windows | `NightlyInterpreterTests`: `C1039_BootstrapUsesPwsh`, `C1039_DirectEntryHopsOnce`, `C1039_MissingPwshRefuses` | Use the bootstrap's 5.1 interpreter for the driver; drop a bound argument/run identity in the hop; fall back to 5.1 when pwsh is absent. Three controls assert actual version/argv and refusal before driver start. |
+**Measurement receipt acceptance (no unit-test claim).** M-0 ends at its 30-minute
+cap with per-class usable/historical/missing classification, original identity and
+reason. M-1 is one clean Windows isolated build plus compiled list-tests only:
+retain gated build/discovery argv, SHA/dirty=0, SDK/OS/tools, executable/DLL/policy
+hashes, raw diagnostics, expanded UID/class/category census with reasons/digests,
+slot wait, wall time and observed cleanup. Reparse originals to reproduce counts
+and digest. Malformed/unknown/empty census refuses. Linux receipts, source counts,
+probe inventory and 4,051 historical executions are inadmissible replacements.
 
-The native fixture opens independent handles from a child-written PID/start-time
-record and uses barriers to hold a descendant alive after its root exits, then
-release it and observe termination. It writes final output on both streams.
-Real adapter/job/drain/gate code runs; faults intercept only a specific OS
-operation below the owner. `C1039_NativeFixtureLoop` separately proves real
-discovery/filter argv, expanded TRX/UID union and persisted summary from the
-staged probe through the production loop. Include paths with spaces, nonzero
-child exit, private gate endpoint and one driver start/final record on the hop.
-Test finally terminates/joins every owned process even after a red mutant; do
-not trust ScriptHarness's old timeout cleanup as native evidence.
+Only after that census, freeze M-2.n's exact class filters, eligible expanded UID
+rosters, counts, upper bounds and total dispatch budget. Every probe has at most
+20 minutes execution plus bounded cleanup and a real host lease. A complete
+assertion-red may be usable timing, never a green result; capped/incomplete rows
+are lower bounds and go to CARD-1040. Do not launch another full assembly or Unit
+battery. M-3 requires every eligible class exactly once and applicable complete
+wall-time receipts, with the 20 percent chunk reserve and whole-run forecast.
+After fixtures change discovery, refresh only added/affected classes and preserve
+original provenance of reused timings. No M-2 filter/Min is guessed here: this
+is an admission algorithm for a later bounded measurement commission, not an
+unfilled runnable checkpoint row. S3a cannot be dispatched until M-3 is accepted.
 
-Report tests use the production disk queue, producer and consumer process. For
-recipient cases use private real Antiphon HTTP/discussion storage and isolated
-PostgreSQL state. A fixture returning posted bodies is insufficient. Use a
-loopback Kestrel host with the actual endpoint/service or a guarded test host
-exposed through a loopback bridge to the child; no production runner/API. Make
-accepted-but-lost-response and crash hooks observable, stop only the owned
-consumer at those hooks, and restart it over the same files/database. A busy
-consumer holds its real file lock; an unavailable board remains pending until
-the endpoint returns. Assert whole body equality with an independent reader,
-not just queue length/state flags. Cover multipart, exact-limit and Unicode/
-whitespace bodies, conflicting parts, identical duplicates, unknown GET and
-every durable handoff. Expected bytes must be independent of the formatter.
-
-T7 changes from "green means zero HTTP writes" to "green creates no incident
-and stores one logical complete ledger report". Preserve narrow incident-move
-and RC/nightly-separation regressions. `C545_ResultLine` now needs a correlated
-fixture receipt through the production validator; fabricated
-`summary.reportDelivered=true` becomes a negative case. Installed queue/API
-recovery remains Q-R, and genuine manual/scheduled evidence remains Q-2/Q-4.
+Q-0..Q-6 and Q-R keep their operational acceptance above. Q-2 manual and Q-4 real
+scheduled runs are explicitly commissioned full nightly runs after landed code;
+they are not extra Code checkpoints and cannot discharge the CARD-1021 waiver.
+Retain manual versus scheduled identity, native/job/report joins, seven suite
+inventories, full Unit census, true receipt and before-08:00 completion. A report
+recovered after an interrupted job does not qualify that job; await a future
+scheduled green. Installed API and recipient readback remain mandatory.
 
 ### Guards the regression
 
-- R-1: build-slot semantics remain intact | CP-2:
-  BuildSlotScriptTests.C589_WrapperRunsUnderLease,
-  C589_WrapperMaxCpuCountRules, C589_WrapperTimeout,
-  C800_WrapperPassesWildcardArgvLiterally. Require the existing named PASS
-  inventories, literal argv and exit 4 with no command.
-- R-2: pinned parser/profile/census contracts | CP-5: all five
-  ReleaseGatePolicyTests methods. Require stale-hash refusal, unchanged nightly/RC
-  suite distinction, metadata preservation, expanded missing-row refusal and
-  declared exclusion reason/owner checks. This is five TUnit results, not the sum
-  of its PowerShell assertions.
-- R-3: enriched summary must not relax readiness or change completion identity |
-  CP-6: NightlyVerificationContractTests.C544_ScheduledIdentity,
-  C544_CoverageRequired, C544_GreenRequired, C544_ReportReceiptRequired,
-  C545_ResultLine, C545_JobResultFetch. Decisive assertions are manual/crossed-run
-  refusal; each false flag is unready; final JSON equals native state; missing/
-  unfetchable result remains unknown. ResultLine remains a propagation test only.
-- R-4: preview, disabled create, enable selection, drift and wrapper provenance |
-  CP-7: existing ReleaseGateRegistrationTests.C599_Preview,
-  C599_ApplyReadback, C599_Concurrency, C599_ScheduleProvenance, after expanding the
-  fixture without weakening their named assertions. Source-text provenance
-  checks are a regression pin, not proof of a real scheduled job.
-- R-5: bootstrap safety | CP-8: NightlyScriptsTests.The_three_scripts_are_ascii_only
-  and Shared_tree_WhatIf_exits_3_naming_the_guard. Require ASCII bytes and exit 3
-  naming AllowSharedTree before WhatIf output. Real Windows 5.1 execution is the
-  separate S1n-c obligation, not evidence supplied by these text tests.
+- R-1: existing slot wrapper semantics | CP-6's four exact BuildSlotScriptTests
+  methods | grant/command/release order, granted CPU cap, exit 4/no command and
+  literal argv required named PASS inventories remain intact.
+- R-2: profile/parser/census contracts | CP-11/13's five exact ReleaseGatePolicyTests
+  methods | stale hash refuses, seven-suite/RC distinction, metadata retained,
+  named expanded row missing refuses, declared RC exclusion reasons/owners required.
+- R-3: readiness and completion identities remain strict | CP-14/23's exact
+  NightlyVerificationContractTests methods | false coverage/tests/report is unready,
+  crossed/native manual run refuses, missing job result unknown; final JSON and
+  state flags/IDs match. C545_ResultLine must use a validated correlated fixture
+  receipt; summary.reportDelivered=true alone is now a negative case.
+- R-4: preview, disabled create, selector/drift and provenance | CP-26's four
+  inspected C599 methods | zero writes/token in preview, preserved enabled state,
+  explicit one-schedule enable and drift refusal. Text provenance pins alone cannot
+  prove real scheduled delivery; V-8 and Q-4 supply those layers.
+- R-5: bootstrap safety | CP-4/25 | exact ASCII and shared-tree guard methods;
+  exit 3 names AllowSharedTree before WhatIf. ASCII roster expands to new scripts/
+  adapter source. Actual interpreter behavior is V-5, not a source-text assertion.
+- R-6: incident separation and safe closure | CP-18 and CP-23 | new recipient
+  C1039_IncidentSeparation reuses T1..T7/G077..079/G099..104 scenarios through real
+  storage; ledger is persistent and distinct, one incident is reused, green moves
+  only its eligible unassigned Backlog incident, other lane untouched.
 
 ### Guard inventory
 
-Each row is a distinct independently bypassable guard. The eight driver
-callsites have separate PCs even though one method exercises them. Unchanged
-watchdog internals retain their CARD-0545 guard/PC IDs and are excluded from this
-card's mutation battery; their operational acceptance is still Q-5.
+Each row is one independently bypassable guard, mapped 1:1 to its own PC. The
+field comparisons are split even when implemented by a shared projection loop:
+removing a field is a separate defect. Eight driver callsites likewise retain
+separate controls. No `PC family` or unpriced hidden variant is admitted.
+Unchanged watchdog internals and qualification orchestration are governed by
+CARD-0545's existing PCs and Q receipts; this card does not mutate them.
 
 | Guard | Plan reference and invariant | Positive control |
 |---|---|---|
@@ -862,19 +843,19 @@ card's mutation battery; their operational acceptance is still Q-5.
 | G-26 | S2/D-3 serial execution waits for cleanup | PC-26 |
 | G-27 | S3b/D-2 Unit comes from preserved compiled metadata | PC-27 |
 | G-28 | S3b/D-2 expanded diagnostics, not TRX GUIDs, identify rows | PC-28 |
-| G-29 | S3b/D-2 zero/nonterminal set cannot be complete | PC-29 |
+| G-29 | S3b/D-2 zero terminal set cannot be complete | PC-29 |
 | G-30 | S3b/D-2 required skipped row never earns green | PC-30 |
 | G-31 | S3b/D-2 failed row never earns green | PC-31 |
 | G-32 | S3b/D-2 duplicate terminal rows are invalid | PC-32 |
-| G-33 | S3b/D-2 bind receipt identity envelope | PC-33 |
+| G-33 | S3b/D-2 receipt SHA equality | PC-33 |
 | G-34 | S3b/D-2 sorted UID digest covers the admitted set | PC-34 |
 | G-35 | S3b/D-1/D-2 Unit success cannot override full nightly red | PC-35 |
 | G-36 | S3b/D-5 duration fields describe separate phases | PC-36 |
 | G-37 | S4/D-6 opaque revision is not a content digest | PC-37 |
 | G-38 | S4/D-6 failed script read is unknown, never absent | PC-38 |
 | G-39 | S4/D-6 failed schedule read is unknown, never absent | PC-39 |
-| G-40 | S4/D-6 stored script fields, not accepted POST, establish reconciliation | PC-40 |
-| G-41 | S4/D-6 stored schedule fields establish reconciliation | PC-41 |
+| G-40 | S4/D-6 stored script content equality | PC-40 |
+| G-41 | S4/D-6 stored schedule cron equality | PC-41 |
 | G-42 | S4/D-6 enable readback establishes the selected stored state | PC-42 |
 | G-43 | S4/D-6 restart reconciles accepted write with lost response | PC-43 |
 | G-44 | S4/D-6 concurrent script revision is a fence | PC-44 |
@@ -886,32 +867,182 @@ card's mutation battery; their operational acceptance is still Q-5.
 | G-50 | D-2 full coverage remains a readiness prerequisite | PC-50 |
 | G-51 | D-2 full test success remains a readiness prerequisite | PC-51 |
 | G-52 | D-8 false delivery remains a readiness refusal | PC-52 |
-| G-53 | S1n/S1/D-10 actual descendant exit and drained output, not an asserted ChildrenExited bit | PC-53 family: split the six native behaviours in the amendment table; Windows rows pending fresh TestDesign |
-| G-54 | S3c/D-11 complete correlated nightly report receipt, not exit zero | PC-54 family: split receipt/no-op/body/envelope/part/mode behaviours; proposed recipient and reader are now defined |
-| G-55 | S3c/D-12 durable nightly-report recovery at each queue handoff | PC-55 family: ten distinct queue/receipt-recovery controls in the amendment table; no live delivery claimed |
-| G-56 | S3a/D-9 measured complete Windows partition within unchanged caps | PC-56 family: missing timing, over-budget and applicability controls; actual M-1/M-2 data still pending |
-| G-57 | S1n-c/D-10 PowerShell 5.1 bootstrap cannot bypass PowerShell 7 admission | PC-57 family: three interpreter controls; real Windows checkpoint freeze pending |
+| G-53 | S3b/D-2 receipt ref equality | PC-53 |
+| G-54 | S3b/D-2 receipt policyHash equality | PC-54 |
+| G-55 | S3b/D-2 receipt assemblyHash equality | PC-55 |
+| G-56 | S3b/D-2 receipt nativeRunId equality | PC-56 |
+| G-57 | S3b/D-2 receipt jobId equality | PC-57 |
+| G-58 | S3b/D-2 receipt scriptDigest equality | PC-58 |
+| G-59 | S3b/D-2 receipt scriptRevision equality | PC-59 |
+| G-60 | S4/D-6 stored script path equality | PC-60 |
+| G-61 | S4/D-6 stored script language equality | PC-61 |
+| G-62 | S4/D-6 stored script tag equality | PC-62 |
+| G-63 | S4/D-6 stored script schema equality | PC-63 |
+| G-64 | S4/D-6 stored script summary equality | PC-64 |
+| G-65 | S4/D-6 stored script description equality | PC-65 |
+| G-66 | S4/D-6 stored schedule path equality | PC-66 |
+| G-67 | S4/D-6 stored schedule script_path equality | PC-67 |
+| G-68 | S4/D-6 stored schedule timezone equality | PC-68 |
+| G-69 | S4/D-6 stored schedule tag equality | PC-69 |
+| G-70 | S4/D-6 stored schedule args equality | PC-70 |
+| G-71 | S4/D-6 stored schedule is_flow equality | PC-71 |
+| G-72 | S4/D-6 matching schedule preserves enablement | PC-72 |
+| G-73 | S2/D-3 filter cannot match class prefixes | PC-73 |
+| G-74 | S2/D-3 empty configured chunk is invalid | PC-74 |
+| G-75 | S3b/D-2 terminal UID must be discovered | PC-75 |
+| G-76 | S3b/D-2 zero eligible Unit cannot earn complete-green | PC-76 |
+| G-77 | S3b/D-2 nightly default exclusions remain authoritative | PC-77 |
+| G-78 | S3b/D-2 independent TRX/diagnostic agreement | PC-78 |
+| G-79 | S2/D-3 timeout discovery refuses before execution | PC-79 |
+| G-80 | S2/D-3 empty discovery refuses before execution | PC-80 |
+| G-81 | S2/D-3 missing discovery refuses before execution | PC-81 |
+| G-82 | S2/D-3 version discovery refuses before execution | PC-82 |
+| G-83 | S2/D-3 malformed discovery refuses before execution | PC-83 |
+| G-84 | S2/D-3 duplicate-discovery discovery refuses before execution | PC-84 |
+| G-85 | S3b/D-2 InProgress never earns complete-green | PC-85 |
+| G-86 | S3b/D-2 NotExecuted never earns complete-green | PC-86 |
+| G-87 | S3b/D-2 Unknown never earns complete-green | PC-87 |
+| G-88 | S3b/D-2 wrong-run-directory is rejected | PC-88 |
+| G-89 | S3b/D-2 stale-timestamp is rejected | PC-89 |
+| G-90 | S3b/D-2 previous-invocation is rejected | PC-90 |
+| G-91 | S1n-a/D-10 suspended root until assignment | PC-91 |
+| G-92 | S1n-a/D-10 no spawn-before-assignment race | PC-92 |
+| G-93 | S1n-a/D-10 job forbids breakaway | PC-93 |
+| G-94 | S1n-a/D-10 root signal is independently required | PC-94 |
+| G-95 | S1n-a/D-10 root exit is not descendant exit | PC-95 |
+| G-96 | S1n-a/D-10 stdout EOF required | PC-96 |
+| G-97 | S1n-a/D-10 stderr EOF required | PC-97 |
+| G-98 | S1n-a/D-10 final log write completion required | PC-98 |
+| G-99 | S1n-b/D-10 timeout terminates owned job | PC-99 |
+| G-100 | S1n-b/D-10 failed termination is not normal completion | PC-100 |
+| G-101 | S1n-b/D-10 unknown job query is not empty | PC-101 |
+| G-102 | S1n-b/D-10 cleanup wait expiry is unresolved | PC-102 |
+| G-103 | S1n-b/D-10 output failure is unresolved | PC-103 |
+| G-104 | S1n-b/D-10 kill-on-close fallback stays armed | PC-104 |
+| G-105 | S1n-b/D-10 fixture execution cannot qualify | PC-105 |
+| G-106 | S1n-b/D-10 same executable resolution for discovery and execution | PC-106 |
+| G-107 | S1/D-10 native cleanup precedes lease release | PC-107 |
+| G-108 | S1/D-10 held custody retains foreground owner and renewals | PC-108 |
+| G-109 | S1n-c/D-10 bootstrap uses PowerShell 7 | PC-109 |
+| G-110 | S1n-c/D-10 hop preserves all bound parameters | PC-110 |
+| G-111 | S1n-c/D-10 exactly one interpreter hop | PC-111 |
+| G-112 | S1n-c/D-10 missing supported pwsh refuses | PC-112 |
+| G-113 | S1n-a/D-10 native argv remain literal | PC-113 |
+| G-114 | S3a/D-9 every class needs a timing | PC-114 |
+| G-115 | S3a/D-9 only complete UID timing is admissible | PC-115 |
+| G-116 | S3a/D-9 20 percent headroom | PC-116 |
+| G-117 | S3a/D-9 measured invocation/cleanup allowance is included | PC-117 |
+| G-118 | S3a/D-9 timing source applicability | PC-118 |
+| G-119 | S3a/D-9 whole-run forecast includes queues and fixed phases | PC-119 |
+| G-120 | S3a/D-9 unknown queue allowance cannot prove deadline | PC-120 |
+| G-121 | S3a/D-9 native timeout cap unchanged | PC-121 |
+| G-122 | S3a/D-9 checked-in partition is the admitted measured partition | PC-122 |
+| G-123 | S3c-a/D-12 producer manifest precedes launch | PC-123 |
+| G-124 | S3c-a/D-12 immutable intent precedes wake/POST | PC-124 |
+| G-125 | S3c-a/D-12 flushed files precede atomic publication | PC-125 |
+| G-126 | S3c-a/D-12 complete summary without enqueue is recoverable | PC-126 |
+| G-127 | S3c-a/D-12 partial summary never becomes report success | PC-127 |
+| G-128 | S3c-a/D-12 intent body immutable under reportId | PC-128 |
+| G-129 | S3c-a/D-12 corrupt persisted intent is held | PC-129 |
+| G-130 | S3c-a/D-12 pending producer evidence survives retention | PC-130 |
+| G-131 | S3c-a/D-12 lock serializes consumers | PC-131 |
+| G-132 | S3c-a/D-11 complete ordered multipart receipt | PC-132 |
+| G-133 | S3c-a/D-11 part conflicts hold | PC-133 |
+| G-134 | S3c-a/D-11 parts respect 16000 UTF-16-unit API limit | PC-134 |
+| G-135 | S3c-a/D-11 part framing preserves whitespace | PC-135 |
+| G-136 | S3c-a/D-11 part digests are validated | PC-136 |
+| G-137 | S3c-a/D-11 whole-body digest is validated | PC-137 |
+| G-138 | S3c-a/D-11 report identity is deterministic and unambiguous | PC-138 |
+| G-139 | S3c-b/D-11 green without incident still delivers | PC-139 |
+| G-140 | S3c-b/D-11 stored body alone proves receipt | PC-140 |
+| G-141 | S3c-b/D-11 receipt reader uses configured card | PC-141 |
+| G-142 | S3c-b/D-11 profile/card must resolve to configured board | PC-142 |
+| G-143 | S3c-b/D-11 missing profile never chooses another recipient | PC-143 |
+| G-144 | S3c-b/D-11 ledger is not an incident | PC-144 |
+| G-145 | S3c-b/D-12 unknown GET never proves absence | PC-145 |
+| G-146 | S3c-c/D-12 enqueue failure stays pending | PC-146 |
+| G-147 | S3c-c/D-12 committed intent survives lost wake | PC-147 |
+| G-148 | S3c-c/D-12 already eligible consumer drains work | PC-148 |
+| G-149 | S3c-c/D-12 attempt intent precedes POST | PC-149 |
+| G-150 | S3c-c/D-12 reader-first lost-ack recovery | PC-150 |
+| G-151 | S3c-c/D-12 absent-part send failure remains retryable | PC-151 |
+| G-152 | S3c-c/D-12 GET observation is durably published | PC-152 |
+| G-153 | S3c-c/D-12 receipt survives producer death | PC-153 |
+| G-154 | S3c-d/D-12 producer must consume receipt | PC-154 |
+| G-155 | S3c-d/D-12 summary cannot assert delivery | PC-155 |
+| G-156 | S3c-d/D-12 NoReport never grants receipt | PC-156 |
+| G-157 | S3c-d/D-12 DryRun never grants receipt | PC-157 |
+| G-158 | S3c-d/D-12 recovery never promotes old green | PC-158 |
+| G-159 | S3c-d/D-12 startup uses same bounded consumer | PC-159 |
+| G-160 | S3c-d/D-12 recovery count bound | PC-160 |
+| G-161 | S3c-d/D-12 recovery wall bound | PC-161 |
+| G-162 | S3c-d/D-12 finite HTTP request timeout | PC-162 |
+| G-163 | S3c-d/D-7 Windmill job identity propagates | PC-163 |
+| G-164 | S3c-d/D-7 scheduled run requires actual job identity | PC-164 |
+| G-165 | S3c-d/D-7 tokens cannot become commands | PC-165 |
+| G-166 | S3c-d/D-11 incident write failure prevents green | PC-166 |
+| G-167 | S3c-b/D-11 receipt schemaVersion equality | PC-167 |
+| G-168 | S3c-b/D-11 receipt boardId equality | PC-168 |
+| G-169 | S3c-b/D-11 receipt cardId equality | PC-169 |
+| G-170 | S3c-b/D-11 receipt profile equality | PC-170 |
+| G-171 | S3c-b/D-11 receipt trigger equality | PC-171 |
+| G-172 | S3c-b/D-11 receipt dueDay equality | PC-172 |
+| G-173 | S3c-b/D-11 receipt jobId equality | PC-173 |
+| G-174 | S3c-b/D-11 receipt nativeRunId equality | PC-174 |
+| G-175 | S3c-b/D-11 receipt sha equality | PC-175 |
+| G-176 | S3c-b/D-11 receipt ref equality | PC-176 |
+| G-177 | S3c-b/D-11 receipt policyHash equality | PC-177 |
+| G-178 | S3c-b/D-11 receipt scriptDigest equality | PC-178 |
+| G-179 | S3c-b/D-11 receipt scriptRevision equality | PC-179 |
+| G-180 | S3c-b/D-11 receipt assemblyDigest equality | PC-180 |
+| G-181 | S3c-b/D-11 receipt censusDigest equality | PC-181 |
+| G-182 | S3c-b/D-11 receipt bodyDigest equality | PC-182 |
+| G-183 | S4/D-6 full read census before any apply write | PC-183 |
+| G-184 | S1/D-4 unleased is diagnostic only | PC-184 |
+| G-185 | S2/D-3 executable and DLL both remain bound | PC-185 |
+| G-186 | S3c-c/D-12 retry after receipt-write failure uses reader | PC-186 |
+| G-187 | S3c-d/D-7 schedule context controls trigger | PC-187 |
+| G-188 | S3c-b/D-11 safe incident closure requires Backlog | PC-188 |
+| G-189 | S3c-b/D-11 safe incident closure requires no assigned agent | PC-189 |
+| G-190 | S3c-b/D-11 safe incident closure requires no owner session | PC-190 |
+| G-191 | S3c-b/D-11 RC/nightly incidents remain distinct | PC-191 |
+| G-192 | S3a/D-9 timing assemblyHash applicability | PC-192 |
+| G-193 | S3a/D-9 timing classDigest applicability | PC-193 |
+| G-194 | S3a/D-9 timing hooksDigest applicability | PC-194 |
+| G-195 | S3a/D-9 timing dependencyDigest applicability | PC-195 |
+| G-196 | S3a/D-9 timing toolVersions applicability | PC-196 |
+| G-197 | S3a/D-9 timing os applicability | PC-197 |
+| G-198 | S3c-a/D-11 Unicode boundaries preserved | PC-198 |
+| G-199 | S3c-a/D-12 summary publication is atomic | PC-199 |
+| G-200 | S3a/D-1 full suite inventory is preserved | PC-200 |
+| G-201 | S4/D-6 lost schedule-create response reconciles stored state | PC-201 |
+| G-202 | S4/D-6 lost enable response reconciles stored state | PC-202 |
+| G-203 | S3c-d/D-11 report profile reaches producer and recovery | PC-203 |
 
 ### Positive controls
 
-PC-1..52 below are concrete mutation recipes for the planned methods. Code must
-implement the new methods and their assertions; an empty/constant harness row is
-not an implementation. All selectors are method-scoped:
-'/*/*/ClassName/ExactMethodName', using the exact Class.Method in the table.
-Each recipe changes production PowerShell, not the test expectation or fixture.
-A valid red is the named assertion reached with tests executing; parse, build,
-fixture failure and zero selection are not red.
+Mutation runs **break/red/restore/green after land**, on the commissioned immutable
+SourceLanding source. Code runs V/R; Review judges all recipes before land. Each
+row below means: break its identically numbered G by the listed compiling defect;
+run exactly `/*/*/ClassName/ExactMethodName` from the row; expect red at the stated
+assertion. Restore, fresh isolated build and run that same exact method green.
+No whole class/namespace/Unit filter is allowed for a PC. PowerShell parse failure,
+C# build error, fixture setup failure, timeout before the assertion or zero selected
+tests is not red. All internal valid/invalid arms execute for that method on both
+runs, but each PC has only the one listed mutation. No production repair occurs in
+a mutation snapshot.
 
-Mutation runs break/red/restore/green **after land** against the commissioned
-SourceLanding SHA, with separate fresh build/receipts for red and restored green.
-Code runs V/R; ordinary Review judges the recipes before land. Execute all named
-single-field/response/outcome variants where a method covers a matrix. Never
-declare a multi-variant PC complete from one failing arm. Within one PC, independent
-single-field bypasses each get their own red/restore/green cycle if the
-implementation has separate guard branches; TestDesign must split the G/PC rows
-before Code admission once those branches are chosen.
+Sites: slot/chunk/Unit consumer defects are in `nightly-tests-impl.ps1` or its
+named `nightly-coverage.ps1` helper; registration defects in
+`register-release-gates.ps1`; native defects in D-10's new `.cs` adapter/`.ps1`
+owner; interpreter defects in `nightly-tests.ps1`/run bootstrap; outbox/receipt
+consumer defects in D-12's new `nightly-report-delivery.ps1` or its named producer/
+reporter callsite; wrapper defects in the nightly Windmill definition content.
+Use the exact boundary described, never alter expected assertions to create red.
+For new code these are implementation acceptance recipes, with fully specified
+seams/methods/oracles; they are not claims that the methods exist at this source.
 
-| PC | Break the matching G by this compiling defect | Exact test method expected red | Decisive assertion |
+| PC | Compiling defect in matching G | Exact method expected red | Decisive assertion |
 |---|---|---|---|
 | PC-1 | bypass the lease only for npm ci | NightlyBuildSlotTests.C1039_AllDriversLeased | npm-ci: child-start follows its own grant |
 | PC-2 | bypass the lease only for npm run build | NightlyBuildSlotTests.C1039_AllDriversLeased | npm-build: child-start follows its own grant |
@@ -932,30 +1063,30 @@ before Code admission once those branches are chosen.
 | PC-17 | ignore the membership Missing set | NightlyChunkAdmissionTests.C1039_Admission | A+B discovered, A assigned: missing B and zero execution |
 | PC-18 | ignore duplicate assignments | NightlyChunkAdmissionTests.C1039_Admission | A assigned twice: duplicate A and zero execution |
 | PC-19 | remove the unknown-class rejection | NightlyChunkAdmissionTests.C1039_Admission | A discovered, A+Z assigned: unknown Z and zero execution |
-| PC-20 | use configured classes when discovery exits nonzero | NightlyChunkAdmissionTests.C1039_DiscoveryFailure | nonzero discovery with otherwise valid diagnostics: zero execution |
+| PC-20 | ignore nonzero discovery ExitCode while preserving valid diagnostic parsing | NightlyChunkAdmissionTests.C1039_DiscoveryFailure | nonzero discovery with otherwise valid diagnostics: zero execution |
 | PC-21 | skip the assembly hash comparison | NightlyChunkAdmissionTests.C1039_BuildBinding | changed DLL after discovery: execution refused |
-| PC-22 | drop one OR operand from generated native arguments | NightlyChunkAdmissionTests.C1039_LiteralFilter | captured argv and executed class set both equal A+B |
+| PC-22 | drop the B operand from Get-NightlyNativeExecutionArguments | NightlyChunkAdmissionTests.C1039_LiteralFilter | captured argv and executed class set both equal A+B |
 | PC-23 | accept union.Ok=false | NightlyChunkAdmissionTests.C1039_ExpandedUnion | one missing argument UID: incomplete and exact UID named |
 | PC-24 | deduplicate terminal rows before overlap validation | NightlyChunkAdmissionTests.C1039_ExpandedUnion | same UID in two chunks: duplicate count 1 and incomplete |
 | PC-25 | break the chunk loop on a nonzero ordinary test exit | NightlyChunkAdmissionTests.C1039_ContinueAfterRed | B execution and B evidence exist after A fails |
 | PC-26 | advance to chunk B while A cleanup is held | NightlyChunkAdmissionTests.C1039_SerialChildren | B starts only after A cleanup releases; maximum active native=1 |
 | PC-27 | classify by method/class name containing Unit | NightlyUnitReceiptTests.C1039_Categories | misleading Unit name excluded; inherited Unit metadata included |
 | PC-28 | join required UID directly to TRX testId | NightlyUnitReceiptTests.C1039_TerminalRows | two argument UIDs with unrelated TRX GUIDs: executed=2 |
-| PC-29 | treat an empty terminal set as complete | NightlyUnitReceiptTests.C1039_TerminalRows | discovery-only and InProgress-only: complete=false, passed=0 |
+| PC-29 | treat an empty terminal set as complete | NightlyUnitReceiptTests.C1039_TerminalRows | discovery-only: complete=false and passed=0 |
 | PC-30 | normalize Skipped to Passed | NightlyUnitReceiptTests.C1039_TerminalRows | required skipped UID: skipped=1 and complete-green=false |
 | PC-31 | ignore failed Unit terminal outcomes | NightlyUnitReceiptTests.C1039_TerminalRows | failed UID: failed=1 and complete-green=false |
 | PC-32 | collapse duplicate terminal UIDs before counting | NightlyUnitReceiptTests.C1039_DuplicateRows | duplicate UID: duplicate=1 and complete-green=false |
-| PC-33 | copy expected identity over the observed receipt identity before comparison | NightlyUnitReceiptTests.C1039_IdentityBinding | each independently changed SHA/ref/policy/assembly/run/job/script field is rejected |
+| PC-33 | omit only SHA from the receipt comparison | NightlyUnitReceiptTests.C1039_IdentityBinding | changed SHA alone is rejected |
 | PC-34 | hash only the count rather than sorted UIDs | NightlyUnitReceiptTests.C1039_Digest | same-count UID replacement changes digest; permutation does not |
 | PC-35 | replace overall result with the Unit result | NightlyUnitReceiptTests.C1039_FullNightly | Unit green plus non-Unit red: nightly stays red |
 | PC-36 | write total wall time into childElapsedSeconds | NightlyUnitReceiptTests.C1039_PhaseDurations | controlled slot/child/cleanup intervals stay distinct |
 | PC-37 | restore liveHash==desiredDigest comparison | ReleaseGateRegistrationTests.C1039_OpaqueRevision | identical content, opaque revision: second apply writes=0 |
 | PC-38 | classify failed scripts/get as missing | ReleaseGateRegistrationTests.C1039_UnknownReads | 401/403/503/transport/invalid-200: zero writes |
 | PC-39 | classify failed schedules/get as missing | ReleaseGateRegistrationTests.C1039_UnknownReads | 401/403/503/transport/invalid-200: zero writes |
-| PC-40 | omit the owned-field comparison after GET | ReleaseGateRegistrationTests.C1039_ScriptFields | accepted write with altered stored field: apply fails |
-| PC-41 | compare only cron/timezone | ReleaseGateRegistrationTests.C1039_ScheduleFields | wrong target/tag/args/is_flow: apply fails without overwriting drift |
+| PC-40 | omit content from the owned-script projection | ReleaseGateRegistrationTests.C1039_ScriptFields | accepted write with altered stored content: apply fails |
+| PC-41 | omit schedule from the owned-schedule projection | ReleaseGateRegistrationTests.C1039_ScheduleFields | stored cron differs: apply fails without overwriting drift |
 | PC-42 | return success immediately after setenabled POST | ReleaseGateRegistrationTests.C1039_EnableReadback | accepted-but-not-stored enable: failure and no enabled receipt |
-| PC-43 | recreate all definitions unconditionally on resumed apply | ReleaseGateRegistrationTests.C1039_RestartApply | each committed cut: one stored object per path and no extra script revision |
+| PC-43 | unconditionally repost the desired script during a restarted apply despite matching GET content | ReleaseGateRegistrationTests.C1039_RestartApply | each committed cut: one stored object per path and no extra script revision |
 | PC-44 | omit parent_hash on an update | ReleaseGateRegistrationTests.C1039_OpaqueRevision | fixture changes revision before POST: refuses and preserves competing content |
 | PC-45 | fall through preview into Apply writes | ReleaseGateRegistrationTests.C599_Preview | a preview performs zero writes |
 | PC-46 | load tokenFile into preview context | ReleaseGateRegistrationTests.C599_Preview | a preview sends no token |
@@ -965,147 +1096,274 @@ before Code admission once those branches are chosen.
 | PC-50 | remove coverageComplete from native green admission | NightlyVerificationContractTests.C544_CoverageRequired | coverageComplete=false is unready |
 | PC-51 | remove testsPassed from native green admission | NightlyVerificationContractTests.C544_GreenRequired | testsPassed=false is unready |
 | PC-52 | remove reportDelivered from native green admission | NightlyVerificationContractTests.C544_ReportReceiptRequired | reportDelivered=false is unready |
+| PC-53 | omit only ref from the receipt comparison | NightlyUnitReceiptTests.C1039_IdentityBinding | changed ref alone is rejected |
+| PC-54 | omit only policyHash from the receipt comparison | NightlyUnitReceiptTests.C1039_IdentityBinding | changed policyHash alone is rejected |
+| PC-55 | omit only assemblyHash from the receipt comparison | NightlyUnitReceiptTests.C1039_IdentityBinding | changed assemblyHash alone is rejected |
+| PC-56 | omit only nativeRunId from the receipt comparison | NightlyUnitReceiptTests.C1039_IdentityBinding | changed nativeRunId alone is rejected |
+| PC-57 | omit only jobId from the receipt comparison | NightlyUnitReceiptTests.C1039_IdentityBinding | changed jobId alone is rejected |
+| PC-58 | omit only scriptDigest from the receipt comparison | NightlyUnitReceiptTests.C1039_IdentityBinding | changed scriptDigest alone is rejected |
+| PC-59 | omit only scriptRevision from the receipt comparison | NightlyUnitReceiptTests.C1039_IdentityBinding | changed scriptRevision alone is rejected |
+| PC-60 | omit only path from the owned-script projection | ReleaseGateRegistrationTests.C1039_ScriptFields | accepted write with altered path alone: apply fails |
+| PC-61 | omit only language from the owned-script projection | ReleaseGateRegistrationTests.C1039_ScriptFields | accepted write with altered language alone: apply fails |
+| PC-62 | omit only tag from the owned-script projection | ReleaseGateRegistrationTests.C1039_ScriptFields | accepted write with altered tag alone: apply fails |
+| PC-63 | omit only schema from the owned-script projection | ReleaseGateRegistrationTests.C1039_ScriptFields | accepted write with altered schema alone: apply fails |
+| PC-64 | omit only summary from the owned-script projection | ReleaseGateRegistrationTests.C1039_ScriptFields | accepted write with altered summary alone: apply fails |
+| PC-65 | omit only description from the owned-script projection | ReleaseGateRegistrationTests.C1039_ScriptFields | accepted write with altered description alone: apply fails |
+| PC-66 | omit only path from the owned-schedule projection | ReleaseGateRegistrationTests.C1039_ScheduleFields | altered path alone: apply fails without overwriting drift |
+| PC-67 | omit only script_path from the owned-schedule projection | ReleaseGateRegistrationTests.C1039_ScheduleFields | altered script_path alone: apply fails without overwriting drift |
+| PC-68 | omit only timezone from the owned-schedule projection | ReleaseGateRegistrationTests.C1039_ScheduleFields | altered timezone alone: apply fails without overwriting drift |
+| PC-69 | omit only tag from the owned-schedule projection | ReleaseGateRegistrationTests.C1039_ScheduleFields | altered tag alone: apply fails without overwriting drift |
+| PC-70 | omit only args from the owned-schedule projection | ReleaseGateRegistrationTests.C1039_ScheduleFields | altered args alone: apply fails without overwriting drift |
+| PC-71 | omit only is_flow from the owned-schedule projection | ReleaseGateRegistrationTests.C1039_ScheduleFields | altered is_flow alone: apply fails without overwriting drift |
+| PC-72 | post enabled=false on every matching reapply | ReleaseGateRegistrationTests.C599_ApplyReadback | a reapply PRESERVES an already enabled schedule |
+| PC-73 | restore ClassName* selection for A beside AExtra | NightlyChunkAdmissionTests.C1039_LiteralFilter | A assigned: argv selects A exactly and AExtra never executes |
+| PC-74 | allow an empty classes list in a configured chunk | NightlyChunkAdmissionTests.C1039_Admission | configured empty chunk refused; unconfigured all invocation still works |
+| PC-75 | ignore terminal UIDs outside the discovery set | NightlyUnitReceiptTests.C1039_TerminalRows | unknown UID named and complete-green=false |
+| PC-76 | return complete-green=true for an empty eligible set | NightlyUnitReceiptTests.C1039_TerminalRows | zero eligible: complete-green=false |
+| PC-77 | force ProfileAware=true for nightly receipt census | NightlyUnitReceiptTests.C1039_Categories | OptIn/Explicit remain excluded with category-optin/nightly-default |
+| PC-78 | accept Test-NightlyTrxDiagnosticCrossCheck.Ok=false | NightlyUnitReceiptTests.C1039_TerminalRows | equal UID set but missing TRX argument row: incomplete |
+| PC-79 | ignore TimedOut with otherwise valid diagnostics | NightlyChunkAdmissionTests.C1039_DiscoveryFailure | timeout: zero native execution starts; named discovery refusal |
+| PC-80 | allow Nodes.Count=0 | NightlyChunkAdmissionTests.C1039_DiscoveryFailure | empty: zero native execution starts; named discovery refusal |
+| PC-81 | substitute configured classes when the diagnostic file is missing | NightlyChunkAdmissionTests.C1039_DiscoveryFailure | missing: zero native execution starts; named discovery refusal |
+| PC-82 | bypass the pinned diagnostic version check | NightlyChunkAdmissionTests.C1039_DiscoveryFailure | version: zero native execution starts; named discovery refusal |
+| PC-83 | drop the invalid record in the diagnostic parser | NightlyChunkAdmissionTests.C1039_DiscoveryFailure | malformed: zero native execution starts; named discovery refusal |
+| PC-84 | deduplicate discovery UIDs instead of rejecting | NightlyChunkAdmissionTests.C1039_DiscoveryFailure | duplicate-discovery: zero native execution starts; named discovery refusal |
+| PC-85 | normalize InProgress to Passed | NightlyUnitReceiptTests.C1039_TerminalRows | InProgress UID does not count as passed; complete-green=false |
+| PC-86 | normalize NotExecuted to Passed | NightlyUnitReceiptTests.C1039_TerminalRows | NotExecuted UID does not count as passed; complete-green=false |
+| PC-87 | normalize Unknown to Passed | NightlyUnitReceiptTests.C1039_TerminalRows | Unknown UID does not count as passed; complete-green=false |
+| PC-88 | skip the run-directory containment check | NightlyUnitReceiptTests.C1039_IdentityBinding | wrong-run-directory: receipt refused although counts match |
+| PC-89 | skip the evidence timestamp check | NightlyUnitReceiptTests.C1039_IdentityBinding | stale-timestamp: receipt refused although counts match |
+| PC-90 | skip the invocation marker comparison | NightlyUnitReceiptTests.C1039_IdentityBinding | previous-invocation: receipt refused although counts match |
+| PC-91 | resume the root despite AssignProcessToJobObject failure | NightlyNativeOwnershipTests.C1039_AssignBeforeResume | assignment refused: fixture start marker absent and root handle signalled |
+| PC-92 | omit CREATE_SUSPENDED when creating the root | NightlyNativeOwnershipTests.C1039_AssignBeforeResume | assignment barrier held: neither root marker nor descendant exists |
+| PC-93 | enable JOB_OBJECT_LIMIT_BREAKAWAY_OK | NightlyNativeOwnershipTests.C1039_DescendantExit | fixture breakaway request cannot leave an independently live descendant |
+| PC-94 | treat job active-count zero as sufficient without root wait | NightlyNativeOwnershipTests.C1039_DescendantExit | held root wait: ChildrenExited=false despite zero-count observation |
+| PC-95 | set ChildrenExited from root.HasExited alone | NightlyNativeOwnershipTests.C1039_DescendantExit | root exited/child held: no clean return until child handle signals |
+| PC-96 | ignore the stdout reader completion in OutputDrained | NightlyNativeOwnershipTests.C1039_DrainBeforeReturn | held stdout EOF: OutputDrained=false and no successful return |
+| PC-97 | ignore the stderr reader completion in OutputDrained | NightlyNativeOwnershipTests.C1039_DrainBeforeReturn | held stderr EOF: OutputDrained=false and no successful return |
+| PC-98 | return OutputDrained=true before final log flush completes | NightlyNativeOwnershipTests.C1039_DrainBeforeReturn | held final write: no return; released log contains both terminal sentinels |
+| PC-99 | omit TerminateJobObject on the timeout path | NightlyNativeOwnershipTests.C1039_NativeTimeout | timeout arm records termination before fallback and root/child handles both signal |
+| PC-100 | normalize TerminateJobObject failure to successful cleanup | NightlyNativeOwnershipTests.C1039_CleanupUnknownHolds | termination-failed arm: red/held, next driver starts=0 |
+| PC-101 | convert a failed active-process query to count zero | NightlyNativeOwnershipTests.C1039_CleanupUnknownHolds | query-failed arm: CleanupComplete=false, next starts=0 |
+| PC-102 | treat root/child join timeout as success | NightlyNativeOwnershipTests.C1039_CleanupUnknownHolds | join-expired arm: held cleanup, retained logs and no next driver |
+| PC-103 | catch a redirected reader exception and set OutputDrained=true | NightlyNativeOwnershipTests.C1039_CleanupUnknownHolds | reader-error arm: cleanup incomplete and logs retained |
+| PC-104 | omit JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | NightlyNativeOwnershipTests.C1039_NativeTimeout | faulted termination then close: independently opened descendant handle signals |
+| PC-105 | clear the fixture-resolution-active disqualification bit | NightlyNativeOwnershipTests.C1039_NativeFixtureLoop | real staged probe evidence exists but qualificationEligible=false |
+| PC-106 | ignore ResolveNativeExecutable for execution only | NightlyNativeOwnershipTests.C1039_NativeFixtureLoop | observed discovery/execution executable path and hashes are identical staged values |
+| PC-107 | release native lease after root exit before descendant/drain completion | NightlyNativeOwnershipTests.C1039_LeaseAfterNativeCleanup | DELETE follows independent descendant signal and both output sentinels |
+| PC-108 | return from held cleanup and dispose the renewal job | NightlyNativeOwnershipTests.C1039_LeaseAfterNativeCleanup | held query/drain: owner alive, renewals continue, DELETE and next-start absent |
+| PC-109 | launch driver with powershell.exe instead of resolved pwsh | NightlyInterpreterTests.C1039_BootstrapUsesPwsh | fixture observes major version >=7 before gate import |
+| PC-110 | omit RunId from the hop argument map | NightlyInterpreterTests.C1039_DirectEntryHopsOnce | literal argv including RunId matches input and single final record names it |
+| PC-111 | continue in the 5.1 parent after the child returns | NightlyInterpreterTests.C1039_DirectEntryHopsOnce | one driver start and one final completion record |
+| PC-112 | fall back to the current 5.1 interpreter when pwsh resolution fails | NightlyInterpreterTests.C1039_MissingPwshRefuses | nonzero refusal before any driver marker; missing and version-5 executable arms |
+| PC-113 | join native tokens with spaces without Windows escaping | NightlyNativeOwnershipTests.C1039_AssignBeforeResume | space/empty/quote/backslash/filter tokens equal independently expected argv |
+| PC-114 | default a missing timing to zero | NightlyPartitionTimingTests.C1039_MissingTimingRefuses | missing B refuses; exact complete A+B map passes |
+| PC-115 | ignore incomplete UID execution in timing input | NightlyPartitionTimingTests.C1039_MissingTimingRefuses | capped probe with a missing expanded UID refuses |
+| PC-116 | use 100 percent instead of 80 percent of 3600000 ms | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | 2880001 ms refuses; 2880000 ms is admitted |
+| PC-117 | sum class wall time without the measured allowance | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | class sum under threshold plus allowance over it refuses |
+| PC-118 | omit source applicability from timing validation | NightlyPartitionTimingTests.C1039_TimingIdentity | changed source without explicit dependency applicability: refused |
+| PC-119 | drop slot/build/discovery costs from the forecast | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | otherwise fitting chunks with forecast after 08:00 do not admit qualification |
+| PC-120 | coerce missing queue bound to zero | NightlyPartitionTimingTests.C1039_OverBudgetRefuses | unknown queue input: deadline claim is inadmissible |
+| PC-121 | change antiphon watchdog to 7200000 and recompute policyHash | NightlyPartitionTimingTests.C1039_PolicyPartition | shipped antiphon watchdog must equal 3600000 |
+| PC-122 | remove one measured class from chunks.antiphon and recompute policyHash | NightlyPartitionTimingTests.C1039_PolicyPartition | committed roster digest equals admitted M-3 roster digest |
+| PC-123 | launch driver before publishing report-producers manifest | NightlyReportDeliveryTests.C1039_IntentBeforeWake | manifest publication failure: zero driver starts |
+| PC-124 | wake consumer before outbox atomic rename | NightlyReportDeliveryTests.C1039_IntentBeforeWake | held rename: zero wakes/POSTs and no committed intent visible |
+| PC-125 | omit Flush(true) before publishing intent | NightlyReportDeliveryTests.C1039_IntentBeforeWake | file-operation observer records flush before rename for body/intent; crash leaves no partial published entry |
+| PC-126 | skip report-producers scan during recovery | NightlyReportDeliveryTests.C1039_RecoverBeforeEnqueue | producer death after complete summary: same reportId queued on restart |
+| PC-127 | accept incomplete summary publication as ready | NightlyReportDeliveryTests.C1039_RecoverBeforeEnqueue | partial/missing summary: pending reason and zero POSTs |
+| PC-128 | overwrite an existing reportId body with a recomposed changed body | NightlyReportDeliveryTests.C1039_IntentIntegrity | same ID/different bytes: conflict held; original digest and bytes unchanged |
+| PC-129 | skip persisted intent/body digest validation | NightlyReportDeliveryTests.C1039_IntentIntegrity | torn/missing/mismatched intent: held with reason and zero send |
+| PC-130 | remove a pending manifest summary during retention cleanup | NightlyReportDeliveryTests.C1039_RetentionPins | aged pending summary/body remain readable and recoverable |
+| PC-131 | continue consumption when exclusive file lock acquisition fails | NightlyReportDeliveryTests.C1039_BusyConsumer | consumer B sends zero while A owns lock; committed intent stays pending |
+| PC-132 | accept available parts without requiring every ordinal | NightlyReportDeliveryTests.C1039_ReportParts | missing middle part: received=false |
+| PC-133 | take first part when same ordinal has different digest | NightlyReportDeliveryTests.C1039_ReportParts | conflicting ordinal held; identical duplicates coalesce |
+| PC-134 | split payload at 16000 without reserving frame/header length | NightlyReportDeliveryTests.C1039_ReportParts | every framed part.Length<=16000 at limit-1/limit/limit+1 |
+| PC-135 | omit suffix framing | NightlyReportDeliveryTests.C1039_ReportParts | API trim simulation preserves exact canonical body bytes after reassembly |
+| PC-136 | skip per-part digest comparison | NightlyReportDeliveryTests.C1039_ReportParts | one altered part rejected even when header whole digest matches |
+| PC-137 | skip reassembled whole digest comparison | NightlyReportDeliveryTests.C1039_ReportParts | valid part digests but wrong declared whole digest: received=false |
+| PC-138 | hash delimiter-joined values without the versioned canonical envelope | NightlyReportDeliveryTests.C1039_IntentIntegrity | ambiguous field-boundary pair gets distinct IDs; reordered equivalent input gets same ID |
+| PC-139 | return early for green and zero open incidents | NightlyReportRecipientTests.C1039_GreenWithoutIncident | no incident created; independent GET contains entire correlated ledger report |
+| PC-140 | construct receipt from POST response without a separate GET | NightlyReportRecipientTests.C1039_WholeBoardReceipt | accepted-but-unreadable/altered stored body: reportDelivered=false |
+| PC-141 | read a matching report from a different ledger card | NightlyReportRecipientTests.C1039_RejectMismatchedReceipt | matching bytes on other card do not satisfy recipient receipt |
+| PC-142 | omit ledgerCard.BoardId comparison at profile validation | NightlyReportRecipientTests.C1039_ReportProfile | card on other board: no writes and explicit refusal |
+| PC-143 | fall back to creating a ledger card when profile resolution fails | NightlyReportRecipientTests.C1039_ReportProfile | missing/malformed profile: zero writes and pending/refused |
+| PC-144 | include configured ledger in nightly incident selection | NightlyReportRecipientTests.C1039_IncidentSeparation | ledger content/status/labels unchanged by red update and green close |
+| PC-145 | turn failed discussion GET into an empty successful list | NightlyReportRecipientTests.C1039_UnknownReadNoSend | 401/403/404/503/transport/malformed GET: zero POSTs; intent remains pending |
+| PC-146 | delete producer manifest when outbox rename fails | NightlyReportDeliveryTests.C1039_EnqueueFailure | failed enqueue retains complete summary; restart delivers same ID without tests |
+| PC-147 | scan only volatile wake IDs after restart | NightlyReportDeliveryTests.C1039_CommitBeforeWake | crash after rename/before wake: real directory scan delivers unchanged body |
+| PC-148 | skip drain when lock is immediately available | NightlyReportDeliveryTests.C1039_AlreadyEligibleConsumer | immediately ready consumer completes same report through independent GET |
+| PC-149 | POST before persisting attempt intent | NightlyReportRecipientTests.C1039_AttemptBeforeSend | attempt persistence failure: no POST, durable report still pending |
+| PC-150 | blindly retry POST before discussion GET | NightlyReportRecipientTests.C1039_SendBeforeAck | after committed POST/lost response: one stored part per ordinal and receipt from GET on restart |
+| PC-151 | mark part received after a failed POST | NightlyReportRecipientTests.C1039_SendBeforeAck | failure before board commit: pending then same ID delivered after recovery |
+| PC-152 | mark received before atomic receipt publication | NightlyReportRecipientTests.C1039_ReceiptBeforeFinalState | failure after GET/before receipt rename: no received state; restart rereads full body |
+| PC-153 | delete receipt on consumer restart | NightlyReportRecipientTests.C1039_ReceiptBeforeFinalState | crash after receipt rename/before final state: same receipt/body retained without resend |
+| PC-154 | restore exit-zero fallback when receipt is absent | NightlyReportDeliveryTests.C1039_ExitZeroIsNotReceipt | report exit 0 without receipt: reportDelivered=false and nonzero run |
+| PC-155 | restore summary.reportDelivered override | NightlyReportDeliveryTests.C1039_ExitZeroIsNotReceipt | summary true without receipt: reportDelivered=false |
+| PC-156 | allow valid old receipt to override NoReport | NightlyReportDeliveryTests.C1039_NoReportNoReceipt | NoReport: reportDelivered=false and no green state |
+| PC-157 | allow valid receipt to override DryRun | NightlyReportDeliveryTests.C1039_NoReportNoReceipt | DryRun: reportDelivered=false and no report write |
+| PC-158 | write last-complete-green after recovering an old report | NightlyReportDeliveryTests.C1039_RecoveryDoesNotPromoteGreen | old receipt received; final job/state and green file byte-identical; no clone/test launch |
+| PC-159 | omit startup RecoverPending call | NightlyReportDeliveryTests.C1039_RecoveryFrontDoor | pending earlier report received before current driver start without old tests |
+| PC-160 | raise scan batch limit from 10 to 11 | NightlyReportDeliveryTests.C1039_RecoveryBounds | 11 eligible intents: at most 10 attempted this wake, remainder durable |
+| PC-161 | ignore the two-minute recovery HTTP-work deadline | NightlyReportDeliveryTests.C1039_RecoveryBounds | controlled monotonic clock at 120s: no new request; remaining work pending |
+| PC-162 | omit request timeout from delivery HTTP call | NightlyReportDeliveryTests.C1039_RecoveryBounds | held endpoint cancels within configured request bound and persists next reason |
+| PC-163 | omit WM_JOB_ID from wrapper hop | NightlyReportDeliveryTests.C1039_ProducerIdentity | executed wrapper/argv recorder and producer manifest carry exact jobId |
+| PC-164 | accept scheduled trigger with empty jobId | NightlyReportDeliveryTests.C1039_ProducerIdentity | missing scheduled jobId refuses credit; local manual run records absent job explicitly |
+| PC-165 | skip validation of jobId before SSH command construction | NightlyReportDeliveryTests.C1039_ProducerIdentity | invalid token refuses before owned ssh recorder; no injected sentinel executes |
+| PC-166 | ignore incident reconciliation failure after ledger receipt | NightlyReportRecipientTests.C1039_IncidentSeparation | complete ledger receipt plus failed required incident write: overall red |
+| PC-167 | omit only schemaVersion from receipt envelope comparison | NightlyReportRecipientTests.C1039_RejectMismatchedReceipt | only schemaVersion differs: received=false and producer refuses credit |
+| PC-168 | omit only boardId from receipt envelope comparison | NightlyReportRecipientTests.C1039_RejectMismatchedReceipt | only boardId differs: received=false and producer refuses credit |
+| PC-169 | omit only cardId from receipt envelope comparison | NightlyReportRecipientTests.C1039_RejectMismatchedReceipt | only cardId differs: received=false and producer refuses credit |
+| PC-170 | omit only profile from receipt envelope comparison | NightlyReportRecipientTests.C1039_RejectMismatchedReceipt | only profile differs: received=false and producer refuses credit |
+| PC-171 | omit only trigger from receipt envelope comparison | NightlyReportRecipientTests.C1039_RejectMismatchedReceipt | only trigger differs: received=false and producer refuses credit |
+| PC-172 | omit only dueDay from receipt envelope comparison | NightlyReportRecipientTests.C1039_RejectMismatchedReceipt | only dueDay differs: received=false and producer refuses credit |
+| PC-173 | omit only jobId from receipt envelope comparison | NightlyReportRecipientTests.C1039_RejectMismatchedReceipt | only jobId differs: received=false and producer refuses credit |
+| PC-174 | omit only nativeRunId from receipt envelope comparison | NightlyReportRecipientTests.C1039_RejectMismatchedReceipt | only nativeRunId differs: received=false and producer refuses credit |
+| PC-175 | omit only sha from receipt envelope comparison | NightlyReportRecipientTests.C1039_RejectMismatchedReceipt | only sha differs: received=false and producer refuses credit |
+| PC-176 | omit only ref from receipt envelope comparison | NightlyReportRecipientTests.C1039_RejectMismatchedReceipt | only ref differs: received=false and producer refuses credit |
+| PC-177 | omit only policyHash from receipt envelope comparison | NightlyReportRecipientTests.C1039_RejectMismatchedReceipt | only policyHash differs: received=false and producer refuses credit |
+| PC-178 | omit only scriptDigest from receipt envelope comparison | NightlyReportRecipientTests.C1039_RejectMismatchedReceipt | only scriptDigest differs: received=false and producer refuses credit |
+| PC-179 | omit only scriptRevision from receipt envelope comparison | NightlyReportRecipientTests.C1039_RejectMismatchedReceipt | only scriptRevision differs: received=false and producer refuses credit |
+| PC-180 | omit only assemblyDigest from receipt envelope comparison | NightlyReportRecipientTests.C1039_RejectMismatchedReceipt | only assemblyDigest differs: received=false and producer refuses credit |
+| PC-181 | omit only censusDigest from receipt envelope comparison | NightlyReportRecipientTests.C1039_RejectMismatchedReceipt | only censusDigest differs: received=false and producer refuses credit |
+| PC-182 | omit only bodyDigest from receipt envelope comparison | NightlyReportRecipientTests.C1039_RejectMismatchedReceipt | only bodyDigest differs: received=false and producer refuses credit |
+| PC-183 | write definition 1 before reading definition 3 | ReleaseGateRegistrationTests.C1039_UnknownReads | third definition unknown: total writes=0 |
+| PC-184 | serialize an unleased driver as granted | NightlyBuildSlotTests.C1039_AllDriversLeased | unleased arm preserves classification and qualificationEligible=false |
+| PC-185 | skip executable hash recheck while retaining DLL comparison | NightlyChunkAdmissionTests.C1039_BuildBinding | changed executable alone after discovery refuses |
+| PC-186 | clear accepted comment IDs then resend without GET after receipt rename failure | NightlyReportRecipientTests.C1039_ReceiptBeforeFinalState | GET-before-retry recovers same stored parts; no duplicate POST |
+| PC-187 | set TRIGGER=scheduled unconditionally in wrapper | NightlyReportDeliveryTests.C1039_ProducerIdentity | absent/wrong schedule context stays manual even with jobId |
+| PC-188 | remove status=Backlog from closure predicate | NightlyReportRecipientTests.C1039_IncidentSeparation | InProgress incident stays InProgress after green |
+| PC-189 | ignore assignedAgentId in unassigned predicate | NightlyReportRecipientTests.C1039_IncidentSeparation | assigned Backlog incident stays Backlog |
+| PC-190 | ignore ownerSessionId in unassigned predicate | NightlyReportRecipientTests.C1039_IncidentSeparation | owned Backlog incident stays Backlog |
+| PC-191 | select release-gate incidents for a nightly run | NightlyReportRecipientTests.C1039_IncidentSeparation | nightly green/red leaves RC incident bytes and status unchanged |
+| PC-192 | omit only assemblyHash from timing applicability validation | NightlyPartitionTimingTests.C1039_TimingIdentity | changed assemblyHash alone without an applicable retained receipt: refused |
+| PC-193 | omit only classDigest from timing applicability validation | NightlyPartitionTimingTests.C1039_TimingIdentity | changed classDigest alone without an applicable retained receipt: refused |
+| PC-194 | omit only hooksDigest from timing applicability validation | NightlyPartitionTimingTests.C1039_TimingIdentity | changed hooksDigest alone without an applicable retained receipt: refused |
+| PC-195 | omit only dependencyDigest from timing applicability validation | NightlyPartitionTimingTests.C1039_TimingIdentity | changed dependencyDigest alone without an applicable retained receipt: refused |
+| PC-196 | omit only toolVersions from timing applicability validation | NightlyPartitionTimingTests.C1039_TimingIdentity | changed toolVersions alone without an applicable retained receipt: refused |
+| PC-197 | omit only os from timing applicability validation | NightlyPartitionTimingTests.C1039_TimingIdentity | changed os alone without an applicable retained receipt: refused |
+| PC-198 | split a part at a UTF-16 high surrogate without adjusting the boundary | NightlyReportDeliveryTests.C1039_ReportParts | valid supplementary code point at split edge survives as identical UTF-8 bytes |
+| PC-199 | write summary directly to its final path | NightlyReportDeliveryTests.C1039_RecoverBeforeEnqueue | held partial write: final summary absent; restart cannot enqueue until atomic publication |
+| PC-200 | remove messaging from nightly requiredSuites and recompute policyHash | NightlyPartitionTimingTests.C1039_PolicyPartition | committed nightly requiredSuites equal the seven named suites |
+| PC-201 | recreate an already stored schedule on resumed apply | ReleaseGateRegistrationTests.C1039_RestartApply | schedule-create lost response: no second create and stored enablement unchanged |
+| PC-202 | reissue setenabled when GET already matches the selected enabled schedule | ReleaseGateRegistrationTests.C1039_RestartApply | enable lost response: matching readback succeeds without extra setenabled |
+| PC-203 | drop ReportProfile in bootstrap report/recovery argv | NightlyReportDeliveryTests.C1039_ProducerIdentity | same explicit profile path and expected script identities reach both children |
 
-PC-53..57 were non-executable at the original TestDesign. D-9..D-12 and the
-amendment verification table now provide planned seams and concrete red-oracle
-directions. None is passing, waived, implemented or a final PC freeze. Fresh
-TestDesign replaces these families with exact method/assertion/defect rows,
-audits additional independent guards and adds their ordinary checkpoints.
-
-**Historical admission audit (task 68138e50):** guards=57, mapped=57, missing ID
-maps=0, duplicate PC maps=0. Concrete offline recipes=52; non-executable
-obligations=5 (PC-53..57). No PC was run. The required all-PCs-executable gate
-failed, as did the whole-ordinary-scope checkpoint union. That task returned
-Plan. The amendment returns **test-design**; do not reuse 57 as the revised
-guard count or represent the historical audit as a completed verification freeze.
+Every newly introduced safety-critical guard must have the corresponding planned
+method and observer. If Code splits an implementation into additional independently
+bypassable safety checks, update this inventory before Review; do not silently
+broaden a PC into an uncounted mutation family. This does not authorize dropping
+any row. Mutation stores assertion/receipt/restoration evidence externally, runs
+only locally inherited children and never commits/pushes from SourceLanding.
 
 ### Out of scope
 
-- Re-running CARD-1021 whole Unit: revision-9 waiver remains authoritative.
-  Its historical failures/skips remain red evidence; no extra Unit run here.
-- jq/images/remote rollout repair and actual timeout diagnosis: CARD-1040;
-  checkpoint row-ceiling enforcement: CARD-1041. This manifest does not assume
-  that enforcement is installed.
-- Broker redesign and unrelated CARD-0589 wrapper/broker regression suites.
-  Inspect the landed Round 2 consumer before implementing S1 to avoid overlap.
-- Changing eligibility, suite membership, native timeout caps, nightly deadline,
-  RC enablement or InterimVerification/reducedDispatchPolicy.
-- Live registration, schedule enable, Telegram messages, reader login or choosing
-  a new destination: commissioned Q-0..Q-6/CARD-0545 custody only.
-- Full nightly qualification is separate operational work, not a hidden Code
-  checkpoint. Missing native/delivery proof V-5/V-6 is **required work**, not an
-  exclusion accepted for final scope.
-- Source-text bootstrap/provenance assertions do not prove Windows process
-  behavior. No native success is claimed from the Linux mirror.
+- CARD-1021 further whole-Unit verification is waived at revision 9; historical
+  failures/skips remain red facts. This plan adds no whole-Unit Code/Review run.
+- CARD-1040 owns jq/environment/image repair and actual timeout diagnosis;
+  CARD-1041 owns checkpoint ceiling enforcement. No wider timeout, assertion
+  relaxation or retry makes a missing measurement admissible.
+- CARD-0589 broker redesign/other assemblies; check for an overlapping landed
+  nightly consumer before S1, reuse equivalent code and keep its consumer checks.
+- Eligibility/suite changes, RC enable/publication and reduced verification
+  activation are excluded. InterimVerification remains disabled.
+- Live Windmill writes/notices, operator profiles/credentials/login and production
+  process interruption are excluded from this delegate and ordinary Code/Review.
+  Q lanes are required separate commissioned work, not waived proof.
+- No Linux native implementation, generic ScriptHarness cleanup refactor, session
+  queue change or server schema/endpoint change. Native Windows and real report
+  recipient evidence are included; none is omitted to meet a budget.
+- Power-loss/hardware-cache guarantees exceed these process-crash tests. The flush
+  ordering control proves the implemented syscall contract, not storage firmware.
+  Human reading is not inferred from persisted board discussion.
 
 ### Checkpoints
 
-**NOT ADMITTED FOR CODE:** this table freezes the offline candidate scope only.
-Its union is V-1..V-4/R-1..R-5. The new S1n/S1 native integration, S3a timing
-admission and S3c report rows are not yet included; do not run this as the whole
-plan. Fresh TestDesign uses the provided B-1..B-3 designs to finish those rows,
-guard splits and costs, and rechecks the union before Code. M-1/M-2 measured
-selections remain a separate explicit commission, not empty Windows CP rows.
+This is the single runnable ordinary manifest. All filters list exact methods,
+not class wildcards; all C1039 methods are unparameterized (one execution each).
+Require **all listed methods, zero failed/skipped**, in addition to Min. Harness
+assertion totals and nested probe results do not increase the outer TUnit floor.
 
-All new C1039 methods below are single non-parameterized tests: slots=7,
-admission=8, Unit receipt=7, registration=6 new + 4 existing. Existing regressions
-are slots=4, policy=5, readiness=6, scripts=2. Total candidate executions=49.
-Require every named method, zero failed/skipped, not merely the floor.
-Use the importer-selected host; no portable row gets a Windows-only pin.
-Lane for each of CP-1..CP-8 below: **portable offline** (no `-Platform` pin).
-The future S1n/S1 native rows name **native Windows**, and future S3c recipient
-rows name **portable private HTTP/DB**. Do not add an unsupported `Lane` column
-to the importer table; retain these lane bindings beside the row groups.
-Filters deliberately select only the new C1039 methods or explicit retained
-methods. A '*' on one existing class in CP-5 means the five inspected methods,
-not permission to absorb later additions without recounting.
+Windows lane: CP-1..4, CP-7, CP-9, CP-24/25 (`-Platform Windows`, no runner pin).
+Portable controlled-I/O lane: CP-5/6, CP-8, CP-10..16, CP-21..23, CP-26/27.
+Portable private HTTP/DB lane: CP-17..20 (including actual process restarts).
+CP-23's incident recheck also needs private HTTP/DB; CP-19's three queue tests
+use that same fixture to reach stored recipient evidence. `--rows` selects one lane
+and committed slice; do not run a Windows row on Linux and count its skip.
+S3a rows CP-10/11 additionally require accepted M-3; their test filters themselves
+are portable and do not execute the measured production inventory.
+
+Verification subdivisions keep the existing design within 30-60 minute dispatches:
+S3c-a1 is producer/queue/lock; a2 is immutable parts/retention; b1 is recipient
+fixture/profile/receipt; b2 is unknown-read/incident semantics; c1 is enqueue/wake/
+ready recovery; c2 is send/receipt crash recovery; d1 is receipt consumption/modes;
+d2 is front-door bounds/identity. Each builds the preceding slice; no file-sharing
+concurrency. CP-20 additionally closes the real recipient queue-handoff matrix
+after c1/c2. This is verification sequencing, not a change to D-11/D-12. S1 portable
+and native rows may be separate
+placement dispatches at the same source. S1n-b's early loop test exercises the
+available producer; CP-9/24 recheck it after the dependent discovery/receipt changes.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | tests/Antiphon.Tests -> bin-c1039-s1/ | nightly-slot-consumer | /*/*/NightlyBuildSlotTests/C1039_* | V-1 | all 7 named methods, 0 failed/skipped | 7 | 10 |
-| CP-2 | S1 | CP-1 | slot-retained | /*/*/BuildSlotScriptTests/(C589_WrapperRunsUnderLease*)\|(C589_WrapperMaxCpuCountRules*)\|(C589_WrapperTimeout*)\|(C800_WrapperPassesWildcardArgvLiterally*) | R-1 | all 4 listed, 0 failed/skipped | 4 | 4 |
-| CP-3 | S2 | tests/Antiphon.Tests -> bin-c1039-s2/ | independent-chunk-admission | /*/*/NightlyChunkAdmissionTests/C1039_* | V-2 | all 8 named methods, 0 failed/skipped | 8 | 12 |
-| CP-4 | S3b | tests/Antiphon.Tests -> bin-c1039-s3b/ | unit-duration-receipt | /*/*/NightlyUnitReceiptTests/C1039_* | V-3 | all 7 named methods, 0 failed/skipped | 7 | 10 |
-| CP-5 | S3b | CP-4 | policy-parser-retained | /*/*/ReleaseGatePolicyTests/* | R-2 | all 5 inspected methods, 0 failed/skipped | 5 | 4 |
-| CP-6 | S3b | CP-4 | nightly-readiness-retained | /*/*/NightlyVerificationContractTests/(C544_ScheduledIdentity*)\|(C544_CoverageRequired*)\|(C544_GreenRequired*)\|(C544_ReportReceiptRequired*)\|(C545_ResultLine*)\|(C545_JobResultFetch*) | R-3 | all 6 listed, 0 failed/skipped | 6 | 4 |
-| CP-7 | S4 | tests/Antiphon.Tests -> bin-c1039-s4/ | registration-readback | /*/*/ReleaseGateRegistrationTests/(C1039_*)\|(C599_Preview*)\|(C599_ApplyReadback*)\|(C599_Concurrency*)\|(C599_ScheduleProvenance*) | V-4, R-4 | all 10 named methods, 0 failed/skipped | 10 | 12 |
-| CP-8 | S4 | CP-7 | bootstrap-retained | /*/*/NightlyScriptsTests/(The_three_scripts_are_ascii_only*)\|(Shared_tree_WhatIf_exits_3_naming_the_guard*) | R-5 | both listed, 0 failed/skipped | 2 | 2 |
+| CP-1 | S1n-a | tests/Antiphon.Tests -> bin-c1039-s1na/ | native-containment | /*/*/NightlyNativeOwnershipTests/(C1039_AssignBeforeResume)\|(C1039_DescendantExit)\|(C1039_DrainBeforeReturn) | V-5 | all 3 listed, 0 failed/skipped | 3 | 10 |
+| CP-2 | S1n-b | tests/Antiphon.Tests -> bin-c1039-s1nb/ | native-faults | /*/*/NightlyNativeOwnershipTests/(C1039_NativeTimeout)\|(C1039_CleanupUnknownHolds)\|(C1039_NativeFixtureLoop) | V-5 | all 3 listed, 0 failed/skipped | 3 | 12 |
+| CP-3 | S1n-c | tests/Antiphon.Tests -> bin-c1039-s1nc/ | interpreter-hop | /*/*/NightlyInterpreterTests/(C1039_BootstrapUsesPwsh)\|(C1039_DirectEntryHopsOnce)\|(C1039_MissingPwshRefuses) | V-5 | all 3 listed, 0 failed/skipped | 3 | 9 |
+| CP-4 | S1n-c | CP-3 | bootstrap-early | /*/*/NightlyScriptsTests/(The_three_scripts_are_ascii_only)\|(Shared_tree_WhatIf_exits_3_naming_the_guard) | V-5, R-5 | all 2 listed, 0 failed/skipped | 2 | 2 |
+| CP-5 | S1 | tests/Antiphon.Tests -> bin-c1039-s1p/ | slot-consumer | /*/*/NightlyBuildSlotTests/(C1039_AllDriversLeased)\|(C1039_SlotTimeout)\|(C1039_CpuGrant)\|(C1039_ReleaseAfterCleanup)\|(C1039_RenewLease)\|(C1039_WaitClock)\|(C1039_NoNestedLease) | V-1 | all 7 listed, 0 failed/skipped | 7 | 10 |
+| CP-6 | S1 | CP-5 | slot-retained | /*/*/BuildSlotScriptTests/(C589_WrapperRunsUnderLease)\|(C589_WrapperMaxCpuCountRules)\|(C589_WrapperTimeout)\|(C800_WrapperPassesWildcardArgvLiterally) | R-1 | all 4 listed, 0 failed/skipped | 4 | 4 |
+| CP-7 | S1 | tests/Antiphon.Tests -> bin-c1039-s1w/ | native-slot-custody | /*/*/NightlyNativeOwnershipTests/C1039_LeaseAfterNativeCleanup | V-1, V-5 | all 1 listed, 0 failed/skipped | 1 | 6 |
+| CP-8 | S2 | tests/Antiphon.Tests -> bin-c1039-s2p/ | chunk-admission | /*/*/NightlyChunkAdmissionTests/(C1039_IndependentDiscovery)\|(C1039_Admission)\|(C1039_DiscoveryFailure)\|(C1039_BuildBinding)\|(C1039_LiteralFilter)\|(C1039_ExpandedUnion)\|(C1039_ContinueAfterRed)\|(C1039_SerialChildren) | V-2 | all 8 listed, 0 failed/skipped | 8 | 12 |
+| CP-9 | S2 | tests/Antiphon.Tests -> bin-c1039-s2w/ | native-partition-loop | /*/*/NightlyNativeOwnershipTests/C1039_NativeFixtureLoop | V-2, V-5 | all 1 listed, 0 failed/skipped | 1 | 5 |
+| CP-10 | S3a | tests/Antiphon.Tests -> bin-c1039-s3a/ | timing-admission | /*/*/NightlyPartitionTimingTests/(C1039_MissingTimingRefuses)\|(C1039_OverBudgetRefuses)\|(C1039_TimingIdentity)\|(C1039_PolicyPartition) | V-7 | all 4 listed, 0 failed/skipped | 4 | 8 |
+| CP-11 | S3a | CP-10 | policy-contract | /*/*/ReleaseGatePolicyTests/(C599_ProfileSchema)\|(C599_ProfileSuites) | V-7, R-2 | all 2 listed, 0 failed/skipped | 2 | 3 |
+| CP-12 | S3b | tests/Antiphon.Tests -> bin-c1039-s3b/ | unit-receipt | /*/*/NightlyUnitReceiptTests/(C1039_Categories)\|(C1039_TerminalRows)\|(C1039_DuplicateRows)\|(C1039_IdentityBinding)\|(C1039_Digest)\|(C1039_FullNightly)\|(C1039_PhaseDurations) | V-3 | all 7 listed, 0 failed/skipped | 7 | 10 |
+| CP-13 | S3b | CP-12 | parser-retained | /*/*/ReleaseGatePolicyTests/(C599_MetadataParsers)\|(C599_EligibilityCensus)\|(C599_ExpandedCoverage) | R-2 | all 3 listed, 0 failed/skipped | 3 | 3 |
+| CP-14 | S3b | CP-12 | readiness-unit | /*/*/NightlyVerificationContractTests/(C544_ScheduledIdentity)\|(C544_CoverageRequired)\|(C544_GreenRequired)\|(C544_ReportReceiptRequired) | R-3 | all 4 listed, 0 failed/skipped | 4 | 3 |
+| CP-15 | S3c-a1 | tests/Antiphon.Tests -> bin-c1039-s3ca1/ | report-intent | /*/*/NightlyReportDeliveryTests/(C1039_IntentBeforeWake)\|(C1039_RecoverBeforeEnqueue)\|(C1039_BusyConsumer) | V-6 | all 3 listed, 0 failed/skipped | 3 | 9 |
+| CP-16 | S3c-a2 | tests/Antiphon.Tests -> bin-c1039-s3ca2/ | report-body | /*/*/NightlyReportDeliveryTests/(C1039_ReportParts)\|(C1039_IntentIntegrity)\|(C1039_RetentionPins) | V-6 | all 3 listed, 0 failed/skipped | 3 | 8 |
+| CP-17 | S3c-b1 | tests/Antiphon.Tests -> bin-c1039-s3cb1/ | board-receipt | /*/*/NightlyReportRecipientTests/(C1039_WholeBoardReceipt)\|(C1039_GreenWithoutIncident)\|(C1039_ReportProfile)\|(C1039_RejectMismatchedReceipt) | V-6 | all 4 listed, 0 failed/skipped | 4 | 12 |
+| CP-18 | S3c-b2 | tests/Antiphon.Tests -> bin-c1039-s3cb2/ | board-incidents | /*/*/NightlyReportRecipientTests/(C1039_UnknownReadNoSend)\|(C1039_IncidentSeparation) | V-6, R-6 | all 2 listed, 0 failed/skipped | 2 | 8 |
+| CP-19 | S3c-c1 | tests/Antiphon.Tests -> bin-c1039-s3cc1/ | queue-restart | /*/*/NightlyReportDeliveryTests/(C1039_EnqueueFailure)\|(C1039_CommitBeforeWake)\|(C1039_AlreadyEligibleConsumer) | V-6 | all 3 listed, 0 failed/skipped | 3 | 9 |
+| CP-20 | S3c-c2 | tests/Antiphon.Tests -> bin-c1039-s3cc2/ | recipient-restart | /*/*/NightlyReportRecipientTests/(C1039_AttemptBeforeSend)\|(C1039_SendBeforeAck)\|(C1039_ReceiptBeforeFinalState)\|(C1039_QueueHandoffs)\|(C1039_BusyAndEligibleRecipient) | V-6 | all 5 listed, 0 failed/skipped | 5 | 15 |
+| CP-21 | S3c-d1 | tests/Antiphon.Tests -> bin-c1039-s3cd1/ | producer-receipt | /*/*/NightlyReportDeliveryTests/(C1039_ExitZeroIsNotReceipt)\|(C1039_RecoveryDoesNotPromoteGreen)\|(C1039_NoReportNoReceipt) | V-8 | all 3 listed, 0 failed/skipped | 3 | 9 |
+| CP-22 | S3c-d2 | tests/Antiphon.Tests -> bin-c1039-s3cd2p/ | recovery-front-door | /*/*/NightlyReportDeliveryTests/(C1039_RecoveryFrontDoor)\|(C1039_RecoveryBounds)\|(C1039_ProducerIdentity) | V-8 | all 3 listed, 0 failed/skipped | 3 | 12 |
+| CP-23 | S3c-d2 | CP-22 | receipt-regressions | /*/*/(NightlyVerificationContractTests)\|(NightlyReportRecipientTests)/(C544_ScheduledIdentity)\|(C544_CoverageRequired)\|(C544_GreenRequired)\|(C544_ReportReceiptRequired)\|(C545_ResultLine)\|(C545_JobResultFetch)\|(C1039_IncidentSeparation) | V-8, R-3, R-6 | all 7 listed, 0 failed/skipped | 7 | 5 |
+| CP-24 | S3c-d2 | tests/Antiphon.Tests -> bin-c1039-s3cd2w/ | native-final | /*/*/(NightlyNativeOwnershipTests)\|(NightlyInterpreterTests)/(C1039_NativeFixtureLoop)\|(C1039_BootstrapUsesPwsh)\|(C1039_DirectEntryHopsOnce) | V-5, V-8 | all 3 listed, 0 failed/skipped | 3 | 10 |
+| CP-25 | S3c-d2 | CP-24 | bootstrap-final | /*/*/NightlyScriptsTests/(The_three_scripts_are_ascii_only)\|(Shared_tree_WhatIf_exits_3_naming_the_guard) | V-5, V-8, R-5 | all 2 listed, 0 failed/skipped | 2 | 2 |
+| CP-26 | S4 | tests/Antiphon.Tests -> bin-c1039-s4/ | registration | /*/*/ReleaseGateRegistrationTests/(C1039_OpaqueRevision)\|(C1039_UnknownReads)\|(C1039_ScriptFields)\|(C1039_ScheduleFields)\|(C1039_EnableReadback)\|(C1039_RestartApply)\|(C599_Preview)\|(C599_ApplyReadback)\|(C599_Concurrency)\|(C599_ScheduleProvenance) | V-4, R-4 | all 10 listed, 0 failed/skipped | 10 | 12 |
+| CP-27 | S5 | n/a | runbook-diff | git diff --check a54e03b78c6e45a9c78e8d09ca3679859c499605 HEAD | R-5 | exit 0, no whitespace errors | n/a | 1 |
 
-New method roster is exactly the distinct C1039 Class.Method names in PC-1..44.
-Tests sharing a method share its TUnit execution, never its independently
-required mutation. New harness rows must use the C1039 prefix and assert the
-named inventories through ScriptHarness or an equivalent owned-child fixture.
-No harness-wide test-nightly-tests invocation is in this table: its constant
-true cases are not evidence.
-
-After admission, use tools/Antiphon.Checkpoints run --plan with one committed
-slice group (--after S1, S2, S3b or S4), --expected-source-sha and --serial.
-Use an isolated gated tool bootstrap only if necessary and record it.
-Wait with --max-wait 50s until terminal exit; exit 75 means keep waiting.
-The tool owns build slots; any separate driver must use scripts/build-slot.ps1.
-Exit 4 is not run. No unleased retry, source edits during execution, or reuse
-across After groups. Validate structured source/build receipts and preserve the
-unedited CHECKPOINT lines. Delete only the task-owned alternate output inventory
-after all children have exited; generated JSON/TRX/logs stay ignored. Run the
-full-task-range evidence diff guard in Code/Review.
-
-Code slice budgets for the retained candidate scope, excluding the added native/delivery
-work: S1 35 authoring + 14 verification = 49 minutes; S2 40 + 12 = 52;
-S3b 35 + 18 = 53; S4 40 + 14 = 54. These are estimates, not measured timings.
-S1n, S3a and S3c are separately budgeted above. S1's added Windows integration
-also needs repricing: split the portable and native verification dispatches if
-their combined authoring/checks exceed 60 minutes. The old totals below cannot
-represent these additions.
+CP-27 is a documentation check (0 build/test cases); review the S5 links, corrected
+nightly eligibility prose and pending qualification statuses alongside its diff.
+All other rows bind exactly one isolated build output, with reuse only at the same
+After value. `run --plan` once per committed slice group/explicit lane rows,
+`--expected-source-sha` and `--serial`; wait in foreground with `--max-wait 50s`
+until terminal exit (75 means keep waiting). The tool owns row build slots.
+Any separate tool bootstrap takes `scripts/build-slot.ps1`; exit 4 is not run.
+No nested outer production lease against a private fixture broker. Do not edit
+source during a run. Retain SHA-clean receipts and unedited CHECKPOINT lines;
+Code/Review run `scripts/check-evidence-diff.ps1` over the full task range. Remove
+only recorded alternate outputs after every owned child has exited.
 
 ### Cost
 
-The following figures are the **retained original TestDesign lower bound**.
-They omit the new slices; fresh TestDesign must replace the full-task cost and
-guard totals. D-10/S1n and D-11/12/S3c now name bounded 30-60 minute Code slices,
-but their exact ordinary/PC row prices are not measured or frozen in Plan.
-M-0..M-3 are separately budgeted above, with M-2 total determined by its measured
-missing-class roster. Do not add an unbounded measurement battery to one Code
-dispatch or quote 378 minutes as the amended plan's complete cost.
+All figures below are **estimated**, not measured test durations. Counts are
+planned outer TUnit executions derived from the explicit rosters. Measurement and
+qualification are separately bounded commissions, never zero-cost omitted rows.
 
-All new costs are **estimated**; this TestDesign ran zero builds, zero tests and
-zero PCs. Historical timings cited under B-1 are attributed measurements and
-are not substituted for current checkpoint timings.
+- Ordinary V/R floor (Code) = **209 minutes**: CP-1 10, CP-2 12, CP-3 9, CP-4 2, CP-5 10, CP-6 4, CP-7 6, CP-8 12, CP-9 5, CP-10 8, CP-11 3, CP-12 10, CP-13 3, CP-14 3, CP-15 9, CP-16 8, CP-17 12, CP-18 8, CP-19 9, CP-20 15, CP-21 9, CP-22 12, CP-23 5, CP-24 10, CP-25 2, CP-26 12, CP-27 1. The table contains **27 rows, 19 isolated builds, 100 TUnit executions**, plus the one non-TUnit diff command. Builds are included at 2 minutes each (38 build + 171 fixture/execution/check minutes), not added twice.
+- Additional setup/tool bootstrap/source-receipt inspection/output cleanup allowance = **12 minutes** across the ordinary campaign; Code verification including setup = **221 minutes**. Authoring is separate. Dispatch authoring+ordinary budgets in minutes: S1n-a 38+10=48; S1n-b 35+12=47; S1n-c 30+11=41; S1 28+20=48; S2 32+17=49; S3a 35+11=46; S3b 32+16=48; S3c-a1 35+9=44; S3c-a2 35+8=43; S3c-b1 38+12=50; S3c-b2 35+8=43; S3c-c1 35+9=44; S3c-c2 35+15=50; S3c-d1 35+9=44; S3c-d2 27+29=56; S4 35+12=47; S5 29+1=30. These sum to 569 authoring + 209 ordinary = 778; every dispatch is 30-60 minutes. The shared 12-minute setup allowance is spread across dispatch slack.
+- PC floor (Mutation) = **1470 minutes** for **203 separate cycles**. Every filter is exactly the Class.Method in its PC row expanded to `/*/*/Class/Method`. Portable slot/chunk/Unit/policy/registration/readiness: 111 PCs x 6 min = 666; native ownership/interpreter: 23 x 8 = 184; disk producer/recovery: 35 x 8 = 280; real HTTP/DB recipient: 34 x 10 = 340. This class-based price assignment uniquely names every filter/PC; no unnamed variants.
+- A 6-minute cycle is mutate 0.5 + isolated red build 2 + exact red method 0.5 + restore 0.5 + fresh green build 2 + exact green method 0.5. The 8-minute cycles allow 1.5 minutes per red/green method; 10-minute recipient cycles allow 2.5 each. Include each cycle's independent cleanup within its execution allowance. Mutation setup/discovery/receipt audit/restoration inventory allowance = **15 minutes**, so Mutation commission floor is **1485 minutes** (split into method-scoped serial commissions at landed slices; do not compress it into a one-hour Code task).
+- Combined engineering verification floor = setup 12 + ordinary 209 + mutation setup 15 + PCs 1470 = **1706 minutes**. This is the complete priced V/R/PC scope; authoring and operational evidence are separate. No actual pass or PC result is claimed.
+- Reuse saves 7 duplicate builds x 2 = **14 minutes** versus one build per TUnit row. No PC build/batching saving is assumed: controls predominantly share production files. Narrow selections replace a whole-Unit run; no invented historical runtime saving is claimed for the waiver.
+- Measurement allowance: M-0 30 + M-1 60 + M-3 30 = **120 minutes maximum commissioned fixed allowance**, plus M-2 dispatches **30-60 minutes each**. Exact M-2 total is calculated from accepted M-1 class roster before those dispatches are authorized. A 20-minute class cap is a diagnostic lower-bound stop, not a fabricated full timing. For planning scale only, 10 such dispatches would reserve 300-600 additional minutes (420-720 total measurement); this example is not a roster, forecast or admitted run.
+- Operational Q-0..Q-6/Q-R: reserve **600 active minutes plus two scheduled boundaries**, including the carried CARD-0545 S6 work and Q-R. The two actual full-nightly execution durations remain measurement-derived, not this active-work reserve; admission requires each genuine scheduled run fit 00:30-08:00 London (450 minutes including queue/build/cleanup). A conservative budget envelope is **1,500 minutes** (600 active + two 450-minute execution windows), excluding calendar wait and additional failure diagnosis. It grants no timeout extension and is not a claim the workload fits. Fixed measurement plus this envelope plus engineering verification is **3326 minutes**, with M-2 additions disclosed above; a measured full-card total cannot be claimed before M-1/M-2.
 
-- Ordinary offline V/R floor (Code) = CP-1 10 + CP-2 4 + CP-3 12 + CP-4 10 +
-  CP-5 4 + CP-6 4 + CP-7 12 + CP-8 2 = **58 minutes** for the exact filters above.
-  Four isolated builds are included, estimated at 2 minutes each: 8 build +
-  50 execution/fixture minutes. They are not added again.
-- Additional setup/tool bootstrap/source receipt inspection/cleanup allowance =
-  **8 minutes**. Offline Code verification including setup = **66 minutes**,
-  divided among the four slices above; authoring is separate.
-- Concrete PC floor (Mutation) = **312 minutes** for PC-1..52 at **6 minutes each**:
-  0.5 mutate + 2 red build + 0.5 exact-method red + 0.5 restore +
-  2 restored build + 0.5 same-method green. Each uses
-  /*/*/ClassName/ExactMethodName from its PC row, never a class or suite.
-  This is a **lower bound of one cycle per PC**; field/response variants that
-  need separate mutations add 6 minutes per cycle and must be enumerated when
-  Plan fixes the guards. Long-lived child controls must be measured and repriced
-  if they exceed the 0.5-minute execution estimate, never dropped.
-- Priced offline verification lower bound = setup 8 + ordinary 58 + concrete
-  PCs 312 = **378 minutes**. This is **not** a full-task total: PC-53..57,
-  S3a native census/timing, native integration and Q-0..Q-6 are not yet costable
-  from current inputs. Full-task admission therefore fails; zero minutes is not
-  assigned to those obligations. CARD-0545's retained S6 band is 300-600 active
-  minutes plus overnight boundaries, not a measured CARD-1039 quote.
-- Build reuse in CP-2/5/6/8 saves four otherwise redundant estimated 2-minute
-  builds = **8 minutes** versus an identical eight-build selection (66 ordinary
-  minutes -> 58). No savings are claimed by omitting required native/delivery
-  proof or by the CARD-1021 waiver. No PC batching saving is assumed: most
-  mutations share production script files.
-- Before a Code handoff the revised design must have executable PCs for all
-  guards, frozen Windows selections/counts, a whole-scope CP union, and a numeric
-  full ordinary/PC cost. The present lower bound must not be presented as that
-  completed gate.
+Admission audit: bodies above read; **guards=203, mapped=203, missing=0, duplicate PC maps=0**. All 203 PC recipes have a compiling defect, named exact method and decisive red assertion in the ordinary roster; all are executable specifications after their implementation slice lands. Native and recipient seams are specified, not unresolved. Whole ordinary scope is V-1..V-8/R-1..R-6; its union is the manifest above. M/Q evidence has separate acceptance and cost, not blank Min cells or substituted unit tests.
 
-Amendment outcome: B-1 has an explicit bounded measurement path; B-2/B-3 have
-decisions, production seams, files, tests and bounded slices. Eligibility is
-corrected to the actual nightly semantics. Return to fresh TestDesign to assess
-these inputs and complete the verification freeze, with M-1/M-2 measurement
-pending. No Code, whole-Unit rerun or live activation is authorized by this
-document-only amendment. The caller lands this pushed plan promptly, then
-dispatches `test-design`.
+Handoff: land this documentation branch promptly through normal caller-owned
+landing, then commission S1n-a Code on Windows and M-0/M-1 measurement separately.
+Continue the serial bounded slices; obtain accepted M-3 before S3a. No operator
+choice is needed for this verification freeze. Live profile custody and explicit
+qualification remain with Q-0's commissioned owner.
