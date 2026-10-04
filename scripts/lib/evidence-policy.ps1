@@ -130,6 +130,12 @@ function Test-EvidenceRoot {
     return $Path.Split('/')[0].Equals('.antiphon', [StringComparison]::OrdinalIgnoreCase)
 }
 
+function Test-EvidenceApprovedFixturePath {
+    param([string]$Path)
+    # approved-json-fixture: exact root, groups, basename and approved JSON suffix.
+    return $Path -cmatch '\A\.antiphon/fixtures/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+\.approved\.json\z'
+}
+
 function Get-EvidenceViolation {
     param([string]$Path, [string]$Mode, [long]$Bytes)
     if (-not (Test-EvidenceRoot $Path)) { return '' }
@@ -138,7 +144,8 @@ function Get-EvidenceViolation {
         if ($components[$i].IndexOf('checkpoints', [StringComparison]::OrdinalIgnoreCase) -ge 0) { return 'checkpoint_directory' }
     }
     if ($Mode -cne '100644' -and $Mode -cne '100755') { return 'non_regular_mode' }
-    if (-not [IO.Path]::GetExtension($Path).Equals('.md', [StringComparison]::OrdinalIgnoreCase)) { return 'non_markdown' }
+    if (-not [IO.Path]::GetExtension($Path).Equals('.md', [StringComparison]::OrdinalIgnoreCase) -and
+        -not (Test-EvidenceApprovedFixturePath $Path)) { return 'non_markdown' }
     if ($Bytes -gt 1048576) { return 'oversize_blob' }
     return ''
 }
