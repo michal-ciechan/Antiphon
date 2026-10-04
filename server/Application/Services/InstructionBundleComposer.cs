@@ -1,4 +1,7 @@
 using System.Text;
+using Antiphon.Agents.Pty;
+using Antiphon.Server.Domain.Enums;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -9,13 +12,17 @@ namespace Antiphon.Server.Application.Services;
 /// </summary>
 public sealed record ComposedInstructions(string Text, IReadOnlyList<InstructionBundle> Bundles)
 {
+    /// <summary>Full immutable identity, independent of the display-only abbreviated stamp.</summary>
+    public AgentPinSnapshot? PinSnapshot { get; init; }
     public static ComposedInstructions Empty { get; } = new(string.Empty, []);
 
     /// <summary>Nothing to append: no bundles, no style, no agent contract. The flag is then omitted entirely.</summary>
     public bool IsEmpty => Text.Length == 0;
 
     /// <summary><c>["delegate-basics v3f9a1b2c", …]</c> — for a log line, a DTO or a drift check.</summary>
-    public IReadOnlyList<string> Stamps => [.. Bundles.Select(b => b.Stamp)];
+    public IReadOnlyList<string> Stamps => PinSnapshot is { HasHistory: true } pin
+        ? [.. Bundles.Select(b => b.Stamp), $"pinned v{pin.ContentHash[..8]}"]
+        : [.. Bundles.Select(b => b.Stamp)];
 
     /// <summary>
     /// The whole composition on one line — <c>"orchestrator v1a2b3c4d, delegate-basics v3f9a1b2c"</c>
@@ -83,6 +90,9 @@ public static class InstructionBundleComposer
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var key in keys)
         {
+            // Only the explicit, dormant named path below may select implicit protocols.
+            if (InstructionBundles.IsImplicit(key))
+                continue;
             if (!seen.Add(key))
                 continue;
             bundles.Add(InstructionBundles.Get(key));
@@ -106,6 +116,87 @@ public static class InstructionBundleComposer
         return text.Length == 0
             ? ComposedInstructions.Empty
             : new ComposedInstructions(text.ToString(), bundles);
+    }
+
+    /// <summary>
+    /// Dormant S2 composition seam. Static expansion finishes before literal pins are added;
+    /// the operator append remains verbatim and last. No production launch calls this until
+    /// verified execution-host projection and durable refresh/recovery are available.
+    /// </summary>
+    public static ComposedInstructions ComposeNamed(
+        NamedAgentInstructionSelection selection,
+        AgentPinSnapshot snapshot,
+        IEnumerable<string>? bundleKeys = null,
+        string? styleBundleKey = null,
+        string? systemPromptAppend = null,
+        Func<string, string>? renderStatic = null)
+    {
+        if (snapshot.AgentId != selection.AgentId)
+            throw new InvalidOperationException("Pin snapshot belongs to another agent.");
+        if (!selection.RuntimeSupported)
+            return Compose(bundleKeys, styleBundleKey, systemPromptAppend);
+
+        var bundles = new List<InstructionBundle>();
+        var blocks = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        void AddBundle(string key)
+        {
+            if (!seen.Add(key)) return;
+            var bundle = InstructionBundles.Get(key);
+            bundles.Add(bundle);
+            blocks.Add(renderStatic is null ? bundle.Render() : renderStatic(bundle.Render()));
+        }
+        foreach (var key in bundleKeys ?? [])
+            if (!InstructionBundles.IsImplicit(key) && key != styleBundleKey) AddBundle(key);
+
+        if (selection.CanReadLive)
+            AddBundle(InstructionBundles.StandingInstructions);
+        else
+            blocks.Add("Apply the current complete pinned set below, including an empty replacement. "
+                + "Respect the operator's contract and tool restrictions. Live reread is unavailable for this tool-disabled session.");
+
+        if (styleBundleKey is not null && !InstructionBundles.IsImplicit(styleBundleKey)) AddBundle(styleBundleKey);
+        var pins = AgentPinRenderer.Render(snapshot);
+        if (pins.Length != 0) blocks.Add(pins);
+        if (!string.IsNullOrWhiteSpace(systemPromptAppend)) blocks.Add(systemPromptAppend);
+        return new ComposedInstructions(string.Join(BlockSeparator, blocks), bundles.AsReadOnly()) { PinSnapshot = snapshot };
+    }
+
+    /// <summary>
+    /// Prepare an explicit core composition for its existing provider transport. Call with resolved
+    /// executable/other arguments; this can be used for mutation preflight and launch validation.
+    /// The actual runner still owns launcher resolution, Codex's two Node hops and Grok's eventual
+    /// file bootstrap. This pure seam neither starts a process nor certifies a file projection.
+    /// </summary>
+    public static AgentPinInstructionPayload BuildPinPayload(ComposedInstructions composed, AgentKind kind,
+        string resolvedExecutable, IReadOnlyList<string> resolvedOtherArgs, int commandLineBudgetChars,
+        int grokRulesMaxFileBytes)
+    {
+        if (kind is not AgentKind.ClaudeCode and not AgentKind.Codex and not AgentKind.Grok)
+            throw new InvalidOperationException("This provider does not support pinned instruction injection.");
+        if (commandLineBudgetChars <= 0 || grokRulesMaxFileBytes <= 0)
+            throw new ArgumentOutOfRangeException(nameof(commandLineBudgetChars), "Instruction budgets must be positive.");
+        ApiKeyPlaceholder.EnsureAbsent(composed.Text, "Pinned instruction composition");
+        ApiKeyPlaceholder.EnsureAbsent(resolvedExecutable, "Resolved executable");
+        foreach (var arg in resolvedOtherArgs) ApiKeyPlaceholder.EnsureAbsent(arg, "Resolved argument");
+        var args = new List<string>(resolvedOtherArgs);
+        GrokRulesPayload? rules = null;
+        if (!composed.IsEmpty)
+        {
+            if (kind == AgentKind.Grok)
+            {
+                rules = new(composed.Text, GrokRulesTransport.Version, Guid.NewGuid());
+                GrokRulesTransport.Encode(rules, true, grokRulesMaxFileBytes);
+            }
+            else if (kind == AgentKind.Codex)
+                args.AddRange([CodexLaunchArgs.ConfigFlag, CodexLaunchArgs.DeveloperInstructions(composed.Text)]);
+            else
+                args.AddRange(["--append-system-prompt", composed.Text]);
+        }
+        var length = WindowsCommandLine.Measure(resolvedExecutable, args);
+        if (length > Math.Min(commandLineBudgetChars, 30000))
+            throw new InvalidOperationException("Resolved pinned instruction command line exceeds its effective budget.");
+        return new(args.AsReadOnly(), rules);
     }
 
     /// <summary>
@@ -174,4 +265,10 @@ public static class InstructionBundleComposer
             + "bundle under server/Bundles/, or shorten the agent's own system prompt append. This is an "
             + "early estimate; the session runner is the final check of the fully quoted command line.");
     }
+}
+
+/// <summary>Private provider payload. Do not include instruction content in diagnostics.</summary>
+public sealed record AgentPinInstructionPayload(IReadOnlyList<string> Args, GrokRulesPayload? GrokRulesPayload)
+{
+    public override string ToString() => $"AgentPinInstructionPayload args={Args.Count} grok={GrokRulesPayload is not null}";
 }

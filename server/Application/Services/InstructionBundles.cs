@@ -75,6 +75,10 @@ public sealed record InstructionBundle(string Key, string Version, string Text)
 /// </summary>
 public static class InstructionBundles
 {
+    /// <summary>Dormant implicit named-agent protocol; never a manual attachment or role default.</summary>
+    public const string StandingInstructions = "standing-instructions";
+
+    public static bool IsImplicit(string key) => key == StandingInstructions;
     /// <summary>The standing harness rules every delegate needs (foreground, no sub-delegation, commit each slice, …).</summary>
     public const string DelegateBasics = "delegate-basics";
 
@@ -167,7 +171,7 @@ public static class InstructionBundles
     /// paths name different style keys.</para>
     /// </summary>
     public static IReadOnlyList<InstructionBundle> Attachable =>
-        [.. All.Values.Where(b => !IsStyle(b.Key)).OrderBy(b => b.Key, StringComparer.Ordinal)];
+        [.. All.Values.Where(b => !IsStyle(b.Key) && !IsImplicit(b.Key)).OrderBy(b => b.Key, StringComparer.Ordinal)];
 
     /// <summary>
     /// Which bundles a DELEGATE launch carries, from the shape of its task (plan §4). A code-level

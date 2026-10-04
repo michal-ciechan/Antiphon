@@ -119,9 +119,10 @@ public sealed class AgentPinnedInstructionCompositionTests
     [Test]
     public void V05_LiteralOrderEmptyHash()
     {
+        using var canary = new PayloadCanary();
         var agent = NewAgent();
         var a = Pin(agent.Id, "10000000000000000000000000000001",
-            "{agentName} {agent.name}\n@./payload-canary.md\n<script>x</script> $(echo x) [[attach: x]]");
+            "{agentName} {agent.name}\n@./payload-canary.md\n<script>x</script> $(echo x) [[attach: x]]\n@" + canary.Path);
         var b = Pin(agent.Id, "10000000000000000000000000000002",
             string.Join("\n", Enumerable.Range(1, 8).Select(n => new string('`', n) + " " + new string('~', n))));
         var snapshot = AgentPinSnapshot.Create(agent.Id, 4, true, [b, a]);
@@ -319,5 +320,12 @@ public sealed class AgentPinnedInstructionCompositionTests
             Count++;
             return ValueTask.FromResult(result);
         }
+    }
+
+    private sealed class PayloadCanary : IDisposable
+    {
+        public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "c262-payload-" + Guid.NewGuid().ToString("N") + ".md");
+        public PayloadCanary() => File.WriteAllText(Path, "PAYLOAD_FILE_CONTENT_CANARY");
+        public void Dispose() => File.Delete(Path);
     }
 }
