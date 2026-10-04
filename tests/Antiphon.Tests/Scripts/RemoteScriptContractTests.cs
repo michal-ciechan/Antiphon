@@ -833,9 +833,7 @@ public sealed class RemoteScriptContractTests
     public void C946_Green_harness_removes_root_and_failed_keep_run_retains_evidence()
     {
         RequireLinuxPwsh();
-        var repo = DelegateScriptRunner.RepoRoot.Replace("\\", "/", StringComparison.Ordinal);
-        if (OperatingSystem.IsWindows()) repo = LinuxShell("wslpath -u '" + repo + "'").Trim();
-        var output = LinuxShell("repo='" + repo + "'\n" + """
+        var output = LinuxShell("""
             set -u
             root="$(mktemp -d /tmp/c946-cleanup-XXXXXXXX)"
             printf 'C946_ROOT=%s\n' "$root"
@@ -853,7 +851,7 @@ public sealed class RemoteScriptContractTests
                 # Only the root created and printed by this invocation is removed.
                 rm -rf -- "$kept"
             fi
-            """);
+            """, "repo");
         output.ShouldContain("GREEN_EXIT=0");
         output.ShouldContain("GREEN_ROOT_REMOVED");
         output.ShouldContain("FAILED_KEEP_EXIT=1");
@@ -2208,8 +2206,8 @@ public sealed class RemoteScriptContractTests
         bridge.ShouldContain("CachePreviewInvalid");
         front.ShouldContain("C849_DEPLOY_SHA");
         front.ShouldContain("CachePreviewInvalid");
-        var result = LinuxShell("root='" + DelegateScriptRunner.RepoRoot.Replace("'", "'\\''") + "'\n" +
-            "pwsh -NoProfile -File \"$root/scripts/verify-card0849-caches.ps1\" -Case Inventory -Sha bad 2>&1 || true\n");
+        var result = LinuxShell(
+            "pwsh -NoProfile -File \"$root/scripts/verify-card0849-caches.ps1\" -Case Inventory -Sha bad 2>&1 || true\n", "root");
         result.ShouldContain("C849_DEPLOY_SHA must be the reviewed full lowercase SHA");
     }
 
@@ -2432,7 +2430,7 @@ public sealed class RemoteScriptContractTests
             """);
         ready.ShouldContain("seed-result=true:");
         ready.ShouldNotContain("unsafe-docker");
-        var wrapper = LinuxShell("repo='" + DelegateScriptRunner.RepoRoot.Replace("'", "'\\''") + "'\n" + """
+        var wrapper = LinuxShell("""
             root="$(mktemp -d)"
             trap 'rm -rf "$root"' EXIT
             export ANTIPHON_OPERATOR_TOKEN_FILE="$root/operator-token"
@@ -2449,7 +2447,7 @@ public sealed class RemoteScriptContractTests
                 code=$?
                 printf 'retired-container=%s exit=%s cases=%s\n' "$container" "$code" "$(sed -n 's/.*"kind":"case","name":"\([^"]*\)".*/\1/p' "$C727_TEST_TRACE" | paste -sd, -)"
             done
-            """);
+            """, "repo");
         wrapper.ShouldContain("retired-container=false exit=0 cases=runner-cache-seed,deploy-temp-runner,verify-runner-caches");
         wrapper.ShouldContain("retired-container=true exit=2 cases=\n");
         wrapper.ShouldNotContain("retired-container=true exit=2 cases=runner-cache-seed");
@@ -2577,7 +2575,7 @@ public sealed class RemoteScriptContractTests
     {
         RequireLinuxPwsh();
         var remote = Remote();
-        var output = LinuxShell("repo='" + DelegateScriptRunner.RepoRoot.Replace("'", "'\\''") + "'\n" +
+        var output = LinuxShell(
             CacheSeedTreeHarness() + "\n" + Block(remote, "c849_saved_copy") + "\n" +
             Block(remote, "c849_no_cache_attachments") + "\n" +
             Block(remote, "c849_seed_failure") + "\n" + Block(remote, "c849_seed") + "\n" +
@@ -2684,7 +2682,7 @@ public sealed class RemoteScriptContractTests
                 ( case_deploy_$([ "$target" = parent ] && echo parent || echo temp_runner) ) > "$root/deploy" 2>&1
                 printf 'deploy-%s=%s\n' "$target" "$(cat "$root/deploy")"
             done
-            """);
+            """, "repo");
         foreach (var expected in new[] { "success=0 seed-result=true:", "marker-written", "saved-identity",
             "payload-imported", "recovery-retained", "recovery-host-owned", "unsafe-mode-masked",
             "incomplete-pruned", "live-cache-owned-by-1654", "idle-count=3 smoke-count=1",
@@ -2699,7 +2697,7 @@ public sealed class RemoteScriptContractTests
     {
         RequireLinuxPwsh();
         var remote = Remote();
-        var output = LinuxShell("repo='" + DelegateScriptRunner.RepoRoot.Replace("'", "'\\''") + "'\n" +
+        var output = LinuxShell(
             CacheSeedTreeHarness() + "\n" + Block(remote, "c849_saved_copy") + "\n" +
             Block(remote, "c849_prune_idle") + "\n" +
             Block(remote, "c849_no_cache_attachments") + "\n" + """
@@ -2776,7 +2774,7 @@ public sealed class RemoteScriptContractTests
             IN_USE=no; PS_ERROR=yes
             ( c849_no_cache_attachments ) > "$root/verdict" 2>&1
             printf 'attachment-unknown code=%s verdict=%s\n' "$?" "$(cat "$root/verdict")"
-            """);
+            """, "repo");
         output.ShouldContain("traversal code=2 diagnosis=CacheDonorUnsafePath");
         output.ShouldContain("nested-traversal code=2 diagnosis=CacheDonorUnsafePath");
         output.ShouldContain("nested-traversal-no-escape");
@@ -2797,7 +2795,7 @@ public sealed class RemoteScriptContractTests
     public void C849_Saved_donor_rejects_declared_size_bomb_before_writing()
     {
         RequireLinuxPwsh();
-        var output = LinuxShell("repo='" + DelegateScriptRunner.RepoRoot.Replace("'", "'\\''") + "'\n" + """
+        var output = LinuxShell("""
             root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
             mkdir -p "$root/stage/packages" "$root/stage/npm"
             perl -e '
@@ -2819,7 +2817,7 @@ public sealed class RemoteScriptContractTests
             diagnosis="$(pwsh -NoProfile -File "$repo/scripts/c849-import-saved-donor.ps1" -Source "$root/bomb.tar" -Stage "$root/stage")"; code=$?
             printf 'size-bomb code=%s diagnosis=%s\n' "$code" "$diagnosis"
             test ! -e "$root/stage/packages/bomb" && echo size-bomb-not-written
-            """);
+            """, "repo");
         output.ShouldContain("size-bomb code=2 diagnosis=CacheBudgetExceeded");
         output.ShouldContain("size-bomb-not-written");
     }
@@ -4080,19 +4078,48 @@ public sealed class RemoteScriptContractTests
             + "\n";
     }
 
+    private static string PrepareLinuxShellScript(string body, string? repositoryVariable, string nativeRoot, bool isWindows)
+    {
+        if (repositoryVariable is not null and not "root" and not "repo")
+            throw new ArgumentException("The repository-variable argument must be root or repo.", nameof(repositoryVariable));
+
+        // Check the caller's body before inserting the trusted native-root assignment. Keep this
+        // specific to the current checkout so unrelated Windows-path fixtures remain valid.
+        if (isWindows)
+        {
+            var forwardRoot = nativeRoot.Replace('\\', '/');
+            var spellings = new[] { nativeRoot, forwardRoot,
+                nativeRoot.Replace("'", "'\\''"), forwardRoot.Replace("'", "'\\''") };
+            if (spellings.Any(root => body.Contains(root, StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException("RepoRoot in a Linux shell body needs the repository-variable argument.");
+        }
+
+        if (repositoryVariable is null) return body;
+        var prelude = repositoryVariable + "='" + nativeRoot.Replace("'", "'\\''") + "'\n";
+        if (isWindows)
+        {
+            prelude += $$"""
+                if ! {{repositoryVariable}}="$(wslpath -u "${{repositoryVariable}}")"; then
+                    printf '%s\n' 'C980_REPO_ROOT_CONVERSION_FAILED' >&2
+                    exit 1
+                fi
+                case "${{repositoryVariable}}" in
+                    /*) ;;
+                    *) printf '%s\n' 'C980_REPO_ROOT_CONVERSION_FAILED' >&2; exit 1 ;;
+                esac
+                """ + "\n";
+        }
+        return prelude + body;
+    }
+
     // The remote script only ever runs under Linux bash, and these defects are behaviour (a
     // symlink's target mode, a restart's ordering), not text. On Windows the Linux shell is WSL:
     // Git Bash can neither create a symlink without privilege nor keep a 0600 mode.
-    private static string PrepareLinuxShellScript(string body, string? repositoryVariable, string nativeRoot, bool isWindows)
-    {
-        // Pre-fix assignment behavior extracted from the five C849 callers for the red-first witness run.
-        return repositoryVariable is null ? body : repositoryVariable + "='" + nativeRoot.Replace("'", "'\\''") + "'\n" + body;
-    }
-
     internal static string LinuxShell(string script, string? repositoryVariable = null)
     {
         if (ForceNoLinuxPwsh.Value)
             throw new InvalidOperationException("A Linux script block ran before the CARD-0905 pwsh skip.");
+        script = PrepareLinuxShellScript(script, repositoryVariable, DelegateScriptRunner.RepoRoot, OperatingSystem.IsWindows());
         ProcessStartInfo start;
         if (OperatingSystem.IsWindows())
         {
