@@ -44,6 +44,8 @@ public sealed class RollingProductionMountTests
                     [ -z "$override" ] || CODEX_HOME_PATH="$override"
                     override="$(printf '%s' "$input" | jq -r '.gitOverride // empty')"
                     [ -z "$override" ] || GIT_IDENTITY_PATH="$override"
+                    metadataFault="$(printf '%s' "$input"|jq -r '.metadataFault // empty')"
+                    if [ -n "$metadataFault" ];then sudo(){ [ "$1" = -n ] && shift;[ "$1" != "$metadataFault" ] || return 2;command "$@"; };fi
                     compose_host() { printf '%s' "$C994_FIXTURE_COMPOSE_JSON"; }
                     compose_temp() { printf '%s' "$C994_FIXTURE_COMPOSE_JSON"; }
                     c1008_refuse() { exit 2; }
@@ -74,10 +76,12 @@ public sealed class RollingProductionMountTests
             var state = bad["model"]!["services"]![service]!["volumes"]!.AsArray().Single(x => x!["source"]!.GetValue<string>() == "runner-state")!;
             state["target"] = service == "state-init" ? "/state" : "/runner-state"; add(service + ":swap", false, bad);
         }
-        var variants = new[] { "external", "nocopy", "kind", "options", "missing", "extra", "duplicate", "read-only-type" };
+        var variants = new[] { "external", "nocopy", "kind", "options", "missing", "extra", "duplicate", "read-only-type", "unused-volume", "unused-secret" };
         foreach (var variant in variants) {
             var bad = good.DeepClone().AsObject(); var mounts = bad["model"]!["services"]!["session-runner"]!["volumes"]!.AsArray();
             switch (variant) {
+                case "unused-volume": bad["model"]!["volumes"]!["foreign"] = new JsonObject{["name"]="foreign"}; break;
+                case "unused-secret": bad["model"]!["secrets"]!["foreign"] = new JsonObject{["file"]="/foreign"}; break;
                 case "external": bad["model"]!["volumes"]!["work"]!["external"] = true; break;
                 case "nocopy": mounts.Single(x => x!["source"]!.GetValue<string>() == "runner-nuget-packages")!["volume"]!["nocopy"] = false; break;
                 case "kind": mounts[0]!["type"] = "tmpfs"; break;
@@ -93,10 +97,13 @@ public sealed class RollingProductionMountTests
 
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public Task C994_Named_volume_identity_and_topology_are_exact() => Prove("c994-volume-mount c994-volume-owner", (_, good, add) => {
-        foreach (var field in new[] { "Name", "Source", "Destination", "Type", "RW", "missing-RW", "string-RW", "duplicate", "owner", "role" }) {
+        foreach (var field in new[] { "Name", "Source", "Destination", "Type", "RW", "missing-RW", "string-RW", "duplicate", "owner", "role", "generation", "anonymous", "mountpoint" }) {
             var bad = good.DeepClone().AsObject(); var mounts = bad["owned"]![0]!["Mounts"]!.AsArray(); var mount = mounts[0]!.AsObject();
             if (field == "missing-RW") mount.Remove("RW");
             else if (field == "string-RW") mount["RW"] = "true";
+            else if(field=="generation")bad["volumes"]![mount["Name"]!.GetValue<string>()]!["CreatedAt"]=null;
+            else if(field=="anonymous")mount["Name"]="";
+            else if(field=="mountpoint")bad["volumes"]![mount["Name"]!.GetValue<string>()]!["Mountpoint"]="/foreign";
             else if (field == "RW") mount["RW"] = false;
             else if (field == "duplicate") mounts.Add(mount.DeepClone());
             else if (field is "owner" or "role") bad["volumes"]![mount["Name"]!.GetValue<string>()]!["Labels"]!["com.docker.compose." + (field == "owner" ? "project" : "volume")] = "foreign";
@@ -113,7 +120,7 @@ public sealed class RollingProductionMountTests
 
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public Task C994_Bind_sources_are_canonical_and_typed() => Prove("c994-bind-proof", (f, good, add) => {
-        foreach (var variant in new[] { "source", "target", "rw", "missing", "extra", "directory-for-file", "symlink" }) {
+        foreach (var variant in new[] { "source", "target", "rw", "missing", "extra", "directory-for-file", "symlink", "ancestor", "file-for-directory", "readlink", "stat", "provider-missing" }) {
             var bad = good.DeepClone().AsObject(); var mounts = bad["owned"]![0]!["Mounts"]!.AsArray();
             var bind = mounts.Single(x => x!["Destination"]!.GetValue<string>() == "/run/antiphon/gitconfig")!;
             switch (variant) {
@@ -123,6 +130,21 @@ public sealed class RollingProductionMountTests
                 case "missing": mounts.Remove(bind); break;
                 case "extra": mounts.Add(new JsonObject { ["Type"]="bind", ["Source"]=f.Root, ["Destination"]="/foreign", ["RW"]=true }); break;
                 case "directory-for-file": File.Delete(f.Root + "/gitconfig"); Directory.CreateDirectory(f.Root + "/gitconfig"); break;
+                case "readlink": case "stat": bad["metadataFault"]=variant;break;
+                case "provider-missing": mounts.Remove(mounts.Single(x=>x!["Destination"]!.GetValue<string>()=="/state/codex"));break;
+                case "file-for-directory":
+                    var file=f.Root+"/not-directory";File.WriteAllText(file,"inert");bad["codexOverride"]=file;
+                    foreach(var service in new[]{"session-runner","state-init"}){
+                        bad["model"]!["services"]![service]!["volumes"]!.AsArray().Single(x=>x!["source"]!.GetValue<string>()==f.Root+"/codex")!["source"]=file;
+                        bad["owned"]![service=="session-runner"?0:1]!["Mounts"]!.AsArray().Single(x=>x!["Source"]!.GetValue<string>()==f.Root+"/codex")!["Source"]=file;
+                    }break;
+                case "ancestor":
+                    var parent=f.Root+"/parent-link";if(!Directory.Exists(parent))Directory.CreateSymbolicLink(parent,f.Root);
+                    var child=parent+"/codex";bad["codexOverride"]=child;
+                    foreach(var service in new[]{"session-runner","state-init"}){
+                        bad["model"]!["services"]![service]!["volumes"]!.AsArray().Single(x=>x!["source"]!.GetValue<string>()==f.Root+"/codex")!["source"]=child;
+                        bad["owned"]![service=="session-runner"?0:1]!["Mounts"]!.AsArray().Single(x=>x!["Source"]!.GetValue<string>()==f.Root+"/codex")!["Source"]=child;
+                    }break;
                 case "symlink":
                     var link = f.Root + "/codex-link";
                     if (!Directory.Exists(link)) Directory.CreateSymbolicLink(link, f.Root + "/codex");
@@ -168,7 +190,7 @@ public sealed class RollingProductionMountTests
 
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public Task C994_Tmpfs_configuration_survives_exit() => Prove("c994-tmpfs-proof", (_, good, add) => {
-        foreach (var variant in new[] { "running", "inspected", "mount-encoding", "missing", "contradiction", "extra", "readonly", "options", "impostor" }) {
+        foreach (var variant in new[] { "running", "inspected", "mount-encoding", "missing", "contradiction", "extra", "readonly", "options", "impostor", "state-init-tmpfs", "duplicate-config", "malformed-options" }) {
             var bad = good.DeepClone().AsObject(); var container = bad["owned"]![0]!;
             switch (variant) {
                 case "running": container["State"]!["Running"] = true; container["State"]!["Status"] = "running"; break;
@@ -179,6 +201,9 @@ public sealed class RollingProductionMountTests
                 case "extra": container["HostConfig"]!["Tmpfs"]!["/foreign"] = ""; break;
                 case "readonly": container["HostConfig"]!["Tmpfs"]!["/run/antiphon"] = "ro"; break;
                 case "options": container["HostConfig"]!["Tmpfs"]!["/run/antiphon"] = "size=123"; break;
+                case "state-init-tmpfs":bad["owned"]![1]!["HostConfig"]!["Tmpfs"]!["/foreign"]="";break;
+                case "duplicate-config":container["HostConfig"]!["Mounts"]=new JsonArray(new JsonObject{["Type"]="tmpfs",["Target"]="/run/antiphon"},new JsonObject{["Type"]="tmpfs",["Target"]="/run/antiphon"});break;
+                case "malformed-options":container["HostConfig"]!["Tmpfs"]!["/run/antiphon"]=1;break;
                 case "impostor": container["Mounts"]!.AsArray().Add(new JsonObject { ["Type"]="bind", ["Source"]="/foreign", ["Destination"]="/run/antiphon", ["RW"]=true }); break;
             }
             add(variant, variant is "running" or "inspected" or "mount-encoding", bad);
