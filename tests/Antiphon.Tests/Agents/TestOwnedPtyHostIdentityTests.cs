@@ -12,6 +12,10 @@ namespace Antiphon.Tests.Agents;
 [Category("Unit")]
 public class TestOwnedPtyHostIdentityTests
 {
+    private const string SymlinkPrivilegeSkipReason =
+        "CARD-1028: symlink-outside requires SeCreateSymbolicLinkPrivilege "
+        + "(ERROR_PRIVILEGE_NOT_HELD, 1314).";
+
     [Test]
     [Arguments("owned")]
     [Arguments("foreign-root")]
@@ -46,10 +50,19 @@ public class TestOwnedPtyHostIdentityTests
         };
         if (scenario == "symlink-outside")
         {
+            AssertSymlinkPrivilegeClassification();
             var outside = Path.Combine(fixture.Root, "outside");
             Directory.CreateDirectory(outside);
             var link = Path.Combine(fixture.Root, "bin", "linked");
-            Directory.CreateSymbolicLink(link, outside);
+            try
+            {
+                Directory.CreateSymbolicLink(link, outside);
+            }
+            catch (Exception ex) when (IsMissingSymlinkPrivilege(ex, OperatingSystem.IsWindows()))
+            {
+                Skip.Test(SymlinkPrivilegeSkipReason);
+                return;
+            }
             candidate = candidate with { Process = candidate.Process with { Image = Path.Combine(link, PtyHostLauncher.HostExeName) } };
         }
         fixture.Manager.Retain(candidate, fixture.SessionId).ShouldBe(expected, "identity-rejected");
@@ -63,6 +76,31 @@ public class TestOwnedPtyHostIdentityTests
             try { fixture.Manager.Force(valid); } catch (IOException) { }
             fixture.Killed.ShouldBeEmpty("control-operations-zero");
         }
+    }
+
+    private static bool IsMissingSymlinkPrivilege(Exception error, bool windows) =>
+        windows && error is IOException or UnauthorizedAccessException
+        && error.HResult == unchecked((int)0x80070522); // HRESULT_FROM_WIN32(ERROR_PRIVILEGE_NOT_HELD)
+
+    private static void AssertSymlinkPrivilegeClassification()
+    {
+        // Exercise the catch predicate even on Linux, without requiring a privileged host.
+        var io = new IOException("privilege missing", unchecked((int)0x80070522));
+        var denied = new UnauthorizedAccessException { HResult = unchecked((int)0x80070522) };
+        IsMissingSymlinkPrivilege(io, true).ShouldBeTrue("symlink-privilege-io-recognized");
+        IsMissingSymlinkPrivilege(denied, true).ShouldBeTrue("symlink-privilege-unauthorized-recognized");
+        IsMissingSymlinkPrivilege(io, false).ShouldBeFalse("symlink-linux-errors-propagate");
+        IsMissingSymlinkPrivilege(denied, false).ShouldBeFalse("symlink-linux-denial-propagates");
+        IsMissingSymlinkPrivilege(new IOException("A required privilege is not held by the client"), true)
+            .ShouldBeFalse("symlink-message-alone-does-not-skip");
+        IsMissingSymlinkPrivilege(new UnauthorizedAccessException(), true)
+            .ShouldBeFalse("symlink-access-denied-does-not-skip");
+        IsMissingSymlinkPrivilege(new IOException("other Win32 error", unchecked((int)0x80070521)), true)
+            .ShouldBeFalse("symlink-other-win32-error-does-not-skip");
+        IsMissingSymlinkPrivilege(new IOException("other facility", unchecked((int)0x80040522)), true)
+            .ShouldBeFalse("symlink-other-facility-does-not-skip");
+        IsMissingSymlinkPrivilege(new InvalidOperationException { HResult = unchecked((int)0x80070522) }, true)
+            .ShouldBeFalse("symlink-other-exception-type-does-not-skip");
     }
 }
 

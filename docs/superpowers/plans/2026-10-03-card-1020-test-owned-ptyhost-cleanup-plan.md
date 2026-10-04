@@ -551,7 +551,7 @@ once green unless source changes or a demonstrated failure requires it.
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1-S2 | `tests/Antiphon.Tests -> bin-c1020-linux-lifecycle/` | linux-lifecycle | `/*/*/(DirectSessionRunnerClientDisposalTests*)\|(TestOwnedPtyHostIdentityTests*)\|(TestOwnedPtyHostPolicyTests*)/*` | V-1–V-15 | all 40 listed results, 0 failed/skipped | 40 | 9 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-2 | S1-S2 | `tests/Antiphon.Tests -> bin-c1020-linux-callers/` | linux-callers | `/*/*/(RunnerGrokAdapterReadyTestsPty*)\|(HerdrLabelFollowWireTests*)/(Fake_dashboard_marker_reaches_ready_and_complete_first_prompt*)\|(Launch_and_get_round_trip_follow_metadata*)\|(Direct_and_http_get_refresh_and_map_the_same_follow_observation*)\|(Old_peers_and_sidecars_remain_compatible_without_follow*)` | R-1, R-2 | all 6 listed results, 0 failed/skipped | 6 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-3 | S1-S2 | `tests/Antiphon.Tests -> bin-c1020-windows-lifecycle/` | windows-modern-lifecycle | `/*/*/(DirectSessionRunnerClientDisposalTests*)\|(TestOwnedPtyHostIdentityTests*)\|(TestOwnedPtyHostPolicyTests*)/*` | V-1–V-15 | all 40 listed results; required native Windows witnesses; 0 failed/skipped | 40 | 9 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-3 | S1-S2 | `tests/Antiphon.Tests -> bin-c1020-windows-lifecycle/` | windows-modern-lifecycle | `/*/*/(DirectSessionRunnerClientDisposalTests*)\|(TestOwnedPtyHostIdentityTests*)\|(TestOwnedPtyHostPolicyTests*)/*` | V-1–V-15 | all 40 listed results; required native Windows witnesses; 0 failed; only CARD-1028 symlink privilege skip allowed | 39 | 9 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-4 | S1-S2 | `tests/Antiphon.Tests -> bin-c1020-windows-grok/` | windows-modern-grok | `/*/*/RunnerGrokAdapterReadyTestsPty/Fake_dashboard_marker_reaches_ready_and_complete_first_prompt` | R-1 | both marker cases with Windows process witnesses, 0 failed/skipped | 2 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
 **Code execution correction, 2026-10-04 (task 1d3e0d92).** CP-2's original
@@ -560,6 +560,31 @@ The method operands now use trailing `*`, as required by the pinned TUnit discov
 hint behavior in docs/testing-and-build.md. This implements the Code brief's prefix
 filter requirement. The intended roster and floor remain exactly 2 marker + 4 Herdr;
 inspect fresh TRX to reject any additional prefix matches. No Windows row changes.
+
+**Privilege repair, 2026-10-04 (task 561e2b31, new landing owner).** V-7 keeps
+its 12 argument results and every identity assertion. Its symlink-outside row
+also checks the actual skip predicate with constructed exceptions on either OS.
+Only Windows `IOException`/`UnauthorizedAccessException` with exact HRESULT
+`0x80070522` (Win32 1314) from `Directory.CreateSymbolicLink` may call `Skip.Test`:
+`CARD-1028: symlink-outside requires SeCreateSymbolicLinkPrivilege (ERROR_PRIVILEGE_NOT_HELD, 1314).`
+Other creation errors propagate. Linux and privileged Windows still run the full
+identity assertion. The roster and checkpoint-namespace census 377 are unchanged.
+
+CP-3 requires **40 total** results: either 40 passed, or 39 passed plus exactly
+that named symlink-outside skip. Pass `-MinExecuted 39` and
+`-Expect DirectSessionRunnerClientDisposalTests,TestOwnedPtyHostIdentityTests,TestOwnedPtyHostPolicyTests`
+to the script (the tool imports the amended floor); manually inspect the fresh
+TRX for the exact argument/reason and all remaining cases. Neither the floor nor
+class-name roster alone establishes this conditional acceptance. CP-1 stays 40
+executed with no skips. The script excludes skipped names from `-Expect`; the
+tool includes them, but these class tokens match executed cases in both.
+The strict `validate-checkpoint-receipt.ps1` currently rejects any skipped result;
+an accepted CP-3 privilege skip is therefore **not** a validator-clean certificate.
+Preserve its actual clean-source/build provenance and explicit qualification gap
+for the caller/Review; do not change the validator or claim all 40 executed.
+The portable CP-1/2 rerun is commissioned here; the caller commissions Windows
+CP-3 at the pushed repair SHA before Review. All positive controls remain pending
+SourceLanding Mutation, including discovery of controls for this skip predicate.
 
 **Read-only importer contract audit.** `ExtractSection` chooses the first exact
 `### Checkpoints`; the planner table's heading was renamed so it cannot silently
