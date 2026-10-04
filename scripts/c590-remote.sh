@@ -1522,7 +1522,7 @@ c849_status_zero() {
 }
 
 c849_donor() {
-    local -a ids
+    local -a ids=()
     local listed
     listed="$(docker ps -aq \
         --filter "label=com.docker.compose.project=$TEMP_PROJECT" \
@@ -1542,7 +1542,7 @@ c849_donor() {
 }
 
 c849_optional_donor() {
-    local -a ids
+    local -a ids=()
     local listed
     listed="$(docker ps -aq \
         --filter "label=com.docker.compose.project=$TEMP_PROJECT" \
