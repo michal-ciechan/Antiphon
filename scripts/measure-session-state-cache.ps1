@@ -143,11 +143,12 @@ function Read-Statistics {
 
 function New-Snapshot {
     param($Context)
+    # The pre-feature runtime fallback must also use this sample's observations.
+    $observed = Get-Content -LiteralPath $ContextPath -Raw | ConvertFrom-Json -AsHashtable
     $version = Read-Api '/api/version'
-    $runtime = Read-Runtime $Context
+    $runtime = Read-Runtime $observed
     $pg = Read-Statistics
     # Refresh the operator's sanitized observations at every sample, not only at startup.
-    $observed = Get-Content -LiteralPath $ContextPath -Raw | ConvertFrom-Json -AsHashtable
     $observation = @{ openClients = $observed.openClients; workloadKey = $observed.workloadKey; siblingShas = $observed.siblingShas }
     return @{ utc = [DateTimeOffset]::UtcNow.ToString('o'); version = $version; runtime = $runtime; postgres = $pg; observation = $observation }
 }
