@@ -274,7 +274,13 @@ public sealed class TaskWorktreeRetirementService
         return (true, null);
     }
 
-    public async Task<WorktreeRemoval> TryRetireAsync(TaskWorktreeRetirement retirement, Guid? runId, CancellationToken ct)
+    public Task<WorktreeRemoval> TryRetireAsync(TaskWorktreeRetirement retirement, Guid? runId, CancellationToken ct) =>
+        TryRetireCoreAsync(retirement, runId, null, ct);
+
+    internal Task<WorktreeRemoval> TryRetireCardDoneAsync(TaskWorktreeRetirement retirement, Guid endpointId, Guid? runId, CancellationToken ct) =>
+        TryRetireCoreAsync(retirement, runId, endpointId, ct);
+
+    private async Task<WorktreeRemoval> TryRetireCoreAsync(TaskWorktreeRetirement retirement, Guid? runId, Guid? endpointId, CancellationToken ct)
     {
         if (_worktrees is null || _leases is null || _commands is null)
             return new(false, false, false, "retirement_executor_unavailable");
@@ -285,7 +291,7 @@ public sealed class TaskWorktreeRetirementService
         if (lease is null) return new(false, false, false, "repository_lease_required");
 
         var attempt = await GetOrCreateAttemptAsync(retirement, runId, ct);
-        if (attempt.CommandIntentId is Guid spent
+        if (endpointId is null && attempt.CommandIntentId is Guid spent
             && attempt.DirectoryRemoved is not true)
             return new(attempt.DirectoryRemoved == true, attempt.RegistrationRemoved == true,
                 attempt.BranchRemoved == true, "cleanup_command_slot_spent");
@@ -326,7 +332,7 @@ public sealed class TaskWorktreeRetirementService
             retirement.CommonDirectory, retirement.GitDirectory, retirement.SourceSha,
             retirement.ObservedTargetSha ?? new string('0', 40),
             null, lease, ManagedRoot: ResolveManagedRoot(), RetirementId: retirement.Id,
-            HasDeletionIntent: true);
+            HasDeletionIntent: true, CardDoneEndpointId: endpointId);
         var removed = await _worktrees.TryRemoveAsync(request, ct);
         await _commands.RecordComponentAsync(attempt.Id, removed.DirectoryGone, null, null, removed.Residue, ct);
         await _commands.RecordComponentAsync(attempt.Id, null, removed.Unregistered, null, removed.Residue, ct);
@@ -354,7 +360,7 @@ public sealed class TaskWorktreeRetirementService
         // effort and strictly after it: the mirror holds no work the branch does not, so failing
         // to reach the runner records residue for the operator's sweep and never blocks or
         // reverses the retirement of the thing that actually matters.
-        await RemoveRemoteMirrorAsync(retirement.TaskId, ct);
+        if (endpointId is null) await RemoveRemoteMirrorAsync(retirement.TaskId, ct);
 
         retirement.UpdatedAt = UtcNow();
         retirement.ConcurrencyToken = Guid.NewGuid();

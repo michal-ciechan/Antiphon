@@ -8,6 +8,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Server.Infrastructure.Files;
 
 namespace Antiphon.Server.Infrastructure.Data;
 
@@ -155,12 +156,47 @@ public sealed class WorktreeRemovalEvidence(IServiceScopeFactory scopes) : IWork
             .SingleOrDefaultAsync(r => r.Id == retirementId, ct);
         if (row is null || !row.Active || row.SchemaVersion != 1) return null;
         var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == row.TaskId, ct);
+        var cardDone = await db.CardWorktreeCleanupEndpoints.AsNoTracking().AnyAsync(e =>
+            e.Target.RetirementId == retirementId && e.OperationId != null && e.OperationId == row.CommandIntentId
+            && e.State != CardWorktreeCleanupEndpointState.Revoked, ct);
         if (task is null || task.Attempt != row.TaskAttempt
-            || task.Role == AgentTaskRole.Mutation || task.SourceLandingOperationId is not null
-            || task.RepairSourceTaskId is not null
+            || !cardDone && (task.Role == AgentTaskRole.Mutation || task.SourceLandingOperationId is not null
+                || task.RepairSourceTaskId is not null)
             || task.Status is not (AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled))
             return null;
         return row;
+    }
+
+    public async Task<bool> CanDisposeCardDoneAsync(WorktreeRemovalRequest request, CancellationToken ct)
+    {
+        if (request.CardDoneEndpointId is not Guid endpointId || !request.HasDeletionIntent) return false;
+        await using var scope = scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var endpoint = await db.CardWorktreeCleanupEndpoints.AsNoTracking()
+            .Include(e => e.Target).ThenInclude(t => t.Cleanup).SingleOrDefaultAsync(e => e.Id == endpointId, ct);
+        if (endpoint?.OperationId is not Guid operationId || endpoint.IntentAt is null
+            || endpoint.State is CardWorktreeCleanupEndpointState.Pending or CardWorktreeCleanupEndpointState.Revoked
+            || endpoint.Target.TaskId != request.Source.TaskId || endpoint.Target.RetirementId != request.RetirementId
+            || endpoint.SourceSha != request.ExpectedSourceSha || endpoint.SourceFullRef != request.Source.SourceFullRef
+            || !SamePath(endpoint.RepositoryPath, request.Source.RepositoryPath)
+            || !SamePath(endpoint.WorktreePath, request.Source.WorktreePath)
+            || !SamePath(endpoint.CommonDirectory, request.CommonDirectory)
+            || !SamePath(endpoint.GitDirectory, request.GitDirectory)) return false;
+        var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == endpoint.Target.TaskId, ct);
+        var retirement = await db.TaskWorktreeRetirements.AsNoTracking().SingleOrDefaultAsync(r => r.Id == request.RetirementId, ct);
+        if (task is null || retirement?.CommandIntentId != operationId || !retirement.Active
+            || task.CardId != endpoint.Target.Cleanup.CardId || task.Attempt != endpoint.Target.TaskAttempt
+            || task.Status is not (AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled)
+            || CardDoneArtifactPreservation.Digest(task.Result) != endpoint.ReportDigest
+            || !SamePath(task.RepoPath, endpoint.RepositoryPath) || !SamePath(task.WorktreePath, endpoint.WorktreePath)
+            || FullRef(task.WorktreeBranch) != endpoint.SourceFullRef) return false;
+        // Reopen after the committed intent does not revoke this exact command. The durable
+        // reservation still fences these coordinates; another endpoint must obtain a new intent.
+        if (!await db.WorkspaceUseReservations.AsNoTracking().AnyAsync(r => r.Active
+                && r.RetirementId == retirement.Id && r.Kind == WorkspaceReservationKind.Retirement, ct)) return false;
+        var artifacts = scope.ServiceProvider.GetService<CardDoneArtifactPreservation>();
+        return artifacts is not null && await artifacts.VerifyAsync(task,
+            [endpoint.WorktreePath, Antiphon.Server.Infrastructure.Git.WorktreeSetAside.SetAsidePath(endpoint.WorktreePath)], retirement.MissingReportReviewed, ct);
     }
 
     public async Task<AgentTask?> ReadTaskAsync(Guid taskId, CancellationToken ct)

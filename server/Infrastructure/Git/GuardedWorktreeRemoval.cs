@@ -309,10 +309,14 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
             return "repository_lease_required";
         if (!LandingGit.IsOid(request.ExpectedSourceSha) || !LandingGit.IsOid(request.ExpectedTargetSha)
             || source.SourceFullRef == source.TargetFullRef) return "invalid_removal_identity";
+        if (request.CardDoneEndpointId is not null && !await evidence.CanDisposeCardDoneAsync(request, ct))
+            return "card_done_authority_required";
         if (request.Purpose == WorktreeRemovalPurpose.SettledTask)
         {
             if (request.RetirementId is not Guid retirementId) return "retirement_receipt_required";
             var retirement = await evidence.ReadRetirementAsync(retirementId, ct);
+            if (retirement?.CallerIdentity == "card-done" && request.CardDoneEndpointId is null)
+                return "card_done_authority_required";
             if (retirement is null || retirement.Id != retirementId || !retirement.Active
                 || retirement.TaskId != source.TaskId || retirement.SourceFullRef != source.SourceFullRef
                 || retirement.SourceSha != request.ExpectedSourceSha
