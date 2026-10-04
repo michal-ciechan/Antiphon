@@ -386,27 +386,6 @@ Names must remain exact (escape Markdown OR pipes). Split oversized regression g
 methods/classes if measurement exceeds a foreground window; do not widen to the whole assembly.
 Rows sharing a build have identical After groups. Estimates include builds and are not measurements.
 
-**Budgeted S3a.2 split (Code f9183542, 2026-10-04).** Next in S3a order is the
-dormant Linux x64 publication/custody/fence primitive. CP-29 specifies six native
-publication methods, the complete three-method inspection class and the two adjacent
-phone-home admission methods (11 executions). Commit the executable failing tests
-before implementing the primitive, then rerun the same row. File intent lives in a
-runner-owned journal outside workspace discovery, keyed by canonical owner path;
-its monotonic fence survives reconstruction and cleanup. Exact operation replay must
-verify current disk bytes. Only journal-proven custody permits replacement/deletion;
-marker-shaped content never grants custody. Final comparisons preserve editor bytes,
-and cleanup removes only the file and an empty owner leaf. This is process-crash
-recovery with file/directory flushes, not ACL isolation from same-user edits.
-
-This part accepts non-Git workspaces only: any ancestor `.git` refuses publication
-until the native exclude/tracked-target implementation lands. No transport, capability,
-DI activation, server intent/CAS, legacy upgrade, import custody or Windows support is
-added. CP-3–6 and full V/R remain owed; CP-29 covers host portions of V-13–15/V-34,
-R-5/R-6 and the existing inspection portions of V-32 only. All PC-1–207 and native
-variants remain pending SourceLanding Mutation. Whole Unit and Windows remain
-explicitly deferred by this dispatch. Added ordinary estimated cost: 10 minutes per
-CP-29 run; red then green planned, no repeats after green.
-
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S2-core | `tests/Antiphon.Tests -> bin-c262-core/` | portable-snapshot-store | `/*/*/(AgentPinnedInstructionCompositionTests)\|(AgentPinnedInstructionServiceTests)\|(AgentPinnedInstructionEndpointTests)\|(InstructionBundleTests)/*` | A1 | all selected methods/data, 0 failed/skipped | 1 | 10 | false | n/a |
@@ -1139,6 +1118,33 @@ rechecks path components before and after reading; it does not claim
 filesystem ACL isolation against concurrent same-user path replacement. No capability
 or production registration is added. Whole Unit and all other Final obligations are
 deferred by this task's explicit budget instruction, not passed.
+
+**Budgeted S3a.2 split (Code f9183542, 2026-10-04).** Next in S3a order is the
+dormant Linux x64 publication/custody/fence primitive. CP-29 specifies six native
+publication methods, the complete three-method inspection class and the two adjacent
+phone-home admission methods (11 executions). Commit the executable failing tests
+before implementing the primitive, then rerun the same row. File intent lives in a
+runner-owned journal outside workspace discovery, keyed by canonical owner path;
+its monotonic fence survives reconstruction and cleanup. Exact operation replay must
+verify current disk bytes. Only journal-proven custody permits replacement/deletion;
+marker-shaped content never grants custody. Final comparisons preserve editor bytes,
+and cleanup removes only the file and an empty owner leaf. This is process-crash
+recovery with file/directory flushes, not ACL isolation from same-user edits.
+Serialization includes a test-owned inherited `flock` child (util-linux required),
+awaited through teardown under the assembly process limiter. Cleanup replay also
+finishes empty-leaf retirement after the delete/receipt crash gap; missing parents
+stay missing. Corrupt/lost journals cannot confer custody, and equal-byte operations
+preserve the target modification time. A follow-up source change after the first
+green expanded these cases; its one additional qualification is not repeat proof.
+
+This part accepts non-Git workspaces only: any ancestor `.git` refuses publication
+until the native exclude/tracked-target implementation lands. No transport, capability,
+DI activation, server intent/CAS, legacy upgrade, import custody or Windows support is
+added. CP-3–6 and full V/R remain owed; CP-29 covers host portions of V-13–15/V-34,
+R-5/R-6 and the existing inspection portions of V-32 only. All PC-1–207 and native
+variants remain pending SourceLanding Mutation. Whole Unit and Windows remain
+explicitly deferred by this dispatch. Added ordinary estimated cost: 10 minutes per
+CP-29 run; red then green planned, no unchanged repeats after green.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
