@@ -304,10 +304,31 @@ public class PtyDeliveryCeilingsTests
             .Backend.ShouldBe(DeliveryBackend.InboxConhost);
     }
 
+    [Test]
+    public void Unix_backend_keeps_conservative_limits()
+    {
+        var ceilings = new DelegationSettings().CeilingsFor(PtyBackend.UnixPty, "Unix unchanged transport");
+        ceilings.BriefInlineMaxBytes.ShouldBe(900);
+        ceilings.ReplyInlineMaxChars.ShouldBe(3000);
+        ceilings.SingleWriteMaxBytes.ShouldBe(1024);
+        ceilings.IsPastePath.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Unknown_runner_backend_downgrades_modern_server()
+    {
+        RequireRedistributable();
+        await using var profile = BuildProfile("modern", (PtyBackend)8675309);
+        var ceilings = await profile.Value.RefreshAsync(CancellationToken.None);
+        ceilings.Backend.ShouldBe(DeliveryBackend.InboxConhost, "unknown runner yields conservative profile");
+        ceilings.SingleWriteMaxBytes.ShouldBe(1024);
+        ceilings.BriefInlineMaxBytes.ShouldBe(900);
+    }
+
     private static void RequireRedistributable()
     {
-        if (!ConPtyRedistributable.TryLocate(out _, out var why))
-            throw new SkipTestException("no shipped conpty.dll: " + why);
+        if (!OperatingSystem.IsWindows()) throw new SkipTestException("Windows delivery profile proof");
+        ConPtyRedistributable.TryLocate(out _, out var why).ShouldBeTrue("required shipped pair: " + why);
     }
 
     /// <summary>A profile whose runner answers <paramref name="reported"/> (null = cannot say).</summary>

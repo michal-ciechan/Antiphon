@@ -46,8 +46,7 @@ public class ModernPtyDa1Tests
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             throw new SkipTestException("ConPTY only on Windows");
-        if (!ConPtyRedistributable.TryLocate(out var dll, out var why))
-            throw new SkipTestException("no shipped conpty.dll: " + why);
+        ConPtyRedistributable.TryLocate(out var dll, out var why).ShouldBeTrue("required shipped pair: " + why);
         return dll!;
     }
 

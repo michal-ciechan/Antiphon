@@ -5,17 +5,9 @@ using TUnit.Core;
 namespace Antiphon.SessionRunner.Tests;
 
 /// <summary>
-/// CARD-0045: this test host refuses to inherit <c>ANTIPHON_PTY_BACKEND</c>. One copy per
-/// pty-touching test assembly, because the hook is assembly-scoped; the full rationale lives on
-/// <c>tests/Antiphon.Agents.Pty.Tests/PtyBackendEnvGuard.cs</c>.
-///
-/// <para>Every pty here is host-mediated: <c>SessionRunnerRuntime</c> spawns a detached
-/// <c>Antiphon.PtyHost</c> which inherits this process's environment block, so an exported variable
-/// reached the child even though nothing in this assembly ever mentioned it — that is how
-/// <c>PtyHostAdoptionTests.Exit_while_runner_down…</c> came to fail on a backend it never asked
-/// for. A test that WANTS a specific backend now says so through
-/// <c>SessionRunnerSettings.PtyBackend</c> (slice 3), which the runtime passes to the host as
-/// <c>--pty-backend</c>.</para>
+/// Each PTY test assembly clears inherited backend input independently. Tests name any override;
+/// the isolated default is modern on Windows with the shipped pair, UnixPty elsewhere (CARD-1022).
+/// Process-environment mutators remain excluded by ConPtyEnvironmentIsolationGuardTests.
 /// </summary>
 public class PtyBackendEnvGuard
 {
@@ -38,11 +30,7 @@ public class PtyBackendEnvGuard
 
 public class PtyBackendEnvGuardTests
 {
-    /// <summary>
-    /// The pin: the guard has already run by the time any test executes, so this asserts the state
-    /// it leaves behind. On a machine WITH the redistributable the second assertion is only true
-    /// because the guard ran.
-    /// </summary>
+    /// <summary>Assert the assembly hook left the platform default and no ambient selector.</summary>
     [Test]
     public void The_suite_ignores_an_inherited_pty_backend()
     {
@@ -50,9 +38,10 @@ public class PtyBackendEnvGuardTests
             $"the [Before(Assembly)] guard must clear {PtyBackendPolicy.EnvVar} before any test "
             + $"runs (this process inherited '{PtyBackendEnvGuard.Inherited ?? "<unset>"}')");
 
-        PtyBackendPolicy.Resolve().Backend.ShouldBe(
-            PtyBackend.InboxConhost,
-            "an unqualified resolution must be the code default, so a test that does not declare a "
-            + "backend gets the same pty on every machine and from every launcher");
+        var decision = PtyBackendPolicy.Resolve();
+        decision.Backend.ShouldBe(OperatingSystem.IsWindows() ? PtyBackend.ModernConPty : PtyBackend.UnixPty,
+            "the isolated platform default requires the shipped pair on Windows");
+        decision.FellBack.ShouldBeFalse(decision.Reason);
+        decision.Deprecated.ShouldBeFalse();
     }
 }

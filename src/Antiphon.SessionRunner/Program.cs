@@ -190,9 +190,6 @@ async ValueTask<object?> HerdrUnreachableFilter(EndpointFilterInvocationContext 
 // Say which pseudoconsole every session on this runner will get, once, at startup. A "modern"
 // request that fell back to the inbox conhost looks identical from everywhere else, and it silently
 // re-arms the 1 KB clipping the ceilings exist for.
-PtyBackendConfiguration.LogDecision(app.Logger,
-    app.Services.GetRequiredService<SessionRunnerRuntime>().BackendDecision);
-
 // Readiness gating: adopt pty-hosts that survived the previous runner BEFORE the HTTP API starts
 // listening. The server's reconciler treats "runner doesn't know this session" as fatal, so the
 // runner must never answer /sessions with a half-adopted list — during the sweep the port is
@@ -204,6 +201,7 @@ PtyBackendConfiguration.LogDecision(app.Logger,
         runtime = app.Services.GetRequiredService<SessionRunnerRuntime>();
         resolution.Complete();
     }
+    PtyBackendConfiguration.LogDecision(app.Logger, runtime.BackendDecision);
     var probe = app.Services.GetRequiredService<IProcessLivenessProbe>();
     var adopted = await runtime.AdoptOrphanedHostsAsync(probe, CancellationToken.None);
     if (adopted > 0)

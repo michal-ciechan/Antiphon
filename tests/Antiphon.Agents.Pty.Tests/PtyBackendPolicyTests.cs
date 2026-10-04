@@ -42,6 +42,7 @@ public class PtyBackendPolicyTests
         d.Backend.ShouldBe(PtyBackend.ModernConPty, "unknown-modern");
         d.Requested.ShouldBe(" typo ");
         d.Reason.ShouldContain("unrecognised");
+        d.RequiresWarning.ShouldBeTrue("unknown selector must warn");
         d.FellBack.ShouldBeFalse();
     }
 
@@ -62,14 +63,24 @@ public class PtyBackendPolicyTests
     [Test]
     public void Windows_missing_pairs_fall_back_and_preserve_request()
     {
-        foreach (var raw in new string?[] { null, "modern", "typo" })
-        foreach (var present in new[] { false, true })
+        var root = Path.Combine(Path.GetTempPath(), "c1022-pair-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
         {
+        foreach (var raw in new string?[] { null, "modern", "typo" })
+        foreach (var mask in new[] { 0, 1, 2, 3 })
+        {
+            var dir = Path.Combine(root, Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            if ((mask & 1) != 0) File.WriteAllText(Path.Combine(dir, "conpty.dll"), "discovery fixture, not native code");
+            if ((mask & 2) != 0) File.WriteAllText(Path.Combine(dir, "OpenConsole.exe"), "discovery fixture, not native code");
+            var present = mask == 3;
             var calls = 0;
             var d = PtyBackendPolicy.Resolve(raw, null, true, () =>
             {
                 calls++;
-                return (present ? "pair/conpty.dll" : null, present ? "pair found" : "pair incomplete");
+                ConPtyRedistributable.TryLocate(true, [dir], out var dll, out var why);
+                return (dll, why);
             });
             calls.ShouldBe(1, "pair-fallback");
             d.Backend.ShouldBe(present ? PtyBackend.ModernConPty : PtyBackend.InboxConhost, "pair-fallback");
@@ -77,6 +88,8 @@ public class PtyBackendPolicyTests
             d.Deprecated.ShouldBe(!present);
             d.Requested.ShouldBe(raw ?? "");
         }
+        }
+        finally { Directory.Delete(root, true); }
     }
 
     [Test]

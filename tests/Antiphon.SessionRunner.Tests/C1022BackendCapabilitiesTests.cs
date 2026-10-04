@@ -19,10 +19,15 @@ public class C1022BackendCapabilitiesTests
     [Test]
     public void Daemon_environment_overrides_configuration()
     {
-        foreach (var environment in new string?[] { null, "", " ", "modern", "inbox" })
-        foreach (var configured in new string?[] { null, "modern", "inbox" })
+        foreach (var (environment, configured, expected) in new (string?, string?, string)[]
         {
-            var expected = environment is null or "" ? configured ?? "" : environment;
+            (null, null, ""), (null, "modern", "modern"), (null, "inbox", "inbox"),
+            ("", null, ""), ("", "modern", "modern"), ("", "inbox", "inbox"),
+            (" ", null, " "), (" ", "modern", " "), (" ", "inbox", " "),
+            ("modern", null, "modern"), ("modern", "modern", "modern"), ("modern", "inbox", "modern"),
+            ("inbox", null, "inbox"), ("inbox", "modern", "inbox"), ("inbox", "inbox", "inbox"),
+        })
+        {
             PtyBackendConfiguration.EffectiveRequest(configured, environment)
                 .ShouldBe(expected, "daemon-precedence");
         }

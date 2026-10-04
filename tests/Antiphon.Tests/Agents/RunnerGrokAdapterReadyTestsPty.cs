@@ -26,12 +26,11 @@ namespace Antiphon.Tests.Agents;
 public class RunnerGrokAdapterReadyTestsPty
 {
     [Test]
-    [Arguments("inbox")]
     [Arguments("modern")]
     public async Task C1011_windows_backends_reach_ready_and_complete_prompt(string backend)
     {
         if (!OperatingSystem.IsWindows())
-            throw new SkipTestException("CARD-1011 actual inbox/modern qualification requires Windows");
+            throw new SkipTestException("CARD-1011 actual modern qualification requires Windows");
         var root = Path.Combine(Path.GetTempPath(), "c1011-backend-" + Guid.NewGuid().ToString("N"));
         var cwd = Path.Combine(root, "cwd");
         Directory.CreateDirectory(cwd);
@@ -56,10 +55,7 @@ public class RunnerGrokAdapterReadyTestsPty
             }, cwd, 120, 30, SessionId: sessionId), deadline.Token);
         (await adapter.WaitForReadyAsync(deadline.Token)).ShouldBeTrue();
         var hostLog = await ReadHostLogAsync(client, sessionId, deadline.Token);
-        if (backend == "inbox")
-            hostLog.ShouldContain("pty backend: InboxConhost (requested 'inbox')");
-        else
-            hostLog.ShouldContain("pty backend: ModernConPty (requested 'modern')");
+        hostLog.ShouldContain("pty backend: ModernConPty (requested 'modern')");
         var snapshot = await client.GetSnapshotAsync(sessionId, deadline.Token);
         GrokStartupScreen.Classify(snapshot.RenderedScreen).Reason.ShouldBe(GrokStartupReason.Ready);
         snapshot.RenderedScreen.Split('\n')[25][4].ShouldBe('>');

@@ -852,7 +852,13 @@ GET  /events              SSE
 ```
 
 `GET /capabilities` is worth knowing about even from outside: it is how you check which pty backend
-is actually serving (`InboxConhost` vs `ModernConPty`) and whether the runner advertises `herdr`.
+is configured for new sessions (`ModernConPty`, deprecated `InboxConhost`, or `UnixPty`) and
+whether the runner advertises `herdr`. CARD-1022 release A appends nullable
+`ptyBackendDeprecated` after the four Codex CLI observation fields: true for legacy/fallback,
+false for modern/Unix, null/absent for an older peer. `ptyBackendRequested` preserves raw input;
+`ptyBackendFellBack` distinguishes a missing-pair fallback from an explicit legacy request.
+HTTP and phone-home project the same runtime decision. These observations are not delivery
+receipts or a new admission gate. Windows defaults to modern; Unix retains Porta.
 
 **CARD-0478 runtime checkpoint, not a complete deployed feature:** this branch adds
 `verificationCustodyV1`, `verificationCustodyBackend` and stable `runnerStoreId` to

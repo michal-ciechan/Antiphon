@@ -59,7 +59,7 @@ public static class PtyBackendPolicy
     /// <summary>Windows defaults to modern; inbox/0/off/false/no are deprecated selectors.</summary>
     public const string EnvVar = "ANTIPHON_PTY_BACKEND";
 
-    /// <summary>The configuration key the session runner reads and exports into <see cref="EnvVar"/>.</summary>
+    /// <summary>The configuration key the daemon composes with its environment once at startup.</summary>
     public const string ConfigKey = "SessionRunner:PtyBackend";
 
     public static bool IsInboxRequest(string requested) => requested.Trim().ToLowerInvariant()
