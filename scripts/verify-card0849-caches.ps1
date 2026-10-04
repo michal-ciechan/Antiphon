@@ -137,15 +137,31 @@ for ($i = 0; $i -lt $cases.Count; $i++) {
 switch ($Case) {
     'Fixture' {
         $summary = Read-C849Receipt 0 'fixture-summary.txt'
-        foreach ($line in @('source-sha=' + $Sha, 'inventories=2', 'groups=9', 'controls=26',
-                'expected-red=26', 'production-mutations=0')) {
-            if (($summary -split "`n" | ForEach-Object Trim) -cnotcontains $line) { throw "C849 fixture receipt missing $line" }
+        $lines = @($summary -split "`n" | Where-Object { $_.Length -gt 0 })
+        foreach ($line in @('source-sha=' + $Sha, 'inventories=2', 'groups=9', 'controls=32',
+                'expected-red=32', 'variants=47', 'expected-red-variants=47', 'production-mutations=0')) {
+            if (@($lines | Where-Object { $_ -ceq $line }).Count -ne 1) { throw "C849 fixture receipt missing $line" }
         }
-        if ($summary -cnotmatch '(?m)^image-id=sha256:[0-9a-f]{64}\r?$') { throw 'C849 fixture image receipt invalid' }
-        $groups = @((Read-C849Receipt 0 'fixture-groups.txt') -split "`n" | Where-Object { $_ -match '^PASS F-[1-9]$' })
-        $controls = @((Read-C849Receipt 0 'fixture-controls.txt') -split "`n" | Where-Object { $_ -match '^CONTROL PC-[0-9]{2} expected-red observed=' })
-        if ($groups.Count -ne 9 -or $controls.Count -ne 26) { throw 'C849 fixture roster incomplete' }
-        Write-Output 'C849_FIXTURE groups=9 controls=26 expectedRed=26 inventories=2 failures=0 productionMutations=0'
+        if ($lines.Count -ne 9 -or @($lines | Where-Object { $_ -cmatch '^image-id=sha256:[0-9a-f]{64}$' }).Count -ne 1) {
+            throw 'C849 fixture image receipt invalid'
+        }
+        $groups = @((Read-C849Receipt 0 'fixture-groups.txt') -split "`n" | Where-Object { $_.Length -gt 0 })
+        $controls = @((Read-C849Receipt 0 'fixture-controls.txt') -split "`n" | Where-Object { $_.Length -gt 0 })
+        $variants = @((Read-C849Receipt 0 'fixture-control-variants.txt') -split "`n" | Where-Object { $_.Length -gt 0 })
+        if ($groups.Count -ne 9 -or $controls.Count -ne 32 -or $variants.Count -ne 47) { throw 'C849 fixture roster incomplete' }
+        foreach ($number in 1..9) {
+            if (@($groups | Where-Object { $_ -ceq "PASS F-$number" }).Count -ne 1) { throw 'C849 fixture roster incomplete' }
+        }
+        foreach ($number in 1..32) {
+            $family = 'PC-{0:d2}' -f $number
+            if (@($controls | Where-Object { $_ -cmatch "^CONTROL $family expected-red observed=[A-Za-z][A-Za-z0-9:.-]*$" }).Count -ne 1) { throw 'C849 fixture roster incomplete' }
+            $count = switch ($number) { { $_ -in 13,14,29,30 } { 2 } { $_ -in 15,18,27,31 } { 3 } 28 { 4 } default { 1 } }
+            foreach ($ordinal in 1..$count) {
+                $variant = '{0}.{1:d2}' -f $family,$ordinal
+                if (@($variants | Where-Object { $_ -cmatch "^$([regex]::Escape($variant)) expected-red observed=[A-Za-z][A-Za-z0-9:.-]*$" }).Count -ne 1) { throw 'C849 fixture roster incomplete' }
+            }
+        }
+        Write-Output 'C849_FIXTURE groups=9 controls=32 expectedRed=32 variants=47 expectedRedVariants=47 inventories=2 failures=0 productionMutations=0'
     }
     'Seed' {
         $contract = Read-C849Contract 0
@@ -160,12 +176,12 @@ switch ($Case) {
                 $status.redirectTo -cne 'server2' -or $status.sessions -ne 0 -or
                 $status.queuedTasks -ne 0 -or ($null -ne $status.runnerSessions -and $status.runnerSessions -ne 0) -or
                 $null -eq $main.sessions -or $null -eq $main.queuedTasks) { throw 'C849 cold seed status invalid' }
-            Write-Output 'C849_SEED kind=cold ready=true writable=3'
+            Write-Output 'C849_SEED kind=cold schema=2 digestType=none ready=true writable=3'
             break
         }
         if ($Cold) { throw 'C849 cold seed receipt invalid' }
         if ($contract.Kind -cne 'full') { throw 'C849 full seed receipt invalid' }
-        Assert-C849Smoke 0 $contract 'seed' $false
+        Assert-C849Smoke 0 $contract 'seed' ($seed.Trim() -cne 'ready=true donor=')
         if ($seed -match '(?m)^ready=true donor=saved(?: |\r?$)') {
             $status = Read-C849Receipt 0 'status.json' | ConvertFrom-Json
             if ($status.sessions -ne 0 -or $status.queuedTasks -ne 0 -or
@@ -219,10 +235,14 @@ switch ($Case) {
             }
             $private = if ($i -eq 0) { 'antiphon-runner_runner-tmp' } else { 'antiphon-runner-temp_runner-tmp' }
             if ($mounts -cnotmatch [regex]::Escape($private + ' /tmp true')) { throw 'C849 private tmp mount invalid' }
-            if ($kind -eq 'full') { $hashes += (Read-C849Receipt $i 'seed-hash.txt').Trim() }
+            if ($kind -eq 'full') {
+                $hash = (Read-C849Receipt $i 'seed-hash.txt').Trim()
+                if ($hash -cne $contracts[$i].Digest) { throw 'C849 digest projection invalid' }
+                $hashes += $hash
+            }
         }
         if ($kinds[0] -eq 'cold') {
-            Write-Output 'C849_BOTH kind=cold runners=2 writableVolumes=3 sharedVolumes=3 privateTmpVolumes=2 tmpMode=1777 failures=0'
+            Write-Output 'C849_BOTH kind=cold schema=2 digestType=none runners=2 writableVolumes=3 sharedVolumes=3 privateTmpVolumes=2 tmpMode=1777 failures=0'
             break
         }
         if ($hashes[0] -cnotmatch '^[0-9a-f]{64}$' -or $hashes[0] -cne $hashes[1]) { throw 'C849 seed payload differs' }
@@ -243,13 +263,13 @@ switch ($Case) {
             throw 'C849 retired receipt invalid'
         }
         if ($kind -eq 'cold') {
-            Write-Output 'C849_RETIRED kind=cold externalVolumes=3 tempPrivateVolumes=0 mainTmpRetained=true rollback=retained failures=0'
+            Write-Output 'C849_RETIRED kind=cold schema=2 digestType=none externalVolumes=3 tempPrivateVolumes=0 mainTmpRetained=true rollback=retained failures=0'
             break
         }
         $smoke = Read-C849Receipt 0 'smoke-summary.txt'
         $hash = (Read-C849Receipt 0 'seed-hash.txt').Trim()
         if ($smoke -notmatch 'uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK' -or
-            $hash -cnotmatch '^[0-9a-f]{64}$') { throw 'C849 retired receipt invalid' }
+            $hash -cnotmatch '^[0-9a-f]{64}$' -or $hash -cne $contract.Digest) { throw 'C849 retired receipt invalid' }
         Write-Output "C849_RETIRED schema=$($contract.Schema) digestType=$($contract.DigestType) externalVolumes=3 tempPrivateVolumes=0 mainTmpRetained=true smokes=1 rollback=retained failures=0"
     }
     'PrunePreview' {

@@ -1462,7 +1462,7 @@ test "$NUGET_SCRATCH" = /var/cache/antiphon/nuget-scratch
 test "$NPM_CONFIG_CACHE" = /home/app/.npm
 for pack in Microsoft.NETCore.App.Host.linux-x64 Microsoft.NETCore.App.Ref Microsoft.AspNetCore.App.Ref; do
     path="/usr/share/dotnet/packs/$pack/9.0.20"
-    if [ "$pack" = Microsoft.NETCore.App.Host.linux-x64 ]; then test -x "$path/runtimes/linux-x64/native/apphost"; else test -s "$path/data/FrameworkList.xml"; fi
+    if [ "$pack" = Microsoft.NETCore.App.Host.linux-x64 ]; then test -x "$path/runtimes/linux-x64/native/apphost"; else test -s "$path/data/FrameworkList.xml"; fi || { printf 'ImagePackMissing:%s\n' "$pack"; exit 1; }
     printf 'C849_PACK %s\n' "$path"
 done
 curl -fsS http://build-slots:8080/build-slots >/dev/null
@@ -2677,7 +2677,9 @@ c849_fixture_control() {
     ( write_result() { printf '%s\n' "$2"; exit "$3"; }; "$@" ) > "$actual" 2>&1 || code=$?
     [ "$code" -ne 0 ] && grep -Fxq "$diagnosis" "$actual" \
         || write_result false "ControlNotSensitive $id" 2
-    printf '%s %s\n' "$id" "$diagnosis" >> "$CASE_DIR/fixture-control-variants.txt"
+    local ordinal
+    ordinal="$(grep -c "^$id\." "$CASE_DIR/fixture-control-variants.txt" || true)"
+    printf '%s.%02d expected-red observed=%s\n' "$id" "$((ordinal + 1))" "$diagnosis" >> "$CASE_DIR/fixture-control-variants.txt"
     if ! grep -q "^CONTROL $id " "$CASE_DIR/fixture-controls.txt"; then
         printf 'CONTROL %s expected-red observed=%s\n' "$id" "$diagnosis" >> "$CASE_DIR/fixture-controls.txt"
     fi
@@ -2733,7 +2735,7 @@ c849_fixture_cleanup() {
     done
     [ -f "$CASE_DIR/.fixture-volumes" ] || return 0
     while read -r name; do
-        [[ "$name" =~ ^c849[a-z0-9]{1,64}-(packages|scratch|npm)$ ]] || continue
+        [[ "$name" == "c849${RUN}"* ]] && [[ "$name" =~ ^c849[a-z0-9]{1,64}-(packages|scratch|npm)$ ]] || continue
         docker volume rm "$name" >/dev/null 2>&1 || true
     done < "$CASE_DIR/.fixture-volumes"
 }
@@ -2814,11 +2816,11 @@ c849_fixture_tree_fault() {
     local fault="$1" tree="$SERVER2_ROOT/.tree-$fault"
     cp -a "$SERVER2_ROOT/.donor-tree" "$tree" || return 1
     case "$fault" in
-        host) rm -f "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" ;;
-        metadata) : > "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata" ;;
-        reference) : > "$tree/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata" ;;
+        host) find "$tree/packages" -name .nupkg.metadata -delete ;;
+        metadata) rm -rf "$tree/packages/c913.probe"; rm "$tree/packages/c913.tools/2.0.0/.nupkg.metadata" ;;
+        reference) rm -rf "$tree/packages/c913.probe"; : > "$tree/packages/c913.tools/2.0.0/.nupkg.metadata" ;;
         symlink) ln -s "$CASE_DIR" "$tree/packages/escape" ;;
-        hardlink) ln "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata" "$tree/packages/escape" ;;
+        hardlink) ln "$tree/packages/c913.tools/2.0.0/.nupkg.metadata" "$tree/packages/escape" ;;
         special) mkfifo "$tree/packages/escape" ;;
     esac
     c849_validate_seed_tree "$tree"
@@ -2840,16 +2842,16 @@ c849_fixture_seed() {
         printf '%s\n' "$name" >> "$CASE_DIR/.fixture-volumes"
     done
     tree="$SERVER2_ROOT/.donor-tree"
-    mkdir -p "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native" \
-        "$tree/packages/microsoft.netcore.app.ref/9.0.20" "$tree/npm"
-    printf 'fixture-native-host\n' > "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost"
-    chmod 0755 "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost"
-    printf 'fixture-metadata\n' > "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata"
-    printf 'fixture-metadata\n' > "$tree/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata"
+    mkdir -p "$tree/packages/c913.tools/2.0.0" \
+        "$tree/packages/c913.probe/1.0.0" "$tree/npm"
+    printf 'fixture-native-host\n' > "$tree/packages/c913.tools/2.0.0/tool"
+    chmod 0755 "$tree/packages/c913.tools/2.0.0/tool"
+    printf 'fixture-metadata\n' > "$tree/packages/c913.tools/2.0.0/.nupkg.metadata"
+    printf 'fixture-metadata\n' > "$tree/packages/c913.probe/1.0.0/.nupkg.metadata"
     c849_validate_seed_tree "$tree" || write_result false FixtureDonorTreeInvalid 2
-    c849_fixture_control PC-12 AppHostDonorMissing c849_fixture_tree_fault host
-    c849_fixture_control PC-13 AppHostDonorMetadataMissing c849_fixture_tree_fault metadata
-    c849_fixture_control PC-13 Net9ReferenceDonorMissing c849_fixture_tree_fault reference
+    c849_fixture_control PC-12 CacheDonorPackagesEmpty c849_fixture_tree_fault host
+    c849_fixture_control PC-13 CacheDonorPackagesEmpty c849_fixture_tree_fault metadata
+    c849_fixture_control PC-13 CacheDonorPackagesEmpty c849_fixture_tree_fault reference
     c849_fixture_control PC-14 CacheDonorUnsafePath c849_validate_seed_relative '../escape'
     c849_fixture_control PC-14 CacheDonorUnsafePath c849_validate_seed_relative '/tmp/escape'
     c849_fixture_control PC-15 CacheDonorUnsafeEntry c849_fixture_tree_fault symlink
@@ -2881,23 +2883,17 @@ c849_fixture_seed() {
           [ "$1" = server2-temp ] || return 1
           [ "$(docker inspect -f '{{.State.Running}}' "$donor")" = true ]
       }
-      c849_smoke() {
-          docker exec -u 1654:1654 "$1" /bin/sh -c \
-              'test -s /home/app/.nuget/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata && test -s /home/app/.nuget/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata' \
-              || write_result false FixtureSeedProbeFailed 2
-          printf 'fixture-seed-smoke=passed\n' > "$CASE_DIR/.fixture-seed-smoke"
-      }
       c849_seed ) || write_result false FixtureSeedFailed 2
-    [ -s "$CASE_DIR/.fixture-seed-smoke" ] && [ -s "$C849_READY" ] \
+    [ -s "$CASE_DIR/smoke-summary.txt" ] && [ -s "$C849_READY" ] \
         || write_result false FixtureSeedMarkerOrderInvalid 2
     recovery="$(sed -n 's/^recovery=//p' "$C849_READY" | head -n 1)"
-    [ -s "$recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata" ] \
+    [ -s "$recovery/packages/c913.tools/2.0.0/.nupkg.metadata" ] \
         && [ -s "$CASE_DIR/npm-integrity.txt" ] \
         && [ -n "$(find "$recovery/npm" -type f -print -quit)" ] \
         || write_result false FixtureRecoveryMissing 2
-    before="$(sha256sum "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" | cut -d' ' -f1)"
-    after="$(sed -n 's/^payload-sha256=//p' "$C849_READY" | head -n 1)"
-    [ "$before" = "$after" ] && [ "$(stat -c %a "$recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost")" = 755 ] \
+    before="$(sha256sum "$tree/packages/c913.tools/2.0.0/tool" | cut -d' ' -f1)"
+    after="$(sha256sum "$recovery/packages/c913.tools/2.0.0/tool" | cut -d' ' -f1)"
+    [ "$before" = "$after" ] && [ "$(stat -c %a "$recovery/packages/c913.tools/2.0.0/tool")" = 755 ] \
         || write_result false FixtureSeedPayloadChanged 2
     [ "$(docker inspect -f '{{.State.Running}}' "$donor")" = true ] \
         || write_result false FixtureDonorNotRestarted 2
@@ -3074,73 +3070,40 @@ PS
     printf 'PASS F-4\n' >> "$CASE_DIR/fixture-groups.txt"
 }
 
-c849_fixture_empty_apphost() {
-    local image="$1" packages="$2" scratch="$3" root="$4" output="$SERVER2_ROOT/empty-apphost.log" code=0
-    docker run --rm --name "c849-${RUN}-apphost-miss" --network antiphon-build-slots \
-        --user 1654:1654 --entrypoint /bin/sh -e HOME=/home/app \
-        -e NUGET_PACKAGES=/home/app/.nuget/packages \
-        -e NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch \
-        -e ANTIPHON_BUILD_SLOTS_URL=http://build-slots:8080/build-slots \
-        --mount "type=volume,source=$packages,target=/home/app/.nuget/packages,volume-nocopy" \
-        --mount "type=volume,source=$scratch,target=/var/cache/antiphon/nuget-scratch,volume-nocopy" \
-        --mount "type=bind,source=$root,target=/fixture" \
-        --mount "type=bind,source=$CHECKOUT/scripts/build-slot.ps1,target=/scripts/build-slot.ps1,readonly" \
-        --mount "type=bind,source=$CHECKOUT/scripts/lib/build-slot.ps1,target=/scripts/lib/build-slot.ps1,readonly" \
-        "$image" -c 'pwsh -NoProfile -File /scripts/build-slot.ps1 -Label c849-apphost-miss -- /bin/sh -c "cd /fixture; dotnet restore Smoke.csproj --configfile NuGet.Config --no-http-cache -p:NuGetAudit=false -nodeReuse:false -maxcpucount:1"' \
-        > "$output" 2>&1 || code=$?
-    [ "$code" -ne 0 ] && grep -Eq 'NU1101|NU1102' "$output" \
-        && grep -Fq 'Microsoft.NETCore.App.Host.linux-x64' "$output" \
+c849_fixture_masked_pack() {
+    local image="$1" pack="$2" root="$3" helper="c849-${RUN}-masked" code=0
+    docker run -d --name "$helper" --network antiphon-build-slots --user 1654:1654 --entrypoint sleep \
+        -e HOME=/home/app -e NUGET_PACKAGES=/home/app/.nuget/packages \
+        -e NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch -e NPM_CONFIG_CACHE=/home/app/.npm \
+        --mount "type=bind,source=$root/mask,target=/usr/share/dotnet/packs/$pack/9.0.20,readonly" \
+        "$image" infinity >/dev/null || return 1
+    (c849_smoke "$helper" fixture-masked) >/dev/null 2>&1 || code=$?
+    docker rm -f "$helper" >/dev/null || return 1
+    [ "$code" -ne 0 ] && grep -Fxq "ImagePackMissing:$pack" "$CASE_DIR/smoke.txt" \
         || { printf 'ControlNotSensitive\n'; return 2; }
-    printf 'AppHostCacheMiss\n'; return 2
+    printf 'ImagePackMissing:%s\n' "$pack"; return 2
 }
 
 c849_fixture_apphost() {
-    local image donor packages scratch empty_packages empty_scratch name root helper before after
-    image="$(c849_image)" || {
-        if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
-        write_result false CacheHelperImageMissing 2
-    }
-    donor="$(docker ps -aq --filter label=com.docker.compose.project=antiphon-runner-temp \
-        --filter label=com.docker.compose.service=session-runner)"
-    [ -n "$donor" ] && [ "${donor//$'\n'/}" = "$donor" ] \
-        || write_result false FixtureNet9DonorMissing 2
+    local image packages scratch name root helper pack
+    image="$(c849_image)" || write_result false CacheHelperImageMissing 2
     root="$SERVER2_ROOT/apphost"
-    mkdir -p "$root/packages/microsoft.netcore.app.host.linux-x64" "$root/packages/microsoft.netcore.app.ref"
-    before="$(docker exec "$donor" sha256sum /home/app/.nuget/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost | cut -d' ' -f1)" \
-        || write_result false FixtureNet9DonorMissing 2
-    docker cp "$donor:/home/app/.nuget/packages/microsoft.netcore.app.host.linux-x64/9.0.20" \
-        "$root/packages/microsoft.netcore.app.host.linux-x64/" >/dev/null \
-        || write_result false FixtureNet9CopyFailed 2
-    docker cp "$donor:/home/app/.nuget/packages/microsoft.netcore.app.ref/9.0.20" \
-        "$root/packages/microsoft.netcore.app.ref/" >/dev/null \
-        || write_result false FixtureNet9CopyFailed 2
-    after="$(docker exec "$donor" sha256sum /home/app/.nuget/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost | cut -d' ' -f1)" \
-        || write_result false FixtureNet9DonorChanged 2
-    [ "$before" = "$after" ] \
-        && [ "$after" = "$(sha256sum "$root/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" | cut -d' ' -f1)" ] \
-        && [ -s "$root/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata" ] \
-        && [ -s "$root/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata" ] \
-        || write_result false FixtureNet9DonorChanged 2
-    docker run --rm --network none --entrypoint /bin/sh "$image" \
-        -c 'test ! -d /usr/share/dotnet/packs/Microsoft.NETCore.App.Host.linux-x64/9.0.20' \
-        || write_result false ControlNotSensitive 2
+    mkdir -p "$root/mask" "$root/packages/c913.probe/1.0.0" "$root/packages/c913.tools/2.0.0"
+    printf '{}\n' > "$root/packages/c913.probe/1.0.0/.nupkg.metadata"
+    printf 'ordinary-payload\n' > "$root/packages/c913.probe/1.0.0/data"
+    printf '{}\n' > "$root/packages/c913.tools/2.0.0/.nupkg.metadata"
+    printf '#!/bin/sh\nexit 0\n' > "$root/packages/c913.tools/2.0.0/tool"
+    chmod 0751 "$root/packages/c913.tools/2.0.0/tool"
     packages="c849${RUN}smoke-packages"; scratch="c849${RUN}smoke-scratch"
-    empty_packages="c849${RUN}empty-packages"; empty_scratch="c849${RUN}empty-scratch"
-    for name in "$packages" "$scratch" "$empty_packages" "$empty_scratch"; do
+    for name in "$packages" "$scratch"; do
         docker volume inspect "$name" >/dev/null 2>&1 && write_result false FixtureNamespaceOccupied 2
         printf '%s\n' "$name" >> "$CASE_DIR/.fixture-volumes"
     done
     C849_PACKAGES="$packages"; C849_SCRATCH="$scratch"
     c849_volume "$packages" nuget-packages yes "$image"
     c849_volume "$scratch" nuget-scratch yes "$image"
-    C849_PACKAGES="$empty_packages"; C849_SCRATCH="$empty_scratch"
-    c849_volume "$empty_packages" nuget-packages yes "$image"
-    c849_volume "$empty_scratch" nuget-scratch yes "$image"
-    docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
-        --mount "type=bind,source=$root/packages,target=/seed,readonly" \
-        --mount "type=volume,source=$packages,target=/cache,volume-nocopy" "$image" \
-        -c 'set -eu; cp -a /seed/. /cache/; chown -R 1654:1654 /cache' \
-        || write_result false FixtureNet9ImportFailed 2
+    c849_empty_volume "$packages" "$image" && c849_empty_volume "$scratch" "$image" \
+        || write_result false FixtureEmptyPairRequired 2
     helper="c849-${RUN}-apphost"
     docker run -d --name "$helper" --network antiphon-build-slots --user 1654:1654 --entrypoint sleep \
         -e HOME=/home/app -e NUGET_PACKAGES=/home/app/.nuget/packages \
@@ -3156,14 +3119,17 @@ c849_fixture_apphost() {
     c849_smoke "$helper" fixture || write_result false FixtureAppHostSmokeFailed 2
     docker rm -f "$helper" >/dev/null || write_result false FixtureAppHostCleanupFailed 2
     rm -f "$CASE_DIR/.fixture-apphost"
-    cat > "$root/Smoke.csproj" <<'EOF'
-<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework><UseAppHost>true</UseAppHost><RuntimeIdentifier>linux-x64</RuntimeIdentifier><RuntimeFrameworkVersion>9.0.20</RuntimeFrameworkVersion><TargetLatestRuntimePatch>false</TargetLatestRuntimePatch><SelfContained>false</SelfContained><NuGetAudit>false</NuGetAudit></PropertyGroup></Project>
-EOF
-    printf 'System.Console.WriteLine("CARD0849_APPHOST_OK");\n' > "$root/Program.cs"
-    mkdir -p "$root/empty"
-    printf '<configuration><packageSources><clear/><add key="empty" value="/fixture/empty"/></packageSources></configuration>\n' > "$root/NuGet.Config"
-    sudo -n chown -R 1654:1654 "$root"
-    c849_fixture_control PC-18 AppHostCacheMiss c849_fixture_empty_apphost "$image" "$empty_packages" "$empty_scratch" "$root"
+    c849_empty_volume "$packages" "$image" && c849_empty_volume "$scratch" "$image" \
+        || write_result false FixtureEmptyPairChanged 2
+    for pack in Microsoft.NETCore.App.Host.linux-x64 Microsoft.NETCore.App.Ref Microsoft.AspNetCore.App.Ref; do
+        c849_fixture_control PC-18 "ImagePackMissing:$pack" c849_fixture_masked_pack "$image" "$pack" "$root"
+    done
+    # Ordinary bytes, independent of framework availability, feed the retention/prune cases.
+    docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
+        --mount "type=bind,source=$root/packages,target=/seed,readonly" \
+        --mount "type=volume,source=$packages,target=/cache,volume-nocopy" "$image" \
+        -c 'set -eu; cp -a /seed/. /cache/; chown -R 1654:1654 /cache' \
+        || write_result false FixtureOrdinaryImportFailed 2
     printf 'PASS F-5\n' >> "$CASE_DIR/fixture-groups.txt"
 }
 
@@ -3380,15 +3346,17 @@ c849_fixture_prune() {
     C849_SCRATCH="c849${RUN}smoke-scratch"
     C849_NPM="c849${RUN}npmcache-npm"
     C849_READY="$SERVER2_ROOT/cache/fixture-prune-ready"
-    recovery="$SERVER2_ROOT/cache/recovery-$RUN"
+    recovery="$SERVER2_ROOT/cache/recovery-$RUN-prune"
     [ ! -e "$recovery" ] || write_result false CacheRecoveryExists 2
     mkdir -p "$recovery/packages" "$recovery/npm"
     cp -a "$SERVER2_ROOT/apphost/packages/." "$recovery/packages/" \
         || write_result false CacheRecoveryMissing 2
-    payload="$(sha256sum "$recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" | cut -d' ' -f1)"
-    image_id="$(docker image inspect -f '{{.Id}}' "$image")" \
-        || write_result false CacheRecoveryImageMissing 2
-    printf 'image=%s\npayload-sha256=%s\nrecovery=%s\n' "$image_id" "$payload" "$recovery" > "$C849_READY"
+    printf npm-content > "$recovery/npm/fixture-content"
+    c849_manifest_write "$recovery" "$recovery/recovery.manifest" || write_result false CacheManifestFailed 2
+    payload="$(sha256sum "$recovery/recovery.manifest" | cut -d' ' -f1)"
+    image_id="$(docker image inspect -f '{{.Id}}' "$image")" || write_result false CacheRecoveryImageMissing 2
+    printf 'schema=3\nkind=full\nsource-sha=%s\nimage=%s\ndonor-type=saved-directory\ndonor=saved\ntime=%s\npackages=%s\nscratch=%s\nnpm=%s\npackage-bytes=0\nnpm-bytes=0\nrecovery=%s\nmanifest-sha256=%s\n' \
+        "$SHA" "$image_id" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM" "$recovery" "$payload" > "$C849_READY"
     printf 'runners=idle processes=0 leases=0\n' > "$SERVER2_ROOT/fixture-consumers.txt"
     C849_FIXTURE_PACKAGES_BUDGET="$(( $(c849_observe_volume "$C849_PACKAGES" nuget-packages 10737418240 | awk '{print $5}') * 5 / 4 ))"
     C849_FIXTURE_SCRATCH_BUDGET="$(( $(c849_observe_volume "$C849_SCRATCH" nuget-scratch 268435456 | awk '{print $5}') * 5 / 4 ))"
@@ -3409,12 +3377,7 @@ c849_fixture_prune() {
     c849_fixture_control PC-23 CacheTargetInvalid c849_prune_validate_tree '' ''
     cp "$SERVER2_ROOT/cache/previews/$RUN/volumes.txt" "$SERVER2_ROOT/volumes-backup.txt"
     C849_FIXTURE_PACKAGES_BUDGET=1
-    awk '$2=="nuget-packages" {$6=1} {print}' "$SERVER2_ROOT/volumes-backup.txt" \
-        > "$SERVER2_ROOT/cache/previews/$RUN/volumes.txt"
-    sed -i "s/^volume-sha256=.*/volume-sha256=$(sha256sum "$SERVER2_ROOT/cache/previews/$RUN/volumes.txt" | cut -d' ' -f1)/" "$source_root"
-    c849_fixture_control PC-24 CacheBudgetExceeded c849_fixture_prune_case
-    cp "$SERVER2_ROOT/volumes-backup.txt" "$SERVER2_ROOT/cache/previews/$RUN/volumes.txt"
-    cp "$SERVER2_ROOT/preview-backup.txt" "$source_root"
+    c849_fixture_control PC-24 CacheBudgetExceeded c849_budget_gate
     C849_FIXTURE_PACKAGES_BUDGET="$(awk '$2=="nuget-packages" {print $6}' "$SERVER2_ROOT/volumes-backup.txt")"
     mv "$recovery" "$recovery.missing"
     c849_fixture_control PC-25 CacheRecoveryMissing c849_fixture_prune_case
@@ -3426,6 +3389,121 @@ c849_fixture_prune() {
     printf 'PASS F-8\n' >> "$CASE_DIR/fixture-groups.txt"
 }
 
+c849_fixture_warm_probe() {
+    local image="$1" packages="$2" scratch="$3" kind="$4" code=0 output="$SERVER2_ROOT/warm-$kind.txt"
+    docker run --rm --network antiphon-build-slots --user 1654:1654 --entrypoint /bin/bash \
+        -e ANTIPHON_BUILD_SLOTS_URL=http://build-slots:8080/build-slots \
+        --tmpfs /c660-home:exec,uid=1654,gid=1654,mode=0700 \
+        --mount "type=volume,source=$packages,target=/home/app/.nuget/packages,volume-nocopy" \
+        --mount "type=volume,source=$scratch,target=/var/cache/antiphon/nuget-scratch,volume-nocopy" \
+        --mount "type=bind,source=$CHECKOUT/docker/session-runner-grok/verify-codex-image.sh,target=/probe.sh,readonly" \
+        --mount "type=bind,source=$CHECKOUT/scripts/build-slot.ps1,target=/scripts/build-slot.ps1,readonly" \
+        --mount "type=bind,source=$CHECKOUT/scripts/lib/build-slot.ps1,target=/scripts/lib/build-slot.ps1,readonly" \
+        "$image" -c 'set -u; case "$1" in packages) p=/home/app/.nuget/packages;; scratch) p=/var/cache/antiphon/nuget-scratch;; home) p=/c660-home;; *) exit 2;; esac; printf warm > "$p/.warm"; code=0; pwsh -NoProfile -File /scripts/build-slot.ps1 -Label c913-warm-control -- /bin/bash /probe.sh net9-offline || code=$?; rm -f "$p/.warm"; exit "$code"' bash "$kind" \
+        > "$output" 2>&1 || code=$?
+    [ "$code" = 1 ] && grep -Eq "^C660_ROW net9-offline fail NuGet $kind( cache)? is not empty$" "$output" \
+        || { printf 'ControlNotSensitive\n'; return 2; }
+    printf 'WarmCacheRefused:%s\n' "$kind"; return 2
+}
+
+c849_fixture_inventory_fault() (
+    local fault="$1"
+    TEMP_PROJECT=antiphon-runner-temp
+    docker() {
+        case "$1:${2:-}" in
+            ps:*) [ "$fault" != census ] || return 1
+                [[ "$*" == *"project=$TEMP_PROJECT"* ]] || printf '%064d\n' 1 ;;
+            inspect:*) [ "$fault" != inspect ] || return 1
+                case "$3" in *'.Image'*) printf 'sha256:%064d\n' 1;; *'.State.Running'*) echo false;; *'.Mounts'*) :;; *) return 1;; esac ;;
+            *) return 1 ;;
+        esac
+    }
+    c849_status_body() {
+        printf '{"sessions":0,"queuedTasks":0,"runnerSessions":0,"available":false,"dispatchEligible":false,"acceptingNewWork":false,"draining":true,"redirectTo":"server2","retireWhenIdle":true'
+        if [ "$fault" != status ]; then printf ',"retiredAt":"2026-10-04T00:00:00Z"'; fi
+        printf '}\n'
+    }
+    write_result() { printf '%s\n' "$2"; exit "$3"; }
+    case_runner_cache_inventory
+)
+
+c849_fixture_cleanup_scope() (
+    local ledger="$CASE_DIR/.fixture-volumes" saved="$SERVER2_ROOT/cleanup-ledger" trace="$SERVER2_ROOT/cleanup-trace"
+    cp "$ledger" "$saved" || return 1
+    printf 'c849foreign-packages\n' >> "$ledger"
+    : > "$trace"
+    docker() { printf '%s\n' "$*" >> "$trace"; }
+    c849_fixture_cleanup
+    cp "$saved" "$ledger" || return 1
+    if grep -Fq c849foreign-packages "$trace"; then printf 'ControlNotSensitive\n'; return 2; fi
+    printf 'FixtureCleanupScopeHeld\n'; return 2
+)
+
+c849_fixture_contract_controls() {
+    local image old_packages="$C849_PACKAGES" old_scratch="$C849_SCRATCH" recovery expected file saved kind name
+    image="$(c849_image)" || write_result false CacheHelperImageMissing 2
+    C849_PACKAGES="c849${RUN}warm-packages"; C849_SCRATCH="c849${RUN}warm-scratch"
+    for name in "$C849_PACKAGES" "$C849_SCRATCH"; do
+        docker volume inspect "$name" >/dev/null 2>&1 && write_result false FixtureNamespaceOccupied 2
+        printf '%s\n' "$name" >> "$CASE_DIR/.fixture-volumes"
+    done
+    c849_volume "$C849_PACKAGES" nuget-packages yes "$image"
+    c849_volume "$C849_SCRATCH" nuget-scratch yes "$image"
+    for kind in packages scratch home; do
+        c849_fixture_control PC-27 "WarmCacheRefused:$kind" c849_fixture_warm_probe "$image" "$C849_PACKAGES" "$C849_SCRATCH" "$kind"
+    done
+    C849_PACKAGES="$old_packages"; C849_SCRATCH="$old_scratch"
+    recovery="$(sed -n 's/^recovery=//p' "$C849_READY")"
+    expected="$(sed -n 's/^manifest-sha256=//p' "$C849_READY")"
+    # The retained private fixture tree is restored byte-for-byte after each bad input.
+    for kind in package npm executable manifest; do
+        case "$kind" in
+            package) file="$recovery/packages/c913.probe/1.0.0/data" ;;
+            npm) file="$recovery/npm/fixture-content" ;;
+            executable) file="$recovery/packages/c913.tools/2.0.0/tool" ;;
+            manifest) file="$recovery/recovery.manifest" ;;
+        esac
+        saved="$SERVER2_ROOT/control-backup"
+        cp -p "$file" "$saved" || write_result false FixtureControlSetupFailed 2
+        if [ "$kind" = executable ]; then chmod 0600 "$file"; else printf changed >> "$file"; fi
+        c849_fixture_control PC-28 CacheRecoveryChanged c849_recovery_check "$recovery" "$expected"
+        cp -p "$saved" "$file" || write_result false FixtureControlSetupFailed 2
+    done
+    mv "$recovery" "$recovery.missing"
+    c849_fixture_control PC-29 CacheRecoveryMissing c849_recovery_check "$recovery" "$expected"
+    mv "$recovery.missing" "$recovery"
+    mv "$recovery/recovery.manifest" "$recovery/manifest.missing"
+    c849_fixture_control PC-29 CacheRecoveryMissing c849_recovery_check "$recovery" "$expected"
+    mv "$recovery/manifest.missing" "$recovery/recovery.manifest"
+    cp "$C849_READY" "$SERVER2_ROOT/marker-backup"
+    printf 'payload-sha256=%064d\n' 0 >> "$C849_READY"
+    c849_fixture_control PC-30 CacheSeedMarkerInvalid c849_require_ready allow-cold
+    printf 'schema=2\nkind=cold\ncold=true\nsource-sha=%s\nimage=%s\npackages=%s\nscratch=%s\nnpm=%s\nmanifest-sha256=%064d\n' \
+        "$SHA" "$image" "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM" 0 > "$C849_READY"
+    c849_fixture_control PC-30 CacheSeedMarkerInvalid c849_require_ready allow-cold
+    cp "$SERVER2_ROOT/marker-backup" "$C849_READY"
+    c849_fixture_control PC-31 CacheInventoryLookupFailed c849_fixture_inventory_fault census
+    c849_fixture_control PC-31 CacheInventoryLookupFailed c849_fixture_inventory_fault inspect
+    c849_fixture_control PC-31 CacheInventoryStatusInvalid c849_fixture_inventory_fault status
+    c849_fixture_control PC-32 FixtureCleanupScopeHeld c849_fixture_cleanup_scope
+}
+
+c849_fixture_roster() {
+    local family count ordinal expected="$SERVER2_ROOT/expected-variants.txt"
+    : > "$expected"
+    for family in $(seq -w 1 32); do
+        count=1
+        case "$family" in 13|14|29|30) count=2 ;; 15|18|27|31) count=3 ;; 28) count=4 ;; esac
+        for ordinal in $(seq 1 "$count"); do printf 'PC-%s.%02d\n' "$family" "$ordinal" >> "$expected"; done
+    done
+    cmp -s <(sort "$expected") <(cut -d' ' -f1 "$CASE_DIR/fixture-control-variants.txt" | sort) \
+        || write_result false FixtureRosterIncomplete 2
+    cmp -s <(seq -w 1 32 | sed 's/^/PC-/') <(awk '{print $2}' "$CASE_DIR/fixture-controls.txt" | sort) \
+        || write_result false FixtureRosterIncomplete 2
+    cmp -s <(seq 1 9 | sed 's/^/PASS F-/') <(sort "$CASE_DIR/fixture-groups.txt") \
+        || write_result false FixtureRosterIncomplete 2
+}
+
 c849_fixture_receipt() {
     local line key value source="$1" output="$2"
     : > "$output"
@@ -3434,7 +3512,7 @@ c849_fixture_receipt() {
         case "$key" in
             source-sha) [[ "$value" =~ ^[0-9a-f]{40}$ ]] || { printf 'EvidenceNotAllowListed\n'; return 2; } ;;
             image-id) [[ "$value" =~ ^sha256:[0-9a-f]{64}$ ]] || { printf 'EvidenceNotAllowListed\n'; return 2; } ;;
-            inventories|groups|controls|expected-red|production-mutations)
+            inventories|groups|controls|expected-red|variants|expected-red-variants|production-mutations)
                 [[ "$value" =~ ^[0-9]+$ ]] || { printf 'EvidenceNotAllowListed\n'; return 2; } ;;
             *) printf 'EvidenceNotAllowListed\n'; return 2 ;;
         esac
@@ -3450,14 +3528,6 @@ c849_fixture_evidence() {
         || write_result false FixtureInventoryFailed 2
     [ -s "$CASE_DIR/server2-status.json" ] && [ -s "$CASE_DIR/server2-temp-status.json" ] \
         || write_result false FixtureInventoriesMissing 2
-    for id in $(seq -w 1 25); do
-        grep -q "^CONTROL PC-$id " "$CASE_DIR/fixture-controls.txt" \
-            || write_result false "FixtureControlMissing PC-$id" 2
-    done
-    [ "$(sort -u "$CASE_DIR/fixture-controls.txt" | wc -l)" -eq 25 ] \
-        && [ "$(wc -l < "$CASE_DIR/fixture-controls.txt")" -eq 25 ] \
-        && [ "$(wc -l < "$CASE_DIR/fixture-groups.txt")" -eq 8 ] \
-        || write_result false FixtureRosterIncomplete 2
     printf 'credential=TOKEN_SENTINEL_C849_CONTENT\n' > "$SERVER2_ROOT/fixture-toxic-observation.txt"
     c849_fixture_control PC-26 EvidenceNotAllowListed c849_fixture_receipt \
         "$SERVER2_ROOT/fixture-toxic-observation.txt" "$SERVER2_ROOT/fixture-toxic-output.txt"
@@ -3466,16 +3536,14 @@ c849_fixture_evidence() {
         || write_result false EvidenceNotAllowListed 2
     image_id="$(docker image inspect -f '{{.Id}}' "$(c849_image)")" \
         || write_result false FixtureImageMissing 2
-    groups=9; controls=26
-    printf 'source-sha=%s\nimage-id=%s\ninventories=2\ngroups=%s\ncontrols=%s\nexpected-red=%s\nproduction-mutations=0\n' \
+    groups=9; controls=32
+    printf 'source-sha=%s\nimage-id=%s\ninventories=2\ngroups=%s\ncontrols=%s\nexpected-red=%s\nvariants=47\nexpected-red-variants=47\nproduction-mutations=0\n' \
         "$SHA" "$image_id" "$groups" "$controls" "$controls" > "$input"
     c849_fixture_receipt "$input" "$receipt" || write_result false EvidenceNotAllowListed 2
     printf 'PASS F-9\n' >> "$CASE_DIR/fixture-groups.txt"
-    [ "$(wc -l < "$CASE_DIR/fixture-groups.txt")" -eq 9 ] \
-        && [ "$(wc -l < "$CASE_DIR/fixture-controls.txt")" -eq 26 ] \
-        || write_result false FixtureRosterIncomplete 2
+    c849_fixture_roster
     cat "$CASE_DIR/fixture-groups.txt" "$CASE_DIR/fixture-controls.txt"
-    printf 'C849_FIXTURE groups=9 controls=26 expectedRed=26 inventories=2 failures=0 productionMutations=0\n'
+    printf 'C849_FIXTURE groups=9 controls=32 expectedRed=32 variants=47 expectedRedVariants=47 inventories=2 failures=0 productionMutations=0\n'
 }
 
 c849_fixture() {
@@ -3498,6 +3566,7 @@ c849_fixture() {
     c849_fixture_npm
     c849_fixture_retention
     c849_fixture_prune
+    c849_fixture_contract_controls
     c849_fixture_evidence
     write_result true '' 0
 }

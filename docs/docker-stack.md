@@ -339,15 +339,16 @@ packs come from Microsoft's SDK 9.0.318 Linux x64 archive, pinned to the SHA-512
 the [official .NET 9 release record](https://builds.dotnet.microsoft.com/dotnet/release-metadata/9.0/releases.json)
 and checked before extraction. Only those three packs are copied into the final image;
 the .NET 9 SDK is not installed alongside SDK 10. `scripts/verify-card0660-codex-image.ps1`
-checks the eight Codex rows plus a `grok-version` row requiring Grok 1.0.41 (the channel tag is optional)
-and, for `session-testing`, a tenth `net9-offline` row:
-uid 1654 restores, builds, and runs a `net9.0` native apphost with `--network none`,
-an empty NuGet package directory, and an empty NuGet home. This covers framework
-targeting and the Linux x64 apphost. Ordinary `PackageReference` packages still need
-online restore or the best-effort shared cache. The Seed cache-only assertions below
-still describe the existing CARD-0849 scripts; CARD-0912 owns their cold-first-Seed
-update. Deploy the rebuilt image to server2-temp first within the CARD-0849 rolling
-window, with a cold cache.
+checks eight Codex rows, Grok, jq and, for `session-testing`, `net9-offline`:
+**11 rows**. The native row runs as uid 1654 with `--network none`, fresh task-owned
+package and scratch volumes mounted at the production cache destinations with
+`volume-nocopy`, and a private empty home. It clears sources and fallback folders,
+uses all three image packs (including a compiled ASP.NET type), and records actual
+SDK/runtime, image ID, source SHA, restore/build/native exits and the exact success
+token. The controller holds the build slot; the disconnected child acquires no lease.
+Ordinary `PackageReference` packages still need online restore or the best-effort
+shared cache. Qualify the image independently of volumes-only cold Seed, then deploy
+to the temporary runner within the approved rolling window.
 
 The Grok row requires `grok 1.0.41 (<12 lowercase hex>)`, optionally followed by
 ` [stable]`, with no other tokens, exit 0, and empty stderr. The image install
@@ -435,8 +436,8 @@ for the already drained temp runner to reach fresh non-null zero `sessions`,
 `runnerSessions` and `queuedTasks`. Use the explicit Seed front door from the reviewed
 desktop checkout with `C849_DEPLOY_SHA` set to its full landed SHA. The host helper stops
 only that idle donor container, copies the NuGet packages and npm content from its
-writable layer, checks complete net9 host/reference packages, and starts the same old
-container again under its drain after the disconnected apphost probe and recovery copy.
+writable layer, checks complete ordinary package versions, and starts the same old
+container again under its drain after the private-cache apphost probe and recovery copy.
 Do not replace or retire that donor when Seed has refused or before its reconnect with
 fresh zero counters is recorded. No `/tmp` contents or NuGet scratch locks are copied.
 When the old temp container has already been retired, import the operator's saved cache
@@ -454,18 +455,31 @@ archive is inspected before extraction; links, traversal, other entries and over
 content refuse. Both runner statuses must be drained with zero counters (only the
 retired temp's disconnected `runnerSessions` may be null), the temp project must have
 no containers, all cache volumes must have no attached containers, and the build broker
-must be idle. Seed checks the volume identities and labels, the complete net9 host and
-reference packages, npm integrity and a leased uid-1654 apphost build before retaining
-the recovery copy and publishing the ready marker. A rerun verifies that marker and its
-payload. The saved archive stays untouched.
+must be idle. Seed checks volume identities, complete generic package versions, npm
+integrity and a leased uid-1654 native apphost build using image packs and private
+empty caches. At least one complete ordinary version is required; incomplete versions
+are removed only from staging. The saved archive stays untouched.
+
+New full markers use schema 3 and bind a deterministic NUL-delimited recovery manifest
+with a SHA-256 digest. The manifest includes both package and npm trees, regular-file
+bytes, sizes and executable bits, plus empty directories. Import comparison precedes
+smoke, recovery retention, donor reconnect and atomic publication. Readiness validates
+the retained recovery and image, while permitting changes to the live best-effort
+cache. Legacy unversioned full markers retain their payload-hash compatibility rules;
+schema-2 cold remains volumes-only. Mixed, partial and unknown formats refuse.
+Seed/Both/Retired receipts carry schema, digest type/value and smoke status. Marker
+reuse reports `smoke=not-run`. Both requires matching typed digests.
+
+Schema-3 Prune validates retained recovery before deletion, then performs the existing
+leased ordinary refill, budget check and image-based smoke. It does not refill named
+framework packages merely to make native smoke work. Legacy Prune retains its bounded
+framework recovery. Admission stays held on success and failure.
 
 If the archive lives elsewhere on server2, replace the example `-SavedDonor` value
 with its actual absolute, canonical host path; the host user must be able to read it.
-Do not copy the archive into the checkout. A successful seed keeps a recovery tree of
-about 2.8 GB at the `recovery=` path in
-`/home/mc/antiphon-server2/cache/seed-accepted`. After the shared cache and rollback
-window are accepted, inspect that exact path and remove only that recovery directory
-with `rm -rf -- /home/mc/antiphon-server2/cache/recovery-<run-id>`. A refused seed
+Do not copy the archive into the checkout. A successful seed keeps a recovery tree sized to the accepted donor at the `recovery=` path in
+`/home/mc/antiphon-server2/cache/seed-accepted`. Retain this tree while its full marker is accepted: removing it invalidates readiness.
+Retire a recovery generation only through an explicit reviewed replacement/reset. A refused seed
 normally removes its own `stage-<run-id>-<suffix>` directory; inspect the cache
 directory for any leftover stage from an interrupted run and remove only that exact
 stage path after confirming no Seed is running. Older root-owned stages may need a
@@ -476,10 +490,12 @@ If the import refuses after copying into an unmarked volume, leave both drains h
 use the Reset command below only after confirming all cache consumers are detached;
 then correct the source and repeat Seed. To roll back a completed import, drain both
 runners, retain the saved archive and recovery copy, and switch to the prior image only
-after its cache mount and apphost smoke checks pass. When there is no saved donor, warm
+after its cache mount and apphost smoke checks pass. An older image without baked packs
+needs a separately qualified compatible rollback path and its own private cache pair;
+otherwise keep the verified runner serving. When there is no saved donor, warm
 a temporary runner in its private cache, drain it to zero, then use Seed without
 `-SavedDonor` before deploying either runner against the shared volumes.
-After temp retirement, an accepted full ready marker and verified volume payload allow the
+After temp retirement, an accepted full ready marker and its verified recovery allow the
 next `deploy-temp` to reuse the caches when the status is retired or cleared offline,
 its bound sessions and queue are zero, and the host confirms the temp project has no
 containers. The absent live connection may make only `runnerSessions` null, regardless
@@ -504,8 +520,9 @@ remain for operator inspection.
 
 The rolling sequence remains explicit: CP-3 Fixture and inventory, Seed, `deploy-temp`,
 `drain-old`, `redeploy-old`, CP-4 Both, `drain-temp`, `retire-temp`, then CP-5 Retired.
-The deploy wrapper verifies the real mounts and a uid-1654 net9 apphost restore, build
-and executable run before clearing either drain, even on a same-SHA rerun. A failed
+The deploy wrapper verifies real mounts before clearing either drain. Full markers also
+require a uid-1654 image-pack native apphost smoke; cold markers retain their filesystem
+writability checks without package smoke. A failed
 verification leaves the affected runner held. CP-3/4/5 are trusted desktop and host
 operations at those gates; repo tests alone do not establish live acceptance.
 
@@ -516,16 +533,20 @@ a rolling phase or clear admission on its own.
 
 | Gate | Command | Required receipt summary |
 |---|---|---|
-| Before seed/deploy, CP-3 | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Fixture` | `C849_FIXTURE groups=9 controls=26 expectedRed=26 inventories=2 failures=0 productionMutations=0` |
-| Drained temp donor, before recreation | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed` | `C849_SEED donor=server2-temp ready=true smoke=passed recovery=retained` |
-| Retired temp, saved donor available | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -SavedDonor /home/mc/runner-cache-donor/temp-runner-cache.tar` | `C849_SEED donor=saved ready=true smoke=passed recovery=retained` |
+| Before seed/deploy, CP-3 | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Fixture` | `C849_FIXTURE groups=9 controls=32 expectedRed=32 variants=47 expectedRedVariants=47 inventories=2 failures=0 productionMutations=0` |
+| Drained temp donor, before recreation | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed` | `C849_SEED donor=server2-temp ready=true schema=3 digestType=manifest-sha256 smoke=passed recovery=retained` |
+| Retired temp, saved donor available | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -SavedDonor /home/mc/runner-cache-donor/temp-runner-cache.tar` | `C849_SEED donor=saved ready=true schema=3 digestType=manifest-sha256 smoke=passed recovery=retained` |
 | After redeploy-old, before drain-temp, CP-4 | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Both` | `C849_BOTH runners=2 smokes=2 sharedVolumes=3 privateTmpVolumes=2 tmpMode=1777 failures=0` |
 | After retire-temp, CP-5 | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Retired` | `C849_RETIRED externalVolumes=3 tempPrivateVolumes=0 mainTmpRetained=true smokes=1 rollback=retained failures=0` |
 
 `-Case Inventory` refreshes two read-only status and mount receipts. The Fixture case
 uses run-scoped Docker resources and records `PASS F-1` through `PASS F-9` and all
-`CONTROL PC-01` through `PC-26` expected refusals. It reads production only for the
-two inventories and a validated copy of the donor's net9 host/reference package.
+32 control families (`PC-01` through `PC-32`), with exactly 47 negative variants.
+Both shell and front door check the full roster, including duplicates. Fixture generates
+ordinary packages locally and reads production only for the two inventories. A complete
+successful census and an explicitly retired temp status may record an absent temp;
+lookup failures and contradictory live containers refuse. Empty-cache native execution
+is positive; disposable children mask each image pack separately for the negative cases.
 Its temporary containers, networks and volumes are removed by exact recorded names;
 the production cache names are outside its namespace. A nonzero case or missing
 receipt leaves the checkpoint pending. CP-3/4/5 are operational gates after Review,
