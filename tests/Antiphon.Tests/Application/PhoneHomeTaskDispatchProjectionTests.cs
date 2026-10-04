@@ -555,6 +555,7 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
             s.DefaultDefinition = "claude";
             s.GrokCredentialProbeEnabled = grokCredentialProbe;
             s.Definitions["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "claude.exe" };
+            s.Definitions["codex"] = new AgentDefinition { Kind = "Codex", Exe = "codex.exe" };
             s.Definitions["grok"] = new AgentDefinition
             {
                 Kind = "Grok", Exe = "grok.exe", ArgsTemplate = ["--always-approve", "--no-alt-screen"],
