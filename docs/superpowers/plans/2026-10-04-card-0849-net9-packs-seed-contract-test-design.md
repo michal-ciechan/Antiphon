@@ -604,7 +604,7 @@ break/red/restore/green **after land**. No snapshot commit/push.
 |---|---|---|---|
 | PC-1 | Break G-1: Change one hex digit in NET9_SDK_SHA512 | `CodexRunnerImageContractTests.Net9_packs_are_pinned_verified_before_extraction_and_available_to_session_testing` | `pin-pair` |
 | PC-2 | Break G-2: Replace the sha512sum pipeline with true while preserving valid shell syntax | `CodexRunnerImageContractTests.Net9_packs_are_pinned_verified_before_extraction_and_available_to_session_testing` | `bad-archive-no-extract` |
-| PC-3 | Break G-3: Delete only the host-pack tar member and its post-extract test | `CodexRunnerImageContractTests.Net9_packs_are_pinned_verified_before_extraction_and_available_to_session_testing` | `host-pack-member` |
+| PC-3 | Break G-3: Delete only the host-pack tar member, its post-extract test and its apphost chmod | `CodexRunnerImageContractTests.Net9_packs_are_pinned_verified_before_extraction_and_available_to_session_testing` | `host-pack-member` |
 | PC-4 | Break G-4: Delete only the core-reference tar member and its post-extract test | `CodexRunnerImageContractTests.Net9_packs_are_pinned_verified_before_extraction_and_available_to_session_testing` | `core-ref-member` |
 | PC-5 | Break G-5: Delete only the ASP.NET-reference tar member and its post-extract test | `CodexRunnerImageContractTests.Net9_packs_are_pinned_verified_before_extraction_and_available_to_session_testing` | `aspnet-ref-member` |
 | PC-6 | Break G-6: Remove the final COPY --from=net9-packs instruction | `CodexRunnerImageContractTests.Net9_packs_are_pinned_verified_before_extraction_and_available_to_session_testing` | `packs-visible-after-sdk-copy` |
@@ -777,6 +777,15 @@ built the exact pinned archive but observed mode 0744 / uid 2001 in the final
 image; uid 1654 could not satisfy the required executable image-pack guard.
 The pins and narrow three-pack extraction stay unchanged. No deliberate
 mutation of either variant has been run in Code.
+
+**Code cost addendum for those two PC-3 variants:** the 165 guard IDs now require
+167 control cycles, 501 method-scoped phase invocations and 525 TUnit results
+under the original per-phase estimates below. This adds 13 minutes: Mutation
+1085.5 minutes (751.5 build, 250.5 execution, 83.5 edit/restore), combined setup,
+ordinary Code and Mutation 1171.5 minutes, and the total including fresh Review
+and Q-1 1273.5 minutes. The ordinary eight-row floor remains 80 minutes. The Code
+brief's extra Final Unit lane is separate; its measured results and incomplete
+rows are in `.antiphon/task-62fc2d31.md`. All controls remain pending Mutation.
 
 ### Out of scope
 
