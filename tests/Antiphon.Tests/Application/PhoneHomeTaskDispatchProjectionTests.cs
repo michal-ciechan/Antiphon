@@ -77,6 +77,8 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
                 Kind = AgentKind.Codex, ModelLevel = AgentModelLevel.Frontier,
                 WorkingDirectory = workspace.Path, RunnerId = host.AllowedRunnerId,
                 IsPoolDelegate = true, Status = AgentStatus.Idle, PoolIdleSince = now.AddMinutes(-3),
+                // Keep the warm process eligible inside the default five-minute reservation.
+                PoolReservedForRootTaskId = taskId,
                 PersistentSessionId = sessionId.ToString("D"), CreatedAt = now, UpdatedAt = now,
             });
             await db.SaveChangesAsync();
