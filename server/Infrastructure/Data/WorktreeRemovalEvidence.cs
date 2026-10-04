@@ -198,7 +198,7 @@ public sealed class WorktreeRemovalEvidence(IServiceScopeFactory scopes) : IWork
                 && r.RetirementId == retirement.Id && r.Kind == WorkspaceReservationKind.Retirement, ct)) return false;
         var artifacts = scope.ServiceProvider.GetService<CardDoneArtifactPreservation>();
         return artifacts is not null && await artifacts.VerifyAsync(task,
-            [endpoint.WorktreePath, Antiphon.Server.Infrastructure.Git.WorktreeSetAside.SetAsidePath(endpoint.WorktreePath)], retirement.MissingReportReviewed, ct);
+            await CardDoneArtifactRoots.ReadAsync(db, endpoint.Target.CleanupId, ct), retirement.MissingReportReviewed, ct);
     }
 
     public async Task<AgentTask?> ReadTaskAsync(Guid taskId, CancellationToken ct)

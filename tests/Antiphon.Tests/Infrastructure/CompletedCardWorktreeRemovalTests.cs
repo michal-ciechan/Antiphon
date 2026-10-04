@@ -22,6 +22,7 @@ public sealed class CompletedCardWorktreeRemovalTests
     public async Task C1017_EvidenceNeedsDoneDisposition()
     {
         await using var f = await CompletedCardCleanupFixture.CreateAsync();
+        await f.DiscoverAsync();
         await f.MoveAsync(f.ReviewColumnId);
         var before = await f.CleanupAsync();
         before.IsClean.ShouldBeFalse();
@@ -196,6 +197,7 @@ public sealed class CompletedCardWorktreeRemovalTests
             await f.Host.Fixture.RequiredAsync(f.Tree, "commit", "-m", "feature");
             await f.Host.Fixture.RequiredAsync(f.Tree, "push", "origin", "HEAD:refs/heads/feat/card-task-" + f.TaskId.ToString("N")[..8]);
             await f.Host.Fixture.PushIndependentAsync("target-moved");
+            await f.Host.RequestAsync(expectedSourceSha: (await f.Host.Fixture.RequiredAsync(f.Tree, "rev-parse", "HEAD")).Trim());
             await f.Host.RunAsync();
             var op = (await f.Host.OperationAsync()).ShouldNotBeNull();
             new AgentTaskLandingState().HasPublication(op).ShouldBeTrue();
@@ -316,7 +318,7 @@ public sealed class CompletedCardWorktreeRemovalTests
             var root = Path.Combine(h.Git.Root, shape == "sibling-prefix" ? "tree" : "outside");
             Directory.CreateDirectory(root);
             if (shape == "link") { root = Path.Combine(h.Git.Root, "root-link"); Directory.CreateSymbolicLink(root, Path.Combine(h.Git.Root, "trees")); }
-            var result = await h.RemoveAsync(r => shape == "dot" ? r with { Source = r.Source with { WorktreePath = Path.Combine(h.Tree, "..", Path.GetFileName(h.Tree)) } } : r with { ManagedRoot = root });
+            var result = await h.RemoveAsync(r => shape == "dot" ? r with { Source = r.Source with { WorktreePath = Path.Combine(h.Tree, "..", "..", "outside") } } : r with { ManagedRoot = root });
             await h.AssertHeldAsync(result);
             var outsideTreeExists = Directory.Exists(h.Tree);
             outsideTreeExists.ShouldBeTrue();

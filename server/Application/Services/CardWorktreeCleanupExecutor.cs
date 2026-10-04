@@ -44,7 +44,7 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
             retirementId, "cleanup-observed", ct);
         if (observed.Reason is not null || !observed.ContainsSource)
             return await RefuseAsync(endpoint, observed.Reason ?? "unlanded_work", ct);
-        var roots = new[] { endpoint.WorktreePath, WorktreeSetAside.SetAsidePath(endpoint.WorktreePath) };
+        var roots = await CardDoneArtifactRoots.ReadAsync(db, endpoint.Target.CleanupId, ct);
         var priorRelease = await db.TaskWorktreeRetirements.AsNoTracking()
             .SingleOrDefaultAsync(r => r.TaskId == task.Id && r.TaskAttempt == task.Attempt && r.Active, ct);
         var missingReviewed = priorRelease?.MissingReportReviewed == true;
