@@ -1098,8 +1098,27 @@ Native companion cycles (same G/PC, additional method-scoped cycle; never combin
 
 ### Checkpoints
 
+**Budgeted S3a.1 split (Code f065f946, 2026-10-04).** The operator's 30–60 minute
+brief permits the first part of an oversized slice. S3a follows S2-core and does not
+depend on PC-180. This task implements only a dormant, read-only host inspection
+contract and native POSIX path validation. CP-28 is its closed list: three new
+disk-backed inspection methods plus the two existing adjacent phone-home admission
+methods. CP-3–6 remain owed for full S3a; no original checkpoint floor is reduced.
+The inspection methods cover only the read portion of V-13/V-32/V-34 and R-5/R-6
+(no arbitrary target, no filesystem mutation). They do not complete those IDs.
+Publication, native Git excludes, durable intent/fences, custody/cleanup, application
+location/receipt CAS and legacy upgrade, HTTP/phone-home wiring, Windows and mixed-OS
+qualification remain S3a work. Later full-host methods must incorporate these cases
+while retaining the planned publication/concurrency cases and updating their roster.
+An observed file hash grants no ownership, Ready state, launch or cleanup authority.
+Inspection rechecks path components before and after reading; it does not claim
+filesystem ACL isolation against concurrent same-user path replacement. No capability
+or production registration is added. Whole Unit and all other Final obligations are
+deferred by this task's explicit budget instruction, not passed.
+
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
+| CP-28 | S3a.1 | `tests/Antiphon.SessionRunner.Tests -> bin-c262-inspect/` | linux-native-inspection | `/*/*/(AgentPinWorkspaceStoreTests*)\|(PhoneHomeCommandDispatcherTests*)/(V*)\|(Unsupported_operation_or_launch_never_enters_runtime*)\|(Workspace_ops_are_admitted_only_under_allowed_cwd*)` | V-13, V-32, V-34, R-5, R-6 read-only portions | all 5 roster executions; 0 failed/skipped | 5 | 10 | true | `n/a` |
 | CP-1 | S2-core | `tests/Antiphon.Tests -> bin-c262-core/` | portable-snapshot-store | `/*/*/(AgentPinnedInstructionCompositionTests*)\|(AgentPinnedInstructionServiceTests*)\|(AgentPinnedInstructionEndpointTests*)/*` | V-1–5, V-32, R-7, R-11 | all 32 roster executions; 0 failed/skipped | 32 | 10 | true | `n/a` |
 | CP-2 | S2-core | `CP-1` | portable-bundle-regression | `/*/*/InstructionBundleTests/*` | V-4, V-5, R-7 | all 71 roster executions; 0 failed/skipped | 71 | 4 | true | `n/a` |
 | CP-3 | S3a | `tests/Antiphon.Tests -> bin-c262-projection/` | portable-projection | `/*/*/(AgentPinWorkspaceTests*)\|(AgentPinLocationTests*)\|(AgentPinTransportTests*)/*` | V-6, V-7, V-13–17, V-32–34, R-1, R-2, R-5, R-6 | all 16 roster executions; 0 failed/skipped | 16 | 12 | true | `n/a` |
