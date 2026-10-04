@@ -83,11 +83,11 @@ internal static partial class CodexCliRemoteDeliveryFixture
                 Host = await PhoneHomeTestHost.StartAsync(clock: Clock, connectionString: Schema.ConnectionString,
                     configureRunnerSettings: s =>
                     {
-                        services.AddSingleton<TimeProvider>(Clock);
                         s.AllowDelegatedTasks = true; s.HostWorkspaceRoot = Git.Path; s.RunnerWorkspace = Root;
                         s.RunnerRepository = Path.Combine(Root, "repo"); s.CallbackOrigin = "https://antiphon.test";
                     }, configureServices: services =>
                     {
+                        services.AddSingleton<TimeProvider>(Clock);
                         services.AddSingleton<RemoteSpillCourier>();
                         services.AddSingleton(sp => new PhoneHomeRunnerDirectory(
                             sp.GetRequiredService<ISessionRunnerClient>(), sp.GetRequiredService<IOptions<PhoneHomeRunnerSettings>>(),
