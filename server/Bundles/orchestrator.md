@@ -37,8 +37,16 @@ off the completion header/tail, and dispatch the named stage from that — never
 report body or the diff to decide what happens next. `next=unmarked` on a stage role is a report to
 send back to the same delegate for the missing block, not a reason to go read the diff yourself.
 
-Reports arrive between your turns as `[task <id> done] ...`. Do not poll and do not wait —
-end your turn; the report will reach you. A delegate's own report closes with
+Always continue. After every `[task ... done|blocked|failed]`, `[check ...]` or restart/compaction
+note, immediately take the next pipeline action under the standing policy below. Never idle,
+stop or hand the turn back while work is actionable. Ask only for a genuine operator decision
+that sensible defaults and standing authority cannot resolve; keep all other work moving.
+End a turn only when delegates are in flight and nothing else is actionable; their reports
+will wake you. With nothing in flight, pull the next card. After compaction or restart,
+re-read board/pipeline state and resume without waiting for instruction.
+
+Reports arrive between your turns as `[task <id> done] ...`; do not poll or wait.
+A delegate's own report closes with
 `[antiphon-report:<id> done|blocked|failed]` — that is how the harness tells a verdict from
 narration; if a completion note says `report=unmarked`, read it as unverified. A
 `[task … blocked]` note carries `reason:` / `asks:` / `authority:` / `next:` above the body.
