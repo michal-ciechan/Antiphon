@@ -30,3 +30,22 @@ public sealed record AgentPinInspection(
     string? Path = null,
     string? Sha256 = null,
     long? ByteCount = null);
+
+/// <summary>Dormant host primitive. The authenticated caller must have committed
+/// its intent before calling. Fence increases across location retirement/reuse.
+/// Null expected hash means absence; cleanup carries no content or new hash.</summary>
+public sealed record AgentPinPublicationRequest(
+    int SchemaVersion, Guid AgentId, Guid TargetOwnerId, Guid RunnerStoreId,
+    string Cwd, Guid LocationGeneration, Guid OperationId, long Fence, long Revision,
+    AgentPinFileAction Action, byte[]? Content, string? Sha256, string? ExpectedSha256);
+
+public enum AgentPinFileAction { Publish, Cleanup }
+public enum AgentPinPublicationStatus { Applied, Refused, Unavailable }
+
+public sealed record AgentPinFileReceipt(
+    int SchemaVersion, Guid AgentId, Guid RunnerStoreId, string Path,
+    Guid LocationGeneration, Guid OperationId, long Fence, long Revision,
+    AgentPinFileAction Action, string? Sha256, long ByteCount);
+
+public sealed record AgentPinPublicationResult(
+    AgentPinPublicationStatus Status, string? Reason, AgentPinFileReceipt? Receipt = null);
