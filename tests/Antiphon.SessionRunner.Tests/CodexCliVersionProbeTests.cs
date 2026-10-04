@@ -84,6 +84,7 @@ public sealed class CodexCliVersionProbeTests
             start.Environment.ContainsKey(name).ShouldBeFalse($"C959-pc-{label:000} {name}");
         start.Environment["CODEX_HOME"].ShouldNotBe(Environment.GetEnvironmentVariable("CODEX_HOME"), "C959-pc-022");
         kit.EmptyHomes.Single().ShouldBeTrue("C959-pc-022 empty");
+        start.WorkingDirectory.ShouldBe(Path.GetDirectoryName(start.Environment["CODEX_HOME"]!), "C959-pc-023 neutral scratch");
         start.WorkingDirectory.ShouldNotBe(kit.Root, "C959-pc-023");
         File.Exists(Path.Combine(kit.Root, "receipts-1", "stdin-eof")).ShouldBeTrue("C959-pc-024");
         kit.AuthOpens.ShouldBe(0, "C959-pc-025");
@@ -109,9 +110,27 @@ public sealed class CodexCliVersionProbeTests
         CodexCliVersionTestFixture.Text(second, "codexCliLauncherFingerprint")
             .ShouldNotBe(CodexCliVersionTestFixture.Text(first, "codexCliLauncherFingerprint"), "C959-v02-path-invalidates");
         var explicitB = await kit.Attempt(secondExe, path: pathA);
-        CodexCliVersionTestFixture.Text(explicitB, "codexCliVersion").ShouldBe("0.156.1", "C959-v02-absolute-ignores-PATH");
+        CodexCliVersionTestFixture.Text(explicitB, "codexCliVersion").ShouldBe("0.156.1", "C959-pc-153");
         foreach (var evidence in new[] { first, second, explicitB })
             evidence.GetRawText().Contains("C959-env-canary", StringComparison.Ordinal).ShouldBeFalse("C959-pc-199");
+        kit.ChildMode = info => info.FileName == kit.Executable ? "version-old" : "success";
+        await kit.Refresh();
+        var selectedCurrent = await kit.Attempt(firstExe);
+        CodexCliVersionTestFixture.Text(selectedCurrent, "codexCliVersion").ShouldBe("0.160.0", "C959-pc-154");
+        kit.ChildMode = _ => "success";
+        await kit.Refresh();
+        var missingSelected = await kit.Attempt(Path.Combine(kit.Root, "missing-codex"));
+        CodexCliVersionTestFixture.Text(missingSelected, "codexCliVersion").ShouldBeNull("C959-pc-155");
+        CodexCliVersionTestFixture.Text(missingSelected, "codexCliVersionError").ShouldBe("executable_missing", "C959-pc-155 error");
+        var beforeCwds = kit.Starts.Count;
+        var cwdA = await kit.Attempt(kit.Executable, resolutionCwd: a);
+        var cwdB = await kit.Attempt(kit.Executable, resolutionCwd: b);
+        CodexCliVersionTestFixture.Text(cwdA, "codexCliLauncherFingerprint")
+            .ShouldNotBe(CodexCliVersionTestFixture.Text(cwdB, "codexCliLauncherFingerprint"), "C959-pc-205");
+        kit.Starts.Count.ShouldBe(beforeCwds + 2, "C959-pc-205 two real attempts");
+        var missingCwd = await kit.Attempt(executableName, resolutionCwd: Path.Combine(kit.Root, "future-worktree"));
+        CodexCliVersionTestFixture.Text(missingCwd, "codexCliVersionError").ShouldBe("launcher_unverified", "C959-pc-158");
+        kit.Starts.Count.ShouldBe(beforeCwds + 2, "C959-pc-158 no ancestor fallback child");
         using var diagnostic = new CodexCliVersionTestFixture { Mode = "diagnostic" };
         var previousError = Console.Error;
         using var captured = new StringWriter();
@@ -332,8 +351,16 @@ public sealed class CodexCliVersionProbeTests
         {
             kit.Mode = mode;
             await kit.Refresh();
+            var expectedSample = ((CodexCliVersionProbe)kit.Probe!).Snapshot;
+            var startsBeforeReads = kit.Starts.Count;
+            for (var read = 0; read < 10; read++) _ = kit.Local();
+            kit.Starts.Count.ShouldBe(startsBeforeReads, "C959-pc-060");
             var local = kit.Local();
             var remote = kit.Registration();
+            local.GetProperty("codexCliVersionCheckedAtUtc").GetDateTimeOffset().ShouldBe(CodexCliVersionTestFixture.T, "C959-pc-051");
+            remote.GetProperty("codexCliVersionCheckedAtUtc").GetDateTimeOffset().ShouldBe(CodexCliVersionTestFixture.T, "C959-pc-055");
+            CodexCliVersionTestFixture.Text(local, "codexCliLauncherFingerprint").ShouldBe(expectedSample.CodexCliLauncherFingerprint, "C959-pc-053");
+            CodexCliVersionTestFixture.Text(remote, "codexCliLauncherFingerprint").ShouldBe(expectedSample.CodexCliLauncherFingerprint, "C959-pc-057");
             local.TryGetProperty("codexCliVersion", out _).ShouldBeTrue("C959-v05-local");
             CodexCliVersionTestFixture.Text(local, "codexCliVersion").ShouldBe(version, "C959-pc-050");
             CodexCliVersionTestFixture.Text(remote, "codexCliVersion").ShouldBe(version, "C959-pc-054");

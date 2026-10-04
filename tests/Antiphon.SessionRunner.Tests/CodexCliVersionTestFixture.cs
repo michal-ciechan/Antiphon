@@ -84,8 +84,7 @@ internal sealed class CodexCliVersionTestFixture : IDisposable
         try
         {
             using var process = Process.GetProcessById(pid);
-            if (process.HasExited || process.StartTime.ToUniversalTime()
-                != receipt.GetProperty("startedUtc").GetDateTime().ToUniversalTime()) return false;
+            if (process.HasExited || !MatchesReceipt(process, receipt)) return false;
             // A killed grandchild may await the container init's waitpid; it has no live code or pipe.
             if (!OperatingSystem.IsWindows() && File.Exists($"/proc/{pid}/stat"))
             {
@@ -151,6 +150,17 @@ internal sealed class CodexCliVersionTestFixture : IDisposable
         throw new InvalidOperationException("missing owned child fixture");
     }
 
+    private static bool MatchesReceipt(Process process, JsonElement receipt)
+    {
+        if (!OperatingSystem.IsLinux())
+            return process.StartTime.ToUniversalTime() == receipt.GetProperty("startedUtc").GetDateTime().ToUniversalTime();
+        // Linux Process.StartTime converts monotonic ticks to wall time per process.
+        // The kernel start tick is stable across parent exit/reparenting and binds PID reuse exactly.
+        var stat = File.ReadAllText($"/proc/{process.Id}/stat");
+        return stat[(stat.LastIndexOf(')') + 2)..].Split(' ')[19]
+            == receipt.GetProperty("kernelStartTicks").GetString();
+    }
+
     public void RescueLeaves()
     {
         // Independent rescue owner, including grandchildren left alive by product cleanup defects.
@@ -161,8 +171,7 @@ internal sealed class CodexCliVersionTestFixture : IDisposable
             try
             {
                 using var process = Process.GetProcessById(data.GetProperty("pid").GetInt32());
-                if (process.StartTime.ToUniversalTime() == data.GetProperty("startedUtc").GetDateTime().ToUniversalTime()
-                    && !process.HasExited) { process.Kill(true); process.WaitForExit(5000); }
+                if (MatchesReceipt(process, data) && !process.HasExited) { process.Kill(true); process.WaitForExit(5000); }
             }
             catch (ArgumentException) { }
         }

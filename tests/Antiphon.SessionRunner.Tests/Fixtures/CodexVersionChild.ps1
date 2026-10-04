@@ -6,8 +6,14 @@ param(
 $ErrorActionPreference = 'Stop'
 if (-not [IO.Directory]::Exists($ReceiptRoot)) { throw 'missing owned receipt root' }
 $ownedProcess = [Diagnostics.Process]::GetCurrentProcess()
+$kernelStartTicks = $null
+if ($IsLinux) {
+    $stat = [IO.File]::ReadAllText("/proc/$PID/stat")
+    $kernelStartTicks = ($stat.Substring($stat.LastIndexOf(')') + 2) -split ' ')[19]
+}
 $receipt = @{
     pid = $PID
+    kernelStartTicks = $kernelStartTicks
     startedUtc = $ownedProcess.StartTime.ToUniversalTime().ToString('O')
     mode = $Mode
 } | ConvertTo-Json -Compress
