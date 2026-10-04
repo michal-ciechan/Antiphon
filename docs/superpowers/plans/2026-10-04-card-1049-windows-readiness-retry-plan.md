@@ -1,10 +1,10 @@
 # CARD-1049: Windows readiness fixture and Git tool discovery
 
-Status: **plan recorded; Windows diagnosis required before Code**. Verification
-design is folded in for the small repair below. The assigned Plan environment is
-Linux and cannot reach the assigned Windows checkout. No Windows experiment,
-test run, or build is claimed here. Next is a bounded **Investigate on Windows**,
-not permission to implement an unmeasured network hypothesis.
+Status: **Windows I-1 measured; fixture failure confirmed; Plan reconciliation
+before Code**. The original Plan was authored on Linux without Windows
+measurements. The 2026-10-05 Windows investigation below meets I-1's no-listener
+exit gate. Verification design remains the previously recorded design; this
+evidence amendment implements no fix and authorizes no Code dispatch.
 
 Inspected source: `19cd9131393fa104ad2f39879b20018a08400ef8`. Read CARD-1049,
 CARD-1050 and CARD-1048 using `scripts/card.ps1 get <card> -Board Antiphon`.
@@ -30,14 +30,14 @@ and [testing/build operations](../../testing-and-build.md). Related designs:
 [CARD-1050](2026-10-04-card-1050-windows-bash-host-tests-plan.md) and
 [CARD-1048](2026-10-04-card-1048-build-slot-module-path-plan.md).
 
-## Cause established versus cause still to measure
+## Cause established versus packet mechanism still inferred
 
 **Established from source:** the fixture treats one transport error code as a
 readiness-transition signal, even though the deployment loop treats all failed
 HTTP probes as not ready. The two code-7-only handshake gates explain why a
 reported code 28 makes the success case exhaust its budget.
 
-**Leading explanation for Windows code 28, not a host diagnosis:** Windows TCP
+**Original leading explanation, packet mechanism still inferred:** Windows TCP
 can resend SYN after a refusal and delay reporting the connection failure for
 seconds. The curl maintainer documents this for both IP families and also notes
 a newer curl workaround. The actual executable/version therefore matters.
@@ -99,6 +99,75 @@ Accepting/listener/reuse evidence requires a fixture correction first. If the
 required distinctions cannot be measured, keep next `investigate`; do not
 promote the hypothesis to fact or dispatch Code.
 
+### I-1 measured outcome, 2026-10-05, task a7c42072
+
+**Confirmed:** the short command times out before the same held socket reports
+refusal with the longer command. Both code-7-only fixture gates remain closed
+after 28. Source/reconstruction citations and essential trace/TCP-table excerpts
+are in the [investigation](../../investigations/2026-10-05-card-1049-amservicedeployreadinesstests-retry-cases-fail-on-windows-curl-exits-28-not-7-and-cygpath-missing-from-path.md).
+Inspected/measured source was `d2a771ff8041908b03581f15c8ca965750804847`;
+production and test source were unchanged.
+
+Original-PATH curl selection: `C:\Windows\system32\curl.exe`, curl/libcurl
+8.13.0, Schannel, release 2025-04-02. Host: Windows 10 Pro, `10.0.19045`, build
+19045. Original-PATH sh/sleep/cygpath searches all failed; installation-relative
+candidates exist in `C:\Program Files\Git\usr\bin\`: sh 5.2.37(1), sleep 8.32,
+cygpath 3.6.3. No parent or machine PATH was modified and no WSL was used.
+
+All ports were fresh IPv4 ephemeral binds retained throughout their probes.
+Default options: ExclusiveAddressUse=false, ReuseAddress=0, Blocking=true,
+NoDelay=false; the separate exclusive control changed only ExclusiveAddressUse.
+Both non-listening sockets belonged to PID 12352. Before/during/after
+`netstat -ano -p tcp` samples found only each curl PID's SYN_SENT on those ports,
+no LISTENING/ESTABLISHED or foreign owner; socket custody was retained in the
+owning process. There was no release/rebind. Listening controls recorded the
+expected owned listener and established connection.
+
+| Probe | Port | Deadline connect/max s | curl exit | Outer wall ms | time_connect s | time_total s | HTTP | Accept/GET |
+|---|---:|---|---:|---:|---:|---:|---|---|
+| Bound, default | 61099 | 2/3 | 28 | 2132.6 | 0.000000 | 2.014509 | 000 | 0/0 |
+| Same bound socket | 61099 | 10/12 | 7 | 2154.4 | 0.000000 | 2.049447 | 000 | 0/0 |
+| Bound, exclusive | 61104 | 2/3 | 28 | 2122.5 | 0.000000 | 2.013480 | 000 | 0/0 |
+| Same exclusive socket | 61104 | 10/12 | 7 | 2145.3 | 0.000000 | 2.052217 | 000 | 0/0 |
+| Listening, accepted stall | 61118 | 2/3 | 28 | 3245.3 | 0.004323 | 3.036306 | 000 | 1/1 |
+| Listening, exact fixture body | 61156 | 2/3 | 0 | 413.6 | 0.010911 | 0.219926 | 200 | 1/1 |
+
+Default curl trace: short reports `Connection timed out after 2014 milliseconds`;
+long reports `failed: Connection refused` after approximately 2.05 seconds.
+Exclusive control repeats that difference. Stall trace reports connected,
+request completely sent, then no response before the max-time deadline. Exact
+HTTP 200 returned the fixture's 44-byte body, stderr empty. These distinguish
+delayed refusal reporting from an accepted HTTP stall. The packet-level reason
+for the delay is not established.
+
+Domain/Private/Public firewall profiles were Enabled=True; default inbound and
+outbound properties were NotConfigured. Ethernet was Public and Tailscale
+Private. This is configuration context, not packet-drop evidence. The session
+was non-elevated (Medium integrity; Administrators deny-only); `pktmon status`
+failed with cannot obtain state / file not found; tshark was absent from PATH.
+No packet capture was started. **SYN/RST retry remains inferred; filtering or
+security-product contributions are not ruled out at packet level.** A scoped
+loopback SYN/RST capture would settle that narrower uncertainty. No firewall,
+registry, tool installation or machine setting was changed.
+
+Both diagnostic commands took host slots, completed foreground and released
+their leases. Each curl had an outer 15-second deadline; none hit it. Six
+accepted observations came from seven curl invocations: the initial ready
+control used an incorrect 51-byte object and was discarded, then only that
+control was corrected/repeated with the exact 44-byte fixture array. All raw
+attempts remain under ignored `.antiphon/c1049-i1/`, including the correction
+under `exact-body/`. No test build, TUnit method or whole-class lane ran. Every
+owned child was awaited and socket disposed; no bin output was created.
+
+**I-1 gate result:** no listener/reuse/foreign owner observed, short=28,
+same-socket long=7, immediate exact-body HTTP=0. The existing D-2 prerequisite
+is measured. No evidence requires the foreign-listener/reuse branch or supports
+dropping native Windows coverage. Repaired-test qualification is still pending.
+
+#### Not done, noted
+
+I-1 supports existing D-2's Windows 7/28 fixture allowance at both gates; Plan must reconcile the measured choice before Code, keeping production unchanged.
+
 ## Decisions
 
 - **D-1: retain the production readiness contract.** No changes to
@@ -111,8 +180,9 @@ promote the hypothesis to fact or dispatch Code.
   exact 28 for intentionally accepted/stalled HTTP and exact 22 for HTTP 503.
   Preserve raw curl exit codes in the journal; never rewrite 28 to 7. Update
   both handshake gates and the scenario-specific assertions together. Reject
-  a blanket any-nonzero allowance and assertion-only repair. This is a
-  conditional candidate, not a measured resolution of I-1.
+  a blanket any-nonzero allowance and assertion-only repair. I-1 now records
+  that this candidate's no-listener prerequisite was observed; implementation
+  and final verification remain unperformed.
 - **D-3: reject hunting for a fixed fast-refused port.** The fixture already
   retains its socket. Releasing/rebinding, choosing a fixed port or trying
   ports until one returns 7 introduces ownership races or selects around a
@@ -322,11 +392,13 @@ no unrelated coverage saving is claimed as correctness evidence.
 
 ## Acceptance and next stage
 
-The plan can land now; the fix cannot start until I-1 records the Windows
-cause classification and confirms D-2 or revises the fixture choice. In the
-D-2 case, this folded verification design then supplies Code's closed list.
+The evidence amendment can land now. I-1 records the Windows cause
+classification and meets the existing D-2 prerequisite. Next is Plan to
+reconcile the measured choice and authorize Code; this investigation has not
+changed the implementation design. In the D-2 case, the previously folded
+verification design supplies Code's closed list.
 Acceptance needs all seven rows green at the same source S, production script
 unchanged, preserved raw exit evidence, and the Windows sanitized-PATH proof.
 No live deploy, runner restart, curl upgrade or global environment edit is in
-scope. Next: **Investigate**, explicitly Windows, then amend this plan with
-the measured result before handing off to Code.
+scope. Next: **Plan**, with the confirmed fixture mechanism and explicit
+packet-level uncertainty recorded above, before Code.
