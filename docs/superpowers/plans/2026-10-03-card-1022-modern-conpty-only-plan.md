@@ -253,7 +253,7 @@ payload/Node prerequisites explicit. A missing dependency is not a passing test.
 No browser or paid-model suite is needed for A's ordinary checkpoints. Native
 Windows evidence cannot be substituted by the Unix lane or synthetic capabilities.
 
-### Checkpoints
+### Planner checkpoint proposal (superseded by the verification freeze)
 
 Proposed closed list for **release A S1-S3 only**, to be frozen by TestDesign.
 Every row has its own isolated build and one exact filter. Group names carry the
@@ -290,7 +290,7 @@ CHECKPOINT lines and counts/source identity in the task report; validate receipt
 against the code SHA. Code/Review run `scripts/check-evidence-diff.ps1` over the
 full task range. Remove only manifest-owned alternate outputs after completion.
 
-### Cost
+### Planner cost estimate (superseded by the verification freeze)
 
 Provisional ordinary A checkpoint floor: 47 minutes across the named lanes, plus
 authoring and the separate final Windows Debug. No full assembly or repeated green
@@ -595,3 +595,562 @@ The code premise is substantially correct; the Linux identity and conservative
 ceiling findings refine implementation scope and do not require another
 Investigate stage. Next stage is TestDesign, with release A only as its executable
 scope and B/C retained as separately commissioned follow-ups.
+
+## Verification design
+
+TestDesign freeze, 2026-10-04, task `1b2000a7`. This section supersedes the
+verification proposal and dated dependency observations, not D-1–D-10 or the
+A/B/C fix design. Only release A is commissioned. Inspected: plan/base
+`13d7100febc3f4b595299eb982bf7fc5e44c88af`, landed CARD-1011 `8bb0cea04`,
+CARD-0959 `origin/feat/card-task-bd02f8d9` at `d45a7915d`, CARD-1020 freeze
+`d4203e109`, CARD-1023 plan `02d54f6ae`. A fresh fetch found master at
+`f7132d329` (CARD-1024 evidence cleanup), without CARD-0959. `ef329fb0` is a
+**task ID**, not a commit: its repair branch tip inspected is
+`c57e1980fe7388f122cf69a73f20908ca14293de`. No builds, tests or activation ran
+in TestDesign. Proposed new methods below are Code obligations, not passing evidence.
+
+### Inspection
+
+| Bodies read, including fixture setup | Boundaries -> coverage or exclusion |
+|---|---|
+| `PtyBackend.cs`, `ConPtyRedistributable.cs`, `PtyAgentRunner.LaunchCoreAsync`; nearest fixture `PtyBackendContractTests` | Selector/default/pair/platform/instance precedence -> V-1/R-1. |
+| `RunnerCapabilitiesTests` (seven bodies), `PtyBackendSeamTests` and its owned detached-host helper; Program backend composition, runtime/phone-home capability and custody projections | Config/environment/instance, both producers and actual host argv -> V-2/V-3. Native inbox seam excluded in A; B owns retirement. |
+| All five `PtyBackendEnvGuard.cs` bodies; `ConPtyEnvironmentIsolationGuardTests`, including IL scanner fixtures | Independent assembly hooks, mutator exclusion and nonvacuous census -> R-2. |
+| `ModernPtyDa1Tests`, `Da1StartupResponderTests`, `Da1StartupResponder`, `PtyInputEncoding`; all backend contract methods | Actual host, hashes, marker preservation, fragmented/query/reply boundaries -> R-1/R-6. |
+| Shadow-copy pair test plus `CreateFixture`/`Cleanup`; entire `UnixPtyArgvTests`, NativeFixture, Placement and Journal | Both content files, exact argv, NUL before/after containment and start-intent order -> R-3. Text-file shadow fixture cannot prove native load. |
+| Entire `PtyDeliveryCeilingsTests`, `SessionDeliveryProfileTests`, `GrokDeliveryShapeTests`, `TypedBodySpillTests` and their profile/stub/temp helpers; `PtyDeliveryProfile` | Local/remote, old/unknown/null capabilities, kind, byte/char and pointer boundaries -> R-4. |
+| Entire `FakeVsRealClipParityTests`, `NodeStdinProbe` and `PtyInputChunkingTests`; modern clipping helper/paste methods in `FakeClaudeContractTests` | Implicit typed arm becomes paste after default flip -> R-6; no real-provider qualification in A. |
+| Entire `SessionQueueReceiptPlumbingTests`, PtyWorld, ForwardingClient, InsertFault and `SessionQueueTranscriptPump`; nearest real-queue composition in `SessionMessageQueuePtyIntegrationTests.Queued_message_submits_through_the_real_runtime_runner_pty_path` | Busy/eligible, insert/attempt/body/Enter/ingestion/verdict cuts -> V-4. |
+| Landed C1011 backend method and explicit fresh-worktree method, `C1011GrokQualification` verdict/observer, WQ ledger | Two native backend arguments -> one modern result, exact native UserPrompt -> R-5. Preserve historical WQ; no real Grok. |
+| `IsolatedSessionRunner.StartProcess`, direct-client constructor; backend-pin and Node-probe caller census | Unset policy changes; E2E has no explicit inbox launch pin, only guard expectation. Explicit pins separated below. |
+| `PlanTableImporter`, `ManifestValidator`, `Program.Import`; testing/build manifest, delivery, slot and census contracts | First exact Checkpoints heading, escaped pipes, result counts and isolated builds -> sole active table below. |
+
+New-test setup missing today: eight policy methods, five capability methods, three
+launch methods, one typed-input method and one receipt-negative method. Code must implement them through the
+production seams, using the nearest inspected fixtures above. Windows x64 needs
+the shipped pair, Node, staged fakeclaude/fakegrok/runner/host apphosts; server rows
+need the established isolated PostgreSQL fixture. Linux needs Node and Porta native
+assets. Missing prerequisites fail the declared lane; skip/zero/Linux-only evidence
+cannot qualify Windows. No installed Grok, provider credentials or paid turn needed.
+
+The five guard edit paths are `tests/Antiphon.Agents.Pty.Tests/PtyBackendEnvGuard.cs`,
+`tests/Antiphon.SessionRunner.Tests/PtyBackendEnvGuard.cs`,
+`tests/Antiphon.PtyHost.Tests/PtyBackendEnvGuard.cs`,
+`tests/Antiphon.Tests/TestHelpers/PtyBackendEnvGuard.cs`, and
+`tests/Antiphon.E2E/Fixtures/PtyBackendEnvGuard.cs`.
+
+Dependency and migration order:
+
+1. CARD-1011 is landed. Integrate the target containing `8bb0cea04` through the
+   normal landing owner; do not replay its in-flight branches. S3 removes only
+   `[Arguments("inbox")]` from
+   `RunnerGrokAdapterReadyTestsPty.C1011_windows_backends_reach_ready_and_complete_prompt`:
+   keep its name and modern argument, Ready, no preprompt, single exact-body
+   UserPrompt assertions. Count **2 -> 1**. The parameter is not in
+   `FakeGrokContractTests`; that separate inbox helper is B work. Preserve
+   `C1011_real_fresh_worktree_ready_and_one_turn`, `C1011GrokQualification`, trust
+   handling and stored WQ receipts. WQ-1 was dropped, never passed. CARD-1011
+   CP-3/CP-6 inbox evidence is historical and cannot prove this default flip.
+2. Wait for reviewed **inert CARD-0959 plus ef329fb0 repair** land before S2.
+   Append nullable `PtyBackendDeprecated` after `CodexCliVersion`,
+   `CodexCliVersionCheckedAtUtc`, `CodexCliVersionError`,
+   `CodexCliLauncherFingerprint`; preserve probe feature and both projections.
+   No freshness/version/authentication admission gate belongs here. The inspected
+   branch leaves RunnerCapabilitiesTests at seven. Recount CP-2's 7+5=12,
+   any changed selected CP-6/CP-7 methods/argument rows, the overall result floor,
+   and Cost after landing. Do not replace floors with CARD-0959's whole-suite count.
+3. Serialize S3 edits to the C1011 caller and shared direct-client use with
+   CARD-1020's landed cleanup fix. Preserve its captured process identities,
+   nested disposal and physical host/child/OpenConsole exit assertions. Wait for
+   that shared-file owner before CP-7 rather than copying its implementation.
+   Its two dashboard-marker cases are
+   `Fake_dashboard_marker_reaches_ready_and_complete_first_prompt`, distinct from
+   C1011's two backend arguments. Production detach is unchanged.
+4. CARD-1023 consumes backend as a matrix dimension. Keep old wire/history strings;
+   create **no inbox matrix row, native checkpoint or PC**. Its observation-first
+   plan grants no new admission floor and does not block A's policy work.
+
+Immediate S3 fixture changes: all five guards; the C1011 method above;
+`SessionQueueReceiptPlumbingTests.PtyWorld` (modern pin and host witness);
+`FakeVsRealClipParityTests` (explicit modern, deliberately unwrapped typed arm);
+`PtyInputChunkingTests` (explicit modern; its typed-read-shape method deliberately
+uses unwrapped input); and `UnixPtyArgvTests.NativeFixture` (OS default, assert
+UnixPty/no fallback). Share the parity encoding choice in a small internal test
+helper used by both parity peers and new R-6. Merely changing the backend string
+while keeping the typed arm bracketed is incorrect. `NodeStdinProbe` retains its
+nullable override. Its callers in `PtyInputLossExperiments` and
+`PtyPasteMarkerExperiments` are explicit experiments, outside A execution; update
+current-default descriptions, preserve historical data, and require an explicit
+backend for future measurements. `IsolatedSessionRunner` needs accurate comments:
+`modernPty=false` omits config; it does not select inbox. A hand-launched runner with
+neither config nor environment now gets modern on Windows, UnixPty on Linux.
+The shipped runner appsettings already requests modern. The E2E guard row starts
+no browser or daemon.
+
+Explicit native inbox fixtures retained for B, excluded from A execution:
+`PtyBracketedPasteContractTests`, `WindowsPtyArgvNativeTests`' inbox argument,
+`PtyBackendSeamTests`' declared-inbox arm, `FakeClaudeContractTests`' inbox helpers,
+`FakeGrokContractTests.LaunchReadyFakeAsync`, `ClaudeSubmitContractTests`,
+`ClaudePasteLossCanaryTests`, `PtyAgentRunnerTests`, `PtyKillProcessTreeTests`,
+`PtyCustodyTests`, `RunnerChildClaudeTokenInheritanceTests`,
+`CodexCommandLengthSessionTests`, shared `RemoteControlPtyLane.PinnedBackend`,
+`SessionMessageQueuePtyIntegrationTests.PinnedBackend`,
+`SessionMessageQueueGrokPtyIntegrationTests.PinnedBackend`, and
+`DelegationBriefCeilingPtyTests`. Linux selectors in `RunnerPlatformLaunchTests`,
+`RunnerCustodyLedgerBackendTests`, `LinuxCgroupCustodyTests` and
+`UnixDelegateLaunchArgvTests` are platform/containment fixtures, not Windows
+qualification. Appendix A/B remains the file-classification ledger. Conservative
+profile inputs and old DTO fixtures stay explicit; do not mass-replace with modern.
+
+### Delivery inventory
+
+A creates no outbox or notification producer, but changes the transport selected
+by existing input producers. Recipient evidence is therefore mandatory.
+
+| Producer -> destination | Durable identity / persistence | Recovery / observable receipt |
+|---|---|---|
+| SessionMessageQueueService -> AgentSessionRuntime -> DirectSessionRunnerClient/runtime -> owned PtyHost -> FakeClaude | Session ID + queue row ID + attempt + baseline; row committed before input, attempt/baseline committed before write; native JSONL UUID | V-4 uses the real queue and transport, compares whole native-file and persisted destination UserPrompt after baseline exactly once. |
+| Persisted Pending/Sent row -> recreated queue -> same recipient | Same row/body/attempt and baseline, separate body/Enter handoff | Pending stays owed while busy; retry unsent, Enter-only after composer evidence, late-confirm after native receipt/ingestion/verdict cut without duplicate body. |
+| Runtime decision -> HTTP and phone-home projections -> server profile | Runner store/build identity; existing hello/refresh connection owns transport, no new durable state | V-2 production projections + old/new JSON; R-4 downgrade behavior. Projection is not hello-delivery evidence or recipient input. Phone-home transport/recovery is unchanged. |
+| Existing spill helper -> stored body + bounded pointer -> existing queue | Task/message marker, relative path, exact file bytes; pointer measured after binding | R-4 proves file/shape only, never receipt. No changed remote-spill persistence/handoff; its worker-death recovery remains the existing owner's scope. |
+
+V-4 runs `C475_QueueCommitAndTransportRecovery` with all six cuts:
+`insert-fails`, `pending-before-flush`, `attempt-before-write`, `body-before-enter`,
+`recipient-before-ingestion`, `receipt-before-verdict`; also
+`C475_AlreadyIdleWhenIdleHasRecipientReceipt`. The pending cut is the busy-recipient
+case; assert both UserPrompt lists empty before TurnEnd, then complete receipt.
+Keep final row-ID, attempt-count, baseline, multiplicity and exact-body assertions.
+The separate receipt-negative method below covers stale/partial transcript rows;
+do not contaminate these six cases' exact final receipt lists. Strengthen
+`C475_MultilineWritesKeepPasteMarkers` to use CRLF and Unicode, assert normalized
+LF body, both markers and a distinct subsequent CR write. Capture the enqueue
+outcome/error, assert observed input shape before rethrowing an unexpected error
+or asserting its delivery verdict, then require the whole recipient receipt.
+The fixture receipt wait must finish at a named `recipient-receipt` Shouldly
+assertion after its existing bounded wait, so a missing destination receipt gives
+an assertion failure rather than a fixture timeout. No wait budget is widened.
+
+Substitutes and limits: FakeClaude/FakeGrok are local recipient processes, not real
+models; they prove submission/native transcript, not current paid-provider behavior.
+The receipt pump uses production normalization with test DB ingestion; its five
+cut cases do not prove production event streaming. Queue recreation/interceptor cuts
+model persisted crash states, not power loss or daemon relaunch. Node proves bytes,
+not UserPrompt. Capability/request/queue insert/Sent/event/ack never proves delivery.
+No native queue test may stop before matching complete recipient evidence.
+
+### Proves it works now
+
+New methods are single-result methods with internal boundary loops. Quoted witness
+strings below are required assertion labels, used by the PC roster.
+
+- V-1: platform-aware policy | Pty unit | eight new `PtyBackendPolicyTests` methods:
+  `Windows_defaults_request_modern` (null/empty/space/tab with empty ambient,
+  `default-modern`); `Windows_modern_aliases_resolve_modern` (six aliases plus
+  trim/case, `modern-alias`); `Windows_unknown_selector_warns_and_chooses_modern`
+  (`unknown-modern`, preserve raw/reason); `Windows_legacy_aliases_are_deprecated_without_fallback`
+  (five aliases, no discovery, `legacy-deprecated`);
+  `Windows_missing_pairs_fall_back_and_preserve_request` (default/modern/unknown x
+  neither/DLL-only/host-only/both; exclusive override, `pair-fallback`);
+  `Unix_ignores_windows_selectors_without_probing` (all selector families, counting
+  locator, `unix-no-probe` and `unix-locator-calls=0`); `Enum_wire_values_remain_stable` (0/1/2, `enum-stable`);
+  `Instance_request_outranks_environment` (opposites and null vs explicit empty,
+  `instance-wins`). Use a deterministic platform/locator seam in production policy,
+  not a test copy. Both-present dummy files establish discovery, not usability.
+- V-2: coherent capabilities | runner composition/unit | five new
+  `C1022BackendCapabilitiesTests` methods:
+  `Daemon_environment_overrides_configuration` (null/empty/whitespace/modern/inbox
+  env x unset/opposite config through the production composition helper,
+  `daemon-precedence`); `Local_capabilities_use_runtime_decision` (`local-decision`);
+  `Phone_home_capabilities_use_runtime_decision` (`phone-decision`);
+  `Custody_uses_runtime_decision` (`custody-decision`);
+  `Capability_json_preserves_nullable_deprecation_and_cli_observations`
+  (`deprecation-wire`, `cli-fields-retained`). Use the production instance-decision
+  seam for portable Windows decisions; Linux custody keeps its existing cgroup
+  probe. Opposite ambient input must distinguish each projection from the instance.
+  Exercise true/false/null/absent, literal old four-field JSON, unknown backend and
+  distinct values for all four CARD-0959 fields in both actual production projections,
+  then serialize those projections. Extend existing round-trip test. Mark any
+  capability fixture that changes process environment with unkeyed NotInParallel
+  and restore the previous value in finally.
+  Also check production logging helper emits warning for deprecated/fallback and
+  unknown selection, but repeated capability reads do not repeat startup warnings.
+  Diagnostic log counts are not delivery authorization.
+- V-3: actual owned Windows host | runner integration | three new
+  `C1022BackendLaunchTests` methods: `Unset_owned_host_runs_modern`,
+  `Configured_owned_host_runs_modern`, `Declared_modern_overrides_inherited_inbox`.
+  First two use Program's production composition with isolated config; third uses
+  direct-runtime override. Host log, observed OpenConsole and both capability
+  projections agree: `host-modern`, `host-request`, no fallback/deprecation, correct
+  package/version. Preserve raw unset request; explicit config/instance is modern.
+  Keep unkeyed NotInParallel, assembly limiter, unique roots and awaited owned
+  teardown. No test spawns inbox.
+- V-4: queued modern input/recovery | server integration | complete
+  `SessionQueueReceiptPlumbingTests` (21 results, nine methods) | all inventory
+  receipt and recovery assertions above, plus pump and failed-startup cleanup tests.
+
+### Guards the regression
+
+- R-1: actual modern contract | four retained `PtyBackendContractTests` methods,
+  four `ModernPtyDa1Tests`, 22 `Da1StartupResponderTests` results | package hashes,
+  actual shipped host, both markers and complete body, no startup stall/leaked
+  reply, exactly one reply including split/repeated queries. Remove the old
+  `The_flag_defaults_off` method (five obsolete results); V-1 replaces it.
+  Keep incomplete-pair test name/unkeyed exclusion; extend to host-only/exclusive
+  override and deprecation. No inbox spawn in that negative test.
+- R-2: deterministic fixtures | five `PtyBackendEnvGuardTests.The_suite_ignores_an_inherited_pty_backend`
+  and both `ConPtyEnvironmentIsolationGuardTests` | environment null; Windows modern
+  with staged pair/no fallback, Linux UnixPty/no fallback; mutator census and no
+  violations. Every guard row starts with a nonempty inherited selector.
+- R-3: package closure and Unix | shadow pair method + complete `UnixPtyArgvTests`
+  (17 results: 9 argv, 4 original NUL, 1 tracked argv, 2 final NUL, 1 consumed
+  attempt) | both staged files, exact argv, no spawn/start-intent on invalid input,
+  unchanged Porta and containment. Linux guard adds one result to CP-9.
+- R-4: ceilings/spill retained | CP-6 full classes: 12+7+14+9 existing results plus
+  `PtyDeliveryCeilingsTests.Unix_backend_keeps_conservative_limits` and
+  `Unknown_runner_backend_downgrades_modern_server` -> 44 | inbox/Unix conservative
+  900/3000/1024; modern 43200/14400/86400; old/unknown report downgrade; null or
+  unreachable report retains local decision; phone-home/uncertain Herdr conservative;
+  non-Claude inline zero; exact stored bytes and bounded join-safe pointer. Extend
+  existing methods with internal 899/900/901, 1023/1024/1025, and modern threshold
+  minus/equal/plus combinations, UTF-8 expansion and long bound paths. These loops
+  do not add result counts. Keep existing spill write-failure contract.
+- R-5: landed C1011 behavior | its modern-only backend method | Ready, no prompt
+  before send, one exact native UserPrompt and modern host evidence; preserve
+  CARD-1020's disposal assertions. No real Grok canary.
+- R-6: explicit typed versus paste helper | new Pty-project
+  `C1022TypedInputTests.Typed_and_paste_modes_reach_the_modern_peer_distinctly`
+  plus six `PtyInputChunkingTests` results | use the helper shared with parity peers:
+  Node observes normalized unwrapped LF/no markers (`typed-no-markers`) versus both
+  paste markers (`paste-markers`) and complete bytes (`whole-body`). Also drive the
+  clipping fake with the same helper and clipping armed: typed loses the modeled
+  chunk; paste preserves all marked lines. No real Claude; this does not requalify
+  historical real-provider measurements. Do not loosen an inherited timing/chunk
+  assertion to make modern green; confirm at base and return a concrete finding.
+
+### Guard inventory
+
+Every independently bypassable safety guard claimed by this freeze is listed below,
+including retained guards. Diagnostic warnings and DTO observation values do not
+create authorization; their ordinary assertions remain V-1/V-2. Native custody,
+cleanup implementation and remote spill protocols unchanged by A retain their own
+cards' PC inventories; no claim of new qualification is made for them here.
+
+| Guard | Plan reference and invariant | Positive control |
+|---|---|---|
+| G-1 | D-2 Windows default modern | PC-1 |
+| G-2 | D-2 modern aliases | PC-2 |
+| G-3 | D-2 unknown selects modern with reason | PC-3 |
+| G-4 | D-2 explicit legacy transition and deprecation | PC-4 |
+| G-5 | D-2 missing DLL cannot advertise modern | PC-5 |
+| G-6 | D-2 missing host cannot advertise modern | PC-6 |
+| G-7 | D-2 custom directory is exclusive | PC-7 |
+| G-8 | D-2 failed modern request remains observable | PC-8 |
+| G-9 | D-3 Unix bypasses all Windows discovery | PC-9 |
+| G-10 | D-3 stable enum values | PC-10 |
+| G-11 | D-4 direct instance beats ambient | PC-11 |
+| G-12 | D-4 daemon env beats config | PC-12 |
+| G-13 | D-4 local capabilities use instance | PC-13 |
+| G-14 | D-4 phone-home capabilities use instance | PC-14 |
+| G-15 | D-4 custody uses instance backend | PC-15 |
+| G-16 | D-5 absent deprecated field remains unknown | PC-16 |
+| G-17 | D-5 preserve independent CLI observation fields | PC-17 |
+| G-18 | D-4 effective request travels to host | PC-18 |
+| G-19 | D-9 Pty assembly env isolation | PC-19 |
+| G-20 | D-9 runner assembly env isolation | PC-20 |
+| G-21 | D-9 host assembly env isolation | PC-21 |
+| G-22 | D-9 server assembly env isolation | PC-22 |
+| G-23 | D-9 E2E assembly env isolation | PC-23 |
+| G-24 | S3 global locator mutators are serialized | PC-24 |
+| G-25 | D-8 DLL package hash remains pinned | PC-25 |
+| G-26 | D-8 host package hash remains pinned | PC-26 |
+| G-27 | D-8 actual host matches selected pair | PC-27 |
+| G-28 | D-9 opening bracketed-paste marker | PC-28 |
+| G-29 | D-9 closing bracketed-paste marker | PC-29 |
+| G-30 | D-9 normalize input to LF | PC-30 |
+| G-31 | D-9 Enter is a distinct later write | PC-31 |
+| G-32 | D-8 answer DA1 startup promptly | PC-32 |
+| G-33 | D-8 DA1 response never leaks to child | PC-33 |
+| G-34 | D-8 DA1 answers only first query | PC-34 |
+| G-35 | D-8 no DA1 reply to lookalike | PC-35 |
+| G-36 | D-8 DA1 handles split reads | PC-36 |
+| G-37 | D-8 shadow copy retains DLL | PC-37 |
+| G-38 | D-8 shadow copy retains EXE | PC-38 |
+| G-39 | D-3 Unix exact argv survives Porta | PC-39 |
+| G-40 | D-8 original Unix NUL blocks spawn | PC-40 |
+| G-41 | D-8 post-containment Unix NUL blocks start intent | PC-41 |
+| G-42 | D-8 containment rewriting is honored | PC-42 |
+| G-43 | D-7 old runner forces conservative downgrade | PC-43 |
+| G-44 | D-7 unknown reported backend never corroborates modern | PC-44 |
+| G-45 | D-7 conservative numeric limits remain | PC-45 |
+| G-46 | D-3 Unix does not acquire modern envelope | PC-46 |
+| G-47 | D-7 phone-home stays conservative | PC-47 |
+| G-48 | D-7 uncertain Herdr stays conservative | PC-48 |
+| G-49 | D-7 unmeasured kinds always spill | PC-49 |
+| G-50 | D-7 pointer fits after durable path binding | PC-50 |
+| G-51 | D-7 spill preserves full body | PC-51 |
+| G-52 | D-9 busy queue recipient must wait | PC-52 |
+| G-53 | D-9 enqueue commit precedes delivery | PC-53 |
+| G-54 | D-9 attempt and baseline committed before input | PC-54 |
+| G-55 | D-9 interrupted unwritten attempt recovers | PC-55 |
+| G-56 | D-9 composer-held body gets Enter-only recovery | PC-56 |
+| G-57 | D-9 receipt-before-ingestion recovers without retyping | PC-57 |
+| G-58 | D-9 committed receipt survives failed verdict save | PC-58 |
+| G-59 | D-9 only complete receipt confirms | PC-59 |
+| G-60 | D-9 receipt must follow attempt baseline | PC-60 |
+| G-61 | S3 typed parity helper must send raw input intentionally | PC-61 |
+| G-62 | D-7 pointer keeps correlation and join-safe path | PC-62 |
+| G-63 | D-7 modern envelope remains bounded | PC-63 |
+| G-64 | D-7 omitted profile stays conservative | PC-64 |
+| G-65 | D-7 silent capability is not a contradictory report | PC-65 |
+| G-66 | D-3 Unix must not call ConPTY locator | PC-66 |
+| G-67 | D-8 original NUL precedes containment side effects | PC-67 |
+| G-68 | D-8 refused tracked attempt remains consumed | PC-68 |
+| G-69 | D-7 Grok inline narrowing remains zero | PC-69 |
+| G-70 | D-7 unreachable Herdr stays conservative | PC-70 |
+| G-71 | D-7 local conservative policy cannot be raised remotely | PC-71 |
+| G-72 | D-7 fitting uses UTF-8 bytes, not UTF-16 chars | PC-72 |
+| G-73 | D-7 failed write cannot claim stored spill | PC-73 |
+
+### Positive controls
+
+Mutation runs each control **after land**, at the landed source: green discovery,
+compiling defect, intended red assertion, restore, fresh build and same method green.
+Code runs ordinary V/R only; separate Review judges this inventory before land.
+No native inbox launch is a control. A startup/fixture/build error or zero tests is
+not red. Each row below denotes one exact filter `/*/*/Class/Method` formed from its
+Method cell; no class wildcard is permitted. Argument rows all execute for that
+method. Projects are explicit; Windows is required except portable policy/parser/
+capability controls and Linux Unix-argv controls. The one alternate-pair PC stages
+an isolated copy of the approved modern DLL/EXE and removes it after restoration;
+it never substitutes inbox or modifies deployed files.
+
+For the five environment controls launch a fresh test host with
+`ANTIPHON_PTY_BACKEND=inbox`; it must clear the value. Do not mutate the test
+assertion. All other controls change the production predicate/assignment identified
+below, except the explicitly test-owned environment/serialization/typed-helper
+guards. Do not combine independent controls in one production file. Retain per-PC
+red assertion/result count and restored green evidence outside SourceLanding.
+
+| PC | Break by this compiling defect | Project | Exact Method | Min | Expected red assertion |
+|---|---|---|---|---:|---|
+| PC-1 | Return InboxConhost for empty/default selector in production policy | Antiphon.Agents.Pty.Tests | `PtyBackendPolicyTests/Windows_defaults_request_modern` | 1 | default-modern |
+| PC-2 | Map conpty to the legacy policy arm | Antiphon.Agents.Pty.Tests | `PtyBackendPolicyTests/Windows_modern_aliases_resolve_modern` | 1 | modern-alias |
+| PC-3 | Map unknown nonempty selector to legacy policy arm | Antiphon.Agents.Pty.Tests | `PtyBackendPolicyTests/Windows_unknown_selector_warns_and_chooses_modern` | 1 | unknown-modern |
+| PC-4 | Return Deprecated=false for explicit legacy selection | Antiphon.Agents.Pty.Tests | `PtyBackendPolicyTests/Windows_legacy_aliases_are_deprecated_without_fallback` | 1 | legacy-deprecated |
+| PC-5 | In TryLocate bypass File.Exists(dll), retaining the host check | Antiphon.Agents.Pty.Tests | `PtyBackendContractTests/A_modern_request_falls_back_to_the_inbox_conhost_when_the_pair_is_incomplete` | 1 | host-only Backend must be InboxConhost |
+| PC-6 | In TryLocate bypass File.Exists(host), retaining the DLL check | Antiphon.Agents.Pty.Tests | `PtyBackendContractTests/A_modern_request_falls_back_to_the_inbox_conhost_when_the_pair_is_incomplete` | 1 | DLL-only FellBack must be true |
+| PC-7 | Append shipped default directory after the empty custom directory in ProbeDirectories | Antiphon.Agents.Pty.Tests | `PtyBackendContractTests/A_modern_request_falls_back_to_the_inbox_conhost_when_the_pair_is_incomplete` | 1 | empty exclusive override must fall back despite staged default pair |
+| PC-8 | Force FellBack=false for resolved inbox after modern lookup failure | Antiphon.Agents.Pty.Tests | `PtyBackendPolicyTests/Windows_missing_pairs_fall_back_and_preserve_request` | 1 | pair-fallback |
+| PC-9 | Return an InboxConhost decision in the non-Windows branch instead of UnixPty | Antiphon.Agents.Pty.Tests | `PtyBackendPolicyTests/Unix_ignores_windows_selectors_without_probing` | 1 | unix-no-probe |
+| PC-10 | Assign UnixPty=0 and InboxConhost=2 explicitly, leaving all switches compiling | Antiphon.Agents.Pty.Tests | `PtyBackendPolicyTests/Enum_wire_values_remain_stable` | 1 | enum-stable |
+| PC-11 | Reverse instance/ambient null-coalescing precedence in Resolve | Antiphon.Agents.Pty.Tests | `PtyBackendPolicyTests/Instance_request_outranks_environment` | 1 | instance-wins |
+| PC-12 | Choose nonempty configured value ahead of nonempty environment in production composition | Antiphon.SessionRunner.Tests | `C1022BackendCapabilitiesTests/Daemon_environment_overrides_configuration` | 1 | daemon-precedence |
+| PC-13 | Resolve ambient policy again inside DescribeCapabilities instead of instance decision | Antiphon.SessionRunner.Tests | `C1022BackendCapabilitiesTests/Local_capabilities_use_runtime_decision` | 1 | local-decision |
+| PC-14 | Resolve ambient policy again in PhoneHomeRuntimeAdapter.Capabilities | Antiphon.SessionRunner.Tests | `C1022BackendCapabilitiesTests/Phone_home_capabilities_use_runtime_decision` | 1 | phone-decision |
+| PC-15 | Advertise WindowsJob for the injected Windows legacy decision without the modern predicate | Antiphon.SessionRunner.Tests | `C1022BackendCapabilitiesTests/Custody_uses_runtime_decision` | 1 | custody-decision |
+| PC-16 | Change optional nullable DTO default from null to false | Antiphon.SessionRunner.Tests | `C1022BackendCapabilitiesTests/Capability_json_preserves_nullable_deprecation_and_cli_observations` | 1 | deprecation-wire: old literal JSON remains null |
+| PC-17 | Set CodexCliLauncherFingerprint to null in the local capability producer | Antiphon.SessionRunner.Tests | `C1022BackendCapabilitiesTests/Capability_json_preserves_nullable_deprecation_and_cli_observations` | 1 | cli-fields-retained |
+| PC-18 | Pass conpty instead of modern in the explicit host argument; both resolve modern so no inbox starts | Antiphon.SessionRunner.Tests | `C1022BackendLaunchTests/Declared_modern_overrides_inherited_inbox` | 1 | host-request: exact requested modern |
+| PC-19 | Remove SetEnvironmentVariable(..., null) from Pty test assembly hook | Antiphon.Agents.Pty.Tests | `PtyBackendEnvGuardTests/The_suite_ignores_an_inherited_pty_backend` | 1 | environment must be null |
+| PC-20 | Remove environment clear from SessionRunner test assembly hook | Antiphon.SessionRunner.Tests | `PtyBackendEnvGuardTests/The_suite_ignores_an_inherited_pty_backend` | 1 | environment must be null |
+| PC-21 | Remove environment clear from PtyHost test assembly hook | Antiphon.PtyHost.Tests | `PtyBackendEnvGuardTests/The_suite_ignores_an_inherited_pty_backend` | 1 | environment must be null |
+| PC-22 | Remove environment clear from server Tests/TestHelpers hook | Antiphon.Tests | `PtyBackendEnvGuardTests/The_suite_ignores_an_inherited_pty_backend` | 1 | environment must be null |
+| PC-23 | Remove environment clear from E2E/Fixtures hook | Antiphon.E2E | `PtyBackendEnvGuardTests/The_suite_ignores_an_inherited_pty_backend` | 1 | environment must be null |
+| PC-24 | Remove unkeyed NotInParallel from incomplete-pair method, retaining the class Headed key | Antiphon.Agents.Pty.Tests | `ConPtyEnvironmentIsolationGuardTests/ConPty_environment_mutators_are_unkeyed_not_in_parallel` | 1 | conpty-env-mutators-are-unkeyed-not-in-parallel |
+| PC-25 | Change one hex digit of ConPtyDllSha256 constant | Antiphon.Agents.Pty.Tests | `PtyBackendContractTests/The_shipped_binaries_are_the_ones_with_recorded_provenance` | 1 | ok must be true |
+| PC-26 | Change one hex digit of OpenConsoleSha256 constant | Antiphon.Agents.Pty.Tests | `PtyBackendContractTests/The_shipped_binaries_are_the_ones_with_recorded_provenance` | 1 | ok must be true |
+| PC-27 | At ModernConPtyConnection.Spawn load an isolated duplicate of the same approved modern pair instead of the supplied DLL path | Antiphon.Agents.Pty.Tests | `PtyBackendContractTests/Asking_for_the_modern_backend_runs_the_child_under_our_own_OpenConsole` | 1 | hosts must contain the original expected OpenConsole path; setup proves duplicate pair is valid |
+| PC-28 | Omit PasteStart in WrapIfMultiline, retaining body and PasteEnd | Antiphon.Agents.Pty.Tests | `PtyBackendContractTests/The_production_write_path_delivers_the_markers_on_the_modern_backend` | 1 | HasPasteStart must be true |
+| PC-29 | Omit PasteEnd in WrapIfMultiline, retaining PasteStart and body | Antiphon.Agents.Pty.Tests | `PtyBackendContractTests/The_production_write_path_delivers_the_markers_on_the_modern_backend` | 1 | HasPasteEnd must be true |
+| PC-30 | Return body.TrimEnd() without ReplaceLineEndings in NormalizeBody | Antiphon.Tests | `SessionQueueReceiptPlumbingTests/C475_MultilineWritesKeepPasteMarkers` | 1 | exact forwarded body has LF and no CR within markers |
+| PC-31 | Concatenate CR to the encoded body at queue submit and suppress the later Enter call | Antiphon.Tests | `SessionQueueReceiptPlumbingTests/C475_MultilineWritesKeepPasteMarkers` | 1 | Payloads contains a separate CR after the body |
+| PC-32 | Omit responder Scan from the modern connection reader | Antiphon.Agents.Pty.Tests | `ModernPtyDa1Tests/Modern_child_first_output_arrives_without_the_da1_stall` | 1 | elapsed must be less than 2.5 seconds, after child marker appears |
+| PC-33 | Remove ESC from the actual DA1 reply bytes, keeping write and responder | Antiphon.Agents.Pty.Tests | `ModernPtyDa1Tests/The_da1_reply_is_consumed_and_does_not_leak_to_the_child` | 1 | screen must not contain ?1;0c or is not recognized |
+| PC-34 | Remove if (_fired) return from OnQuery | Antiphon.Agents.Pty.Tests | `Da1StartupResponderTests/A_second_query_is_counted_but_never_answered` | 1 | replies must equal 1 |
+| PC-35 | Accept every CSI final c regardless of usable parameters/query predicate | Antiphon.Agents.Pty.Tests | `Da1StartupResponderTests/A_lookalike_never_fires` | 13 | replies must equal 0 for DA2/private/multiparameter rows |
+| PC-36 | Reset parser state to Ground at the beginning of each Scan | Antiphon.Agents.Pty.Tests | `Da1StartupResponderTests/A_query_split_at_every_byte_boundary_still_fires_once` | 2 | replies must equal 1 at interior split |
+| PC-37 | Reject conpty.dll in shadow-copy content selection | Antiphon.PtyHost.Tests | `ShadowCopyStoreTests/Shipped_conpty_binaries_survive_the_deps_json_closure_filter` | 1 | copied conpty.dll must exist |
+| PC-38 | Reject OpenConsole.exe in shadow-copy content selection | Antiphon.PtyHost.Tests | `ShadowCopyStoreTests/Shipped_conpty_binaries_survive_the_deps_json_closure_filter` | 1 | copied OpenConsole.exe must exist |
+| PC-39 | Drop empty arguments from the Unix options vector before Porta spawn | Antiphon.Agents.Pty.Tests | `UnixPtyArgvTests/Native_argv_is_verbatim` | 9 | native-argv-exact for empty and trailing sentinel |
+| PC-40 | Have UnixPtyArgvGuard.VerifyOrThrow return without validation | Antiphon.Agents.Pty.Tests | `UnixPtyArgvTests/Nul_is_refused_before_native_spawn` | 4 | Should.Throw UnixPtyArgvException before the native launch |
+| PC-41 | Remove final argv NUL validation after Place but before RecordStartIntent | Antiphon.Agents.Pty.Tests | `UnixPtyArgvTests/Containment_introduced_nul_is_refused_before_start_intent` | 2 | final-nul-before-start-intent (journal remains empty) |
+| PC-42 | Discard Place returned command vector and pass original vector to Porta | Antiphon.Agents.Pty.Tests | `UnixPtyArgvTests/Tracked_argv_is_verbatim_after_containment` | 1 | tracked-native-argv-exact includes placed-sentinel |
+| PC-43 | Treat reported InboxConhost as modern corroboration in PtyDeliveryProfile | Antiphon.Tests | `PtyDeliveryCeilingsTests/A_runner_on_the_inbox_conhost_downgrades_a_modern_server` | 1 | Backend must be InboxConhost and inline must be 900 |
+| PC-44 | Treat any nonempty reported backend as modern corroboration | Antiphon.Tests | `PtyDeliveryCeilingsTests/Unknown_runner_backend_downgrades_modern_server` | 1 | unknown runner yields conservative profile |
+| PC-45 | Return modern ceiling tuple for the explicit InboxConhost mapping | Antiphon.Tests | `PtyDeliveryCeilingsTests/The_inbox_backend_keeps_exactly_the_ceilings_that_shipped` | 1 | 900/3000/1024 and IsPastePath false |
+| PC-46 | Map UnixPty to modern tuple in DelegationSettings.CeilingsFor | Antiphon.Tests | `PtyDeliveryCeilingsTests/Unix_backend_keeps_conservative_limits` | 1 | Unix limits equal 900/3000/1024 |
+| PC-47 | Bypass RunnerId/RunnerCwd conservative branch and use local modern profile | Antiphon.Tests | `SessionDeliveryProfileTests/Phone_home_Claude_keeps_the_inbox_ceiling_for_its_own_kind` | 1 | SingleWriteMaxBytes must be 1024 |
+| PC-48 | Return Herdr ceilings when capability omits Herdr | Antiphon.Tests | `SessionDeliveryProfileTests/Herdr_snapshot_but_runner_without_herdr_downgrades_to_inbox` | 1 | Backend InboxConhost, SingleWriteMaxBytes 1024 |
+| PC-49 | Return false from RequiresJoinSafeDelivery for Codex | Antiphon.Tests | `GrokDeliveryShapeTests/An_unmeasured_kind_is_join_safe_by_default` | 3 | RequiresJoinSafeDelivery true and inline zero |
+| PC-50 | Measure pre-binding pointer only in FitBriefForTyping, omitting bound-path recheck | Antiphon.Tests | `PtyDeliveryCeilingsTests/A_runner_pointer_is_measured_after_the_queue_expands_its_spill_path` | 1 | typed UTF-8 bytes must be <= SingleWriteMaxBytes |
+| PC-51 | Write request body without its first character in TypedBodySpill.Fit | Antiphon.Tests | `TypedBodySpillTests/Over_the_ceiling_writes_the_original_and_returns_a_short_pointer` | 1 | File.ReadAllText(path) must equal body |
+| PC-52 | Force working-state check false on ordinary WhenIdle flush | Antiphon.Tests | `SessionQueueReceiptPlumbingTests/C475_QueueCommitAndTransportRecovery` | 6 | pending-before-flush: Pending and no input/receipt before TurnEnd |
+| PC-53 | Insert await _runtime.SendInputAsync(sessionId, row.Body, ct) immediately before the initial queue SaveChanges | Antiphon.Tests | `SessionQueueReceiptPlumbingTests/C475_QueueCommitAndTransportRecovery` | 6 | insert-fails: input and both receipt lists remain empty |
+| PC-54 | Move the attempt/baseline SaveChanges after the body transport call | Antiphon.Tests | `SessionQueueReceiptPlumbingTests/C475_QueueCommitAndTransportRecovery` | 6 | attempt-before-write: persisted Sent/attempt=1/baseline assertion |
+| PC-55 | Return Nothing for interrupted Sent runs at RecoverDeliveryRunLockedAsync entry | Antiphon.Tests | `SessionQueueReceiptPlumbingTests/C475_QueueCommitAndTransportRecovery` | 6 | attempt-before-write: recovered DeliveryAttempts must be 2 |
+| PC-56 | In composer-present recovery resend body before pressing Enter | Antiphon.Tests | `SessionQueueReceiptPlumbingTests/C475_QueueCommitAndTransportRecovery` | 6 | body-before-enter: post-recovery Writes must equal CR only |
+| PC-57 | In SessionQueueTranscriptPump skip normalizing complete user lines while still ingesting turn-end lines | Antiphon.Tests | `SessionQueueReceiptPlumbingTests/C475_QueueCommitAndTransportRecovery` | 6 | recipient-before-ingestion: recipient-receipt must find the complete destination UserPrompt |
+| PC-58 | In RecoverDeliveryRunLockedAsync, after late.Confirmed > 0, send ReconstructRunBody(run) again through _runtime.SendInputAsync before returning LateConfirmed | Antiphon.Tests | `SessionQueueReceiptPlumbingTests/C475_QueueCommitAndTransportRecovery` | 6 | receipt-before-verdict: no new Writes, same baseline and attempt |
+| PC-59 | Bypass !match.Complete branch in LateConfirmAttemptedMessagesAsync | Antiphon.Tests | `SessionQueueReceiptPlumbingTests/C1022_Incomplete_or_stale_receipts_do_not_confirm` | 1 | partial-current case must remain unconfirmed/parked, never LateConfirmed |
+| PC-60 | Remove sequence > stored baseline predicate from late-confirm transcript query | Antiphon.Tests | `SessionQueueReceiptPlumbingTests/C1022_Incomplete_or_stale_receipts_do_not_confirm` | 1 | stale-full case remains owed until a new matching UserPrompt |
+| PC-61 | Have shared typed-mode helper call EncodeBody instead of NormalizeBody | Antiphon.Agents.Pty.Tests | `C1022TypedInputTests/Typed_and_paste_modes_reach_the_modern_peer_distinctly` | 1 | typed-no-markers |
+| PC-62 | Remove task marker prefix from BuildBriefPointer for joining kinds | Antiphon.Tests | `GrokDeliveryShapeTests/A_join_safe_pointer_is_already_one_line_and_keeps_the_path_delimited` | 1 | pointer must start with marker |
+| PC-63 | Increase ModernPtySingleWriteMaxBytes default from 86400 to 86401 | Antiphon.Tests | `PtyDeliveryCeilingsTests/No_modern_ceiling_exceeds_the_measured_envelope` | 1 | SingleWriteMaxBytes must equal measured 86400 |
+| PC-64 | Use modern ceilings when FitBriefForTyping receives no profile | Antiphon.Tests | `PtyDeliveryCeilingsTests/A_caller_with_no_profile_gets_the_conservative_ceilings` | 1 | pointer headline must be present |
+| PC-65 | Use conservative backend instead of _local.Backend when capabilities is null | Antiphon.Tests | `PtyDeliveryCeilingsTests/A_silent_runner_leaves_this_processes_own_decision_standing` | 1 | silentModern remains ModernConPty |
+| PC-66 | Invoke the injected locator once in the Unix branch, ignore its result and still return UnixPty | Antiphon.Agents.Pty.Tests | `PtyBackendPolicyTests/Unix_ignores_windows_selectors_without_probing` | 1 | unix-locator-calls must equal 0 |
+| PC-67 | Move original-vector validation after CustodyContainment.Place | Antiphon.Agents.Pty.Tests | `UnixPtyArgvTests/Original_nul_is_refused_before_containment_and_consumes_attempt` | 1 | original-nul-before-placement |
+| PC-68 | Reset the tracked-launch attempt flag in the failed-launch finally block | Antiphon.Agents.Pty.Tests | `UnixPtyArgvTests/Original_nul_is_refused_before_containment_and_consumes_attempt` | 1 | second launch must throw InvalidOperationException before placement |
+| PC-69 | Return the unchanged ceiling record for Grok in ForAgentKind | Antiphon.Tests | `GrokDeliveryShapeTests/Narrowing_for_a_joining_composer_touches_the_inline_ceiling_and_nothing_else` | 2 | BriefInlineMaxBytes must be 0 |
+| PC-70 | Return Herdr limits on null capability in the Herdr branch | Antiphon.Tests | `SessionDeliveryProfileTests/Herdr_snapshot_with_unreachable_runner_uses_conservative_inbox` | 1 | Backend must be InboxConhost |
+| PC-71 | Bypass local-nonmodern early return in ProbeAsync and assign ModernConPty in the agreeing-runner branch | Antiphon.Tests | `PtyDeliveryCeilingsTests/An_inbox_server_is_not_raised_by_a_modern_runner` | 1 | Backend must remain InboxConhost |
+| PC-72 | Use Body.Length instead of UTF8.GetByteCount for the Fit ceiling comparison | Antiphon.Tests | `TypedBodySpillTests/Under_the_ceiling_returns_the_original_and_writes_no_file` | 1 | UTF-8 threshold-plus case must spill while equal case remains inline |
+| PC-73 | Return a spilled pointer from the IOException catch without a file or API fallback | Antiphon.Tests | `TypedBodySpillTests/Write_failure_returns_the_original` | 1 | Spilled must be false and ToType must equal original body |
+
+Inventory audit: bodies read; guards=73, mapped=73, missing=0,
+duplicate PC maps=0. Every control has a production/test-owned mutation, exact
+method, project, minimum and decisive assertion. New-method controls become
+runnable when Code implements the named tests; all are authoring obligations,
+not claimed mutation results. No safety guard in A is silently untested.
+
+### Out of scope
+
+- B startup/spawn refusal (`pty_backend_removed`, `pty_backend_invalid`,
+  `modern_conpty_unavailable`), corrupt DLL/export/blocked-host preflight, readiness
+  invalidation and C deletion need their own freezes. A deliberately retains
+  observable missing-pair fallback; neither fake files nor Linux can prove B.
+- No full provider/E2E browser sweep, real Grok, paid-model canary, live inbox
+  qualification, new compatibility row, capability admission gate, Compose change,
+  Docker deployment-script change, Linux transport rewrite or new delivery envelope.
+- No `Antiphon.Tests.Checkpoints` test is added/removed. Its independent literal
+  census stays **377** in `scripts/lib/checkpoint-usage.ps1`; this plan adds tests
+  in Pty, SessionRunner and Application, not Checkpoints. After unrelated land,
+  preserve whatever independently verified census then owns that namespace.
+- Untouched remote spill protocol, production detach/re-adoption, process cleanup
+  and native ownership predicates keep their separate card tests/PCs. A uses
+  CARD-1020's test helper; it does not redesign teardown or infer exit from an ack.
+- Historical inbox fixtures/receipts in Appendix A/B are not evidence for modern.
+  The later fixture migration must revisit their actual input model; skipping or
+  weakening tests to conceal a regression is excluded.
+
+### Checkpoints
+
+This is the **only active/importable table**, the closed ordinary scope for A.
+The old proposal heading was renamed because the real importer reads the first
+exact `### Checkpoints`; merely appending a second table would run stale filters.
+One isolated build and one exact filter per row; all rows serial. Portable CP-1/2
+use normal placement; CP-3–8 require Windows x64; CP-9 requires Linux. Group names
+are labels, not scheduling enforcement: explicitly select the lane's rows.
+`Min` is expanded TUnit execution count, not assertions, loop cases or minutes.
+All rows require zero failures and zero skips. No unlisted full-suite run.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
+|---|---|---|---|---|---|---|---:|---:|---|---|
+| CP-1 | S1-S3 | `tests/Antiphon.Agents.Pty.Tests -> bin-c1022-policy/` | portable-policy | `/*/*/(PtyBackendPolicyTests*)\|(Da1StartupResponderTests*)/*` | V-1, R-1 | 8 new policy + 22 parser results; 0 failed/skipped | 30 | 4 | true | `ANTIPHON_PTY_BACKEND=inbox` |
+| CP-2 | S1-S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c1022-capabilities/` | portable-capabilities | `/*/*/(C1022BackendCapabilitiesTests*)\|(RunnerCapabilitiesTests*)/*` | V-2 | 5 new + 7 existing; rebaseline after CARD-0959 land; 0 failed/skipped | 12 | 5 | true | `ANTIPHON_PTY_BACKEND=inbox` |
+| CP-3 | S1-S3 | `tests/Antiphon.Agents.Pty.Tests -> bin-c1022-windows-native/` | windows-modern | `/*/*/(PtyBackendContractTests*)\|(ModernPtyDa1Tests*)\|(PtyBackendEnvGuardTests*)\|(ConPtyEnvironmentIsolationGuardTests*)\|(C1022TypedInputTests*)\|(PtyInputChunkingTests*)/*` | R-1, R-2, R-6 | 4 + 4 + 1 + 2 + 1 + 6 results; 0 failed/skipped | 18 | 9 | true | `ANTIPHON_PTY_BACKEND=inbox` |
+| CP-4 | S1-S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c1022-windows-launch/` | windows-owned-hosts | `/*/*/(C1022BackendLaunchTests*)\|(PtyBackendEnvGuardTests*)/*` | V-3, R-2 | 3 new owned launches + 1 guard; 0 failed/skipped | 4 | 7 | true | `ANTIPHON_PTY_BACKEND=inbox` |
+| CP-5 | S1-S3 | `tests/Antiphon.PtyHost.Tests -> bin-c1022-windows-pair/` | windows-shadow-pair | `/*/*/(ShadowCopyStoreTests*)\|(PtyBackendEnvGuardTests*)/(Shipped_conpty_binaries_survive_the_deps_json_closure_filter*)\|(The_suite_ignores_an_inherited_pty_backend*)` | R-2, R-3 | Both named methods; 0 failed/skipped | 2 | 4 | true | `ANTIPHON_PTY_BACKEND=inbox` |
+| CP-6 | S1-S3 | `tests/Antiphon.Tests -> bin-c1022-windows-delivery/` | windows-delivery | `/*/Antiphon.Tests.Application/(PtyDeliveryCeilingsTests*)\|(SessionDeliveryProfileTests*)\|(GrokDeliveryShapeTests*)\|(TypedBodySpillTests*)/*` | R-4 | 14 + 7 + 14 + 9 results; 0 failed/skipped | 44 | 8 | true | `ANTIPHON_PTY_BACKEND=inbox;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-7 | S1-S3 | `tests/Antiphon.Tests -> bin-c1022-server-guard/` | windows-queue-and-grok | `/*/*/(PtyBackendEnvGuardTests*)\|(SessionQueueReceiptPlumbingTests*)\|(RunnerGrokAdapterReadyTestsPty*)/(The_suite_ignores_an_inherited_pty_backend*)\|(C475_*)\|(C1022_Incomplete_or_stale_receipts_do_not_confirm*)\|(C1011_windows_backends_reach_ready_and_complete_prompt*)` | V-4, R-2, R-5 | 1 guard + 20 retained queue + 1 new receipt-negative + 1 modern C1011; 0 failed/skipped | 23 | 12 | true | `ANTIPHON_PTY_BACKEND=inbox;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-8 | S1-S3 | `tests/Antiphon.E2E -> bin-c1022-e2e-guard/` | windows-e2e-guard | `/*/*/PtyBackendEnvGuardTests/*` | R-2 | 1 guard, no browser; 0 failed/skipped | 1 | 5 | true | `ANTIPHON_PTY_BACKEND=inbox` |
+| CP-9 | S1-S3 | `tests/Antiphon.Agents.Pty.Tests -> bin-c1022-linux-argv/` | linux-unix-transport | `/*/*/(UnixPtyArgvTests*)\|(PtyBackendEnvGuardTests*)/*` | R-2, R-3 | 17 Unix argument-expanded + 1 guard; 0 failed/skipped | 18 | 5 | true | `ANTIPHON_PTY_BACKEND=modern` |
+
+The added receipt-negative method lives in `SessionQueueReceiptPlumbingTests`:
+`C1022_Incomplete_or_stale_receipts_do_not_confirm`, one result with two independent
+worlds. Hold transport before first write, retain the committed attempt/baseline,
+then use the existing test DB seam to insert (a) full body at/below baseline and
+(b) identity-matching truncated body above it. Recreate queue and flush. Stale
+receipt leaves the row owed until new complete input; current truncated receipt
+parks it under existing truncation policy and never marks LateConfirmed. Assert
+no complete native receipt was fabricated. Use separate worlds so negative rows
+do not contaminate the six recovery cases' exact `[text]` final lists. Release all
+blocked tasks and reap only fixture-owned processes. This is negative evidence,
+not a claim that truncated delivery is successful. New total is **152 results**:
+CP-1/2/9 = 60; Windows CP-3–8 = 92.
+
+Importer contract: required nine columns remain in order; only supported optional
+Serial/Environment columns follow. Escaped `\|` becomes literal filter OR. All
+builds have different `bin-.../` outputs and the same After group; no reuse or
+unrecognized Lane/Configuration column. The importer does not validate test
+existence or actual native execution counts: Code discovery/receipts do that.
+Read-only import uses an already built checkpoint DLL, never `dotnet run` here.
+Its source importer was compared to this checkout before use. Import output is
+ignored `.antiphon/c1022-freeze-import.yaml`; no generated file is committed.
+
+Read-only importer result on 2026-10-04: exit 0, `imported 9 rows`; no warnings.
+The DLL used was `/work/worktrees/task-1d3e0d92/tools/Antiphon.Checkpoints/bin-c1020-importer/Antiphon.Checkpoints.dll`;
+`git diff --no-index` of its source `Manifest/PlanTableImporter.cs` against this
+checkout returned no differences. This is manifest syntax evidence only.
+
+Code/Review: commit all S1–S3 edits before the grouped runs. Use the checkpoint
+runner tool with this plan and `--rows CP-1,CP-2,CP-9` on Linux, and
+`--rows CP-3,CP-4,CP-5,CP-6,CP-7,CP-8` on Windows, plus
+`--expected-source-sha` set to the exact committed code SHA. Bootstrap the tool
+once through `scripts/build-slot.ps1` to an isolated `bin-c1022-tool/` only if
+needed; report that infrastructure build separately. Checkpoint rows own their
+slots; no double wrapper and no NoSlot. Await every run, continuing wait after
+exit 75. Capture unedited CHECKPOINT lines, source/build provenance, counts and
+native evidence. Run `scripts/check-evidence-diff.ps1` over the full task range.
+Validate receipts against their actual SHA. Do not edit source during a run.
+Remove only owned alternate outputs after confirmed test-process exit.
+
+Separate final-SHA Windows Debug is mandatory: run **CP-3–CP-8, exactly as above**
+on the final frozen code SHA, minimum 92 total with every row meeting its own
+floor and no skips. This is distinct from ordinary Code evidence, even if no
+source changed. Default Debug build configuration applies; do not reuse a Release
+output. Record OS/process architecture, source and loaded runner/host build SHA,
+host session ID/PID/start time, actual OpenConsole path, both file hashes, and
+host log lines containing `pty backend: ModernConPty` and
+`Microsoft.Windows.Console.ConPTY 1.24.260710001`. Explicit config/override rows
+must report `PtyBackend="ModernConPty"`, `PtyBackendRequested="modern"`,
+`PtyBackendFellBack=false`, `PtyBackendDeprecated=false` in capabilities and matching
+host request. The unset row retains its empty raw Requested; do not fabricate a
+literal modern request to satisfy a checklist. The brief's “PtyBackend modern”
+means the existing wire value ModernConPty, not a new wire spelling. Include CP-7
+complete native/destination UserPrompt and CARD-1020 process-exit evidence. Health,
+capability or source checkout alone cannot establish the actual host. If landing
+changes SHA, refresh affected qualification at landed SHA before activation.
+
+Release-A activation clarification: the operator-requested deployment is the
+**desktop Windows runner first**, using `restart-session-runner.ps1` from the
+canonical checkout after lock checks and old/unknown host inventory. Never kill
+live sessions to satisfy the migration. Confirm loaded runner SHA and capabilities,
+then a freshly owned modern host's log/package and complete prompt receipt, before
+server activation and `/api/version` SHA validation. The server2 image is Linux:
+its Porta transport is unaffected by the Windows default flip, and no ConPTY
+rollout/restart or inbox canary is required there for A. D-3's UnixPty observation
+will appear with its next ordinary shared-code runner upgrade; use the documented
+rolling procedure if that upgrade is separately commissioned. This narrows the
+old generic activation step 4 for this Windows release, without deleting its
+follow-up rollout guidance. Keep conservative phone-home limits throughout.
+
+### Cost
+
+All times below are **estimates**, not measurements. Ordinary Code V/R floor is
+**59 minutes**, the CP column sum: policy 4, capabilities 5, Windows modern 9,
+owned-hosts 7, shadow-pair 4, delivery 8, queue/Grok 12, E2E guard 5, Unix argv 5.
+Each includes its isolated build; do not add nine builds again. Count floor is
+152 executions, unrelated to minutes. Setup/tool bootstrap/provenance import
+allowance is 4 minutes. Authoring and slot queue time are additional, not hidden
+inside measured claims.
+
+Mutation floor for **PC-1–PC-73 is 578 minutes**. Exact filters/minimums are the PC
+table: each cell expands to `/*/*/Class/Method`. Per cycle budget includes initial
+method green, compiling edit, isolated red build/run, restoration, fresh isolated
+green build/run and evidence: 31 Pty controls x 6 = 186 minutes; 8 SessionRunner
+controls x 8 = 64; 3 PtyHost controls x 6 = 18; 30 server controls x 10 = 300;
+1 E2E guard x 10 = 10. Method-only argument expansions are included; no whole-class
+mutation run is permitted. Windows and Linux controls use their declared OS lane.
+Mutation does not repair source inside a SourceLanding snapshot.
+
+Ordinary + mutation + setup floor = **641 minutes** (4 + 59 + 578). Separate
+final-SHA Windows Debug adds **45 minutes** (9 + 7 + 4 + 8 + 12 + 5), giving a
+**686-minute** verification/qualification budget before authoring, slot wait,
+inherited-red confirmation or a changed-SHA refresh. The prior proposal was 47
+ordinary minutes; the added typed-helper, real-queue recovery, parser and full Unix
+proof raise the floor by 12 minutes. Savings are zero against that smaller scope:
+claiming a faster pass would omit required recipient/recovery evidence. Exact
+method PCs avoid repeated full-suite work, but no unmeasured full-suite savings
+are claimed. Windows Debug is intentionally counted separately, not treated as
+free reuse of Code's receipts.
