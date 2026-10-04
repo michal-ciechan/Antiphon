@@ -44,6 +44,75 @@ public sealed class AgentPinnedInstructionEndpointTests
     }
 
     [Test]
+    public async Task V03_PrincipalMatrix()
+    {
+        var owner = await CreateAgentAsync();
+        var foreignOwner = await CreateAgentAsync();
+        using var op = _factory.CreateClient();
+        var created = await ReadAsync(await op.PostAsJsonAsync($"/api/agents/{owner}/pinned-instructions",
+            new { requestId = Guid.NewGuid(), expectedRevision = 0, text = "PRINCIPAL_PRIVATE_CANARY" }));
+        var operatorPin = created.GetProperty("pins")[0].GetProperty("id").GetGuid();
+        var (ownToken, ownSession) = await SeedLiveSessionAsync(owner);
+        var (wrongToken, _) = await SeedLiveSessionAsync(foreignOwner);
+        var stoppedOwner = await CreateAgentAsync();
+        var (stoppedToken, _) = await SeedLiveSessionAsync(stoppedOwner, SessionStatus.Stopped);
+        var expiredOwner = await CreateAgentAsync();
+        var (expiredToken, expiredSession) = await SeedLiveSessionAsync(expiredOwner);
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            (await db.AgentSessions.SingleAsync(s => s.Id == expiredSession)).EndedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
+        var taskToken = await SeedTaskTokenAsync(owner, orchestrator: true);
+        var capabilityToken = await SeedCapabilityTokenAsync();
+        foreach (var token in new[] { wrongToken, stoppedToken, expiredToken, taskToken, capabilityToken, "invalid", "" })
+        {
+            using var client = _factory.CreateClient();
+            client.DefaultRequestHeaders.TryAddWithoutValidation(AgentTaskEndpoints.TokenHeader, token);
+            foreach (var action in new[] { "get", "capture", "revoke", "reconcile" })
+            {
+                var url = $"/api/agents/{owner}/pinned-instructions";
+                using var response = action switch
+                {
+                    "get" => await client.GetAsync(url),
+                    "capture" => await client.PostAsJsonAsync(url, new { requestId = Guid.NewGuid(), expectedRevision = 1, text = "denied" }),
+                    "revoke" => await client.PostAsJsonAsync(url + $"/{operatorPin}/revoke", new { requestId = Guid.NewGuid(), expectedRevision = 1 }),
+                    _ => await client.PostAsJsonAsync(url + "/reconcile", new { expectedRevision = 1 })
+                };
+                response.StatusCode.ShouldBe(HttpStatusCode.Forbidden, action);
+                (await response.Content.ReadAsStringAsync()).ShouldNotContain("PRINCIPAL_PRIVATE_CANARY");
+            }
+        }
+        using var own = _factory.CreateClient();
+        own.DefaultRequestHeaders.Add(AgentTaskEndpoints.TokenHeader, ownToken);
+        (await own.GetAsync($"/api/agents/{owner}/pinned-instructions")).StatusCode.ShouldBe(HttpStatusCode.OK);
+        var forgedActor = Guid.NewGuid();
+        var capture = await own.PostAsJsonAsync($"/api/agents/{owner}/pinned-instructions", new
+        {
+            requestId = Guid.NewGuid(), expectedRevision = 1, text = "own pin", createdBySessionId = forgedActor,
+            createdByUserId = forgedActor, actor = forgedActor
+        });
+        capture.StatusCode.ShouldBe(HttpStatusCode.Created);
+        Guid ownPin;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var stored = await db.AgentPinnedInstructions.SingleAsync(p => p.AgentId == owner && p.Text == "own pin");
+            stored.CreatedBySessionId.ShouldBe(ownSession);
+            stored.CreatedByUserId.ShouldBeNull();
+            stored.Source.ShouldBe(PinInstructionSource.Agent);
+            ownPin = stored.Id;
+        }
+        (await own.PostAsJsonAsync($"/api/agents/{owner}/pinned-instructions/{ownPin}/revoke",
+            new { requestId = Guid.NewGuid(), expectedRevision = 2 })).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await op.PostAsJsonAsync($"/api/agents/{owner}/pinned-instructions",
+            new { requestId = Guid.NewGuid(), expectedRevision = 3, text = "" })).StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
+        _factory.SessionRunner.LaunchAttempts.ShouldBeEmpty();
+        // Full class retains source/import-mode forgery, operator-pin refusal, foreign 404 and stale 409.
+    }
+
+    [Test]
     public async Task V03_headerless_operator_capture_get_and_revoke_succeed()
     {
         var agent = await CreateAgentAsync();

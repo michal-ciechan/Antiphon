@@ -16,6 +16,89 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentPinnedInstructionServiceTests
 {
     [Test]
+    public async Task V01_RestartMigration()
+    {
+        await using var world = await World.CreateAsync();
+        (await world.Db.AgentPinnedInstructionStates.CountAsync()).ShouldBe(0);
+        var agent = await world.SeedAgentAsync();
+        var request = new CapturePinnedInstructionRequest(Guid.NewGuid(), 0, "survives lost wakeup", "kb", "restart");
+        var service = new AgentPinnedInstructionService(world.Db, world.Events, TimeProvider.System, new ThrowingReconciler());
+        await Should.ThrowAsync<InvalidOperationException>(() => service.CaptureAsync(agent.Id, request, world.Operator, CancellationToken.None));
+        for (var replay = 0; replay < 2; replay++)
+        {
+            await using var fresh = world.FreshDb();
+            var observer = new TransactionCheckingReconciler(() => world.FreshDb());
+            var resumed = new AgentPinnedInstructionService(fresh, world.Events, TimeProvider.System, observer);
+            var result = await resumed.CaptureAsync(agent.Id, request, world.Operator, CancellationToken.None);
+            result.Set.Revision.ShouldBe(1);
+            result.Set.Pins.Single().Text.ShouldBe("survives lost wakeup");
+            result.Set.Reconciliation!.Status.ShouldBe(PinProjectionStatus.Pending);
+            observer.Calls.ShouldBe(0);
+            var conflict = await Should.ThrowAsync<ConflictException>(() => resumed.CaptureAsync(
+                agent.Id, request with { Text = "changed fingerprint" }, world.Operator, CancellationToken.None));
+            conflict.Code.ShouldBe(AgentPinnedInstructionService.RequestConflict);
+        }
+        await using var next = world.FreshDb();
+        var checkedReconciler = new TransactionCheckingReconciler(() => world.FreshDb());
+        await new AgentPinnedInstructionService(next, world.Events, TimeProvider.System, checkedReconciler)
+            .CaptureAsync(agent.Id, new(Guid.NewGuid(), 1, "next"), world.Operator, CancellationToken.None);
+        checkedReconciler.Calls.ShouldBe(1);
+        (await next.AgentPinOperations.CountAsync(p => p.AgentId == agent.Id)).ShouldBe(2);
+    }
+
+    [Test]
+    public async Task V02_AllValidationBoundaries()
+    {
+        await using var world = await World.CreateAsync();
+        var agent = await world.SeedAgentAsync();
+        var invalid = new List<CapturePinnedInstructionRequest>();
+        foreach (var text in new string?[] { null, "", " \t\r\n ", new('a', 501), "a\0b", "a\x1b" + "b", "a\u0001b", new string('a', 499) + "🙂" })
+            invalid.Add(new(Guid.NewGuid(), 0, text!));
+        invalid.Add(new(Guid.NewGuid(), 0, "valid", new string('n', 65), "k"));
+        invalid.Add(new(Guid.NewGuid(), 0, "valid", "n", new string('k', 201)));
+        invalid.Add(new(Guid.NewGuid(), 0, "valid", SourceRef: new string('r', 201)));
+        invalid.Add(new(Guid.NewGuid(), 0, "valid", SourceNamespace: "namespace-only"));
+        invalid.Add(new(Guid.NewGuid(), 0, "valid", SourceKey: "key-only"));
+        foreach (var control in new[] { '\0', '\x1b', '\n' })
+        {
+            invalid.Add(new(Guid.NewGuid(), 0, "valid", "a" + control + "b", "k"));
+            invalid.Add(new(Guid.NewGuid(), 0, "valid", "n", "a" + control + "b"));
+            invalid.Add(new(Guid.NewGuid(), 0, "valid", SourceRef: "a" + control + "b"));
+        }
+        foreach (var request in invalid)
+        {
+            await Should.ThrowAsync<ValidationException>(() => world.Service.CaptureAsync(agent.Id, request, world.Operator, CancellationToken.None));
+            (await world.Db.AgentPinnedInstructions.CountAsync()).ShouldBe(0);
+            (await world.Db.AgentPinnedInstructionStates.CountAsync()).ShouldBe(0);
+            world.Events.PublishedEvents.ShouldBeEmpty();
+            world.Reconciler.CallCount.ShouldBe(0);
+        }
+        var valid = new[] { "x", new string('a', 500), new string('a', 498) + "🙂", "a\r\nb" };
+        for (var revision = 0; revision < valid.Length; revision++)
+        {
+            var result = await world.Service.CaptureAsync(agent.Id,
+                new(Guid.NewGuid(), revision, valid[revision], new string('n', 64),
+                    revision.ToString() + new string('k', 199), new string('r', 200)), world.Operator, CancellationToken.None);
+            result.Set.Revision.ShouldBe(revision + 1);
+            result.Set.Pins.Last().Text.ShouldBe(valid[revision].Replace("\r\n", "\n"));
+        }
+        (await world.Db.AgentPinnedInstructions.CountAsync()).ShouldBe(4);
+        // Races, 19/20/21, replace/re-pin and two-owner source identity remain in the full inherited class.
+    }
+
+    private sealed class TransactionCheckingReconciler(Func<AppDbContext> freshDb) : IAgentPinnedInstructionReconciler
+    {
+        public int Calls;
+        public async Task ReconcileAfterCommitAsync(Guid agentId, int revision, CancellationToken ct)
+        {
+            // Another connection sees the revision only after the mutation committed.
+            await using var verify = freshDb();
+            (await verify.AgentPinnedInstructionStates.SingleAsync(s => s.AgentId == agentId, ct))
+                .Revision.ShouldBe(revision);
+            Calls++;
+        }
+    }
+    [Test]
     public async Task V01_empty_migrated_store_has_no_pin_rows_or_io()
     {
         await using var world = await World.CreateAsync();
