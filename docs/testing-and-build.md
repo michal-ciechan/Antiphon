@@ -166,6 +166,54 @@ assertions. The absent, missing-shell and failing-shell driver cases remain
 optional unless explicitly required. The C1008 Unit consumer requires jq in its
 present invocation; a missing prerequisite is a failure of that proof.
 
+#### jq qualification and bounded consumer proof (CARD-1040)
+
+Qualify these three locations independently:
+
+| Location | Required evidence / owner |
+|---|---|
+| Test child shell | Resolve bash and jq in the non-login environment inherited by the actual child. Record OS/architecture, uid, executable paths and resolved symlinks, jq version/SHA-256/owner/mode, and any child-only prerequisite adjustment. A login-shell probe with a different PATH does not qualify the child. |
+| Executing runner image | Reuse the [CARD-0927 image pin](../docker/session-runner-grok/Dockerfile) and [image contract](docker-stack.md). The outer container's owning host supplies container ID, creation/start times, immutable image ID/digest and selected source provenance, joined to build/activation receipts and runner `buildVersion`. Nested Docker and runner health cannot establish the outer image identity. |
+| Outer deployment host | [CARD-1025](/api/cards/66b75498-78a5-4e97-a699-0ba4fe8db651) owns jq on the host PATH used by real recycling and its separate receipt. A runner-image binary does not qualify the host; coordinate its prerequisite before rollout phases that recycle. |
+
+For the native Linux CARD-1040 proof, the actual child must resolve the qualified
+`/usr/local/bin/jq` (or an explicit alias to that same verified file): `jq-1.7.1`,
+SHA-256 `5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5`,
+root:root mode 0755, executable as uid 1654. A matching user-home copy alone is
+provisional diagnostic evidence. Record missing image identity or activation
+receipts as pending obligations; do not install into a standing container or
+infer activation from a checkout SHA.
+
+Reuse only the existing [jq-version probe](../docker/session-runner-grok/verify-codex-image.sh)
+in a throwaway container of the recorded immutable image: reviewed script mounted
+readonly, uid `1654:1654`, `--network none`, no ports/socket and private writable
+`/c660-home` tmpfs owned by 1654. Require exit 0 and exactly
+`C660_ROW jq-version ok jq-1.7.1 as uid 1654`. This supplements the active-container
+checks; it does not prove activation. The full image wrapper also runs unrelated
+provider probes and is outside this bounded qualification.
+
+The [CARD-1040 Plan/TestDesign](superpowers/plans/2026-10-04-card-1040-jq-prerequisites-and-unit-timing-plan.md#checkpoints)
+freezes CP-1/CP-2/CP-3: exactly twelve Remote methods, two Rolling methods and the
+one legacy roster method, respectively. Its `After=S1` rows execute **during S2,
+after image qualification**; S1 documentation may record the outstanding gate.
+Use the checkpoint tool, serial isolated outputs, exact committed expected SHA
+and exact frozen filters. Inspect fresh TRX for equality with all fifteen literal
+names, exactly 15 passed and zero failed/skipped, plus four driver summaries of
+31 assertions each. Present must execute `-RequireJq`, T-20 and 24/66/227 without
+`C973_JQ_SKIPPED`; the other three modes retain their optional branches and
+23/62/218. Required jq absence remains visible as failure, including production
+`RecycleToolsMissing`; optional C912/C973 guards retain their existing contract.
+Do not substitute a whole Unit/class/namespace run or change assertions,
+deadlines, retries or process limits. PC-1 remains the isolated method-scoped
+jq-absence control for post-land SourceLanding Mutation.
+
+Account separately for slot wait, isolated build, host startup, wall interval
+between method boundaries and teardown. Preserve source receipts, unedited
+CHECKPOINT lines and per-method outcomes; do not sum parallel durations to infer
+wall time. The plan's retained red run has zero timeouts/aborts and already
+separates these phases. Missing phase evidence is unattributed and does not
+authorize another timed probe or a longer deadline.
+
 ### Offline Pty provider oracles (CARD-1007)
 
 The Codex `debug prompt-input` and Grok `inspect --json` methods in
