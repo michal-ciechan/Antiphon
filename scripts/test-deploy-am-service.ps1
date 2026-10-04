@@ -124,7 +124,7 @@ function Initialize-C496Fake {
             $dockerfile = if ($state.Variant -eq 'wrong-dockerfile') { 'different/Dockerfile' } else { 'Antiphon.Messaging.Service/Dockerfile' }
             return (@{context=$context;dockerfile=$dockerfile;secret='never-log-this'} | ConvertTo-Json -Compress)
         }
-        if ($command -match 'curl -fsS') { return (@('[{"channel":"telegram"},{"channel":"slack"}]') + $state.Migrations) }
+        if ($command.Contains('curl --connect-timeout 2 --max-time 3 -fsS http://localhost:18090/api/channels')) { return (@('[{"channel":"telegram"},{"channel":"slack"}]') + $state.Migrations) }
         if ($command -match '^docker inspect') {
             if ($command -match '&&') { return @('aaaaaaaaaaaa sha256:aaaaaaaaaaaa running','{"State":"running","secret":"never-log-this"}') }
             return 'bbbbbbbbbbbb sha256:bbbbbbbbbbbb running'
