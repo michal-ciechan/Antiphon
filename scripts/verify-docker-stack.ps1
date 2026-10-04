@@ -12,6 +12,7 @@ $c737RefreshClaudeToken = [bool]$RefreshClaudeToken
 if (-not (Test-Path -LiteralPath $Manifest)) { Write-Error 'Manifest is required'; exit 2 }
 $rawManifest = Get-Content -Raw -LiteralPath $Manifest
 . (Join-Path $PSScriptRoot 'c590-real.ps1')
+# Raw timestamp validation must precede PowerShell's automatic DateTime conversion.
 Assert-C994RawManifest -Json $rawManifest
 $m = $rawManifest | ConvertFrom-Json
 if ($Case -ceq 'retire-temp-containers' -or $m.PSObject.Properties.Name -ccontains 'tempContainerCleanup') {
