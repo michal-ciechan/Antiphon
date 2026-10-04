@@ -613,14 +613,14 @@ public sealed class SessionQueueReceiptPlumbingTests
                 }
                 if (checkpoint is not null) await checkpoint("seeded", world);
                 await WaitUntilAsync(async () => (await inner.GetSnapshotAsync(sessionId, CancellationToken.None)).RawOutput.Contains("Fake Claude ready"));
-                var hostLog = await File.ReadAllTextAsync(Path.Combine(logDirectory, "pty-hosts", "logs", $"{sessionId:N}.log"));
+                using var hostLogStream = new FileStream(Path.Combine(logDirectory, "pty-hosts", "logs", $"{sessionId:N}.log"),
+                    FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var hostLogReader = new StreamReader(hostLogStream);
+                var hostLog = await hostLogReader.ReadToEndAsync();
                 hostLog.ShouldContain("pty backend: ModernConPty (requested 'modern')", customMessage: "host-modern");
                 hostLog.ShouldContain("Microsoft.Windows.Console.ConPTY 1.24.260710001");
-                var capabilities = (await inner.GetCapabilitiesAsync(CancellationToken.None)).ShouldNotBeNull();
-                capabilities.PtyBackend.ShouldBe("ModernConPty");
-                capabilities.PtyBackendRequested.ShouldBe("modern");
-                capabilities.PtyBackendFellBack.ShouldBeFalse();
-                capabilities.PtyBackendDeprecated.ShouldBe(false);
+                // This shared client's capabilities are intentionally synthetic. V-3 separately
+                // compares the real runtime's HTTP/phone-home projections with its owned host.
                 if (checkpoint is not null) await checkpoint("ready", world);
                 world.StartPump();
                 if (checkpoint is not null) await checkpoint("pumping", world);
