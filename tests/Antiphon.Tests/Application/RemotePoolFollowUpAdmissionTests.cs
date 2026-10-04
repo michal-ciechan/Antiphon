@@ -165,11 +165,15 @@ public sealed class RemotePoolFollowUpAdmissionTests
                 var sessionId = Guid.NewGuid();
                 var agentId = Guid.NewGuid();
                 var name = "c1037-pool-" + agentId.ToString("N")[..8];
+                var sessionRunnerId = RunnerRequestIntent.CanonicalRunnerId(
+                    string.IsNullOrWhiteSpace(agentRunner) ? priorRunner : agentRunner);
                 db.AgentSessions.Add(new AgentSession
                 {
                     Id = sessionId, DefinitionName = kind.ToString(), AgentKind = kind,
                     Status = SessionStatus.Running, Cwd = directory, Cols = 120, Rows = 30,
-                    RunnerId = agentRunner, RunnerStoreId = Guid.NewGuid(), RunnerCwd = directory,
+                    RunnerId = sessionRunnerId,
+                    RunnerStoreId = sessionRunnerId is null ? null : Guid.NewGuid(),
+                    RunnerCwd = sessionRunnerId is null ? null : directory,
                     CreatedAt = now.AddMinutes(-10), StartedAt = now.AddMinutes(-10), LastSeenAt = now,
                 });
                 db.Agents.Add(new Agent
