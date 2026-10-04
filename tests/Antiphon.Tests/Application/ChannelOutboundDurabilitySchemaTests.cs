@@ -220,7 +220,7 @@ public sealed class ChannelOutboundDurabilitySchemaTests
         var error = await Should.ThrowAsync<PostgresException>(() => db.Database.ExecuteSqlInterpolatedAsync(
             $"DELETE FROM \"ChannelOutboundDeliveries\" WHERE \"Id\" = {root.Id}"));
         error.SqlState.ShouldBe(PostgresErrorCodes.ForeignKeyViolation);
-        error.ConstraintName.ShouldBe("FK_ChannelOutboundDeliveries_ChannelOutboundDeliveries_RootDeliv~");
+        error.ConstraintName.ShouldBe("FK_ChannelOutboundDeliveries_ChannelOutboundDeliveries_RootDel~");
         (await db.ChannelOutboundDeliveries.AsNoTracking().AnyAsync(d => d.Id == root.Id)).ShouldBeTrue();
         (await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == tail.Id)).RootDeliveryId.ShouldBe(root.Id);
         await db.ChannelOutboundDeliveries.Where(d => d.Id == tail.Id).ExecuteDeleteAsync();
