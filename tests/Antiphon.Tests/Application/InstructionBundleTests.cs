@@ -675,7 +675,10 @@ public class InstructionBundleTests
         foreach (var kind in Enum.GetValues<AgentTaskKind>())
         {
             var keys = InstructionBundles.ForDelegate(kind, role, [InstructionBundles.BoardApi, "style-explanatory"]);
-            var composed = InstructionBundleComposer.Compose(keys, systemPromptAppend: ChannelPreamble.TelegramPresetTemplate);
+            // ChannelPreamble uses AppendLine: Windows adds CRLF even on an LF checkout.
+            // Exercise that larger append on every host so Linux cannot hide argv overflow.
+            var composed = InstructionBundleComposer.Compose(keys,
+                systemPromptAppend: ChannelPreamble.TelegramPresetTemplate.ReplaceLineEndings("\r\n"));
             composed.Text.Length.ShouldBeLessThan(budget, $"{kind}/{role}");
             Should.NotThrow(() => InstructionBundleComposer.EnsureWithinCommandLineBudget(composed,
                 ["--name", "task-1a2b3c4d", "--model", "opus", "--session-id", Guid.NewGuid().ToString("D")],
