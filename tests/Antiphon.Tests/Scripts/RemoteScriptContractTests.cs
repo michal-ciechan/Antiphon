@@ -72,9 +72,10 @@ public sealed class RemoteScriptContractTests
     {
         RequireLinuxPwsh();
         RequireLinuxJq();
-        var output = LinuxShell("bash \"$repo/scripts/fixtures/c913-seed-contract.sh\" " + mode + " \"$repo\"\n", "repo");
+        var output = LinuxShell("bash \"$repo/scripts/fixtures/c913-seed-contract.sh\" " + mode + " \"$repo\"\nprintf 'C913_EXIT=%s\\n' \"$?\"\n", "repo");
         output.ShouldContain("PASS " + witness, customMessage: witness);
         output.ShouldContain("PASS " + mode + "-complete");
+        output.ShouldContain("C913_EXIT=0", customMessage: output);
         output.ShouldNotContain("FAIL ");
     }
 

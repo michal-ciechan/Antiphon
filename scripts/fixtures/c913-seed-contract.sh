@@ -144,6 +144,7 @@ docker() {
         if [ "$entrypoint" = sha256sum ]; then code="sha256sum ${!#}"; fi
         if [ -z "$code" ]; then code=$(cat); fi
         if [[ "$code" == *'c849_manifest_compare /import '* ]]; then
+          rm -rf -- "$root/import-view"
           mkdir -p "$root/import-view"
           cp -a "$root/volumes/$C849_PACKAGES/_data" "$root/import-view/packages"
           cp -a "$root/volumes/$C849_NPM/_data" "$root/import-view/npm"
