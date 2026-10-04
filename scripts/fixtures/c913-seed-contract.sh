@@ -47,6 +47,10 @@ write_result() { printf 'RESULT %s %s\n' "$1" "$2"; exit "$3"; }
 c849_lock() { :; }
 c849_prepare() { :; } # Mount/initialization has its separate A1/A2 tests.
 c849_smoke() {
+    if [ "$2" = fixture-masked ]; then
+        printf 'ImagePackMissing:%s\n' "$(cat "$C913_ROOT/masked-pack")" > "$CASE_DIR/smoke.txt"
+        write_result false CacheSmokeFailed 2
+    fi
     barrier before-smoke
     printf 'smoke\n' >> "$root/trace"
     [ "$FAULT" != smoke ] || write_result false CacheSmokeFailed 2
@@ -75,7 +79,11 @@ sudo() {
     esac
 }
 chown() { :; }
-export -f chown
+stat() {
+    if [ "$1" = -c ] && [ "$2" = '%u:%g:%a' ]; then printf '1654:1654:%s\n' "$(command stat -c %a "${@: -1}")"
+    else command stat "$@"; fi
+}
+export -f chown stat
 compose_host() { printf 'main\n'; }
 sleep() { :; } # injected reconnect state is constant; do not wait on a synthetic status
 findmnt() { printf '/\n'; [ "$FAULT" != nested-mount ] || printf '%s/child\n' "$root/volumes/$C849_SCRATCH/_data"; }
@@ -89,8 +97,9 @@ docker() {
       image:inspect) [ "$FAULT" != image-missing ] || return 1; printf '%s\n' "$image_id" ;;
       info:*) printf '%s\n' "$root" ;;
       volume:ls) printf '%s\n' "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM" ;;
+      volume:create) name="${@: -1}"; mkdir -p "$root/volumes/$name/_data"; echo "$name" ;;
       volume:inspect)
-        name="${@: -1}"; role=nuget-packages
+        name="${@: -1}"; [ -d "$root/volumes/$name/_data" ] || return 1; role=nuget-packages
         [ "$name" != "$C849_SCRATCH" ] || role=nuget-scratch
         [ "$name" != "$C849_NPM" ] || role=npm-content
         if [ "${3:-}" = -f ]; then
@@ -159,7 +168,12 @@ docker() {
             -c) i=$((i+1)); code="${!i}" ;;
           esac
         done
-        if [ "$entrypoint" = sleep ]; then echo helper; return; fi
+        if [ "$entrypoint" = sleep ]; then
+          for arg in "${mappings[@]}"; do
+            if [[ "$arg" == /usr/share/dotnet/packs/* ]]; then name="${arg#/usr/share/dotnet/packs/}"; printf '%s\n' "${name%%/*}" > "$root/masked-pack"; fi
+          done
+          echo helper; return
+        fi
         if [ "$entrypoint" = npm ]; then [ "$FAULT" != npm-verify ] || return 1; barrier after-npm-verify; return; fi
         if [ "$entrypoint" = pwsh ]; then
           "$pwsh_path" -NoProfile -File "$repo/scripts/c849-import-saved-donor.ps1" -Source "$C590_SAVED_DONOR" -Stage "$stage" || return $?; barrier after-saved-copy; return
@@ -180,10 +194,6 @@ docker() {
         if [[ "$code" == *'cp -a '* ]]; then
           [ "$FAULT" != import ] || return 1
           printf 'import\n' >> "$root/trace"
-        fi
-        if [[ "$code" == *'stat -c %u:%g:%a'* ]]; then
-          # Execute actual predicates; only remap privileged uid fact.
-          code="${code//stat -c %u:%g:%a/printf 1654:1654:700\\n #}"
         fi
         bash -c "$code" || return $?
         if [[ "$code" == *'cp -a '* ]]; then
@@ -536,6 +546,14 @@ case "$mode" in
     run c849_fixture_control PC-01 ExpectedRefusal intended_refusal; accept intended-control-red
     setup_failure() { printf 'SetupError\n'; return 2; }
     run c849_fixture_control PC-02 ExpectedRefusal setup_failure; refuse setup-error-not-control-red ControlNotSensitive
+    SOURCE=saved; FAULT=none
+    : > "$root/docker-trace"; : > "$CASE_DIR/fixture-controls.txt"; : > "$CASE_DIR/fixture-control-variants.txt"
+    run c849_fixture_apphost
+    ! grep -Eq '^cp [0-9a-f]{12,64}:|^exec [0-9a-f]{12,64} .*\.nuget/packages' "$root/docker-trace" || fail no-production-payload-read
+    accept fixture-owned-native-payload
+    grep -Fxq 'PASS F-5' "$CASE_DIR/fixture-groups.txt" || fail fixture-native-recipient
+    [ "$(cat "$SERVER2_ROOT/apphost/packages/c913.probe/1.0.0/data")" = ordinary-payload ] || fail fixture-generated-ordinary-payload
+    pass no-production-payload-read
     ;;
  *) fail unknown-mode ;;
 esac
