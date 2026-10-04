@@ -454,16 +454,7 @@ public sealed class SessionQueueReceiptPlumbingTests
             world.Fault.FailRevert = false;
             world.Forward.CutBeforeWrite = false;
             await world.StopPumpAsync();
-            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
-            {
-                db.TranscriptEntries.Add(new TranscriptEntry
-                {
-                    Id = Guid.NewGuid(), AgentSessionId = world.SessionId,
-                    Sequence = stale ? 0 : 2, Kind = TranscriptKinds.UserPrompt,
-                    Text = stale ? body : body[..220], CreatedAt = DateTime.UtcNow,
-                });
-                await db.SaveChangesAsync();
-            }
+            await SeedReceiptTurnAsync(world.SessionId, body, stale);
             world.Clock.Offset = TimeSpan.FromMinutes(2);
             world.RecreateQueue();
             if (stale)
@@ -506,6 +497,43 @@ public sealed class SessionQueueReceiptPlumbingTests
                 (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(world.SessionId, 1)).ShouldBe([body[..220]]);
             }
         }
+    }
+
+    [Test]
+    public async Task C1022_Partial_receipt_turn_parks_interrupted_attempt()
+    {
+        // Reproduce the native fixture's persisted state through the real queue without a PTY.
+        await using var world = await BridgeQueueHarness.CreateAsync();
+        const string body = "C1022 portable receipt " + "identity prefix ";
+        var complete = body + new string('x', 300) + " COMPLETE TAIL";
+        await world.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var id = await world.SeedPendingMessageAsync(complete, deliveryAttempts: 1,
+            baselineSequence: 1, status: QueuedMessageStatus.Sent,
+            lastDeliveryStartedAt: world.Now - TimeSpan.FromMinutes(2));
+        await SeedReceiptTurnAsync(world.SessionId, complete, stale: false);
+
+        await world.Queue.FlushSessionAsync(world.SessionId, CancellationToken.None);
+
+        await using var db = BridgeQueueHarness.CreateContext();
+        var parked = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+        parked.Status.ShouldBe(QueuedMessageStatus.Pending, "partial-current receipt must park");
+        parked.DeliveryVerdict.ShouldBe(DeliveryVerdict.Truncated);
+        parked.DeliveryAttempts.ShouldBe(new DeliveryVerificationSettings().MaxDeliveryAttempts);
+        parked.LastDeliveryBaselineSequence.ShouldBe(1);
+        world.Adapter.Inputs.ShouldBeEmpty("partial receipt must never trigger retyping or Enter");
+        (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(world.SessionId, 1)).ShouldBe([complete[..220]]);
+    }
+
+    private static async Task SeedReceiptTurnAsync(Guid sessionId, string body, bool stale)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(), AgentSessionId = sessionId,
+            Sequence = stale ? 0 : 2, Kind = TranscriptKinds.UserPrompt,
+            Text = stale ? body : body[..220], CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
     }
 
     [Test]
