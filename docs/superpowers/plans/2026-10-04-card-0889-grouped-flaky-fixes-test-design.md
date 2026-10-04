@@ -3,6 +3,12 @@
 Date: 2026-10-04. TestDesign task: `c916f049-bd8a-4927-a1c4-ba9704b9b68d`.
 Inspected source: `cd07828f63726c62532a597fbe3ff7650eeb0323`.
 
+Continuation: the [N1-N4 Plan amendment](2026-10-04-card-0889-verification-seams-plan.md)
+answers this document's Plan handoff with test-only implementation decisions and
+an explicit shared-harness roster delta. Return to **TestDesign** to confirm it;
+the historical refusal and 74-control inventory below remain the record at the
+inspected source, not an executable certificate for the proposed changes.
+
 This companion appends verification to the unchanged [fix plan](2026-10-04-card-0889-grouped-flaky-fixes-plan.md)
 (`a06b4b242f6959b9f381fc66c100e8f85a02eeab`). It preserves S1–S7 and all
 54 outstanding controls from the [original TestDesign](2026-10-02-flaky-test-fixes-plan.md).

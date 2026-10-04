@@ -295,3 +295,12 @@ five published groups and all 54 outstanding controls. **Next: Plan**, to resolv
 its N1–N4 finite-observation/cancellation seams before Code; this document's earlier
 proposed checkpoint table is not an executable handoff. The companion records the
 fresh exact-path occupancy check and the conditions for a subsequent Code dispatch.
+
+## N1-N4 Plan amendment (2026-10-04)
+
+The [test-only seams amendment](2026-10-04-card-0889-verification-seams-plan.md)
+now specifies the held resilience-driver witness, finite submit outcome driver,
+C578 cancellation/process custody and readiness hold placement. It preserves
+the published implementations, S4 scope and all inherited controls, and proposes
+the additional shared-ScriptHarness regression roster. **Next: test-design**, to
+confirm executable control paths and freeze the revised manifest before Code.
