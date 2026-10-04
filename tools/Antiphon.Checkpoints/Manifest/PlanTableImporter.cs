@@ -16,7 +16,7 @@ public static class PlanTableImporter
     private static readonly string[] Header =
         ["CP", "After", "Build", "Group", "Filter", "Covers", "Expect", "Min", "EstimatedMinutes"];
 
-    private const int RowTimeoutCeilingMinutes = 45;
+    private const int RowTimeoutAdvisoryMinutes = 45;
 
     public static ImportResult ImportFile(string path, string? planProvenance = null, bool? isWindows = null) =>
         ImportMarkdown(File.ReadAllText(path), planProvenance ?? path, isWindows);
@@ -151,8 +151,8 @@ public static class PlanTableImporter
                 }
             }
             row.TimeoutMinutes = RowTimeout.DeriveRowMinutes(row.EstimatedMinutes, null, 15);
-            if (3L * row.EstimatedMinutes > RowTimeoutCeilingMinutes)
-                warnings.Add($"{id}: 3 x EstimatedMinutes ({3L * row.EstimatedMinutes}) exceeds the {RowTimeoutCeilingMinutes} minute row-timeout ceiling");
+            if (3L * row.EstimatedMinutes > RowTimeoutAdvisoryMinutes)
+                warnings.Add($"{id}: derived row timeout ({row.TimeoutMinutes} minutes) exceeds the {RowTimeoutAdvisoryMinutes} minute advisory threshold; consider splitting the row (timeout is not capped)");
 
             var payload = ExtractPayload(filterCell);
             if (Regex.IsMatch(payload, @"^same\s+as\s+CP-\d+$", RegexOptions.IgnoreCase))

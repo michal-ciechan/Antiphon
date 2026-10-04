@@ -73,19 +73,27 @@ public sealed class CheckpointImportTests : CheckpointTestBase
     }
 
     [Test]
-    public void warns_when_estimate_exceeds_row_timeout()
+    public void warns_when_estimate_exceeds_advisory_threshold()
     {
-        var markdown = """
-            ### Checkpoints
+        foreach (var (estimate, timeout, expectedWarnings) in new (int, int, string[])[]
+        {
+            (15, 45, []),
+            (16, 48, ["CP-1: derived row timeout (48 minutes) exceeds the 45 minute advisory threshold; consider splitting the row (timeout is not capped)"]),
+            (20, 60, ["CP-1: derived row timeout (60 minutes) exceeds the 45 minute advisory threshold; consider splitting the row (timeout is not capped)"]),
+        })
+        {
+            var markdown = $"""
+                ### Checkpoints
 
-            | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
-            |---|---|---|---|---|---|---|---:|---:|
-            | CP-1 | S1 | `tests/Antiphon.Tests -> bin-ex/` | slow | `/*/*/SlowTests/*` | V-1 | all listed, 0 failed | 1 | 20 |
-            """;
-        var imported = PlanTableImporter.ImportMarkdown(markdown);
-        imported.ExitCode.ShouldBe(0, imported.Error);
-        imported.Warnings.ShouldContain(warning => warning.Contains("45", StringComparison.Ordinal));
-        imported.Manifest!.Checkpoints[0].TimeoutMinutes.ShouldBe(60);
+                | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+                |---|---|---|---|---|---|---|---:|---:|
+                | CP-1 | S1 | `tests/Antiphon.Tests -> bin-ex/` | slow | `/*/*/SlowTests/*` | V-1 | all listed, 0 failed | 1 | {estimate} |
+                """;
+            var imported = PlanTableImporter.ImportMarkdown(markdown);
+            imported.ExitCode.ShouldBe(0, imported.Error);
+            imported.Manifest.ShouldNotBeNull().Checkpoints.Single().TimeoutMinutes.ShouldBe(timeout);
+            imported.Warnings.ShouldBe(expectedWarnings);
+        }
     }
 
     [Test]
