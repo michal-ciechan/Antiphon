@@ -269,3 +269,13 @@ be implemented and landed is stale. Next: **Investigate** the named acceptance
 measurements at O/L. Separate **TestDesign** follows only for a proven
 qualification gap or corrective delta; there is no direct Code handoff from this
 Plan. No unresolved design choice prevents this document from being delivered.
+
+## Acceptance verification addendum (2026-10-04)
+
+The demonstrated qualification gap is frozen in
+[the acceptance TestDesign](2026-10-04-card-1022-release-a-acceptance-test-design.md).
+For this continuation use that document's closed CP-3..8 selection at published L,
+not the nine-row candidate table above. It preserves the 155-result contract and
+accepted ordinary Review; qualification, activation/retained-host acceptance and
+paused Mutation remain separate. The fix design and source attribution above
+are unchanged.
