@@ -4394,7 +4394,6 @@ public sealed class AgentTaskDispatcher
         // change the task's kind, so the pre-claim answer is the one the claim applies.
         var claudeAuth = await ReadClaudeProviderAuthBeforeClaimAsync(task, ct);
         var grokAuth = await ReadGrokProviderAuthBeforeClaimAsync(task, ct);
-        await _tasks.RefuseUnauthenticatedRunnerCodexAsync(task.AgentKind, false, task.RunnerId, ct);
         // Admission and landing read running claims under the same common-directory lease.
         // Hold through commit of the claim, including warm-agent and follow-up paths.
         // CARD-0672 D-1 (invariant I-A): a runner session never writes the desktop checkout; only

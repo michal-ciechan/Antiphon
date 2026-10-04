@@ -4028,9 +4028,9 @@ public sealed class AgentTaskService
     /// whose runner reports no Codex login. Only the selected runner is asked, only a definite
     /// Codex-attributed "no" refuses, and a desktop Codex task is never probed: no desktop store
     /// stands in for the runner's. Unknown, unavailable and timed-out answers admit (the
-    /// dispatcher and runner backstops remain); the caller's own cancellation propagates.
+    /// runner launch backstop remains); the caller's own cancellation propagates.
     /// </summary>
-    internal async Task RefuseUnauthenticatedRunnerCodexAsync(
+    private async Task RefuseUnauthenticatedRunnerCodexAsync(
         AgentKind agentKind,
         bool allowUnauthenticated,
         string? runnerId,
