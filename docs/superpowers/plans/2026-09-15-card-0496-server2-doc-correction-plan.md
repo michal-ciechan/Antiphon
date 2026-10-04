@@ -260,6 +260,38 @@ retention and prose accuracy use explicit review oracles rather than mutation te
 that merely pin exact wording. A SourceLanding stage stores its evidence externally
 and restores its snapshot under the repository verification-restoration contract.
 
+### Master-port verification scope (task d1c1630d)
+
+The Final port brief explicitly limits ordinary verification to R-1/R-2 and manual
+V-1 through V-10; no whole Unit lane is required for this textual/script change.
+Keep master's pg_stat_statements guidance and HTTP readiness retry. The merged
+test entry supports both Case and ReadinessCase. The readiness fixture supplies a
+synthetic explicit target only when the loaded deployment helper accepts it, so
+its retained pre-retry baseline remains executable. The full affected
+AmServiceDeployReadinessTests class is an adjacent integration acceptance row.
+S3 closes those merge repairs and the Linux C496 cleanup-prefix fix, using the
+platform directory separator without changing Windows semantics.
+
+Windows PowerShell 5.1 R-1 and its parser half of V-10 require powershell.exe on a
+Windows runner. This Linux port cannot discharge them; the caller must commission
+that OS-specific check. Historical verification commit messages are imported
+provenance, not fresh evidence for this port.
+
+### Checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | S1-S3 | n/a | c496-script | `pwsh -NoProfile -File scripts/test-deploy-am-service.ps1` | R-1 (PowerShell 7), V-5 through V-9 | 167 assertions passed, 0 failed; all five C496 cases | n/a | 2 |
+| CP-2 | S1-S3 | tests/Antiphon.Tests -> bin-c496-port/ | c496-broker | `/*/*/AppHostBrokerSourceGuardTests/*` | R-2, V-3 | all listed, 0 failed | 2 | 4 |
+| CP-3 | S1-S3 | CP-2 | c496-readiness | `/*/*/AmServiceDeployReadinessTests/*` | ReadinessCase conflict acceptance, preserved HTTP retry | all listed, 0 failed | 3 | 3 |
+
+### Cost
+
+Ordinary Linux checkpoint floor: 9 minutes, plus porting and manual review.
+The checkpoint-tool bootstrap build is necessary infrastructure, outside the
+product selection. A pre-fix CP-1 run may reproduce the reported Linux fixture
+defect; rerun that red row after committing S3. No deliberate PCs run in Code.
+
 ## Completion and handoff
 
 Code is complete when both slices are committed/pushed, V-1 through V-10 and R-1/R-2

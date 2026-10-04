@@ -93,7 +93,12 @@ $record = [ordered]@{case=$ReadinessCase;shellExit=$null;shellOutput=@();outerEr
 $resultFile = Join-Path $FixtureDirectory 'result.json'
 try {
     $result = $null
-    $record.outerLog = (@(Invoke-AmServiceDeployment $root $true $true 10 $ssh $scp $http 6>&1 | ForEach-Object {
+    # The retained pre-retry baseline predates explicit target selection.
+    $targetOptions = @{}
+    if ((Get-Command Invoke-AmServiceDeployment).Parameters.ContainsKey('SshTarget')) {
+        $targetOptions.SshTarget = 'operator@gateway.example.invalid'
+    }
+    $record.outerLog = (@(Invoke-AmServiceDeployment $root $true $true 10 $ssh $scp $http @targetOptions 6>&1 | ForEach-Object {
         if ($_ -isnot [string] -and $null -ne $_.PSObject.Properties['AdapterNames']) { $script:deploymentResult = $_; return }
         $_.ToString()
     }) -join "`n")
