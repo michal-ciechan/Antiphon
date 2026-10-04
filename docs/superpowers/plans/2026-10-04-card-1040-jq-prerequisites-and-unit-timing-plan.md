@@ -271,3 +271,329 @@ checkpoint-ceiling repair follows merely from landing this plan.
 next: test-design
 handoff: Freeze the 15-method native-Linux manifest and one isolated jq-absence control; preserve required-jq assertions, qualify CARD-0927 image activation, and coordinate outer-host jq with CARD-1025. Use retained timing evidence, no timeout increase or whole-Unit run; keep Code slices within 30–60 minutes.
 artifact: docs/superpowers/plans/2026-10-04-card-1040-jq-prerequisites-and-unit-timing-plan.md
+
+## Verification design
+
+TestDesign: `fea04260-8710-4eba-ae70-3206c1245256`, 2026-10-04. Inspected
+checkout: `2c15feb754797f9b76035fdbec19d68168ec93df`; landed fix design:
+`5de230cf75f24aa4a5c00cd8d9d53293bf00d064`. This appended section freezes the
+verification choices; it does not change D-1 through D-6 or either Code slice.
+The earlier Plan handoff is historical; the next stage after this design is Code.
+
+### Inspection
+
+`Remote` and `Rolling` retain the file abbreviations defined above. Read every
+selected method body, not just its name. All fifteen have `[Test]`, no
+`[Arguments]`, and `ParallelLimiter<ProcessSpawnLimit>`; each contributes exactly
+one TUnit result. Internal loops and driver assertion totals do not expand `Min`.
+
+| Bodies read | Boundaries -> verification IDs or exclusion |
+|---|---|
+| Remote `C1008_Recycle_exact_default_volumes` | Default main removes exactly work/tmp/dind in order, preserves eleven other volumes and broker, never prunes; Options `{}`/null accepted versus empty-string/false/array/nonempty/omitted refused; four private roles x external/name/label, three cache roles x external/name/owner/missing, and both service mount lists -> V-1/R-1, PC-1. |
+| Remote `C1008_Recycle_refuses_references_and_unknown_census` | Held/released native flock; valid controlled stop; five mount defects; running/exited references; fourteen census/stop/late-change faults; three counters x null/string/bool/negative/fraction/positive plus omitted; three state-init states; exact/descendant/ancestor/last-target binds; duplicate identity; generation drift; seven task-envelope/detail faults -> V-1/R-1. |
+| Remote `C1008_Recycle_audits_work_as_1654`, `C1008GitGraph` | Readonly helper argv includes uid 1654; ordinary, linked-with-space, standalone and bare Git layouts appear as hashed audit identities -> V-1/R-1. Helper creates real private Git repositories and origin, never publishes task source. |
+| Remote `C1008_Recycle_refuses_unpublished_and_dirty_work` | Published clean control; quiescent audit drift; unpublished HEAD/branch/tag/other-remote/linked/detached/bare, dirty/staged/untracked -> V-1/R-1. |
+| Remote `C1008_Recycle_refuses_uninspectable_git` | Complete-history control; exit128/timeout/empty/nonnumeric/negative, shallow/partial/stale/deleted/missing origin, broken gitdir/escaping link/missing objects/origin failure; index.lock/MERGE_HEAD/rebase-merge and linked index lock -> V-1/R-1. |
+| Remote `C1008_Recycle_preserves_tmp_copyup` | Selected tmp removal and no volume-nocopy; wrong recreated mode versus missing assets -> V-1/R-1. Real image copy-up remains the rollout owner's qualification. |
+| Remote `C1008_Recycle_resume_requires_matching_receipt` | Seed failure at creation intent; second removal failure; stop/owned-remove/first/third removal recovery; eight receipt/store/generation/stop-receipt drifts; recorded versus foreign recreated container -> V-1/R-1. |
+| Remote `C1008_Recycle_receipt_records_disk_and_partial_failure` | Before/after/signed disk delta; atomic journal failure at preflight/stop/remove/volume, then recovery; empty/invalid/negative/after/reverse/filesystem disk readings; partial removal; failed/successful bridge copy with exact final journal bytes and no second removal -> V-1/R-1. |
+| Remote `C1008_Retire_temp_rechecks_absence_and_retirement` | Retired absent/null control; nine retirement/status changes; retained volume/census failure/counterpart refusal; exited state-init; shared null-refuses/integer-zero-accepts -> V-1/R-1. |
+| Remote `C1008_Retire_temp_reclaims_below_cache_disk_gate` | Four temp defaults reclaimed with allocation gate forced to refuse if consulted -> V-1/R-1. |
+| Remote `C1008_Recycle_dry_run_never_mutates` | Main/temp x preview/apply; empty effect trace during preview; busy status changed before apply refuses -> V-1/R-1. |
+| Remote `C849_Deploy_prepares_and_verifies_before_acceptance`, `Block`, `Order` | Main/temp prepare/ready ordering; three busy counters; missing preserved cache; exact retired targets and preserved sentinel bytes; prepare-fails/ready-fails x parent/temp with no unsafe effects -> V-1/R-1. |
+| Rolling `C1008_Retired_absent_null_is_accepted` | Wrapper emits host case without clearing retirement; copied operation ID/stamp drives the actual host entry; exact four removed defaults -> V-2/R-2. |
+| Rolling `C1008_Refusal_receipts_do_not_leak_secrets` | Malformed Git refusal and public receipt exclude filename/stderr sentinels; accepted Docker receipt excludes Env/foreign label; HTTP refusal excludes error/token sentinel -> V-2/R-2. |
+| Rolling `C1008_Legacy_rolling_and_jq_rosters_remain`, `C1008Process` | Present with `-RequireJq`, absent, missing-shell, failing-shell; four 31-assertion driver receipts, present never skipped; 12-minute child deadline unchanged -> V-3/R-3. |
+| Rolling `C1008HostFixture` and `C1008WrapperFixture` constructors, Run, state/trace readers and Dispose; Remote `LinuxShell`, `PrepareLinuxShellScript`, `RequireLinuxJq`; `DelegateScriptRunner.RepoRoot`; `ProcessSpawnLimit` | Test-private roots and JSON state, real native bash/pwsh, inherited PATH, explicit fake HTTP/Docker boundary, Run(extra) injection before dispatch/trap, 30-second fixture and 60-second LinuxShell deadlines; limiter=1 inside each assembly -> all rows and PC-1. Optional RequireLinuxJq is not added to the selected methods. |
+| `scripts/fixtures/c1008-fake-docker.sh`, `c1008-recycle-cases.json`, `c727-fake-http.ps1`, `c727-fake-verify.ps1`, `c973-marker-reader.sh`; `scripts/test-deploy-server2-jq.ps1`; jq probe, required admission and T-20 bodies in `test-deploy-server2.ps1` | File-backed boundary faults, typed offline statuses, actual cold-reader slices; present 24 groups/66 invocations/227 assertions versus optional absent modes 23/62/218; driver=31 each -> R-1..R-3. These substitutes prove neither live Docker effects nor outer-host installation. |
+| Dockerfile jq RUN; `verify-codex-image.sh` jq-version/need_uid/result; wrapper `Invoke-Probe` and jq row; all `JqRunnerImageContractTests` methods/argument rows | Pin/digest-before-install/root ownership; exact successful version with empty stderr; existing twelve version vectors include wrong versions, extra output, nonzero exit and stderr. Source contracts inspected, not rerun or remutated: no image/probe edit is proposed. Runtime admission below is still mandatory. |
+| `PlanTableImporter`, `CheckpointManifest`, `ManifestValidator`, `RowTimeout`; testing owner jq/checkpoint/filter/slot/Mutation sections | Escaped method-prefix OR, exact floors, isolated outputs, serial execution, 18/15/24-minute derived row deadlines -> CP-1..CP-3. No timeout override or knownFlaky entry. |
+| Nearest evidence document `docs/investigations/2026-10-04-card-1021-code-7c7fdeeb.md`; retained source.json/TRX/log identities; Plan timing table | Code's new evidence Markdown follows that provenance format. Re-hashed all three retained HEAD artifacts: identical to the Plan inventory. Retained red/zero-timeout evidence supplies accounting, not a fresh green or activation verdict. |
+
+Admission and missing setup, before CP-1:
+
+- The caller supplies the outer container/image/build provenance receipt and,
+  if rollout is required, CARD-1025's separate host-jq qualification plus named
+  phase receipts. Neither this checkout nor nested Docker establishes these
+  facts. TestDesign has not obtained a fresh activation receipt. S1 may document
+  the obligation; S2 cannot start required proof until it is satisfied.
+- Qualify the actual non-login child environment as uid 1654: native Linux x64,
+  bash, node, pwsh, Git, flock and ordinary core utilities must execute. Record
+  resolved bash/jq, jq version/digest/owner/mode, and resolve symlinks. jq must
+  resolve to the qualified `/usr/local/bin/jq` (or the same file through an
+  explicit alias), with the Plan's SHA-256, root:root 0755 and `jq-1.7.1`.
+  A same-digest user-home copy is insufficient image-custody evidence.
+- Reuse only the existing `jq-version` probe row: the owning host may invoke
+  `/c660/verify-codex-image.sh jq-version` in a throwaway container of the recorded
+  immutable image, with the reviewed script mounted readonly, uid `1654:1654`,
+  `--network none`, no ports/socket, and a private writable
+  `/c660-home` tmpfs owned by 1654. Require exit 0 and exactly
+  `C660_ROW jq-version ok jq-1.7.1 as uid 1654`. This supplements the active
+  container checks; a successful throwaway probe alone is not activation.
+  Do not invoke the full wrapper, which also runs unrelated provider probes.
+- Record the Code source SHA and clean source before the three rows. Probe with
+  the same PATH inherited by their children; do not dump the environment. Record
+  any child-only prerequisite adjustment. Missing bash/node/pwsh/Git, a broken
+  build-slot broker, or inability to identify the executing image is missing
+  setup, never a test skip, intended PC red, or reason to extend deadlines.
+
+### Delivery inventory
+
+No new or changed asynchronous delivery path exists in D-1..D-6/S1..S2. The
+change is image-prerequisite qualification and documentation; it adds no
+producer, queue, destination, persistence handoff or recovery branch. Busy and
+already-eligible recipients and enqueue/crash cuts are consequently excluded.
+The async C# methods await owned subprocesses; they do not implement queued
+session delivery. No UserPrompt/session receipt is claimed by this card.
+
+The existing synchronous recycle evidence path exercised by R-1 is host script
+-> host journal -> bridge copy -> local receipt file, joined by operation ID,
+source SHA and project. The test reads final copied bytes and compares them to
+the surviving host journal after a failed then successful copy. A request or
+copy exit alone is not its oracle. Its fake SSH/scp, file-backed Docker, canned
+HTTP statuses and fake privilege boundary cannot prove live rollout delivery,
+image activation, actual UID isolation, or a recipient transcript. Caller-owned
+activation evidence remains a separate prerequisite, not inferred from these
+substitutes. No delivery/recovery guard is introduced or changed here.
+
+### Proves it works now
+
+- V-1: Qualified jq lets all twelve frozen Remote consumers complete their
+  existing success and refusal assertions | native Linux shell/PowerShell with
+  private boundary fakes | CP-1 exact method-prefix OR | exactly 12 passed,
+  zero failed/skipped, precisely the twelve names in the inspection table.
+- V-2: Qualified jq lets the wrapper-to-host retirement and receipt-custody
+  consumers complete | native Linux wrapper and host fixtures | CP-2 exact OR |
+  exactly 2 passed, zero failed/skipped, exact four retired targets and no public
+  credential sentinels.
+- V-3: Required present-jq and the three optional driver modes retain their
+  distinct behavior | native Linux, actual marker-reader shell | CP-3 exact
+  method | exactly 1 passed, zero failed/skipped; four
+  `C973_JQ case=<mode> assertions=31 failures=0` lines; present includes
+  `C973_JQ_PROBE available=True`, PASS T-20 and 24/66/227, excludes
+  `C973_JQ_SKIPPED`; other modes include the named internal skip and 23/62/218.
+  Those deliberate internal optional branches are not TUnit skips.
+
+### Guards the regression
+
+- R-1: Missing jq cannot masquerade as accepted C1008 proof; prerequisite
+  provisioning must preserve every existing recycle/refusal/recovery assertion |
+  the twelve CP-1 methods and boundary combinations above. Decisive PC oracle:
+  `RemoteScriptContractTests.C1008_Recycle_exact_default_volumes` first
+  `f.Removed.ShouldBe(new[] { "antiphon-runner_work", "antiphon-runner_runner-tmp",
+  "antiphon-runner_dind-data" }, "recycle-exact-defaults: exact ordered defaults; " + run.Output)`.
+  Full ordinary execution also retains the no-removal, refusal-diagnosis,
+  receipt-byte, generation and preservation assertions in each selected body.
+- R-2: Provisioning must not weaken retired/null acceptance or sanitized failure
+  receipts | CP-2 exact two methods | host removes the exact four temp defaults;
+  malformed Git retains all targets; public output/journal excludes every
+  fixture credential sentinel; expected typed refusal survives.
+- R-3: A missing prerequisite must not silently turn required present coverage
+  into optional coverage | `RollingVolumeRecycleScriptTests.C1008_Legacy_rolling_and_jq_rosters_remain`
+  | existing `arguments.ShouldContain("-RequireJq")`, four summary assertions,
+  `run.Output.ShouldNotContain("C973_JQ_SKIPPED")` for present, and exit 0.
+  No new skip or reduced assertion/execution count is allowed.
+
+### Guard inventory
+
+- G-1: D-1/D-2, S1 admission and S2 required-consumer proof: jq availability in
+  the executing native shell is a required prerequisite; its loss must make the
+  unchanged success consumer red with `RecycleToolsMissing`, never green/skip |
+  PC-1.
+
+Scope census: guards=1, mapped=1, missing=0, duplicate PC maps=0. This is the one
+provisioning behavior required by the Plan. There are no new/changed product
+guards, queue guards or recovery guards. R-1/R-2 deliberately retain many
+independently bypassable **existing** C1008 guards; they are regression consumers
+of jq, not repairs to those guards. Their mutation batteries remain with
+CARD-1008. Existing C983 required-driver admission and C927 pin/version/digest
+guards similarly retain their owners' controls; no new bypass of their
+assertions is commissioned here. Runtime image identity/ownership, strict roster
+and source provenance are evidence-admission checks; PC-1 does not claim to
+mutation-test them. An edit to any of these source guards/probes/fixtures changes
+scope and returns to TestDesign, rather than broadening this single-PC battery.
+
+### Positive controls
+
+- PC-1: Break G-1 with the compiling, method-local prerequisite defect below;
+  expect **exactly**
+  `RemoteScriptContractTests.C1008_Recycle_exact_default_volumes` red at its
+  first `f.Removed.ShouldBe(...)`, labelled
+  `recycle-exact-defaults: exact ordered defaults`. Expected actual list is empty
+  versus the three literal defaults; its failure detail must include
+  `C1040_PC_JQ_ABSENT` and production `RecycleToolsMissing`. The fixture child
+  exits 2 through the production refusal. Compile errors, timeout, launch error,
+  other missing executables, setup error, zero results, wrong assertion or a skip
+  do not count. This is a required-consumer control, not a mutation removing the
+  production fail-closed jq guard.
+
+In the SourceLanding snapshot only, replace the **first** `var run = await
+f.Run();` in that method with the following. Leave its assertions and all other
+calls unchanged. This uses the existing `extra` seam; no permanent fixture/helper
+edit is needed and no Code-stage source change is requested:
+
+```csharp
+var run = await f.Run(extra: """
+    node <<'C1040_NODE'
+    const fs = require('node:fs'), path = require('node:path');
+    const root = process.env.C1008_FIXTURE_ROOT;
+    if (!root || !path.basename(root).startsWith('c1008-host-'))
+        throw Error('C1040_PC_SETUP_ROOT');
+    const bin = path.join(root, 'pc1-no-jq');
+    fs.mkdirSync(bin);
+    const seen = new Set();
+    for (const part of process.env.PATH.split(path.delimiter)) {
+        const dir = path.resolve(part || '.');
+        let names;
+        try { names = fs.readdirSync(dir); }
+        catch (e) {
+            if (['ENOENT', 'ENOTDIR', 'EACCES'].includes(e.code)) continue;
+            throw e;
+        }
+        for (const name of names) {
+            if (name === 'jq' || seen.has(name)) continue;
+            const source = path.join(dir, name);
+            try {
+                if (!fs.statSync(source).isFile()) continue;
+                fs.accessSync(source, fs.constants.X_OK);
+            } catch (e) {
+                if (['ENOENT', 'ENOTDIR', 'EACCES'].includes(e.code)) continue;
+                throw e;
+            }
+            fs.symlinkSync(source, path.join(bin, name));
+            seen.add(name);
+        }
+    }
+    for (const name of ['bash', 'node', 'pwsh', 'git', 'flock', 'sed', 'mkdir'])
+        if (!seen.has(name)) throw Error('C1040_PC_SETUP_TOOL_' + name);
+    C1040_NODE
+    PATH="$C1008_FIXTURE_ROOT/pc1-no-jq"; export PATH; hash -r
+    if command -v jq >/dev/null 2>&1; then
+        printf '%s\n' C1040_PC_SETUP_JQ_VISIBLE >&2; exit 97
+    fi
+    printf '%s\n' C1040_PC_JQ_ABSENT
+    """);
+```
+
+The private directory mirrors executable resolution in original PATH order,
+excluding **every** basename `jq`; hashing is cleared before the real admission
+check. All other executable entries are symlinks to their original files. This
+is actual child PATH absence, not a fake success/failure from jq or a mock of
+`command -v`. It does not remove/rename a shared binary or edit parent PATH,
+profiles, daemon settings or live state. Fixture Dispose removes the owned root.
+It proves the consumer detects loss of its prerequisite; it cannot prove a
+Dockerfile rebuild or durable deployment, which requires the activation receipt.
+
+Mutation runs baseline/break/red/restore/green **after land**; Code runs V/R;
+Review judges this executable design and ordinary receipts **before land**.
+Use precisely `/*/*/RemoteScriptContractTests/C1008_Recycle_exact_default_volumes`
+for all three phases, `-MinExecuted 1` and
+`-Expect RemoteScriptContractTests.C1008_Recycle_exact_default_volumes`.
+Each phase gets its own build output `bin-c1040-pc1-baseline/`,
+`bin-c1040-pc1-red/`, `bin-c1040-pc1-green/`, and distinct results directory under
+the assigned external evidence root. Use the unchanged external copy of
+`scripts/run-checkpoint.ps1` and `scripts/lib/build-slot.ps1` per the testing
+owner; it takes its own slot. Do not use strict clean-source mode on the intended
+dirty red. Baseline and restored green must be one pass/zero skips, with clean
+landed-source provenance; red must be one expected assertion failure, driver
+exit 1. Await all children, restore exact tracked/index bytes and timestamps,
+rebuild green, remove only owned alternate outputs and retain external restoration
+records. Never commit the mutant or any SourceLanding snapshot amendment.
+
+### Out of scope
+
+- Whole Unit/namespace/class/assembly runs, extra repeats, timeout/retry/process
+  budget changes, and a speculative startup probe. The retained timing receipt
+  already distinguishes slot/build/startup/test/teardown with zero timeouts;
+  unavailable additional evidence is reported as unattributed.
+- Windows/WSL path/argv/lock behavior (CARD-1030), outer-host installation
+  (CARD-1025), daily broad qualification (CARD-1039), and timeout semantics
+  (CARD-1041). Their boundary combinations cannot be inferred from Linux results.
+- New image implementation, provider qualification suites, reinstalling jq in a
+  standing container, real volume removal or rollout by this delegate. The
+  orchestrator owns activation and its stop gates. Missing activation proof is
+  an explicit incomplete runtime obligation, not permission to close the card.
+- Additional PCs for unchanged image/version/rolling safety logic. D-5 freezes
+  one prerequisite behavior; no new test class or shared fixture seam is needed.
+  A new source defect needs its exact method replay at the committed base in the
+  same qualified environment, then a separately scoped repair/design.
+
+### Checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1040-remote/` | linux-qualified-remote | `/*/*/RemoteScriptContractTests/(C1008_Recycle_receipt_records_disk_and_partial_failure*)\|(C1008_Recycle_audits_work_as_1654*)\|(C1008_Recycle_preserves_tmp_copyup*)\|(C1008_Recycle_refuses_uninspectable_git*)\|(C1008_Recycle_exact_default_volumes*)\|(C1008_Recycle_refuses_references_and_unknown_census*)\|(C849_Deploy_prepares_and_verifies_before_acceptance*)\|(C1008_Retire_temp_rechecks_absence_and_retirement*)\|(C1008_Retire_temp_reclaims_below_cache_disk_gate*)\|(C1008_Recycle_dry_run_never_mutates*)\|(C1008_Recycle_resume_requires_matching_receipt*)\|(C1008_Recycle_refuses_unpublished_and_dirty_work*)` | V-1, R-1 | exactly 12 listed methods, 12 passed, 0 failed/skipped; no extra names | 12 | 6 |
+| CP-2 | S1 | `tests/Antiphon.Tests -> bin-c1040-retirement/` | linux-qualified-retirement | `/*/*/RollingVolumeRecycleScriptTests/(C1008_Retired_absent_null_is_accepted*)\|(C1008_Refusal_receipts_do_not_leak_secrets*)` | V-2, R-2 | exactly 2 listed methods, 2 passed, 0 failed/skipped; no extra names | 2 | 4 |
+| CP-3 | S1 | `tests/Antiphon.Tests -> bin-c1040-legacy/` | linux-qualified-legacy | `/*/*/RollingVolumeRecycleScriptTests/C1008_Legacy_rolling_and_jq_rosters_remain` | V-3, R-3 | exactly 1 listed method passed, 0 failed/skipped; all four 31-assertion driver receipts and required present T-20 | 1 | 8 |
+
+All rows run on **native Linux with the qualified image**, after committed S1
+and the activation gate, during S2. S2 writes its final evidence after execution;
+requiring that report commit before the runs would be circular. The union is
+the entire ordinary executable scope: fifteen unique methods, fifteen TUnit
+executions, three builds. Prefix `*` exists only for pinned discovery's OR hint;
+the fresh TRX roster must still equal these literal names. The tool enforces a
+floor, not an exact count or every prose condition in Expect: Code/Review must
+check equality, zero skips, and nested driver receipts separately.
+
+One foreground-supervised run covers the group. Bootstrap the checkpoint tool
+once, through `scripts/build-slot.ps1`, into `bin-c1040-tool/` with
+`UseAppHost=false`; this one-minute setup build is explicitly outside the test
+table. Then run in PowerShell:
+
+```powershell
+$c1040Source = (git rev-parse HEAD).Trim()
+dotnet tools/Antiphon.Checkpoints/bin-c1040-tool/Antiphon.Checkpoints.dll run --plan docs/superpowers/plans/2026-10-04-card-1040-jq-prerequisites-and-unit-timing-plan.md --after S1 --serial --expected-source-sha $c1040Source --max-wait 50s
+```
+
+The tool acquires the per-build/per-row leases; do not wrap it in a second slot.
+On exit 75, use that emitted run ID with `wait --max-wait 50s` until terminal;
+never settle with owned work still running. Serial is required because the
+process limiter is assembly-local, not shared across row hosts. Effective
+derived row deadlines are 18, 15 and 24 minutes and the total is 46 minutes;
+these are admission limits, not wall estimates or new overrides. Exit 4 means
+not run due to slot timeout. Any other failure retains its diagnostic receipt;
+never rerun unleased or widen a filter. Use the source-receipt validator, retain
+unedited CHECKPOINT lines and actual method roster, and clean the tool output
+plus all row-owned `bin-c1040-*` directories only after every child exits.
+
+For elapsed-time accounting, retain each row's slot wait, build duration,
+driver-start/first-result/last-result/exit boundaries, per-method timestamps and
+outcomes; use intervals, not sums of parallel durations. Keep the inherited
+red table separate. If new evidence lacks a needed boundary, report that phase
+unattributed. No additional timed experiment is in this manifest.
+
+### Cost
+
+- **Ordinary V/R floor (Code), estimated: 18 minutes** = CP-1 Remote twelve-method
+  prefix-OR 6 + CP-2 Rolling two-method prefix-OR 4 + CP-3 exact legacy method 8.
+  Includes all three isolated builds (estimated 2 minutes each) and 12 minutes
+  of test/startup/teardown. No broad Unit execution is included.
+- **PC floor (Mutation), estimated: 9 minutes** = PC-1 exact-method baseline
+  build/run 3 + break/setup 0.5 + red build/run 2 + restore 0.5 + green build/run 3.
+  Every run uses the exact PC-1 filter above; no whole-class phase. A missing
+  baseline or unexpected red is a finding, not an excuse to spend an unbounded
+  retry budget.
+- **Setup outside CP rows, estimated: 8 minutes** = tool bootstrap 1 + same-shell
+  prerequisite/receipt reconciliation 7, assuming the caller has supplied a
+  qualified activation receipt. Rollout/drain/host access waiting is explicitly
+  excluded from a Code slice and cannot be hidden in a CP estimate.
+- **Total planned verification: 35 minutes estimated** = setup 8 + ordinary 18
+  + PC 9. Code-side verification is 26 minutes; Mutation-side is 9. Documentation
+  authoring/review/evidence interpretation fills the Plan's S1 30–45 and S2
+  30–60 minute slices; it is not a reason to combine Code and Mutation stages.
+  These are estimates, not fresh runtime measurements. The only measured build
+  comparison remains the retained 102.2440571-second build and
+  522.468084-second test-host wall.
+- Scope savings versus repeating the retained 4,051-execution Unit lane:
+  **4,036 executions avoided (99.63%)** per ordinary pass. Claimed wall-clock
+  savings: **0 minutes** until qualified jq timings exist, because historical
+  failures stopped early and these three isolated builds add overhead. One
+  prerequisite PC also avoids duplicating the unchanged C1008/C983/C927 mutation
+  batteries; no numeric time saving is claimed without their measured costs.
+
+Handoff audit: all selected bodies and their fixtures/helpers read; fifteen
+non-parameterized results; guards=1, mapped=1, missing=0, duplicate PC maps=0;
+one concrete executable PC; ordinary floor=18, PC floor=9, setup=8, total=35
+minutes. Code may begin S1; required S2 execution waits for the explicit image
+activation prerequisite. No human policy choice or new implementation seam is
+needed to use this design.
