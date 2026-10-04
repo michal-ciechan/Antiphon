@@ -12,6 +12,7 @@ const save = () => fs.writeFileSync(file, JSON.stringify(state));
 const out = x => process.stdout.write(typeof x === 'string' ? x : JSON.stringify(x));
 const fail = () => process.exit(2);
 const name = args.at(-1), fault = state.fault || '';
+if(state.dockerStderr&&args[0]==='inspect')process.stderr.write(state.dockerStderr+'\n');
 if (fault === 'ps-error' && args[0] === 'ps') fail();
 if (fault === 'inspect-error' && args[0] === 'inspect') fail();
 if (fault === 'volume-ls-error' && args[0] === 'volume' && args[1] === 'ls') fail();
@@ -23,9 +24,13 @@ else if (args[0] === 'ps') {
   if(fault==='late-attachment')state.postStopPs=(state.postStopPs||0)+1;
   if(fault==='late-attachment'&&state.postStopPs===3)state.containers.push({Id:'5'.repeat(64),Image:'sha256:'+'a'.repeat(64),State:{Running:false,Status:'exited'},Config:{Labels:{}},Mounts:[{Type:'volume',Name:'antiphon-runner_work',Source:state.volumes['antiphon-runner_work'].Mountpoint,Destination:'/foreign',RW:true}]});
   if(fault==='final-ps-error')fail();
+  if(fault==='c994-final-ps-partial'){out(state.containers[0].Id+'\n');fail();}
   save();
  }
  if(fault==='c994-ps-partial'){out(state.containers[0].Id+'\n');fail();}
+ if(fault==='c994-ps-empty-error')fail();
+ if(fault==='c994-truncated-id'){out('a'.repeat(12)+'\n');process.exit(0);}
+ if(fault==='c994-nonhex-id'){out('z'.repeat(64)+'\n');process.exit(0);}
  if(fault==='c994-duplicate-id'){out(state.containers[0].Id+'\n'+state.containers[0].Id+'\n');process.exit(0);}
  let items = state.containers;
  const filter = args[args.indexOf('--filter')+1];
@@ -42,6 +47,10 @@ else if (args[0] === 'ps') {
  if(fault==='inspect-malformed'){out('{');process.exit(0);}
  if(fault==='c994-wrong-id')c.Id='f'.repeat(64);
  if(fault==='c994-missing-state')delete c.State;
+ if(fault==='c994-missing-image')delete c.Image;
+ if(fault==='c994-missing-mounts')delete c.Mounts;
+ if(fault==='c994-missing-labels')delete c.Config.Labels;
+ if(fault==='c994-inspect-multirow'){out([c,c]);process.exit(0);}
  out([c]);
 } else if(args[0]==='stop') {
  if(fault==='stop-failed')fail(); const c=state.containers.find(c=>c.Id===name);if(!c)fail();
@@ -62,9 +71,11 @@ else if (args[0] === 'ps') {
  if(next&&fault==='c994-late-image')next.Image='sha256:'+'b'.repeat(64);
  if(next&&fault==='c994-late-mount')next.Mounts[0].Source='/foreign';
  if(next&&fault==='c994-late-state')next.State={Running:true,Status:'running'};
+ if(next&&fault==='c994-late-id')next.Id='e'.repeat(64);
  if(fault==='c994-late-main'||fault==='c994-late-stamp') {const p=path.join(root,'statuses.json'),v=JSON.parse(fs.readFileSync(p));
   if(fault==='c994-late-main')v.server2.acceptingNewWork=false;else v['server2-temp'].retiredAt='2026-10-03T10:30:00Z';fs.writeFileSync(p,JSON.stringify(v));}
  if(fault==='c994-late-land'){const p=path.join(root,'tasks.json'),v=JSON.parse(fs.readFileSync(p));v.scopes[Object.keys(v.scopes)[0]].excluded.total=1;fs.writeFileSync(p,JSON.stringify(v));}
+ if(fault==='c994-late-task'){const p=path.join(root,'tasks.json'),v=JSON.parse(fs.readFileSync(p));v.scopes[Object.keys(v.scopes)[0]].items.push({id:'22222222-2222-2222-2222-222222222222',status:'Working',runnerId:'server2-temp',projectId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',scopeSource:'Task',landRequestedAt:null,landStartedAt:null});fs.writeFileSync(p,JSON.stringify(v));}
  if(fault==='c994-final-replacement') {const replacement=structuredClone(c);replacement.Id='e'.repeat(64);state.containers.push(replacement);}
  save();out(name+'\n');
 } else if(args[0]==='volume'&&args[1]==='ls')out(Object.keys(state.volumes).join('\n')+'\n');
