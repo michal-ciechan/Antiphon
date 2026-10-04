@@ -58,6 +58,7 @@ public sealed class PlanCoverageParserTests : CheckpointTestBase
         const string lfHash = "da6fa0fb6dc64a3faf1f81f830b8696ccf02b9c654135111429090fa240870f8";
         const string crlfHash = "79f2f76348e92b2903f7a7e371d28a1e951cf465a1ec68a1f1ee2221a871a200";
         string RawHash(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+        var coordinatePlan = PlanCoverageFixture.Plan("| V-1 | `Demo.Check()` | label `target-label` |");
         foreach (var (payload, expectedHash, label) in new[]
         {
             (json, lfHash, "c1013-inline-lf"),
@@ -65,7 +66,7 @@ public sealed class PlanCoverageParserTests : CheckpointTestBase
             (json.Replace("  \"version\"", "    \"version\""), "85c491e24a155122596d00155b48f01c095a8b8968b71985736a69155256feb1", "c1013-inline-whitespace"),
         })
         {
-            var lfPlan = PlanCoverageFixture.Plan() + "\n```plan-coverage-v1\n" + payload + "```\n";
+            var lfPlan = coordinatePlan + "\n```plan-coverage-v1\n" + payload + "```\n";
             var lf = new PlanCoverageReader().Read("plan.md", lfPlan);
             var crlfPlan = lfPlan.Replace("\n", "\r\n");
             var crlf = new PlanCoverageReader().Read("plan.md", crlfPlan);

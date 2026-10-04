@@ -416,8 +416,9 @@ CARD-1001 retain their own ownership; no delivery/recovery guard is introduced.
   `git ls-files --eol` | all seven raw pins match, with unchanged fixture and
   provenance blobs. The Windows result uses a freshly materialized checkout.
 
-For V-1, append the inline fence after `PlanCoverageFixture.Plan()`'s checkpoint
-row, within its Verification design section; do not shift the existing row at
+For V-1, use `PlanCoverageFixture.Plan("| V-1 | `Demo.Check()` | label `target-label` |")`
+and append the inline fence after its checkpoint row, within its Verification
+design section; do not shift the existing row at
 line 5. Use explicit `\n` strings, never `Environment.NewLine`, `AppendLine`, or
 platform-dependent source raw-string line endings for the expected vectors.
 The exact base JSON is `{\n  "version": 1,\n  "items": []\n}\n` (escaped here).
@@ -787,6 +788,14 @@ operands for class and method selection. Literal pipes, OS separation, row
 IDs, counts, assertions, timeouts and serial execution remain the same. Code
 reruns both red Linux rows and checks the exact 24/3 roster in fresh TRX; the
 Windows task uses the corresponding corrected CP-1/CP-3 selection at final C.
+
+The first actual prefix-filter execution selected the exact 24/3 roster. CP-4
+passed all three methods; CP-2 passed 23 and failed the new coordinate assertion:
+the default `Demo.Check` fixture places `target-label` at column 31, whereas the
+frozen coordinate 33 belongs to the existing parser fixture's `Demo.Check()`
+spelling. Code corrects V-1's input row to that spelling, preserving the required
+`(5,10)`/`(5,33)` assertions and normalized `Demo.Check` binding. No assertion is
+loosened. This fixture-setup failure is not an inline-newline positive control.
 
 Before handoff: touched bodies/helpers read; **guards=15, mapped=15, missing=0,
 duplicate PC maps=0**. Every PC has an exact method, valid defect and decisive
