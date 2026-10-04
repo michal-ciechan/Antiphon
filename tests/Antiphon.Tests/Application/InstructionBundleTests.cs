@@ -636,7 +636,7 @@ public class InstructionBundleTests
         bundle = bundle.Replace("\r\n", "\n");
         bundle.ShouldNotContain('\r');
         bundle.ShouldContain("Follow docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout for autonomous AppHost and runner restarts and server2 rollouts.");
-        bundle.Length.ShouldBeLessThanOrEqualTo(14_625, "CARD-0940 restored policy plus the standing Always continue rule");
+        bundle.Length.ShouldBeLessThanOrEqualTo(14_538, "CARD-0940 restored policy plus the standing Always continue rule");
     }
 
     [Test]
