@@ -4665,6 +4665,12 @@ c994_lookup_image() {
     C994_IMAGE="$image"; C994_ORIGINAL="$found"
 }
 
+c994_exact_absent() {
+    local id="$1" raw code=0
+    raw="$(docker inspect "$id" 2>&1)" || code=$?
+    [ "$code" = 1 ] && [[ "${raw,,}" == *'no such object'* ]] || return 2
+}
+
 case_retire_temp_containers() {
     require_lane host
     [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] && [[ "$RUN" =~ ^[a-z0-9]{1,64}$ ]] && \
@@ -4725,10 +4731,10 @@ case_retire_temp_containers() {
         [ -n "$id" ] || continue
         c994_status_proof
         current="$(c1008_container_census)" || c994_refuse TempContainerCensusUnavailable
-        current="$(printf '%s' "$current" | jq -c --arg id "$id" '[.[]|select(.Id==$id)]')"
+        current="$(printf '%s' "$current" | jq -c --arg project "$TEMP_PROJECT" '[.[]|select(.Config.Labels["com.docker.compose.project"]==$project)]')"
         c1008_owned_mounts "$current" "$model" "$volumes"; current="$C1008_OWNED"
-        expected="$(printf '%s' "$owned" | jq -Sc --arg id "$id" '[.[]|select(.Id==$id)]')"
-        [ "$(printf '%s' "$current" | jq -Sc .)" = "$expected" ] || c994_refuse TempContainerChanged
+        expected="$(printf '%s' "$owned" | jq -Sc --argjson record "$C994_RECORD" '[.[]|. as $c|select(all($record.removals[]; .id!=$c.Id or .outcome!="removed"))]|map(.Mounts|=sort_by(.Destination))|sort_by(.Id)')"
+        [ "$(printf '%s' "$current" | jq -Sc 'map(.Mounts|=sort_by(.Destination))|sort_by(.Id)')" = "$expected" ] || c994_refuse TempContainerChanged
         # Re-read every retained generation immediately before effect.
         for name in work runner-state runner-tmp dind-data; do
             facts="$(c1008_volume "${TEMP_PROJECT}_$name")" || c994_refuse RecycleVolumeIdentityMismatch
@@ -4737,6 +4743,7 @@ case_retire_temp_containers() {
         C994_RECORD="$(printf '%s' "$C994_RECORD" | jq -c --arg id "$id" '.removals += [{id:$id,outcome:"intent"}]')"
         c994_save || c994_refuse TempContainerReceiptUnavailable
         docker rm -- "$id" >/dev/null 2>&1 || c994_refuse TempContainerRemoveFailed
+        c994_exact_absent "$id" || c994_refuse TempContainerAbsenceUnknown
         current="$(c1008_container_census)" || c994_refuse TempContainerCensusUnavailable
         printf '%s' "$current" | jq -e --arg id "$id" 'all(.[]; .Id!=$id)' >/dev/null || c994_refuse TempContainerRemoveFailed
         C994_RECORD="$(printf '%s' "$C994_RECORD" | jq -c --arg id "$id" '(.removals[]|select(.id==$id)).outcome="removed"')"
