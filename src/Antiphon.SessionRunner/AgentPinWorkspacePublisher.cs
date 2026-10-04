@@ -115,6 +115,23 @@ public sealed class AgentPinWorkspacePublisher
 
             Save(journal, journalName, desired); // Durable fence BEFORE any workspace mutation.
             await BoundaryAsync("intent", ct);
+            if (bytes is null && observed.Status == AgentPinInspectionStatus.MissingFile)
+            {
+                // Retiring an interrupted first publish (or a newer cleanup of an
+                // already absent target) must not create any workspace directories.
+                await BoundaryAsync("before-compare", ct);
+                observed = await inspector.InspectAsync(inspectRequest, ct);
+                if (ObservationFailure(observed) is { } absentFailure) return absentFailure;
+                if (HasGitAncestor(cwd)) return Refuse("pin_git_not_qualified");
+                if (observed.Sha256 != desired.ExpectedSha256) return Refuse("pin_bytes_conflict");
+                RemoveEmptyLeaf(cwd, request.AgentId);
+                await BoundaryAsync("published", ct);
+                observed = await inspector.InspectAsync(inspectRequest, ct);
+                if (ObservationFailure(observed) is { } absentReceiptFailure) return absentReceiptFailure;
+                if (observed.Sha256 is not null) return Refuse("pin_bytes_conflict");
+                Save(journal, journalName, desired with { Completed = true });
+                return Applied(desired);
+            }
             using var cwdDirectory = AgentPinPosixDirectory.Open(cwd);
             using var antiphon = cwdDirectory.Child(".antiphon", true);
             using var pins = antiphon.Child("pins", true);
