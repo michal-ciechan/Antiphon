@@ -425,6 +425,8 @@ public sealed class RoutingExhaustedPlacementTests
         public RecordingWorktrees Worktrees { get; } = new();
         public ScaledTimeProvider Clock { get; } = new(1);
         private readonly List<string> _parentRoots = [];
+        private PhoneHomeTestHost? _dispatchHost;
+        private PhoneHomeScriptedPeer? _peer;
         public Guid ListId { get; } = Guid.NewGuid();
         public Guid CardId { get; } = Guid.NewGuid();
         public Guid BoardId { get; } = Guid.NewGuid();
@@ -503,7 +505,7 @@ public sealed class RoutingExhaustedPlacementTests
             await using var db = Context();
             var task = await db.AgentTasks.AsNoTracking().SingleAsync(x => x.Id == id);
             task.Status.ShouldBe(AgentTaskStatus.Blocked, "durable-blocked");
-            task.FailureReason.ShouldNotBeNull().ShouldStartWith(ComplexityRoutingService.RoutingExhaustedPrefix, "exhaustion-prefix");
+            task.FailureReason.ShouldNotBeNull().ShouldStartWith(ComplexityRoutingService.RoutingExhaustedPrefix, customMessage: "exhaustion-prefix");
             task.AgentSessionId.ShouldBeNull("no-session");
             task.DispatchedAt.ShouldBeNull();
             (await db.AgentTaskEvents.CountAsync(x => x.AgentTaskId == id && x.Type == AgentTaskEventType.Created)).ShouldBe(1, "created-event");
@@ -596,6 +598,21 @@ public sealed class RoutingExhaustedPlacementTests
 
         public async Task<AgentTaskDispatcher.TickResult> TickAsync()
         {
+            if (_dispatchHost is null)
+            {
+                _dispatchHost = await PhoneHomeTestHost.StartAsync(connectionString: database.ConnectionString,
+                    configureRunnerSettings: settings => settings.AllowedRunnerId = "server2");
+                _peer = await _dispatchHost.ConnectPeerAsync(runnerId: "server2", platform: Directory.RemotePlatform,
+                    capabilities: new RunnerCapabilitiesDto("InboxConhost", "inbox", "test", false,
+                        Features: [RunnerPlatformWire.Feature, RunnerCapabilityFeatures.WorkspaceRepositoryV1],
+                        Platform: Directory.RemotePlatform));
+                _peer.Reply = frame => frame.Operation == PhoneHomeOperation.WorkspaceMirror
+                    ? new PhoneHomeFrame(PhoneHomeFrameKind.Result, frame.Epoch, frame.RequestId, frame.Operation,
+                        System.Text.Json.JsonSerializer.SerializeToElement(new PhoneHomeWorkspaceMirrorResponse("/work/c1021-fixture"), PhoneHomeFraming.Json))
+                    : null;
+                _dispatchHost.Directory.MarkRecovered(await _dispatchHost.WaitLiveAsync(runnerId: "server2"));
+                Directory.RemoteClient = _dispatchHost.Directory.Resolve("server2");
+            }
             var services = new ServiceCollection();
             services.AddLogging();
             services.AddSingleton<TimeProvider>(Clock);
@@ -645,9 +662,17 @@ public sealed class RoutingExhaustedPlacementTests
             Directory.Client.Inputs.ShouldBeEmpty("no-input");
             Directory.Git.Commands.ShouldBeEmpty("no-mirror-preparation");
             Worktrees.Creates.ShouldBeEmpty("no-worktree-preparation");
+            if (_peer is not null)
+            {
+                _peer.RequestCount(PhoneHomeOperation.WorkspaceMirror).ShouldBe(0, "no-mirror-preparation");
+                _peer.Launches.ShouldBeEmpty("no-launch");
+                _peer.RequestCount(PhoneHomeOperation.Input).ShouldBe(0, "no-input");
+            }
         }
         public async ValueTask DisposeAsync()
         {
+            if (_peer is not null) await _peer.DisposeAsync();
+            if (_dispatchHost is not null) await _dispatchHost.DisposeAsync();
             await database.DisposeAsync();
             foreach (var root in _parentRoots)
                 if (System.IO.Directory.Exists(root)) System.IO.Directory.Delete(root, recursive: true);
@@ -716,6 +741,7 @@ public sealed class RoutingExhaustedPlacementTests
     private sealed class PlacementDirectory(string local) : ISessionRunnerDirectory
     {
         public ProbeClient Client { get; } = new();
+        public ISessionRunnerClient? RemoteClient { get; set; }
         public PreparationGit Git { get; } = new();
         public ISessionRunnerClient Local => Client;
         public string? RemotePlatform { get; set; } = local == "windows" ? "linux" : "windows";
@@ -730,10 +756,10 @@ public sealed class RoutingExhaustedPlacementTests
             return Task.FromResult<RunnerDescriptor?>(new RunnerDescriptor(desktop ? "desktop" : "server2", "fixture", platform,
                 DateTimeOffset.UtcNow, desktop || Eligible, desktop || Eligible, false, 10,
                 new RunnerCapabilitiesDto("InboxConhost", "inbox", "test", false,
-                    Features: desktop || Feature ? [RunnerPlatformWire.Feature] : [], Platform: platform)));
+                    Features: desktop || Feature ? [RunnerPlatformWire.Feature, RunnerCapabilityFeatures.WorkspaceRepositoryV1] : [RunnerCapabilityFeatures.WorkspaceRepositoryV1], Platform: platform)));
         }
         public ISessionRunnerClient Resolve(string? runnerId) => Eligible || string.IsNullOrWhiteSpace(runnerId)
-            ? Client : throw new ServiceUnavailableException("fixture runner unavailable", PhoneHomeProblemTypes.Unavailable);
+            ? (string.IsNullOrWhiteSpace(runnerId) ? Client : RemoteClient ?? Client) : throw new ServiceUnavailableException("fixture runner unavailable", PhoneHomeProblemTypes.Unavailable);
         public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) => Task.FromResult<SessionRunnerOwner?>(null);
         public Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct) => Task.FromResult<SessionRunnerBinding>(SessionRunnerBinding.Missing.Instance);
         public Task<RunnerInventory> GetInventoryAsync(string? runnerId, CancellationToken ct) =>
