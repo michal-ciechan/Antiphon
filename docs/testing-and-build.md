@@ -176,6 +176,14 @@ assertions. The absent, missing-shell and failing-shell driver cases remain
 optional unless explicitly required. The C1008 Unit consumer requires jq in its
 present invocation; a missing prerequisite is a failure of that proof.
 
+The sixteen named C1008 host contracts in `RemoteScriptContractTests` and
+`RollingVolumeRecycleScriptTests` explicitly require native Linux (CARD-1050).
+Their entry guards skip before host setup on other platforms; missing Linux
+tools still fail. The five extracted source/ASCII and PowerShell wrapper tests
+run on Windows and Linux. Windows coverage requires the exact method/reason
+skip audit plus those portable passes; intentional skips are placement evidence,
+not a clean zero-skip checkpoint certificate or passing host coverage.
+
 #### jq qualification and bounded consumer proof (CARD-1040)
 
 Qualify these three locations independently:
