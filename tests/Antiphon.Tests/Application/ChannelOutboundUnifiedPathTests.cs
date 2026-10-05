@@ -183,7 +183,7 @@ public sealed class ChannelOutboundUnifiedPathTests
     public Task C519_Deferred_runtime_releases_without_claiming_publication() =>
         new AgentTaskReplyIntegrationTests().VerifyDeferredRuntimeAsync();
 
-    private sealed class World(BridgeQueueHarness harness, IsolatedTestSchema schema, string key) : IAsyncDisposable
+    private sealed class World(BridgeQueueHarness harness, IsolatedTestSchema schema, string key, Guid projectId) : IAsyncDisposable
     {
         public BridgeQueueHarness H => harness;
         public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(harness.ConnectionString));
@@ -214,7 +214,7 @@ public sealed class ChannelOutboundUnifiedPathTests
                     Trigger = Enum.Parse<ChannelOutboundTrigger>(profile) };
                 await db.ChatChannels.Where(c => c.ExternalId == conversation).ExecuteUpdateAsync(s => s.SetProperty(c => c.OutboundAgentProfile, "test"));
             }
-            return new(h, schema, "telegram:" + conversation);
+            return new(h, schema, "telegram:" + conversation, project);
         }
         public async Task<Guid> MainAsync(string answer)
         {
@@ -232,7 +232,7 @@ public sealed class ChannelOutboundUnifiedPathTests
             await File.WriteAllTextAsync(Path.Combine(dir, DeliverableBundleService.SourceManifestName),
                 JsonSerializer.Serialize(manifest, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
             await using var db = Db();
-            db.AgentTasks.Add(new() { Id = id, RootTaskId = id, ProjectId = (await db.Projects.SingleAsync()).Id,
+            db.AgentTasks.Add(new() { Id = id, RootTaskId = id, ProjectId = projectId,
                 AgentId = H.AgentId, Title = "implied source", Goal = "implied source", WorkingDirectory = H.TempRoot,
                 RepoPath = H.TempRoot, Status = AgentTaskStatus.Succeeded, DeliverableBundleDir = dir,
                 CreatedAt = H.Now, CompletedAt = H.Now });
