@@ -5,10 +5,12 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
+using System.Runtime.InteropServices;
+using System.Text;
 
 namespace Antiphon.Tests.Application;
 
-// CP-5 is commissioned on native Windows only. A wrong-host selection must fail visibly.
+// Native Windows rows must fail visibly when selected on the wrong host.
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class AgentTaskLandHalfResetWindowsTests
@@ -134,19 +136,55 @@ public sealed class AgentTaskLandHalfResetWindowsTests
     public async Task C883_CaseAliasCannotChangeRegisteredIdentity()
     {
         RequireWindows();
-        await using var f = new LandingGitFixture();
+        var root = Path.Combine(Path.GetTempPath(), "antiphon-c448-" + Guid.NewGuid().ToString("N") + " with spaces");
+        await using var f = new LandingGitFixture(root);
         await f.InitializeAsync();
         var sourceHead = (await f.RequiredAsync(f.Source, "rev-parse", "HEAD")).Trim();
+        var sourceBytes = await File.ReadAllBytesAsync(Path.Combine(f.Source, "keep.txt"));
+        var admin = (await f.RequiredAsync(f.Source, "rev-parse", "--absolute-git-dir")).Trim();
+        var index = Path.Combine(admin, "index");
+        var indexBytes = await File.ReadAllBytesAsync(index);
+        using var sourceLink = DirectoryLink.TryCreate(Path.Combine(f.Root, "source junction"), f.Source)
+            .ShouldNotBeNull("native qualification requires an actual owned junction");
+        File.GetAttributes(sourceLink.Path).HasFlag(FileAttributes.ReparsePoint).ShouldBeTrue();
+        foreach (var same in new[] { f.Source.ToUpperInvariant(), f.Source.Replace('\\', '/'), sourceLink.Path })
+        {
+            var accepted = await f.Git.InspectRecoveryCheckoutAsync(f.Coordinates with { WorktreePath = same },
+                sourceHead, sourceHead, CancellationToken.None);
+            accepted.Accepted.ShouldBeTrue("W.SameRegisteredIdentityAccepted: " + same);
+        }
         var other = Path.Combine(f.Root, "trees", "other");
         await f.RequiredAsync(f.Repository, "worktree", "add", "--detach", other, sourceHead);
-        var alias = Path.Combine(f.Root, "TREES", "OTHER");
-        var forged = new LandSourceCoordinates(f.TaskId, f.Repository, alias, f.SourceRef, f.TargetRef);
-        var proof = await f.Git.InspectRecoveryCheckoutAsync(forged, sourceHead, sourceHead,
-            CancellationToken.None);
-        proof.Accepted.ShouldBeFalse("W.CaseAliasCannotRedirectOwnerReset");
+        using var otherLink = DirectoryLink.TryCreate(Path.Combine(f.Root, "other junction"), other)
+            .ShouldNotBeNull("native qualification requires an actual owned junction");
+        foreach (var alias in new[] { other.ToUpperInvariant(), other.Replace('\\', '/'), otherLink.Path })
+        {
+            var forged = new LandSourceCoordinates(f.TaskId, f.Repository, alias, f.SourceRef, f.TargetRef);
+            var proof = await f.Git.InspectRecoveryCheckoutAsync(forged, sourceHead, sourceHead, CancellationToken.None);
+            proof.Accepted.ShouldBeFalse("W.CaseAliasCannotRedirectOwnerReset: " + alias);
+        }
+        using (var held = new FileStream(index, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            var locked = await f.Git.InspectRecoveryCheckoutAsync(f.Coordinates, sourceHead, sourceHead,
+                CancellationToken.None);
+            locked.Accepted.ShouldBeFalse("W.LockedIndexCannotAuthorizeReset");
+        }
         (await f.RequiredAsync(f.Source, "rev-parse", "HEAD")).Trim()
             .ShouldBe(sourceHead, "W.RegisteredOwnerHeadPreserved");
+        (await File.ReadAllBytesAsync(index)).ShouldBe(indexBytes, "W.NativeIndexPreserved");
+        (await File.ReadAllBytesAsync(Path.Combine(f.Source, "keep.txt"))).ShouldBe(sourceBytes, "W.NativeBytesPreserved");
+        var shortName = new StringBuilder(32768);
+        var shortLength = GetShortPathNameW(f.Source, shortName, (uint)shortName.Capacity);
+        shortLength.ShouldBeGreaterThan(0u, "W.NativeShortNameAvailable");
+        shortLength.ShouldBeLessThan((uint)shortName.Capacity);
+        shortName.ToString().ShouldNotBe(f.Source, "W.NativeShortNameMustExerciseDifferentSpelling");
+        var shortProof = await f.Git.InspectRecoveryCheckoutAsync(
+            f.Coordinates with { WorktreePath = shortName.ToString() }, sourceHead, sourceHead, CancellationToken.None);
+        shortProof.Accepted.ShouldBeTrue("W.ShortNameOfSameRegisteredIdentityAccepted");
     }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    private static extern uint GetShortPathNameW(string path, StringBuilder shortPath, uint capacity);
 
     private static void RequireWindows()
     {
