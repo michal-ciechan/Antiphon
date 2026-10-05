@@ -722,7 +722,7 @@ public class ChannelReplyDurabilityTests
     }
 
     [Test]
-    public async Task Ttl_with_a_completed_unmatched_turn_is_turn_unmatched()
+    public async Task Ttl_with_a_completed_answer_captures_before_recording_expired_preparation()
     {
         await using var h = await CreateHarnessAsync();
         var chatId = await h.BindChannelAsync();
@@ -741,21 +741,7 @@ public class ChannelReplyDurabilityTests
 
         await h.Dispatcher.SweepStaleCorrelationsAsync(CancellationToken.None);
 
-        (await RowAsync(messageId)).ChannelReplySettledAt.ShouldNotBeNull();
-        var notice = h.Messaging.SentReplies.Where(r => r.ConversationId == chatId).ShouldHaveSingleItem();
-        notice.Text.ShouldNotBeNull();
-        notice.Text.ShouldStartWith(ChannelReplyDispatcher.LostReplyNoticePrefix);
-        notice.Text.ShouldNotContain(hiPhil);
-
-        await using var db = CreateContext();
-        var incident = (await db.AgentIncidents
-                .Where(i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.ChannelReplyLost)
-                .ToListAsync())
-            .ShouldHaveSingleItem();
-        incident.FailureReason.ShouldBe("TurnUnmatched");
-        incident.Severity.ShouldBe(AlertSeverity.Critical);
-        incident.Message.ShouldContain($"prompt seq {promptSeq}");
-        incident.Message.ShouldContain("Give me message to Phil");
+        await ChannelOutboundTestDriver.AssertExpiredCaptureLossAsync(h, messageId, promptSeq, hiPhil);
     }
 
     [Test]

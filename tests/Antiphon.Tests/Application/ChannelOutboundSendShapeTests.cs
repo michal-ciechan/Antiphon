@@ -178,6 +178,8 @@ public sealed partial class ChannelOutboundDeliveryTests
                             Origin = QueuedMessageOrigin.Delegation, SourceTaskId = taskId,
                             ConversationKey = "telegram:" + conversation,
                             CreatedAt = now, SentAt = now, DeliveryAttempts = 1,
+                            LastDeliveryStartedAt = now,
+                            LastDeliveryBaselineSequence = await h.CurrentTranscriptMaxSequenceAsync(),
                         });
                         await db.SaveChangesAsync();
                     }

@@ -17,6 +17,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -672,22 +673,46 @@ public class ChannelBridgeTests
     }
 
     [Test]
-    public async Task A_missing_attachment_file_becomes_a_visible_note_not_a_lost_reply()
+    public async Task A_missing_attachment_remains_captured_until_its_due_retry_recovers_the_file()
     {
-        await using var h = await HarnessAsync();
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var h = await HarnessAsync(outboundClock: clock);
         await h.BindChannelAsync();
+        var path = Path.Combine(Path.GetTempPath(), $"bridge-missing-{Guid.NewGuid():N}.pdf");
+        var bytes = "%PDF-1.4 complete recovered source"u8.ToArray();
+        try
+        {
+            var msg = TelegramText(h.ChatId, "send the report", title: "AZ Care");
+            await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
+            await h.InsertTurnAsync(h.Adapter.Inputs[0], $"Here you go:\n[[attach: {path}]]");
+            await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+            await ChannelOutboundTestDriver.AssertCapturedAsync(h.Provider, h.SessionId, "main", 1);
+            await h.DrainOutboundAsync();
 
-        var msg = TelegramText(h.ChatId, "send the report", title: "AZ Care");
-        await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            var captured = await db.ChannelOutboundDeliveries.AsNoTracking()
+                .SingleAsync(d => d.SourceSessionId == h.SessionId);
+            captured.State.ShouldBe(ChannelOutboundDeliveryState.Captured);
+            captured.PreparationAttempts.ShouldBe(1);
+            captured.NextAttemptAt.ShouldBe(clock.GetUtcNow().UtcDateTime.AddSeconds(30));
+            captured.PublishedAt.ShouldBeNull();
+            (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+                .ChannelReplySettledAt.ShouldBeNull();
+            h.Messaging.SentReplies.ShouldBeEmpty();
 
-        await h.InsertTurnAsync(h.Adapter.Inputs[0], "Here you go:\n[[attach: C:\\nope\\missing.pdf]]");
-        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
-        await h.DrainOutboundAsync();
-
-        var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
-        reply.Attachments.ShouldBeEmpty();
-        reply.Text.ShouldNotBeNull();
-        reply.Text.ShouldContain("attachment not found");
+            await File.WriteAllBytesAsync(path, bytes);
+            await h.DrainOutboundAsync();
+            h.Messaging.SentReplies.ShouldBeEmpty("the persisted due time still owns the retry");
+            clock.Advance(TimeSpan.FromSeconds(30));
+            await h.DrainOutboundAsync();
+            var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
+            reply.ConversationId.ShouldBe(h.ChatId);
+            reply.Text.ShouldBe("Here you go:");
+            reply.Attachments.ShouldHaveSingleItem().Content.ShouldBe(bytes);
+            (await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == captured.Id))
+                .State.ShouldBe(ChannelOutboundDeliveryState.Published);
+        }
+        finally { File.Delete(path); }
     }
 
     [Test]
@@ -981,7 +1006,8 @@ public class ChannelBridgeTests
         Raw = System.Text.Json.JsonDocument.Parse("{}").RootElement.Clone(),
     };
 
-    private static async Task<Harness> HarnessAsync(int debounceWindowMs = 0, long maxAttachmentBytes = 14 * 1024 * 1024)
+    private static async Task<Harness> HarnessAsync(int debounceWindowMs = 0, long maxAttachmentBytes = 14 * 1024 * 1024,
+        TimeProvider? outboundClock = null)
     {
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options =>
@@ -1043,14 +1069,17 @@ public class ChannelBridgeTests
             Profiles = new(StringComparer.Ordinal),
         }));
         services.AddSingleton<IChannelOutboundFileStore>(new ChannelOutboundFileStore(outboundRoot));
-        services.AddScoped<ChannelOutboundService>();
+        services.AddScoped<ChannelOutboundService>(sp => new ChannelOutboundService(
+            sp.GetRequiredService<AppDbContext>(), sp.GetRequiredService<IChannelOutboundFileStore>(),
+            sp.GetRequiredService<IAntiphonMessagingProducer>(),
+            sp.GetRequiredService<IOptions<ChannelOutboundSettings>>(), outboundClock ?? TimeProvider.System));
         services.AddSingleton<IChannelReplyAttachmentReader, ChannelReplyAttachmentReader>();
         services.AddScoped<ChannelReplyPreparation>();
         services.AddScoped<ChannelOutboundDeliveryPump>(sp => new ChannelOutboundDeliveryPump(
             sp.GetRequiredService<AppDbContext>(), null!,
             sp.GetRequiredService<IChannelOutboundFileStore>(),
             sp.GetRequiredService<IAntiphonMessagingProducer>(),
-            Options.Create(new AntiphonMessagingOptions()), TimeProvider.System,
+            Options.Create(new AntiphonMessagingOptions()), outboundClock ?? TimeProvider.System,
             NullLogger<ChannelOutboundDeliveryPump>.Instance,
             sp.GetRequiredService<IOptions<ChannelOutboundSettings>>(),
             sp.GetRequiredService<ChannelReplyPreparation>()));
@@ -1065,6 +1094,8 @@ public class ChannelBridgeTests
 
         var sessionId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
         var chatId = $"-100{Random.Shared.Next(100000, 999999)}";
         var now = DateTime.UtcNow;
 
@@ -1073,9 +1104,13 @@ public class ChannelBridgeTests
             // Fail at fixture setup if the dispatcher's outbound graph is incomplete.
             _ = scope.ServiceProvider.GetRequiredService<ChannelOutboundService>();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Projects.Add(new Project { Id = projectId, Name = "bridge-" + projectId.ToString("N"),
+                CreatedAt = now, UpdatedAt = now });
+            db.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "bridge",
+                CreatedAt = now, UpdatedAt = now });
             db.Agents.Add(new Agent
             {
-                Id = agentId,
+                Id = agentId, BoardId = boardId,
                 Name = $"BridgeTestAgent-{agentId:N}"[..30],
                 Slug = $"bridge-test-{agentId:N}"[..20],
                 WorkingDirectory = Path.GetTempPath(),
@@ -1116,7 +1151,7 @@ public class ChannelBridgeTests
             provider.GetRequiredService<TimeProvider>(),
             NullLogger<ChannelBridgeService>.Instance);
 
-        return new Harness(provider, bridge, dispatcher, messaging, adapter, eventBus, sessionId, agentId, chatId, outboundRoot);
+        return new Harness(provider, bridge, dispatcher, messaging, adapter, eventBus, sessionId, agentId, chatId, outboundRoot, projectId, boardId);
     }
 
     private sealed record Harness(
@@ -1129,7 +1164,9 @@ public class ChannelBridgeTests
         Guid SessionId,
         Guid AgentId,
         string ChatId,
-        string OutboundRoot) : IAsyncDisposable
+        string OutboundRoot,
+        Guid ProjectId,
+        Guid BoardId) : IAsyncDisposable
     {
         public Task DrainOutboundAsync() => ChannelOutboundTestDriver.DrainAsync(Provider, SessionId);
 
@@ -1269,6 +1306,8 @@ public class ChannelBridgeTests
                 await db.ChatChannels.Where(c => c.ExternalId == ChatId).ExecuteDeleteAsync();
                 await db.AgentSessions.Where(s => s.Id == SessionId).ExecuteDeleteAsync();
                 await db.Agents.Where(a => a.Id == AgentId).ExecuteDeleteAsync();
+                await db.Boards.Where(b => b.Id == BoardId).ExecuteDeleteAsync();
+                await db.Projects.Where(p => p.Id == ProjectId).ExecuteDeleteAsync();
             }
             await Provider.DisposeAsync();
             if (Directory.Exists(OutboundRoot))

@@ -1735,3 +1735,20 @@ stored-outcome assertions must detect the mapped defects; no new duplicate PC is
 introduced. Every PC-1..100, PC-1059-1..6 and S4/S5/S6/S7/S8/S9/S10 variant remains
 pending; Code executes no deliberate mutants. Activation remains false by default.
 Restart: none; caller owns eventual server/runner activation after the full card.
+
+S11 repair group 1: run 20261005-152818-0de1 at
+6c88d246a94adf2bda69c069dd15d2182565edd2 executed CP-15 26/40, CP-16 24/25 and
+CP-17 41/42. It was stopped during CP-18's build and awaited to terminal exit 6;
+the executor and children were gone before edits. CP-18..22 executed no tests.
+The standalone bridge now supplies its missing project/board binding. Two TTL
+tests follow the newly discovered capture through expired preparation to atomic
+Failed/source/incident/alert outcome, checking original response and owning prompt.
+The missing-file test uses an outbound-only controlled clock to prove no early
+retry, then exact recovered bytes at the persisted due time. Queue clocks remain
+unchanged. Machine sources now contain actual attempt floors; modern bundle
+fixtures contain complete manifests while historical cases explicitly replace
+them. Superseded Check is amended while pending in the real queue, so its fixture
+now rejects the old header alone and accepts the complete amended receipt. Original
+text/route/attachment assertions remain. Rerun CP-15..22 at the committed repair
+SHA with unchanged filters, floors and deadlines. No inherited-red claim or
+deliberate mutant is made; every PC remains pending as above.

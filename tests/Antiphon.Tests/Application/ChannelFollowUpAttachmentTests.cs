@@ -96,7 +96,7 @@ public class ChannelFollowUpAttachmentTests
         attachment.Mime.ShouldBe("application/pdf");
         attachment.Content.ShouldBe(pdfBytes);
         (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldNotBeNull(
-            "the Delegation row's ChannelReplySettledAt is the claim-before-produce marker");
+            "the Delegation row's ChannelReplySettledAt is the committed publication marker");
         (await RowAsync(channelRowId)).ChannelReplySettledAt.ShouldNotBeNull(
             "the follow-up must not touch the already-settled Channel-origin row");
     }
@@ -234,7 +234,7 @@ public class ChannelFollowUpAttachmentTests
         await Restarted(h).OnTurnEndAsync(h.SessionId, CancellationToken.None);
         await h.DrainOutboundAsync();
 
-        h.Messaging.SentReplies.Count.ShouldBe(2, "claim-before-produce makes re-triggers a no-op");
+        h.Messaging.SentReplies.Count.ShouldBe(2, "committed publication makes re-triggers a no-op");
         (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldNotBeNull();
     }
 
@@ -623,6 +623,7 @@ public class ChannelFollowUpAttachmentTests
         File.WriteAllText(Path.Combine(bundle, "part.tmp"), "stale");
         File.WriteAllText(legacyZip, "legacy zip");
         var manifestPath = Path.Combine(bundle, DeliverableBundleService.SourceManifestName);
+        File.Delete(manifestPath); // Historical cases deliberately replace the modern fixture manifest.
         if (mode == "valid")
         {
             var bytes = File.ReadAllBytes(files[1]);
@@ -767,6 +768,8 @@ public class ChannelFollowUpAttachmentTests
             CreatedAt = sent,
             SentAt = sent,
             DeliveryAttempts = 1,
+            LastDeliveryStartedAt = sent,
+            LastDeliveryBaselineSequence = await h.CurrentTranscriptMaxSequenceAsync(),
         });
         await db.SaveChangesAsync();
         return id;
@@ -803,6 +806,17 @@ public class ChannelFollowUpAttachmentTests
             File.WriteAllText(path, $"# doc {i}\n");
             files.Add(path);
         }
+
+        var sourceMembers = files.Where(f => f.EndsWith(".md", StringComparison.Ordinal))
+            .Select(f =>
+            {
+                var bytes = File.ReadAllBytes(f);
+                return new DeliverableBundleService.SourceMember(Path.GetFileName(f), Path.GetFileName(f),
+                    null, bytes.Length, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)));
+            }).ToArray();
+        File.WriteAllText(Path.Combine(bundleDir, DeliverableBundleService.SourceManifestName),
+            System.Text.Json.JsonSerializer.Serialize(new DeliverableBundleService.SourceManifest(1, true,
+                sourceMembers, []), new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)));
 
         File.WriteAllText(Path.Combine(bundleDir, "render.log"), "ok\n");
 

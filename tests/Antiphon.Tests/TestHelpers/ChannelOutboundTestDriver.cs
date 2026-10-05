@@ -72,6 +72,40 @@ internal static class ChannelOutboundTestDriver
         }
     }
 
+    public static async Task AssertExpiredCaptureLossAsync(BridgeQueueHarness harness,
+        Guid sourceId, long promptSequence, string response)
+    {
+        await using var scope = harness.Provider.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var source = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == sourceId);
+        source.ChannelReplySettledAt.ShouldBeNull();
+        var captured = await db.ChannelOutboundDeliveries.AsNoTracking()
+            .SingleAsync(d => d.Id == source.ChannelOutboundDeliveryId);
+        captured.State.ShouldBe(ChannelOutboundDeliveryState.Captured);
+        captured.PromptSequence.ShouldBe(promptSequence);
+        ChannelReplyPreparation.Deserialize(captured.CaptureJson!).Body.OriginalResponse.ShouldBe(response);
+        captured.PreparationDeadlineAt.ShouldBeLessThan(harness.Now);
+        harness.Messaging.SentReplies.ShouldBeEmpty();
+
+        await harness.DrainOutboundAsync();
+        var failed = await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == captured.Id);
+        failed.State.ShouldBe(ChannelOutboundDeliveryState.Failed);
+        failed.PublishedAt.ShouldBeNull();
+        failed.PublicationAttempts.ShouldBe(0);
+        failed.FailureReportedEpisode.ShouldBe(failed.FailureEpisode);
+        failed.FailureReason.ShouldContain("original obligation deadline was exhausted");
+        (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == sourceId))
+            .ChannelReplySettledAt.ShouldNotBeNull();
+        var incident = await db.AgentIncidents.SingleAsync(i => i.AgentId == harness.AgentId
+            && i.Kind == AgentIncidentKind.ChannelReplyLost);
+        incident.FailureReason.ShouldBe("Failed");
+        incident.Severity.ShouldBe(AlertSeverity.Critical);
+        incident.Message.ShouldContain(captured.Id.ToString());
+        incident.Message.ShouldContain(sourceId.ToString());
+        (await db.Alerts.CountAsync(a => a.AgentId == harness.AgentId)).ShouldBe(1);
+        harness.Messaging.SentReplies.ShouldBeEmpty();
+    }
+
     public static async Task AcknowledgeUncertainAsync(BridgeQueueHarness harness, Guid sourceId)
     {
         await using var scope = harness.Provider.CreateAsyncScope();
