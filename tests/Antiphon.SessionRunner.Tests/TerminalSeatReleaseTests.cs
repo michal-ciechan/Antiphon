@@ -3,6 +3,8 @@ using System.Text.Json;
 using System.Threading.Channels;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -12,6 +14,103 @@ namespace Antiphon.SessionRunner.Tests;
 [NotInParallel("ClaudeConfigDirEnv")]
 public class TerminalSeatReleaseTests
 {
+    [Test]
+    public async Task Two_observations_require_the_full_safety_margin()
+    {
+        await using var world = new SeatWorld("Codex");
+        await world.StartAsync();
+        await world.DeliverAsync();
+        var first = await world.ObserveAsync();
+        first.Status.ShouldBe(TerminalSeatQualificationStatus.Waiting);
+        first.StableFor.ShouldBe(TimeSpan.Zero);
+        first.Token.ShouldBeNull();
+        world.ServerClock.Advance(TimeSpan.FromDays(2));
+        (await world.ObserveAsync()).Status.ShouldBe(TerminalSeatQualificationStatus.Waiting,
+            "the server clock cannot supply runner elapsed time");
+        world.Clock.Advance(TimeSpan.FromMilliseconds(119999));
+        var early = await world.ObserveAsync();
+        early.Status.ShouldBe(TerminalSeatQualificationStatus.Waiting, "119.999 seconds is not qualified");
+        early.Token.ShouldBeNull();
+        world.Clock.Advance(TimeSpan.FromMilliseconds(1));
+        var qualified = await world.ObserveAsync();
+        qualified.Status.ShouldBe(TerminalSeatQualificationStatus.Qualified, "exactly 120 seconds qualifies");
+        qualified.StableFor.ShouldBe(TimeSpan.FromSeconds(120));
+        qualified.Token.ShouldNotBeNullOrWhiteSpace();
+        qualified.FirstObservedAt.ShouldBe(first.FirstObservedAt);
+        world.Clock.Advance(TimeSpan.FromMilliseconds(1));
+        var later = await world.ObserveAsync();
+        later.Status.ShouldBe(TerminalSeatQualificationStatus.Qualified);
+        later.Token.ShouldBe(qualified.Token, "unchanged evidence retains its opaque token");
+        world.AssertRetained();
+    }
+
+    [Test]
+    public async Task Old_turn_end_does_not_qualify_a_new_generation()
+    {
+        foreach (var provider in new[] { "Claude", "Grok", "Codex" })
+        {
+            await using var world = new SeatWorld(provider);
+            await world.StartAsync();
+            // Old history is idle, but none of it follows the current delivery floor.
+            var old = await world.ObserveAsync();
+            old.Status.ShouldBe(TerminalSeatQualificationStatus.OldPrompt, "old-end-rejected: " + provider);
+            world.Clock.Advance(TimeSpan.FromHours(1));
+            (await world.ObserveAsync()).Status.ShouldBe(TerminalSeatQualificationStatus.OldPrompt);
+            await world.DeliverAsync();
+            (await world.ObserveAsync()).Status.ShouldBe(TerminalSeatQualificationStatus.Waiting);
+            world.Clock.Advance(TimeSpan.FromSeconds(120));
+            (await world.ObserveAsync()).Status.ShouldBe(TerminalSeatQualificationStatus.Qualified,
+                "a real later delivered prompt and end must be accepted: " + provider);
+            world.Child.Inputs.ShouldContain(SeatWorld.TaskPrompt);
+            world.AssertRetained();
+        }
+    }
+
+    [Test]
+    public async Task Unavailable_observation_discards_qualification()
+    {
+        await using var world = new SeatWorld("Grok");
+        await world.StartAsync();
+        await world.DeliverAsync();
+        (await world.ObserveAsync()).Status.ShouldBe(TerminalSeatQualificationStatus.Waiting);
+        world.Clock.Advance(TimeSpan.FromSeconds(60));
+        world.Tail.Observer.OpenRead = _ => throw new IOException("fixture unavailable");
+        var unavailable = await world.ObserveAsync();
+        unavailable.Status.ShouldBe(TerminalSeatQualificationStatus.Unknown);
+        unavailable.Token.ShouldBeNull();
+        world.Tail.Observer.OpenRead = null;
+        world.Clock.Advance(TimeSpan.FromSeconds(60));
+        var recovered = await world.ObserveAsync();
+        recovered.Status.ShouldBe(TerminalSeatQualificationStatus.Waiting,
+            "recovery at old t+120 must start a new window");
+        recovered.StableFor.ShouldBe(TimeSpan.Zero);
+        world.Clock.Advance(TimeSpan.FromSeconds(120));
+        (await world.ObserveAsync()).Status.ShouldBe(TerminalSeatQualificationStatus.Qualified);
+        world.AssertRetained();
+    }
+
+    [Test]
+    public async Task Restart_invalidates_volatile_observation_tokens()
+    {
+        await using var world = new SeatWorld("Claude");
+        await world.StartAsync();
+        await world.DeliverAsync();
+        await world.ObserveAsync();
+        world.Clock.Advance(TimeSpan.FromSeconds(120));
+        var before = await world.ObserveAsync();
+        before.Status.ShouldBe(TerminalSeatQualificationStatus.Qualified);
+        before.Token.ShouldNotBeNullOrWhiteSpace();
+        await world.RestartAsync();
+        var restarted = await world.ObserveAsync();
+        restarted.Status.ShouldBe(TerminalSeatQualificationStatus.Waiting, "restart requires a new runner window");
+        restarted.Token.ShouldBeNull();
+        world.Clock.Advance(TimeSpan.FromSeconds(120));
+        var qualified = await world.ObserveAsync();
+        qualified.Status.ShouldBe(TerminalSeatQualificationStatus.Qualified);
+        qualified.Token.ShouldNotBe(before.Token, "a restarted runtime must not recreate an old token");
+        world.AssertRetained();
+    }
+
     [Test]
     [Arguments("Claude")]
     [Arguments("Grok")]
@@ -153,6 +252,95 @@ public class TerminalSeatReleaseTests
             await world.PollAsync();
             world.DrainTranscript().ShouldBeEmpty("the next poll must not re-emit the same bytes");
         }
+    }
+
+    private sealed class SeatWorld : IAsyncDisposable
+    {
+        internal const string TaskPrompt = "[antiphon-task:c667-s1b] Current generation delivery, complete distinctive task prompt.";
+        private readonly string _root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "c667-seat-" + Guid.NewGuid().ToString("N"));
+        private readonly SessionRunnerSettings _settings;
+        private readonly DateTime _generation = new(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc);
+        public TailWorld Tail { get; }
+        public SeatChild Child { get; } = new();
+        public FakeTimeProvider Clock { get; } = new(new DateTimeOffset(2026, 10, 2, 0, 0, 0, TimeSpan.Zero));
+        public FakeTimeProvider ServerClock { get; } = new(new DateTimeOffset(2026, 10, 3, 0, 0, 0, TimeSpan.Zero));
+        public SessionRunnerRuntime Runtime { get; private set; }
+        public TerminalSeatObservationRequest Request { get; private set; } = null!;
+
+        public SeatWorld(string provider)
+        {
+            Tail = new TailWorld(provider);
+            _settings = new SessionRunnerSettings { SessionLogPath = _root };
+            Runtime = CreateRuntime();
+        }
+
+        private SessionRunnerRuntime CreateRuntime() => new(Options.Create(_settings),
+            NullLogger<SessionRunnerRuntime>.Instance, timeProvider: Clock);
+
+        private void Bind()
+        {
+            var session = new SessionRunnerRuntime.RunnerSession(Tail.SessionId, _settings,
+                new SessionRunnerEventHub(), NullLogger.Instance);
+            session.BindChildForTest(Child, Tail.Tailer, _generation);
+            Runtime.Track(session);
+        }
+
+        public async Task StartAsync()
+        {
+            await Tail.StartAsync();
+            Bind();
+            var baseline = await Tail.ObserveAsync();
+            Request = new(Runtime.RunnerStoreId, _generation, baseline.BindingIdentity!, baseline.TranscriptRevision);
+        }
+
+        public async Task DeliverAsync()
+        {
+            await Runtime.SendInputAsync(Tail.SessionId, TaskPrompt, CancellationToken.None);
+            await Runtime.SendInputAsync(Tail.SessionId, "\r", CancellationToken.None);
+            await Tail.AppendAsync(Tail.Prompt(TaskPrompt, "current") + Tail.End("current"));
+        }
+
+        public Task<TerminalSeatObservation> ObserveAsync() =>
+            Runtime.ObserveTerminalSeatAsync(Tail.SessionId, Request, CancellationToken.None);
+
+        public async Task RestartAsync()
+        {
+            // Detach the real tailer before runtime disposal; the same native transcript stays
+            // owned by TailWorld, like the transcript/child surviving a runner process restart.
+            Runtime.DetachTerminalTailerForTest(Tail.SessionId);
+            await Runtime.DisposeAsync();
+            Runtime = CreateRuntime();
+            Runtime.RunnerStoreId.ShouldBe(Request.ExpectedRunnerStoreId);
+            Bind();
+        }
+
+        public void AssertRetained()
+        {
+            Child.Kills.ShouldBe(0, "S1b has no signal route");
+            Runtime.LiveSessionCount.ShouldBe(1);
+            Runtime.List().ShouldContain(s => s.SessionId == Tail.SessionId);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            Runtime.DetachTerminalTailerForTest(Tail.SessionId);
+            await Runtime.DisposeAsync();
+            await Tail.DisposeAsync();
+            if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
+        }
+    }
+
+    private sealed class SeatChild : ISessionChild
+    {
+        public List<string> Inputs { get; } = [];
+        public int Kills { get; private set; }
+        public Task<ChildStarted> LaunchAsync(RunnerLaunchRequest request, CancellationToken ct) => throw new NotSupportedException();
+        public Task WriteAsync(string input, CancellationToken ct) { Inputs.Add(input); return Task.CompletedTask; }
+        public Task ResizeAsync(int cols, int rows, CancellationToken ct) => Task.CompletedTask;
+        public Task<bool> KillAsync(CancellationToken ct) { Kills++; return Task.FromResult(false); }
+        public Task<ChildScreen?> ReadScreenAsync(CancellationToken ct) => Task.FromResult<ChildScreen?>(null);
+        public event Action<ChildExit>? Exited { add { } remove { } }
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class TailWorld : IAsyncDisposable
