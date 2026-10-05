@@ -78,6 +78,218 @@ public class TerminalSeatReleaseTests
     }
 
     [Test]
+    public async Task Native_delivery_floor_is_captured_before_backend_write()
+    {
+        foreach (var provider in new[] { "Claude", "Grok", "Codex" })
+        foreach (var conditional in new[] { false, true })
+        {
+            await using var world = new SeatWorld(provider);
+            await world.StartAsync();
+            var before = await world.Tail.ObserveAsync();
+            before.Status.ShouldBe(TerminalTranscriptReadStatus.Success);
+            TerminalSeatDeliveryCapture? atWriter = null;
+            world.Child.Write = async _ =>
+            {
+                var evidence = world.Session.DeliveryEvidence;
+                evidence.State.ShouldBe(TerminalSeatDeliveryState.Prepared,
+                    "PC-91: native floor must exist at backend writer entry");
+                atWriter = evidence.Pending.ShouldNotBeNull();
+                atWriter.PromptFloorRevision.ShouldBe(before.TranscriptRevision);
+                atWriter.BindingIdentity.ShouldBe(before.BindingIdentity);
+                atWriter.CaptureId.ShouldNotBe(Guid.Empty);
+                atWriter.RuntimeEpoch.ShouldNotBe(Guid.Empty);
+                atWriter.RunnerStoreId.ShouldBe(world.Runtime.RunnerStoreId);
+                atWriter.Session.ShouldBeSameAs(world.Session);
+                atWriter.SessionId.ShouldBe(world.Tail.SessionId);
+                atWriter.AcceptedStartedAt.ShouldBe(world.Session.AcceptedStartedAt!.Value);
+                // The provider can append native output before WriteAsync returns.
+                await world.Tail.AppendAsync(world.Tail.Prompt(SeatWorld.TaskPrompt, "sync") + world.Tail.End("sync"));
+            };
+            await SendCapturedInputAsync(world, SeatWorld.TaskPrompt, conditional);
+            world.Child.Write = null;
+            await SendCapturedInputAsync(world, "\r", conditional);
+            var submitted = world.Session.DeliveryEvidence.Submitted.ShouldNotBeNull();
+            submitted.ShouldBe(atWriter);
+            (await world.Tail.ObserveAsync()).TranscriptRevision.ShouldBeGreaterThan(submitted.PromptFloorRevision);
+            world.Child.Inputs.ShouldBe(new[] { SeatWorld.TaskPrompt, "\r" });
+            world.AssertRetained();
+        }
+    }
+
+    [Test]
+    public async Task Native_delivery_floor_survives_body_enter_and_reenter()
+    {
+        foreach (var provider in new[] { "Claude", "Grok", "Codex" })
+        foreach (var conditional in new[] { false, true })
+        {
+            await using var world = new SeatWorld(provider);
+            await world.StartAsync();
+            var chunks = new[] { "\u001b[2", "00~first\n", "second\u001b[20", "1~" };
+            TerminalSeatDeliveryCapture? first = null;
+            foreach (var chunk in chunks)
+            {
+                await SendCapturedInputAsync(world, chunk, conditional);
+                var current = world.Session.DeliveryEvidence.Pending.ShouldNotBeNull();
+                first ??= current;
+                current.ShouldBe(first, "body chunks must retain the first capture");
+            }
+            await SendCapturedInputAsync(world, "\r", conditional);
+            await world.Tail.AppendAsync(world.Tail.Prompt("first\nsecond", "submitted") + world.Tail.End("submitted"));
+            await SendCapturedInputAsync(world, "\r", conditional);
+            world.Session.DeliveryEvidence.Submitted.ShouldBe(first, "PC-92: re-Enter must retain capture and floor");
+            world.Child.Inputs.ShouldBe(chunks.Concat(new[] { "\r", "\r" }));
+            world.Session.BackendInput.Count.ShouldBe(6);
+            (await world.ObserveAsync()).Status.ShouldBe(TerminalSeatQualificationStatus.Waiting);
+            world.Clock.Advance(TimeSpan.FromSeconds(120));
+            (await world.ObserveAsync()).Status.ShouldBe(TerminalSeatQualificationStatus.Qualified);
+            world.Child.Write = _ =>
+            {
+                world.Session.DeliveryEvidence.Submitted.ShouldBeNull();
+                world.Session.DeliveryEvidence.Pending.ShouldNotBeNull().CaptureId.ShouldNotBe(first!.CaptureId);
+                world.Runtime.TerminalSeatProofFor(world.Tail.SessionId).ShouldBeNull("new body invalidates old qualification before writing");
+                return Task.CompletedTask;
+            };
+            await SendCapturedInputAsync(world, "next body", conditional);
+            world.Child.Write = null;
+            await SendCapturedInputAsync(world, "\r", conditional);
+            world.Session.DeliveryEvidence.Submitted.ShouldNotBeNull().PromptFloorRevision
+                .ShouldBeGreaterThan(first!.PromptFloorRevision);
+        }
+    }
+
+    [Test]
+    public async Task Uncertain_input_never_publishes_delivery_evidence()
+    {
+        foreach (var conditional in new[] { false, true })
+        foreach (var fault in new[] { "throw-body", "cancel-body", "throw-enter", "editing", "framing", "overflow", "read" })
+        {
+            await using var world = new SeatWorld("Codex");
+            await world.StartAsync();
+            var failure = fault is "throw-body" or "cancel-body" or "throw-enter";
+            if (fault == "throw-enter") await SendCapturedInputAsync(world, "body", conditional);
+            if (failure)
+            {
+                world.Child.Write = _ =>
+                {
+                    world.Session.DeliveryEvidence.State.ShouldBe(TerminalSeatDeliveryState.Prepared);
+                    return fault == "cancel-body" ? Task.FromCanceled(new CancellationToken(true))
+                        : Task.FromException(new IOException("backend write failed"));
+                };
+                if (fault == "cancel-body")
+                    await Should.ThrowAsync<OperationCanceledException>(() => SendCapturedInputAsync(world, "body", conditional));
+                else await Should.ThrowAsync<IOException>(() => SendCapturedInputAsync(world,
+                    fault == "throw-enter" ? "\r" : "body", conditional));
+            }
+            else
+            {
+                if (fault == "read") world.Tail.Observer.OpenRead = _ => throw new UnauthorizedAccessException();
+                await SendCapturedInputAsync(world, fault switch
+                {
+                    "editing" => "body\b",
+                    "framing" => "\u001b[200~body\u001b[20X",
+                    "overflow" => new string('x', TerminalSeatDeliveryEvidence.MaximumCharacters + 1),
+                    _ => "body"
+                }, conditional);
+            }
+            world.Session.DeliveryEvidence.State.ShouldBe(TerminalSeatDeliveryState.Invalid,
+                "PC-93: uncertainty must invalidate the producer state before custody checks");
+            world.Session.DeliveryEvidence.Submitted.ShouldBeNull();
+            world.Child.Write = null;
+            await SendCapturedInputAsync(world, "\r", conditional);
+            world.Session.DeliveryEvidence.State.ShouldBe(TerminalSeatDeliveryState.Invalid);
+            world.Session.DeliveryEvidence.Current.ShouldBeNull();
+            if (failure) world.Session.TerminalReleaseCustodyHold.ShouldBe(TerminalSeatReleaseOutcome.PendingDelivery);
+            world.Child.Inputs.Count.ShouldBeGreaterThanOrEqualTo(2, "evidence failure never suppresses input");
+            world.AssertRetained();
+        }
+    }
+
+    [Test]
+    public async Task Unbound_delivery_never_backfills_an_idle_floor()
+    {
+        foreach (var provider in new[] { "Claude", "Grok", "Codex" })
+        foreach (var conditional in new[] { false, true })
+        foreach (var unbound in new[] { false, true })
+        {
+            await using var world = new SeatWorld(provider);
+            if (unbound) world.BindUnbound();
+            else
+            {
+                await world.StartAsync();
+                world.Tail.Observer.OpenRead = _ => throw new IOException("unavailable before body");
+            }
+            await SendCapturedInputAsync(world, SeatWorld.TaskPrompt, conditional);
+            world.Session.DeliveryEvidence.Current.ShouldBeNull();
+            if (unbound) await world.Tail.StartAsync();
+            else world.Tail.Observer.OpenRead = path => new FileStream(path, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            (await world.Tail.ObserveAsync()).Verdict.ShouldBe(TerminalTranscriptVerdict.Idle);
+            for (var retry = 0; retry < 2; retry++)
+            {
+                world.Clock.Advance(TimeSpan.FromHours(1));
+                await SendCapturedInputAsync(world, "\r", conditional);
+                world.Session.DeliveryEvidence.Current.ShouldBeNull("PC-94: late binding cannot repair a prior body capture");
+                world.Session.DeliveryEvidence.State.ShouldNotBe(TerminalSeatDeliveryState.Submitted);
+            }
+            // A genuinely subsequent, bound submission is a new capture, not backfill.
+            await SendCapturedInputAsync(world, "subsequent legitimate body", conditional);
+            await SendCapturedInputAsync(world, "\r", conditional);
+            world.Session.DeliveryEvidence.Submitted.ShouldNotBeNull();
+            world.AssertRetained();
+        }
+    }
+
+    [Test]
+    public async Task Native_delivery_evidence_is_cleared_on_rebind()
+    {
+        foreach (var change in new[] { "generation", "tailer", "claim", "replacement", "restart", "dispose" })
+        {
+            await using var world = new SeatWorld("Codex");
+            await world.StartAsync();
+            await world.DeliverAsync();
+            var previousSession = world.Session;
+            var first = previousSession.DeliveryEvidence.Submitted.ShouldNotBeNull();
+            switch (change)
+            {
+                case "generation": world.Session.BindAcceptedGeneration(first.AcceptedStartedAt.AddSeconds(1)); break;
+                case "tailer":
+                    world.Runtime.DetachTerminalTailerForTest(world.Tail.SessionId);
+                    break;
+                case "claim": world.Session.OnTranscriptClaimRevoked(world.Tail.Path, Guid.NewGuid()); break;
+                case "replacement":
+                    await world.RestartEmptyAsyncForReplacement();
+                    world.TrackReplacement(first.AcceptedStartedAt.AddSeconds(1));
+                    break;
+                case "restart": await world.RestartAsync(); break;
+                case "dispose":
+                    world.Runtime.DetachTerminalTailerForTest(world.Tail.SessionId);
+                    await world.Runtime.DisposeAsync();
+                    break;
+            }
+            world.Session.DeliveryEvidence.Current.ShouldBeNull("PC-95: reset the producer before downstream identity guards");
+            world.Session.DeliveryEvidence.State.ShouldBe(TerminalSeatDeliveryState.Missing);
+            if (change is "generation" or "restart")
+            {
+                await SendCapturedInputAsync(world, "new generation body", false);
+                await SendCapturedInputAsync(world, "\r", false);
+                var next = world.Session.DeliveryEvidence.Submitted.ShouldNotBeNull();
+                next.CaptureId.ShouldNotBe(first.CaptureId);
+                next.AcceptedStartedAt.ShouldBe(world.Session.AcceptedStartedAt!.Value);
+                if (change == "restart") next.RuntimeEpoch.ShouldNotBe(first.RuntimeEpoch);
+            }
+        }
+    }
+
+    private static async Task SendCapturedInputAsync(SeatWorld world, string input, bool conditional)
+    {
+        if (conditional)
+            (await world.Runtime.SendConditionalInputAsync(world.Tail.SessionId,
+                new(world.Session.AcceptedStartedAt!.Value, world.Session.LastSequence, input), CancellationToken.None))
+                .Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        else await world.Runtime.SendInputAsync(world.Tail.SessionId, input, CancellationToken.None);
+    }
+
+    [Test]
     public async Task Unsupported_capability_never_falls_back_to_force()
     {
         foreach (var phoneHome in new[] { false, true })
@@ -1128,6 +1340,14 @@ public class TerminalSeatReleaseTests
             Bind();
             var baseline = await Tail.ObserveAsync();
             Request = new(Runtime.RunnerStoreId, _generation, baseline.BindingIdentity!, baseline.TranscriptRevision);
+        }
+
+        public void BindUnbound() => Bind();
+
+        public async Task RestartEmptyAsyncForReplacement()
+        {
+            Runtime.DetachTerminalTailerForTest(Tail.SessionId);
+            await RestartEmptyAsync();
         }
 
         public async Task DeliverAsync()

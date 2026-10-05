@@ -1971,6 +1971,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private int _terminalInputWriters;
         private bool _terminalInputUncertain;
         private bool _terminalComposerPending;
+        private readonly TerminalSeatDeliveryEvidence _deliveryEvidence = new();
+        internal TerminalSeatDeliverySnapshot DeliveryEvidence
+        {
+            get { lock (_gate) return _deliveryEvidence.Snapshot; }
+        }
         internal bool TerminalReleaseInProgress { get; set; }
 
         internal TerminalSeatReleaseOutcome? TerminalReleaseCustodyHold
