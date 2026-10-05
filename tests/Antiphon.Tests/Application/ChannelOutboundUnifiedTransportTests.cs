@@ -354,14 +354,16 @@ public sealed class ChannelOutboundUnifiedTransportTests
             using var scenario = new CancellationTokenSource(TimeSpan.FromSeconds(120));
             var worker = new FakeAgentProtocolAdapter();
             if (busy) worker.ReadyHold = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            var workerEvents = new WorkerTurnBus();
             var delegation = new DelegationSettings { MaxConcurrentTasks = 16 };
             await using var w = await UnifiedOutboundTransport.CreateAsync(broker, configure: services =>
             {
                 services.AddSingleton(Options.Create(delegation));
+                services.AddSingleton<IEventBus>(workerEvents);
                 services.AddSingleton<IAgentProtocolAdapterFactory>(new WorkerFactory(worker));
                 services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
                 services.AddSingleton<DelegationWorkspaceResolver>();
-                services.AddScoped<DelegationWorktreeService>();
+                services.AddDelegationWorktreeGraph();
                 services.AddScoped<AgentTaskService>();
                 services.AddScoped<AgentTaskDispatcher>();
                 services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(
@@ -372,6 +374,10 @@ public sealed class ChannelOutboundUnifiedTransportTests
                             { Kind = "ClaudeCode", Exe = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh" } },
                     }));
             });
+            if (busy) workerEvents.OnStarted = () => BridgeQueueHarness.InsertEntryAsync(
+                worker.StartedSessionId!.Value, TranscriptKinds.UserPrompt,
+                "converter is already working after its interrupted launch", connectionString: w.Schema.ConnectionString,
+                createdAtUtc: w.H.Now);
             delegation.AllowedRoots = [w.H.TempRoot];
             var workerRoot = Directory.CreateDirectory(Path.Combine(w.H.TempRoot, "converter")).FullName;
             await File.WriteAllTextAsync(Path.Combine(workerRoot, "convert.md"), "Preserve every source; emit the exact converted receipt.");
@@ -437,9 +443,6 @@ public sealed class ChannelOutboundUnifiedTransportTests
             if (busy)
             {
                 await UnifiedOutboundTransport.WaitForAsync(() => worker.StartedSessionId is not null);
-                await BridgeQueueHarness.InsertEntryAsync(worker.StartedSessionId!.Value, TranscriptKinds.UserPrompt,
-                    "converter is already working on its interrupted turn", connectionString: w.Schema.ConnectionString,
-                    createdAtUtc: w.H.Now);
                 worker.ReadyHold!.SetResult(true);
             }
             await w.H.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(30), scenario.Token);
@@ -456,7 +459,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
                 worker.SubmittedBodies.ShouldBeEmpty("a busy converter cannot receive the brief yet");
                 await using var db = w.Db();
                 var queued = (await db.SessionQueuedMessages.Where(m => m.AgentSessionId == workerSession
-                    && m.SourceTaskId == taskId).ToListAsync()).ShouldHaveSingleItem();
+                    && m.ExecutionTaskId == taskId).ToListAsync()).ShouldHaveSingleItem();
                 queued.Status.ShouldBe(QueuedMessageStatus.Pending);
                 queued.DeliveryAttempts.ShouldBe(0);
                 await BridgeQueueHarness.InsertEntryAsync(workerSession, TranscriptKinds.TurnEnd, stopReason: "end_turn",
@@ -466,7 +469,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
             await using (var db = w.Db())
             {
                 var brief = (await db.SessionQueuedMessages.AsNoTracking().Where(m => m.AgentSessionId == workerSession
-                    && m.Origin == QueuedMessageOrigin.Delegation && m.SourceTaskId == taskId).ToListAsync()).ShouldHaveSingleItem();
+                    && m.Origin == QueuedMessageOrigin.Delegation && m.ExecutionTaskId == taskId).ToListAsync()).ShouldHaveSingleItem();
                 brief.Status.ShouldBe(QueuedMessageStatus.Sent);
                 brief.Body.ShouldContain(goal);
                 brief.Body.ShouldContain(delivery.Id.ToString("D"));
@@ -505,6 +508,14 @@ public sealed class ChannelOutboundUnifiedTransportTests
     private sealed class WorkerFactory(FakeAgentProtocolAdapter worker) : IAgentProtocolAdapterFactory
     {
         public IAgentProtocolAdapter Create(AgentKind kind) => worker;
+    }
+
+    private sealed class WorkerTurnBus : IEventBus
+    {
+        public Func<Task>? OnStarted { get; set; }
+        public Task PublishToGroupAsync(string group, string eventName, object payload, CancellationToken ct = default) =>
+            eventName == "SessionStarted" && OnStarted is not null ? OnStarted() : Task.CompletedTask;
+        public Task PublishToAllAsync(string eventName, object payload, CancellationToken ct = default) => Task.CompletedTask;
     }
 
     private sealed class RefusalProducer : IAntiphonMessagingProducer
