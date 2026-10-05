@@ -1,4 +1,4 @@
-using System.ComponentModel;
+using Win32Exception = System.ComponentModel.Win32Exception;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
