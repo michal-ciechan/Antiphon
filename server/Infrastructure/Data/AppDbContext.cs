@@ -122,10 +122,27 @@ public class AppDbContext : DbContext
     public DbSet<ExpectationEpisode> ExpectationEpisodes => Set<ExpectationEpisode>();
     public DbSet<ExpectationNudge> ExpectationNudges => Set<ExpectationNudge>();
     public DbSet<SessionRunnerState> SessionRunnerStates => Set<SessionRunnerState>();
+    public DbSet<RunnerSeatRelease> RunnerSeatReleases => Set<RunnerSeatRelease>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<RunnerSeatRelease>(entity =>
+        {
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.RunnerId).HasMaxLength(200);
+            entity.Property(r => r.ReasonCode).HasMaxLength(64);
+            entity.Property(r => r.OutcomeCode).HasMaxLength(64);
+            entity.Property(r => r.ObservationToken).HasMaxLength(200);
+            entity.Property(r => r.BindingIdentity).HasMaxLength(200);
+            entity.Property(r => r.FileRevision).HasMaxLength(200);
+            entity.Property(r => r.Revision).IsConcurrencyToken();
+            entity.HasIndex(r => new { r.RunnerId, r.RunnerStoreId, r.SessionId, r.AcceptedStartedAt }).IsUnique();
+            entity.HasIndex(r => new { r.State, r.UpdatedAt });
+            entity.HasIndex(r => new { r.TaskId, r.Attempt });
+            entity.HasIndex(r => r.ActionId).IsUnique();
+        });
 
         modelBuilder.Entity<HostCleanupRun>(entity =>
         {

@@ -17,6 +17,14 @@ namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 /// </summary>
 public sealed class RunnerScopedSessionRunnerClient : ISessionRunnerClient, IVerificationWorkspaceTransport
 {
+    public Task<TerminalSeatObservation> ObserveTerminalSeatAsync(
+        Guid sessionId, TerminalSeatObservationRequest request, CancellationToken ct) =>
+        Current.ObserveTerminalSeatAsync(sessionId, request, ct);
+
+    public Task<TerminalSeatReleaseResult> ReleaseTerminalSeatAsync(
+        Guid sessionId, TerminalSeatReleaseRequest request, CancellationToken ct) =>
+        Current.ReleaseTerminalSeatAsync(sessionId, request, ct);
+
     private readonly ISessionRunnerDirectory _directory;
 
     public RunnerScopedSessionRunnerClient(ISessionRunnerDirectory directory, string runnerId)

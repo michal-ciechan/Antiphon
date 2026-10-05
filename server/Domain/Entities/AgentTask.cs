@@ -539,6 +539,15 @@ public class AgentTask
     /// </summary>
     public DateTime? RepliedAt { get; set; }
 
+    // CARD-0667: inert until confirmed-seat answer recovery is connected. Ordinary authorized
+    // task input, separate from the payload-free release ledger; never clipped to a report excerpt.
+    public string? ReleasedSeatAnswer { get; set; }
+    public Guid? ReleasedSeatAnswerId { get; set; }
+    public Guid? ReleasedSeatAnswerRoundId { get; set; }
+    public Guid? ReleasedSeatAnswerReleaseId { get; set; }
+    public int? ReleasedSeatAnswerTargetAttempt { get; set; }
+    public DateTime? ReleasedSeatAnswerAcceptedAt { get; set; }
+
     /// <summary>
     /// Transcript high-water mark (max TranscriptEntries.Sequence on the delegate's session) at the
     /// moment a Blocked task was answered (CARD-0348). The answer starts a NEW turn; until it ends

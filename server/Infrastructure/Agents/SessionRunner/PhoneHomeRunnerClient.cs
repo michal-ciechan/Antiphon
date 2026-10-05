@@ -10,6 +10,28 @@ namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
 public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationWorkspaceTransport
 {
+    public async Task<TerminalSeatObservation> ObserveTerminalSeatAsync(
+        Guid sessionId, TerminalSeatObservationRequest request, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.ObserveTerminalSeat,
+            new PhoneHomeTerminalSeatObservationRequest(sessionId, request), ct);
+        if (frame.Kind == PhoneHomeFrameKind.Error)
+            throw new NotSupportedException("Terminal seat observation is unsupported.");
+        return Read<TerminalSeatObservation>(frame)
+            ?? throw Missing("terminal-seat-observation");
+    }
+
+    public async Task<TerminalSeatReleaseResult> ReleaseTerminalSeatAsync(
+        Guid sessionId, TerminalSeatReleaseRequest request, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.ReleaseTerminalSeat,
+            new PhoneHomeTerminalSeatReleaseRequest(sessionId, request), ct);
+        if (frame.Kind == PhoneHomeFrameKind.Error)
+            return new(sessionId, request.ActionId, TerminalSeatReleaseOutcome.Unsupported, null);
+        return Read<TerminalSeatReleaseResult>(frame)
+            ?? new(sessionId, request.ActionId, TerminalSeatReleaseOutcome.Unresolved, null);
+    }
+
     private readonly PhoneHomeLiveConnection _connection;
     private readonly RunnerContractMapper _mapper = new();
     private readonly Antiphon.Server.Application.Services.RemoteSpillCourier? _spills;

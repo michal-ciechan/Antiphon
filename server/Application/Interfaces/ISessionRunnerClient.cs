@@ -6,6 +6,15 @@ namespace Antiphon.Server.Application.Interfaces;
 
 public interface ISessionRunnerClient
 {
+    Task<TerminalSeatObservation> ObserveTerminalSeatAsync(
+        Guid sessionId, TerminalSeatObservationRequest request, CancellationToken ct) =>
+        throw new NotSupportedException("Terminal seat observation is unsupported.");
+
+    Task<TerminalSeatReleaseResult> ReleaseTerminalSeatAsync(
+        Guid sessionId, TerminalSeatReleaseRequest request, CancellationToken ct) =>
+        Task.FromResult(new TerminalSeatReleaseResult(sessionId, request.ActionId,
+            TerminalSeatReleaseOutcome.Unsupported, null));
+
     Task<VerificationCustodyStatus> ReadVerificationCustodyAsync(VerificationExecutionBinding binding, bool seal, CancellationToken ct)
         => Task.FromResult(new VerificationCustodyStatus(binding, VerificationCustodyState.UnsupportedBackend,
             "verification_custody_unsupported_backend"));
