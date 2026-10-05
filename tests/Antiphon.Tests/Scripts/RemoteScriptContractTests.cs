@@ -112,6 +112,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_exact_default_volumes()
     {
+        C1008HostFixture.RequireNativeLinux();
         using var f = new C1008HostFixture();
         var run = await f.Run();
         f.Removed.ShouldBe(new[] { "antiphon-runner_work", "antiphon-runner_runner-tmp", "antiphon-runner_dind-data" },
@@ -183,6 +184,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_refuses_references_and_unknown_census()
     {
+        C1008HostFixture.RequireNativeLinux();
         using (var held = new C1008HostFixture())
         {
             Directory.CreateDirectory(Path.Combine(held.Root, "server/locks"));
@@ -335,6 +337,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_audits_work_as_1654()
     {
+        C1008HostFixture.RequireNativeLinux();
         using var f = new C1008HostFixture();
         await C1008GitGraph(f, "layouts");
         var run = await f.Run();
@@ -355,6 +358,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_refuses_unpublished_and_dirty_work()
     {
+        C1008HostFixture.RequireNativeLinux();
         using (var accepted = new C1008HostFixture())
         {
             await C1008GitGraph(accepted); var run = await accepted.Run();
@@ -378,6 +382,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_refuses_uninspectable_git()
     {
+        C1008HostFixture.RequireNativeLinux();
         using (var accepted = new C1008HostFixture())
         {
             await C1008GitGraph(accepted); var run = await accepted.Run();
@@ -420,6 +425,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_preserves_tmp_copyup()
     {
+        C1008HostFixture.RequireNativeLinux();
         using var f = new C1008HostFixture(); var run = await f.Run();
         f.Removed.ShouldContain("antiphon-runner_runner-tmp", "recycle-tmp-assets: whole named tmp is recycled; " + run.Output);
         var compose = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "docker-compose.server2-runner.yml"));
@@ -439,6 +445,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_resume_requires_matching_receipt()
     {
+        C1008HostFixture.RequireNativeLinux();
         using (var seeded = new C1008HostFixture())
         {
             var interruption = await seeded.Run(extra: "seed_runner_checkout() { write_result false InjectedSeedFailure 2; }; build_server2_images() { :; }; c849_prepare() { :; }; c849_require_ready() { :; }; ensure_build_slots_broker() { :; }");
@@ -526,6 +533,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_receipt_records_disk_and_partial_failure()
     {
+        C1008HostFixture.RequireNativeLinux();
         using var f = new C1008HostFixture();
         var run = await f.Run(extra: "sudo() { [ \"$1\" = -n ] && shift; if [ \"$1\" = df ]; then if [ -f \"$C1008_FIXTURE_ROOT/df-seen\" ]; then n=3072; else n=1024; touch \"$C1008_FIXTURE_ROOT/df-seen\"; fi; printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\nfixture 99999999 1 %s 1%% /fixture\\n' \"$n\"; elif [ \"$1\" = install ]; then mkdir -p \"${@: -1}\"; else \"$@\"; fi; }");
         run.Output.ShouldContain("freeAfterBytes=3145728", Case.Sensitive, "recycle-receipt-facts: measured after-df bytes");
@@ -645,6 +653,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Retire_temp_rechecks_absence_and_retirement()
     {
+        C1008HostFixture.RequireNativeLinux();
         using (var accepted = new C1008HostFixture(main: false))
         {
             var run = await accepted.Run("retire-temp-runner");
@@ -685,6 +694,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Retire_temp_reclaims_below_cache_disk_gate()
     {
+        C1008HostFixture.RequireNativeLinux();
         using var f = new C1008HostFixture(main: false);
         var run = await f.Run("retire-temp-runner", "c849_budget_gate() { write_result false CacheDiskLow 2; }");
         f.Removed.Length.ShouldBe(4, "recycle-disk-order: reclaim does not need the allocation budget; " + run.Output);
@@ -695,6 +705,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_dry_run_never_mutates()
     {
+        C1008HostFixture.RequireNativeLinux();
         foreach (var main in new[] { true, false })
         {
             using var f = new C1008HostFixture(main);
@@ -3272,8 +3283,7 @@ public sealed class RemoteScriptContractTests
     }
 
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
-    public async Task C849_Deploy_prepares_and_verifies_before_acceptance()
+    public void C849_Deploy_ordering_contract_is_pinned()
     {
         var remote = Remote();
         foreach (var name in new[] { "case_deploy_parent", "case_deploy_temp_runner" })
@@ -3293,6 +3303,14 @@ public sealed class RemoteScriptContractTests
         Order(recycle, "c1008_cache_preservation", "compose_temp down -v").ShouldBeTrue();
         Order(Block(remote, "case_deploy_parent"), "c1008_recycle", "c849_budget_gate").ShouldBeTrue();
         Order(Block(remote, "case_deploy_parent"), "c849_budget_gate", "build_server2_images").ShouldBeTrue();
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C849_Deploy_prepares_and_verifies_before_acceptance()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        var remote = Remote();
         foreach (var field in new[] { "sessions", "runnerSessions", "queuedTasks" })
         {
             using var blocked = new C1008HostFixture(main: false);
