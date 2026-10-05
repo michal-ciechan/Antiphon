@@ -32,7 +32,8 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
     public TerminalSeatObservationRequest Observation => new(Directory.StoreId, Now.AddHours(-1), "binding", 10);
     public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
 
-    public static async Task<RunnerSeatReleaseFixture> CreateAsync(AgentTaskStatus status = AgentTaskStatus.Succeeded)
+    public static async Task<RunnerSeatReleaseFixture> CreateAsync(
+        AgentTaskStatus status = AgentTaskStatus.Succeeded, bool sourced = false)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero));
@@ -62,23 +63,43 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         }
         catch { http.Dispose(); await schema.DisposeAsync(); throw; }
         var f = new RunnerSeatReleaseFixture { Schema = schema, Harness = harness, Clock = clock, Wire = wire, Directory = directory };
+        try
+        {
         await using var db = f.Db();
         var session = await db.AgentSessions.SingleAsync(s => s.Id == f.SessionId);
         session.RunnerId = "fixture"; session.RunnerStoreId = directory.StoreId;
+        session.RunnerCwd = "/fixture";
         session.StartedAt = f.Observation.ExpectedAcceptedStartedAt;
         var agent = await db.Agents.SingleAsync(a => a.Id == f.AgentId);
         agent.IsPoolDelegate = true; agent.AlwaysOn = false; agent.BoardId = null;
+        Guid? landingId = null;
+        if (sourced)
+        {
+            landingId = Guid.NewGuid();
+            var ownerId = Guid.NewGuid();
+            db.AgentTasks.Add(new AgentTask { Id = ownerId, RootTaskId = ownerId, Status = AgentTaskStatus.Succeeded,
+                CompletedAt = f.Now, CreatedAt = f.Now });
+            await db.SaveChangesAsync();
+            db.AgentTaskLandings.Add(new AgentTaskLanding
+            {
+                Id = landingId.Value, TaskId = ownerId, CreatedAt = f.Now, UpdatedAt = f.Now
+            });
+            await db.SaveChangesAsync();
+        }
         db.AgentTasks.Add(new AgentTask
         {
             Id = f.TaskId, RootTaskId = f.TaskId, AgentId = f.AgentId, AgentSessionId = f.SessionId,
             RunnerId = "fixture", Workspace = WorkspaceMode.Worktree, Attempt = 1,
             Status = status, CompletedAt = f.Now.AddMinutes(-3), CreatedAt = f.Now.AddHours(-1),
             Result = "completed report", ReportEvidence = AgentTaskReportEvidence.Marked,
+            SourceLandingOperationId = landingId,
         });
         await db.SaveChangesAsync();
         await harness.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "task", timestamp: f.Now.AddMinutes(-4));
         await harness.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn", timestamp: f.Now.AddMinutes(-3));
         return f;
+        }
+        catch { await f.DisposeAsync(); throw; }
     }
 
     public async Task<TerminalRunnerSeatReservation> RunAsync(Guid? taskId = null)
