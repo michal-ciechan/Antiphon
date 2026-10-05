@@ -1081,6 +1081,15 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             : new(sessionId, request.ActionId, TerminalSeatReleaseOutcome.StaleObservation, session?.AcceptedStartedAt);
     }
 
+    private async Task<bool> VerifyTerminalParkPublicationAsync(
+        Guid sessionId, TerminalSeatReleaseRequest request, CancellationToken ct)
+    {
+        if (request.Publication is not { } source) return true;
+        if (TerminalParkBeforeVerification is { } beforeVerification) await beforeVerification(sessionId);
+        var verified = await _workspacePark!.VerifyAsync(source, ct);
+        return verified.Outcome == WorkspaceParkOutcome.Published;
+    }
+
     // Dormant until S2c exposes the wire protocol. Both input entry points share this gate.
     // Never call either public lock-taking release/observation method from inside this gate.
     internal async Task<TerminalSeatReleaseResult> ReleaseTerminalSeatAsync(
@@ -1122,9 +1131,17 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (session is null)
             {
                 // A not-yet-adopted durable seat is not authoritative absence.
-                return Refuse(File.Exists(PtyHostManifest.PathFor(_settings.PtyHostManifestDir, sessionId))
-                    || File.Exists(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, sessionId))
-                    ? TerminalSeatReleaseOutcome.Unknown : TerminalSeatReleaseOutcome.AlreadyAbsent);
+                bool HasDurableSeat() => File.Exists(PtyHostManifest.PathFor(_settings.PtyHostManifestDir, sessionId))
+                    || File.Exists(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, sessionId));
+                if (HasDurableSeat()) return Refuse(TerminalSeatReleaseOutcome.Unknown);
+                if (!await VerifyTerminalParkPublicationAsync(sessionId, request, ct))
+                    return Refuse(TerminalSeatReleaseOutcome.StaleObservation);
+                // Source inspection awaits Git/network while the input/generation gate is
+                // reserved. Recheck both custody sources before a fresh confirmation.
+                if (_sessions.ContainsKey(sessionId)) return Refuse(TerminalSeatReleaseOutcome.GenerationMismatch);
+                if (HasDurableSeat()) return Refuse(TerminalSeatReleaseOutcome.Unknown);
+                ct.ThrowIfCancellationRequested();
+                return Refuse(TerminalSeatReleaseOutcome.AlreadyAbsent);
             }
             if (session.VerificationBinding is not null)
                 return Refuse(TerminalSeatReleaseOutcome.Owned);
@@ -1148,11 +1165,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 if (refusal is { } outcome) return Refuse(outcome);
                 var tailRevision = tailer.Snapshot().LastSequence;
 
-                if (request.Publication is { } source)
+                if (request.Publication is not null)
                 {
-                    if (TerminalParkBeforeVerification is { } beforeVerification) await beforeVerification(sessionId);
-                    var verified = await _workspacePark!.VerifyAsync(source, ct);
-                    if (verified.Outcome != WorkspaceParkOutcome.Published)
+                    if (!await VerifyTerminalParkPublicationAsync(sessionId, request, ct))
                         return Refuse(TerminalSeatReleaseOutcome.StaleObservation);
                     // Git/network awaited above. Repeat the native read before the last
                     // synchronous input/output/generation fences and signal.
@@ -1175,6 +1190,18 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     return Refuse(TerminalSeatReleaseOutcome.StaleObservation);
                 // No await remains between these revision fences and entry to the signal helper.
                 // Independent file writers cannot be transactionally locked by the runner.
+            }
+            else
+            {
+                // Physical exit alone does not prove that the retained checkout still
+                // matches the publication receipt. Refuse before forgetting its metadata.
+                if (!await VerifyTerminalParkPublicationAsync(sessionId, request, ct))
+                    return Refuse(TerminalSeatReleaseOutcome.StaleObservation);
+                if (!_sessions.TryGetValue(sessionId, out var current) || !ReferenceEquals(current, session)
+                    || !SessionGeneration.Equal(session.AcceptedStartedAt, expected.ExpectedAcceptedStartedAt))
+                    return Refuse(TerminalSeatReleaseOutcome.GenerationMismatch);
+                if (!session.HasExited) return Refuse(TerminalSeatReleaseOutcome.Unknown);
+                if (session.VerificationBinding is not null) return Refuse(TerminalSeatReleaseOutcome.Owned);
             }
 
             ct.ThrowIfCancellationRequested();
