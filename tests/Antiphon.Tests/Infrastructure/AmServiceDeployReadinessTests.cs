@@ -36,11 +36,23 @@ public sealed class AmServiceDeployReadinessTests
         }
         finally { File.Delete(baseline); }
 
+        using (var fixture = new ReadinessFixture(2, "timeout-ready"))
+        {
+            var run = await fixture.RunAsync("V-1-accepted-timeout", Path.Combine(Root, "scripts", "deploy-am-service.ps1"));
+            run.ShellExit.ShouldBe(0, "C1049-timeout-transition-succeeds: " + run.Detail);
+            run.CurlExits.ShouldBe(new[] { 28, 28, 0 }, run.Detail);
+            run.RequestsBeforeTransition.ShouldBe(2, run.Detail);
+            run.ServedRequests.ShouldBe(3, run.Detail);
+            AssertSuccess(run, 3, 2, new[] { 28 });
+        }
+
         foreach (var readyAt in new[] { 3, 5 })
         {
             using var fixture = new ReadinessFixture(readyAt - 1, "ready");
             var run = await fixture.RunAsync("V-1", Path.Combine(Root, "scripts", "deploy-am-service.ps1"));
             AssertSuccess(run, readyAt, readyAt - 1);
+            run.RequestsBeforeTransition.ShouldBe(0, run.Detail);
+            run.ServedRequests.ShouldBe(1, run.Detail);
         }
     }
 
@@ -51,9 +63,11 @@ public sealed class AmServiceDeployReadinessTests
         {
             using var fixture = new ReadinessFixture(0, mode);
             var run = await fixture.RunAsync("V-2", Path.Combine(Root, "scripts", "deploy-am-service.ps1"));
-            var expected = mode switch { "refused" => 7, "timeout" => 28, _ => 22 };
+            var allowed = mode switch { "refused" => InitialRefusalCodes, "timeout" => new[] { 28 }, _ => new[] { 22 } };
             run.ShellExit.ShouldBe(44, run.Detail);
-            run.CurlExits.ShouldBe(Enumerable.Repeat(expected, 5), run.Detail);
+            run.CurlExits.Length.ShouldBe(5, run.Detail);
+            run.CurlExits.ShouldAllBe(code => allowed.Contains(code), run.Detail);
+            run.ServedRequests.ShouldBe(mode == "refused" ? 0 : 5, run.Detail);
             run.SleepArguments.ShouldBe(Enumerable.Repeat("2", 4), run.Detail);
             AssertCurlArguments(run);
             run.LaterCalls.ShouldBe(0, run.Detail);
@@ -94,10 +108,67 @@ public sealed class AmServiceDeployReadinessTests
         Console.WriteLine("PASS C504 R-1");
     }
 
-    private static void AssertSuccess(Run run, int calls, int sleeps)
+    [Test]
+    public async Task ResolvesGitToolsWithoutUsrBinOnPathAsync()
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new TUnit.Core.Exceptions.SkipTestException("Native Windows Git tool discovery qualification");
+
+        var parentPath = Environment.GetEnvironmentVariable("PATH") ?? "";
+        var git = FindProgram("git", parentPath);
+        git.ShouldNotBeNull("Git installation must be discoverable before the supplied-PATH proof");
+        var gitRoot = Directory.GetParent(Path.GetDirectoryName(git!)!)!.FullName;
+        var usrBin = Path.Combine(gitRoot, "usr", "bin");
+        Directory.Exists(usrBin).ShouldBeTrue("Git installation-relative usr/bin precondition");
+        var suppliedPath = string.Join(Path.PathSeparator,
+            parentPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries).Where(path => !SamePath(path, usrBin))
+                .Concat(new[] { Path.Combine(gitRoot, "cmd"), Path.Combine(gitRoot, "bin") }));
+        FindProgram("cygpath", suppliedPath).ShouldBeNull("Supplied PATH must not resolve cygpath");
+        var tools = ResolveTools(suppliedPath, out var error);
+        tools.ShouldNotBeNull("C1049-toolchain-resolved-without-usrbin: " + error);
+        foreach (var tool in new[] { tools!.Sh, tools.Sleep, tools.Cygpath! })
+        {
+            Path.IsPathFullyQualified(tool).ShouldBeTrue(tool);
+            File.Exists(tool).ShouldBeTrue(tool);
+            SamePath(Path.GetDirectoryName(tool)!, usrBin).ShouldBeTrue(tool);
+        }
+        tools.Curl.ShouldBe(FindProgram("curl", parentPath));
+
+        var directory = Path.Combine(Path.GetTempPath(), "c1049 path with spaces " + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var file = Path.Combine(directory, "sentinel with spaces.txt");
+            await File.WriteAllTextAsync(file, "C1049-real-path-sentinel");
+            var start = new ProcessStartInfo(tools.Sh) { RedirectStandardOutput = true, RedirectStandardError = true };
+            start.Environment["PATH"] = tools.Directory + Path.PathSeparator + suppliedPath;
+            foreach (var arg in new[] { "-c", "cat -- \"$1\"", "c1049", ToPosixPath(file, tools) }) start.ArgumentList.Add(arg);
+            using var child = Process.Start(start) ?? throw new InvalidOperationException("Git sh did not start");
+            var stdout = child.StandardOutput.ReadToEndAsync();
+            var stderr = child.StandardError.ReadToEndAsync();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            try { await child.WaitForExitAsync(timeout.Token); }
+            catch (OperationCanceledException) { child.Kill(entireProcessTree: true); await child.WaitForExitAsync(); throw; }
+            child.ExitCode.ShouldBe(0, await stderr);
+            (await stdout).ShouldBe("C1049-real-path-sentinel");
+            using var fixture = new ReadinessFixture(0, "ready", suppliedPath);
+            var run = await fixture.RunAsync("V-3-sanitized-path", Path.Combine(Root, "scripts", "deploy-am-service.ps1"));
+            AssertSuccess(run, 1, 0);
+            run.ServedRequests.ShouldBe(1, run.Detail);
+            Environment.GetEnvironmentVariable("PATH").ShouldBe(parentPath, "Parent PATH must remain byte-for-byte unchanged");
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    private static int[] InitialRefusalCodes => OperatingSystem.IsWindows() ? new[] { 7, 28 } : new[] { 7 };
+
+    private static void AssertSuccess(Run run, int calls, int sleeps, int[]? initialCodes = null)
     {
         run.ShellExit.ShouldBe(0, run.Detail);
-        run.CurlExits.ShouldBe(Enumerable.Repeat(7, calls - 1).Append(0), run.Detail);
+        var allowed = initialCodes ?? InitialRefusalCodes;
+        run.CurlExits.Length.ShouldBe(calls, run.Detail);
+        run.CurlExits.Take(calls - 1).ShouldAllBe(code => allowed.Contains(code), run.Detail);
+        run.CurlExits.Last().ShouldBe(0, run.Detail);
         run.SleepArguments.ShouldBe(Enumerable.Repeat("2", sleeps), run.Detail);
         AssertCurlArguments(run);
         run.ShellOutput[0].ShouldBe(Body, run.Detail);
@@ -117,6 +188,7 @@ public sealed class AmServiceDeployReadinessTests
     {
         var starts = run.Journal.Where(x => x.StartsWith("curl-start|", StringComparison.Ordinal)).ToArray();
         starts.Length.ShouldBe(run.CurlExits.Length, run.Detail);
+        starts.Select(x => int.Parse(x.Split('|')[1])).ShouldBe(Enumerable.Range(1, starts.Length), run.Detail);
         foreach (var item in starts)
         {
             item.ShouldContain("--connect-timeout 2", Case.Sensitive, run.Detail);
@@ -156,6 +228,87 @@ public sealed class AmServiceDeployReadinessTests
         return output;
     }
 
+    private sealed record ToolPaths(string Curl, string Sh, string Sleep, string? Cygpath, string Directory);
+
+    private static string? FindProgram(string name, string searchPath)
+    {
+        foreach (var entry in searchPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var candidate = Path.GetFullPath(Path.Combine(entry.Trim('"'), name));
+            if (File.Exists(candidate)) return candidate;
+            if (OperatingSystem.IsWindows() && File.Exists(candidate + ".exe")) return candidate + ".exe";
+        }
+        return null;
+    }
+
+    private static bool SamePath(string left, string right) =>
+        string.Equals(Path.GetFullPath(left.Trim('"')).TrimEnd(Path.DirectorySeparatorChar),
+            Path.GetFullPath(right.Trim('"')).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase);
+
+    private static ToolPaths? ResolveTools(string originalPath, out string error)
+    {
+        // Resolve curl before admitting Git tools: native Windows curl remains the measured executable.
+        var curl = FindProgram("curl", originalPath);
+        error = "Required tool curl was not found on the original PATH";
+        if (curl is null) return null;
+        if (!OperatingSystem.IsWindows())
+        {
+            var sh = FindProgram("sh", originalPath);
+            var sleep = FindProgram("sleep", originalPath);
+            error = "Required tools sh and sleep must be present on PATH";
+            return sh is null || sleep is null ? null : new ToolPaths(curl, sh, sleep, null, Path.GetDirectoryName(sh)!);
+        }
+
+        var candidates = originalPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+            .Select(path => Path.GetFullPath(path.Trim('"'))).ToList();
+        foreach (var launcher in new[] { FindProgram("git", originalPath), FindProgram("sh", originalPath) }.OfType<string>())
+        {
+            var directory = new DirectoryInfo(Path.GetDirectoryName(launcher)!);
+            // Only installation-relative candidates, never a machine PATH edit or a disk search.
+            var ancestor = directory;
+            for (var depth = 0; depth < 3 && ancestor is not null; depth++, ancestor = ancestor.Parent)
+                candidates.Add(Path.Combine(ancestor.FullName, "usr", "bin"));
+        }
+        foreach (var directory in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var info = new DirectoryInfo(directory);
+            if (!info.Name.Equals("bin", StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(info.Parent?.Name, "usr", StringComparison.OrdinalIgnoreCase)) continue;
+            var root = info.Parent!.Parent!.FullName;
+            if (!File.Exists(Path.Combine(root, "cmd", "git.exe")) && !File.Exists(Path.Combine(root, "bin", "git.exe"))) continue;
+            var sh = Path.Combine(directory, "sh.exe");
+            var sleep = Path.Combine(directory, "sleep.exe");
+            var cygpath = Path.Combine(directory, "cygpath.exe");
+            if (new[] { sh, sleep, cygpath }.All(File.Exists))
+            {
+                error = "";
+                return new ToolPaths(curl, sh, sleep, cygpath, directory);
+            }
+        }
+        error = "Required Git for Windows prerequisites sh.exe, sleep.exe and cygpath.exe were not found in one installation's usr/bin; expose Git cmd/bin on the supplied PATH";
+        return null;
+    }
+
+    private static string ToPosixPath(string path, ToolPaths tools)
+    {
+        if (!OperatingSystem.IsWindows()) return path;
+        var start = new ProcessStartInfo(tools.Cygpath!) { RedirectStandardOutput = true, RedirectStandardError = true };
+        start.ArgumentList.Add("-u"); start.ArgumentList.Add("--"); start.ArgumentList.Add(path);
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("cygpath did not start");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(10_000))
+        {
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit();
+            throw new TimeoutException("cygpath did not finish in 10 seconds");
+        }
+        var result = stdout.GetAwaiter().GetResult().Trim();
+        var error = stderr.GetAwaiter().GetResult();
+        if (process.ExitCode != 0) throw new InvalidOperationException("cygpath failed: " + error);
+        return result;
+    }
+
     private sealed class ReadinessFixture : IDisposable
     {
         private readonly Socket _socket = new(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
@@ -163,16 +316,22 @@ public sealed class AmServiceDeployReadinessTests
         private readonly string _directory = Path.Combine(Path.GetTempPath(), "c504-" + Guid.NewGuid().ToString("N"));
         private readonly int _refusals;
         private readonly string _mode;
+        private readonly string _originalPath;
+        private readonly List<Task> _handlers = new();
         private Task? _server;
+        private Task? _transition;
         private int _served;
+        private int _requestsBeforeTransition = -1;
+        private int _ready;
 
-        public ReadinessFixture(int refusals, string mode)
+        public ReadinessFixture(int refusals, string mode, string? originalPath = null)
         {
             _refusals = refusals;
             _mode = mode;
+            _originalPath = originalPath ?? Environment.GetEnvironmentVariable("PATH") ?? "";
             Directory.CreateDirectory(_directory);
             _socket.Bind(new IPEndPoint(IPAddress.Loopback, 0));
-            if (mode != "refused" && refusals == 0) Listen();
+            if (mode == "timeout-ready" || (mode != "refused" && refusals == 0)) Listen();
         }
 
         private string Endpoint => $"http://127.0.0.1:{((IPEndPoint)_socket.LocalEndPoint!).Port}/api/channels";
@@ -180,6 +339,9 @@ public sealed class AmServiceDeployReadinessTests
 
         public async Task<Run> RunAsync(string caseName, string deploymentScript)
         {
+            var tools = ResolveTools(_originalPath, out var toolError)
+                ?? throw new InvalidOperationException(toolError);
+            var initialCodes = _mode == "timeout-ready" ? new[] { 28 } : InitialRefusalCodes;
             var wrappers = Path.Combine(_directory, "wrappers");
             Directory.CreateDirectory(wrappers);
             var migrationIds = Directory.GetFiles(Path.Combine(Root, "src", "Antiphon.Messaging.Service", "Migrations"), "*.cs")
@@ -204,7 +366,9 @@ public sealed class AmServiceDeployReadinessTests
                 "$C504_REAL_CURL" --disable --noproxy '*' "$@"
                 code=$?
                 printf 'curl-end|%s|%s\n' "$n" "$code" >> "$C504_JOURNAL"
-                if [ "$code" -eq 7 ] && [ "$n" -eq "$C504_REFUSALS" ] && [ "$C504_MODE" = ready ]; then
+                admitted=false
+                case "$C504_INITIAL_CODES" in *"|$code|"*) admitted=true ;; esac
+                if [ "$admitted" = true ] && [ "$n" -eq "$C504_REFUSALS" ] && { [ "$C504_MODE" = ready ] || [ "$C504_MODE" = timeout-ready ]; }; then
                   ticks=0
                   while [ ! -f "$C504_ACK" ]; do
                     "$C504_REAL_SLEEP" 0.1
@@ -228,37 +392,49 @@ public sealed class AmServiceDeployReadinessTests
 
             var start = new ProcessStartInfo("pwsh") { WorkingDirectory = Root, RedirectStandardOutput = true, RedirectStandardError = true };
             foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", Path.Combine(Root, "scripts", "test-deploy-am-service.ps1"), "-ReadinessCase", caseName, "-FixtureDirectory", _directory, "-DeploymentScript", deploymentScript }) start.ArgumentList.Add(arg);
-            start.Environment["PATH"] = wrappers + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
+            start.Environment["PATH"] = string.Join(Path.PathSeparator, new[] { wrappers, tools.Directory, _originalPath });
             start.Environment["C504_ENDPOINT"] = Endpoint;
-            start.Environment["C504_JOURNAL"] = ToPosixPath(JournalPath);
-            start.Environment["C504_MIGRATIONS"] = ToPosixPath(Path.Combine(_directory, "migrations.txt"));
-            start.Environment["C504_COUNT"] = ToPosixPath(Path.Combine(_directory, "curl-count.txt"));
-            start.Environment["C504_ACK"] = ToPosixPath(Path.Combine(_directory, "listen-ack.txt"));
+            start.Environment["C504_JOURNAL"] = ToPosixPath(JournalPath, tools);
+            start.Environment["C504_MIGRATIONS"] = ToPosixPath(Path.Combine(_directory, "migrations.txt"), tools);
+            start.Environment["C504_COUNT"] = ToPosixPath(Path.Combine(_directory, "curl-count.txt"), tools);
+            start.Environment["C504_ACK"] = ToPosixPath(Path.Combine(_directory, "listen-ack.txt"), tools);
             start.Environment["C504_REFUSALS"] = _refusals.ToString();
             start.Environment["C504_MODE"] = _mode;
-            start.Environment["C504_REAL_CURL"] = ToPosixPath(FindProgram("curl"));
-            start.Environment["C504_REAL_SLEEP"] = ToPosixPath(FindProgram("sleep"));
-            start.Environment["C504_POSIX_FIXTURE"] = ToPosixPath(_directory);
+            start.Environment["C504_INITIAL_CODES"] = "|" + string.Join('|', initialCodes) + "|";
+            start.Environment["C504_REAL_CURL"] = ToPosixPath(tools.Curl, tools);
+            start.Environment["C504_REAL_SLEEP"] = ToPosixPath(tools.Sleep, tools);
+            start.Environment["C504_POSIX_FIXTURE"] = ToPosixPath(_directory, tools);
             foreach (var key in start.Environment.Keys.Where(x => x.Contains("TOKEN", StringComparison.OrdinalIgnoreCase) || x.Contains("SECRET", StringComparison.OrdinalIgnoreCase) || x.Contains("PASSWORD", StringComparison.OrdinalIgnoreCase) || x.Contains("API_KEY", StringComparison.OrdinalIgnoreCase)).ToArray()) start.Environment.Remove(key);
             using var child = Process.Start(start) ?? throw new InvalidOperationException("PowerShell did not start");
             var stdout = child.StandardOutput.ReadToEndAsync();
             var stderr = child.StandardError.ReadToEndAsync();
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(300));
-            Task? transition = null;
-            if (_mode == "ready" && _refusals > 0)
-                transition = Task.Run(async () => {
-                    while (!_stop.IsCancellationRequested)
+            if ((_mode == "ready" || _mode == "timeout-ready") && _refusals > 0)
+                _transition = Task.Run(async () => {
+                    try
                     {
-                        if (File.Exists(JournalPath) && File.ReadAllLines(JournalPath).Contains($"curl-end|{_refusals}|7")) { Listen(); File.WriteAllText(Path.Combine(_directory, "listen-ack.txt"), "ready"); return; }
-                        await Task.Delay(25, _stop.Token);
+                        while (!_stop.IsCancellationRequested)
+                        {
+                            if (File.Exists(JournalPath) && initialCodes.Any(code => File.ReadAllLines(JournalPath).Contains($"curl-end|{_refusals}|{code}")))
+                            {
+                                _requestsBeforeTransition = Volatile.Read(ref _served);
+                                _requestsBeforeTransition.ShouldBe(_mode == "timeout-ready" ? _refusals : 0, "Socket state before readiness transition");
+                                if (_mode == "ready") Listen();
+                                else Volatile.Write(ref _ready, 1);
+                                File.WriteAllText(Path.Combine(_directory, "listen-ack.txt"), "ready");
+                                return;
+                            }
+                            await Task.Delay(25, _stop.Token);
+                        }
                     }
+                    catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
                 });
             try
             {
                 await child.WaitForExitAsync(timeout.Token);
-                if (transition is not null)
+                if (_transition is not null)
                 {
-                    if (File.Exists(Path.Combine(_directory, "listen-ack.txt"))) await transition.WaitAsync(TimeSpan.FromSeconds(10));
+                    if (File.Exists(Path.Combine(_directory, "listen-ack.txt"))) await _transition.WaitAsync(TimeSpan.FromSeconds(10));
                     else _stop.Cancel(); // The baseline stops after its first refusal.
                 }
                 var output = await stdout + await stderr;
@@ -272,7 +448,7 @@ public sealed class AmServiceDeployReadinessTests
                 var shellOutput = result.GetProperty("shellOutput").EnumerateArray().Select(x => x.GetString()!).ToArray();
                 return new Run(result.GetProperty("shellExit").GetInt32(), shellOutput,
                     result.GetProperty("outerError").GetString()!, result.GetProperty("adapterNames").EnumerateArray().Select(x => x.GetString()!).ToArray(),
-                    result.GetProperty("laterCalls").GetInt32(), journal, output, Endpoint, _served);
+                    result.GetProperty("laterCalls").GetInt32(), journal, output, Endpoint, _served, _requestsBeforeTransition, _mode);
             }
             catch (OperationCanceledException) { child.Kill(entireProcessTree: true); await child.WaitForExitAsync(); throw; }
         }
@@ -287,46 +463,31 @@ public sealed class AmServiceDeployReadinessTests
                     try { accepted = await _socket.AcceptAsync(_stop.Token); }
                     catch (OperationCanceledException) { return; }
                     catch (ObjectDisposedException) { return; }
-                    _ = Task.Run(async () => {
-                        using (accepted)
-                        {
-                            var buffer = new byte[4096];
-                            var size = await accepted.ReceiveAsync(buffer, SocketFlags.None, _stop.Token);
-                            var request = Encoding.ASCII.GetString(buffer, 0, size);
-                            if (!request.StartsWith("GET /api/channels HTTP/", StringComparison.Ordinal)) throw new InvalidOperationException("Unexpected HTTP request");
-                            Interlocked.Increment(ref _served);
-                            if (_mode == "timeout") { await Task.Delay(Timeout.Infinite, _stop.Token); return; }
-                            var body = _mode == "unavailable" ? "c504-response-must-not-leak" : Body;
-                            var status = _mode == "unavailable" ? "503 Service Unavailable" : "200 OK";
-                            var bytes = Encoding.ASCII.GetBytes($"HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {Encoding.ASCII.GetByteCount(body)}\r\nConnection: close\r\n\r\n{body}");
-                            await accepted.SendAsync(bytes, SocketFlags.None, _stop.Token);
-                        }
-                    }, _stop.Token);
+                    _handlers.Add(HandleRequestAsync(accepted));
                 }
             });
         }
 
-        private static string FindProgram(string name)
+        private async Task HandleRequestAsync(Socket accepted)
         {
-            foreach (var path in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator))
+            try
             {
-                var candidate = Path.Combine(path, name);
-                if (File.Exists(candidate)) return candidate;
-                if (OperatingSystem.IsWindows() && File.Exists(candidate + ".exe")) return candidate + ".exe";
+                using (accepted)
+                {
+                    var buffer = new byte[4096];
+                    var size = await accepted.ReceiveAsync(buffer, SocketFlags.None, _stop.Token);
+                    var request = Encoding.ASCII.GetString(buffer, 0, size);
+                    if (!request.StartsWith("GET /api/channels HTTP/", StringComparison.Ordinal)) throw new InvalidOperationException("Unexpected HTTP request");
+                    Interlocked.Increment(ref _served);
+                    if (_mode == "timeout" || (_mode == "timeout-ready" && Volatile.Read(ref _ready) == 0))
+                    { await Task.Delay(Timeout.Infinite, _stop.Token); return; }
+                    var body = _mode == "unavailable" ? "c504-response-must-not-leak" : Body;
+                    var status = _mode == "unavailable" ? "503 Service Unavailable" : "200 OK";
+                    var bytes = Encoding.ASCII.GetBytes($"HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {Encoding.ASCII.GetByteCount(body)}\r\nConnection: close\r\n\r\n{body}");
+                    await accepted.SendAsync(bytes, SocketFlags.None, _stop.Token);
+                }
             }
-            throw new InvalidOperationException($"Required tool {name} was not found");
-        }
-
-        private static string ToPosixPath(string path)
-        {
-            if (!OperatingSystem.IsWindows()) return path;
-            var start = new ProcessStartInfo("cygpath") { RedirectStandardOutput = true };
-            start.ArgumentList.Add("-u"); start.ArgumentList.Add(path);
-            using var process = Process.Start(start) ?? throw new InvalidOperationException("cygpath did not start");
-            var result = process.StandardOutput.ReadToEnd().Trim();
-            process.WaitForExit();
-            if (process.ExitCode != 0) throw new InvalidOperationException("cygpath failed");
-            return result;
+            catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
         }
 
         private static void WriteWrapper(string directory, string name, string source)
@@ -340,17 +501,25 @@ public sealed class AmServiceDeployReadinessTests
         {
             _stop.Cancel();
             _socket.Dispose();
-            try { _server?.Wait(TimeSpan.FromSeconds(2)); } catch (AggregateException) { }
-            _stop.Dispose();
-            Directory.Delete(_directory, recursive: true);
+            try
+            {
+                try { Task.WhenAll(new[] { _server, _transition }.OfType<Task>()).WaitAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult(); }
+                finally { Task.WhenAll(_handlers).WaitAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult(); }
+            }
+            finally
+            {
+                _stop.Dispose();
+                Directory.Delete(_directory, recursive: true);
+            }
         }
     }
 
     private sealed record Run(int ShellExit, string[] ShellOutput, string OuterError, string[] AdapterNames,
-        int LaterCalls, List<string> Journal, string ChildOutput, string Endpoint, int ServedRequests)
+        int LaterCalls, List<string> Journal, string ChildOutput, string Endpoint, int ServedRequests,
+        int RequestsBeforeTransition, string Mode)
     {
         public int[] CurlExits => Journal.Where(x => x.StartsWith("curl-end|", StringComparison.Ordinal)).Select(x => int.Parse(x.Split('|')[2])).ToArray();
         public string[] SleepArguments => Journal.Where(x => x.StartsWith("sleep|", StringComparison.Ordinal)).Select(x => x[6..]).ToArray();
-        public string Detail => $"shell={ShellExit}, curl=[{string.Join(',', CurlExits)}], sleeps=[{string.Join(',', SleepArguments)}], later={LaterCalls}, output={ChildOutput}";
+        public string Detail => $"mode={Mode}, shell={ShellExit}, curl=[{string.Join(',', CurlExits)}], sleeps=[{string.Join(',', SleepArguments)}], served={ServedRequests}, beforeTransition={RequestsBeforeTransition}, later={LaterCalls}, output={ChildOutput}";
     }
 }
