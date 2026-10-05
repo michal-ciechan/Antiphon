@@ -167,14 +167,14 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         return await db.ChannelOutboundDeliveries.AsNoTracking().SingleOrDefaultAsync(d => d.SendKind == kind);
     }
 
-    public async Task AssertReceiptAsync(int copies = 1)
+    public async Task AssertReceiptAsync(int copies = 1, string? expectedText = null)
     {
         await WaitForAsync(() => Slack.SentMessages.Count == BaselineReceipts + copies
             && Slack.UploadedFiles.Count == copies);
         foreach (var message in Slack.SentMessages.Skip(BaselineReceipts))
         {
             message.Channel.ShouldBe(Conversation); message.ThreadTs.ShouldBe(Thread);
-            message.Text.ShouldBe(Answer);
+            message.Text.ShouldBe(expectedText ?? Answer);
         }
         foreach (var file in Slack.UploadedFiles)
         {
