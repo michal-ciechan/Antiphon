@@ -941,7 +941,7 @@ select CP-29 in a Linux invocation. A missing Windows lane leaves R-12 outstandi
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c519-cp01/` | schema | `/*/*/ChannelOutboundDurabilitySchemaTests/*` | V-1 | all 4 listed results, 0 failed/skipped | 4 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c519-cp02/` | capture | `/*/*/ChannelOutboundCaptureTests/*` | V-2 | all 5 listed results, 0 failed/skipped | 5 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c519-cp03/` | storage | `/*/*/ChannelOutboundStorageTests/*` | R-7, CARD-1059 | all 32 listed results, 0 failed/skipped | 32 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-4 | S4 | `tests/Antiphon.Tests -> bin-c519-cp04/` | dispatch | `/*/*/ChannelOutboundDispatchIntegrationTests/*` | R-1 | all 4 listed results, 0 failed/skipped | 4 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-4 | S4 | `tests/Antiphon.Tests -> bin-c519-cp04/` | dispatch | `/*/*/ChannelOutboundDispatchIntegrationTests/*` | R-1 | all 10 listed results, 0 failed/skipped | 10 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-5 | S4 | `tests/Antiphon.Tests -> bin-c519-cp05/` | runtime | `/*/*/AgentTaskReplyIntegrationTests/Deferred_is_durable_and_releases_runtime` | R-1 | all 1 listed results, 0 failed/skipped | 1 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-6 | S8 | `tests/Antiphon.Tests -> bin-c519-cp06/` | materialize | `/*/*/ChannelOutboundMaterializationTests/*` | V-3 | all 12 listed results, 0 failed/skipped | 12 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-7 | S8 | `tests/Antiphon.Tests -> bin-c519-cp07/` | loss | `/*/*/ChannelOutboundFailureRecordingTests/*` | V-8 | all 8 listed results, 0 failed/skipped | 8 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
@@ -1106,3 +1106,45 @@ qualifies only R-1 and the named activation checks. No PC is discharged here.
 Original PC-1..PC-100 and PC-1059-1..PC-1059-6 remain pending unchanged. These
 S4 variants supplement their eventual complete witnesses; no deliberate mutant
 runs belong to this Code task. Method-scoped cycles remain Mutation-owned.
+
+### S4 catalog-less Review repair (Code task 530ed557, 2026-10-05)
+
+Review `aa7cf6db` found that enabling unified recovery broke the dispatcher's
+supported conversation-id route when there was no ChatChannels row. This repair
+brief overrides D-8's missing-catalog loss proposal for S4: main, machine and
+trailing replies without a catalog row must retain one PublishDirectAsync call,
+ordinary body/attachment preparation and direct source settlement, with no capture
+or queued delivery. Catalog-backed enabled replies retain capture/admission.
+Default-off behavior and operational activation remain unchanged.
+
+CP-4 adds Missing_catalog_main_publishes_once_and_settles_without_capture,
+Missing_catalog_machine_publishes_once_and_settles_without_capture, and
+Missing_catalog_trailing_publishes_once_without_capture, each with false/true
+switch arguments. Each observes complete text/attachment bytes, exactly one
+producer receipt across redispatch/pump, settled queue sources, no delivery link
+or delivery row, and no fabricated catalog. The trailing test starts with NO_REPLY
+so a main-path defect cannot prevent it from reaching its own send guard.
+The existing activation witnesses retain catalog-backed capture coverage.
+CP-4 now requires ten results; CP-5 still requires one. Run these two rows once
+at the repair tip, serially, with the existing deadlines. No whole Unit or Linux
+Herdr selection belongs to this repair brief. One CP-4 run on committed baseline
+production plus the new tests is allowed solely to establish the real regression
+red before fixing it; it is not a deliberate mutant or a PC discharge.
+
+R-1 is the ordinary repair scope. V-4 is covered only for these named S4 activation
+and missing-catalog cases; its full S9 matrix stays deferred, as do V-1..V-3,
+V-5..V-13 and R-2..R-12. No manual activation is required; restart is caller-owned
+and the switch stays off. The CP-5 flake budget is unchanged: wait for the actual
+converter-held condition before timing runtime release, excluding setup and
+materialization from that five-second check.
+
+| PC/variant (all pending SourceLanding Mutation) | Deliberate guarded defect | Exact ordinary witness |
+|---|---|---|
+| PC-S4-2 / catalog-less main | Always select capture for enabled main replies, even without a catalog row. | ChannelOutboundDispatchIntegrationTests.Missing_catalog_main_publishes_once_and_settles_without_capture (true): Published outcome, exactly one complete receipt and settled unowned source. |
+| PC-S4-3 / catalog-less machine | Always select capture for enabled machine replies, even without a catalog row. | ChannelOutboundDispatchIntegrationTests.Missing_catalog_machine_publishes_once_and_settles_without_capture (true): exactly one complete receipt and settled unowned injection. |
+| PC-S4-4 / catalog-less trailing | Refuse direct send from SendAsync when enabled and the catalog row is absent. | ChannelOutboundDispatchIntegrationTests.Missing_catalog_trailing_publishes_once_without_capture (true): exactly one complete trailing receipt and no delivery row. |
+
+All original PC-1..PC-100, PC-1059-1..PC-1059-6 and S4 variants remain pending.
+PC-20's original atomic-loss witness is not implemented or claimed by this repair;
+the revised S4 catalog-less contract above governs its new variants. Mutation and
+the caller own reconciliation of the later full-plan missing-catalog control.
