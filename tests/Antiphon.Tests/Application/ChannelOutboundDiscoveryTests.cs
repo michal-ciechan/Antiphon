@@ -1,4 +1,6 @@
 using System.Threading.Channels;
+using Antiphon.Messaging;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -243,6 +245,81 @@ public sealed class ChannelOutboundDiscoveryTests
         (await w.DeliveryAsync(silent)).SendKind.ShouldBe("machine");
         await w.DrainAsync();
         w.H.Messaging.SentReplies.ShouldHaveSingleItem().Text.ShouldBe("NO_REPLY\n\nlegitimate late machine text");
+        var path = Path.Combine(w.H.TempRoot, "workspace", "closed-source.md");
+        await File.WriteAllTextAsync(path, "complete closure companion bytes");
+        // Repeating a closed source's complete prompt in a later turn must not resurrect it,
+        // even when that later turn has attachments that would otherwise be eligible.
+        await w.H.InsertTurnAsync("[System] complete system prompt", $"do not resurrect\n[[attach: {path}]]");
+        await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, default);
+        (await w.MemberAsync(system)).ChannelOutboundDeliveryId.ShouldBeNull();
+        w.H.Messaging.SentReplies.Count.ShouldBe(1);
+        var fresh = await w.MachineAsync("[System] fresh system attachment prompt", $"fresh attachment\n[[attach: {path}]]",
+            QueuedMessageOrigin.System);
+        await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, default);
+        (await w.DeliveryAsync(fresh)).State.ShouldBe(ChannelOutboundDeliveryState.Captured);
+        await w.DrainAsync();
+        w.H.Messaging.SentReplies.Count.ShouldBe(2);
+        w.H.Messaging.SentReplies[^1].Attachments.ShouldHaveSingleItem().Content
+            .ShouldBe("complete closure companion bytes"u8.ToArray());
+    }
+
+    [Test]
+    public async Task C519_Closed_machine_source_cannot_be_captured()
+    {
+        await using var w = await World.CreateAsync();
+        await w.ContextAsync();
+        var closed = await w.MachineAsync("[System] closed source prompt", "policy held text", QueuedMessageOrigin.System);
+        await w.H.InsertTurnAsync("next unrelated prompt", "unrelated answer");
+        await w.Discovery.TickAsync(default);
+        (await w.MemberAsync(closed)).ChannelReplyDiscoveryClosedAt.ShouldNotBeNull();
+        await using (var scope = w.H.Provider.CreateAsyncScope())
+        {
+            var service = scope.ServiceProvider.GetRequiredService<ChannelOutboundService>();
+            var error = await Should.ThrowAsync<ConflictException>(() => service.CaptureAsync(
+                new ChannelReply { Channel = "telegram", ConversationId = w.Key[9..], Text = "closed source" },
+                new ChannelOutboundSource(w.H.SessionId, 1, 2, 2, "machine", [closed]),
+                ChannelReplyPreparation.Describe("closed source"), new ChannelBridgeSettings(), default));
+            error.Code.ShouldBe("channel_outbound_source_closed");
+        }
+        (await w.MemberAsync(closed)).ChannelOutboundDeliveryId.ShouldBeNull();
+        await using (var db = w.Db()) (await db.ChannelOutboundDeliveries.CountAsync()).ShouldBe(0);
+        var fresh = await w.MachineAsync("[Check] fresh eligible companion", "fresh complete machine answer");
+        await w.Discovery.TickAsync(default);
+        (await w.DeliveryAsync(fresh)).State.ShouldBe(ChannelOutboundDeliveryState.Captured);
+        await w.DrainAsync();
+        w.H.Messaging.SentReplies.ShouldHaveSingleItem().Text.ShouldBe("fresh complete machine answer");
+    }
+
+    [Test]
+    public async Task C519_Complete_machine_batch_has_one_owner_for_every_member()
+    {
+        await using var w = await World.CreateAsync();
+        await w.ContextAsync();
+        var bodies = Enumerable.Range(0, 3).Select(i => $"[task {Guid.NewGuid():N} done]\nComplete report middle and tail {i}").ToArray();
+        var members = new List<Guid>();
+        foreach (var body in bodies)
+            members.Add(await w.H.SeedPendingMessageAsync(body, status: QueuedMessageStatus.Sent,
+                origin: QueuedMessageOrigin.Delegation, conversationKey: "task:shared-batch",
+                deliveryAttempts: 1, baselineSequence: 0, createdAtUtc: w.H.Now,
+                lastDeliveryStartedAt: w.H.Now, legacyNullGeneration: true));
+        var path = Path.Combine(w.H.TempRoot, "workspace", "batch.md");
+        await File.WriteAllTextAsync(path, "complete batch attachment bytes");
+        await w.H.InsertTurnAsync(ChannelPromptFormat.FormatBatch(bodies[..^1], bodies[^1]),
+            $"complete batch answer\n[[attach: {path}]]");
+        await w.Discovery.TickAsync(default);
+        var root = await w.DeliveryAsync(members[0]);
+        foreach (var member in members)
+        {
+            (await w.MemberAsync(member)).ChannelOutboundDeliveryId.ShouldBe(root.Id);
+            (await w.MemberAsync(member)).ChannelReplySettledAt.ShouldBeNull();
+        }
+        await w.DrainAsync();
+        var reply = w.H.Messaging.SentReplies.ShouldHaveSingleItem();
+        reply.Text.ShouldBe("complete batch answer");
+        reply.Attachments.ShouldHaveSingleItem().Content.ShouldBe("complete batch attachment bytes"u8.ToArray());
+        foreach (var member in members) (await w.MemberAsync(member)).ChannelReplySettledAt.ShouldNotBeNull();
+        await using var db = w.Db();
+        (await db.ChannelOutboundDeliveries.CountAsync()).ShouldBe(1);
     }
 
     [Test]
