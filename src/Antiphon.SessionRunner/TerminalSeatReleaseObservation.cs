@@ -91,7 +91,7 @@ internal sealed class TerminalSeatReleaseObservation
 
             if (captureBinding() != binding || CaptureFile(path) != before)
                 return Refuse(TerminalTranscriptReadStatus.StaleObservation);
-            var verify = await ReadAsync(path, before.Length, null, ct);
+            var verify = await ReadAsync(path, before, null, ct);
             if (verify.Status != TerminalTranscriptReadStatus.Success
                 || verify.Digest != first.Digest
                 || captureBinding() != binding || CaptureFile(path) != before)
@@ -108,7 +108,7 @@ internal sealed class TerminalSeatReleaseObservation
                 first.Digest, before.Length, entries.Count, lastEnd, lastPrompt);
         }
         catch (ReadBudgetException) { return Refuse(TerminalTranscriptReadStatus.BudgetExceeded); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
         {
             return Refuse(TerminalTranscriptReadStatus.Unavailable);
         }
