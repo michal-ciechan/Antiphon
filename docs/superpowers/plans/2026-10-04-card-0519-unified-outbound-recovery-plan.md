@@ -987,6 +987,9 @@ select CP-29 in a Linux invocation. A missing Windows lane leaves R-12 outstandi
 | CP-47 | S7 | `tests/Antiphon.Tests -> bin-c519-cp47/` | tails-s7 | `/*/*/ChannelOutboundTrailingRecoveryTests/*` | V-6 trailing retry regression | all 8 results, 0 failed/skipped | 8 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-48 | S7 | `tests/Antiphon.Tests -> bin-c519-cp48/` | materialization-s7 | `/*/*/ChannelOutboundMaterializationTests/*` | V-3 S3 preparation subset | all 12 results, 0 failed/skipped | 12 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-49 | S7 | `tests/Antiphon.Tests -> bin-c519-cp49/` | discovery-s7 | `/*/*/ChannelOutboundDiscoveryTests/*` | V-5 existing S5 subset | all 16 results, 0 failed/skipped | 16 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-50 | S8 | `tests/Antiphon.Tests -> bin-c519-cp50/` | dispatch-s8 | `/*/*/ChannelOutboundDispatchIntegrationTests/*` | R-1 dispatcher | all 10 results, 0 failed/skipped | 10 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-51 | S8 | `tests/Antiphon.Tests -> bin-c519-cp51/` | bridge-s8 | `/*/*/ChannelBridgeTests/*` | R-2 bridge | all 40 results, 0 failed/skipped | 40 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-52 | S8 | `tests/Antiphon.Tests -> bin-c519-cp52/` | durability-s8 | `/*/*/ChannelReplyDurabilityTests/*` | R-2 durability | all 25 results, 0 failed/skipped | 25 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
 Floors come from the specified new roster and inspected source attributes:
 S=4, C=5, M=12, U=8, D=14, T=5, B=22, F=8, P=5, L=6, X=21, W=5.
@@ -1450,11 +1453,11 @@ deliberate red/restore/green runs; none was executed in Code.
 
 ## S8 implementation selection (Code 23e91309, 2026-10-05)
 
-S8 selects the existing After=S8 rows CP-6 and CP-7, unchanged filters,
-floors (12 and 8) and deadlines. This task's explicit no-whole-Unit and S8-only
+S8 selects CP-6/CP-7 plus the full affected dispatcher/bridge/durability
+regressions CP-50..52. Existing filters, floors and deadlines are unchanged. This task's explicit no-whole-Unit and S8-only
 brief takes the narrow checkpoint selection; it does not claim the generic Final
-profile's whole Unit lane or the later S11 regression rows. V-3 and V-8 are the
-ordinary S8 IDs; all other V/R IDs remain with their owning slices. Activation
+profile's whole Unit lane. V-3, V-8, R-1 dispatcher and R-2 are the ordinary
+S8 IDs; R-1 runtime and all other V/R IDs remain with their owning slices. Activation
 stays default-off; no server or runner restart is required for this source slice.
 
 `ChannelOutboundFailureRecorder` uses the existing delivery episode fields, source
@@ -1484,7 +1487,7 @@ and refused, with an independent committed-state read at producer entry.
 | PC/variant (pending SourceLanding Mutation) | Guarded defect | Exact ordinary witness |
 |---|---|---|
 | PC-S8-1 / SentAt origin | Use enqueue CreatedAt for a member with a later SentAt. | ChannelOutboundMaterializationTests.C519_Preparation_deadline_uses_original_obligation: old enqueue/new SentAt retains its delivery-relative preparation window. |
-| PC-S8-2 / recording-only preparation repair | Ignore the persisted definite preparation failure and reopen preparation while loss insertion is unavailable. | ChannelOutboundFailureRecordingTests.C519_Loss_and_source_outcome_are_atomic: preparation variant observes exactly one reader call at the last authorized attempt across fresh-owner recording failures and repair. |
+| PC-S8-2 / recording-only preparation repair | Ignore the persisted definite preparation failure and reopen preparation while loss insertion is unavailable. | ChannelOutboundFailureRecordingTests.C519_Loss_and_source_outcome_are_atomic: preparation variant observes exactly one source read and one staged-file adoption attempt across fresh-owner recording failures and repair. |
 
 PC-12..18, PC-20, PC-36/37, PC-55, PC-67..73 and PC-100, including the two S8
 variants above, remain pending. Every other PC and variant in the plan also remains
@@ -1501,3 +1504,21 @@ tests. No inherited-red claim is made. This repair fixes that fixture reference
 and counts real staged-file adoption/read calls in the recording-repair witness,
 so removing the recording-only preparation branch cannot hide behind the separate
 source-reader attempt cap. Both CP-6 and CP-7 rerun at the next committed tip.
+
+S8 repair group 2 (final allowed repair): CP-6 passed 12/12 at
+8e355fccc9fc1135f931f2b948d9f934393c1235; CP-7 passed 6/8, with the two insert-fault
+matrices missing their positive unroutable outcome. The new fixture lacked actual
+delivery-attempt evidence required by MatchChannelRowsAsync. This repair adds
+that evidence and a PostgreSQL sequence witness proving each injected INSERT fault
+was reached (sequence advancement survives transaction rollback). No assertion or
+timeout is loosened, and no inherited-red claim is made.
+
+The S4 Review amendment overrides the original D-8 missing-catalog proposal. S8
+preserves catalog-less direct routing and tests genuinely invalid conversation
+keys as unroutable. CP-50 runs all ten dispatcher results to retain that S4
+contract; CP-51/52 run the full affected bridge/durability classes because S8
+changes their terminal-provider and TTL recording paths. These three additional
+manifest rows are justified affected-class regression work, not a whole-assembly
+run. Their cost is 18 estimated minutes including builds; the complete S8 manifest
+is now 29 estimated minutes. PC-20's original missing-catalog-loss variant stays
+superseded by the S4 routing amendment; all revised variants remain pending.

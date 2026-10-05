@@ -419,7 +419,6 @@ public sealed class ChannelReplyDispatcher
 
         // Freeze the native handle from the inbound that caused this turn. The catalog handle may
         // already name a newer Slack thread when an earlier answer is finally published.
-        var unified = scope.ServiceProvider.GetRequiredService<ChannelOutboundService>().UnifiedRecoveryEnabled;
         var targets = new List<ReplyTarget>();
         var unroutable = new List<SessionQueuedMessage>();
         foreach (var group in matches.GroupBy(m => m.ConversationKey!, StringComparer.Ordinal))
@@ -434,11 +433,6 @@ public sealed class ChannelReplyDispatcher
                 .Where(c => c.Provider == provider && c.ExternalId == conversationId)
                 .Select(c => new { c.ReplyHandle })
                 .FirstOrDefaultAsync(ct);
-            if (channel is null && unified)
-            {
-                unroutable.AddRange(group);
-                continue;
-            }
             if (channel is null)
             {
                 _logger.LogWarning(
