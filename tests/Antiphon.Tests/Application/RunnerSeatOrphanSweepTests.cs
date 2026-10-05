@@ -73,7 +73,7 @@ public class RunnerSeatOrphanSweepTests
                 var session = await db.AgentSessions.SingleAsync(s => s.Id == f.SessionId);
                 if (variant == "runner") session.RunnerId = "replacement";
                 if (variant == "store") session.RunnerStoreId = replacementId;
-                if (variant == "generation") session.StartedAt = session.StartedAt!.Value.AddSeconds(1);
+                if (variant == "generation") session.StartedAt = session.StartedAt.AddSeconds(1);
                 if (variant == "session")
                 {
                     db.AgentSessions.Add(new AgentSession { Id = replacementId, Status = SessionStatus.Running,
