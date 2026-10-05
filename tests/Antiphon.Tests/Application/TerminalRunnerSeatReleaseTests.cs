@@ -109,11 +109,11 @@ public class TerminalRunnerSeatReleaseTests
             (TerminalRunnerSeatDecision.SpecialistOwner, (_, a) => a.StandingSpecialistOwnerId = Guid.NewGuid()),
             (TerminalRunnerSeatDecision.SpecialistOwner, (t, _) => t.Role = AgentTaskRole.Check),
             (TerminalRunnerSeatDecision.WarmPool, (t, a) => { t.Workspace = WorkspaceMode.Shared; a.PoolIdleSince = DateTime.UtcNow; }),
-            (TerminalRunnerSeatDecision.VerificationOwner, (t, _) => t.SourceLandingOperationId = Guid.NewGuid()),
+            (TerminalRunnerSeatDecision.VerificationOwner, (_, _) => { }),
         };
         foreach (var variant in variants)
         {
-            await using var f = await RunnerSeatReleaseFixture.CreateAsync();
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(sourced: variant.Decision == TerminalRunnerSeatDecision.VerificationOwner);
             // A real board satisfies the FK; other variants each change only their own guard.
             await using var db = f.Db();
             if (variant.Decision == TerminalRunnerSeatDecision.BoardOwner)
