@@ -150,7 +150,11 @@ internal sealed class LandHalfResetFixture : IAsyncDisposable
         {
             redirected.ShouldBeFalse("each scenario injects exactly once");
             redirected = true;
-            await File.WriteAllTextAsync(backlink, Path.Combine(fixture.Observer, ".git") + "\n");
+            // Git-for-Windows writes forward-slash admin backlinks. A native backslash
+            // path makes worktree list name a different malformed path, not the observer.
+            var observerGitDirectory = (await RequiredAsync(reader, fixture.Observer,
+                "rev-parse", "--absolute-git-dir")).Trim();
+            await File.WriteAllTextAsync(backlink, observerGitDirectory + "\n");
             AssertStamp();
             var rows = LandingGit.ParseRegistrations(await RequiredAsync(reader, fixture.Repository,
                 "worktree", "list", "--porcelain", "-z"));
