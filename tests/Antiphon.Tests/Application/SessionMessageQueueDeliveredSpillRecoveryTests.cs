@@ -49,7 +49,7 @@ public sealed class SessionMessageQueueDeliveredSpillRecoveryTests
                 var session = await db.AgentSessions.SingleAsync(s => s.Id == f.H.SessionId);
                 directory.Owner = new(session.RunnerId!, session.RunnerStoreId!.Value, session.RunnerCwd!);
                 directory.SessionId = session.Id;
-                directory.StartedAt = session.StartedAt!.Value;
+                directory.StartedAt = session.StartedAt;
             }
             if (c.Attempts == 1) await f.ScreenAsync(c.Origin);
             else // Historical cap obligations; never alter the primary reproduction's attempt floor.
@@ -122,6 +122,9 @@ public sealed class SessionMessageQueueDeliveredSpillRecoveryTests
                 "sync-only current work", null, null, null, false, null);
             f.H.Runner.SetTranscript(new(f.H.SessionId, [receipt, extra], 3));
             await f.H.Runtime.SyncTranscriptAsync(f.H.SessionId, CancellationToken.None);
+            await using (var db = f.Db())
+                (await db.TranscriptEntries.AsNoTracking().SingleAsync(e => e.AgentSessionId == f.H.SessionId
+                    && e.Uuid == extra.Uuid)).Text.ShouldBe(extra.Text, "sync-user-prompt-committed");
             await f.RetainedAsync("sync-without-turn-end-retains");
             await using (var db = f.Db())
                 (await SessionMessageQueueService.IsWorkingAsync(db, f.H.SessionId, CancellationToken.None))
@@ -277,7 +280,8 @@ public sealed class SessionMessageQueueDeliveredSpillRecoveryTests
             {
                 f.H.EventBus.ThrowOnceOnEvent = "SessionQueueChanged";
                 var ex = await Should.ThrowAsync<InvalidOperationException>(() => f.FlushAsync());
-                ex.Message.ShouldContain("MockEventBus throw-once", "publication-fault-hit");
+                ex.Message.Contains("MockEventBus throw-once", StringComparison.Ordinal)
+                    .ShouldBeTrue("publication-fault-hit");
             }
             else await f.FlushAsync();
             await f.ReleasedAsync("recovered-atomic-release", from);
@@ -285,6 +289,7 @@ public sealed class SessionMessageQueueDeliveredSpillRecoveryTests
             await f.RecreateAsync();
             var view = await f.H.Queue.GetQueueAsync(f.H.SessionId, CancellationToken.None);
             view.SessionId.ShouldBe(f.H.SessionId, "post-commit-queue-readable");
+            view.Messages.ShouldBeEmpty("post-commit-queue-has-no-redelivery");
             await f.FlushAsync();
             (await f.RowAsync()).RemoteSpillBody.ShouldBeNull("post-commit-release-survives");
             (await f.RowAsync()).DeliveryVerdictAt.ShouldBe(releasedAt);
