@@ -645,6 +645,7 @@ public class ChannelFollowUpAttachmentTests
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
         await h.DrainOutboundAsync();
 
+        h.Messaging.SentReplies.Count.ShouldBe(2);
         var reply = h.Messaging.SentReplies[1];
         var names = reply.Attachments.Select(a => a.Name).ToArray();
         var expected = mode switch
@@ -660,6 +661,8 @@ public class ChannelFollowUpAttachmentTests
         names.ShouldNotContain(Path.GetFileName(unrelatedZip));
         names.ShouldNotContain("render.html");
         names.ShouldNotContain("part.tmp");
+        if (mode is "corrupt" or "unknown")
+            (await TaskRowAsync(taskId)).DeliverableDeliveredAt.ShouldBeNull();
     }
 
     [Test]

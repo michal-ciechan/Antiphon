@@ -1762,3 +1762,33 @@ are unchanged. An earlier mistyped expected SHA was refused before creating a ru
 or build. This exhausts the two repair groups. Run CP-15..22 at the committed tip;
 any remaining failures require caller-commissioned follow-up Code, without
 loosening the existing payload/routing oracles or widening a timeout.
+
+## S11 follow-up repair selection (Code 8b31ec87, 2026-10-05)
+
+Original landing owner remains 6ff18828; this follow-up starts at
+742115aa57ba612b57bcb744bb9dbe149d4d37e1. Repair group 1 addresses the seven
+reported ordinary failures. CP-15 changes only the fixture clock to PostgreSQL
+microsecond precision, retaining exact due-time and recovered-byte assertions.
+CP-21 changes only exact expected prompts: R-3/R-10 and the CARD-0584 runtime
+contract require every inline batch member's correlation marker. Expected IDs
+come from the enqueue callback, independently of the submitted body.
+
+CP-18 repairs production preparation: R-4 and D-11 preserve attachment markers
+and implied-bundle policy. DeliverableBundleService.ListAttachableFiles already
+refuses implied files for corrupt/unsupported manifests while explicit markers
+remain independent. Preparation now parses once, retains the raw manifest for
+staging, and permits explicit attachments without inferred files or bundle stamps
+when that manifest is unusable. Read failures and budgets remain unchanged.
+The existing four historical-manifest arguments retain exact names/bytes/order
+and forbidden-file assertions; invalid arguments additionally require no bundle
+delivery stamp. The predecessor's corrupt/unknown cases are ordinary red evidence
+for the repaired production defect, not Mutation cycles.
+
+Because production changed, rerun all CP-15..22, serial, once at committed HEAD,
+with the existing filters, floors and deadlines. The explicit brief forbids a
+whole-Unit run and bounds this task to 40 minutes and two repair rounds. The
+previous eight-row execution cost 26m39s; the manifest estimate remains 53 minutes.
+No full assembly/namespace run or new manual recipient acceptance is selected.
+All earlier/later V/R assignments and all pending PC variants above remain intact.
+UnifiedRecoveryEnabled stays false by default. Restart: none; caller owns any
+eventual activation after the complete card. Ordinary verification is pending.

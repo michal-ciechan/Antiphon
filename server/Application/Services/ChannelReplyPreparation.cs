@@ -105,22 +105,24 @@ public sealed class ChannelReplyPreparation(IChannelReplyAttachmentReader reader
             if (task.TaskId == delivery.SourceTaskId) manifest = taskManifest;
             if (taskManifest is not null)
             {
-                var frozenManifest = JsonSerializer.Deserialize<DeliverableBundleService.SourceManifest>(taskManifest, JsonOptions)
-                    ?? throw new InvalidDataException("The captured bundle source manifest is empty.");
+                // Historical invalid manifests authorize neither implied files nor a bundle
+                // delivery stamp. Explicit markers still own their independent attachments.
+                DeliverableBundleService.SourceManifest? frozenManifest;
+                try
+                {
+                    frozenManifest = JsonSerializer.Deserialize<DeliverableBundleService.SourceManifest>(taskManifest, JsonOptions);
+                }
+                catch (JsonException) { continue; }
+                if (frozenManifest is not { Version: 1, Sources: not null }) continue;
                 bundles.Add(new(task.TaskId, task.BundleDirectory!, frozenManifest));
-            }
-            if (!capture.Body.BundleTaskIds.Contains(task.TaskId)) continue;
-            if (taskManifest is not null)
-            {
-                var sources = JsonSerializer.Deserialize<DeliverableBundleService.SourceManifest>(taskManifest, JsonOptions);
-                if (sources is not { Version: 1, Sources: not null })
-                    throw new InvalidDataException("The captured bundle source manifest is invalid.");
-                paths.AddRange(sources.Sources.Select(s => s.StoredFile).Distinct(StringComparer.OrdinalIgnoreCase)
+                if (!capture.Body.BundleTaskIds.Contains(task.TaskId)) continue;
+                paths.AddRange(frozenManifest.Sources.Select(s => s.StoredFile).Distinct(StringComparer.OrdinalIgnoreCase)
                     .Where(DeliverableBundleService.IsSafeStoredSourceName)
                     .Select(name => Path.Combine(task.BundleDirectory!, name)).Take(65));
             }
             else
             {
+                if (!capture.Body.BundleTaskIds.Contains(task.TaskId)) continue;
                 // Legacy bundles retain the existing restricted extension fallback. All byte reads
                 // still go through the captured-root/regular-file reader below.
                 paths.AddRange(Directory.EnumerateFiles(task.BundleDirectory!)
