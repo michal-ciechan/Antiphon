@@ -7,6 +7,7 @@ using System.Net.Http.Json;
 using System.Reflection;
 using System.Text.Json;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner;
@@ -671,8 +672,11 @@ public sealed class RunnerCodexCliEvidenceTests
                 ? new(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation, Shape(Sample("0.160.0", T))) : null;
             b.Reply = request => request.Operation == PhoneHomeOperation.CodexCliVersion
                 ? new(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation, Shape(Sample("0.156.1", T))) : null;
-            var selected = await new RunnerScopedSessionRunnerClient(two.Directory, "runner-a")
+            var counted = new DiagnosticDirectory(two.Directory);
+            var selected = await new RunnerScopedSessionRunnerClient(counted, "runner-a")
                 .GetCodexCliVersionAsync(new("/isolated/codex", "/isolated"), CancellationToken.None);
+            counted.LocalProbeCalls.ShouldBe(0, "C959-pc-108 no local typed diagnostic");
+            counted.RemoteProbeCalls.ShouldBe(1, "C1029-v13 selected typed diagnostic");
             a.RequestCount(PhoneHomeOperation.CodexCliVersion).ShouldBe(1, "C959-pc-111 selected recipient");
             selected!.CodexCliVersion.ShouldBe("0.160.0", "C959-pc-111");
             b.RequestCount(PhoneHomeOperation.CodexCliVersion).ShouldBe(0, "C959-pc-111 no reroute");
@@ -854,23 +858,32 @@ public sealed class RunnerCodexCliEvidenceTests
         actual.Local.Calls.ShouldBeEmpty("C959-pc-108");
         (await actual.Directory.DescribeAsync(actual.AllowedRunnerId, CancellationToken.None))!
             .Capabilities!.CodexCliVersion.ShouldBeNull("C959-v13-exact-does-not-overwrite-default");
-        foreach (var invalid in new[]
+        foreach (var vector in CodexCliDescriptorCases.All(exact).Where(v => !v.Accepted))
         {
-            exact with { Executable = new string('X', 65537) }, exact with { ResolutionCwd = new string('X', 65537) },
-            exact with { Path = new string('X', 65537) }, exact with { ResolutionCwd = "${secret:C959}" },
-            exact with { Path = "${secret:C959}" }, exact with { Executable = "codex\0" },
-            exact with { Path = new string('X', CodexCliVersionProbe.DescriptorFieldLimit + 1) },
-            exact with { Path = "NUL\0sentinel" }, exact with { Path = "{{key:C959}}" },
-        })
-        {
-            var unknown = await (Task<RunnerCodexCliVersionDto?>)method.Invoke(localClient, [invalid, CancellationToken.None])!;
-            (unknown?.CodexCliVersionError).ShouldBe("launcher_unverified", invalid.Path == "NUL\0sentinel"
-                ? "C959-pc-244" : invalid.Path == "{{key:C959}}" ? "C959-pc-245" : "C959-pc-117/118");
-            io.Starts.Count.ShouldBe(1, "C959-v13-invalid-no-child");
+            foreach (var (transport, diagnostic) in new (string, ISessionRunnerClient)[]
+                     { ("local-post", localClient), ("framed-dispatch", bound) })
+            {
+                var starts = io.Starts.Count;
+                var unknown = await diagnostic.GetCodexCliVersionAsync(vector.Request, CancellationToken.None);
+                var label = $"{vector.RunnerControl} {transport}/{vector.Field}/{vector.Name}";
+                (unknown?.CodexCliVersionError).ShouldBe("launcher_unverified", label);
+                unknown!.CodexCliVersion.ShouldBeNull(label + " no sample");
+                io.Starts.Count.ShouldBe(starts, label + " no child");
+            }
         }
-        var atLimit = exact with { Path = new string('X', CodexCliVersionProbe.DescriptorFieldLimit) };
-        (await (Task<RunnerCodexCliVersionDto?>)method.Invoke(localClient, [atLimit, CancellationToken.None])!)!
-            .CodexCliVersion.ShouldBe("0.160.0", "C959-v13-limit-equality");
+        // These two fields can reach a real child at the boundary on either OS.
+        // Pure FromSpec covers representability of the other three, not OS path support.
+        foreach (var vector in CodexCliDescriptorCases.All(exact)
+                     .Where(v => v.Accepted && v.Field is "Path" or "PathExt"))
+        {
+            var starts = io.Starts.Count;
+            var atLimit = await localClient.GetCodexCliVersionAsync(vector.Request, CancellationToken.None);
+            (atLimit?.CodexCliVersion).ShouldBe("0.160.0", "C1029-v13 local exact boundary " + vector.Field);
+            io.Starts.Count.ShouldBe(starts + 1, "C1029-v13 boundary reaches child " + vector.Field);
+            (await bound.GetCodexCliVersionAsync(vector.Request, CancellationToken.None))
+                .ShouldBe(atLimit, "C1029-v13 framed exact boundary " + vector.Field);
+            io.Starts.Count.ShouldBe(starts + 1, "C1029-v13 exact descriptor cache " + vector.Field);
+        }
         actualPeer.Reply = request => request.Operation == (PhoneHomeOperation)33
             ? new(PhoneHomeFrameKind.Error, request.Epoch, request.RequestId, request.Operation,
                 ErrorCode: PhoneHomeProblemTypes.UnsupportedOperation, StatusCode: 409) : null;
@@ -883,6 +896,40 @@ public sealed class RunnerCodexCliEvidenceTests
         io.Clock.Advance(TimeSpan.FromSeconds(8));
         (await Task.WhenAny(silent, Task.Delay(TimeSpan.FromSeconds(5))) == silent).ShouldBeTrue("C959-pc-114");
         (await silent).ShouldBeNull("C959-pc-114 C959-pc-123");
+    }
+
+    private sealed class DiagnosticDirectory(ISessionRunnerDirectory inner) : ISessionRunnerDirectory
+    {
+        public int LocalProbeCalls { get; private set; }
+        public int RemoteProbeCalls { get; private set; }
+        public ISessionRunnerClient Local => new DiagnosticClient(inner.Local, () => LocalProbeCalls++);
+        public ISessionRunnerClient Resolve(string? runnerId) =>
+            new DiagnosticClient(inner.Resolve(runnerId), () => RemoteProbeCalls++);
+        public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) => inner.GetOwnerAsync(sessionId, ct);
+        public Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct) => inner.GetBindingAsync(sessionId, ct);
+        public Task<RunnerInventory> GetInventoryAsync(string? runnerId, CancellationToken ct) => inner.GetInventoryAsync(runnerId, ct);
+        public IReadOnlyList<string> KnownRunnerIds => inner.KnownRunnerIds;
+        public Guid? GetLiveStoreId(string? runnerId) => inner.GetLiveStoreId(runnerId);
+    }
+
+    private sealed class DiagnosticClient(ISessionRunnerClient inner, Action onProbe) : ISessionRunnerClient
+    {
+        public Task<RunnerCodexCliVersionDto?> GetCodexCliVersionAsync(RunnerCodexCliProbeRequest request, CancellationToken ct)
+        {
+            onProbe(); // Count the typed operation even if forwarding refuses before a frame is written.
+            return inner.GetCodexCliVersionAsync(request, ct);
+        }
+        public Task<SessionRunnerSessionDto> StartAsync(Guid id, AgentLaunchSpec spec, CancellationToken ct) => inner.StartAsync(id, spec, ct);
+        public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) => inner.ListAsync(ct);
+        public Task<SessionRunnerSessionDto> GetAsync(Guid id, CancellationToken ct) => inner.GetAsync(id, ct);
+        public Task<SessionRunnerBufferDto> GetBufferAsync(Guid id, CancellationToken ct) => inner.GetBufferAsync(id, ct);
+        public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid id, CancellationToken ct) => inner.GetSnapshotAsync(id, ct);
+        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid id, CancellationToken ct) => inner.GetTranscriptAsync(id, ct);
+        public Task SendInputAsync(Guid id, string input, CancellationToken ct) => inner.SendInputAsync(id, input, ct);
+        public Task ClearLiveBufferAsync(Guid id, CancellationToken ct) => inner.ClearLiveBufferAsync(id, ct);
+        public Task ResizeAsync(Guid id, int cols, int rows, CancellationToken ct) => inner.ResizeAsync(id, cols, rows, ct);
+        public Task<SessionRunnerSessionDto> KillAsync(Guid id, CancellationToken ct) => inner.KillAsync(id, ct);
+        public IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(CancellationToken ct) => inner.StreamEventsAsync(ct);
     }
 
     private sealed class ControlledSendSocket(WebSocket inner) : WebSocket
