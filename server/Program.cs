@@ -394,6 +394,10 @@ try
     builder.Services.AddScoped<InterimVerificationPolicy>();
     builder.Services.AddScoped<RunnerDefaultSettingsService>();
     builder.Services.AddScoped<AgentTaskService>();
+    builder.Services.Configure<TerminalRunnerSeatReleaseOptions>(
+        builder.Configuration.GetSection(TerminalRunnerSeatReleaseOptions.SectionName));
+    builder.Services.AddSingleton<TerminalRunnerSeatReleasePolicy>();
+    builder.Services.AddScoped<TerminalRunnerSeatReleaseService>();
     builder.Services.AddScoped<AgentTaskInputService>();
     builder.Services.AddScoped<AgentTaskDecisionQuestionService>();
     builder.Services.AddScoped<SourceLandingAdmission>();

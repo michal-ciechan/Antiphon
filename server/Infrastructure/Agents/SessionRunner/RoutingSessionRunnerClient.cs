@@ -8,6 +8,14 @@ namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
 public sealed class RoutingSessionRunnerClient : ISessionRunnerClient
 {
+    public async Task<TerminalSeatObservation> ObserveTerminalSeatAsync(
+        Guid sessionId, TerminalSeatObservationRequest request, CancellationToken ct) =>
+        await (await Route(sessionId, ct)).ObserveTerminalSeatAsync(sessionId, request, ct);
+
+    public async Task<TerminalSeatReleaseResult> ReleaseTerminalSeatAsync(
+        Guid sessionId, TerminalSeatReleaseRequest request, CancellationToken ct) =>
+        await (await Route(sessionId, ct)).ReleaseTerminalSeatAsync(sessionId, request, ct);
+
     private readonly ISessionRunnerDirectory _directory;
 
     public RoutingSessionRunnerClient(ISessionRunnerDirectory directory) => _directory = directory;

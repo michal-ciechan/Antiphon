@@ -16,6 +16,30 @@ namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
 public sealed class SessionRunnerHttpClient : ISessionRunnerClient
 {
+    public async Task<TerminalSeatObservation> ObserveTerminalSeatAsync(
+        Guid sessionId, TerminalSeatObservationRequest request, CancellationToken ct)
+    {
+        using var response = await _httpClient.PostAsJsonAsync(
+            $"sessions/{sessionId}/terminal-seat-observation", request, JsonOptions, ct);
+        if (response.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.NotImplemented)
+            throw new NotSupportedException("Terminal seat observation is unsupported.");
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<TerminalSeatObservation>(JsonOptions, ct)
+            ?? throw new JsonException("Missing terminal seat observation.");
+    }
+
+    public async Task<TerminalSeatReleaseResult> ReleaseTerminalSeatAsync(
+        Guid sessionId, TerminalSeatReleaseRequest request, CancellationToken ct)
+    {
+        using var response = await _httpClient.PostAsJsonAsync(
+            $"sessions/{sessionId}/release-terminal-seat", request, JsonOptions, ct);
+        if (response.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.NotImplemented)
+            return new(sessionId, request.ActionId, TerminalSeatReleaseOutcome.Unsupported, null);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<TerminalSeatReleaseResult>(JsonOptions, ct)
+            ?? new(sessionId, request.ActionId, TerminalSeatReleaseOutcome.Unresolved, null);
+    }
+
     private static readonly TimeSpan CapabilityProbeTtl = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan CapabilityProbeTimeout = TimeSpan.FromSeconds(5);
     /// <summary>
