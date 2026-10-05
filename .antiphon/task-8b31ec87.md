@@ -128,5 +128,3 @@ Every control remains pending, including all argument/path/state variants in the
 - PC-S10-3a/b/c runtime/HTTP/phone-home completeness/generation propagation.
 - PC-84 Published/Suppressed root and ineligible machine-source variants.
 - S11 strengthens existing PC-8/19/21..24/47/49/50/74/77/78 and PC-88 witnesses; it introduces no duplicate PC ID. Every existing variant remains pending.
-
-
