@@ -1,15 +1,18 @@
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Infrastructure.Supervision;
 
 public sealed class ChannelOutboundHostedService(
     IServiceScopeFactory scopes, ILogger<ChannelOutboundHostedService> logger,
-    TimeProvider? timeProvider = null) : BackgroundService
+    TimeProvider? timeProvider = null, IOptions<ChannelOutboundSettings>? settings = null) : BackgroundService
 {
     internal Func<CancellationToken, Task>? CycleCompletedAsync { get; set; }
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5), timeProvider ?? TimeProvider.System);
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(settings?.Value.UnifiedRecoveryEnabled == true
+            ? settings.Value.ScanIntervalSeconds : 5), timeProvider ?? TimeProvider.System);
         do
         {
             try

@@ -752,6 +752,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     }
     builder.Services.AddScoped<OutboundConversionTaskRunner>();
     builder.Services.AddScoped<ChannelOutboundDeliveryPump>();
+    builder.Services.AddSingleton<ChannelOutboundWorkCursor>();
     builder.Services.AddScoped<ChannelOutboundFailureRecorder>();
     builder.Services.AddHostedService<ChannelOutboundHostedService>();
     builder.Services.AddSingleton<IChannelOutboundFileStore, Antiphon.Server.Infrastructure.Files.ChannelOutboundFileStore>();

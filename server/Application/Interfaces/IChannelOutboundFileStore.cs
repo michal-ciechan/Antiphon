@@ -18,7 +18,10 @@ public interface IChannelOutboundFileStore
 }
 
 public sealed record ChannelOutboundMaterialized(ChannelOutboundSnapshot Snapshot,
-    string PromptText, string PromptRevision, string? SourceManifestJson);
+    string PromptText, string PromptRevision, string? SourceManifestJson)
+{
+    public IReadOnlyList<ChannelReplyBundleSnapshot> Bundles { get; init; } = [];
+}
 
 public sealed record ChannelOutboundSnapshot(string ReplyPath, string ReplySha256,
     string RequestPath, string OutputDirectory);

@@ -31,7 +31,13 @@ public sealed record ChannelReplyCapture(int Version, ChannelReply Route,
 }
 
 public sealed record ChannelReplyPrepared(ChannelReply Reply, string PromptText,
-    string PromptRevision, string? SourceManifestJson);
+    string PromptRevision, string? SourceManifestJson)
+{
+    public IReadOnlyList<ChannelReplyBundleSnapshot> Bundles { get; init; } = [];
+}
+
+public sealed record ChannelReplyBundleSnapshot(Guid TaskId, string Directory,
+    DeliverableBundleService.SourceManifest Manifest);
 
 /// <summary>
 /// Preparation runs only after capture. The materialization pump owns staging and retries.
@@ -85,8 +91,8 @@ public sealed class ChannelReplyPreparation(IChannelReplyAttachmentReader reader
         var notes = new List<string>();
         var paths = capture.Body.AttachmentPaths.ToList();
         string? manifest = null;
-        foreach (var task in capture.Tasks.Where(t => t.BundleDirectory is not null
-            && (t.TaskId == delivery.SourceTaskId || capture.Body.BundleTaskIds.Contains(t.TaskId))))
+        var bundles = new List<ChannelReplyBundleSnapshot>();
+        foreach (var task in capture.Tasks.Where(t => t.BundleDirectory is not null))
         {
             string? taskManifest;
             try
@@ -97,6 +103,12 @@ public sealed class ChannelReplyPreparation(IChannelReplyAttachmentReader reader
             }
             catch (FileNotFoundException) { taskManifest = null; }
             if (task.TaskId == delivery.SourceTaskId) manifest = taskManifest;
+            if (taskManifest is not null)
+            {
+                var frozenManifest = JsonSerializer.Deserialize<DeliverableBundleService.SourceManifest>(taskManifest, JsonOptions)
+                    ?? throw new InvalidDataException("The captured bundle source manifest is empty.");
+                bundles.Add(new(task.TaskId, task.BundleDirectory!, frozenManifest));
+            }
             if (!capture.Body.BundleTaskIds.Contains(task.TaskId)) continue;
             if (taskManifest is not null)
             {
@@ -154,6 +166,6 @@ public sealed class ChannelReplyPreparation(IChannelReplyAttachmentReader reader
             prompt = await reader.ReadTextAsync(promptPath, [profile.PromptWorkspace!], MaxCaptureBytes, ct);
         }
         var revision = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(prompt))).ToLowerInvariant();
-        return new(reply, prompt, revision, manifest);
+        return new(reply, prompt, revision, manifest) { Bundles = bundles };
     }
 }

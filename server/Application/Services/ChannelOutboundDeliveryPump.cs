@@ -29,6 +29,7 @@ public sealed class ChannelOutboundDeliveryPump
     private readonly Guid _owner = Guid.NewGuid();
     private readonly ChannelReplyPreparation? _preparation;
     private readonly ChannelOutboundFailureRecorder _failures;
+    private readonly ChannelOutboundWorkCursor _cursor;
 
     // Test-only, per-instance stop point. Production leaves this null. Write-boundary
     // callbacks run after commit; before-conversion-claim runs after the worker's
@@ -41,7 +42,8 @@ public sealed class ChannelOutboundDeliveryPump
         ILogger<ChannelOutboundDeliveryPump> logger,
         IOptions<ChannelOutboundSettings>? outboundSettings = null,
         ChannelReplyPreparation? preparation = null,
-        ChannelOutboundFailureRecorder? failures = null)
+        ChannelOutboundFailureRecorder? failures = null,
+        ChannelOutboundWorkCursor? cursor = null)
     {
         _db = db;
         _runner = runner;
@@ -53,36 +55,74 @@ public sealed class ChannelOutboundDeliveryPump
         _logger = logger;
         _preparation = preparation;
         _failures = failures ?? new ChannelOutboundFailureRecorder(db, clock);
+        _cursor = cursor ?? new ChannelOutboundWorkCursor();
     }
 
     public async Task<int> TickAsync(CancellationToken ct)
     {
-        var now = UtcNow();
-        var candidates = await _db.ChannelOutboundDeliveries.AsNoTracking()
-            .Where(d => (d.State == ChannelOutboundDeliveryState.Captured && _preparation != null
-                    || d.State == ChannelOutboundDeliveryState.Pending
-                    || d.State == ChannelOutboundDeliveryState.Converting
-                    || d.State == ChannelOutboundDeliveryState.Ready
-                    || d.State == ChannelOutboundDeliveryState.Publishing)
-                && (d.LeaseUntil == null || d.LeaseUntil <= now)
-                && (d.State != ChannelOutboundDeliveryState.Captured
-                    && (!_outboundSettings.UnifiedRecoveryEnabled || d.State != ChannelOutboundDeliveryState.Ready)
-                    || d.NextAttemptAt == null || d.NextAttemptAt <= now))
-            .OrderBy(d => d.CreatedAt).ThenBy(d => d.Id)
-            .Take(_outboundSettings.UnifiedRecoveryEnabled ? _outboundSettings.PageSize : 32)
-            .Select(d => new { d.Id, d.Version, d.State }).ToListAsync(ct);
         var processed = 0;
-        foreach (var candidate in candidates)
+        var unified = _outboundSettings.UnifiedRecoveryEnabled;
+        var pageSize = unified ? _outboundSettings.PageSize : 32;
+        var pages = unified ? _outboundSettings.MaximumPages : 1;
+        for (var page = 0; page < pages; page++)
         {
-            if (ProbeBarrierAsync is { } beforeClaimBarrier)
-                await beforeClaimBarrier("before-claim", candidate.Id, ct);
-            if (candidate.State == ChannelOutboundDeliveryState.Converting
-                && ProbeBarrierAsync is { } beforeClaim)
-                await beforeClaim("before-conversion-claim", candidate.Id, ct);
-            if (await ClaimAsync(candidate.Id, candidate.Version, ct))
+            var now = UtcNow();
+            var query = _db.ChannelOutboundDeliveries.AsNoTracking()
+                .Where(d => (d.State == ChannelOutboundDeliveryState.Captured && _preparation != null
+                        || d.State == ChannelOutboundDeliveryState.Pending
+                        || d.State == ChannelOutboundDeliveryState.Converting
+                        || d.State == ChannelOutboundDeliveryState.Ready
+                        || d.State == ChannelOutboundDeliveryState.Publishing)
+                    && (d.LeaseUntil == null || d.LeaseUntil <= now)
+                    && (d.State != ChannelOutboundDeliveryState.Captured
+                        && (!unified || d.State != ChannelOutboundDeliveryState.Ready)
+                        || d.NextAttemptAt == null || d.NextAttemptAt <= now));
+            var cursor = unified ? _cursor.Send : null;
+            if (cursor is not null)
+                query = query.Where(d => d.CreatedAt > cursor.CreatedAt
+                    || d.CreatedAt == cursor.CreatedAt && d.Id.CompareTo(cursor.Id) > 0);
+            var candidates = await query.OrderBy(d => d.CreatedAt).ThenBy(d => d.Id)
+                .Take(pageSize).Select(d => new { d.Id, d.Version, d.State, d.CreatedAt }).ToListAsync(ct);
+            if (candidates.Count == 0) { _cursor.Send = null; break; }
+            foreach (var candidate in candidates)
             {
-                processed++;
-                await ProcessClaimAsync(candidate.Id, ct);
+                if (ProbeBarrierAsync is { } beforeClaimBarrier)
+                    await beforeClaimBarrier("before-claim", candidate.Id, ct);
+                if (candidate.State == ChannelOutboundDeliveryState.Converting
+                    && ProbeBarrierAsync is { } beforeClaim)
+                    await beforeClaim("before-conversion-claim", candidate.Id, ct);
+                if (await ClaimAsync(candidate.Id, candidate.Version, ct))
+                {
+                    processed++;
+                    await ProcessClaimAsync(candidate.Id, ct);
+                }
+                if (unified) _cursor.Send = new(candidate.CreatedAt, candidate.Id);
+            }
+            if (candidates.Count < pageSize) { _cursor.Send = null; break; }
+        }
+        if (unified)
+        {
+            var repair = new ChannelOutboundMetadataRepair(_db, _files, _clock);
+            for (var page = 0; page < pages; page++)
+            {
+                var query = _db.ChannelOutboundDeliveries.AsNoTracking().Where(d =>
+                    d.State == ChannelOutboundDeliveryState.Published && d.MetadataAppliedAt == null);
+                var cursor = _cursor.Repair;
+                if (cursor is not null)
+                    query = query.Where(d => d.CreatedAt > cursor.CreatedAt
+                        || d.CreatedAt == cursor.CreatedAt && d.Id.CompareTo(cursor.Id) > 0);
+                var candidates = await query.OrderBy(d => d.CreatedAt).ThenBy(d => d.Id)
+                    .Take(pageSize).Select(d => new { d.Id, d.CreatedAt }).ToListAsync(ct);
+                if (candidates.Count == 0) { _cursor.Repair = null; break; }
+                foreach (var candidate in candidates)
+                {
+                    try { await repair.RepairAsync(candidate.Id, ct); }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    { _logger.LogWarning(ex, "Accepted outbound delivery {DeliveryId} needs metadata repair", candidate.Id); }
+                    finally { _db.ChangeTracker.Clear(); }
+                    _cursor.Repair = new(candidate.CreatedAt, candidate.Id);
+                }
+                if (candidates.Count < pageSize) { _cursor.Repair = null; break; }
             }
         }
         return processed;
@@ -163,7 +203,7 @@ public sealed class ChannelOutboundDeliveryPump
             _logger.LogError(ex, "Outbound delivery {DeliveryId} preparation failed", id);
             _db.ChangeTracker.Clear();
             var current = await _db.ChannelOutboundDeliveries.SingleOrDefaultAsync(d => d.Id == id, ct);
-            if (current?.LeaseOwner == _owner && current.State != ChannelOutboundDeliveryState.Publishing)
+            if (current?.LeaseOwner == _owner && current.State is not (ChannelOutboundDeliveryState.Publishing or ChannelOutboundDeliveryState.Published))
             {
                 var state = current.State == ChannelOutboundDeliveryState.Captured
                     && current.PreparationAttempts < PreparationAttemptLimit && current.PreparationDeadlineAt > UtcNow()
@@ -562,8 +602,8 @@ public sealed class ChannelOutboundDeliveryPump
             return;
         }
 
-        // Keep the existing acceptance/projection transaction until S9 separates
-        // metadata repair. Lock and recheck the lease before committing its outcome.
+        // Acceptance and every linked source outcome are one fenced commit. Projections
+        // are repaired independently and can never reclassify an accepted publication.
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
         var current = await _db.ChannelOutboundDeliveries.FromSqlInterpolated(
             $"SELECT * FROM \"ChannelOutboundDeliveries\" WHERE \"Id\" = {delivery.Id} FOR UPDATE")
@@ -577,11 +617,6 @@ public sealed class ChannelOutboundDeliveryPump
         delivery.Version++;
         var rows = await _db.SessionQueuedMessages.Where(m => m.ChannelOutboundDeliveryId == delivery.Id).ToListAsync(ct);
         foreach (var row in rows) row.ChannelReplySettledAt = delivery.PublishedAt;
-        var channel = await _db.ChatChannels.SingleAsync(c => c.Id == delivery.ChannelId, ct);
-        channel.LastReplyAt = delivery.PublishedAt;
-        channel.LastReplyPreview = reply.Text is { Length: > 200 } text ? text[..200] : reply.Text;
-        channel.UpdatedAt = delivery.PublishedAt.Value;
-        await StampCompleteSourceAsync(delivery, reply, ct);
         await _db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
         if (ProbeBarrierAsync is { } publishedBarrier)
@@ -680,7 +715,19 @@ public sealed class ChannelOutboundDeliveryPump
         DeliverableBundleService.SourceManifest manifest,
         IReadOnlyList<OutboundAttachment> attachments)
     {
-        if (manifest.Sources is not { Count: > 0 and <= 256 })
+        var files = DeliverableBundleService.ListAttachableFiles(task);
+        if (manifest.Sources is null || files.Count != manifest.Sources.Select(s => s.StoredFile)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count())
+            return false;
+        return task.DeliverableBundleDir is { } directory
+            && HasCompleteFrozenSourceAttachments(directory, manifest, attachments);
+    }
+
+    internal static bool HasCompleteFrozenSourceAttachments(string directory,
+        DeliverableBundleService.SourceManifest manifest, IReadOnlyList<OutboundAttachment> attachments)
+    {
+        if (manifest.Version != 1 || !manifest.Complete || manifest.Sources is not { Count: > 0 and <= 256 }
+            || manifest.Sources.Any(s => !DeliverableBundleService.IsSafeStoredSourceName(s.StoredFile)))
             return false;
         const long maxSourceBytes = 64L * 1024 * 1024;
         long sourceBytes = 0;
@@ -692,12 +739,7 @@ public sealed class ChannelOutboundDeliveryPump
         }
         var required = manifest.Sources.Select(s => s.StoredFile)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        var files = DeliverableBundleService.ListAttachableFiles(task);
-        if (files.Count != required.Length)
-            return false;
-        if (!required.All(name => files.Any(path =>
-                string.Equals(Path.GetFileName(path), name, StringComparison.OrdinalIgnoreCase))))
-            return false;
+        var files = required.Select(name => Path.Combine(directory, name)).ToArray();
         foreach (var source in manifest.Sources)
         {
             var file = files.SingleOrDefault(path =>

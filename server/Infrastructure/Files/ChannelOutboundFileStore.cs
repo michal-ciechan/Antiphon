@@ -29,7 +29,8 @@ public sealed class ChannelOutboundFileStore : IChannelOutboundFileStore
         ChannelReplyPrepared prepared, CancellationToken ct)
     {
         var snapshot = await StageCoreAsync(deliveryId, prepared.Reply, ct, prepared.SourceManifestJson, captureJson, prepared);
-        return new(snapshot, prepared.PromptText, prepared.PromptRevision, prepared.SourceManifestJson);
+        return new(snapshot, prepared.PromptText, prepared.PromptRevision, prepared.SourceManifestJson)
+            { Bundles = prepared.Bundles };
     }
 
     private async Task<ChannelOutboundSnapshot> StageCoreAsync(Guid deliveryId, ChannelReply reply,
@@ -102,6 +103,10 @@ public sealed class ChannelOutboundFileStore : IChannelOutboundFileStore
                 JsonSerializer.SerializeToUtf8Bytes(request, new JsonSerializerOptions(JsonSerializerDefaults.Web)), ct);
             if (captureJson is not null && prepared is not null)
             {
+                var bundleBytes = JsonSerializer.SerializeToUtf8Bytes(prepared.Bundles);
+                if (bundleBytes.Length > ChannelReplyPreparation.MaxCaptureBytes)
+                    throw new InvalidDataException("The frozen bundle metadata exceeds its budget.");
+                await File.WriteAllBytesAsync(Path.Combine(temporary, "bundles.json"), bundleBytes, ct);
                 var retained = new List<RetainedFile>();
                 foreach (var path in Directory.GetFiles(temporary, "*", SearchOption.AllDirectories))
                 {
@@ -167,9 +172,14 @@ public sealed class ChannelOutboundFileStore : IChannelOutboundFileStore
         using (request)
             if (request.RootElement.GetProperty("deliveryId").GetGuid() != deliveryId)
                 throw new InvalidDataException("The staged request belongs to another delivery.");
+        var bundles = paths.Contains("bundles.json")
+            ? JsonSerializer.Deserialize<ChannelReplyBundleSnapshot[]>(await reader.ReadAttachmentAsync(
+                Path.Combine(final, "bundles.json"), [_root], ChannelReplyPreparation.MaxCaptureBytes, ct))
+                ?? throw new InvalidDataException("The frozen bundle metadata is empty.")
+            : [];
         return new(new(Path.Combine(final, "reply.json"), complete.ReplySha256,
             Path.Combine(final, "request.json"), Path.Combine(final, "output")),
-            complete.PromptText, complete.PromptRevision, complete.SourceManifestJson);
+            complete.PromptText, complete.PromptRevision, complete.SourceManifestJson) { Bundles = bundles };
     }
 
     private sealed record StagedSource(string OriginalRelativePath, string LocalName,
