@@ -5,9 +5,12 @@
 `TerminalRunnerSeatRelease:AutomaticEnabled` remains false. When explicitly enabled,
 the existing slot reconciliation job and dispatcher discover release debt with a shared,
 bounded traversal cursor. Settlement first commits its result and caller obligation;
-remote worktree release then uses a fresh scope and the conditional coordinator.
+remote release then uses a fresh scope and the conditional coordinator, including Shared
+tasks that did not enter the intentional warm pool. Settlement and the pool-release sweep
+preserve intentional Shared pooling before intercepting the destructive arm.
 Completed Blocked reports can release physical seats while retaining their logical reply
-and workspace. The remote worktree janitor cannot override a conditional hold at its TTL.
+and workspace. The remote janitor cannot override a conditional hold at its TTL; intentional
+warm Shared ownership remains a veto on the conditional path.
 Cancellation retains its explicit requested stop; its post-commit hook only reconciles.
 Unsupported peers, Working, unknown evidence and pending delivery never fall back to force.
 The existing job still reconciles legacy intents and attention while automatic release is off.

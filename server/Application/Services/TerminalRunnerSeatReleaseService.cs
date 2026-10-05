@@ -44,7 +44,7 @@ public sealed class TerminalRunnerSeatReleaseService(
 
     public bool OwnsAutomaticPath(AgentTask task) => options.Value.AutomaticEnabled
         && !string.IsNullOrWhiteSpace(task.RunnerId) && !RunnerRequestIntent.IsDesktopAlias(task.RunnerId)
-        && task.Workspace == WorkspaceMode.Worktree && task.SourceLandingOperationId is null;
+        && task.SourceLandingOperationId is null;
 
     /// <summary>True means this path owns disposition, including a hold or unavailable peer.
     /// Callers must never fall through to the ordinary stopper after a conditional refusal.</summary>
