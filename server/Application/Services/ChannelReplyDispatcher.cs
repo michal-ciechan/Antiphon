@@ -1373,7 +1373,8 @@ public sealed class ChannelReplyDispatcher
                 originalContext = await db.SessionQueuedMessages.AsNoTracking()
                     .Where(m => m.AgentSessionId == sessionId && m.Origin == QueuedMessageOrigin.Channel
                         && m.Status == QueuedMessageStatus.Sent && m.ConversationKey != null
-                        && m.Sequence < first.Sequence && (m.SentAt ?? m.CreatedAt) <= injectionAt)
+                        && m.Sequence < first.Sequence
+                        && (m.LastDeliveryStartedAt ?? m.SentAt ?? m.CreatedAt) <= injectionAt)
                     .OrderByDescending(m => m.Sequence).FirstOrDefaultAsync(ct);
                 if (originalContext is null)
                     return;

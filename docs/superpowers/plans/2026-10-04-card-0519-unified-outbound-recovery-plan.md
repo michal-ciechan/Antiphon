@@ -1235,3 +1235,22 @@ of the event exclusion. Its valid companion proves that barrier is wired to the
 real scoped service. Mutation owns deliberate mutants, red/restore/green and
 missing-control discovery. Every pre-existing PC/variant and all three new S5
 variants remain pending.
+
+S5 repair group 2: the intermediate ebed8ead6c24e05bdff7a881b575448e573c265d
+run passed all sixteen discovery results, then was explicitly stopped and awaited
+before changing source. It is superseded, not final qualification; its remaining
+rows are not claimed passed. Channel context now ranks its original
+LastDeliveryStartedAt before the late-confirm SentAt fallback, matching the
+original-attempt contract. C519_Machine_context_must_predate_injection advances
+the manual clock and stamps a later SentAt on its prior-context companion: that
+companion must still recover, while a genuinely later chat remains refused.
+The sixteen-result roster/floor and row/total deadlines remain unchanged. Run
+After=S5 once on the final committed tip; this exhausts the two repair-group
+budget. No additional source edits or broad repetitions without a new brief.
+
+| PC/variant (pending SourceLanding Mutation) | Deliberate guarded defect | Exact ordinary witness |
+|---|---|---|
+| PC-S5-4 / original context time | Prefer current SentAt over LastDeliveryStartedAt when checking prior channel context. | ChannelOutboundDiscoveryTests.C519_Machine_context_must_predate_injection: prior original-attempt context survives late confirmation; genuinely later context produces no capture. |
+
+All PC-1..PC-100, PC-1059-1..PC-1059-6, PC-S4-1..PC-S4-4, named S4
+variants and PC-S5-1..PC-S5-4 remain pending post-land SourceLanding Mutation.
