@@ -40,8 +40,8 @@ if ($Case -eq 'host-jq-prerequisite') {
         evidenceRoot=$request.evidenceRoot; outcome=$outcome
     } | ConvertTo-Json -Compress)
     switch ($outcome) {
-        'missing' { [Console]::Error.WriteLine('HostJqMissing'); exit 2 }
-        'invalid' { [Console]::Error.WriteLine('HostJqInvalid'); exit 2 }
+        'missing' { Write-Error 'HostJqMissing' -ErrorAction Continue; exit 2 }
+        'invalid' { Write-Error 'HostJqInvalid' -ErrorAction Continue; exit 2 }
         'ssh-failed' { exit 255 }
         'malformed-proof' { Write-Output '{'; exit 0 }
         'receipt-write-failed' {

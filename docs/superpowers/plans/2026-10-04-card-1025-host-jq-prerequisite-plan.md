@@ -972,3 +972,27 @@ no assertion or deadline changes.
 | PC | Guard / variant | Compiling defect | Exact method | Required red assertion |
 |---|---|---|---|---|
 | PC-54-leaf | G-54 canonical-lookup refusal | Reject a typed path refusal solely because lookupPath is canonical. | `C1025_Check_rejects_canonical_leaf_symlink` | wrapper emits HostJqPathUnapproved and persists canonical lookup/home resolution with qualified=false |
+
+### S2 fixture repair (Code 137ab344)
+
+The first S2 CP-2 selection at `9de91cb409986e9808fbeb4dd3f24388b263d801`
+passed M-17..M-19 but failed the six S1 wrapper methods before admission:
+their private repo lacked the newly imported `scripts/c590-real.ps1`.
+An additional exact-six-method diagnostic at the clean task base
+`dc7d1794b06282cf7e6cb42e2cdfd4442d49b93a` reproduced all six failures
+(0 passed, 6 failed, 0 skipped; verified build/source). Copy that required
+production dependency into the private repo before committing its baseline.
+No assertion or deadline is changed, and no shared C1008 fixture is repaired.
+
+The initial CP-3 was stopped without a verdict after the first legacy mode
+reached 48 of 66 invocations: a new pwsh child per synthetic prerequisite
+added unnecessary startup overhead. The new prerequisite branch follows the
+existing in-process HTTP fixture convention instead. Each entry still reads
+its request/state, consumes only its own bounded response sequence, traces
+`kind=prerequisite`, and traverses the production parser and persisted receipt.
+The actual SSH branch retains its fixed connect/check/provision deadlines,
+stdin streaming, concurrent drains and owned child reaping; the six replayed
+S1 methods still exercise that boundary with a private SSH executable.
+This synthetic branch proves phase admission, not transport or live host facts.
+Run CP-2 and CP-3 together once at the committed repair tip; keep all 67 PCs
+pending for SourceLanding Mutation. Retain the stopped and base-red evidence.

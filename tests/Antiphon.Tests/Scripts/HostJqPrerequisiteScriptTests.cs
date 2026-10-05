@@ -879,6 +879,7 @@ internal sealed class HostJqFixture : IDisposable
         source = ReplaceOnce(source, "$hostJqDestination = '/usr/local/bin/jq'", "$hostJqDestination = '" + Destination + "'");
         if (shortDeadline) source = ReplaceOnce(source, "{ 30000 } else { 180000 }", "{ 100 } else { 100 }");
         File.WriteAllText(Root + "/scripts/deploy-server2.ps1", source);
+        File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-real.ps1"), Root + "/scripts/c590-real.ps1");
         File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/lib/runner-operator-token.ps1"), Root + "/scripts/lib/runner-operator-token.ps1");
         File.WriteAllText(Root + "/.gitignore", ".antiphon/\n/tools/\n/home/\n/foreign/\n/destination/\n/lock/\n/temporary/\n/payload\n/fault\n/dockerenv\n/trace\n/stdin\n/ssh-pid\n/proof\n/token\n/*-ready\n/*-release\n");
         (await Git("init", "-q")).Exit.ShouldBe(0);
