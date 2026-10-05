@@ -1774,7 +1774,7 @@ public sealed class RemoteScriptContractTests
         var retire = Block(text, "case_retire_temp_containers");
         Commands(ownedMounts)[1].ShouldBe("require_lane host", "c1008_owned_mounts refuses off the host lane before any sudo");
         Commands(lookupImage)[1].ShouldBe("require_lane host", "c994_lookup_image refuses off the host lane before any sudo");
-        retire.ShouldContain("require_lane host", "the retire case is host-lane only");
+        retire.ShouldContain("require_lane host", customMessage: "the retire case is host-lane only");
         foreach (var line in sudoLines)
             (EnsureDirsBody(text).Contains(line, StringComparison.Ordinal)
                 || containment.Contains(line, StringComparison.Ordinal)
