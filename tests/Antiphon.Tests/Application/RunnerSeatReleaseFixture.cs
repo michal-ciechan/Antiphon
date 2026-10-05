@@ -678,6 +678,9 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         {
             if (ForbidFixedEvidence) throw new InvalidOperationException("Real-runtime mode reached fixed evidence wire.");
             Calls.Add(request.RequestUri!.AbsolutePath);
+            // An old transport rejects both observation and release. Do not synthesize a
+            // successful release receipt before applying the configured unsupported response.
+            if (Unsupported) return new HttpResponseMessage(UnsupportedStatusCode);
             if (request.RequestUri.AbsolutePath.EndsWith("/release-terminal-seat"))
             {
                 var command = (await request.Content!.ReadFromJsonAsync<TerminalSeatReleaseRequest>(ct))!;
@@ -693,9 +696,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
                     command.Observation.ExpectedAcceptedStartedAt);
                 return new(HttpStatusCode.OK) { Content = JsonContent.Create(RewriteReply?.Invoke(result) ?? result) };
             }
-            return Unsupported
-                ? new HttpResponseMessage(UnsupportedStatusCode)
-                : new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(Qualified) };
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(Qualified) };
         }
     }
 
