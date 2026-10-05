@@ -224,7 +224,7 @@ public sealed class C1008PlatformContractTests
                 damage(changed);
                 var failure = Should.Throw<ShouldAssertException>(() => Audit(changed, hosts, portable, 0),
                     "c1050-negative: corrupted receipt must fail " + label);
-                failure.Message.ShouldContain(label, "c1050-negative: decisive audit assertion");
+                failure.Message.ShouldContain(label, Case.Sensitive, "c1050-negative: decisive audit assertion");
             }
             XElement Host(XDocument doc) => doc.Descendants(Trx + "UnitTestResult").First();
             XElement Portable(XDocument doc) => doc.Descendants(Trx + "UnitTestResult").Last();
