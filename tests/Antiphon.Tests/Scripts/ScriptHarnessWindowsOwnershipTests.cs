@@ -78,15 +78,22 @@ public sealed class ScriptHarnessWindowsOwnershipTests
         return ScriptHarnessProcessFixture.WithInvocationAsync(async fixture =>
         {
             var assigned = false;
+            var deadBeforeClose = false;
             hooks.BeforeResume = (job, root) =>
             {
                 assigned = true;
                 ScriptHarnessWindowsProcessFixture.IsInJob(root, job).ShouldBeTrue();
                 fixture.Windows!.Root!.Executing().ShouldBeTrue();
             };
+            hooks.BeforeCloseJob = () =>
+            {
+                fixture.Windows!.Root!.Executing().ShouldBeFalse("Explicit setup unwind must kill the root before job disposal.");
+                deadBeforeClose = true;
+            };
             var error = await ScriptHarnessProcessFixture.CaptureAsync(fixture.Start("Passing"));
             error.ShouldBeOfType<Win32Exception>().Message.ShouldContain("injected ResumeThread failure");
             assigned.ShouldBeTrue();
+            deadBeforeClose.ShouldBeTrue();
             hooks.Calls.Count(call => call == "resume").ShouldBe(1);
             hooks.Calls.ShouldNotContain("resumed");
             var stop = Array.IndexOf(hooks.Calls, "terminate-job");

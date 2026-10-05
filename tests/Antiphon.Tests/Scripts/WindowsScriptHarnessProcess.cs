@@ -19,6 +19,7 @@ internal sealed class WindowsScriptHarnessHooks
     internal Action<SafeFileHandle>? Created { get; set; }
     internal Action<SafeFileHandle, SafeFileHandle>? BeforeAssign { get; set; }
     internal Action<SafeFileHandle, SafeFileHandle>? BeforeResume { get; set; }
+    internal Action? BeforeCloseJob { get; set; }
     internal volatile bool StdoutEof;
     internal volatile bool StderrEof;
     internal void Record(string call) => _calls.Enqueue(call);
@@ -181,8 +182,7 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
             stdoutRead?.Dispose(); stdoutWrite?.Dispose();
             stderrRead?.Dispose(); stderrWrite?.Dispose();
             stdinRead?.Dispose(); stdinWrite?.Dispose();
-            _hooks.Record("close-job");
-            _job.Dispose();
+            CloseJob();
             throw;
         }
     }
@@ -236,8 +236,17 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
         _stderr.Dispose();
         _thread.Dispose();
         _process.Dispose();
-        _hooks.Record("close-job");
-        _job.Dispose();
+        CloseJob();
+    }
+
+    private void CloseJob()
+    {
+        try { _hooks.BeforeCloseJob?.Invoke(); }
+        finally
+        {
+            _hooks.Record("close-job");
+            _job.Dispose();
+        }
     }
 
     private static StreamReader CreateReader(SafeFileHandle handle, Action eof)
