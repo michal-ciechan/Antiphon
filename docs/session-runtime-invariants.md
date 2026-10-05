@@ -231,6 +231,23 @@
   writes the same bytes to the same file on retries. A fresh server process reads the row;
   another spill for the same busy session cannot replace it.
 
+- **Screen-delivered spills retain a receipt obligation (CARD-1056).** An attempted
+  Sent/Delivered row with retained bytes is reconciled under its session queue lock,
+  separately from retry discovery. Only a committed, complete UserPrompt from that
+  session can release it: sequence must exceed the original baseline, or, with no
+  baseline, native timestamp must meet the original attempt start minus the configured
+  nonnegative clock tolerance. No floor means no automatic release; CreatedAt and a
+  later session generation never replace the floor. One commit clears the bytes and
+  stamps LateConfirmed, preserving the row, wire pointer, path, attempt metadata and
+  SentAt. A failed save leaves the obligation for the next pass. Direct flushes and
+  the periodic stranded sweep converge even without TurnEnd, while working, stopped,
+  absent or without input transport, independent of origin, AlwaysOn, retry cap and
+  age. Reconciliation sends no input, charges no attempt and contributes zero newly
+  delivered messages to the sweep count. CatchUp remains free of queue callbacks;
+  queue-change publication follows commit. Pinned by
+  [SessionMessageQueueDeliveredSpillTests](../tests/Antiphon.Tests/Application/SessionMessageQueueDeliveredSpillTests.cs)
+  and [SessionMessageQueueDeliveredSpillRecoveryTests](../tests/Antiphon.Tests/Application/SessionMessageQueueDeliveredSpillRecoveryTests.cs).
+
 - **Phone-home Grok (CARD-0490) is transcript-confirmed.** Registration, heartbeat and screen PONG
   are not delivery. The complete matching UserPrompt past the attempt floor is the receipt. Local
   HTTP/SSE is unchanged; remote sessions persist `RunnerId`/`RunnerStoreId`/`RunnerCwd` and never

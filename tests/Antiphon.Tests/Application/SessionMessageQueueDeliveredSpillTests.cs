@@ -22,7 +22,7 @@ public sealed class SessionMessageQueueDeliveredSpillTests
         foreach (var entry in new[] { "flush-session", "flush-if-idle", "turn-end" })
         foreach (var origin in new[] { QueuedMessageOrigin.Ui, QueuedMessageOrigin.Channel })
         {
-            await using var f = await Fixture.CreateAsync(schema.ConnectionString);
+            await using var f = await DeliveredSpillFixture.CreateAsync(schema.ConnectionString);
             await f.ScreenAsync(origin);
             await f.PublishAsync(f.Wire, TranscriptKinds.UserPrompt, f.H.Now);
             await f.RetainedAsync("ingestion-alone-retains");
@@ -51,7 +51,7 @@ public sealed class SessionMessageQueueDeliveredSpillTests
         }
         foreach (var kind in new[] { AgentKind.ClaudeCode, AgentKind.Grok })
         {
-            await using var f = await Fixture.CreateAsync(schema.ConnectionString);
+            await using var f = await DeliveredSpillFixture.CreateAsync(schema.ConnectionString);
             await f.SetKindAsync(kind);
             await f.SeedAsync();
             await f.PublishAsync(f.Wire, TranscriptKinds.UserPrompt, f.H.Now);
@@ -65,7 +65,7 @@ public sealed class SessionMessageQueueDeliveredSpillTests
     public async Task C1056_Only_UserPrompt_can_release()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var f = await Fixture.CreateAsync(schema.ConnectionString);
+        await using var f = await DeliveredSpillFixture.CreateAsync(schema.ConnectionString);
         await f.ScreenAsync();
         foreach (var (kind, tool) in new[]
         {
@@ -95,7 +95,7 @@ public sealed class SessionMessageQueueDeliveredSpillTests
     public async Task C1056_Complete_wire_is_required()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using (var f = await Fixture.CreateAsync(schema.ConnectionString))
+        await using (var f = await DeliveredSpillFixture.CreateAsync(schema.ConnectionString))
         {
             await f.ScreenAsync();
             f.Wire.Length.ShouldBeGreaterThan(200);
@@ -108,7 +108,7 @@ public sealed class SessionMessageQueueDeliveredSpillTests
                 await f.PublishAsync(partial, TranscriptKinds.UserPrompt, f.H.Now);
                 await f.FlushAsync();
                 await f.RetainedAsync("partial-retains / partial-state-unchanged");
-                Fixture.Identity(await f.RowAsync()).ShouldBe(Fixture.Identity(f.Before), "partial-state-unchanged");
+                DeliveredSpillFixture.Identity(await f.RowAsync()).ShouldBe(DeliveredSpillFixture.Identity(f.Before), "partial-state-unchanged");
             }
             // A single production ingestion batch includes both partial and complete candidates.
             await f.PublishBatchAsync([f.Wire[..200], f.Wire]);
@@ -118,7 +118,7 @@ public sealed class SessionMessageQueueDeliveredSpillTests
         }
         foreach (var length in new[] { 11, 0, 12 })
         {
-            await using var f = await Fixture.CreateAsync(schema.ConnectionString);
+            await using var f = await DeliveredSpillFixture.CreateAsync(schema.ConnectionString);
             await f.SeedAsync(new string('w', length));
             await f.PublishAsync(f.Wire, TranscriptKinds.UserPrompt, f.H.Now);
             var from = f.H.Now;
@@ -128,7 +128,7 @@ public sealed class SessionMessageQueueDeliveredSpillTests
         }
         foreach (var form in new[] { "ansi-crlf", "elided", "framed" })
         {
-            await using var f = await Fixture.CreateAsync(schema.ConnectionString);
+            await using var f = await DeliveredSpillFixture.CreateAsync(schema.ConnectionString);
             await f.ScreenAsync();
             var receipt = form switch
             {
@@ -147,8 +147,8 @@ public sealed class SessionMessageQueueDeliveredSpillTests
     public async Task C1056_Receipt_session_must_match()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var local = await Fixture.CreateAsync(schema.ConnectionString);
-        await using var foreign = await Fixture.CreateAsync(schema.ConnectionString);
+        await using var local = await DeliveredSpillFixture.CreateAsync(schema.ConnectionString);
+        await using var foreign = await DeliveredSpillFixture.CreateAsync(schema.ConnectionString);
         await local.ScreenAsync();
         await foreign.SeedAsync(local.Wire);
         await foreign.PublishAsync(local.Wire, TranscriptKinds.UserPrompt, foreign.H.Now);
@@ -170,7 +170,7 @@ public sealed class SessionMessageQueueDeliveredSpillTests
         foreach (var sequence in new[] { baseline, baseline - 1, baseline + 1 })
         foreach (var time in new[] { "current", "null", "old" })
         {
-            await using var f = await Fixture.CreateAsync(schema.ConnectionString);
+            await using var f = await DeliveredSpillFixture.CreateAsync(schema.ConnectionString);
             await f.SeedAsync(baseline: baseline);
             DateTime? timestamp = time == "null" ? null : time == "old" ? f.H.Now.AddDays(-1) : f.H.Now;
             var receipt = await f.PublishAsync(f.Wire, TranscriptKinds.UserPrompt, timestamp, sequence);
@@ -193,7 +193,7 @@ public sealed class SessionMessageQueueDeliveredSpillTests
     public async Task C1056_Null_timestamp_cannot_release_unobservable_spill()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var f = await Fixture.CreateAsync(schema.ConnectionString);
+        await using var f = await DeliveredSpillFixture.CreateAsync(schema.ConnectionString);
         await f.ScreenAsync();
         f.Clock.Advance(TimeSpan.FromMinutes(2));
         var receipt = await f.PublishAsync(f.Wire, TranscriptKinds.UserPrompt, null, 10000);
@@ -216,7 +216,7 @@ public sealed class SessionMessageQueueDeliveredSpillTests
         foreach (var laterGeneration in new[] { false, true })
         foreach (var delta in new[] { 0L, -10L, 10L })
         {
-            await using var f = await Fixture.CreateAsync(schema.ConnectionString, tolerance);
+            await using var f = await DeliveredSpillFixture.CreateAsync(schema.ConnectionString, tolerance);
             await f.ScreenAsync();
             var floor = f.Before.LastDeliveryStartedAt!.Value.AddSeconds(-Math.Max(0, tolerance));
             var timestamp = floor.AddTicks(delta);
@@ -271,7 +271,7 @@ public sealed class SessionMessageQueueDeliveredSpillTests
         };
         foreach (var (label, change) in cases)
         {
-            await using var f = await Fixture.CreateAsync(schema.ConnectionString);
+            await using var f = await DeliveredSpillFixture.CreateAsync(schema.ConnectionString);
             await f.SeedAsync(change: change);
             await f.PublishAsync(f.Wire, TranscriptKinds.UserPrompt, f.H.Now);
             var eligible = label == "eligible-obligation-included";
@@ -294,7 +294,7 @@ public sealed class SessionMessageQueueDeliveredSpillTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         foreach (var floor in new[] { "none", "sequence", "time" })
         {
-            await using var f = await Fixture.CreateAsync(schema.ConnectionString);
+            await using var f = await DeliveredSpillFixture.CreateAsync(schema.ConnectionString);
             await f.SeedAsync(change: m =>
             {
                 // Synthetic historical obligation only: primary ScreenAsync never edits floors.
@@ -309,193 +309,4 @@ public sealed class SessionMessageQueueDeliveredSpillTests
         }
     }
 
-    private sealed class Fixture(BridgeQueueHarness harness, ScaledTimeProvider clock) : IAsyncDisposable
-    {
-        public BridgeQueueHarness H { get; } = harness;
-        public ScaledTimeProvider Clock { get; } = clock;
-        public SessionQueuedMessage Before { get; private set; } = null!;
-        public string Wire => Before.Body;
-        private readonly List<SessionRunnerTranscriptEvent> _entries = [];
-        private readonly List<string> _captured = [];
-        private string[] _inputs = [], _conditional = [], _prompts = [], _lifecycle = [], _submissions = [];
-
-        public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(H.ConnectionString));
-
-        public static async Task<Fixture> CreateAsync(string connection, int tolerance = 30)
-        {
-            var clock = new ScaledTimeProvider(1);
-            var h = await BridgeQueueHarness.CreateAsync(new()
-            {
-                ConnectionString = connection,
-                TimeProvider = clock,
-                ConfigureServices = s => s.AddSingleton<RemoteSpillCourier>(),
-                ConfigureDeliveryVerification = v => v.UnobservableBaselineConfirmClockToleranceSeconds = tolerance,
-            });
-            var f = new Fixture(h, clock);
-            h.Adapter.OnSubmitted = text => { f._captured.Add(text); return Task.CompletedTask; };
-            h.Adapter.SwallowSubmits = 0;
-            h.Adapter.SubmitAck = "\n• Working (0s • esc to interrupt)";
-            await using var db = f.Db();
-            await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u
-                .SetProperty(s => s.AgentKind, AgentKind.Codex)
-                .SetProperty(s => s.RunnerId, "c1056-fixture")
-                .SetProperty(s => s.RunnerStoreId, Guid.NewGuid())
-                .SetProperty(s => s.RunnerCwd, h.TempRoot));
-            return f;
-        }
-
-        public async Task SetKindAsync(AgentKind kind)
-        {
-            await using var db = Db();
-            await db.AgentSessions.Where(s => s.Id == H.SessionId)
-                .ExecuteUpdateAsync(u => u.SetProperty(s => s.AgentKind, kind));
-        }
-
-        public async Task ScreenAsync(QueuedMessageOrigin origin = QueuedMessageOrigin.Ui)
-        {
-            (await TranscriptCountAsync()).ShouldBe(0, "real-empty-transcript-before-input");
-            const string relative = ".antiphon/task-c1056-brief.md";
-            var body = "[antiphon-task:c1056abc] complete original spill " + new string('e', 3000);
-            var pointer = "[antiphon-task:c1056abc] Read the full brief at " + relative
-                + "\nPreserve the queue identity and the original attempt floor. The file contains the entire"
-                + " task and its verification requirements; read it before making changes. Report the exact"
-                + " checkpoint results and keep the full recipient submission evidence. End-of-wire-Z";
-            H.Queue.StageRemoteSpill(H.SessionId, H.TempRoot, new PhoneHomeInputSpill(relative, body));
-            await H.Queue.EnqueueAsync(H.SessionId, pointer, MessageSendMode.WhenIdle, CancellationToken.None, origin);
-            await using var db = Db();
-            Before = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.AgentSessionId == H.SessionId);
-            _captured.ShouldHaveSingleItem("exactly-one-actual-submission");
-            H.Adapter.SubmittedBodies.ShouldBe(_captured);
-            Before.Body.ShouldBe(_captured.Single(), "actual-captured-wire");
-            Before.Body.ShouldContain(Before.RemoteSpillRelativePath!);
-            Before.LastDeliveryBaselineSequence.ShouldBeNull("honest-unobservable-baseline");
-            Before.LastDeliveryStartedAt.ShouldNotBeNull();
-            Before.LastDeliveryGeneration.ShouldNotBeNull();
-            Before.DeliveryAttempts.ShouldBe(1);
-            Before.Status.ShouldBe(QueuedMessageStatus.Sent);
-            Before.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
-            Before.RemoteSpillBody.ShouldBe(body, "screen-spill-retained");
-            (await TranscriptCountAsync()).ShouldBe(0, "screen-has-no-receipt");
-            SnapshotInput();
-        }
-
-        public async Task SeedAsync(string? body = null, long? baseline = null, Action<SessionQueuedMessage>? change = null)
-        {
-            var id = await H.SeedPendingMessageAsync(body ?? "historical-spill-wire-" + Guid.NewGuid(),
-                deliveryAttempts: 1, baselineSequence: baseline, status: QueuedMessageStatus.Sent,
-                deliveryVerdict: DeliveryVerdict.Delivered, lastDeliveryStartedAt: H.Now);
-            await using (var db = Db())
-            {
-                var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
-                row.RemoteSpillBody = "historical-owned-bytes-" + id;
-                row.RemoteSpillRelativePath = TypedBodySpill.InboxRelativePath(id.ToString("D"));
-                change?.Invoke(row);
-                await db.SaveChangesAsync();
-            }
-            await using var fresh = Db();
-            Before = await fresh.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == id);
-            SnapshotInput();
-        }
-
-        private void SnapshotInput()
-        {
-            _inputs = H.Adapter.Inputs.ToArray();
-            _conditional = H.Adapter.ConditionalInputs.ToArray();
-            _prompts = H.Adapter.Prompts.ToArray();
-            _lifecycle = H.Adapter.Lifecycle.ToArray();
-            _submissions = H.Adapter.SubmittedBodies.ToArray();
-        }
-
-        public void NoInput()
-        {
-            H.Adapter.Inputs.ShouldBe(_inputs, "receipt-zero-input");
-            H.Adapter.ConditionalInputs.ToArray().ShouldBe(_conditional, "receipt-zero-conditional-input");
-            H.Adapter.Prompts.ShouldBe(_prompts, "receipt-zero-prompts");
-            H.Adapter.Lifecycle.ShouldBe(_lifecycle, "receipt-zero-lifecycle");
-            H.Adapter.SubmittedBodies.ShouldBe(_submissions, "receipt-zero-submissions");
-        }
-
-        private SessionRunnerTranscriptEvent Entry(string? text, string kind, DateTime? timestamp,
-            long? sequence = null, string? tool = null) => new(H.SessionId,
-                sequence ?? (_entries.Count == 0 ? 1 : _entries.Max(e => e.Sequence) + 1),
-                kind, Guid.NewGuid().ToString("N"), null,
-                timestamp is { } time ? new DateTimeOffset(time) : null, "user", text,
-                tool, tool == "AskUserQuestion" ? "{\"questions\":[]}" : null, null, false, null);
-
-        public async Task<TranscriptEntry> PublishAsync(string? text, string kind, DateTime? timestamp,
-            long? sequence = null, string? tool = null)
-        {
-            var entry = Entry(text, kind, timestamp, sequence, tool);
-            _entries.Add(entry);
-            H.Runner.SetTranscript(new(H.SessionId, _entries.ToArray(), _entries.Max(e => e.Sequence)));
-            await H.Runtime.CatchUpTranscriptAsync(H.SessionId, CancellationToken.None);
-            await using var db = Db();
-            var saved = await db.TranscriptEntries.AsNoTracking().SingleAsync(e => e.AgentSessionId == H.SessionId
-                && e.Uuid == entry.Uuid && e.Kind == kind);
-            saved.Text.ShouldBe(text, "committed-actual-receipt-text");
-            saved.Timestamp.ShouldBe(timestamp is { } t ? SessionGeneration.Normalize(t) : null,
-                "committed-native-timestamp");
-            return saved;
-        }
-
-        public async Task PublishBatchAsync(string[] texts)
-        {
-            foreach (var text in texts) _entries.Add(Entry(text, TranscriptKinds.UserPrompt, H.Now));
-            H.Runner.SetTranscript(new(H.SessionId, _entries.ToArray(), _entries.Max(e => e.Sequence)));
-            await H.Runtime.CatchUpTranscriptAsync(H.SessionId, CancellationToken.None);
-            await using var db = Db();
-            foreach (var entry in _entries.TakeLast(texts.Length))
-                (await db.TranscriptEntries.AsNoTracking().SingleAsync(e => e.AgentSessionId == H.SessionId
-                    && e.Uuid == entry.Uuid)).Text.ShouldBe(entry.Text, "batch-receipt-persisted");
-        }
-
-        public async Task<SessionQueueTurnEndResult?> FlushAsync(string entry = "flush-if-idle")
-        {
-            if (entry == "turn-end") return await H.Queue.OnTurnEndAsync(H.SessionId, CancellationToken.None);
-            if (entry == "flush-session") await H.Queue.FlushSessionAsync(H.SessionId, CancellationToken.None);
-            else await H.Queue.FlushIfIdleAsync(H.SessionId, CancellationToken.None);
-            return null;
-        }
-
-        public async Task<SessionQueuedMessage> RowAsync()
-        {
-            await using var db = Db();
-            return await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == Before.Id);
-        }
-
-        public async Task<int> TranscriptCountAsync()
-        {
-            await using var db = Db();
-            return await db.TranscriptEntries.CountAsync(e => e.AgentSessionId == H.SessionId);
-        }
-
-        public static object?[] Identity(SessionQueuedMessage row) =>
-        [row.Id, row.AgentSessionId, row.Body, row.RemoteSpillRelativePath, row.DeliveryAttempts,
-            row.LastDeliveryStartedAt, row.LastDeliveryBaselineSequence, row.LastDeliveryGeneration,
-            row.Status, row.SentAt, row.Sequence, row.CreatedAt, row.Origin];
-
-        public async Task RetainedAsync(string label)
-        {
-            var row = await RowAsync();
-            row.RemoteSpillBody.ShouldBe(Before.RemoteSpillBody, label);
-            row.DeliveryVerdict.ShouldBe(Before.DeliveryVerdict, label);
-            row.DeliveryVerdictAt.ShouldBe(Before.DeliveryVerdictAt, label);
-            Identity(row).ShouldBe(Identity(Before), label);
-            NoInput();
-        }
-
-        public async Task ReleasedAsync(string label, DateTime from)
-        {
-            var row = await RowAsync();
-            row.RemoteSpillBody.ShouldBeNull(label);
-            row.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed, label);
-            row.DeliveryVerdictAt.ShouldNotBeNull(label);
-            row.DeliveryVerdictAt!.Value.ShouldBeGreaterThanOrEqualTo(SessionGeneration.Normalize(from), label);
-            row.DeliveryVerdictAt.Value.ShouldBeLessThanOrEqualTo(H.Now, label);
-            Identity(row).ShouldBe(Identity(Before), label);
-            NoInput();
-        }
-
-        public ValueTask DisposeAsync() => H.DisposeAsync();
-    }
 }

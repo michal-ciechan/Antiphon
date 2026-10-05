@@ -1518,6 +1518,35 @@ public sealed partial class SessionMessageQueueService
     /// </summary>
     public async Task<int> FlushStrandedQueuesAsync(CancellationToken ct)
     {
+        // A delivered spill owes a receipt, not another input attempt. Discover it before the
+        // ordinary Pending/InterruptedSent early return and all input-admission gates.
+        List<Guid> receiptSessions;
+        await using (var scope = _scopeFactory.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            receiptSessions = await db.SessionQueuedMessages.AsNoTracking()
+                .Where(QueueAttention.DeliveredSpillAwaitingReceipt)
+                .Select(m => m.AgentSessionId).Distinct().ToListAsync(ct);
+        }
+        foreach (var sessionId in receiptSessions)
+        {
+            var sem = GetLock(sessionId);
+            await sem.WaitAsync(ct);
+            LateConfirmCounts receipts;
+            try
+            {
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                receipts = await ReconcileDeliveredSpillsLockedAsync(db, sessionId, ct);
+            }
+            finally
+            {
+                sem.Release();
+            }
+            if (receipts.Confirmed > 0)
+                await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
+        }
+
         var now = UtcNow();
         var cutoff = now - TimeSpan.FromSeconds(_verification.StrandedAgeSeconds);
         var interruptedAge = now - InterruptedAttemptAge;
