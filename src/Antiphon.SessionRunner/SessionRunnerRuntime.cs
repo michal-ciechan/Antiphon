@@ -30,6 +30,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _launchLocks = new();
     private readonly Guid _terminalSeatEpoch = Guid.NewGuid();
     private readonly ConcurrentDictionary<Guid, TerminalSeatQualification> _terminalSeatQualifications = new();
+    private sealed record TerminalReleaseAction(
+        TerminalSeatReleaseRequest Request, RunnerSession Session, TerminalSeatReleaseResult Result);
+    private readonly ConcurrentDictionary<(Guid SessionId, Guid ActionId), TerminalReleaseAction> _terminalReleases = new();
     private readonly SessionRunnerEventHub _events = new();
     // One transcript, one session (CARD-0006 rule C1). Process-wide because the runner process is
     // the only thing that knows which sessions are live.
@@ -964,22 +967,104 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     internal Func<Guid, Task>? TerminalReleaseBeforeFinalCheck { get; set; }
     internal Func<Guid, Task>? TerminalReleaseBeforeSignal { get; set; }
 
-    // S2a test-first boundary over the existing release implementation. No wire/automatic
-    // caller exists. CP-9 supplies the missing conditional contract before its guards land.
+    // Dormant until S2b fences both input entry points and S2c exposes the wire protocol.
+    // Never call either public lock-taking release/observation method from inside this gate.
     internal async Task<TerminalSeatReleaseResult> ReleaseTerminalSeatAsync(
         Guid sessionId, TerminalSeatReleaseRequest request, TimeSpan timeout, CancellationToken ct)
     {
-        if (TerminalReleaseBeforeFinalCheck is { } beforeFinal) await beforeFinal(sessionId);
-        if (TerminalReleaseBeforeSignal is { } beforeSignal) await beforeSignal(sessionId);
+        var gate = _launchLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        RunnerSession? session = null;
+        TerminalSeatReleaseResult Result(TerminalSeatReleaseOutcome outcome) =>
+            new(sessionId, request.ActionId, outcome, session?.AcceptedStartedAt);
+        TerminalSeatReleaseResult Refuse(TerminalSeatReleaseOutcome outcome)
+        {
+            if (_terminalSeatQualifications.TryGetValue(sessionId, out var qualification)) qualification.Discard();
+            return Result(outcome);
+        }
         try
         {
-            var released = await ReleaseSlotAsync(sessionId, "terminal-seat-release", timeout, ct);
-            return new(sessionId, request.ActionId, TerminalSeatReleaseOutcome.Released, released.AcceptedStartedAt);
+            _sessions.TryGetValue(sessionId, out session);
+            var expected = request.Observation;
+            if (expected.ExpectedRunnerStoreId != RunnerStoreId
+                || (session is not null && !SessionGeneration.Equal(session.AcceptedStartedAt, expected.ExpectedAcceptedStartedAt)))
+                return Refuse(TerminalSeatReleaseOutcome.GenerationMismatch);
+            if (request.ActionId == Guid.Empty)
+                return Refuse(TerminalSeatReleaseOutcome.StaleObservation);
+
+            var key = (sessionId, request.ActionId);
+            if (_terminalReleases.TryGetValue(key, out var prior))
+            {
+                if (prior.Request.Observation.ExpectedRunnerStoreId != expected.ExpectedRunnerStoreId
+                    || !SessionGeneration.Equal(prior.Request.Observation.ExpectedAcceptedStartedAt, expected.ExpectedAcceptedStartedAt)
+                    || (session is not null && !ReferenceEquals(prior.Session, session)))
+                    return Refuse(TerminalSeatReleaseOutcome.GenerationMismatch);
+                return prior.Request == request ? prior.Result : Refuse(TerminalSeatReleaseOutcome.StaleObservation);
+            }
+
+            if (session is null)
+            {
+                // A not-yet-adopted durable seat is not authoritative absence.
+                return Refuse(File.Exists(PtyHostManifest.PathFor(_settings.PtyHostManifestDir, sessionId))
+                    || File.Exists(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, sessionId))
+                    ? TerminalSeatReleaseOutcome.Unknown : TerminalSeatReleaseOutcome.AlreadyAbsent);
+            }
+            if (session.VerificationBinding is not null)
+                return Refuse(TerminalSeatReleaseOutcome.Owned);
+            if (session.TerminalReleaseInProgress)
+                return Refuse(TerminalSeatReleaseOutcome.Unresolved);
+
+            var wasExited = session.HasExited;
+            if (!wasExited)
+            {
+                if (session.TerminalReleaseCustodyHold is { } hold) return Refuse(hold);
+                if (TerminalSeatProofFor(sessionId) is not { } proof)
+                    return Refuse(TerminalSeatReleaseOutcome.StaleObservation);
+                if (TerminalReleaseBeforeFinalCheck is { } beforeFinal) await beforeFinal(sessionId);
+                if (session.Tailer is not { } tailer) return Refuse(TerminalSeatReleaseOutcome.Unknown);
+                var transcript = await tailer.ObserveTerminalSeatAsync(ct);
+                var refusal = TerminalSeatQualification.AuthorizeRelease(proof, _terminalSeatEpoch, session,
+                    request, transcript, session.BackendInput.Count, session.LastSequence, _labelClock);
+                if (refusal is { } outcome) return Refuse(outcome);
+                var tailRevision = tailer.Snapshot().LastSequence;
+
+                if (TerminalReleaseBeforeSignal is { } beforeSignal) await beforeSignal(sessionId);
+                if (!_sessions.TryGetValue(sessionId, out var current) || !ReferenceEquals(current, session)
+                    || !SessionGeneration.Equal(session.AcceptedStartedAt, expected.ExpectedAcceptedStartedAt))
+                    return Refuse(TerminalSeatReleaseOutcome.GenerationMismatch);
+                if (session.TerminalReleaseCustodyHold is { } finalHold) return Refuse(finalHold);
+                if (!ReferenceEquals(tailer, session.Tailer)
+                    || tailRevision != tailer.Snapshot().LastSequence
+                    || proof.InputRevision != session.BackendInput.Count || proof.OutputRevision != session.LastSequence)
+                    return Refuse(TerminalSeatReleaseOutcome.StaleObservation);
+                // No await remains between these revision fences and entry to the signal helper.
+                // Independent file writers cannot be transactionally locked by the runner.
+            }
+
+            ct.ThrowIfCancellationRequested();
+            session.TerminalReleaseInProgress = true;
+            // Persist the ambiguous outcome in this process before any signal; duplicate requests
+            // cannot turn a failed/canceled kill into another attempt. Restart requires requalification.
+            var result = Result(TerminalSeatReleaseOutcome.Unresolved);
+            _terminalReleases[key] = new(request, session, result);
+            try
+            {
+                await ReleaseSlotUnderGateAsync(sessionId, session, "terminal-seat-release:" + request.ActionId.ToString("N"), timeout, ct);
+                result = Result(wasExited ? TerminalSeatReleaseOutcome.AlreadyExited : TerminalSeatReleaseOutcome.Released);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Conditional slot release remains unresolved for {SessionId}", sessionId);
+            }
+            _terminalReleases[key] = new(request, session, result);
+            _terminalSeatQualifications.TryRemove(sessionId, out _);
+            return result;
         }
-        catch (Exception ex) when (ex is InvalidOperationException or OperationCanceledException)
+        catch (OperationCanceledException)
         {
-            return new(sessionId, request.ActionId, TerminalSeatReleaseOutcome.Unresolved, null);
+            return Refuse(TerminalSeatReleaseOutcome.Unresolved);
         }
+        finally { gate.Release(); }
     }
 
     /// <summary>CARD-0667 S1b: unused read-only qualification boundary; no release caller.</summary>
@@ -1145,37 +1230,41 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         try
         {
             _sessions.TryGetValue(sessionId, out var session);
-            if (session is not null && !session.HasExited)
-            {
-                try
-                {
-                    await session.KillAsync(timeout, ct);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.LogWarning(ex, "Slot release kill failed for session {SessionId}", sessionId);
-                }
+            return await ReleaseSlotUnderGateAsync(sessionId, session, reason.Trim(), timeout, ct);
+        }
+        finally { gate.Release(); }
+    }
 
-                if (!session.HasExited)
-                    throw new InvalidOperationException(
-                        $"Session '{sessionId:D}' is still live after slot release; custody was retained.");
+    private async Task<RunnerSessionDto> ReleaseSlotUnderGateAsync(
+        Guid sessionId, RunnerSession? session, string reason, TimeSpan timeout, CancellationToken ct)
+    {
+        if (session is not null && !session.HasExited)
+        {
+            try
+            {
+                await session.KillAsync(timeout, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException && !session.TerminalReleaseInProgress)
+            {
+                _logger.LogWarning(ex, "Slot release kill failed for session {SessionId}", sessionId);
             }
 
-            if (session is not null)
-                _sessions.TryRemove(sessionId, out _);
-            ForgetDurableSession(sessionId);
-            AppendSlotRelease(sessionId, reason.Trim(), session is not null);
-            if (session is null)
-                return new RunnerSessionDto(sessionId, null, DateTime.UtcNow, "Exited", null, "Released", 0);
+            if (!session.HasExited)
+                throw new InvalidOperationException(
+                    $"Session '{sessionId:D}' is still live after slot release; custody was retained.");
+        }
 
-            var dto = session.ToDto();
-            await session.DisposeAsync();
-            return dto;
-        }
-        finally
-        {
-            gate.Release();
-        }
+        ct.ThrowIfCancellationRequested();
+        if (session is not null && !_sessions.TryRemove(new KeyValuePair<Guid, RunnerSession>(sessionId, session)))
+            throw new InvalidOperationException("The slot generation changed; custody was retained.");
+        ForgetDurableSession(sessionId);
+        AppendSlotRelease(sessionId, reason, session is not null);
+        if (session is null)
+            return new RunnerSessionDto(sessionId, null, DateTime.UtcNow, "Exited", null, "Released", 0);
+
+        var dto = session.ToDto();
+        await session.DisposeAsync();
+        return dto;
     }
 
     /// <summary>Test seam: register a session the release path can find.</summary>
@@ -1836,6 +1925,27 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private DateTime? _herdrVerifiedAtUtc;
         private string? _herdrOrigin;
         private DateTime? _acceptedStartedAt;
+        private int _terminalInputWriters;
+        private bool _terminalInputUncertain;
+        private bool _terminalComposerPending;
+        internal bool TerminalReleaseInProgress { get; set; }
+
+        internal TerminalSeatReleaseOutcome? TerminalReleaseCustodyHold
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    if (VerificationBinding is not null) return TerminalSeatReleaseOutcome.Owned;
+                    if (_status != "Running" || _pendingReason is not null || _backend != SessionBackends.PtyHost
+                        || !_clientReady.Task.IsCompletedSuccessfully || !_clientReady.Task.Result)
+                        return TerminalSeatReleaseOutcome.Unknown;
+                    if (_terminalInputWriters != 0 || _terminalInputUncertain || _terminalComposerPending)
+                        return TerminalSeatReleaseOutcome.PendingDelivery;
+                    return null;
+                }
+            }
+        }
 
         internal DateTime? AcceptedStartedAt => _acceptedStartedAt;
 
@@ -3102,6 +3212,22 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             _tailer?.Snapshot() ?? new RunnerTranscriptDto(_sessionId, Array.Empty<RunnerTranscriptEvent>(), 0);
 
         public async Task WriteAsync(string input, CancellationToken ct)
+        {
+            lock (_gate) _terminalInputWriters++;
+            try
+            {
+                await WriteCoreAsync(input, ct);
+                lock (_gate) _terminalComposerPending = input != "\r";
+            }
+            catch
+            {
+                lock (_gate) _terminalInputUncertain = true;
+                throw;
+            }
+            finally { lock (_gate) _terminalInputWriters--; }
+        }
+
+        private async Task WriteCoreAsync(string input, CancellationToken ct)
         {
             if (VerificationBinding is { } binding
                 && _custodyLedger!.Store.ReadRecord<CustodyStamp>(binding, "runner-seal.json") is not null)
