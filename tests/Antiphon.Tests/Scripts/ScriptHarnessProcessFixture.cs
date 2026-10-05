@@ -63,10 +63,12 @@ internal static class ScriptHarnessProcessFixture
         return new ProcessIdentity(int.Parse(fields[0]), long.Parse(fields[1]), long.Parse(fields[2]));
     }
 
-    internal readonly record struct ProcessIdentity(int Pid, long StartTicks, long NativeStartTicks)
+    internal readonly record struct ProcessIdentity(int Pid, long StartTicks, long NativeStartTicks,
+        ScriptHarnessWindowsProcessFixture.ObservedProcess? WindowsObservation = null)
     {
         internal bool Executing()
         {
+            if (WindowsObservation is not null) return WindowsObservation.Executing();
             try
             {
                 if (OperatingSystem.IsLinux())
@@ -82,17 +84,119 @@ internal static class ScriptHarnessProcessFixture
             }
             catch (ArgumentException) { return false; }
             catch (InvalidOperationException) { return false; }
-            catch (System.ComponentModel.Win32Exception) { return false; }
             catch (FileNotFoundException) { return false; }
             catch (DirectoryNotFoundException) { return false; }
         }
 
         internal void EmergencyStop()
         {
+            if (WindowsObservation is not null)
+            {
+                if (WindowsObservation.Executing()) WindowsObservation.Terminate();
+                WindowsObservation.Join(TimeSpan.FromSeconds(5));
+                return;
+            }
             if (!Executing()) return;
             using var process = Process.GetProcessById(Pid);
             if (Executing())
                 process.Kill(entireProcessTree: false);
+        }
+    }
+
+    // The watchdog is independent of the harness's 5+2-second budgets. Task.Run
+    // also keeps a stuck synchronous launch from blocking the watchdog itself.
+    internal static async Task WithInvocationAsync(Func<Invocation, Task> body, int watchdogSeconds = 30,
+        WindowsScriptHarnessHooks? hooks = null, bool requireWindows = false, CancellationToken watchdogToken = default)
+    {
+        await using var invocation = new Invocation(hooks, requireWindows);
+        await body(invocation).WaitAsync(TimeSpan.FromSeconds(watchdogSeconds), watchdogToken);
+    }
+
+    internal sealed class Invocation : IAsyncDisposable
+    {
+        private readonly CancellationTokenSource _cancel = new();
+        private Task? _run;
+        internal ScriptHarnessWindowsProcessFixture? Windows { get; }
+        internal ScriptProcessRequest? Request { get; private set; }
+        internal ObservedTree? Tree { get; private set; }
+        internal Invocation(WindowsScriptHarnessHooks? hooks, bool requireWindows)
+        {
+            if (requireWindows && !OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Windows qualification requires Windows.");
+            if (!File.Exists(HelperPath)) throw new FileNotFoundException("Native fixture helper not staged.");
+            if (OperatingSystem.IsWindows()) Windows = new ScriptHarnessWindowsProcessFixture(hooks);
+        }
+        internal ScriptHarnessOptions Options(string? payload = null) =>
+            ScriptHarnessProcessFixture.Options(payload, value => Request = value) with
+            {
+                AdditionalArguments = Windows?.Arguments(payload) ?? (payload is null ?
+                    ["-HelperPath", HelperPath] : ["-HelperPath", HelperPath, "-Payload", payload]),
+                OwnerFactory = value =>
+                {
+                    Request = value;
+                    return Windows is null ? new LinuxScriptHarnessProcess(value) : new WindowsScriptHarnessProcess(value, Windows.Hooks);
+                }
+            };
+        internal Task<ScriptHarnessResult> Start(string caseName, string? payload = null, CancellationToken token = default,
+            Action<ScriptHarnessResult>? validate = null)
+        {
+            if (_run is not null) throw new InvalidOperationException("One invocation per fixture.");
+            var run = Task.Run(async () =>
+            {
+                return await ScriptHarnessProcess.RunAsync("fixture", "C806", caseName, ScriptPath, Options(payload),
+                    token.CanBeCanceled ? token : _cancel.Token, validate);
+            });
+            _run = run;
+            return run;
+        }
+        internal Task StartHarness(string caseName)
+        {
+            if (_run is not null) throw new InvalidOperationException("One invocation per fixture.");
+            return _run = Task.Run(() => ScriptHarness.RunHarnessCaseAsync("fixture", "C806", caseName, 1,
+                ["C806 C806 fixture passed"], Options(), _cancel.Token));
+        }
+        internal async Task<ObservedTree> WaitReadyAsync(Task run)
+        {
+            if (Windows is null) return Tree = await ScriptHarnessProcessFixture.WaitReadyAsync(() => Request, run);
+            var clock = Stopwatch.StartNew();
+            while (Request is null)
+            {
+                if (run.IsCompleted) throw new InvalidOperationException("Launch failed before request.", await CaptureAsync(run));
+                if (clock.Elapsed >= TimeSpan.FromSeconds(5)) throw new TimeoutException("No fixture request.");
+                await Task.Delay(20);
+            }
+            return Tree = await Windows.WaitReadyAsync(Request, run);
+        }
+        internal void AssertClean()
+        {
+            Tree?.AssertDeadBeforeEmergencySweep();
+            Windows?.AssertStoppedBeforeDispose();
+            if (Request is not null)
+            {
+                Directory.Exists(Request.ResultsDirectory).ShouldBeFalse();
+                Directory.Exists(Request.ControlDirectory).ShouldBeFalse();
+            }
+        }
+        public async ValueTask DisposeAsync()
+        {
+            var clock = Stopwatch.StartNew();
+            _cancel.Cancel();
+            try
+            {
+                if (_run is not null)
+                {
+                    try { await _run.WaitAsync(TimeSpan.FromSeconds(5)); }
+                    catch (Exception) when (_run.IsCompleted) { /* Primary outcome belongs to the test body. */ }
+                }
+            }
+            finally
+            {
+                try
+                {
+                    if (Windows is not null) Windows.Dispose(TimeSpan.FromSeconds(5) - clock.Elapsed);
+                    else Tree?.EmergencyStop();
+                }
+                finally { _cancel.Dispose(); }
+            }
         }
     }
 

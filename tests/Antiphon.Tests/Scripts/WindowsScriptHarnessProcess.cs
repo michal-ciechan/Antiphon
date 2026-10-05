@@ -5,6 +5,26 @@ using Microsoft.Win32.SafeHandles;
 
 namespace Antiphon.Tests.Scripts;
 
+// Instance-local observations/faults. Sequencing and successful native operations
+// remain in the adapter; fixtures query the OS independently through retained handles.
+internal sealed class WindowsScriptHarnessHooks
+{
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _calls = new();
+    internal List<(string Name, SafeFileHandle Handle)> Handles { get; } = [];
+    internal string[] Calls => _calls.ToArray();
+    internal uint CreateFlags { get; set; }
+    internal uint? PreviousSuspendCount { get; set; }
+    internal bool FailAssignment { get; init; }
+    internal bool FailResume { get; init; }
+    internal Action<SafeFileHandle>? Created { get; set; }
+    internal Action<SafeFileHandle, SafeFileHandle>? BeforeAssign { get; set; }
+    internal Action<SafeFileHandle, SafeFileHandle>? BeforeResume { get; set; }
+    internal volatile bool StdoutEof;
+    internal volatile bool StderrEof;
+    internal void Record(string call) => _calls.Enqueue(call);
+    internal void Track(string name, SafeFileHandle handle) => Handles.Add((name, handle));
+}
+
 internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
 {
     private const uint CreateSuspended = 0x00000004;
@@ -22,18 +42,21 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
     private readonly SafeFileHandle _thread;
     private readonly StreamReader _stdout;
     private readonly StreamReader _stderr;
+    private readonly WindowsScriptHarnessHooks _hooks;
     private bool _terminated;
     public StreamReader Stdout => _stdout;
     public StreamReader Stderr => _stderr;
 
-    internal WindowsScriptHarnessProcess(ScriptProcessRequest request)
+    internal WindowsScriptHarnessProcess(ScriptProcessRequest request, WindowsScriptHarnessHooks? hooks = null)
     {
+        _hooks = hooks ?? new WindowsScriptHarnessHooks();
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
         if (!Path.IsPathFullyQualified(request.Executable) ||
             request.Executable.Contains("\\WindowsApps\\", StringComparison.OrdinalIgnoreCase) ||
             (File.GetAttributes(request.Executable) & FileAttributes.ReparsePoint) != 0)
             throw new InvalidOperationException("ScriptHarness requires a real pwsh.exe path, not an App Execution Alias; set ExecutablePath to the installed PowerShell executable.");
         _job = CreateJobObjectW(IntPtr.Zero, null);
+        _hooks.Track("job", _job);
         if (_job.IsInvalid) { _job.Dispose(); throw NativeError("CreateJobObjectW"); }
         SafeFileHandle? stdoutRead = null, stdoutWrite = null, stderrRead = null, stderrWrite = null,
             stdinRead = null, stdinWrite = null;
@@ -51,6 +74,12 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
             !CreatePipe(out stderrRead, out stderrWrite, ref security, 0) ||
             !CreatePipe(out stdinRead, out stdinWrite, ref security, 0))
             throw NativeError("CreatePipe");
+        _hooks.Track("stdout-read", stdoutRead);
+        _hooks.Track("stdout-write", stdoutWrite);
+        _hooks.Track("stderr-read", stderrRead);
+        _hooks.Track("stderr-write", stderrWrite);
+        _hooks.Track("stdin-read", stdinRead);
+        _hooks.Track("stdin-write", stdinWrite);
         using (stdoutWrite)
         using (stderrWrite)
         using (stdinRead)
@@ -92,14 +121,30 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
                     "-Case", request.CaseName, "-ResultsDirectory", request.ResultsDirectory };
                 if (request.AdditionalArguments is not null) argv.AddRange(request.AdditionalArguments);
                 var command = new StringBuilder(string.Join(" ", argv.Select(QuoteArgument)));
+                var flags = CreateSuspended | ExtendedStartupInfoPresent;
+                _hooks.CreateFlags = flags;
+                _hooks.Record("create");
                 if (!CreateProcessW(request.Executable, command, IntPtr.Zero, IntPtr.Zero, true,
-                        CreateSuspended | ExtendedStartupInfoPresent, IntPtr.Zero,
+                        flags, IntPtr.Zero,
                         Directory.GetCurrentDirectory(), ref startup, out var information))
                     throw NativeError("CreateProcessW");
                 _process = information.Process;
                 _thread = information.Thread;
+                _hooks.Track("process", _process);
+                _hooks.Track("thread", _thread);
+                _hooks.Created?.Invoke(_process);
+                _hooks.BeforeAssign?.Invoke(_job, _process);
+                _hooks.Record("assign");
+                if (_hooks.FailAssignment) throw new Win32Exception(5, "injected AssignProcessToJobObject refusal");
                 if (!AssignProcessToJobObject(_job, _process)) throw NativeError("AssignProcessToJobObject");
-                if (ResumeThread(_thread) == uint.MaxValue) throw NativeError("ResumeThread");
+                _hooks.Record("assigned");
+                _hooks.BeforeResume?.Invoke(_job, _process);
+                _hooks.Record("resume");
+                if (_hooks.FailResume) throw new Win32Exception(5, "injected ResumeThread failure");
+                var previous = ResumeThread(_thread);
+                if (previous == uint.MaxValue) throw NativeError("ResumeThread");
+                _hooks.PreviousSuspendCount = previous;
+                _hooks.Record("resumed");
             }
             finally
             {
@@ -111,16 +156,22 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
                 if (handles != IntPtr.Zero) Marshal.FreeHGlobal(handles);
             }
         }
-        _stdout = new StreamReader(new FileStream(stdoutRead, FileAccess.Read, 4096, isAsync: true), Encoding.UTF8);
-        _stderr = new StreamReader(new FileStream(stderrRead, FileAccess.Read, 4096, isAsync: true), Encoding.UTF8);
+        // CreatePipe returns synchronous handles; ReadAsync still pumps the two
+        // streams independently. Each reader takes ownership of its read handle.
+        _stdout = CreateReader(stdoutRead, () => _hooks.StdoutEof = true);
+        stdoutRead = null;
+        _stderr = CreateReader(stderrRead, () => _hooks.StderrEof = true);
+        stderrRead = null;
         }
         catch
         {
             // A failed assignment or resume must never release a suspended root.
             // Terminate the private job and the root before closing its handles.
+            _hooks.Record("terminate-job");
             try { TerminateJobObject(_job, 1); } catch { }
             if (_process is not null)
             {
+                _hooks.Record("terminate-root");
                 try { TerminateProcess(_process, 1); WaitForSingleObject(_process, 2000); } catch { }
             }
             _stdout?.Dispose();
@@ -130,6 +181,7 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
             stdoutRead?.Dispose(); stdoutWrite?.Dispose();
             stderrRead?.Dispose(); stderrWrite?.Dispose();
             stdinRead?.Dispose(); stdinWrite?.Dispose();
+            _hooks.Record("close-job");
             _job.Dispose();
             throw;
         }
@@ -153,6 +205,7 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
         cancellationToken.ThrowIfCancellationRequested();
         if (_terminated) return Task.CompletedTask;
         _terminated = true;
+        _hooks.Record("terminate-job");
         if (!TerminateJobObject(_job, 1)) throw NativeError("TerminateJobObject");
         return Task.CompletedTask;
     }
@@ -178,11 +231,30 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
 
     public void Dispose()
     {
+        _hooks.Record("dispose");
         _stdout.Dispose();
         _stderr.Dispose();
         _thread.Dispose();
         _process.Dispose();
+        _hooks.Record("close-job");
         _job.Dispose();
+    }
+
+    private static StreamReader CreateReader(SafeFileHandle handle, Action eof)
+    {
+        var stream = new FileStream(handle, FileAccess.Read, 4096, isAsync: false);
+        try { return new EofReader(stream, eof); }
+        catch { stream.Dispose(); throw; }
+    }
+
+    private sealed class EofReader(Stream stream, Action eof) : StreamReader(stream, Encoding.UTF8)
+    {
+        public override async ValueTask<int> ReadAsync(Memory<char> buffer, CancellationToken cancellationToken = default)
+        {
+            var count = await base.ReadAsync(buffer, cancellationToken);
+            if (count == 0 && buffer.Length != 0) eof();
+            return count;
+        }
     }
 
     private static string QuoteArgument(string arg)

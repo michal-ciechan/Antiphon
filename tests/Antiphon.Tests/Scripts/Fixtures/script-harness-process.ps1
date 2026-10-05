@@ -2,7 +2,9 @@ param(
     [string]$Case,
     [string]$ResultsDirectory,
     [string]$HelperPath,
-    [string]$Payload
+    [string]$Payload,
+    [string]$ObservationDirectory,
+    [string]$Nonce
 )
 $ErrorActionPreference = 'Stop'
 [System.IO.Directory]::CreateDirectory($ResultsDirectory) | Out-Null
@@ -13,7 +15,18 @@ if ($IsLinux) {
     $fields = $stat.Substring($stat.LastIndexOf(') ') + 2).Split(' ', [System.StringSplitOptions]::RemoveEmptyEntries)
     $nativeStart = $fields[19]
 }
-[System.IO.File]::WriteAllText((Join-Path $ResultsDirectory 'root'), "$PID $($root.StartTime.ToUniversalTime().Ticks) $nativeStart")
+$observer = $ResultsDirectory
+$identityPrefix = ''
+if ($IsWindows) {
+    if (-not $ObservationDirectory -or -not $Nonce) { throw 'Windows fixture requires an external observer and nonce.' }
+    $observer = $ObservationDirectory
+    if ([System.IO.File]::ReadAllText((Join-Path $observer 'nonce')) -cne $Nonce) { throw 'Observer nonce mismatch.' }
+    $identityPrefix = "$Nonce "
+    [System.IO.File]::WriteAllText((Join-Path $observer 'first-instruction.tmp'), $Nonce)
+    [System.IO.File]::Move((Join-Path $observer 'first-instruction.tmp'), (Join-Path $observer 'first-instruction'))
+}
+[System.IO.File]::WriteAllText((Join-Path $observer 'root.tmp'), "$identityPrefix$PID $($root.StartTime.ToUniversalTime().Ticks) $nativeStart")
+[System.IO.File]::Move((Join-Path $observer 'root.tmp'), (Join-Path $observer 'root'))
 
 if ($Case -in @('LiveRoot','ExitedStdout','ExitedStderr','Cancellation','Silent','Race')) {
     $held = switch ($Case) {
@@ -24,20 +37,32 @@ if ($Case -in @('LiveRoot','ExitedStdout','ExitedStderr','Cancellation','Silent'
     }
     $start = [System.Diagnostics.ProcessStartInfo]::new('dotnet')
     $start.UseShellExecute = $false
-    foreach ($argument in @($HelperPath,'fixture-child',$ResultsDirectory,$held)) {
+    foreach ($argument in @($HelperPath,'fixture-child',$observer,$held)) {
         [void]$start.ArgumentList.Add([string]$argument)
     }
     $child = [System.Diagnostics.Process]::Start($start)
     if ($null -eq $child) { throw 'Fixture child did not start.' }
     $limit = [System.Diagnostics.Stopwatch]::StartNew()
-    while (-not ((Test-Path (Join-Path $ResultsDirectory 'child')) -and (Test-Path (Join-Path $ResultsDirectory 'grandchild')))) {
+    while (-not ((Test-Path (Join-Path $observer 'child')) -and (Test-Path (Join-Path $observer 'grandchild')))) {
         if ($limit.Elapsed.TotalSeconds -gt 4) { throw 'Fixture child and grandchild readiness timed out.' }
         Start-Sleep -Milliseconds 20
     }
-    [System.IO.File]::WriteAllText((Join-Path $ResultsDirectory 'ready'), $Case)
+    $readyValue = if ($IsWindows) { "$Nonce $Case" } else { $Case }
+    [System.IO.File]::WriteAllText((Join-Path $observer 'ready.tmp'), $readyValue)
+    [System.IO.File]::Move((Join-Path $observer 'ready.tmp'), (Join-Path $observer 'ready'))
+    if ($IsWindows) {
+        while (-not (Test-Path (Join-Path $observer 'observed'))) {
+            if ($limit.Elapsed.TotalSeconds -gt 4) { throw 'Retained-handle observation barrier timed out.' }
+            Start-Sleep -Milliseconds 20
+        }
+        if ([System.IO.File]::ReadAllText((Join-Path $observer 'observed')) -cne $Nonce) { throw 'Release nonce mismatch.' }
+    }
     if ($Case -in @('LiveRoot','Cancellation')) { Start-Sleep -Seconds 20 }
     if ($Case -eq 'Race') {
-        while (-not (Test-Path (Join-Path $ResultsDirectory 'release'))) { Start-Sleep -Milliseconds 20 }
+        while (-not (Test-Path (Join-Path $observer 'release'))) {
+            if ($limit.Elapsed.TotalSeconds -gt 20) { throw 'Race release timed out.' }
+            Start-Sleep -Milliseconds 20
+        }
     }
     if ($Case -ne 'Silent') { exit 0 }
 }
