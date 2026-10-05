@@ -32,7 +32,8 @@ public sealed class WorkspaceParkPublicationTests
             receipt.ReceiptId.ShouldNotBe(Guid.Empty);
             world.Commands.Count(x => x[0] == "push").ShouldBe(relation == "equal" ? 0 : 1);
             world.Commands.Count(x => x[0] == "ls-remote").ShouldBe(2, "fresh proof even on equal/missing ref");
-            world.Commands.ShouldNotContain(x => x[0] is "fetch" or "reset" or "merge" or "commit" or "add");
+            world.Commands.ShouldNotContain(x => x[0] == "fetch" || x[0] == "reset" || x[0] == "merge"
+                || x[0] == "commit" || x[0] == "add");
             var verified = await world.Publisher().VerifyAsync(receipt, CancellationToken.None);
             verified.Receipt.ShouldBe(receipt);
             await world.CommitAsync("later.txt", "source changed after receipt");
