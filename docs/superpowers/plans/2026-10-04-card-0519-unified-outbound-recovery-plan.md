@@ -604,7 +604,7 @@ must change their expectations to Uncertain/explicit retry, never automatic repl
 
 | ID | Existing selected tests | Decisive retained assertion / required adaptation |
 |---|---|---|
-| R-1 | ChannelOutboundDispatchIntegrationTests (1); AgentTaskReplyIntegrationTests.Deferred_is_durable_and_releases_runtime (1) | Qualifying conversion/source bytes/native handle survive. Nonqualifying reply also has capture and explicit pump drain. Held conversion leaves settlement/LastReplyAt null; next prompt has one complete UserPrompt. |
+| R-1 | ChannelOutboundDispatchIntegrationTests (4); AgentTaskReplyIntegrationTests.Deferred_is_durable_and_releases_runtime (1) | Qualifying conversion/source bytes/native handle survive, with activation default-off and enabled arguments. Activation_captures_before_source_reads_and_publishes_the_staged_bytes covers missing-at-dispatch sources and frozen bytes; Activation_preserves_machine_silence_and_origin_policy_before_capture covers main/machine silence, held System text and eligible Check text. Nonqualifying reply also has capture and explicit pump drain. Held conversion leaves settlement/LastReplyAt null; next prompt has one complete UserPrompt. |
 | R-2 | ChannelBridgeTests (40); ChannelReplyDurabilityTests (25) | Routing/late-confirm/attachment/TTL/API-withhold/terminal-provider behavior remains observable after pump. Inspect stored delivery outcome, not old immediate return. Incident/alert assertions strengthen to atomic outcome. |
 | R-3 | ChannelPromptCorrelationTests (24), ChannelPromptCorrelationUnitTests (8), ChannelMachineTurnMatchTests (10) | Complete joined prompt and batch/spill membership; wrong marker/tail/session/floor/next turn cannot own answer; channel receipt cannot be borrowed by quoted machine output. |
 | R-4 | ChannelMachineTurnTextTests (19), ChannelFollowUpAttachmentTests (26) | All allowed origins, NO_REPLY, flattened headers, marker/implied attachments and actual bundle completeness preserved. Generic failure remains uncertain until acknowledged. |
@@ -941,7 +941,7 @@ select CP-29 in a Linux invocation. A missing Windows lane leaves R-12 outstandi
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c519-cp01/` | schema | `/*/*/ChannelOutboundDurabilitySchemaTests/*` | V-1 | all 4 listed results, 0 failed/skipped | 4 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c519-cp02/` | capture | `/*/*/ChannelOutboundCaptureTests/*` | V-2 | all 5 listed results, 0 failed/skipped | 5 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c519-cp03/` | storage | `/*/*/ChannelOutboundStorageTests/*` | R-7, CARD-1059 | all 32 listed results, 0 failed/skipped | 32 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-4 | S4 | `tests/Antiphon.Tests -> bin-c519-cp04/` | dispatch | `/*/*/ChannelOutboundDispatchIntegrationTests/*` | R-1 | all 1 listed results, 0 failed/skipped | 1 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-4 | S4 | `tests/Antiphon.Tests -> bin-c519-cp04/` | dispatch | `/*/*/ChannelOutboundDispatchIntegrationTests/*` | R-1 | all 4 listed results, 0 failed/skipped | 4 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-5 | S4 | `tests/Antiphon.Tests -> bin-c519-cp05/` | runtime | `/*/*/AgentTaskReplyIntegrationTests/Deferred_is_durable_and_releases_runtime` | R-1 | all 1 listed results, 0 failed/skipped | 1 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-6 | S8 | `tests/Antiphon.Tests -> bin-c519-cp06/` | materialize | `/*/*/ChannelOutboundMaterializationTests/*` | V-3 | all 12 listed results, 0 failed/skipped | 12 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-7 | S8 | `tests/Antiphon.Tests -> bin-c519-cp07/` | loss | `/*/*/ChannelOutboundFailureRecordingTests/*` | V-8 | all 8 listed results, 0 failed/skipped | 8 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
@@ -974,7 +974,7 @@ The seven X methods each expand to three path results; cut variants remain inter
 assertions. Existing Delivery has 18 methods / 38 results across its five partial
 files, including SendShape and Gate. Existing Deadline has nine methods / 13 results
 across its two files. All other existing floors are shown in R-1..R-12.
-Table total = **401 minimum executed TUnit results**; no loop/child/assertion counts
+Table total = **404 minimum executed TUnit results**; no loop/child/assertion counts
 are smuggled into Min. If Code adds/removes arguments, update the explicit roster,
 floor and cost before running; do not lower a floor to excuse skipped tests.
 
@@ -1005,22 +1005,22 @@ using the failing exact method, never a whole assembly.
 ### Cost
 
 All numbers below are **estimates**, not measured test results. The ordinary
-Code V/R floor is **177 minutes**, exactly the sum of CP-1..CP-29
+Code V/R floor is **178 minutes**, exactly the sum of CP-1..CP-29
 EstimatedMinutes. It includes **58 build minutes** (29 isolated warm builds at
-2 minutes each) and **119 test minutes**. Setup/tool bootstrap and EF migration
+2 minutes each) and **120 test minutes**. Setup/tool bootstrap and EF migration
 generation add **12 minutes**. No additional whole-suite run is budgeted.
 
 The exact ordinary filters are in the table; by group:
-schema/capture 8; storage 5; dispatch/runtime 8; materialize/discovery/loss 17;
+schema/capture 8; storage 5; dispatch/runtime 9; materialize/discovery/loss 17;
 tails/retry/projections/unified 23; retention pair 9; bridge/durability/correlation
 20; machine-attachments/outbound-partials/profile-contract/batching/deadlines 33;
 crash preparation/publication 16; queue-recipient/transport-handoffs/composed-files/
-manual-recovery 30; Windows parity 8. Sum **177**.
+manual-recovery 30; Windows parity 8. Sum **178**.
 
-The 177-minute floor is one execution of every row. It can qualify one final frozen
+The 178-minute floor is one execution of every row. It can qualify one final frozen
 candidate if Code defers these full rows until all source is ready. If Code uses
 the intended per-slice checkpoints before later source edits, commission a final
-frozen-candidate qualification of the same 29 rows as well: **177 additional
+frozen-candidate qualification of the same 29 rows as well: **178 additional
 minutes**, **354 ordinary minutes total**. This is a source-provenance rerun, not
 discretionary broadening. Record both receipts at their real SHAs. Changed/failing
 rows may add further measured repair runs; never quietly count them as zero.
@@ -1043,10 +1043,10 @@ discovery, schema tooling, receipt inspection and external restoration report ad
 No parallel-shard saving is assumed; most controls touch the same production files.
 
 Verification execution total = setup 12 + ordinary builds 58 + ordinary tests 119
-+ PC cycles 726 = **915 minutes**. With intended early slices and one required final
-source qualification, that becomes **1,092 minutes**. Add Code authoring **885**
++ PC cycles 726 = **916 minutes**. With intended early slices and one required final
+source qualification, that becomes **1,094 minutes**. Add Code authoring **885**
 (the landed 30–60 minute slices), ordinary Review **30**, and Mutation setup/report
-**25**: end-to-end planning floor **1,855 minutes**, or **2,032 minutes** with the
+**25**: end-to-end planning floor **1,856 minutes**, or **2,034 minutes** with the
 explicit final qualification pass. Slot waits, cold image pulls, native capacity
 waits and repair are additional measured costs, not passing evidence.
 
@@ -1069,3 +1069,40 @@ checkpoint importer built through the host slot gate and imported all **29 rows*
 successfully (exit 0; tool-only build, 7 seconds holding the slot). It emitted one
 existing CS8602 warning in TaskOwnerGuard.cs; no application tests or PCs ran.
 Generated YAML remains ignored and the owned alternate tool output is removed.
+
+### S4 activation and checkpoint roster amendment (2026-10-05)
+
+`ChannelOutbound:UnifiedRecoveryEnabled` defaults to false. Program registers the
+captured preparation reader/helper only when enabled. The required outbound service
+owns all dispatcher sends; default-off preserves the existing service's direct or
+conversion admission decision. Enabled main/machine paths describe then capture,
+without attachment or bundle-manifest reads in dispatch. Materialization resolves
+only undelivered implied bundle task descriptors, through the captured-root reader.
+Trailing sends use the existing service admission path when enabled; durable root
+reservation/discovery is still S5/S6. The switch must remain off operationally until
+the full deployable recovery unit is qualified. AppHost activation is caller-owned.
+No migration is needed in S4.
+
+The executable S4 selection is `After=S4`: CP-4 and CP-5. The older allocation's
+CP-21 is superseded by the appended manifest (where CP-21 now belongs to S11b).
+CP-4's exact roster is Dispatcher_defers_only_the_bound_conversation_and_preserves_source_bytes
+(false/default and true arguments), Activation_captures_before_source_reads_and_publishes_the_staged_bytes,
+and Activation_preserves_machine_silence_and_origin_policy_before_capture: four
+native results. CP-5 retains its single Deferred_is_durable_and_releases_runtime
+result, now exercising captured machine intent and explicit materialization before
+the held converter. S4 total: five results, nine estimated minutes (two isolated
+builds); the full table becomes 404 results / 178 minutes. The prior TestDesign
+audit above is historical. V-4's complete matrix stays scheduled at S9; this slice
+qualifies only R-1 and the named activation checks. No PC is discharged here.
+
+| PC/variant (all pending SourceLanding Mutation) | Deliberate guarded defect | Exact ordinary witness |
+|---|---|---|
+| PC-S4-1 / default off | Change UnifiedRecoveryEnabled's default to true. | ChannelOutboundDispatchIntegrationTests.Dispatcher_defers_only_the_bound_conversation_and_preserves_source_bytes: false argument omits assigning the switch; passthrough remains immediate and conversion is already Pending. |
+| PC-19 / S4 main and machine activation | Bypass capture and publish the activated dispatcher reply directly. | ChannelOutboundDispatchIntegrationTests.Activation_captures_before_source_reads_and_publishes_the_staged_bytes; AgentTaskReplyIntegrationTests.Deferred_is_durable_and_releases_runtime: capture/member commit, zero producer calls and zero preparation attempts precede any source reads. |
+| PC-15 / S4 staged source | Read current sources again on Ready publication. | ChannelOutboundDispatchIntegrationTests.Activation_captures_before_source_reads_and_publishes_the_staged_bytes: replace the source after staging; receiver retains original bytes and reader count stays one. |
+| PC-22 / S4 silence | Admit exact machine NO_REPLY as ordinary text. | ChannelOutboundDispatchIntegrationTests.Activation_preserves_machine_silence_and_origin_policy_before_capture: silent machine member stays unowned/unsettled; eligible Check companion publishes. |
+| PC-23 / S4 origin | Admit System plain text despite the Check-only policy. | ChannelOutboundDispatchIntegrationTests.Activation_preserves_machine_silence_and_origin_policy_before_capture: System stays unowned/unsettled; eligible Check companion publishes. |
+
+Original PC-1..PC-100 and PC-1059-1..PC-1059-6 remain pending unchanged. These
+S4 variants supplement their eventual complete witnesses; no deliberate mutant
+runs belong to this Code task. Method-scoped cycles remain Mutation-owned.

@@ -23,8 +23,140 @@ namespace Antiphon.Tests.Application;
 [NotInParallel]
 public sealed class ChannelOutboundDispatchIntegrationTests
 {
+    private static async Task BindProjectAsync(BridgeQueueHarness h)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString));
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        db.Projects.Add(new Project { Id = projectId, Name = "activation-" + projectId.ToString("N"),
+            CreatedAt = h.Now, UpdatedAt = h.Now });
+        db.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "activation",
+            CreatedAt = h.Now, UpdatedAt = h.Now });
+        await db.SaveChangesAsync();
+        await db.Agents.Where(a => a.Id == h.AgentId).ExecuteUpdateAsync(s => s.SetProperty(a => a.BoardId, boardId));
+    }
+
     [Test]
-    public async Task Dispatcher_defers_only_the_bound_conversation_and_preserves_source_bytes()
+    public async Task Activation_captures_before_source_reads_and_publishes_the_staged_bytes()
+    {
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var reader = new ChannelReplyAttachmentReader();
+        var reads = 0;
+        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            ConnectionString = isolated.ConnectionString,
+            ConfigureServices = services =>
+            {
+                services.AddSingleton<IOptions<ChannelOutboundSettings>>(Options.Create(
+                    new ChannelOutboundSettings { UnifiedRecoveryEnabled = true }));
+                services.AddSingleton<IChannelReplyAttachmentReader>(reader);
+            },
+        });
+        await BindProjectAsync(h);
+        var conversation = await h.BindChannelAsync();
+        var prompt = "Send the complete source, including its middle and tail.";
+        var correlationId = await h.SeedChannelCorrelationAsync(prompt, "telegram:" + conversation);
+        var path = Path.Combine(h.TempRoot, "late-source.md");
+        // The source does not exist during dispatch. A read-before-capture implementation
+        // either drops it or cannot commit the durable owner.
+        await h.InsertTurnAsync(prompt, $"Complete answer.\n[[attach: {path}]]");
+        var dispatched = await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        dispatched.OutcomeFor(correlationId).ShouldBe(ChannelReplyDispatchOutcome.Deferred);
+        h.Messaging.SentReplies.ShouldBeEmpty();
+        Guid deliveryId;
+        await using (var observer = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString)))
+        {
+            var member = await observer.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationId);
+            member.ChannelOutboundDeliveryId.ShouldNotBeNull();
+            deliveryId = member.ChannelOutboundDeliveryId.Value;
+            member.ChannelReplySettledAt.ShouldBeNull();
+            var capture = await observer.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == deliveryId);
+            capture.State.ShouldBe(ChannelOutboundDeliveryState.Captured);
+            capture.InputPath.ShouldBeEmpty();
+            ChannelReplyPreparation.Deserialize(capture.CaptureJson!).Body.AttachmentPaths.ShouldContain(path);
+        }
+        reader.BeforeReadAsync = async (source, ct) =>
+        {
+            reads++;
+            await using var observer = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString));
+            var member = await observer.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationId, ct);
+            member.ChannelOutboundDeliveryId.ShouldBe(deliveryId);
+            member.ChannelReplySettledAt.ShouldBeNull();
+        };
+        var bytes = "# Original staged source\r\nComplete middle and tail ✨\r\n"u8.ToArray();
+        await File.WriteAllBytesAsync(path, bytes);
+        (await h.TickOutboundAsync()).ShouldBe(1);
+        reads.ShouldBe(1);
+        h.Messaging.SentReplies.ShouldBeEmpty();
+        await File.WriteAllTextAsync(path, "replacement that must not be sent");
+        (await h.TickOutboundAsync()).ShouldBe(1);
+        reads.ShouldBe(1);
+        var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
+        reply.Text.ShouldBe("Complete answer.");
+        reply.Attachments.ShouldHaveSingleItem().Content.ShouldBe(bytes);
+        await using var accepted = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString));
+        (await accepted.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == deliveryId))
+            .State.ShouldBe(ChannelOutboundDeliveryState.Published);
+        (await accepted.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationId))
+            .ChannelReplySettledAt.ShouldNotBeNull();
+    }
+
+    [Test]
+    public async Task Activation_preserves_machine_silence_and_origin_policy_before_capture()
+    {
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            ConnectionString = isolated.ConnectionString,
+            Bridge = new ChannelBridgeSettings { Enabled = true, MachineTurnTextOrigins = [QueuedMessageOrigin.Check] },
+            ConfigureServices = services => services.AddSingleton<IOptions<ChannelOutboundSettings>>(Options.Create(
+                new ChannelOutboundSettings { UnifiedRecoveryEnabled = true })),
+        });
+        await BindProjectAsync(h);
+        var conversation = await h.BindChannelAsync();
+        // A settled previous channel turn supplies context, without becoming a new obligation.
+        var old = await h.SeedChannelCorrelationAsync("Original chat", "telegram:" + conversation);
+        await h.InsertTurnAsync("Original chat", "NO_REPLY");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await using (var silence = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString)))
+        {
+            (await silence.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == old))
+                .ChannelReplySettledAt.ShouldNotBeNull();
+            (await silence.ChannelOutboundDeliveries.CountAsync(d => d.SourceSessionId == h.SessionId)).ShouldBe(0);
+        }
+        foreach (var (origin, prompt, response) in new[]
+        {
+            (QueuedMessageOrigin.System, "[System] Policy holds this plain text", "Held machine answer"),
+            (QueuedMessageOrigin.Check, "[Check] Keep this turn silent", "NO_REPLY"),
+            (QueuedMessageOrigin.Check, "[Check] Answer this turn", "Allowed complete machine answer"),
+        })
+        {
+            var id = await h.SeedPendingMessageAsync(prompt, status: QueuedMessageStatus.Sent, origin: origin);
+            await h.InsertTurnAsync(prompt, response);
+            await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+            await using var observer = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString));
+            var member = await observer.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == id);
+            member.ChannelReplySettledAt.ShouldBeNull();
+            if (response == "Allowed complete machine answer")
+            {
+                member.ChannelOutboundDeliveryId.ShouldNotBeNull();
+                var capture = await observer.ChannelOutboundDeliveries.AsNoTracking()
+                    .SingleAsync(d => d.Id == member.ChannelOutboundDeliveryId);
+                capture.SendKind.ShouldBe("machine");
+                capture.State.ShouldBe(ChannelOutboundDeliveryState.Captured);
+            }
+            else member.ChannelOutboundDeliveryId.ShouldBeNull();
+        }
+        h.Messaging.SentReplies.ShouldBeEmpty();
+        (await h.TickOutboundAsync()).ShouldBe(1);
+        (await h.TickOutboundAsync()).ShouldBe(1);
+        h.Messaging.SentReplies.ShouldHaveSingleItem().Text.ShouldBe("Allowed complete machine answer");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Dispatcher_defers_only_the_bound_conversation_and_preserves_source_bytes(bool unifiedRecovery)
     {
         var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-dispatch-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -43,6 +175,7 @@ public sealed class ChannelOutboundDispatchIntegrationTests
                 },
             },
         });
+        if (unifiedRecovery) profileSettings.Value.UnifiedRecoveryEnabled = true;
         await File.WriteAllTextAsync(Path.Combine(root, "convert.md"), "Convert supplied Markdown.");
         var sourceBytes = "# Synthetic source\r\nPolski tekst i emoji ✨\r\n"u8.ToArray();
         var sourcePath = Path.Combine(root, "source.md");
@@ -75,6 +208,8 @@ public sealed class ChannelOutboundDispatchIntegrationTests
                 await seed.SaveChangesAsync();
                 await seed.Agents.Where(a => a.Id == h.AgentId)
                     .ExecuteUpdateAsync(u => u.SetProperty(a => a.BoardId, boardId));
+                await seed.AgentSessions.Where(s => s.Id == h.SessionId)
+                    .ExecuteUpdateAsync(u => u.SetProperty(s => s.Cwd, root));
             }
 
             var x = await h.BindChannelAsync();
@@ -93,6 +228,17 @@ public sealed class ChannelOutboundDispatchIntegrationTests
             await h.InsertTurnAsync(xPrompt, $"Here is the source.\n[[attach: {sourcePath}]]");
             await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
             h.Messaging.SentReplies.ShouldBeEmpty();
+            if (unifiedRecovery)
+            {
+                await using var observer = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString));
+                var captured = await observer.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.ChannelId == xId);
+                captured.State.ShouldBe(ChannelOutboundDeliveryState.Captured);
+                captured.InputPath.ShouldBeEmpty();
+                captured.PreparationAttempts.ShouldBe(0);
+                ChannelReplyPreparation.Deserialize(captured.CaptureJson!).Body.AttachmentPaths
+                    .ShouldContain(sourcePath);
+                (await h.TickOutboundAsync()).ShouldBe(1);
+            }
 
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString)))
             {
@@ -114,6 +260,28 @@ public sealed class ChannelOutboundDispatchIntegrationTests
             var yCorrelation = await h.SeedChannelCorrelationAsync(yPrompt, "telegram:" + y);
             await h.InsertTurnAsync(yPrompt, $"Here is the source.\n[[attach: {sourcePath}]]");
             await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+            if (unifiedRecovery)
+            {
+                h.Messaging.SentReplies.ShouldBeEmpty();
+                await using var observer = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString));
+                var captured = await observer.ChannelOutboundDeliveries.AsNoTracking()
+                    .SingleAsync(d => d.ChannelId != xId && d.InboundAgentId == h.AgentId);
+                captured.State.ShouldBe(ChannelOutboundDeliveryState.Captured);
+                (await observer.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == yCorrelation))
+                    .ChannelReplySettledAt.ShouldBeNull();
+                // Materialize Y without starting X's converter; the latter is asserted below.
+                var tasks = new AgentTaskService(observer,
+                    new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+                    Options.Create(new DelegationSettings { AllowedRoots = [root] }),
+                    new MockEventBus(), new RecordingSessionStopper(), TimeProvider.System,
+                    NullLogger<AgentTaskService>.Instance);
+                var pump = new ChannelOutboundDeliveryPump(observer, new OutboundConversionTaskRunner(observer, tasks),
+                    store, h.Messaging, Options.Create(new AntiphonMessagingOptions()), TimeProvider.System,
+                    NullLogger<ChannelOutboundDeliveryPump>.Instance, profileSettings,
+                    new ChannelReplyPreparation(new ChannelReplyAttachmentReader()));
+                (await pump.TickAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
+                (await pump.TickAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
+            }
             h.Messaging.SentReplies.ShouldHaveSingleItem().ConversationId.ShouldBe(y);
             h.Messaging.SentReplies[0].Attachments.ShouldHaveSingleItem().Content.ShouldBe(sourceBytes);
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString)))
@@ -159,7 +327,8 @@ public sealed class ChannelOutboundDispatchIntegrationTests
                 task.Goal.ShouldContain(Path.Combine(Path.GetDirectoryName(intent.InputPath)!, "request.json"));
                 task.ReplyTo.ShouldBe(AgentTaskReplyTo.None);
                 (await db.AgentTasks.CountAsync(t => t.OutboundDeliveryId == deliveryId)).ShouldBe(1);
-                (await db.ChannelOutboundDeliveries.CountAsync(d => d.ChannelId != xId)).ShouldBe(0);
+                (await db.ChannelOutboundDeliveries.CountAsync(d => d.ChannelId != xId
+                    && d.InboundAgentId == h.AgentId)).ShouldBe(unifiedRecovery ? 1 : 0);
                 var pdf = "%PDF-1.4 synthetic conversion"u8.ToArray();
                 var output = Path.Combine(Path.GetDirectoryName(intent.InputPath)!, "output");
                 await File.WriteAllBytesAsync(Path.Combine(output, "combined.pdf"), pdf);
@@ -190,7 +359,7 @@ public sealed class ChannelOutboundDispatchIntegrationTests
             xReply.Attachments[1].Content.ShouldBe("%PDF-1.4 synthetic conversion"u8.ToArray());
 
             // A source task id and manifest do not turn an unrelated zip into a
-            // Markdown-source trigger. The actual send route must remain direct.
+            // Markdown-source trigger. Activation keeps it in the passthrough pump path.
             unrelatedZipTaskId = Guid.NewGuid();
             var bundleDir = Path.Combine(root, "stray-bundle");
             Directory.CreateDirectory(bundleDir);
@@ -220,8 +389,13 @@ public sealed class ChannelOutboundDispatchIntegrationTests
                 (await outbound.SendAsync(unrelated, ChannelOutboundOrigin.AgentReply,
                     new ChannelOutboundSource(h.SessionId, 700, 701, 702, "main", [],
                         unrelatedZipTaskId), CancellationToken.None))
-                    .ShouldBe(ChannelOutboundSendOutcome.Published);
-                (await db.ChannelOutboundDeliveries.CountAsync(d => d.ChannelId == xId)).ShouldBe(1);
+                    .ShouldBe(unifiedRecovery ? ChannelOutboundSendOutcome.Deferred : ChannelOutboundSendOutcome.Published);
+                (await db.ChannelOutboundDeliveries.CountAsync(d => d.ChannelId == xId)).ShouldBe(unifiedRecovery ? 2 : 1);
+            }
+            if (unifiedRecovery)
+            {
+                h.Messaging.SentReplies.Count.ShouldBe(2);
+                (await h.TickOutboundAsync()).ShouldBe(1);
             }
             h.Messaging.SentReplies.Count.ShouldBe(3);
             h.Messaging.SentReplies[2].Attachments.ShouldHaveSingleItem().Name.ShouldBe("unrelated.zip");

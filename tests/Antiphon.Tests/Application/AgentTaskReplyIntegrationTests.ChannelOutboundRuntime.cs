@@ -139,6 +139,7 @@ public partial class AgentTaskReplyIntegrationTests
         var files = new ChannelOutboundFileStore(storeRoot);
         var settings = Options.Create(new ChannelOutboundSettings
         {
+            UnifiedRecoveryEnabled = true,
             Profiles = new Dictionary<string, ChannelOutboundProfile>
             {
                 ["pdf"] = new() { ProjectId = projectId, AgentId = converterId,
@@ -161,7 +162,9 @@ public partial class AgentTaskReplyIntegrationTests
             var pump = new ChannelOutboundDeliveryPump(pumpDb,
                 new OutboundConversionTaskRunner(pumpDb, tasks), files, h.Messaging,
                 Options.Create(new AntiphonMessagingOptions()), TimeProvider.System,
-                NullLogger<ChannelOutboundDeliveryPump>.Instance, settings);
+                NullLogger<ChannelOutboundDeliveryPump>.Instance, settings,
+                new ChannelReplyPreparation(new ChannelReplyAttachmentReader()));
+            (await pump.TickAsync(CancellationToken.None)).ShouldBe(1);
             (await pump.TickAsync(CancellationToken.None)).ShouldBe(1);
             pump.ProbeBarrierAsync = async (boundary, id, ct) =>
             {
@@ -190,7 +193,15 @@ public partial class AgentTaskReplyIntegrationTests
                             settings, TimeProvider.System);
                         service.ProbeBarrierAsync = async (boundary, id, ct) =>
                         {
-                            if (boundary != "admission-committed") return;
+                            if (boundary != "capture-committed") return;
+                            await using var observer = CreateContext(isolated.ConnectionString);
+                            var capture = await observer.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == id);
+                            capture.State.ShouldBe(ChannelOutboundDeliveryState.Captured);
+                            capture.InputPath.ShouldBeEmpty();
+                            capture.PreparationAttempts.ShouldBe(0);
+                            var member = await observer.SessionQueuedMessages.AsNoTracking()
+                                .SingleAsync(m => m.ChannelOutboundDeliveryId == id);
+                            member.ChannelReplySettledAt.ShouldBeNull();
                             pumpTask = RunHeldConverterAsync(id);
                             var first = await Task.WhenAny(converterHeld.Task, pumpTask)
                                 .WaitAsync(TimeSpan.FromSeconds(5), ct);

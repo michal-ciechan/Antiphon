@@ -743,6 +743,11 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddAntiphonMessaging(builder.Configuration);
     builder.Services.AddScoped<ChatChannelService>();
     builder.Services.AddScoped<ChannelOutboundService>();
+    if (builder.Configuration.GetValue<bool>("ChannelOutbound:UnifiedRecoveryEnabled"))
+    {
+        builder.Services.AddSingleton<IChannelReplyAttachmentReader, Antiphon.Server.Infrastructure.Files.ChannelReplyAttachmentReader>();
+        builder.Services.AddScoped<ChannelReplyPreparation>();
+    }
     builder.Services.AddScoped<OutboundConversionTaskRunner>();
     builder.Services.AddScoped<ChannelOutboundDeliveryPump>();
     builder.Services.AddHostedService<ChannelOutboundHostedService>();

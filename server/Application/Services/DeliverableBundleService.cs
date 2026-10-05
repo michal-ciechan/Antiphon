@@ -132,7 +132,7 @@ public sealed class DeliverableBundleService
         }
     }
 
-    private static bool IsSafeStoredSourceName(string name) =>
+    internal static bool IsSafeStoredSourceName(string name) =>
         !string.IsNullOrWhiteSpace(name)
         && name == Path.GetFileName(name)
         && !name.Contains("..", StringComparison.Ordinal)
