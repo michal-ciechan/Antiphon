@@ -663,11 +663,16 @@ An explicit `-Runner server2` may also carry `-Kind Codex` for a Worker task (CA
 
 CARD-0812 permits `-Worktree` for another project when its desktop checkout's `origin` is under
 the runner's `PhoneHome:AllowedCloneSources` prefix (default `https://github.com/michal-ciechan/`)
-and anonymously fetchable. The runner clones it under `/work/repos/<repository-name>` and
+and fetchable. The runner clones it under `/work/repos/<repository-name>` and
 advertises `workspaceRepositoryV1`. Before making a secondary mirror, the default probe uses
 `git push --dry-run` through the push URL; a receive-pack refusal returns
-`phone_home_repository_push_unauthorized`. The current Antiphon deploy key cannot push to another
-repository, so each one needs its own server2 push credential.
+`phone_home_repository_push_unauthorized` with a safe category and remedy. CARD-0817 keeps the
+exact Antiphon primary URL on its SSH deploy key; other admitted HTTPS repositories share
+one token through the baked credential helper and read-only `RUNNER_GITHUB_TOKEN_DIR`
+directory bind on both runners. The same helper can answer an admitted private fetch's
+authentication challenge. Ordinary checkpoints use inert files and scratch repositories;
+provisioning, rollout and live acceptance remain operator-owned (see
+[agent-credentials.md](agent-credentials.md)).
 CARD-0710 places a supported Codex worker by the runtime runner defaults: per-kind, then global,
 then the built-in fallback. `Delegation:DefaultRunnerId` is an import input only. The first
 missing runtime-defaults row copies it once; after that row exists, including an explicit null
