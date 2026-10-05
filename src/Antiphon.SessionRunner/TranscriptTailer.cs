@@ -85,6 +85,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     private Task? _loop;
     private long _seq;
     private DateTime? _childExitedAtUtc;
+    private readonly TerminalTranscriptCompletion _completion = new();
     private DateTime? _firstInputObservedUtc;
     private string? _unboundReason;
 
@@ -188,7 +189,8 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     public RunnerTranscriptDto Snapshot()
     {
         lock (_gate)
-            return new RunnerTranscriptDto(_sessionId, _entries.ToArray(), _seq);
+            return new RunnerTranscriptDto(_sessionId, _entries.ToArray(), _seq,
+                _completion.IsComplete && !_claimRevoked);
     }
 
     /// <summary>Invoked after a read-to-end and before the binding is accepted. Production leaves it unset.</summary>
@@ -372,6 +374,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                     await TerminalObservation.ReadGate.WaitAsync(ct);
                     try
                     {
+                        _completion.Invalidate();
                         if (_claimRevoked)
                         {
                             HandleClaimRevoked(path);
@@ -423,6 +426,8 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                                     ProcessPending(pending);
                                 }
                             }
+                            _completion.Observe(path, offset, pending.Count, _childExitedAtUtc, ChildExitSettle,
+                                TerminalObservation.IsCurrentFile(path));
                         }
                         catch (IOException)
                         {
@@ -498,10 +503,12 @@ internal sealed class TranscriptTailer : ITranscriptTailer
 
     private void EmitLine(string line)
     {
+        _completion.ObserveLine(line);
         IReadOnlyList<TranscriptPart> parts;
         try { parts = TranscriptNormalizer.Normalize(line); }
         catch (Exception ex)
         {
+            _completion.ParseFailed();
             _logger.LogDebug(ex, "Failed to normalize transcript line for session {SessionId}", _sessionId);
             return;
         }

@@ -180,12 +180,14 @@ public sealed class DataRetentionService
         var cutoff = UtcNow().AddDays(-_settings.SessionRetentionDays);
         var protectedIds = await LoadPersistentSessionIdsAsync(ct);
         var unresolvedRecovery = CheckCompactionRecoveryStates.Unresolved;
+        var outboundSessions = ChannelOutboundEvidence.ProtectedSessions(_db);
 
         // Terminal + stale LastSeenAt + not a PersistentSessionId + no surviving task
         // names this row via AgentSessionId OR ParentSessionId.
         var query = _db.AgentSessions.Where(s =>
             (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed)
             && s.LastSeenAt < cutoff
+            && !outboundSessions.Contains(s.Id)
             && !_db.CheckCompactionRecoveries.Any(r => unresolvedRecovery.Contains(r.State)
                 && (r.SessionId == s.Id || r.ResumeSessionId == s.Id))
             && !_db.LegacyCheckNotePublications.Any(p =>
@@ -239,10 +241,12 @@ public sealed class DataRetentionService
         var unresolvedRecovery = CheckCompactionRecoveryStates.Unresolved;
 
         var protectedIds = await LoadPersistentSessionIdsAsync(ct);
+        var outboundSessions = ChannelOutboundEvidence.ProtectedSessions(_db);
 
         var candidates = await _db.AgentSessions
             .Where(s => (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed)
                 && s.LastSeenAt < cutoff
+                && !outboundSessions.Contains(s.Id)
                 && !_db.CheckCompactionRecoveries.Any(r => unresolvedRecovery.Contains(r.State)
                     && (r.SessionId == s.Id || r.ResumeSessionId == s.Id))
                 && !_db.LegacyCheckNotePublications.Any(p =>
@@ -281,6 +285,8 @@ public sealed class DataRetentionService
             var deleted = await MutateTranscriptAsync(sessionId, async () =>
             {
                 // Recheck under the ingest gate: a catch-up may have committed after discovery.
+                if (await ChannelOutboundEvidence.ProtectedSessions(_db).ContainsAsync(sessionId, ct))
+                    return 0;
                 if (await _db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == sessionId && t.CreatedAt >= cutoff, ct))
                     return 0;
                 if (await _db.ChannelInbounds.AnyAsync(i => i.EnvelopeJson != null && i.QueueMessageId != null
@@ -334,6 +340,7 @@ public sealed class DataRetentionService
 
         var cutoff = UtcNow().AddDays(-_settings.QueuedMessageRetentionDays);
         var unresolvedRecovery = CheckCompactionRecoveryStates.Unresolved;
+        var outboundSources = ChannelOutboundEvidence.ProtectedSources(_db);
         await CompletionNoteStamp.RepairFromAsync(
             _db,
             _db.SessionQueuedMessages.Where(m =>
@@ -349,6 +356,7 @@ public sealed class DataRetentionService
                 && (m.SourceLandNotificationId == null || _db.AgentTaskLandNotifications.Any(n =>
                     n.Id == m.SourceLandNotificationId && n.ConfirmedAt != null))
                 && (m.Origin != QueuedMessageOrigin.Channel || m.ChannelReplySettledAt != null)
+                && !outboundSources.Any(s => s.Id == m.Id)
                 && !_db.ChannelInbounds.Any(i => i.EnvelopeJson != null && i.QueueMessageId == m.Id)
                 && !_db.CheckCompactionRecoveries.Any(r => unresolvedRecovery.Contains(r.State)
                     && (r.SessionId == m.AgentSessionId || r.ResumeSessionId == m.AgentSessionId
@@ -395,6 +403,8 @@ public sealed class DataRetentionService
         var cutoff = UtcNow().AddDays(-_settings.TaskRetentionDays);
         var unresolvedRecovery = CheckCompactionRecoveryStates.Unresolved;
 
+        var outboundTaskIds = await LoadOutboundTaskIdsAsync(ct);
+
         // A root is ineligible if ANY row in its tree is still live (Queued/Dispatched/Working/Blocked).
         var liveRootIds = _db.AgentTasks
             .Where(t => t.Status != AgentTaskStatus.Succeeded
@@ -404,6 +414,8 @@ public sealed class DataRetentionService
 
         var eligibleRootIds = await _db.AgentTasks
             .Where(t => !liveRootIds.Contains(t.RootTaskId)
+                && !_db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId
+                    && outboundTaskIds.Contains(member.Id))
                 && !_db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.SourceLandingOperationId != null)
                 && !_db.AgentTaskLandings.Any(op => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == op.TaskId))
                 && !_db.AgentTaskLandRequests.Any(r => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == r.TaskId))
@@ -572,6 +584,26 @@ public sealed class DataRetentionService
     }
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
+
+    private async Task<HashSet<Guid>> LoadOutboundTaskIdsAsync(CancellationToken ct)
+    {
+        var ids = (await ChannelOutboundEvidence.ProtectedSources(_db)
+            .Where(m => m.SourceTaskId != null).Select(m => m.SourceTaskId!.Value).ToListAsync(ct)).ToHashSet();
+        // Captures contain every batch/implied member, not only the legacy SourceTaskId.
+        // Stream rows rather than loading all frozen descriptors into memory at once.
+        await foreach (var delivery in ChannelOutboundEvidence.ProtectedDeliveries(_db)
+            .AsNoTracking().AsAsyncEnumerable().WithCancellation(ct))
+        {
+            if (delivery.SourceTaskId is Guid source) ids.Add(source);
+            if (delivery.ConversionTaskId is Guid converter) ids.Add(converter);
+            if (delivery.CaptureJson is null) continue;
+            // A malformed descriptor refuses this prune pass: deleting its unknown inputs
+            // would make a visible, repairable failed intent irrecoverable.
+            foreach (var task in ChannelReplyPreparation.Deserialize(delivery.CaptureJson).Tasks)
+                ids.Add(task.TaskId);
+        }
+        return ids;
+    }
 }
 
 public sealed record DataRetentionSweepResult(

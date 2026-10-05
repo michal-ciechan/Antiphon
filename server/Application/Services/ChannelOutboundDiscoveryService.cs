@@ -38,12 +38,7 @@ public sealed class ChannelOutboundDiscoveryService(
             var examined = 0;
             for (var page = 0; page < settings.Value.MaximumPages; page++)
             {
-                var query = db.SessionQueuedMessages.AsNoTracking().Where(m =>
-                    m.Status == QueuedMessageStatus.Sent && m.ChannelReplySettledAt == null
-                    && m.ChannelOutboundDeliveryId == null && m.ChannelReplyDiscoveryClosedAt == null
-                    && (m.Origin == QueuedMessageOrigin.Channel && m.ConversationKey != null
-                        || m.Origin == QueuedMessageOrigin.Delegation || m.Origin == QueuedMessageOrigin.Check
-                        || m.Origin == QueuedMessageOrigin.System || m.Origin == QueuedMessageOrigin.Scheduled));
+                var query = ChannelOutboundEvidence.DiscoverySources(db).AsNoTracking();
                 if (_afterCreatedAt is DateTime after)
                     query = query.Where(m => m.CreatedAt > after
                         || m.CreatedAt == after && m.Id.CompareTo(_afterId) > 0);

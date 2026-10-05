@@ -951,7 +951,7 @@ select CP-29 in a Linux invocation. A missing Windows lane leaves R-12 outstandi
 | CP-11 | S9 | `tests/Antiphon.Tests -> bin-c519-cp11/` | projections | `/*/*/ChannelOutboundMetadataRepairTests/*` | V-9, V-5 repair fairness | all 6 listed results, 0 failed/skipped | 6 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-12 | S9 | `tests/Antiphon.Tests -> bin-c519-cp12/` | unified | `/*/*/ChannelOutboundUnifiedPathTests/*` | V-4 | all 8 listed results, 0 failed/skipped | 8 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-13 | S10 | `tests/Antiphon.Tests -> bin-c519-cp13/` | retention | `/*/*/ChannelOutboundRetentionTests/*` | V-10 | all 6 listed results, 0 failed/skipped | 6 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-14 | S10 | `tests/Antiphon.Tests -> bin-c519-cp14/` | old-queue-retention | `/*/*/DataRetentionServiceTests/Queue_keeps_Pending_and_unsettled_channel_rows_and_deletes_settled_old_ones` | R-11 | all 1 listed results, 0 failed/skipped | 1 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-14 | S10 | `tests/Antiphon.Tests -> bin-c519-cp14/` | old-queue-retention | `/*/*/DataRetentionServiceTests/Queue_keeps_Pending_and_unsettled_channel_rows_and_deletes_settled_old_ones*` | R-11 | all 1 listed results, 0 failed/skipped | 1 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-15 | S11a | `tests/Antiphon.Tests -> bin-c519-cp15/` | bridge | `/*/*/ChannelBridgeTests/*` | R-2 | all 40 listed results, 0 failed/skipped | 40 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-16 | S11a | `tests/Antiphon.Tests -> bin-c519-cp16/` | reply-durability | `/*/*/ChannelReplyDurabilityTests/*` | R-2 | all 25 listed results, 0 failed/skipped | 25 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-17 | S11a | `tests/Antiphon.Tests -> bin-c519-cp17/` | correlation | `/*/*/(ChannelPromptCorrelationTests*)\|(ChannelPromptCorrelationUnitTests*)\|(ChannelMachineTurnMatchTests*)/*` | R-3 | all 42 listed results, 0 failed/skipped | 42 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
@@ -995,6 +995,8 @@ select CP-29 in a Linux invocation. A missing Windows lane leaves R-12 outstandi
 | CP-55 | S9 | `tests/Antiphon.Tests -> bin-c519-cp55/` | materialization-s9 | `/*/*/ChannelOutboundMaterializationTests/*` | V-3 | all 12 results, 0 failed/skipped | 12 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-56 | S9 | `tests/Antiphon.Tests -> bin-c519-cp56/` | dispatch-s9 | `/*/*/ChannelOutboundDispatchIntegrationTests/*` | R-1 dispatcher | all 10 results, 0 failed/skipped | 10 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-57 | S9 | `tests/Antiphon.Tests -> bin-c519-cp57/` | runtime-s9 | `/*/*/AgentTaskReplyIntegrationTests/Deferred_is_durable_and_releases_runtime` | R-1 runtime | all 1 result, 0 failed/skipped | 1 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-58 | S10 | `tests/Antiphon.Tests -> bin-c519-cp58/` | retention-regression-s10 | `/*/*/DataRetentionServiceTests/*` | R-11 full affected class | all class results, 0 failed/skipped | 55 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-59 | S10 | `tests/Antiphon.SessionRunner.Tests -> bin-c519-cp59/` | terminal-reader-s10 | `/*/*/(TerminalSeatReleaseTests*)\|(TranscriptTailerObservationTests*)\|(CodexTranscriptTailerTests*)\|(GrokTranscriptTailerTests*)/*` | V-5, V-10 terminal completeness | all four class results, 0 failed/skipped | 70 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
 
 Floors come from the specified new roster and inspected source attributes:
@@ -1616,3 +1618,46 @@ These are proposed repairs, not verified resolutions. Both permitted repair
 rounds are used; next Code owns these two fixes and committed CP-8/CP-12 reruns,
 then Review. Evidence, actual tested SHAs, all V/R outcomes and pending controls
 are in .antiphon/task-170e6f0d.md. Adoption/landing owner remains a4290b71.
+
+## S10 implementation selection (Code e739d9aa, 2026-10-05)
+
+Select CP-8, CP-9, CP-13, CP-14, CP-58 and CP-59, serial, at committed expected
+HEAD. CP-13/14 are the S10 manifest (the earlier allocation's CP-11/12 labels
+were superseded by TestDesign). CP-58 adds the full affected retention class;
+CP-8/9 cover the shared discovery predicate and terminal window closure. CP-59
+covers the three native readers and their shared file-identity observation using
+the four named full classes. Estimated ordinary cost: 34 minutes. There is no
+full assembly run or unbounded class selection. The explicit S10/no-whole-Unit
+brief limits this slice's ordinary scope; no unrelated V/R is claimed passed.
+
+The runner previously had no terminal transcript completeness signal. Add optional
+TerminalComplete (legacy false) and AcceptedStartedAt to the existing transcript
+snapshot, carried through HTTP and phone-home mapping. Each native reader proves
+the bound file reached EOF after child exit grace, with no pending partial line
+or malformed JSON; Grok flushes its pending text before exposing completion.
+Discovery pulls this snapshot, persists it through the existing runtime, checks
+every emitted identity/payload and the terminal generation, and only then closes
+an examined root or conclusively silent machine source. Terminal status, missing
+runner and partial persistence do not prove closure. No database migration is
+needed: durable classification remains the existing TailClosedAt/discovery stamp.
+
+Retention shares the open-source query with discovery. It protects unresolved
+delivery states, pending metadata repairs, open root windows, original machine
+route context and all captured/implied/conversion task trees. Transcript pruning
+rechecks after taking its existing mutation gate. Closed history follows ordinary
+age rules; this adds no filesystem cleanup or journal deletion pass.
+
+V-10's six named methods include all eight unresolved states, pending repair,
+Published/Suppressed open and closed roots, machine closure, stale generation,
+late native text catch-up, hash-validated staged bytes and unrelated prunable
+companions. PC-79..84 stay pending SourceLanding Mutation. Additional method-scoped
+controls stay pending: PC-S10-1a/b/c remove EOF/partial/malformed guards in
+TerminalTranscriptCompletion, detected by TerminalSeatReleaseTests.
+C519_Terminal_completion_requires_drained_native_file for Claude/Codex/Grok;
+PC-S10-2a/b remove terminal generation/persisted-payload checks in
+ChannelOutboundTerminalTranscript, detected by ChannelOutboundRetentionTests.
+C519_Closed_roots_eventually_become_prunable. PC-84 includes Published/Suppressed
+root and ineligible machine-source variants. Earlier PC-1..100, PC-1059-1..6,
+S4/S5/S6/S7/S8 variants and PC-S9-1 remain pending, not rerun here. No deliberate
+mutants are part of Code. UnifiedRecoveryEnabled stays false by default.
+Restart performed: none; caller owns eventual server/runner activation.

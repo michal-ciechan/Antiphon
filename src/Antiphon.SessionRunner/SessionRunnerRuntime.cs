@@ -3252,7 +3252,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
 
         public RunnerTranscriptDto GetTranscript() =>
-            _tailer?.Snapshot() ?? new RunnerTranscriptDto(_sessionId, Array.Empty<RunnerTranscriptEvent>(), 0);
+            (_tailer?.Snapshot() ?? new RunnerTranscriptDto(_sessionId, Array.Empty<RunnerTranscriptEvent>(), 0))
+                with { AcceptedStartedAt = _acceptedStartedAt };
 
         public async Task WriteAsync(string input, CancellationToken ct)
         {

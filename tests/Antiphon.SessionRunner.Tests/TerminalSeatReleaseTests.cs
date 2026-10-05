@@ -24,6 +24,54 @@ namespace Antiphon.SessionRunner.Tests;
 public class TerminalSeatReleaseTests
 {
     [Test]
+    [Arguments("Claude")]
+    [Arguments("Codex")]
+    [Arguments("Grok")]
+    public async Task C519_Terminal_completion_requires_drained_native_file(string provider)
+    {
+        // Exercise the final-read boundary independently of native polling chunk sizes.
+        var path = System.IO.Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllBytesAsync(path, new byte[16]);
+            var completion = new TerminalTranscriptCompletion();
+            completion.Observe(path, 8, 0, DateTime.UtcNow.AddMinutes(-1), TimeSpan.FromSeconds(3), true);
+            completion.IsComplete.ShouldBeFalse("unread suffix at the final poll");
+            completion.Observe(path, 16, 0, DateTime.UtcNow.AddMinutes(-1), TimeSpan.FromSeconds(3), false);
+            completion.IsComplete.ShouldBeFalse("replaced binding cannot certify completion");
+            completion.Observe(path, 16, 0, DateTime.UtcNow.AddMinutes(-1), TimeSpan.FromSeconds(3), true);
+            completion.IsComplete.ShouldBeTrue();
+        }
+        finally { File.Delete(path); }
+        foreach (var shape in new[] { "complete", "partial", "malformed" })
+        {
+            await using var world = new TailWorld(provider);
+            await world.StartAsync();
+            world.Tailer.Snapshot().TerminalComplete.ShouldBeFalse("live reader is not final");
+            var before = world.Tailer.Snapshot().LastSequence;
+            await world.AppendAsync(world.Prompt("last native prompt", "last")
+                + (shape == "partial" ? "{\"partial\":" : shape == "malformed" ? "{not-json}\n" : ""));
+            world.Tailer.NotifyChildExited();
+            world.Tailer.Snapshot().TerminalComplete.ShouldBeFalse("unread suffix after exit");
+            await Task.Delay(TimeSpan.FromMilliseconds(3100)); // Existing native child-exit grace is 3 seconds.
+            world.PermitFinalPoll();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (world.Tailer.Snapshot().LastSequence <= before
+                || shape == "complete" && !world.Tailer.Snapshot().TerminalComplete)
+                await Task.Delay(10, timeout.Token);
+            // Synchronize with the end of processing, including Grok's pending-output flush.
+            await world.Observer.ReadGate.WaitAsync(timeout.Token);
+            try
+            {
+                var snapshot = world.Tailer.Snapshot();
+                snapshot.Entries.ShouldContain(e => e.Text == "last native prompt");
+                snapshot.TerminalComplete.ShouldBe(shape == "complete");
+            }
+            finally { world.Observer.ReadGate.Release(); }
+        }
+    }
+
+    [Test]
     public async Task Unsupported_capability_never_falls_back_to_force()
     {
         foreach (var phoneHome in new[] { false, true })
@@ -1197,6 +1245,8 @@ public class TerminalSeatReleaseTests
             _pollPermit.Release();
             await AwaitPollAsync();
         }
+
+        public void PermitFinalPoll() => _pollPermit.Release();
 
         private async Task AwaitPollAsync() =>
             await _pollArrived.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));

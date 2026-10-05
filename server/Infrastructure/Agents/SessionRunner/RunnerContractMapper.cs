@@ -56,7 +56,8 @@ public sealed class RunnerContractMapper
             dto.VerificationBinding);
 
     public SessionRunnerTranscriptDto MapTranscript(RunnerTranscriptDto transcript) =>
-        new(transcript.SessionId, transcript.Entries.Select(MapTranscript).ToList(), transcript.LastSequence);
+        new(transcript.SessionId, transcript.Entries.Select(MapTranscript).ToList(), transcript.LastSequence,
+            transcript.TerminalComplete, transcript.AcceptedStartedAt);
 
     public static SessionRunnerTranscriptEvent MapTranscript(RunnerTranscriptEvent e) =>
         new(
