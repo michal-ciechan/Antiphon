@@ -119,7 +119,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
                     services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new BridgeQueueHarness.OptionsMonitorStub<AgentRegistrySettings>(registry));
                     services.AddSingleton<IAgentProtocolAdapterFactory>(sp => new KindFactory(
                         Remote ? new RunnerScopedSessionRunnerClient(Host.Directory, Host.AllowedRunnerId) : local,
-                        registry, sp.GetRequiredService<IOptions<SupervisionSettings>>()));
+                        registry, sp.GetRequiredService<IOptions<SupervisionSettings>>(), Clock));
                     services.AddSingleton<LandDeliveryBoundary>(Freeze);
                     services.AddSingleton<IAgentTaskLaunchSink>(Launches);
                     services.AddSingleton<RemoteSpillCourier>();
@@ -195,6 +195,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
             {
                 if (Peer is not null) await Peer.DisposeAsync();
                 if (Host is not null) await Host.DisposeAsync();
+                Peer = null!; Host = null!;
                 return;
             }
             await JoinLaunchAsync();
@@ -202,6 +203,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
             await Harness.DisposeAsync();
             await Peer.DisposeAsync();
             await Host.DisposeAsync();
+            Peer = null!; Host = null!;
             _graph = false;
         }
         public async ValueTask DisposeAsync()
@@ -229,6 +231,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
         public Guid? QueueId { get; set; }
         public bool AfterSave { get; set; }
         public bool Verdict { get; set; }
+        public bool KeepFailing { get; set; }
         public bool RejectRetry { get; set; }
         public int Hits { get; private set; }
         private bool _saving;
@@ -248,19 +251,19 @@ internal static partial class CodexCliRemoteDeliveryFixture
             if (_saving && AfterSave) Fail();
             return ValueTask.FromResult(result);
         }
-        private void Fail() { Hits++; TaskId = QueueId = null; _saving = false; throw new InvalidOperationException("C1029 owned queue save fault"); }
+        private void Fail() { Hits++; if (!KeepFailing) TaskId = QueueId = null; _saving = false; throw new InvalidOperationException("C1029 owned queue save fault"); }
     }
 
     private sealed class KindFactory(ISessionRunnerClient client, AgentRegistrySettings registry,
-        IOptions<SupervisionSettings> verification) : IAgentProtocolAdapterFactory, IAsyncDisposable
+        IOptions<SupervisionSettings> verification, TimeProvider clock) : IAgentProtocolAdapterFactory, IAsyncDisposable
     {
         private readonly List<IAgentProtocolAdapter> _created = [];
         public IAgentProtocolAdapter Create(AgentKind kind)
         {
             IAgentProtocolAdapter adapter = kind switch
             {
-                AgentKind.Grok => new RunnerGrokAdapter(client, Options.Create(registry), verification),
-                AgentKind.ClaudeCode => new RunnerClaudeAdapter(client, Options.Create(registry), verification),
+                AgentKind.Grok => new RunnerGrokAdapter(client, Options.Create(registry), verification, time: clock),
+                AgentKind.ClaudeCode => new RunnerClaudeAdapter(client, Options.Create(registry), verification, time: clock),
                 _ => new RunnerCodexAdapter(client, Options.Create(registry)),
             };
             _created.Add(adapter); return adapter;

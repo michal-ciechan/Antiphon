@@ -206,14 +206,18 @@ internal static partial class CodexCliRemoteDeliveryFixture
         public DelegationSettings Settings { get; set; } = new();
         public Dictionary<Guid, AgentTask> Tasks { get; } = [];
         public Dictionary<Guid, string> Full { get; } = [];
+        public Dictionary<Guid, DelegationSettings> BriefSettings { get; } = [];
+        public Dictionary<Guid, PtyDeliveryCeilings> Limits { get; } = [];
         public override async Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
         {
             if (boundary != "dispatch-warning-claim-committed") return;
             await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
             var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId, ct);
             Tasks[taskId] = task;
-            Full[taskId] = DelegationReportFormatter.BuildBrief(task, Settings,
-                Settings.CeilingsFor(PtyBackend.InboxConhost, "runner").ForAgentKind(task.AgentKind).ReplyInlineMaxChars, refocus: false);
+            var frozen = System.Text.Json.JsonSerializer.Deserialize<DelegationSettings>(System.Text.Json.JsonSerializer.Serialize(Settings))!;
+            BriefSettings[taskId] = frozen;
+            Limits[taskId] = frozen.CeilingsFor(PtyBackend.InboxConhost, "selected delivery backend at claim").ForAgentKind(task.AgentKind);
+            Full[taskId] = DelegationReportFormatter.BuildBrief(task, frozen, Limits[taskId].ReplyInlineMaxChars, refocus: false);
         }
     }
 
@@ -296,6 +300,11 @@ internal static partial class CodexCliRemoteDeliveryFixture
         public async Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct)
         {
             var terminal = new FakeAgentProtocolAdapter();
+            if (Kind == AgentKind.ClaudeCode)
+            {
+                terminal.StartupOutput = "Claude Code\n";
+                terminal.ClaudeComposerChrome = true;
+            }
             Terminals.Add(request.SessionId, terminal);
             _transcripts.Add(request.SessionId, []);
             if (request.GrokRulesPayload is { } payload)
@@ -350,6 +359,8 @@ internal static partial class CodexCliRemoteDeliveryFixture
         {
             if (BeforeBody is { } check) await check(id, input);
             await Terminals[id].SendInputAsync(input, ct);
+            if (Kind == AgentKind.ClaudeCode && input == ComposerInputProbe.KillLine)
+                Terminals[id].PrimeComposer(""); // Actual scripted Ctrl+U effect; the readiness probe stays enabled.
         }
         public Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid id, RunnerConditionalInputRequest request, CancellationToken ct) => throw new NotSupportedException();
         public Task ClearLiveBufferAsync(Guid id, CancellationToken ct) => Task.CompletedTask;
@@ -359,6 +370,11 @@ internal static partial class CodexCliRemoteDeliveryFixture
             if (!Terminals.ContainsKey(id)) return new(id, true, KillGenerationOutcomes.Killed, DateTime.UtcNow);
             var killed = await Terminals[id].KillGenerationAsync(expected, TimeSpan.FromSeconds(1), ct);
             return new(id, killed, killed ? KillGenerationOutcomes.Killed : KillGenerationOutcomes.Mismatch, DateTime.UtcNow);
+        }
+        public async Task<RunnerSessionDto> ReleaseSlotAsync(Guid id, string reason, CancellationToken ct)
+        {
+            if (Terminals.TryGetValue(id, out var terminal)) await terminal.KillAsync(TimeSpan.FromSeconds(1), ct);
+            return await GetAsync(id, ct);
         }
         public int OwnedSessionCount => Terminals.Values.Count(t => !t.Killed);
         public async Task StopAsync() { foreach (var terminal in Terminals.Values) await terminal.KillAsync(TimeSpan.FromSeconds(1), CancellationToken.None); }

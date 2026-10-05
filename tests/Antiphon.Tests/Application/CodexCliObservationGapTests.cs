@@ -26,8 +26,19 @@ public sealed class CodexCliObservationGapTests
     [Test]
     public async Task C1029_Per_kind_receipts()
     {
+        var failures = new List<Exception>();
+        async Task Case(string name, Func<Task> body)
+        {
+            try { await body(); }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"C1029 CASE FAILED {name}: {ex.GetType().Name}: {ex.Message}");
+                failures.Add(new InvalidOperationException(name, ex));
+            }
+        }
         foreach (var remote in new[] { false, true })
         foreach (var busy in new[] { false, true })
+        await Case($"grok/remote={remote}/busy={busy}", async () =>
         {
             await using var w = await World.CreateAsync(busy: busy, kind: AgentKind.Grok, remote: remote);
             w.Recipient.Ready = false;
@@ -78,9 +89,10 @@ public sealed class CodexCliObservationGapTests
                 TaskBodies(w, session).Count.ShouldBe(1, "C1029-pc-273 no duplicate task submission");
             }
             finally { w.Recipient.Ready = true; w.Recipient.ReleaseAcks(); await w.JoinLaunchAsync(); }
-        }
+        });
         foreach (var busy in new[] { false, true })
         foreach (var spill in new[] { false, true })
+        await Case($"claude/busy={busy}/spill={spill}", async () =>
         {
             await using var w = await World.CreateAsync(busy: busy, kind: AgentKind.ClaudeCode);
             var id = await w.CreateTaskAsync(Body + (spill ? "\n" + new string('x', 4000) : ""));
@@ -96,7 +108,61 @@ public sealed class CodexCliObservationGapTests
             }
             await AssertReceiptAsync(w, task, observed, "claude/busy=" + busy + "/spill=" + spill);
             (await QueueAsync(w, id)).RemoteSpillRelativePath.ShouldBe(spill ? TypedBodySpill.InboxRelativePath((await QueueAsync(w, id)).Id.ToString("D")) : null);
+        });
+        foreach (var remote in new[] { false, true })
+        foreach (var busy in new[] { false, true })
+        foreach (var after in new[] { false, true })
+            await Case($"grok-fault/remote={remote}/busy={busy}/after={after}", () => GrokFaultAsync(remote, busy, after));
+        if (failures.Count > 0) throw new AggregateException("C1029 per-kind receipt cases failed", failures);
+    }
+
+    private static async Task GrokFaultAsync(bool remote, bool busy, bool after)
+    {
+        await using var w = await World.CreateAsync(busy: busy, kind: AgentKind.Grok, remote: remote);
+        var id = await w.CreateTaskAsync(Body);
+        w.Fault.TaskId = id; w.Fault.AfterSave = after;
+        await w.DispatchAsync();
+        var original = await TaskAsync(w, id);
+        var session = original.AgentSessionId!.Value;
+        w.Launch(); await w.JoinLaunchAsync();
+        w.Fault.Hits.ShouldBe(1, "C1029 Grok fault follows actual provider readiness and rules ACK");
+        TaskBodies(w, session).ShouldBeEmpty("C1029 Grok failed enqueue is not a task receipt");
+        await using (var db = w.Context())
+        {
+            var rules = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == session);
+            rules.GrokRulesReadyAt.ShouldNotBeNull("C1029 real rules ACK precedes the fault");
+            (await db.SessionQueuedMessages.CountAsync(q => q.SourceTaskId == id)).ShouldBe(after ? 1 : 0);
         }
+        if (after)
+        {
+            var durable = await QueueAsync(w, id);
+            var observed = ObserveFile(w, original);
+            Console.WriteLine($"C1029 GROK POSTCOMMIT queue={durable.Id} recipientKilled={w.Recipient.Terminals[session].Killed}");
+            await w.RecreateAsync(session);
+            using (var scope = w.Harness.Provider.CreateScope())
+                await scope.ServiceProvider.GetRequiredService<GrokRulesRefreshService>().RecoverSessionAsync(session, CancellationToken.None);
+            (await QueueAsync(w, id)).Id.ShouldBe(durable.Id, "C1029-pc-273 postcommit recovery retains the original handoff");
+            await w.EligibleAsync(session); await w.FlushAsync(session);
+            await AssertReceiptAsync(w, original, observed, $"grok-postcommit/remote={remote}/busy={busy}");
+            return;
+        }
+        original.Status.ShouldNotBe(AgentTaskStatus.Working);
+        w.Clock.Advance(TimeSpan.FromMinutes(w.Harness.Delegation.DeliveryFailTimeoutMinutes + 1));
+        using (var scope = w.Harness.Provider.CreateScope())
+        {
+            (await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().FailNeverStartedAsync(CancellationToken.None)).ShouldBe(1);
+            await scope.ServiceProvider.GetRequiredService<AgentTaskService>().RetryAsync(id, CancellationToken.None);
+        }
+        await w.DispatchAsync();
+        var retry = await TaskAsync(w, id);
+        retry.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        retry.Id.ShouldBe(original.Id); retry.Attempt.ShouldBe(original.Attempt + 1);
+        retry.AgentSessionId.ShouldNotBeNull(); retry.AgentSessionId.ShouldNotBe(session);
+        retry.RunnerId.ShouldBe(original.RunnerId); retry.Workspace.ShouldBe(WorkspaceMode.Worktree);
+        var retryObservation = ObserveFile(w, retry);
+        w.Launch(); await w.JoinLaunchAsync();
+        if (busy) { await w.EligibleAsync(retry.AgentSessionId.Value); await w.FlushAsync(retry.AgentSessionId.Value); }
+        await AssertReceiptAsync(w, retry, retryObservation, $"grok-preinsert-retry/remote={remote}/busy={busy}");
     }
 
     [Test]
@@ -163,11 +229,36 @@ public sealed class CodexCliObservationGapTests
     {
         foreach (var remote in new[] { false, true })
         {
+            // A separately owned, actually launched prior generation supplies the negative.
+            // Its current task is irrelevant; only its actual captured UserPrompt is copied.
+            await using var prior = await World.CreateAsync(remote: remote);
+            var priorTaskId = await prior.CreateTaskAsync("C1029 prior recipient generation");
+            await prior.DispatchAsync();
+            var priorTask = await TaskAsync(prior, priorTaskId);
+            var priorSession = priorTask.AgentSessionId!.Value;
+            prior.Launch(); await prior.JoinLaunchAsync();
             await using var w = await World.CreateAsync(busy: true, remote: remote);
             var id = await w.CreateTaskAsync(Body);
             await w.DispatchAsync();
             var task = await TaskAsync(w, id);
             var observed = ObserveFile(w, task);
+            var expected = ExpectedWire(w, task, await QueueAsync(w, id));
+            await prior.EligibleAsync(priorSession);
+            await prior.Harness.Queue.EnqueueAsync(priorSession, expected, MessageSendMode.WhenIdle, CancellationToken.None);
+            await prior.Harness.Runtime.CatchUpTranscriptAsync(priorSession, CancellationToken.None);
+            prior.Recipient.Terminals[priorSession].SubmittedBodies.Last().ShouldBe(expected);
+            TranscriptEntry priorRecord;
+            await using (var priorDb = prior.Context())
+                priorRecord = await priorDb.TranscriptEntries.AsNoTracking().SingleAsync(e =>
+                    e.AgentSessionId == priorSession && e.Kind == TranscriptKinds.UserPrompt && e.Text == expected);
+            priorRecord.Timestamp.ShouldNotBeNull();
+            var priorGeneration = prior.Recipient.Terminals[priorSession].StartedAcceptedGeneration.ShouldNotBeNull();
+            await using (var currentDb = w.Context())
+            {
+                var selected = await currentDb.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == task.AgentSessionId);
+                priorGeneration.ShouldBeLessThan(selected.StartedAt);
+                selected.Id.ShouldNotBe(priorSession);
+            }
             var held = HoldPrompts(w);
             var record = w.Recipient.RecordPrompt!;
             w.Recipient.RecordPrompt = async (sessionId, text) =>
@@ -176,8 +267,10 @@ public sealed class CodexCliObservationGapTests
                 var attempt = await QueueAsync(w, id);
                 await using var db = w.Context();
                 var old = await db.TranscriptEntries.SingleAsync(e => e.AgentSessionId == sessionId && e.Sequence == attempt.LastDeliveryBaselineSequence);
-                old.Kind = TranscriptKinds.UserPrompt; old.Text = text;
-                old.Timestamp = attempt.LastDeliveryStartedAt!.Value.AddMinutes(-5);
+                // Synthetic stale arrival is allowed. Its complete text and source timestamp
+                // come from the real prior generation above, never from this current submit.
+                old.Kind = priorRecord.Kind; old.Text = priorRecord.Text;
+                old.Timestamp = priorRecord.Timestamp;
                 await db.SaveChangesAsync();
             };
             w.Launch(); await w.JoinLaunchAsync();
@@ -192,7 +285,7 @@ public sealed class CodexCliObservationGapTests
             retained.DeliveryVerdict.ShouldNotBe(DeliveryVerdict.LateConfirmed, "C959-pc-223 old floor is not a current receipt");
             await AssertRetainedAsync(w, task);
             await ReleaseAsync(w, session, held);
-            await AssertReceiptAsync(w, task, observed, "old-floor/remote=" + remote);
+            await AssertReceiptAsync(w, task, observed, "prior-generation-floor/remote=" + remote);
         }
     }
 
@@ -312,15 +405,16 @@ public sealed class CodexCliObservationGapTests
                 return Task.CompletedTask;
             };
             w.Launch(); await w.JoinLaunchAsync();
-            w.Fault.QueueId = row.Id; w.Fault.Verdict = true;
+            w.Fault.QueueId = row.Id; w.Fault.Verdict = true; w.Fault.KeepFailing = true;
             await w.EligibleAsync(task.AgentSessionId!.Value);
             await Should.ThrowAsync<InvalidOperationException>(() => w.FlushAsync(task.AgentSessionId.Value));
-            w.Fault.Hits.ShouldBe(1);
+            w.Fault.Hits.ShouldBe(2, "C1029 both the caught boot-watch save and final verdict save fail");
             held.ShouldHaveSingleItem("C959-pc-220 actual terminal submitted before save loss");
             var interrupted = await QueueAsync(w, id);
             interrupted.Status.ShouldBe(QueuedMessageStatus.Sent);
             interrupted.DeliveryVerdict.ShouldBeNull("C959-pc-220 interrupted verdict did not persist");
             await AssertRetainedAsync(w, task);
+            w.Fault.QueueId = null; w.Fault.KeepFailing = false; // Storage is available for the replacement graph.
             if (busyAfterRecreate) w.Recipient.Append(task.AgentSessionId.Value, TranscriptKinds.AssistantText, "actual recipient still working");
             w.Clock.Advance(TimeSpan.FromSeconds(37)); // Original interrupted-attempt age, not a changed timeout.
             await w.RecreateAsync(task.AgentSessionId.Value);
@@ -377,8 +471,7 @@ public sealed class CodexCliObservationGapTests
         };
         return observed;
     }
-    private static PtyDeliveryCeilings Limits(World w, AgentTask task) => w.Harness.Delegation
-        .CeilingsFor(PtyBackend.InboxConhost, "selected fixture delivery backend").ForAgentKind(task.AgentKind);
+    private static PtyDeliveryCeilings Limits(World w, AgentTask task) => w.Freeze.Limits[task.Id];
     private static bool MustSpill(World w, AgentTask task) =>
         Encoding.UTF8.GetByteCount(w.Freeze.Full[task.Id]) > Limits(w, task).BriefInlineMaxBytes;
     private static string? SpillPath(World w, AgentTask task, SessionQueuedMessage row) => !MustSpill(w, task) ? null : w.Remote
@@ -389,7 +482,7 @@ public sealed class CodexCliObservationGapTests
         var full = w.Freeze.Full[task.Id];
         if (!MustSpill(w, task)) return full.TrimEnd();
         var path = w.Remote ? TypedBodySpill.InboxRelativePath(row.Id.ToString("D")) : SpillPath(w, task, row)!;
-        return DelegationReportFormatter.BuildBriefPointer(w.Freeze.Tasks[task.Id], w.Harness.Delegation,
+        return DelegationReportFormatter.BuildBriefPointer(w.Freeze.Tasks[task.Id], w.Freeze.BriefSettings[task.Id],
             path, full.Length, task.AgentKind, maxWireBytes: w.Remote ? Limits(w, task).SingleWriteMaxBytes : null,
             boundSpillPath: w.Remote ? path : null).TrimEnd();
     }
