@@ -11,6 +11,7 @@ set -u
 CODEX_VERSION=0.160.0
 GROK_VERSION=1.0.41
 JQ_VERSION=1.7.1
+JQ_DESTINATION=/usr/local/bin/jq
 PACKAGE_ROOT=/opt/codex/$CODEX_VERSION/package
 VENDOR=$PACKAGE_ROOT/vendor/x86_64-unknown-linux-musl
 # Regular files in @openai/codex@0.160.0-linux-x64 (measured from the pinned tarball).
@@ -77,12 +78,35 @@ case "$row" in
     ;;
   jq-version)
     need_uid 1654
-    out=$(env HOME=$PROBE_HOME /usr/local/bin/jq --version 2>"$PROBE_HOME/jq-version.err")
+    lookup=unavailable
+    resolved=unavailable
+    jq_path_detail() {
+      LC_ALL=C printf 'lookupPath=%q path=%q' "$lookup" "$resolved"
+    }
+    jq_path_refuse() {
+      result fail "reason=$1 $(jq_path_detail)"
+    }
+    # Observe the child's PATH, including shadows, rather than repairing it here.
+    hash -r
+    if ! lookup=$(command -v jq 2>/dev/null) || [ -z "$lookup" ]; then
+      lookup=unavailable
+      jq_path_refuse JqNotFound
+    fi
+    [[ "$lookup" = /* ]] && [ -f "$lookup" ] && [ -x "$lookup" ] || jq_path_refuse JqLookupInvalid
+    if ! resolved=$(readlink -f -- "$lookup" 2>/dev/null) || [ -z "$resolved" ]; then
+      resolved=unavailable
+      jq_path_refuse JqResolveFailed
+    fi
+    # Aliases may reach the canonical regular leaf. Its directory integrity is
+    # trusted here; hardlinks and concurrent writers are owned by CARD-1058.
+    [ "$resolved" = "$JQ_DESTINATION" ] && [ -f "$JQ_DESTINATION" ] &&
+      [ -x "$JQ_DESTINATION" ] && [ ! -L "$JQ_DESTINATION" ] || jq_path_refuse JqPathUnapproved
+    out=$(env HOME=$PROBE_HOME "$resolved" --version 2>"$PROBE_HOME/jq-version.err")
     code=$?
     [ $code -eq 0 ] || result fail "exit=$code"
     [ "$out" = "jq-$JQ_VERSION" ] || result fail "stdout=[$out] expected jq-$JQ_VERSION"
     [ ! -s "$PROBE_HOME/jq-version.err" ] || result fail "unexpected version stderr"
-    result ok "jq-$JQ_VERSION as uid 1654"
+    result ok "jq-$JQ_VERSION as uid 1654 $(jq_path_detail)"
     ;;
   layout)
     command -v ps >/dev/null 2>&1 || result fail "ps required by codex managed app-server"
