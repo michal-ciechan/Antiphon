@@ -791,6 +791,13 @@ CP-10..12 are portable and omit placement pins. CP-8..9 and CP-13..22 require
 `-Platform Windows`, no `-Runner` pin. Read current runner defaults/catalogue
 before dispatch. A skipped native method is incomplete evidence.
 
+S3 implementation note (Code task `e9e898c2`): CP-9's combined class selector
+requires trailing wildcards for the pinned TUnit hint extractor, as documented
+in `docs/testing-and-build.md` (Combined class filters). The original selector
+executed zero tests both at S3's first commit and at task base
+`7e6967dd1c4d3eb33ae000433e87d7ce5e2c099c`. The corrected row below preserves
+the same two exact methods, count floor and deadlines.
+
 CP-1..12 use repeat 1. CP-13..22 use **`--repeat 2`** at the final committed
 candidate SHA, including both native held-file ordinals. In their rows Min is the
 per-repetition floor supplied to the driver; Expect states the doubled execution
@@ -844,7 +851,7 @@ outputs on completion; generated receipts/TRX/logs remain ignored.
 | CP-6 | S2 | `CP-5` | s2-diagnostics | `/*/*/CheckpointSlotContractTests/renew_and_release_diagnostics_keep_status_and_body` | V-3 | all listed; 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-7 | S2 | `CP-5` | s2-census | `/*/*/CheckpointNamespaceCensusUsageTests/namespace_census_matches_compiled_checkpoint_cases` | V-6 | all listed; 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-8 | S3 | `tests/Antiphon.Tests -> bin-c820-s3w/` | s3-held-file | `/*/*/EvidenceFolderTests/(tool_copy_removal_retries_while_a_file_is_still_held_open*)\|(non_image_remove_drops_the_tool_copy*)` | V-4 | all listed; 2 executed, 0 failed/skipped | 2 | 5 |
-| CP-9 | S3 | `CP-8` | s3-cleanup-census | `/*/*/(CheckpointToolCopyCleanupTests)\|(CheckpointNamespaceCensusUsageTests)/(failed_delete_receipt_is_truthful_and_retryable*)\|(namespace_census_matches_compiled_checkpoint_cases*)` | R-4, V-6 | all listed; 2 executed, 0 failed/skipped | 2 | 1 |
+| CP-9 | S3 | `CP-8` | s3-cleanup-census | `/*/*/(CheckpointToolCopyCleanupTests*)\|(CheckpointNamespaceCensusUsageTests*)/(failed_delete_receipt_is_truthful_and_retryable*)\|(namespace_census_matches_compiled_checkpoint_cases*)` | R-4, V-6 | all listed; 2 executed, 0 failed/skipped | 2 | 1 |
 | CP-10 | S4 | `tests/Antiphon.Tests -> bin-c820-s4/` | s4-sweep | `/*/*/CheckpointTempRootSweepTests/(live_roots_are_skipped_without_taking_the_root_lock*)\|(young_roots_are_skipped_without_taking_the_root_lock*)\|(uncertain_roots_are_skipped_without_taking_the_root_lock*)\|(root_lock_is_still_required_for_dead_candidates*)\|(eligibility_is_rechecked_after_the_root_lock*)\|(grace_is_additional_to_dead_ownership*)\|(resumed_deletion_rechecks_every_veto*)\|(marker_survives_partial_deletion*)` | V-5, R-5 | all listed; 14 executed, 0 failed/skipped | 14 | 5 |
 | CP-11 | S4 | `CP-10` | s4-nested | `/*/*/CheckpointToolCopyCleanupTests/(nested_live_executor_vetoes_whole_root*)\|(unknown_nested_custody_vetoes_whole_root*)` | R-5 | all listed; 2 executed, 0 failed/skipped | 2 | 1 |
 | CP-12 | S4 | `CP-10` | s4-census | `/*/*/CheckpointNamespaceCensusUsageTests/namespace_census_matches_compiled_checkpoint_cases` | V-6 | all listed; 1 executed, 0 failed/skipped | 1 | 1 |
