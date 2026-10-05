@@ -242,6 +242,7 @@ Antiphon.Tests.Application.ReviewEvidenceRecoveryEndpointTests
 
 # CARD-1061: sequential native NTFS junction commands and bounded process/pipe timeout witnesses.
 Antiphon.Tests.Application.ChannelReplyAttachmentReaderWindowsTests
+# CARD-1061: native NTFS junction lifecycle and bounded child process/pipe cleanup.
 Antiphon.Tests.TestHelpers.DirectoryLinkFixtureWindowsTests
 # CARD-0519 S12: owned crash children, isolated broker and durable gateway receipts.
 Antiphon.Tests.Application.ChannelOutboundUnifiedCrashTests

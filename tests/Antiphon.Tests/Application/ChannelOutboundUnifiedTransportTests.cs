@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Data.Common;
+using System.Text.RegularExpressions;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
 using Antiphon.Server.Application.Dtos;
@@ -40,6 +41,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
         {
             using var scenario = new CancellationTokenSource(TimeSpan.FromSeconds(120));
             var fault = new HandoffFault(cut);
+            var refusalSave = new RefusalSaveFault(fault);
             var producer = new RefusalProducer();
             var clock = new ScaledTimeProvider(1);
             await using var w = await UnifiedOutboundTransport.CreateAsync(broker, !lateGateway,
@@ -57,7 +59,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
                         };
                         return service;
                     });
-                }, options => options.AddInterceptors(fault, new CommittedQueueFault(fault)), clock: clock);
+                }, options => options.AddInterceptors(fault, new CommittedQueueFault(fault), refusalSave), clock: clock);
             producer.Inner = w.Producer;
             await ReceiveSourceAsync(w, kind, busy, fault, scenario.Token);
             if (cut == "capture") fault.Armed = true;
@@ -78,6 +80,24 @@ public sealed class ChannelOutboundUnifiedTransportTests
                 var row = (await w.DeliveryAsync(kind))!;
                 row.PublicationAttempts.ShouldBe(1);
                 row.State.ShouldBe(cut == "refusal-save" ? ChannelOutboundDeliveryState.Publishing : ChannelOutboundDeliveryState.Ready);
+                if (cut == "refusal-save")
+                {
+                    fault.Fired.ShouldBe(1);
+                    refusalSave.CommandText.ShouldNotBeNull();
+                    refusalSave.CommandText.ShouldContain("UPDATE \"ChannelOutboundDeliveries\"");
+                    foreach (var column in new[] { "State", "FailureReason", "NextAttemptAt", "Version" })
+                        refusalSave.CommandText.ShouldContain("\"" + column + "\" =");
+                    refusalSave.StateParameter.ShouldBe((int)ChannelOutboundDeliveryState.Ready);
+                    row.LeaseOwner.ShouldNotBeNull();
+                    row.LeaseUntil.ShouldBeGreaterThan(w.H.Now);
+                    await w.H.TickOutboundAsync();
+                    var stillPublishing = (await w.DeliveryAsync(kind))!;
+                    stillPublishing.State.ShouldBe(ChannelOutboundDeliveryState.Publishing);
+                    stillPublishing.PublicationAttempts.ShouldBe(1);
+                    stillPublishing.LeaseOwner.ShouldBe(row.LeaseOwner);
+                    stillPublishing.LeaseUntil.ShouldBe(row.LeaseUntil);
+                    producer.Refusals.ShouldBe(1);
+                }
                 await w.RecoverAsync();
                 if (cut == "refusal-save")
                 {
@@ -112,6 +132,13 @@ public sealed class ChannelOutboundUnifiedTransportTests
         var body = "whole source HEAD " + Guid.NewGuid().ToString("N") + new string('x', 180)
             + "\nunique MIDDLE\ncomplete TAIL";
         var recordComplete = h.Adapter.OnSubmitted!;
+        if (kind == "machine")
+            h.Adapter.OnSubmitted = async submitted =>
+            {
+                await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, submitted, timestamp: h.Now);
+                await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "NO_REPLY");
+                await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+            };
         if (fault.Cut == "partial-prompt")
             h.Adapter.OnSubmitted = submitted => recordComplete(submitted[..200]);
         fault.BeforeConfirmFailure = async source =>
@@ -200,8 +227,11 @@ public sealed class ChannelOutboundUnifiedTransportTests
         }
         if (kind == "machine")
         {
-            await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "NO_REPLY");
             await h.Dispatcher.OnTurnEndAsync(h.SessionId, ct);
+            await using (var idleDb = w.Db())
+                (await SessionMessageQueueService.IsWorkingAsync(idleDb, h.SessionId, ct)).ShouldBeFalse();
+            h.Adapter.OnSubmitted = recordComplete;
+            var submissions = h.Adapter.SubmittedBodies.Count;
             await h.Queue.EnqueueAsync(h.SessionId, "[Check] machine complete HEAD\nMIDDLE\nTAIL", MessageSendMode.WhenIdle,
                 ct, origin: QueuedMessageOrigin.Check);
             await using var db = w.Db();
@@ -209,6 +239,8 @@ public sealed class ChannelOutboundUnifiedTransportTests
             source.Status.ShouldBe(QueuedMessageStatus.Sent);
             (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
                 && t.Kind == TranscriptKinds.UserPrompt && t.Text == source.Body)).ShouldBe(1);
+            h.Adapter.SubmittedBodies.Count.ShouldBe(submissions + 1);
+            h.Adapter.SubmittedBodies.Last().ShouldBe(source.Body);
             w.MemberId = source.Id;
         }
         else if (kind == "trailing")
@@ -321,11 +353,37 @@ public sealed class ChannelOutboundUnifiedTransportTests
                 Fire();
                 throw new IOException("Injected complete-receipt confirmation save refusal");
             }
-            if (cut == "queue-insert" && queue.Any(e => e.State == EntityState.Added)
-                || cut == "refusal-save" && eventData.Context.ChangeTracker.Entries<ChannelOutboundDelivery>().Any(e =>
-                    e.State == EntityState.Modified && e.Entity.State == ChannelOutboundDeliveryState.Ready && e.Entity.PublicationAttempts == 1))
+            if (cut == "queue-insert" && queue.Any(e => e.State == EntityState.Added))
             { Fire(); throw new IOException("Injected " + cut); }
             return result;
+        }
+    }
+
+    private sealed class RefusalSaveFault(HandoffFault fault) : DbCommandInterceptor
+    {
+        public string? CommandText { get; private set; }
+        public int? StateParameter { get; private set; }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (!fault.Armed || fault.Cut != "refusal-save"
+                || !command.CommandText.StartsWith("UPDATE \"ChannelOutboundDeliveries\"", StringComparison.Ordinal)
+                || !new[] { "State", "FailureReason", "NextAttemptAt", "Version" }
+                    .All(column => command.CommandText.Contains("\"" + column + "\" =", StringComparison.Ordinal)))
+                return ValueTask.FromResult(result);
+
+            var state = Regex.Match(command.CommandText, "\"State\" = (@[A-Za-z0-9_]+)");
+            if (!state.Success) return ValueTask.FromResult(result);
+            var parameter = command.Parameters.Cast<DbParameter>().Single(p =>
+                p.ParameterName.TrimStart('@') == state.Groups[1].Value.TrimStart('@'));
+            if (Convert.ToInt32(parameter.Value) != (int)ChannelOutboundDeliveryState.Ready)
+                return ValueTask.FromResult(result);
+
+            CommandText = command.CommandText;
+            StateParameter = Convert.ToInt32(parameter.Value);
+            fault.Fire();
+            throw new IOException("Injected ExecuteUpdateAsync refusal-save failure");
         }
     }
 
@@ -447,11 +505,11 @@ public sealed class ChannelOutboundUnifiedTransportTests
             }
             await w.H.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(30), scenario.Token);
             Guid workerSession;
-            string goal;
+            AgentTask dispatchedTask;
             await using (var db = w.Db())
             {
                 var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
-                task.AgentSessionId.ShouldNotBeNull(); workerSession = task.AgentSessionId.Value; goal = task.Goal;
+                task.AgentSessionId.ShouldNotBeNull(); workerSession = task.AgentSessionId.Value; dispatchedTask = task;
                 (await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == workerSession)).Status.ShouldBe(SessionStatus.Running);
             }
             if (busy)
@@ -471,9 +529,16 @@ public sealed class ChannelOutboundUnifiedTransportTests
                 var brief = (await db.SessionQueuedMessages.AsNoTracking().Where(m => m.AgentSessionId == workerSession
                     && m.Origin == QueuedMessageOrigin.Delegation && m.ExecutionTaskId == taskId).ToListAsync()).ShouldHaveSingleItem();
                 brief.Status.ShouldBe(QueuedMessageStatus.Sent);
-                brief.Body.ShouldContain(goal);
-                brief.Body.ShouldContain(delivery.Id.ToString("D"));
-                brief.Body.ShouldContain("request.json");
+                var spillPath = Path.Combine(dispatchedTask.WorkingDirectory, ".antiphon",
+                    $"task-{DelegationReportFormatter.Short(taskId)}-brief.md");
+                var spilledBrief = await File.ReadAllTextAsync(spillPath, scenario.Token);
+                brief.Body.ShouldBe(DelegationReportFormatter.BuildBriefPointer(dispatchedTask, delegation,
+                    spillPath, spilledBrief.Length, dispatchedTask.AgentKind));
+                brief.Body.ShouldContain(DelegationReportFormatter.TaskMarker(taskId));
+                brief.Body.ShouldContain(spillPath);
+                spilledBrief.ShouldContain(dispatchedTask.Goal);
+                spilledBrief.ShouldContain(delivery.Id.ToString("D"));
+                spilledBrief.ShouldContain("request.json");
                 (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == workerSession
                     && t.Kind == TranscriptKinds.UserPrompt && t.Text == brief.Body
                     && t.Sequence > brief.LastDeliveryBaselineSequence)).ShouldBe(1);
