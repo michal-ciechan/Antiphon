@@ -118,7 +118,10 @@ public class TerminalRunnerSeatReleaseTests
             await using var db = f.Db();
             if (variant.Decision == TerminalRunnerSeatDecision.BoardOwner)
             {
-                var board = new Board { Id = Guid.NewGuid(), Name = "seat owner" }; db.Boards.Add(board); await db.SaveChangesAsync();
+                var project = new Project { Id = Guid.NewGuid(), Name = "seat ownership project" };
+                db.Projects.Add(project); await db.SaveChangesAsync();
+                var board = new Board { Id = Guid.NewGuid(), ProjectId = project.Id, Name = "seat owner" };
+                db.Boards.Add(board); await db.SaveChangesAsync();
                 await f.EditAsync((_, a) => a.BoardId = board.Id);
             }
             else await f.EditAsync(variant.Edit);
