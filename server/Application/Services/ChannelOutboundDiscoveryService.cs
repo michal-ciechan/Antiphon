@@ -9,7 +9,7 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>
 /// Fair, bounded historical source discovery in the existing outbound hosted loop. Cursors
 /// are hints only: a fresh process wraps from the beginning and committed sources dedupe capture.
-/// Durable trailing roots, definitive closure and TTL fencing follow in the later slices.
+/// Sources and open roots have independent budgets so idle history cannot starve tails.
 /// </summary>
 public sealed class ChannelOutboundDiscoveryService(
     IServiceScopeFactory scopes, ChannelReplyDispatcher dispatcher,
@@ -19,6 +19,9 @@ public sealed class ChannelOutboundDiscoveryService(
     internal const int MaximumPages = 10;
     private DateTime? _afterCreatedAt;
     private Guid _afterId;
+    private DateTime? _afterRootCreatedAt;
+    private Guid _afterRootId;
+    internal int RootsExaminedLastTick { get; private set; }
     private readonly Dictionary<Guid, long> _promptCursors = new();
     private readonly SemaphoreSlim _tickGate = new(1, 1);
 
@@ -31,6 +34,7 @@ public sealed class ChannelOutboundDiscoveryService(
         {
             await using var scope = scopes.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            RootsExaminedLastTick = 0;
             var examined = 0;
             for (var page = 0; page < MaximumPages; page++)
             {
@@ -66,6 +70,31 @@ public sealed class ChannelOutboundDiscoveryService(
                     }
                     _afterCreatedAt = source.CreatedAt;
                     _afterId = source.Id;
+                }
+            }
+            for (var page = 0; page < MaximumPages; page++)
+            {
+                var rootsQuery = db.ChannelOutboundDeliveries.AsNoTracking().Where(d =>
+                    d.CaptureJson != null && d.RootDeliveryId == null && d.ReservedThroughSequence != null
+                    && d.TailClosedAt == null && (d.SendKind == "main" || d.SendKind == "machine"));
+                if (_afterRootCreatedAt is DateTime afterRoot)
+                    rootsQuery = rootsQuery.Where(d => d.CreatedAt > afterRoot
+                        || d.CreatedAt == afterRoot && d.Id.CompareTo(_afterRootId) > 0);
+                var roots = await rootsQuery.OrderBy(d => d.CreatedAt).ThenBy(d => d.Id)
+                    .Take(PageSize).ToListAsync(ct);
+                if (roots.Count == 0)
+                {
+                    _afterRootCreatedAt = null;
+                    break;
+                }
+                foreach (var root in roots)
+                {
+                    RootsExaminedLastTick++;
+                    try { await dispatcher.DiscoverRootAsync(root.Id, ct); }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    { logger.LogWarning(ex, "Outbound tail discovery failed for root {RootId}", root.Id); }
+                    _afterRootCreatedAt = root.CreatedAt;
+                    _afterRootId = root.Id;
                 }
             }
             return examined;

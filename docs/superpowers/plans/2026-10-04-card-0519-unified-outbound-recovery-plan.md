@@ -971,6 +971,13 @@ select CP-29 in a Linux invocation. A missing Windows lane leaves R-12 outstandi
 | CP-31 | S5 | `tests/Antiphon.Tests -> bin-c519-cp31/` | dispatch-s5 | `/*/*/ChannelOutboundDispatchIntegrationTests/*` | R-1 (dispatcher) | all 10 results, 0 failed/skipped | 10 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-32 | S5 | `tests/Antiphon.Tests -> bin-c519-cp32/` | correlation-s5 | `/*/*/(ChannelPromptCorrelationTests*)\|(ChannelPromptCorrelationUnitTests*)\|(ChannelMachineTurnMatchTests*)/*` | R-3 | all 42 results, 0 failed/skipped | 42 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-33 | S5 | `tests/Antiphon.Tests -> bin-c519-cp33/` | capture-s5 | `/*/*/ChannelOutboundCaptureTests/*` | V-2 (capture regression) | all 5 results, 0 failed/skipped | 5 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-34 | S6 | `tests/Antiphon.Tests -> bin-c519-cp34/` | tails-s6 | `/*/*/ChannelOutboundTrailingRecoveryTests/*` | V-6, V-5 root subset | all 8 S6 results, 0 failed/skipped | 8 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-35 | S6 | `tests/Antiphon.Tests -> bin-c519-cp35/` | dispatch-s6 | `/*/*/ChannelOutboundDispatchIntegrationTests/*` | R-1 dispatcher | all 10 results, 0 failed/skipped | 10 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-36 | S6 | `tests/Antiphon.Tests -> bin-c519-cp36/` | discovery-s6 | `/*/*/ChannelOutboundDiscoveryTests/*` | V-5 source subset | all 16 S5 results, 0 failed/skipped | 16 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-37 | S6 | `tests/Antiphon.Tests -> bin-c519-cp37/` | capture-s6 | `/*/*/ChannelOutboundCaptureTests/*` | V-2 capture regression | all 5 results, 0 failed/skipped | 5 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-38 | S6 | `tests/Antiphon.Tests -> bin-c519-cp38/` | outbound-s6 | `/*/*/ChannelOutboundDeliveryTests/*` | R-5 ordering/legacy regression | all 38 results, 0 failed/skipped | 38 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-39 | S6 | `tests/Antiphon.Tests -> bin-c519-cp39/` | policy-s6 | `/*/*/(ChannelOutboundPolicyTests*)\|(ChannelOutboundContractTests*)/*` | R-5 binding/conversion regression | all 31 results, 0 failed/skipped | 31 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-40 | S6 | `tests/Antiphon.Tests -> bin-c519-cp40/` | deadlines-s6 | `/*/*/ChannelOutboundDeadlineTests/*` | R-6 conversion deadlines | all 13 results, 0 failed/skipped | 13 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
 Floors come from the specified new roster and inspected source attributes:
 S=4, C=5, M=12, U=8, D=14, T=5, B=22, F=8, P=5, L=6, X=21, W=5.
@@ -1254,3 +1261,63 @@ budget. No additional source edits or broad repetitions without a new brief.
 
 All PC-1..PC-100, PC-1059-1..PC-1059-6, PC-S4-1..PC-S4-4, named S4
 variants and PC-S5-1..PC-S5-4 remain pending post-land SourceLanding Mutation.
+
+### S6 trailing-recovery checkpoint amendment (Code task 7d285cb5, 2026-10-05)
+
+The allocation's S6/CP-6 is superseded by the executable manifest, where CP-6
+belongs to S8 and CP-9 waits for S9. S6 now selects only After=S6, CP-34..CP-40:
+seven serial isolated builds/filters, 121 result floor, 42 estimated minutes,
+unchanged 15-minute row / 60-minute total deadlines. No Unit, namespace, assembly
+or Linux Herdr run. The pump/service terminal-order predicate now includes
+Suppressed; full Delivery, Policy/Contract and Deadline classes qualify the
+shared ordering/conversion/binding impact beside the dispatcher/discovery/capture
+classes. The eight trailing methods are C519_Pending_intervals_never_overlap,
+C519_Restart_recovers_reserved_tail, C519_Next_prompt_keeps_an_already_reserved_tail,
+C519_Suppressed_tail_advances_cursor_without_publication,
+C519_Concurrent_reservation_has_one_winner,
+C519_Fair_root_budget_reaches_tail_behind_idle_roots,
+C519_Tail_commit_failure_does_not_advance_root, and
+C519_Machine_tail_policy_and_api_withholding_survive_restart.
+
+Catalog-backed enabled main/machine roots and their per-target tails are owned
+only by the delivery journal. Event dispatch examines at most 32 roots; historical
+discovery has an independent keyset cursor and 32 x 10 root budget. A restart
+needs no event or in-memory watermark. Preparation failures retain their reserved
+interval while later text starts after that interval. Next UserPrompt or submitted
+QueuedUserPrompt caps extraction; a version-fenced closure never removes a child.
+Main NO_REPLY captures a Suppressed root and settles members in that same
+transaction. Suppressed tails advance the cursor with no preparation/publication
+or PublishedAt. Machine NO_REPLY remains unowned/unsettled; existing machine
+origin and attachment policy still governs tails. Captured route/profile/root
+identity survives rebinding; the existing pump revalidates authorization.
+Catalog-less routes and default-off dispatch retain their legacy path. No schema
+change, new producer path, activation, TTL/loss repair or S7-S9 work is included.
+
+V-6's ordinary PostgreSQL/reservation/provider-reconstruction matrix is supplied
+here; independent fake receiver envelopes plus reloaded journal/member data are
+its receipt boundary. Real Kafka/gateway/process-death proof remains V-11..V-13
+at S12. V-5 gains its root/tail and 321-idle-root fairness subset; the remaining
+S8/S9/terminal-ingestion-completeness parts remain pending. V-2 capture regression,
+R-1 dispatcher, R-5 and R-6 run on this tip. R-1 runtime keeps its prior S4 receipt
+and is unchanged. V-1/V-3/V-4/V-7..V-13 and R-2..R-4/R-7..R-12 remain deferred
+to their owning slices; no manual operational activation is required. The switch
+stays false; restart is none, activation owner is the caller.
+
+PC-11/PC-38..PC-41/PC-99 gain their named ordinary trailing witnesses. PC-99's
+race holds the first root read under its destination lock and overlaps a second
+caller with a different start/end, leaving exact-start uniqueness unable to mask
+an overlapping reservation if both lock and version guards are bypassed.
+All PC-1..PC-100, PC-1059-1..PC-1059-6, PC-S4-1..PC-S4-4 and all S4 variants,
+and PC-S5-1..PC-S5-4 remain pending post-land SourceLanding Mutation.
+
+| PC/variant (pending SourceLanding Mutation) | Deliberate guarded defect | Exact ordinary witness |
+|---|---|---|
+| PC-S6-1 / silent main root | Settle main NO_REPLY without a captured root. | ChannelOutboundTrailingRecoveryTests.C519_Suppressed_tail_advances_cursor_without_publication: linked Suppressed root, null PublishedAt, and a later legitimate tail after provider reconstruction. |
+| PC-S6-2 / root fair budget | Reset the root keyset cursor each tick or remove its page bound. | ChannelOutboundTrailingRecoveryTests.C519_Fair_root_budget_reaches_tail_behind_idle_roots: 320 then 2 examined roots, target reserved on cycle two, one tail receipt. |
+| PC-S6-3 / machine trailing policy | Publish System plain trailing text without attachments. | ChannelOutboundTrailingRecoveryTests.C519_Machine_tail_policy_and_api_withholding_survive_restart: silent cursor-owning child, no receiver message; valid attachment companion received. |
+| PC-S6-4 / trailing API withholding | Reserve/publish a trailing window containing an API-error stub. | ChannelOutboundTrailingRecoveryTests.C519_Machine_tail_policy_and_api_withholding_survive_restart: cursor unchanged and no additional receipt after the stub beside a valid attachment. |
+| PC-S6-5 / terminal ordering | Leave Suppressed in the pump's unresolved-head predicate. | ChannelOutboundTrailingRecoveryTests.C519_Suppressed_tail_advances_cursor_without_publication: legitimate child publishes behind its silent root/child. |
+
+Mutation owns deliberate mutants, red/restore/green, and missing-control discovery;
+no PC is discharged by these ordinary results. PreparationDeadlineAt's CreatedAt
+basis and CARD-1061's hard-link reader gap remain unchanged.
