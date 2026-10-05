@@ -129,17 +129,16 @@ public sealed class ReviewEvidenceRecoveryTests
         try
         {
             await prepared.Entered.Task.WaitAsync(Guard);
-            await using var db = other.Db();
-            await using var tx = await db.Database.BeginTransactionAsync();
-            await db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM \"AgentTasks\" WHERE \"Id\" = {other.ReviewId} FOR UPDATE");
-            db.StageOutcomes.Add(new StageOutcome { Id = Guid.NewGuid(), StageTaskId = other.ReviewId,
-                Stage = OrchestrationStage.Review, Source = StageOutcomeSource.Delegate, Outcome = StageOutcomeKind.Clean,
-                SupersedesId = other.OldId, RecordedAt = DateTime.UtcNow });
-            await db.SaveChangesAsync(); await tx.CommitAsync();
+            await other.World.Git.EnsureRunnerAsync();
+            await other.ChangeAsync(t => t.Status = AgentTaskStatus.Working);
+            await other.World.ReloadAsync();
+            await other.World.SettleAsync(other.Report).WaitAsync(Guard);
+            other.World.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, "G42 actual automatic settlement");
         }
         finally { prepared.Release.TrySetResult(); }
         await Should.ThrowAsync<ConflictException>(() => stale);
         (await other.RowsAsync()).Count.ShouldBe(2, "G42 automatic/recovery competing authority");
+        (await other.RowsAsync()).Single(o => o.Id != other.OldId).Source.ShouldBe(StageOutcomeSource.Delegate);
     }
     private static async Task OverrideWinsAsync(bool subject)
     {
@@ -431,6 +430,7 @@ public sealed class ReviewEvidenceRecoveryTests
         audit.GetProperty("reason").GetString().ShouldBe(w.Request.Reason);
         audit.GetProperty("reportSha256").GetString().ShouldBe(provenance.ReportSha256);
         row.SubjectTaskId.ShouldBe(w.SubjectId); row.ReviewedSourceSha.ShouldBe(w.World.Git.Baseline);
+        row.Detail.ShouldBe("checked", "successor finding detail comes from the stored final report");
         row.OrdinaryScopeCompleted.ShouldBe(VerificationScope.Full);
     }
     [Test]

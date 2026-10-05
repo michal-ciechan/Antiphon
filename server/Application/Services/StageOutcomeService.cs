@@ -176,79 +176,79 @@ public sealed class StageOutcomeService
         // identity change, so we never write under the wrong Review lock.
         for (var attempt = 0; attempt < 3; attempt++)
         {
-        var existing = await FindingPredecessorAsync(taskId, stage, ct);
-        var lockId = existing?.StageTaskId ?? taskId;
-        await _boundary.ReachedAsync("review-finding-prepared", taskId, lockId, ct);
-        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
-        await ReviewEvidenceRecoveryService.LockTasksAsync(_db, [taskId, lockId], ct);
-        await _boundary.ReachedAsync("review-finding-locked", taskId, lockId, ct);
-        var current = await FindingPredecessorAsync(taskId, stage, ct);
-        if ((current?.StageTaskId ?? taskId) != lockId) continue;
-        existing = current;
-        await _db.Entry(task).ReloadAsync(ct);
-        var now = DateTime.UtcNow;
+            var existing = await FindingPredecessorAsync(taskId, stage, ct);
+            var lockId = existing?.StageTaskId ?? taskId;
+            await _boundary.ReachedAsync("review-finding-prepared", taskId, lockId, ct);
+            await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+            await ReviewEvidenceRecoveryService.LockTasksAsync(_db, [taskId, lockId], ct);
+            await _boundary.ReachedAsync("review-finding-locked", taskId, lockId, ct);
+            var current = await FindingPredecessorAsync(taskId, stage, ct);
+            if ((current?.StageTaskId ?? taskId) != lockId) continue;
+            existing = current;
+            await _db.Entry(task).ReloadAsync(ct);
+            var now = DateTime.UtcNow;
 
-        var detail = (request.Detail ?? string.Empty).Trim();
-        if (detail.Length > StageOutcome.DetailMaxLength)
-            detail = detail[..StageOutcome.DetailMaxLength];
+            var detail = (request.Detail ?? string.Empty).Trim();
+            if (detail.Length > StageOutcome.DetailMaxLength)
+                detail = detail[..StageOutcome.DetailMaxLength];
 
-        var duration = 0;
-        if (task.CompletedAt is DateTime completed && task.DispatchedAt is DateTime dispatched)
-            duration = (int)Math.Clamp(Math.Round((completed - dispatched).TotalSeconds), 0, int.MaxValue);
+            var duration = 0;
+            if (task.CompletedAt is DateTime completed && task.DispatchedAt is DateTime dispatched)
+                duration = (int)Math.Clamp(Math.Round((completed - dispatched).TotalSeconds), 0, int.MaxValue);
 
-        var subjectId = existing?.SubjectTaskId ?? task.FollowUpOfTaskId ?? (reviewedSha is null ? null : task.Id);
-        string? reviewedRef = null;
-        string? reviewedRepo = null;
-        if (reviewedSha is not null)
-        {
-            var subject = subjectId is Guid sid
-                ? await _db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == sid, ct)
-                : task;
-            if (subject is null || subject.Workspace != WorkspaceMode.Worktree
-                || !CallerMayBindSubject(task, subject))
-                throw new ConflictException("Review evidence subject is not an authorized Worktree landing owner.",
-                    "review_evidence_subject_unauthorized");
-            subjectId = subject.Id;
-            reviewedRef = FullRef(subject.WorktreeBranch);
-            reviewedRepo = subject.RepoPath;
-        }
+            var subjectId = existing?.SubjectTaskId ?? task.FollowUpOfTaskId ?? (reviewedSha is null ? null : task.Id);
+            string? reviewedRef = null;
+            string? reviewedRepo = null;
+            if (reviewedSha is not null)
+            {
+                var subject = subjectId is Guid sid
+                    ? await _db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == sid, ct)
+                    : task;
+                if (subject is null || subject.Workspace != WorkspaceMode.Worktree
+                    || !CallerMayBindSubject(task, subject))
+                    throw new ConflictException("Review evidence subject is not an authorized Worktree landing owner.",
+                        "review_evidence_subject_unauthorized");
+                subjectId = subject.Id;
+                reviewedRef = FullRef(subject.WorktreeBranch);
+                reviewedRepo = subject.RepoPath;
+            }
 
-        var row = new StageOutcome
-        {
-            Id = Guid.NewGuid(),
-            Stage = stage,
-            Outcome = request.Found ? StageOutcomeKind.Found : StageOutcomeKind.Clean,
-            Source = StageOutcomeSource.Orchestrator,
-            SubjectTaskId = subjectId,
-            StageTaskId = task.Id,
-            CardId = existing?.CardId ?? task.CardId,
-            CostUsd = existing?.CostUsd ?? (task.CostUsd == 0m ? null : task.CostUsd),
-            TokensIn = existing?.TokensIn ?? (task.TokensIn == 0 ? null : task.TokensIn),
-            TokensOut = existing?.TokensOut ?? (task.TokensOut == 0 ? null : task.TokensOut),
-            DurationSeconds = existing?.DurationSeconds > 0 ? existing.DurationSeconds : duration,
-            Detail = detail,
-            SupersedesId = existing?.Id,
-            RecordedAt = now,
-            ReviewedSourceSha = reviewedSha,
-            ReviewedSourceClean = request.ReviewedSourceClean,
-            ReviewedSourceRef = reviewedRef,
-            ReviewedRepositoryPath = reviewedRepo,
-        };
-        _db.StageOutcomes.Add(row);
+            var row = new StageOutcome
+            {
+                Id = Guid.NewGuid(),
+                Stage = stage,
+                Outcome = request.Found ? StageOutcomeKind.Found : StageOutcomeKind.Clean,
+                Source = StageOutcomeSource.Orchestrator,
+                SubjectTaskId = subjectId,
+                StageTaskId = task.Id,
+                CardId = existing?.CardId ?? task.CardId,
+                CostUsd = existing?.CostUsd ?? (task.CostUsd == 0m ? null : task.CostUsd),
+                TokensIn = existing?.TokensIn ?? (task.TokensIn == 0 ? null : task.TokensIn),
+                TokensOut = existing?.TokensOut ?? (task.TokensOut == 0 ? null : task.TokensOut),
+                DurationSeconds = existing?.DurationSeconds > 0 ? existing.DurationSeconds : duration,
+                Detail = detail,
+                SupersedesId = existing?.Id,
+                RecordedAt = now,
+                ReviewedSourceSha = reviewedSha,
+                ReviewedSourceClean = request.ReviewedSourceClean,
+                ReviewedSourceRef = reviewedRef,
+                ReviewedRepositoryPath = reviewedRepo,
+            };
+            _db.StageOutcomes.Add(row);
 
-        var eventDetail = $"{stage} {(request.Found ? "Found" : "Clean")}"
-            + (detail.Length > 0 ? $": {detail}" : string.Empty);
-        _db.AgentTaskEvents.Add(new AgentTaskEvent
-        {
-            Id = Guid.NewGuid(),
-            AgentTaskId = task.Id,
-            Type = AgentTaskEventType.FindingRecorded,
-            Detail = eventDetail.Length <= 4000 ? eventDetail : eventDetail[..4000],
-            At = now,
-        });
-        await _db.SaveChangesAsync(ct);
-        await transaction.CommitAsync(ct);
-        return ToDto(row);
+            var eventDetail = $"{stage} {(request.Found ? "Found" : "Clean")}"
+                + (detail.Length > 0 ? $": {detail}" : string.Empty);
+            _db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(),
+                AgentTaskId = task.Id,
+                Type = AgentTaskEventType.FindingRecorded,
+                Detail = eventDetail.Length <= 4000 ? eventDetail : eventDetail[..4000],
+                At = now,
+            });
+            await _db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+            return ToDto(row);
         }
         throw new ConflictException("Review predecessor changed during finding preparation.", "review_evidence_predecessor_changed");
     }

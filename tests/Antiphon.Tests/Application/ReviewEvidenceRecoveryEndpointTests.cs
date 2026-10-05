@@ -177,7 +177,7 @@ public sealed class ReviewEvidenceRecoveryEndpointTests
         }
         using var get = await client.GetAsync($"/api/agent-tasks/{w.ReviewId:D}");
         get.StatusCode.ShouldBe(HttpStatusCode.OK);
-        (await get.Content.ReadAsStringAsync()).ShouldContain(receipt.ReviewEvidenceId.ToString("D"), "G69 fresh GET");
+        (await get.Content.ReadAsStringAsync()).Contains(receipt.ReviewEvidenceId.ToString("D")).ShouldBeTrue("G69 fresh GET");
         // Ignore the first response as if lost; a new HTTP client retries the exact selectors.
         using var retry = factory.CreateClient(); Principal(retry, cap.Token);
         using var repeated = await retry.PostAsJsonAsync(Url(w), w.Request);
