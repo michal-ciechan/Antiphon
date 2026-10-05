@@ -64,6 +64,10 @@ public class TerminalRunnerSeatReleaseTests
         var held = await uncertain.TaskAsync();
         held.ReleasedSeatAnswer.ShouldBe("persist through an ambiguous release");
         held.Status.ShouldBe(AgentTaskStatus.Blocked); held.Attempt.ShouldBe(1);
+        AgentTaskService.MatchesReleasedAnswerRevision(held, held.ConcurrencyToken, held.Attempt,
+            held.ReleasedSeatAnswerId!.Value, held.ReleasedSeatAnswerReleaseId!.Value).ShouldBeTrue();
+        AgentTaskService.MatchesReleasedAnswerRevision(held, Guid.NewGuid(), held.Attempt,
+            held.ReleasedSeatAnswerId.Value, held.ReleasedSeatAnswerReleaseId.Value).ShouldBeFalse("revision alone fences an otherwise eligible answer");
         await using var heldDb = uncertain.Db();
         (await heldDb.SessionQueuedMessages.CountAsync()).ShouldBe(0, "no input to an uncertain corpse");
 
@@ -216,7 +220,9 @@ public class TerminalRunnerSeatReleaseTests
         await f.EditAsync((t, _) => { t.WorktreePath = f.Harness.TempRoot; t.WorktreeBranch = "feat/retained";
             t.WorktreeBaseRef = "master"; t.Result = "retained report"; t.ResultFilePath = "report.md"; });
         var before = await f.TaskAsync();
-        await f.ReleaseAsync(); await f.TryAnswerAsync("continue retained work");
+        await f.ReleaseAsync();
+        f.Harness.Provider.GetRequiredService<IOptions<TerminalRunnerSeatReleaseOptions>>().Value.AutomaticEnabled = false;
+        await f.TryAnswerAsync("continue retained work");
         var task = await f.TaskAsync();
         task.Attempt.ShouldBe(2); task.Status.ShouldBe(AgentTaskStatus.Queued); task.AgentSessionId.ShouldBeNull();
         task.WorktreePath.ShouldBe(before.WorktreePath); task.WorktreeBranch.ShouldBe(before.WorktreeBranch);
