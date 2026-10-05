@@ -237,12 +237,23 @@ internal static class ScriptHarnessProcessFixture
         }
         internal void AssertDeadBeforeEmergencySweep()
         {
+            Exception? primary = null;
+            try
+            {
                 Root.Executing().ShouldBeFalse("Script root remained executing after cleanup.");
                 Child.Executing().ShouldBeFalse("Fixture child remained executing after cleanup.");
                 Grandchild.Executing().ShouldBeFalse("Fixture grandchild remained executing after cleanup.");
                 Directory.Exists(ResultsDirectory).ShouldBeFalse("Owned results path survived confirmed cleanup.");
-            // WithInvocationAsync owns the safety sweep and preserves its error
-            // alongside this assertion if both fail.
+            }
+            catch (Exception ex) { primary = ex; throw; }
+            finally
+            {
+                try { EmergencyStop(); }
+                catch (Exception cleanup) when (primary is not null)
+                {
+                    throw new AggregateException("Native death assertion and emergency sweep both failed.", primary, cleanup);
+                }
+            }
         }
     }
 }
