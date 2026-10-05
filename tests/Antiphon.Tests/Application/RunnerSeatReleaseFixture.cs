@@ -164,7 +164,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
                     services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
                     services.AddScoped<AgentTaskService>();
                     services.AddSingleton<AgentTaskReplyService>();
-                    services.AddSingleton<Antiphon.Server.Infrastructure.Orchestration.CompletionNoteFlushQueue>();
+                    services.AddSingleton<CompletionNoteFlushQueue>();
                     services.AddScoped<AgentTaskLandNotificationService>();
                     services.AddScoped<SubscriptionUsageReader>();
                     services.AddScoped<SubscriptionQuotaGate>();
