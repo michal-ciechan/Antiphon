@@ -13,6 +13,8 @@ internal sealed class WindowsScriptHarnessHooks
     internal List<(string Name, SafeFileHandle Handle)> Handles { get; } = [];
     internal string[] Calls => _calls.ToArray();
     internal uint CreateFlags { get; set; }
+    internal IntPtr[] StartupHandles { get; set; } = [];
+    internal Action<uint>? BeforeCreate { get; set; }
     internal uint? PreviousSuspendCount { get; set; }
     internal bool FailAssignment { get; init; }
     internal bool FailResume { get; init; }
@@ -131,6 +133,9 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
                 var command = new StringBuilder(string.Join(" ", argv.Select(QuoteArgument)));
                 var flags = CreateSuspended | ExtendedStartupInfoPresent;
                 _hooks.CreateFlags = flags;
+                _hooks.StartupHandles = Enumerable.Range(0, 3)
+                    .Select(index => Marshal.ReadIntPtr(handles, index * IntPtr.Size)).ToArray();
+                _hooks.BeforeCreate?.Invoke(flags);
                 _hooks.Record("create");
                 if (!CreateProcessW(request.Executable, command, IntPtr.Zero, IntPtr.Zero, true,
                         flags, IntPtr.Zero,
@@ -291,12 +296,17 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
     public void Dispose()
     {
         _hooks.Record("dispose");
-        _stdout.Dispose();
-        _stderr.Dispose();
-        _thread.Dispose();
-        _process.Dispose();
-        foreach (var process in _terminationProcesses) process.Dispose();
-        CloseJob();
+        // Close custody before streams: live writers must not keep synchronous
+        // readers blocked when disposal is the kill-on-close safety net.
+        try { CloseJob(); }
+        finally
+        {
+            _stdout.Dispose();
+            _stderr.Dispose();
+            _thread.Dispose();
+            _process.Dispose();
+            foreach (var process in _terminationProcesses) process.Dispose();
+        }
     }
 
     private void CloseJob()

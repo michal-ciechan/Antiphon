@@ -8,6 +8,11 @@ if (args.Length >= 3 && args[0] == "fixture-child")
     return await FixtureChild(args[1], args[2]);
 if (args.Length >= 3 && args[0] == "fixture-grandchild")
     return await FixtureGrandchild(args[1], args[2]);
+if (args.Length == 1 && args[0] == "windows-sentinel" && OperatingSystem.IsWindows())
+{
+    await Task.Delay(TimeSpan.FromSeconds(20));
+    return 0;
+}
 if (args.Length < 9 || args[0] != "linux-owner" || !OperatingSystem.IsLinux()) return 2;
 var socketPath = args[1];
 var nonce = args[2];
@@ -181,3 +186,41 @@ static void PublishIdentity(string directory, string name)
 [DllImport("libc", SetLastError = true)] static extern int kill(int pid, int signal);
 [DllImport("libc", SetLastError = true)] static extern int close(int fd);
 [DllImport("libc", SetLastError = true)] static extern nint readlink(string path, byte[] buffer, nuint size);
+
+// Loaded by the real PowerShell root so the probe sees that process's inherited
+// handle table, rather than the different table of another helper subprocess.
+public static class WindowsScriptHandleProbe
+{
+    public static void WriteReceipt(string directory, string nonce)
+    {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+        var fields = File.ReadAllText(Path.Combine(directory, "probe-input")).Split(' ');
+        if (fields.Length != 3 || fields[0] != nonce) throw new InvalidDataException("Handle probe nonce mismatch.");
+        var job = new IntPtr(long.Parse(fields[1], CultureInfo.InvariantCulture));
+        var unrelatedEvent = new IntPtr(long.Parse(fields[2], CultureInfo.InvariantCulture));
+        var buffer = Marshal.AllocHGlobal(144);
+        bool query, retained = false;
+        try
+        {
+            query = QueryInformationJobObject(job, 9, buffer, 144, out _);
+            if (query)
+            {
+                var current = GetCurrentProcess();
+                retained = DuplicateHandle(current, job, current, out var duplicate, 0, false, 2);
+                if (retained && !CloseHandle(duplicate)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+            }
+        }
+        finally { Marshal.FreeHGlobal(buffer); }
+        var signaled = unrelatedEvent != IntPtr.Zero && SetEvent(unrelatedEvent);
+        var receipt = $"{nonce} {query} {retained} {signaled} {GetStdHandle(-10).ToInt64()} {GetStdHandle(-11).ToInt64()} {GetStdHandle(-12).ToInt64()}";
+        File.WriteAllText(Path.Combine(directory, "probe-receipt.tmp"), receipt);
+        File.Move(Path.Combine(directory, "probe-receipt.tmp"), Path.Combine(directory, "probe-receipt"));
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool QueryInformationJobObject(IntPtr job, int kind, IntPtr buffer, uint size, out uint returned);
+    [DllImport("kernel32.dll")] private static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool DuplicateHandle(IntPtr sourceProcess, IntPtr source, IntPtr targetProcess, out IntPtr copy, uint access, bool inherit, uint options);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool CloseHandle(IntPtr handle);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool SetEvent(IntPtr handle);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr GetStdHandle(int standard);
+}
