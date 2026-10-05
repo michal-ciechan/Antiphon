@@ -10,7 +10,7 @@ namespace Antiphon.SessionRunner;
 /// <summary>
 /// Volatile authority for one runtime/session object. The token is random and returned only
 /// after two matching fresh observations; wall time is diagnostic, never elapsed authority.
-/// This is a read-only decision. A future conditional signal must reobserve under the gate.
+/// A conditional signal must reobserve under the launch gate.
 /// </summary>
 internal sealed record TerminalSeatProof(
     Guid RuntimeEpoch, object Session, TerminalSeatObservationRequest Request,
@@ -71,6 +71,27 @@ internal sealed class TerminalSeatQualification
         if (evidence != TerminalSeatQualificationStatus.Qualified) return evidence;
         return clock.GetElapsedTime(proof.FirstTimestamp) >= SafetyMargin
             ? TerminalSeatQualificationStatus.Qualified : TerminalSeatQualificationStatus.Waiting;
+    }
+
+    // Null is authorization to proceed to the last pre-signal fence, never an exit receipt.
+    // This is also the mutation oracle for individual guards otherwise masked by later fences.
+    internal static TerminalSeatReleaseOutcome? AuthorizeRelease(
+        TerminalSeatProof proof, Guid epoch, object session, TerminalSeatReleaseRequest request,
+        TerminalTranscriptObservation transcript, long inputRevision, long outputRevision, TimeProvider clock)
+    {
+        if (proof.RuntimeEpoch != epoch || !ReferenceEquals(proof.Session, session)
+            || proof.Request != request.Observation || proof.Token != request.Token)
+            return TerminalSeatReleaseOutcome.StaleObservation;
+        if (transcript.Status != TerminalTranscriptReadStatus.Success
+            || transcript.Verdict == TerminalTranscriptVerdict.Unknown)
+            return TerminalSeatReleaseOutcome.Unknown;
+        if (transcript.Verdict == TerminalTranscriptVerdict.Working)
+            return TerminalSeatReleaseOutcome.Working;
+        if (proof.Transcript != transcript || proof.InputRevision != inputRevision
+            || proof.OutputRevision != outputRevision
+            || clock.GetElapsedTime(proof.FirstTimestamp) < SafetyMargin)
+            return TerminalSeatReleaseOutcome.StaleObservation;
+        return null;
     }
 
     private static TerminalSeatQualificationStatus CheckEvidence(

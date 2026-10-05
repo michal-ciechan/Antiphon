@@ -39,6 +39,14 @@ public class TerminalSeatReleaseTests
         var foreign = await first.QualifyAsync();
         await using var second = new SeatWorld("Codex");
         var own = await second.QualifyAsync();
+        var proof = second.Runtime.TerminalSeatProofFor(second.Tail.SessionId)!;
+        TerminalSeatQualification.AuthorizeRelease(proof, proof.RuntimeEpoch, proof.Session, own,
+            proof.Transcript, proof.InputRevision, proof.OutputRevision, second.Clock).ShouldBeNull();
+        // Same evidence/token, only the session object differs. The token dictionary must not
+        // mask a missing object fence in the production authorization decision (PC-19).
+        TerminalSeatQualification.AuthorizeRelease(proof, proof.RuntimeEpoch, first.Session, own,
+            proof.Transcript, proof.InputRevision, proof.OutputRevision, second.Clock)
+            .ShouldBe(TerminalSeatReleaseOutcome.StaleObservation);
         (await second.ReleaseAsync(own with { Token = foreign.Token })).Outcome
             .ShouldBe(TerminalSeatReleaseOutcome.StaleObservation);
         first.AssertRetained();
@@ -54,6 +62,14 @@ public class TerminalSeatReleaseTests
             var request = await world.QualifyAsync();
             await world.Tail.AppendAsync(world.Tail.Activity("still-working"));
             world.Clock.Advance(TimeSpan.FromHours(1));
+            var proof = world.Runtime.TerminalSeatProofFor(world.Tail.SessionId)!;
+            var working = await world.Tail.ObserveAsync();
+            working.Verdict.ShouldBe(TerminalTranscriptVerdict.Working);
+            // Only Working prevents this otherwise matching aged proof from passing. The
+            // end-to-end check below independently rejects activity after an issued idle token.
+            TerminalSeatQualification.AuthorizeRelease(proof with { Transcript = working },
+                proof.RuntimeEpoch, proof.Session, request, working, proof.InputRevision,
+                proof.OutputRevision, world.Clock).ShouldBe(TerminalSeatReleaseOutcome.Working);
             (await world.ReleaseAsync(request)).Outcome.ShouldBe(TerminalSeatReleaseOutcome.Working);
             world.AssertRetained();
         }
@@ -62,7 +78,7 @@ public class TerminalSeatReleaseTests
     [Test]
     public async Task Unknown_backend_custody_refuses_release()
     {
-        foreach (var condition in new[] { "launch", "adoption", "external" })
+        foreach (var condition in new[] { "launch", "adoption", "external", "composer", "failed-input", "pending-input" })
         {
             await using var world = new SeatWorld("Codex");
             var request = await world.QualifyAsync();
@@ -70,7 +86,34 @@ public class TerminalSeatReleaseTests
                 status: condition == "launch" ? "Starting" : "Running",
                 pendingReason: condition == "adoption" ? "AdoptionPending" : null,
                 backend: condition == "external" ? SessionBackends.Herdr : SessionBackends.PtyHost);
-            (await world.ReleaseAsync(request)).Outcome.ShouldBe(TerminalSeatReleaseOutcome.Unknown, condition);
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Task? pending = null;
+            try
+            {
+                if (condition == "composer")
+                    await world.Runtime.SendInputAsync(world.Tail.SessionId, "unsubmitted body", CancellationToken.None);
+                if (condition == "failed-input")
+                {
+                    world.Child.Write = _ => throw new IOException("uncertain input");
+                    await Should.ThrowAsync<IOException>(() => world.Runtime.SendInputAsync(
+                        world.Tail.SessionId, "uncertain body", CancellationToken.None));
+                }
+                if (condition == "pending-input")
+                {
+                    world.Child.Write = _ => { entered.TrySetResult(); return finish.Task; };
+                    pending = world.Runtime.SendInputAsync(world.Tail.SessionId, "pending body", CancellationToken.None);
+                    await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                }
+                (await world.ReleaseAsync(request)).Outcome.ShouldBe(
+                    condition is "composer" or "failed-input" or "pending-input"
+                        ? TerminalSeatReleaseOutcome.PendingDelivery : TerminalSeatReleaseOutcome.Unknown, condition);
+            }
+            finally
+            {
+                finish.TrySetResult();
+                if (pending is not null) await pending;
+            }
             world.AssertRetained();
         }
     }
@@ -121,6 +164,8 @@ public class TerminalSeatReleaseTests
             result.ConfirmsExit.ShouldBeFalse();
             world.AssertRetained(expectedKills: 1);
             world.ReleaseAuditCount.ShouldBe(0);
+            (await world.ReleaseAsync(request)).ShouldBe(result, "an unresolved action is not a second kill attempt");
+            world.Child.Kills.ShouldBe(1);
         }
     }
 
@@ -159,12 +204,19 @@ public class TerminalSeatReleaseTests
         world.AssertReleased();
         world.Runtime.List().Select(s => s.SessionId).ShouldBe(new[] { foreign });
         world.Runtime.LiveSessionCount.ShouldBe(1);
+        world.AssertForeignRetained(foreign);
         world.ReadGenerationFromDisk().ShouldBe(request.Observation.ExpectedAcceptedStartedAt);
         // New runtime/store instance reads the real durable watermark after session eviction.
         await world.RestartEmptyAsync();
         world.ReadGenerationFromDisk().ShouldBe(request.Observation.ExpectedAcceptedStartedAt);
         (await world.ReleaseAsync(request)).Outcome.ShouldBe(TerminalSeatReleaseOutcome.AlreadyAbsent);
         world.Child.Kills.ShouldBe(1);
+
+        await using var exited = new SeatWorld("Codex");
+        var exitedRequest = await exited.QualifyAsync();
+        exited.Child.Exit();
+        (await exited.ReleaseAsync(exitedRequest)).Outcome.ShouldBe(TerminalSeatReleaseOutcome.AlreadyExited);
+        exited.AssertReleased(expectedKills: 0);
     }
 
     [Test]
@@ -503,7 +555,18 @@ public class TerminalSeatReleaseTests
                 new SessionRunnerEventHub(), NullLogger.Instance);
             foreign.BindChildForTest(new SeatChild());
             Runtime.Track(foreign);
+            new PtyHostManifest
+            {
+                SessionId = id, PipeName = "fixture-foreign", HostPid = 1,
+                HostStartTimeUtc = _generation, CreatedAtUtc = _generation, AcceptedStartedAt = _generation
+            }.SaveAtomic(PtyHostManifest.PathFor(_settings.PtyHostManifestDir, id));
             return id;
+        }
+
+        public void AssertForeignRetained(Guid id)
+        {
+            Runtime.List().ShouldContain(s => s.SessionId == id);
+            File.Exists(PtyHostManifest.PathFor(_settings.PtyHostManifestDir, id)).ShouldBeTrue();
         }
 
         private string GenerationDirectory => System.IO.Path.Combine(_root, "launch-generations");
@@ -511,13 +574,13 @@ public class TerminalSeatReleaseTests
             .Record(Tail.SessionId, _generation);
         public DateTime? ReadGenerationFromDisk() => new PhoneHomeLaunchGenerationStore(GenerationDirectory).Read(Tail.SessionId);
 
-        public void AssertReleased()
+        public void AssertReleased(int expectedKills = 1)
         {
             Runtime.List().ShouldNotContain(s => s.SessionId == Tail.SessionId);
             File.Exists(_manifest).ShouldBeFalse();
             File.Exists(HerdrPaneSidecar.PathFor(_root, Tail.SessionId)).ShouldBeFalse();
             File.Exists(_sidecar).ShouldBeTrue("transcript history is not session custody");
-            Child.Kills.ShouldBe(1);
+            Child.Kills.ShouldBe(expectedKills);
             ReleaseAuditCount.ShouldBe(1);
         }
 
@@ -584,8 +647,9 @@ public class TerminalSeatReleaseTests
         public List<string> Inputs { get; } = [];
         public int Kills { get; private set; }
         public Func<CancellationToken, Task<bool>>? Kill { get; set; }
+        public Func<CancellationToken, Task>? Write { get; set; }
         public Task<ChildStarted> LaunchAsync(RunnerLaunchRequest request, CancellationToken ct) => throw new NotSupportedException();
-        public Task WriteAsync(string input, CancellationToken ct) { Inputs.Add(input); return Task.CompletedTask; }
+        public Task WriteAsync(string input, CancellationToken ct) { Inputs.Add(input); return Write?.Invoke(ct) ?? Task.CompletedTask; }
         public Task ResizeAsync(int cols, int rows, CancellationToken ct) => Task.CompletedTask;
         public Task<bool> KillAsync(CancellationToken ct) { Kills++; return Kill?.Invoke(ct) ?? Task.FromResult(false); }
         public Task<ChildScreen?> ReadScreenAsync(CancellationToken ct) => Task.FromResult<ChildScreen?>(null);
