@@ -961,6 +961,27 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     internal TerminalSeatProof? TerminalSeatProofFor(Guid sessionId) =>
         _terminalSeatQualifications.TryGetValue(sessionId, out var qualification) ? qualification.Proof : null;
 
+    internal Func<Guid, Task>? TerminalReleaseBeforeFinalCheck { get; set; }
+    internal Func<Guid, Task>? TerminalReleaseBeforeSignal { get; set; }
+
+    // S2a test-first boundary over the existing release implementation. No wire/automatic
+    // caller exists. CP-9 supplies the missing conditional contract before its guards land.
+    internal async Task<TerminalSeatReleaseResult> ReleaseTerminalSeatAsync(
+        Guid sessionId, TerminalSeatReleaseRequest request, TimeSpan timeout, CancellationToken ct)
+    {
+        if (TerminalReleaseBeforeFinalCheck is { } beforeFinal) await beforeFinal(sessionId);
+        if (TerminalReleaseBeforeSignal is { } beforeSignal) await beforeSignal(sessionId);
+        try
+        {
+            var released = await ReleaseSlotAsync(sessionId, "terminal-seat-release", timeout, ct);
+            return new(sessionId, request.ActionId, TerminalSeatReleaseOutcome.Released, released.AcceptedStartedAt);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or OperationCanceledException)
+        {
+            return new(sessionId, request.ActionId, TerminalSeatReleaseOutcome.Unresolved, null);
+        }
+    }
+
     /// <summary>CARD-0667 S1b: unused read-only qualification boundary; no release caller.</summary>
     internal Task<TerminalSeatObservation> ObserveTerminalSeatAsync(
         Guid sessionId, TerminalSeatObservationRequest request, CancellationToken ct) =>
@@ -2967,12 +2988,24 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         internal void BindChildForTest(ISessionChild child, ITranscriptTailer tailer, DateTime acceptedStartedAt)
         {
             _herdrChild = child;
+            child.Exited += exit => HandleExited(new ExitedMessage(exit.ExitCode, exit.Reason, LastSequence));
             _tailer = tailer;
             _sidecar = TranscriptSidecar.TryLoad(TranscriptSidecar.PathFor(_settings.SessionLogPath, _sessionId));
             BindAcceptedGeneration(acceptedStartedAt);
             _startedAt = acceptedStartedAt;
             _status = "Running";
             _clientReady.TrySetResult(true);
+        }
+
+        internal void OutputForTest(long sequence) => HandleOutput(sequence, "fixture output");
+
+        // Supplies concrete backend state, never a qualification verdict.
+        internal void SetTerminalBackendStateForTest(string status = "Running", string? pendingReason = null,
+            string backend = SessionBackends.PtyHost)
+        {
+            _status = status;
+            _pendingReason = pendingReason;
+            _backend = backend;
         }
 
         public RunnerSessionDto ToDto()

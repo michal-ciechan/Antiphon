@@ -45,3 +45,20 @@ public sealed record TerminalSeatObservation(
     string? Token = null,
     TimeSpan StableFor = default,
     DateTimeOffset? FirstObservedAt = null);
+
+public sealed record TerminalSeatReleaseRequest(
+    Guid ActionId, TerminalSeatObservationRequest Observation, string Token);
+
+public enum TerminalSeatReleaseOutcome
+{
+    Released, AlreadyExited, AlreadyAbsent, Working, Unknown, PendingDelivery,
+    StaleObservation, GenerationMismatch, Owned, Unsupported, Unresolved
+}
+
+public sealed record TerminalSeatReleaseResult(
+    Guid SessionId, Guid ActionId, TerminalSeatReleaseOutcome Outcome,
+    DateTime? AcceptedStartedAt)
+{
+    public bool ConfirmsExit => Outcome is TerminalSeatReleaseOutcome.Released
+        or TerminalSeatReleaseOutcome.AlreadyExited or TerminalSeatReleaseOutcome.AlreadyAbsent;
+}
