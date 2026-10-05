@@ -13,6 +13,38 @@ Docker replacement. The only timed stop exception is step 5 below.
 Before starting, verify no land is pending, the checkout has no half-reset worktree, and the
 running server's `/health` and `GET /api/version` SHA match the canonical source-root `HEAD`
 (see [the autonomy policy](orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout)).
+Before cache preparation or gate 1, qualify **outer-host jq** in the non-login SSH
+deployment shell. The runner image's jq does not satisfy this prerequisite.
+Use the reviewed, landed canonical checkout at `<sha>`:
+
+```powershell
+pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase check-host-jq
+```
+
+Only `HostJqMissing` permits the explicit provision phase:
+
+```powershell
+pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase provision-host-jq
+pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase check-host-jq
+pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase provision-host-jq
+```
+
+Retain the independently checked and both provision receipts under the printed
+`.antiphon/rolling-server2/<run-id>/host-jq-<phase>.json` paths. The second provision
+must record `installed=false` and the unchanged resolved binary hash. For an
+already qualified jq, retain check/no-op receipts without replacement. Provision
+requires clean canonical `HEAD=<sha>` and verifies the jq 1.7.1 artifact SHA-256
+`5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5` before publication.
+Each receipt binds source SHA, run, selected/executing phase, observation time and
+SSH exit to host path/version/digest/owner/mode and both semantic predicate exits.
+Invalid jq, unapproved PATH shadowing, unknown transport/proof or failed receipt
+persistence stops preparation; diagnose the refusal rather than installing by hand.
+`/usr/local/bin` integrity is the trust boundary: canonical-leaf symlinks and home
+PATH shadows refuse, but hardlinks and a writer's check-to-use swap remain
+CARD-1058 limitations. These phases do not deploy or restart anything.
+Give the host receipt reference to the [CARD-1040 image qualification owner](superpowers/plans/2026-10-04-card-1040-jq-prerequisites-and-unit-timing-plan.md);
+host qualification does not qualify the image or its activation.
+
 Run `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Fixture -Sha <sha>` and
 `-Case Inventory -Sha <sha>` and retain their receipts. For empty cache volumes use
 `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -Cold -Sha <sha>`;
@@ -135,6 +167,15 @@ the retired absent row; the next `deploy-temp` supports it. Unknown live invento
 without confirmed absence still stops cleanup. Do not clear the hold to abandon a rollout.
 
 ### Volume recycling and disk reclaim (CARD-1008)
+
+Every rolling phase freshly checks outer-host jq and persists its
+`host-jq-<phase>.json` receipt **before** status, POST, cache seed, deploy, stop or
+removal. This includes same-SHA retries, `-DryRun`, `-ResumeRecycle` and each entry
+of `all`; none installs jq implicitly. Follow the explicit check/provision sequence
+above before starting, and stop on any prerequisite refusal. Runner-image jq is
+separate. Direct host recycling retains its final `RecycleToolsMissing` refusal
+if jq disappears after preflight or the wrapper is bypassed; a previous receipt
+never authorizes a later phase.
 
 Always retire `server2-temp` once scheduling has moved back to the verified, accepting
 main runner. After drain and the checks below, temp is disposable: `compose_temp down -v`

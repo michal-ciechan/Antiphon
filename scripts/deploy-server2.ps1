@@ -65,8 +65,20 @@ function Invoke-HostJq {
     $psi.RedirectStandardInput = $true
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
-    $psi.FileName = 'ssh'
-    foreach ($token in @('-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', 'mc@server2', 'bash', '-s', '--', $Mode)) {
+    $fixture = $env:C727_TEST_VERIFY_STUB -and $env:C727_TEST_STATE
+    if ($fixture) {
+        # Use the existing offline verifier boundary; its proof still passes the
+        # same parser and durable receipt admission as the real SSH child.
+        $manifestPath = Join-Path $evidenceRoot ("host-jq-$ExecutingPhase.manifest.json")
+        @{ sourceSha=$Sha; runId=$runId; selectedPhase=$Phase; phase=$ExecutingPhase; mode=$Mode; evidenceRoot=$evidenceRoot } |
+            ConvertTo-Json -Compress | Set-Content -LiteralPath $manifestPath -Encoding ascii
+        $psi.FileName = 'pwsh'
+        $tokens = @('-NoProfile', '-File', $env:C727_TEST_VERIFY_STUB, '-Case', 'host-jq-prerequisite', '-Manifest', $manifestPath)
+    } else {
+        $psi.FileName = 'ssh'
+        $tokens = @('-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', 'mc@server2', 'bash', '-s', '--', $Mode)
+    }
+    foreach ($token in $tokens) {
         [void]$psi.ArgumentList.Add($token)
     }
     $proc = [Diagnostics.Process]::new()
@@ -79,10 +91,12 @@ function Invoke-HostJq {
             [void]$proc.Start()
             $stdout = $proc.StandardOutput.ReadToEndAsync()
             $stderr = $proc.StandardError.ReadToEndAsync()
-            $helper = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'server2-host-jq.sh')).Replace("`r`n", "`n")
-            $inputTask = $proc.StandardInput.WriteAsync($helper)
-            if (-not $inputTask.Wait([Math]::Max(1, $deadlineMs - [int]$timer.ElapsedMilliseconds))) { throw 'timeout' }
-            $inputTask.GetAwaiter().GetResult()
+            if (-not $fixture) {
+                $helper = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'server2-host-jq.sh')).Replace("`r`n", "`n")
+                $inputTask = $proc.StandardInput.WriteAsync($helper)
+                if (-not $inputTask.Wait([Math]::Max(1, $deadlineMs - [int]$timer.ElapsedMilliseconds))) { throw 'timeout' }
+                $inputTask.GetAwaiter().GetResult()
+            }
             $proc.StandardInput.Close()
             if (-not $proc.WaitForExit([Math]::Max(1, $deadlineMs - [int]$timer.ElapsedMilliseconds))) { throw 'timeout' }
             if (-not [Threading.Tasks.Task]::WhenAll([Threading.Tasks.Task[]]@($stdout, $stderr)).Wait([Math]::Max(1, $deadlineMs - [int]$timer.ElapsedMilliseconds))) { throw 'timeout' }
@@ -698,6 +712,7 @@ function Assert-TempProjectAbsent {
 
 function Invoke-Phase {
     param([string]$Name)
+    Invoke-HostJq -Mode check -ExecutingPhase $Name
     switch ($Name) {
         'deploy-temp' {
             if ($SavedDonor) { throw 'TempSavedDonorRequiresMaintenance' }
