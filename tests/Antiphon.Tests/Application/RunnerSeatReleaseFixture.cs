@@ -514,7 +514,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
                 connection.DispatchEligible.ShouldBeFalse();
                 var inventory = await Client.ListAsync(default);
                 var seat = inventory.ShouldHaveSingleItem();
-                seat.Id.ShouldBe(SessionId);
+                seat.SessionId.ShouldBe(SessionId);
                 seat.AcceptedStartedAt.ShouldBe(_generation);
                 _phoneHost.Directory.SnapshotLive().ShouldBeSameAs(connection);
                 _phoneHost.Directory.MarkRecovered(connection);
