@@ -27,12 +27,16 @@ public class ChannelPromptCorrelationTests
     private const string Envelope = "[Telegram \"Family\" — Tester 10:10] ";
     private static readonly CancellationToken Ct = CancellationToken.None;
 
-    private static Task<BridgeQueueHarness> HarnessAsync() => BridgeQueueHarness.CreateAsync(new()
+    private static Task<BridgeQueueHarness> HarnessAsync(IAntiphonMessagingProducer? producer = null) => BridgeQueueHarness.CreateAsync(new()
     {
         AlwaysOn = false,
         Bridge = new() { Enabled = true, DebounceWindowMs = 0 },
         // Ingest via the runtime but let each scenario choose when publication/sweep happens.
-        ConfigureServices = services => services.RemoveAll<ChannelReplyDispatcher>(),
+        ConfigureServices = services =>
+        {
+            services.RemoveAll<ChannelReplyDispatcher>();
+            if (producer is not null) services.AddSingleton(producer);
+        },
     });
 
     private static ChannelReplyDispatcher Dispatcher(BridgeQueueHarness h,
@@ -366,15 +370,20 @@ public class ChannelPromptCorrelationTests
     [Test]
     public async Task C584_RestartAndProducerFailure()
     {
-        await using var h = await HarnessAsync();
+        var producer = new FailingProducer();
+        await using var h = await HarnessAsync(producer);
+        producer.Receiver = h.Messaging;
         var chat = await h.BindChannelAsync();
         var id = await EnqueueAsync(h, chat, "please deploy\nthe latest build and verify");
         var body = (await RowAsync(h, id)).Body;
         await ReplayAsync(h, body.Replace("\n", ""), "Done. " + ChannelPromptCorrelation.OpeningMarker(body));
-        await Dispatcher(h, new FailingProducer()).OnTurnEndAsync(h.SessionId, Ct);
+        await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        producer.Calls.ShouldBe(1, "the failure must reach the service's active producer seam");
         (await RowAsync(h, id)).ChannelReplySettledAt.ShouldBeNull();
         h.Messaging.SentReplies.ShouldBeEmpty();
+        producer.Fail = false;
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        producer.Calls.ShouldBe(2);
         h.Messaging.SentReplies.ShouldHaveSingleItem().Text.ShouldBe("Done.");
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
         h.Messaging.SentReplies.Count.ShouldBe(1);
@@ -696,7 +705,14 @@ public class ChannelPromptCorrelationTests
 
     private sealed class FailingProducer : IAntiphonMessagingProducer
     {
-        public Task SendAsync(Antiphon.Messaging.ChannelReply reply, CancellationToken cancellationToken = default) =>
-            Task.FromException(new InvalidOperationException("C584 producer failure"));
+        public bool Fail { get; set; } = true;
+        public int Calls { get; private set; }
+        public IAntiphonMessagingProducer? Receiver { get; set; }
+        public Task SendAsync(Antiphon.Messaging.ChannelReply reply, CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            return Fail ? Task.FromException(new InvalidOperationException("C584 producer failure"))
+                : Receiver!.SendAsync(reply, cancellationToken);
+        }
     }
 }

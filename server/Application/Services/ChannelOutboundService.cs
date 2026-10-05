@@ -125,6 +125,8 @@ public sealed class ChannelOutboundService
             }
             if (members.Any(m => m.ChannelReplySettledAt != null))
                 throw new ConflictException("A historical settled source cannot acquire a new owner.", "channel_outbound_source_settled");
+            if (members.Any(m => m.ChannelReplyDiscoveryClosedAt != null))
+                throw new ConflictException("A classified machine source cannot acquire a new owner.", "channel_outbound_source_closed");
 
             var now = _clock.GetUtcNow().UtcDateTime;
             var tasks = members.Where(m => m.SourceTaskId != null).Select(m => m.SourceTaskId!.Value)
@@ -170,7 +172,8 @@ public sealed class ChannelOutboundService
             _db.ChannelOutboundDeliveries.Add(delivery);
             await _db.SaveChangesAsync(ct);
             var claimed = await _db.SessionQueuedMessages.Where(m => memberIds.Contains(m.Id)
-                && m.ChannelOutboundDeliveryId == null && m.ChannelReplySettledAt == null)
+                && m.ChannelOutboundDeliveryId == null && m.ChannelReplySettledAt == null
+                && m.ChannelReplyDiscoveryClosedAt == null)
                 .ExecuteUpdateAsync(s => s.SetProperty(m => m.ChannelOutboundDeliveryId, delivery.Id), ct);
             if (claimed != memberIds.Length)
                 throw new ConflictException("A capture source was claimed concurrently.", "channel_outbound_members_owned");

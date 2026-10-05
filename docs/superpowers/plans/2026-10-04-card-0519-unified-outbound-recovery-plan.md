@@ -967,9 +967,10 @@ select CP-29 in a Linux invocation. A missing Windows lane leaves R-12 outstandi
 | CP-27 | S12b | `tests/Antiphon.Tests -> bin-c519-cp27/` | composed-files | `/*/*/ChannelOutboundComposedTransportTests/*` | R-9 | all 1 listed results, 0 failed/skipped | 1 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-28 | S12b | `tests/Antiphon.Tests -> bin-c519-cp28/` | manual-recovery | `/*/*/ChannelOutboundRecoveryTests/(Expired_publishing_lease_is_uncertain_until_explicit_retry*)\|(Held_head_blocks_later_reply_until_original_binding_is_repaired_and_resumed*)\|(Restart_preserves_two_inbound_slack_routes_behind_an_uncertain_head*)\|(Broker_ack_before_process_death_remains_uncertain_without_replay*)` | R-8 | all 4 listed results, 0 failed/skipped | 4 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-29 | S13 | `tests/Antiphon.Tests -> bin-c519-cp29/` | windows-parity | `/*/*/HerdrAlwaysOnChannelParityTests/AlwaysOn_channel_bound_survives_child_death_and_replies*` | R-12 | all 2 listed results, 0 failed/skipped | 2 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-30 | S5 | `tests/Antiphon.Tests -> bin-c519-cp30/` | discovery-s5 | `/*/*/ChannelOutboundDiscoveryTests/*` | V-5 (S5 subset) | all 14 S5 results, 0 failed/skipped | 14 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-30 | S5 | `tests/Antiphon.Tests -> bin-c519-cp30/` | discovery-s5 | `/*/*/ChannelOutboundDiscoveryTests/*` | V-5 (S5 subset) | all 16 S5 results, 0 failed/skipped | 16 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-31 | S5 | `tests/Antiphon.Tests -> bin-c519-cp31/` | dispatch-s5 | `/*/*/ChannelOutboundDispatchIntegrationTests/*` | R-1 (dispatcher) | all 10 results, 0 failed/skipped | 10 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-32 | S5 | `tests/Antiphon.Tests -> bin-c519-cp32/` | correlation-s5 | `/*/*/(ChannelPromptCorrelationTests*)\|(ChannelPromptCorrelationUnitTests*)\|(ChannelMachineTurnMatchTests*)/*` | R-3 | all 42 results, 0 failed/skipped | 42 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-33 | S5 | `tests/Antiphon.Tests -> bin-c519-cp33/` | capture-s5 | `/*/*/ChannelOutboundCaptureTests/*` | V-2 (capture regression) | all 5 results, 0 failed/skipped | 5 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
 Floors come from the specified new roster and inspected source attributes:
 S=4, C=5, M=12, U=8, D=14, T=5, B=22, F=8, P=5, L=6, X=21, W=5.
@@ -1156,11 +1157,11 @@ the caller own reconciliation of the later full-plan missing-catalog control.
 
 The original allocation's S5/CP-5 is superseded by the executable manifest,
 where CP-5 belongs to S4 and full discovery CP-8 waits for S9 prerequisites.
-S5 now runs only After=S5: CP-30, CP-31 and CP-32, serial, once on its committed
+S5 now runs only After=S5: CP-30, CP-31, CP-32 and CP-33, serial, once on its committed
 tip, with unchanged 15-minute row and 60-minute total deadlines. This adds
-18 estimated minutes; no whole Unit/assembly or Windows parity run.
+22 estimated minutes; no whole Unit/assembly or Windows parity run.
 
-CP-30 has fourteen single-result methods in ChannelOutboundDiscoveryTests:
+CP-30 has sixteen single-result methods in ChannelOutboundDiscoveryTests:
 C519_Startup_recovers_without_signal; C519_Timer_recovers_without_signal;
 C519_Default_off_does_not_discover; C519_Historical_match_requires_complete_prompt;
 C519_Historical_match_requires_marker; C519_Historical_match_requires_source_session;
@@ -1168,7 +1169,8 @@ C519_Historical_match_obeys_attempt_floors; C519_Historical_native_time_obeys_or
 C519_Historical_withholding_does_not_hide_a_later_receipt;
 C519_Historical_answer_stops_at_next_prompt; C519_Machine_context_must_predate_injection;
 C519_Discovery_closure_waits_for_complete_window; C519_Legacy_settled_sources_are_not_replayed;
-C519_Fair_cursors_and_finite_source_budget. The receipt is the complete fake producer
+C519_Fair_cursors_and_finite_source_budget; C519_Closed_machine_source_cannot_be_captured;
+C519_Complete_machine_batch_has_one_owner_for_every_member. The receipt is the complete fake producer
 envelope after the real capture/materialization/pump path, plus independently
 reloaded source/journal outcomes. It is not Kafka/gateway/provider receipt.
 
@@ -1200,3 +1202,35 @@ witnesses for PC-25..PC-32 and the open/next-prompt part of PC-33; its combined
 finite/fair method supplies partial witnesses for PC-34/PC-35/PC-98. Exact
 full-witness methods and missing-control discovery remain Mutation's responsibility.
 CARD-1061's hard-link reader gap remains unchanged and is not claimed fixed.
+
+S5 repair group 1: the first CP-32 run on 8e44520a7f2b786e8cd3dd228cc7ee43bc7b98fa
+found C584_RestartAndProducerFailure red (41/42 passed). A method-only isolated
+run at task base 90cd74bb5289c438ae0201b6a2dfae7f86aaccaa reproduced the same
+settlement assertion (0/1 passed): S4 had moved the producer into the service
+while this fixture still injected through the unused dispatcher constructor.
+The repaired fixture injects the producer into DI, explicitly observes the failed
+entry, then enables its real fake receiver; all original reopen/retry assertions
+remain. This diagnostic baseline is the sole non-manifest test, justified to
+classify inherited red; no timeout/assertion relaxation or retry was added.
+
+The same repair group makes policy closure authoritative at event dispatch and
+inside the capture transaction (reload under source-row lock plus conditional
+claim). CP-33 runs the full five-result capture class for that changed shared
+service. Complete machine batches retain all members: the opening complete
+receipt, common persisted attempt and entire composed batch are required, so
+quoted headers alone cannot add members. The two additional CP-30 methods and
+closure method extension exercise these guards with eligible companions.
+One final After=S5 run on the next committed tip requalifies all four rows;
+no rebuild per individual fix and at most one further repair round if necessary.
+
+| PC/variant (pending SourceLanding Mutation) | Deliberate guarded defect | Exact ordinary witness |
+|---|---|---|
+| PC-S5-1 / event closure | Remove MatchMachineSources' closed-source exclusion. | ChannelOutboundDiscoveryTests.C519_Discovery_closure_waits_for_complete_window: later attachment turn cannot resurrect the closed System source; fresh attachment companion captures and publishes. |
+| PC-S5-2 / transactional closure | Remove both closed-source rejection and the redundant closure predicate on conditional member assignment in CaptureAsync. | ChannelOutboundDiscoveryTests.C519_Closed_machine_source_cannot_be_captured: Conflict code, zero orphan/root/member assignment; fresh eligible companion publishes. |
+| PC-S5-3 / complete machine batch | Keep only the opening machine source when the complete shared-attempt composed batch is present. | ChannelOutboundDiscoveryTests.C519_Complete_machine_batch_has_one_owner_for_every_member: three independent members have the same root before preparation and all settle after one complete envelope. |
+
+PC-S5-1's publication safety also has the transactional fence: its event witness
+must observe the attempted admission to discriminate that exclusion alone from
+the remaining fence. Mutation owns missing-control discovery and reconciliation;
+no red/restore/green cycle is claimed by Code. Every pre-existing PC/variant and
+all three new S5 variants remain pending.

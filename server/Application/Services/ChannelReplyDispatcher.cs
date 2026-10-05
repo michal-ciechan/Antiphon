@@ -195,7 +195,7 @@ public sealed class ChannelReplyDispatcher
         var result = ChannelReplyDispatchResult.Empty;
         try
         {
-            result = await DispatchAsync(sessionId, ct);
+            result = await DispatchAsync(sessionId, null, ct);
 
             // Trailing text for an already-answered turn (stop marker mid-stream) goes out as a
             // follow-up. No-op unless this session's last dispatched turn is still the live one.
@@ -207,7 +207,7 @@ public sealed class ChannelReplyDispatcher
             // turn settled the Channel correlation. Attachments always; plain text for origins
             // in MachineTurnTextOrigins. Additive; never matches or settles Channel-origin rows.
             // The main path always wins first claim on the turn.
-            await DispatchMachineTurnFollowUpAsync(sessionId, ct);
+            await DispatchMachineTurnFollowUpAsync(sessionId, null, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -252,10 +252,10 @@ public sealed class ChannelReplyDispatcher
                 db, source.AgentSessionId, end.Value, ct))?.Id != prompt.Id)
                 continue;
             if (source.Origin == QueuedMessageOrigin.Channel)
-                await DispatchAsync(source.AgentSessionId, ct, prompt);
+                await DispatchAsync(source.AgentSessionId, prompt, ct);
             else
             {
-                await DispatchMachineTurnFollowUpAsync(source.AgentSessionId, ct, prompt);
+                await DispatchMachineTurnFollowUpAsync(source.AgentSessionId, prompt, ct);
                 if (next is not null)
                 {
                     var (text, _, apiError) = await ExtractTurnResponseAsync(db, source.AgentSessionId, prompt.Sequence, ct);
@@ -305,8 +305,8 @@ public sealed class ChannelReplyDispatcher
         }
     }
 
-    private async Task<ChannelReplyDispatchResult> DispatchAsync(Guid sessionId, CancellationToken ct,
-        TranscriptEntry? historicalPrompt = null)
+    private async Task<ChannelReplyDispatchResult> DispatchAsync(Guid sessionId,
+        TranscriptEntry? historicalPrompt, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -1294,8 +1294,8 @@ public sealed class ChannelReplyDispatcher
     /// A successful send records the <c>_dispatched</c> watermark so trailing AssistantText of the
     /// same turn follows via <see cref="DispatchFollowUpAsync"/>.
     /// </summary>
-    private async Task DispatchMachineTurnFollowUpAsync(Guid sessionId, CancellationToken ct,
-        TranscriptEntry? historicalPrompt = null)
+    private async Task DispatchMachineTurnFollowUpAsync(Guid sessionId,
+        TranscriptEntry? historicalPrompt, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -1365,8 +1365,7 @@ public sealed class ChannelReplyDispatcher
         {
             // Task/header routing is not a delivered-prompt receipt. Historical and event
             // dispatch share the complete matcher and original attempt floors.
-            matches = matches.Where(m => ChannelPromptCorrelation.MatchesMachineDelivery(
-                m, userPrompt, _correlationTolerance)).ToList();
+            matches = MatchMachineSources(matches, userPrompt);
             if (matches.Count > 0)
             {
                 var first = matches.OrderBy(m => m.Sequence).First();
@@ -1532,6 +1531,27 @@ public sealed class ChannelReplyDispatcher
             var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
             await channels.StampLastReplyAsync(provider, conversationId, text, ct);
         }
+    }
+
+    private List<SessionQueuedMessage> MatchMachineSources(List<SessionQueuedMessage> candidates,
+        TranscriptEntry prompt)
+    {
+        candidates = candidates.Where(m => m.ChannelReplyDiscoveryClosedAt == null).ToList();
+        var opening = candidates.Where(m => ChannelPromptCorrelation.MatchesMachineDelivery(
+            m, prompt, _correlationTolerance)).ToList();
+        var outer = opening.FirstOrDefault();
+        if (outer is null)
+            return [];
+        var batch = candidates.Where(m => m.Origin == outer.Origin && m.DeliveryAttempts > 0
+            && ChannelPromptCorrelation.SameDeliveredBatch(outer, m)).OrderBy(m => m.Sequence).ToList();
+        // A complete first member establishes the outer machine receipt. Subsequent members
+        // need the same persisted attempt and the entire composed batch, not a quoted header.
+        if (batch.Count > 1 && Normalize(prompt.Text!).StartsWith(
+            Normalize(ChannelPromptFormat.BatchContextMarker), StringComparison.Ordinal)
+            && PromptSubmissionMatch.IsCompleteIn(ChannelPromptFormat.FormatBatch(
+                batch.Take(batch.Count - 1).Select(m => m.Body).ToArray(), batch[^1].Body), prompt.Text!))
+            return batch;
+        return opening;
     }
 
     private static bool MatchesByTaskId(
