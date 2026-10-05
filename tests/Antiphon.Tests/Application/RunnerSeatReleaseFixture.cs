@@ -27,6 +27,8 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
+using Antiphon.Server.Api.Endpoints;
+using System.Security.Claims;
 using SessionRunnerSettings = Antiphon.Server.Application.Settings.SessionRunnerSettings;
 
 namespace Antiphon.Tests.Application;
@@ -50,6 +52,49 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
     public Guid CandidateId => Live?.SessionId ?? SessionId;
     public TerminalSeatObservationRequest Observation => new(Directory.StoreId, Now.AddHours(-1), "binding", 10);
     public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
+
+    public CapturingLoggerProvider AttentionLogs { get; } = new();
+
+    public async Task<AttentionDto> AttentionAsync()
+    {
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [], EnvironmentName = "Testing" });
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Logging.ClearProviders();
+        builder.Logging.AddProvider(AttentionLogs);
+        builder.Services.AddScoped(_ => Db());
+        builder.Services.AddScoped(sp => new AttentionService(sp.GetRequiredService<AppDbContext>(),
+            new AttentionServiceTests.FakeRunnerClient(), Options.Create(new SupervisionSettings()),
+            Options.Create(new DelegationSettings()), Clock, sp.GetRequiredService<ILogger<AttentionService>>()));
+        builder.Services.AddSingleton<AttentionSummaryCache>();
+        builder.Services.AddMemoryCache();
+        await using var app = builder.Build();
+        var credential = Guid.NewGuid().ToString("N");
+        app.Use(async (context, next) =>
+        {
+            if (context.Request.Headers["X-Test-Attention-Token"] != credential)
+            { context.Response.StatusCode = 401; return; }
+            context.User = new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.Name, "fixture-operator")], "fixture"));
+            await next(context);
+        });
+        app.MapAttentionEndpoints();
+        await app.StartAsync();
+        using var http = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        using (var refused = await http.GetAsync("/api/attention/"))
+            refused.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+        http.DefaultRequestHeaders.Add("X-Test-Attention-Token", credential);
+        return (await http.GetFromJsonAsync<AttentionDto>("/api/attention/"))!;
+    }
+
+    public async Task RecoverAttentionAsync()
+    {
+        await using var db = Db();
+        foreach (var id in await db.RunnerSeatReleases.Select(r => r.Id).ToListAsync())
+        {
+            using var scope = Harness.Provider.CreateScope();
+            await scope.ServiceProvider.GetRequiredService<TerminalRunnerSeatReleaseService>()
+                .ReconcileAcceptedAnswerAsync(id, default);
+        }
+    }
 
     public async Task<RunnerSeatDiscoveryResult> DiscoverAsync(int budget = 3, int pageSize = 2,
         RunnerSeatDiscoveryCursor? cursor = null, Func<string, CancellationToken, Task>? boundary = null)
@@ -683,7 +728,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         public List<string> Calls { get; } = [];
         public int ConditionalCommands => Calls.Count(p => p.EndsWith("/release-terminal-seat"));
         public int ForceCommands => Calls.Count(p => p.EndsWith("/kill") || p.EndsWith("/kill-generation") || p.EndsWith("/release"));
-        public TerminalSeatObservation Qualified { get; } = new(TerminalSeatQualificationStatus.Qualified,
+        public TerminalSeatObservation Qualified { get; set; } = new(TerminalSeatQualificationStatus.Qualified,
             new(TerminalTranscriptReadStatus.Success, TerminalTranscriptVerdict.Idle,
                 "binding", "file", 100, 12, 12, 11), "issued-token", TimeSpan.FromSeconds(120),
             new DateTimeOffset(2026, 10, 6, 0, 0, 0, TimeSpan.Zero)); // Runner clock is +24h.
