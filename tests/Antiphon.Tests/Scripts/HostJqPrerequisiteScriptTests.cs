@@ -13,6 +13,251 @@ public sealed class HostJqPrerequisiteScriptTests
 {
 
     [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1058_Open_descriptor_must_match_canonical_leaf()
+    {
+        foreach (var boundary in new[] { "P0", "F0" })
+        foreach (var mode in new[] { "check", "provision", "locked" })
+        foreach (var symlink in new[] { false, true })
+        {
+            using var f = new HostJqFixture(); await f.Identity();
+            var r = await f.AtMode(mode, [(boundary + ".after", () => f.Swap(symlink))]);
+            f.Calls.Length.ShouldBe(0, boundary == "P0" ? "c1058-pre-open-no-execution" : "c1058-fresh-leaf-no-execution");
+            r.Exit.ShouldBe(2, r.Output); r.Stdout.ShouldBeEmpty(); f.Trace.ShouldNotContain("download");
+            f.AssertObservations();
+        }
+        foreach (var native in new[] { true, false })
+        {
+            using var f = new HostJqFixture(); await f.Identity(); if (native) f.NativeControl();
+            var r = await f.Helper("check"); r.Exit.ShouldBe(0, "native/shebang descriptor control: " + r.Output);
+            f.AssertObservations(complete: true);
+        }
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1058_Digest_is_bound_to_open_descriptor()
+    {
+        foreach (var mode in new[] { "check", "provision" })
+        {
+            using var f = new HostJqFixture(); await f.Identity(); f.RawHash();
+            var r = await f.Observe(mode, [("H.before", () => f.Swap()), ("H.after", f.RestoreSwap)]);
+            r.Exit.ShouldBe(0, r.Output);
+            var hash = JsonNode.Parse(r.Stdout)!["digest"]!.GetValue<string>();
+            hash.ShouldBe(f.OriginalHash, "c1058-digest-original"); hash.ShouldNotBe(f.ReplacementHash);
+            f.Calls.Count(x => x.Contains("foreign", StringComparison.Ordinal)).ShouldBe(0);
+            f.Ledger.ShouldContain("H|/proc/self/fd/8|" + f.OriginalHash); f.AssertObservations(complete: true);
+        }
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1058_Installed_pin_is_checked_before_execution()
+    {
+        using (var f = new HostJqFixture())
+        {
+            await f.Identity(existing: false);
+            var r = await f.Observe("provision", [("unlink.after", () => f.Swap())]);
+            f.Calls.Length.ShouldBe(0, "c1058-installed-pin-no-execution");
+            f.Trace.ShouldNotContain("jq-call", Case.Sensitive, "installed pin precedes every execution");
+            r.Exit.ShouldBe(2, r.Output); r.Stdout.ShouldBeEmpty(); f.Receipts.ShouldBeEmpty();
+        }
+        using (var f = new HostJqFixture())
+        { await f.Identity(existing: false); (await f.Helper("provision")).Exit.ShouldBe(0, "healthy install"); }
+        foreach (var mode in new[] { "check", "provision" })
+        {
+            using var f = new HostJqFixture(); f.Existing("version-other");
+            var r = await f.Helper(mode); r.Exit.ShouldBe(0, r.Output);
+            var p = JsonNode.Parse(r.Stdout)!; p["version"]!.GetValue<string>().ShouldBe("jq-other");
+            p["digest"]!.GetValue<string>().ShouldBe(f.Hash(f.Destination));
+            f.Hash(f.Destination).ShouldNotBe(HostJqFixture.Pin); f.InstallEffects.ShouldBeEmpty();
+        }
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public Task C1058_Version_probe_uses_open_descriptor() => ProbeUsesDescriptor("H", "Qv", "c1058-version-foreign-zero");
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public Task C1058_True_probe_uses_open_descriptor() => ProbeUsesDescriptor("Qv", "Qt", "c1058-true-foreign-zero");
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public Task C1058_False_probe_uses_open_descriptor() => ProbeUsesDescriptor("Qt", "Qf", "c1058-false-foreign-zero");
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public Task C1058_Receipt_formatter_uses_open_descriptor() => ProbeUsesDescriptor("Qf", "Qj", "c1058-formatter-foreign-zero");
+
+    private async Task ProbeUsesDescriptor(string boundary, string probe, string label)
+    {
+        foreach (var mode in new[] { "check", "provision" })
+        foreach (var symlink in new[] { false, true })
+        {
+            using var f = new HostJqFixture(); await f.Identity();
+            var r = await f.Observe(mode, [(boundary + ".after", () => f.Swap(symlink))]);
+            f.Calls.Count(x => x.StartsWith("identity-call foreign " + probe + " ", StringComparison.Ordinal)).ShouldBe(0, label);
+            f.Calls.Count(x => x.StartsWith("identity-call original " + probe + " ", StringComparison.Ordinal)).ShouldBe(1, "original probe executes exactly once");
+            f.Trace.ShouldContain("jq-result original Qf 1 false");
+            f.Trace.ShouldContain("jq-result original Qj 0 {\"schema\":1", Case.Sensitive, "formatter produced real JSON");
+            r.Exit.ShouldBe(2, r.Output); r.Stdout.ShouldBeEmpty(); f.AssertObservations();
+        }
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1058_Changed_leaf_cannot_emit_success_proof()
+    {
+        foreach (var wrapper in new[] { false, true })
+        foreach (var mode in new[] { "check", "provision" })
+        foreach (var symlink in new[] { false, true })
+        {
+            using var f = new HostJqFixture(); await f.Identity();
+            if (wrapper) await f.InitializeRepo();
+            var r = await f.Observe(mode, [("Qj.after", () => f.Swap(symlink))], wrapper);
+            if (!wrapper) r.Stdout.ShouldBeEmpty("c1058-final-success-stdout-empty");
+            r.Exit.ShouldBe(2, r.Output); f.Receipts.ShouldBeEmpty("no persisted success after leaf replacement");
+            r.Output.ShouldNotContain("Host jq qualified");
+            f.Trace.ShouldContain("jq-result original Qj 0 {\"schema\":1");
+        }
+        using var good = new HostJqFixture(); await good.Identity(); await good.InitializeRepo();
+        var start = DateTime.UtcNow; var accepted = await good.Wrapper("check-host-jq");
+        accepted.Exit.ShouldBe(0, accepted.Output);
+        good.AssertReceipt("check-host-jq", "check", start, DateTime.UtcNow, installed: false);
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1058_Pre_execution_link_checks_are_independent()
+    {
+        foreach (var phase in new[] { "F0", "L0" })
+        foreach (var mode in new[] { "check", "provision", "locked" })
+        {
+            using var f = new HostJqFixture(); await f.Identity();
+            var r = await f.AtMode(mode, [((phase == "F0" ? "P0" : "F0") + ".after", f.Link), (phase + ".after", f.UnlinkAlias)]);
+            f.Calls.Length.ShouldBe(0, phase == "F0" ? "c1058-opened-link-no-execution" : "c1058-fresh-link-no-execution");
+            r.Exit.ShouldBe(2, r.Output); f.Snapshot(phase)[2].Split(' ')[2].ShouldBe("2");
+            (await f.NativeIdentity(f.Destination)).Split(' ')[2].ShouldBe("1"); f.AssertObservations();
+        }
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1058_Identity_comparisons_include_device()
+    {
+        foreach (var phase in new[] { "P0", "L0", "L1" })
+        foreach (var mode in new[] { "check", "provision" })
+        {
+            using var f = new HostJqFixture(); await f.Identity();
+            var tuple = (await f.NativeIdentity(f.Destination)).Split(' ');
+            var supplied = (ulong.Parse(tuple[0]) + 1) + " " + tuple[1] + " 1";
+            var r = await f.Observe(mode, [(phase + ".after", () => f.Supply("supply", supplied))]);
+            if (phase == "L1") r.Stdout.ShouldBeEmpty("c1058-final-device-stdout-empty");
+            else f.Calls.Length.ShouldBe(0, phase == "P0" ? "c1058-pre-device-no-execution" : "c1058-fresh-device-no-execution");
+            r.Exit.ShouldBe(2, r.Output); f.Snapshot(phase)[3].ShouldBe(supplied);
+            f.Snapshot(phase)[2].ShouldBe(string.Join(' ', tuple.Take(3))); f.AssertObservations();
+        }
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1058_Final_link_checks_are_independent()
+    {
+        foreach (var phase in new[] { "L1", "F1" })
+        foreach (var mode in new[] { "check", "provision" })
+        {
+            using var f = new HostJqFixture(); await f.Identity();
+            var r = await f.Observe(mode, [((phase == "L1" ? "Qj" : "L1") + ".after", f.Link), (phase + ".after", f.UnlinkAlias)]);
+            r.Stdout.ShouldBeEmpty(phase == "L1" ? "c1058-final-leaf-link-stdout-empty" : "c1058-final-fd-link-stdout-empty");
+            r.Exit.ShouldBe(2, r.Output); f.Snapshot(phase)[2].Split(' ')[2].ShouldBe("2");
+            f.Hash(f.Destination).ShouldBe(f.OriginalHash); f.AssertObservations();
+        }
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1058_Final_permission_checks_are_independent()
+    {
+        foreach (var phase in new[] { "L1", "F1" })
+        foreach (var mode in new[] { "check", "provision" })
+        {
+            using var f = new HostJqFixture(); await f.Identity();
+            // Only a mutant reaches this optional F1 callback in the L1 vector.
+            if (phase == "L1") await f.Supply("F1.before.action", "/usr/bin/chmod 755 \"$HJ_DEST\"");
+            try
+            {
+                var r = await f.Observe(mode, [((phase == "L1" ? "Qj.after" : "F1.before"), () => f.Mode(f.Destination, "644"))]);
+                r.Stdout.ShouldBeEmpty(phase == "L1" ? "c1058-final-leaf-access-stdout-empty" : "c1058-final-fd-access-stdout-empty");
+                r.Exit.ShouldBe(2, r.Output); f.Snapshot(phase)[4].ShouldBe("644");
+                f.Snapshot(phase)[2].Split(' ')[2].ShouldBe("1"); f.Hash(f.Destination).ShouldBe(f.OriginalHash);
+            }
+            finally { await f.Mode(f.Destination, "755"); }
+        }
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1058_Proof_is_buffered_until_final_admission()
+    {
+        using (var f = new HostJqFixture())
+        {
+            await f.Identity(); var r = await f.Observe("check", [("Qj.after", () => f.Swap())]);
+            r.Stdout.ShouldBeEmpty("c1058-buffered-stdout-empty"); r.Exit.ShouldBe(2);
+            f.Trace.ShouldContain("jq-result original Qj 0 {\"schema\":1");
+        }
+        using var good = new HostJqFixture(); await good.Identity(); var result = await good.Helper("check");
+        result.Exit.ShouldBe(0, result.Output); JsonNode.Parse(result.Stdout)!["schema"]!.GetValue<int>().ShouldBe(1);
+        result.Stdout.Trim().Split('\n').Length.ShouldBe(1, "exactly one buffered document");
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1058_Metadata_syntax_refuses()
+    {
+        foreach (var mode in new[] { "check", "provision" })
+        foreach (var phase in new[] { "P0", "F0", "L0", "L1", "F1", "all" })
+        foreach (var fault in new[] { "extra", "multiline", "missing", "device", "inode", "link" })
+        {
+            if (phase == "all" && fault is not ("device" or "inode")) continue;
+            using var f = new HostJqFixture(); await f.Identity();
+            var tuple = (await f.NativeIdentity(f.Destination)).Split(' ').Take(3).ToArray();
+            var supplied = fault switch
+            {
+                "extra" => string.Join(' ', tuple) + " suffix",
+                "multiline" => string.Join(' ', tuple) + "\nsecond",
+                "missing" => string.Join(' ', tuple.Take(2)),
+                "device" => "bad " + tuple[1] + " 1",
+                "inode" => tuple[0] + " bad 1",
+                _ => tuple[0] + " " + tuple[1] + " bad"
+            };
+            HostJqRun r;
+            if (phase == "all") { await f.Supply("supply-always", supplied); r = await f.Helper(mode); }
+            else r = await f.Observe(mode, [(phase + ".after", () => f.Supply("supply", supplied))]);
+            r.Exit.ShouldBe(2, fault switch { "device" => "c1058-device-syntax-refused", "inode" => "c1058-inode-syntax-refused", _ => "c1058-metadata-frame-refused" });
+            r.Stderr.ShouldContain("HostJqInvalid"); r.Stdout.ShouldBeEmpty();
+            if (phase is "P0" or "F0" or "L0" or "all") f.Calls.ShouldBeEmpty();
+            f.Snapshot(phase == "all" ? "P0" : phase)[3].ShouldBe(supplied.Replace('\n', '~'));
+        }
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1058_Observation_failures_are_invalid()
+    {
+        foreach (var mode in new[] { "check", "provision" })
+        foreach (var phase in new[] { "P0", "F0", "L0", "L1", "F1" })
+        {
+            using var f = new HostJqFixture(); await f.Identity();
+            var r = await f.Observe(mode, [(phase + ".after", () => f.Supply("status", "1"))]);
+            r.Exit.ShouldBe(2, "c1058-stat-status-refused: " + phase); r.Stderr.ShouldContain("HostJqInvalid");
+            r.Stdout.ShouldBeEmpty(); f.Trace.ShouldNotContain("download");
+        }
+        using (var f = new HostJqFixture())
+        {
+            await f.Identity();
+            var r = await f.Observe("provision", [("P0.after", () => { File.Delete(f.Destination); return Task.CompletedTask; })]);
+            f.Trace.ShouldNotContain("download", Case.Sensitive, "c1058-open-invalid-no-download");
+            r.Exit.ShouldBe(2); r.Stderr.ShouldContain("HostJqInvalid"); f.Calls.ShouldBeEmpty();
+        }
+        foreach (var mode in new[] { "check", "provision" })
+        foreach (var fault in new[] { "stat-unavailable", "hash-unavailable", "hash-status", "hash-syntax" })
+        {
+            using var f = new HostJqFixture(); await f.Identity(); f.RawHash();
+            if (fault == "stat-unavailable") await f.Supply("F0.before.action", "exec 8<&-");
+            if (fault == "hash-unavailable") await f.Supply("H.before.action", "exec 8<&-");
+            if (fault == "hash-status") await f.Supply("hash-status", "1");
+            if (fault == "hash-syntax") await f.Supply("hash-supply", "not-a-digest  file");
+            var r = await f.Helper(mode);
+            f.Calls.ShouldBeEmpty(fault == "hash-syntax" ? "c1058-hash-syntax-no-execution" : "c1058-hash-status-no-execution");
+            r.Exit.ShouldBe(2, fault + r.Output); r.Stderr.ShouldContain("HostJqInvalid");
+            r.Stdout.ShouldBeEmpty(); f.Trace.ShouldNotContain("download");
+        }
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1058_Check_rejects_canonical_hardlink()
     {
         // Put the transient witness first: later link guards cannot mask P0's policy.
@@ -63,6 +308,8 @@ public sealed class HostJqPrerequisiteScriptTests
             "c1058-install-single-link-before-probe");
         f.Trace.ShouldContain("jq-nlink 1", Case.Sensitive, "first probe observed");
         var hash = f.Hash(f.Destination); var identity = await f.NativeIdentity(f.Destination);
+        f.Ledger.Split('\n').Single(x => x.StartsWith("publish|", StringComparison.Ordinal)).Split('|')[2]
+            .ShouldBe(string.Join(' ', identity.Split(' ').Take(2)), "published destination inode retained after stage unlink");
         hash.ShouldBe(f.Hash(f.Payload));
         f.ClearTrace(); (await f.Helper("provision")).Exit.ShouldBe(0);
         f.InstallEffects.ShouldBeEmpty(); f.Hash(f.Destination).ShouldBe(hash);
@@ -85,6 +332,8 @@ public sealed class HostJqPrerequisiteScriptTests
             f.Ledger.ShouldContain("publish|2");
             if (fault == "unlink-after") f.Ledger.ShouldContain("unlink|1");
             (await f.NativeIdentity(f.Destination)).Split(' ')[2].ShouldBe("1");
+            f.Ledger.Split('\n').Single(x => x.StartsWith("publish|", StringComparison.Ordinal)).Split('|')[2]
+                .ShouldBe(string.Join(' ', (await f.NativeIdentity(f.Destination)).Split(' ').Take(2)), "failed stage unlink retains published inode");
             f.Sentinels().ShouldBe(sentinels);
             Directory.GetDirectories(f.Parent, ".antiphon-jq.*").ShouldBeEmpty();
         }
@@ -359,7 +608,8 @@ public sealed class HostJqPrerequisiteScriptTests
         foreach (var fault in new[] { "curl-exit", "truncated", "digest", "hash-exit", "tamper" })
         {
             using var f = new HostJqFixture(); f.Fault(fault);
-            var r = await f.Helper("provision"); r.Exit.ShouldBe(2, fault + r.Output);
+            var r = await f.Helper("provision");
+            r.Exit.ShouldBe(2, fault + r.Output);
             if (fault != "tamper") f.Trace.ShouldNotContain("stage ", Case.Sensitive, "digest-before-use: rejected download cannot reach staging");
             f.Trace.ShouldNotContain("publish", Case.Sensitive, fault == "curl-exit" ? "transfer-refused" : "digest-before-use");
             f.Trace.ShouldNotContain("jq-call", Case.Sensitive, "rejected artifact must not execute");
@@ -433,7 +683,18 @@ public sealed class HostJqPrerequisiteScriptTests
         foreach (var fault in new[] { "final-path", "final-version", "final-digest", "final-owner", "final-group", "final-mode", "final-true", "final-false", "path-absent" })
         {
             using var f = new HostJqFixture(); f.Fault(fault);
-            var r = await f.Helper("provision"); r.Exit.ShouldBe(2, fault + r.Output);
+            var r = await f.Helper("provision");
+            if (fault == "final-digest")
+            {
+                f.Trace.ShouldNotContain("jq-call", Case.Sensitive, "final-digest now refuses at the pre-execution installed pin");
+                r.Stderr.ShouldContain("HostJqInvalid");
+            }
+            if (fault is "final-owner" or "final-group" or "final-mode")
+            {
+                f.Trace.ShouldContain("fd-metadata /proc/self/fd/8 " + fault);
+                r.Stderr.ShouldContain(fault == "final-mode" ? "HostJqFinalModeInvalid" : "HostJqFinalOwnerInvalid");
+            }
+            r.Exit.ShouldBe(2, fault + r.Output);
             if (fault == "final-path") JsonNode.Parse(r.Stdout)!["reason"]!.GetValue<string>().ShouldBe("HostJqPathUnapproved", "final-path: no successful proof");
             else r.Stdout.ShouldBeEmpty(fault + ": success receipts=0");
             File.Exists(f.Destination).ShouldBeTrue("published file left for diagnosis");
@@ -905,8 +1166,8 @@ internal sealed class HostJqFixture : IDisposable
         WriteTool("hostname", "[ \"$fault\" != hostname ] || exit 1\necho fixture-host");
         WriteTool("uname", "if [ \"$1\" = -s ]; then [ \"$fault\" != os ] || { echo Darwin; exit 0; }; echo Linux; else [ \"$fault\" != arch ] || { echo aarch64; exit 0; }; echo x86_64; fi");
         WriteTool("sudo", "printf 'sudo %s\\n' \"$*\" >> \"$HJ_ROOT/trace\"\n[ \"$fault\" != sudo ] || exit 1\n[ \"$1\" = -n ] || exit 1\nshift; [ \"$1\" != -- ] || shift\nif [ \"$1\" = test ]; then [ \"$fault\" != parent-write ] || exit 1; fi\nexec \"$@\"");
-        WriteTool("stat", "last=${!#}\n[ \"$fault\" != parent-stat ] || [ \"$last\" != \"$HJ_DEST_PARENT\" ] || exit 1\nformat=$2\nif [ -d \"$last\" ] && [ \"$format\" = '%u %g %a' ]; then echo '0 0 755'; exit 0; fi\nif [ \"$last\" = \"$HJ_LOCK\" ]; then echo '0:0:755'; exit 0; fi\nif [ \"$format\" = '%u %g %a' ] && [ \"$last\" = \"$HJ_DEST\" ]; then\n case \"$fault\" in final-owner) echo '1 0 755';; final-group) echo '0 1 755';; final-mode) echo '0 0 777';; *) echo '0 0 755';; esac; exit 0; fi\nif [[ \"$last\" = */.antiphon-jq.*/jq ]] && [ \"$format\" = '%u:%g:%a' ]; then\n [ -f \"${last%/*}/owner\" ] || { echo '1654:1654:755'; exit 0; }\n case \"$fault\" in stage-owner) echo '1:0:755';; stage-mode) echo '0:0:777';; *) printf '0:0:'; /usr/bin/stat -c '%a' \"$last\";; esac; exit 0; fi\nexec /usr/bin/stat \"$@\"");
-        WriteTool("sha256sum", "last=${!#}\nprintf 'hash %s\\n' \"$last\" >> \"$HJ_ROOT/trace\"\n[ \"$fault\" != hash-exit ] || exit 1\nif [ \"$fault\" = final-digest ] && [ \"$last\" = \"$HJ_DEST\" ]; then echo 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  file'; exit 0; fi\nif /usr/bin/cmp -s \"$last\" \"$HJ_ROOT/payload\"; then printf '%s  %s\\n' '" + Pin + "' \"$last\"; else exec /usr/bin/sha256sum \"$@\"; fi");
+        WriteTool("stat", "last=${!#}\n[ \"$fault\" != parent-stat ] || [ \"$last\" != \"$HJ_DEST_PARENT\" ] || exit 1\nformat=$2\nif [ -d \"$last\" ] && [ \"$format\" = '%u %g %a' ]; then echo '0 0 755'; exit 0; fi\nif [ \"$last\" = \"$HJ_LOCK\" ]; then echo '0:0:755'; exit 0; fi\nif [ \"$format\" = '%u %g %a' ] && [[ \"$last\" = \"$HJ_DEST\" || \"$last\" = /proc/self/fd/8 ]]; then\n printf 'fd-metadata %s %s\\n' \"$last\" \"$fault\" >> \"$HJ_ROOT/trace\"\n case \"$fault\" in final-owner) echo '1 0 755';; final-group) echo '0 1 755';; final-mode) echo '0 0 777';; *) echo '0 0 755';; esac; exit 0; fi\nif [[ \"$last\" = */.antiphon-jq.*/jq ]] && [ \"$format\" = '%u:%g:%a' ]; then\n [ -f \"${last%/*}/owner\" ] || { echo '1654:1654:755'; exit 0; }\n case \"$fault\" in stage-owner) echo '1:0:755';; stage-mode) echo '0:0:777';; *) printf '0:0:'; /usr/bin/stat -c '%a' \"$last\";; esac; exit 0; fi\nexec /usr/bin/stat \"$@\"");
+        WriteTool("sha256sum", "last=${!#}\nprintf 'hash %s\\n' \"$last\" >> \"$HJ_ROOT/trace\"\n[ \"$fault\" != hash-exit ] || exit 1\nif [ \"$fault\" = final-digest ] && [[ \"$last\" = \"$HJ_DEST\" || \"$last\" = /proc/self/fd/8 ]]; then echo 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  file'; exit 0; fi\nif /usr/bin/cmp -s \"$last\" \"$HJ_ROOT/payload\"; then printf '%s  %s\\n' '" + Pin + "' \"$last\"; else exec /usr/bin/sha256sum \"$@\"; fi");
         WriteTool("curl", "printf 'download %s\\n' \"$*\" >> \"$HJ_ROOT/trace\"\nwhile [ \"$1\" != --output ]; do shift; done; out=$2\nprintf 'download-mode %s\\n' \"$(/usr/bin/stat -c %a \"${out%/*}\")\" >> \"$HJ_ROOT/trace\"\nif [ \"$fault\" = download-barrier ]; then echo ready > \"$HJ_ROOT/download-ready\"; /usr/bin/sleep .5; fi\nif [ \"$fault\" = truncated ] || [ \"$fault\" = digest ]; then printf bad > \"$out\"; else /usr/bin/cp \"$HJ_ROOT/payload\" \"$out\"; fi\n[ \"$fault\" != curl-exit ] || exit 1");
         WriteTool("install", "original=\"$*\"\nargs=(); owner=false; group=false\nwhile [ \"$#\" -gt 0 ]; do case \"$1\" in -o) owner=true; shift 2;; -g) group=true; shift 2;; *) args+=(\"$1\"); shift;; esac; done\nlast=${args[${#args[@]}-1]}\nif [[ \"$last\" = */.antiphon-jq.*/jq ]]; then\n printf 'stage %s\\n' \"$original\" >> \"$HJ_ROOT/trace\"\n [ \"$fault\" != stage-exit ] || exit 1\n if $owner && $group; then echo root > \"${last%/*}/owner\"; fi\nfi\n/usr/bin/install \"${args[@]}\" || exit $?\nif [ \"$fault\" = tamper ] && [[ \"$last\" = */.antiphon-jq.*/jq ]]; then printf corrupt >> \"$last\"; fi");
         WriteTool("ln", "printf 'publish %s\\n' \"$*\" >> \"$HJ_ROOT/trace\"\nsource=$3\nprintf 'stage-owner %s\\n' \"$(stat -c '%u:%g:%a' -- \"$source\")\" >> \"$HJ_ROOT/trace\"\nif [ \"$fault\" = publish-barrier ]; then echo ready > \"$HJ_ROOT/publish-ready\"; while [ ! -f \"$HJ_ROOT/publish-release\" ]; do /usr/bin/sleep .01; done; fi\n[ \"$fault\" != publish-exit ] || exit 1\n/usr/bin/ln \"$@\" || exit $?\nif [ \"$fault\" = final-path ]; then /usr/bin/cp \"$HJ_ROOT/payload\" \"$HJ_ROOT/tools/jq\"; /usr/bin/chmod 755 \"$HJ_ROOT/tools/jq\"; fi");
@@ -1011,6 +1272,39 @@ internal sealed class HostJqFixture : IDisposable
         (observed >= start && observed <= end).ShouldBeTrue("refusal-time");
     }
 
+    internal void RawHash() => File.WriteAllText(Control + "/raw-hash", "");
+    internal void NativeControl() { Existing(); OriginalHash = Hash(Destination); }
+    internal Task Supply(string name, string value) { File.WriteAllText(Control + "/" + name, value); return Task.CompletedTask; }
+    internal string[] Snapshot(string phase) => Ledger.Split('\n').Single(x => x.StartsWith(phase + "|", StringComparison.Ordinal)).Split('|');
+    internal async Task<HostJqRun> AtMode(string mode, (string Event, Func<Task> Action)[] barriers)
+    {
+        if (mode != "locked") return await Observe(mode, barriers);
+        File.Delete(Destination);
+        return await Locked(() => { IdentityExisting(); return Task.CompletedTask; }, () => Observe("provision", barriers));
+    }
+    internal void AssertObservations(bool complete = false)
+    {
+        var phases = new[] { "P0", "F0", "L0", "L1", "F1" };
+        var records = Ledger.Split('\n').Where(x => phases.Any(p => x.StartsWith(p + "|", StringComparison.Ordinal))).Select(x => x.Split('|')).ToArray();
+        records.Select(x => x[0]).ShouldBe(phases.Take(records.Length), "fixture ordered native snapshot ledger");
+        foreach (var record in records)
+        {
+            var native = record[2].Split(' '); native.Length.ShouldBe(3, "fixture native tuple");
+            native.ShouldAllBe(x => x.All(char.IsAsciiDigit), "fixture real decimal tuple");
+            record[5].Length.ShouldBe(64, "fixture native SHA-256");
+            if (record[0] is "F0" or "F1")
+                new[] { OriginalHash, ReplacementHash }.ShouldContain(record[5], "fixture independent byte hash of opened inode");
+            if (record[0] is "F0" or "F1") record[1].ShouldBe("/proc/self/fd/8", "fixture descriptor target");
+        }
+        if (complete) records.Length.ShouldBe(5, "fixture complete qualification observations");
+        var events = Ledger.Split('\n').Where(x => x.StartsWith("event|", StringComparison.Ordinal)).Select(x => x.Split('|')[2]).ToArray();
+        if (events.Contains("Qj.after"))
+        {
+            var expected = new[] { "P0.before", "P0.after", "F0.before", "F0.after", "L0.before", "L0.after", "H.before", "H.after", "Qv.after", "Qt.after", "Qf.after", "Qj.after", "L1.before", "L1.after", "F1.before", "F1.after" };
+            events.ShouldBe(expected.Take(events.Length), "fixture hash/probe/final observation order");
+        }
+    }
+
     internal string Control => Root + "/control";
     internal string Ledger => File.Exists(Control + "/ledger") ? File.ReadAllText(Control + "/ledger") : "";
     internal string[] Calls => Trace.Split('\n').Where(x => x.StartsWith("identity-call ")).ToArray();
@@ -1060,16 +1354,17 @@ internal sealed class HostJqFixture : IDisposable
             last=${!#}
             if [ "$2" != '%d %i %h' ]; then exec "$HJ_ROOT/tools/inner-stat" "$@"; fi
             phase=$(/usr/bin/cat "$HJ_ROOT/control/next")
-            case "$phase" in P0) next=F0;; F0) next=L0;; L0) next=H;; L1) next=F1;; F1) next=done;; *) echo bad-phase >&2; exit 97;; esac
+            case "$phase" in P0) next=F0;; F0) next=L0;; L0) next=L1;; L1) next=F1;; F1) next=done;; *) echo bad-phase >&2; exit 97;; esac
             observe "$phase.before" "$last"
             native=$(/usr/bin/stat "$@"); code=$?
             mode=$(/usr/bin/stat -Lc '%a' -- "$last" 2>/dev/null)
             hash=$(/usr/bin/sha256sum -- "$last" 2>/dev/null); hash=${hash%% *}
             supplied=$native
             observe "$phase.after" "$last"
-            if [ -f "$HJ_ROOT/control/supply" ]; then supplied=$(/usr/bin/cat "$HJ_ROOT/control/supply"); fi
-            if [ -f "$HJ_ROOT/control/status" ]; then code=$(/usr/bin/cat "$HJ_ROOT/control/status"); fi
-            printf '%s|%s|%s|%s|%s|%s\n' "$phase" "$last" "$native" "$supplied" "$mode" "$hash" >> "$HJ_ROOT/control/ledger"
+            if [ -f "$HJ_ROOT/control/supply-always" ]; then supplied=$(/usr/bin/cat "$HJ_ROOT/control/supply-always"); fi
+            if [ -f "$HJ_ROOT/control/supply" ]; then supplied=$(/usr/bin/cat "$HJ_ROOT/control/supply"); /usr/bin/rm "$HJ_ROOT/control/supply"; fi
+            if [ -f "$HJ_ROOT/control/status" ]; then code=$(/usr/bin/cat "$HJ_ROOT/control/status"); /usr/bin/rm "$HJ_ROOT/control/status"; fi
+            printf '%s|%s|%s|%s|%s|%s\n' "$phase" "$last" "${native//$'\n'/~}" "${supplied//$'\n'/~}" "$mode" "$hash" >> "$HJ_ROOT/control/ledger"
             echo "$next" > "$HJ_ROOT/control/next"
             printf '%s\n' "$supplied"
             exit "$code"
@@ -1122,6 +1417,7 @@ internal sealed class HostJqFixture : IDisposable
             local event=$1 target=$2 nonce parts
             nonce=$(/usr/bin/cat "$HJ_ROOT/control/nonce")
             printf 'event|%s|%s|%s\n' "$nonce" "$event" "$target" >> "$HJ_ROOT/control/ledger"
+            if [ -f "$HJ_ROOT/control/$event.action" ]; then . "$HJ_ROOT/control/$event.action"; fi
             if [ -f "$HJ_ROOT/control/$event.arm" ]; then
                 read -r -a parts < /proc/$$/stat
                 printf '%s %s %s\n' "$$" "${parts[21]}" "$nonce" >> "$HJ_ROOT/control/$event.ready"
