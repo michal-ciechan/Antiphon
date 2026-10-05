@@ -100,6 +100,7 @@ public class RunnerSeatOrphanSweepTests
             live.Observations.Count.ShouldBe(calls + 1);
             afterRunner.Hold.ShouldBe(TerminalRunnerSeatDecision.Unknown);
             afterRunner.Observation!.Token.ShouldBeNull();
+            await f.AdvanceAsync(releaseId, qualified.Request!);
             live.ConditionalCommands.ShouldBe(0, "a persisted reservation cannot manufacture fresh capture");
             live.Child.Kills.ShouldBe(0); live.Runtime.LiveSessionCount.ShouldBe(1);
             // A later legitimate delivery can reacquire proof; time/idle alone cannot.
