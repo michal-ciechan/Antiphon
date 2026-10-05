@@ -883,12 +883,44 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 ct);
             await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), ct);
 
-            await _messageQueue.FlushSessionAsync(session.Id, ct);
-
             var task = await _db.AgentTasks
                 .Where(t => t.AgentSessionId == session.Id && t.Status == AgentTaskStatus.Dispatched)
                 .OrderByDescending(t => t.DispatchedAt)
                 .FirstOrDefaultAsync(ct);
+            if (task is not null)
+            {
+                var marker = DelegationReportFormatter.TaskMarker(task.Id);
+                // Dispatch commits the claim before its singleton queue can persist the brief.
+                // Rules bootstrap also identifies its brief through SourceTaskId.
+                var hasBrief = await _db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == session.Id
+                    && m.Origin == QueuedMessageOrigin.Delegation
+                    && (m.ExecutionTaskId == task.Id || (m.SourceTaskId == task.Id && m.Body.Contains(marker))), ct);
+                var receivedBrief = !hasBrief && await _db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == session.Id
+                    && t.Kind == TranscriptKinds.UserPrompt && t.Text != null && t.Text.Contains(marker)
+                    && (task.DispatchedAt == null || (t.Timestamp ?? t.CreatedAt) > task.DispatchedAt), ct);
+                if (!hasBrief && !receivedBrief)
+                {
+                    var brief = AgentTaskDispatcher.FitBriefForTyping(task, _delegationSettings,
+                        AgentTaskDispatcher.CeilingsForBrief(_ptyProfile?.Ceilings, session.RunnerCwd, _delegationSettings),
+                        _logger, session.AgentKind, runnerCwd: session.RunnerCwd,
+                        stageRemoteSpill: string.IsNullOrWhiteSpace(session.RunnerCwd)
+                            ? null
+                            : spill => _messageQueue.StageRemoteSpill(session.Id, session.RunnerCwd, spill));
+                    await _messageQueue.EnqueueAsync(session.Id, brief, MessageSendMode.WhenIdle, ct,
+                        QueuedMessageOrigin.Delegation, deliverIfIdle: false,
+                        executionDeadlineAt: task.ExecutionDeadlineAt, executionTaskId: task.Id);
+                    _db.AgentTaskEvents.Add(new AgentTaskEvent
+                    {
+                        Id = Guid.NewGuid(), AgentTaskId = task.Id, Type = AgentTaskEventType.Warning,
+                        Detail = "brief re-queued: the interrupted dispatch died before its brief row was persisted",
+                        At = UtcNow(),
+                    });
+                    await _db.SaveChangesAsync(ct);
+                }
+            }
+
+            await _messageQueue.FlushSessionAsync(session.Id, ct);
+
             if (task is not null)
             {
                 _db.AgentTaskEvents.Add(new AgentTaskEvent

@@ -5123,10 +5123,27 @@ public sealed class AgentTaskDispatcher
             claimed, agent, session, program, attachedBundleKeys, verificationBinding, remoteCwd,
             $"task {DelegationReportFormatter.Short(claimed.Id)} on agent '{agent.Name}'",
             ct);
-        if (_taskLaunchSink is not null)
-            _taskLaunchSink.Enqueue(session.Id, agent.Id, session.StartedAt, spec);
-        else
-            _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, session.StartedAt, spec, remoteControlName: null, notes: null);
+        try
+        {
+            if (_taskLaunchSink is not null)
+                _taskLaunchSink.Enqueue(session.Id, agent.Id, session.StartedAt, spec);
+            else
+                _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, session.StartedAt, spec, remoteControlName: null, notes: null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The claim and Starting session already committed. Preserve them for the same
+            // interrupted-launch recovery used after a restart, and still persist the brief.
+            _logger.LogWarning(ex, "Task {ShortId}: launch enqueue refused after the committed claim",
+                DelegationReportFormatter.Short(claimed.Id));
+            _db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(), AgentTaskId = claimed.Id, Type = AgentTaskEventType.Warning,
+                Detail = $"launch enqueue refused after the committed claim: {ex.Message}; the Starting session awaits interrupted-launch recovery",
+                At = UtcNow(),
+            });
+            await _db.SaveChangesAsync(ct);
+        }
         await MaybeWarnOrchestratorWorkspaceAsync(claimed, agent, session.Id, ct);
 
         // The brief goes through the message QUEUE, never straight to the pty: that is the only path
