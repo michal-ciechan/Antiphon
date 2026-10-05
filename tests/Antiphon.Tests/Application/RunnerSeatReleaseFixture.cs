@@ -51,6 +51,15 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
     public TerminalSeatObservationRequest Observation => new(Directory.StoreId, Now.AddHours(-1), "binding", 10);
     public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
 
+    public async Task<RunnerSeatDiscoveryResult> DiscoverAsync(int budget = 3, int pageSize = 2,
+        RunnerSeatDiscoveryCursor? cursor = null, Func<string, CancellationToken, Task>? boundary = null)
+    {
+        using var scope = Harness.Provider.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<TerminalRunnerSeatReleaseService>();
+        service.BoundaryAsync = boundary;
+        return await service.DiscoverAsync(budget, pageSize, cursor, default);
+    }
+
     public async Task<TerminalRunnerSeatEvidence> AcquireAsync()
     {
         using var scope = Harness.Provider.CreateScope();
@@ -702,6 +711,11 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
 
     internal sealed class SeatDirectory(ISessionRunnerClient client) : ISessionRunnerDirectory
     {
+        public string RunnerId { get; set; } = "fixture";
+        public bool IsLocal { get; set; }
+        public IReadOnlyList<string>? RunnerIds { get; set; }
+        public Func<string?, Task<RunnerInventory>>? InventoryByRunner { get; set; }
+        public Func<string?, Task<RunnerDescriptor?>>? DescriptorByRunner { get; set; }
         public Guid StoreId { get; set; } = Guid.NewGuid();
         public Func<Task<RunnerCapabilitiesDto?>>? Capabilities { get; set; }
         public IReadOnlyList<string>? FeaturesOverride { get; set; }
@@ -719,22 +733,24 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         public ISessionRunnerClient ResolveForNewWork(string? runnerId) => RefuseNewWork
             ? throw new ServiceUnavailableException("fixture runner unavailable", "runner_unavailable") : Client;
         public int? DeclaredCapacity(string runnerId) => Capacity;
-        public Guid? GetLiveStoreId(string? runnerId) => LiveStoreOverride ?? StoreId;
+        public Guid? GetLiveStoreId(string? runnerId) => IsLocal ? null : LiveStoreOverride ?? StoreId;
         public async Task<RunnerDescriptor?> DescribeAsync(string? runnerId, CancellationToken ct)
         {
+            if (DescriptorByRunner is not null) return await DescriptorByRunner(runnerId);
             var caps = Capabilities is null
                 ? new RunnerCapabilitiesDto("fake", "fake", "fixture", false,
                     Features: [RunnerCapabilityFeatures.TerminalSeatReleaseV1], RunnerStoreId: StoreId)
                 : await Capabilities();
             if (FeaturesOverride is not null && caps is not null) caps = caps with { Features = FeaturesOverride };
-            return new("fixture", "fixture", "linux", null, Available, Recovered, Stale, 1, caps);
+            return new(RunnerId, RunnerId, "linux", null, Available, Recovered, Stale, 1, caps);
         }
-        public IReadOnlyList<string> KnownRunnerIds => ["fixture"];
+        public IReadOnlyList<string> KnownRunnerIds => RunnerIds ?? [RunnerId];
         public Task<SessionRunnerOwner?> GetOwnerAsync(Guid id, CancellationToken ct) => Task.FromResult<SessionRunnerOwner?>(new("fixture", StoreId, "/fixture"));
         public Task<SessionRunnerBinding> GetBindingAsync(Guid id, CancellationToken ct) => Task.FromResult<SessionRunnerBinding>(new SessionRunnerBinding.Remote(new("fixture", StoreId, "/fixture")));
         public async Task<RunnerInventory> GetInventoryAsync(string? id, CancellationToken ct)
         {
             InventoryCalls++;
+            if (InventoryByRunner is not null) return await InventoryByRunner(id);
             return Inventory is null ? new RunnerInventory.Unavailable("fixture inventory not supplied") : await Inventory();
         }
         public bool RemoteInventoryPending(string? runnerId) => !Recovered;

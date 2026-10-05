@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -32,6 +33,12 @@ public sealed class TerminalRunnerSeatReleaseService(
     IOptions<TerminalRunnerSeatReleaseOptions> options)
 {
     internal Func<string, CancellationToken, Task>? BoundaryAsync { get; set; }
+
+    // S3e test-first surface; discovery implementation follows the committed assertion-red run.
+    public Task<RunnerSeatDiscoveryResult> DiscoverAsync(int candidateBudget, int pageSize,
+        RunnerSeatDiscoveryCursor? continuation, CancellationToken ct) =>
+        Task.FromResult(new RunnerSeatDiscoveryResult([], 0, 0,
+            continuation ?? new(null, new Dictionary<string, Guid>())));
 
     /// <summary>Acquire runner-owned evidence for an inventory identity, including a seat with
     /// no server row. This does not reserve debt or grant ownership authority to release it.</summary>

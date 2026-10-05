@@ -14,6 +14,107 @@ namespace Antiphon.Tests.Application;
 public class RunnerSeatOrphanSweepTests
 {
     [Test]
+    public async Task Sweep_budget_is_bounded_and_resumes_fairly()
+    {
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(provider: "Codex", rowless: true);
+        var ids = Enumerable.Range(1, 8).Select(i => new Guid(i, 0, 0, new byte[8])).ToArray();
+        var inventory = ids.Select(id => new SessionRunnerSessionDto(id, null, f.Now.AddDays(-3), "Running",
+            null, AgentExitReason.Unknown, 0, AcceptedStartedAt: f.Now.AddDays(-3))).ToArray();
+        f.Directory.Inventory = () => Task.FromResult<RunnerInventory>(new RunnerInventory.Available(inventory));
+        RunnerSeatDiscoveryCursor? cursor = null;
+        var seen = new HashSet<Guid>();
+        for (var tick = 0; tick < 3; tick++)
+        {
+            var result = await f.DiscoverAsync(cursor: cursor, boundary: (cut, _) =>
+                cut == "Discovery:" + ids[0].ToString("D") ? throw new IOException("poisoned candidate") : Task.CompletedTask);
+            result.Candidates.Count.ShouldBe(3, "G-52: supplied budget must be used and never exceeded");
+            result.InventoryCalls.ShouldBe(1, "paging candidates must not repeat the full List RPC");
+            seen.UnionWith(result.Candidates.Select(c => c.SessionId));
+            cursor = result.Continuation;
+        }
+        seen.Count.ShouldBe(8, "PC-52: the saved continuation advances past a poisoned first candidate");
+        f.Live!.ConditionalCommands.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task One_runner_failure_does_not_hide_other_candidates()
+    {
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(provider: "Codex", rowless: true);
+        var live = f.Live!;
+        await live.SubmitAsync("healthy runner candidate");
+        var poison = new SessionRunnerSessionDto(Guid.Empty, null, f.Now, "Running", null,
+            AgentExitReason.Unknown, 0, AcceptedStartedAt: f.Now);
+        f.Directory.RunnerIds = ["broken", "fixture"];
+        f.Directory.InventoryByRunner = async id => id == "broken"
+            ? throw new IOException("unavailable runner")
+            : new RunnerInventory.Available(new[] { poison }.Concat(await live.Client.ListAsync(default)).ToArray());
+        Task Boundary(string cut, CancellationToken _) => cut == "Discovery:" + Guid.Empty.ToString("D")
+            ? throw new IOException("candidate failure") : Task.CompletedTask;
+        await f.DiscoverAsync(boundary: Boundary);
+        live.Clock.Advance(TimeSpan.FromSeconds(120));
+        var result = await f.DiscoverAsync(boundary: Boundary);
+        result.Released.ShouldBe(1, "PC-53: later runner and later candidate must confirm release");
+        live.Child.Kills.ShouldBe(1); live.ForceCommands.ShouldBe(0);
+        await using var db = f.Db();
+        (await db.RunnerSeatReleases.SingleAsync()).State.ShouldBe(RunnerSeatReleaseState.Confirmed);
+    }
+
+    [Test]
+    public async Task Unknown_server_session_with_idle_runner_is_released()
+    {
+        foreach (var phoneHome in new[] { false, true })
+        {
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(provider: "Codex", phoneHome: phoneHome, rowless: true);
+            f.Directory.IsLocal = !phoneHome;
+            f.Directory.RunnerId = phoneHome ? "fixture" : "desktop";
+            var live = f.Live!;
+            await live.SubmitAsync("rowless task with genuine native receipt");
+            var first = await f.DiscoverAsync();
+            first.Released.ShouldBe(0);
+            first.Candidates.ShouldHaveSingleItem().Disposition.ShouldBe("Waiting", "rowlessness cannot backdate the first observation");
+            live.Clock.Advance(TimeSpan.FromSeconds(119.999));
+            (await f.DiscoverAsync()).Released.ShouldBe(0);
+            live.Clock.Advance(TimeSpan.FromMilliseconds(1));
+            (await f.DiscoverAsync()).Released.ShouldBe(1, "PC-55: " + (phoneHome ? "phone-home" : "local"));
+            live.Child.Kills.ShouldBe(1); live.Runtime.LiveSessionCount.ShouldBe(0);
+            live.ConditionalCommands.ShouldBe(1); live.ForceCommands.ShouldBe(0);
+            live.Observations.ShouldAllBe(r => r.UseCapturedDeliveryEvidence && r.PromptBindingIdentity == "" && r.PromptFloorRevision == -1);
+            await using var db = f.Db();
+            (await db.AgentSessions.AnyAsync(s => s.Id == live.SessionId)).ShouldBeFalse("never synthesize a session row");
+            (await db.RunnerSeatReleases.SingleAsync()).State.ShouldBe(RunnerSeatReleaseState.Confirmed);
+        }
+    }
+
+    [Test]
+    public async Task Discovery_is_idempotent_across_restart()
+    {
+        foreach (var phoneHome in new[] { false, true })
+        {
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(provider: "Codex", phoneHome: phoneHome, rowless: true);
+            var live = f.Live!;
+            await live.SubmitAsync("deduplicated rowless generation");
+            await Task.WhenAll(f.DiscoverAsync(), f.DiscoverAsync());
+            Guid id;
+            await using (var db = f.Db())
+                id = (await db.RunnerSeatReleases.ToListAsync()).ShouldHaveSingleItem("PC-56: concurrent tuple upsert").Id;
+            await f.DiscoverAsync();
+            await f.RestartAsync();
+            live.Clock.Advance(TimeSpan.FromSeconds(120));
+            await Task.WhenAll(f.DiscoverAsync(), f.DiscoverAsync());
+            // An overlapping pass may see the queue gate held; a normal later pass finishes it.
+            await f.DiscoverAsync();
+            await f.RestartAsync();
+            await f.DiscoverAsync();
+            await using var read = f.Db();
+            var release = (await read.RunnerSeatReleases.ToListAsync()).ShouldHaveSingleItem("PC-56: restart/repeat preserves tuple identity");
+            release.Id.ShouldBe(id); release.ActionId.ShouldNotBeNull();
+            release.State.ShouldBe(RunnerSeatReleaseState.Confirmed);
+            live.ConditionalCommands.ShouldBe(1, "one durable action per generation");
+            live.Child.Kills.ShouldBe(1); live.ForceCommands.ShouldBe(0);
+        }
+    }
+
+    [Test]
     public async Task Discovery_request_uses_runner_owned_delivery_evidence()
     {
         foreach (var phoneHome in new[] { false, true })

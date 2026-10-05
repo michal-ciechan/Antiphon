@@ -32,3 +32,11 @@ public sealed record RunnerSlotReleaseDto(
     IReadOnlyList<RunnerSlotIntentOutcomeDto>? Intents = null);
 
 public sealed record RunnerSlotIntentOutcomeDto(Guid IntentId, Guid SessionId, string Outcome);
+
+/// <summary>Caller-retained scan position, never release authority. Inventory is fetched afresh
+/// on every pass; the existing List transport is not a paged or partial absence certificate.</summary>
+public sealed record RunnerSeatDiscoveryCursor(string? NextRunnerId, IReadOnlyDictionary<string, Guid> AfterSession);
+public sealed record RunnerSeatDiscoveryItem(string RunnerId, Guid SessionId, Guid? ReleaseId, string Disposition);
+public sealed record RunnerSeatDiscoveryResult(
+    IReadOnlyList<RunnerSeatDiscoveryItem> Candidates, int Released, int InventoryCalls,
+    RunnerSeatDiscoveryCursor Continuation);
