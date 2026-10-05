@@ -8,22 +8,35 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class EvidenceFolderTests : CheckpointTestBase
 {
     [Test]
-    public async Task tool_copy_removal_retries_while_a_file_is_still_held_open()
+    public void tool_copy_removal_retries_while_a_file_is_still_held_open()
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            Skip.Test("Native file-sharing retry proof requires Windows.");
+            return;
+        }
+
         var dir = TempDir();
         CheckpointFixtures.MarkRun(dir, alive: false);
-        Directory.CreateDirectory(Path.Combine(dir, "tool"));
-        var locked = Path.Combine(dir, "tool", "YamlDotNet.dll");
+        var tool = Path.Combine(dir, "tool");
+        Directory.CreateDirectory(tool);
+        var locked = Path.Combine(tool, "YamlDotNet.dll");
         File.WriteAllText(locked, "x");
-        var stream = new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.Read);
-        var release = Task.Run(async () =>
+        using var stream = new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var attempts = 0;
+        var receipt = new ToolCopyCleanup(beforeDelete: _ =>
         {
-            await Task.Delay(300);
-            stream.Dispose();
-        });
-        EvidenceFolder.TryRemoveToolCopy(dir);
-        await release;
-        Directory.Exists(Path.Combine(dir, "tool")).ShouldBeFalse();
+            attempts++;
+            Console.WriteLine($"held-file run={dir} attempt={attempts} elapsedMs={clock.Elapsed.TotalMilliseconds:F1}");
+            // The first native delete must encounter the held handle. Its retry
+            // enters this callback again, so release needs no background worker.
+            if (attempts == 2) stream.Dispose();
+        }).Remove(dir);
+        Console.WriteLine($"held-file outcome={receipt.Outcome} attempts={attempts} elapsedMs={clock.Elapsed.TotalMilliseconds:F1}");
+        receipt.Outcome.ShouldBe("Removed", "held-file-removed: the native sharing failure must be retried");
+        attempts.ShouldBe(2, "held-file-two-attempts: removal must follow exactly one native sharing failure");
+        Directory.Exists(tool).ShouldBeFalse("held-file-tool-absent: the removal receipt must match the filesystem");
     }
 
     [Test]

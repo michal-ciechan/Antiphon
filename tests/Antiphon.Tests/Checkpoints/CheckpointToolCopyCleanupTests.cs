@@ -204,7 +204,7 @@ public sealed class CheckpointToolCopyCleanupTests : CheckpointTestBase
     {
         var run = Run();
         var failed = new ToolCopyCleanup(beforeDelete: _ => throw new IOException("delete-denied")).Remove(run);
-        failed.Outcome.ShouldBe("Failed");
+        failed.Outcome.ShouldBe("Failed", "failed-delete-truthful: a denied delete must not report removal");
         Directory.Exists(Path.Combine(run, "tool")).ShouldBeTrue();
         new ToolCopyCleanup().Remove(run).Outcome.ShouldBe("Removed");
         Directory.Exists(Path.Combine(run, "tool")).ShouldBeFalse();
