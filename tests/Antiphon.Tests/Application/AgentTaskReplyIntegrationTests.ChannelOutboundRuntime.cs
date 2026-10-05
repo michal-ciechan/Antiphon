@@ -147,8 +147,10 @@ public partial class AgentTaskReplyIntegrationTests
             },
         });
         var converterHeld = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var converterMaterialized = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseConverter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Task? pumpTask = null;
+        Task? runtimeTask = null;
         BridgeQueueHarness? h = null;
 
         async Task RunHeldConverterAsync(Guid deliveryId)
@@ -166,6 +168,7 @@ public partial class AgentTaskReplyIntegrationTests
                 new ChannelReplyPreparation(new ChannelReplyAttachmentReader()));
             (await pump.TickAsync(CancellationToken.None)).ShouldBe(1);
             (await pump.TickAsync(CancellationToken.None)).ShouldBe(1);
+            converterMaterialized.TrySetResult(deliveryId);
             pump.ProbeBarrierAsync = async (boundary, id, ct) =>
             {
                 if (boundary != "before-conversion-observation" || id != deliveryId) return;
@@ -203,7 +206,12 @@ public partial class AgentTaskReplyIntegrationTests
                                 .SingleAsync(m => m.ChannelOutboundDeliveryId == id);
                             member.ChannelReplySettledAt.ShouldBeNull();
                             pumpTask = RunHeldConverterAsync(id);
-                            var first = await Task.WhenAny(converterHeld.Task, pumpTask)
+                            // Materialization and converter creation are setup work, bounded by
+                            // the checkpoint. Time only observation after that work commits.
+                            var first = await Task.WhenAny(converterMaterialized.Task, pumpTask);
+                            if (first == pumpTask) await pumpTask;
+                            (await converterMaterialized.Task).ShouldBe(id);
+                            first = await Task.WhenAny(converterHeld.Task, pumpTask)
                                 .WaitAsync(TimeSpan.FromSeconds(5), ct);
                             if (first == pumpTask) await pumpTask;
                             (await converterHeld.Task).ShouldBe(id);
@@ -278,8 +286,13 @@ public partial class AgentTaskReplyIntegrationTests
 
             // The admission hook starts a real conversion task. Its observation stays held while
             // this runtime must route the source answer and submit the next queued prompt.
-            await h.Runtime.ObserveTranscriptAsync(turnEnd, CancellationToken.None)
-                .WaitAsync(TimeSpan.FromSeconds(5));
+            runtimeTask = h.Runtime.ObserveTranscriptAsync(turnEnd, CancellationToken.None);
+            // Start the unchanged release budget at the actual converter-held condition,
+            // rather than charging the capture/materialization ticks to runtime release.
+            var observed = await Task.WhenAny(converterHeld.Task, runtimeTask);
+            if (observed == runtimeTask) await runtimeTask;
+            converterHeld.Task.IsCompletedSuccessfully.ShouldBeTrue();
+            await runtimeTask.WaitAsync(TimeSpan.FromSeconds(5));
             pumpTask.ShouldNotBeNull();
             pumpTask.IsCompleted.ShouldBeFalse();
             h.Adapter.SubmittedBodies.ShouldContain(nextPrompt);
@@ -331,6 +344,9 @@ public partial class AgentTaskReplyIntegrationTests
             if (pumpTask is not null)
                 try { await pumpTask.WaitAsync(TimeSpan.FromSeconds(10)); }
                 catch (Exception) { /* Preserve the primary assertion failure after barrier release. */ }
+            if (runtimeTask is not null)
+                try { await runtimeTask.WaitAsync(TimeSpan.FromSeconds(10)); }
+                catch (Exception) { /* Await the runtime before disposing its harness. */ }
             if (h is not null)
             {
                 await h.DisposeAsync();
