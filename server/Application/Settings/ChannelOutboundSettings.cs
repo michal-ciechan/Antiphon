@@ -6,6 +6,8 @@ namespace Antiphon.Server.Application.Settings;
 public sealed class ChannelOutboundSettings
 {
     public const string SectionName = "ChannelOutbound";
+    /// <summary>Opt-in activation of CARD-0519 capture. Keep false until the recovery slices are deployed together.</summary>
+    public bool UnifiedRecoveryEnabled { get; set; }
     public Dictionary<string, ChannelOutboundProfile> Profiles { get; set; } = new(StringComparer.Ordinal);
 }
 

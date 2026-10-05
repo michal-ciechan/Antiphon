@@ -31,6 +31,7 @@ public sealed class ChannelOutboundService
     private readonly TimeProvider _clock;
 
     internal Func<string, Guid, CancellationToken, Task>? ProbeBarrierAsync { get; set; }
+    public bool UnifiedRecoveryEnabled => _settings.UnifiedRecoveryEnabled;
 
     public ChannelOutboundService(AppDbContext db, IChannelOutboundFileStore files,
         IAntiphonMessagingProducer producer, IOptions<ChannelOutboundSettings> settings,
@@ -45,7 +46,7 @@ public sealed class ChannelOutboundService
 
     /// <summary>
     /// Capture without reading attachments, prompts, manifests or calling the producer.
-    /// Dormant until S4 switches the agent paths; legacy SendAsync remains unchanged.
+    /// Used by main/machine dispatch only when unified recovery is enabled.
     /// A tail supplies its root and never claims or settles that root's queue members.
     /// </summary>
     public async Task<ChannelOutboundDelivery> CaptureAsync(ChannelReply route,
@@ -279,7 +280,7 @@ public sealed class ChannelOutboundService
             d.ChannelId == channel.Id && d.State != ChannelOutboundDeliveryState.Published
             && d.State != ChannelOutboundDeliveryState.Failed, ct);
 
-        if (!qualifies && !hasOlderIntent)
+        if (!_settings.UnifiedRecoveryEnabled && !qualifies && !hasOlderIntent)
             return await PublishDirectAsync(reply, source, ct);
         if (channel is null)
             throw new InvalidOperationException("A queued reply requires a channel catalog row.");

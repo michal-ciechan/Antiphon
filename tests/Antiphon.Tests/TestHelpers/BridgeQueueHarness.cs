@@ -7,6 +7,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Files;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.ApiKeys;
@@ -167,6 +168,26 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         services.AddSingleton<CapacityRecoveryService>();
         services.AddScoped<ModelAvailability>();
         services.AddSingleton<ChannelReplyDispatcher>();
+        services.AddSingleton<IOptions<ChannelOutboundSettings>>(Options.Create(new ChannelOutboundSettings()));
+        services.AddSingleton<IOptions<AntiphonMessagingOptions>>(Options.Create(new AntiphonMessagingOptions()));
+        services.AddSingleton<IChannelOutboundFileStore>(new ChannelOutboundFileStore(Path.Combine(tempRoot, "outbound")));
+        services.AddSingleton<IChannelReplyAttachmentReader, ChannelReplyAttachmentReader>();
+        services.AddScoped<ChannelReplyPreparation>();
+        services.AddScoped<ChannelOutboundService>();
+        services.AddScoped<ChannelOutboundDeliveryPump>(sp =>
+        {
+            var db = sp.GetRequiredService<AppDbContext>();
+            var tasks = new AgentTaskService(db,
+                new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+                Options.Create(new DelegationSettings { AllowedRoots = [tempRoot] }), eventBus,
+                new RecordingSessionStopper(), clock, NullLogger<AgentTaskService>.Instance);
+            return new ChannelOutboundDeliveryPump(db, new OutboundConversionTaskRunner(db, tasks),
+                sp.GetRequiredService<IChannelOutboundFileStore>(), messaging,
+                sp.GetRequiredService<IOptions<AntiphonMessagingOptions>>(), clock,
+                NullLogger<ChannelOutboundDeliveryPump>.Instance,
+                sp.GetRequiredService<IOptions<ChannelOutboundSettings>>(),
+                sp.GetRequiredService<ChannelReplyPreparation>());
+        });
         services.AddScoped<ChatChannelService>();
         services.AddScoped<AgentSupervisorService>();
         services.AddScoped<IAlertService, AlertService>();
@@ -590,13 +611,21 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         return externalId;
     }
 
+    /// <summary>Explicit pump step; fixtures keep capture and publication assertions separate.</summary>
+    public async Task<int> TickOutboundAsync()
+    {
+        await using var scope = Provider.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<ChannelOutboundDeliveryPump>()
+            .TickAsync(CancellationToken.None);
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (!PreserveDatabaseOnDispose)
         await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(ConnectionString)))
         {
             var sessionIds = await db.AgentSessions
-                .Where(s => s.CardId == null && s.Cwd.StartsWith(TempRoot))
+                .Where(s => s.CardId == null && (s.Cwd.StartsWith(TempRoot) || s.Id == SessionId))
                 .Select(s => s.Id)
                 .ToListAsync();
             await db.ModelAvailabilityHolds
@@ -613,6 +642,11 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
                 .Where(t => sessionIds.Contains(t.AgentSessionId) || t.AgentSessionId == SessionId)
                 .ExecuteDeleteAsync();
             await db.ChannelInbounds.Where(i => i.AgentId == AgentId).ExecuteDeleteAsync();
+            var deliveries = db.ChannelOutboundDeliveries.Where(d => d.InboundAgentId == AgentId);
+            await db.AgentTasks.Where(t => t.OutboundDeliveryId != null
+                && deliveries.Any(d => d.Id == t.OutboundDeliveryId)).ExecuteDeleteAsync();
+            await deliveries.Where(d => d.RootDeliveryId != null).ExecuteDeleteAsync();
+            await deliveries.ExecuteDeleteAsync();
             await db.ChatChannels.Where(c => c.AgentId == AgentId).ExecuteDeleteAsync();
             await db.AgentIncidents.Where(i => i.AgentId == AgentId).ExecuteDeleteAsync();
             await db.Alerts.Where(a => a.AgentId == AgentId).ExecuteDeleteAsync();

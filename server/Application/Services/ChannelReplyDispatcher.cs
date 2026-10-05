@@ -136,7 +136,6 @@ public sealed class ChannelReplyDispatcher
     private sealed record DispatchedTurn(long PromptSeq, long MaxTextSeq, IReadOnlyList<ReplyTarget> Targets);
 
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly IAntiphonMessagingProducer _producer;
     private readonly Settings.ChannelBridgeSettings _settings;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<ChannelReplyDispatcher> _logger;
@@ -151,7 +150,6 @@ public sealed class ChannelReplyDispatcher
         IOptions<Settings.SupervisionSettings>? supervision = null)
     {
         _scopeFactory = scopeFactory;
-        _producer = producer;
         _settings = settings.Value;
         _timeProvider = timeProvider;
         _logger = logger;
@@ -407,7 +405,11 @@ public sealed class ChannelReplyDispatcher
                 new HashSet<Guid>(), matches.Select(m => m.Id).ToHashSet(), failed);
         }
 
-        var (bodyText, attachments) = PrepareReplyBody(responseText, sessionId);
+        var outbound = scope.ServiceProvider.GetRequiredService<ChannelOutboundService>();
+        var descriptor = ChannelReplyPreparation.Describe(responseText) with { MaxTextChars = _settings.MaxReplyChars };
+        var (bodyText, attachments) = outbound.UnifiedRecoveryEnabled
+            ? (descriptor.Text, new List<OutboundAttachment>())
+            : PrepareReplyBody(responseText, sessionId);
         var text = Truncate(bodyText);
         var kind = ClassifyKind(bodyText);
 
@@ -417,7 +419,6 @@ public sealed class ChannelReplyDispatcher
         var published = new HashSet<Guid>();
         var deferred = new HashSet<Guid>();
         var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
-        var outbound = scope.ServiceProvider.GetService<ChannelOutboundService>();
         foreach (var target in targets)
         {
             try
@@ -433,18 +434,18 @@ public sealed class ChannelReplyDispatcher
                 };
                 var targetRows = matches.Where(m => target.CorrelationIds.Contains(m.Id)).ToList();
                 ChannelOutboundSendOutcome outcome;
-                if (outbound is null)
+                var source = new ChannelOutboundSource(sessionId, userPrompt.Sequence,
+                    userPrompt.Sequence + 1, maxTextSeq, "main", target.CorrelationIds,
+                    targetRows.Select(m => m.SourceTaskId).FirstOrDefault(id => id.HasValue));
+                if (outbound.UnifiedRecoveryEnabled)
                 {
-                    await SettleAsync(db, targetRows, ct);
-                    await _producer.SendAsync(reply, ct);
-                    outcome = ChannelOutboundSendOutcome.Published;
+                    var delivery = await outbound.CaptureAsync(reply, source, descriptor, _settings, ct);
+                    outcome = delivery.State == ChannelOutboundDeliveryState.Published
+                        ? ChannelOutboundSendOutcome.Published : ChannelOutboundSendOutcome.Deferred;
                 }
                 else
                 {
-                    outcome = await outbound.SendAsync(reply, ChannelOutboundOrigin.AgentReply,
-                        new ChannelOutboundSource(sessionId, userPrompt.Sequence,
-                            userPrompt.Sequence + 1, maxTextSeq, "main", target.CorrelationIds,
-                            targetRows.Select(m => m.SourceTaskId).FirstOrDefault(id => id.HasValue)), ct);
+                    outcome = await outbound.SendAsync(reply, ChannelOutboundOrigin.AgentReply, source, ct);
                 }
                 if (outcome == ChannelOutboundSendOutcome.Published)
                 {
@@ -466,9 +467,12 @@ public sealed class ChannelReplyDispatcher
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _dispatched.TryRemove(sessionId, out _);
-                foreach (var m in matches.Where(m => target.CorrelationIds.Contains(m.Id)))
-                    m.ChannelReplySettledAt = null;
-                await db.SaveChangesAsync(CancellationToken.None);
+                if (!outbound.UnifiedRecoveryEnabled)
+                {
+                    foreach (var m in matches.Where(m => target.CorrelationIds.Contains(m.Id)))
+                        m.ChannelReplySettledAt = null;
+                    await db.SaveChangesAsync(CancellationToken.None);
+                }
                 _logger.LogError(ex,
                     "Producing the channel reply for session {SessionId} failed; target {ConversationId} remains owed",
                     sessionId, target.ConversationId);
@@ -1167,7 +1171,7 @@ public sealed class ChannelReplyDispatcher
         var text = Truncate(bodyText);
         var kind = ClassifyKind(bodyText);
         var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
-        var outbound = scope.ServiceProvider.GetService<ChannelOutboundService>();
+        var outbound = scope.ServiceProvider.GetRequiredService<ChannelOutboundService>();
         foreach (var target in turn.Targets)
         {
             var reply = new ChannelReply
@@ -1179,9 +1183,7 @@ public sealed class ChannelReplyDispatcher
                 Kind = kind,
                 Attachments = attachments,
             };
-            var outcome = outbound is null
-                ? await SendLegacyFollowUpAsync(reply, ct)
-                : await outbound.SendAsync(reply, ChannelOutboundOrigin.AgentReply,
+            var outcome = await outbound.SendAsync(reply, ChannelOutboundOrigin.AgentReply,
                     new ChannelOutboundSource(sessionId, turn.PromptSeq,
                         turn.MaxTextSeq + 1, claimed.MaxTextSeq, "trailing", []), ct);
             if (outcome == ChannelOutboundSendOutcome.Published)
@@ -1203,12 +1205,6 @@ public sealed class ChannelReplyDispatcher
         // the advanced watermark for a later fragment of the same turn.
         if (nextPromptSeq is not null)
             _dispatched.TryRemove(new KeyValuePair<Guid, DispatchedTurn>(sessionId, claimed));
-    }
-
-    private async Task<ChannelOutboundSendOutcome> SendLegacyFollowUpAsync(ChannelReply reply, CancellationToken ct)
-    {
-        await _producer.SendAsync(reply, ct);
-        return ChannelOutboundSendOutcome.Published;
     }
 
     /// <summary>
@@ -1311,14 +1307,17 @@ public sealed class ChannelReplyDispatcher
             return;
         }
 
-        var (impliedPaths, impliedTasks) = await CollectImpliedAttachmentsAsync(db, matches, ct);
+        var outbound = scope.ServiceProvider.GetRequiredService<ChannelOutboundService>();
+        var (impliedPaths, impliedTasks) = await CollectImpliedAttachmentsAsync(db, matches, ct,
+            describeOnly: outbound.UnifiedRecoveryEnabled);
 
         // CARD-0337 S3: an exact NO_REPLY with no explicit markers holds the bundle. The
         // orchestrator chose silence; S5's Done-time check catches it later.
         if (ChannelContracts.IsNoReply(responseText) && explicitPaths.Count == 0)
             return;
 
-        var hasAttachments = explicitPaths.Count > 0 || impliedPaths.Count > 0;
+        var hasAttachments = explicitPaths.Count > 0 || impliedPaths.Count > 0
+            || outbound.UnifiedRecoveryEnabled && impliedTasks.Count > 0;
         var deliverText = !hasAttachments && AdmitsMachineTurnText(matches);
         if (!hasAttachments && !deliverText)
         {
@@ -1349,11 +1348,20 @@ public sealed class ChannelReplyDispatcher
                 conversationKey, sessionId);
         }
 
-        var (bodyText, attachments) = PrepareReplyBody(responseText, sessionId, impliedPaths);
+        var descriptor = ChannelReplyPreparation.Describe(responseText) with
+        {
+            BundleTaskIds = impliedTasks.Select(t => t.Id).ToArray(),
+            RequiresAttachment = explicitPaths.Count == 0 && !AdmitsMachineTurnText(matches),
+            MaxTextChars = _settings.MaxReplyChars,
+        };
+        var (bodyText, attachments) = outbound.UnifiedRecoveryEnabled
+            ? (descriptor.Text, new List<OutboundAttachment>())
+            : PrepareReplyBody(responseText, sessionId, impliedPaths);
         // A remaining-text of NO_REPLY still sends — the marker is the explicit ask. Empty text
         // (the file IS the follow-up), never a skip.
         if (ChannelContracts.IsNoReply(bodyText))
             bodyText = "";
+        descriptor = descriptor with { Text = bodyText };
         var text = Truncate(bodyText);
         var kind = ClassifyKind(bodyText);
         var replyHandle = await ResolveInboundReplyHandleAsync(db, matches, channel?.ReplyHandle, ct);
@@ -1372,19 +1380,19 @@ public sealed class ChannelReplyDispatcher
                 Kind = kind,
                 Attachments = attachments,
             };
-            var outbound = scope.ServiceProvider.GetService<ChannelOutboundService>();
             ChannelOutboundSendOutcome outcome;
-            if (outbound is null)
+            var source = new ChannelOutboundSource(sessionId, userPrompt.Sequence,
+                userPrompt.Sequence + 1, maxTextSeq, "machine", target.CorrelationIds,
+                impliedTasks.FirstOrDefault()?.Id);
+            if (outbound.UnifiedRecoveryEnabled)
             {
-                await SettleAsync(db, matches, ct);
-                await _producer.SendAsync(reply, ct);
-                outcome = ChannelOutboundSendOutcome.Published;
+                var delivery = await outbound.CaptureAsync(reply, source, descriptor, _settings, ct,
+                    sourceTaskIds: impliedTasks.Select(t => t.Id).ToArray());
+                outcome = delivery.State == ChannelOutboundDeliveryState.Published
+                    ? ChannelOutboundSendOutcome.Published : ChannelOutboundSendOutcome.Deferred;
             }
             else
-                outcome = await outbound.SendAsync(reply, ChannelOutboundOrigin.AgentReply,
-                    new ChannelOutboundSource(sessionId, userPrompt.Sequence,
-                        userPrompt.Sequence + 1, maxTextSeq, "machine", target.CorrelationIds,
-                        impliedTasks.FirstOrDefault()?.Id), ct);
+                outcome = await outbound.SendAsync(reply, ChannelOutboundOrigin.AgentReply, source, ct);
             publicationAccepted = outcome == ChannelOutboundSendOutcome.Published;
             if (outcome == ChannelOutboundSendOutcome.Published)
             {
@@ -1399,7 +1407,7 @@ public sealed class ChannelReplyDispatcher
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            if (!publicationAccepted)
+            if (!publicationAccepted && !outbound.UnifiedRecoveryEnabled)
             {
                 foreach (var m in matches)
                     m.ChannelReplySettledAt = null;
@@ -1414,7 +1422,7 @@ public sealed class ChannelReplyDispatcher
             return;
         }
 
-        if (matches.All(m => m.ChannelOutboundDeliveryId is null))
+        if (!outbound.UnifiedRecoveryEnabled && matches.All(m => m.ChannelOutboundDeliveryId is null))
         {
             var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
             await channels.StampLastReplyAsync(provider, conversationId, text, ct);
@@ -1463,7 +1471,7 @@ public sealed class ChannelReplyDispatcher
     private static async Task<(List<string> Paths, List<AgentTask> Tasks)> CollectImpliedAttachmentsAsync(
         AppDbContext db,
         IReadOnlyList<SessionQueuedMessage> matches,
-        CancellationToken ct)
+        CancellationToken ct, bool describeOnly = false)
     {
         var paths = new List<string>();
         var tasks = new List<AgentTask>();
@@ -1477,6 +1485,12 @@ public sealed class ChannelReplyDispatcher
                 || string.IsNullOrWhiteSpace(task.DeliverableBundleDir)
                 || task.DeliverableDeliveredAt is not null)
                 continue;
+            if (describeOnly)
+            {
+                // Bundle identity is sufficient before capture. The pump reads its manifest/files.
+                tasks.Add(task);
+                continue;
+            }
             var files = DeliverableBundleService.ListAttachableFiles(task);
             if (files.Count == 0)
                 continue;

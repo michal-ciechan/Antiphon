@@ -9,7 +9,12 @@ namespace Antiphon.Server.Application.Services;
 
 /// <summary>Pure turn description. Paths are retained as descriptors, never opened here.</summary>
 public sealed record ChannelReplyBodyDescriptor(string OriginalResponse, string Text,
-    IReadOnlyList<string> AttachmentPaths);
+    IReadOnlyList<string> AttachmentPaths)
+{
+    public IReadOnlyList<Guid> BundleTaskIds { get; init; } = [];
+    public bool RequiresAttachment { get; init; }
+    public int? MaxTextChars { get; init; }
+}
 
 public sealed record ChannelReplyTaskDescriptor(Guid TaskId, string? BundleDirectory);
 
@@ -29,8 +34,7 @@ public sealed record ChannelReplyPrepared(ChannelReply Reply, string PromptText,
     string PromptRevision, string? SourceManifestJson);
 
 /// <summary>
-/// S2 preparation primitive, deliberately not registered or invoked by live dispatch yet.
-/// The materialization pump owns staging, retries and state transitions in S3.
+/// Preparation runs only after capture. The materialization pump owns staging and retries.
 /// </summary>
 public sealed class ChannelReplyPreparation(IChannelReplyAttachmentReader reader)
 {
@@ -62,6 +66,7 @@ public sealed class ChannelReplyPreparation(IChannelReplyAttachmentReader reader
         if (capture is not { Version: 1, Route: not null, Body: not null,
                 MemberIds: not null, Tasks: not null, MaxAttachmentBytes: > 0 }
             || capture.Body.AttachmentPaths is null || capture.Body.OriginalResponse is null
+            || capture.Body.BundleTaskIds is null || capture.Body.BundleTaskIds.Count > 64
             || capture.Body.AttachmentPaths.Count > 64 || capture.AttachmentRoots is null || capture.AttachmentRoots.Count > 64
             || capture.Body.Text is null || capture.Route.Attachments is null || capture.Route.Attachments.Count != 0
             || string.IsNullOrWhiteSpace(capture.Route.Channel)
@@ -78,7 +83,43 @@ public sealed class ChannelReplyPreparation(IChannelReplyAttachmentReader reader
         var budget = capture.MaxAttachmentBytes;
         var attachments = new List<OutboundAttachment>();
         var notes = new List<string>();
-        foreach (var path in capture.Body.AttachmentPaths)
+        var paths = capture.Body.AttachmentPaths.ToList();
+        string? manifest = null;
+        foreach (var task in capture.Tasks.Where(t => t.BundleDirectory is not null
+            && (t.TaskId == delivery.SourceTaskId || capture.Body.BundleTaskIds.Contains(t.TaskId))))
+        {
+            string? taskManifest;
+            try
+            {
+                taskManifest = await reader.ReadTextAsync(
+                    Path.Combine(task.BundleDirectory!, DeliverableBundleService.SourceManifestName),
+                    [task.BundleDirectory!], MaxCaptureBytes, ct);
+            }
+            catch (FileNotFoundException) { taskManifest = null; }
+            if (task.TaskId == delivery.SourceTaskId) manifest = taskManifest;
+            if (!capture.Body.BundleTaskIds.Contains(task.TaskId)) continue;
+            if (taskManifest is not null)
+            {
+                var sources = JsonSerializer.Deserialize<DeliverableBundleService.SourceManifest>(taskManifest, JsonOptions);
+                if (sources is not { Version: 1, Sources: not null })
+                    throw new InvalidDataException("The captured bundle source manifest is invalid.");
+                paths.AddRange(sources.Sources.Select(s => s.StoredFile).Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Where(DeliverableBundleService.IsSafeStoredSourceName)
+                    .Select(name => Path.Combine(task.BundleDirectory!, name)).Take(65));
+            }
+            else
+            {
+                // Legacy bundles retain the existing restricted extension fallback. All byte reads
+                // still go through the captured-root/regular-file reader below.
+                paths.AddRange(Directory.EnumerateFiles(task.BundleDirectory!)
+                    .Where(p => p.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
+                        || Path.GetFileName(p).EndsWith("-sources.zip", StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(p => p, StringComparer.OrdinalIgnoreCase).Take(65));
+            }
+        }
+        if (paths.Count > 64)
+            throw new InvalidDataException("The captured bundle exceeds the attachment descriptor budget.");
+        foreach (var path in paths.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             // Read failures remain preparation failures; the pump, not extraction, owns retries.
             byte[] bytes;
@@ -96,10 +137,11 @@ public sealed class ChannelReplyPreparation(IChannelReplyAttachmentReader reader
         var text = capture.Body.Text;
         if (notes.Count > 0)
             text = text.Length == 0 ? string.Join("\n", notes) : text + "\n\n" + string.Join("\n", notes);
-        var bundle = capture.Tasks.FirstOrDefault(t => t.TaskId == delivery.SourceTaskId)?.BundleDirectory;
-        var manifest = bundle is null ? null
-            : await reader.ReadTextAsync(Path.Combine(bundle, DeliverableBundleService.SourceManifestName), [bundle], MaxCaptureBytes, ct);
-        var reply = capture.Route with { Text = text, Attachments = attachments };
+        if (capture.Body.RequiresAttachment && attachments.Count == 0 && notes.Count == 0)
+            throw new InvalidDataException("The machine origin requires an attachment; no source bytes were prepared.");
+        if (capture.Body.MaxTextChars is > 0 and var max && text.Length > max)
+            text = text[..max] + "…";
+        var reply = capture.Route with { Text = text.Length == 0 ? null : text, Attachments = attachments };
         var prompt = "";
         if (prepareConversion && capture.Profile is { } profile
             && (profile.Trigger == "EveryAgentReply" || ChannelOutboundService.MatchesMarkdownSources(reply, manifest)))
