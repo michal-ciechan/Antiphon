@@ -55,6 +55,25 @@ public class TerminalRunnerSeatReleaseTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Remote_shared_release_keeps_intentional_warm_pooling(bool sweep)
+    {
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync();
+        await f.EditAsync((task, _) => task.Workspace = WorkspaceMode.Shared);
+        if (sweep) await f.SweepAsync();
+        else await f.ReleaseFromSettlementAsync();
+        f.RecordedStops.Killed.ShouldBeEmpty();
+        f.Wire.Calls.ShouldBeEmpty();
+        await using var db = f.Db();
+        var agent = await db.Agents.SingleAsync(a => a.Id == f.AgentId);
+        agent.Status.ShouldBe(AgentStatus.Idle);
+        agent.PoolIdleSince.ShouldBe(f.Now);
+        agent.PoolReservedForRootTaskId.ShouldBe(f.TaskId);
+        (await db.RunnerSeatReleases.CountAsync()).ShouldBe(0);
+    }
+
+    [Test]
     public async Task Working_session_keeps_ownership_and_visible_debt()
     {
         foreach (var status in new[] { AgentTaskStatus.Failed, AgentTaskStatus.Succeeded, AgentTaskStatus.Blocked })
@@ -114,7 +133,18 @@ public class TerminalRunnerSeatReleaseTests
             await f.Live!.SubmitAsync("completed blocked task");
             await f.SettleAsync(syncBlock ? "done" : "blocked");
             (await f.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Blocked);
-            if (syncBlock) (await f.TaskAsync()).FailureReason.ShouldNotBeNull();
+            if (syncBlock)
+            {
+                var settled = await f.TaskAsync();
+                settled.NextStage.ShouldBe(PipelineHandoffKind.Decide);
+                settled.NextHandoff.ShouldBe("Runner sync blocked (runner_sync_branch_mismatch): repair the desktop checkout or the task branch "
+                    + "on origin, then reply to this task for a fresh completion report.");
+                await using var syncDb = f.Db();
+                (await syncDb.AgentTaskEvents.Where(e => e.AgentTaskId == f.TaskId && e.Type == AgentTaskEventType.Warning)
+                    .Select(e => e.Detail).ToListAsync()).ShouldContain(
+                        "Runner sync refused: runner_sync_branch_mismatch. The report is retained and the desktop checkout was left as found; repair it, then reply "
+                        + "to this task for a fresh completion report.");
+            }
             f.Live.Child.Kills.ShouldBe(0);
             f.Clock.Advance(TimeSpan.FromSeconds(120));
             await f.JobAsync();

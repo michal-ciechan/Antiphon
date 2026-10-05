@@ -305,8 +305,10 @@ public class RunnerSlotEndpointTests
         f.Directory.Inventory = async () =>
         {
             var listed = await f.Live.Client.ListAsync(default);
-            await SeedRunningSessionAsync(f.Schema.ConnectionString, sessionId, f.Now.AddHours(-1), f.Directory.StoreId);
-            await SeedOpenTaskAsync(f.Schema.ConnectionString, sessionId, f.Now);
+            await SeedRunningSessionAsync(f.Schema.ConnectionString, sessionId, f.Now.AddHours(-1), f.Directory.StoreId,
+                runnerId: "fixture");
+            await SeedOpenTaskAsync(f.Schema.ConnectionString, sessionId, f.Now,
+                runnerId: "fixture", status: AgentTaskStatus.Dispatched);
             return new RunnerInventory.Available(listed);
         };
         using var response = await host.PostOperatorAsync("/api/session-runners/fixture/slots/release-orphans",
@@ -314,6 +316,7 @@ public class RunnerSlotEndpointTests
         response.EnsureSuccessStatusCode();
         var released = (await response.Content.ReadFromJsonAsync<RunnerSlotReleaseDto>(Json))!;
         released.Released.ShouldBe(0); released.Deferred.ShouldBe(1);
+        released.Dispositions!.ShouldHaveSingleItem().Disposition.ShouldBe("Owned");
         f.Live.Child.Kills.ShouldBe(0); f.Live.ForceCommands.ShouldBe(0);
         await using var verify = f.Db();
         (await verify.AgentTasks.CountAsync(task =>
@@ -400,7 +403,8 @@ public class RunnerSlotEndpointTests
         await db.SaveChangesAsync();
     }
 
-    private static async Task SeedOpenTaskAsync(string connectionString, Guid sessionId, DateTime now)
+    private static async Task SeedOpenTaskAsync(string connectionString, Guid sessionId, DateTime now,
+        string? runnerId = null, AgentTaskStatus status = AgentTaskStatus.Working)
     {
         var id = Guid.NewGuid();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
@@ -416,11 +420,12 @@ public class RunnerSlotEndpointTests
             ModelLevel = AgentModelLevel.Frontier,
             Workspace = WorkspaceMode.Shared,
             WorkingDirectory = "/work",
-            Status = AgentTaskStatus.Working,
+            Status = status,
             ReplyTo = AgentTaskReplyTo.None,
             CreatedAt = now,
             ConcurrencyToken = Guid.NewGuid(),
             AgentSessionId = sessionId,
+            RunnerId = runnerId,
         });
         await db.SaveChangesAsync();
     }
@@ -430,7 +435,8 @@ public class RunnerSlotEndpointTests
             .AddInterceptors(interceptor)
             .Options;
 
-    private static async Task SeedRunningSessionAsync(string connectionString, Guid sessionId, DateTime now, Guid storeId)
+    private static async Task SeedRunningSessionAsync(string connectionString, Guid sessionId, DateTime now, Guid storeId,
+        string runnerId = "grok-linux")
     {
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
         db.AgentSessions.Add(new AgentSession
@@ -445,7 +451,7 @@ public class RunnerSlotEndpointTests
             CreatedAt = now,
             StartedAt = now,
             LastSeenAt = now,
-            RunnerId = "grok-linux",
+            RunnerId = runnerId,
             RunnerStoreId = storeId,
             RunnerCwd = "/work",
         });

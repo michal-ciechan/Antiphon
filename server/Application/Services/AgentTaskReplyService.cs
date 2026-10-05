@@ -2366,13 +2366,6 @@ public sealed class AgentTaskReplyService
         IServiceProvider services, AppDbContext db, AgentTask task, DateTime now, CancellationToken ct,
         bool killSession = true)
     {
-        // Settlement and its parent obligation are already committed. Never share its dirty
-        // tracker with the coordinator, and never fall back to a stopper after a held release.
-        await using (var releaseScope = _scopeFactory.CreateAsyncScope())
-        {
-            var terminalSeats = releaseScope.ServiceProvider.GetService<TerminalRunnerSeatReleaseService>();
-            if (terminalSeats is not null && await terminalSeats.TryHandleTaskAsync(task.Id, ct)) return;
-        }
         if (task.AgentId is not Guid agentId)
             return;
 
@@ -2411,6 +2404,15 @@ public sealed class AgentTaskReplyService
                 "Delegate '{Name}' pooled warm in {Dir} (reserved for run {Root} first)",
                 agent.Name, agent.WorkingDirectory, DelegationReportFormatter.Short(task.RootTaskId));
             return;
+        }
+
+        // Settlement and its parent obligation are already committed. Intentional Shared
+        // pooling above keeps ownership; every other remote retirement (including unpooled
+        // Shared) uses conditional evidence. Never fall through after a hold or unsupported peer.
+        await using (var releaseScope = _scopeFactory.CreateAsyncScope())
+        {
+            var terminalSeats = releaseScope.ServiceProvider.GetService<TerminalRunnerSeatReleaseService>();
+            if (terminalSeats is not null && await terminalSeats.TryHandleTaskAsync(task.Id, ct)) return;
         }
 
         // CARD-0085 / CARD-0221: do not kill now (a kill on a false Failed is how you kill a live
