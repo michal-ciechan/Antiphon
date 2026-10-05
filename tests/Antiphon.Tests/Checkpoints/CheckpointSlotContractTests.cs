@@ -268,12 +268,12 @@ public sealed class CheckpointSlotContractTests
             await timing.PhaseAsync("renew-http", handler.RenewObserved.Task);
             await timing.PhaseAsync("renew-diagnostic", emitted.Task);
             var renewal = log.Single(line => line.Contains("operation=renew", StringComparison.Ordinal));
-            renewal.ShouldContain("status=404", "renew-status-preserved");
-            renewal.ShouldContain("renew gone", "renew-body-preserved");
+            renewal.Contains("status=404", StringComparison.Ordinal).ShouldBeTrue("renew-status-preserved");
+            renewal.Contains("renew gone", StringComparison.Ordinal).ShouldBeTrue("renew-body-preserved");
             await timing.PhaseAsync("lease-disposed", owner.ReleaseAsync());
             var release = log.Single(line => line.Contains("operation=release", StringComparison.Ordinal));
-            release.ShouldContain("status=404", "release-status-preserved");
-            release.ShouldContain("release gone", "release-body-preserved");
+            release.Contains("status=404", StringComparison.Ordinal).ShouldBeTrue("release-status-preserved");
+            release.Contains("release gone", StringComparison.Ordinal).ShouldBeTrue("release-body-preserved");
             handler.DeleteCount.ShouldBe(1);
         });
 
