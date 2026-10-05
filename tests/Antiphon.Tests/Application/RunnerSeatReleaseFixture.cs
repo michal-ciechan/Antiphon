@@ -543,7 +543,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
             var uri = new Uri(_app.Urls.Single());
             uri.IsLoopback.ShouldBeTrue(); uri.Port.ShouldNotBe(17204);
             _http = new HttpClient { BaseAddress = uri, Timeout = TimeSpan.FromSeconds(10) };
-            Client = new SessionRunnerHttpClient(_http, new ClientFactory(_http),
+            Client = new SessionRunnerHttpClient(_http, new LoopbackClientFactory(uri),
                 Options.Create(new SessionRunnerSettings { BaseUrl = uri.ToString() }));
         }
 
@@ -630,6 +630,13 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
             { Kills++; Exited?.Invoke(new(0, "KilledByRequest")); return Task.FromResult(true); }
             public Task<ChildScreen?> ReadScreenAsync(CancellationToken ct) => Task.FromResult<ChildScreen?>(null);
             public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
+
+        // The production read client disposes each factory-created HttpClient. Mutation
+        // requests keep their separate long-lived client, as in the real DI registration.
+        private sealed class LoopbackClientFactory(Uri address) : IHttpClientFactory
+        {
+            public HttpClient CreateClient(string name) => new() { BaseAddress = address, Timeout = TimeSpan.FromSeconds(10) };
         }
     }
 
