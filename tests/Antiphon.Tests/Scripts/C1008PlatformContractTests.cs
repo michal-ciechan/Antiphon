@@ -87,7 +87,7 @@ public sealed class C1008PlatformContractTests
             var label = "c1050-first-statement: " + identity;
             methods.Length.ShouldBe(1, label);
             var first = methods[0].Body?.Statements.FirstOrDefault();
-            (first is not null && first.IsEquivalentTo(SyntaxFactory.ParseStatement("C1008HostFixture.RequireNativeLinux();")))
+            (first is not null && SyntaxFactory.AreEquivalent(first, SyntaxFactory.ParseStatement("C1008HostFixture.RequireNativeLinux();")))
                 .ShouldBeTrue(label);
         }
     }
