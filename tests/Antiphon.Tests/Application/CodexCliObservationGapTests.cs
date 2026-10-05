@@ -2,6 +2,7 @@ using System.Text;
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
@@ -40,7 +41,14 @@ public sealed class CodexCliObservationGapTests
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(25));
             try
             {
-                await UntilAsync(() => w.Recipient.SnapshotReads >= 2, deadline.Token);
+                try { await UntilAsync(() => w.Recipient.SnapshotReads >= 2, deadline.Token); }
+                catch
+                {
+                    await using var diagnostic = w.Context();
+                    var failed = await diagnostic.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == session);
+                    Console.WriteLine($"C1029 GROK launch status={failed.Status} failure={failed.FailureReason} rules={failed.GrokRulesFailure}");
+                    throw;
+                }
                 w.Recipient.Terminals[session].Inputs.ShouldBeEmpty("C1029-pc-262 no input before provider readiness");
                 await w.FlushAsync(session);
                 w.Recipient.Terminals[session].Inputs.ShouldBeEmpty("C1029-pc-262 queue also respects readiness");
@@ -79,6 +87,7 @@ public sealed class CodexCliObservationGapTests
             await w.DispatchAsync();
             var task = await TaskAsync(w, id);
             var observed = ObserveFile(w, task);
+            Console.WriteLine($"C1029 CLAUDE requestedSpill={spill} EBytes={Encoding.UTF8.GetByteCount(w.Freeze.Full[id])} inlineCeiling={Limits(w, task).BriefInlineMaxBytes}");
             w.Launch(); await w.JoinLaunchAsync();
             if (busy)
             {
@@ -135,6 +144,8 @@ public sealed class CodexCliObservationGapTests
                 retried.Workspace.ShouldBe(WorkspaceMode.Worktree);
                 retried.RunnerId.ShouldBe(original.RunnerId);
                 retried.Attempt.ShouldBe(original.Attempt + 1);
+                retried.Status.ShouldBe(AgentTaskStatus.Dispatched, "C959-pc-192 retry actually claimed; see C1029 EVENT diagnostics");
+                retried.AgentSessionId.ShouldNotBeNull();
                 retried.AgentSessionId.ShouldNotBe(oldSession, "C959-pc-192 retry targets a new session");
                 var observed = ObserveFile(w, retried);
                 w.Launch(); await w.JoinLaunchAsync();
@@ -292,7 +303,14 @@ public sealed class CodexCliObservationGapTests
             var task = await TaskAsync(w, id);
             var row = await QueueAsync(w, id);
             var observed = ObserveFile(w, task);
-            var held = HoldPrompts(w);
+            var held = new List<Submitted>();
+            w.Recipient.RecordPrompt = (session, text) =>
+            {
+                var actual = new Submitted(session, text, DateTimeOffset.UtcNow);
+                held.Add(actual);
+                w.Recipient.Append(session, TranscriptKinds.UserPrompt, actual.Text, timestamp: actual.Timestamp);
+                return Task.CompletedTask;
+            };
             w.Launch(); await w.JoinLaunchAsync();
             w.Fault.QueueId = row.Id; w.Fault.Verdict = true;
             await w.EligibleAsync(task.AgentSessionId!.Value);
@@ -307,7 +325,10 @@ public sealed class CodexCliObservationGapTests
             w.Clock.Advance(TimeSpan.FromSeconds(37)); // Original interrupted-attempt age, not a changed timeout.
             await w.RecreateAsync(task.AgentSessionId.Value);
             (await QueueAsync(w, id)).LastDeliveryStartedAt.ShouldBe(interrupted.LastDeliveryStartedAt);
-            await ReleaseAsync(w, task.AgentSessionId.Value, held);
+            // The actual recipient record survived the lost verdict save. Ingesting it
+            // through the replacement graph must settle the original row without typing.
+            await w.EligibleAsync(task.AgentSessionId.Value);
+            await w.FlushAsync(task.AgentSessionId.Value);
             await AssertReceiptAsync(w, task, observed, "post-input/busy=" + busyAfterRecreate);
             var settled = await QueueAsync(w, id);
             settled.Id.ShouldBe(row.Id);
@@ -356,15 +377,21 @@ public sealed class CodexCliObservationGapTests
         };
         return observed;
     }
-    private static string? SpillPath(World w, AgentTask task, SessionQueuedMessage row) => w.Remote
-        ? row.RemoteSpillRelativePath is { } relative ? Path.Combine(task.RemoteWorktreePath!, relative) : null
+    private static PtyDeliveryCeilings Limits(World w, AgentTask task) => w.Harness.Delegation
+        .CeilingsFor(PtyBackend.InboxConhost, "selected fixture delivery backend").ForAgentKind(task.AgentKind);
+    private static bool MustSpill(World w, AgentTask task) =>
+        Encoding.UTF8.GetByteCount(w.Freeze.Full[task.Id]) > Limits(w, task).BriefInlineMaxBytes;
+    private static string? SpillPath(World w, AgentTask task, SessionQueuedMessage row) => !MustSpill(w, task) ? null : w.Remote
+        ? Path.Combine(task.RemoteWorktreePath!, TypedBodySpill.InboxRelativePath(row.Id.ToString("D")))
         : Path.Combine(task.WorkingDirectory, ".antiphon", $"task-{DelegationReportFormatter.Short(task.Id)}-brief.md");
     private static string ExpectedWire(World w, AgentTask task, SessionQueuedMessage row)
     {
         var full = w.Freeze.Full[task.Id];
-        var path = w.Remote ? row.RemoteSpillRelativePath is null ? null : TypedBodySpill.InboxRelativePath(row.Id.ToString("D"))
-            : Path.Combine(task.WorkingDirectory, ".antiphon", $"task-{DelegationReportFormatter.Short(task.Id)}-brief.md");
-        return path is null ? full.TrimEnd() : DelegationReportFormatter.BuildBriefPointer(w.Freeze.Tasks[task.Id], w.Harness.Delegation, path, full.Length, task.AgentKind).TrimEnd();
+        if (!MustSpill(w, task)) return full.TrimEnd();
+        var path = w.Remote ? TypedBodySpill.InboxRelativePath(row.Id.ToString("D")) : SpillPath(w, task, row)!;
+        return DelegationReportFormatter.BuildBriefPointer(w.Freeze.Tasks[task.Id], w.Harness.Delegation,
+            path, full.Length, task.AgentKind, maxWireBytes: w.Remote ? Limits(w, task).SingleWriteMaxBytes : null,
+            boundSpillPath: w.Remote ? path : null).TrimEnd();
     }
     private static async Task AssertRetainedAsync(World w, AgentTask task)
     {
@@ -380,7 +407,9 @@ public sealed class CodexCliObservationGapTests
         var full = w.Freeze.Full[task.Id];
         full.ShouldContain(Body); full.ShouldNotContain("\r");
         var expected = ExpectedWire(w, task, q);
-        var spilled = !w.Remote || q.RemoteSpillRelativePath is not null;
+        var spilled = MustSpill(w, task);
+        if (w.Remote) q.RemoteSpillRelativePath.ShouldBe(spilled ? TypedBodySpill.InboxRelativePath(q.Id.ToString("D")) : null, "C1029 independently selected spill path");
+        Encoding.UTF8.GetByteCount(expected).ShouldBeLessThanOrEqualTo(Limits(w, task).SingleWriteMaxBytes, "C1029 unchanged write ceiling");
         if (spilled)
         {
             observed.Exists.ShouldBe(true, "C1029 file exists before pointer " + vector);
@@ -403,6 +432,11 @@ public sealed class CodexCliObservationGapTests
         var receipts = await db.TranscriptEntries.AsNoTracking().Where(e => e.AgentSessionId == task.AgentSessionId
             && e.Kind == TranscriptKinds.UserPrompt && e.Text == expected
             && e.Sequence > (q.LastDeliveryBaselineSequence ?? 0)).ToListAsync();
+        if (q.LastDeliveryBaselineSequence is null)
+        {
+            var timestampFloor = q.LastDeliveryStartedAt.ShouldNotBeNull().AddSeconds(-30);
+            receipts = receipts.Where(e => e.Timestamp >= timestampFloor).ToList();
+        }
         receipts.ShouldHaveSingleItem("C1029 complete selected recipient W " + vector);
         q.Status.ShouldBe(QueuedMessageStatus.Sent);
         q.DeliveryVerdict.ShouldBeOneOf(DeliveryVerdict.Delivered, DeliveryVerdict.LateConfirmed);

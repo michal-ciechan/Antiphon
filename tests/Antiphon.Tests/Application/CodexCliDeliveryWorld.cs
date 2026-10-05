@@ -88,6 +88,9 @@ internal static partial class CodexCliRemoteDeliveryFixture
                         sp.GetRequiredService<ISessionRunnerClient>(), sp.GetRequiredService<IOptions<PhoneHomeRunnerSettings>>(),
                         sp.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System, sp.GetRequiredService<RemoteSpillCourier>()));
                 });
+            // Rules preflight reads the local capabilities surface; the selected adapter
+            // independently checks the remote capabilities before its framed launch.
+            Host.Local.Capabilities = Recipient.Capabilities();
             Peer = await Host.ConnectPeerAsync(storeId: _store, bootId: _boot, capabilities: Recipient.Capabilities());
             Peer.Reply = request => dispatcher.DispatchAsync(request, CancellationToken.None).GetAwaiter().GetResult();
             Host.Directory.MarkRecovered(await Host.WaitLiveAsync());
@@ -168,6 +171,14 @@ internal static partial class CodexCliRemoteDeliveryFixture
             }
             await Tick();
             if (Remote) { await Harness.Provider.GetRequiredService<RemoteWorkspacePreparer>().WhenIdleAsync(); await Tick(); }
+            await using var db = Context();
+            foreach (var task in await db.AgentTasks.AsNoTracking().ToListAsync())
+            {
+                Console.WriteLine($"C1029 DISPATCH task={task.Id} attempt={task.Attempt} status={task.Status} session={task.AgentSessionId}");
+                if (task.Status != AgentTaskStatus.Dispatched)
+                    foreach (var e in await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == task.Id).OrderBy(e => e.At).ToListAsync())
+                        Console.WriteLine($"C1029 EVENT task={task.Id} type={e.Type} detail={e.Detail}");
+            }
         }
         public void Launch() => Launches.Release(Harness.Provider.GetRequiredService<AgentSessionLaunchQueue>());
         public Task JoinLaunchAsync() => Harness.Provider.GetRequiredService<AgentSessionLaunchQueue>()
@@ -180,7 +191,12 @@ internal static partial class CodexCliRemoteDeliveryFixture
         public Task FlushAsync(Guid session) => Harness.Queue.FlushSessionAsync(session, CancellationToken.None);
         private async Task CloseGraphAsync()
         {
-            if (!_graph) return;
+            if (!_graph)
+            {
+                if (Peer is not null) await Peer.DisposeAsync();
+                if (Host is not null) await Host.DisposeAsync();
+                return;
+            }
             await JoinLaunchAsync();
             await Harness.Provider.GetRequiredService<RemoteWorkspacePreparer>().WhenIdleAsync();
             await Harness.DisposeAsync();
