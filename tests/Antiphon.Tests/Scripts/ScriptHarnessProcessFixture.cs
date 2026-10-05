@@ -22,7 +22,7 @@ internal static class ScriptHarnessProcessFixture
                     new LinuxScriptHarnessProcess(request);
             });
 
-    private static string ResolveInstalledPowerShell()
+    internal static string ResolveInstalledPowerShell()
     {
         var path = Environment.GetEnvironmentVariable("PATH") ?? "";
         foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))

@@ -28,6 +28,13 @@ if ($IsWindows) {
 [System.IO.File]::WriteAllText((Join-Path $observer 'root.tmp'), "$identityPrefix$PID $($root.StartTime.ToUniversalTime().Ticks) $nativeStart")
 [System.IO.File]::Move((Join-Path $observer 'root.tmp'), (Join-Path $observer 'root'))
 
+if ($IsWindows -and $Case -eq 'HandleProbe') {
+    [void][System.Reflection.Assembly]::LoadFrom($HelperPath)
+    [WindowsScriptHandleProbe]::WriteReceipt($observer, $Nonce)
+    Start-Sleep -Seconds 20
+    exit 0
+}
+
 if ($Case -in @('LiveRoot','ExitedStdout','ExitedStderr','Cancellation','Silent','Race')) {
     $held = switch ($Case) {
         'ExitedStdout' { 'stdout' }
