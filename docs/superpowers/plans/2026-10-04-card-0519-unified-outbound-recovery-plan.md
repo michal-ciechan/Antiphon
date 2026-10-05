@@ -978,6 +978,15 @@ select CP-29 in a Linux invocation. A missing Windows lane leaves R-12 outstandi
 | CP-38 | S6 | `tests/Antiphon.Tests -> bin-c519-cp38/` | outbound-s6 | `/*/*/ChannelOutboundDeliveryTests/*` | R-5 ordering/legacy regression | all 38 results, 0 failed/skipped | 38 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-39 | S6 | `tests/Antiphon.Tests -> bin-c519-cp39/` | policy-s6 | `/*/*/(ChannelOutboundPolicyTests*)\|(ChannelOutboundContractTests*)/*` | R-5 binding/conversion regression | all 31 results, 0 failed/skipped | 31 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-40 | S6 | `tests/Antiphon.Tests -> bin-c519-cp40/` | deadlines-s6 | `/*/*/ChannelOutboundDeadlineTests/*` | R-6 conversion deadlines | all 13 results, 0 failed/skipped | 13 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-41 | S7 | `tests/Antiphon.Tests -> bin-c519-cp41/` | retry-s7 | `/*/*/ChannelOutboundRetryPolicyTests/*` | V-7 S7 subset | all 22 results, 0 failed/skipped | 22 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-42 | S7 | `tests/Antiphon.Tests -> bin-c519-cp42/` | recovery-s7 | `/*/*/ChannelOutboundRecoveryTests/(Expired_publishing_lease_is_uncertain_until_explicit_retry*)\|(Held_head_blocks_later_reply_until_original_binding_is_repaired_and_resumed*)\|(Resume_held_after_conversion_returns_to_ready*)` | R-8 S7 manual recovery | all 3 results, 0 failed/skipped | 3 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-43 | S7 | `tests/Antiphon.Tests -> bin-c519-cp43/` | outbound-s7 | `/*/*/ChannelOutboundDeliveryTests/*` | R-5 default-off publication/ordering | all 38 results, 0 failed/skipped | 38 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-44 | S7 | `tests/Antiphon.Tests -> bin-c519-cp44/` | policy-s7 | `/*/*/(ChannelOutboundPolicyTests*)\|(ChannelOutboundContractTests*)/*` | R-5 binding/conversion | all 31 results, 0 failed/skipped | 31 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-45 | S7 | `tests/Antiphon.Tests -> bin-c519-cp45/` | deadlines-s7 | `/*/*/ChannelOutboundDeadlineTests/*` | R-6 conversion deadlines | all 13 results, 0 failed/skipped | 13 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-46 | S7 | `tests/Antiphon.Tests -> bin-c519-cp46/` | dispatch-s7 | `/*/*/ChannelOutboundDispatchIntegrationTests/*` | R-1 dispatcher | all 10 results, 0 failed/skipped | 10 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-47 | S7 | `tests/Antiphon.Tests -> bin-c519-cp47/` | tails-s7 | `/*/*/ChannelOutboundTrailingRecoveryTests/*` | V-6 trailing retry regression | all 8 results, 0 failed/skipped | 8 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-48 | S7 | `tests/Antiphon.Tests -> bin-c519-cp48/` | materialization-s7 | `/*/*/ChannelOutboundMaterializationTests/*` | V-3 S3 preparation subset | all 12 results, 0 failed/skipped | 12 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-49 | S7 | `tests/Antiphon.Tests -> bin-c519-cp49/` | discovery-s7 | `/*/*/ChannelOutboundDiscoveryTests/*` | V-5 existing S5 subset | all 16 results, 0 failed/skipped | 16 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
 Floors come from the specified new roster and inspected source attributes:
 S=4, C=5, M=12, U=8, D=14, T=5, B=22, F=8, P=5, L=6, X=21, W=5.
@@ -1346,3 +1355,57 @@ fair-root method: reset the root cursor every tick; remove Take(PageSize) from
 the root query; remove the MaximumPages root-loop limit. Mutation must execute
 each separately and budget each red/restore/green cycle. All prior pending PC
 IDs/variants remain pending; ordinary green does not discharge any control.
+
+### S7 retry checkpoint amendment (Code task 28194b17, 2026-10-05)
+
+The proposed allocation's S7/CP-7 and CP-8 are superseded by the executable
+manifest. S7 selects only After=S7, CP-41..CP-49, serial, once at its final
+committed tip: 153 result floor, 56 estimated minutes, unchanged 15-minute row /
+60-minute total deadlines. No whole Unit, namespace, assembly or Windows parity
+run belongs to this slice. CP-10 remains the later S9 complete retry qualification.
+
+The 22 exact B methods remain the original roster (PC-42..PC-58, PC-60..PC-62,
+PC-85..PC-86). Their S7 oracles independently reload PostgreSQL and observe complete
+fake producer envelopes. They qualify attempt-before-entry, commit refusal,
+unexpired single-owner claims, each independently isolated owner/version/expiry/state
+entry and outcome fence, awaited completion, cancellation before attempt/after entry/
+after acceptance, a cancellation-ignoring producer bounded by the manual-clock
+send deadline, uncertainty without replay, duplicate acknowledgement, lifetime
+counts and a fresh explicit budget, synchronous/asynchronous/serialization/accepted-
+then-fault classification, queue-full persisted due times at minus-one/equality,
+three-refusal cap across reconstruction, refusal-save failure, broker-shaped and
+local size refusals with a valid companion, all binding holds with explicit repair/
+resume, final profile revocation, equal-CreatedAt Id order, resume phase and finite
+settings including strict timeout-less-than-lease. These are application receiver
+observations, not Kafka/gateway/provider receipts. Real transport and process death
+remain S12.
+
+Enabled publication takes one attempt per due tick and applies the configured
+send timeout, lease, preparation/publication limits and retry delay. Explicit
+uncertain retry alone moves the publication budget base to the lifetime count.
+The default-off publication path keeps its existing in-call refusal loop, clocks,
+manual retry and binding/conversion behavior. UnifiedRecoveryEnabled remains false
+by default. No migration, activation, new outbound path, deadline-basis repair,
+loss transaction, metadata separation or retention work is included. ScanIntervalSeconds
+and MaximumPages are validated scheduling inputs whose loop adoption remains S9;
+S7 uses PageSize only for pump candidates, retaining the existing bounded discovery.
+
+V-7's S7 matrix is ordinary qualification here; its atomic incident/alert and
+acceptance/projection failure extensions remain CP-10/S9 after S8 prerequisites.
+V-3 retains S3 preparation oracles only, without claiming S8 loss outcomes. V-5
+retains the existing S5 subset; V-6 reruns its full S6 reservation matrix. R-1
+reruns the dispatcher only; the unchanged runtime result retains its prior S4
+qualification. R-5 and R-6 rerun in full. R-8 runs the three named portable manual
+recovery methods; its native-route/broker/process proofs remain S12. V-1/V-2/V-4/
+V-8..V-13 and R-2..R-4/R-7/R-9..R-12 remain at their owning slices. The task-specific
+brief explicitly excludes the generic Final whole-Unit lane. No operational manual
+acceptance is required; restart is none and activation remains caller-owned.
+
+All PC-1..PC-100, PC-1059-1..PC-1059-6, PC-S4-1..PC-S4-4 and their named
+S4 variants, PC-S5-1..PC-S5-4 and PC-S6-1..PC-S6-5 (including the three independent
+PC-S6-2 variants) remain pending post-land SourceLanding Mutation. PC-42..PC-58,
+PC-60..PC-62 and PC-85..PC-86 gain their exact ordinary B witnesses. PC-53's
+atomic loss and PC-55's incident-save variants remain S8/S9 prerequisites; S7's
+refusal-state-save variant is independently exercised. Mutation owns every deliberate
+mutant, red/restore/green cycle and missing-control discovery. No PC is discharged.
+PreparationDeadlineAt still uses enqueue CreatedAt; CARD-1061 remains unfixed.

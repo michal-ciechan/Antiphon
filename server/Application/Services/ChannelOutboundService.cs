@@ -241,6 +241,11 @@ public sealed class ChannelOutboundService
         delivery.State = ChannelOutboundDeliveryState.Ready;
         delivery.LeaseOwner = null;
         delivery.LeaseUntil = null;
+        if (_settings.UnifiedRecoveryEnabled)
+        {
+            delivery.PublicationAttemptBudgetBase = delivery.PublicationAttempts;
+            delivery.NextAttemptAt = _clock.GetUtcNow().UtcDateTime;
+        }
         delivery.FailureReason = "Explicit retry requested after possible broker acceptance.";
         delivery.Version++;
         await _db.SaveChangesAsync(ct);

@@ -8,6 +8,14 @@ public sealed class ChannelOutboundSettings
     public const string SectionName = "ChannelOutbound";
     /// <summary>Opt-in activation of CARD-0519 capture. Keep false until the recovery slices are deployed together.</summary>
     public bool UnifiedRecoveryEnabled { get; set; }
+    public int ScanIntervalSeconds { get; set; } = 5;
+    public int PageSize { get; set; } = 32;
+    public int MaximumPages { get; set; } = 10;
+    public int RetryDelaySeconds { get; set; } = 30;
+    public int SendTimeoutSeconds { get; set; } = 30;
+    public int LeaseSeconds { get; set; } = 300;
+    public int PreparationAttemptLimit { get; set; } = 3;
+    public int PublicationAttemptLimit { get; set; } = 3;
     public Dictionary<string, ChannelOutboundProfile> Profiles { get; set; } = new(StringComparer.Ordinal);
 }
 
@@ -31,6 +39,18 @@ public sealed class ChannelOutboundSettingsValidator : IValidateOptions<ChannelO
 {
     public ValidateOptionsResult Validate(string? name, ChannelOutboundSettings settings)
     {
+        var errors = new List<string>();
+        if (settings.ScanIntervalSeconds is < 1 or > 60) errors.Add("ChannelOutbound:ScanIntervalSeconds must be 1..60.");
+        if (settings.PageSize is < 1 or > 32) errors.Add("ChannelOutbound:PageSize must be 1..32.");
+        if (settings.MaximumPages is < 1 or > 10) errors.Add("ChannelOutbound:MaximumPages must be 1..10.");
+        if (settings.RetryDelaySeconds is < 1 or > 300) errors.Add("ChannelOutbound:RetryDelaySeconds must be 1..300.");
+        if (settings.SendTimeoutSeconds is < 1 or > 300) errors.Add("ChannelOutbound:SendTimeoutSeconds must be 1..300.");
+        if (settings.LeaseSeconds is < 2 or > 900) errors.Add("ChannelOutbound:LeaseSeconds must be 2..900.");
+        if (settings.PreparationAttemptLimit is < 1 or > 3) errors.Add("ChannelOutbound:PreparationAttemptLimit must be 1..3.");
+        if (settings.PublicationAttemptLimit is < 1 or > 3) errors.Add("ChannelOutbound:PublicationAttemptLimit must be 1..3.");
+        if (settings.SendTimeoutSeconds >= settings.LeaseSeconds)
+            errors.Add("ChannelOutbound:SendTimeoutSeconds must be less than LeaseSeconds.");
+        if (errors.Count > 0) return ValidateOptionsResult.Fail(errors);
         if (settings.Profiles is null)
             return ValidateOptionsResult.Fail("ChannelOutbound:Profiles is required.");
 

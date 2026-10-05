@@ -62,9 +62,12 @@ public sealed class ChannelOutboundDeliveryPump
                     || d.State == ChannelOutboundDeliveryState.Ready
                     || d.State == ChannelOutboundDeliveryState.Publishing)
                 && (d.LeaseUntil == null || d.LeaseUntil <= now)
-                && (d.State != ChannelOutboundDeliveryState.Captured || d.NextAttemptAt == null || d.NextAttemptAt <= now))
+                && (d.State != ChannelOutboundDeliveryState.Captured
+                    && (!_outboundSettings.UnifiedRecoveryEnabled || d.State != ChannelOutboundDeliveryState.Ready)
+                    || d.NextAttemptAt == null || d.NextAttemptAt <= now))
             .OrderBy(d => d.CreatedAt).ThenBy(d => d.Id)
-            .Take(32).Select(d => new { d.Id, d.Version, d.State }).ToListAsync(ct);
+            .Take(_outboundSettings.UnifiedRecoveryEnabled ? _outboundSettings.PageSize : 32)
+            .Select(d => new { d.Id, d.Version, d.State }).ToListAsync(ct);
         var processed = 0;
         foreach (var candidate in candidates)
         {
@@ -83,13 +86,14 @@ public sealed class ChannelOutboundDeliveryPump
     private async Task<bool> ClaimAsync(Guid id, long version, CancellationToken ct)
     {
         var now = UtcNow();
+        var leaseUntil = now.AddSeconds(_outboundSettings.UnifiedRecoveryEnabled ? _outboundSettings.LeaseSeconds : 300);
         return await _db.ChannelOutboundDeliveries
             .Where(d => d.Id == id && d.Version == version
                 && (d.LeaseUntil == null || d.LeaseUntil <= now))
             .ExecuteUpdateAsync(s => s
                 .SetProperty(d => d.Version, d => d.Version + 1)
                 .SetProperty(d => d.LeaseOwner, _owner)
-                .SetProperty(d => d.LeaseUntil, now.AddMinutes(5)), ct) == 1;
+                .SetProperty(d => d.LeaseUntil, leaseUntil), ct) == 1;
     }
 
     private async Task ProcessClaimAsync(Guid id, CancellationToken ct)
@@ -140,10 +144,10 @@ public sealed class ChannelOutboundDeliveryPump
             if (current?.LeaseOwner == _owner && current.State != ChannelOutboundDeliveryState.Publishing)
             {
                 current.State = current.State == ChannelOutboundDeliveryState.Captured
-                    && current.PreparationAttempts < 3 && current.PreparationDeadlineAt > UtcNow()
+                    && current.PreparationAttempts < PreparationAttemptLimit && current.PreparationDeadlineAt > UtcNow()
                     && ex is not (InvalidDataException or System.Text.Json.JsonException)
                     ? ChannelOutboundDeliveryState.Captured : ChannelOutboundDeliveryState.Failed;
-                current.NextAttemptAt = current.State == ChannelOutboundDeliveryState.Captured ? UtcNow().AddSeconds(30) : null;
+                current.NextAttemptAt = current.State == ChannelOutboundDeliveryState.Captured ? UtcNow().AddSeconds(RetryDelaySeconds) : null;
                 current.FailureReason = Bound(ex.Message);
                 current.Version++;
                 await _db.SaveChangesAsync(ct);
@@ -170,7 +174,7 @@ public sealed class ChannelOutboundDeliveryPump
         // Count failed adoption I/O as preparation too. A completed third stage
         // may still be adopted after a crash, without authorizing a fourth read
         // of the original sources.
-        var preparationAuthorized = delivery.PreparationAttempts < 3;
+        var preparationAuthorized = delivery.PreparationAttempts < PreparationAttemptLimit;
         if (preparationAuthorized)
         {
             delivery.PreparationAttempts++;
@@ -366,6 +370,11 @@ public sealed class ChannelOutboundDeliveryPump
             await _db.SaveChangesAsync(ct);
             return;
         }
+        if (_outboundSettings.UnifiedRecoveryEnabled)
+        {
+            await PublishWithRecoveryAsync(delivery, reply, ct);
+            return;
+        }
         delivery.State = ChannelOutboundDeliveryState.Publishing;
         delivery.Version++;
         await _db.SaveChangesAsync(ct);
@@ -438,6 +447,110 @@ public sealed class ChannelOutboundDeliveryPump
         if (ProbeBarrierAsync is { } publishedBarrier)
             await publishedBarrier("published-committed", delivery.Id, ct);
     }
+
+    private async Task PublishWithRecoveryAsync(ChannelOutboundDelivery delivery, ChannelReply reply, CancellationToken ct)
+    {
+        if (delivery.NextAttemptAt > UtcNow()) return;
+        if (delivery.PublicationAttempts - delivery.PublicationAttemptBudgetBase >= _outboundSettings.PublicationAttemptLimit)
+        {
+            delivery.State = ChannelOutboundDeliveryState.Failed;
+            delivery.FailureReason = "The publication attempt budget was exhausted.";
+            delivery.NextAttemptAt = null;
+            delivery.Version++;
+            await _db.SaveChangesAsync(ct);
+            return;
+        }
+        if (ProbeBarrierAsync is { } beforeAttempt)
+            await beforeAttempt("before-publication-attempt", delivery.Id, ct);
+        ct.ThrowIfCancellationRequested();
+        delivery.State = ChannelOutboundDeliveryState.Publishing;
+        delivery.PublicationAttempts++;
+        delivery.NextAttemptAt = null;
+        delivery.Version++;
+        await _db.SaveChangesAsync(ct);
+        try
+        {
+            if (ProbeBarrierAsync is { } publishingBarrier)
+                await publishingBarrier("publishing-committed", delivery.Id, ct);
+            if (ProbeBarrierAsync is { } entryBarrier)
+                await entryBarrier("before-producer-call", delivery.Id, ct);
+            if (!await RevalidateAsync(delivery, beforePublish: true, ct)) return;
+            if (!await _db.ChannelOutboundDeliveries.AsNoTracking().AnyAsync(d =>
+                d.Id == delivery.Id && d.Version == delivery.Version && d.LeaseOwner == _owner
+                && d.LeaseUntil > UtcNow() && d.State == ChannelOutboundDeliveryState.Publishing, ct)) return;
+
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(_outboundSettings.SendTimeoutSeconds), _clock);
+            using var send = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
+            var producerTask = _producer.SendAsync(reply, send.Token);
+            // Bound even a producer that ignores cancellation. Its late completion
+            // cannot commit an outcome; observe a late fault without awaiting it.
+            _ = producerTask.ContinueWith(t => { _ = t.Exception; }, CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            await producerTask.WaitAsync(send.Token);
+            send.Token.ThrowIfCancellationRequested();
+            if (ProbeBarrierAsync is { } acceptedBarrier)
+                await acceptedBarrier("producer-accepted", delivery.Id, ct);
+        }
+        catch (ProduceException<string, string> ex) when (ex.Error.Code == ErrorCode.Local_QueueFull)
+        {
+            var exhausted = delivery.PublicationAttempts - delivery.PublicationAttemptBudgetBase >= _outboundSettings.PublicationAttemptLimit;
+            await FinishAttemptAsync(delivery, exhausted ? ChannelOutboundDeliveryState.Failed : ChannelOutboundDeliveryState.Ready,
+                "Broker queue definitely refused the frozen reply: " + Bound(ex.Message),
+                exhausted ? null : UtcNow().AddSeconds(_outboundSettings.RetryDelaySeconds), CancellationToken.None);
+            return;
+        }
+        catch (ProduceException<string, string> ex) when (ex.Error.Code == ErrorCode.MsgSizeTooLarge)
+        {
+            await FinishAttemptAsync(delivery, ChannelOutboundDeliveryState.Failed,
+                "Broker size limit definitely refused the frozen reply: " + Bound(ex.Message), null, CancellationToken.None);
+            return;
+        }
+        catch (DbUpdateConcurrencyException) { throw; }
+        catch (Exception ex)
+        {
+            await FinishAttemptAsync(delivery, ChannelOutboundDeliveryState.PublishUncertain,
+                "Broker acceptance unknown: " + Bound(ex.Message), null, CancellationToken.None);
+            return;
+        }
+
+        // Keep the existing acceptance/projection transaction until S9 separates
+        // metadata repair. Lock and recheck the lease before committing its outcome.
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        var current = await _db.ChannelOutboundDeliveries.FromSqlInterpolated(
+            $"SELECT * FROM \"ChannelOutboundDeliveries\" WHERE \"Id\" = {delivery.Id} FOR UPDATE")
+            .AsNoTracking().SingleAsync(ct);
+        if (current.Version != delivery.Version || current.LeaseOwner != _owner
+            || current.LeaseUntil <= UtcNow() || current.State != ChannelOutboundDeliveryState.Publishing)
+            return;
+        delivery.State = ChannelOutboundDeliveryState.Published;
+        delivery.PublishedAt = UtcNow();
+        delivery.Version++;
+        var rows = await _db.SessionQueuedMessages.Where(m => m.ChannelOutboundDeliveryId == delivery.Id).ToListAsync(ct);
+        foreach (var row in rows) row.ChannelReplySettledAt = delivery.PublishedAt;
+        var channel = await _db.ChatChannels.SingleAsync(c => c.Id == delivery.ChannelId, ct);
+        channel.LastReplyAt = delivery.PublishedAt;
+        channel.LastReplyPreview = reply.Text is { Length: > 200 } text ? text[..200] : reply.Text;
+        channel.UpdatedAt = delivery.PublishedAt.Value;
+        await StampCompleteSourceAsync(delivery, reply, ct);
+        await _db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+        if (ProbeBarrierAsync is { } publishedBarrier)
+            await publishedBarrier("published-committed", delivery.Id, ct);
+    }
+
+    private async Task FinishAttemptAsync(ChannelOutboundDelivery delivery, ChannelOutboundDeliveryState state,
+        string reason, DateTime? due, CancellationToken ct)
+    {
+        var now = UtcNow();
+        await _db.ChannelOutboundDeliveries.Where(d => d.Id == delivery.Id && d.Version == delivery.Version
+            && d.LeaseOwner == _owner && d.LeaseUntil > now && d.State == ChannelOutboundDeliveryState.Publishing)
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.State, state)
+                .SetProperty(d => d.FailureReason, Bound(reason)).SetProperty(d => d.NextAttemptAt, due)
+                .SetProperty(d => d.Version, d => d.Version + 1), ct);
+    }
+
+    private int PreparationAttemptLimit => _outboundSettings.UnifiedRecoveryEnabled ? _outboundSettings.PreparationAttemptLimit : 3;
+    private int RetryDelaySeconds => _outboundSettings.UnifiedRecoveryEnabled ? _outboundSettings.RetryDelaySeconds : 30;
 
     private async Task<bool> RevalidateAsync(ChannelOutboundDelivery delivery,
         bool beforePublish, CancellationToken ct)
