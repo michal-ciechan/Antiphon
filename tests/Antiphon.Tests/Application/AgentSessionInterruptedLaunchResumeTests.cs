@@ -331,7 +331,16 @@ public class AgentSessionInterruptedLaunchResumeTests
             var marker = TaskId is Guid id
                 ? DelegationReportFormatter.TaskMarker(id) + "\n\nDo the thing."
                 : "queued while Starting";
-            return await Harness.SeedPendingMessageAsync(marker, SessionId);
+            var queued = await Harness.SeedPendingMessageAsync(marker, SessionId,
+                origin: TaskId is null ? QueuedMessageOrigin.Ui : QueuedMessageOrigin.Delegation);
+            if (TaskId is Guid taskId)
+            {
+                await using var db = CreateContext();
+                await db.SessionQueuedMessages.Where(m => m.Id == queued).ExecuteUpdateAsync(s => s
+                    .SetProperty(m => m.ExecutionTaskId, taskId)
+                    .SetProperty(m => m.SourceTaskId, taskId));
+            }
+            return queued;
         }
 
         public Task InsertTranscriptAsync(string kind, string? text = null, string? stopReason = null) =>
