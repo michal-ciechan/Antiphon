@@ -116,7 +116,7 @@ public sealed class SessionMessageQueueDeliveredSpillTests
             await f.FlushAsync();
             await f.ReleasedAsync("later-complete-releases", from);
         }
-        foreach (var length in new[] { 0, 11, 12 })
+        foreach (var length in new[] { 11, 0, 12 })
         {
             await using var f = await Fixture.CreateAsync(schema.ConnectionString);
             await f.SeedAsync(new string('w', length));
@@ -167,8 +167,8 @@ public sealed class SessionMessageQueueDeliveredSpillTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         const long baseline = 100;
-        foreach (var sequence in new[] { baseline - 1, baseline, baseline + 1 })
-        foreach (var time in new[] { "null", "old", "current" })
+        foreach (var sequence in new[] { baseline, baseline - 1, baseline + 1 })
+        foreach (var time in new[] { "current", "null", "old" })
         {
             await using var f = await Fixture.CreateAsync(schema.ConnectionString);
             await f.SeedAsync(baseline: baseline);
@@ -214,7 +214,7 @@ public sealed class SessionMessageQueueDeliveredSpillTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         foreach (var tolerance in new[] { 0, 30, -30 })
         foreach (var laterGeneration in new[] { false, true })
-        foreach (var delta in new[] { -10L, 0L, 10L })
+        foreach (var delta in new[] { 0L, -10L, 10L })
         {
             await using var f = await Fixture.CreateAsync(schema.ConnectionString, tolerance);
             await f.ScreenAsync();
