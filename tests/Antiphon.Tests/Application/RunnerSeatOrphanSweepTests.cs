@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
@@ -12,6 +13,143 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public class RunnerSeatOrphanSweepTests
 {
+    [Test]
+    public async Task Discovery_request_uses_runner_owned_delivery_evidence()
+    {
+        foreach (var phoneHome in new[] { false, true })
+        foreach (var provider in new[] { "Claude", "Grok", "Codex" })
+        {
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(provider: provider, phoneHome: phoneHome, rowless: true);
+            var live = f.Live!;
+            await using (var db = f.Db())
+            {
+                (await db.AgentSessions.AnyAsync(s => s.Id == f.CandidateId)).ShouldBeFalse();
+                (await db.SessionQueuedMessages.AnyAsync(s => s.AgentSessionId == f.CandidateId)).ShouldBeFalse();
+            }
+            var missing = await f.AcquireAsync();
+            var request = missing.Request.ShouldNotBeNull("G-100: production factory must emit a captured request without a server row");
+            request.UseCapturedDeliveryEvidence.ShouldBeTrue("PC-100");
+            request.PromptBindingIdentity.ShouldBe(""); request.PromptFloorRevision.ShouldBe(-1);
+            missing.Hold.ShouldBe(TerminalRunnerSeatDecision.Unknown);
+            live.SwallowNextEnter = true;
+            const string body = "actual current task body\nreceived through the server client";
+            await live.SubmitAsync(body);
+            live.NativeSubmissions.ShouldBeEmpty("swallowed Enter must not fabricate native evidence");
+            (await f.AcquireAsync()).Observation!.Status.ShouldBe(TerminalSeatQualificationStatus.OldPrompt);
+            live.Clock.Advance(TimeSpan.FromSeconds(120));
+            (await f.AcquireAsync()).Observation!.Status.ShouldBe(TerminalSeatQualificationStatus.OldPrompt);
+            live.Child.Kills.ShouldBe(0);
+            await live.Client.SendInputAsync(live.SessionId, "\r", default);
+            live.NativeSubmissions.ShouldBe([body]);
+            (await f.AcquireAsync()).Hold.ShouldBe(TerminalRunnerSeatDecision.Waiting);
+            live.Clock.Advance(TimeSpan.FromSeconds(120));
+            var qualified = await f.AcquireAsync();
+            qualified.Hold.ShouldBeNull();
+            qualified.Observation!.Status.ShouldBe(TerminalSeatQualificationStatus.Qualified);
+            foreach (var emitted in live.Observations)
+            {
+                emitted.UseCapturedDeliveryEvidence.ShouldBeTrue("PC-100: actual wire request");
+                emitted.PromptBindingIdentity.ShouldBe(""); emitted.PromptFloorRevision.ShouldBe(-1);
+            }
+            var receipt = await live.Client.ReleaseTerminalSeatAsync(live.SessionId,
+                new(Guid.NewGuid(), qualified.Request!, qualified.Observation.Token!), default);
+            receipt.Outcome.ShouldBe(TerminalSeatReleaseOutcome.Released);
+            live.Child.Kills.ShouldBe(1); live.ConditionalCommands.ShouldBe(1); live.ForceCommands.ShouldBe(0);
+            (await live.Client.ListAsync(default)).ShouldBeEmpty();
+            await using var read = f.Db();
+            (await read.RunnerSeatReleases.CountAsync()).ShouldBe(0, "S3h acquisition does not reserve rowless debt");
+        }
+    }
+
+    [Test]
+    public async Task Server_restart_reacquires_runner_delivery_evidence()
+    {
+        foreach (var phoneHome in new[] { false, true })
+        {
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(provider: "Codex", phoneHome: phoneHome);
+            var live = f.Live!;
+            await live.SubmitAsync("completed owned attempt");
+            var first = await f.AcquireAsync();
+            first.Hold.ShouldBe(TerminalRunnerSeatDecision.Waiting, "G-101: acquire real evidence before persisting the reservation");
+            live.Clock.Advance(TimeSpan.FromSeconds(120));
+            var qualified = await f.AcquireAsync();
+            qualified.Hold.ShouldBeNull();
+            var reservation = await f.ReserveAsync(qualified.Request!);
+            reservation.Decision.ShouldBe(TerminalRunnerSeatDecision.Reserved);
+            var releaseId = reservation.ReleaseId.ShouldNotBeNull();
+            await using (var db = f.Db())
+            {
+                var row = await db.RunnerSeatReleases.SingleAsync();
+                row.Id.ShouldBe(releaseId); row.ObservationToken.ShouldNotBeNullOrWhiteSpace();
+            }
+            var calls = live.Observations.Count;
+            var runner = live.Runtime;
+            await f.RestartAsync();
+            live.Runtime.ShouldBeSameAs(runner);
+            var afterServer = await f.AcquireAsync();
+            live.Observations.Count.ShouldBe(calls + 1, "PC-101: server restart must make a fresh runner observation");
+            afterServer.Hold.ShouldBeNull();
+            afterServer.Request.ShouldBe(qualified.Request);
+            await using (var db = f.Db())
+                (await db.RunnerSeatReleases.SingleAsync()).Id.ShouldBe(releaseId);
+
+            await live.RestartRunnerAsync();
+            f.Directory.Client = live.Client;
+            calls = live.Observations.Count;
+            var afterRunner = await f.AcquireAsync();
+            live.Observations.Count.ShouldBe(calls + 1);
+            afterRunner.Hold.ShouldBe(TerminalRunnerSeatDecision.Unknown);
+            afterRunner.Observation!.Token.ShouldBeNull();
+            live.ConditionalCommands.ShouldBe(0, "a persisted reservation cannot manufacture fresh capture");
+            live.Child.Kills.ShouldBe(0); live.Runtime.LiveSessionCount.ShouldBe(1);
+            // A later legitimate delivery can reacquire proof; time/idle alone cannot.
+            await live.SubmitAsync("legitimate post-restart work");
+            (await f.AcquireAsync()).Hold.ShouldBe(TerminalRunnerSeatDecision.Waiting);
+            live.Clock.Advance(TimeSpan.FromSeconds(120));
+            (await f.AcquireAsync()).Hold.ShouldBeNull();
+            live.ForceCommands.ShouldBe(0);
+        }
+    }
+
+    [Test]
+    public async Task Evidence_missing_or_peer_unsupported_defers_discovery()
+    {
+        foreach (var phoneHome in new[] { false, true })
+        foreach (var variant in new[] { "release-only", "evidence-only", "missing", "invalid", "malformed", "lost", "unavailable", "stale", "adopting", "store", "valid" })
+        {
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(provider: "Codex", phoneHome: phoneHome, rowless: true);
+            var live = f.Live!;
+            if (variant != "missing") await live.SubmitAsync("real task for refusal control");
+            if (variant == "release-only") f.Directory.FeaturesOverride = [RunnerCapabilityFeatures.TerminalSeatReleaseV1];
+            if (variant == "evidence-only") f.Directory.FeaturesOverride = [RunnerCapabilityFeatures.TerminalSeatDeliveryEvidenceV1];
+            if (variant == "invalid")
+            {
+                await live.Client.SendInputAsync(live.SessionId, "\u001b[A", default);
+                await live.Client.SendInputAsync(live.SessionId, "\r", default);
+            }
+            if (variant is "malformed" or "lost") live.ResponseFault = variant;
+            if (variant == "unavailable") f.Directory.Available = false;
+            if (variant == "stale") f.Directory.Stale = true;
+            if (variant == "adopting") f.Directory.Recovered = false;
+            if (variant == "store") f.Directory.LiveStoreOverride = Guid.NewGuid();
+            var result = await f.AcquireAsync();
+            result.Hold.ShouldBe(variant switch
+            {
+                "release-only" or "evidence-only" => TerminalRunnerSeatDecision.Unsupported,
+                "store" => TerminalRunnerSeatDecision.IdentityUnknown,
+                "valid" => TerminalRunnerSeatDecision.Waiting,
+                _ => TerminalRunnerSeatDecision.Unknown
+            }, "G-102: " + variant);
+            if (variant is "release-only" or "evidence-only" or "unavailable" or "stale" or "adopting" or "store")
+                live.Observations.ShouldBeEmpty("PC-102: no captured RPC to an unsupported/unavailable peer");
+            else live.Observations.Count.ShouldBe(1, "refusal must exercise the real wire");
+            live.ForceCommands.ShouldBe(0); live.ConditionalCommands.ShouldBe(0); live.Child.Kills.ShouldBe(0);
+            live.Runtime.LiveSessionCount.ShouldBe(1);
+            await using var db = f.Db();
+            (await db.RunnerSeatReleases.CountAsync()).ShouldBe(0);
+        }
+    }
+
     [Test]
     public async Task Claim_between_inventory_and_release_vetoes_action()
     {
