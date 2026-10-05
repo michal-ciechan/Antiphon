@@ -340,10 +340,14 @@ internal sealed class TranscriptTailer : ITranscriptTailer
 
     internal TerminalSeatReleaseObservation TerminalObservation { get; } = new();
 
-    public Task<TerminalTranscriptObservation> ObserveTerminalSeatAsync(CancellationToken ct) =>
-        TerminalObservation.ObserveAsync(
+    public Task<TerminalTranscriptObservation> ObserveTerminalSeatAsync(CancellationToken ct)
+    {
+        return TerminalObservation.ObserveAsync(
             () => BoundTranscriptPath is { } path && !_claimRevoked
-                ? (path, $"{path}|{BindHow}|{_bindGeneration}") : null, Snapshot, ct);
+                && (_claims is null || _claims.OwnerOf(path)?.Owner == _sessionId)
+                ? (path, $"{path}|{BindHow}|{_bindGeneration}") : null,
+            TranscriptNormalizer.Normalize, null, ct);
+    }
 
     private async Task RunAsync(CancellationToken ct)
     {
@@ -368,61 +372,62 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                     await TerminalObservation.ReadGate.WaitAsync(ct);
                     try
                     {
-                    if (_claimRevoked)
-                    {
-                        HandleClaimRevoked(path);
-                        dropped = true;
-                        break;
-                    }
-                // Mid-session fork watch: /clear forks the conversation to a FRESH file (canary:
-                // ClaudeLocalCommandCanaryTests) — the current file goes quiet and all further
-                // activity lands in the fork. Without following it, transcript ingestion (and with
-                // it working/idle + channel reply dispatch) silently dies for the rest of the
-                // session (live miss 2026-07-31: the AZ Care reply after a /clear never reached
-                // Telegram). Sequences stay monotonic across the switch; re-reading the fork from
-                // offset 0 is safe — the server dedupes by line uuid.
-                if (DateTime.UtcNow - lastForkScan >= ForkScanInterval)
-                {
-                    lastForkScan = DateTime.UtcNow;
-                    if (TryFindNewerFork(path) is { } fork && TryBind(fork, TranscriptBindMethods.Fork))
-                    {
-                        _logger.LogWarning(
-                            "Session {SessionId}: conversation forked mid-session (e.g. /clear); "
-                            + "switching tail {Old} -> {New}", _sessionId, path, fork);
-                        path = fork;
-                        offset = 0;
-                        pending.Clear();
-                    }
-                }
-
-                try
-                {
-                    var info = new FileInfo(path);
-                    if (info.Exists && info.Length > offset)
-                    {
-                        byte[] buffer;
-                        int read;
-                        await using (var fs = new FileStream(
-                            path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                        if (_claimRevoked)
                         {
-                            fs.Seek(offset, SeekOrigin.Begin);
-                            var len = (int)Math.Min(info.Length - offset, MaxReadChunkBytes);
-                            buffer = new byte[len];
-                            read = await fs.ReadAsync(buffer.AsMemory(0, len), ct);
+                            HandleClaimRevoked(path);
+                            dropped = true;
+                            break;
+                        }
+                        // Mid-session fork watch: /clear forks the conversation to a FRESH file (canary:
+                        // ClaudeLocalCommandCanaryTests) — the current file goes quiet and all further
+                        // activity lands in the fork. Without following it, transcript ingestion (and with
+                        // it working/idle + channel reply dispatch) silently dies for the rest of the
+                        // session (live miss 2026-07-31: the AZ Care reply after a /clear never reached
+                        // Telegram). Sequences stay monotonic across the switch; re-reading the fork from
+                        // offset 0 is safe — the server dedupes by line uuid.
+                        if (DateTime.UtcNow - lastForkScan >= ForkScanInterval)
+                        {
+                            lastForkScan = DateTime.UtcNow;
+                            if (TryFindNewerFork(path) is { } fork && TryBind(fork, TranscriptBindMethods.Fork))
+                            {
+                                _logger.LogWarning(
+                                    "Session {SessionId}: conversation forked mid-session (e.g. /clear); "
+                                    + "switching tail {Old} -> {New}", _sessionId, path, fork);
+                                path = fork;
+                                offset = 0;
+                                pending.Clear();
+                            }
                         }
 
-                        if (read > 0)
+                        try
                         {
-                            offset += read;
-                            pending.AddRange(read == buffer.Length ? buffer : buffer[..read]);
-                            ProcessPending(pending);
+                            var info = new FileInfo(path);
+                            if (info.Exists && info.Length > offset)
+                            {
+                                byte[] buffer;
+                                int read;
+                                await using (var fs = new FileStream(
+                                    path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                                {
+                                    fs.Seek(offset, SeekOrigin.Begin);
+                                    var len = (int)Math.Min(info.Length - offset, MaxReadChunkBytes);
+                                    buffer = new byte[len];
+                                    read = await fs.ReadAsync(buffer.AsMemory(0, len), ct);
+                                }
+
+                                if (read > 0)
+                                {
+                                    offset += read;
+                                    TerminalObservation.RecordConsumed(offset);
+                                    pending.AddRange(read == buffer.Length ? buffer : buffer[..read]);
+                                    ProcessPending(pending);
+                                }
+                            }
                         }
-                    }
-                }
-                catch (IOException)
-                {
-                    // File is mid-write / transiently locked — retry on the next poll.
-                }
+                        catch (IOException)
+                        {
+                            // File is mid-write / transiently locked — retry on the next poll.
+                        }
 
                     }
                     finally { TerminalObservation.ReadGate.Release(); }
@@ -670,6 +675,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
             }
         }
 
+        TerminalObservation.Bind(path);
         BoundTranscriptPath = path;
         BindHow = how;
         _bindGeneration++;
