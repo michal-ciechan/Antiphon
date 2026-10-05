@@ -412,6 +412,16 @@ class operands qualified by S1, rather than repeating the known literal-OR
 discovery defect. The exact 32/21 rosters, assertions, scope and budgets are
 unchanged; fresh TRX must still enumerate exactly the named classes/methods.
 
+S3 fixture correction (2026-10-05): run `20261005-043551-5231` observed an
+intermittent W7 event-probe hit (the isolated base check passed), and W10's
+independent termination raced kill-on-close. W7 now pins the transported handle
+and compares it with the nonce-named fixture event's kernel object before signaling,
+rather than assuming process-local handle numbers imply object identity. W10
+serializes its independent reap before close; the real-termination query-error arm
+only joins. The original assertions, 5+2-second harness budgets, five-second fixture
+cleanup and exact filters remain intact. These Windows-only fixture repairs also
+touch `tests/Antiphon.ScriptHarnessHost/Program.cs`; the Linux branch is unchanged.
+
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1047-s1/` | windows-launch | `/*/*/(ScriptHarnessProcessTests*)\|(ScriptHarnessWindowsOwnershipTests*)/*` | V-1/V-3, R-1/R-2/R-3 | Windows only; N1-N11 plus W1-W3 at S1: exactly 14, 0 failed/skipped; 10m row cap | 14 | 9 | true |
