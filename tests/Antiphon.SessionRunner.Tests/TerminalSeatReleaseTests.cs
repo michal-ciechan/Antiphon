@@ -160,10 +160,11 @@ public class TerminalSeatReleaseTests
     [Test]
     public async Task Uncertain_input_never_publishes_delivery_evidence()
     {
+        foreach (var provider in new[] { "Claude", "Grok", "Codex" })
         foreach (var conditional in new[] { false, true })
         foreach (var fault in new[] { "throw-body", "cancel-body", "throw-enter", "editing", "framing", "overflow", "read" })
         {
-            await using var world = new SeatWorld("Codex");
+            await using var world = new SeatWorld(provider);
             await world.StartAsync();
             var failure = fault is "throw-body" or "cancel-body" or "throw-enter";
             if (fault == "throw-enter") await SendCapturedInputAsync(world, "body", conditional);
@@ -224,6 +225,8 @@ public class TerminalSeatReleaseTests
             else world.Tail.Observer.OpenRead = path => new FileStream(path, FileMode.Open, FileAccess.Read,
                 FileShare.ReadWrite | FileShare.Delete);
             (await world.Tail.ObserveAsync()).Verdict.ShouldBe(TerminalTranscriptVerdict.Idle);
+            await SendCapturedInputAsync(world, " remaining body chunk", conditional);
+            world.Session.DeliveryEvidence.Current.ShouldBeNull("late binding cannot recapture between body chunks");
             for (var retry = 0; retry < 2; retry++)
             {
                 world.Clock.Advance(TimeSpan.FromHours(1));
@@ -262,7 +265,6 @@ public class TerminalSeatReleaseTests
                     break;
                 case "restart": await world.RestartAsync(); break;
                 case "dispose":
-                    world.Runtime.DetachTerminalTailerForTest(world.Tail.SessionId);
                     await world.Runtime.DisposeAsync();
                     break;
             }
@@ -278,6 +280,37 @@ public class TerminalSeatReleaseTests
                 if (change == "restart") next.RuntimeEpoch.ShouldNotBe(first.RuntimeEpoch);
             }
         }
+
+        // A real native read yields without holding the session monitor. Rebinding while
+        // it is suspended must also prevent its old result from restoring a capture.
+        await using var race = new SeatWorld("Codex");
+        await race.StartAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var readEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        race.Tail.Observer.AfterRead = async ct =>
+        {
+            readEntered.TrySetResult();
+            await finishRead.Task.WaitAsync(ct);
+        };
+        var writing = SendCapturedInputAsync(race, "body during generation change", false);
+        Task? rebinding = null;
+        try
+        {
+            await readEntered.Task.WaitAsync(deadline.Token);
+            rebinding = Task.Run(() => race.Session.BindAcceptedGeneration(race.Session.AcceptedStartedAt!.Value.AddSeconds(1)));
+            await rebinding.WaitAsync(deadline.Token);
+            race.Session.DeliveryEvidence.Current.ShouldBeNull();
+        }
+        finally
+        {
+            finishRead.TrySetResult();
+            await writing;
+            if (rebinding is not null) await rebinding;
+            race.Tail.Observer.AfterRead = null;
+        }
+        await SendCapturedInputAsync(race, "\r", false);
+        race.Session.DeliveryEvidence.Current.ShouldBeNull("a pre-rebind native read cannot republish capture");
     }
 
     private static async Task SendCapturedInputAsync(SeatWorld world, string input, bool conditional)
@@ -1232,7 +1265,9 @@ public class TerminalSeatReleaseTests
 
         public SeatWorld(string provider)
         {
-            Tail = new TailWorld(provider);
+            Tail = new TailWorld(provider,
+                (path, how) => Session?.RecordTranscriptBinding(path, how),
+                () => Session?.RecordTranscriptUnbinding());
             _settings = new SessionRunnerSettings { SessionLogPath = _root };
             _manifest = PtyHostManifest.PathFor(_settings.PtyHostManifestDir, Tail.SessionId);
             _sidecar = TranscriptSidecar.PathFor(_root, Tail.SessionId);
@@ -1425,7 +1460,7 @@ public class TerminalSeatReleaseTests
         public ITranscriptTailer Tailer { get; }
         public TerminalSeatReleaseObservation Observer { get; }
 
-        public TailWorld(string provider)
+        public TailWorld(string provider, Action<string, string>? onBound = null, Action? onUnbound = null)
         {
             _provider = provider;
             Directory.CreateDirectory(_root);
@@ -1438,12 +1473,13 @@ public class TerminalSeatReleaseTests
             Tailer = provider switch
             {
                 "Claude" => new TranscriptTailer(SessionId, _root, hub, NullLogger.Instance,
-                    knownTranscriptPath: Path, claims: Claims, forkScanInterval: TimeSpan.FromDays(1)),
+                    knownTranscriptPath: Path, claims: Claims, forkScanInterval: TimeSpan.FromDays(1),
+                    onBound: onBound, onUnbound: onUnbound),
                 "Grok" => new GrokTranscriptTailer(SessionId, Path, hub, NullLogger.Instance,
                     pollInterval: TimeSpan.FromMilliseconds(1)),
                 _ => new CodexTranscriptTailer(SessionId, _root, hub, NullLogger.Instance,
                     knownTranscriptPath: Path, sessionsRoot: _root, claims: Claims,
-                    pollInterval: TimeSpan.FromMilliseconds(1))
+                    pollInterval: TimeSpan.FromMilliseconds(1), onBound: onBound, onUnbound: onUnbound)
             };
             Observer = Tailer switch
             {
