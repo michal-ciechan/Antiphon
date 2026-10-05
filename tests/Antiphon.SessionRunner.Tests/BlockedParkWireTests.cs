@@ -248,6 +248,7 @@ public sealed class BlockedParkWireTests
     [Test]
     public async Task C1065_ExitUnconfirmedRetainsSeatAndCustody()
     {
+        await Exited_and_absent_source_requires_fresh_verification();
         await Kill_failure_retains_manifest_and_capacity();
         await Duplicate_action_is_idempotent();
         await Confirmed_exit_forgets_only_the_expected_generation();
@@ -273,6 +274,98 @@ public sealed class BlockedParkWireTests
         (await wire.ReleaseAsync(lostRequest)).ConfirmsExit.ShouldBeTrue("G-64");
         lost.Child.Kills.ShouldBe(1, "G-64");
         lost.AssertReleased();
+    }
+
+    private async Task Exited_and_absent_source_requires_fresh_verification()
+    {
+        // Execute every arm before asserting the refusals, so the red run identifies
+        // both bypasses. Each receipt comes from actual publication, never a seeded DTO.
+        var wrongOutcomes = new List<string>();
+        var custodyFailures = new List<string>();
+        foreach (var absent in new[] { false, true })
+        foreach (var change in new[] { "valid", "head", "dirty", "ref", "endpoint", "unavailable",
+            "generation", "replacement", "manifest" })
+        {
+            if (!absent && change == "manifest") continue;
+            await using var world = new SeatWorld("Codex");
+            var request = await world.QualifyAsync();
+            world.RecordGeneration();
+            world.Child.Exit();
+            if (absent)
+            {
+                (await world.ReleaseAsync(request)).Outcome.ShouldBe(TerminalSeatReleaseOutcome.AlreadyExited);
+                world.AssertReleased(expectedKills: 0);
+                // No cached success can mask the fresh absence decision after restart.
+                await world.RestartEmptyAsync();
+            }
+            var foreign = world.TrackForeign();
+            var auditBefore = world.ReleaseAuditCount;
+            var scenario = (absent ? "absent/" : "exited/") + change;
+            var expected = change switch
+            {
+                "valid" => absent ? TerminalSeatReleaseOutcome.AlreadyAbsent : TerminalSeatReleaseOutcome.AlreadyExited,
+                "generation" or "replacement" => TerminalSeatReleaseOutcome.GenerationMismatch,
+                "manifest" => TerminalSeatReleaseOutcome.Unknown,
+                _ => TerminalSeatReleaseOutcome.StaleObservation
+            };
+            switch (change)
+            {
+                case "head":
+                    await world.Source.CommitAsync("later.txt", "published after the captured receipt");
+                    await world.Source.PushAsync();
+                    break;
+                case "dirty":
+                    await File.WriteAllTextAsync(Path.Combine(world.Source.Mirror, "pending.cs"), "unpublished source");
+                    break;
+                case "ref": await world.Source.GitAsync(world.Source.Mirror, "checkout", "-b", "different-ref"); break;
+                case "endpoint":
+                    var other = Path.Combine(world.Source.Root, "replacement.git");
+                    await world.Source.GitAsync(world.Source.Root, "clone", "--bare", world.Source.Origin, other);
+                    await world.Source.GitAsync(world.Source.Mirror, "remote", "set-url", "--push", "origin", other);
+                    break;
+                case "unavailable":
+                    world.Source.BeforeStart = psi =>
+                    {
+                        if (psi.ArgumentList[0] != "status") return;
+                        psi.ArgumentList.Clear();
+                        foreach (var arg in new[] { "rev-parse", "--verify", "refs/heads/missing-source" })
+                            psi.ArgumentList.Add(arg);
+                    };
+                    break;
+                case "generation":
+                case "replacement":
+                case "manifest":
+                    // Concrete state changes during the real source read must be fenced
+                    // again after its await, even though there is no live child to signal.
+                    world.Source.BeforeStart = _ =>
+                    {
+                        world.Source.BeforeStart = null;
+                        if (change == "manifest") world.RestoreManifest();
+                        else if (absent) world.TrackReplacement(change == "generation"
+                            ? request.Observation.ExpectedAcceptedStartedAt.AddSeconds(1)
+                            : request.Observation.ExpectedAcceptedStartedAt);
+                        else if (change == "generation") world.Session.BindAcceptedGeneration(
+                            request.Observation.ExpectedAcceptedStartedAt.AddSeconds(1));
+                        else world.ReplaceTracked(request.Observation.ExpectedAcceptedStartedAt);
+                    };
+                    break;
+            }
+            var result = await world.ReleaseAsync(request);
+            if (result.Outcome != expected)
+                wrongOutcomes.Add($"{scenario}: expected {expected}, got {result.Outcome}");
+            if (change != "valid" && (world.ReleaseAuditCount != auditBefore
+                || (!absent && !world.HasManifest)))
+                custodyFailures.Add(scenario);
+            world.Child.Kills.ShouldBe(0, scenario + ": no signal to an exited/absent generation");
+            world.AssertForeignRetained(foreign);
+            world.ReadGenerationFromDisk().ShouldBe(request.Observation.ExpectedAcceptedStartedAt, "G-66 " + scenario);
+            world.HasTranscriptSidecar.ShouldBeTrue("G-66 " + scenario);
+            if (change == "valid" && !absent) world.AssertReleased(expectedKills: 0);
+            if (change is "head" or "dirty" or "ref" or "endpoint" or "unavailable" or "valid")
+                world.Runtime.LiveSessionCount.ShouldBe(1, scenario + ": only the foreign child occupies capacity");
+        }
+        wrongOutcomes.ShouldBeEmpty("G-57/G-58/G-59/G-60: fresh exited/absent decisions require source proof and final identity fences");
+        custodyFailures.ShouldBeEmpty("refused source verification must preserve exited custody and release audit");
     }
 
     private async Task Activity_resets_the_qualification_window()
@@ -1162,6 +1255,13 @@ public sealed class BlockedParkWireTests
         public DateTime? ReadGenerationFromDisk() => new PhoneHomeLaunchGenerationStore(GenerationDirectory).Read(Tail.SessionId);
 
         public void AssertUnadoptedManifest() => File.Exists(_manifest).ShouldBeTrue("G-67");
+        public bool HasManifest => File.Exists(_manifest);
+        public bool HasTranscriptSidecar => File.Exists(_sidecar);
+        public void RestoreManifest() => new PtyHostManifest
+        {
+            SessionId = Tail.SessionId, PipeName = "fixture-reappeared", HostPid = 1,
+            HostStartTimeUtc = _generation, CreatedAtUtc = _generation, AcceptedStartedAt = _generation
+        }.SaveAtomic(_manifest);
         public void AssertReleased(int expectedKills = 1)
         {
             Runtime.List().ShouldNotContain(s => s.SessionId == Tail.SessionId);
