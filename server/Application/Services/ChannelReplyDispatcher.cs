@@ -1013,15 +1013,10 @@ public sealed class ChannelReplyDispatcher
     private (string Text, IReadOnlyList<OutboundAttachment> Attachments) PrepareReplyBody(
         string responseText, Guid sessionId, IReadOnlyList<string>? extraPaths = null)
     {
+        var descriptor = ChannelReplyPreparation.Describe(responseText, extraPaths);
         responseText = ChannelPromptCorrelation.RemoveMarkers(responseText);
-        var (text, explicitPaths) = ChannelContracts.ExtractAttachments(responseText);
-        var paths = new List<string>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var path in explicitPaths.Concat(extraPaths ?? []))
-        {
-            if (seen.Add(path))
-                paths.Add(path);
-        }
+        var text = descriptor.Text;
+        var paths = descriptor.AttachmentPaths;
 
         if (paths.Count == 0)
             return (responseText, []);
@@ -1071,7 +1066,7 @@ public sealed class ChannelReplyDispatcher
         return (text, attachments);
     }
 
-    private static AttachmentKind InferAttachmentKind(string extension) => extension.ToLowerInvariant() switch
+    internal static AttachmentKind InferAttachmentKind(string extension) => extension.ToLowerInvariant() switch
     {
         ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp" or ".bmp" => AttachmentKind.Image,
         ".mp4" or ".mov" or ".webm" => AttachmentKind.Video,
@@ -1080,7 +1075,7 @@ public sealed class ChannelReplyDispatcher
         _ => AttachmentKind.File,
     };
 
-    private static string InferMime(string extension) => extension.ToLowerInvariant() switch
+    internal static string InferMime(string extension) => extension.ToLowerInvariant() switch
     {
         ".pdf" => "application/pdf",
         ".html" or ".htm" => "text/html",
