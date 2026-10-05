@@ -30,8 +30,7 @@ public sealed class SessionMessageQueueDeliveredSpillTests
             f.H.EventBus.Clear();
             var from = f.H.Now;
             var result = await f.FlushAsync(entry);
-            await f.ReleasedAsync("release-complete", from);
-            await f.ReleasedAsync(entry + "-releases", from);
+            await f.ReleasedAsync("release-complete / " + entry + "-releases", from);
             if (result is not null)
             {
                 result.LateConfirmedMessageIds.ShouldContain(f.Before.Id, "turn-end-confirmed-ids");
@@ -74,7 +73,9 @@ public sealed class SessionMessageQueueDeliveredSpillTests
             (TranscriptKinds.AssistantText, (string?)null),
             (TranscriptKinds.ToolResult, "AskUserQuestion"),
             (TranscriptKinds.ToolResult, "completed-answer"),
-            ("queue-operation", (string?)null),
+            (TranscriptKinds.QueueEnqueue, (string?)null),
+            (TranscriptKinds.QueueDequeue, (string?)null),
+            (TranscriptKinds.QueueRemove, (string?)null),
         })
         {
             await f.PublishAsync(f.Wire, kind, f.H.Now, tool: tool);
@@ -106,7 +107,7 @@ public sealed class SessionMessageQueueDeliveredSpillTests
             {
                 await f.PublishAsync(partial, TranscriptKinds.UserPrompt, f.H.Now);
                 await f.FlushAsync();
-                await f.RetainedAsync("partial-retains");
+                await f.RetainedAsync("partial-retains / partial-state-unchanged");
                 Fixture.Identity(await f.RowAsync()).ShouldBe(Fixture.Identity(f.Before), "partial-state-unchanged");
             }
             // A single production ingestion batch includes both partial and complete candidates.
@@ -178,8 +179,8 @@ public sealed class SessionMessageQueueDeliveredSpillTests
             await f.FlushAsync();
             if (sequence <= baseline)
             {
-                await f.RetainedAsync(sequence == baseline ? "sequence-equal-retains" : "sequence-before-retains");
-                await f.RetainedAsync("sequence-dominates-time");
+                await f.RetainedAsync(sequence == baseline
+                    ? "sequence-equal-retains / sequence-dominates-time" : "sequence-before-retains");
                 await f.PublishAsync(f.Wire, TranscriptKinds.UserPrompt, f.H.Now, baseline + 1);
                 from = f.H.Now;
                 await f.FlushAsync();
@@ -238,15 +239,16 @@ public sealed class SessionMessageQueueDeliveredSpillTests
             }
             else
             {
-                await f.ReleasedAsync("original-floor-releases", from);
-                if (delta == 0) await f.ReleasedAsync("timestamp-equal-releases", from);
-                if (tolerance < 0) await f.ReleasedAsync("negative-tolerance-clamped", from);
+                var label = "original-floor-releases";
+                if (delta == 0) label += " / timestamp-equal-releases";
+                if (tolerance < 0) label += " / negative-tolerance-clamped";
                 if (tolerance == 30)
                 {
                     timestamp.ShouldBeLessThan(f.Before.LastDeliveryGeneration!.Value,
                         "the tolerance receipt really precedes the original generation");
-                    await f.ReleasedAsync("tolerance-pre-generation-releases", from);
+                    label += " / tolerance-pre-generation-releases";
                 }
+                await f.ReleasedAsync(label, from);
             }
             await f.ReleasedAsync("release-complete", from);
         }
@@ -407,7 +409,7 @@ public sealed class SessionMessageQueueDeliveredSpillTests
         public void NoInput()
         {
             H.Adapter.Inputs.ShouldBe(_inputs, "receipt-zero-input");
-            H.Adapter.ConditionalInputs.ShouldBe(_conditional, "receipt-zero-conditional-input");
+            H.Adapter.ConditionalInputs.ToArray().ShouldBe(_conditional, "receipt-zero-conditional-input");
             H.Adapter.Prompts.ShouldBe(_prompts, "receipt-zero-prompts");
             H.Adapter.Lifecycle.ShouldBe(_lifecycle, "receipt-zero-lifecycle");
             H.Adapter.SubmittedBodies.ShouldBe(_submissions, "receipt-zero-submissions");
