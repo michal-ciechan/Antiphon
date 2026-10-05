@@ -1995,7 +1995,7 @@ public sealed class AgentTaskService
     /// binding wins over the owning standing agent's board, matching the card-launch precedent:
     /// the work's card names its project even if the agent happens to belong elsewhere.
     /// </summary>
-    private async Task<Guid?> DeriveCallerProjectAsync(Caller caller, CancellationToken ct)
+    internal async Task<Guid?> DeriveCallerProjectAsync(Caller caller, CancellationToken ct)
     {
         if (caller.ProjectId is Guid capabilityProject)
             return capabilityProject;
