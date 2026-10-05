@@ -40,6 +40,20 @@ The operator brief supersedes the historical handoff hold below: P-1 blocks only
 PC-274 in paused Mutation and does not block the ordinary Code checkpoints.
 No production mutant or red/restore/green cycle was run in this Code slice.
 
+## Current-master authoring status (bbc126e0, 2026-10-05)
+
+The current Code slice ports S1 and authors the seven S2/S3 methods on master
+`28a97c2ebf0a1e1f37c8dba47aa449c9ac38a2fa`; the main plan's current-master
+appendix owns its arrangements and exact ordinary scope. The historical
+missing-witness labels below remain design lineage, not current test outcomes.
+Grok PC-273 now has direct durable row-count assertions after two independent
+recovery opportunities. PC-274 alone retains P-1's interrupted-startup blocker.
+Claude inline transport uses a short actual queued follow-up because the remote
+Worktree contract cannot fit the unchanged brief ceiling; its task brief retains
+the independent full spill receipt witness. No PC has been executed or discharged:
+all 211 primary IDs and 21 remote-only variants remain pending SourceLanding
+Mutation. The stored Code report records final source-qualified ordinary results.
+
 ## Reading and execution key
 
 The main plan's Inspection and Delivery inventory enumerate bodies, missing setup,

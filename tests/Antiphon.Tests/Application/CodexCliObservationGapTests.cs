@@ -83,10 +83,17 @@ public sealed class CodexCliObservationGapTests
                     await w.FlushAsync(session);
                 }
                 await AssertReceiptAsync(w, task, observed, "grok/remote=" + remote + "/busy=" + busy);
-                using var scope = w.Harness.Provider.CreateScope();
-                await scope.ServiceProvider.GetRequiredService<GrokRulesRefreshService>().RecoverSessionAsync(session, CancellationToken.None);
-                (await QueueAsync(w, id)).Id.ShouldBe(row.Id, "C1029-pc-273 recovery keeps original durable task handoff");
-                TaskBodies(w, session).Count.ShouldBe(1, "C1029-pc-273 no duplicate task submission");
+                for (var recovery = 0; recovery < 2; recovery++)
+                {
+                    await w.EligibleAsync(session);
+                    using var scope = w.Harness.Provider.CreateScope();
+                    await scope.ServiceProvider.GetRequiredService<GrokRulesRefreshService>().RecoverSessionAsync(session, CancellationToken.None);
+                    await using var db = w.Context();
+                    (await db.SessionQueuedMessages.CountAsync(q => q.SourceTaskId == id))
+                        .ShouldBe(1, "C1029-pc-273 recovery must not insert a second durable task handoff");
+                    (await QueueAsync(w, id)).Id.ShouldBe(row.Id, "C1029-pc-273 recovery keeps original durable task handoff");
+                    TaskBodies(w, session).Count.ShouldBe(1, "C1029-pc-273 no duplicate task submission");
+                }
             }
             finally { w.Recipient.Ready = true; w.Recipient.ReleaseAcks(); await w.JoinLaunchAsync(); }
         });
@@ -133,7 +140,7 @@ public sealed class CodexCliObservationGapTests
         var original = await TaskAsync(w, id);
         var session = original.AgentSessionId!.Value;
         w.Launch(); await w.JoinLaunchAsync();
-        w.Fault.Hits.ShouldBe(1, "C1029 Grok fault follows actual provider readiness and rules ACK");
+        w.Fault.Hits.ShouldBe(1, "C1029 Grok queue-save cut follows actual provider readiness and rules ACK");
         TaskBodies(w, session).ShouldBeEmpty("C1029 Grok failed enqueue is not a task receipt");
         await using (var db = w.Context())
         {
@@ -406,23 +413,27 @@ public sealed class CodexCliObservationGapTests
             var row = await QueueAsync(w, id);
             var observed = ObserveFile(w, task);
             var held = new List<Submitted>();
+            var submitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             w.Recipient.RecordPrompt = (session, text) =>
             {
                 var actual = new Submitted(session, text, DateTimeOffset.UtcNow);
                 held.Add(actual);
                 w.Fault.Submitted = true;
                 w.Recipient.Append(session, TranscriptKinds.UserPrompt, actual.Text, timestamp: actual.Timestamp);
+                submitted.TrySetResult();
                 return Task.CompletedTask;
             };
             w.Launch(); await w.JoinLaunchAsync();
             held.ShouldBeEmpty("C1029 boot is busy before the post-input storage fault is armed");
             w.Fault.QueueId = row.Id; w.Fault.Verdict = true; w.Fault.KeepFailing = true;
             await w.EligibleAsync(task.AgentSessionId!.Value);
-            await Should.ThrowAsync<InvalidOperationException>(() => w.FlushAsync(task.AgentSessionId.Value));
+            await Should.ThrowAsync<InvalidOperationException>(() => ObserveSubmittedAsync(w,
+                task.AgentSessionId.Value, w.FlushAsync(task.AgentSessionId.Value), submitted.Task));
             var firstHits = w.Fault.Hits;
             firstHits.ShouldBe(1, "C1029 first post-input verdict save fails");
             // Keep storage unavailable across another verdict save too; a caught
             // convenience save or reconciliation cannot silently commit the verdict.
+            w.Clock.Advance(TimeSpan.FromSeconds(37)); // Existing interrupted-attempt age is 36 seconds.
             await Should.ThrowAsync<InvalidOperationException>(() => w.FlushAsync(task.AgentSessionId.Value));
             w.Fault.Hits.ShouldBe(2, "C1029 storage fault persists across both verdict saves");
             held.ShouldHaveSingleItem("C959-pc-220 actual terminal submitted before save loss");
@@ -432,7 +443,6 @@ public sealed class CodexCliObservationGapTests
             await AssertRetainedAsync(w, task);
             w.Fault.QueueId = null; w.Fault.KeepFailing = false; // Storage is available for the replacement graph.
             if (busyAfterRecreate) w.Recipient.Append(task.AgentSessionId.Value, TranscriptKinds.AssistantText, "actual recipient still working");
-            w.Clock.Advance(TimeSpan.FromSeconds(37)); // Original interrupted-attempt age, not a changed timeout.
             await w.RecreateAsync(task.AgentSessionId.Value);
             (await QueueAsync(w, id)).LastDeliveryStartedAt.ShouldBe(interrupted.LastDeliveryStartedAt);
             // The actual recipient record survived the lost verdict save. Ingesting it
@@ -454,19 +464,29 @@ public sealed class CodexCliObservationGapTests
         Encoding.UTF8.GetByteCount(expected).ShouldBeLessThanOrEqualTo(Limits(w, task).BriefInlineMaxBytes);
         var terminal = w.Recipient.Terminals[sessionId];
         var before = terminal.SubmittedBodies.Count;
+        var submitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        w.Recipient.RecordPrompt = (id, text) =>
+        {
+            w.Recipient.Append(id, TranscriptKinds.UserPrompt, text);
+            submitted.TrySetResult();
+            return Task.CompletedTask;
+        };
         if (busy)
         {
             w.Recipient.Append(sessionId, TranscriptKinds.AssistantText, "C1029 actual work before inline follow-up");
             await w.Harness.Runtime.CatchUpTranscriptAsync(sessionId, CancellationToken.None);
         }
         else await w.EligibleAsync(sessionId);
-        await w.Harness.Queue.EnqueueAsync(sessionId, expected, MessageSendMode.WhenIdle, CancellationToken.None);
         if (busy)
         {
+            await w.Harness.Queue.EnqueueAsync(sessionId, expected, MessageSendMode.WhenIdle, CancellationToken.None);
             terminal.SubmittedBodies.Count.ShouldBe(before, "C1029 busy Claude holds inline follow-up");
             await w.EligibleAsync(sessionId);
-            await w.FlushAsync(sessionId);
+            await ObserveSubmittedAsync(w, sessionId, w.FlushAsync(sessionId), submitted.Task);
         }
+        else await ObserveSubmittedAsync(w, sessionId,
+            w.Harness.Queue.EnqueueAsync(sessionId, expected, MessageSendMode.WhenIdle, CancellationToken.None), submitted.Task);
+        w.Recipient.RecordPrompt = null;
         await w.Harness.Runtime.CatchUpTranscriptAsync(sessionId, CancellationToken.None);
         terminal.SubmittedBodies.Count.ShouldBe(before + 1);
         terminal.SubmittedBodies.Last().ShouldBe(expected, "C1029 whole independently expected inline body");
@@ -482,12 +502,27 @@ public sealed class CodexCliObservationGapTests
         row.Status.ShouldBe(QueuedMessageStatus.Sent);
         row.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
         row.LastDeliveryGeneration.ShouldBe(SessionGeneration.Normalize(terminal.StartedAcceptedGeneration!.Value));
+        row.LastDeliveryBaselineSequence.ShouldNotBeNull("C1029 inline follows an observed task prompt");
         (await db.TranscriptEntries.AsNoTracking().Where(e => e.AgentSessionId == sessionId
             && e.Kind == TranscriptKinds.UserPrompt && e.Text == expected
             && e.Sequence > row.LastDeliveryBaselineSequence).ToListAsync()).ShouldHaveSingleItem();
         w.Peer.RequestCount(PhoneHomeOperation.Transcript).ShouldBeGreaterThan(0);
         w.Recipient.ProbeRequests.ShouldBeEmpty();
         Console.WriteLine($"C1029 VECTOR claude-inline/busy={busy} task={task.Id} queue={row.Id} session={sessionId} receipt=complete submits=1");
+    }
+
+    private static async Task ObserveSubmittedAsync(World w, Guid sessionId, Task delivery, Task submitted)
+    {
+        try
+        {
+            await Task.WhenAny(submitted, delivery);
+            submitted.IsCompletedSuccessfully.ShouldBeTrue("C1029 actual terminal submission precedes live ingestion");
+            // The scripted peer has no live transcript stream. Pull its actual submitted
+            // record during confirmation, outside the Input reply callback, so the peer
+            // can finish that reply and serve this real framed Transcript request.
+            await w.Harness.Runtime.CatchUpTranscriptAsync(sessionId, CancellationToken.None);
+        }
+        finally { await delivery; }
     }
 
     private static async Task UntilAsync(Func<bool> check, CancellationToken ct)
