@@ -53,11 +53,15 @@ public sealed class ChannelOutboundFailureRecordingTests
             w.Producer.Notices.ShouldBe(0);
             var entries = w.Producer.Entries;
             var reads = w.Reader.Calls;
+            var fileReads = w.Files.Reads;
+            if (route == "Preparation") { reads.ShouldBe(1); fileReads.ShouldBe(1); }
+            if (route == "Failed") fileReads.ShouldBe(0);
             // A fresh pump/context after lease expiry repairs only recording at a spent budget.
             w.Clock.Advance(TimeSpan.FromSeconds(301));
             await w.RunAsync(route);
             w.Producer.Entries.ShouldBe(entries);
             w.Reader.Calls.ShouldBe(reads);
+            w.Files.Reads.ShouldBe(fileReads);
             await w.FaultAsync(table, enable: false);
             w.Clock.Advance(TimeSpan.FromSeconds(301));
             await w.RunAsync(route);
@@ -177,6 +181,18 @@ public sealed class ChannelOutboundFailureRecordingTests
         row.PublicationAttempts.ShouldBe(2); w.Producer.Entries.ShouldBe(2);
     }
 
+    private sealed class CountingFiles(IChannelOutboundFileStore inner) : IChannelOutboundFileStore
+    {
+        public int Reads;
+        public Task<ChannelOutboundSnapshot> StageAsync(Guid id, ChannelReply reply, CancellationToken ct, string? manifest = null) => inner.StageAsync(id, reply, ct, manifest);
+        public Task<ChannelReply> ReadReplyAsync(string path, string hash, CancellationToken ct)
+        { Reads++; return inner.ReadReplyAsync(path, hash, ct); }
+        public Task<ChannelOutboundSealed> ValidateAndSealAsync(Guid id, string path, string hash, int max, CancellationToken ct) => inner.ValidateAndSealAsync(id, path, hash, max, ct);
+        public Task<ChannelOutboundMaterialized?> TryAdoptAsync(Guid id, string capture, CancellationToken ct)
+        { Reads++; return inner.TryAdoptAsync(id, capture, ct); }
+        public Task<ChannelOutboundMaterialized> StageCapturedAsync(Guid id, string capture, ChannelReplyPrepared prepared, CancellationToken ct) => inner.StageCapturedAsync(id, capture, prepared, ct);
+    }
+
     private sealed class RefusingReader : IChannelReplyAttachmentReader
     {
         public int Calls;
@@ -209,11 +225,12 @@ public sealed class ChannelOutboundFailureRecordingTests
     {
         public Guid Project = Guid.NewGuid(), Board = Guid.NewGuid(), Owner = Guid.NewGuid(), Session = Guid.NewGuid(), Channel = Guid.NewGuid(), Source = Guid.NewGuid();
         public Guid? Delivery;
+        public string Root => root;
         public FakeTimeProvider Clock { get; } = new(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
         public DateTime Now => Clock.GetUtcNow().UtcDateTime;
         public Producer Producer { get; } = new();
         public ChannelOutboundSettings Settings { get; } = new() { UnifiedRecoveryEnabled = true };
-        public ChannelOutboundFileStore Files { get; } = new(Path.Combine(root, "store"));
+        public CountingFiles Files { get; } = new(new ChannelOutboundFileStore(Path.Combine(root, "store")));
         public bool SendNotices;
         public RefusingReader Reader { get; } = new();
         public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
@@ -225,7 +242,7 @@ public sealed class ChannelOutboundFailureRecordingTests
             db.Projects.Add(new() { Id = w.Project, Name = "loss" });
             db.Boards.Add(new() { Id = w.Board, ProjectId = w.Project, Name = "loss" });
             db.Agents.Add(new() { Id = w.Owner, BoardId = w.Board, Name = "owner", Slug = "owner", PersistentSessionId = w.Session.ToString("D") });
-            db.AgentSessions.Add(new() { Id = w.Session, Cwd = root });
+            db.AgentSessions.Add(new() { Id = w.Session, Cwd = w.Root });
             db.ChatChannels.Add(new() { Id = w.Channel, Provider = "fake", ExternalId = "chat", AgentId = w.Owner, Enabled = true });
             await db.SaveChangesAsync(); return w;
         }

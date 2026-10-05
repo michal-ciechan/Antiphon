@@ -1492,3 +1492,12 @@ pending; no deliberate mutant or red/restore/green cycle runs in Code. S9 still
 owns bounded discovery completion/fairness and metadata repair; CARD-1061 is not
 expanded by this slice. Checkpoint receipts and actual counts are in the task's
 stored evidence report, not inferred from these planned floors.
+
+S8 repair group 1: the first CP-6 build found CS9105 in the new fixture's static
+factory (referencing its primary-constructor parameter without the instance).
+Run `20261005-085349-646f` at `56e95cd934089b2a9fd7cb42cf63437b68e55957`
+was stopped during CP-7's build and awaited to exit 6; both rows executed zero
+tests. No inherited-red claim is made. This repair fixes that fixture reference
+and counts real staged-file adoption/read calls in the recording-repair witness,
+so removing the recording-only preparation branch cannot hide behind the separate
+source-reader attempt cap. Both CP-6 and CP-7 rerun at the next committed tip.
