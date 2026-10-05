@@ -8,8 +8,9 @@ namespace Antiphon.Server.Application.Services;
 
 internal static class ChannelOutboundTerminalTranscript
 {
+    internal sealed record Proof(DateTime Generation, IReadOnlySet<long> StoredSequences);
     // Null means unknown, including old/unreachable runners, stale generations and partial persistence.
-    internal static async Task<DateTime?> CatchUpAsync(IServiceProvider services, Guid sessionId, CancellationToken ct)
+    internal static async Task<Proof?> CatchUpAsync(IServiceProvider services, Guid sessionId, CancellationToken ct)
     {
         var db = services.GetRequiredService<AppDbContext>();
         var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
@@ -25,6 +26,7 @@ internal static class ChannelOutboundTerminalTranscript
             || snapshot.Entries.Any(e => e.SessionId != sessionId)
             || snapshot.LastSequence != snapshot.Entries[^1].Sequence) return null;
         await runtime.PersistTranscriptAsync(sessionId, snapshot.Entries);
+        var matchedSequences = new HashSet<long>();
         // UUID identity survives runner sequence rebasing. Check payload as well: a metadata stub
         // or an ignored failed insert is not proof of a complete persisted transcript.
         foreach (var page in snapshot.Entries.Chunk(128))
@@ -34,11 +36,16 @@ internal static class ChannelOutboundTerminalTranscript
             var stored = await db.TranscriptEntries.AsNoTracking().Where(t => t.AgentSessionId == sessionId
                 && (t.Uuid != null && uuids.Contains(t.Uuid) || sequences.Contains(t.Sequence))).ToListAsync(ct);
             foreach (var entry in page)
-                if (!stored.Any(t => (entry.Uuid is null ? t.Sequence == entry.Sequence : t.Uuid == entry.Uuid)
+            {
+                var match = stored.FirstOrDefault(t => (entry.Uuid is null ? t.Sequence == entry.Sequence : t.Uuid == entry.Uuid)
                     && t.Kind == entry.Kind && t.Text == entry.Text && t.ToolInput == entry.ToolInput
-                    && t.StopReason == entry.StopReason && t.IsApiError == entry.IsApiError)) return null;
+                    && t.StopReason == entry.StopReason && t.IsApiError == entry.IsApiError);
+                if (match is null) return null;
+                matchedSequences.Add(match.Sequence);
+            }
         }
         return await db.AgentSessions.AnyAsync(s => s.Id == sessionId && s.StartedAt == session.StartedAt
-            && (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed), ct) ? session.StartedAt : null;
+            && (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed), ct)
+            ? new Proof(session.StartedAt, matchedSequences) : null;
     }
 }

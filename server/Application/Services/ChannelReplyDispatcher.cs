@@ -232,7 +232,7 @@ public sealed class ChannelReplyDispatcher
         if (!scope.ServiceProvider.GetRequiredService<ChannelOutboundService>().UnifiedRecoveryEnabled)
             return null;
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var terminalGeneration = await ChannelOutboundTerminalTranscript.CatchUpAsync(
+        var terminalProof = await ChannelOutboundTerminalTranscript.CatchUpAsync(
             scope.ServiceProvider, source.AgentSessionId, ct);
         var prompts = await db.TranscriptEntries.AsNoTracking()
             .Where(t => t.AgentSessionId == source.AgentSessionId && t.Sequence > afterPrompt
@@ -240,6 +240,8 @@ public sealed class ChannelReplyDispatcher
             .OrderBy(t => t.Sequence).Take(ChannelOutboundDiscoveryService.PageSize).ToListAsync(ct);
         foreach (var prompt in prompts)
         {
+            var terminalGeneration = terminalProof?.StoredSequences.Contains(prompt.Sequence) == true
+                ? terminalProof.Generation : (DateTime?)null;
             if (prompt.Text is null)
                 continue;
             var matched = source.Origin == QueuedMessageOrigin.Channel
@@ -1193,8 +1195,10 @@ public sealed class ChannelReplyDispatcher
         var root = await db.ChannelOutboundDeliveries.AsNoTracking().SingleOrDefaultAsync(d => d.Id == rootId, ct);
         if (root is not { RootDeliveryId: null, CaptureJson: not null, TailClosedAt: null,
                 ReservedThroughSequence: long cursor }) return;
-        var terminalGeneration = await ChannelOutboundTerminalTranscript.CatchUpAsync(
+        var terminalProof = await ChannelOutboundTerminalTranscript.CatchUpAsync(
             scope.ServiceProvider, root.SourceSessionId, ct);
+        var terminalGeneration = terminalProof?.StoredSequences.Contains(root.PromptSequence) == true
+            ? terminalProof.Generation : (DateTime?)null;
         var (next, late) = await QueryTurnWindowAsync(db, root.SourceSessionId, root.PromptSequence, cursor, ct);
         var texts = late.Where(t => !string.IsNullOrWhiteSpace(t.Text)).ToArray();
         if (!late.Any(t => TranscriptKinds.IsApiErrorStub(t.Kind, t.IsApiError)) && texts.Length > 0)

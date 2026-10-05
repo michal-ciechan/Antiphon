@@ -1,5 +1,17 @@
 # Session runtime invariants
 
+CARD-0519 S10: a terminal session status alone does not close outbound recovery
+windows. The optional transcript snapshot `TerminalComplete` is reader-owned EOF
+evidence after the existing child-exit grace, with no pending partial line,
+malformed JSON or changed file identity; Grok's pending output is flushed first.
+`AcceptedStartedAt` binds that evidence to the session generation. The server
+persists and checks every snapshot identity/payload and requires the original
+owning prompt in that snapshot before closing its root or classifying machine
+silence. Legacy/unreachable runners and incomplete persistence leave windows open.
+Retention shares discovery eligibility and rechecks outbound protections under
+the transcript mutation gate. Activation requires both server and runner support;
+`ChannelOutbound:UnifiedRecoveryEnabled` remains false by default.
+
 - **CARD-1022 release A uses one runtime backend decision.** Windows defaults to modern;
   Unix uses Porta and reports UnixPty without Windows discovery. The daemon composes nonempty
   environment before config; explicit direct-runtime requests, including empty, override ambient

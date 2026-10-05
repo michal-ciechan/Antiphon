@@ -7,6 +7,9 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Files;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
+using System.Net;
+using System.Net.Http.Json;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -212,13 +215,17 @@ public sealed class ChannelOutboundRetentionTests
             w.H.Runner.SetTranscript(new(w.H.SessionId, entries, entries[^1].Sequence, true, generation.AddSeconds(-1)));
             await w.H.Dispatcher.DiscoverRootAsync(root.Id, default);
             (await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync()).TailClosedAt.ShouldBeNull("stale generation");
+            w.H.Runner.SetTranscript(new(w.H.SessionId, entries.Skip(1).ToArray(), entries[^1].Sequence, true, generation));
+            await w.H.Dispatcher.DiscoverRootAsync(root.Id, default);
+            (await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == root.Id))
+                .TailClosedAt.ShouldBeNull("a later generation snapshot must include the original prompt");
             var mismatched = entries.ToArray();
             mismatched[0] = mismatched[0] with { Text = "payload absent from persisted evidence" };
             w.H.Runner.SetTranscript(new(w.H.SessionId, mismatched, entries[^1].Sequence, true, generation));
             await w.H.Dispatcher.DiscoverRootAsync(root.Id, default);
             (await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == root.Id))
                 .TailClosedAt.ShouldBeNull("deduplication cannot certify a different persisted payload");
-            w.H.Runner.SetTranscript(new(w.H.SessionId, entries, entries[^1].Sequence, true, generation));
+            w.H.Runner.SetTranscript(await ReadWireSnapshotAsync(w.H.SessionId, entries, generation));
             await w.H.Dispatcher.DiscoverRootAsync(root.Id, default);
             root = await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == root.Id);
             root.TailClosedAt.ShouldNotBeNull();
@@ -238,6 +245,29 @@ public sealed class ChannelOutboundRetentionTests
         }
     }
 
+    private static async Task<SessionRunnerTranscriptDto> ReadWireSnapshotAsync(Guid session,
+        IReadOnlyList<SessionRunnerTranscriptEvent> entries, DateTime generation)
+    {
+        var native = new RunnerTranscriptDto(session, entries.Select(e => new RunnerTranscriptEvent(
+            session, e.Sequence, e.Kind, e.Uuid, e.ParentUuid, e.Timestamp, e.Role, e.Text,
+            e.ToolName, e.ToolInput, e.ToolUseId, e.ToolIsError, e.StopReason)).ToArray(), entries[^1].Sequence, true, generation);
+        var mapped = new RunnerContractMapper().MapTranscript(native); // Phone-home's production mapper.
+        mapped.TerminalComplete.ShouldBeTrue();
+        mapped.AcceptedStartedAt.ShouldBe(generation);
+        using var http = new HttpClient(new SnapshotHandler(native));
+        var client = new SessionRunnerHttpClient(http, null!, Options.Create(new SessionRunnerSettings { BaseUrl = "http://fixture.invalid" }));
+        var snapshot = await client.GetTranscriptAsync(session, default);
+        snapshot.TerminalComplete.ShouldBeTrue();
+        snapshot.AcceptedStartedAt.ShouldBe(generation);
+        return snapshot;
+    }
+
+    private sealed class SnapshotHandler(RunnerTranscriptDto snapshot) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(snapshot) });
+    }
+
     private sealed class World(IsolatedTestSchema schema, BridgeQueueHarness h, FakeTimeProvider clock, string key) : IAsyncDisposable
     {
         public BridgeQueueHarness H => h;
@@ -250,7 +280,7 @@ public sealed class ChannelOutboundRetentionTests
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero));
             var h = await BridgeQueueHarness.CreateAsync(new() { ConnectionString = schema.ConnectionString,
-                AlwaysOn = false, TimeProvider = clock, ConfigureServices = s =>
+                AlwaysOn = false, PreserveDatabaseOnDispose = true, TimeProvider = clock, ConfigureServices = s =>
                     s.AddSingleton<IOptions<ChannelOutboundSettings>>(Options.Create(new ChannelOutboundSettings { UnifiedRecoveryEnabled = true })) });
             await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
             var project = Guid.NewGuid(); var board = Guid.NewGuid();
@@ -318,6 +348,10 @@ public sealed class ChannelOutboundRetentionTests
                 DeliverableBundleDir = h.TempRoot });
             await db.SaveChangesAsync(); return (root, child, path);
         }
-        public async ValueTask DisposeAsync() { await h.DisposeAsync(); await schema.DisposeAsync(); }
+        public async ValueTask DisposeAsync()
+        {
+            try { await h.DisposeAsync(); }
+            finally { await schema.DisposeAsync(); }
+        }
     }
 }
