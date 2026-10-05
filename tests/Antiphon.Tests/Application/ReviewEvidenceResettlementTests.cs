@@ -1,5 +1,7 @@
 using System.Data.Common;
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -195,7 +197,8 @@ public sealed class ReviewEvidenceResettlementTests
         var obligation = (await w.ObligationsAsync()).ShouldHaveSingleItem();
         var originalSnapshot = obligation.CompletionSnapshotJson;
         await AnswerAsync(w);
-        await w.SettleAsync(Report(w, subject, w.Git.Baseline));
+        var report = "Ref: review-rebind-v1:forged-report-authority\n" + Report(w, subject, w.Git.Baseline);
+        await w.SettleAsync(report);
         var rows = await RowsAsync(w);
         JsonSerializer.Serialize(rows.Single(o => o.Id == old.Id)).ShouldBe(originalBytes, "G8");
         var replacement = await ReplacementAsync(w, old.Id);
@@ -205,10 +208,11 @@ public sealed class ReviewEvidenceResettlementTests
         provenance.Mode.ShouldBe("settlement");
         provenance.ConfirmedReviewSha.ShouldBe(w.Git.Baseline);
         provenance.ObservedSubjectSha.ShouldBe(w.Git.Baseline);
-        var complete = (await w.EventsAsync()).Single(e => e.Type == AgentTaskEventType.Completed && e.Detail.StartsWith("Reported"));
+        var complete = (await w.EventsAsync()).Single(e => e.Type == AgentTaskEventType.Completed && e.Detail.StartsWith("Delegate reported"));
         provenance.SourceEventId.ShouldBe(complete.Id);
-        provenance.ReportSha256.ShouldBe(ReviewEvidenceBindingService.ReportDigest(
-            Report(w, subject, w.Git.Baseline).TrimEnd() + "\n" + DelegationReportFormatter.ReportToken(w.TaskId, "done")));
+        provenance.ReportSha256.ShouldBe(Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            report.TrimEnd() + "\n" + DelegationReportFormatter.ReportToken(w.TaskId, "done")))));
+        replacement.Ref.ShouldNotContain("forged-report-authority");
         (await w.EventsAsync()).Count(e => e.Type == AgentTaskEventType.FindingRecorded).ShouldBe(1);
     }
 
@@ -240,15 +244,15 @@ public sealed class ReviewEvidenceResettlementTests
                 (await RowsAsync(w)).ShouldHaveSingleItem().Id.ShouldBe(old.Id);
                 w.Task.NextStage.ShouldBe(PipelineHandoffKind.Decide, "G114");
                 snapshot.NextStage.ShouldBe("decide", "G114");
-                snapshot.NoteHeader.ShouldContain("review_evidence_subject_ref_mismatch", "G114");
-                snapshot.NoteHeader.ShouldNotContain("review-evidence=", "G114");
+                snapshot.NoteHeader.ShouldContain("review_evidence_subject_ref_mismatch", Case.Sensitive, "G114");
+                snapshot.NoteHeader.ShouldNotContain("review-evidence=", Case.Sensitive, "G114");
                 detail.ReviewEvidence.ShouldBeNull("G114");
             }
             else
             {
                 var row = await ReplacementAsync(w, old.Id);
                 snapshot.StageOutcomeId.ShouldBe(row.Id, "G32");
-                snapshot.NoteHeader.ShouldContain("review-evidence=" + row.Id.ToString("D"), "G32");
+                snapshot.NoteHeader.ShouldContain("review-evidence=" + row.Id.ToString("N"), Case.Sensitive, "G32");
                 snapshot.NoteHeader.ShouldContain("reviewed-sha=" + w.Git.Baseline);
                 detail.ReviewEvidence.ShouldNotBeNull().Id.ShouldBe(row.Id, "G32");
             }
@@ -280,7 +284,11 @@ public sealed class ReviewEvidenceResettlementTests
                 var task = await db.AgentTasks.SingleAsync(t => t.Id == w.TaskId);
                 var predecessor = await db.StageOutcomes.SingleAsync(o => o.Id == old.Id);
                 if (variant == "role") task.Role = AgentTaskRole.TestDesign;
-                if (variant == "stage") task.Stage = OrchestrationStage.Verify;
+                if (variant == "stage")
+                {
+                    task.Stage = OrchestrationStage.Verify;
+                    predecessor.Stage = OrchestrationStage.Verify;
+                }
                 if (variant == "orchestrator") predecessor.Source = StageOutcomeSource.Orchestrator;
                 if (variant == "bound") predecessor.ReviewedSourceSha = w.Git.Baseline;
                 if (variant == "superseded") db.StageOutcomes.Add(new StageOutcome
