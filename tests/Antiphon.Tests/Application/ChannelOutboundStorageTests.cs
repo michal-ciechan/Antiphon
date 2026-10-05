@@ -61,6 +61,16 @@ public sealed class ChannelOutboundStorageTests
             (await reader.ReadAttachmentAsync(file, [root], 8, default)).ShouldBe("12345678"u8.ToArray());
             var ex = await Should.ThrowAsync<Antiphon.Server.Application.Interfaces.ChannelReplyFileTooLargeException>(() => reader.ReadAttachmentAsync(file, [root], 7, default));
             ex.Length.ShouldBe(8);
+            if (OperatingSystem.IsLinux())
+            {
+                var grew = false;
+                reader.BeforeReadAsync = (openedPath, _) =>
+                { grew = true; File.AppendAllText(openedPath, "9"); return Task.CompletedTask; };
+                var growth = await Should.ThrowAsync<Antiphon.Server.Application.Interfaces.ChannelReplyFileTooLargeException>(() => reader.ReadAttachmentAsync(file, [root], 8, default));
+                grew.ShouldBeTrue();
+                growth.Length.ShouldBe(9);
+                reader.BeforeReadAsync = null;
+            }
             // A sparse file proves refusal before allocating/reading the entire payload.
             using (var sparse = File.OpenWrite(file)) sparse.SetLength(1024L * 1024 * 1024);
             using var canceled = new CancellationTokenSource();
@@ -84,6 +94,7 @@ public sealed class ChannelOutboundStorageTests
             await Should.ThrowAsync<InvalidDataException>(() => reader.ReadAttachmentAsync(root, [Path.GetTempPath()], 64, default));
             if (OperatingSystem.IsLinux())
             {
+                await Should.ThrowAsync<InvalidDataException>(() => reader.ReadTextAsync("/dev/null", ["/dev"], 64, default));
                 var fifo = Path.Combine(root, "fifo");
                 var start = new System.Diagnostics.ProcessStartInfo("mkfifo") { UseShellExecute = false };
                 start.ArgumentList.Add(fifo);
@@ -91,7 +102,6 @@ public sealed class ChannelOutboundStorageTests
                 await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
                 process.ExitCode.ShouldBe(0);
                 await Should.ThrowAsync<InvalidDataException>(() => reader.ReadAttachmentAsync(fifo, [root], 64, default).WaitAsync(TimeSpan.FromSeconds(5)));
-                await Should.ThrowAsync<InvalidDataException>(() => reader.ReadTextAsync("/dev/null", ["/dev"], 64, default));
             }
         }
         finally { Directory.Delete(root, true); }

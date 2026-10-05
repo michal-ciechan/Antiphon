@@ -167,15 +167,22 @@ public sealed class ChannelOutboundDeliveryPump
         if (delivery.PreparationDeadlineAt is null
             || delivery.PreparationDeadlineAt <= UtcNow())
             throw new InvalidDataException("The captured preparation budget or original obligation deadline was exhausted.");
-        var materialized = await _files.TryAdoptAsync(delivery.Id, delivery.CaptureJson!, ct);
-        if (materialized is null)
+        // Count failed adoption I/O as preparation too. A completed third stage
+        // may still be adopted after a crash, without authorizing a fourth read
+        // of the original sources.
+        var preparationAuthorized = delivery.PreparationAttempts < 3;
+        if (preparationAuthorized)
         {
-            if (delivery.PreparationAttempts >= 3)
-                throw new InvalidDataException("The captured preparation attempt budget was exhausted.");
             delivery.PreparationAttempts++;
             delivery.NextAttemptAt = null;
             delivery.Version++;
             await _db.SaveChangesAsync(ct);
+        }
+        var materialized = await _files.TryAdoptAsync(delivery.Id, delivery.CaptureJson!, ct);
+        if (materialized is null)
+        {
+            if (!preparationAuthorized)
+                throw new InvalidDataException("The captured preparation attempt budget was exhausted.");
             var prepared = await _preparation!.PrepareAsync(delivery, ct,
                 prepareConversion: delivery.ConversionOutcome != "Revoked");
             materialized = await _files.StageCapturedAsync(delivery.Id, delivery.CaptureJson!, prepared, ct);

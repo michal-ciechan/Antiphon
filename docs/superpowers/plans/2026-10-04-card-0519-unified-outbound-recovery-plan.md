@@ -873,6 +873,25 @@ Inventory: **guards=100, mapped=100, missing=0, duplicate PC maps=0**.
 All guards are mapped; none is exempted for inconvenience. All 100 PCs have an exact
 detecting method and compiling defect. No PC execution is claimed by TestDesign.
 
+#### S3 prerequisite controls (CARD-1059)
+
+The original PC-1 through PC-100 remain unchanged and pending. S3 adds six
+independent source-read controls below; all are also pending for post-land
+method-scoped SourceLanding Mutation. These are additive controls, not ordinary
+Code mutant runs. Their ordinary methods are the four new CP-3 results.
+
+| PC/variant | Compiling defect | Exact detecting method | Intended assertion red |
+|---|---|---|---|
+| PC-1059-1 / roots | Bypass the allowed-root membership predicate in ChannelReplyAttachmentReader.ValidatePath. | ChannelOutboundStorageTests.`C1059_Source_reads_require_captured_roots_without_traversal` | An existing regular file with only a nonmatching sibling root is refused; authorized companion reads the original bytes. |
+| PC-1059-2 / traversal | Remove the explicit dot/dot-dot component rejection, leaving canonical root membership intact. | ChannelOutboundStorageTests.`C1059_Source_reads_require_captured_roots_without_traversal` | The path containing ../allowed/source.txt is refused even though its normalized path is within the allowed root. |
+| PC-1059-3 / file and directory links | Remove reparse rejection in ValidatePath and handle inspection; remove Linux O_NOFOLLOW and Windows OPEN_REPARSE_POINT flags for source directory/leaf opens. These are redundant fences for the same no-link invariant and must be removed together. | ChannelOutboundStorageTests.`C1059_Source_reads_reject_file_and_directory_links` | File link, directory link and linked allowed root are refused; unlinked companion reads successfully. |
+| PC-1059-4 / pre-read budget | Remove the stream.Length > maxBytes pre-read refusal, retaining the streamed byte counter. | ChannelOutboundStorageTests.`C1059_Source_length_is_checked_before_reading_with_a_finite_budget` | A 1 GiB sparse file with a 256 KiB budget must produce the length refusal before touching its canceled read token, rather than entering ReadAsync. The exact-size companion reads. |
+| PC-1059-5 / Linux regular type | Bypass the statx regular-file mode comparison and remove the redundant FileAttributes.Device precheck, retaining root and no-follow guards. Run on Linux. | ChannelOutboundStorageTests.`C1059_Source_reads_refuse_nonregular_files_without_blocking` | Device read is refused, never accepted as an empty attachment; FIFO also refuses promptly and the ordinary-file companion succeeds. |
+| PC-1059-6 / Linux growing-file budget | Remove the streamed read > maxBytes - output.Length check, keeping the pre-read length check. Run on Linux. | ChannelOutboundStorageTests.`C1059_Source_length_is_checked_before_reading_with_a_finite_budget` | A file grows from eight to nine bytes after the valid eight-byte length check; the I/O barrier fires and the reader refuses the ninth byte. Windows holds a handle without write sharing instead. |
+
+Supplemental inventory: guards=6, mapped=6, pending=6. Windows handle behavior
+is implemented but S3's portable Linux receipt does not claim Windows execution.
+
 ### Out of scope
 
 - Native provider acknowledgement, gateway crash/offset-loss durability and human
@@ -1033,7 +1052,7 @@ the same bounded manifest; do not expand timeout or replace an assertion.
 
 TestDesign handoff audit: inspected bodies and nearest new-file fixtures recorded;
 **guards=100, mapped=100, missing=0, duplicate PC maps=0; all PCs executable** as
-specified Code deliverables; **29 CP rows, 397 ordinary result floor, 177 ordinary
+specified Code deliverables; **29 CP rows, 401 ordinary result floor, 177 ordinary
 minutes, 726 PC minutes**. No build/test/PC result is claimed by this documentation
 stage. Commit/push this appendix on the assigned TestDesign branch; caller lands
 the Succeeded task promptly, then commissions Code with this exact artifact.
