@@ -136,15 +136,14 @@ public sealed class BlockedParkWireTests
 
         await using var attempted = new SeatWorld("Codex");
         var pendingRelease = await attempted.QualifyAsync();
-        var before = attempted.Session.BackendInput.Count;
         attempted.Child.Write = _ =>
         {
-            attempted.Session.BackendInput.Count.ShouldBe(before + 1, "G-47");
+            attempted.Runtime.TerminalSeatProofFor(attempted.Tail.SessionId).ShouldBeNull("G-47");
             throw new IOException("failed attempted write");
         };
         await Should.ThrowAsync<IOException>(() => attempted.Runtime.SendInputAsync(
             attempted.Tail.SessionId, "uncertain input", CancellationToken.None));
-        attempted.Session.BackendInput.Count.ShouldBe(before + 1, "G-47");
+        attempted.Runtime.TerminalSeatProofFor(attempted.Tail.SessionId).ShouldBeNull("G-47");
         (await attempted.ReleaseAsync(pendingRelease)).ConfirmsExit.ShouldBeFalse("G-47");
         attempted.AssertRetained();
     }
@@ -1390,4 +1389,3 @@ public sealed class BlockedParkWireTests
         }
     }
 }
-
