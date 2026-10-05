@@ -1752,3 +1752,13 @@ now rejects the old header alone and accepts the complete amended receipt. Origi
 text/route/attachment assertions remain. Rerun CP-15..22 at the committed repair
 SHA with unchanged filters, floors and deadlines. No inherited-red claim or
 deliberate mutant is made; every PC remains pending as above.
+
+S11 repair group 2: run 20261005-154305-69f1 at
+4fa9bdcbe8b0280a6e90438a9f3a865cebc93cc3 failed CP-15's build with CS0313 in
+the new nullable DateTime comparison, executing zero tests. Stopped during the
+next build and awaited terminal exit 6 with no children before editing. Assert
+the deadline is non-null before comparing its Value; the deadline and inequality
+are unchanged. An earlier mistyped expected SHA was refused before creating a run
+or build. This exhausts the two repair groups. Run CP-15..22 at the committed tip;
+any remaining failures require caller-commissioned follow-up Code, without
+loosening the existing payload/routing oracles or widening a timeout.

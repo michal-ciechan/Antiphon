@@ -84,7 +84,8 @@ internal static class ChannelOutboundTestDriver
         captured.State.ShouldBe(ChannelOutboundDeliveryState.Captured);
         captured.PromptSequence.ShouldBe(promptSequence);
         ChannelReplyPreparation.Deserialize(captured.CaptureJson!).Body.OriginalResponse.ShouldBe(response);
-        captured.PreparationDeadlineAt.ShouldBeLessThan(harness.Now);
+        captured.PreparationDeadlineAt.ShouldNotBeNull();
+        captured.PreparationDeadlineAt.Value.ShouldBeLessThan(harness.Now);
         harness.Messaging.SentReplies.ShouldBeEmpty();
 
         await harness.DrainOutboundAsync();
