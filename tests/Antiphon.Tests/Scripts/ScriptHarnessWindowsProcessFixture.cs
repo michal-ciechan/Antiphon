@@ -169,7 +169,10 @@ internal sealed class ScriptHarnessWindowsProcessFixture : IDisposable
         }
         internal void Terminate()
         {
-            if (!TerminateProcess(_handle, 99) && Executing()) throw NativeError("Emergency TerminateProcess");
+            if (TerminateProcess(_handle, 99)) return;
+            var code = Marshal.GetLastWin32Error();
+            if (Executing()) throw new Win32Exception(code,
+                $"Emergency TerminateProcess failed ({code}): {new Win32Exception(code).Message}");
         }
         internal void Join(TimeSpan remaining)
         {
