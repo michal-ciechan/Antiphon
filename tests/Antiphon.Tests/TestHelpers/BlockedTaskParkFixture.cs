@@ -49,6 +49,7 @@ internal sealed class BlockedTaskParkFixture : IAsyncDisposable
             var worker = await db.AgentSessions.SingleAsync(s => s.Id == f.SessionId);
             worker.RunnerId = "fixture";
             worker.RunnerStoreId = Guid.NewGuid();
+            worker.RunnerCwd = f._harness.TempRoot;
             worker.StartedAt = f.Now;
             db.AgentTasks.Add(new AgentTask
             {
