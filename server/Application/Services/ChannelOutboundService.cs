@@ -52,7 +52,7 @@ public sealed class ChannelOutboundService
     public async Task<ChannelOutboundDelivery> CaptureAsync(ChannelReply route,
         ChannelOutboundSource source, ChannelReplyBodyDescriptor body,
         ChannelBridgeSettings bridge, CancellationToken ct, Guid? rootDeliveryId = null,
-        IReadOnlyList<Guid>? sourceTaskIds = null)
+        IReadOnlyList<Guid>? sourceTaskIds = null, bool suppress = false)
     {
         if (ProbeBarrierAsync is { } admissionProbe)
             await admissionProbe("capture-admission", source.CorrelationIds.FirstOrDefault(), ct);
@@ -94,7 +94,9 @@ public sealed class ChannelOutboundService
                 if (source.FirstTextSequence <= root.ReservedThroughSequence)
                     throw new ConflictException("The trailing window overlaps an already reserved interval.", "channel_outbound_interval_owned");
                 // The tail inherits the original route/policy, even if the current catalog changed.
-                route = ChannelReplyPreparation.Deserialize(root.CaptureJson).Route;
+                route = ChannelReplyPreparation.Deserialize(root.CaptureJson).Route with { Kind = route.Kind };
+                if (ProbeBarrierAsync is { } rootRead)
+                    await rootRead("tail-root-read", root.Id, ct);
             }
 
             var memberIds = root is null ? source.CorrelationIds.Distinct().Order().ToArray() : [];
@@ -154,7 +156,7 @@ public sealed class ChannelOutboundService
                         .Select(s => s.Cwd).SingleAsync(ct) }.Concat(taskDescriptors.Select(t => t.BundleDirectory)
                         .OfType<string>()).Where(p => !string.IsNullOrWhiteSpace(p)).Distinct().ToArray(),
                 }
-                : ChannelReplyPreparation.Deserialize(root.CaptureJson!) with { Body = body, MemberIds = [] };
+                : ChannelReplyPreparation.Deserialize(root.CaptureJson!) with { Route = route, Body = body, MemberIds = [] };
             var createdAt = root?.CreatedAt ?? (members.Count == 0 ? now : members.Min(m => m.CreatedAt));
             var delivery = new ChannelOutboundDelivery
             {
@@ -167,7 +169,8 @@ public sealed class ChannelOutboundService
                 ReservedThroughSequence = root is null ? source.LastTextSequence : null,
                 ProfileName = capture.Profile?.Name ?? "", ConverterAgentId = capture.Profile?.AgentId ?? Guid.Empty,
                 Trigger = capture.Profile?.Trigger ?? "Passthrough", MaxPending = capture.Profile?.MaxPending ?? 0,
-                State = ChannelOutboundDeliveryState.Captured, CreatedAt = now,
+                State = suppress ? ChannelOutboundDeliveryState.Suppressed : ChannelOutboundDeliveryState.Captured,
+                CreatedAt = now,
                 DeadlineAt = now.AddSeconds(capture.Profile?.TimeoutSeconds ?? 120),
                 PreparationDeadlineAt = root?.PreparationDeadlineAt ?? createdAt.AddMinutes(bridge.PendingReplyTtlMinutes),
             };
@@ -179,6 +182,10 @@ public sealed class ChannelOutboundService
                 .ExecuteUpdateAsync(s => s.SetProperty(m => m.ChannelOutboundDeliveryId, delivery.Id), ct);
             if (claimed != memberIds.Length)
                 throw new ConflictException("A capture source was claimed concurrently.", "channel_outbound_members_owned");
+            if (suppress)
+                await _db.SessionQueuedMessages.Where(m => memberIds.Contains(m.Id)
+                    && m.ChannelOutboundDeliveryId == delivery.Id)
+                    .ExecuteUpdateAsync(s => s.SetProperty(m => m.ChannelReplySettledAt, now), ct);
             if (root is not null)
             {
                 var advanced = await _db.ChannelOutboundDeliveries.Where(d => d.Id == root.Id
@@ -203,6 +210,21 @@ public sealed class ChannelOutboundService
             _db.ChangeTracker.Clear();
             throw;
         }
+    }
+
+    /// <summary>Close only the version of the root whose next-prompt window was examined.</summary>
+    internal async Task CloseTailAsync(ChannelOutboundDelivery root, CancellationToken ct)
+    {
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        var lockBytes = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+            "channel-outbound:" + root.ChannelId.ToString("N")));
+        await _db.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT pg_advisory_xact_lock({BitConverter.ToInt64(lockBytes, 0)})", ct);
+        await _db.ChannelOutboundDeliveries.Where(d => d.Id == root.Id && d.Version == root.Version
+            && d.ReservedThroughSequence == root.ReservedThroughSequence && d.TailClosedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.TailClosedAt, _clock.GetUtcNow().UtcDateTime)
+                .SetProperty(d => d.Version, d => d.Version + 1), ct);
+        await transaction.CommitAsync(ct);
     }
 
     /// <summary>Human retry of an ambiguous broker attempt. It may duplicate a prior accepted send.</summary>
@@ -283,6 +305,7 @@ public sealed class ChannelOutboundService
             || MatchesMarkdownSources(reply, sourceManifest));
         var hasOlderIntent = channel is not null && await _db.ChannelOutboundDeliveries.AnyAsync(d =>
             d.ChannelId == channel.Id && d.State != ChannelOutboundDeliveryState.Published
+            && d.State != ChannelOutboundDeliveryState.Suppressed
             && d.State != ChannelOutboundDeliveryState.Failed, ct);
 
         // Catalog-less conversation-id replies have no durable channel owner. Preserve

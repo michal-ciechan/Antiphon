@@ -348,6 +348,7 @@ public sealed class ChannelOutboundDeliveryPump
         if (await _db.ChannelOutboundDeliveries.AnyAsync(d => d.ChannelId == delivery.ChannelId
             && (d.CreatedAt < delivery.CreatedAt || d.CreatedAt == delivery.CreatedAt && d.Id.CompareTo(delivery.Id) < 0)
             && d.State != ChannelOutboundDeliveryState.Published
+            && d.State != ChannelOutboundDeliveryState.Suppressed
             && d.State != ChannelOutboundDeliveryState.Failed, ct))
             return;
 

@@ -234,7 +234,10 @@ public sealed class ChannelOutboundDispatchIntegrationTests
         {
             (await silence.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == old))
                 .ChannelReplySettledAt.ShouldNotBeNull();
-            (await silence.ChannelOutboundDeliveries.CountAsync(d => d.SourceSessionId == h.SessionId)).ShouldBe(0);
+            var root = await silence.ChannelOutboundDeliveries.AsNoTracking()
+                .SingleAsync(d => d.SourceSessionId == h.SessionId);
+            root.State.ShouldBe(ChannelOutboundDeliveryState.Suppressed);
+            root.PublishedAt.ShouldBeNull();
         }
         foreach (var (origin, prompt, response) in new[]
         {

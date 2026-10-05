@@ -202,6 +202,8 @@ public sealed class ChannelReplyDispatcher
             if (_dispatched.ContainsKey(sessionId))
                 await DispatchFollowUpAsync(sessionId, ct);
 
+            await DispatchDurableFollowUpsAsync(sessionId, ct);
+
             // CARD-0250 / CARD-0338: a later machine-triggered turn (task-done / check-in /
             // scheduled / system note) still reaches the last-known conversation after the ack
             // turn settled the Channel correlation. Attachments always; plain text for origins
@@ -455,18 +457,33 @@ public sealed class ChannelReplyDispatcher
                     new HashSet<Guid>(), new HashSet<Guid>(), failed);
         }
 
-        // Remember routing for the current trailing-text path (durable trailing recovery is S6).
-        // With activation enabled, CaptureAsync owns the main sources before any preparation;
-        // settlement is the pump's accepted outcome. Default-off retains the legacy service's
-        // claim/reopen protocol. This cache does not authorize settlement or publication.
+        var outbound = scope.ServiceProvider.GetRequiredService<ChannelOutboundService>();
+        // Only legacy and catalog-less routes need the process-local watermark. Captured
+        // destinations always derive trailing ownership from their committed root.
         if (historicalPrompt is null)
-            _dispatched[sessionId] = new DispatchedTurn(userPrompt.Sequence, maxTextSeq, targets);
+        {
+            var legacyTargets = targets.Where(t => !outbound.UnifiedRecoveryEnabled || !t.HasCatalog).ToArray();
+            if (legacyTargets.Length > 0)
+                _dispatched[sessionId] = new DispatchedTurn(userPrompt.Sequence, maxTextSeq, legacyTargets);
+        }
 
         // The frozen silent-turn contract: a whole-turn NO_REPLY settles the correlations and
         // sends nothing — system notes and housekeeping turns must never spam the chat.
         if (ChannelContracts.IsNoReply(responseText))
         {
-            await SettleAsync(db, matches, ct);
+            if (outbound.UnifiedRecoveryEnabled)
+            {
+                foreach (var target in targets.Where(t => t.HasCatalog))
+                    await outbound.CaptureAsync(new ChannelReply { Channel = target.Provider,
+                            ConversationId = target.ConversationId, ReplyHandle = target.ReplyHandle },
+                        new ChannelOutboundSource(sessionId, userPrompt.Sequence, userPrompt.Sequence + 1,
+                            maxTextSeq, "main", target.CorrelationIds),
+                        ChannelReplyPreparation.Describe(responseText), _settings, ct, suppress: true);
+                await SettleAsync(db, matches.Where(m => targets.Any(t => !t.HasCatalog
+                    && t.CorrelationIds.Contains(m.Id))).ToList(), ct);
+            }
+            else
+                await SettleAsync(db, matches, ct);
             _logger.LogInformation(
                 "Silent turn (NO_REPLY) on session {SessionId}; {Count} correlation(s) settled without a reply",
                 sessionId, matches.Count);
@@ -474,7 +491,6 @@ public sealed class ChannelReplyDispatcher
                 new HashSet<Guid>(), matches.Select(m => m.Id).ToHashSet(), failed);
         }
 
-        var outbound = scope.ServiceProvider.GetRequiredService<ChannelOutboundService>();
         var descriptor = ChannelReplyPreparation.Describe(responseText) with { MaxTextChars = _settings.MaxReplyChars };
         var (bodyText, attachments) = outbound.UnifiedRecoveryEnabled
             ? (descriptor.Text, new List<OutboundAttachment>())
@@ -1188,6 +1204,62 @@ public sealed class ChannelReplyDispatcher
     // window's upper bound, not a reason to drop in-window text — CARD-0068, seq 469 on 2026-08-17
     // (the guest list) landed in the same PersistTranscriptAsync batch as seq 471 (the next
     // UserPrompt) and was discarded by the old "is PromptSeq still the latest UserPrompt?" bail.
+    private async Task DispatchDurableFollowUpsAsync(Guid sessionId, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        if (!scope.ServiceProvider.GetRequiredService<ChannelOutboundService>().UnifiedRecoveryEnabled)
+            return;
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var roots = await db.ChannelOutboundDeliveries.AsNoTracking().Where(d => d.SourceSessionId == sessionId
+            && d.CaptureJson != null && d.RootDeliveryId == null && d.ReservedThroughSequence != null
+            && d.TailClosedAt == null && (d.SendKind == "main" || d.SendKind == "machine"))
+            .OrderBy(d => d.CreatedAt).ThenBy(d => d.Id).Take(ChannelOutboundDiscoveryService.PageSize)
+            .Select(d => d.Id).ToListAsync(ct);
+        foreach (var id in roots) await DiscoverRootAsync(id, ct);
+    }
+
+    /// <summary>Reserve a tail using durable routing and cursor; preparation belongs to the pump.</summary>
+    internal async Task DiscoverRootAsync(Guid rootId, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var outbound = scope.ServiceProvider.GetRequiredService<ChannelOutboundService>();
+        if (!outbound.UnifiedRecoveryEnabled) return;
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var root = await db.ChannelOutboundDeliveries.AsNoTracking().SingleOrDefaultAsync(d => d.Id == rootId, ct);
+        if (root is not { RootDeliveryId: null, CaptureJson: not null, TailClosedAt: null,
+                ReservedThroughSequence: long cursor }) return;
+        var (next, late) = await QueryTurnWindowAsync(db, root.SourceSessionId, root.PromptSequence, cursor, ct);
+        var texts = late.Where(t => !string.IsNullOrWhiteSpace(t.Text)).ToArray();
+        if (!late.Any(t => TranscriptKinds.IsApiErrorStub(t.Kind, t.IsApiError)) && texts.Length > 0)
+        {
+            var joined = string.Join("\n\n", texts.Select(t => t.Text!)).Trim();
+            var descriptor = ChannelReplyPreparation.Describe(joined) with { MaxTextChars = _settings.MaxReplyChars };
+            var suppress = ChannelContracts.IsNoReply(joined);
+            if (root.SendKind == "machine")
+            {
+                var members = await db.SessionQueuedMessages.AsNoTracking()
+                    .Where(m => m.ChannelOutboundDeliveryId == root.Id).ToListAsync(ct);
+                // Plain trailing machine text retains the root's origin policy. Explicit
+                // attachments remain eligible, and silent fragments still reserve their range.
+                suppress |= descriptor.AttachmentPaths.Count == 0 && !AdmitsMachineTurnText(members);
+                if (ChannelContracts.IsNoReply(descriptor.Text) && descriptor.AttachmentPaths.Count > 0)
+                    descriptor = descriptor with { Text = "" };
+            }
+            var route = ChannelReplyPreparation.Deserialize(root.CaptureJson).Route
+                with { Kind = ClassifyKind(descriptor.Text) };
+            await outbound.CaptureAsync(route,
+                new ChannelOutboundSource(root.SourceSessionId, root.PromptSequence, cursor + 1,
+                    late[^1].Sequence, "trailing", []), descriptor, _settings, ct, root.Id, suppress: suppress);
+            // A racing reservation may have won a shorter interval; only close after a new
+            // examination of the committed cursor, so its remaining suffix is never dropped.
+            root = await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == rootId, ct);
+            var (_, remaining) = await QueryTurnWindowAsync(db, root.SourceSessionId, root.PromptSequence,
+                root.ReservedThroughSequence!.Value, ct);
+            if (remaining.Count > 0) return;
+        }
+        if (next is not null) await outbound.CloseTailAsync(root, ct);
+    }
+
     private async Task DispatchFollowUpAsync(Guid sessionId, CancellationToken ct)
     {
         if (!_dispatched.TryGetValue(sessionId, out var turn))
@@ -1503,7 +1575,7 @@ public sealed class ChannelReplyDispatcher
                 StampDeliveredBundles(impliedTasks, attachments, _timeProvider.GetUtcNow().UtcDateTime);
                 await db.SaveChangesAsync(ct);
             }
-            if (historicalPrompt is null)
+            if (historicalPrompt is null && !captureReply)
                 _dispatched[sessionId] = new DispatchedTurn(userPrompt.Sequence, maxTextSeq, [target]);
             _logger.LogInformation(
                 "Sent machine-turn follow-up {Kind} reply ({Chars} chars, {AttachmentCount} attachment(s)) "
