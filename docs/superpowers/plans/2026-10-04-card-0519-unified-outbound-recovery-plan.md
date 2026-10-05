@@ -1423,3 +1423,27 @@ explicitly stopped and awaited (terminal exit 6, executor/children gone) before
 source edits. Its CP-43 build and all later rows are incomplete, and these earlier
 receipts are superseded. Run all nine After=S7 rows once on the next committed tip;
 no per-fix rebuild, assertion relaxation or timeout change is authorized.
+
+S7 repair group 2 rejects a null LeaseUntil in the accepted-outcome fence. C#'s
+nullable <= comparison alone returns false for null, so the former check did not
+establish an unexpired lease. Both the entry and late-outcome methods now include
+an independently isolated null-lease case, keeping all other guards valid. The
+outcome case holds producer completion, clears only LeaseUntil without changing
+owner/version/state, then releases the actual fake acceptance and requires no
+PublishedAt or source settlement. A fresh tick classifies the durable Publishing
+row as Uncertain with exactly one receiver envelope and no replay.
+Run 20261005-070005-455d at cf6981c08302ab85329d11bbae13ee507c04a652 passed
+CP-41..CP-45 (22/3/38/31/13), then was explicitly stopped during CP-46's build.
+Its waiter returned terminal exit 6 and all children were gone before source edits;
+CP-46..CP-49 are incomplete and all earlier results are superseded. This exhausts
+the two repair-group budget. Run all nine After=S7 rows at the final committed tip
+with the existing floors/deadlines. No source edits, extra broad repetitions,
+assertion relaxation or timeout widening without a new brief.
+
+| PC/variant (pending SourceLanding Mutation) | Compiling guarded defect | Exact ordinary witness |
+|---|---|---|
+| PC-S7-1 / null accepted lease | Remove only current.LeaseUntil is null from the enabled acceptance fence, retaining its <= expiry check. | ChannelOutboundRetryPolicyTests.C519_Late_outcome_cannot_overwrite_new_owner: null-lease case has one complete receiver envelope but no PublishedAt or source settlement after actual producer completion. |
+
+PC-S7-1 supplements PC-45's owner/version/expiry/state variants. Every original
+PC/variant remains pending, including this null-lease variant. Mutation owns all
+deliberate red/restore/green runs; none was executed in Code.
