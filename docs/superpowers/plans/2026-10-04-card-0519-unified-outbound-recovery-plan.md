@@ -967,6 +967,9 @@ select CP-29 in a Linux invocation. A missing Windows lane leaves R-12 outstandi
 | CP-27 | S12b | `tests/Antiphon.Tests -> bin-c519-cp27/` | composed-files | `/*/*/ChannelOutboundComposedTransportTests/*` | R-9 | all 1 listed results, 0 failed/skipped | 1 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-28 | S12b | `tests/Antiphon.Tests -> bin-c519-cp28/` | manual-recovery | `/*/*/ChannelOutboundRecoveryTests/(Expired_publishing_lease_is_uncertain_until_explicit_retry*)\|(Held_head_blocks_later_reply_until_original_binding_is_repaired_and_resumed*)\|(Restart_preserves_two_inbound_slack_routes_behind_an_uncertain_head*)\|(Broker_ack_before_process_death_remains_uncertain_without_replay*)` | R-8 | all 4 listed results, 0 failed/skipped | 4 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-29 | S13 | `tests/Antiphon.Tests -> bin-c519-cp29/` | windows-parity | `/*/*/HerdrAlwaysOnChannelParityTests/AlwaysOn_channel_bound_survives_child_death_and_replies*` | R-12 | all 2 listed results, 0 failed/skipped | 2 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-30 | S5 | `tests/Antiphon.Tests -> bin-c519-cp30/` | discovery-s5 | `/*/*/ChannelOutboundDiscoveryTests/*` | V-5 (S5 subset) | all 14 S5 results, 0 failed/skipped | 14 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-31 | S5 | `tests/Antiphon.Tests -> bin-c519-cp31/` | dispatch-s5 | `/*/*/ChannelOutboundDispatchIntegrationTests/*` | R-1 (dispatcher) | all 10 results, 0 failed/skipped | 10 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-32 | S5 | `tests/Antiphon.Tests -> bin-c519-cp32/` | correlation-s5 | `/*/*/(ChannelPromptCorrelationTests*)\|(ChannelPromptCorrelationUnitTests*)\|(ChannelMachineTurnMatchTests*)/*` | R-3 | all 42 results, 0 failed/skipped | 42 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
 Floors come from the specified new roster and inspected source attributes:
 S=4, C=5, M=12, U=8, D=14, T=5, B=22, F=8, P=5, L=6, X=21, W=5.
@@ -1148,3 +1151,52 @@ All original PC-1..PC-100, PC-1059-1..PC-1059-6 and S4 variants remain pending.
 PC-20's original atomic-loss witness is not implemented or claimed by this repair;
 the revised S4 catalog-less contract above governs its new variants. Mutation and
 the caller own reconciliation of the later full-plan missing-catalog control.
+
+### S5 source-discovery checkpoint amendment (Code task 395283bc, 2026-10-05)
+
+The original allocation's S5/CP-5 is superseded by the executable manifest,
+where CP-5 belongs to S4 and full discovery CP-8 waits for S9 prerequisites.
+S5 now runs only After=S5: CP-30, CP-31 and CP-32, serial, once on its committed
+tip, with unchanged 15-minute row and 60-minute total deadlines. This adds
+18 estimated minutes; no whole Unit/assembly or Windows parity run.
+
+CP-30 has fourteen single-result methods in ChannelOutboundDiscoveryTests:
+C519_Startup_recovers_without_signal; C519_Timer_recovers_without_signal;
+C519_Default_off_does_not_discover; C519_Historical_match_requires_complete_prompt;
+C519_Historical_match_requires_marker; C519_Historical_match_requires_source_session;
+C519_Historical_match_obeys_attempt_floors; C519_Historical_native_time_obeys_original_attempt;
+C519_Historical_withholding_does_not_hide_a_later_receipt;
+C519_Historical_answer_stops_at_next_prompt; C519_Machine_context_must_predate_injection;
+C519_Discovery_closure_waits_for_complete_window; C519_Legacy_settled_sources_are_not_replayed;
+C519_Fair_cursors_and_finite_source_budget. The receipt is the complete fake producer
+envelope after the real capture/materialization/pump path, plus independently
+reloaded source/journal outcomes. It is not Kafka/gateway/provider receipt.
+
+This covers the S5 part of V-5: startup and timer with an observed hosted-cycle
+barrier and manual clock; historical full-body/marker/session/attempt matching;
+original next-prompt windows; prior versus later machine context; complete
+next-prompt policy closure and open late text; legacy settled history; and a
+321-source withheld prefix, at most 320 examined source candidates per cycle,
+with the eligible companion reached by cycle two. Prompt lookup is independently
+paged at 32 per candidate with process-local cursors. Capture remains the only
+durable ownership authority. Event dispatch and discovery reuse turn extraction,
+policy and capture; enabled machine dispatch now requires complete delivery evidence.
+CP-31 adapts its two enabled machine fixtures to supply that evidence; its
+default-off argument stays unchanged. CP-32 retains every selected matcher result.
+
+Full V-5 remains pending CP-8/S9: root/tail discovery (S6), TTL capture/loss
+serialization (S8), metadata fairness (S9), terminal transcript-completeness
+closure (requires an authoritative ingestion-complete contract), and the full
+per-page interceptor census. S5 conservatively leaves terminal machine windows
+open; neither session terminal state nor a last transcript row proves ingestion
+complete. No later slice is implemented by this amendment. R-1's runtime case
+is unchanged and retains its S4 qualification; only its dispatcher class is rerun
+here. V-1..V-4, V-6..V-13 and R-2/R-4..R-12 remain at their owning slices.
+No manual activation is required. The switch stays false; restart is caller-owned.
+
+All PC-1..PC-100, PC-1059-1..PC-1059-6, PC-S4-1..PC-S4-4 and their S4
+variants stay pending for post-land SourceLanding Mutation. S5 supplies ordinary
+witnesses for PC-25..PC-32 and the open/next-prompt part of PC-33; its combined
+finite/fair method supplies partial witnesses for PC-34/PC-35/PC-98. Exact
+full-witness methods and missing-control discovery remain Mutation's responsibility.
+CARD-1061's hard-link reader gap remains unchanged and is not claimed fixed.
