@@ -199,7 +199,7 @@ public sealed class HostJqPrerequisiteScriptTests
     public async Task C1058_Metadata_syntax_refuses()
     {
         foreach (var mode in new[] { "check", "provision" })
-        foreach (var phase in new[] { "P0", "F0", "L0", "L1", "F1", "all" })
+        foreach (var phase in new[] { "all", "P0", "F0", "L0", "L1", "F1" })
         foreach (var fault in new[] { "extra", "multiline", "missing", "device", "inode", "link" })
         {
             if (phase == "all" && fault is not ("device" or "inode")) continue;
@@ -1143,6 +1143,9 @@ internal sealed class HostJqFixture : IDisposable
     private readonly string _jq;
     private readonly string _pwsh;
     private readonly string _git;
+    private string _latestInvocation = "";
+    private int _identityUid;
+    private int _identityGid;
 
     internal HostJqFixture()
     {
@@ -1252,7 +1255,9 @@ internal sealed class HostJqFixture : IDisposable
         p["outcome"]!.GetValue<string>().ShouldBe(installed ? "installed" : "existing");
         p["digest"]!.GetValue<string>().ShouldBe(installed ? Pin : Hash(Destination));
         p["version"]!.GetValue<string>().ShouldBe("jq-1.7.1");
-        p["uid"]!.GetValue<int>().ShouldBe(0); p["gid"]!.GetValue<int>().ShouldBe(0); p["permissions"]!.GetValue<string>().ShouldBe("755");
+        p["uid"]!.GetValue<int>().ShouldBe(!installed && Directory.Exists(Control) ? _identityUid : 0);
+        p["gid"]!.GetValue<int>().ShouldBe(!installed && Directory.Exists(Control) ? _identityGid : 0);
+        p["permissions"]!.GetValue<string>().ShouldBe("755");
     }
     internal void AssertRefusalReceipt(string phase, string mode, DateTime start, DateTime end)
     {
@@ -1332,7 +1337,6 @@ internal sealed class HostJqFixture : IDisposable
     internal async Task Identity(bool existing = true)
     {
         Directory.CreateDirectory(Control);
-        File.WriteAllText(Control + "/nonce", Guid.NewGuid().ToString("N"));
         File.WriteAllText(Root + "/scripts/identity-hook.sh", IdentityHook);
         File.WriteAllText(Control + "/replacement", IdentityScript("foreign")); Executable(Control + "/replacement");
         // Verify the foreign program is fully functional before any fault, then clear setup markers.
@@ -1346,12 +1350,17 @@ internal sealed class HostJqFixture : IDisposable
         if (existing)
         {
             IdentityExisting(); OriginalHash = Hash(Destination); ReplacementHash = Hash(Control + "/replacement");
+            var owner = (await Run("/usr/bin/stat", "-c", "%u %g", Destination)).Stdout.Trim().Split(' ');
+            _identityUid = int.Parse(owner[0]); _identityGid = int.Parse(owner[1]);
             OriginalHash.ShouldNotBe(ReplacementHash, "fixture distinct bytes");
             (await NativeIdentity(Destination)).ShouldNotBe(await NativeIdentity(Control + "/replacement"), "fixture distinct native inodes");
         }
         WrapIdentityTool("readlink", "result=$(\"$HJ_ROOT/tools/inner-readlink\" \"$@\"); code=$?\necho P0 > \"$HJ_ROOT/control/next\"\nprintf '%s\\n' \"$result\"\nexit \"$code\"");
         WrapIdentityTool("stat", """
             last=${!#}
+            if [ "$2" = '%u %g %a' ] && [ "$last" = /proc/self/fd/8 ] && ! /usr/bin/cmp -s "$last" "$HJ_ROOT/payload"; then
+                exec /usr/bin/stat "$@"
+            fi
             if [ "$2" != '%d %i %h' ]; then exec "$HJ_ROOT/tools/inner-stat" "$@"; fi
             phase=$(/usr/bin/cat "$HJ_ROOT/control/next")
             case "$phase" in P0) next=F0;; F0) next=L0;; L0) next=L1;; L1) next=F1;; F1) next=done;; *) echo bad-phase >&2; exit 97;; esac
@@ -1364,7 +1373,7 @@ internal sealed class HostJqFixture : IDisposable
             if [ -f "$HJ_ROOT/control/supply-always" ]; then supplied=$(/usr/bin/cat "$HJ_ROOT/control/supply-always"); fi
             if [ -f "$HJ_ROOT/control/supply" ]; then supplied=$(/usr/bin/cat "$HJ_ROOT/control/supply"); /usr/bin/rm "$HJ_ROOT/control/supply"; fi
             if [ -f "$HJ_ROOT/control/status" ]; then code=$(/usr/bin/cat "$HJ_ROOT/control/status"); /usr/bin/rm "$HJ_ROOT/control/status"; fi
-            printf '%s|%s|%s|%s|%s|%s\n' "$phase" "$last" "${native//$'\n'/~}" "${supplied//$'\n'/~}" "$mode" "$hash" >> "$HJ_ROOT/control/ledger"
+            printf '%s|%s|%s|%s|%s|%s\n' "$phase" "$last" "${native//$'\n'/\~}" "${supplied//$'\n'/\~}" "$mode" "$hash" >> "$HJ_ROOT/control/ledger"
             echo "$next" > "$HJ_ROOT/control/next"
             printf '%s\n' "$supplied"
             exit "$code"
@@ -1415,7 +1424,7 @@ internal sealed class HostJqFixture : IDisposable
     private const string IdentityHook = """
         observe() {
             local event=$1 target=$2 nonce parts
-            nonce=$(/usr/bin/cat "$HJ_ROOT/control/nonce")
+            nonce=$HJ_INVOCATION
             printf 'event|%s|%s|%s\n' "$nonce" "$event" "$target" >> "$HJ_ROOT/control/ledger"
             if [ -f "$HJ_ROOT/control/$event.action" ]; then . "$HJ_ROOT/control/$event.action"; fi
             if [ -f "$HJ_ROOT/control/$event.arm" ]; then
@@ -1434,6 +1443,7 @@ internal sealed class HostJqFixture : IDisposable
         foreach (var b in barriers) File.WriteAllText(Control + "/" + b.Event + ".arm", "");
         var children = new List<(int Pid, string Start)>();
         var pending = wrapper ? Wrapper(mode + "-host-jq") : Helper(mode);
+        var invocation = _latestInvocation;
         try
         {
             foreach (var b in barriers)
@@ -1442,7 +1452,7 @@ internal sealed class HostJqFixture : IDisposable
                 var lines = File.ReadAllLines(Control + "/" + b.Event + ".ready");
                 lines.Length.ShouldBe(1, "fixture barrier exactly one hit: " + b.Event);
                 var fields = lines[0].Split(' ');
-                fields[2].ShouldBe(File.ReadAllText(Control + "/nonce"), "fixture nonce");
+                fields[2].ShouldBe(invocation, "fixture invocation nonce");
                 children.Add((int.Parse(fields[0]), fields[1]));
                 await b.Action();
                 File.WriteAllText(Control + "/" + b.Event + ".release", "");
@@ -1488,6 +1498,8 @@ internal sealed class HostJqFixture : IDisposable
     internal Process Start(string executable, params string[] args)
     {
         var psi = new ProcessStartInfo(executable) { UseShellExecute = false, WorkingDirectory = Root, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        _latestInvocation = Guid.NewGuid().ToString("N");
+        psi.Environment["HJ_INVOCATION"] = _latestInvocation;
         foreach (var arg in args) psi.ArgumentList.Add(arg);
         psi.Environment["PATH"] = PathPrefix + Tools + (!IncludeDestination || (File.Exists(Root + "/fault") && File.ReadAllText(Root + "/fault") == "path-absent") ? "" : ":" + Parent);
         psi.Environment["TMPDIR"] = Temp; psi.Environment["HJ_ROOT"] = Root; psi.Environment["HJ_DEST"] = Destination;
