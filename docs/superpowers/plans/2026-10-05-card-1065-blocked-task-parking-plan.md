@@ -447,7 +447,7 @@ must cover the successful Review continuation at the integrated candidate SHA.
 | Sync debt worker -> task/attention readers | Park ID + immutable source + persisted due/attempt/outcome. | Fresh DB/API reconstruction after restart/lost invalidation; no duplicate evidence/settlement. B16/B25. |
 | Legacy sweep -> task/attention readers | Same park/release identity as fast registration, persisted cursor. | Freshly claimed owner wins; bounded fair paging; actual authorized GET shows debt/result. B23-B25. |
 
-### Checkpoints
+### Proposed checkpoints (superseded by Verification design)
 
 The nine required columns below use the repository importer format. Group prefixes
 name lanes: CP-1 through CP-12 run in the **Linux** lane; CP-13 is the **Windows**
@@ -534,3 +534,728 @@ closed checkpoints including R01-R03 and integrated 0667/1043 cases, and capabil
 wire compatibility. Refresh the partially landed CARD-0667 API and preserve its
 Working/input/custody controls. No operator decision is needed to write that design;
 Code admission and activation remain ordered by the explicit dependencies above.
+
+
+## Verification design
+
+TestDesign task `1e11a5d2-20d8-4a9a-9a86-a44446ef4696`, 2026-10-05.
+This appended section qualifies D-1 through D-9; it does not replace the fix design.
+Its V/R, guard, PC, checkpoint and cost inventories supersede the provisional B/PC
+and checkpoint proposal above. B01-B26 retain their method identities as V-1-V-26;
+V-27 adds the missing cold Review integration. The earlier checkpoint heading was
+renamed because PlanTableImporter reads the **first exact** Checkpoints heading.
+There is now one executable 13-row manifest.
+
+Source distinction: this branch remains a fast-forward descendant of
+`837a7f3103a61a58c05a92ceab9cb28e8d8c8da0`. Read-only inspection of fetched master
+`691606689` additionally includes CARD-0667 S2a (`b3742ccf3`, tests `b8867fcbd`).
+No rebase, merge, cherry-pick, activation or deployment is part of TestDesign.
+
+### Inspection
+
+Paths below are relative to the repository; listed methods/helpers were read, not
+inferred from names. New CARD-1065 test classes do not exist yet.
+
+| Bodies read | Boundaries -> V/R IDs or exclusion |
+|---|---|
+| CARD-0667 master `TerminalSeatReleaseTests`: all S1a/S1b/S2a test bodies, `SeatWorld`, `SeatChild`, `TailWorld`; contracts `TerminalSeatRelease.cs`; runtime observation, conditional release, final fences, input and kill/forget bodies | Real fresh provider reads + fake-child custody, prompt floor, 120-second window and generation -> V-6-V-8, R-5. `SeatWorld` is private; do not pretend it is a reusable public helper. |
+| `RunnerWorkspaceServiceTests`: eight Publish test bodies, `Scratch.Create/Service/Git/Dispose`; production `RunnerWorkspaceService.PublishAsync`, `OwningRepositoryAsync` | Existing publisher permits dirty equal HEAD and is not park authority; root, repository, ref, sequencer, ancestry -> V-3-V-5, R-6. Scratch uses a non-bare origin; new publication worlds use a bare origin. |
+| `RunnerTaskSettlementTests`: `Runner_sync_block_commits_the_completion_obligation`, `AssertCompletionObligationAsync`, `Sync_uncertainty_blocks_and_reply_retries`, `Sustained_lease_contention_spans_sweeps_without_holding_up_other_settlements`, `Refused_sync_never_autosaves_or_releases_workspace`, `AssertRefusedAsync`; entire `RunnerSettlementWorld`; `RunnerSettlementSyncTests.SyncWorld` topology/service/owned Git/runner/cleanup bodies | Real Git, lease, report and isolated DB -> V-1/V-2/V-9-V-19/V-23/V-24, R-1. Existing notification assertions stop at AwaitingReceipt/queue; they cannot prove caller delivery. |
+| `AgentTaskSettlementRaceTests`: two selected reply methods, `SeedBlockedTaskAsync`, `SeedAnswerTurnAsync`, shared task/marked turn seeders; `AgentTaskReplyService.AnswerAsync`, Continue classification/authority and settlement release decision | Same-session watermark, retained prior result and deduplication -> R-2, V-18/V-21. Seeded expected prompts do not prove input delivery; use only for prior history. |
+| Entire `RemotePoolFollowUpAdmissionTests`, including `PoolPredecessor`, refusal and fresh-count helpers | Real admission before insert and independent remote/local restrictions -> R-3, V-22. |
+| Entire `DelegationTestServices`, `TestDbFixture`, `QueuedReceiptAssertions`, `SessionQueueTranscriptPump`; `BridgeQueueHarness` options/Create/attach/OnSubmitted/Dispose; `PhoneHomeTestHost.StartAsync` and configuration/route composition | Nearest new server fixture, cloned migrated PostgreSQL, real queue, transcript ingestion, random loopback routes -> V-1/V-2/V-9-V-27. The historical Schema name means a cloned database. Pump uses the default store: do not use it unchanged for an isolated DB. |
+| `DurableRunnerSpillReceiptTests.Dispatcher_pointer_survives_queue_binding_and_reaches_a_complete_UserPrompt`, `Queued_runner_spill_keeps_its_bytes_and_receives_a_complete_UserPrompt`, `SendNow_persists_the_spill_body_before_delivery_so_a_restart_can_read_it`; their real queue/receipt helpers | Pointer wire receipt versus retained full spill bytes -> V-20, V-27. A pointer receipt cannot prove the provider read the file. |
+| `ReviewEvidenceResettlementTests`: Incident/Block/Answer/Rows/Replacement/Report helpers and `C1043_ConfirmedNoPushBinds`, `C1043_FinalReportWins`, `C1043_AppendPreservesHistory`, `C1043_HeaderSnapshotAndGetAgree` | Landed CARD-1043 automatic re-settlement and immutable predecessor/notification -> V-16/V-27, R-4. Those tests use a live old session, so a separate parked continuation capstone is necessary. |
+| `RunnerSlotEndpointTests.Release_stops_the_desktop_row_and_records_the_reason`, PhoneHome host setup; PlanTableImporter.ExtractSection/SplitRow and testing/build coverage/checkpoint rules | Nearest endpoint/slot fixture -> V-25/V-26. Its peer-generated Exited DTO is a transport substitute, not process exit proof. |
+| Owners: project-context, lifecycle, orchestration-loop stage/delegate rules, session-runtime-invariants delivery/source/occupancy rules, testing-and-build; CARD-0667 and CARD-1043 plans | Layer/receipt/admission and dormant activation boundaries -> all V/R. No card-state, deployment or Working-stop policy change. |
+
+#### Landed API and dependency gate
+
+The actual S1a/S1b/S2a API is `ITranscriptTailer.ObserveTerminalSeatAsync(ct)`,
+`SessionRunnerRuntime.ObserveTerminalSeatAsync(sessionId, TerminalSeatObservationRequest, ct)`,
+`AuthorizeTerminalSeatTokenAsync(sessionId, request, token, ct)` and internal
+`ReleaseTerminalSeatAsync(sessionId, TerminalSeatReleaseRequest, timeout, ct)`.
+The observation request binds ExpectedRunnerStoreId, ExpectedAcceptedStartedAt,
+PromptBindingIdentity and PromptFloorRevision. Release adds ActionId and Token;
+result binds SessionId/ActionId/AcceptedStartedAt and its outcome. ConfirmsExit is
+not a source-publication receipt. S2a has per-instance final-check/signal hooks and
+`BindChildForTest(child, tailer, generation)`, but no public conditional release route.
+Its action cache is process-local, not the planned server durable ledger.
+
+| Ordered dependency | What is available / missing | CARD-1065 slices allowed after it |
+|---|---|---|
+| CARD-0667 S1a -> S1b -> S2a, landed on inspected master | Fresh read, token qualification, internal conditional kill/verify/forget. S2a evidence reports 9 passing executions; this TestDesign did not rerun them. | Observation/fixture design only; no external signal caller. |
+| CARD-0667 S2b -> S2c, **not landed** | Shared input/release gate with attempted-input fencing, then actual HTTP/phone-home mapper/capabilities/wrappers. | Required before CARD-1065 S3. Do not expose S2a directly. |
+| CARD-0667 S3a -> S3d -> S3b -> S3c -> S3e -> S4a -> S4b, **not landed** | One durable RunnerSeatRelease ledger plus answer journal, exact receipt requeue, recovery, discovery, attention and dormant writer integration. | Required before CARD-1065 S1-S10 under the landed fix plan's ordering. In particular S1 schema builds on S3a, S5 on S3d/S4b, S7-S8 on S3b/S3c, S9-S10 on S3e/S4a/S4b. No duplicate ledger or invented current service signature. |
+| CARD-1043 automatic binding/re-settlement, present in this branch | Real `ReviewEvidenceBindingService`, `ReviewEvidenceResettlementTests` and runner Review fixture. Independent recovery/delivery slices may continue separately. | S6 preserves evidence; S8 V-27 and S11 R-4 consume the automatic path at the integrated candidate SHA. No dependency on an unlanded recovery CLI. |
+| CARD-1065 S1 -> S2 -> S3 -> S4 -> S5 -> S6 -> S7 -> S8 -> S9 -> S10 -> S11 | All new action switches stay false in default DI. | Serialize shared reply/dispatcher/runner files with CARD-0667 and CARD-1043 Code. CARD-0667 S4c must not activate Blocked release until this barrier exists. |
+
+Code admission must use a checkout containing those predecessor commits. This branch
+need not absorb them to publish a design. Resolve future coordinator calls from the
+landed implementation at admission; the behavioral method identities below are fixed.
+A missing planned predecessor is a scheduling dependency, not authorization to fake a
+ledger. A changed/unreachable boundary returns to Plan before the dependent slice.
+
+#### Missing setup assigned to bounded slices
+
+- S1: implement `BlockedTaskParkFixture` in its already planned file, using
+  DelegationTestServices and CreateIsolatedSchemaAsync; every context/ingest/queue/host
+  must use that connection. Real migrations, separate committed contexts and EF
+  transaction/command interceptors prove uniqueness, CAS and rollback. Test the unique
+  index with direct duplicate inserts as well as concurrent service registration, so
+  the service lock/reuse guard cannot mask an absent database constraint. Recreated DI
+  retains the database, Git root, reports and runner artifacts. Do not seed successful
+  release/publication receipts: obtain them through production operations.
+- S2-S3: new test files own their private runner worlds, following the inspected
+  SeatWorld and Scratch patterns. Use the existing fresh tailers and final barriers;
+  new hooks in already named production files pause before/after a real I/O boundary,
+  never return eligibility. Use isolated bare remotes, empty global/system Git config,
+  no credentials, owned awaited Git children and the project ProcessSpawnLimit.
+  Actual HTTP mapper and phone-home adapter must call the same runtime after S2c;
+  all server routing/scoped clients are exercised through S5's fixture.
+- S4-S6: compose the actual park publisher and coordinator with SyncWorld's topology,
+  real repository lease and workspace reservations. Inject IO failure or EF save cuts,
+  not a made-up Parked result. Record sequence-numbered boundary observations, checking
+  a fresh DB context at the instant of wire entry. A second DB connection must obtain
+  the task row lock while Git/idle wait is paused: no long transaction across either.
+- S7-S8: attach the real queue to the newly dispatcher-created session/agent via
+  BridgeQueueHarness's AttachSessionId/AttachAgentId, PreserveDatabaseOnDispose and
+  connection options. The fake adapter accepts actual LF/bracketed paste/separate CR;
+  OnSubmitted writes native-format fixture bytes, then real normalizer and committed
+  ingestion establish UserPrompt. Use a connection-aware ingestion closure in this
+  card's fixture, not the default-store pump or the expected queue body as a receipt.
+  Track every source event, queue ID, attempt floor, generation and delivered body.
+  Use existing input-event/spill/API retrieval for long bodies; verify authorization
+  and exact retained bytes at the destination path. Stop/dispose/await every pump.
+- S9-S10: bounded sweep page size 2, pass budget 3, seven eligible/held rows plus one
+  injected failing candidate; recreate service after every page. Map real attention,
+  task-detail and slot endpoints into the loopback host with normal authorized caller
+  context. Drop invalidations and re-read after restart. Never boot production Program
+  against 17204; real default options are resolved through the test composition.
+
+These seams fit the already named footprint. New test setup is delivered with its
+slice, not in an all-tests-first mega-slice. Each test below returns one TUnit result;
+its internal independently labeled scenarios are not extra Min executions.
+
+### Delivery inventory
+
+Join identities all the way through. P = task/attempt/block-event/park ID; S =
+runner/store/session/accepted-start; U = accepted input event/answer round/target
+attempt; N = notification/source event/destination/digest; Q = queue ID plus delivery
+attempt floor/generation. No lookup may substitute just AgentId, short task ID or SHA.
+
+| Producer -> recipient | Persistence and durable join | Recovery and observable receipt |
+|---|---|---|
+| Blocked settlement -> caller session | Report/artifact, source event and N commit before P's release can send; N -> Q pins caller and frozen body. | V-12 runs actual settlement -> notification worker -> real queue for busy and already eligible caller, all cuts H0-H6 below. Release/push failure cannot lose or duplicate it. One complete matching caller UserPrompt beyond Q's floor is required. |
+| Park registration/sweep -> publication worker -> release coordinator -> runner | Requested P precedes push; immutable exact-ref receipt binds P+S+repository+endpoint+ref+HEAD; release action links existing CARD-0667 ledger before command. | V-1/V-3-V-8/V-11/V-12/V-23: restart before/after push, receipt save, reserve, send, exit and audit. Query exact remote after uncertain push. Lost release reply uses fresh authoritative S evidence, never blind repeat. Runner recipient proof is exit event/state, only expected manifest removal, preserved conversation/watermark, unchanged neighboring seat and capacity decrement. |
+| Reply/Continue -> admission/dispatcher -> new session | U and exact release/P binding commit with target-attempt reservation; dispatcher creates new UUID on same task/agent; U -> Q -> new S. | V-17-V-21/V-26: every H cut for both eligible and busy target; old session cannot receive ambiguous-release input. Full inline UserPrompt or complete actual pointer UserPrompt plus full retrieved bytes/digest. Exactly one target attempt and one matching receipt after recovery. |
+| New Review turn -> CARD-1043 re-settlement -> caller | New S/U report and final event -> append-only successor evidence -> new N/Q, preserving predecessor and old N. | V-27: sync-only phase has no new evidence; explicit Reply, full new-session receipt and final report produce a successor on the Code subject SHA. New caller UserPrompt contains the new evidence ID. Run both caller states and H cuts. |
+| Sync worker -> task/attention HTTP reader | P + fixed published SHA + persisted retry/due/state; SourceReady commits before invalidation. | V-15/V-16/V-25: restart before/after sync, save, invalidation; authenticated fresh GET agrees with DB and original P. No provider turn or new approval/settlement. |
+| Legacy sweep -> task/attention HTTP reader | Durable cursor + P uniqueness, same release ledger; no age-based shortcut. | V-23-V-25: fail callback, page-save and state-save; new claim/reply wins. Fresh GET reconstructs each linked hold/release after restart. |
+
+H0 = before producer commit (no accepted result; retry original request). H1 = after
+commit before enqueue/admission wake. H2 = queue insert throws/rolls back. H3 = queue
+commit succeeds but enqueue acknowledgment/wakeup is lost. H4 = delivery-attempt stamp
+commits before input (restart must inspect uncertainty). H5 = actual submit and native
+UserPrompt persist but queue verdict save fails. H6 = matching receipt recognized
+before producer obligation/accepted-answer completion save. For cold input also cut
+after U commits before target-attempt reservation, after reservation before launch,
+after launch before Q, and after Q before dispatcher acknowledgment. Reuse the same
+U/Q/attempt on recovery. Busy-at-enqueue and already-eligible-at-enqueue are separate
+worlds, not “make idle later” substitutes for the latter.
+
+For every handoff, test a successful control and its failure in an otherwise valid
+world. Before restoring the fault assert persisted pending debt, zero premature
+confirmation and retained full text; then restore/recreate/flush/reconcile to the
+recipient receipt. Cross join H0-H6 with both recipient states in V-12/V-20/V-27;
+join Reply-vs-release cuts to V-18 and target-attempt cuts to V-17/V-20. Do not multiply
+irrelevant provider or Git variants into this transaction matrix: V-7/R-5 cover all
+three native formats, V-3-V-5 cover Git combinations. All changed async paths end at
+recipient evidence; no request, insert, event, Sent flag or ACK is a verdict.
+
+Substitutes: controlled adapter/native fixture records prove queue, framing,
+normalization and persisted recovery, not a paid provider's understanding. Spilled
+input proves the complete pointer was submitted and its complete file/API bytes are
+available; it does not prove file reading. A fake child with an observed Exited event
+proves runtime custody bookkeeping, not OS process-tree kill. DI recreation/EF fault
+cuts prove durable recovery, not arbitrary machine power loss. HTTP GET proves the
+server projection, not browser rendering. Native provider/OS rollout acceptance
+remains the separate isolated acceptance obligation in the fix plan, before enablement.
+
+### Proves it works now
+
+“Now” means required evidence on Code's committed candidate, not tests executed by
+TestDesign. V-1-V-26 strengthen the corresponding B01-B26 above; the exact method
+roster below is normative. Every labeled PC assertion must be in its named method
+or a called helper with its literal label passed through; no constant assertion or
+mocked eligibility is acceptable.
+
+| ID | Layer / exact test (one result each) | Required ordinary behavior and boundary combinations |
+|---|---|---|
+| V-1 | `BlockedTaskParkStateTests.C1065_EpisodeIdentitySurvivesRestart` | Real PostgreSQL: concurrent same episode registrations and DI restart retain one ID; next attempt and next block event each create a different episode; no uncommitted publication/reserve escapes rollback. |
+| V-2 | `BlockedTaskParkStateTests.C1065_ParkingDoesNotSettleOrDiscardHistory` | Real state/card lifecycle: Requested/Held/Published/ReleasePending/Parked preserve Blocked/open semantics, CompletedAt null for nonreport blocks, result/failure/report/transcript/workspace/agent/history. Card never moves to Review just for parking. |
+| V-3 | `WorkspaceParkPublicationTests.C1065_CleanCommittedTipIsPublishedExactly` | Real bare Git: remote behind/equal/missing, clean tracked tree plus ignored generated files, ordinary FF push or equal-tip observation. Receipt binds every coordinate and fresh exact remote=HEAD, without desktop fetch. |
+| V-4 | `WorkspaceParkPublicationTests.C1065_DirtyOrUnsafeSourceCannotPublishReceipt` | Real Git refusals: staged, unstaged, untracked nonignored, dirty submodule; changed ignore policy requiring commit gate; detached/wrong branch, escaped/linked root, foreign common repository, all sequencer forms, invalid baseline/full ref, divergent/behind ancestry. Files/refs unchanged, no qualifying receipt. |
+| V-5 | `WorkspaceParkPublicationTests.C1065_PushAckWithoutExactRemoteProofIsHeld` | IO/remote faults: nonzero or canceled push, successful-ACK-without-push, exact-ref unavailable/missing/moved, endpoint change, local HEAD/status drift after push. Clean read failure is Unknown; no receipt. Independent green equal/missing-ref cases prevent accidental blanket refusal. |
+| V-6 | `BlockedParkWireTests.C1065_OldRunnerNeverReceivesFallbackKill` | Real serializing HTTP and phone-home adapters: each capability missing alone, unknown wire version and local unsupported peer hold with zero force release/generation kill. Full binding round-trips, existing operation numbers unchanged. |
+| V-7 | `BlockedParkWireTests.C1065_ActivityOrReplacementInvalidatesParkRelease` | Real runtime/fresh native reads with published scratch source: Working/Unknown, wrong prompt floor, 0/119.999/120/120.001 seconds, unavailable gap, epoch/store/generation/session-object/binding/file/input/output changes one at a time. Both input routes race both winners; late source HEAD/dirty/ref/endpoint change before signal retains manifest. All-valid control releases once. |
+| V-8 | `BlockedParkWireTests.C1065_ExitUnconfirmedRetainsSeatAndCustody` | Runtime custody: kill throw/cancel/non-exit/true-without-exit retain seat and manifest. Actual observed exit, already exited and authoritative absence release expected generation only. Lost reply, duplicate action and restart never kill a replacement or forget the generation watermark. |
+| V-9 | `TaskParkPublicationTests.C1065_WorkspaceModesPreservePublicationAuthority` | Publication policy: local/remote owned Worktree use identical clean exact-ref proof; authorized already-published clean Shared works without push; Shared other writer/unauthorized ref/unpublished tip holds. ReadOnly clean known base is NoSourceChanges; discovered writes hold; SourceLanding excludes autosave/publish/release path. |
+| V-10 | `TaskParkPublicationTests.C1065_CommitInstructionsAndRefusalsRespectOverrides` | Formatter and service: ordinary writable brief requires truthful WIP commit/push before blocked; NoCommit/ReadOnly/SourceLanding instructions and actual enforcement refuse autosave. No automatic Commit delegate; pending commit recovery and uncertain ownership hold. |
+| V-11 | `TaskParkPublicationTests.C1065_PublicationReceiptCannotAuthorizeChangedAttempt` | Real DB conditional advance: change each receipt field alone (park/task/attempt/block event/agent/S/repository/endpoint/ref/SHA/report digest/concurrency token). Wrong immutable receipt never reserves or overwrites source; task lock is not held across Git or idle wait. |
+| V-12 | `BlockedTaskParkReleaseTests.C1065_ReportPublicationPrecedesPhysicalRelease` | Real report settlement commits report/checkpoint and completion obligation before publication, then reserve/wire. No source proof means zero release even via CARD-0667 direct Blocked caller. H0-H6 caller delivery plus push/reserve/send/exit/audit cuts recover same durable identities and whole caller prompt. |
+| V-13 | `BlockedTaskParkReleaseTests.C1065_EachBlockCauseUsesCurrentIdleProof` | Cause matrix: normal question, bind refusal, unmarked/prerequisite wait, quota, create/routing/kind exhaustion, wall/cost, merge-back and land conflict. Valid current idle+publication can park; Working/unknown/sequencer/foreign writer holds. No-session case has zero release commands, no invented report or CompletedAt and zero provider launches. |
+| V-14 | `BlockedTaskParkReleaseTests.C1065_ParkedAgentIsReservedButNotWarm` | Retained identity: stopped agent is not warm, not pooled/reused, not TTL-retired or deleted while Blocked reservation open. Standing, AlwaysOn, board and specialist owners each veto independently; continuation/cancel clears only its own reservation. Failed stop keeps owner. |
+| V-15 | `BlockedTaskSyncRecoveryTests.C1065_LeaseBusyDoesNotRetainPublishedIdleSeat` | Hold actual desktop repository lease until runner_sync_lease_busy; independent clean publication and qualified runner still park once. Report/obligation and Pending sync SHA survive restart; failed independent publication still vetoes release. Existing 120-second budget remains unchanged. |
+| V-16 | `BlockedTaskSyncRecoveryTests.C1065_SyncDebtRecoversWithoutMintingApproval` | Sync recovery: exact parked SHA only, even if branch later advances; unknown/changed endpoint/dirty desktop/sequencer/non-descendant hold without reset. One try per due item/pass, persisted 1/2/4/5-minute capped backoff, future due skipped and poison item cannot starve neighbor. Restart success updates SourceReady once but does not change verdict, evidence or notification counts. |
+| V-17 | `BlockedTaskParkResumeTests.C1065_ReplyStartsOneAttemptFromPublishedSource` | Actual Answer -> normal admission -> dispatcher: same task and agent, one incremented attempt, fresh session UUID and credentials; preserve artifacts and clear prior sequence/nudge/check state. Reuse matching clean workspace or recreate missing mirror from exact pushed SHA. Cut every accepted-answer/attempt/launch/enqueue boundary. |
+| V-18 | `BlockedTaskParkResumeTests.C1065_ReplyRacePersistsOneAnswerAndOneOwner` | Reply before release reserve cancels park and uses original live watermark; after reserve/before signal, after exit/before reply and lost release response preserve one durable answer/owner. No old-session delivery while outcome ambiguous; concurrent duplicates create one attempt and receipt. |
+| V-19 | `BlockedTaskParkResumeTests.C1065_ResumePreservesSourceAndAdmissionRefusals` | Resume holds independently for dirty/advanced/divergent/missing source, changed ref/endpoint, stale round, active quota, full capacity, routing/kind/OS/host pin, scope/workspace ownership and commit recovery. No provider start in Answer HTTP or silent fallback; accepted text survives each refusal. |
+| V-20 | `BlockedTaskParkDeliveryTests.C1065_FullAnswerRequiresNewSessionUserPrompt` | Actual queue receipt: full Unicode answer at 3999/4000/4001 characters and below/at/above configured byte spill ceiling, including last-byte canary; full context and authorized report/transcript/source references. Wrong session/generation/sequence/kind or matching prefix cannot confirm; H0-H6 both target states plus cold-attempt cuts recover one complete matching new-session prompt. |
+| V-21 | `BlockedTaskParkDeliveryTests.C1065_ContinueAndPrerequisiteReplyUseGuardedPath` | Continue independently checks Blocked/question/standing authority, then same accepted-answer path. Explicit caller Reply after confirmed prerequisite publication works; arbitrary report prose/Done event wakes nothing; merge-helper parent completion launches no continuation; stale old-session TurnEnd cannot settle new attempt. |
+| V-22 | `BlockedTaskParkDeliveryTests.C1065_PinnedFollowupCannotStealParkedIdentity` | Real new-work admission: parked local OnAgent refuses before task insert with Reply guidance; remote follow-up still refuses independently; same-task Reply uses retained reservation and normal admission. |
+| V-23 | `BlockedTaskParkReclaimTests.C1065_LegacySweepRequiresFreshPublicationAndIdleWindow` | Legacy paged sweep creates current episodes/windows; ancient CompletedAt/silence is never qualification. Already-logically-parked live clean pushed/unpushed-committed owned Code work recovers via same path; dirty/Working/Unknown/missing source/report binding/ambiguous ownership hold. Cursor and episode survive restart; one reclaimed task cold-resumes its exact tip. |
+| V-24 | `BlockedTaskParkReclaimTests.C1065_ClaimAndReplyInvalidateLegacyCandidate` | At list->reserve and reserve->send, change owner/session claim, task attempt/event/status, reply, cancel, source and generation separately. Old candidate cannot signal; cancellation takes only its own authorized path; no historical workspace deletion. |
+| V-25 | `BlockedTaskParkProjectionTests.C1065_OccupancyTracksProcessesNotBlockedStatus` | Real slot/task/attention GET: Starting/Running/Stopping and stale/unknown catalogue count occupied through pending/held publication; only authoritative exit/absence frees seat. Blocked and Queued logical owners are not orphans. IDs/reasons survive rollback/missed invalidation/restart, no raw paths/secrets or report/answer payloads leak. |
+| V-26 | `BlockedTaskParkProjectionTests.C1065_DefaultOffRetainsRecoveryOfAcceptedAnswers` | Default DI Enabled=false/ReclaimExisting=false; all four flag combinations separately gate new park and legacy discovery. Disable after accepted answer, sent release and pending sync: receipt reconciliation, answer delivery and sync debt still recover. No receipt/debt deletion. |
+| V-27 | `BlockedTaskParkDeliveryTests.C1065_ParkedReviewReplyBindsFreshEvidence` | CARD-1043 integrated capstone: Review blocked by held real lease, published idle seat released, debt later SourceReady with original unbound outcome unchanged. Explicit Reply cold-starts same Review task/agent; whole new-session prompt then final Clean/Full report binds fresh Code-subject SHA, supersedes old evidence once and yields one whole caller receipt naming new ID. Missing/dirty/wrong-subject evidence refuses; old prompt/report never becomes approval. |
+
+### Guards the regression
+
+These existing tests remain under default-off composition. Do not rewrite their live
+reply/warm/custody expectations just to make the enabled path green. Enabled behavior
+is asserted separately by V-12-V-20 and V-27.
+
+- R-1: Remote settlement safety | `RunnerTaskSettlementTests.Runner_sync_block_commits_the_completion_obligation`, `RunnerTaskSettlementTests.Sync_uncertainty_blocks_and_reply_retries`, `RunnerTaskSettlementTests.Refused_sync_never_autosaves_or_releases_workspace` | source event matches durable obligation; lease-busy Blocked can reply and later sync; dirty/divergent desktop retains bytes, no stopper call or workspace deletion. Three results, CP-11.
+- R-2: Live reply watermark/deduplication | `AgentTaskSettlementRaceTests.an_answered_blocked_task_is_not_re_blocked_by_the_stale_boundary`, `AgentTaskSettlementRaceTests.the_answer_turn_settles_the_task_and_delivers_one_done_note` | stale boundary leaves Working and one Blocked event; later answer turn succeeds with one queued caller note. Two results, CP-11. These are queue-persistence regressions, not a delivery substitute.
+- R-3: Independent remote pool admission | `RemotePoolFollowUpAdmissionTests.Remote_pool_follow_up_refuses_before_insert` | follow_up_remote_pool_unsupported with unchanged task/event/session counts and no event publication. One result, CP-11.
+- R-4: CARD-1043 live continuation compatibility | `ReviewEvidenceResettlementTests.C1043_ConfirmedNoPushBinds`, `ReviewEvidenceResettlementTests.C1043_FinalReportWins`, `ReviewEvidenceResettlementTests.C1043_AppendPreservesHistory`, `ReviewEvidenceResettlementTests.C1043_HeaderSnapshotAndGetAgree` | confirmed equal/pushed source binds; final report governs; predecessor bytes/old snapshot remain immutable; current header/snapshot/GET name the successor or retain Decide on mismatch. Four results, CP-11. V-27 supplies the missing cold delivery integration.
+- R-5: CARD-0667 runtime safety | all 24 methods/26 results in `TerminalSeatReleaseTests` after its S2c lands, CP-12/CP-13. Current master contains 17 methods/19 results; the seven S2b/S2c methods named in its plan must exist before these final rows. Exact class selects only this bounded protocol boundary. Assert fresh Working/Unknown refusals, current prompt, full 120 seconds, input ordering, generation/epoch/token/output fences, exit custody, wire mapping and explicit operator compatibility.
+- R-6: Legacy publisher compatibility | `RunnerWorkspaceServiceTests.Publish_pushes_only_own_fast_forward_branch`, `RunnerWorkspaceServiceTests.Publish_equal_tip_is_not_pushed_and_reports_dirty_tree`, `RunnerWorkspaceServiceTests.Publish_refuses_an_active_sequencer_before_push` | original nonforced own-ref arguments, permissive equal dirty reporting and sequencer refusal remain unchanged; three results, CP-12/CP-13.
+
+### Guard inventory
+
+Every row is independently breakable and maps to its own distinct PC. Component
+comparisons are split even when the implementation puts them in one if-expression.
+Inherited CARD-0667 guards exercised by the changed park path have local PCs below;
+its broader unrelated server/operator controls remain owned by its own plan. No
+safety-critical guard in this extension is intentionally untested. Assertions at a
+pure production decision seam are required when a later guard would mask a bypass;
+the same method also executes its real end-to-end refusal and an all-valid control.
+
+| Guard | Plan reference + safety-critical guard / invariant | Positive control |
+|---|---|---|
+| G-1 | D-1: Database uniqueness for task/attempt/block event. | PC-1 |
+| G-2 | D-1: Registration recovers the existing episode after restart. | PC-2 |
+| G-3 | D-1: New attempt identity is not reused. | PC-3 |
+| G-4 | D-1: New block-event identity is not reused. | PC-4 |
+| G-5 | D-1: Park state never settles the task/card. | PC-5 |
+| G-6 | D-1: Report, transcript, source and agent custody survive parking. | PC-6 |
+| G-7 | D-1/D-4: Nonreport blocks do not acquire invented completion timestamps. | PC-7 |
+| G-8 | D-2: Clean unpublished owned tip is pushed. | PC-8 |
+| G-9 | D-2: Tracked/index dirt vetoes publication. | PC-9 |
+| G-10 | D-2: Untracked nonignored files count as dirty. | PC-10 |
+| G-11 | D-2: Submodule source dirt counts as dirty. | PC-11 |
+| G-12 | D-2: Changed ignore policy requiring commit gate cannot be silently accepted. | PC-12 |
+| G-13 | D-2: Requested path is lexically under authorized root. | PC-13 |
+| G-14 | D-2: Resolved path is under the owned root. | PC-14 |
+| G-15 | D-2: Common repository ownership is verified. | PC-15 |
+| G-16 | D-2: Symbolic HEAD equals captured full ref. | PC-16 |
+| G-17 | D-2: Only full owned refs and full OIDs are admitted. | PC-17 |
+| G-18 | D-2: Every active sequencer vetoes. | PC-18 |
+| G-19 | D-2: HEAD descends from captured dispatch baseline. | PC-19 |
+| G-20 | D-2: Remote ancestry prevents overwrite. | PC-20 |
+| G-21 | D-2: Publication reads fail closed. | PC-21 |
+| G-22 | D-2: Push errors are not publication proof. | PC-22 |
+| G-23 | D-2: Fresh post-push exact remote observation is mandatory. | PC-23 |
+| G-24 | D-2: Equal/missing-baseline refs still require fresh proof. | PC-24 |
+| G-25 | D-2: Endpoint fingerprint is preserved. | PC-25 |
+| G-26 | D-2: Post-push local HEAD remains unchanged. | PC-26 |
+| G-27 | D-2: Post-push source/index remains clean. | PC-27 |
+| G-28 | D-3/D-9: workspaceParkV1 capability is required. | PC-28 |
+| G-29 | D-3/D-9: Conditional release capability is independently required. | PC-29 |
+| G-30 | D-3: Unsupported local/remote protocol has no force fallback. | PC-30 |
+| G-31 | D-3: Wire keeps exact publication action/source binding. | PC-31 |
+| G-32 | D-3: Runner store fence. | PC-32 |
+| G-33 | D-3: Accepted-start generation fence. | PC-33 |
+| G-34 | D-3: Token is tied to current session object. | PC-34 |
+| G-35 | D-3: Token is tied to runtime epoch. | PC-35 |
+| G-36 | D-3: Current prompt floor excludes old idle turns. | PC-36 |
+| G-37 | D-3: Working independently vetoes. | PC-37 |
+| G-38 | D-3: Unknown/incomplete fresh read independently vetoes. | PC-38 |
+| G-39 | D-3: Two observations span full 120-second runner interval. | PC-39 |
+| G-40 | D-3: Unavailable gap discards previous window. | PC-40 |
+| G-41 | D-3: Binding identity invalidates a token. | PC-41 |
+| G-42 | D-3: File revision invalidates a token. | PC-42 |
+| G-43 | D-3: Transcript revision invalidates a token. | PC-43 |
+| G-44 | D-3: Normal input shares release gate. | PC-44 |
+| G-45 | D-3: Conditional input shares release gate. | PC-45 |
+| G-46 | D-3: Attempted input invalidates release proof. | PC-46 |
+| G-47 | D-3: Release-in-progress vetoes subsequent input. | PC-47 |
+| G-48 | D-3: Unsubmitted composer and uncertain input veto custody. | PC-48 |
+| G-49 | D-3: Unknown launch/adoption/external child custody vetoes. | PC-49 |
+| G-50 | D-3: Final fresh native read precedes signal. | PC-50 |
+| G-51 | D-3: Final session-object fence. | PC-51 |
+| G-52 | D-3: Final accepted-generation fence. | PC-52 |
+| G-53 | D-3: Final tailer ownership fence. | PC-53 |
+| G-54 | D-3: Final input revision fence. | PC-54 |
+| G-55 | D-3: Final output revision fence. | PC-55 |
+| G-56 | D-3: Final source HEAD equality fence. | PC-56 |
+| G-57 | D-3: Final source cleanliness fence. | PC-57 |
+| G-58 | D-3: Final source ref fence. | PC-58 |
+| G-59 | D-3: Final source endpoint fence. | PC-59 |
+| G-60 | D-3: Publication reservation excludes competing input. | PC-60 |
+| G-61 | D-3: Exit observation precedes forget/capacity release. | PC-61 |
+| G-62 | D-3: Kill throw/cancellation remains unresolved. | PC-62 |
+| G-63 | D-3: Replay action cannot kill twice. | PC-63 |
+| G-64 | D-3: Cached success cannot release replacement. | PC-64 |
+| G-65 | D-3: Confirmed eviction preserves generation history and conversation. | PC-65 |
+| G-66 | D-3/D-8: Lost response is reconciled only from authoritative evidence. | PC-66 |
+| G-67 | D-2: Shared publication has no automatic push authority. | PC-67 |
+| G-68 | D-2: Shared authorized exact ref proof is required. | PC-68 |
+| G-69 | D-2: Shared other-writer ownership vetoes. | PC-69 |
+| G-70 | D-2: ReadOnly writes cannot become NoSourceChanges. | PC-70 |
+| G-71 | D-2: ReadOnly known base must match. | PC-71 |
+| G-72 | D-2/D-3: SourceLanding keeps its separate custody owner. | PC-72 |
+| G-73 | D-2: NoCommit is enforced in service. | PC-73 |
+| G-74 | D-2: Commit recovery obligations hold publication. | PC-74 |
+| G-75 | D-2: Ordinary brief states WIP-before-block obligation. | PC-75 |
+| G-76 | D-2: Brief exclusions preserve explicit custody overrides. | PC-76 |
+| G-77 | D-1/D-2: Receipt park/action identity fence. | PC-77 |
+| G-78 | D-1/D-2: Receipt task identity fence. | PC-78 |
+| G-79 | D-1/D-2: Receipt attempt fence. | PC-79 |
+| G-80 | D-1/D-2: Receipt block-event fence. | PC-80 |
+| G-81 | D-1/D-3: Task concurrency token fence. | PC-81 |
+| G-82 | D-1/D-3: Agent identity fence. | PC-82 |
+| G-83 | D-1/D-3: Server receipt runner identity fence. | PC-83 |
+| G-84 | D-1/D-3: Server receipt store identity fence. | PC-84 |
+| G-85 | D-1/D-3: Server receipt session identity fence. | PC-85 |
+| G-86 | D-1/D-3: Server receipt accepted generation fence. | PC-86 |
+| G-87 | D-1/D-2: Server receipt repository identity fence. | PC-87 |
+| G-88 | D-1/D-2: Server receipt endpoint identity fence. | PC-88 |
+| G-89 | D-1/D-2: Server receipt full-ref fence. | PC-89 |
+| G-90 | D-1/D-2: Server receipt source SHA fence. | PC-90 |
+| G-91 | D-1/D-4: Report/checkpoint digest binds episode. | PC-91 |
+| G-92 | D-1/D-3: Git/idle wait runs outside task transaction. | PC-92 |
+| G-93 | D-1/D-4: Report and completion obligation commit before release. | PC-93 |
+| G-94 | D-2/D-3/D-9: Every Blocked coordinator entry requires publication receipt. | PC-94 |
+| G-95 | D-1/D-3: Release intent is durable before wire. | PC-95 |
+| G-96 | D-1/D-4: Caller obligation recovers enqueue failure. | PC-96 |
+| G-97 | D-1/D-4: Caller queue ACK is not a receipt. | PC-97 |
+| G-98 | D-1/D-4: Caller receipt requires complete text. | PC-98 |
+| G-99 | D-1/D-4: Caller receipt pins destination. | PC-99 |
+| G-100 | D-1/D-4: Caller receipt requires UserPrompt kind. | PC-100 |
+| G-101 | D-1/D-4: Caller receipt pins attempt floor. | PC-101 |
+| G-102 | D-1/D-4: Caller receipt pins generation. | PC-102 |
+| G-103 | D-1/D-4: Caller enqueue retry is deduplicated. | PC-103 |
+| G-104 | D-1/D-4: Busy caller is not interrupted. | PC-104 |
+| G-105 | D-4: All block writers enter same current eligibility path. | PC-105 |
+| G-106 | D-4: Absent session does not create a release command. | PC-106 |
+| G-107 | D-4: Ambiguous/foreign workspace owner cannot release. | PC-107 |
+| G-108 | D-3/D-5: Parked agent is retained. | PC-108 |
+| G-109 | D-3/D-5: Parked agent is never warm. | PC-109 |
+| G-110 | D-3/D-5: Pool admission respects park reservation. | PC-110 |
+| G-111 | D-3/D-5: Retirement respects park reservation. | PC-111 |
+| G-112 | D-3: Standing nonpool owner vetoes. | PC-112 |
+| G-113 | D-3: AlwaysOn independently vetoes. | PC-113 |
+| G-114 | D-3: Board owner independently vetoes. | PC-114 |
+| G-115 | D-3: Specialist owner independently vetoes. | PC-115 |
+| G-116 | D-3/D-5: Reservation clearing is episode-specific. | PC-116 |
+| G-117 | D-6: Desktop lease debt does not veto independently published idle release. | PC-117 |
+| G-118 | D-6: Sync debt survives restart with exact parked source. | PC-118 |
+| G-119 | D-6: Sync uses immutable parked SHA. | PC-119 |
+| G-120 | D-6: Sync revalidates captured endpoint. | PC-120 |
+| G-121 | D-6: Dirty desktop vetoes sync mutation. | PC-121 |
+| G-122 | D-6: Desktop sequencer vetoes sync mutation. | PC-122 |
+| G-123 | D-6: Non-descendant desktop history vetoes sync. | PC-123 |
+| G-124 | D-6: Due/backoff persists and bounds each retry. | PC-124 |
+| G-125 | D-6: One bad debt does not starve other due work. | PC-125 |
+| G-126 | D-6: Sync success cannot promote task verdict. | PC-126 |
+| G-127 | D-6: Sync success cannot mint approval or replay completion. | PC-127 |
+| G-128 | D-5: Cold continuation retains task identity. | PC-128 |
+| G-129 | D-5: Cold continuation retains agent identity. | PC-129 |
+| G-130 | D-5: One accepted answer reserves one attempt. | PC-130 |
+| G-131 | D-5: Cold continuation uses fresh session generation. | PC-131 |
+| G-132 | D-5: Cold continuation rotates credentials. | PC-132 |
+| G-133 | D-5: Old per-session watermarks cannot leak. | PC-133 |
+| G-134 | D-5: Missing mirror recreates exact pushed SHA. | PC-134 |
+| G-135 | D-5: Reply before reserve wins live path. | PC-135 |
+| G-136 | D-5: Ambiguous release holds old-session input. | PC-136 |
+| G-137 | D-5: Accepted answer is durable before resume wake. | PC-137 |
+| G-138 | D-5: Stop/delete bypass needs exact confirmed release receipt. | PC-138 |
+| G-139 | D-5: Resume revalidates exact retained source. | PC-139 |
+| G-140 | D-5: Resume revalidates cleanliness. | PC-140 |
+| G-141 | D-5: Resume preserves ref identity. | PC-141 |
+| G-142 | D-5: Resume preserves endpoint identity. | PC-142 |
+| G-143 | D-5: Stale question round cannot accept reply. | PC-143 |
+| G-144 | D-5: Quota admission remains enforced. | PC-144 |
+| G-145 | D-5: Host capacity remains enforced. | PC-145 |
+| G-146 | D-5: Explicit host pin remains enforced. | PC-146 |
+| G-147 | D-5: Explicit provider/kind remains enforced. | PC-147 |
+| G-148 | D-5: Explicit platform remains enforced. | PC-148 |
+| G-149 | D-5: Scope collision remains enforced. | PC-149 |
+| G-150 | D-5: Workspace reservation remains enforced. | PC-150 |
+| G-151 | D-5: Commit recovery remains enforced on dispatch. | PC-151 |
+| G-152 | D-5: Answer HTTP does not start a process. | PC-152 |
+| G-153 | D-5: Full answer survives formatting/spill. | PC-153 |
+| G-154 | D-5: Receipt requires full matching body. | PC-154 |
+| G-155 | D-5: Receipt pins destination session. | PC-155 |
+| G-156 | D-5: Receipt pins generation. | PC-156 |
+| G-157 | D-5: Receipt pins attempt floor. | PC-157 |
+| G-158 | D-5: Receipt kind must be UserPrompt. | PC-158 |
+| G-159 | D-5: Queue ACK/Sent cannot replace receipt. | PC-159 |
+| G-160 | D-5: Enqueue and launch failure recovery reuses durable identity. | PC-160 |
+| G-161 | D-5: Busy target receives no bytes until eligible. | PC-161 |
+| G-162 | D-5: Continue requires Blocked status. | PC-162 |
+| G-163 | D-5: Continue requires question classification. | PC-163 |
+| G-164 | D-5: Continue requires standing authority. | PC-164 |
+| G-165 | D-5: Prerequisite text/Done never automatically spends. | PC-165 |
+| G-166 | D-5: Old session TurnEnd cannot settle resumed attempt. | PC-166 |
+| G-167 | D-5: Merge-helper resolution stays completion. | PC-167 |
+| G-168 | D-5: Local OnAgent cannot steal Blocked reservation. | PC-168 |
+| G-169 | D-5: Remote pool follow-up restriction remains independent. | PC-169 |
+| G-170 | D-7: Legacy window begins at discovery now. | PC-170 |
+| G-171 | D-7: Legacy uses the same publication gate. | PC-171 |
+| G-172 | D-7: Legacy report/transcript binding is required. | PC-172 |
+| G-173 | D-7: Cursor advances durably without skipping held rows. | PC-173 |
+| G-174 | D-7: Latest task status invalidates candidate. | PC-174 |
+| G-175 | D-7: Latest attempt invalidates discovered candidate. | PC-175 |
+| G-176 | D-7: Latest block event invalidates discovered candidate. | PC-176 |
+| G-177 | D-7: Latest source invalidates discovered candidate. | PC-177 |
+| G-178 | D-7: Latest generation invalidates discovered candidate. | PC-178 |
+| G-179 | D-7: New session claim independently invalidates candidate. | PC-179 |
+| G-180 | D-7: New agent claim independently invalidates candidate. | PC-180 |
+| G-181 | D-8: Occupancy remains physical until confirmed exit. | PC-181 |
+| G-182 | D-8: Stale/disconnected catalogue is unknown, never zero. | PC-182 |
+| G-183 | D-8: Blocked/Queued retain logical slot ownership. | PC-183 |
+| G-184 | D-8: GET rebuilds persisted attention after missed event. | PC-184 |
+| G-185 | D-8: Projection/logs exclude payloads and raw endpoints. | PC-185 |
+| G-186 | D-9: Enabled independently gates new publication/release. | PC-186 |
+| G-187 | D-9: ReclaimExisting independently gates legacy discovery. | PC-187 |
+| G-188 | D-9: Disabling cannot strand accepted answer recovery. | PC-188 |
+| G-189 | D-9: Disabling cannot abandon release audit reconciliation. | PC-189 |
+| G-190 | D-9: Disabling cannot abandon sync debt recovery. | PC-190 |
+| G-191 | D-6/CARD-1043: Only fresh final report can authorize evidence replacement. | PC-191 |
+| G-192 | D-5/CARD-1043: Cold re-settlement calls shared CARD-1043 replacement path. | PC-192 |
+| G-193 | D-5/CARD-1043: Cold completion renders new evidence identity. | PC-193 |
+
+### Positive controls
+
+Mutation runs **break/red/restore/green after land**; Code runs ordinary V/R;
+Review judges guard independence and executable reachability before land. Each row
+below is a compiling production defect, applied singly to the named guard, with
+all other facts valid. Do not mutate tests to manufacture red. Use the exact literal
+method filter shown, never its whole class. A missing method, build/fixture failure,
+timeout or zero executions is not red. After each mutation restore source and make
+a fresh isolated build, then execute the same method green. Controls sharing a file
+run sequentially; source remains frozen during each run. G-1's database-index mutant
+uses a disposable CLI-generated migration and isolated cloned DB only; restore the
+migration/model before the fresh green build.
+
+Where multiple layered checks protect the same bad input, the named assertion is
+made at the actual production decision as well as on final custody. For example,
+bypass of final runtime generation is tested after server reservation so an earlier
+server equality cannot mask it. Fault hooks pause/throw at I/O boundaries; they do
+not fabricate production success. Labels G-n below must occur on those precise
+assertions. All controls are executable once their owning slice and dependencies
+land; absent future files are disclosed above, not counted as current test evidence.
+
+| PC | Break guard by compiling defect | Exact detecting filter | Expected red assertion |
+|---|---|---|---|
+| PC-1 | G-1: remove the composite unique index from model and generate a disposable mutant migration. | `/*/*/BlockedTaskParkStateTests/C1065_EpisodeIdentitySurvivesRestart` | `G-1`: direct separate-context inserts of the same episode key cannot both commit. |
+| PC-2 | G-2: replace the existing-key lookup with unconditional insert. | `/*/*/BlockedTaskParkStateTests/C1065_EpisodeIdentitySurvivesRestart` | `G-2`: second registration succeeds with the original park ID. |
+| PC-3 | G-3: drop attempt from episode reuse predicate. | `/*/*/BlockedTaskParkStateTests/C1065_EpisodeIdentitySurvivesRestart` | `G-3`: same block event under next attempt has a different park ID. |
+| PC-4 | G-4: drop block-event from episode reuse predicate. | `/*/*/BlockedTaskParkStateTests/C1065_EpisodeIdentitySurvivesRestart` | `G-4`: same attempt under next block event has a different park ID. |
+| PC-5 | G-5: assign Succeeded when persisting Parked. | `/*/*/BlockedTaskParkStateTests/C1065_ParkingDoesNotSettleOrDiscardHistory` | `G-5`: task remains Blocked and card remains InProgress. |
+| PC-6 | G-6: clear retained artifact/context fields on Parked. | `/*/*/BlockedTaskParkStateTests/C1065_ParkingDoesNotSettleOrDiscardHistory` | `G-6`: retained field snapshot equals pre-park snapshot. |
+| PC-7 | G-7: assign current time to missing CompletedAt on discovery. | `/*/*/BlockedTaskParkStateTests/C1065_ParkingDoesNotSettleOrDiscardHistory` | `G-7`: routing/quota CompletedAt remains null. |
+| PC-8 | G-8: skip push on behind or absent remote. | `/*/*/WorkspaceParkPublicationTests/C1065_CleanCommittedTipIsPublishedExactly` | `G-8`: bare remote exact owned ref equals committed HEAD. |
+| PC-9 | G-9: ignore nonempty tracked/index status. | `/*/*/WorkspaceParkPublicationTests/C1065_DirtyOrUnsafeSourceCannotPublishReceipt` | `G-9`: dirty decision refuses and receipt count is zero. |
+| PC-10 | G-10: use --untracked-files=no in strict status. | `/*/*/WorkspaceParkPublicationTests/C1065_DirtyOrUnsafeSourceCannotPublishReceipt` | `G-10`: untracked code yields no receipt and bytes remain. |
+| PC-11 | G-11: pass --ignore-submodules=all to strict status. | `/*/*/WorkspaceParkPublicationTests/C1065_DirtyOrUnsafeSourceCannotPublishReceipt` | `G-11`: dirty submodule yields no qualifying receipt. |
+| PC-12 | G-12: bypass unresolved ignore-policy gate. | `/*/*/TaskParkPublicationTests/C1065_CommitInstructionsAndRefusalsRespectOverrides` | `G-12`: ignore-policy hold persists with zero release. |
+| PC-13 | G-13: omit lexical root admission. | `/*/*/WorkspaceParkPublicationTests/C1065_DirtyOrUnsafeSourceCannotPublishReceipt` | `G-13`: foreign-path decision refuses before Git. |
+| PC-14 | G-14: omit resolved containment check. | `/*/*/WorkspaceParkPublicationTests/C1065_DirtyOrUnsafeSourceCannotPublishReceipt` | `G-14`: in-root link to foreign tree receives no receipt. |
+| PC-15 | G-15: skip OwningRepositoryAsync equivalent. | `/*/*/WorkspaceParkPublicationTests/C1065_DirtyOrUnsafeSourceCannotPublishReceipt` | `G-15`: foreign common repository receives no receipt. |
+| PC-16 | G-16: skip symbolic-ref comparison. | `/*/*/WorkspaceParkPublicationTests/C1065_DirtyOrUnsafeSourceCannotPublishReceipt` | `G-16`: wrong/detached branch receives no receipt. |
+| PC-17 | G-17: accept nonempty ref/OID instead of exact shape validation. | `/*/*/WorkspaceParkPublicationTests/C1065_DirtyOrUnsafeSourceCannotPublishReceipt` | `G-17`: short OID or target ref is refused before push. |
+| PC-18 | G-18: return false from active-sequencer predicate. | `/*/*/WorkspaceParkPublicationTests/C1065_DirtyOrUnsafeSourceCannotPublishReceipt` | `G-18`: merge/rebase/cherry-pick/revert arm has zero pushes. |
+| PC-19 | G-19: remove baseline ancestor predicate. | `/*/*/WorkspaceParkPublicationTests/C1065_DirtyOrUnsafeSourceCannotPublishReceipt` | `G-19`: divergent baseline gets no publication receipt. |
+| PC-20 | G-20: add --force to park push and bypass non-FF policy decision. | `/*/*/WorkspaceParkPublicationTests/C1065_DirtyOrUnsafeSourceCannotPublishReceipt` | `G-20`: foreign advanced remote remains unchanged. |
+| PC-21 | G-21: convert failed HEAD/status/ancestry inspection to clean-known. | `/*/*/WorkspaceParkPublicationTests/C1065_PushAckWithoutExactRemoteProofIsHeld` | `G-21`: read-error arm yields Unknown and no receipt. |
+| PC-22 | G-22: continue success path after nonzero or canceled push. | `/*/*/WorkspaceParkPublicationTests/C1065_PushAckWithoutExactRemoteProofIsHeld` | `G-22`: typed push hold persists and no receipt exists. |
+| PC-23 | G-23: reuse pre-push/tracking SHA instead of exact observation. | `/*/*/WorkspaceParkPublicationTests/C1065_PushAckWithoutExactRemoteProofIsHeld` | `G-23`: lying push ACK or moved ref leaves receipt absent. |
+| PC-24 | G-24: return prepared receipt early for equal HEAD. | `/*/*/WorkspaceParkPublicationTests/C1065_PushAckWithoutExactRemoteProofIsHeld` | `G-24`: equal-at-baseline ref moved at final read is held. |
+| PC-25 | G-25: pass null expected endpoint or skip fingerprint equality. | `/*/*/WorkspaceParkPublicationTests/C1065_PushAckWithoutExactRemoteProofIsHeld` | `G-25`: same ref/SHA on replacement endpoint is refused. |
+| PC-26 | G-26: skip final local HEAD equality. | `/*/*/WorkspaceParkPublicationTests/C1065_PushAckWithoutExactRemoteProofIsHeld` | `G-26`: new local commit invalidates receipt. |
+| PC-27 | G-27: skip final status read. | `/*/*/WorkspaceParkPublicationTests/C1065_PushAckWithoutExactRemoteProofIsHeld` | `G-27`: new dirt after push invalidates receipt. |
+| PC-28 | G-28: omit only workspacePark capability check. | `/*/*/BlockedParkWireTests/C1065_OldRunnerNeverReceivesFallbackKill` | `G-28`: park command count is zero when only workspacePark is absent. |
+| PC-29 | G-29: omit only conditional-release capability check. | `/*/*/BlockedParkWireTests/C1065_OldRunnerNeverReceivesFallbackKill` | `G-29`: release command count is zero when only release capability is absent. |
+| PC-30 | G-30: call existing ReleaseSlotAsync on Unsupported. | `/*/*/BlockedParkWireTests/C1065_OldRunnerNeverReceivesFallbackKill` | `G-30`: force release and generation-kill call counts are zero. |
+| PC-31 | G-31: serialize an empty publication receipt ID. | `/*/*/BlockedParkWireTests/C1065_OldRunnerNeverReceivesFallbackKill` | `G-31`: received binding equals original P/receipt tuple. |
+| PC-32 | G-32: remove expected store comparison. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-32`: store-only replacement decision refuses and signal count is zero. |
+| PC-33 | G-33: remove accepted-start equality. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-33`: generation-only replacement decision refuses and seat retained. |
+| PC-34 | G-34: remove session-object identity from token authorization. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-34`: otherwise valid foreign-object proof is StaleObservation. |
+| PC-35 | G-35: remove runtime epoch comparison. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-35`: otherwise valid old-epoch proof is StaleObservation. |
+| PC-36 | G-36: ignore PromptFloorRevision. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-36`: old end cannot qualify even after 120 seconds. |
+| PC-37 | G-37: remove Working verdict branch from production authorization. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-37`: otherwise matching Working proof returns Working and zero signals. |
+| PC-38 | G-38: treat Unknown read as Idle in authorization. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-38`: partial/unavailable otherwise matching proof has zero signals. |
+| PC-39 | G-39: change required interval to 119 seconds. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-39`: 119.999-second observation is unqualified. |
+| PC-40 | G-40: retain first-observed time on read failure. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-40`: recovered observation at old t+120 starts at zero. |
+| PC-41 | G-41: omit binding identity equality. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-41`: binding-only change gives StaleObservation. |
+| PC-42 | G-42: omit file revision equality. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-42`: file-only change gives StaleObservation. |
+| PC-43 | G-43: omit transcript revision equality. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-43`: transcript-only change gives StaleObservation. |
+| PC-44 | G-44: remove launch-gate acquisition in normal input entry. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-44`: normal writer cannot enter while release holds gate. |
+| PC-45 | G-45: remove launch-gate acquisition in conditional input entry. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-45`: conditional writer cannot enter while release holds gate. |
+| PC-46 | G-46: advance input revision only after successful write. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-46`: failed/pending attempted input prevents signal. |
+| PC-47 | G-47: omit ReleaseInProgress input decision. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-47`: both input routes make zero child writes after reserve wins. |
+| PC-48 | G-48: ignore backend pending/composer/failed-input hold. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-48`: otherwise eligible composer/input uncertainty retains custody. |
+| PC-49 | G-49: ignore unknown-backend custody hold. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-49`: each otherwise eligible unknown custody arm has zero signals. |
+| PC-50 | G-50: reuse cached qualification transcript at final check. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-50`: unread native Working at final barrier yields zero signals. |
+| PC-51 | G-51: remove final ReferenceEquals current session check. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-51`: object replaced at final barrier is retained without signal. |
+| PC-52 | G-52: remove final accepted-start comparison. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-52`: generation changed after final read receives zero signals. |
+| PC-53 | G-53: remove final tailer reference check. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-53`: tailer replaced after observation receives zero signals. |
+| PC-54 | G-54: omit final input revision comparison. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-54`: input revision advanced at signal boundary yields zero signals. |
+| PC-55 | G-55: omit last output sequence comparison. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-55`: output-only change at signal boundary retains seat. |
+| PC-56 | G-56: omit park HEAD comparison just before signal. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-56`: changed HEAD at final barrier yields zero signals. |
+| PC-57 | G-57: omit final park status comparison. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-57`: new dirty bytes at final barrier retain seat. |
+| PC-58 | G-58: omit final symbolic ref equality. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-58`: same SHA on different branch cannot signal. |
+| PC-59 | G-59: omit final endpoint binding comparison. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-59`: same ref/SHA on different endpoint cannot signal. |
+| PC-60 | G-60: release operation reservation before Git receipt verification. | `/*/*/BlockedParkWireTests/C1065_ActivityOrReplacementInvalidatesParkRelease` | `G-60`: input cannot enter while publication-to-release reservation is held. |
+| PC-61 | G-61: treat KillAsync true as confirmed exit without HasExited. | `/*/*/BlockedParkWireTests/C1065_ExitUnconfirmedRetainsSeatAndCustody` | `G-61`: true-without-exit keeps manifest and occupied count. |
+| PC-62 | G-62: forget session in release exception handler. | `/*/*/BlockedParkWireTests/C1065_ExitUnconfirmedRetainsSeatAndCustody` | `G-62`: throw/cancel leaves live record and manifest. |
+| PC-63 | G-63: evict unresolved action result before duplicate request. | `/*/*/BlockedParkWireTests/C1065_ExitUnconfirmedRetainsSeatAndCustody` | `G-63`: same action makes exactly one kill attempt. |
+| PC-64 | G-64: return cached outcome before generation comparison. | `/*/*/BlockedParkWireTests/C1065_ExitUnconfirmedRetainsSeatAndCustody` | `G-64`: replacement is retained and result is GenerationMismatch. |
+| PC-65 | G-65: delete accepted-generation watermark/transcript sidecar during forget. | `/*/*/BlockedParkWireTests/C1065_ExitUnconfirmedRetainsSeatAndCustody` | `G-65`: durable watermark and transcript remain after restart. |
+| PC-66 | G-66: treat disconnected/incomplete catalogue as absence. | `/*/*/BlockedParkWireTests/C1065_ExitUnconfirmedRetainsSeatAndCustody` | `G-66`: lost reply with unknown catalogue retains debt and occupancy. |
+| PC-67 | G-67: route Shared through ordinary worktree push. | `/*/*/TaskParkPublicationTests/C1065_WorkspaceModesPreservePublicationAuthority` | `G-67`: Shared push count is zero even with unpublished commits. |
+| PC-68 | G-68: allow Shared clean HEAD without authorized remote receipt. | `/*/*/TaskParkPublicationTests/C1065_WorkspaceModesPreservePublicationAuthority` | `G-68`: unauthorized/unpublished Shared cannot park. |
+| PC-69 | G-69: skip shared workspace other-writer predicate. | `/*/*/TaskParkPublicationTests/C1065_WorkspaceModesPreservePublicationAuthority` | `G-69`: otherwise clean published Shared with other writer is held. |
+| PC-70 | G-70: return NoSourceChanges before strict dirty inspection. | `/*/*/TaskParkPublicationTests/C1065_WorkspaceModesPreservePublicationAuthority` | `G-70`: ReadOnly with writes yields no no-source-change receipt. |
+| PC-71 | G-71: skip ReadOnly base equality. | `/*/*/TaskParkPublicationTests/C1065_WorkspaceModesPreservePublicationAuthority` | `G-71`: clean advanced ReadOnly HEAD is held. |
+| PC-72 | G-72: remove SourceLanding exclusion. | `/*/*/TaskParkPublicationTests/C1065_WorkspaceModesPreservePublicationAuthority` | `G-72`: sourced task has zero park publish/release actions. |
+| PC-73 | G-73: ignore no-commit flag in park admission. | `/*/*/TaskParkPublicationTests/C1065_CommitInstructionsAndRefusalsRespectOverrides` | `G-73`: NoCommit remains Held with no push/autosave. |
+| PC-74 | G-74: ignore pending commit-recovery predicate. | `/*/*/TaskParkPublicationTests/C1065_CommitInstructionsAndRefusalsRespectOverrides` | `G-74`: unresolved recovery remains owned with no receipt. |
+| PC-75 | G-75: omit the scoped blocked-publication instruction. | `/*/*/TaskParkPublicationTests/C1065_CommitInstructionsAndRefusalsRespectOverrides` | `G-75`: ordinary brief contains complete commit-before-block and push instructions. |
+| PC-76 | G-76: emit ordinary WIP instruction for all workspace modes. | `/*/*/TaskParkPublicationTests/C1065_CommitInstructionsAndRefusalsRespectOverrides` | `G-76`: NoCommit/ReadOnly/SourceLanding briefs contain no conflicting instruction. |
+| PC-77 | G-77: omit park/action ID comparison. | `/*/*/TaskParkPublicationTests/C1065_PublicationReceiptCannotAuthorizeChangedAttempt` | `G-77`: other park receipt reserves zero releases. |
+| PC-78 | G-78: omit receipt TaskId comparison. | `/*/*/TaskParkPublicationTests/C1065_PublicationReceiptCannotAuthorizeChangedAttempt` | `G-78`: other task receipt reserves zero releases. |
+| PC-79 | G-79: omit receipt attempt comparison. | `/*/*/TaskParkPublicationTests/C1065_PublicationReceiptCannotAuthorizeChangedAttempt` | `G-79`: prior-attempt receipt reserves zero releases. |
+| PC-80 | G-80: omit source block-event equality. | `/*/*/TaskParkPublicationTests/C1065_PublicationReceiptCannotAuthorizeChangedAttempt` | `G-80`: same-attempt different-block receipt reserves zero releases. |
+| PC-81 | G-81: omit task CAS/concurrency predicate. | `/*/*/TaskParkPublicationTests/C1065_PublicationReceiptCannotAuthorizeChangedAttempt` | `G-81`: changed token wins and stale advance affects zero rows. |
+| PC-82 | G-82: omit retained AgentId equality. | `/*/*/TaskParkPublicationTests/C1065_PublicationReceiptCannotAuthorizeChangedAttempt` | `G-82`: reassigned-agent receipt cannot advance. |
+| PC-83 | G-83: omit receipt runner equality. | `/*/*/TaskParkPublicationTests/C1065_PublicationReceiptCannotAuthorizeChangedAttempt` | `G-83`: runner-only change cannot reserve. |
+| PC-84 | G-84: omit receipt store equality. | `/*/*/TaskParkPublicationTests/C1065_PublicationReceiptCannotAuthorizeChangedAttempt` | `G-84`: store-only change cannot reserve. |
+| PC-85 | G-85: omit receipt session equality. | `/*/*/TaskParkPublicationTests/C1065_PublicationReceiptCannotAuthorizeChangedAttempt` | `G-85`: session-only change cannot reserve. |
+| PC-86 | G-86: omit receipt accepted-start equality. | `/*/*/TaskParkPublicationTests/C1065_PublicationReceiptCannotAuthorizeChangedAttempt` | `G-86`: generation-only change cannot reserve. |
+| PC-87 | G-87: omit repository/common-directory equality. | `/*/*/TaskParkPublicationTests/C1065_PublicationReceiptCannotAuthorizeChangedAttempt` | `G-87`: repository-only change cannot reserve. |
+| PC-88 | G-88: omit server endpoint fingerprint equality. | `/*/*/TaskParkPublicationTests/C1065_PublicationReceiptCannotAuthorizeChangedAttempt` | `G-88`: endpoint-only change cannot reserve. |
+| PC-89 | G-89: omit full-ref equality. | `/*/*/TaskParkPublicationTests/C1065_PublicationReceiptCannotAuthorizeChangedAttempt` | `G-89`: ref-only change cannot reserve. |
+| PC-90 | G-90: omit source SHA equality. | `/*/*/TaskParkPublicationTests/C1065_PublicationReceiptCannotAuthorizeChangedAttempt` | `G-90`: SHA-only change cannot reserve. |
+| PC-91 | G-91: omit retained report/checkpoint digest comparison. | `/*/*/TaskParkPublicationTests/C1065_PublicationReceiptCannotAuthorizeChangedAttempt` | `G-91`: changed report cannot authorize old episode release. |
+| PC-92 | G-92: begin task transaction before awaited Git inspection. | `/*/*/TaskParkPublicationTests/C1065_PublicationReceiptCannotAuthorizeChangedAttempt` | `G-92`: second connection obtains task row lock during paused Git. |
+| PC-93 | G-93: invoke park reserve before settlement SaveChanges/commit. | `/*/*/BlockedTaskParkReleaseTests/C1065_ReportPublicationPrecedesPhysicalRelease` | `G-93`: wire-entry fresh context contains report and exact owed notification. |
+| PC-94 | G-94: accept Blocked with only CARD-0667 idle proof. | `/*/*/BlockedTaskParkReleaseTests/C1065_ReportPublicationPrecedesPhysicalRelease` | `G-94`: direct coordinator and settlement path send zero commands without source proof. |
+| PC-95 | G-95: send before committing release action. | `/*/*/BlockedTaskParkReleaseTests/C1065_ReportPublicationPrecedesPhysicalRelease` | `G-95`: wire-entry fresh context finds exact P/action row. |
+| PC-96 | G-96: stamp notification handled before queue insert commits. | `/*/*/BlockedTaskParkReleaseTests/C1065_ReportPublicationPrecedesPhysicalRelease` | `G-96`: after enqueue rollback/restart one complete caller prompt arrives. |
+| PC-97 | G-97: accept queue ACK as notification receipt. | `/*/*/BlockedTaskParkReleaseTests/C1065_ReportPublicationPrecedesPhysicalRelease` | `G-97`: ACK with no transcript leaves ConfirmedAt null. |
+| PC-98 | G-98: use prefix matching for notification receipt. | `/*/*/BlockedTaskParkReleaseTests/C1065_ReportPublicationPrecedesPhysicalRelease` | `G-98`: prefix-only caller prompt leaves ConfirmedAt null. |
+| PC-99 | G-99: remove notification recipient predicate. | `/*/*/BlockedTaskParkReleaseTests/C1065_ReportPublicationPrecedesPhysicalRelease` | `G-99`: whole note on other session leaves ConfirmedAt null. |
+| PC-100 | G-100: accept QueuedUserPrompt as notification receipt. | `/*/*/BlockedTaskParkReleaseTests/C1065_ReportPublicationPrecedesPhysicalRelease` | `G-100`: matching non-UserPrompt leaves ConfirmedAt null. |
+| PC-101 | G-101: omit notification receipt floor predicate. | `/*/*/BlockedTaskParkReleaseTests/C1065_ReportPublicationPrecedesPhysicalRelease` | `G-101`: old complete prompt leaves ConfirmedAt null. |
+| PC-102 | G-102: omit notification receipt generation predicate. | `/*/*/BlockedTaskParkReleaseTests/C1065_ReportPublicationPrecedesPhysicalRelease` | `G-102`: wrong-generation whole prompt leaves ConfirmedAt null. |
+| PC-103 | G-103: generate a new notification conversation key on retry. | `/*/*/BlockedTaskParkReleaseTests/C1065_ReportPublicationPrecedesPhysicalRelease` | `G-103`: lost acknowledgment recovers exactly one queue row and caller receipt. |
+| PC-104 | G-104: use immediate mode for caller completion enqueue. | `/*/*/BlockedTaskParkReleaseTests/C1065_ReportPublicationPrecedesPhysicalRelease` | `G-104`: busy-before-enqueue caller has zero writes before TurnEnd. |
+| PC-105 | G-105: skip discovery for non-report Blocked with null CompletedAt. | `/*/*/BlockedTaskParkReleaseTests/C1065_EachBlockCauseUsesCurrentIdleProof` | `G-105`: eligible quota/unmarked/wall arm acquires same guarded episode. |
+| PC-106 | G-106: manufacture a release target for sessionless routing hold. | `/*/*/BlockedTaskParkReleaseTests/C1065_EachBlockCauseUsesCurrentIdleProof` | `G-106`: routing/create hold has zero release and provider launch calls. |
+| PC-107 | G-107: ignore unknown or foreign workspace ownership. | `/*/*/BlockedTaskParkReleaseTests/C1065_EachBlockCauseUsesCurrentIdleProof` | `G-107`: otherwise qualified ownership-uncertain task remains held. |
+| PC-108 | G-108: run generic ephemeral-agent deletion after release. | `/*/*/BlockedTaskParkReleaseTests/C1065_ParkedAgentIsReservedButNotWarm` | `G-108`: retained agent row still exists with original ID. |
+| PC-109 | G-109: set PoolIdleSince on park success. | `/*/*/BlockedTaskParkReleaseTests/C1065_ParkedAgentIsReservedButNotWarm` | `G-109`: PoolIdleSince and PoolReservedForRootTaskId are null. |
+| PC-110 | G-110: omit park reservation from reusable-agent selection. | `/*/*/BlockedTaskParkReleaseTests/C1065_ParkedAgentIsReservedButNotWarm` | `G-110`: unrelated task does not acquire parked AgentId. |
+| PC-111 | G-111: omit park hold from pool retirement sweep. | `/*/*/BlockedTaskParkReleaseTests/C1065_ParkedAgentIsReservedButNotWarm` | `G-111`: retirement pass keeps parked identity and workspace. |
+| PC-112 | G-112: omit standing-owner predicate. | `/*/*/BlockedTaskParkReleaseTests/C1065_ParkedAgentIsReservedButNotWarm` | `G-112`: standing-owner-only case has zero release commands. |
+| PC-113 | G-113: omit AlwaysOn predicate. | `/*/*/BlockedTaskParkReleaseTests/C1065_ParkedAgentIsReservedButNotWarm` | `G-113`: AlwaysOn-only pool shape has zero release commands. |
+| PC-114 | G-114: omit board ownership predicate. | `/*/*/BlockedTaskParkReleaseTests/C1065_ParkedAgentIsReservedButNotWarm` | `G-114`: board-owner-only case has zero release commands. |
+| PC-115 | G-115: omit specialist role/owner predicate. | `/*/*/BlockedTaskParkReleaseTests/C1065_ParkedAgentIsReservedButNotWarm` | `G-115`: specialist-only case has zero release commands. |
+| PC-116 | G-116: clear all agent park reservations during one resume/cancel. | `/*/*/BlockedTaskParkReleaseTests/C1065_ParkedAgentIsReservedButNotWarm` | `G-116`: unrelated/current replacement reservation remains intact. |
+| PC-117 | G-117: require desktop SourceReady before reserve. | `/*/*/BlockedTaskSyncRecoveryTests/C1065_LeaseBusyDoesNotRetainPublishedIdleSeat` | `G-117`: lease-busy task releases once while sync stays Pending. |
+| PC-118 | G-118: keep sync due/SHA only in service memory. | `/*/*/BlockedTaskSyncRecoveryTests/C1065_LeaseBusyDoesNotRetainPublishedIdleSeat` | `G-118`: new service reads same pending park/SHA and retries. |
+| PC-119 | G-119: sync current branch tip rather than parked SHA. | `/*/*/BlockedTaskSyncRecoveryTests/C1065_SyncDebtRecoversWithoutMintingApproval` | `G-119`: advanced branch is held without moving desktop to newer tip. |
+| PC-120 | G-120: pass no expected fingerprint to sync exact-ref read. | `/*/*/BlockedTaskSyncRecoveryTests/C1065_SyncDebtRecoversWithoutMintingApproval` | `G-120`: changed endpoint holds without fetch/move. |
+| PC-121 | G-121: omit desktop cleanliness check. | `/*/*/BlockedTaskSyncRecoveryTests/C1065_SyncDebtRecoversWithoutMintingApproval` | `G-121`: desktop dirty bytes and HEAD remain unchanged. |
+| PC-122 | G-122: omit desktop sequencer check. | `/*/*/BlockedTaskSyncRecoveryTests/C1065_SyncDebtRecoversWithoutMintingApproval` | `G-122`: active-sequencer desktop remains unchanged. |
+| PC-123 | G-123: replace ff-only update with reset to parked SHA. | `/*/*/BlockedTaskSyncRecoveryTests/C1065_SyncDebtRecoversWithoutMintingApproval` | `G-123`: divergent local commit remains HEAD. |
+| PC-124 | G-124: set NextDueAt to now and retry loop immediately. | `/*/*/BlockedTaskSyncRecoveryTests/C1065_SyncDebtRecoversWithoutMintingApproval` | `G-124`: one pass makes one call; restart respects 1/2/4/5 minute schedule. |
+| PC-125 | G-125: return from sweep on first held/error item. | `/*/*/BlockedTaskSyncRecoveryTests/C1065_SyncDebtRecoversWithoutMintingApproval` | `G-125`: second due item reaches SourceReady in same bounded pass. |
+| PC-126 | G-126: assign Succeeded on SourceReady. | `/*/*/BlockedTaskSyncRecoveryTests/C1065_SyncDebtRecoversWithoutMintingApproval` | `G-126`: status remains historical Blocked after successful sync. |
+| PC-127 | G-127: invoke settlement/evidence recording on SourceReady. | `/*/*/BlockedTaskSyncRecoveryTests/C1065_SyncDebtRecoversWithoutMintingApproval` | `G-127`: StageOutcome/completion notification counts stay unchanged. |
+| PC-128 | G-128: create a new task instead of requeueing current row. | `/*/*/BlockedTaskParkResumeTests/C1065_ReplyStartsOneAttemptFromPublishedSource` | `G-128`: task ID and task row count are unchanged. |
+| PC-129 | G-129: clear AgentId as ordinary RequeueAsync does. | `/*/*/BlockedTaskParkResumeTests/C1065_ReplyStartsOneAttemptFromPublishedSource` | `G-129`: new session belongs to original AgentId. |
+| PC-130 | G-130: increment Attempt again on recovery. | `/*/*/BlockedTaskParkResumeTests/C1065_ReplyStartsOneAttemptFromPublishedSource` | `G-130`: after each crash duplicate request yields one target attempt. |
+| PC-131 | G-131: reuse old session UUID in launch request. | `/*/*/BlockedTaskParkResumeTests/C1065_ReplyStartsOneAttemptFromPublishedSource` | `G-131`: new session ID differs and old S never receives input. |
+| PC-132 | G-132: reuse prior attempt credential binding. | `/*/*/BlockedTaskParkResumeTests/C1065_ReplyStartsOneAttemptFromPublishedSource` | `G-132`: accepted credential identity differs from previous attempt. |
+| PC-133 | G-133: retain RepliedAtSequence/nudge/check fields during cold requeue. | `/*/*/BlockedTaskParkResumeTests/C1065_ReplyStartsOneAttemptFromPublishedSource` | `G-133`: new attempt per-session state is reset before launch. |
+| PC-134 | G-134: use master as mirror start ref. | `/*/*/BlockedTaskParkResumeTests/C1065_ReplyStartsOneAttemptFromPublishedSource` | `G-134`: new mirror HEAD equals parked SHA and full ref. |
+| PC-135 | G-135: ignore accepted reply when reserving candidate. | `/*/*/BlockedTaskParkResumeTests/C1065_ReplyRacePersistsOneAnswerAndOneOwner` | `G-135`: pre-reserve reply prevents release and keeps original attempt/session. |
+| PC-136 | G-136: enqueue to historical session during ReleasePending. | `/*/*/BlockedTaskParkResumeTests/C1065_ReplyRacePersistsOneAnswerAndOneOwner` | `G-136`: old-session write and queue counts for accepted answer are zero. |
+| PC-137 | G-137: persist answer only after dispatch enqueue. | `/*/*/BlockedTaskParkResumeTests/C1065_ReplyRacePersistsOneAnswerAndOneOwner` | `G-137`: post-accept restart retains full answer and produces one receipt. |
+| PC-138 | G-138: admit cold continuation with absent or mismatched receipt. | `/*/*/BlockedTaskParkResumeTests/C1065_ResumePreservesSourceAndAdmissionRefusals` | `G-138`: no cold launch and no agent deletion for invalid release receipt. |
+| PC-139 | G-139: skip retained HEAD equality. | `/*/*/BlockedTaskParkResumeTests/C1065_ResumePreservesSourceAndAdmissionRefusals` | `G-139`: advanced/divergent source refuses launch without reset. |
+| PC-140 | G-140: skip retained status read. | `/*/*/BlockedTaskParkResumeTests/C1065_ResumePreservesSourceAndAdmissionRefusals` | `G-140`: dirty source refuses launch with bytes retained. |
+| PC-141 | G-141: skip resumed full-ref equality. | `/*/*/BlockedTaskParkResumeTests/C1065_ResumePreservesSourceAndAdmissionRefusals` | `G-141`: same SHA under changed ref refuses launch. |
+| PC-142 | G-142: skip resumed endpoint equality. | `/*/*/BlockedTaskParkResumeTests/C1065_ResumePreservesSourceAndAdmissionRefusals` | `G-142`: same SHA under changed endpoint refuses launch. |
+| PC-143 | G-143: omit requested-round equality. | `/*/*/BlockedTaskParkResumeTests/C1065_ResumePreservesSourceAndAdmissionRefusals` | `G-143`: stale round changes no accepted inputs/attempts. |
+| PC-144 | G-144: ignore active quota hold for receipt-bound resume. | `/*/*/BlockedTaskParkResumeTests/C1065_ResumePreservesSourceAndAdmissionRefusals` | `G-144`: active quota yields zero launches and retains accepted text. |
+| PC-145 | G-145: skip capacity reservation for cold resume. | `/*/*/BlockedTaskParkResumeTests/C1065_ResumePreservesSourceAndAdmissionRefusals` | `G-145`: full host launches zero sessions and accepted reply remains queued. |
+| PC-146 | G-146: allow fallback runner on pinned-host refusal. | `/*/*/BlockedTaskParkResumeTests/C1065_ResumePreservesSourceAndAdmissionRefusals` | `G-146`: no alternate-host launch occurs. |
+| PC-147 | G-147: substitute available kind after required-kind refusal. | `/*/*/BlockedTaskParkResumeTests/C1065_ResumePreservesSourceAndAdmissionRefusals` | `G-147`: no alternate-kind launch occurs. |
+| PC-148 | G-148: ignore requested platform during cold dispatch. | `/*/*/BlockedTaskParkResumeTests/C1065_ResumePreservesSourceAndAdmissionRefusals` | `G-148`: wrong-OS host receives zero launches. |
+| PC-149 | G-149: omit scope admission for cold resume. | `/*/*/BlockedTaskParkResumeTests/C1065_ResumePreservesSourceAndAdmissionRefusals` | `G-149`: colliding task keeps reply pending and launches zero sessions. |
+| PC-150 | G-150: omit workspace-use admission for cold resume. | `/*/*/BlockedTaskParkResumeTests/C1065_ResumePreservesSourceAndAdmissionRefusals` | `G-150`: foreign workspace claim keeps reply pending with zero launches. |
+| PC-151 | G-151: ignore pending commit obligation in cold admission. | `/*/*/BlockedTaskParkResumeTests/C1065_ResumePreservesSourceAndAdmissionRefusals` | `G-151`: commit-recovery hold retains reply and launches zero sessions. |
+| PC-152 | G-152: call launch directly after accepting answer. | `/*/*/BlockedTaskParkResumeTests/C1065_ResumePreservesSourceAndAdmissionRefusals` | `G-152`: before dispatcher tick launch count is zero. |
+| PC-153 | G-153: truncate answer to prior-report excerpt limit. | `/*/*/BlockedTaskParkDeliveryTests/C1065_FullAnswerRequiresNewSessionUserPrompt` | `G-153`: retrieved/inline answer equals complete Unicode input including tail canary. |
+| PC-154 | G-154: replace whole-body comparison with prefix comparison. | `/*/*/BlockedTaskParkDeliveryTests/C1065_FullAnswerRequiresNewSessionUserPrompt` | `G-154`: prefix-only UserPrompt leaves answer pending. |
+| PC-155 | G-155: query receipt without target-session predicate. | `/*/*/BlockedTaskParkDeliveryTests/C1065_FullAnswerRequiresNewSessionUserPrompt` | `G-155`: complete old-session UserPrompt leaves answer pending. |
+| PC-156 | G-156: omit receipt generation predicate. | `/*/*/BlockedTaskParkDeliveryTests/C1065_FullAnswerRequiresNewSessionUserPrompt` | `G-156`: complete wrong-generation prompt leaves answer pending. |
+| PC-157 | G-157: omit receipt sequence floor predicate. | `/*/*/BlockedTaskParkDeliveryTests/C1065_FullAnswerRequiresNewSessionUserPrompt` | `G-157`: complete earlier-sequence prompt leaves answer pending. |
+| PC-158 | G-158: accept QueuedUserPrompt/assistant kind. | `/*/*/BlockedTaskParkDeliveryTests/C1065_FullAnswerRequiresNewSessionUserPrompt` | `G-158`: matching non-UserPrompt row leaves answer pending. |
+| PC-159 | G-159: clear accepted input after enqueue or Sent alone. | `/*/*/BlockedTaskParkDeliveryTests/C1065_FullAnswerRequiresNewSessionUserPrompt` | `G-159`: no-transcript arm retains accepted text and completion is unconfirmed. |
+| PC-160 | G-160: generate new input/conversation key on retry. | `/*/*/BlockedTaskParkDeliveryTests/C1065_FullAnswerRequiresNewSessionUserPrompt` | `G-160`: each crash recovers one Q/attempt and one complete prompt. |
+| PC-161 | G-161: change cold queue send mode to immediate. | `/*/*/BlockedTaskParkDeliveryTests/C1065_FullAnswerRequiresNewSessionUserPrompt` | `G-161`: busy-before-enqueue target has zero writes until TurnEnd. |
+| PC-162 | G-162: omit Continue Blocked check. | `/*/*/BlockedTaskParkDeliveryTests/C1065_ContinueAndPrerequisiteReplyUseGuardedPath` | `G-162`: otherwise authorized non-Blocked request is refused. |
+| PC-163 | G-163: omit question-kind predicate. | `/*/*/BlockedTaskParkDeliveryTests/C1065_ContinueAndPrerequisiteReplyUseGuardedPath` | `G-163`: non-question Blocked request is refused. |
+| PC-164 | G-164: omit standing-authority predicate. | `/*/*/BlockedTaskParkDeliveryTests/C1065_ContinueAndPrerequisiteReplyUseGuardedPath` | `G-164`: question without authority is refused. |
+| PC-165 | G-165: enqueue continuation from sweep when report mentions completed prerequisite. | `/*/*/BlockedTaskParkDeliveryTests/C1065_ContinueAndPrerequisiteReplyUseGuardedPath` | `G-165`: Done/prose-only change yields zero new attempts/launches. |
+| PC-166 | G-166: drop current-session/watermark check on settlement lookup. | `/*/*/BlockedTaskParkDeliveryTests/C1065_ContinueAndPrerequisiteReplyUseGuardedPath` | `G-166`: old turn leaves new attempt Working with no completion event. |
+| PC-167 | G-167: route merge-helper parent resolution through resume admission. | `/*/*/BlockedTaskParkDeliveryTests/C1065_ContinueAndPrerequisiteReplyUseGuardedPath` | `G-167`: resolved parent succeeds with zero cold continuation launches. |
+| PC-168 | G-168: omit blocked-agent follow-up admission check. | `/*/*/BlockedTaskParkDeliveryTests/C1065_PinnedFollowupCannotStealParkedIdentity` | `G-168`: new task insert count is zero and refusal gives Reply guidance. |
+| PC-169 | G-169: skip remote-pool restriction for parked predecessor. | `/*/*/BlockedTaskParkDeliveryTests/C1065_PinnedFollowupCannotStealParkedIdentity` | `G-169`: otherwise eligible remote follow-up returns follow_up_remote_pool_unsupported. |
+| PC-170 | G-170: initialize first observation from old CompletedAt. | `/*/*/BlockedTaskParkReclaimTests/C1065_LegacySweepRequiresFreshPublicationAndIdleWindow` | `G-170`: ancient task remains unqualified at new t+119.999. |
+| PC-171 | G-171: allow legacy release from MirrorPushed flag alone. | `/*/*/BlockedTaskParkReclaimTests/C1065_LegacySweepRequiresFreshPublicationAndIdleWindow` | `G-171`: dirty/unknown/unpublished legacy arm sends zero commands. |
+| PC-172 | G-172: accept missing handoff/report binding. | `/*/*/BlockedTaskParkReclaimTests/C1065_LegacySweepRequiresFreshPublicationAndIdleWindow` | `G-172`: missing-binding task retains seat with typed hold. |
+| PC-173 | G-173: advance cursor only in memory and terminate after first page. | `/*/*/BlockedTaskParkReclaimTests/C1065_LegacySweepRequiresFreshPublicationAndIdleWindow` | `G-173`: restart completes fair seven-row traversal without duplicate episodes. |
+| PC-174 | G-174: omit Blocked-status recheck before reserve/send. | `/*/*/BlockedTaskParkReclaimTests/C1065_ClaimAndReplyInvalidateLegacyCandidate` | `G-174`: reply/cancel status change prevents stale release. |
+| PC-175 | G-175: omit task attempt recheck at reserve/send. | `/*/*/BlockedTaskParkReclaimTests/C1065_ClaimAndReplyInvalidateLegacyCandidate` | `G-175`: next attempt at either barrier prevents old release. |
+| PC-176 | G-176: omit block event recheck at reserve/send. | `/*/*/BlockedTaskParkReclaimTests/C1065_ClaimAndReplyInvalidateLegacyCandidate` | `G-176`: same-attempt newer block at either barrier prevents old release. |
+| PC-177 | G-177: omit source receipt freshness recheck at reserve/send. | `/*/*/BlockedTaskParkReclaimTests/C1065_ClaimAndReplyInvalidateLegacyCandidate` | `G-177`: changed source at either barrier prevents old release. |
+| PC-178 | G-178: omit generation recheck at reserve/send. | `/*/*/BlockedTaskParkReclaimTests/C1065_ClaimAndReplyInvalidateLegacyCandidate` | `G-178`: replacement generation at either barrier prevents old release. |
+| PC-179 | G-179: omit session-owner query at final reservation. | `/*/*/BlockedTaskParkReclaimTests/C1065_ClaimAndReplyInvalidateLegacyCandidate` | `G-179`: same-attempt new session claim prevents release. |
+| PC-180 | G-180: omit agent-owner query at final reservation. | `/*/*/BlockedTaskParkReclaimTests/C1065_ClaimAndReplyInvalidateLegacyCandidate` | `G-180`: same-agent different-session claim prevents release. |
+| PC-181 | G-181: subtract Published/Parked task state from live capacity. | `/*/*/BlockedTaskParkProjectionTests/C1065_OccupancyTracksProcessesNotBlockedStatus` | `G-181`: Starting/Running/Stopping pending/held seats count occupied. |
+| PC-182 | G-182: return empty authoritative inventory when runner disconnected. | `/*/*/BlockedTaskParkProjectionTests/C1065_OccupancyTracksProcessesNotBlockedStatus` | `G-182`: unknown inventory does not report released capacity. |
+| PC-183 | G-183: filter owner tasks to Dispatched/Working only. | `/*/*/BlockedTaskParkProjectionTests/C1065_OccupancyTracksProcessesNotBlockedStatus` | `G-183`: bound Blocked/Queued slot is not orphan. |
+| PC-184 | G-184: serve park projection only from invalidation memory. | `/*/*/BlockedTaskParkProjectionTests/C1065_OccupancyTracksProcessesNotBlockedStatus` | `G-184`: fresh authorized GET after restart contains same park ID/reason. |
+| PC-185 | G-185: include raw Git error/report/answer in projection detail. | `/*/*/BlockedTaskParkProjectionTests/C1065_OccupancyTracksProcessesNotBlockedStatus` | `G-185`: synthetic secret/path/body canaries absent from GET and structured logs. |
+| PC-186 | G-186: omit Enabled check. | `/*/*/BlockedTaskParkProjectionTests/C1065_DefaultOffRetainsRecoveryOfAcceptedAnswers` | `G-186`: Enabled=false produces zero new park Git/wire actions. |
+| PC-187 | G-187: ignore ReclaimExisting when Enabled. | `/*/*/BlockedTaskParkProjectionTests/C1065_DefaultOffRetainsRecoveryOfAcceptedAnswers` | `G-187`: Enabled=true/ReclaimExisting=false produces zero legacy episodes. |
+| PC-188 | G-188: return early from accepted-answer recovery when disabled. | `/*/*/BlockedTaskParkProjectionTests/C1065_DefaultOffRetainsRecoveryOfAcceptedAnswers` | `G-188`: disabled recovery still yields one new-session receipt. |
+| PC-189 | G-189: return early from pending-release reconciliation when disabled. | `/*/*/BlockedTaskParkProjectionTests/C1065_DefaultOffRetainsRecoveryOfAcceptedAnswers` | `G-189`: disabled lost-reply recovery confirms exact generation exit. |
+| PC-190 | G-190: return early from sync debt sweep when disabled. | `/*/*/BlockedTaskParkProjectionTests/C1065_DefaultOffRetainsRecoveryOfAcceptedAnswers` | `G-190`: disabled due sync debt reaches SourceReady. |
+| PC-191 | G-191: feed parked stored report to successful resettlement. | `/*/*/BlockedTaskParkDeliveryTests/C1065_ParkedReviewReplyBindsFreshEvidence` | `G-191`: old report cannot mint successor before new complete answer turn. |
+| PC-192 | G-192: restore skip-recording-if-any-outcome on cold success. | `/*/*/BlockedTaskParkDeliveryTests/C1065_ParkedReviewReplyBindsFreshEvidence` | `G-192`: fresh final report creates exactly one correctly bound successor. |
+| PC-193 | G-193: reuse old notification snapshot after successor commit. | `/*/*/BlockedTaskParkDeliveryTests/C1065_ParkedReviewReplyBindsFreshEvidence` | `G-193`: complete caller UserPrompt names new evidence ID and exact subject SHA. |
+
+### Out of scope
+
+- Paid/native provider qualification, OS process-tree termination and browser rendering
+  are excluded from ordinary rows because the design uses declared deterministic
+  substitutes. The original isolated acceptance/activation gate remains required;
+  neither simulated UserPrompt nor fake child exit authorizes production enablement.
+- No release of Working sessions, inferred prerequisite scheduler, SourceLanding
+  autosave, arbitrary rowless ownership recovery, force fallback, branch reset or
+  workspace deletion. CARD-0079 and explicit operator cancellation keep their owners.
+- No whole Unit/namespace/assembly run: the closed affected filters below include
+  CARD-0667 runtime, CARD-1043 automatic binding, legacy publisher and live Reply
+  regressions. Unrelated evidence-recovery CLI, provider UI and landing mutation
+  suites remain under their own plans. No changed path is excluded for test cost.
+- Full Cartesian multiplication of cause x provider x workspace x crash x time is
+  unnecessary: each independent decision has an all-valid control and single-factor
+  negative, with mandatory interacting pairs/triples in V-7 (input/source/generation),
+  V-12/V-20/V-27 (recipient state x every handoff cut), V-15 (busy lease x independent
+  publication failure), V-18 (Reply timing x release certainty), V-23 (legacy x age x
+  dirty/Working) and V-26 (all four switches x preaccepted work). No age or default
+  switch substitutes for source, custody or receipt proof.
+
+### Checkpoints
+
+Exactly one isolated build and one filter per row. S1-S10 consume their own row once;
+S11 runs CP-11/12 on Linux and CP-13 on Windows at the identical committed candidate
+SHA. Each new method returns one result, including internal scenario loops. Final
+server roster is 21 new + 10 existing = 31; final runner roster is 6 new + 26
+CARD-0667 + 3 publisher = 35. New tests may not add parameter expansion without
+updating this manifest. CP-12/13 deliberately require all S2b/S2c results. Confirm
+actual TRX names equal the selected roster, not merely at least Min.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---|---|
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1065-cp1/` | park-state | `/*/*/BlockedTaskParkStateTests/C1065_*` | V-1,V-2 | all 2 listed, 0 failed/skipped | 2 | 7 |
+| CP-2 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1065-cp2/` | publication | `/*/*/WorkspaceParkPublicationTests/C1065_*` | V-3-V-5 | all 3 listed, 0 failed/skipped | 3 | 8 |
+| CP-3 | S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c1065-cp3/` | park-wire | `/*/*/BlockedParkWireTests/C1065_*` | V-6-V-8 | all 3 listed, 0 failed/skipped | 3 | 9 |
+| CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1065-cp4/` | source-policy | `/*/*/TaskParkPublicationTests/C1065_*` | V-9-V-11 | all 3 listed, 0 failed/skipped | 3 | 8 |
+| CP-5 | S5 | `tests/Antiphon.Tests -> bin-c1065-cp5/` | park-release | `/*/*/BlockedTaskParkReleaseTests/C1065_*` | V-12-V-14 | all 3 listed, 0 failed/skipped | 3 | 9 |
+| CP-6 | S6 | `tests/Antiphon.Tests -> bin-c1065-cp6/` | sync-debt | `/*/*/BlockedTaskSyncRecoveryTests/C1065_*` | V-15,V-16 | all 2 listed, 0 failed/skipped | 2 | 9 |
+| CP-7 | S7 | `tests/Antiphon.Tests -> bin-c1065-cp7/` | resume | `/*/*/BlockedTaskParkResumeTests/C1065_*` | V-17-V-19 | all 3 listed, 0 failed/skipped | 3 | 10 |
+| CP-8 | S8 | `tests/Antiphon.Tests -> bin-c1065-cp8/` | delivery | `/*/*/BlockedTaskParkDeliveryTests/C1065_*` | V-20-V-22,V-27 | all 4 listed, 0 failed/skipped | 4 | 12 |
+| CP-9 | S9 | `tests/Antiphon.Tests -> bin-c1065-cp9/` | reclaim | `/*/*/BlockedTaskParkReclaimTests/C1065_*` | V-23,V-24 | all 2 listed, 0 failed/skipped | 2 | 9 |
+| CP-10 | S10 | `tests/Antiphon.Tests -> bin-c1065-cp10/` | projection | `/*/*/BlockedTaskParkProjectionTests/C1065_*` | V-25,V-26 | all 2 listed, 0 failed/skipped | 2 | 9 |
+| CP-11 | S11 | `tests/Antiphon.Tests -> bin-c1065-cp11/` | final-server | `/*/*/(BlockedTaskPark*)\|(BlockedTaskSyncRecoveryTests*)\|(TaskParkPublicationTests*)\|(RunnerTaskSettlementTests*)\|(AgentTaskSettlementRaceTests*)\|(RemotePoolFollowUpAdmissionTests*)\|(ReviewEvidenceResettlementTests*)/(C1065_*)\|(Runner_sync_block_commits_the_completion_obligation*)\|(Sync_uncertainty_blocks_and_reply_retries*)\|(Refused_sync_never_autosaves_or_releases_workspace*)\|(an_answered_blocked_task_is_not_re_blocked_by_the_stale_boundary*)\|(the_answer_turn_settles_the_task_and_delivers_one_done_note*)\|(Remote_pool_follow_up_refuses_before_insert*)\|(C1043_ConfirmedNoPushBinds*)\|(C1043_FinalReportWins*)\|(C1043_AppendPreservesHistory*)\|(C1043_HeaderSnapshotAndGetAgree*)` | V-1,V-2,V-9-V-27,R-1-R-4 | all 31 listed, 0 failed/skipped | 31 | 18 |
+| CP-12 | S11 | `tests/Antiphon.SessionRunner.Tests -> bin-c1065-cp12/` | final-runner | `/*/*/(WorkspaceParkPublicationTests*)\|(BlockedParkWireTests*)\|(TerminalSeatReleaseTests*)\|(RunnerWorkspaceServiceTests*)/(C1065_*)\|(Replacement_generation_is_never_released*)\|(Token_for_another_session_is_refused*)\|(Restart_invalidates_volatile_observation_tokens*)\|(Fresh_tail_reads_each_provider*)\|(Unknown_or_partial_tail_never_authorizes_release*)\|(Binding_changes_during_read_refuse_qualification*)\|(Old_turn_end_does_not_qualify_a_new_generation*)\|(Working_remains_protected_after_arbitrary_silence*)\|(Two_observations_require_the_full_safety_margin*)\|(Activity_resets_the_qualification_window*)\|(Unavailable_observation_discards_qualification*)\|(Unknown_backend_custody_refuses_release*)\|(Input_winning_the_gate_invalidates_release*)\|(Conditional_input_invalidates_release*)\|(Release_winning_the_gate_refuses_later_input*)\|(Tail_growth_at_final_check_refuses_signal*)\|(Output_growth_at_signal_boundary_refuses_release*)\|(Kill_failure_retains_manifest_and_capacity*)\|(Duplicate_action_is_idempotent*)\|(Confirmed_exit_forgets_only_the_expected_generation*)\|(Unsupported_capability_never_falls_back_to_force*)\|(Http_and_phone_home_share_conditional_semantics*)\|(Fresh_observation_does_not_publish_duplicate_entries*)\|(Explicit_operator_release_keeps_its_contract*)\|(Publish_pushes_only_own_fast_forward_branch*)\|(Publish_equal_tip_is_not_pushed_and_reports_dirty_tree*)\|(Publish_refuses_an_active_sequencer_before_push*)` | V-3-V-8,R-5,R-6 | all 35 listed, 0 failed/skipped | 35 | 10 |
+| CP-13 | S11 | `tests/Antiphon.SessionRunner.Tests -> bin-c1065-cp13/` | windows-runner | `/*/*/(WorkspaceParkPublicationTests*)\|(BlockedParkWireTests*)\|(TerminalSeatReleaseTests*)\|(RunnerWorkspaceServiceTests*)/(C1065_*)\|(Replacement_generation_is_never_released*)\|(Token_for_another_session_is_refused*)\|(Restart_invalidates_volatile_observation_tokens*)\|(Fresh_tail_reads_each_provider*)\|(Unknown_or_partial_tail_never_authorizes_release*)\|(Binding_changes_during_read_refuse_qualification*)\|(Old_turn_end_does_not_qualify_a_new_generation*)\|(Working_remains_protected_after_arbitrary_silence*)\|(Two_observations_require_the_full_safety_margin*)\|(Activity_resets_the_qualification_window*)\|(Unavailable_observation_discards_qualification*)\|(Unknown_backend_custody_refuses_release*)\|(Input_winning_the_gate_invalidates_release*)\|(Conditional_input_invalidates_release*)\|(Release_winning_the_gate_refuses_later_input*)\|(Tail_growth_at_final_check_refuses_signal*)\|(Output_growth_at_signal_boundary_refuses_release*)\|(Kill_failure_retains_manifest_and_capacity*)\|(Duplicate_action_is_idempotent*)\|(Confirmed_exit_forgets_only_the_expected_generation*)\|(Unsupported_capability_never_falls_back_to_force*)\|(Http_and_phone_home_share_conditional_semantics*)\|(Fresh_observation_does_not_publish_duplicate_entries*)\|(Explicit_operator_release_keeps_its_contract*)\|(Publish_pushes_only_own_fast_forward_branch*)\|(Publish_equal_tip_is_not_pushed_and_reports_dirty_tree*)\|(Publish_refuses_an_active_sequencer_before_push*)` | V-3-V-8,R-5,R-6 | all 35 listed, 0 failed/skipped | 35 | 18 |
+
+Use the checkpoint tool through the build-slot gate, e.g. the S1 committed slice:
+
+```sh
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1065-s1 -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1065-driver/ -- run --plan docs/superpowers/plans/2026-10-05-card-1065-blocked-task-parking-plan.md --after S1 --expected-source-sha "$(git rev-parse HEAD)"
+```
+
+The command resolves the just-committed implementation SHA. For S11 use
+`--rows CP-11,CP-12` on Linux and `--rows CP-13` on Windows; do not run all S11
+rows on one host. Continue
+`wait` while exit=75 and await completion before editing/settling. Exit 4 is not run.
+Preserve each tool-produced CHECKPOINT line with executed/passed/failed/skipped counts
+and source/build provenance. No unlisted build/test loop or whole-Unit run. Report
+any necessary failure-driven rerun with its reason and source commit. Code/Review run
+check-evidence-diff.ps1 over the full task range. Cleanup only producer-owned
+bin-c1065 outputs through checkpoint cleanup; evidence stays ignored.
+
+### Cost
+
+Estimated, not measured runtime: ordinary Code V/R floor = **136 minutes**,
+the sum of CP-1 through CP-13 (7 + 8 + 9 + 8 + 9 + 9 + 10 + 12 + 9 + 9 + 18 + 10 + 18).
+This includes **39 minutes** isolated row builds/setup (3 per row) and
+**97 minutes** filtered V/R. Separate checkpoint-driver bootstrap/coverage lint
+allowance is **5 minutes**; do not double-count row builds.
+
+Slices remain 30-60 minutes: S1 39 author + 7 check = 46; S2 41+8=49;
+S3 43+9=52; S4 42+8=50; S5 43+9=52; S6 39+9=48; S7 44+10=54;
+S8 44+12=56; S9 41+9=50; S10 42+9=51; S11 10 evidence + 46 check=56.
+Total author/evidence = **428 minutes**; Code floor with bootstrap =
+**569 minutes**. If an implementation slice exceeds this bound, split that
+slice's commissioning before starting its next boundary; do not silently enlarge its
+checkpoint selection or build all fixtures first.
+
+Separate SourceLanding Mutation floor: **193 method-scoped cycles**.
+Each literal filter is in its PC row: 58 runner controls (V-3-V-8) at
+6 minutes each = **348 minutes**; 135 server controls at 8 minutes each =
+**1080 minutes**. Runner cycle allowance = 1 edit/break + 2 red build/run +
+1 restoration + 2 green build/run. Server = 1 edit/break + 3 red build/run +
+1 restoration + 3 green build/run. Total PC red/restore/green floor =
+**1428 minutes**, plus **30 minutes** source binding/restoration audit/reporting =
+**1458 minutes Mutation**. No cross-PC build reuse assumed; fresh restored green
+is mandatory. Combined Code+Mutation floor = **2027 minutes**, excluding
+predecessor implementation, queue delay, repairs and later rollout acceptance.
+
+Narrow grouping replaces 27 separate new-method ordinary builds with 10 slice
+builds: at 3 minutes each that saves **51 estimated build minutes** in the
+preparatory V/R pass. Final regression/Windows builds and all PCs are retained.
+Compared with the provisional 114-minute ordinary plan, the qualified manifest adds
+**22 minutes** for its missing regressions, extra capstone and guard scenarios.
+No whole-Unit time saving is claimed because this change never required that run.
+
+Design audit: bodies read as listed; **guards=193, mapped=193, missing=0,
+duplicate PC maps=0**. Every PC has a compiling mutation, one literal method filter
+and a decisive assertion; all are executable after their stated owning-slice setup.
+Static coverage findings for absent future tests are not a green claim. Code must
+rerun coverage on the integrated implementation and reconcile missing/unmapped
+obligations before ordinary Review; SourceLanding Mutation alone proves reachability.
