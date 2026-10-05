@@ -333,6 +333,24 @@ owner requires a real `pwsh.exe` path, and the Linux owner requires its confirme
 private-session supervisor. A failed death or pipe observation retains the
 invocation's results/control directories for diagnosis.
 
+CARD-1047 Windows qualification uses the plan's four bounded final rows (32
+contract/classification, 21 native ownership, 24 checkpoint callers and 18
+positively selected slot callers), rather than a whole Unit or assembly run.
+Every native Windows test requires an installed regular pwsh.exe and the staged
+helper. Fixture observations use retained process handles outside harness-owned
+paths, nonce-checked readiness and a bounded release barrier; each invocation has
+an independent 30-second watchdog (45 seconds for the three-invocation repeat).
+Emergency termination/join has five seconds total and any rescued residue fails
+ordinary proof. W10 deliberately injects an acknowledged stop with live members,
+or failed accounting after real membership: both must fail cleanup and retain
+diagnostic paths before independent joins and fixture scratch removal. A job close
+or stop acknowledgement cannot replace successful empty accounting and signaled
+process observations. W9 refuses WindowsApps path shapes and reparse classification
+before native creation, with an installed-executable output control and no installed
+alias/privilege requirement. All 20 method-scoped PCs remain a separate post-land
+SourceLanding Mutation obligation. See the
+[Windows plan](superpowers/plans/2026-10-04-card-1047-windows-script-harness-plan.md).
+
 Use the checkpoint tool for repeated class runs. Before any ad hoc destructive shell cleanup, verify both variable components are nonempty, quote their expansions, and resolve the target inside the intended scratch root; a missing component must exit nonzero before `rm`.
 
 A Plan/TestDesign artifact ends its `## Verification design` with a `### Checkpoints` table: one row per isolated build plus one exact test-filter group, bound to the plan slice it closes, and a Code dispatch runs that table as a **closed list** rather than an ad hoc build/test loop. It removes the extra rebuilds (CARD-0490 ran 19 builds for 8 test runs), the hunting for files the plan already named, and the second Code round that CARD-0459 paid for; it does not shrink the named Slow/native V/R work, which is the coverage itself (investigation `docs/superpowers/investigations/2026-09-20-card-0585-batched-edit-test-workflow.md`).

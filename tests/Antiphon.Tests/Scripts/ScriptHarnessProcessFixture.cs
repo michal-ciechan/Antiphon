@@ -179,7 +179,7 @@ internal static class ScriptHarnessProcessFixture
             return _run = Task.Run(() => ScriptHarness.RunHarnessCaseAsync("fixture", "C806", caseName, 1,
                 ["C806 C806 fixture passed"], Options(), _cancel.Token));
         }
-        internal async Task<ObservedTree> WaitReadyAsync(Task run)
+        internal async Task<ObservedTree> WaitReadyAsync(Task run, Action<ObservedTree>? beforeRelease = null)
         {
             if (Windows is null) return Tree = await ScriptHarnessProcessFixture.WaitReadyAsync(() => Request, run);
             var clock = Stopwatch.StartNew();
@@ -189,7 +189,7 @@ internal static class ScriptHarnessProcessFixture
                 if (clock.Elapsed >= TimeSpan.FromSeconds(5)) throw new TimeoutException("No fixture request.");
                 await Task.Delay(20);
             }
-            return Tree = await Windows.WaitReadyAsync(Request, run);
+            return Tree = await Windows.WaitReadyAsync(Request, run, beforeRelease);
         }
         internal void AssertClean()
         {

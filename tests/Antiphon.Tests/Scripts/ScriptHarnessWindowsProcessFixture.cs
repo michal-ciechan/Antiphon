@@ -36,7 +36,8 @@ internal sealed class ScriptHarnessWindowsProcessFixture : IDisposable
         return args;
     }
 
-    internal async Task<ScriptHarnessProcessFixture.ObservedTree> WaitReadyAsync(ScriptProcessRequest request, Task run)
+    internal async Task<ScriptHarnessProcessFixture.ObservedTree> WaitReadyAsync(ScriptProcessRequest request, Task run,
+        Action<ScriptHarnessProcessFixture.ObservedTree>? beforeRelease = null)
     {
         var clock = Stopwatch.StartNew();
         while (!File.Exists(Path.Combine(DirectoryPath, "ready")))
@@ -51,6 +52,7 @@ internal sealed class ScriptHarnessWindowsProcessFixture : IDisposable
         var grandchild = Read("grandchild");
         var tree = new ScriptHarnessProcessFixture.ObservedTree(root, child, grandchild, request.ResultsDirectory);
         tree.AllExecuting().ShouldBeTrue("Ready requires three independently observed live processes.");
+        beforeRelease?.Invoke(tree);
         File.WriteAllText(Path.Combine(DirectoryPath, "observed"), Nonce);
         return tree;
     }
@@ -346,6 +348,17 @@ internal sealed class ScriptHarnessWindowsProcessFixture : IDisposable
     {
         if (!IsProcessInJob(process, job, out var member)) throw NativeError("Independent membership");
         return member;
+    }
+
+    internal static uint ReadActiveJobMembers(SafeFileHandle job)
+    {
+        var buffer = Marshal.AllocHGlobal(48);
+        try
+        {
+            if (!QueryInformationJobObject(job, 1, buffer, 48, out _)) throw NativeError("Independent job accounting");
+            return unchecked((uint)Marshal.ReadInt32(buffer, 40));
+        }
+        finally { Marshal.FreeHGlobal(buffer); }
     }
 
     internal sealed class ObservedProcess : IDisposable

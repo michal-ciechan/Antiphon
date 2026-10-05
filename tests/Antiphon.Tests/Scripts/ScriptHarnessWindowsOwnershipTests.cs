@@ -249,6 +249,127 @@ public sealed class ScriptHarnessWindowsOwnershipTests
         });
     }
 
+    [Test]
+    public Task App_execution_alias_is_refused_before_launch()
+    {
+        return ScriptHarnessProcessFixture.WithInvocationAsync(async fixture =>
+        {
+            var windows = fixture.Windows!;
+            var installed = ScriptHarnessProcessFixture.ResolveInstalledPowerShell();
+            var shaped = Path.Combine(windows.DirectoryPath, "WindowsApps", "pwsh.exe");
+            Directory.CreateDirectory(Path.GetDirectoryName(shaped)!);
+            File.WriteAllText(shaped, "Alias-shaped fixture; must never execute.");
+            foreach (var reparse in new[] { false, true })
+            {
+                var path = reparse ? installed : shaped;
+                Path.IsPathFullyQualified(path).ShouldBeTrue();
+                File.Exists(path).ShouldBeTrue();
+                var classified = false;
+                var attempts = 0;
+                var refused = new WindowsScriptHarnessHooks
+                {
+                    ExecutableAttributes = executable =>
+                    {
+                        executable.ShouldBe(installed);
+                        classified = true;
+                        return File.GetAttributes(executable) | FileAttributes.ReparsePoint;
+                    },
+                    BeforeCreate = _ =>
+                    {
+                        attempts++;
+                        throw new InvalidOperationException("Guard intercepted an unsafe alias launch.");
+                    }
+                };
+                var request = new ScriptProcessRequest(path, ScriptHarnessProcessFixture.ScriptPath, "Passing",
+                    Path.Combine(windows.DirectoryPath, "results"), Path.Combine(windows.DirectoryPath, "control"),
+                    TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(2), windows.Arguments());
+                var error = Should.Throw<InvalidOperationException>(() =>
+                {
+                    using var owner = new WindowsScriptHarnessProcess(request, refused);
+                });
+                error.Message.ShouldContain("real pwsh.exe path, not an App Execution Alias");
+                error.Message.ShouldContain("ExecutablePath");
+                classified.ShouldBe(reparse, "WindowsApps path and reparse classification are independent refusal arms.");
+                attempts.ShouldBe(0, "Alias refusal must precede any native launch attempt.");
+                refused.Calls.ShouldNotContain("create");
+                refused.Handles.ShouldBeEmpty();
+            }
+            var result = await fixture.Start("Passing");
+            result.ExitCode.ShouldBe(0);
+            result.Stdout.ShouldContain("PASS C806 C806 fixture passed");
+            windows.Hooks.Calls.ShouldContain("create", "The real installed executable is the positive ordinary control.");
+            fixture.AssertClean();
+        }, requireWindows: true);
+    }
+
+    [Test]
+    public async Task Job_accounting_must_confirm_no_active_processes()
+    {
+        foreach (var queryFailure in new[] { false, true })
+        {
+            var hooks = new WindowsScriptHarnessHooks
+            {
+                AcknowledgeTerminationWithoutKill = !queryFailure,
+                FailAccounting = queryFailure
+            };
+            await ScriptHarnessProcessFixture.WithInvocationAsync(async fixture =>
+            {
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                hooks.BeforeResume = (_, _) =>
+                {
+                    Directory.CreateDirectory(fixture.Request!.ControlDirectory);
+                    File.WriteAllText(Path.Combine(fixture.Request.ControlDirectory, "accounting-evidence"), fixture.Windows!.Nonce);
+                };
+                // Silent exits the root and closes both streams with live children.
+                // A false death confirmation therefore permits genuine success/delete.
+                var run = fixture.Start("Silent");
+                var observedBeforeClose = false;
+                var tree = await fixture.WaitReadyAsync(run, ready =>
+                {
+                    var job = Handle(hooks, "job");
+                    ready.Child.WindowsObservation!.IsInJob(job).ShouldBeTrue();
+                    ready.Grandchild.WindowsObservation!.IsInJob(job).ShouldBeTrue();
+                    ScriptHarnessWindowsProcessFixture.ReadActiveJobMembers(job).ShouldBeGreaterThanOrEqualTo(2u);
+                    hooks.BeforeCloseJob = () =>
+                    {
+                    hooks.Calls.ShouldContain("query-accounting");
+                    if (queryFailure) hooks.Calls.ShouldContain("query-accounting-failed");
+                    else
+                    {
+                        hooks.ActiveMemberObservations.ShouldNotBeEmpty();
+                        hooks.ActiveMemberObservations.All(count => count >= 2).ShouldBeTrue();
+                        ScriptHarnessWindowsProcessFixture.ReadActiveJobMembers(job).ShouldBeGreaterThanOrEqualTo(2u);
+                        ready.Child.Executing().ShouldBeTrue();
+                        ready.Grandchild.Executing().ShouldBeTrue();
+                    }
+                    observedBeforeClose = true;
+                    };
+                });
+                var error = await ScriptHarnessProcessFixture.CaptureAsync(run);
+                error.ShouldBeOfType<IOException>().Message.ShouldContain("death confirmation:");
+                if (queryFailure) error.Message.ShouldContain("QueryInformationJobObject");
+                else hooks.Calls.ShouldContain("terminate-ack-without-kill");
+                observedBeforeClose.ShouldBeTrue("Accounting evidence must precede kill-on-close.");
+                hooks.StdoutEof.ShouldBeTrue();
+                hooks.StderrEof.ShouldBeTrue();
+                clock.Elapsed.ShouldBeLessThanOrEqualTo(TimeSpan.FromSeconds(10));
+                var request = fixture.Request!;
+                Directory.Exists(request.ResultsDirectory).ShouldBeTrue("Uncertain cleanup must retain results.");
+                Directory.Exists(request.ControlDirectory).ShouldBeTrue("Uncertain cleanup must retain control evidence.");
+                error.Message.ShouldContain(request.ResultsDirectory);
+                error.Message.ShouldContain(request.ControlDirectory);
+                // Disposal is only the safety net, never the earlier cleanup verdict.
+                // Independently join the known handles before removing fixture scratch.
+                var join = System.Diagnostics.Stopwatch.StartNew();
+                foreach (var process in new[] { tree.Root, tree.Child, tree.Grandchild })
+                    process.WindowsObservation!.Join(TimeSpan.FromSeconds(5) - join.Elapsed);
+                fixture.Windows!.AssertStoppedBeforeDispose();
+                Directory.Delete(request.ResultsDirectory, true);
+                Directory.Delete(request.ControlDirectory, true);
+            }, hooks: hooks, requireWindows: true);
+        }
+    }
+
     private static void AssertLiveWriterClosure(ScriptHarnessWindowsProcessFixture.DirectOwner owned,
         ScriptHarnessProcessFixture.ObservedTree tree, WindowsScriptHarnessHooks hooks, string writer)
     {

@@ -397,11 +397,16 @@ committed plan SHA (measured first build 106 seconds; row startup 10 seconds).
 Source: [pinned hint extractor](https://github.com/thomhurst/TUnit/blob/42e3be6d99bb637d21e1dac711d76991a99e49c3/TUnit.Engine/Services/MetadataFilterMatcher.cs)
 and [segment conjunction syntax](https://tunit.dev/docs/execution/test-filters/).
 
+S3 discovery correction (2026-10-05): CP-4 and CP-5 use the same trailing-wildcard
+class operands qualified by S1, rather than repeating the known literal-OR
+discovery defect. The exact 32/21 rosters, assertions, scope and budgets are
+unchanged; fresh TRX must still enumerate exactly the named classes/methods.
+
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1047-s1/` | windows-launch | `/*/*/(ScriptHarnessProcessTests*)\|(ScriptHarnessWindowsOwnershipTests*)/*` | V-1/V-3, R-1/R-2/R-3 | Windows only; N1-N11 plus W1-W3 at S1: exactly 14, 0 failed/skipped; 10m row cap | 14 | 9 | true |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1047-s2/` | windows-job-handles | `/*/*/ScriptHarnessWindowsOwnershipTests/((Child_is_assigned_before_first_instruction)\|(Assignment_failure_never_resumes_child)\|(Resume_failure_terminates_suspended_child)\|(Closing_private_job_kills_owned_tree)\|(Nested_job_timeout_kills_owned_descendants_only)\|(Private_job_handle_is_not_inherited)\|(Only_standard_handles_are_inherited)\|(Parent_closes_child_pipe_write_handles))&(*)` | V-1/V-2, R-1/R-2/R-3 | Windows only; W1-W8: exactly 8, 0 failed/skipped; 10m row cap | 8 | 8 | true |
-| CP-4 | S1-S3 | `tests/Antiphon.Tests -> bin-c1047-final/` | windows-contract | `/*/*/(ScriptHarnessProcessContractTests)\|(ProcessSpawnLimitTests)\|(TestLaneCategoryGuardTests)\|(SlowTestTripwireTests)/*` | V-4, R-4 | Windows only; 26+3+1+2: exactly 32, 0 failed/skipped; 10m row cap | 32 | 8 | true |
-| CP-5 | S1-S3 | CP-4 | windows-native | `/*/*/(ScriptHarnessProcessTests)\|(ScriptHarnessWindowsOwnershipTests)/*` | V-1/V-2/V-3, R-1/R-2/R-3 | Windows only; N1-N11 plus W1-W10: exactly 21, 0 failed/skipped; 10m row cap | 21 | 5 | true |
+| CP-4 | S1-S3 | `tests/Antiphon.Tests -> bin-c1047-final/` | windows-contract | `/*/*/(ScriptHarnessProcessContractTests*)\|(ProcessSpawnLimitTests*)\|(TestLaneCategoryGuardTests*)\|(SlowTestTripwireTests*)/*` | V-4, R-4 | Windows only; 26+3+1+2: exactly 32, 0 failed/skipped; 10m row cap | 32 | 8 | true |
+| CP-5 | S1-S3 | CP-4 | windows-native | `/*/*/(ScriptHarnessProcessTests*)\|(ScriptHarnessWindowsOwnershipTests*)/*` | V-1/V-2/V-3, R-1/R-2/R-3 | Windows only; N1-N11 plus W1-W10: exactly 21, 0 failed/skipped; 10m row cap | 21 | 5 | true |
 | CP-6 | S1-S3 | CP-4 | windows-checkpoint-callers | `/*/*/RunCheckpointScriptTests/*` | V-5, R-4 | Windows only; all 24 existing methods, 0 failed/skipped; 10m row cap | 24 | 8 | true |
 | CP-7 | S1-S3 | CP-4 | windows-slot-callers | `/*/*/BuildSlotScriptTests/(C589_*)\|(Wrapper_renews_a_renew_mode_grant_while_the_command_runs)\|(C800_WrapperPassesWildcardArgvLiterally)\|(C800_WrapperStartsUnitFilterWithinDeadline)\|(C800_WrapperForwardsScriptTokens)\|(C800_WrapperLaunchesNativeExecutableLiterally)\|(C845_*)\|(C1048_*)` | V-5, R-4 | Windows only; 7 C589 + 1 renew + 4 C800 + 4 C845 + 2 C1048: exactly 18, 0 failed/skipped; 10m row cap | 18 | 6 | true |
