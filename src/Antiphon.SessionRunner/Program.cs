@@ -461,6 +461,8 @@ internal static class TerminalSeatReleaseRoutes
                 features = [.. features, RunnerCapabilityFeatures.VerificationCustodyV1];
             features = [.. features, RunnerCapabilityFeatures.TerminalSeatReleaseV1,
                 RunnerCapabilityFeatures.TerminalSeatDeliveryEvidenceV1];
+            if (runtime.SupportsWorkspacePark)
+                features = [.. features, RunnerCapabilityFeatures.WorkspaceParkV1];
             features = HostStatsRoutes.CapabilityFeatures(features, hostStats.Value);
             return Results.Ok(runtime.DescribeCapabilities(runnerBuild, sessionBackends, features));
         });
@@ -468,6 +470,15 @@ internal static class TerminalSeatReleaseRoutes
 
     internal static void MapTerminalSeatReleaseRoutes(this IEndpointRouteBuilder app)
     {
+        app.MapPost("/sessions/{id:guid}/workspace-park", async (
+            Guid id, WorkspaceParkCommand request, IPhoneHomeRuntimeSurface runtime, CancellationToken ct) =>
+        {
+            if (request.Version != 1 || !WorkspaceParkCommand.Supported(runtime.Capabilities()))
+                return Results.Ok(new WorkspaceParkResult(WorkspaceParkOutcome.Held, "park_unsupported"));
+            if (id != request.SessionId)
+                return Results.Ok(new WorkspaceParkResult(WorkspaceParkOutcome.Held, "park_generation_changed"));
+            return Results.Ok(await runtime.ParkWorkspaceAsync(request, ct));
+        });
         app.MapPost("/sessions/{id:guid}/terminal-seat-observation", async (
             Guid id, TerminalSeatObservationRequest request, IPhoneHomeRuntimeSurface runtime, CancellationToken ct) =>
         {
@@ -482,6 +493,10 @@ internal static class TerminalSeatReleaseRoutes
         {
             if (request.Observation is null)
                 return Results.Problem(title: "Terminal seat observation is required.", statusCode: 400);
+            if (request.ParkVersion != 1 || request.Publication is not null
+                && !WorkspaceParkCommand.Supported(runtime.Capabilities()))
+                return Results.Ok(new TerminalSeatReleaseResult(id, request.ActionId,
+                    TerminalSeatReleaseOutcome.Unsupported, null));
             return Results.Ok(await runtime.ReleaseTerminalSeatAsync(id, request, ct));
         });
     }

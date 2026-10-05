@@ -6,6 +6,8 @@ namespace Antiphon.SessionRunner;
 
 public interface IPhoneHomeRuntimeSurface
 {
+    Task<WorkspaceParkResult> ParkWorkspaceAsync(WorkspaceParkCommand request, CancellationToken ct) =>
+        Task.FromResult(new WorkspaceParkResult(WorkspaceParkOutcome.Held, "park_unsupported"));
     RunnerCapabilitiesDto Capabilities();
     Task<RunnerCodexCliVersionDto?> GetCodexCliVersionAsync(RunnerCodexCliProbeRequest request, CancellationToken ct) =>
         Task.FromResult<RunnerCodexCliVersionDto?>(null);
@@ -316,12 +318,24 @@ public sealed class PhoneHomeCommandDispatcher
                     return Result(request, await _runtime.KillGenerationAsync(ReadSessionId(request), body.ExpectedAcceptedStartedAt, ct));
                 }),
                 PhoneHomeOperation.ObserveTerminalSeat => Result(request, await ObserveTerminalSeatAsync(request, ct)),
+                PhoneHomeOperation.WorkspacePark => await MutateAsync(request, async () =>
+                {
+                    var body = request.Payload?.Deserialize<WorkspaceParkCommand>(PhoneHomeFraming.Json)
+                        ?? throw new ArgumentException("Workspace park body is required.");
+                    if (body.Version != 1 || !WorkspaceParkCommand.Supported(_runtime.Capabilities()))
+                        return Result(request, new WorkspaceParkResult(WorkspaceParkOutcome.Held, "park_unsupported"));
+                    return Result(request, await _runtime.ParkWorkspaceAsync(body, ct));
+                }),
                 PhoneHomeOperation.ReleaseTerminalSeat => await MutateAsync(request, async () =>
                 {
                     var body = request.Payload?.Deserialize<PhoneHomeTerminalSeatReleaseRequest>(PhoneHomeFraming.Json)
                         ?? throw new ArgumentException("Terminal seat release body is required.");
                     ArgumentNullException.ThrowIfNull(body.Release);
                     ArgumentNullException.ThrowIfNull(body.Release.Observation);
+                    if (body.Release.ParkVersion != 1 || body.Release.Publication is not null
+                        && !WorkspaceParkCommand.Supported(_runtime.Capabilities()))
+                        return Result(request, new TerminalSeatReleaseResult(body.SessionId, body.Release.ActionId,
+                            TerminalSeatReleaseOutcome.Unsupported, null));
                     return Result(request, await _runtime.ReleaseTerminalSeatAsync(body.SessionId, body.Release, ct));
                 }),
                 PhoneHomeOperation.ReleaseSlot => await MutateAsync(request, async () =>
