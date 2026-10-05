@@ -99,7 +99,12 @@ public enum PhoneHomeOperation
     SetCapacity = 31,
     WorkspacePublish = 32,
     CodexCliVersion = 33,
+    ObserveTerminalSeat = 34,
+    ReleaseTerminalSeat = 35,
 }
+
+public sealed record PhoneHomeTerminalSeatObservationRequest(Guid SessionId, TerminalSeatObservationRequest Observation);
+public sealed record PhoneHomeTerminalSeatReleaseRequest(Guid SessionId, TerminalSeatReleaseRequest Release);
 
 public sealed record PhoneHomeSetCapacityRequest(int Capacity, string Reason);
 public sealed record PhoneHomeSetCapacityResponse(int Capacity, bool Persisted, string? Path);

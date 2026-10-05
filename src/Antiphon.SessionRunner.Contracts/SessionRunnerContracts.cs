@@ -140,6 +140,9 @@ public static class HerdrNativeSessionSources
 /// <summary>CARD-0213: extra capability tokens on <see cref="RunnerCapabilitiesDto.Features"/>.</summary>
 public static class RunnerCapabilityFeatures
 {
+    /// <summary>CARD-0667: fresh idle observation and generation-fenced terminal seat release.</summary>
+    public const string TerminalSeatReleaseV1 = "terminalSeatReleaseV1";
+
     public const string WorkspacePublishV1 = "workspacePublishV1";
     public const string WorkspaceRepositoryV1 = "workspaceRepositoryV1";
     public const string VerificationCustodyV1 = "verificationCustodyV1";

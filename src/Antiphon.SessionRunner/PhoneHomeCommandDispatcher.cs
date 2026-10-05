@@ -40,6 +40,17 @@ public interface IPhoneHomeRuntimeSurface
     Task<CompactionTailObservation> ObserveCompactionAsync(Guid sessionId, CancellationToken ct) =>
         Task.FromResult(CompactionTailObservation.Unsupported());
 
+    // Old surfaces refuse without calling either destructive compatibility operation.
+    Task<TerminalSeatObservation> ObserveTerminalSeatAsync(
+        Guid sessionId, TerminalSeatObservationRequest request, CancellationToken ct) =>
+        throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation,
+            "Terminal seat observation is not supported on this runner.", 409);
+
+    Task<TerminalSeatReleaseResult> ReleaseTerminalSeatAsync(
+        Guid sessionId, TerminalSeatReleaseRequest request, CancellationToken ct) =>
+        Task.FromResult(new TerminalSeatReleaseResult(
+            sessionId, request.ActionId, TerminalSeatReleaseOutcome.Unsupported, null));
+
     // CARD-0604 D-19 (Cut B). The custody surface the phone-home lane needs: which mechanism
     // this runner actually advertises, which custody store is its own, and a read/seal of a
     // tracked execution. Defaults keep every existing fake compiling AND refusing: a fake that
@@ -304,6 +315,15 @@ public sealed class PhoneHomeCommandDispatcher
                         ?? throw new ArgumentException("Kill-generation body is required.");
                     return Result(request, await _runtime.KillGenerationAsync(ReadSessionId(request), body.ExpectedAcceptedStartedAt, ct));
                 }),
+                PhoneHomeOperation.ObserveTerminalSeat => Result(request, await ObserveTerminalSeatAsync(request, ct)),
+                PhoneHomeOperation.ReleaseTerminalSeat => await MutateAsync(request, async () =>
+                {
+                    var body = request.Payload?.Deserialize<PhoneHomeTerminalSeatReleaseRequest>(PhoneHomeFraming.Json)
+                        ?? throw new ArgumentException("Terminal seat release body is required.");
+                    ArgumentNullException.ThrowIfNull(body.Release);
+                    ArgumentNullException.ThrowIfNull(body.Release.Observation);
+                    return Result(request, await _runtime.ReleaseTerminalSeatAsync(body.SessionId, body.Release, ct));
+                }),
                 PhoneHomeOperation.ReleaseSlot => await MutateAsync(request, async () =>
                 {
                     var reason = request.Payload is { } payload
@@ -375,6 +395,14 @@ public sealed class PhoneHomeCommandDispatcher
             // this request. Cancellation stays cancellation; the receive pump decides what it means.
             return PhoneHomeErrorFrames.Internal(request, ex, _settings.Limits.MaxMessageUtf8Bytes);
         }
+    }
+
+    private async Task<TerminalSeatObservation> ObserveTerminalSeatAsync(PhoneHomeFrame request, CancellationToken ct)
+    {
+        var body = request.Payload?.Deserialize<PhoneHomeTerminalSeatObservationRequest>(PhoneHomeFraming.Json)
+            ?? throw new ArgumentException("Terminal seat observation body is required.");
+        ArgumentNullException.ThrowIfNull(body.Observation);
+        return await _runtime.ObserveTerminalSeatAsync(body.SessionId, body.Observation, ct);
     }
 
     private async Task<PhoneHomeFrame> RetireAsync(PhoneHomeFrame request, CancellationToken ct)
