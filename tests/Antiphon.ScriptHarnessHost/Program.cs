@@ -101,6 +101,20 @@ static Task WriteFrame(Stream stream, string message, CancellationToken token) =
 
 static void CloseOwnOutputWriters(bool closeStdout = true, bool closeStderr = true)
 {
+    if (OperatingSystem.IsWindows())
+    {
+        // Do not initialize Console.Out/Error: cached Console streams can retain
+        // another writer. Close just the selected inherited standard handles.
+        var writers = new HashSet<IntPtr>();
+        if (closeStdout) writers.Add(GetStdHandle(-11));
+        if (closeStderr) writers.Add(GetStdHandle(-12));
+        foreach (var handle in writers)
+        {
+            if (handle == IntPtr.Zero || handle == new IntPtr(-1) || !CloseHandle(handle))
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Close inherited standard writer");
+        }
+        return;
+    }
     // dotnet's redirected-process launch can leave duplicate write descriptors
     // (for example 6/7) in the supervisor in addition to fd 1/2. They must all
     // be closed or a completed pwsh never gives the host stream EOF.
@@ -135,19 +149,30 @@ static async Task<int> FixtureChild(string directory, string heldStream)
     var psi = new ProcessStartInfo("dotnet") { UseShellExecute = false };
     foreach (var arg in new[] { helper, "fixture-grandchild", directory, heldStream }) psi.ArgumentList.Add(arg);
     using var grandchild = Process.Start(psi) ?? throw new InvalidOperationException("Fixture grandchild did not start.");
-    File.WriteAllText(Path.Combine(directory, "child"), $"{Environment.ProcessId} {Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks} {(OperatingSystem.IsLinux() ? ReadStart(Environment.ProcessId) : 0)}");
     CloseOwnOutputWriters(heldStream is "stderr" or "none", heldStream is "stdout" or "none");
+    PublishIdentity(directory, "child");
     await Task.Delay(TimeSpan.FromSeconds(20));
     return 0;
 }
 
 static async Task<int> FixtureGrandchild(string directory, string heldStream)
 {
-    File.WriteAllText(Path.Combine(directory, "grandchild"), $"{Environment.ProcessId} {Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks} {(OperatingSystem.IsLinux() ? ReadStart(Environment.ProcessId) : 0)}");
     CloseOwnOutputWriters(heldStream is "stderr" or "none", heldStream is "stdout" or "none");
+    PublishIdentity(directory, "grandchild");
     await Task.Delay(TimeSpan.FromSeconds(20));
     return 0;
 }
+
+static void PublishIdentity(string directory, string name)
+{
+    var path = Path.Combine(directory, name);
+    var nonce = OperatingSystem.IsWindows() ? File.ReadAllText(Path.Combine(directory, "nonce")) + " " : "";
+    File.WriteAllText(path + ".tmp", $"{nonce}{Environment.ProcessId} {Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks} {(OperatingSystem.IsLinux() ? ReadStart(Environment.ProcessId) : 0)}");
+    File.Move(path + ".tmp", path);
+}
+
+[DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr GetStdHandle(int standard);
+[DllImport("kernel32.dll", SetLastError = true)] static extern bool CloseHandle(IntPtr handle);
 
 [DllImport("libc", SetLastError = true)] static extern int setsid();
 [DllImport("libc", SetLastError = true)] static extern int getpid();

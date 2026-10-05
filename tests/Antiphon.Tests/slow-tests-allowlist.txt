@@ -228,3 +228,6 @@ Antiphon.Tests.Infrastructure.CompletedCardWorktreeRemovalTests
 
 # CARD-0519 S1: complete empty-database migration chain and predecessor upgrade in isolated PostgreSQL.
 Antiphon.Tests.Application.ChannelOutboundDurabilitySchemaTests
+
+# CARD-1047: real Windows launch, native observations and bounded unwind.
+Antiphon.Tests.Scripts.ScriptHarnessWindowsOwnershipTests
