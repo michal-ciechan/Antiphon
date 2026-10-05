@@ -30,7 +30,7 @@ internal sealed class ReviewRecoveryWorld : IAsyncDisposable
         + "--- next stage ---\nnext: land\nhandoff: reviewed\n";
     public static async Task<ReviewRecoveryWorld> CreateAsync()
     {
-        var world = await RunnerSettlementWorld.CreateAsync(AgentTaskRole.Review, profiled: true);
+        var world = await RunnerSettlementWorld.CreateAsync(AgentTaskRole.Review, profiled: true, mirrorPublish: true);
         try
         {
             var subject = await world.AddReviewSubjectAsync(world.Git.Baseline);
@@ -42,7 +42,7 @@ internal sealed class ReviewRecoveryWorld : IAsyncDisposable
             task.CompletedAt = DateTime.UtcNow;
             task.Result = w.Report;
             task.ReportEvidence = AgentTaskReportEvidence.Marked;
-            task.NextStage = "land"; task.NextHandoff = "retained handoff"; task.CostUsd = 2.50m;
+            task.NextStage = PipelineHandoffKind.Land; task.NextHandoff = "retained handoff"; task.CostUsd = 2.50m;
             task.CompletionProgressEvidenceJson = TaskProgressJson.SerializeEvidence(new(1,
                 CompletionProgressAssessment.NoAttributedProgress, RemoteSync: new(1,
                     RemoteSettlementSyncState.NoPushedProgress, "refs/heads/" + world.Git.Branch,
@@ -93,7 +93,9 @@ internal sealed class ReviewRecoveryWorld : IAsyncDisposable
             TimeProvider.System, boundary ?? new()).RebindAsync(ReviewId, request ?? Request, Actor, CancellationToken.None);
     }
     public async Task<List<StageOutcome>> RowsAsync()
-    { await using var db = Db(); return await db.StageOutcomes.AsNoTracking().Where(o => o.StageTaskId == ReviewId || o.SupersedesId == OldId).ToListAsync(); }
+    { await using var db = Db(); return await db.StageOutcomes.AsNoTracking()
+        .Where(o => o.StageTaskId == ReviewId || o.SubjectTaskId == SubjectId || o.SupersedesId == OldId)
+        .OrderBy(o => o.RecordedAt).ThenBy(o => o.Id).ToListAsync(); }
     public async Task<List<AgentTaskEvent>> AuditsAsync()
     { await using var db = Db(); return await db.AgentTaskEvents.AsNoTracking().Where(e => e.Type == AgentTaskEventType.FindingRecorded).ToListAsync(); }
     public async Task FindingAsync(Guid target, LandDeliveryBoundary? boundary = null, params IInterceptor[] interceptors)

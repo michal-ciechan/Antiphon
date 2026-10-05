@@ -54,7 +54,7 @@ public sealed class ReviewEvidenceRecoveryService(
             return Receipt("already-bound", reviewId, old!.Id, existing, digest);
         }
 
-        if (!DelegationReportFormatter.TryReadFindingLine(reviewId, review.Result!, out var finding, out _)
+        if (!DelegationReportFormatter.TryReadFindingLine(reviewId, review.Result!, out var finding, out var findingDetail)
             || finding != StageOutcomeKind.Clean) throw Refuse("finding_not_clean");
         var sync = TaskProgressJson.TryReadEvidence(review.CompletionProgressEvidenceJson)?.RemoteSync;
         // Historical sync is required even when fresh refs match. It is not a substitute for them.
@@ -106,7 +106,9 @@ public sealed class ReviewEvidenceRecoveryService(
             Source = StageOutcomeSource.Orchestrator, StageTaskId = reviewId, SubjectTaskId = subject.Id,
             CardId = old.CardId, SupersedesId = old.Id, RecordedAt = clock.GetUtcNow().UtcDateTime,
             CostUsd = old.CostUsd, TokensIn = old.TokensIn, TokensOut = old.TokensOut,
-            DurationSeconds = old.DurationSeconds, Detail = old.Detail, Ref = provenance,
+            DurationSeconds = old.DurationSeconds,
+            Detail = findingDetail.Length <= StageOutcome.DetailMaxLength ? findingDetail : findingDetail[..StageOutcome.DetailMaxLength],
+            Ref = provenance,
             ReviewedSourceSha = candidate.ReviewedSourceSha, ReviewedSourceClean = true,
             ReviewedSourceRef = candidate.ReviewedSourceRef, ReviewedRepositoryPath = candidate.ReviewedRepositoryPath,
             VerificationProfileVersion = 1, CommissionedRound = VerificationRound.Final,
