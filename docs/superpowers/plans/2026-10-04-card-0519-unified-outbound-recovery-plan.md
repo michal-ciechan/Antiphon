@@ -945,7 +945,7 @@ select CP-29 in a Linux invocation. A missing Windows lane leaves R-12 outstandi
 | CP-5 | S4 | `tests/Antiphon.Tests -> bin-c519-cp05/` | runtime | `/*/*/AgentTaskReplyIntegrationTests/Deferred_is_durable_and_releases_runtime` | R-1 | all 1 listed results, 0 failed/skipped | 1 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-6 | S8 | `tests/Antiphon.Tests -> bin-c519-cp06/` | materialize | `/*/*/ChannelOutboundMaterializationTests/*` | V-3 | all 12 listed results, 0 failed/skipped | 12 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-7 | S8 | `tests/Antiphon.Tests -> bin-c519-cp07/` | loss | `/*/*/ChannelOutboundFailureRecordingTests/*` | V-8 | all 8 listed results, 0 failed/skipped | 8 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-8 | S9 | `tests/Antiphon.Tests -> bin-c519-cp08/` | discovery | `/*/*/ChannelOutboundDiscoveryTests/*` | V-5 | all 14 listed results, 0 failed/skipped | 14 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-8 | S9 | `tests/Antiphon.Tests -> bin-c519-cp08/` | discovery | `/*/*/ChannelOutboundDiscoveryTests/*` | V-5 | all 20 listed results, 0 failed/skipped | 20 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-9 | S9 | `tests/Antiphon.Tests -> bin-c519-cp09/` | tails | `/*/*/ChannelOutboundTrailingRecoveryTests/*` | V-6 | all 5 listed results, 0 failed/skipped | 5 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-10 | S9 | `tests/Antiphon.Tests -> bin-c519-cp10/` | retry | `/*/*/ChannelOutboundRetryPolicyTests/*` | V-7 | all 22 listed results, 0 failed/skipped | 22 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-11 | S9 | `tests/Antiphon.Tests -> bin-c519-cp11/` | projections | `/*/*/ChannelOutboundMetadataRepairTests/*` | V-9, V-5 repair fairness | all 6 listed results, 0 failed/skipped | 6 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
@@ -1574,3 +1574,16 @@ companion, and adapts the shared target fixture to S8's Failed+loss settlement
 contract (including an incident and durable episode assertion). No timeout or
 production assertion was weakened. Ordinary rows remain unexecuted pending the
 session credential; diagnostic compilation is not checkpoint evidence.
+
+S9 continuation (Code 170e6f0d, landing owner a4290b71) adds the remaining portable
+discovery witnesses: actual returned page counts (32 x 10, then 2), independent
+root cursor progress past 321 idle roots, due publication and accepted metadata
+repair in the real hosted startup cycle with a full withheld source prefix, and
+TTL deferral beyond a historical prompt page plus capture/loss serialization.
+The latter holds capture before commit while the independent loss context reaches
+the destination lock, then checks the refreshed owner, untouched settlement and
+absence of loss; its loss-first companion checks one atomic incident/alert and
+refused capture. The existing finite-source test takes PC-34's planned method name.
+CP-8 now requires all 20 results. These are ordinary witnesses; PC-34..37/97/98 and
+all other controls remain pending SourceLanding Mutation. Terminal-complete
+closure remains S10-owned. Run only CP-8..12 and CP-53..57 at the committed SHA.
