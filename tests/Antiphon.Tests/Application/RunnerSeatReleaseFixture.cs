@@ -72,7 +72,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
                     services.AddScoped<SubscriptionQuotaGate>();
                     services.AddSingleton(Options.Create(new SubscriptionQuotaGateSettings()));
                     services.AddSingleton<LaunchRecorder>();
-                    services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new OptionsMonitorStub<AgentRegistrySettings>(
+                    services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new BridgeQueueHarness.OptionsMonitorStub<AgentRegistrySettings>(
                         new AgentRegistrySettings { DefaultDefinition = "fake", Definitions =
                             { ["fake"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "fixture-provider" } } }));
                     services.AddScoped<RemoteWorkspaceService>();

@@ -3108,7 +3108,8 @@ public sealed class AgentTaskService
         AgentTask task, string message, AnswerOrigin origin, int? round, CancellationToken ct)
     {
         var answer = message.Trim().ReplaceLineEndings("\n");
-        if (task.ReleasedSeatAnswerId is not null && task.ReleasedSeatAnswerTargetAttempt == task.Attempt)
+        if (task.Status != AgentTaskStatus.Blocked && task.ReleasedSeatAnswerId is not null
+            && task.ReleasedSeatAnswerTargetAttempt == task.Attempt)
         {
             if (task.ReleasedSeatAnswer != answer)
                 throw new ConflictException("This question already has an accepted answer.", "answer_already_accepted");
@@ -3118,7 +3119,7 @@ public sealed class AgentTaskService
         var release = await TerminalRunnerSeatReleaseService.FindAttemptReleaseAsync(_db, task, ct);
         if (release?.State is not (RunnerSeatReleaseState.Confirmed or RunnerSeatReleaseState.Unresolved))
         {
-            if (task.ReleasedSeatAnswerId is not null)
+            if (task.ReleasedSeatAnswerId is not null && task.ReleasedSeatAnswerTargetAttempt == task.Attempt + 1)
                 throw new ConflictException("The accepted answer is awaiting its exact release receipt.", "runner_seat_release_pending");
             return false;
         }
@@ -3137,6 +3138,9 @@ public sealed class AgentTaskService
             await _db.Entry(task).ReloadAsync(ct);
             if (task.ConcurrencyToken != revision || task.Attempt != attempt || task.Status != AgentTaskStatus.Blocked)
                 throw new ConflictException("The task changed before answer acceptance.", "answer_revision_changed");
+            var lockedRelease = await TerminalRunnerSeatReleaseService.FindAttemptReleaseAsync(_db, task, ct);
+            if (lockedRelease?.Id != release.Id)
+                throw new ConflictException("The seat identity changed before answer acceptance.", "answer_revision_changed");
             var rounds = await _db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == task.Id
                 && (e.Type == AgentTaskEventType.Blocked || e.Type == AgentTaskEventType.Conflicted))
                 .OrderBy(e => e.At).ThenBy(e => e.Id).ToListAsync(ct);
@@ -3144,7 +3148,7 @@ public sealed class AgentTaskService
             if (round is int requested && requested != currentRound)
                 throw new ConflictException($"The task has moved on to question round {currentRound}.", "answer_round_changed");
             var roundId = rounds.LastOrDefault()?.Id ?? Guid.Empty;
-            if (task.ReleasedSeatAnswerId is not null)
+            if (task.ReleasedSeatAnswerId is not null && task.ReleasedSeatAnswerTargetAttempt == attempt + 1)
             {
                 if (task.ReleasedSeatAnswer != answer || task.ReleasedSeatAnswerRoundId != roundId
                     || task.ReleasedSeatAnswerReleaseId != release.Id || task.ReleasedSeatAnswerTargetAttempt != attempt + 1)
@@ -3209,9 +3213,7 @@ public sealed class AgentTaskService
             await _db.Entry(task).ReloadAsync(ct);
             // ConcurrencyToken is an application revision, not an EF concurrency token.
             // Compare it and the accepted answer while holding the actual task row lock.
-            if (task.ConcurrencyToken != revision || task.Attempt != attempt
-                || task.ReleasedSeatAnswerId != answerId || task.ReleasedSeatAnswerReleaseId != release.Id
-                || task.ReleasedSeatAnswerTargetAttempt != attempt + 1)
+            if (!MatchesReleasedAnswerRevision(task, revision, attempt, answerId.Value, release.Id))
                 throw new ConflictException("The accepted answer changed before requeue.", "answer_revision_changed");
             release = await TerminalRunnerSeatReleaseService.FindAttemptReleaseAsync(_db, task, ct);
             if (!TerminalRunnerSeatReleaseService.IsConfirmed(release))
@@ -3223,6 +3225,11 @@ public sealed class AgentTaskService
         }
         await _eventBus.PublishToAllAsync("AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
     }
+
+    internal static bool MatchesReleasedAnswerRevision(AgentTask task, Guid revision, int attempt, Guid answerId, Guid releaseId) =>
+        task.ConcurrencyToken == revision && task.Attempt == attempt
+        && task.ReleasedSeatAnswerId == answerId && task.ReleasedSeatAnswerReleaseId == releaseId
+        && task.ReleasedSeatAnswerTargetAttempt == attempt + 1;
 
     /// <summary>
     /// Put a task back on the queue for another attempt. Shared by retry and escalation because the
