@@ -191,7 +191,13 @@ public sealed class RunnerTaskSettlementTests
     public async Task C788_NonCodeNoPushRoleMatrix(AgentTaskRole role)
     {
         await using var world = await RunnerSettlementWorld.CreateAsync(role);
-        await world.SettleAsync(RunnerSettlementWorld.Report("No branch change."));
+        Guid? subject = role == AgentTaskRole.Review ? await world.AddReviewSubjectAsync(world.Git.Baseline) : null;
+        var report = subject is { } id
+            ? "No branch change.\n" + DelegationReportFormatter.FindingToken(world.TaskId, "clean")
+                + $"\n--- review evidence ---\nsubjectTaskId: {id:D}\nreviewedSourceSha: {world.Git.Baseline}\n"
+                + "reviewedSourceClean: true\nordinaryScopeCompleted: Full\n\n"
+            : "No branch change.";
+        await world.SettleAsync(RunnerSettlementWorld.Report(report));
         world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world));
         world.Evidence()!.Assessment.ShouldBe(CompletionProgressAssessment.NoAttributedProgress);
         var warning = (await world.EventsAsync()).Where(e => e.Type == AgentTaskEventType.Warning
@@ -200,6 +206,14 @@ public sealed class RunnerTaskSettlementTests
         warning[0].Detail.ShouldContain(world.Git.FullRef);
         (await world.NoteAsync())!.Body.ShouldContain(warning[0].Detail);
         (await world.NoProgressIncidentsAsync()).ShouldBe(0);
+        if (subject is not null)
+        {
+            await using var db = world.CreateContext();
+            var row = await db.StageOutcomes.SingleAsync(o => o.StageTaskId == world.TaskId);
+            row.SubjectTaskId.ShouldBe(subject);
+            row.ReviewedSourceSha.ShouldBe(world.Git.Baseline);
+            row.OrdinaryScopeCompleted.ShouldBe(VerificationScope.Full);
+        }
     }
 
     [Test]

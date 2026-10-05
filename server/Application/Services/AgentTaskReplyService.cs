@@ -4532,11 +4532,12 @@ public sealed class AgentTaskReplyService
     /// </summary>
     private sealed record ReviewSettlementIdentity(Guid Token, AgentTaskStatus Status, string? Result,
         Guid? SessionId, Guid? FollowUpId, Guid? CardId, string? Repository, string? Branch,
-        int? Profile, VerificationRound? Round)
+        int? Profile, VerificationRound? Round, AgentTaskRole Role, OrchestrationStage? Stage, WorkspaceMode Workspace)
     {
         public static ReviewSettlementIdentity Capture(AgentTask task) => new(task.ConcurrencyToken,
             task.Status, task.Result, task.AgentSessionId, task.FollowUpOfTaskId, task.CardId,
-            task.RepoPath, task.WorktreeBranch, task.VerificationProfileVersion, task.VerificationRound);
+            task.RepoPath, task.WorktreeBranch, task.VerificationProfileVersion, task.VerificationRound,
+            task.Role, task.Stage, task.Workspace);
     }
 
     private sealed record ReviewSettlementRepair(Guid PredecessorId, ReviewSettlementIdentity Identity,
@@ -4560,7 +4561,8 @@ public sealed class AgentTaskReplyService
         return subject is not null && subject.Workspace == WorkspaceMode.Worktree
             && subject.RepoPath == repair.SubjectRepository && subject.WorktreeBranch == repair.SubjectBranch
             && subject.ProgressBaselineJson == repair.SubjectBaseline
-            && (current.FollowUpOfTaskId == subject.Id || current.CardId is { } card && subject.CardId == card);
+            && (current.Id == subject.Id || current.FollowUpOfTaskId == subject.Id
+                || current.CardId is { } card && subject.CardId == card);
     }
 
     private async Task<StageRecording?> RecordDelegateStageOutcomeAsync(
@@ -4573,9 +4575,10 @@ public sealed class AgentTaskReplyService
             return null;
 
         var rows = await db.StageOutcomes.Where(o => o.StageTaskId == task.Id && o.Stage == stage).ToListAsync(ct);
-        var activeRows = await StageOutcomeService.ActiveQuery(db.StageOutcomes.AsNoTracking(), db)
-            .Where(o => o.StageTaskId == task.Id && o.Stage == stage).ToListAsync(ct);
-        var previous = StageOutcomeService.ActiveReview(activeRows, task.Id);
+        var activeRows = rows.Count == 0 ? rows
+            : await StageOutcomeService.ActiveQuery(db.StageOutcomes.AsNoTracking(), db)
+                .Where(o => o.StageTaskId == task.Id && o.Stage == stage).ToListAsync(ct);
+        var previous = activeRows.OrderByDescending(o => o.RecordedAt).ThenByDescending(o => o.Id).FirstOrDefault();
         var repairing = rows.Count != 0 && task.Role == AgentTaskRole.Review
             && stage == OrchestrationStage.Review && task.Status == AgentTaskStatus.Succeeded
             && previous is { Source: StageOutcomeSource.Delegate, ReviewedSourceSha: null };
