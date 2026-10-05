@@ -9,6 +9,130 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class CheckpointTempRootSweepTests : CheckpointTestBase
 {
     [Test]
+    public void live_roots_are_skipped_without_taking_the_root_lock() =>
+        AssertRegistrationDuringObservation(ProcessVerdict.AliveSame, "live-preflight-registers");
+
+    [Test]
+    [Arguments(ProcessVerdict.Unknown)]
+    [Arguments(ProcessVerdict.ReusedPid)]
+    public void uncertain_roots_are_skipped_without_taking_the_root_lock(ProcessVerdict verdict) =>
+        AssertRegistrationDuringObservation(verdict, "uncertain-preflight-registers");
+
+    private void AssertRegistrationDuringObservation(ProcessVerdict verdict, string label)
+    {
+        var sandbox = TempDir();
+        var root = Candidate(sandbox, payloadBytes: 16, alive: true);
+        var attempts = new List<(string Run, Exception? Failure)>();
+        var probe = new CallbackProbe(_ =>
+        {
+            // Every observation attempts real registration, including a second
+            // observation under the lock if preflight wrongly falls through.
+            var run = Path.Combine(root, "run-" + attempts.Count);
+            Directory.CreateDirectory(run);
+            Exception? failure = null;
+            try { TestRootGuard.RegisterRun(run); }
+            catch (IOException ex) { failure = ex; }
+            attempts.Add((run, failure));
+            return new(verdict, "scripted-" + verdict);
+        });
+        var receipt = Sweep(sandbox, probe: probe).SweepOnce();
+        attempts.ShouldNotBeEmpty(label);
+        foreach (var (run, failure) in attempts)
+        {
+            failure.ShouldBeNull(label);
+            var journal = File.ReadAllLines(Path.Combine(root, TestRootGuard.RunsName))
+                .Select(line => JsonSerializer.Deserialize<string>(line)).ToArray();
+            journal.ShouldContain(Path.GetFullPath(run), label);
+            Directory.Exists(run).ShouldBeTrue(label);
+        }
+        receipt.CompletedRoots.ShouldBe(0, label);
+        receipt.Skips["scripted-" + verdict].ShouldBe(1, label);
+        File.ReadAllBytes(Path.Combine(root, "payload.bin")).ShouldBe(new byte[16], label);
+        TestRootGuard.Read(root).ShouldNotBeNull(label);
+        File.Exists(IndexPath(sandbox, root)).ShouldBeTrue(label);
+    }
+
+    [Test]
+    public void young_roots_are_skipped_without_taking_the_root_lock()
+    {
+        var sandbox = TempDir();
+        var now = DateTimeOffset.UtcNow;
+        var root = Candidate(sandbox, createdAt: now);
+        var receipt = Sweep(sandbox, clock: () => now, grace: TimeSpan.FromMinutes(10)).SweepOnce();
+        File.Exists(Path.Combine(root, TestRootGuard.LockName)).ShouldBeFalse("young-preflight-no-lock");
+        receipt.Skips["grace"].ShouldBe(1);
+        TestRootGuard.Read(root).ShouldNotBeNull();
+    }
+
+    [Test]
+    public void root_lock_is_still_required_for_dead_candidates()
+    {
+        var sandbox = TempDir();
+        var root = Candidate(sandbox, payloadBytes: 16);
+        using var gate = TestRootGuard.TryLock(root);
+        gate.ShouldNotBeNull();
+        var receipt = Sweep(sandbox).SweepOnce();
+        receipt.CompletedRoots.ShouldBe(0, "root-busy-retains-payload");
+        receipt.Skips["root-busy"].ShouldBe(1);
+        File.ReadAllBytes(Path.Combine(root, "payload.bin")).ShouldBe(new byte[16], "root-busy-retains-payload");
+        TestRootGuard.Read(root).ShouldNotBeNull();
+    }
+
+    [Test]
+    [Arguments("live")]
+    [Arguments("unknown")]
+    [Arguments("reused")]
+    [Arguments("grace")]
+    [Arguments("marker")]
+    [Arguments("inventory")]
+    public void eligibility_is_rechecked_after_the_root_lock(string change)
+    {
+        var sandbox = TempDir();
+        var now = DateTimeOffset.UtcNow;
+        var root = Candidate(sandbox, payloadBytes: 16, createdAt: now.AddHours(-1));
+        var marker = TestRootGuard.Read(root)!;
+        var changed = false;
+        var probe = new CallbackProbe(_ =>
+        {
+            if (!changed)
+            {
+                changed = true;
+                switch (change)
+                {
+                    case "grace": marker.CreatedAt = now; TestRootGuard.Write(root, marker); break;
+                    case "marker": marker.RootId = Guid.NewGuid().ToString("N"); TestRootGuard.Write(root, marker); break;
+                    case "inventory":
+                        for (var i = 0; i < 9; i++) File.WriteAllText(Path.Combine(root, "extra-" + i), "keep");
+                        break;
+                }
+                return new(ProcessVerdict.Dead, "scripted-dead");
+            }
+            var verdict = change switch
+            {
+                "live" => ProcessVerdict.AliveSame,
+                "unknown" => ProcessVerdict.Unknown,
+                "reused" => ProcessVerdict.ReusedPid,
+                _ => ProcessVerdict.Dead,
+            };
+            return new(verdict, "scripted-" + verdict);
+        });
+        var receipt = Sweep(sandbox, clock: () => now, grace: TimeSpan.FromMinutes(10),
+            maxDescendants: 8, probe: probe).SweepOnce();
+        changed.ShouldBeTrue();
+        var label = change is "live" or "unknown" or "reused" ? "locked-owner-retained" : "locked-" + change + "-retained";
+        receipt.CompletedRoots.ShouldBe(0, label);
+        File.ReadAllBytes(Path.Combine(root, "payload.bin")).ShouldBe(new byte[16], label);
+        File.Exists(Path.Combine(root, TestRootGuard.MarkerName)).ShouldBeTrue(label);
+        File.Exists(IndexPath(sandbox, root)).ShouldBeTrue(label);
+        var reason = change switch
+        {
+            "grace" => "grace", "marker" => "marker-invalid", "inventory" => "inventory-incomplete-or-linked",
+            "live" => "scripted-AliveSame", "unknown" => "scripted-Unknown", _ => "scripted-ReusedPid",
+        };
+        receipt.Skips[reason].ShouldBe(1, label);
+    }
+
+    [Test]
     public async Task two_hundred_concurrent_allocations_ignore_the_sweep_gate()
     {
         var sandbox = TempDir();
@@ -176,7 +300,9 @@ public sealed class CheckpointTempRootSweepTests : CheckpointTestBase
         var root = Candidate(sandbox, payloadBytes: 16 * 1024);
         var sweep = Sweep(sandbox, maxBytes: 8 * 1024);
         sweep.SweepOnce().CompletedRoots.ShouldBe(0);
-        TestRootGuard.Read(root)!.State.ShouldBe("deleting");
+        var marker = TestRootGuard.Read(root);
+        marker.ShouldNotBeNull("partial-marker-retained");
+        marker.State.ShouldBe("deleting", "partial-marker-retained");
         sweep.SweepOnce().CompletedRoots.ShouldBe(1);
         Directory.Exists(root).ShouldBeFalse();
     }
@@ -233,7 +359,7 @@ public sealed class CheckpointTempRootSweepTests : CheckpointTestBase
 
     private static CheckpointTempRootSweep Sweep(string sandbox, Func<DateTimeOffset>? clock = null,
         TimeSpan? grace = null, TimeSpan? interval = null, int maxRoots = 16, long maxBytes = 256L * 1024 * 1024,
-        int maxDirect = 512, int maxDescendants = 10000) => new(sandbox,
+        int maxDirect = 512, int maxDescendants = 10000, ProcessIdentityProbe? probe = null) => new(sandbox, probe,
         options: new CheckpointSweepOptions
         {
             Grace = grace ?? TimeSpan.Zero, Interval = interval ?? TimeSpan.Zero,
@@ -264,5 +390,13 @@ public sealed class CheckpointTempRootSweepTests : CheckpointTestBase
         public int Calls { get; private set; }
         public override ProcessObservation Observe(ProcessIdentity? expected)
         { Calls++; return base.Observe(expected); }
+    }
+
+    private static string IndexPath(string sandbox, string root) =>
+        Path.Combine(sandbox, ".checkpoint-temp-roots", Path.GetFileName(root) + ".json");
+
+    private sealed class CallbackProbe(Func<ProcessIdentity?, ProcessObservation> observe) : ProcessIdentityProbe
+    {
+        public override ProcessObservation Observe(ProcessIdentity? expected) => observe(expected);
     }
 }

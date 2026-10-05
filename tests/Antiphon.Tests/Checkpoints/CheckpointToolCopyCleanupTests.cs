@@ -17,8 +17,8 @@ public sealed class CheckpointToolCopyCleanupTests : CheckpointTestBase
         Directory.CreateDirectory(Path.Combine(run, "tool"));
         CheckpointFixtures.MarkRun(run, alive: true);
         File.WriteAllText(Path.Combine(root, "sentinel"), "keep");
-        sweep.SweepOnce().CompletedRoots.ShouldBe(0);
-        File.ReadAllText(Path.Combine(root, "sentinel")).ShouldBe("keep");
+        sweep.SweepOnce().CompletedRoots.ShouldBe(0, "nested-live-retained");
+        File.ReadAllText(Path.Combine(root, "sentinel")).ShouldBe("keep", "nested-live-retained");
     }
 
     [Test]
@@ -28,8 +28,8 @@ public sealed class CheckpointToolCopyCleanupTests : CheckpointTestBase
         var tool = Path.Combine(root, "custom-results", "run", "tool");
         Directory.CreateDirectory(tool);
         File.WriteAllText(Path.Combine(tool, "sentinel"), "keep");
-        sweep.SweepOnce().CompletedRoots.ShouldBe(0);
-        File.ReadAllText(Path.Combine(tool, "sentinel")).ShouldBe("keep");
+        sweep.SweepOnce().CompletedRoots.ShouldBe(0, "nested-missing-retained");
+        File.ReadAllText(Path.Combine(tool, "sentinel")).ShouldBe("keep", "nested-missing-retained");
     }
 
     [Test]
