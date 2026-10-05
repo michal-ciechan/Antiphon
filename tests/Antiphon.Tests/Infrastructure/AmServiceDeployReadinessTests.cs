@@ -162,6 +162,91 @@ public sealed class AmServiceDeployReadinessTests
         finally { Directory.Delete(directory, recursive: true); }
     }
 
+    [Test]
+    public async Task ResolvesGitToolsPastIncompleteInstallationAsync()
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new TUnit.Core.Exceptions.SkipTestException("Native Windows Git tool discovery qualification");
+
+        var parentPath = Environment.GetEnvironmentVariable("PATH") ?? "";
+        var directory = Path.Combine(Path.GetTempPath(), "c1060-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var incompleteRoot = Path.Combine(directory, "incomplete");
+            var completeRoot = Path.Combine(directory, "complete");
+            WriteFakeGitInstallation(incompleteRoot, complete: false);
+            WriteFakeGitInstallation(completeRoot, complete: true);
+            var curlDirectory = Path.Combine(directory, "tools");
+            Directory.CreateDirectory(curlDirectory);
+            var curl = Path.Combine(curlDirectory, "curl.exe");
+            await File.WriteAllTextAsync(curl, "");
+            var incompleteCmd = Path.Combine(incompleteRoot, "cmd");
+            var privatePath = string.Join(Path.PathSeparator, incompleteCmd, curlDirectory, Path.Combine(completeRoot, "cmd"));
+            SamePath(FindProgram("git", privatePath)!, Path.Combine(incompleteCmd, "git.exe"))
+                .ShouldBeTrue("The first Git launcher must be the incomplete installation");
+            FindProgram("sh", privatePath).ShouldBeNull("No sh launcher is exposed on the private PATH");
+
+            var tools = ResolveTools(privatePath, out var error);
+            tools.ShouldNotBeNull("C1060-incomplete-git-skipped: " + error);
+            var usrBin = Path.Combine(completeRoot, "usr", "bin");
+            SamePath(tools!.Directory, usrBin).ShouldBeTrue(tools.Directory);
+            foreach (var tool in new[] { tools.Sh, tools.Sleep, tools.Cygpath! })
+            {
+                SamePath(Path.GetDirectoryName(tool)!, usrBin).ShouldBeTrue(tool);
+                File.Exists(tool).ShouldBeTrue(tool);
+            }
+            SamePath(tools.Curl, curl).ShouldBeTrue(tools.Curl);
+            error.ShouldBeEmpty();
+
+            var parentTools = ResolveTools(parentPath, out var parentError);
+            parentTools.ShouldNotBeNull("The Windows lane requires one complete Git installation: " + parentError);
+            var realTools = ResolveTools(incompleteCmd + Path.PathSeparator + parentPath, out var realError);
+            realTools.ShouldNotBeNull("C1060-incomplete-git-skipped-real-path: " + realError);
+            SamePath(realTools!.Directory, parentTools!.Directory)
+                .ShouldBeTrue("C1060-incomplete-git-skipped-real-path");
+            Environment.GetEnvironmentVariable("PATH").ShouldBe(parentPath, "Parent PATH must remain byte-for-byte unchanged");
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Test]
+    public async Task RefusesWhenNoCompleteGitInstallationExistsAsync()
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new TUnit.Core.Exceptions.SkipTestException("Native Windows Git tool discovery qualification");
+
+        var directory = Path.Combine(Path.GetTempPath(), "c1060-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var incompleteRoot = Path.Combine(directory, "incomplete");
+            WriteFakeGitInstallation(incompleteRoot, complete: false);
+            var curlDirectory = Path.Combine(directory, "tools");
+            Directory.CreateDirectory(curlDirectory);
+            await File.WriteAllTextAsync(Path.Combine(curlDirectory, "curl.exe"), "");
+            var privatePath = string.Join(Path.PathSeparator, Path.Combine(incompleteRoot, "cmd"), curlDirectory);
+            var tools = ResolveTools(privatePath, out var error);
+            tools.ShouldBeNull("C1060-incomplete-only-refused");
+            error.ShouldContain("Required Git for Windows prerequisites sh.exe, sleep.exe and cygpath.exe were not found in one installation's usr/bin; expose Git cmd/bin on the supplied PATH", Case.Sensitive);
+            error.ShouldContain("Skipped incomplete Git installation " + incompleteRoot + ": missing sleep.exe, cygpath.exe", Case.Insensitive);
+            error.ShouldNotContain("missing sh.exe", Case.Insensitive);
+            using var fixture = new ReadinessFixture(0, "ready", privatePath);
+            var exception = await Should.ThrowAsync<InvalidOperationException>(() =>
+                fixture.RunAsync("V-2-no-complete-git", Path.Combine(Root, "scripts", "deploy-am-service.ps1")));
+            exception.Message.ShouldBe(error, "C1060-incomplete-only-fixture-throws");
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    private static void WriteFakeGitInstallation(string root, bool complete)
+    {
+        Directory.CreateDirectory(Path.Combine(root, "cmd"));
+        var usrBin = Path.Combine(root, "usr", "bin");
+        Directory.CreateDirectory(usrBin);
+        File.WriteAllText(Path.Combine(root, "cmd", "git.exe"), "");
+        foreach (var name in complete ? new[] { "sh.exe", "sleep.exe", "cygpath.exe" } : new[] { "sh.exe" })
+            File.WriteAllText(Path.Combine(usrBin, name), "");
+    }
+
     private static int[] InitialRefusalCodes => OperatingSystem.IsWindows() ? new[] { 7, 28 } : new[] { 7 };
 
     private static void AssertSuccess(Run run, int calls, int sleeps, int[]? initialCodes = null)
