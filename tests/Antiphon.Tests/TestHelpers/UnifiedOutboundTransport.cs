@@ -54,7 +54,8 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
 
     public static async Task<UnifiedOutboundTransport> CreateAsync(RedpandaContainer broker,
         bool gatewayStarted = true, Action<IServiceCollection>? configure = null,
-        Action<DbContextOptionsBuilder>? configureDb = null, int? maxMessageBytes = null)
+        Action<DbContextOptionsBuilder>? configureDb = null, int? maxMessageBytes = null,
+        TimeProvider? clock = null)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var topic = "c519-" + Guid.NewGuid().ToString("N");
@@ -84,6 +85,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         var h = await BridgeQueueHarness.CreateAsync(new()
         {
             ConnectionString = schema.ConnectionString,
+            TimeProvider = clock,
             Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
             Bridge = new ChannelBridgeSettings
             { Enabled = true, DebounceWindowMs = 0, MachineTurnTextOrigins = [QueuedMessageOrigin.Check] },
