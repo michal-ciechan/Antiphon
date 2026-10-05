@@ -16,9 +16,16 @@ public class RunnerSeatOrphanSweepTests
     public async Task Claim_between_inventory_and_release_vetoes_action()
     {
         // Each edit changes only its own reservation guard; other expected facts stay valid.
-        foreach (var variant in new[] { "attempt", "revision", "status" })
+        foreach (var variant in new[] { "attempt", "revision", "status", "event" })
         {
             await using var f = await RunnerSeatReleaseFixture.CreateAsync();
+            if (variant == "event")
+            {
+                await using var seed = f.Db();
+                seed.AgentTaskEvents.Add(new AgentTaskEvent { Id = Guid.NewGuid(), AgentTaskId = f.TaskId,
+                    At = f.Now.AddMinutes(-3), Type = AgentTaskEventType.Completed });
+                await seed.SaveChangesAsync();
+            }
             await f.ReleaseAsync(async (cut, _) =>
             {
                 if (cut != "BeforeReservation") return;
@@ -28,12 +35,21 @@ public class RunnerSeatOrphanSweepTests
                     if (variant == "revision") t.ConcurrencyToken = Guid.NewGuid();
                     if (variant == "status") t.Status = AgentTaskStatus.Failed;
                 });
+                if (variant == "event")
+                {
+                    await using var db = f.Db();
+                    await db.AgentTaskEvents.ExecuteDeleteAsync();
+                    db.AgentTaskEvents.Add(new AgentTaskEvent { Id = Guid.NewGuid(), AgentTaskId = f.TaskId,
+                        At = f.Now.AddMinutes(-3), Type = AgentTaskEventType.Completed });
+                    await db.SaveChangesAsync();
+                }
             });
             await using var db = f.Db();
             (await db.RunnerSeatReleases.CountAsync(r => r.ActionId != null)).ShouldBe(0, variant);
             f.Wire.ConditionalCommands.ShouldBe(0, variant);
         }
         foreach (var bySession in new[] { true, false })
+        foreach (var status in new[] { AgentTaskStatus.Queued, AgentTaskStatus.Dispatched, AgentTaskStatus.Working, AgentTaskStatus.Blocked })
         {
             await using var f = await RunnerSeatReleaseFixture.CreateAsync();
             var reached = false;
@@ -43,7 +59,7 @@ public class RunnerSeatOrphanSweepTests
                 reached = true;
                 await using var db = f.Db();
                 db.AgentTasks.Add(new AgentTask { Id = Guid.NewGuid(), RootTaskId = Guid.NewGuid(),
-                    Status = AgentTaskStatus.Working, CreatedAt = f.Now,
+                    Status = status, CreatedAt = f.Now,
                     AgentSessionId = bySession ? f.SessionId : Guid.NewGuid(),
                     AgentId = bySession ? Guid.NewGuid() : f.AgentId });
                 await db.SaveChangesAsync();
@@ -53,6 +69,30 @@ public class RunnerSeatOrphanSweepTests
             await using var read = f.Db();
             (await read.AgentSessions.SingleAsync(s => s.Id == f.SessionId)).Status.ShouldBe(SessionStatus.Running);
             (await read.RunnerSeatReleases.SingleAsync()).State.ShouldNotBe(RunnerSeatReleaseState.Confirmed);
+        }
+        foreach (var variant in new[] { "attempt", "revision", "status", "queue", "working" })
+        {
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync();
+            await f.ReleaseAsync(async (cut, _) =>
+            {
+                if (cut != "BeforeDispatch") return;
+                await f.EditAsync((t, _) =>
+                {
+                    if (variant == "attempt") t.Attempt++;
+                    if (variant == "revision") t.ConcurrencyToken = Guid.NewGuid();
+                    if (variant == "status") t.Status = AgentTaskStatus.Failed;
+                });
+                if (variant == "queue")
+                {
+                    await using var db = f.Db();
+                    db.SessionQueuedMessages.Add(new SessionQueuedMessage { Id = Guid.NewGuid(), AgentSessionId = f.SessionId,
+                        Body = "unsent answer canary", CreatedAt = f.Now, Status = QueuedMessageStatus.Pending });
+                    await db.SaveChangesAsync();
+                }
+                if (variant == "working")
+                    await f.Harness.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "new work", timestamp: f.Now);
+            });
+            f.Wire.ConditionalCommands.ShouldBe(0, $"pre-command {variant}");
         }
         await using var eligible = await RunnerSeatReleaseFixture.CreateAsync();
         await eligible.ReleaseAsync();
@@ -167,19 +207,21 @@ public class RunnerSeatOrphanSweepTests
         {
             await using var f = await RunnerSeatReleaseFixture.CreateAsync();
             f.Wire.Outcome = outcome;
-            var witnessed = false;
+            RunnerSeatRelease? atWire = null;
+            TerminalSeatReleaseRequest? command = null;
             f.Wire.AtCommand = async request =>
             {
                 await using var db = f.Db();
-                var receipt = await db.RunnerSeatReleases.SingleAsync();
-                receipt.ActionId.ShouldBe(request.ActionId, "a separate connection reads committed action-before-wire");
-                receipt.State.ShouldBe(RunnerSeatReleaseState.Unresolved, "the send intent survives an interrupted caller");
-                receipt.ObservationToken.ShouldBe(request.Token);
-                receipt.AcceptedStartedAt.ShouldBe(request.Observation.ExpectedAcceptedStartedAt);
-                witnessed = true;
+                command = request;
+                atWire = await db.RunnerSeatReleases.SingleOrDefaultAsync();
             };
             await f.ReleaseAsync();
-            witnessed.ShouldBeTrue("the conditional command must actually be sent");
+            command.ShouldNotBeNull("the conditional command must actually be sent");
+            atWire.ShouldNotBeNull("a separate connection must see the committed reservation at wire entry");
+            atWire.ActionId.ShouldBe(command.ActionId, "committed action-before-wire");
+            atWire.State.ShouldBe(RunnerSeatReleaseState.Unresolved, "the send intent survives an interrupted caller");
+            atWire.ObservationToken.ShouldBe(command.Token);
+            atWire.AcceptedStartedAt.ShouldBe(command.Observation.ExpectedAcceptedStartedAt);
             await using var read = f.Db();
             var receipt = await read.RunnerSeatReleases.SingleAsync();
             var confirmed = outcome is TerminalSeatReleaseOutcome.Released or TerminalSeatReleaseOutcome.AlreadyExited or TerminalSeatReleaseOutcome.AlreadyAbsent;
