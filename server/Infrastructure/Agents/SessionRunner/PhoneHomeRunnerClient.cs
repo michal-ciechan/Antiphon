@@ -10,6 +10,16 @@ namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
 public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationWorkspaceTransport
 {
+    public async Task<WorkspaceParkResult> ParkWorkspaceAsync(WorkspaceParkCommand request, CancellationToken ct)
+    {
+        if (request.Version != 1 || !WorkspaceParkCommand.Supported(await GetCapabilitiesAsync(ct)))
+            return new(WorkspaceParkOutcome.Held, "park_unsupported");
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.WorkspacePark, request, ct);
+        if (frame.Kind == PhoneHomeFrameKind.Error)
+            return new(WorkspaceParkOutcome.Held, "park_unsupported");
+        return Read<WorkspaceParkResult>(frame)
+            ?? new(WorkspaceParkOutcome.Unknown, "park_inspection_unavailable");
+    }
     public async Task<TerminalSeatObservation> ObserveTerminalSeatAsync(
         Guid sessionId, TerminalSeatObservationRequest request, CancellationToken ct)
     {
@@ -24,6 +34,9 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
     public async Task<TerminalSeatReleaseResult> ReleaseTerminalSeatAsync(
         Guid sessionId, TerminalSeatReleaseRequest request, CancellationToken ct)
     {
+        if (request.ParkVersion != 1 || request.Publication is not null
+            && !WorkspaceParkCommand.Supported(await GetCapabilitiesAsync(ct)))
+            return new(sessionId, request.ActionId, TerminalSeatReleaseOutcome.Unsupported, null);
         var frame = await _connection.RequestAsync(PhoneHomeOperation.ReleaseTerminalSeat,
             new PhoneHomeTerminalSeatReleaseRequest(sessionId, request), ct);
         if (frame.Kind == PhoneHomeFrameKind.Error)

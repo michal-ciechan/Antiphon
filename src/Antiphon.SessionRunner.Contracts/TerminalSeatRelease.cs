@@ -49,7 +49,8 @@ public sealed record TerminalSeatObservation(
     DateTimeOffset? FirstObservedAt = null);
 
 public sealed record TerminalSeatReleaseRequest(
-    Guid ActionId, TerminalSeatObservationRequest Observation, string Token);
+    Guid ActionId, TerminalSeatObservationRequest Observation, string Token,
+    WorkspaceParkReceipt? Publication = null, int ParkVersion = 1);
 
 public enum TerminalSeatReleaseOutcome
 {

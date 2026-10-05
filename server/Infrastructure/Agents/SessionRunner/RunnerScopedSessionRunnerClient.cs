@@ -21,6 +21,9 @@ public sealed class RunnerScopedSessionRunnerClient : ISessionRunnerClient, IVer
         Guid sessionId, TerminalSeatObservationRequest request, CancellationToken ct) =>
         Current.ObserveTerminalSeatAsync(sessionId, request, ct);
 
+    public Task<WorkspaceParkResult> ParkWorkspaceAsync(WorkspaceParkCommand request, CancellationToken ct) =>
+        Current.ParkWorkspaceAsync(request, ct);
+
     public Task<TerminalSeatReleaseResult> ReleaseTerminalSeatAsync(
         Guid sessionId, TerminalSeatReleaseRequest request, CancellationToken ct) =>
         Current.ReleaseTerminalSeatAsync(sessionId, request, ct);

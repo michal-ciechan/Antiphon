@@ -6,6 +6,8 @@ namespace Antiphon.Server.Application.Interfaces;
 
 public interface ISessionRunnerClient
 {
+    Task<WorkspaceParkResult> ParkWorkspaceAsync(WorkspaceParkCommand request, CancellationToken ct) =>
+        Task.FromResult(new WorkspaceParkResult(WorkspaceParkOutcome.Held, "park_unsupported"));
     Task<TerminalSeatObservation> ObserveTerminalSeatAsync(
         Guid sessionId, TerminalSeatObservationRequest request, CancellationToken ct) =>
         throw new NotSupportedException("Terminal seat observation is unsupported.");

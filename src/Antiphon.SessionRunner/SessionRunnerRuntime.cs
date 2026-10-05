@@ -38,6 +38,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     // the only thing that knows which sessions are live.
     private readonly TranscriptClaimRegistry _transcriptClaims = new();
     private readonly SessionRunnerSettings _settings;
+    private readonly RunnerWorkspaceParkService? _workspacePark;
+    public bool SupportsWorkspacePark => _workspacePark is not null;
     private readonly ShadowCopyStore _shadowStore;
     private readonly PtyHostLauncher _launcher;
     private readonly HerdrClient? _herdrClient;
@@ -173,9 +175,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         IProcessLivenessProbe? processLiveness = null,
         RunnerStartupDiagnostics? startupDiagnostics = null,
         TimeProvider? timeProvider = null,
-        CodexCliVersionProbe? codexCliProbe = null)
+        CodexCliVersionProbe? codexCliProbe = null,
+        IOptions<PhoneHomeSettings>? phoneHomeSettings = null,
+        RunnerWorkspaceParkService? workspaceParkService = null)
     {
         _settings = settings.Value;
+        _workspacePark = workspaceParkService;
+        if (_workspacePark is null && phoneHomeSettings?.Value is { Enabled: true } phoneHome)
+            _workspacePark = new(new RunnerWorkspaceService(phoneHome.RepositoryPolicy(), phoneHome.AllowedCwd));
         _backendDecision = new(() => BackendResolver(_settings.PtyBackend));
         CodexCliProbe = codexCliProbe;
         _custody = new(() => new RunnerCustodyLedger(Path.Combine(_settings.SessionLogPath, "verification-custody")));
@@ -1019,6 +1026,46 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
     internal Func<Guid, Task>? TerminalReleaseBeforeFinalCheck { get; set; }
     internal Func<Guid, Task>? TerminalReleaseBeforeSignal { get; set; }
+    internal Func<Guid, Task>? TerminalParkBeforeVerification { get; set; }
+
+    // Publication and input share the generation gate. Preparing evidence never signals a
+    // child; a later release must revalidate both this source and its fresh idle proof.
+    internal async Task<WorkspaceParkResult> ParkWorkspaceAsync(WorkspaceParkCommand request, CancellationToken ct)
+    {
+        if (_workspacePark is null || request.Version != 1)
+            return new(WorkspaceParkOutcome.Held, "park_unsupported");
+        if ((request.Prepare is null) == (request.Verify is null))
+            return new(WorkspaceParkOutcome.Held, "park_invalid_binding");
+        var source = request.Prepare ?? request.Verify!.Request;
+        if (source?.Binding is null) return new(WorkspaceParkOutcome.Held, "park_invalid_binding");
+        var gate = _launchLocks.GetOrAdd(request.SessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            if (!_sessions.TryGetValue(request.SessionId, out var session)
+                || !ParkGenerationMatches(request.SessionId, source.Binding, session))
+                return new(WorkspaceParkOutcome.Held, "park_generation_changed");
+            if (session.TerminalReleaseInProgress || session.VerificationBinding is not null
+                || session.TerminalReleaseCustodyHold is not null)
+                return new(WorkspaceParkOutcome.Held, "park_custody_unknown");
+            var result = request.Verify is { } receipt
+                ? await _workspacePark.VerifyAsync(receipt, ct)
+                : await _workspacePark.PrepareAsync(source, ct);
+            if (!_sessions.TryGetValue(request.SessionId, out var current) || !ReferenceEquals(session, current)
+                || !ParkGenerationMatches(request.SessionId, source.Binding, session))
+                return new(WorkspaceParkOutcome.Held, "park_generation_changed");
+            return result;
+        }
+        finally { gate.Release(); }
+    }
+
+    private bool ParkGenerationMatches(Guid sessionId, WorkspaceParkBinding binding, RunnerSession session) =>
+        binding.SessionId == sessionId && binding.RunnerStoreId == RunnerStoreId
+        && SessionGeneration.Equal(session.AcceptedStartedAt, binding.AcceptedStartedAt);
+
+    internal bool TerminalGenerationMatches(RunnerSession? session, TerminalSeatObservationRequest expected) =>
+        expected.ExpectedRunnerStoreId == RunnerStoreId
+        && (session is null || SessionGeneration.Equal(session.AcceptedStartedAt, expected.ExpectedAcceptedStartedAt));
 
     // Dormant until S2c exposes the wire protocol. Both input entry points share this gate.
     // Never call either public lock-taking release/observation method from inside this gate.
@@ -1039,12 +1086,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         {
             _sessions.TryGetValue(sessionId, out session);
             var expected = request.Observation;
-            if (expected.ExpectedRunnerStoreId != RunnerStoreId
-                || (session is not null && !SessionGeneration.Equal(session.AcceptedStartedAt, expected.ExpectedAcceptedStartedAt)))
+            if (request.ParkVersion != 1 || request.Publication is not null && _workspacePark is null)
+                return Refuse(TerminalSeatReleaseOutcome.Unsupported);
+            if (!TerminalGenerationMatches(session, expected))
                 return Refuse(TerminalSeatReleaseOutcome.GenerationMismatch);
             if (request.ActionId == Guid.Empty)
                 return Refuse(TerminalSeatReleaseOutcome.StaleObservation);
-
             var key = (sessionId, request.ActionId);
             if (_terminalReleases.TryGetValue(key, out var prior))
             {
@@ -1054,6 +1101,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     return Refuse(TerminalSeatReleaseOutcome.GenerationMismatch);
                 return prior.Request == request ? prior.Result : Refuse(TerminalSeatReleaseOutcome.StaleObservation);
             }
+
+            if (request.Publication is { } publication
+                && (publication.Request?.Binding is not { } binding || binding.ActionId != request.ActionId
+                    || binding.SessionId != sessionId || binding.RunnerStoreId != expected.ExpectedRunnerStoreId
+                    || !SessionGeneration.Equal(binding.AcceptedStartedAt, expected.ExpectedAcceptedStartedAt)))
+                return Refuse(TerminalSeatReleaseOutcome.StaleObservation);
 
             if (session is null)
             {
@@ -1084,6 +1137,20 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 if (refusal is { } outcome) return Refuse(outcome);
                 var tailRevision = tailer.Snapshot().LastSequence;
 
+                if (request.Publication is { } source)
+                {
+                    if (TerminalParkBeforeVerification is { } beforeVerification) await beforeVerification(sessionId);
+                    var verified = await _workspacePark!.VerifyAsync(source, ct);
+                    if (verified.Outcome != WorkspaceParkOutcome.Published)
+                        return Refuse(TerminalSeatReleaseOutcome.StaleObservation);
+                    // Git/network awaited above. Repeat the native read before the last
+                    // synchronous input/output/generation fences and signal.
+                    transcript = await tailer.ObserveTerminalSeatAsync(ct);
+                    refusal = TerminalSeatQualification.AuthorizeRelease(proof, _terminalSeatEpoch, session,
+                        request with { Observation = canonical }, transcript, session.BackendInput.Count,
+                        session.LastSequence, _labelClock, captureId);
+                    if (refusal is { } sourceOutcome) return Refuse(sourceOutcome);
+                }
                 if (TerminalReleaseBeforeSignal is { } beforeSignal) await beforeSignal(sessionId);
                 if (!_sessions.TryGetValue(sessionId, out var current) || !ReferenceEquals(current, session)
                     || !SessionGeneration.Equal(session.AcceptedStartedAt, expected.ExpectedAcceptedStartedAt))

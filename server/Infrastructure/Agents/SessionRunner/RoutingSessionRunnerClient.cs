@@ -12,6 +12,9 @@ public sealed class RoutingSessionRunnerClient : ISessionRunnerClient
         Guid sessionId, TerminalSeatObservationRequest request, CancellationToken ct) =>
         await (await Route(sessionId, ct)).ObserveTerminalSeatAsync(sessionId, request, ct);
 
+    public async Task<WorkspaceParkResult> ParkWorkspaceAsync(WorkspaceParkCommand request, CancellationToken ct) =>
+        await (await Route(request.SessionId, ct)).ParkWorkspaceAsync(request, ct);
+
     public async Task<TerminalSeatReleaseResult> ReleaseTerminalSeatAsync(
         Guid sessionId, TerminalSeatReleaseRequest request, CancellationToken ct) =>
         await (await Route(sessionId, ct)).ReleaseTerminalSeatAsync(sessionId, request, ct);

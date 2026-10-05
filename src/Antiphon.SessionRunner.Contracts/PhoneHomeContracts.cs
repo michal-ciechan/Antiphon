@@ -101,6 +101,16 @@ public enum PhoneHomeOperation
     CodexCliVersion = 33,
     ObserveTerminalSeat = 34,
     ReleaseTerminalSeat = 35,
+    WorkspacePark = 36,
+}
+
+/// <summary>Exactly one prepare or verify payload; unknown versions fail closed.</summary>
+public sealed record WorkspaceParkCommand(
+    Guid SessionId, WorkspaceParkRequest? Prepare = null, WorkspaceParkReceipt? Verify = null, int Version = 1)
+{
+    public static bool Supported(RunnerCapabilitiesDto? capabilities) =>
+        capabilities?.Features?.Contains(RunnerCapabilityFeatures.WorkspaceParkV1) == true
+        && capabilities.Features.Contains(RunnerCapabilityFeatures.TerminalSeatReleaseV1);
 }
 
 public sealed record PhoneHomeTerminalSeatObservationRequest(Guid SessionId, TerminalSeatObservationRequest Observation);
