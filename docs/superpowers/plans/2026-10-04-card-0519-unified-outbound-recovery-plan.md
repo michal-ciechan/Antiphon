@@ -1671,3 +1671,30 @@ pre-chat machine windows as ineligible (a later channel is not authorization).
 These use PC-81 and PC-84's context/classification variants. No deadline, assertion
 tolerance or inherited CP-51/52 result changed. Rerun the entire still-unverified
 six-row selection at this group's committed SHA.
+
+S10 repair group 2: CP-13 reached 6 results (3 pass, 3 fixture-teardown FK
+failures); let the owning isolated database perform cleanup rather than deleting
+the shared channel before its deliberately retained deliveries. CP-58 reached
+73 results (72 pass): its confirmed completion fixture now also states its
+independent outbound-ineligible classification, and a new confirmed-but-open
+companion must remain. The deletion and no-re-enqueue assertions are unchanged.
+This is an intentional fixture adaptation to two separate durable obligations,
+not an inherited failure or a relaxed retention assertion.
+
+Terminal proof now retains the actually matched stored sequences: it cannot
+close an old owning prompt absent from the final native snapshot. The closure
+witness also exercises both HTTP and phone-home mapping; native witnesses read
+the served runtime DTO and its accepted generation. Additional pending controls:
+PC-S10-1e removes the exit-grace check; PC-S10-2c omits original-prompt membership;
+PC-S10-3a/b/c omit the flag or generation in runtime/HTTP/phone-home mapping,
+detected respectively by the native completion method and the root closure method.
+
+CP-59 reached 83 results (82 pass, one existing FileShare assertion failed on
+Linux). Its exact CodexTranscriptTailerTests.A_rollout_held_open_by_the_writer_is_still_read
+method also fails at the task base 17fe69add817134c516a9b21275bac7b67574674:
+File.ReadAllLines does not throw the Windows sharing exception on Linux. Baseline
+row BASE-CP59 ran via the checkpoint tool in an isolated detached base checkout,
+1 executed/0 passed/1 failed, clean verified source, slot=granted waited=0s.
+No assertion, timeout or platform skip is changed. All three new native provider
+results passed. Rerun red CP-13/58/59 and affected CP-8/9 at this final repair SHA;
+CP-14 retains its clean 1/1 receipt. Both permitted repair rounds are then used.

@@ -1682,7 +1682,7 @@ public class DataRetentionServiceTests
 
     /// <summary>
     /// CARD-0544 PC-118 / R-11: a stale keyed row whose Completion obligation is unconfirmed is receipt
-    /// evidence still owed and survives the queue window; a confirmed obligation's row prunes while the
+    /// evidence still owed and survives the queue window; a confirmed, channel-classified row prunes while the
     /// notification keeps ConfirmedAt/ConfirmingPromptSequence, and the next reconcile never re-enqueues.
     /// </summary>
     [Test]
@@ -1692,11 +1692,13 @@ public class DataRetentionServiceTests
         await using var caller = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
         var old = DaysAgo(40);
-        (Guid NoteId, Guid RowId) confirmed, owed;
+        (Guid NoteId, Guid RowId) confirmed, owed, confirmedOpen;
         await using (var db = new AppDbContext(options))
         {
-            confirmed = SeedCompletionObligation(db, caller.SessionId, old, confirmed: true, sequence: 1);
+            confirmed = SeedCompletionObligation(db, caller.SessionId, old, confirmed: true, sequence: 1,
+                discoveryClosed: true);
             owed = SeedCompletionObligation(db, caller.SessionId, old, confirmed: false, sequence: 2);
+            confirmedOpen = SeedCompletionObligation(db, caller.SessionId, old, confirmed: true, sequence: 3);
             await db.SaveChangesAsync();
         }
 
@@ -1706,6 +1708,8 @@ public class DataRetentionServiceTests
         await using (var db = new AppDbContext(options))
         {
             (await db.SessionQueuedMessages.AnyAsync(m => m.Id == owed.RowId)).ShouldBeTrue("unconfirmed Completion evidence survives");
+            (await db.SessionQueuedMessages.AnyAsync(m => m.Id == confirmedOpen.RowId)).ShouldBeTrue(
+                "a completion receipt does not classify its possible channel reply");
             (await db.SessionQueuedMessages.AnyAsync(m => m.Id == confirmed.RowId)).ShouldBeFalse("confirmed obligation row prunes");
             var kept = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == confirmed.NoteId);
             kept.State.ShouldBe(LandNotificationState.Confirmed);
@@ -1727,7 +1731,8 @@ public class DataRetentionServiceTests
         }
     }
 
-    private static (Guid NoteId, Guid RowId) SeedCompletionObligation(AppDbContext db, Guid session, DateTime at, bool confirmed, long sequence)
+    private static (Guid NoteId, Guid RowId) SeedCompletionObligation(AppDbContext db, Guid session, DateTime at, bool confirmed,
+        long sequence, bool discoveryClosed = false)
     {
         var taskId = Guid.NewGuid();
         var eventId = Guid.NewGuid();
@@ -1757,6 +1762,7 @@ public class DataRetentionServiceTests
             Status = QueuedMessageStatus.Sent, Origin = QueuedMessageOrigin.Delegation, SourceTaskId = taskId,
             ContentDigest = digest, SourceLandNotificationId = noteId, ConversationKey = $"task:{taskId:N}",
             DeliveryAttempts = 1, DeliveryVerdict = confirmed ? DeliveryVerdict.Delivered : null,
+            ChannelReplyDiscoveryClosedAt = discoveryClosed ? at : null,
             CreatedAt = at, SentAt = at,
         });
         return (noteId, rowId);

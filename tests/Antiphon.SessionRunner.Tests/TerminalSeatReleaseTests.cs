@@ -35,6 +35,8 @@ public class TerminalSeatReleaseTests
         {
             await File.WriteAllBytesAsync(path, new byte[16]);
             var completion = new TerminalTranscriptCompletion();
+            completion.Observe(path, 16, 0, DateTime.UtcNow, TimeSpan.FromSeconds(3), true);
+            completion.IsComplete.ShouldBeFalse("child-exit grace still owns late native writes");
             completion.Observe(path, 8, 0, DateTime.UtcNow.AddMinutes(-1), TimeSpan.FromSeconds(3), true);
             completion.IsComplete.ShouldBeFalse("unread suffix at the final poll");
             completion.Observe(path, 16, 0, DateTime.UtcNow.AddMinutes(-1), TimeSpan.FromSeconds(3), false);
@@ -45,8 +47,9 @@ public class TerminalSeatReleaseTests
         finally { File.Delete(path); }
         foreach (var shape in new[] { "complete", "partial", "malformed" })
         {
-            await using var world = new TailWorld(provider);
-            await world.StartAsync();
+            await using var seat = new SeatWorld(provider);
+            await seat.StartAsync();
+            var world = seat.Tail;
             world.Tailer.Snapshot().TerminalComplete.ShouldBeFalse("live reader is not final");
             var before = world.Tailer.Snapshot().LastSequence;
             await world.AppendAsync(world.Prompt("last native prompt", "last")
@@ -66,6 +69,9 @@ public class TerminalSeatReleaseTests
                 var snapshot = world.Tailer.Snapshot();
                 snapshot.Entries.ShouldContain(e => e.Text == "last native prompt");
                 snapshot.TerminalComplete.ShouldBe(shape == "complete");
+                var served = seat.Runtime.GetTranscript(world.SessionId);
+                served.TerminalComplete.ShouldBe(shape == "complete");
+                served.AcceptedStartedAt.ShouldBe(seat.Request.ExpectedAcceptedStartedAt);
             }
             finally { world.Observer.ReadGate.Release(); }
         }
