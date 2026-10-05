@@ -79,8 +79,8 @@ internal static class QueueAttention
                     && m.LastDeliveryStartedAt >= windowFloor));
 
     /// <summary>
-    /// The canonical union: every row shape that still has a state transition owed to it. This is
-    /// what a discovery query must select on; anything narrower strands the difference.
+    /// The ordinary delivery/retry union. Receipt-only spill obligations use
+    /// <see cref="DeliveredSpillAwaitingReceipt"/> separately, without input-admission gates.
     /// </summary>
     public static Expression<Func<SessionQueuedMessage, bool>> NeedsAttention(
         int maxAttempts, DateTime strandedCutoff, DateTime ageFloor, DateTime windowFloor) =>
