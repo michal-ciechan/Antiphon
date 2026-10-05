@@ -212,7 +212,9 @@ in a throwaway container of the recorded immutable image: reviewed script mounte
 readonly, uid `1654:1654`, `--network none`, no ports/socket and private writable
 `/c660-home` tmpfs owned by 1654. Consume the reviewed
 [CARD-1054 probe and frozen row contract](superpowers/plans/2026-10-05-card-1054-jq-path-qualification-plan.md#verification-design)
-at its recorded source SHA. Require exit 0 and exactly one physical success row:
+at its recorded source SHA. The [CARD-1054 Code handoff](../.antiphon/task-dfea030e.md)
+records the implementation candidate and per-row source receipts for separate
+Review before S2 consumes it. Require exit 0 and exactly one physical success row:
 `C660_ROW jq-version ok jq-1.7.1 as uid 1654 lookupPath=/usr/local/bin/jq path=/usr/local/bin/jq`
 for direct lookup. An approved alias changes only `lookupPath` to the actual
 found path, Bash `%q`-escaped with `LC_ALL=C`; `path` retains the canonical target.
