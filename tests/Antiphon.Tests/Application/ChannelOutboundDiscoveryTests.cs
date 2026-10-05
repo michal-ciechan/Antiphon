@@ -489,7 +489,7 @@ public sealed class ChannelOutboundDiscoveryTests
             await w.Discovery.TickAsync(default);
             var captured = await w.DeliveryAsync(id);
             captured.State.ShouldBe(ChannelOutboundDeliveryState.Captured);
-            captured.PreparationDeadlineAt.ShouldBeLessThan(w.H.Now);
+            captured.PreparationDeadlineAt.ShouldNotBeNull().ShouldBeLessThan(w.H.Now);
             captured.CreatedAt.ShouldBeGreaterThanOrEqualTo(original);
             ChannelReplyPreparation.Deserialize(captured.CaptureJson!).Body.Text.ShouldBe("original old answer");
             (await w.MemberAsync(id)).ChannelReplySettledAt.ShouldBeNull();
