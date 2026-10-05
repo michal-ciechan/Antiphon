@@ -39,9 +39,18 @@ Each receipt binds source SHA, run, selected/executing phase, observation time a
 SSH exit to host path/version/digest/owner/mode and both semantic predicate exits.
 Invalid jq, unapproved PATH shadowing, unknown transport/proof or failed receipt
 persistence stops preparation; diagnose the refusal rather than installing by hand.
-`/usr/local/bin` integrity is the trust boundary: canonical-leaf symlinks and home
-PATH shadows refuse, but hardlinks and a writer's check-to-use swap remain
-CARD-1058 limitations. These phases do not deploy or restart anything.
+[CARD-1058 host qualification](superpowers/plans/2026-10-05-card-1058-host-jq-file-identity-plan.md)
+rejects canonical-leaf symlinks, home PATH shadows and files with multiple hardlinks.
+It hashes and executes jq through one retained descriptor, checks the installed
+artifact's pin before execution, and buffers the proof until final leaf identity,
+link count and executable-access checks pass. Publication removes only its owned
+staging link before qualification. Functional existing jq keeps its actual version
+and digest; it need not match the installation pin.
+The receipt is a point-in-time observation. The canonical directory and ancestors,
+inode contents and host toolchain remain trusted: an FD does not prevent in-place
+writes, ABA swaps or replacement after proof emission before a later consumer.
+The image probe still trusts directory integrity and has no descriptor custody
+from this host helper. These phases do not deploy or restart anything.
 Give the host receipt reference to the [CARD-1040 image qualification owner](superpowers/plans/2026-10-04-card-1040-jq-prerequisites-and-unit-timing-plan.md);
 host qualification does not qualify the image or its activation.
 

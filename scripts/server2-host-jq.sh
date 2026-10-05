@@ -29,8 +29,10 @@ snapshot() {
     [[ "${fields[1]}" =~ ^[0-9]+$ ]] || refuse HostJqInvalid
 }
 qualify() {
-    local truth falsehood meta
-    local -a initial
+    local truth falsehood meta expected_digest=${1:-}
+    local -a initial fresh
+    # FD 8 belongs to one qualification; FD 9 remains the provision lock.
+    exec 8<&-
     hash -r
     if ! lookup=$(command -v jq); then
         local directory
@@ -48,29 +50,51 @@ qualify() {
     [ "$resolved" = "$DESTINATION" ] && [ -f "$DESTINATION" ] && [ ! -L "$DESTINATION" ] || return 5
     snapshot initial -c "$DESTINATION"
     [ "${initial[2]}" = 1 ] || return 4
-    version=$("$resolved" --version 2>/dev/null) || return 4
+    { exec 8< "$DESTINATION"; } 2>/dev/null || return 4
+    snapshot opened -Lc /proc/self/fd/8
+    [ "${opened[2]}" = 1 ] || return 4
+    [ "${opened[0]}" = "${initial[0]}" ] || return 4
+    [ "${opened[1]}" = "${initial[1]}" ] || return 4
+    snapshot fresh -c "$DESTINATION"
+    [ "${fresh[0]}" = "${opened[0]}" ] || return 4
+    [ "${fresh[1]}" = "${opened[1]}" ] || return 4
+    [ "${fresh[2]}" = 1 ] || return 4
+    digest=$(sha256sum -- /proc/self/fd/8 2>/dev/null) || return 4
+    digest=${digest%% *}
+    [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 4
+    [ -z "$expected_digest" ] || [ "$digest" = "$expected_digest" ] || return 4
+    meta=$(stat -Lc '%u %g %a' -- /proc/self/fd/8 2>/dev/null) || return 4
+    read -r uid gid permissions <<< "$meta"
+    [[ "$uid" =~ ^[0-9]+$ && "$gid" =~ ^[0-9]+$ && "$permissions" =~ ^[0-7]{3,4}$ ]] || return 4
+    version=$(/proc/self/fd/8 --version 2>/dev/null) || return 4
     [[ "$version" =~ [^[:space:]] && "$version" != *$'\n'* ]] || return 4
     # Require the actual outputs as well as both exit codes (constant-success is invalid).
     local predicate='($items|type)=="array" and all($items[]; .ready==true) and any($items[]; .name=="jq")'
-    truth=$("$resolved" -en --argjson items '[{"name":"jq","ready":true}]' "$predicate" 2>/dev/null)
+    truth=$(/proc/self/fd/8 -en --argjson items '[{"name":"jq","ready":true}]' "$predicate" 2>/dev/null)
     true_exit=$?
-    falsehood=$("$resolved" -en --argjson items '[{"name":"jq","ready":false}]' "$predicate" 2>/dev/null)
+    falsehood=$(/proc/self/fd/8 -en --argjson items '[{"name":"jq","ready":false}]' "$predicate" 2>/dev/null)
     false_exit=$?
     [ "$truth" = true ] && [ "$true_exit" = 0 ] || return 4
     [ "$falsehood" = false ] && [ "$false_exit" = 1 ] || return 4
-    digest=$(sha256sum -- "$resolved" 2>/dev/null) || return 4
-    digest=${digest%% *}
-    [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 4
-    meta=$(stat -Lc '%u %g %a' -- "$resolved" 2>/dev/null) || return 4
-    read -r uid gid permissions <<< "$meta"
-    [[ "$uid" =~ ^[0-9]+$ && "$gid" =~ ^[0-9]+$ && "$permissions" =~ ^[0-7]{3,4}$ ]] || return 4
 }
 emit() {
-    # Use the qualified executable for escaping observed path/version; no raw environment.
-    "$resolved" -cn --arg mode "$MODE" --arg lookupPath "$lookup" --arg path "$resolved" --arg version "$version" \
+    local proof
+    local -a leaf final_fd
+    # Buffer through the same descriptor, then admit the final point-in-time identity.
+    proof=$(/proc/self/fd/8 -cn --arg mode "$MODE" --arg lookupPath "$lookup" --arg path "$resolved" --arg version "$version" \
         --arg digest "$digest" --arg permissions "$permissions" --argjson uid "$uid" --argjson gid "$gid" \
         --argjson installed "$installed" --arg outcome "$outcome" \
-        '{schema:1,lane:"host",mode:$mode,lookupPath:$lookupPath,path:$path,version:$version,digest:$digest,uid:$uid,gid:$gid,permissions:$permissions,trueExit:0,falseExit:1,installed:$installed,outcome:$outcome}'
+        '{schema:1,lane:"host",mode:$mode,lookupPath:$lookupPath,path:$path,version:$version,digest:$digest,uid:$uid,gid:$gid,permissions:$permissions,trueExit:0,falseExit:1,installed:$installed,outcome:$outcome}') || return 1
+    snapshot leaf -c "$DESTINATION"
+    [ "${leaf[0]}" = "${opened[0]}" ] || refuse HostJqInvalid
+    [ "${leaf[1]}" = "${opened[1]}" ] || refuse HostJqInvalid
+    [ "${leaf[2]}" = 1 ] || refuse HostJqInvalid
+    [ -x "$DESTINATION" ] || refuse HostJqInvalid
+    snapshot final_fd -Lc /proc/self/fd/8
+    [ "${final_fd[2]}" = 1 ] || refuse HostJqInvalid
+    [ -x /proc/self/fd/8 ] || refuse HostJqInvalid
+    printf '%s\n' "$proof"
+    exec 8<&-
 }
 refuse_path() {
     # Encode observed paths with builtins; an unapproved jq is never executed for diagnostics.
@@ -147,7 +171,7 @@ actual=$(sudo -n -- sha256sum -- "$stage_root/jq" 2>/dev/null) || refuse HostJqD
 sudo -n -- ln -T -- "$stage_root/jq" "$DESTINATION" 2>/dev/null || refuse HostJqPublishUnavailable
 # Publication temporarily has two names. Remove only our staging name before admission.
 sudo -n -- rm -- "$stage_root/jq" 2>/dev/null || refuse HostJqInvalid
-qualify; result=$?
+qualify "$DIGEST"; result=$?
 [ "$result" != 5 ] || refuse_path
 [ "$result" != 3 ] || refuse HostJqFinalPathInvalid
 [ "$result" = 0 ] || refuse HostJqInvalid
