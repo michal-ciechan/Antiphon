@@ -507,7 +507,18 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
                 var dispatcher = new PhoneHomeCommandDispatcher(adapter,
                     new PhoneHomeSettings { LaunchGenerationsPath = Path.Combine(_root, "generations") });
                 _socketLoop = PumpAsync(dispatcher, _socketLifetime.Token);
-                Client = new PhoneHomeRunnerClient(await _phoneHost.WaitLiveAsync());
+                var connection = await _phoneHost.WaitLiveAsync();
+                Client = new PhoneHomeRunnerClient(connection);
+                // The test host has no recovery pump. Complete its real inventory catch-up
+                // before admitting input, including after either transport restart.
+                connection.DispatchEligible.ShouldBeFalse();
+                var inventory = await Client.ListAsync(default);
+                var seat = inventory.ShouldHaveSingleItem();
+                seat.Id.ShouldBe(SessionId);
+                seat.AcceptedStartedAt.ShouldBe(_generation);
+                _phoneHost.Directory.SnapshotLive().ShouldBeSameAs(connection);
+                _phoneHost.Directory.MarkRecovered(connection);
+                connection.DispatchEligible.ShouldBeTrue();
                 return;
             }
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [], EnvironmentName = "Testing" });
