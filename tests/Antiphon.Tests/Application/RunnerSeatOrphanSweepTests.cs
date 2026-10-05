@@ -90,6 +90,15 @@ public class RunnerSeatOrphanSweepTests
             (await db.AgentSessions.AnyAsync(s => s.Id == live.SessionId)).ShouldBeFalse("never synthesize a session row");
             (await db.RunnerSeatReleases.SingleAsync()).State.ShouldBe(RunnerSeatReleaseState.Confirmed);
         }
+        await using var local = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, provider: "Codex");
+        local.Directory.IsLocal = true;
+        local.Directory.RunnerId = RunnerPlatformWire.DesktopId;
+        await local.Live!.SubmitAsync("owned local Blocked conversation");
+        var held = await local.DiscoverAsync();
+        held.Released.ShouldBe(0);
+        held.Candidates.ShouldHaveSingleItem().Disposition.ShouldBe("Owned");
+        local.Live.Observations.ShouldBeEmpty("known local conversations remain with their existing owner");
+        local.Live.Child.Kills.ShouldBe(0);
     }
 
     [Test]

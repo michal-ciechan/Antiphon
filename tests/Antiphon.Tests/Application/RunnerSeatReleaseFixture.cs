@@ -733,7 +733,8 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         public Func<Task<RunnerInventory>>? Inventory { get; set; }
         public ISessionRunnerClient Client { get; set; } = client;
         public ISessionRunnerClient Local => Client;
-        public ISessionRunnerClient Resolve(string? runnerId) => Client;
+        public ISessionRunnerClient Resolve(string? runnerId) => IsLocal
+            ? throw new InvalidOperationException("Local discovery must use the local client") : Client;
         public ISessionRunnerClient ResolveForNewWork(string? runnerId) => RefuseNewWork
             ? throw new ServiceUnavailableException("fixture runner unavailable", "runner_unavailable") : Client;
         public int? DeclaredCapacity(string runnerId) => Capacity;
@@ -748,12 +749,13 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
             if (FeaturesOverride is not null && caps is not null) caps = caps with { Features = FeaturesOverride };
             return new(RunnerId, RunnerId, "linux", null, Available, Recovered, Stale, 1, caps);
         }
-        public IReadOnlyList<string> KnownRunnerIds => RunnerIds ?? [RunnerId];
+        public IReadOnlyList<string> KnownRunnerIds => RunnerIds ?? [IsLocal ? PhoneHomeProtocol.LocalRunnerId : RunnerId];
         public Task<SessionRunnerOwner?> GetOwnerAsync(Guid id, CancellationToken ct) => Task.FromResult<SessionRunnerOwner?>(new("fixture", StoreId, "/fixture"));
         public Task<SessionRunnerBinding> GetBindingAsync(Guid id, CancellationToken ct) => Task.FromResult<SessionRunnerBinding>(new SessionRunnerBinding.Remote(new("fixture", StoreId, "/fixture")));
         public async Task<RunnerInventory> GetInventoryAsync(string? id, CancellationToken ct)
         {
             InventoryCalls++;
+            if (IsLocal) throw new InvalidOperationException("Local inventory is not a phone-home directory lookup");
             if (InventoryByRunner is not null) return await InventoryByRunner(id);
             return Inventory is null ? new RunnerInventory.Unavailable("fixture inventory not supplied") : await Inventory();
         }

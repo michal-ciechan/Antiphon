@@ -51,7 +51,9 @@ public sealed class TerminalRunnerSeatReleaseService(
         if (!options.Value.AutomaticEnabled || db.Database.CurrentTransaction is not null
             || System.Transactions.Transaction.Current is not null)
             return new(results, released, calls, new(next, positions));
-        var runnerIds = runners.KnownRunnerIds.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        var runnerIds = runners.KnownRunnerIds.Select(id => RunnerRequestIntent.IsDesktopAlias(id)
+                ? RunnerPlatformWire.DesktopId : id)
+            .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
         // Discard positions for removed peers, keeping cursor space bounded by the catalogue.
         foreach (var removed in positions.Keys.Except(runnerIds).ToArray()) positions.Remove(removed);
         if (runnerIds.Length == 0) return new(results, released, calls, new(null, positions));
@@ -67,7 +69,7 @@ public sealed class TerminalRunnerSeatReleaseService(
             calls++;
             try
             {
-                if (await runners.GetInventoryAsync(runnerId, ct) is not RunnerInventory.Available inventory) continue;
+                if (await DiscoveryInventoryAsync(runnerId, ct) is not RunnerInventory.Available inventory) continue;
                 var seats = inventory.Sessions.OrderBy(s => s.SessionId).ToArray();
                 var after = positions.GetValueOrDefault(runnerId);
                 // UUID ordering is only traversal order; no age or identity authority is inferred.
@@ -119,7 +121,7 @@ public sealed class TerminalRunnerSeatReleaseService(
             return new(runnerId, seat.SessionId, null, "Unknown");
         var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == seat.SessionId, ct);
         // Local conversations remain with their existing owner, including completed Blocked.
-        if (session is not null && runnerId == PhoneHomeProtocol.LocalRunnerId)
+        if (session is not null && RunnerRequestIntent.IsDesktopAlias(runnerId))
             return new(runnerId, seat.SessionId, null, "Owned");
         if (session is not null && (session.RunnerId != runnerId || session.RunnerStoreId != storeId
             || session.StartedAt != generation)) return new(runnerId, seat.SessionId, null, "IdentityUnknown");
@@ -216,6 +218,14 @@ public sealed class TerminalRunnerSeatReleaseService(
         return null;
     }
 
+    private async Task<RunnerInventory> DiscoveryInventoryAsync(string runnerId, CancellationToken ct) =>
+        RunnerRequestIntent.IsDesktopAlias(runnerId)
+            ? new RunnerInventory.Available(await runners.Local.ListAsync(ct))
+            : await runners.GetInventoryAsync(runnerId, ct);
+
+    private ISessionRunnerClient SeatClient(string runnerId) =>
+        RunnerRequestIntent.IsDesktopAlias(runnerId) ? runners.Local : runners.Resolve(runnerId);
+
     /// <summary>Acquire runner-owned evidence for an inventory identity, including a seat with
     /// no server row. This does not reserve debt or grant ownership authority to release it.</summary>
     public async Task<TerminalRunnerSeatEvidence> ObserveCapturedCandidateAsync(
@@ -232,7 +242,7 @@ public sealed class TerminalRunnerSeatReleaseService(
             // No server ingestion sequence or retroactive native floor is release evidence.
             // Only the runner's pre-write capture can fill these deliberately unusable fields.
             request = new(runnerStoreId, acceptedStartedAt.Value, "", -1, UseCapturedDeliveryEvidence: true);
-            var observed = await runners.Resolve(runnerId).ObserveTerminalSeatAsync(sessionId, request, ct);
+            var observed = await SeatClient(runnerId).ObserveTerminalSeatAsync(sessionId, request, ct);
             if (await CapturedPeerHoldAsync(runnerId, runnerStoreId, ct) is { } afterRead)
                 return new(afterRead, request);
             if (observed?.Transcript is not { } transcript) return new(TerminalRunnerSeatDecision.Unknown, request);
@@ -272,7 +282,8 @@ public sealed class TerminalRunnerSeatReleaseService(
             return TerminalRunnerSeatDecision.Unknown;
         if (peer.Capabilities is null) return TerminalRunnerSeatDecision.Unsupported;
         // A local runner has no phone-home live-store entry; its fresh descriptor supplies it.
-        if (peer.RunnerId != runnerId || peer.Capabilities.RunnerStoreId != runnerStoreId
+        if ((peer.RunnerId != runnerId && !(RunnerRequestIntent.IsDesktopAlias(peer.RunnerId)
+                && RunnerRequestIntent.IsDesktopAlias(runnerId))) || peer.Capabilities.RunnerStoreId != runnerStoreId
             || (runners.GetLiveStoreId(runnerId) is Guid liveStore && liveStore != runnerStoreId))
             return TerminalRunnerSeatDecision.IdentityUnknown;
         var features = peer.Capabilities.Features;
@@ -381,7 +392,7 @@ public sealed class TerminalRunnerSeatReleaseService(
             TerminalSeatReleaseResult result;
             try
             {
-                result = await runners.Resolve(release.RunnerId).ReleaseTerminalSeatAsync(release.SessionId,
+                result = await SeatClient(release.RunnerId).ReleaseTerminalSeatAsync(release.SessionId,
                     new(release.ActionId!.Value, observation, release.ObservationToken!), ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
@@ -431,7 +442,7 @@ public sealed class TerminalRunnerSeatReleaseService(
     {
         if (await RevalidateAsync(release, ct) is not null || !await RunnerReadyAsync(release, ct)) return;
         RunnerInventory inventory;
-        try { inventory = await runners.GetInventoryAsync(release.RunnerId, ct); }
+        try { inventory = await DiscoveryInventoryAsync(release.RunnerId, ct); }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { return; }
         // Available means a complete fresh List RPC, not a heartbeat or an error's empty list.
         // Recheck recovery/store after the RPC too: a disconnect or adoption can race List.
@@ -498,7 +509,8 @@ public sealed class TerminalRunnerSeatReleaseService(
                 || (runners.GetLiveStoreId(release.RunnerId) is Guid liveStore && liveStore != release.RunnerStoreId)) return false;
             var descriptor = await runners.DescribeAsync(release.RunnerId, ct);
             return descriptor is { Available: true, DispatchEligible: true, Stale: false }
-                && descriptor.RunnerId == release.RunnerId
+                && (descriptor.RunnerId == release.RunnerId || (RunnerRequestIntent.IsDesktopAlias(descriptor.RunnerId)
+                    && RunnerRequestIntent.IsDesktopAlias(release.RunnerId)))
                 && descriptor.Capabilities?.RunnerStoreId == release.RunnerStoreId
                 && descriptor.Capabilities.Features?.Contains(RunnerCapabilityFeatures.TerminalSeatReleaseV1) == true;
         }
