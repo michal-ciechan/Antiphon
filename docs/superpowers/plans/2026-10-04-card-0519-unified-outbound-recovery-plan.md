@@ -1004,6 +1004,7 @@ select CP-29 in a Linux invocation. A missing Windows lane leaves R-12 outstandi
 | CP-64 | S12d | `tests/Antiphon.Tests -> bin-c519-cp64/` | converter-recovery-s12d | `/*/*/ChannelOutboundUnifiedTransportTests/C519_Converter_handoff*` | V-13 converter cuts after CARD-1074 fixes | all 8 listed results, 0 failed/skipped | 8 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-65 | S12d | `CP-64` | brief-recovery-s12d | `/*/*/DelegationBriefRecoveryTests/*` | CARD-1074 generic witnesses (PC-S12-1..4) | all 3 listed results, 0 failed/skipped | 3 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-66 | S12d | `CP-64` | dispatch-resume-s12d | `/*/*/(AgentSessionInterruptedLaunchResumeTests*)\|(AgentTaskDispatchFailureTests*)\|(AgentSessionLaunchQueueOwnershipTests*)/*` | affected resume/dispatch consumers | all three class results, 0 failed/skipped | 28 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-78 | S12d | `CP-64` | delegation-regression-s12d | `/*/*/(AgentTaskPoolTests*)\|(AgentTaskStandingAgentDispatchTests*)\|(AgentTaskSettlementRaceTests*)\|(AgentTaskDispatcherPredicateTests*)/*` | CARD-1074 full generic dispatch and settlement compatibility | all 75 results, 0 failed/skipped | 75 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-67 | S12e | `CP-61` | outbound-partials-final | `/*/*/ChannelOutboundDeliveryTests/*` | R-5 final candidate | all 38 listed results, 0 failed/skipped | 38 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-68 | S12e | `CP-61` | composed-files-final | `/*/*/ChannelOutboundComposedTransportTests/*` | R-9 final candidate | all 1 listed results, 0 failed/skipped | 1 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-69 | S12e | `CP-61` | manual-recovery-final | `/*/*/ChannelOutboundRecoveryTests/(Expired_publishing_lease_is_uncertain_until_explicit_retry*)\|(Held_head_blocks_later_reply_until_original_binding_is_repaired_and_resumed*)\|(Restart_preserves_two_inbound_slack_routes_behind_an_uncertain_head*)\|(Broker_ack_before_process_death_remains_uncertain_without_replay*)` | R-8 final candidate | all 4 listed results, 0 failed/skipped | 4 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
@@ -1015,7 +1016,7 @@ select CP-29 in a Linux invocation. A missing Windows lane leaves R-12 outstandi
 | CP-74 | S12g | `tests/Antiphon.Tests -> bin-c519-cp74/` | crash-preparation-final | `/*/*/ChannelOutboundUnifiedCrashTests/(C519_Before_capture_death_is_discovered*)\|(C519_Captured_death_needs_no_wake_signal*)\|(C519_Partial_stage_death_retries_preparation*)\|(C519_Complete_stage_death_preserves_snapshot*)` | V-11 final candidate | all 12 listed results, 0 failed/skipped | 12 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-75 | S12g | `CP-74` | crash-publication-final | `/*/*/ChannelOutboundUnifiedCrashTests/(C519_Attempt_death_stays_uncertain*)\|(C519_Accepted_death_stays_uncertain*)\|(C519_Published_death_never_replays*)` | V-12 final candidate | all 9 listed results, 0 failed/skipped | 9 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
-S12 execution rows are CP-61..CP-77, appended by the S12 split selection below
+S12 execution rows are CP-61..CP-78, appended by the S12 split selection below
 (Plan 02c16198). The landed CP-19 and CP-25..CP-28 rows keep their TestDesign text and
 are superseded for execution by CP-67..CP-71; the whole-Unit row the S12 tasks had
 added as CP-60 is withdrawn (D-S12-7). No whole assembly, namespace or whole-Unit run
@@ -1914,6 +1915,13 @@ with verified clean builds).
   row construction into the dispatcher is invasive and noted on CARD-1074 as a later
   option) and a sweep-time backfill in `FailNeverStartedAsync` (ten-minute latency;
   that arm fails rather than repairs and stays unchanged).
+  CARD-1074 compatibility clarification (Code 9ed7da3b): rules bootstrap identifies
+  its existing Delegation brief through `SourceTaskId`, so recognize that key only
+  with this task's marker in the body as well as the ordinary `ExecutionTaskId` key.
+  The no-duplicate witness covers both keys and a transcript-only receipt. A stale
+  native prompt timestamp before dispatch must not suppress the current brief.
+  Existing resume fixtures stamp the seeded brief's real delegation identity;
+  ownership fixtures record complete submitted prompts without changing deadlines.
 - **D-S12-5 — a launch enqueue refusal keeps the committed claim (production;
   CARD-1074 part 2).** `DispatchOneAsync` wraps only the launch enqueue call
   (`_taskLaunchSink.Enqueue` or `_launchQueue.EnqueueInteractiveSession`): on any
@@ -2011,7 +2019,7 @@ Method-scoped, `/*/*/ClassName/ExactMethod*` where arguments require the suffix.
 
 ### S12 checkpoint groups
 
-The closed ordinary scope for S12c..S12g is CP-61..CP-77 in the main `### Checkpoints`
+The closed ordinary scope for S12c..S12g is CP-61..CP-78 in the main `### Checkpoints`
 table above (one isolated build per slice, exact filters, `--row-timeout 15m
 --total-timeout 60m --serial`, Linux lane, no host or OS pin). Per slice:
 
@@ -2019,6 +2027,7 @@ table above (one isolated build per slice, exact filters, `--row-timeout 15m
 |---|---|---|---|
 | S12c | CP-62, CP-76, CP-63 | `bin-c519-cp62/` | 3 + 3 + 3; plus recorded `BASE-S12D-HANDOFF` 8 executed / 4 passed / 4 failed |
 | S12d | CP-64, CP-65, CP-66 | `bin-c519-cp64/` | 8 + 3 + 28; plus recorded `BASE-S12D-BRIEF` 3 executed / 1 passed / 2 failed |
+| S12d additional requested compatibility | CP-78 | reuse `bin-c519-cp64/` | 75 results across the full pool-dispatch, standing-dispatch, settlement-race and dispatcher-predicate classes; estimated 6 min, same 15 min cap |
 | S12e | CP-61, CP-67, CP-68, CP-69 | `bin-c519-cp61/` | 18 + 38 + 1 + 4 |
 | S12f | CP-70, CP-77, CP-71, CP-72, CP-73 | `bin-c519-cp70/` | 3 + 3 + 11 + 3 + 31 |
 | S12g | CP-74, CP-75 | `bin-c519-cp74/` | 12 + 9 |
@@ -2033,8 +2042,8 @@ pwsh -NoProfile -File scripts/build-slot.ps1 -Label c519-s12c -- dotnet run --pr
 Baselines use the same gated driver with the exact method filter and the committed
 SHA, are reported as `BASE-S12D-HANDOFF`/`BASE-S12D-BRIEF` lines with their TRX paths
 and failing result names, and are never counted as passes. Tool bootstrap is the only
-other gated build. The S12 floor adds **181 ordinary results** across CP-61..CP-77
-(**104 estimated minutes**, five isolated builds) to the landed 404/178; the landed
+other gated build. The S12 floor adds **256 ordinary results** across CP-61..CP-78
+(**110 estimated minutes**, five isolated builds) to the landed 404/178; the landed
 CP-25..CP-28 rows are not executed again. Verify inherited red only with the exact
 method at the recorded base. Every S12 Code report preserves unedited CHECKPOINT
 lines, runs `scripts/check-evidence-diff.ps1` over its task range, removes only its

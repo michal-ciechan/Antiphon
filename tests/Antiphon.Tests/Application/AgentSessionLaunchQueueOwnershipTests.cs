@@ -264,6 +264,15 @@ public class AgentSessionLaunchQueueOwnershipTests
                 }
             }
 
+            adapter.RegisterOnStart = harness.Runtime;
+            adapter.OnSubmitted = async body =>
+            {
+                await harness.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, body,
+                    sessionId: sessionId, timestamp: harness.Now);
+                await harness.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd,
+                    stopReason: "end_turn", sessionId: sessionId);
+            };
+
             return new OwnershipFixture
             {
                 Harness = harness,
