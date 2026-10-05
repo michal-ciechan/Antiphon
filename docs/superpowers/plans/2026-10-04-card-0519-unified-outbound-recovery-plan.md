@@ -891,6 +891,11 @@ Code mutant runs. Their ordinary methods are the four new CP-3 results.
 
 Supplemental inventory: guards=6, mapped=6, pending=6. Windows handle behavior
 is implemented but S3's portable Linux receipt does not claim Windows execution.
+Budget the six serial controls at three minutes per isolated build/method phase:
+6 x (baseline 3 + red 3 + restore/green 3) = 54 additional minutes, 18 additional
+phase runs. The combined post-land control budget is 106 controls / 318 phase
+runs / 780 execution minutes, plus the existing 25-minute Mutation setup/report
+allowance and slot waits. No repetition is required after each restored green.
 
 ### Out of scope
 
@@ -1020,7 +1025,8 @@ minutes**, **354 ordinary minutes total**. This is a source-provenance rerun, no
 discretionary broadening. Record both receipts at their real SHAs. Changed/failing
 rows may add further measured repair runs; never quietly count them as zero.
 
-Mutation method filters are exactly the 100 class/method mappings in the PC table:
+The original Mutation method filters are the 100 class/method mappings in the PC table;
+the six CARD-1059 controls above add their exact method-scoped filters and 54-minute budget:
 
 | PC filters | Controls | Per-control baseline/build + red/build + restore/build/green | Estimated minutes |
 |---|---:|---|---:|
