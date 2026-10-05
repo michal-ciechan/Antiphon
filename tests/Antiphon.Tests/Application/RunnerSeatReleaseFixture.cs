@@ -522,9 +522,13 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
                 // before admitting input, including after either transport restart.
                 connection.DispatchEligible.ShouldBeFalse();
                 var inventory = await Client.ListAsync(default);
-                var seat = inventory.ShouldHaveSingleItem();
-                seat.SessionId.ShouldBe(SessionId);
-                seat.AcceptedStartedAt.ShouldBe(_generation);
+                if (Child.Kills == 0)
+                {
+                    var seat = inventory.ShouldHaveSingleItem();
+                    seat.SessionId.ShouldBe(SessionId);
+                    seat.AcceptedStartedAt.ShouldBe(_generation);
+                }
+                else inventory.ShouldBeEmpty("confirmed release remains absent after server restart");
                 _phoneHost.Directory.SnapshotLive().ShouldBeSameAs(connection);
                 _phoneHost.Directory.MarkRecovered(connection);
                 connection.DispatchEligible.ShouldBeTrue();

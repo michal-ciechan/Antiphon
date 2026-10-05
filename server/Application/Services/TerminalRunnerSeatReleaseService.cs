@@ -34,11 +34,187 @@ public sealed class TerminalRunnerSeatReleaseService(
 {
     internal Func<string, CancellationToken, Task>? BoundaryAsync { get; set; }
 
-    // S3e test-first surface; discovery implementation follows the committed assertion-red run.
-    public Task<RunnerSeatDiscoveryResult> DiscoverAsync(int candidateBudget, int pageSize,
-        RunnerSeatDiscoveryCursor? continuation, CancellationToken ct) =>
-        Task.FromResult(new RunnerSeatDiscoveryResult([], 0, 0,
-            continuation ?? new(null, new Dictionary<string, Guid>())));
+    /// <summary>Bounded candidate processing over fresh complete inventory RPCs. The caller
+    /// retains the returned cursor between ticks; losing it only restarts enumeration, never
+    /// the durable release identity. No scheduler or automatic production caller is wired yet.</summary>
+    public async Task<RunnerSeatDiscoveryResult> DiscoverAsync(int candidateBudget, int pageSize,
+        RunnerSeatDiscoveryCursor? continuation, CancellationToken ct)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(candidateBudget);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pageSize);
+        var positions = continuation?.AfterSession.ToDictionary(p => p.Key, p => p.Value, StringComparer.Ordinal)
+            ?? new Dictionary<string, Guid>(StringComparer.Ordinal);
+        var next = continuation?.NextRunnerId;
+        var results = new List<RunnerSeatDiscoveryItem>();
+        var calls = 0;
+        var released = 0;
+        if (!options.Value.AutomaticEnabled || db.Database.CurrentTransaction is not null
+            || System.Transactions.Transaction.Current is not null)
+            return new(results, released, calls, new(next, positions));
+        var runnerIds = runners.KnownRunnerIds.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        // Discard positions for removed peers, keeping cursor space bounded by the catalogue.
+        foreach (var removed in positions.Keys.Except(runnerIds).ToArray()) positions.Remove(removed);
+        if (runnerIds.Length == 0) return new(results, released, calls, new(null, positions));
+        var start = Math.Max(0, Array.IndexOf(runnerIds, next));
+        var pages = new List<(string Runner, Queue<SessionRunnerSessionDto> Seats)>();
+        // At most budget inventory calls, including failed/empty runners. Each RPC retains its
+        // existing transport deadline. Candidate pages are in memory, not partial wire Lists.
+        for (var offset = 0; offset < Math.Min(candidateBudget, runnerIds.Length); offset++)
+        {
+            var index = (start + offset) % runnerIds.Length;
+            var runnerId = runnerIds[index];
+            next = runnerIds[(index + 1) % runnerIds.Length];
+            calls++;
+            try
+            {
+                if (await runners.GetInventoryAsync(runnerId, ct) is not RunnerInventory.Available inventory) continue;
+                var seats = inventory.Sessions.OrderBy(s => s.SessionId).ToArray();
+                var after = positions.GetValueOrDefault(runnerId);
+                // UUID ordering is only traversal order; no age or identity authority is inferred.
+                pages.Add((runnerId, new Queue<SessionRunnerSessionDto>(
+                    seats.Where(s => s.SessionId.CompareTo(after) > 0)
+                        .Concat(seats.Where(s => s.SessionId.CompareTo(after) <= 0)))));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            { /* One unavailable runner cannot hide another runner's seats. */ }
+        }
+        while (pages.Any(p => p.Seats.Count > 0))
+        {
+            foreach (var page in pages)
+            {
+                for (var count = 0; count < pageSize && page.Seats.TryDequeue(out var seat); count++)
+                {
+                    // Count attempted candidates too, including a poison record. Advance before
+                    // processing so a recurring exception cannot pin the next pass to this seat.
+                    if (results.Count >= candidateBudget)
+                        return new(results, released, calls, new(next, positions));
+                    positions[page.Runner] = seat.SessionId;
+                    next = runnerIds[(Array.IndexOf(runnerIds, page.Runner) + 1) % runnerIds.Length];
+                    try
+                    {
+                        if (BoundaryAsync is not null) await BoundaryAsync("Discovery:" + seat.SessionId.ToString("D"), ct);
+                        var item = await DiscoverCandidateAsync(page.Runner, seat, ct);
+                        results.Add(item);
+                        if (item.Disposition == "Confirmed") released++;
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+                    {
+                        results.Add(new(page.Runner, seat.SessionId, null, "Unknown"));
+                    }
+                }
+            }
+        }
+        return new(results, released, calls, new(next, positions));
+    }
+
+    private async Task<RunnerSeatDiscoveryItem> DiscoverCandidateAsync(
+        string runnerId, SessionRunnerSessionDto seat, CancellationToken ct)
+    {
+        if (seat.SessionId == Guid.Empty || seat.AcceptedStartedAt is not DateTime generation
+            || generation == default || seat.Pending is not null || seat.VerificationBinding is not null)
+            return new(runnerId, seat.SessionId, null, "IdentityUnknown");
+        var descriptor = await runners.DescribeAsync(runnerId, ct);
+        if (descriptor?.Capabilities?.RunnerStoreId is not Guid storeId
+            || await CapturedPeerHoldAsync(runnerId, storeId, ct) is not null)
+            return new(runnerId, seat.SessionId, null, "Unknown");
+        var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == seat.SessionId, ct);
+        // Local conversations remain with their existing owner, including completed Blocked.
+        if (session is not null && runnerId == PhoneHomeProtocol.LocalRunnerId)
+            return new(runnerId, seat.SessionId, null, "Owned");
+        if (session is not null && (session.RunnerId != runnerId || session.RunnerStoreId != storeId
+            || session.StartedAt != generation)) return new(runnerId, seat.SessionId, null, "IdentityUnknown");
+        var task = await db.AgentTasks.AsNoTracking().Where(t => t.AgentSessionId == seat.SessionId)
+            .OrderByDescending(t => t.CreatedAt).ThenByDescending(t => t.Attempt).FirstOrDefaultAsync(ct);
+        // Use the same captured-mode producer as the evidence seam. Never construct a native
+        // floor from inventory, server ingestion or an already-idle transcript.
+        var evidence = await ObserveCapturedCandidateAsync(runnerId, storeId, seat.SessionId, generation, ct);
+        if (evidence.Request is null) return new(runnerId, seat.SessionId, null, evidence.Hold?.ToString() ?? "Unknown");
+        Guid? releaseId;
+        if (task is not null)
+        {
+            if (task.RunnerId != runnerId) return new(runnerId, seat.SessionId, null, "Owned");
+            releaseId = await RegisterAndReleaseAsync(task.Id, evidence.Request, ct);
+        }
+        else if (session is null)
+        {
+            releaseId = await RegisterRowlessAsync(runnerId, seat.SessionId, evidence.Request, ct);
+            await AdvanceAsync(releaseId.Value, evidence.Request, ct);
+        }
+        else return new(runnerId, seat.SessionId, null, "Owned");
+        if (releaseId is null) return new(runnerId, seat.SessionId, null, "Owned");
+        var release = await db.RunnerSeatReleases.AsNoTracking().SingleAsync(r => r.Id == releaseId, ct);
+        return new(runnerId, seat.SessionId, releaseId, release.State == RunnerSeatReleaseState.Confirmed
+            ? "Confirmed" : release.OutcomeCode ?? release.ReasonCode);
+    }
+
+    private async Task<Guid> RegisterRowlessAsync(string runnerId, Guid sessionId,
+        TerminalSeatObservationRequest request, CancellationToken ct)
+    {
+        var now = clock.GetUtcNow().UtcDateTime;
+        var id = Guid.NewGuid();
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "RunnerSeatReleases" ("Id", "RunnerId", "RunnerStoreId", "SessionId",
+                "AcceptedStartedAt", "State", "Revision", "ReasonCode", "CreatedAt", "UpdatedAt")
+            VALUES ({id}, {runnerId}, {request.ExpectedRunnerStoreId}, {sessionId},
+                {request.ExpectedAcceptedStartedAt}, {0}, {0L}, {"Observing"}, {now}, {now})
+            ON CONFLICT ("RunnerId", "RunnerStoreId", "SessionId", "AcceptedStartedAt") DO NOTHING
+            """, ct);
+        var release = await db.RunnerSeatReleases.AsNoTracking().SingleAsync(r => r.RunnerId == runnerId
+            && r.RunnerStoreId == request.ExpectedRunnerStoreId && r.SessionId == sessionId
+            && r.AcceptedStartedAt == request.ExpectedAcceptedStartedAt, ct);
+        if (release.State != RunnerSeatReleaseState.Observing || release.TaskId is not null) return release.Id;
+        var gate = queue.GetLock(sessionId);
+        if (!await gate.WaitAsync(0, ct)) return release.Id;
+        try
+        {
+            if (await RowlessHoldAsync(release, ct) is { } ownerHold)
+            {
+                await HoldAsync(release, ownerHold, ct);
+                return release.Id;
+            }
+            var evidence = await ObserveCapturedCandidateAsync(runnerId, release.RunnerStoreId,
+                sessionId, release.AcceptedStartedAt, ct);
+            if (evidence.Hold is { } hold)
+            {
+                await HoldAsync(release, hold, ct);
+                return release.Id;
+            }
+            if (BoundaryAsync is not null) await BoundaryAsync("BeforeReservation", ct);
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await LockIdentityAsync(release, ct);
+            if (await RowlessHoldAsync(release, ct) is null)
+            {
+                var observed = evidence.Observation!;
+                await db.RunnerSeatReleases.Where(r => r.Id == release.Id && r.Revision == release.Revision
+                    && r.State == RunnerSeatReleaseState.Observing && r.ActionId == null)
+                    .ExecuteUpdateAsync(u => u.SetProperty(r => r.State, RunnerSeatReleaseState.Reserved)
+                        .SetProperty(r => r.Revision, r => r.Revision + 1).SetProperty(r => r.ActionId, Guid.NewGuid())
+                        .SetProperty(r => r.ReasonCode, "Reserved:Rowless")
+                        .SetProperty(r => r.ObservationToken, observed.Token)
+                        .SetProperty(r => r.BindingIdentity, observed.Transcript.BindingIdentity)
+                        .SetProperty(r => r.FileRevision, observed.Transcript.FileRevision)
+                        .SetProperty(r => r.TranscriptRevision, observed.Transcript.TranscriptRevision)
+                        .SetProperty(r => r.FirstStableObservedAt, now).SetProperty(r => r.LastObservedAt, now)
+                        .SetProperty(r => r.UpdatedAt, now), ct);
+            }
+            await tx.CommitAsync(ct);
+        }
+        finally { gate.Release(); }
+        return release.Id;
+    }
+
+    private async Task<TerminalRunnerSeatDecision?> RowlessHoldAsync(RunnerSeatRelease release, CancellationToken ct)
+    {
+        // Any newly materialized row or owner defeats rowless authority. Never manufacture a
+        // server session just to pass through the ordinary stop API.
+        var sessionKey = release.SessionId.ToString("D");
+        if (await db.AgentSessions.AnyAsync(s => s.Id == release.SessionId, ct)
+            || await db.Agents.AnyAsync(a => a.PersistentSessionId == sessionKey, ct)
+            || await db.AgentTasks.AnyAsync(t => t.AgentSessionId == release.SessionId, ct))
+            return TerminalRunnerSeatDecision.Owned;
+        if (await HasPendingDeliveryAsync(release.SessionId, ct)) return TerminalRunnerSeatDecision.PendingDelivery;
+        return null;
+    }
 
     /// <summary>Acquire runner-owned evidence for an inventory identity, including a seat with
     /// no server row. This does not reserve debt or grant ownership authority to release it.</summary>
@@ -319,7 +495,7 @@ public sealed class TerminalRunnerSeatReleaseService(
         try
         {
             if (runners.RemoteInventoryPending(release.RunnerId)
-                || runners.GetLiveStoreId(release.RunnerId) != release.RunnerStoreId) return false;
+                || (runners.GetLiveStoreId(release.RunnerId) is Guid liveStore && liveStore != release.RunnerStoreId)) return false;
             var descriptor = await runners.DescribeAsync(release.RunnerId, ct);
             return descriptor is { Available: true, DispatchEligible: true, Stale: false }
                 && descriptor.RunnerId == release.RunnerId
@@ -346,6 +522,7 @@ public sealed class TerminalRunnerSeatReleaseService(
 
     private async Task<TerminalRunnerSeatDecision?> RevalidateAsync(RunnerSeatRelease release, CancellationToken ct)
     {
+        if (release.TaskId is null) return await RowlessHoldAsync(release, ct);
         var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == release.TaskId, ct);
         if (policy.TerminalAttempt(task) is { } terminal) return terminal;
         if (task!.Attempt != release.Attempt || task.ConcurrencyToken != release.SettlementRevision
@@ -355,9 +532,9 @@ public sealed class TerminalRunnerSeatReleaseService(
         if (await SettlementEventAsync(task, ct) != release.SettlementEventId)
             return TerminalRunnerSeatDecision.StaleAttempt;
         var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == release.SessionId, ct);
-        if (session is null || session.RunnerId != release.RunnerId || session.RunnerStoreId != release.RunnerStoreId
-            || session.StartedAt != release.AcceptedStartedAt) return TerminalRunnerSeatDecision.IdentityUnknown;
-        if (session.StandingAgentId is not null || session.CardId is not null)
+        if (session is not null && (session.RunnerId != release.RunnerId || session.RunnerStoreId != release.RunnerStoreId
+            || session.StartedAt != release.AcceptedStartedAt)) return TerminalRunnerSeatDecision.IdentityUnknown;
+        if (session?.StandingAgentId is not null || session?.CardId is not null)
             return TerminalRunnerSeatDecision.StandingOwner;
         var sessionKey = release.SessionId.ToString("D");
         var agents = await db.Agents.AsNoTracking().Where(a => a.Id == task.AgentId
@@ -373,6 +550,7 @@ public sealed class TerminalRunnerSeatReleaseService(
         if (owners.Any(t => policy.TerminalAttempt(t) is not null)) return TerminalRunnerSeatDecision.Owned;
         if (policy.SettlementAge(task, clock.GetUtcNow().UtcDateTime) is { } age) return age;
         if (await HasPendingDeliveryAsync(release.SessionId, ct)) return TerminalRunnerSeatDecision.PendingDelivery;
+        if (session is null) return null; // Fresh runner proof, not a missing server projection, supplies idle authority.
         var state = await states.ReadAsync(release.SessionId, ct);
         if (state.Readiness != SessionStateReadiness.Ready || state.AcceptedGeneration != session.StartedAt)
             return TerminalRunnerSeatDecision.Unknown;
@@ -435,9 +613,10 @@ public sealed class TerminalRunnerSeatReleaseService(
         if (policy.TerminalAttempt(task) is { } refusal) return new(null, refusal);
         if (task!.AgentSessionId is not Guid sessionId) return new(null, TerminalRunnerSeatDecision.IdentityUnknown);
         var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
+        var runnerId = session?.RunnerId ?? (observation.UseCapturedDeliveryEvidence ? task.RunnerId : null);
         if (observation.ExpectedRunnerStoreId == Guid.Empty || observation.ExpectedAcceptedStartedAt == default
-            || session?.RunnerId is not string runnerId || session.RunnerStoreId != observation.ExpectedRunnerStoreId
-            || session.StartedAt != observation.ExpectedAcceptedStartedAt)
+            || runnerId is null || (session is not null && (session.RunnerStoreId != observation.ExpectedRunnerStoreId
+            || session.StartedAt != observation.ExpectedAcceptedStartedAt)))
             return new(null, TerminalRunnerSeatDecision.IdentityUnknown);
         var now = clock.GetUtcNow().UtcDateTime;
         var release = await db.RunnerSeatReleases.AsNoTracking().SingleOrDefaultAsync(r =>
@@ -476,7 +655,7 @@ public sealed class TerminalRunnerSeatReleaseService(
         {
             var sessionKey = sessionId.ToString("D");
             var agents = await db.Agents.AsNoTracking().Where(a => a.Id == task.AgentId
-                || a.Id == session.StandingAgentId || a.PersistentSessionId == sessionKey).ToListAsync(ct);
+                || a.Id == (session == null ? null : session.StandingAgentId) || a.PersistentSessionId == sessionKey).ToListAsync(ct);
             if (policy.Custody(task, null) is { } taskCustody)
                 return await HoldAsync(release, taskCustody, ct);
             foreach (var agent in agents)
@@ -494,11 +673,14 @@ public sealed class TerminalRunnerSeatReleaseService(
             if (await HasPendingDeliveryAsync(sessionId, ct))
                 return await HoldAsync(release, TerminalRunnerSeatDecision.PendingDelivery, ct);
 
-            var state = await states.ReadAsync(sessionId, ct);
-            if (state.Readiness != SessionStateReadiness.Ready || state.AcceptedGeneration != session.StartedAt)
-                return await HoldAsync(release, TerminalRunnerSeatDecision.Unknown, ct);
-            if (state.Working)
-                return await HoldAsync(release, TerminalRunnerSeatDecision.Working, ct);
+            if (session is not null)
+            {
+                var state = await states.ReadAsync(sessionId, ct);
+                if (state.Readiness != SessionStateReadiness.Ready || state.AcceptedGeneration != session.StartedAt)
+                    return await HoldAsync(release, TerminalRunnerSeatDecision.Unknown, ct);
+                if (state.Working)
+                    return await HoldAsync(release, TerminalRunnerSeatDecision.Working, ct);
+            }
 
             TerminalSeatObservation observed;
             try

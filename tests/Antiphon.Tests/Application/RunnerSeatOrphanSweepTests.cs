@@ -25,14 +25,21 @@ public class RunnerSeatOrphanSweepTests
         var seen = new HashSet<Guid>();
         for (var tick = 0; tick < 3; tick++)
         {
+            var observations = f.Live!.Observations.Count;
             var result = await f.DiscoverAsync(cursor: cursor, boundary: (cut, _) =>
                 cut == "Discovery:" + ids[0].ToString("D") ? throw new IOException("poisoned candidate") : Task.CompletedTask);
             result.Candidates.Count.ShouldBe(3, "G-52: supplied budget must be used and never exceeded");
             result.InventoryCalls.ShouldBe(1, "paging candidates must not repeat the full List RPC");
+            (f.Live.Observations.Count - observations).ShouldBeLessThanOrEqualTo(6,
+                "candidate observations are bounded along with ledger processing");
+            await using var db = f.Db();
+            (await db.RunnerSeatReleases.CountAsync()).ShouldBeLessThanOrEqualTo((tick + 1) * 3);
             seen.UnionWith(result.Candidates.Select(c => c.SessionId));
             cursor = result.Continuation;
         }
         seen.Count.ShouldBe(8, "PC-52: the saved continuation advances past a poisoned first candidate");
+        await using (var db = f.Db())
+            (await db.RunnerSeatReleases.CountAsync()).ShouldBe(7, "all non-poison candidates reach durable discovery");
         f.Live!.ConditionalCommands.ShouldBe(0);
     }
 
@@ -93,10 +100,13 @@ public class RunnerSeatOrphanSweepTests
             await using var f = await RunnerSeatReleaseFixture.CreateAsync(provider: "Codex", phoneHome: phoneHome, rowless: true);
             var live = f.Live!;
             await live.SubmitAsync("deduplicated rowless generation");
-            await Task.WhenAll(f.DiscoverAsync(), f.DiscoverAsync());
+            var concurrent = await Task.WhenAll(f.DiscoverAsync(), f.DiscoverAsync());
             Guid id;
             await using (var db = f.Db())
                 id = (await db.RunnerSeatReleases.ToListAsync()).ShouldHaveSingleItem("PC-56: concurrent tuple upsert").Id;
+            foreach (var result in concurrent)
+                result.Candidates.ShouldHaveSingleItem().ReleaseId.ShouldBe(id,
+                    "PC-56: a duplicate insert failure must not masquerade as successful deduplication");
             await f.DiscoverAsync();
             await f.RestartAsync();
             live.Clock.Advance(TimeSpan.FromSeconds(120));
