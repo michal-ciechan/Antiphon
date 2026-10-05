@@ -926,15 +926,15 @@ all drivers finish. A missing planned method or vector is incomplete, not a skip
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-3 | all | `tests/Antiphon.Tests -> bin-c1029-active-wire/` | active-exact-transport | `/*/*/RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound` | V-13,R-2 | 1 result; all descriptor/transport cases; 0 failed/skipped | 1 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-3 | all | `tests/Antiphon.Tests -> bin-c1029-active-wire/` | active-exact-transport | `/*/*/RunnerCodexCliEvidenceTests/C959_Exact_probe_transport_is_bound*` | V-13,R-2 | 1 result; all descriptor/transport cases; 0 failed/skipped | 1 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-4 | all | `tests/Antiphon.Tests -> bin-c1029-active-existing/` | active-fixture-consumers | `/*/*/CodexCliObservationTests/*` | V-14,V-19,V-21..26 existing,R-3 | 8 original methods, all internal cases; 0 failed/skipped | 8 | 9 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-5 | all | `tests/Antiphon.Tests -> bin-c1029-active-kinds/` | active-kind-receipts | `/*/*/CodexCliObservationGapTests/C1029_Per_kind_receipts*` | V-21 | 1 result; 8 kind vectors plus Grok handoff fault subcases; 0 failed/skipped | 1 | 6 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-6 | all | `tests/Antiphon.Tests -> bin-c1029-active-enqueue/` | active-enqueue-retry | `/*/*/CodexCliObservationGapTests/C1029_Enqueue_fault_and_retry_keep_identity*` | V-21,V-22 | 1 result; local/remote before/after save; real same-task Retry receipts; 0 failed/skipped | 1 | 6 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-7 | all | `tests/Antiphon.Tests -> bin-c1029-active-negative/` | active-receipt-floors | `/*/*/CodexCliObservationGapTests/(C1029_Old_generation_does_not_confirm*)\|(C1029_Unobservable_screen_retains_spill*)\|(C1029_Unobservable_timestamp_floor_is_original*)` | V-21,V-22 | 3 results; all negative then actual-positive variants; 0 failed/skipped | 3 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-8 | all | `tests/Antiphon.Tests -> bin-c1029-active-recovery/` | active-durable-receipts | `/*/*/CodexCliObservationGapTests/(C1029_Durable_spill_survives_recreated_graph*)\|(C1029_Post_input_crash_late_confirms_once*)` | V-22 | 2 results; eligible/busy, original Id/E/path, one actual submit and settled row; 0 failed/skipped | 2 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-15 | all | `tests/Antiphon.Tests -> bin-c1029-active-auth/` | active-independent-refusals | `/*/Antiphon.Tests.Application/(CodexPhoneHomeCreateTests*)\|(ModelAvailabilityCreateTests*)/(Signed_out_remote_create_refuses_with_codex_problem_details*)\|(Present_unknown_and_unavailable_probe_admit*)\|(Create_without_IgnoreModelDisabled_is_still_409_while_held*)` | R-1 | exactly the 3 named methods; 0 failed/skipped | 3 | 4 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-16 | all | `tests/Antiphon.Tests -> bin-c1029-active-warm/` | active-warm-claim | `/*/*/PhoneHomeTaskDispatchProjectionTests/Signed_out_codex_runner_still_claims_and_reuses_a_warm_session` | V-27,R-6 | 1 result; claim/reuse/queue only; 0 failed/skipped | 1 | 3 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-17 | all | `tests/Antiphon.SessionRunner.Tests -> bin-c1029-active-backstop/` | active-runner-auth | `/*/*/CodexProviderAuthRoutingTests/Composed_router_measures_codex_in_its_own_home_and_gates_the_launch` | R-7 | 1 result; 0 failed/skipped | 1 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-16 | all | `tests/Antiphon.Tests -> bin-c1029-active-warm/` | active-warm-claim | `/*/*/PhoneHomeTaskDispatchProjectionTests/Signed_out_codex_runner_still_claims_and_reuses_a_warm_session*` | V-27,R-6 | 1 result; claim/reuse/queue only; 0 failed/skipped | 1 | 3 | true | `C804_ORPHAN_SWEEP_ROOT=c1029-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-17 | all | `tests/Antiphon.SessionRunner.Tests -> bin-c1029-active-backstop/` | active-runner-auth | `/*/*/CodexProviderAuthRoutingTests/Composed_router_measures_codex_in_its_own_home_and_gates_the_launch*` | R-7 | 1 result; 0 failed/skipped | 1 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
 ### Cost
 
@@ -1061,3 +1061,23 @@ The recipient and original attempt survive graph recreation, and LateConfirmed
 plus exactly one submission are still required. No timeout, transport ceiling,
 authentication rule or production source is changed. The stored Code report
 records exact outcomes and source-qualified CHECKPOINT lines after execution.
+
+First port diagnostic at `529aa9f42542634673e843b1a3d7e61baec397ca`:
+CP-3 1/1, CP-4 8/8, CP-6 1/1 and CP-7 3/3 passed. CP-5 was 0/1:
+both inline follow-ups late-confirmed because this scripted peer has no live
+transcript stream. All 16 task-brief/Grok recovery vectors completed successfully.
+After CP-7 the run was stopped and joined before source edits; CP-8's just-started
+build was stopped, and CP-8/15/16/17 tests were not run at that source.
+
+The repaired fixture observes a latch set only by actual terminal submission,
+then performs a real framed transcript pull during the original confirmation
+window, outside the peer's Input callback. It awaits both input and ingestion;
+no synthetic positive prompt, longer deadline or broadened verdict assertion is
+used. The inline assertion remains exactly Delivered. CP-8 uses the same live
+ingestion arrangement to reach the main verdict save, then advances its existing
+clock by 37 seconds past the unchanged 36-second interrupted-attempt age before
+the second failing save. The two failures and uncommitted verdict stay exact.
+Grok idempotency now has a direct one-row assertion before identity reads after
+each of two genuine eligibility/recovery opportunities. The remaining singleton
+active filters use the same trailing-method wildcard convention as CP-5..8/15;
+their exact one-method TRX rosters and count floors are unchanged.
