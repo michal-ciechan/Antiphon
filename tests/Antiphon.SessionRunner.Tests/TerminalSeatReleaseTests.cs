@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.PtyHost.Protocol;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -100,10 +101,23 @@ public class TerminalSeatReleaseTests
         var before = await world.ObserveAsync();
         before.Status.ShouldBe(TerminalSeatQualificationStatus.Qualified);
         before.Token.ShouldNotBeNullOrWhiteSpace();
+        (await world.AuthorizeAsync(before.Token)).Status.ShouldBe(TerminalSeatQualificationStatus.Qualified);
+        (await world.AuthorizeAsync("not-an-issued-token")).Status.ShouldBe(TerminalSeatQualificationStatus.StaleObservation);
+        var proof = world.Runtime.TerminalSeatProofFor(world.Tail.SessionId)!;
         await world.RestartAsync();
+        (await world.AuthorizeAsync(before.Token)).Status.ShouldBe(TerminalSeatQualificationStatus.StaleObservation,
+            "a prior-process token cannot authorize the restarted runtime");
         var restarted = await world.ObserveAsync();
         restarted.Status.ShouldBe(TerminalSeatQualificationStatus.Waiting, "restart requires a new runner window");
         restarted.Token.ShouldBeNull();
+        var newEpoch = world.Runtime.TerminalSeatProofFor(world.Tail.SessionId)!.RuntimeEpoch;
+        TerminalSeatQualification.Authorize(proof, proof.RuntimeEpoch, proof.Session, proof.Request,
+            proof.Transcript, proof.InputRevision, proof.OutputRevision, world.Clock)
+            .ShouldBe(TerminalSeatQualificationStatus.Qualified, "otherwise-valid control for the epoch guard");
+        TerminalSeatQualification.Authorize(proof, newEpoch, proof.Session, proof.Request,
+            proof.Transcript, proof.InputRevision, proof.OutputRevision, world.Clock)
+            .ShouldBe(TerminalSeatQualificationStatus.StaleObservation,
+                "old-epoch proof must fail before a token-cache miss or different object can mask the guard");
         world.Clock.Advance(TimeSpan.FromSeconds(120));
         var qualified = await world.ObserveAsync();
         qualified.Status.ShouldBe(TerminalSeatQualificationStatus.Qualified);
@@ -259,6 +273,8 @@ public class TerminalSeatReleaseTests
         internal const string TaskPrompt = "[antiphon-task:c667-s1b] Current generation delivery, complete distinctive task prompt.";
         private readonly string _root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "c667-seat-" + Guid.NewGuid().ToString("N"));
         private readonly SessionRunnerSettings _settings;
+        private readonly string _manifest;
+        private readonly string _sidecar;
         private readonly DateTime _generation = new(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc);
         public TailWorld Tail { get; }
         public SeatChild Child { get; } = new();
@@ -271,6 +287,18 @@ public class TerminalSeatReleaseTests
         {
             Tail = new TailWorld(provider);
             _settings = new SessionRunnerSettings { SessionLogPath = _root };
+            _manifest = PtyHostManifest.PathFor(_settings.PtyHostManifestDir, Tail.SessionId);
+            _sidecar = TranscriptSidecar.PathFor(_root, Tail.SessionId);
+            new PtyHostManifest
+            {
+                SessionId = Tail.SessionId, PipeName = "fixture-only-no-process", HostPid = 1,
+                HostStartTimeUtc = _generation, CreatedAtUtc = _generation, AcceptedStartedAt = _generation
+            }.SaveAtomic(_manifest);
+            new TranscriptSidecar
+            {
+                SessionId = Tail.SessionId, ChildStartUtc = _generation, TranscriptPath = Tail.Path,
+                Cwd = System.IO.Path.GetDirectoryName(Tail.Path), UpdatedAtUtc = _generation
+            }.SaveAtomic(_sidecar);
             Runtime = CreateRuntime();
         }
 
@@ -303,6 +331,9 @@ public class TerminalSeatReleaseTests
         public Task<TerminalSeatObservation> ObserveAsync() =>
             Runtime.ObserveTerminalSeatAsync(Tail.SessionId, Request, CancellationToken.None);
 
+        public Task<TerminalSeatObservation> AuthorizeAsync(string token) =>
+            Runtime.AuthorizeTerminalSeatTokenAsync(Tail.SessionId, Request, token, CancellationToken.None);
+
         public async Task RestartAsync()
         {
             // Detach the real tailer before runtime disposal; the same native transcript stays
@@ -319,6 +350,8 @@ public class TerminalSeatReleaseTests
             Child.Kills.ShouldBe(0, "S1b has no signal route");
             Runtime.LiveSessionCount.ShouldBe(1);
             Runtime.List().ShouldContain(s => s.SessionId == Tail.SessionId);
+            File.Exists(_manifest).ShouldBeTrue("read-only qualification retains manifest custody");
+            File.Exists(_sidecar).ShouldBeTrue("read-only qualification retains transcript binding");
         }
 
         public async ValueTask DisposeAsync()
