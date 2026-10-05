@@ -29,13 +29,15 @@ for later initializers reading earlier names on the same statement.
 - R-1: existing `C849_Seed_refuses_invalid_donors_and_partial_payloads` plus the
   three exact C1066 methods above preserve the affected script contracts.
   Continuation task 7cc255f0 explicitly replaces the full class with this bounded
-  selection. These are the only tests directly calling the three changed helpers;
-  the existing donor case exercises their real tree validator's rejection and
-  donor-preservation boundaries. CP-2 names all four methods explicitly (12
-  argument-expanded results); CP-1 retains the original regression selection.
-  The overlap is intentional to execute both requested checkpoint rows, not an
-  additional repeat-proof loop. Unrelated deployment, archive, recycle, and cold
-  cache cases are outside these declaration-only changes.
+  selection. CP-1 covers the only three tests directly calling the changed
+  helpers (the V-1/V-2/V-3 methods above). CP-2's narrowest adjacent method list
+  consists only of `C849_Seed_refuses_invalid_donors_and_partial_payloads`: it
+  exercises the real tree validator called by the changed tree helper, including
+  rejection and donor-preservation boundaries. There are no other existing tests
+  directly calling the npm or warm helper. The combined roster is four methods,
+  12 distinct argument-expanded cases; CP-2 repeats only the existing donor guard.
+  Unrelated deployment, archive, recycle, and cold cache cases are outside these
+  declaration-only changes.
   `Nested_lane_never_uses_sudo_or_python` is excluded as inherited: one exact
   method failed at base `0de12dac930ad52a235604c566ee643e71b21daa`, documented in
   `.antiphon/task-d73d91aa.md`. Backlog CARD-1067 owns its c1008 sudo allowlist
@@ -91,11 +93,22 @@ the tool validator and `scripts/validate-checkpoint-receipt.ps1`; never edit a
 receipt or relabel an earlier SHA. Store later facts and unedited CHECKPOINT
 lines in ignored `.antiphon/task-7cc255f0.md` to keep the final tested HEAD stable.
 
+Repair round 1: run `20261005-114955-75a2` at
+`b38475ae347ed20ecdd5df1d03a86fc2788804e9` passed CP-1 (12/12) and CP-4, but
+CP-2's four-operand exact-method OR expression selected zero tests (exit 3).
+Its original receipts remain unchanged. CP-2 now uses the exact single existing
+donor guard; CP-1 already supplies the three direct-helper methods. This removes
+redundant repetition and avoids relying on the unsupported expression. The
+one-result floor follows that exact roster; no test assertion or timeout changes.
+Rerun all three rows after committing this manifest repair to qualify one final
+SHA. This is the third normal CP-1 proof including the predecessor's fixed run;
+no further unchanged proof repetition is authorized or needed after green.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | all | `tests/Antiphon.Tests -> bin-c1066/` | nounset-regressions | `/*/*/RemoteScriptContractTests/(C1066*)\|(C849_Seed_refuses_invalid_donors_and_partial_payloads)` | V-1, V-2, V-3, R-1 | 12 executed, 0 failed/skipped after S2 | 12 | 3 | true |
-| CP-2 | all | CP-1 | remote-contracts | `/*/*/RemoteScriptContractTests/(C1066_Fixture_tree_fault_reaches_validator_under_nounset)\|(C1066_Fixture_npm_install_uses_argument_log_under_nounset)\|(C1066_Fixture_warm_probe_uses_argument_log_under_nounset)\|(C849_Seed_refuses_invalid_donors_and_partial_payloads)` | R-1 | all four named methods, 12 executed, 0 failed/skipped | 12 | 3 | true |
+| CP-2 | all | CP-1 | remote-contracts | `/*/*/RemoteScriptContractTests/C849_Seed_refuses_invalid_donors_and_partial_payloads` | R-1 | exact adjacent donor method, 1 executed, 0 failed/skipped | 1 | 3 | true |
 | CP-3 | all | CP-1 | unit-final | `/*/*/*/*[Category=Unit]` | R-2 | all Unit cases, 0 failed/skipped | 1 | 10 | true |
 | CP-4 | all | n/a | bash-syntax | `bash -n scripts/c590-remote.sh` | R-3 | exit 0 | n/a | 1 | true |
