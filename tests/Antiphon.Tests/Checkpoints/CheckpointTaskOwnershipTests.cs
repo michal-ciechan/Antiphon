@@ -272,66 +272,66 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
                 state.ExitCode.ShouldBe(ExitCodes.OwnerEnded);
                 File.ReadAllText(Path.Combine(run, "report.md")).ShouldContain("exit=7");
             });
-            }
         }
-    
-        [Test]
-        public async Task process_driver_cancellation_kills_each_local_tree()
+    }
+
+    [Test]
+    public async Task process_driver_cancellation_kills_each_local_tree()
+    {
+        var factory = new BlockingHandleFactory();
+        var driver = new ProcessDriver(factory);
+        using var first = new CancellationTokenSource();
+        using var second = new CancellationTokenSource();
+        var a = driver.RunAsync(new DriverRequest("fake", [], TempDir()), first.Token);
+        var b = driver.RunAsync(new DriverRequest("fake", [], TempDir()), second.Token);
+        factory.Handles.Count.ShouldBe(2);
+        first.Cancel();
+        await Should.ThrowAsync<OperationCanceledException>(() => a);
+        factory.Handles[0].Kills.ShouldBe(1);
+        factory.Handles[0].KilledTree.ShouldBeTrue();
+        factory.Handles[1].Kills.ShouldBe(0);
+        second.Cancel();
+        await Should.ThrowAsync<OperationCanceledException>(() => b);
+        factory.Handles[1].Kills.ShouldBe(1);
+        factory.Handles[1].KilledTree.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task one_row_deadline_does_not_kill_its_sibling_handle()
+    {
+        var factory = new BlockingHandleFactory();
+        var driver = new ProcessDriver(factory);
+        using var keepRunning = new CancellationTokenSource();
+        var timed = RowTimeout.RunWithDeadlineAsync(driver,
+            new DriverRequest("fake", [], TempDir()), TimeSpan.FromMilliseconds(50), CancellationToken.None);
+        var sibling = RowTimeout.RunWithDeadlineAsync(driver,
+            new DriverRequest("fake", [], TempDir()), TimeSpan.FromMinutes(1), keepRunning.Token);
+        try
         {
-            var factory = new BlockingHandleFactory();
-            var driver = new ProcessDriver(factory);
-            using var first = new CancellationTokenSource();
-            using var second = new CancellationTokenSource();
-            var a = driver.RunAsync(new DriverRequest("fake", [], TempDir()), first.Token);
-            var b = driver.RunAsync(new DriverRequest("fake", [], TempDir()), second.Token);
             factory.Handles.Count.ShouldBe(2);
-            first.Cancel();
-            await Should.ThrowAsync<OperationCanceledException>(() => a);
+            (await timed.WaitAsync(TimeSpan.FromSeconds(5))).TimedOut.ShouldBeTrue();
             factory.Handles[0].Kills.ShouldBe(1);
-            factory.Handles[0].KilledTree.ShouldBeTrue();
             factory.Handles[1].Kills.ShouldBe(0);
-            second.Cancel();
-            await Should.ThrowAsync<OperationCanceledException>(() => b);
-            factory.Handles[1].Kills.ShouldBe(1);
-            factory.Handles[1].KilledTree.ShouldBeTrue();
         }
-    
-        [Test]
-        public async Task one_row_deadline_does_not_kill_its_sibling_handle()
+        finally
         {
-            var factory = new BlockingHandleFactory();
-            var driver = new ProcessDriver(factory);
-            using var keepRunning = new CancellationTokenSource();
-            var timed = RowTimeout.RunWithDeadlineAsync(driver,
-                new DriverRequest("fake", [], TempDir()), TimeSpan.FromMilliseconds(50), CancellationToken.None);
-            var sibling = RowTimeout.RunWithDeadlineAsync(driver,
-                new DriverRequest("fake", [], TempDir()), TimeSpan.FromMinutes(1), keepRunning.Token);
-            try
-            {
-                factory.Handles.Count.ShouldBe(2);
-                (await timed.WaitAsync(TimeSpan.FromSeconds(5))).TimedOut.ShouldBeTrue();
-                factory.Handles[0].Kills.ShouldBe(1);
-                factory.Handles[1].Kills.ShouldBe(0);
-            }
-            finally
-            {
-                keepRunning.Cancel();
-                await Should.ThrowAsync<OperationCanceledException>(() => sibling.WaitAsync(TimeSpan.FromSeconds(5)));
-            }
+            keepRunning.Cancel();
+            await Should.ThrowAsync<OperationCanceledException>(() => sibling.WaitAsync(TimeSpan.FromSeconds(5)));
         }
-    
-        [Test]
-        public async Task owner_read_allows_slow_recovery_and_uses_twelve_second_deadline()
-        {
-            var handler = new OwnerHandler();
-            for (var i = 0; i < 4; i++) handler.Next.Enqueue("HTTP500");
-            handler.Next.Enqueue("Working");
-            using var owner = new TaskOwnerGuard(OwnerEnvironment(), handler, (_, _) => Task.CompletedTask,
-                deadline: (span, token) =>
-                {
-                    span.ShouldBe(TimeSpan.FromSeconds(12));
-                    return CancellationTokenSource.CreateLinkedTokenSource(token);
-                });
+    }
+
+    [Test]
+    public async Task owner_read_allows_slow_recovery_and_uses_twelve_second_deadline()
+    {
+        var handler = new OwnerHandler();
+        for (var i = 0; i < 4; i++) handler.Next.Enqueue("HTTP500");
+        handler.Next.Enqueue("Working");
+        using var owner = new TaskOwnerGuard(OwnerEnvironment(), handler, (_, _) => Task.CompletedTask,
+            deadline: (span, token) =>
+            {
+                span.ShouldBe(TimeSpan.FromSeconds(12));
+                return CancellationTokenSource.CreateLinkedTokenSource(token);
+            });
         (await owner.EnsureLiveAsync(CancellationToken.None)).ShouldBeTrue();
         handler.Calls.ShouldBe(5);
         owner.Reason.ShouldBeNull();
