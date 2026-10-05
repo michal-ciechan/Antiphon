@@ -159,7 +159,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         SyncCoreAsync(task, reportedTips, inspectMirror: false, ct);
 
     public Task<RemoteSettlementSyncResult> SyncForReviewEvidenceAsync(
-        AgentTask task, CancellationToken ct, IReadOnlyCollection<string>? reportedTips = null) =>
+        AgentTask task, IReadOnlyCollection<string>? reportedTips, CancellationToken ct) =>
         SyncCoreAsync(task, reportedTips, inspectMirror: true, ct);
 
     private async Task<RemoteSettlementSyncResult> SyncCoreAsync(

@@ -12,7 +12,7 @@ public interface IRemoteSettlementSync
 {
     /// <summary>Repair additionally requires a current mirror-cleanliness witness, even after a push.</summary>
     Task<RemoteSettlementSyncResult> SyncForReviewEvidenceAsync(
-        AgentTask task, CancellationToken ct, IReadOnlyCollection<string>? reportedTips = null) =>
+        AgentTask task, IReadOnlyCollection<string>? reportedTips, CancellationToken ct) =>
         SyncAsync(task, ct, reportedTips);
     /// <param name="reportedTips">Bind-refusal recovery only: the commits its correlated evidence
     /// names. When given, origin's tip must be one of them, checked before any checkout mutation.</param>
