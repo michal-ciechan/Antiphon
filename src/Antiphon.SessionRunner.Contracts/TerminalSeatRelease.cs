@@ -31,7 +31,8 @@ public sealed record TerminalSeatObservationRequest(
     Guid ExpectedRunnerStoreId,
     DateTime ExpectedAcceptedStartedAt,
     string PromptBindingIdentity,
-    long PromptFloorRevision);
+    long PromptFloorRevision,
+    bool UseCapturedDeliveryEvidence = false);
 
 public enum TerminalSeatQualificationStatus
 {
