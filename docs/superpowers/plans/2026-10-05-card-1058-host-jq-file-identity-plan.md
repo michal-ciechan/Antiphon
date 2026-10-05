@@ -365,3 +365,443 @@ from every host/image consumer.
 next: test-design
 handoff: Freeze CARD-1058's two host-helper slices, ten exact-method PCs and three narrow Linux checkpoints. Preserve non-pin existing jq; require installed pin before FD execution, remove the owned publish link, and validate/buffer proof. Prove deterministic swaps and real inode/link/hash observations; no wrapper re-stat, image change, whole Unit or Mutation execution.
 artifact: docs/superpowers/plans/2026-10-05-card-1058-host-jq-file-identity-plan.md
+
+## Verification design
+
+TestDesign task `583b6151-4164-4b90-a854-47b0b551c932`, inspected at
+`0de12dac930ad52a235604c566ee643e71b21daa` on 2026-10-05.
+
+**Disposition: return to Plan; the ten-PC proposal is not frozen for Code.**
+The two implementation slices, ten method names and three narrow Linux ordinary
+selections can be retained. The proposed ten mutations cannot establish the
+required independent guard coverage. PC-1 deletes several admission checks,
+PC-3 deletes both identity comparisons, and PC-10 deletes the final admission
+block. Passing those controls would not establish that each independently
+bypassable guard has an effective assertion. This appendix does not change
+D-1..D-8 or authorize implementation, builds, live operations or Mutation.
+
+The repair is technical, not a product-policy choice: Plan must split the
+composite controls, specify the observation order needed to isolate them, and
+revise the ten-control ceiling and cost. Do not delete a guard or weaken D-1,
+D-2 or D-5 to fit ten. The audit below deliberately does **not** issue the
+`guards=N, mapped=N, missing=0, duplicate PC maps=0; all PCs executable`
+certificate. A return-to-Plan finding is not a Code handoff.
+
+### Inspection
+
+Bodies read, not inferred from method names:
+
+- `scripts/server2-host-jq.sh`, entire 145-line helper: `qualify`, `emit`,
+  `refuse_path`, initial/post-lock/final qualification, publication and traps
+  | link policy -> V-1/R-1; staging -> V-2/R-2; opened identity, hash, pin and
+  execution -> V-3..V-9/R-3..R-9; buffered admission -> V-10/R-10.
+- `tests/Antiphon.Tests/Scripts/HostJqPrerequisiteScriptTests.cs`, all test
+  bodies and both fixtures. In particular, the eleven existing methods selected
+  by CP-1/CP-3, and all of `HostJqFixture`'s constructor, `JqScript`, `Existing`,
+  `Hash`, `Inode`, `WriteTool`, `InitializeRepo`, `Wrapper`, receipt assertions,
+  `Start`, `Run`, `Collect`, marker waits and `Dispose`
+  | fixture limitations and exact methods below; unchanged rollout/preflight,
+  transport and source-custody methods excluded from ordinary scope.
+- `scripts/deploy-server2.ps1`: entry setup and complete `Invoke-HostJq` body
+  | actual child transport, proof parser, durable receipt and rejection ->
+  V-1, V-10, R-10 and CP-3. No wrapper re-stat is proposed.
+- `tests/Antiphon.Tests/Infrastructure/JqRunnerImageContractTests.cs`, complete
+  bodies including `JqFixture`; `verify-codex-image.sh`'s `jq-version` arm;
+  `c590-remote.sh`'s `c1008_recycle` admission
+  | exclusion: image qualification and later pathname consumers remain separate.
+- `docs/testing-and-build.md`: checkpoint schema/runner, source provenance,
+  Linux output handling, method-scoped Mutation, jq qualification and delivery
+  sections; `docs/docker-stack.md`'s host prerequisite; project conventions;
+  orchestration stage contract; CARD-1040's frozen checkpoint table
+  | ordinary manifest/cost below; no whole Unit or image/activation substitution.
+- `tools/Antiphon.Checkpoints/Manifest/PlanTableImporter.cs`:
+  `ImportMarkdown`, `ExtractSection`, `SplitRow`
+  | importer reads the **first** exact `### Checkpoints` heading. The appendix
+  repeats the original table unchanged, so no different selection is hidden
+  behind an ignored second table. On repair, make one authoritative importable
+  table, or keep both tables identical. Changing only the second is insufficient.
+
+**Missing setup to implement, not evidence already present:** M-1..M-10 do not
+exist. `Inode` currently reads only `%i`; no helper exposes real device/inode/link
+tuples. `Existing("healthy")` copies native jq and does not trace its execution.
+The existing hash shim returns the release pin whenever bytes equal `Payload`;
+the stat shim synthesizes owner/mode only for pathname-specific shapes. Neither
+is suitable unchanged for descriptor identity/hash witnesses. There is no
+open/hash/probe/formatter barrier, no exact staged-unlink failure arm, and no
+independent foreign-execution record. The existing `download-barrier` is a timed
+sleep; it is not a deterministic swap barrier. `Collect` joins the root process;
+if that root has exited, its `finally` alone does not establish death of a
+blocked grandchild. New barriers must release and await their own children too.
+
+Read-only tool discovery found Bash, pwsh, git, node, stat, sha256sum and ln;
+PATH resolves jq to `/home/app/.local/bin/jq`. This is discovery only, not a
+native execution/procfs/hardlink qualification or an outer-host/image receipt.
+The fixture copies native jq into its private canonical location; this PATH
+observation does not authorize any standing-container installation. No test or
+build was run by TestDesign.
+
+#### Deterministic fixture and witness requirements
+
+These requirements refine the proposed tests without inserting production test
+hooks or replacing the admission predicate:
+
+1. Give every invocation a private nonce, trace and marker/release pair beneath
+   the ignored fixture root. Intercept only private tool calls and the traced
+   executable. Record readiness **after** the real operation whose result is
+   being held; emit that captured result only after release. Select a barrier
+   by operation/target/phase, not an unexplained global stat call number. Assert
+   exactly one hit and one release for the selected boundary.
+2. Observe `%d`, `%i`, `%h`, numeric file mode and actual SHA-256 with absolute
+   native tools. Use non-following stat for the canonical leaf and following
+   stat for `/proc/self/fd/8`. Independently hash original and replacement bytes
+   in C#. Record the descriptor tuple inside the child that inherited FD 8:
+   `/proc/self/fd/8` in the test parent's unrelated process is not that file.
+3. Rename the original to a private holding name before replacing the leaf;
+   preserve that original inode with **one** link. Do not retain it with a
+   hardlink in an identity test, which would trip D-1 first. Restore the
+   original name with rename for the transient-hash arm. Assert precondition
+   tuples and different original/replacement hashes before starting the helper.
+4. Trace original and foreign executable invocations separately, including
+   invocation kind and argv. A foreign script must itself produce a healthy
+   version, true/false outputs with their proper exit codes, and valid formatter
+   JSON. Prove its behavior in fixture setup, then clear its markers. A later
+   refusal cannot erase an unsafe invocation. Native jq controls prove native
+   FD execution; traced shebang controls prove observable invocation ordering.
+5. M-3 holds the initial native leaf stat result, swaps before returning it,
+   then permits open. A separate vector opens the original and swaps before
+   the fresh leaf observation. These exercise different comparisons. The
+   equal-inode/different-device case substitutes **only** a device field after
+   a real stat and records both real and supplied values. It is a comparison
+   test; it cannot prove behavior on a second real filesystem.
+6. M-4's hash shim pauses on the qualification hash regardless of whether the
+   argument is the descriptor or canonical path. While a regular replacement
+   occupies the leaf, invoke native sha256sum on the **actual supplied argument**,
+   save its actual result, restore the original name, then return that result.
+   Require successful proof with the independent original hash. A shim that
+   always hashes FD 8 would silently repair PC-4 and is forbidden.
+7. M-5 tampers after staging verification/publication, before final capture;
+   leave a valid, executable, single-link, wrong-hash script. Use real hashing
+   for the changed bytes, and assert no jq invocation at all. The narrowly
+   scoped existing simulation may identify the unmodified install payload as
+   the pin, but must not pin arbitrary bytes or all `/proc` arguments. This
+   proves ordering under an admitted fixture artifact, not release authenticity.
+8. M-6 swaps after the qualification hash, M-7 inside the original version
+   wrapper before it returns, M-8 inside the original true wrapper before it
+   returns, M-9 inside the original false wrapper before it returns, and M-10
+   inside the admitted formatter before it returns valid JSON. Persistent
+   regular/symlink replacements remain in place through final admission.
+   Preserve each probe's real output and exit code when adding its barrier.
+9. Run real direct helper and real wrapper with separate fresh fixtures where
+   filesystem effects differ. Wrapper arms must use the SSH child shim's real
+   `bash -s` route, never `SyntheticProof`. Explicitly remove inherited
+   `C727_TEST_STATE` for these children: with that variable set, the real wrapper
+   chooses the unrelated synthetic prerequisite route. Initialize the private
+   Git source after writing fixed fixture scripts; runtime markers/swaps remain
+   ignored so provision reaches the helper's intended guard.
+10. Every new method carries `ParallelLimiter<ProcessSpawnLimit>`. Start
+    stdout/stderr drains immediately. Keep the current 5-second barrier and
+    10-second execution bounds; release in `finally` and await the run even
+    when an assertion fails. Record/retain the barrier child's process identity
+    and join it before deleting scratch. A timeout, missed barrier, build error
+    or rescued child is failure, never a positive-control red.
+
+The owner/pin shims may continue simulating root installation in a non-root
+private fixture. They must preserve **real** device/inode/link values, mode
+observations used for identity safety, and M-4's raw digest. Retarget existing
+`final-owner`, `final-group`, `final-mode` faults to the admitted descriptor
+metadata, one field at a time. Put `final-digest` at the final installed digest
+check if that legacy guard is the intended assertion; a pre-execution mismatch
+belongs to M-5. Prove each vector reaches its named fault with an independent
+trace marker. A generic exit 2 from an earlier check does not preserve coverage.
+
+### Delivery inventory
+
+There are **zero new or changed asynchronous delivery paths**. This helper is
+a synchronous child process returning stdout/stderr to a waiting wrapper. No
+queue, session input, outbox, wake-up or recovery worker is introduced. Busy
+recipient, already-eligible recipient and queue handoff recovery tests therefore
+have no applicable path. No session-delivery or UserPrompt claim is made.
+
+For the synchronous evidence path, the producer is the admitted FD-backed jq
+formatter/helper, the recipient is the real `Invoke-HostJq` parser, and the
+persistence boundary is its exclusive `CreateNew` receipt followed by
+`Flush(true)` and close. Identity is source SHA + run ID + selected/executing
+phase + mode, with canonical public paths and the observed digest. Recovery is
+a new invocation/new run, not replay of an old receipt. M-10's wrapper control
+must read the actual persisted document and match those fields using
+`AssertReceipt`; refusal must leave zero success receipts and no success banner.
+The SSH substitute exercises streaming, parsing and private persistence; it
+does not prove a real remote host, SSH authentication, later deployment use or
+user-session receipt. A printed request or successful child start is insufficient.
+
+Existing transport crash/timeout and receipt-write failure behavior is unchanged
+and remains CARD-1025's separately designed obligation. This card does not
+claim it is reverified by the three selected rows. M-10 must at least prove that
+the helper's changed success-emission boundary reaches the real wrapper and its
+actual receipt, not stop at a synthetic JSON assertion.
+
+### Proves it works now
+
+These are intended ordinary V/R cases, not claims that unimplemented methods
+already pass. All M-n names refer to `HostJqPrerequisiteScriptTests`.
+
+- V-1: hardlink refusal in check and existing provision | native private helper
+  and wrapper | `C1058_Check_rejects_canonical_hardlink` | real nlink 2 refuses
+  before jq, no install effects or success receipt, unchanged tuple/bytes/links;
+  direct and alias single-link controls succeed. Add a post-lock hardlink arm:
+  hold the real lock, let missing provision wait, create the hardlinked jq,
+  release, and require invalid/no download.
+- V-2: publication leaves exactly one destination link | native filesystem |
+  `C1058_Provision_removes_only_owned_stage_link` | install succeeds, native
+  nlink 1 before first jq call, only owned stage leaf removed, destination
+  tuple/hash retained; second provision has no install effects. Include unlink
+  failure, retained destination, owned cleanup and foreign sentinels.
+- V-3: one opened inode is admitted | native helper, declared metadata faults |
+  `C1058_Open_descriptor_must_match_canonical_leaf` | before-open and after-open
+  substitutions refuse before any jq call; malformed/unavailable observations
+  are invalid, never missing/install authority. Healthy native and shebang FD
+  controls pass. Check, existing provision and locked qualification are distinct
+  vectors, not implicit coverage from calling `qualify` once.
+- V-4: proof hashes the retained file | native SHA-256 and transient rename |
+  `C1058_Digest_is_bound_to_open_descriptor` | healthy success contains the
+  independently measured original digest, not the different replacement digest.
+- V-5: newly installed bytes meet the pin before execution | native helper with
+  declared install substitution | `C1058_Installed_pin_is_checked_before_execution`
+  | changed published bytes produce zero jq calls and exit 2; healthy install
+  succeeds; functional existing non-pin jq remains accepted in check/provision.
+- V-6: version uses the descriptor | native helper |
+  `C1058_Version_probe_uses_open_descriptor` | original version executes once,
+  foreign version never executes, persistent replacement yields no success JSON.
+- V-7: true predicate uses the descriptor | native helper |
+  `C1058_True_probe_uses_open_descriptor` | original true call executes once,
+  foreign true call count is zero; no successful proof after replacement.
+- V-8: false predicate uses the descriptor | native helper |
+  `C1058_False_probe_uses_open_descriptor` | original false call executes once
+  with its real false/1 result, foreign false count is zero; no successful proof.
+- V-9: formatter uses the descriptor | native helper |
+  `C1058_Receipt_formatter_uses_open_descriptor` | original formatter executes,
+  foreign formatter count is zero and buffered success does not escape.
+- V-10: changed final state cannot release proof | native helper plus real
+  wrapper/private SSH child | `C1058_Changed_leaf_cannot_emit_success_proof` |
+  admitted formatter returns valid JSON, persistent replacement exits 2 with
+  empty success stdout and zero success receipts/banner. Unchanged control
+  persists canonical public paths and descriptor-derived observations.
+
+M-6..M-9 each cross check/existing-provision with regular/symlink replacement
+(four vectors per method). Installed pin ordering is M-5; repeating all late
+swaps through download is excluded because it adds installation effects without
+another execution site. M-4 intentionally restores the leaf to isolate hashing;
+it does not assert ABA resistance. Initial canonical symlink, home-shadow,
+missing, nonexecutable, invalid predicate, install no-clobber/cleanup and wrapper
+schema boundaries retain the selected C1025 assertions. Final hardlink growth,
+permission loss and malformed metadata cannot be omitted merely because final
+inode replacement is already tested; they require the independent controls below.
+
+### Guards the regression
+
+- R-1: hardlink bytes can be healthy and still forbidden | M-1's native nlink
+  witness, zero traced jq calls and unchanged foreign names are decisive.
+- R-2: `ln -T` temporarily makes two links | M-2 must observe nlink 1 **before**
+  qualification; post-exit cleanup reaching nlink 1 is not sufficient.
+- R-3: pathname admission and opened identity diverge | M-3 asserts zero total
+  jq calls at each pre-execution mismatch, not only eventual refusal.
+- R-4: hashing silently follows the replacement leaf | M-4 succeeds yet asserts
+  exact equality to independently hashed original bytes.
+- R-5: final pin rejection occurs after untrusted execution | M-5's zero-call
+  assertion precedes any claim based on the helper's eventual exit.
+- R-6: version reopens the path | M-6 requires zero foreign version calls.
+- R-7: true predicate reopens the path | M-7 requires zero foreign true calls.
+- R-8: false predicate reopens the path | M-8 requires zero foreign false calls.
+- R-9: diagnostic/proof formatting executes a substituted file | M-9 requires
+  zero foreign formatter calls even when final admission refuses.
+- R-10: valid JSON escapes after the canonical leaf changed | M-10 requires
+  empty helper success stdout **and** no real wrapper success receipt/banner.
+
+### Guard inventory
+
+The ten proposed PCs map to the first ten **behavior families** below, not to
+ten independent guards. `PC needed` is an identified design gap, not a silently
+waived control. Additional guard rows deliberately split independently bypassable
+admission boundaries. This is a rejection inventory; Plan must finish the
+per-site inventory after fixing the observation order and cannot call it complete.
+
+| Guard | Plan reference and safety-critical condition | Proposed control / disposition |
+|---|---|---|
+| G-1 | D-1 initial canonical leaf has exactly one link | PC-1 is composite: it also removes opened/final checks; split it. |
+| G-2 | D-4 successful publication removes the owned stage name before qualification | PC-2, healthy install witnesses missing unlink. |
+| G-3 | D-2 opened identity equals the pre-open observation | PC-3 is composite with G-11; split it. |
+| G-4 | D-2/D-3 digest comes from retained descriptor | PC-4, real-hash transient swap. |
+| G-5 | D-3 installed descriptor digest matches fixed pin before any jq call | PC-5, wrong-hash executable and zero calls. |
+| G-6 | D-2 version executes via retained descriptor | PC-6. |
+| G-7 | D-2 true predicate executes via retained descriptor | PC-7. |
+| G-8 | D-2 false predicate executes via retained descriptor | PC-8. |
+| G-9 | D-2 formatter executes via retained descriptor | PC-9. |
+| G-10 | D-5 final canonical identity still equals admitted identity | PC-10 currently removes the entire final block; narrow it. |
+| G-11 | D-2 opened identity also equals the fresh post-open leaf observation | Distinct PC needed; pre-open equality does not protect an after-open replacement. |
+| G-12 | D-2 device participates in identity equality, not inode alone | Distinct PC needed; isolate each independently implemented comparison. |
+| G-13 | D-1/D-2 opened file has exactly one link before execution | Distinct PC needed; initial leaf nlink is an earlier observation. |
+| G-14 | D-5 final canonical leaf is still single-linked | Distinct PC needed; adding a hardlink preserves device/inode and bytes. |
+| G-15 | D-5 final descriptor is still single-linked | Distinct PC needed; isolate its observation from the final leaf's nlink guard. |
+| G-16 | D-5 final executable-state admission | Distinct PC needed; chmod can preserve device/inode/hash. Separate leaf/descriptor checks if implemented independently. |
+| G-17 | D-5 no buffered success bytes are printed before final admission succeeds | Distinct PC needed; deleting final admission does not test early printing while refusal remains. |
+| G-18 | D-4 unsuccessful staged-name removal refuses even if a side effect occurred | Distinct PC needed; leaving both links masks a bypass with D-1. |
+| G-19 | D-2 malformed numeric identity metadata refuses | Distinct PC needed; missing fields cannot be treated as valid equal identities. |
+| G-20 | Implementation shape: open/procfs/stat/hash failure is invalid, never missing authority or pathname fallback | Distinct PC needed; enumerate each independently bypassable failure edge in the revised shape. |
+
+Inherited PATH admission, predicate semantics, downloaded/staged pin checks,
+no-clobber, source custody, final installed owner/mode/version, wrapper parsing
+and persistence are unchanged CARD-1025 guards, with its 67 pending controls.
+They are retained dependencies, not discharged here. Regular-file type of an
+already-open retained inode cannot change in place; do not invent a native
+same-inode regular-to-symlink mutation. Canonical leaf non-symlink/regular checks
+may overlap non-following identity admission. Plan must explicitly distinguish
+redundant checks from independently bypassable checks; a whole-block deletion
+cannot establish either conclusion. Existing-mode compatibility additionally
+needs a non-pin success assertion, retained in V-5 and C1025; a wrong installed
+pin is not an existing-mode test.
+
+Audit at this stage: **20 identified guard rows, 10 proposed control IDs;
+at least 10 rows lack a distinct assigned control; PC-1, PC-3 and PC-10 are
+composite deletions.** Further splitting of G-12/G-16/G-20 depends on the revised
+observation shape. This fails the required bijection and executable-PC gate;
+reporting `missing=0` or a final total of ten would be false.
+
+### Positive controls
+
+The following preserves the ten exact-method candidates and names the decisive
+assertions. It is a review of proposed controls, **not** Mutation authorization
+or executed red/green evidence. The revised plan must assign new IDs to each
+additional independent guard rather than hide variants inside a composite PC.
+
+| PC | Break by a syntactically valid helper defect | Exact method in `HostJqPrerequisiteScriptTests` and required red | Design verdict |
+|---|---|---|---|
+| PC-1 | Bypass all nlink-equals-one checks as originally proposed. | `C1058_Check_rejects_canonical_hardlink`: `c1058-hardlink-no-execution`, traced calls must equal 0. | Reject composite; initial and later nlink checks need isolated controls. |
+| PC-2 | Omit owned staged-name unlink, retaining normal EXIT cleanup. | `C1058_Provision_removes_only_owned_stage_link`: `c1058-install-single-link-before-probe`, healthy provision exit must equal 0. | Viable for G-2; not proof of unlink error handling. |
+| PC-3 | Bypass both pre-open and fresh-leaf identity comparisons. | `C1058_Open_descriptor_must_match_canonical_leaf`: `c1058-open-no-execution`, total jq calls must equal 0. | Reject composite; split comparisons and device omission. |
+| PC-4 | Hash `"$resolved"` instead of `/proc/self/fd/8`, retaining FD execution. | `C1058_Digest_is_bound_to_open_descriptor`: `c1058-digest-original`, proof digest must equal the independent original hash. | Viable only with the raw-argument hash barrier above. |
+| PC-5 | Remove only installed pre-execution pin comparison; retain final installed pin check. | `C1058_Installed_pin_is_checked_before_execution`: `c1058-installed-pin-no-execution`, jq-call count must equal 0. | Viable; final refusal must not mask execution. |
+| PC-6 | Change only version invocation to `"$resolved"`. | `C1058_Version_probe_uses_open_descriptor`: `c1058-version-foreign-zero`, foreign version count must equal 0. | Viable with a healthy foreign script. |
+| PC-7 | Change only true invocation to `"$resolved"`. | `C1058_True_probe_uses_open_descriptor`: `c1058-true-foreign-zero`, foreign true count must equal 0. | Viable with barrier before true starts. |
+| PC-8 | Change only false invocation to `"$resolved"`. | `C1058_False_probe_uses_open_descriptor`: `c1058-false-foreign-zero`, foreign false count must equal 0. | Viable with false/1 fixture semantics preserved. |
+| PC-9 | Change only formatter invocation to `"$resolved"`. | `C1058_Receipt_formatter_uses_open_descriptor`: `c1058-formatter-foreign-zero`, foreign formatter count must equal 0. | Viable even if a later guard refuses. |
+| PC-10 | Print buffered success without any final identity/state admission. | `C1058_Changed_leaf_cannot_emit_success_proof`: `c1058-final-success-stdout-empty`, helper stdout must be empty. | Reject composite; final identity and output ordering need different mutations. |
+
+Concrete repair witnesses, to keep the next Plan bounded:
+
+- For G-3 alone, replace the regular leaf after pre-open stat but before open,
+  then keep the replacement stable. Bypassing only pre-open equality permits
+  foreign calls even with fresh-leaf and final checks intact.
+- For G-11 alone, open the original first, replace before the fresh leaf
+  observation, then keep it stable. Bypassing only fresh-leaf equality permits
+  **original** jq calls before final refusal. Assert zero total calls; zero
+  foreign calls would miss this mutant.
+- For G-12, return the native inode with a different numeric device at just one
+  selected observation, keeping other fields real. Remove only that comparison's
+  device equality; assert pre-execution zero calls or final empty stdout as
+  appropriate. This is a declared metadata substitute, not a real cross-device
+  witness.
+- For G-14, add a real hardlink during the admitted formatter, retaining the
+  original leaf/inode/hash. Removing only final leaf nlink admission can still
+  be masked by final descriptor nlink admission. A timed add/remove around
+  separate native observations can isolate the two only after Plan fixes their
+  ordering; do not credit the existing persistent-swap test for either guard.
+- For G-16, chmod the original during formatter return without changing its
+  inode or bytes. A separate descriptor executable check can mask omission of
+  the leaf check. Plan must specify an isolatable observation boundary or
+  justify redundancy before calling either PC executable.
+- For G-17, move the one successful `printf` before the still-active final
+  validation and remove its old location. Final refusal remains exit 2 and the
+  wrapper still refuses; direct helper stdout alone turns red at the named
+  empty-stdout assertion. This compiles and is distinct from PC-10.
+- For G-18, the private rm shim performs the native unlink successfully, records
+  real nlink 1, then returns nonzero. Remove only the return-status refusal.
+  Require direct exit 2 and no success proof; with this defect qualification
+  succeeds, so the nlink guard cannot mask it. Do not mutate cleanup's rm arm.
+- For G-19/G-20, use separate malformed-field and valid-output/nonzero-exit
+  vectors at the exact observation, and an open-failure vector before jq.
+  Missing, nonnumeric and command-error outcomes must not be credited to an
+  earlier unrelated path refusal. Return-code guards and parsing guards are
+  separate when they can be bypassed independently.
+
+After the repaired design is accepted, Mutation runs each control serially:
+baseline, break/red, exact restore/green. Every phase selects exactly
+`/*/*/HostJqPrerequisiteScriptTests/<the listed literal method>` with
+`-MinExecuted 1`; no method-prefix wildcard, class or Unit suite is needed for
+these non-parameterized methods. Require one TUnit result and the intended
+assertion failure, not a compile/fixture/timeout failure. Use the copied external
+checkpoint driver and external evidence root specified by the SourceLanding
+brief. Code executes ordinary V/R; Review judges these designs before land;
+post-land Mutation remains separately commissioned and leaves no source edits.
+
+### Out of scope
+
+- Whole Unit/class/namespace, the full installer/image/legacy roster, and
+  CARD-1040's fifteen methods: this card has three exact narrow selections.
+- Image activation, live outer-host installation/check, deployment, restart,
+  real SSH and fleet configuration: private fixture proof cannot establish them.
+- Protecting in-place writes, ABA between observations, a malicious toolchain,
+  or replacements after proof emission: D-7 explicitly retains these trust
+  boundaries. The M-4 ABA-shaped setup isolates hash targeting only.
+- Native memfd/fexecve, immutable byte custody, descriptor transfer to later
+  consumers and wrapper re-stat: excluded by D-6/D-7, not implied by green tests.
+- CARD-1025's 67 and CARD-1054's 13 Mutation obligations: unchanged and pending.
+  No historical result is relabeled as current evidence.
+
+### Checkpoints
+
+**Selection retained, execution freeze withheld.** This table is deliberately
+byte-for-byte identical to the earlier proposed table: the importer selects the
+first one. These remain three isolated builds, 26 executions of 21 distinct
+methods, with eleven existing methods and ten proposed new non-parameterized
+methods. Require exact expanded roster equality, not just Min. Repairing the
+PC inventory need not broaden these ordinary filters: add boundary vectors to
+the ten named methods, subject to honest timing review.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
+|---|---|---|---|---|---|---|---:|---:|---|
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1058-links/` | linux-host-jq-links | `/*/*/HostJqPrerequisiteScriptTests/(C1058_Check_rejects_canonical_hardlink*)\|(C1058_Provision_removes_only_owned_stage_link*)\|(C1025_Check_qualifies_deployment_shell*)\|(C1025_Check_has_no_install_effects*)\|(C1025_Provision_requires_missing_jq*)\|(C1025_Provision_serializes_and_rechecks*)\|(C1025_Provision_publishes_complete_no_clobber*)\|(C1025_Provision_cleans_only_owned_staging*)\|(C1025_Provision_requalifies_published_jq*)` | V-1, V-2, R-1, R-2 | exactly the 9 listed methods, 9 passed, 0 failed/skipped | 9 | 8 | true |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1058-identity/` | linux-host-jq-identity | `/*/*/HostJqPrerequisiteScriptTests/(C1058_Open_descriptor_must_match_canonical_leaf*)\|(C1058_Digest_is_bound_to_open_descriptor*)\|(C1058_Installed_pin_is_checked_before_execution*)\|(C1058_Version_probe_uses_open_descriptor*)\|(C1058_True_probe_uses_open_descriptor*)\|(C1058_False_probe_uses_open_descriptor*)\|(C1058_Receipt_formatter_uses_open_descriptor*)\|(C1058_Changed_leaf_cannot_emit_success_proof*)` | V-3, V-4, V-5, V-6, V-7, V-8, V-9, V-10, R-3, R-4, R-5, R-6, R-7, R-8, R-9, R-10 | exactly M-3..M-10, 8 passed, 0 failed/skipped | 8 | 7 | true |
+| CP-3 | S2 | `tests/Antiphon.Tests -> bin-c1058-compat/` | linux-host-jq-compat | `/*/*/HostJqPrerequisiteScriptTests/(C1058_Check_rejects_canonical_hardlink*)\|(C1058_Provision_removes_only_owned_stage_link*)\|(C1025_Check_qualifies_deployment_shell*)\|(C1025_Check_rejects_canonical_leaf_symlink*)\|(C1025_Receipt_rejects_canonical_lookup_with_unapproved_target*)\|(C1025_Check_has_no_install_effects*)\|(C1025_Provision_verifies_download_before_use*)\|(C1025_Provision_requalifies_published_jq*)\|(C1025_Receipt_requires_complete_current_proof*)` | V-1, V-2, V-3, V-4, V-5, V-10, R-1, R-2, R-3, R-4, R-5, R-10 | exactly M-1/M-2 and the 7 listed existing methods, 9 passed, 0 failed/skipped | 9 | 8 | true |
+
+After Plan repair and a successful TestDesign freeze, retain S1 -> CP-1 and
+S2 -> serial CP-2/CP-3, one checkpoint-tool run per committed/pushed slice.
+The earlier build-slot bootstrap and `--after` commands remain the intended
+commands; no run is authorized by this rejection appendix. Await every exit-75
+run to completion, preserve unedited CHECKPOINT lines and SHA-validated source
+receipts, and remove only owned alternate outputs after children exit. Code and
+Review run the full-task-range evidence-diff guard. Documentation-only
+TestDesign needs diff/link/manifest inspection, not a test-project build.
+
+### Cost
+
+All numbers below are **estimates**, not measured wall time. Slot queueing and
+authoring are additional. The missing controls mean the original 119-minute
+total cannot be represented as the complete safety-verification floor.
+
+- Ordinary Code V/R floor remains **23 minutes**: CP-1's exact nine-method OR
+  filter 8, CP-2's exact eight-method OR filter 7, CP-3's exact nine-method OR
+  filter 8. Each includes one isolated build. Initial prerequisite/checkpoint
+  bootstrap is **3 minutes**, giving **26 minutes** setup plus ordinary proof.
+- The original ten literal PC method filters cost **90 minutes**: ten baseline
+  build/runs at 3 minutes and ten red/restore/green cycles at 6 minutes. The
+  estimate is 3 minutes per build/run; restoration is included in the 6-minute
+  cycle allowance. PC setup adds **3 minutes**. Thus **119 minutes** is only the
+  original, incomplete ten-control scope: 3 + 23 + 3 + 90.
+- A lower-bound repair budget with **20 independent controls** is **180 minutes**
+  of PC execution (20 x (3 baseline + 3 red + 3 restored green)), **60 method
+  executions**, plus 3 setup. Ordinary Code plus that Mutation floor is
+  **209 minutes**: 3 + 23 + 3 + 180. This is **90 minutes more** than the rejected
+  ten-control budget. G-12/G-16/G-20 can require further splits; each additional
+  exact-method PC adds **9 minutes**, not a whole-class rerun. Plan must name
+  those filters and freeze the final count before dispatch, rather than treat
+  this lower bound as a completed estimate.
+- Separate ordinary Review adds the same **26 minutes**, giving a **235-minute
+  lower bound** across Code, Review and repaired Mutation, excluding authoring.
+  No PC result is obtained by Code/Review green. No measured savings are claimed
+  (**0 minutes**); there is no comparable complete baseline timing. The three
+  narrow ordinary selections are retained to avoid unrelated broad work.
+
+--- next stage ---
+next: plan
+handoff: Repair CARD-1058 verification: split PC-1/PC-3/PC-10 and assign distinct controls to final nlink/permissions, stdout ordering, unlink error and metadata failure guards. Specify isolatable native observation barriers; revise the ten-PC cap/cost. Preserve D-1..D-8, two slices and three narrow Linux filters, then return to TestDesign; Code is not authorized.
+artifact: docs/superpowers/plans/2026-10-05-card-1058-host-jq-file-identity-plan.md
