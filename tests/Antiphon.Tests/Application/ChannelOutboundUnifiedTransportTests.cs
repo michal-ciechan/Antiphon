@@ -220,7 +220,8 @@ public sealed class ChannelOutboundUnifiedTransportTests
             w.BaselineReceipts = 1;
         }
         await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, w.Answer + "\n[[attach: " + w.SourcePath + "]]");
-        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        // The submission callback already emitted this turn's end. Late assistant
+        // text belongs to that prompt; a second end would create a prompt-less turn.
     }
 
     [Test]
