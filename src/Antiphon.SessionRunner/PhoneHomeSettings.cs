@@ -36,6 +36,7 @@ public sealed class PhoneHomeSettings
     public string? RunnerRepositoriesRoot { get; set; }
     public IReadOnlyList<string> AllowedCloneSources { get; set; } = ["https://github.com/michal-ciechan/"];
     public bool ProbeSecondaryRepositoryPushAccess { get; set; } = true;
+    public string? PushCredentialPolicyPath { get; set; }
 
     public RunnerRepositoryPolicy RepositoryPolicy() => new(
         RunnerRepository, RunnerCloneSource,
@@ -123,6 +124,8 @@ public sealed class PhoneHomeSettings
             throw new InvalidOperationException("PhoneHome:RunnerRepository must be a POSIX absolute path.");
         if (RunnerRepositoriesRoot is { } root && !root.StartsWith('/'))
             throw new InvalidOperationException("PhoneHome:RunnerRepositoriesRoot must be a POSIX absolute path.");
+        if (PushCredentialPolicyPath is { } policyPath && !policyPath.StartsWith('/'))
+            throw new InvalidOperationException("PhoneHome:PushCredentialPolicyPath must be a POSIX absolute path.");
         if (!RepositoryCloneSource.TryNormalize(RunnerCloneSource, out _))
             throw new InvalidOperationException("PhoneHome:RunnerCloneSource must name a repository.");
         if (AllowedCloneSources is null || AllowedCloneSources.Any(prefix =>

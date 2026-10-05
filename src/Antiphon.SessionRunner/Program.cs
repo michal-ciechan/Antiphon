@@ -82,6 +82,7 @@ builder.Services.AddSingleton<PhoneHomeCommandDispatcher>(sp =>
 });
 // CARD-0628 D-7 / CARD-0647 / CARD-0660: the Claude, Grok and Codex probes behind one router.
 builder.Services.AddProviderAuthProbes();
+builder.Services.AddHostedService<PushCredentialPolicyService>();
 builder.Services.AddHostedService<PhoneHomeConnectionService>();
 builder.Services.PostConfigure<SessionRunnerSettings>(settings =>
 {

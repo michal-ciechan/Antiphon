@@ -291,7 +291,7 @@ public sealed class RunnerWorkspaceServiceTests
     }
 
     [Test]
-    public async Task Mirror_refuses_a_secondary_repository_the_deploy_key_cannot_push_to()
+    public async Task Mirror_refuses_a_secondary_repository_the_push_credential_cannot_push_to()
     {
         using var scratch = Scratch.Create();
         var secondary = Path.Combine(scratch.Root, "secondary");
@@ -302,6 +302,10 @@ public sealed class RunnerWorkspaceServiceTests
         var request = new PhoneHomeWorkspaceMirrorRequest(Scratch.Branch, scratch.Sha, "task-deadbeef", secondary);
         var refused = await Should.ThrowAsync<PhoneHomeAdmissionException>(() => service.MirrorAsync(request, CancellationToken.None));
         refused.Code.ShouldBe(PhoneHomeProblemTypes.RepositoryPushUnauthorized);
+        refused.StatusCode.ShouldBe(409);
+        refused.Message.ShouldContain(secondary);
+        refused.Message.ShouldContain("(Unknown)");
+        refused.Message.ShouldNotContain("transport 'file'");
         Directory.Exists(Path.Combine(scratch.Work, "worktrees", "task-deadbeef")).ShouldBeFalse();
         AssertPushProbe(starts.Single(psi => psi.ArgumentList.FirstOrDefault() == "push"), secondary);
         var allowed = RepositoryService(scratch, root, probe: false);
