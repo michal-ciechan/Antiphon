@@ -236,6 +236,15 @@ public static class DelegationReportFormatter
         if (BuildHandoff(task) is { } handoff)
             sb.AppendLine(handoff).AppendLine();
 
+        if (task.ReleasedSeatAnswerId is not null && task.ReleasedSeatAnswerTargetAttempt == task.Attempt
+            && task.ReleasedSeatAnswer is { } answer)
+        {
+            sb.AppendLine("The previous seat was released; this answer continues the task in a new attempt.");
+            sb.AppendLine($"Source release: {task.ReleasedSeatAnswerReleaseId:D}; question: {task.ReleasedSeatAnswerRoundId:D}.");
+            sb.AppendLine("--- accepted answer ---");
+            sb.AppendLine(answer).AppendLine();
+        }
+
         if (VerificationProfileBlock(task) is { } profile)
             sb.AppendLine(profile).AppendLine();
 

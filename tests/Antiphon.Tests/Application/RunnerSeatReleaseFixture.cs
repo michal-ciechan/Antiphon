@@ -14,6 +14,7 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 
 namespace Antiphon.Tests.Application;
@@ -26,8 +27,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
     public required FakeTimeProvider Clock { get; init; }
     public required SeatWire Wire { get; init; }
     public required SeatDirectory Directory { get; init; }
-    public RecordingSessionStopper Stopper { get; } = new();
-    public LaunchRecorder Launches { get; } = new();
+    public LaunchRecorder Launches => Harness.Provider.GetRequiredService<LaunchRecorder>();
     public Guid TaskId { get; } = Guid.NewGuid();
     public Guid SessionId => Harness.SessionId;
     public Guid AgentId => Harness.AgentId;
@@ -68,6 +68,25 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
                     services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
                     services.AddScoped<AgentTaskService>();
                     services.AddSingleton<AgentTaskReplyService>();
+                    services.AddScoped<SubscriptionUsageReader>();
+                    services.AddScoped<SubscriptionQuotaGate>();
+                    services.AddSingleton(Options.Create(new SubscriptionQuotaGateSettings()));
+                    services.AddSingleton<LaunchRecorder>();
+                    services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new OptionsMonitorStub<AgentRegistrySettings>(
+                        new AgentRegistrySettings { DefaultDefinition = "fake", Definitions =
+                            { ["fake"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "fixture-provider" } } }));
+                    services.AddScoped<RemoteWorkspaceService>();
+                    services.AddScoped(sp => new AgentTaskDispatcher(
+                        sp.GetRequiredService<AppDbContext>(), sp.GetRequiredService<AgentRegistry>(),
+                        sp.GetRequiredService<AgentSessionLaunchQueue>(), sp.GetRequiredService<SessionMessageQueueService>(),
+                        sp.GetRequiredService<DelegationWorktreeService>(), sp.GetRequiredService<AgentTaskService>(),
+                        sp.GetRequiredService<IDelegateSessionStopper>(), sp.GetRequiredService<IOptions<DelegationSettings>>(),
+                        sp.GetRequiredService<IEventBus>(), clock, sp.GetRequiredService<ILogger<AgentTaskDispatcher>>(),
+                        modelAvailability: sp.GetRequiredService<ModelAvailability>(),
+                        dispatchWarnings: sp.GetRequiredService<DispatchBaseWarningIntentService>(),
+                        workspaceUse: sp.GetRequiredService<WorkspaceUseAdmission>(),
+                        remoteWorkspace: sp.GetRequiredService<RemoteWorkspaceService>(), runners: directory,
+                        taskLaunchSink: sp.GetRequiredService<LaunchRecorder>()));
                 }
             });
         }
@@ -137,7 +156,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
     public async Task EditAsync(Action<AgentTask, Agent> edit)
     {
         await using var db = Db();
-        edit(await db.AgentTasks.SingleAsync(t => t.Id == TaskId), await db.Agents.SingleAsync(a => a.Id == AgentId));
+        edit(await db.AgentTasks.SingleAsync(t => t.Id == TaskId), await db.Agents.SingleOrDefaultAsync(a => a.Id == AgentId) ?? new Agent());
         await db.SaveChangesAsync();
     }
 
@@ -162,6 +181,19 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         using var scope = Harness.Provider.CreateScope();
         await scope.ServiceProvider.GetRequiredService<AgentTaskService>().RetryAsync(TaskId, default);
     }
+
+    public async Task<AgentTaskDispatcher.TickResult> DispatchAsync()
+    {
+        using var scope = Harness.Provider.CreateScope();
+        return await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+    }
+
+    public Task PrepareContinuationAsync() => EditAsync((t, _) =>
+    {
+        t.WorktreePath = Harness.TempRoot; t.WorktreeBranch = "feat/retained";
+        t.WorktreeBaseRef = "master"; t.WorktreeBaseSha = new string('a', 40);
+        t.RemoteWorktreePath = "/fixture/retained";
+    });
 
     public RecordingSessionStopper RecordedStops => (RecordingSessionStopper)Harness.Provider.GetRequiredService<IDelegateSessionStopper>();
 
@@ -237,6 +269,8 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
     {
         public Guid StoreId { get; } = Guid.NewGuid();
         public bool Available { get; set; } = true;
+        public int Capacity { get; set; } = 10;
+        public bool RefuseNewWork { get; set; }
         public bool Stale { get; set; }
         public bool Recovered { get; set; } = true;
         public Guid? LiveStoreOverride { get; set; }
@@ -245,6 +279,9 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         public ISessionRunnerClient Client { get; set; } = client;
         public ISessionRunnerClient Local => Client;
         public ISessionRunnerClient Resolve(string? runnerId) => Client;
+        public ISessionRunnerClient ResolveForNewWork(string? runnerId) => RefuseNewWork
+            ? throw new ServiceUnavailableException("fixture runner unavailable", "runner_unavailable") : Client;
+        public int? DeclaredCapacity(string runnerId) => Capacity;
         public Guid? GetLiveStoreId(string? runnerId) => LiveStoreOverride ?? StoreId;
         public Task<RunnerDescriptor?> DescribeAsync(string? runnerId, CancellationToken ct) =>
             Task.FromResult<RunnerDescriptor?>(new("fixture", "fixture", "linux", null, Available, Recovered, Stale, 1,
