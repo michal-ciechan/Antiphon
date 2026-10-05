@@ -140,7 +140,7 @@ Test-first order: S1 runner/server tests and compiling seams; commit/push and th
 
 Before admission the caller reads `/api/agent-tasks/pipeline`, `/api/session-runners`, `/api/runner-defaults`, `/api/hosts`, and board-scoped tasks. Use the lower effective stage cap (operator default four) and host cap (server2 default six). Never change budgets or use an override for a same-stage/source collision. The live slots read above is not a substitute for those admission reads. Prefer server2; commission Windows only for the two named portability rows. `server/Bundles` has a 30,000-character guard with shared small headroom (CARD-0884); **zero bundle edits** here. Any later necessary bundle adjustment must be net-shorter and explicitly added to the footprint first.
 
-## Verification design
+## Plan-stage verification proposal (superseded by TestDesign below)
 
 ### Fixtures and evidence boundaries
 
@@ -259,11 +259,11 @@ No unfiltered Unit/full suite, land-worker death battery, browser run or real pr
 
 Final Review applies the operator's 2026-10-01 rule: fail for a regression of existing behavior or a new reachable fail-open/privacy exposure. Do not pad the roster with unrelated tests or demand a new abstraction merely by taste. Explicit intended behavior is completed runner-seat release and queued continuation on a later reply; unchanged local/warm/standing/custody behavior, message retention, operator auth, generation identity and payload exclusion must be proved. A broken old reply endpoint, automatic Working kill, lost answer/report or misleading release count is a substantive regression, not a documentation nit.
 
-### Cost
+### Plan-stage cost proposal (historical)
 
 Estimates, not measurements: final ordinary rows total **36 minutes** (9 + 10 + 6 + 7 + 4), five isolated builds, Linux 25 minutes / Windows 11. Declared preparatory red CP-1/2 add 19 minutes: **55 minutes** ordinary verification including test-first runs, excluding slots. Implementation estimate **120–180 minutes** because all-provider fresh reads and crash-safe reply preservation are real work; split Code into committed slices rather than promise a small Boolean fix. Mutation baseline/red/restored cost estimate 48 × 3 minutes + 10 custody/reporting = **154 minutes**, separate from Code. No routine repeat cost is assumed.
 
-### Checkpoints
+### Plan-stage checkpoint proposal (historical; do not execute)
 
 Closed manifest. Every row owns one isolated build and one literal TUnit filter. `\|` below is a Markdown escape: the importer removes it; an actual quoted shell filter contains plain `|`. Class operands retain trailing `*`; OR is within the class/method segment, never between full paths. All rows are serial to protect shared outputs/fixtures. Source counts after prerequisites and new attributes must be recounted by TestDesign/Code; expected counts are exact, not just floors.
 
@@ -314,3 +314,417 @@ Rollback uses a new forward commit and normal activation, never reset/rebase/for
 Plan validation: a read-only Node census checked the 18/13/9 new method lists expanding to 20/16/9 proposed results, the existing 8/2/3/15 source result census, five eleven-column checkpoint rows, distinct outputs, wildcarded class operands, Min 38/35/4/23/4, Linux/Windows totals 77/27 and ordinary estimates totaling 36 minutes. The importer source and CLI options were inspected; the .NET tool was not executed. `python3` was unavailable, so the same static check used installed Node; no build or test was needed.
 
 TestDesign handoff: freeze this proposed roster and exact guard seams on the post-collision source; pay particular attention to fresh Codex/Grok reads, input/claim locking, rowless attention and the explicitly queued Blocked-answer continuation. CARD-0826 then CARD-0788/0883 must land before Code; serialize with 0881's shared composition files. This Plan neither dispatches work nor claims runtime acceptance.
+
+## Verification design
+
+TestDesign 2026-10-05, task 24ca7610. This appended section is the authoritative verification contract. D-1–D-6 and the fix footprint above are unchanged. The earlier proposal and its counts/PC IDs/commands are historical, not additional work. Its two heading names were changed solely because PlanTableImporter selects the first exact Checkpoints heading. Use only the manifest below.
+
+The required first check, git show origin/master:docs/superpowers/plans/2026-10-01-card-0667-terminal-task-seat-release-plan.md, succeeded. The worktree copy equals that tracked plan; no fallback to an invented design was needed. Inspection source is task base 7e6967dd1c4d3eb33ae000433e87d7ce5e2c099c; local origin/master observed dc7d1794b06282cf7e6cb42e2cdfd4442d49b93a. These are source observations, not deployed versions. No builds, tests, providers, live releases or board changes were run.
+
+Admission remains the caller's gate: 0826, then queued 0788/0883 work, and no overlapping 0881 Code. Local master history contains 0826 implementation and partial-scope reports, 0788 fixes and 0883 recovery commits; this does not establish their stage completion or present occupancy. Re-read only overlapping changes after those gates, regenerate the migration and recount affected attributes before Code's first run. The roster below is frozen for this design; a changed prerequisite requires a committed manifest amendment, never silently lower counts or skip a row.
+
+### Inspection
+
+Bodies read, with deliberately limited reads named where the file is larger than the selected surface:
+
+| Bodies read | Boundaries -> coverage |
+|---|---|
+| RunnerCapacityCountTests: all 3 tests, LiveSeat, StubChild, DeadProbe and AdmitProbe; TranscriptWorkingStateTests: all 13 methods/15 argument results | Fake-child custody/exit and classifier boundary -> V-1, R-1. Stub child binding alone does not set generation, bind a tailer or certify exit. |
+| CompactionContinuationStopTests: all tests and StopWorld; TranscriptTailerCompactionTests: real tail loop / first fork-discovery tests; CodexTranscriptTailerTests: positive bind/newline receipt and stranger refusal setup, NewTailer, CodexTree, HubEvents; GrokTranscriptTailerTests: real-turn normalization and TempUpdatesPath/AppendRows/Poll/teardown | Nearest fixtures for new TerminalSeatReleaseTests -> V-1. StopWorld launches cmd.exe and is not portable; copy neither its process launch nor its real-time waits. |
+| ITranscriptTailer; TranscriptTailer.ObserveCompactionSilenceAsync, ReadBoundFileAsync/binding capture; Grok/Codex constructors, Snapshot/read-loop entry points; SessionRunnerRuntime.SendInputAsync, SendConditionalInputAsync, ReleaseSlotAsync, Track, ForgetDurableSession and test child binding; runner Program route bodies; BuildSlotTestHost | Fresh read vs cached evidence, same launch gate, nonrecursive mutation, actual route mapping -> V-1; CARD-0079 authorization remains excluded and unchanged. |
+| RunnerSlotEndpointTests: all 8 bodies, ReleaseDrops, seeders, FailAuditSave and ClaimOnFirstTaskRead; RunnerSlotRulesTests: both bodies | Existing force-token, refusal, racing claim and failed audit recovery -> R-2, V-3. Endpoint sweep fixtures must supply qualified conditional proof; keep force-route meaning intact. |
+| AgentTaskReplyIntegrationTests: the four R-3 methods, neighboring worktree/failed-release cases, NewDeliveryFactory, AttachTerminal, SeedParentHistoryAsync, AssertParentReceivedNoteAsync, seeders, TestScopeFactory/TempWorkspace | Nearest server lifecycle fixture -> V-2, R-3. Existing selected R-3 tests are local Shared/standing tests; they do not establish remote safety. |
+| AgentTaskReplyService.AnswerAsync, PersistDeliverThenReleaseAsync, DeliverCompletionObligationAsync, ReleaseDelegateAsync; AgentTaskService.RequeueAsync; dispatcher ReleaseUnownedPoolDelegatesAsync and janitor call sites; RunnerSlotService.ListAsync/ReleaseOrphansAsync and reconciliation contract | Writer commit -> recovery -> mutation; private requeue helper needs an internal entry through AgentTaskService, not a second reimplementation -> V-2/V-3. |
+| SessionMessageQueueService.GetLock, keyed enqueue transaction/boundaries and delivery/verdict body; AgentTaskLandNotificationService.ReconcileAsync receipt and exception handling; LandDeliveryBoundary | Queue gate is already internal, so no new lock or queue-file edit is required. Complete recipient receipt and persisted retry -> V-2. |
+| TestDbFixture and IsolatedTestSchema; PhoneHomeTestHost.StartAsync, registration/configuration hooks; BridgeQueueHarness.CreateAsync/attach/fake submit/DisposeAsync; FakeAgentProtocolAdapter.SendInputAsync/SendConditionalInputAsync/OnSubmitted; ProductionRunnerGuard | Isolated PostgreSQL clone (despite historical “Schema” name), scoped real DI, loopback wire and provider substitute -> all server rows. PreserveDatabaseOnDispose is necessary across restart cuts. |
+| SessionMessageQueueSpillTests: large UI/small body/channel spill bodies; SessionMessageQueueDeliveryVerificationTests: ObservableHarness, swallowed/stale/no-receipt methods; AgentTaskLandNotificationRecoveryTests: destination and boot-scan methods | Spill-pointer receipt is not evidence of reading the file; scans/enqueue alone are not recipient evidence -> V-2 delivery matrix. These helper examples are inspected, not added whole-class filters. |
+| AttentionEndpoints: both routes; AttentionService disagreement projection; PlanTableImporter.ExtractSection/SplitRow and schema; docs/testing-and-build.md checkpoint/slot/receipt/Mutation rules; project context, lifecycle and runtime Working/release owners | Attention is fleet-global and unfiltered; preserve linkage without inventing board-scoped visibility. One authoritative checkpoint table -> V-2/V-3, R-4. |
+
+Required setup not present today, to be authored within the already named S1–S4 files:
+
+- In TerminalSeatReleaseTests, build a fake-child world from RunnerCapacityCountTests, with explicit accepted generation/store, manifests/sidecar, input log, real provider tailer and two independent FakeTimeProviders. Extend the existing internal runner seam in SessionRunnerRuntime.cs to bind that tailer/generation and barriers. The seam may supply I/O/barriers/clock, never an eligibility verdict. A child counts exit only when the runtime has observed its exit event/state.
+- Add poll/read serialization and per-instance barriers in the three already named tailer files. Pause normal polling after the first end, append native records and run the real new fresh method. Preserve parser/claim logic and read budgets. Simulate unreadable I/O with a per-instance throwing reader hook; chmod is not an access-denial proof on this host. Use fixture-owned roots; restore CLAUDE_CONFIG_DIR and join tailers/hub pumps. Codex uses its existing sessionsRoot parameter; Grok uses its deterministic updates path. No real user provider home is read.
+- Put the new release HTTP route mapping in an internal callable mapper declared in the already touched runner Program.cs, invoked by production Program and an isolated Kestrel host in the new runner test file. This avoids booting Program's adoption/watchdog services or copying route lambdas into tests. PhoneHomeCommandDispatcher -> PhoneHomeRuntimeAdapter must invoke the same tracked runtime; retain old numeric operation values. Server wrapper coverage lives in the new server fixture because SessionRunner.Tests has no server project reference.
+- RunnerSeatReleaseFixture owns an isolated migrated PostgreSQL clone, the singleton real queue, real reply/task/dispatcher/notification/release services, committed SessionStateStore ingestion, separate scoped contexts and fake runner transports. Use PhoneHomeTestHost's configureServices/mapEndpoints/configureDbContext hooks and BridgeQueueHarness's ConnectionString/AttachSessionId/TimeProvider hooks; do not edit those shared helpers. Map actual AttentionEndpoints with the normal authorized host context. Assert loopback random ports, no Program boot and no provider start; fake runner launch admissions only record specifications.
+- Add per-instance boundary callbacks inside the new release service and touched reply/task/dispatcher files for reservation, answer transaction, enqueue handoff and response application. Reuse LandDeliveryBoundary's existing settlement/queue/receipt cuts and EF interceptors. No hook may skip a guard or substitute a fabricated production result. Expose the pure production authorization decision as a typed internal result so a refused guard can be asserted before downstream checks mask it.
+- For discovery inject a per-pass candidate budget and page size into the new coordinator: fixture page size 2, budget 3, seven seats plus a poisoned candidate. Assert processing/RPC limits, saved continuation and eventual fair traversal across repeated ticks. Each existing inventory RPC has its transport bound; do not claim a paged wire API that currently does not exist. A capped, timed-out or incomplete inventory is not an absence certificate. DB concurrency tests use separate connections and committed barriers, not EF InMemory or a shared dirty tracker.
+
+No additional production-file footprint is necessary for those seams. If implementation cannot reach a named production boundary in those files, return next: plan with that exact seam; do not replace it with a helper-only test.
+
+Release acceptance is explicit: Succeeded and Failed both create debt after committed completion; an Idle, owned, qualified generation can then be stopped and forgotten. Failed status alone never authorizes a kill. Blocked qualifies only after a completed report; it retains logical question/report/worktree state, and an answer after confirmed removal queues the new attempt. Canceled reconciles the operator's requested stop without a second automatic stop. Working/Unknown in any outcome stays owned with debt. Deliberate warm and standing seats remain occupied. Neither age nor rowlessness weakens this rule; CARD-0079 is the sole separately authorized automatic Working stop and is not reused here.
+
+Boundary combinations are mandatory internal scenario loops, not extra TUnit executions:
+
+- For each Claude/Grok/Codex format: unread prompt and tool/assistant activity after a cached end; later complete end; empty/unbound/unreadable/partial final record/read-budget overflow; same-length replacement, truncation, claim revocation and old-generation end. Claude/Codex also use same-cwd stranger claims; Grok's nondeterministic-discovery case is excluded because its path is deterministic. Observation must neither publish duplicates nor trigger server queue callbacks.
+- Time: 0, 119.999, exactly 120 and 120.001 seconds; independently too-young settlement and too-young observation; runner/server clocks offset by 24 hours; hour-silent Working; each binding/file/transcript/input/output revision changed alone; unavailable gap and runner restart. Rowless StartedAt may be ancient, but first qualification starts now.
+- Task fencing: Queued/Dispatched/Working/unsettled Blocked owners by session only and by agent only; completed Blocked with/without report; newer attempt with same session; same attempt with changed settlement; null AgentId; standing/AlwaysOn/board/specialist/warm/SourceLanding each alone. Race before reservation, before RPC, while RPC response is lost, and before applying response. Replacement changes only store, only generation, or only session/object; unrelated fields remain valid.
+- Delivery: brief, answer, channel, mention, completion/continuation and recovery addressed to the releasing seat, each Pending/attempted uncertain/held. Parent's completion is a different destination and does not indefinitely veto child release. For each refusal assert original bytes/status/evidence retained. First explicit answer before reservation uses the live path; during unresolved release it is durable and held; after receipt it takes exactly one new attempt.
+- Confirmed exit/already-exited/authoritatively absent vs kill throw/cancellation/non-exit; all HTTP/phone-home outcomes; missing server row on desktop local client and phone-home; one failing candidate and one failing runner; repeated/restarted sweeps; no global IsSettled change. Existing terminal writers without a callback are seeded after their normal committed shape, then recovered by the actual job/dispatcher.
+- Answers: same and stale round, duplicate concurrent answer, active quota/full capacity/foreign workspace/commit obligation, fixed host/kind refusal, 3999/4000/4001 characters and a multibyte body above the actual spill ceiling, newline normalization and final-content canary. No answer is truncated to the prior-report excerpt. Already accepted text survives admission refusal; auth/round rejection does not count as acceptance. Retry fields are scoped to the target attempt.
+- Attention: two rowless seats with null agents, linked and unlinked tasks, release/hold outcomes, 24 hours minus/plus one clock tick, failed commit and missed invalidation. Fleet-global GET retains known board/card linkage, never guesses it. Only successes age out at 24 hours; unresolved debt stays visible. Check ledger serialization and captured structured logs as well as GET for payload/path canaries.
+
+### Delivery inventory
+
+| Producer -> destination | Durable identity and persistence boundary | Recovery and observable recipient evidence |
+|---|---|---|
+| Reply settlement -> parent session | Task ID + attempt + settlement SourceEventId -> immutable completion notification ID/digest/destination -> keyed queue row -> attempt baseline sequence. Terminal result and owed completion commit before child release. | Real notification reconciler/queue, busy parent and already eligible parent. At each cut below restart services over the same DB, flush and require exactly one complete matching UserPrompt on the pinned parent beyond the attempt floor. Settlement_delivery_precedes_release_and_survives_release_fault and Parent_receipt_rejects_ack_stale_or_partial_prompt. |
+| Explicit released-Blocked answer -> next attempt's session | Accepted answer ID + source question round + source release tuple + target attempt commit atomically; dispatcher builds normal brief; queue row/task marker and target session generation bind receipt. | Real AnswerAsync -> AgentTaskService requeue/admission -> dispatcher -> real queue; both busy-before-enqueue and already eligible targets. Accepted_answer_after_release_is_delivered_once, Answer_racing_release_preserves_one_owner, Answer_recovery_preserves_round_and_admission_guards, long-answer/receipt tests. Persisted answer cannot be cleared on enqueue failure. |
+| Server release coordinator -> runner process custody | Runner/store/session/generation + durable action ID + opaque observation token, reservation committed before RPC. | Actual runner runtime + fake child is the custody recipient: assert observed exit, manifest/sidecar removal, absent tracked generation, unaffected neighbor and exactly-once capacity change. Lost reply/audit failure re-query exact action and authoritative inventory before new qualification. A transport result alone is not release evidence. |
+| Release ledger -> operator attention surface | Release ID -> condition key runner-seat-release:&lt;release-id&gt;; ledger committed before attention invalidation. | Fail publish, restart/reconcile, then actual GET /api/attention contains exact IDs/reason/outcome; record invalidation after commit. Attention GET is the endpoint recipient. No chat/email notification is introduced. |
+
+For both session-input paths run the complete cut matrix in their named methods using fresh isolated worlds: (1) before producer transaction commit, (2) immediately after producer commit/before enqueue, (3) enqueue save throws/rolls back, (4) queue commit succeeds but producer acknowledgement or wakeup is dropped, (5) delivery-attempt stamp before input, (6) body/Enter accepted and UserPrompt persists but verdict save fails, (7) receipt recognized before obligation/answer-completion save. Before commit there is no acknowledged acceptance and no downstream action; repeat the original request. After commit recover the same IDs, including ambiguous accepted input, without duplicating an already recorded complete receipt. For released answers include acceptance before new-attempt reservation and after reservation/before dispatcher brief enqueue. For release RPC include pre-reservation failure, committed reservation before send, runner exit before response, response before audit and restart during adoption. For attention include ledger rollback, commit before invalidation, failed invalidation and GET after restart.
+
+Use actual queue code at every producer-to-session test. A fake adapter only records bytes it actually receives, assembles LF/bracketed paste/separate Enter and then writes native-format synthetic records through the real normalizer/ingest path; it cannot mint an expected UserPrompt without a submit. Wrong text, matching prefix only, earlier sequence, wrong destination, QueuedUserPrompt, assistant row, HTTP ack and Sent alone must leave the obligation unconfirmed. Keep one no-receipt arm before supplying the matching complete prompt; explicitly drive flush/reconcile, never use timeout as the decisive assertion. Ordinary inline bodies must exactly match normalized content and contain the task/answer identity once.
+
+For spill, the complete matching UserPrompt is the actual pointer wire body, joined to the queue/attempt identity; assert the referenced fixture-owned file bytes/hash equal the entire answer/brief and remain recoverable. This proves pointer receipt plus preserved full input, not that a provider read/understood that file. Synthetic transcripts prove parser, queue and recovery integration, not native provider acceptance or external keystroke exclusion. Fake child exit proves protocol/runtime custody bookkeeping, not OS process-tree termination. PostgreSQL transaction cuts plus recreated DI prove persisted-boundary recovery, not SIGKILL/OS crash behavior. No production readiness claim depends on those substitutes.
+
+### Proves it works now
+
+“Now” here names what Code must prove on its clean candidate. No tests named below exist by virtue of this document. A/B/C below expand to the three planned classes, and the following exact method tables are their complete roster.
+
+- V-1: Fresh idle proof, runner identity/input gates, conditional release and wire parity | real runtime/tailers with fake child, Linux and Windows | CP-1 and CP-5 | A roster, 26 results per OS; all named outcomes and custody assertions.
+- V-2: Completed-attempt release, durable answers and parent receipts, attention | real services/queue/HTTP with PostgreSQL | CP-2 and four-method Windows CP-6 | B roster, 29 Linux results; CP-6 selects three of B plus one of C.
+- V-3: Bounded rowless discovery, ownership races and reconciliation | actual job/dispatcher with PostgreSQL and local/phone-home fixture transports | CP-3 and CP-6 | C roster, 14 Linux results; rowless Windows witness included.
+
+Internal scenarios described above do not expand counts. Only Fresh_tail_reads_each_provider has three Arguments (claude/grok/codex); only Completed_attempt_registers_release_debt has four Arguments (Succeeded/Failed/Canceled/completed Blocked). Every other new method is one plain Test. All new helpers stay in the named fixture or test files. Each mutation row below also states the corresponding method's decisive ordinary assertion.
+
+A = `TerminalSeatReleaseTests` (24 methods, 26 results):
+
+| Exact method | Decisive ordinary assertions |
+|---|---|
+| `Replacement_generation_is_never_released` | store-only replacement returns GenerationMismatch and retains child; generation-only replacement returns GenerationMismatch. |
+| `Token_for_another_session_is_refused` | cross-session token returns StaleObservation and signals 0. |
+| `Restart_invalidates_volatile_observation_tokens` | the production authorization decision rejects an otherwise valid old-epoch proof; end-to-end restart requires a new window. |
+| `Fresh_tail_reads_each_provider` (3) | Claude unread prompt yields Working; Grok unread prompt/tool activity yields Working; Codex unread prompt/tool activity yields Working. |
+| `Unknown_or_partial_tail_never_authorizes_release` | each incomplete-read case returns Unknown before qualification. |
+| `Binding_changes_during_read_refuse_qualification` | revoked/replaced/truncated binding returns Unknown or StaleObservation. |
+| `Old_turn_end_does_not_qualify_a_new_generation` | old-end-only observation is not qualified. |
+| `Working_remains_protected_after_arbitrary_silence` | otherwise valid proof returns Working after 1 hour and signals 0. |
+| `Two_observations_require_the_full_safety_margin` | 119.999-second decision is not qualified. |
+| `Activity_resets_the_qualification_window` | each single-component revision change resets qualified elapsed to 0. |
+| `Unavailable_observation_discards_qualification` | recovered observation at old t+120 remains unqualified. |
+| `Unknown_backend_custody_refuses_release` | otherwise eligible custody-uncertain cases signal 0. |
+| `Input_winning_the_gate_invalidates_release` | while a launch barrier owns the gate with no release marker, normal-input writer-entry count is 0; completed normal input invalidates prior proof with StaleObservation and signals 0. |
+| `Conditional_input_invalidates_release` | conditional-input-first outcome is StaleObservation and signals 0; while a launch barrier owns the gate with no release marker, conditional-input writer-entry count is 0. |
+| `Release_winning_the_gate_refuses_later_input` | production input decision is ReleaseInProgress before exit; both public input routes later refuse with 0 child writes. |
+| `Tail_growth_at_final_check_refuses_signal` | native activity at the barrier causes signal count 0. |
+| `Output_growth_at_signal_boundary_refuses_release` | output-only growth at the signal barrier causes signal count 0. |
+| `Kill_failure_retains_manifest_and_capacity` | throw/cancel/non-exit retain manifest and occupied count. |
+| `Duplicate_action_is_idempotent` | same action on replacement returns GenerationMismatch; original signal count stays 1. |
+| `Confirmed_exit_forgets_only_the_expected_generation` | generation history remains readable after confirmed eviction. |
+| `Unsupported_capability_never_falls_back_to_force` | unconditional release and generation-kill counters are both 0. |
+| `Http_and_phone_home_share_conditional_semantics` | the pinned numeric assertion for PhoneHomeOperation.Input equals 9. |
+| `Fresh_observation_does_not_publish_duplicate_entries` | observation adds 0 published entries; later poll publishes each row exactly once. |
+| `Explicit_operator_release_keeps_its_contract` | Explicit single-seat force release remains usable with a reason; correct custody outcome, independent of automatic eligibility.. |
+
+B = `TerminalRunnerSeatReleaseTests` (26 methods, 29 results):
+
+| Exact method | Decisive ordinary assertions |
+|---|---|
+| `Completed_attempt_registers_release_debt` (4) | Failed/Canceled/Blocked ledger count is 1. |
+| `Incomplete_settlements_never_authorize_release` | uncommitted and null-CompletedAt cases have 0 conditional commands; routing-hold case has 0 commands and reason IncompleteReport. |
+| `Unsettled_blocked_or_queued_owner_is_preserved` | same-session/different-agent owner has 0 commands; same-agent/different-session owner has 0 commands. |
+| `Standing_warm_and_verification_owners_are_preserved` | ordinary standing owner has 0 commands; otherwise releasable AlwaysOn pool seat has 0 commands; otherwise releasable board-owned seat has 0 commands; role-only and owner-only specialist cases have 0 commands; Shared warm case remains listed and occupied; verification seat has 0 generic release commands. |
+| `Working_session_keeps_ownership_and_visible_debt` | Failed/Succeeded/Blocked Working cases have 0 stopper calls; runner Idle/server Working case sends 0 conditional commands. |
+| `Janitor_cannot_bypass_a_release_hold` | after TTL the held Working/Unknown seat has 0 stopper calls. |
+| `Cancellation_reconciles_without_second_stop` | operator cancellation causes exactly 1 requested stop. |
+| `Settlement_age_has_its_own_safety_margin` | stable runner plus 119.999-second settlement sends 0 commands. |
+| `Pending_delivery_prevents_release` | each owed/attempted/held message case returns PendingDelivery and sends 0 commands; all message bodies/statuses/attempt evidence remain unchanged. |
+| `Concurrent_reservations_have_one_winner` | two independent contexts produce exactly 1 reservation winner. |
+| `Answer_racing_release_preserves_one_owner` | answer at owned-gate barrier cannot enter old-session write or reserve concurrently; concurrent accepted duplicate requests yield exactly 1 target attempt; uncertain-release case has 0 old-session writes and durable answer text. |
+| `Answer_recovery_preserves_round_and_admission_guards` | at the injected save cut no committed attempt lacks its exact answer; stale-round reply returns conflict and changes 0 attempts/answer rows. |
+| `Answer_stop_bypass_requires_the_exact_release_receipt` | absent-row or mismatched receipt does not take the confirmed-release bypass. |
+| `Answer_admission_guards_preserve_the_accepted_reply` | active quota refusal retains answer and has 0 launch admissions; capacity-full case stays queued and has 0 launch admissions; commit-recovery case retains obligation and answer; target not launched; foreign workspace-use claim refuses dispatch and preserves text; refused preference produces 0 alternate-kind/host launch admissions; before explicit dispatch, launch-call count is 0. |
+| `Long_answer_keeps_complete_content_and_spill_receipt` | recovered input file/inline body equals full Unicode answer including final canary. |
+| `Answer_fields_do_not_leak_into_a_later_attempt` | later explicit retry brief contains 0 stale-answer copies. |
+| `Answer_keeps_workspace_and_report_context` | same workspace/branch/report artifacts and reservation are retained. |
+| `Settlement_delivery_precedes_release_and_survives_release_fault` | wire-entry fresh context contains terminal result and exact owed parent note; busy parent has 0 writes before committed TurnEnd. |
+| `Accepted_answer_after_release_is_delivered_once` | enqueue failure plus restart still yields exactly 1 complete target UserPrompt; busy target has 0 writes before committed TurnEnd. |
+| `Answer_receipt_rejects_ack_stale_or_partial_prompt` | wrong/stale/partial/QueuedUserPrompt-only cases remain unconfirmed. |
+| `Parent_receipt_rejects_ack_stale_or_partial_prompt` | wrong/stale/partial/QueuedUserPrompt-only cases retain ConfirmedAt null. |
+| `Attention_contains_release_identity_and_reason` | deferred-only sweep reports Released=0 and no released headline; at 24h+1 tick unresolved debt remains visible while old success expires. |
+| `Reply_on_live_local_or_warm_session_is_unchanged` | live/local/warm reply retains attempt/session and has 0 cold admissions. |
+| `Unsupported_server_transport_never_falls_back_to_force` | HTTP and phone-home old-peer cases call force/generation-kill 0 times. |
+| `Blocked_report_with_running_runner_frees_the_seat` | Marked and runner-sync Blocked reports with CompletedAt, complete fresh Idle proof and Running process status release; server row Stopped/SystemRequest, occupied 0, report/worktree retained.. |
+| `Failed_settlement_releases_without_success_branch` | Real failed settlement and independent later sweep release the expected seat; no Succeeded-only path, no lost result.. |
+
+C = `RunnerSeatOrphanSweepTests` (14 methods, 14 results):
+
+| Exact method | Decisive ordinary assertions |
+|---|---|
+| `Claim_between_inventory_and_release_vetoes_action` | newer-attempt-only change reserves 0 rows; same-attempt revised settlement reserves 0 rows; claim committed after reservation sends 0 commands. |
+| `Response_does_not_stop_a_replacement` | replacement row remains Running and owner remains unchanged; already-stopped row retains its original termination source and timestamps. |
+| `Missing_or_stale_runner_evidence_is_not_absence` | all non-authoritative cases retain pending debt and Running row. |
+| `Reservation_precedes_the_runner_command` | fresh context at wire entry reads the exact persisted action ID. |
+| `Lost_reply_reconciles_without_blind_second_kill` | mutation request count remains 1 after dropped successful reply. |
+| `Failed_audit_commit_recovers_stopped_row_and_attention` | restart yields Stopped row and exactly 1 committed release note. |
+| `Sweep_budget_is_bounded_and_resumes_fairly` | one tick processes no more than its supplied budget. |
+| `One_runner_failure_does_not_hide_other_candidates` | second runner/candidate has 1 confirmed release. |
+| `Unknown_server_session_with_idle_runner_is_released` | local and phone-home rowless cases each confirm release without synthetic row. |
+| `Discovery_is_idempotent_across_restart` | repeated/concurrent discovery leaves exactly 1 row and action per seat generation. |
+| `Attention_recovery_deduplicates_rowless_seats_without_leaking_payload` | GET contains both distinct rowless session IDs; GET has exactly 2 distinct release condition keys for 2 rowless seats; ledger JSON, GET and captured structured logs exclude every synthetic canary. |
+| `Attention_recovers_a_missed_invalidation_after_commit` | failed publication plus restart produces same-ID invalidation and GET row. |
+| `Unknown_server_session_with_live_work_is_preserved` | Rowless Working and Unknown evidence retain live custody after arbitrary age; zero commands/signals and visible typed hold.. |
+| `Existing_job_discovers_debt_without_settlement_callback` | Actual slot job and dispatcher discover committed Succeeded/Failed/Canceled/completed Blocked and rowless debt without callback; old intent reconciliation remains separate.. |
+
+### Guards the regression
+
+- R-1: File-order Working/Idle/Unknown semantics and capacity/custody | all 15 TranscriptWorkingStateTests results and all 3 RunnerCapacityCountTests results, CP-1; capacity repeated in CP-5. Empty/active/auto-compaction never proves Idle; failed kill keeps manifest; exited adoption does not occupy capacity.
+- R-2: Operator token, force-release audit/refusal and existing pending intent semantics | all 8 RunnerSlotEndpointTests and both RunnerSlotRulesTests, CP-2. Preserve HTTP 403 without token; refused sweep remains HTTP 409 even when unrelated reconciliation succeeds; new claim sends no mutation; audit recovery sends no second release. Pending_release_reconcile_is_scheduled_and_triggered_at_startup still asserts the configured cron and one startup enqueue. New conditional phase must not create a second scheduler.
+- R-3: Local Shared and standing compatibility | CP-4 selects exactly AgentTaskReplyIntegrationTests.a_settled_shared_delegate_goes_warm_instead_of_dying, a_failed_verdict_pools_a_shared_delegate_warm, a_users_standing_agent_is_never_pooled_or_deleted, and a_blocked_delegate_keeps_its_session_and_agent. Their existing stopper-empty, warm reservation, retained agent and Blocked assertions stay unchanged.
+- R-4: Windows portability of the changed safety path | CP-5 A plus existing capacity tests, CP-6 completed Blocked/answer/attention/rowless witnesses. Windows paths and line endings are also inputs in Linux worlds; neither OS substitutes for the other's row. No native PTY coverage is claimed.
+
+### Guard inventory
+
+Every row is a distinct guarded assertion with exactly one distinct PC. A composite identity is tested by changing one component at a time. Where a guard is a single predicate over alternatives (for example specialist-role OR specialist-owner, or read failure), its named PC removes that predicate and all alternatives are separately asserted inside the method. Independent ownership, generation, input and response guards are not collapsed into one end-to-end mutation. There are no intentionally unmapped safety guards in D-1–D-6 or the changed integration paths.
+
+| Guard | Plan reference and invariant | Control |
+|---|---|---|
+| G-1 | D-1: All four completed outcomes incur release debt. | PC-1 |
+| G-2 | D-1: No uncommitted/incomplete attempt grants release. | PC-2 |
+| G-3 | D-1: Blocked needs completed report evidence. | PC-3 |
+| G-4 | D-1: Other task ownership by session vetoes. | PC-4 |
+| G-5 | D-1: Other task ownership by agent vetoes. | PC-5 |
+| G-6 | D-3: Expected attempt fences the reservation. | PC-6 |
+| G-7 | D-3: Expected settlement event/status fences the reservation. | PC-7 |
+| G-8 | D-1: Standing non-pool ownership is retained. | PC-8 |
+| G-9 | D-1: AlwaysOn ownership is retained. | PC-9 |
+| G-10 | D-1: Board ownership is retained. | PC-10 |
+| G-11 | D-1: Specialist ownership is retained. | PC-11 |
+| G-12 | D-1/D-4: Intentional Shared warm custody stays occupied. | PC-12 |
+| G-13 | D-1: SourceLanding stays under its receipt owner. | PC-13 |
+| G-14 | D-1: Fast settlement cannot bypass conditional release. | PC-14 |
+| G-15 | D-4: TTL janitor cannot bypass conditional release. | PC-15 |
+| G-16 | D-1: Post-cancel reconciliation does not repeat requested stop. | PC-16 |
+| G-17 | D-3: Runner store identity is fenced. | PC-17 |
+| G-18 | D-3: Accepted-start generation is fenced. | PC-18 |
+| G-19 | D-3: Observation token is scoped to the session object. | PC-19 |
+| G-20 | D-2/D-3: Runtime epoch invalidates observation authority. | PC-20 |
+| G-21 | D-2: Claude observation consumes fresh native records. | PC-21 |
+| G-22 | D-2: Grok observation consumes fresh native records. | PC-22 |
+| G-23 | D-2: Codex observation consumes fresh native records. | PC-23 |
+| G-24 | D-2: Incomplete/unreadable evidence is Unknown. | PC-24 |
+| G-25 | D-2: Binding/file identity must survive the read. | PC-25 |
+| G-26 | D-2: Turn end must follow this generation's delivered prompt. | PC-26 |
+| G-27 | D-2: Runner Working veto is unconditional. | PC-27 |
+| G-28 | D-2: Committed server Working is an independent veto. | PC-28 |
+| G-29 | D-2: Two stable observations need 120 seconds. | PC-29 |
+| G-30 | D-2: Settlement also must be at least 120 seconds old. | PC-30 |
+| G-31 | D-2: Any evidence revision change restarts qualification. | PC-31 |
+| G-32 | D-2: An unavailable observation discards the window. | PC-32 |
+| G-33 | D-2/D-3: Runner launch/input/custody uncertainty vetoes. | PC-33 |
+| G-34 | D-2: Recipient-addressed pending delivery vetoes release. | PC-34 |
+| G-35 | D-3: Normal input acquires the shared launch gate. | PC-35 |
+| G-36 | D-3: Conditional input advances the input revision. | PC-36 |
+| G-37 | D-3: Release ownership refuses later input. | PC-37 |
+| G-38 | D-3: Final fresh native read precedes signal. | PC-38 |
+| G-39 | D-3: Last output revision is checked before signal. | PC-39 |
+| G-40 | D-3: Positive exit precedes forgetting custody. | PC-40 |
+| G-41 | D-3: Action replay is idempotent only within its generation. | PC-41 |
+| G-42 | D-3: Seat removal retains durable generation history. | PC-42 |
+| G-43 | D-3: Fresh ownership revalidation occurs immediately before RPC. | PC-43 |
+| G-44 | D-3: Response cannot retire a replacement server binding. | PC-44 |
+| G-45 | D-3: Reservation update compares revision and affects exactly one row. | PC-45 |
+| G-46 | D-3: Release and answer/claim obey the singleton queue gate. | PC-46 |
+| G-47 | D-3: Unsupported/refused peers never trigger unconditional fallback. | PC-47 |
+| G-48 | D-2/D-4: Only fresh complete post-adoption inventory proves absence. | PC-48 |
+| G-49 | D-4: Reservation is durable before sending the action. | PC-49 |
+| G-50 | D-4: Lost reply is reconciled before another mutation. | PC-50 |
+| G-51 | D-4: Failed result commit recovers row and audit exactly once. | PC-51 |
+| G-52 | D-4: Discovery is bounded and advances fairly across pages. | PC-52 |
+| G-53 | D-4: Runner/candidate errors do not abort later candidates. | PC-53 |
+| G-54 | D-4: First terminal row writer retains termination provenance. | PC-54 |
+| G-55 | D-4: Rowless seats are discoverable through both transports. | PC-55 |
+| G-56 | D-1/D-4: Ledger uniqueness survives duplicate/restarted discovery. | PC-56 |
+| G-57 | D-5: Answer text/round/target attempt commit atomically. | PC-57 |
+| G-58 | D-5: A stale question round cannot consume an answer. | PC-58 |
+| G-59 | D-5: Concurrent same-round answers create one continuation. | PC-59 |
+| G-60 | D-5: Ambiguous release holds accepted input away from old seat. | PC-60 |
+| G-61 | D-5: Stop bypass requires this attempt's confirmed receipt. | PC-61 |
+| G-62 | D-5: Quota admission remains enforced. | PC-62 |
+| G-63 | D-5: Capacity admission remains enforced. | PC-63 |
+| G-64 | D-5: Commit-recovery admission remains enforced. | PC-64 |
+| G-65 | D-5: Workspace use reservation remains required. | PC-65 |
+| G-66 | D-5: Continuation preserves selected kind and runner preference. | PC-66 |
+| G-67 | D-5: Reply handler never launches a provider. | PC-67 |
+| G-68 | D-5: Accepted answer is complete even across spill. | PC-68 |
+| G-69 | D-5: Answer fields render only for their target attempt. | PC-69 |
+| G-70 | D-5: Continuation preserves existing branch/worktree evidence. | PC-70 |
+| G-71 | D-1/D-5: Settlement commits its parent completion obligation first. | PC-71 |
+| G-72 | D-5: Accepted-answer enqueue failure remains recoverable. | PC-72 |
+| G-73 | D-5: Answer receipt requires the complete correlated UserPrompt. | PC-73 |
+| G-74 | D-1: Parent receipt requires the complete correlated UserPrompt. | PC-74 |
+| G-75 | D-6: Attention projects rowless release identities. | PC-75 |
+| G-76 | D-6: Attention deduplicates by release ID. | PC-76 |
+| G-77 | D-3/D-6: Only confirmed dispositions count or read as released. | PC-77 |
+| G-78 | D-1/D-6: Release diagnostics exclude payloads and sensitive paths. | PC-78 |
+| G-79 | D-6: Committed attention invalidation is recoverable. | PC-79 |
+| G-80 | D-2: Pending inputs are retained while release is held. | PC-80 |
+| G-81 | D-2: Wire additions preserve old operation identities. | PC-81 |
+| G-82 | D-1: Busy parent completion waits through the real queue. | PC-82 |
+| G-83 | D-5: Busy continuation recipient waits through the real queue. | PC-83 |
+| G-84 | D-2: Fresh observation cannot duplicate ingest or invoke queue callbacks. | PC-84 |
+| G-85 | D-5: Live/local/warm replies keep their existing conversation. | PC-85 |
+| G-86 | D-3: Server clients preserve the no-force-fallback rule. | PC-86 |
+| G-87 | D-3 compatibility: Operator force release still requires its token. | PC-87 |
+| G-88 | D-6: Unresolved release debt does not age out with successes. | PC-88 |
+| G-89 | D-3: Normal input advances the input revision. | PC-89 |
+| G-90 | D-3: Conditional input acquires the shared launch gate. | PC-90 |
+
+### Positive controls
+
+Mutation runs these after ordinary Code V/R, separate Review and confirmed land, on the exact SourceLanding snapshot. Review judges the unexecuted design before land. For each PC: clean baseline green -> one compiling defect -> named assertion red -> exact restore -> fresh build -> same method green. Code does not run PC mutations.
+
+Each invocation uses one precise filter: /*/*/ClassName/ExactTestMethod. Only the two parameterized methods use ExactTestMethod*; Fresh_tail_reads_each_provider executes 3 results and Completed_attempt_registers_release_debt executes 4, otherwise Min=1. The class/method in each table row is the literal substitution; no whole-class PC cycle. PC-21/22/23 mutate one provider implementation at a time and that provider argument must be red; the other two must remain green. Keep 90 per-PC evidence sets and the argument roster, even where PCs share a detecting method.
+
+For identity/Working/time/input authorization, first obtain genuine qualification through real observations. Include a direct call to the SAME pure production decision with every other input valid, then run the complete route/race. This makes the decision's own refusal assertion red when redundant downstream defenses otherwise retain custody. In particular G-17/18 change only the request store/generation against a valid current issued proof; G-19 uses a token issued to a second fixture seat; G-20 tests an old epoch in the production decision as well as a runtime restart; G-37 checks ReleaseInProgress while the fake child is still live, before exit independently refuses input. No test-created authority can reach a real child. G-35/G-90 hold the actual launch gate at a non-release launch barrier and assert writer-entry count 0, independently of revision invalidation in G-89/G-36. These are guard-decision witnesses alongside end-to-end safety witnesses, not claims that removing one redundant guard necessarily kills a session.
+
+Keep proof/custody fixtures otherwise eligible so a deleted server owner/pending guard reaches the conditional command counter. For G-45 race conditional updates against the same existing reservation, avoiding a unique-insert constraint masking the revision check. Assert returned affected-row/winner decisions. For all crash cuts assert persisted facts and explicit recovery results; timeouts, noncompiling code, fixture failures and zero tests never count as red. If the selected defect survives, preserve that finding and request a separate repair; do not widen a timeout or rewrite a fixture during sourced Mutation.
+
+| PC | Compiling production defect | Exact detecting method and required red assertion |
+|---|---|---|
+| PC-1 | Break G-1: restrict the terminal predicate to Succeeded. | `TerminalRunnerSeatReleaseTests.Completed_attempt_registers_release_debt`: Failed/Canceled/Blocked ledger count is 1. |
+| PC-2 | Break G-2: remove the CompletedAt requirement. | `TerminalRunnerSeatReleaseTests.Incomplete_settlements_never_authorize_release`: uncommitted and null-CompletedAt cases have 0 conditional commands. |
+| PC-3 | Break G-3: accept Blocked with CompletedAt but no settlement/report. | `TerminalRunnerSeatReleaseTests.Incomplete_settlements_never_authorize_release`: routing-hold case has 0 commands and reason IncompleteReport. |
+| PC-4 | Break G-4: omit the session-ID owner query arm. | `TerminalRunnerSeatReleaseTests.Unsettled_blocked_or_queued_owner_is_preserved`: same-session/different-agent owner has 0 commands. |
+| PC-5 | Break G-5: omit the agent-ID owner query arm. | `TerminalRunnerSeatReleaseTests.Unsettled_blocked_or_queued_owner_is_preserved`: same-agent/different-session owner has 0 commands. |
+| PC-6 | Break G-6: omit expected attempt from the conditional reservation predicate. | `RunnerSeatOrphanSweepTests.Claim_between_inventory_and_release_vetoes_action`: newer-attempt-only change reserves 0 rows. |
+| PC-7 | Break G-7: omit the settlement identity/status comparison. | `RunnerSeatOrphanSweepTests.Claim_between_inventory_and_release_vetoes_action`: same-attempt revised settlement reserves 0 rows. |
+| PC-8 | Break G-8: omit the non-pool owner exclusion. | `TerminalRunnerSeatReleaseTests.Standing_warm_and_verification_owners_are_preserved`: ordinary standing owner has 0 commands. |
+| PC-9 | Break G-9: omit AlwaysOn from owner exclusion. | `TerminalRunnerSeatReleaseTests.Standing_warm_and_verification_owners_are_preserved`: otherwise releasable AlwaysOn pool seat has 0 commands. |
+| PC-10 | Break G-10: omit BoardId from owner exclusion. | `TerminalRunnerSeatReleaseTests.Standing_warm_and_verification_owners_are_preserved`: otherwise releasable board-owned seat has 0 commands. |
+| PC-11 | Break G-11: omit the specialist-role/owner exclusion. | `TerminalRunnerSeatReleaseTests.Standing_warm_and_verification_owners_are_preserved`: role-only and owner-only specialist cases have 0 commands. |
+| PC-12 | Break G-12: treat the warm disposition as releasable. | `TerminalRunnerSeatReleaseTests.Standing_warm_and_verification_owners_are_preserved`: Shared warm case remains listed and occupied. |
+| PC-13 | Break G-13: omit the SourceLanding exclusion. | `TerminalRunnerSeatReleaseTests.Standing_warm_and_verification_owners_are_preserved`: verification seat has 0 generic release commands. |
+| PC-14 | Break G-14: route runner-bound ReleaseDelegateAsync into the existing stopper arm. | `TerminalRunnerSeatReleaseTests.Working_session_keeps_ownership_and_visible_debt`: Failed/Succeeded/Blocked Working cases have 0 stopper calls. |
+| PC-15 | Break G-15: retain the old remote-worktree janitor kill arm. | `TerminalRunnerSeatReleaseTests.Janitor_cannot_bypass_a_release_hold`: after TTL the held Working/Unknown seat has 0 stopper calls. |
+| PC-16 | Break G-16: call the ordinary stopper again from the post-commit release hook. | `TerminalRunnerSeatReleaseTests.Cancellation_reconciles_without_second_stop`: operator cancellation causes exactly 1 requested stop. |
+| PC-17 | Break G-17: ignore ExpectedRunnerStoreId while keeping generation validation. | `TerminalSeatReleaseTests.Replacement_generation_is_never_released`: store-only replacement returns GenerationMismatch and retains child. |
+| PC-18 | Break G-18: remove accepted-generation comparison. | `TerminalSeatReleaseTests.Replacement_generation_is_never_released`: generation-only replacement returns GenerationMismatch. |
+| PC-19 | Break G-19: look up a valid observation token without checking its session/object. | `TerminalSeatReleaseTests.Token_for_another_session_is_refused`: cross-session token returns StaleObservation and signals 0. |
+| PC-20 | Break G-20: remove the runtime-epoch comparison from the production token authorization decision. | `TerminalSeatReleaseTests.Restart_invalidates_volatile_observation_tokens`: the production authorization decision rejects an otherwise valid old-epoch proof; end-to-end restart requires a new window. |
+| PC-21 | Break G-21: use Snapshot() for the Claude fresh-observation implementation. | `TerminalSeatReleaseTests.Fresh_tail_reads_each_provider`: Claude unread prompt yields Working. |
+| PC-22 | Break G-22: use Snapshot() for the Grok fresh-observation implementation. | `TerminalSeatReleaseTests.Fresh_tail_reads_each_provider`: Grok unread prompt/tool activity yields Working. |
+| PC-23 | Break G-23: use Snapshot() for the Codex fresh-observation implementation. | `TerminalSeatReleaseTests.Fresh_tail_reads_each_provider`: Codex unread prompt/tool activity yields Working. |
+| PC-24 | Break G-24: map unsuccessful fresh-read status to an eligible Idle observation. | `TerminalSeatReleaseTests.Unknown_or_partial_tail_never_authorizes_release`: each incomplete-read case returns Unknown before qualification. |
+| PC-25 | Break G-25: omit the before/after binding and consumed-file identity comparison. | `TerminalSeatReleaseTests.Binding_changes_during_read_refuse_qualification`: revoked/replaced/truncated binding returns Unknown or StaleObservation. |
+| PC-26 | Break G-26: omit the current prompt floor check. | `TerminalSeatReleaseTests.Old_turn_end_does_not_qualify_a_new_generation`: old-end-only observation is not qualified. |
+| PC-27 | Break G-27: remove the Working arm from final authorization. | `TerminalSeatReleaseTests.Working_remains_protected_after_arbitrary_silence`: otherwise valid proof returns Working after 1 hour and signals 0. |
+| PC-28 | Break G-28: ignore the committed server Working projection. | `TerminalRunnerSeatReleaseTests.Working_session_keeps_ownership_and_visible_debt`: runner Idle/server Working case sends 0 conditional commands. |
+| PC-29 | Break G-29: set the stable observation minimum to zero. | `TerminalSeatReleaseTests.Two_observations_require_the_full_safety_margin`: 119.999-second decision is not qualified. |
+| PC-30 | Break G-30: omit settlement age comparison. | `TerminalRunnerSeatReleaseTests.Settlement_age_has_its_own_safety_margin`: stable runner plus 119.999-second settlement sends 0 commands. |
+| PC-31 | Break G-31: retain the first-observed instant when a revision changes. | `TerminalSeatReleaseTests.Activity_resets_the_qualification_window`: each single-component revision change resets qualified elapsed to 0. |
+| PC-32 | Break G-32: leave prior qualification intact after Unknown/unavailable. | `TerminalSeatReleaseTests.Unavailable_observation_discards_qualification`: recovered observation at old t+120 remains unqualified. |
+| PC-33 | Break G-33: ignore pending input/launch/adoption or unaccounted external custody in final authorization. | `TerminalSeatReleaseTests.Unknown_backend_custody_refuses_release`: otherwise eligible custody-uncertain cases signal 0. |
+| PC-34 | Break G-34: remove the server pending-delivery decision. | `TerminalRunnerSeatReleaseTests.Pending_delivery_prevents_release`: each owed/attempted/held message case returns PendingDelivery and sends 0 commands. |
+| PC-35 | Break G-35: remove only normal input's launch-gate acquisition, retaining its revision increment. | `TerminalSeatReleaseTests.Input_winning_the_gate_invalidates_release`: while a launch barrier owns the gate with no release marker, normal-input writer-entry count is 0. |
+| PC-36 | Break G-36: omit the input revision increment after conditional input. | `TerminalSeatReleaseTests.Conditional_input_invalidates_release`: conditional-input-first outcome is StaleObservation and signals 0. |
+| PC-37 | Break G-37: omit the release-in-progress branch from the production already-locked input authorization decision. | `TerminalSeatReleaseTests.Release_winning_the_gate_refuses_later_input`: production input decision is ReleaseInProgress before exit; both public input routes later refuse with 0 child writes. |
+| PC-38 | Break G-38: reuse the earlier observation at the final reinspection. | `TerminalSeatReleaseTests.Tail_growth_at_final_check_refuses_signal`: native activity at the barrier causes signal count 0. |
+| PC-39 | Break G-39: remove last pre-signal output-revision comparison. | `TerminalSeatReleaseTests.Output_growth_at_signal_boundary_refuses_release`: output-only growth at the signal barrier causes signal count 0. |
+| PC-40 | Break G-40: forget tracked/durable custody after KillAsync without testing HasExited. | `TerminalSeatReleaseTests.Kill_failure_retains_manifest_and_capacity`: throw/cancel/non-exit retain manifest and occupied count. |
+| PC-41 | Break G-41: cache action results by action ID alone and ignore generation on replay. | `TerminalSeatReleaseTests.Duplicate_action_is_idempotent`: same action on replacement returns GenerationMismatch; original signal count stays 1. |
+| PC-42 | Break G-42: delete generation history with the session manifest. | `TerminalSeatReleaseTests.Confirmed_exit_forgets_only_the_expected_generation`: generation history remains readable after confirmed eviction. |
+| PC-43 | Break G-43: skip pre-dispatch owner revalidation after reservation. | `RunnerSeatOrphanSweepTests.Claim_between_inventory_and_release_vetoes_action`: claim committed after reservation sends 0 commands. |
+| PC-44 | Break G-44: skip response-time runner/store/session/generation and owner comparison. | `RunnerSeatOrphanSweepTests.Response_does_not_stop_a_replacement`: replacement row remains Running and owner remains unchanged. |
+| PC-45 | Break G-45: replace conditional update with tracked SaveChanges and report success. | `TerminalRunnerSeatReleaseTests.Concurrent_reservations_have_one_winner`: two independent contexts produce exactly 1 reservation winner. |
+| PC-46 | Break G-46: use a new SemaphoreSlim instead of queue.GetLock for release. | `TerminalRunnerSeatReleaseTests.Answer_racing_release_preserves_one_owner`: answer at owned-gate barrier cannot enter old-session write or reserve concurrently. |
+| PC-47 | Break G-47: invoke ReleaseSlotAsync when conditional operation is unsupported. | `TerminalSeatReleaseTests.Unsupported_capability_never_falls_back_to_force`: unconditional release and generation-kill counters are both 0. |
+| PC-48 | Break G-48: treat unavailable/partial/pre-adoption inventory as AlreadyAbsent. | `RunnerSeatOrphanSweepTests.Missing_or_stale_runner_evidence_is_not_absence`: all non-authoritative cases retain pending debt and Running row. |
+| PC-49 | Break G-49: send the conditional command before saving its reservation. | `RunnerSeatOrphanSweepTests.Reservation_precedes_the_runner_command`: fresh context at wire entry reads the exact persisted action ID. |
+| PC-50 | Break G-50: re-send release immediately from pending recovery. | `RunnerSeatOrphanSweepTests.Lost_reply_reconciles_without_blind_second_kill`: mutation request count remains 1 after dropped successful reply. |
+| PC-51 | Break G-51: mark release complete in memory and omit pending-result reconciliation. | `RunnerSeatOrphanSweepTests.Failed_audit_commit_recovers_stopped_row_and_attention`: restart yields Stopped row and exactly 1 committed release note. |
+| PC-52 | Break G-52: remove the candidate budget break from discovery. | `RunnerSeatOrphanSweepTests.Sweep_budget_is_bounded_and_resumes_fairly`: one tick processes no more than its supplied budget. |
+| PC-53 | Break G-53: return from the discovery loop on first candidate exception. | `RunnerSeatOrphanSweepTests.One_runner_failure_does_not_hide_other_candidates`: second runner/candidate has 1 confirmed release. |
+| PC-54 | Break G-54: overwrite existing termination source/timestamps unconditionally. | `RunnerSeatOrphanSweepTests.Response_does_not_stop_a_replacement`: already-stopped row retains its original termination source and timestamps. |
+| PC-55 | Break G-55: require a server AgentSession join before discovery. | `RunnerSeatOrphanSweepTests.Unknown_server_session_with_idle_runner_is_released`: local and phone-home rowless cases each confirm release without synthetic row. |
+| PC-56 | Break G-56: key each discovery row by a new random ID without tuple upsert. | `RunnerSeatOrphanSweepTests.Discovery_is_idempotent_across_restart`: repeated/concurrent discovery leaves exactly 1 row and action per seat generation. |
+| PC-57 | Break G-57: save the new attempt before saving accepted answer fields. | `TerminalRunnerSeatReleaseTests.Answer_recovery_preserves_round_and_admission_guards`: at the injected save cut no committed attempt lacks its exact answer. |
+| PC-58 | Break G-58: omit the current round comparison. | `TerminalRunnerSeatReleaseTests.Answer_recovery_preserves_round_and_admission_guards`: stale-round reply returns conflict and changes 0 attempts/answer rows. |
+| PC-59 | Break G-59: omit the accepted-answer revision comparison in requeue. | `TerminalRunnerSeatReleaseTests.Answer_racing_release_preserves_one_owner`: concurrent accepted duplicate requests yield exactly 1 target attempt. |
+| PC-60 | Break G-60: enqueue accepted answer to the old session while release is unresolved. | `TerminalRunnerSeatReleaseTests.Answer_racing_release_preserves_one_owner`: uncertain-release case has 0 old-session writes and durable answer text. |
+| PC-61 | Break G-61: skip StopDelegateAsync whenever the server session row is missing. | `TerminalRunnerSeatReleaseTests.Answer_stop_bypass_requires_the_exact_release_receipt`: absent-row or mismatched receipt does not take the confirmed-release bypass. |
+| PC-62 | Break G-62: skip quota/availability admission for released answers. | `TerminalRunnerSeatReleaseTests.Answer_admission_guards_preserve_the_accepted_reply`: active quota refusal retains answer and has 0 launch admissions. |
+| PC-63 | Break G-63: admit released-answer dispatch without capacity check. | `TerminalRunnerSeatReleaseTests.Answer_admission_guards_preserve_the_accepted_reply`: capacity-full case stays queued and has 0 launch admissions. |
+| PC-64 | Break G-64: bypass unresolved CommitRecoveryObligations for released answer. | `TerminalRunnerSeatReleaseTests.Answer_admission_guards_preserve_the_accepted_reply`: commit-recovery case retains obligation and answer; target not launched. |
+| PC-65 | Break G-65: skip WorkspaceUseAdmission for released answer. | `TerminalRunnerSeatReleaseTests.Answer_admission_guards_preserve_the_accepted_reply`: foreign workspace-use claim refuses dispatch and preserves text. |
+| PC-66 | Break G-66: replace refused preferred runner/kind with an available default. | `TerminalRunnerSeatReleaseTests.Answer_admission_guards_preserve_the_accepted_reply`: refused preference produces 0 alternate-kind/host launch admissions. |
+| PC-67 | Break G-67: invoke dispatcher launch directly from the released-answer handler. | `TerminalRunnerSeatReleaseTests.Answer_admission_guards_preserve_the_accepted_reply`: before explicit dispatch, launch-call count is 0. |
+| PC-68 | Break G-68: clip accepted answer to 4000 characters in BuildBrief. | `TerminalRunnerSeatReleaseTests.Long_answer_keeps_complete_content_and_spill_receipt`: recovered input file/inline body equals full Unicode answer including final canary. |
+| PC-69 | Break G-69: remove target-attempt comparison in BuildBrief. | `TerminalRunnerSeatReleaseTests.Answer_fields_do_not_leak_into_a_later_attempt`: later explicit retry brief contains 0 stale-answer copies. |
+| PC-70 | Break G-70: clear WorktreePath/BaseRef/report evidence before requeue. | `TerminalRunnerSeatReleaseTests.Answer_keeps_workspace_and_report_context`: same workspace/branch/report artifacts and reservation are retained. |
+| PC-71 | Break G-71: start release before committing settlement/completion obligation. | `TerminalRunnerSeatReleaseTests.Settlement_delivery_precedes_release_and_survives_release_fault`: wire-entry fresh context contains terminal result and exact owed parent note. |
+| PC-72 | Break G-72: clear accepted answer before queue insertion commits. | `TerminalRunnerSeatReleaseTests.Accepted_answer_after_release_is_delivered_once`: enqueue failure plus restart still yields exactly 1 complete target UserPrompt. |
+| PC-73 | Break G-73: finish released-answer recovery on Sent/ack without recipient match. | `TerminalRunnerSeatReleaseTests.Answer_receipt_rejects_ack_stale_or_partial_prompt`: wrong/stale/partial/QueuedUserPrompt-only cases remain unconfirmed. |
+| PC-74 | Break G-74: retire the parent completion obligation when queue status is Sent. | `TerminalRunnerSeatReleaseTests.Parent_receipt_rejects_ack_stale_or_partial_prompt`: wrong/stale/partial/QueuedUserPrompt-only cases retain ConfirmedAt null. |
+| PC-75 | Break G-75: inner-join release projection to AgentSession/Agent. | `RunnerSeatOrphanSweepTests.Attention_recovery_deduplicates_rowless_seats_without_leaking_payload`: GET contains both distinct rowless session IDs. |
+| PC-76 | Break G-76: group release attention by nullable AgentId. | `RunnerSeatOrphanSweepTests.Attention_recovery_deduplicates_rowless_seats_without_leaking_payload`: GET has exactly 2 distinct release condition keys for 2 rowless seats. |
+| PC-77 | Break G-77: count deferred/Unresolved as Released in DTO projection. | `TerminalRunnerSeatReleaseTests.Attention_contains_release_identity_and_reason`: deferred-only sweep reports Released=0 and no released headline. |
+| PC-78 | Break G-78: append raw observation path/transcript/answer to release diagnostic. | `RunnerSeatOrphanSweepTests.Attention_recovery_deduplicates_rowless_seats_without_leaking_payload`: ledger JSON, GET and captured structured logs exclude every synthetic canary. |
+| PC-79 | Break G-79: mark invalidation delivered before publish and disable pending republish. | `RunnerSeatOrphanSweepTests.Attention_recovers_a_missed_invalidation_after_commit`: failed publication plus restart produces same-ID invalidation and GET row. |
+| PC-80 | Break G-80: cancel recipient queue rows before testing release eligibility. | `TerminalRunnerSeatReleaseTests.Pending_delivery_prevents_release`: all message bodies/statuses/attempt evidence remain unchanged. |
+| PC-81 | Break G-81: change PhoneHomeOperation.Input from explicit value 9 to unused value 28. | `TerminalSeatReleaseTests.Http_and_phone_home_share_conditional_semantics`: the pinned numeric assertion for PhoneHomeOperation.Input equals 9. |
+| PC-82 | Break G-82: send parent report through immediate input instead of WhenIdle. | `TerminalRunnerSeatReleaseTests.Settlement_delivery_precedes_release_and_survives_release_fault`: busy parent has 0 writes before committed TurnEnd. |
+| PC-83 | Break G-83: enqueue the new attempt brief with SendNow bypass. | `TerminalRunnerSeatReleaseTests.Accepted_answer_after_release_is_delivered_once`: busy target has 0 writes before committed TurnEnd. |
+| PC-84 | Break G-84: publish freshly inspected rows through the hub before poll cursor ownership. | `TerminalSeatReleaseTests.Fresh_observation_does_not_publish_duplicate_entries`: observation adds 0 published entries; later poll publishes each row exactly once. |
+| PC-85 | Break G-85: route every Blocked answer through released-seat requeue. | `TerminalRunnerSeatReleaseTests.Reply_on_live_local_or_warm_session_is_unchanged`: live/local/warm reply retains attempt/session and has 0 cold admissions. |
+| PC-86 | Break G-86: catch Unsupported in the server coordinator and call unconditional ReleaseSlotAsync. | `TerminalRunnerSeatReleaseTests.Unsupported_server_transport_never_falls_back_to_force`: HTTP and phone-home old-peer cases call force/generation-kill 0 times. |
+| PC-87 | Break G-87: remove operator-token validation from the release endpoints. | `RunnerSlotEndpointTests.Force_release_without_the_operator_token_is_forbidden_even_from_loopback`: missing/wrong token returns 403 for single-seat and sweep requests. |
+| PC-88 | Break G-88: apply the 24-hour success cutoff to unresolved rows too. | `TerminalRunnerSeatReleaseTests.Attention_contains_release_identity_and_reason`: at 24h+1 tick unresolved debt remains visible while old success expires. |
+| PC-89 | Break G-89: omit only normal input's revision increment while keeping its shared gate. | `TerminalSeatReleaseTests.Input_winning_the_gate_invalidates_release`: completed normal input invalidates prior proof with StaleObservation and signals 0. |
+| PC-90 | Break G-90: remove only conditional input's launch-gate acquisition, retaining revision updates. | `TerminalSeatReleaseTests.Conditional_input_invalidates_release`: while a launch barrier owns the gate with no release marker, conditional-input writer-entry count is 0. |
+
+### Out of scope
+
+- Live provider/native PTY/process-tree qualification, production seat cleanup, deployment, new native resume support and arbitrary out-of-band keyboard/file writers. The authorized contract for unverifiable independent custody is Unknown/held. Windows fake-backed rows qualify portability, not native termination.
+- SIGKILL/power-loss tests are excluded from this ordinary profile: deterministic persisted transaction/RPC cuts and fresh services are the declared crash substitute. No claim about filesystem power-loss durability is made. Durable generation history must still survive runtime restart in V-1.
+- No workspace deletion or host-budget/capacity policy change; continued branch/workspace retention and unchanged occupied accounting are asserted. No browser/chat/email delivery path is introduced. Existing attention is fleet-global; no new per-board privacy claim is invented.
+- No whole Unit/Application/assembly suite, and no unrelated provider readiness, detached launcher, Check compaction, checkpoint executor/temp-cleanup or loaded Codex-submit fixtures. The earlier known-flake list stays an exclusion roster, never an excuse for a selected failure. Existing CARD-0079 native-stop tests are read-only models and are not in this fake-child selection.
+- Existing parsers, queue receipt matcher, schema cloning, auth host middleware and force-release semantics are reused. New paths exercise them, including token and receipt positive controls, without expanding to their full unrelated batteries. Normalizer/ingest must be real for delivery; a direct expected-text insert alone cannot satisfy it.
+
+### Checkpoints
+
+This is the only executable checkpoint manifest. One isolated build and one exact filter per row; all rows serial. OS is fixed by Group: CP-1–4 Linux/server2, CP-5–6 separately commissioned Windows at the same final clean SHA. PostgreSQL is required in CP-2, CP-3, CP-4 and CP-6; CP-4 uses the existing shared-store compatibility fixture serially, other new server cases use cloned databases. CP-1/5 need no PostgreSQL. Docker/test-Postgres and Windows availability are prerequisites, not optional skips.
+
+S1 has three 45-minute slices (runner seams/tests, server lifecycle fixture/tests, delivery/recovery cases); S2 runner implementation is 60 minutes; S3 has three 45-minute slices (ledger/ownership, answer continuation, integration/transports); S4 visibility/docs is 30 minutes. These are authoring budgets, 360 minutes total, not test counts. Commit/push each 30–60 minute slice. If a slice exceeds its budget, commit a truthful checkpoint and continue that slice; do not weaken the roster. Freeze source throughout each run.
+
+After all S1 cases compile, CP-1/2/3 run once as the declared preparatory red group with the same exact filters. A new method must reach its intended assertion; a compile/fixture error is not test-first red. At final S1–S4 run CP-1–4 once, then CP-5–6 on Windows. No routine repeated green runs per edit. All required rows must pass before ordinary Review; unavailable Windows is pending evidence.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
+|---|---|---|---|---|---|---|---:|---:|---|---|
+| CP-1 | S1-S4 | `tests/Antiphon.SessionRunner.Tests -> bin-c667-linux-runner/` | linux-runner-no-postgres | `/*/*/(TerminalSeatReleaseTests*)\|(TranscriptWorkingStateTests*)\|(RunnerCapacityCountTests*)/*` | V-1, R-1 | all 44 listed results, 0 failed/skipped | 44 | 9 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-2 | S1-S4 | `tests/Antiphon.Tests -> bin-c667-linux-lifecycle/` | linux-lifecycle-postgres | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSlotEndpointTests*)\|(RunnerSlotRulesTests*)/*` | V-2, R-2 | all 39 listed results, 0 failed/skipped | 39 | 10 | true | `C804_ORPHAN_SWEEP_ROOT=c667-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-3 | S1-S4 | `tests/Antiphon.Tests -> bin-c667-linux-orphans/` | linux-orphans-postgres | `/*/*/RunnerSeatOrphanSweepTests*/*` | V-3 | all 14 listed results, 0 failed/skipped | 14 | 7 | true | `C804_ORPHAN_SWEEP_ROOT=c667-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-4 | S1-S4 | `tests/Antiphon.Tests -> bin-c667-linux-compat/` | linux-compat-shared-postgres | `/*/*/AgentTaskReplyIntegrationTests*/(a_settled_shared_delegate_goes_warm_instead_of_dying)\|(a_failed_verdict_pools_a_shared_delegate_warm)\|(a_users_standing_agent_is_never_pooled_or_deleted)\|(a_blocked_delegate_keeps_its_session_and_agent)` | R-3 | all 4 listed results, 0 failed/skipped | 4 | 5 | true | `C804_ORPHAN_SWEEP_ROOT=c667-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-5 | S1-S4 | `tests/Antiphon.SessionRunner.Tests -> bin-c667-windows-runner/` | windows-runner-no-postgres | `/*/*/(TerminalSeatReleaseTests*)\|(RunnerCapacityCountTests*)/*` | V-1, R-4 | all 29 listed results, 0 failed/skipped | 29 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-6 | S1-S4 | `tests/Antiphon.Tests -> bin-c667-windows-server/` | windows-server-postgres | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/(Blocked_report_with_running_runner_frees_the_seat)\|(Accepted_answer_after_release_is_delivered_once)\|(Attention_contains_release_identity_and_reason)\|(Unknown_server_session_with_idle_runner_is_released)` | V-2, V-3, R-4 | all 4 listed results, 0 failed/skipped | 4 | 6 | true | `C804_ORPHAN_SWEEP_ROOT=c667-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+
+A=26, B=29, C=14 new executions. Existing results are classifier 15, capacity 3, endpoint 8, rules 2, reply compatibility 4. Linux 101 + Windows 33 = **134 final ordinary executions**, no skips. S1 red selects 97 executions, so Code's one preparatory plus one final roster is 231 executions. These are static authoring counts, not passes.
+
+Run through the existing checkpoint tool, one invocation per committed selection. Prefer an already prepared tool; otherwise the explicitly budgeted bootstrap below goes through scripts/build-slot.ps1. Its later no-build invocation does not acquire an outer lease: row drivers take their own slots, and must not be double-wrapped. The plan does not authorize raw dotnet build/test or a driver outside the host gate. The tool's separate bin-c667-tool outputs are owned setup artifacts and must also be removed after all foreground runs finish.
+
+```powershell
+$c667Plan = 'docs/superpowers/plans/2026-10-01-card-0667-terminal-task-seat-release-plan.md'
+$c667Sha = git rev-parse HEAD
+# Only if this isolated tool output is not already prepared; a declared setup build.
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c667-tool-bootstrap -- dotnet build tools/Antiphon.Checkpoints --property:OutputPath=bin-c667-tool/ --property:UseAppHost=false
+# Repository checkpoint tool invocation, Linux final. S1 red selects CP-1,CP-2,CP-3.
+dotnet run --no-build --no-restore --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c667-tool/ --property:UseAppHost=false -- run --plan $c667Plan --rows CP-1,CP-2,CP-3,CP-4 --expected-source-sha $c667Sha --max-wait 50s
+# Use the actual emitted ID and wait in <=50-second foreground steps until exit is not 75.
+# Windows final selection at the identical source SHA:
+dotnet run --no-build --no-restore --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c667-tool/ --property:UseAppHost=false -- run --plan $c667Plan --rows CP-5,CP-6 --expected-source-sha $c667Sha --max-wait 50s
+```
+
+Use the emitted wait command, at most 50 seconds per call, and await completion before editing or ending the task. Preserve unedited CHECKPOINT lines/counts/first failure plus dirty/source/sourceState/buildSource/slot provenance and receipt paths. Validate the fresh receipt against the exact committed source and selected CP IDs. Code/Review also run scripts/check-evidence-diff.ps1 over the full task range; generated payloads remain ignored. An inherited red must be reproduced at base using its exact failing method, never the assembly. No slot-timeout bypass or hidden rerun. Delete only the owned alternate bin outputs via the checkpoint cleanup procedure; no daemon bin directories are touched.
+
+### Cost
+
+All times are estimates; TestDesign measured zero build/test minutes.
+
+- Ordinary V/R floor (Code) = **45 minutes**: CP-1 9 + CP-2 10 + CP-3 7 + CP-4 5 + CP-5 8 + CP-6 6. This includes six isolated builds estimated at 6/6/5/4/5/4 = 30 minutes and selected test execution at 3/4/2/1/3/2 = 15 minutes. Exact filters and PostgreSQL/OS assignments are in the manifest.
+- Required S1 red group CP-1/2/3 adds **26 minutes** (the same named rows/filters), including its builds. Allow **10 minutes** separate setup for checkpoint-tool bootstrap if needed, CLI-generated EF migration and DB/Windows preparation; each driver is leased and reported with its reason. Code verification allowance = 10 + 26 + 45 = **81 minutes**, excluding authoring, slot queues and failure reruns.
+- PC floor (Mutation) = **1,056 minutes**, separate from Code: 28 runner PCs at 3 minutes per baseline/red/green phase plus 0.5-minute restoration bookkeeping each = 266; 62 PostgreSQL/server PCs (including PC-87 existing endpoint method) at 4 minutes per phase plus 0.5 restoration each = 775; snapshot/driver-copy/discovery/report setup = 15. Thus 266 + 775 + 15 = 1,056. Every PC uses its exact class/method filter above and fresh phase output. There are **270 phase invocations**, 297 argument-expanded results across them; a failing assertion is expected only in the red phase. Each PC's 9.5-minute runner or 12.5-minute server allowance includes its three builds/tests and restoration; do not add the builds again.
+- Total verification allowance = setup 10 + S1 red 26 + final ordinary 45 + Mutation 1,056 = **1,137 minutes**. Authoring is separately estimated at 360 minutes in eight bounded slices; combined planning allowance = **1,497 minutes**, excluding ordinary Review authoring and host-slot waits.
+- Claimed savings = **0 minutes** versus the original incomplete proposal. Ordinary floor increases from 36 to 45 (+9) and Mutation from 154 to 1,056 (+902) because independent fences, admission/recovery and recipient evidence were previously unmapped. Do not present omitted controls as an optimization. This unusually large PC obligation follows D-1–D-6's cross-layer scope; any reduction requires an explicit design/scope revision, not merging independently bypassable guards or broad PC filters. The closed roster avoids speculative full-suite runs; no measured savings are claimed.
+
+Handoff audit: selected bodies/nearest fixtures read; **guards=90, mapped=90, missing=0, duplicate PC maps=0**. All 90 PCs specify a compiling production defect, exact detecting method and decisive assertion, with the fixture/production seams required to execute them after Code. No PC was executed or claimed green. Static roster is 64 new methods / 69 new results, six checkpoints / 134 final OS executions, ordinary floor 45 and Mutation floor 1,056 minutes. A read-only Node audit passed: preserved original fix design byte-for-byte apart from the three historical verification headings, one active manifest/Cost heading, contiguous 1:1 guard/PC IDs, exact named-method bindings, existing source argument census, eleven cells per checkpoint, six distinct outputs, result totals and cost arithmetic. git diff --check passed. No .NET/tool importer/build/test was executed. No placeholders remain. Design is ready for Code after the stated collision/admission checks; any newly unverifiable seam returns to Plan. Land this documentation through the caller's normal landing path; this runner branch publishes only to its assigned feature ref.
