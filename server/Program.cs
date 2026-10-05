@@ -399,6 +399,9 @@ try
     builder.Services.AddSingleton<TerminalRunnerSeatReleasePolicy>();
     builder.Services.AddSingleton<TerminalRunnerSeatDiscoveryState>();
     builder.Services.AddScoped<TerminalRunnerSeatReleaseService>();
+    builder.Services.Configure<BlockedTaskParkingOptions>(
+        builder.Configuration.GetSection(BlockedTaskParkingOptions.SectionName));
+    builder.Services.AddScoped<BlockedTaskParkingService>();
     builder.Services.AddScoped<AgentTaskInputService>();
     builder.Services.AddScoped<AgentTaskDecisionQuestionService>();
     builder.Services.AddScoped<SourceLandingAdmission>();

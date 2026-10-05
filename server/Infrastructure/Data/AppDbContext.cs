@@ -123,10 +123,35 @@ public class AppDbContext : DbContext
     public DbSet<ExpectationNudge> ExpectationNudges => Set<ExpectationNudge>();
     public DbSet<SessionRunnerState> SessionRunnerStates => Set<SessionRunnerState>();
     public DbSet<RunnerSeatRelease> RunnerSeatReleases => Set<RunnerSeatRelease>();
+    public DbSet<AgentTaskPark> AgentTaskParks => Set<AgentTaskPark>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<AgentTaskPark>(entity =>
+        {
+            entity.HasKey(p => p.Id);
+            entity.Property(p => p.Revision).IsConcurrencyToken();
+            entity.Property(p => p.RunnerId).HasMaxLength(200);
+            entity.Property(p => p.FullRef).HasMaxLength(1024);
+            entity.Property(p => p.RepositoryIdentity).HasMaxLength(200);
+            entity.Property(p => p.EndpointFingerprint).HasMaxLength(200);
+            entity.Property(p => p.BaselineSha).HasMaxLength(64);
+            entity.Property(p => p.SourceSha).HasMaxLength(64);
+            entity.Property(p => p.VerifiedRemoteSha).HasMaxLength(64);
+            entity.Property(p => p.SyncSourceSha).HasMaxLength(64);
+            entity.Property(p => p.ReportDigest).HasMaxLength(64);
+            entity.Property(p => p.PublicationReceiptDigest).HasMaxLength(64);
+            entity.Property(p => p.ReasonCode).HasMaxLength(64);
+            entity.Property(p => p.SyncReasonCode).HasMaxLength(64);
+            entity.HasIndex(p => new { p.TaskId, p.Attempt, p.BlockEventId }).IsUnique();
+            entity.HasIndex(p => new { p.State, p.NextAttemptAt });
+            entity.HasIndex(p => new { p.SyncState, p.SyncNextAttemptAt });
+            entity.HasIndex(p => p.AgentId);
+            entity.HasIndex(p => p.RunnerSeatReleaseId);
+            entity.HasIndex(p => p.PublicationReceiptId).IsUnique();
+        });
 
         modelBuilder.Entity<RunnerSeatRelease>(entity =>
         {
