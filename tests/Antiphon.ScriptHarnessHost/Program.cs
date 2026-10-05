@@ -195,7 +195,7 @@ public static class WindowsScriptHandleProbe
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
         var fields = File.ReadAllText(Path.Combine(directory, "probe-input")).Split(' ');
-        if (fields.Length != 3 || fields[0] != nonce) throw new InvalidDataException("Handle probe nonce mismatch.");
+        if (fields.Length != 4 || fields[0] != nonce) throw new InvalidDataException("Handle probe nonce mismatch.");
         var job = new IntPtr(long.Parse(fields[1], CultureInfo.InvariantCulture));
         var unrelatedEvent = new IntPtr(long.Parse(fields[2], CultureInfo.InvariantCulture));
         var buffer = Marshal.AllocHGlobal(144);
@@ -211,7 +211,27 @@ public static class WindowsScriptHandleProbe
             }
         }
         finally { Marshal.FreeHGlobal(buffer); }
-        var signaled = unrelatedEvent != IntPtr.Zero && SetEvent(unrelatedEvent);
+        var signaled = false;
+        if (unrelatedEvent != IntPtr.Zero)
+        {
+            // Handle values are process-local. Pin the transported value's current
+            // object BEFORE opening the named fixture event, otherwise that open
+            // could itself reuse the value and manufacture a false inheritance hit.
+            var current = GetCurrentProcess();
+            if (DuplicateHandle(current, unrelatedEvent, current, out var snapshot, 0, false, 2))
+            {
+                using var observed = new Microsoft.Win32.SafeHandles.SafeFileHandle(snapshot, true);
+                using var expected = OpenEventW(0x100000, false, fields[3]); // SYNCHRONIZE
+                if (expected.IsInvalid) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Open named fixture event");
+                if (CompareObjectHandles(observed, expected))
+                {
+                    signaled = SetEvent(snapshot);
+                    if (!signaled) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Signal inherited fixture event");
+                }
+            }
+            else if (Marshal.GetLastWin32Error() != 6) // invalid transported handle is the expected non-inheritance arm
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Retain transported event observation");
+        }
         var receipt = $"{nonce} {query} {retained} {signaled} {GetStdHandle(-10).ToInt64()} {GetStdHandle(-11).ToInt64()} {GetStdHandle(-12).ToInt64()}";
         File.WriteAllText(Path.Combine(directory, "probe-receipt.tmp"), receipt);
         File.Move(Path.Combine(directory, "probe-receipt.tmp"), Path.Combine(directory, "probe-receipt"));
@@ -222,5 +242,7 @@ public static class WindowsScriptHandleProbe
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool DuplicateHandle(IntPtr sourceProcess, IntPtr source, IntPtr targetProcess, out IntPtr copy, uint access, bool inherit, uint options);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool CloseHandle(IntPtr handle);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool SetEvent(IntPtr handle);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern Microsoft.Win32.SafeHandles.SafeFileHandle OpenEventW(uint access, bool inherit, string name);
+    [DllImport("kernelbase.dll", SetLastError = true)] private static extern bool CompareObjectHandles(Microsoft.Win32.SafeHandles.SafeFileHandle first, Microsoft.Win32.SafeHandles.SafeFileHandle second);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr GetStdHandle(int standard);
 }

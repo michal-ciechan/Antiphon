@@ -73,9 +73,9 @@ internal sealed class ScriptHarnessWindowsProcessFixture : IDisposable
 
     internal void ReleaseRace() => File.WriteAllText(Path.Combine(DirectoryPath, "release"), Nonce);
 
-    internal void WriteProbeInput(SafeFileHandle job, SafeFileHandle? unrelatedEvent = null) =>
+    internal void WriteProbeInput(SafeFileHandle job, SafeFileHandle? unrelatedEvent = null, string? eventName = null) =>
         File.WriteAllText(Path.Combine(DirectoryPath, "probe-input"),
-            $"{Nonce} {job.DangerousGetHandle().ToInt64()} {unrelatedEvent?.DangerousGetHandle().ToInt64() ?? 0}");
+            $"{Nonce} {job.DangerousGetHandle().ToInt64()} {unrelatedEvent?.DangerousGetHandle().ToInt64() ?? 0} {eventName ?? "-"}");
 
     internal async Task<string[]> WaitProbeAsync(Task root)
     {
@@ -100,10 +100,10 @@ internal sealed class ScriptHarnessWindowsProcessFixture : IDisposable
         return flags;
     }
 
-    internal static SafeFileHandle CreateInheritableEvent()
+    internal static SafeFileHandle CreateInheritableEvent(string name)
     {
         var attributes = new ProbeSecurityAttributes { Length = Marshal.SizeOf<ProbeSecurityAttributes>(), Inherit = true };
-        var handle = CreateEventW(ref attributes, true, false, null);
+        var handle = CreateEventW(ref attributes, true, false, name);
         if (!handle.IsInvalid) return handle;
         handle.Dispose();
         throw NativeError("Create unrelated inheritable event");

@@ -350,6 +350,12 @@ before native creation, with an installed-executable output control and no insta
 alias/privilege requirement. All 20 method-scoped PCs remain a separate post-land
 SourceLanding Mutation obligation. See the
 [Windows plan](superpowers/plans/2026-10-04-card-1047-windows-script-harness-plan.md).
+The W7 child pins the transported handle before opening the nonce-named fixture
+event and compares kernel object identity before signaling; a process-local handle
+value can identify a different runtime event in the child. W10's independent reap
+runs before job close, so fixture termination cannot race kill-on-close; the
+already-terminated query-error arm joins its retained observations without another
+termination request. Both use the existing five-second fixture cleanup cap.
 
 Use the checkpoint tool for repeated class runs. Before any ad hoc destructive shell cleanup, verify both variable components are nonempty, quote their expansions, and resolve the target inside the intended scratch root; a missing component must exit nonzero before `rm`.
 

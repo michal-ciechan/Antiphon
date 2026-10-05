@@ -205,7 +205,8 @@ public sealed class ScriptHarnessWindowsOwnershipTests
     public async Task Only_standard_handles_are_inherited()
     {
         var hooks = new WindowsScriptHarnessHooks();
-        using var unrelatedEvent = ScriptHarnessWindowsProcessFixture.CreateInheritableEvent();
+        var eventName = "Local\\c1047-event-" + Guid.NewGuid().ToString("N");
+        using var unrelatedEvent = ScriptHarnessWindowsProcessFixture.CreateInheritableEvent(eventName);
         (ScriptHarnessWindowsProcessFixture.ReadHandleFlags(unrelatedEvent) & 1).ShouldBe(1u);
         await ScriptHarnessWindowsProcessFixture.WithOwnerAsync("HandleProbe", hooks, async owned =>
         {
@@ -224,7 +225,7 @@ public sealed class ScriptHarnessWindowsOwnershipTests
             hooks.StartupHandles.ShouldNotContain(Handle(hooks, "stderr-read").DangerousGetHandle());
             hooks.StartupHandles.ShouldNotContain(Handle(hooks, "stdin-write").DangerousGetHandle());
             hooks.StartupHandles.ShouldNotContain(unrelatedEvent.DangerousGetHandle());
-            windows.WriteProbeInput(job, unrelatedEvent);
+            windows.WriteProbeInput(job, unrelatedEvent, eventName);
         });
     }
 
@@ -324,6 +325,7 @@ public sealed class ScriptHarnessWindowsOwnershipTests
                 // A false death confirmation therefore permits genuine success/delete.
                 var run = fixture.Start("Silent");
                 var observedBeforeClose = false;
+                var independentReap = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var tree = await fixture.WaitReadyAsync(run, ready =>
                 {
                     var job = Handle(hooks, "job");
@@ -340,6 +342,27 @@ public sealed class ScriptHarnessWindowsOwnershipTests
                             ready.Grandchild.Executing().ShouldBeTrue();
                         }
                         observedBeforeClose = true;
+                    };
+                    hooks.BeforeCloseJob = () =>
+                    {
+                        try
+                        {
+                            // Serialize fixture reaping before kill-on-close.
+                            // Query-failure arm already requested real termination;
+                            // only the deliberately acknowledged live arm needs kills.
+                            var reap = System.Diagnostics.Stopwatch.StartNew();
+                            if (!queryFailure)
+                                foreach (var process in new[] { ready.Child, ready.Grandchild })
+                                    if (process.Executing()) process.WindowsObservation!.Terminate();
+                            foreach (var process in new[] { ready.Root, ready.Child, ready.Grandchild })
+                                process.WindowsObservation!.Join(TimeSpan.FromSeconds(5) - reap.Elapsed);
+                            independentReap.TrySetResult();
+                        }
+                        catch (Exception error)
+                        {
+                            independentReap.TrySetException(error);
+                            throw;
+                        }
                     };
                 });
                 var error = await ScriptHarnessProcessFixture.CaptureAsync(run);
@@ -368,8 +391,7 @@ public sealed class ScriptHarnessWindowsOwnershipTests
                 // runs. W10 owns this deliberate uncertainty: independently reap
                 // and join exact known handles under the existing five-second cap.
                 var join = System.Diagnostics.Stopwatch.StartNew();
-                foreach (var process in new[] { tree.Root, tree.Child, tree.Grandchild })
-                    if (process.Executing()) process.WindowsObservation!.Terminate();
+                await independentReap.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 foreach (var process in new[] { tree.Root, tree.Child, tree.Grandchild })
                     process.WindowsObservation!.Join(TimeSpan.FromSeconds(5) - join.Elapsed);
                 await WaitForAsync(() => hooks.Handles.All(entry => entry.Handle.IsClosed),
