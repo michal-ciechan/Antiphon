@@ -88,7 +88,7 @@ public sealed class ChannelOutboundRetryPolicyTests
     [Test]
     public async Task C519_Final_entry_checks_current_lease()
     {
-        foreach (var guard in new[] { "owner", "version", "expiry", "state" })
+        foreach (var guard in new[] { "owner", "version", "expiry", "null-lease", "state" })
         {
             await using var w = await World.CreateAsync();
             var id = await w.ReadyAsync();
@@ -101,6 +101,7 @@ public sealed class ChannelOutboundRetryPolicyTests
                 if (guard == "owner") row.LeaseOwner = Guid.NewGuid();
                 if (guard == "version") row.Version++;
                 if (guard == "expiry") row.LeaseUntil = w.Now;
+                if (guard == "null-lease") row.LeaseUntil = null;
                 if (guard == "state") row.State = ChannelOutboundDeliveryState.PublishUncertain;
                 await db.SaveChangesAsync();
             });
@@ -116,7 +117,7 @@ public sealed class ChannelOutboundRetryPolicyTests
     [Test]
     public async Task C519_Late_outcome_cannot_overwrite_new_owner()
     {
-        foreach (var guard in new[] { "owner", "version", "expiry", "state" })
+        foreach (var guard in new[] { "owner", "version", "expiry", "null-lease", "state" })
         {
             await using var w = await World.CreateAsync();
             var id = await w.ReadyAsync();
@@ -131,6 +132,7 @@ public sealed class ChannelOutboundRetryPolicyTests
                 if (guard == "owner") row.LeaseOwner = Guid.NewGuid();
                 if (guard == "version") row.Version++;
                 if (guard == "expiry") row.LeaseUntil = w.Now;
+                if (guard == "null-lease") row.LeaseUntil = null;
                 if (guard == "state") row.State = ChannelOutboundDeliveryState.PublishUncertain;
                 await db.SaveChangesAsync();
             }

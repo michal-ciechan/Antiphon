@@ -522,7 +522,8 @@ public sealed class ChannelOutboundDeliveryPump
             $"SELECT * FROM \"ChannelOutboundDeliveries\" WHERE \"Id\" = {delivery.Id} FOR UPDATE")
             .AsNoTracking().SingleAsync(ct);
         if (current.Version != delivery.Version || current.LeaseOwner != _owner
-            || current.LeaseUntil <= UtcNow() || current.State != ChannelOutboundDeliveryState.Publishing)
+            || current.LeaseUntil is null || current.LeaseUntil <= UtcNow()
+            || current.State != ChannelOutboundDeliveryState.Publishing)
             return;
         delivery.State = ChannelOutboundDeliveryState.Published;
         delivery.PublishedAt = UtcNow();
