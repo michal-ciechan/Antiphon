@@ -220,14 +220,16 @@ is an import input only: after revision 1 exists, placement does not read it aga
 
 ### server2 runner credentials (CARD-0604)
 
-Two secrets live only on server2 and never enter Antiphon's stores, the desktop scripts, the image
-or any evidence directory. Names and locations only:
+Runner credentials never enter Antiphon's stores, the image or any evidence directory.
+The generated deploy key and phone-home secret stay on server2; the GitHub token is streamed
+from the vault by the operator's refresh script. Names and locations only:
 
 | Secret | Where it is generated | Where it lives | How the runner sees it |
 |---|---|---|---|
 | Repo-scoped GitHub deploy key (ed25519, write, `michal-ciechan/Antiphon` only, titled `antiphon-server2-runner`) | `deploy-parent` on server2, with `ssh-keygen`; the private half is never copied | `/home/mc/antiphon-server2/secrets/deploy_key`, 0600, owner `mc` | Compose file secret at `/run/secrets/antiphon-deploy-key`; `dind-entrypoint.sh` installs it at `/run/antiphon/deploy-key`, 0400 uid 1654, on a **tmpfs** |
 | Phone-home shared secret | `deploy-parent` on server2, `openssl rand -hex 32` | `/home/mc/antiphon-server2/secrets/phone-home`, 0600, owner `mc` | Compose file secret at `/run/secrets/phone-home`; `dind-entrypoint.sh` installs it at `/run/antiphon/phone-home`, 0400 uid 1654, on the same **tmpfs**, and points `PhoneHome__SecretPath` there |
 | Grok OAuth session for the runner's agent | the operator runs `grok login` **once** inside the running container (CARD-0604 D-16) | `GROK_HOME/auth.json` on the `runner-state` volume, so it survives `compose stop`/`up` and container replacement | read by the Grok sessions the runner launches; never copied to the desktop, never printed |
+| GitHub classic PAT (CARD-0817), token name `antiphon-all (desktop gh + server2/server2-temp) 2026-10-05` | Existing vault item **GitHub PAT - server2 push**, id `97819ca3-710f-43f8-99ce-b4da013e32c1`, password field; scopes `repo`, `workflow`, `write:packages`, `read:org`, `gist` (including `repo:status`, `repo_deployment`, `public_repo`, `repo:invite`, `security_events`, `read:packages`). Expires **2027-10-05**; Todoist reminder **2027-09-14**. Rotate with ClaudeBot skill `github-push-token`, then run `scripts/refresh-server2-github-token.ps1` | `/home/mc/antiphon-server2/secrets/github-token/token`, owner `1654:1654`, mode **0400**; parent directory **0700**, same owner. The refresh script streams the vault value over SSH stdin into an atomic replacement; no desktop credential file | `RUNNER_GITHUB_TOKEN_DIR` binds the directory read-only at `/run/antiphon/github-token:ro` in both runners. `/usr/local/bin/antiphon-github-credential` reads `token` only when git requests an admitted HTTPS credential; never an environment value, URL or argv |
 
 The `runner-state` volume also carries the verification custody store at
 `/state/session-runner/verification-custody` (CARD-0604 D-17). It is outside every verification
@@ -246,14 +248,45 @@ uid 1654 cannot open it: both secrets are staged onto the app-owned tmpfs, and t
 uid 1654 can actually read the staged phone-home copy before dockerd starts, refusing with
 `PhoneHomeSecretUnreadable` if it cannot. Skipping that staging is what left the standing runner
 registering zero times in 304 attempts while `/health` still answered healthy (CARD-0604 D-1). Git is wired through baked, non-secret configuration
-(`/etc/gitconfig`, `/etc/antiphon/ssh_config`, pinned `github_known_hosts`): fetches stay anonymous
-HTTPS and only pushes go over SSH, on `ssh.github.com:443`.
+(`/etc/gitconfig`, `/etc/antiphon/ssh_config`, pinned `github_known_hosts`): Antiphon fetches stay
+anonymous HTTPS and its exact primary push URL uses SSH on `ssh.github.com:443`.
 
-CARD-0812 allows secondary runner checkouts, but this deploy key grants write access to Antiphon
-only. Before creating a secondary mirror, the runner sends a receive-pack dry-run to its push URL;
-a repository that refuses the probe gets `phone_home_repository_push_unauthorized`. Each secondary
-repository needs a server2 push credential to pass that probe. Credential provisioning is a
-separate operator follow-up.
+CARD-0812 allows secondary runner checkouts; CARD-0817 gives every admitted non-Antiphon
+HTTPS push the same mounted token on server2 and server2-temp. Antiphon retains its existing
+deploy key, primary checkout verification and SSH push smoke. Before creating a secondary
+mirror, the runner sends a receive-pack dry-run to its push URL. A refusal keeps the task
+Queued with `phone_home_repository_push_unauthorized` and a safe category/remedy:
+`CredentialMissing`, `CredentialRejected`, `Forbidden`, `Unreachable` or `Unknown`.
+The runner publishes its effective `PhoneHome:AllowedCloneSources` and normalized primary to
+`/run/antiphon/push-allow-list` at startup; the credential helper fails closed without that
+policy, a matching identity/prefix or a non-empty token. Admitted private HTTPS fetches can
+also use the helper when GitHub challenges them.
+
+The token can push to every repository the `michal-ciechan` account can push to, including
+future repositories, organisation and collaborator repositories, and can edit workflow files.
+The runner allow-list is the only gate on automated credential release; it is not a sandbox
+against a hostile session. Every process running as uid 1654 in either container can read
+the mounted file directly and can edit the non-secret policy on its writable tmpfs.
+Protected branches and rulesets still apply.
+
+Deploy creates only the empty directory and warns `GithubTokenAbsent` until the operator
+provisions the file. After the directory exists, run
+`pwsh -NoProfile -File scripts/refresh-server2-github-token.ps1` from the operator/ClaudeBot lane
+with an unlocked vault relay (`BW_SESSION`, else `~/.bw-session`). Missing relay or an unreadable
+vault item skips with exit 2 and leaves the prior file unchanged. The script writes a unique
+sibling temporary file, sets owner/mode, then atomically replaces `token`; a write error before
+replacement preserves the prior file. A lost SSH connection after replacement can leave the
+result unconfirmed, so inspect metadata before retrying. Success prints only `1654:1654 400`
+and `present=true`. Both directory mounts see rotation on their next git invocation: no
+restart or rollout is required for rotation. The `github-push-token` skill updates the vault
+item in place and re-logs desktop `gh`; unlocking Bitwarden is its manual step. The runner
+image installs no `gh` and exports neither `GH_TOKEN` nor `GITHUB_TOKEN`.
+
+Initial activation still requires the caller-owned rollout and
+[CARD-0817 operator acceptance procedure](superpowers/plans/2026-10-05-card-0817-https-token-push-credential-plan.md#operator-provisioning-and-acceptance-procedure):
+private fetch, dry-run with no created ref, outside-allow-list refusal, then a bounded
+markdown-package task that pushes its branch. Code checkpoints use inert files only and do
+not establish live acceptance.
 
 Grok's OAuth store on the runner is provisioned once, interactively, inside the persistent container
 (`docker exec -it -u 1654:1654 <container> grok login`). It is never copied from the desktop and
