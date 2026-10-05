@@ -80,16 +80,16 @@ public class ChannelMachineTurnTextTests
         followUp.Attachments.ShouldBeEmpty();
         followUp.Kind.ShouldBe(ChannelReplyKind.Answer);
         (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldNotBeNull(
-            "the Delegation row's ChannelReplySettledAt is the claim-before-produce marker");
+            "the Delegation row's ChannelReplySettledAt is the committed publication marker");
         (await RowAsync(channelRowId)).ChannelReplySettledAt.ShouldNotBeNull(
             "the follow-up must not touch the already-settled Channel-origin row");
     }
 
     [Test]
-    public async Task A_check_row_matches_by_conversation_key_when_the_stored_body_was_amended()
+    public async Task A_superseded_check_requires_the_complete_delivered_body()
     {
-        // SUPERSEDED prepend after send: HeaderProbe of the stored body is no longer in the
-        // typed UserPrompt. SourceTaskId is null on older Check rows; ConversationKey carries the id.
+        // The queue prepends SUPERSEDED while the Check row is pending, before delivery.
+        // A header-only receipt must not borrow the task id; the complete amended body must route.
         await using var h = await CreateHarnessAsync();
         var chatId = await h.BindChannelAsync();
         var prompt = "[Telegram \"Family\" — Mike 00:18] Check";
@@ -111,7 +111,12 @@ public class ChannelMachineTurnTextTests
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
         await h.DrainOutboundAsync();
 
-        h.Messaging.SentReplies.Count.ShouldBe(2, "Check ConversationKey must match when the body was amended");
+        h.Messaging.SentReplies.Count.ShouldBe(1, "the original header alone is not the amended receipt");
+        (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldBeNull();
+        await h.InsertTurnAsync(amended, "review looping on claude-fable-5, canceling");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
+        h.Messaging.SentReplies.Count.ShouldBe(2, "the complete delivered superseded Check still routes");
         h.Messaging.SentReplies[1].Text.ShouldBe("review looping on claude-fable-5, canceling");
         (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldNotBeNull();
     }
@@ -315,7 +320,7 @@ public class ChannelMachineTurnTextTests
         await Restarted(h).OnTurnEndAsync(h.SessionId, CancellationToken.None);
         await h.DrainOutboundAsync();
 
-        h.Messaging.SentReplies.Count.ShouldBe(2, "claim-before-produce makes re-triggers a no-op");
+        h.Messaging.SentReplies.Count.ShouldBe(2, "committed publication makes re-triggers a no-op");
         (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldNotBeNull();
     }
 
@@ -588,6 +593,8 @@ public class ChannelMachineTurnTextTests
             CreatedAt = sent,
             SentAt = sent,
             DeliveryAttempts = 1,
+            LastDeliveryStartedAt = sent,
+            LastDeliveryBaselineSequence = await h.CurrentTranscriptMaxSequenceAsync(),
         });
         await db.SaveChangesAsync();
         return id;
@@ -613,6 +620,17 @@ public class ChannelMachineTurnTextTests
             File.WriteAllText(path, $"# doc {i}\n");
             files.Add(path);
         }
+
+        var sourceMembers = files.Where(f => f.EndsWith(".md", StringComparison.Ordinal))
+            .Select(f =>
+            {
+                var bytes = File.ReadAllBytes(f);
+                return new DeliverableBundleService.SourceMember(Path.GetFileName(f), Path.GetFileName(f),
+                    null, bytes.Length, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)));
+            }).ToArray();
+        File.WriteAllText(Path.Combine(bundleDir, DeliverableBundleService.SourceManifestName),
+            System.Text.Json.JsonSerializer.Serialize(new DeliverableBundleService.SourceManifest(1, true,
+                sourceMembers, []), new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)));
 
         File.WriteAllText(Path.Combine(bundleDir, "render.log"), "ok\n");
 

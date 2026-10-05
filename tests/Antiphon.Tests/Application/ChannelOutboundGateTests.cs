@@ -90,7 +90,8 @@ public sealed partial class ChannelOutboundDeliveryTests
                 Body = note, Sequence = sequence, Origin = QueuedMessageOrigin.System,
                 Status = QueuedMessageStatus.Sent, ConversationKey = world.ConversationKey,
                 CreatedAt = DateTime.UtcNow, SentAt = DateTime.UtcNow,
-                DeliveryAttempts = 1,
+                DeliveryAttempts = 1, LastDeliveryStartedAt = DateTime.UtcNow,
+                LastDeliveryBaselineSequence = await world.Harness.CurrentTranscriptMaxSequenceAsync(),
             });
             await db.SaveChangesAsync();
         }

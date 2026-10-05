@@ -149,11 +149,7 @@ public class ChannelPromptCorrelationTests
         var seq = await ReplayAsync(h, (await RowAsync(h, id)).Body.Replace("\n", ""));
         await AgeAsync(h, id);
         await Dispatcher(h).SweepStaleCorrelationsAsync(Ct);
-        var incident = await db.AgentIncidents.SingleAsync(i => i.AgentId == h.AgentId
-            && i.Kind == AgentIncidentKind.ChannelReplyLost);
-        incident.FailureReason.ShouldBe("TurnUnmatched");
-        incident.Message.ShouldContain($"prompt seq {seq}");
-        incident.Message.ShouldContain("20 chars"); // Literal answer's character count.
+        await ChannelOutboundTestDriver.AssertExpiredCaptureLossAsync(h, id, seq, "Deployment verified.");
     }
 
     [Test]
