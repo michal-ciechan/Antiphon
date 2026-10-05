@@ -121,24 +121,39 @@ public class TerminalRunnerSeatReleaseTests
     {
         foreach (var busy in new[] { false, true })
         {
-            await using var f = await RunnerSeatReleaseFixture.CreateAsync();
+            var margin = new SettlementCommitMargin();
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(configureDb: b => b.AddInterceptors(margin));
             var parent = await f.AddParentAsync(busy);
-            await f.SettleAsync("failed");
-            (await f.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Failed);
-            await using var db = f.Db();
-            var owed = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == f.TaskId);
-            owed.Body.ShouldContain("Complete seat report canary.");
-            owed.SourceEventId.ShouldNotBe(Guid.Empty);
+            margin.Clock = f.Clock;
+            Guid? observedNote = null;
+            string? observedBody = null;
             f.Wire.AtCommand = async _ =>
             {
                 await using var read = f.Db();
-                (await read.AgentTasks.SingleAsync(t => t.Id == f.TaskId)).Result.ShouldContain("Complete seat report canary.");
-                (await read.AgentTaskLandNotifications.SingleAsync(n => n.Id == owed.Id)).Body.ShouldBe(owed.Body, "PC-71");
+                var terminal = await read.AgentTasks.SingleAsync(t => t.Id == f.TaskId);
+                terminal.Status.ShouldBe(AgentTaskStatus.Failed);
+                terminal.Result.ShouldContain("Complete seat report canary.");
+                var obligation = await read.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == f.TaskId);
+                obligation.Body.ShouldContain("Complete seat report canary.");
+                obligation.ParentSessionId.ShouldBe(parent);
+                obligation.SourceEventId.ShouldNotBe(Guid.Empty);
+                observedNote = obligation.Id; observedBody = obligation.Body;
             };
             f.Wire.DropReply = true;
-            f.Clock.Advance(TimeSpan.FromSeconds(120));
-            await f.ReleaseFromSettlementAsync();
-            f.Wire.ConditionalCommands.ShouldBe(1); f.Wire.CallbackFailure.ShouldBeNull();
+            await f.SettleAsync("failed");
+            // The fake clock advances at the durable commit, so this is the first settlement
+            // hook's command. A later explicit retry cannot conceal an incorrectly early hook.
+            margin.Advanced.ShouldBeTrue();
+            f.Wire.ConditionalCommands.ShouldBe(1, "PC-71: the actual post-commit fast hook reaches the wire");
+            f.Wire.CallbackFailure.ShouldBeNull(); observedNote.ShouldNotBeNull();
+            await using var db = f.Db();
+            var owed = await db.AgentTaskLandNotifications.SingleAsync(n => n.Id == observedNote);
+            owed.Body.ShouldBe(observedBody);
+            if (busy)
+            {
+                await f.RestartAsync();
+                await f.AttachRecipientAsync(parent);
+            }
             await f.FlushAsync(parent);
             if (busy)
             {
@@ -151,6 +166,25 @@ public class TerminalRunnerSeatReleaseTests
             f.Submitted.ShouldHaveSingleItem().ShouldContain("Complete seat report canary.");
             (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == parent
                 && t.Kind == TranscriptKinds.UserPrompt && t.Text == f.Submitted[0])).ShouldBe(1);
+        }
+    }
+
+    private sealed class SettlementCommitMargin : SaveChangesInterceptor
+    {
+        public Microsoft.Extensions.Time.Testing.FakeTimeProvider? Clock { get; set; }
+        public bool Advanced { get; private set; }
+        public override ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData eventData, int result,
+            CancellationToken cancellationToken = default)
+        {
+            if (!Advanced && Clock is not null && eventData.Context is { } context
+                && context.ChangeTracker.Entries<AgentTaskLandNotification>().Any()
+                && context.ChangeTracker.Entries<AgentTask>().Any(e => e.Entity.Status == AgentTaskStatus.Failed
+                    && e.Entity.CompletedAt != null))
+            {
+                Clock.Advance(TimeSpan.FromSeconds(120));
+                Advanced = true;
+            }
+            return ValueTask.FromResult(result);
         }
     }
 
@@ -183,6 +217,10 @@ public class TerminalRunnerSeatReleaseTests
             var rendering = TaskCompletionNotification.TryReadDelivery(attempted.CompletionDeliveryJson).ShouldNotBeNull();
             rendering.WireText.ShouldBe(submitted[0]);
             (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == row.Id)).DeliveryAttempts.ShouldBeGreaterThan(0);
+            // Model an acknowledged transport independently of complete native receipt. Keep
+            // the real queue's rendering, attempt identity, generation and baseline untouched.
+            await db.SessionQueuedMessages.Where(m => m.Id == row.Id)
+                .ExecuteUpdateAsync(u => u.SetProperty(m => m.Status, QueuedMessageStatus.Sent));
             await f.ReconcileParentAsync();
             (await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id))
                 .ConfirmedAt.ShouldBeNull("PC-74: " + shape);
