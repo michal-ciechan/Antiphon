@@ -474,6 +474,19 @@ public sealed class AgentTaskLandSourceResolver(
                 return await RefuseAsync(task, request, baseline, "adopt_local_cas_rejected",
                     local, ownerObserved.Sha, expected, ct);
             await _boundary.ReachedAsync("source-adopt-ref-moved-before-reset", task.Id, request.Id, ct);
+            // CAS moved HEAD to S, but the index and bytes are still at L. Re-prove
+            // only identity here, without a successful-path save or a dirty check.
+            var beforeReset = await git.InspectAsync(coordinates, LandInspectionScope.IdentityOnly, ct);
+            var resetIdentity = beforeReset.Snapshot;
+            var moveIdentity = beforeMove.Snapshot!;
+            if (!beforeReset.Accepted || resetIdentity is null
+                || resetIdentity.HeadSha != expected || resetIdentity.BranchSha != expected
+                || !SamePath(resetIdentity.CommonDirectory, moveIdentity.CommonDirectory)
+                || !SamePath(resetIdentity.RegisteredPath, moveIdentity.RegisteredPath)
+                || !SamePath(resetIdentity.GitDirectory, moveIdentity.GitDirectory)
+                || resetIdentity.SymbolicHead != moveIdentity.SymbolicHead)
+                return await RefuseAsync(task, request, baseline, "adopt_local_changed",
+                    resetIdentity?.HeadSha, ownerObserved.Sha, expected, ct, beforeReset.Diagnostic);
             var reset = await git.RunAsync(coordinates.WorktreePath, ["reset", "--hard", expected], ct);
             if (!reset.Succeeded)
                 return await RefuseAsync(task, request, baseline, "adopt_local_reset_failed",

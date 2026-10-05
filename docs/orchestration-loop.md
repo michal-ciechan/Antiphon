@@ -160,6 +160,16 @@ After publication, a cleanup-only retry uses that operation's saved recovery aut
 the owner's later task status changes; it cannot publish again or select a new source. Cleanup
 does not remove an owner worktree while its task is Queued, Dispatched or Working.
 
+Reviewed owner recovery and adoption prove identity from live worktree registrations
+before moving the owner ref and again immediately before resetting its checkout.
+After CAS, only identity is checked: HEAD and branch must be the reviewed tip and
+the common directory, registered path, Git directory and symbolic ref must match
+the pre-CAS sample. A missing, redirected or otherwise unprovable registration
+refuses without resetting or repairing metadata. A post-CAS refusal is
+`adopt_local_changed`; it keeps the ref at the reviewed tip, the old index/bytes,
+durable reset intent and recovery pins. Cleanup also samples live registration;
+uncertainty retains the checkout and any already-confirmed publication.
+
 **Repair source (CARD-0499).** When a Code Worktree task must work on a branch that is already
 checked out elsewhere, pass `delegate.ps1 -RepairSource <owner-guid>` (full GUID of the original
 Code/Worktree landing owner). Antiphon records that owner, routes the repair onto its own unique
