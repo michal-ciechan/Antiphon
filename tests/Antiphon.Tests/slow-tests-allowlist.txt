@@ -243,3 +243,4 @@ Antiphon.Tests.Application.ReviewEvidenceRecoveryEndpointTests
 # CARD-1061: sequential native NTFS junction commands and bounded process/pipe timeout witnesses.
 Antiphon.Tests.Application.ChannelReplyAttachmentReaderWindowsTests
 Antiphon.Tests.TestHelpers.DirectoryLinkFixtureWindowsTests
+Antiphon.Tests.Application.CodexCliObservationGapTests
