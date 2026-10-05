@@ -991,3 +991,27 @@ was removed after import. No ordinary tests or positive controls ran.
 next: plan
 handoff: Resolve P-1: launch catch-all kills the retained Grok recipient, and launch ownership blocks recovery while initialization is held. Bind an owned server-process crash/reattach fixture and PC-274 setup without production hooks, then requalify the proposed nine-row 55-minute scope. Preserve all 193 inherited PCs, additional guards and 38/38/38 follow-ups; CP-16 stays claim/reuse/queue only.
 artifact: docs/superpowers/plans/2026-10-04-card-1029-inert-observation-verification-gaps-plan.md
+
+## Code continuation 70cdf499: S2/S3 incomplete (2026-10-05)
+
+The seven CP-5..8 methods are authored on `feat/card-task-70cdf499`; implementation
+SHA `1265c9b51371e38cbe6fc7fa9a0bbea6a0147812`. Ordinary verification is incomplete
+within the explicit 90-minute/three-repair budget. Full source-qualified receipts,
+fresh method counts, baseline diagnostic and pending inventory are stored in
+[the continuation report](../../../.antiphon/task-70cdf499.md). This amendment
+changes no checkpoint selection, assertion, timeout, ceiling or PC disposition.
+
+CP-4 passed all eight consumers at the earlier recorded SHAs; another full CP-4
+run is required after the final fixture changes. CP-5 is red: the standard short
+Claude Worktree brief exceeds the existing inline ceiling, and the new Grok
+post-commit arrangement crosses the excluded P-1 survival seam. Repair those
+ordinary test arrangements; P-1 still blocks only PC-274 in paused Mutation.
+CP-7's Screen-to-transcript spill release assertion also failed against clean
+base production dependencies using the documented composite witness. D-1's
+separately scoped repair requirement remains in effect.
+
+The next stage remains Code until the report's red and pending ordinary rows are
+resolved. F-Observation, F-Faults, F-Matrix, F-Regression and caller-owned F-Native
+remain deferred, never passed. All 211 primary PCs and 21 remote-only variants
+remain pending SourceLanding Mutation. Original landing owner remains
+`bed39f89-24ec-4ef4-a70e-f8af615ae5b2`; no restart is required by this tests/docs slice.
