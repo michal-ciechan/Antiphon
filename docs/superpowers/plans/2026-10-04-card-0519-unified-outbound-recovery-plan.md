@@ -2033,6 +2033,15 @@ table above (one isolated build per slice, exact filters, `--row-timeout 15m
 | S12g | CP-74, CP-75 | `bin-c519-cp74/` | 12 + 9 |
 | S13 | CP-29 | `bin-c519-cp29/` | 2 (Windows) |
 
+Code 9ed7da3b confirmed two inherited regression-fixture failures at unchanged
+`40336cb5dd44f3f164e82dbfaab3b1cb93c7f710`, selecting only the failing methods.
+The Unix timeout hook now carries executable permissions, and T6's synthetic
+profile-backed Worktree tasks are ephemeral so the newer existing-agent guard
+does not mask profile preflight. All timeout, reason, status and no-resource
+assertions remain unchanged. CP-66's current full roster has 30 results (its
+manifest minimum remains 28). After these fixture repairs, rerun all S12d rows
+at one final committed SHA; earlier S12d receipts remain attributed to their SHA.
+
 Example first command (S12c):
 
 ```powershell
