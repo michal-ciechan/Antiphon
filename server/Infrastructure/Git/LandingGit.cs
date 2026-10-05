@@ -709,7 +709,9 @@ public class LandingGit : ILandingGit
         var common = await CommonDirectoryAsync(coordinates.RepositoryPath, ct);
         var path = await CanonicalDirectoryAsync(coordinates.WorktreePath, ct);
         if (!PathsEqual(common, await CommonDirectoryAsync(path, ct))) return new(null, "wrong_repository");
-        var registrations = await ListRegistrationsAsync(coordinates.RepositoryPath, live: false, ct);
+        // Mutation-authorizing identity samples must see current registrations. Editing a nested
+        // admin gitdir backlink need not change the operation cache's parent stamp or entry count.
+        var registrations = await ListRegistrationsAsync(coordinates.RepositoryPath, live: true, ct);
         var matching = new List<LandingRegistration>();
         foreach (var entry in registrations)
         {

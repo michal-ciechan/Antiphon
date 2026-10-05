@@ -415,7 +415,7 @@ public sealed class LandingGitTests
     }
 
     [Test]
-    public async Task C642_InspectAsyncListsRegistrationsOncePerScope()
+    public async Task C975_InspectAsyncAlwaysReadsCurrentRegistrations()
     {
         await using var fixture = new LandingGitFixture();
         await fixture.InitializeAsync();
@@ -426,10 +426,10 @@ public sealed class LandingGitTests
         first.Accepted.ShouldBeTrue(first.Reason);
         second.Accepted.ShouldBeTrue(second.Reason);
         second.Snapshot.ShouldBe(first.Snapshot);
-        WorktreeLists(fixture).ShouldBe(1, "two inspections (four identity reads) in one scope list registrations once");
+        WorktreeLists(fixture).ShouldBe(4, "each mutation-authorizing identity sample reads current registrations");
         scope.Profile.Inspections.ShouldBe(2);
-        scope.Profile.WorktreeLists.ShouldBe(1);
-        scope.Profile.RegistrationHits.ShouldBe(3);
+        scope.Profile.WorktreeLists.ShouldBe(4);
+        scope.Profile.RegistrationHits.ShouldBe(0);
         scope.Profile.CanonicalHits.ShouldBeGreaterThan(0);
         scope.Profile.Processes.ShouldBe(fixture.Git.Trace.Count);
     }
