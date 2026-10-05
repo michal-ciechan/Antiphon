@@ -78,6 +78,241 @@ public class TerminalSeatReleaseTests
     }
 
     [Test]
+    public async Task Discovery_evidence_refuses_old_generation_idle_in_real_runtime()
+    {
+        foreach (var provider in new[] { "Claude", "Grok", "Codex" })
+        foreach (var conditional in new[] { false, true })
+        {
+            await using var world = new SeatWorld(provider);
+            await world.StartAsync();
+            world.UseCapturedRequest();
+            world.EnableNativeSubmission(swallowFirstEnter: true);
+            var oldTail = await world.Tail.ObserveAsync();
+            await SendCapturedInputAsync(world, "\u001b[200~current generation\nactual input\u001b[201~", conditional);
+            await SendCapturedInputAsync(world, "\r", conditional);
+            var capture = world.Session.DeliveryEvidence.Submitted.ShouldNotBeNull();
+            capture.PromptFloorRevision.ShouldBe(oldTail.TranscriptRevision);
+            for (var read = 0; read < 2; read++)
+            {
+                var refused = await world.ObserveAsync();
+                refused.Status.ShouldBe(TerminalSeatQualificationStatus.OldPrompt,
+                    "PC-96: the previous generation's idle turn is below the captured floor");
+                refused.Token.ShouldBeNull();
+                world.AssertRetained();
+                world.Clock.Advance(TimeSpan.FromSeconds(120));
+            }
+            await SendCapturedInputAsync(world, "\r", conditional);
+            world.Session.DeliveryEvidence.Submitted.ShouldBe(capture);
+            var first = await world.ObserveAsync();
+            first.Status.ShouldBe(TerminalSeatQualificationStatus.Waiting);
+            first.Transcript.LastPromptRevision!.Value.ShouldBeGreaterThan(capture.PromptFloorRevision);
+            world.Clock.Advance(TimeSpan.FromSeconds(120));
+            var qualified = await world.ObserveAsync();
+            qualified.Status.ShouldBe(TerminalSeatQualificationStatus.Qualified);
+            var release = new TerminalSeatReleaseRequest(Guid.NewGuid(), world.Request, qualified.Token!);
+            world.Child.Kill = _ => { world.Child.Exit(); return Task.FromResult(true); };
+            (await world.ReleaseAsync(release)).Outcome.ShouldBe(TerminalSeatReleaseOutcome.Released);
+            world.AssertReleased();
+        }
+    }
+
+    [Test]
+    public async Task Captured_delivery_mode_requires_current_evidence()
+    {
+        foreach (var provider in new[] { "Claude", "Grok", "Codex" })
+        foreach (var missing in new[] { "missing", "late-bound", "invalid", "restart", "claim", "new-body" })
+        {
+            await using var world = new SeatWorld(provider);
+            if (missing == "late-bound")
+            {
+                world.BindUnbound();
+                await SendCapturedInputAsync(world, "body before binding", false);
+                await world.Tail.StartAsync();
+                await SendCapturedInputAsync(world, "\r", false);
+            }
+            else await world.StartAsync();
+            if (missing is "restart" or "claim" or "new-body")
+            {
+                world.EnableNativeSubmission();
+                await SendCapturedInputAsync(world, "legitimate current body", false);
+                await SendCapturedInputAsync(world, "\r", false);
+                if (missing == "restart") await world.RestartAsync();
+                else if (missing == "claim") world.Session.OnTranscriptClaimRevoked(world.Tail.Path, Guid.NewGuid());
+                else await SendCapturedInputAsync(world, "unsubmitted subsequent body", false);
+            }
+            if (missing == "invalid")
+            {
+                await SendCapturedInputAsync(world, "unsupported\b", false);
+                await SendCapturedInputAsync(world, "\r", false);
+            }
+            var native = await world.Tail.ObserveAsync();
+            // These fields would qualify the existing idle turn in legacy mode.
+            var forged = new TerminalSeatObservationRequest(world.Runtime.RunnerStoreId,
+                world.Session.AcceptedStartedAt!.Value, native.BindingIdentity!, 0, true);
+            for (var read = 0; read < 2; read++)
+            {
+                var refused = await world.Runtime.ObserveTerminalSeatAsync(world.Tail.SessionId, forged, CancellationToken.None);
+                refused.Status.ShouldBe(TerminalSeatQualificationStatus.Unknown, "PC-97: " + missing);
+                refused.Token.ShouldBeNull();
+                world.Clock.Advance(TimeSpan.FromSeconds(120));
+            }
+            world.AssertRetained();
+        }
+
+        foreach (var provider in new[] { "Claude", "Grok", "Codex" })
+        foreach (var conditional in new[] { false, true })
+        {
+            await using var world = new SeatWorld(provider);
+            await world.StartAsync();
+            world.UseCapturedRequest();
+            world.EnableNativeSubmission();
+            await SendCapturedInputAsync(world, "first actual submission", conditional);
+            await SendCapturedInputAsync(world, "\r", conditional);
+            (await world.ObserveAsync()).Status.ShouldBe(TerminalSeatQualificationStatus.Waiting);
+            world.Clock.Advance(TimeSpan.FromSeconds(120));
+            var qualified = await world.ObserveAsync();
+            qualified.Status.ShouldBe(TerminalSeatQualificationStatus.Qualified);
+            var proof = world.Runtime.TerminalSeatProofFor(world.Tail.SessionId).ShouldNotBeNull();
+            var capture = world.Session.DeliveryEvidence.Submitted.ShouldNotBeNull();
+            proof.CaptureId.ShouldBe(capture.CaptureId);
+            var release = new TerminalSeatReleaseRequest(Guid.NewGuid(), world.Request, qualified.Token!);
+            var canonical = release with { Observation = proof.Request };
+            TerminalSeatQualification.AuthorizeRelease(proof, proof.RuntimeEpoch, world.Session, canonical,
+                proof.Transcript, proof.InputRevision, proof.OutputRevision, world.Clock, capture.CaptureId)
+                .ShouldBeNull("valid captured proof reaches the final authorization decision");
+            TerminalSeatQualification.AuthorizeRelease(proof, proof.RuntimeEpoch, world.Session, canonical,
+                proof.Transcript, proof.InputRevision, proof.OutputRevision, world.Clock, Guid.NewGuid())
+                .ShouldBe(TerminalSeatReleaseOutcome.StaleObservation,
+                    "PC-103: only capture ID differs; native/input/output revisions and floor remain valid");
+
+            await SendCapturedInputAsync(world, "second actual submission", conditional);
+            (await world.ObserveAsync()).Status.ShouldBe(TerminalSeatQualificationStatus.Unknown);
+            await SendCapturedInputAsync(world, "\r", conditional);
+            world.Session.DeliveryEvidence.Submitted.ShouldNotBeNull().CaptureId.ShouldNotBe(capture.CaptureId);
+            (await world.ReleaseAsync(release)).Outcome.ShouldBe(TerminalSeatReleaseOutcome.StaleObservation);
+            world.AssertRetained();
+            (await world.ObserveAsync()).Status.ShouldBe(TerminalSeatQualificationStatus.Waiting);
+            world.Clock.Advance(TimeSpan.FromSeconds(120));
+            var replacement = await world.ObserveAsync();
+            replacement.Status.ShouldBe(TerminalSeatQualificationStatus.Qualified);
+            replacement.Token.ShouldNotBe(qualified.Token);
+            (await world.ReleaseAsync(release)).Outcome.ShouldBe(TerminalSeatReleaseOutcome.StaleObservation);
+            world.AssertRetained();
+        }
+    }
+
+    [Test]
+    public async Task Captured_delivery_mode_has_http_phone_home_parity()
+    {
+        foreach (var provider in new[] { "Claude", "Grok", "Codex" })
+        foreach (var phoneHome in new[] { false, true })
+        foreach (var restart in new[] { false, true })
+        {
+            await using var world = new SeatWorld(provider);
+            await world.StartAsync();
+            world.UseCapturedRequest();
+            world.EnableNativeSubmission();
+            var surface = new CurrentSurface(world.Runtime);
+            await using (var wire = await SeatWire.StartAsync(world, surface, phoneHome))
+            {
+                var features = (await wire.CapabilitiesAsync()).Features;
+                features.ShouldContain(RunnerCapabilityFeatures.TerminalSeatReleaseV1);
+                features.ShouldContain(RunnerCapabilityFeatures.TerminalSeatDeliveryEvidenceV1);
+                var missing = await wire.ObserveAsync();
+                missing.Status.ShouldBe(TerminalSeatQualificationStatus.Unknown);
+                missing.Token.ShouldBeNull();
+                await SendCapturedInputAsync(world, "transport actual body\nsecond line", false);
+                await SendCapturedInputAsync(world, "\r", false);
+                // Discard one successful response to model an observation reply lost in transit.
+                (await wire.ObserveAsync()).Status.ShouldBe(TerminalSeatQualificationStatus.Waiting);
+                var first = await wire.ObserveAsync();
+                first.Status.ShouldBe(TerminalSeatQualificationStatus.Waiting, "PC-98: capture-only wire request");
+                first.Token.ShouldBeNull();
+                world.Clock.Advance(TimeSpan.FromSeconds(120));
+                var qualified = await wire.ObserveAsync();
+                qualified.Status.ShouldBe(TerminalSeatQualificationStatus.Qualified);
+                var release = new TerminalSeatReleaseRequest(Guid.NewGuid(), world.Request, qualified.Token!);
+                if (!restart)
+                {
+                    world.Child.Kill = _ => { world.Child.Exit(); return Task.FromResult(true); };
+                    var result = await wire.ReleaseAsync(release);
+                    result.Outcome.ShouldBe(TerminalSeatReleaseOutcome.Released);
+                    (await wire.ReleaseAsync(release)).ShouldBe(result);
+                    world.AssertReleased();
+                }
+            }
+            surface.ForceCalls.ShouldBe(0);
+            surface.GenerationKillCalls.ShouldBe(0);
+            if (restart)
+            {
+                var oldToken = world.Runtime.TerminalSeatProofFor(world.Tail.SessionId)!.Token;
+                await world.RestartAsync();
+                var restartedSurface = new CurrentSurface(world.Runtime);
+                await using var restartedWire = await SeatWire.StartAsync(world, restartedSurface, phoneHome);
+                var missing = await restartedWire.ObserveAsync();
+                missing.Status.ShouldBe(TerminalSeatQualificationStatus.Unknown);
+                missing.Token.ShouldBeNull();
+                (await restartedWire.ReleaseAsync(new(Guid.NewGuid(), world.Request, oldToken))).ConfirmsExit.ShouldBeFalse();
+                world.AssertRetained();
+                // Legitimate subsequent delivery can qualify the adopted generation anew.
+                world.EnableNativeSubmission();
+                await SendCapturedInputAsync(world, "legitimate post-restart body", false);
+                await SendCapturedInputAsync(world, "\r", false);
+                (await restartedWire.ObserveAsync()).Status.ShouldBe(TerminalSeatQualificationStatus.Waiting);
+                world.Clock.Advance(TimeSpan.FromSeconds(120));
+                var fresh = await restartedWire.ObserveAsync();
+                fresh.Status.ShouldBe(TerminalSeatQualificationStatus.Qualified);
+                fresh.Token.ShouldNotBe(oldToken);
+                world.Child.Kill = _ => { world.Child.Exit(); return Task.FromResult(true); };
+                (await restartedWire.ReleaseAsync(new(Guid.NewGuid(), world.Request, fresh.Token!)))
+                    .Outcome.ShouldBe(TerminalSeatReleaseOutcome.Released);
+                world.AssertReleased();
+                restartedSurface.ForceCalls.ShouldBe(0);
+                restartedSurface.GenerationKillCalls.ShouldBe(0);
+            }
+        }
+    }
+
+    [Test]
+    public async Task Legacy_floor_requests_keep_explicit_semantics()
+    {
+        ((int)PhoneHomeOperation.Input).ShouldBe(9);
+        ((int)PhoneHomeOperation.ReleaseSlot).ShouldBe(23);
+        ((int)PhoneHomeOperation.CodexCliVersion).ShouldBe(33);
+        ((int)PhoneHomeOperation.ObserveTerminalSeat).ShouldBe(34);
+        ((int)PhoneHomeOperation.ReleaseTerminalSeat).ShouldBe(35);
+        foreach (var provider in new[] { "Claude", "Grok", "Codex" })
+        foreach (var phoneHome in new[] { false, true })
+        {
+            await using var world = new SeatWorld(provider);
+            await world.StartAsync();
+            var json = JsonSerializer.SerializeToElement(new
+            {
+                world.Request.ExpectedRunnerStoreId, world.Request.ExpectedAcceptedStartedAt,
+                world.Request.PromptBindingIdentity, world.Request.PromptFloorRevision
+            }, PhoneHomeFraming.Json);
+            var legacy = json.Deserialize<TerminalSeatObservationRequest>(PhoneHomeFraming.Json)!;
+            legacy.UseCapturedDeliveryEvidence.ShouldBeFalse("PC-99: omitted JSON flag retains explicit-floor semantics");
+            world.SetRequest(legacy);
+            world.EnableNativeSubmission();
+            await SendCapturedInputAsync(world, "legacy actual submission", false);
+            await SendCapturedInputAsync(world, "\r", false);
+            // Legacy evidence remains supplied by its trusted caller, even without volatile capture.
+            await world.RestartAsync();
+            await using var wire = await SeatWire.StartAsync(world, new CurrentSurface(world.Runtime), phoneHome);
+            (await wire.ObserveAsync()).Status.ShouldBe(TerminalSeatQualificationStatus.Waiting);
+            world.Clock.Advance(TimeSpan.FromSeconds(120));
+            var qualified = await wire.ObserveAsync();
+            qualified.Status.ShouldBe(TerminalSeatQualificationStatus.Qualified);
+            world.SetRequest(legacy with { UseCapturedDeliveryEvidence = true });
+            var captured = await wire.ObserveAsync();
+            captured.Status.ShouldBe(TerminalSeatQualificationStatus.Unknown);
+            captured.Token.ShouldBeNull();
+            world.AssertRetained();
+        }
+    }
+
+    [Test]
     public async Task Native_delivery_floor_is_captured_before_backend_write()
     {
         foreach (var provider in new[] { "Claude", "Grok", "Codex" })
@@ -1378,6 +1613,28 @@ public class TerminalSeatReleaseTests
         }
 
         public void BindUnbound() => Bind();
+
+        public void SetRequest(TerminalSeatObservationRequest request) => Request = request;
+
+        public void UseCapturedRequest() => Request = new(Runtime.RunnerStoreId,
+            Session.AcceptedStartedAt!.Value, "", -1, true);
+
+        public void EnableNativeSubmission(bool swallowFirstEnter = false)
+        {
+            var composer = new StringBuilder();
+            var submits = 0;
+            Child.Write = async _ =>
+            {
+                var bytes = Child.Inputs[^1];
+                if (bytes != "\r") { composer.Append(bytes); return; }
+                if (++submits == 1 && swallowFirstEnter) return;
+                if (composer.Length == 0) return;
+                var body = composer.ToString().Replace("\u001b[200~", "").Replace("\u001b[201~", "");
+                composer.Clear();
+                var id = Guid.NewGuid().ToString("N");
+                await Tail.AppendAsync(Tail.Prompt(body, id) + Tail.End(id));
+            };
+        }
 
         public async Task RestartEmptyAsyncForReplacement()
         {

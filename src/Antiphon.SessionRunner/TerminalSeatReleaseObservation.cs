@@ -15,7 +15,7 @@ namespace Antiphon.SessionRunner;
 internal sealed record TerminalSeatProof(
     Guid RuntimeEpoch, object Session, TerminalSeatObservationRequest Request,
     TerminalTranscriptObservation Transcript, long InputRevision, long OutputRevision,
-    long FirstTimestamp, DateTimeOffset FirstObservedAt, string Token);
+    long FirstTimestamp, DateTimeOffset FirstObservedAt, string Token, Guid? CaptureId = null);
 
 internal sealed class TerminalSeatQualification
 {
@@ -77,7 +77,8 @@ internal sealed class TerminalSeatQualification
     // This is also the mutation oracle for individual guards otherwise masked by later fences.
     internal static TerminalSeatReleaseOutcome? AuthorizeRelease(
         TerminalSeatProof proof, Guid epoch, object session, TerminalSeatReleaseRequest request,
-        TerminalTranscriptObservation transcript, long inputRevision, long outputRevision, TimeProvider clock)
+        TerminalTranscriptObservation transcript, long inputRevision, long outputRevision, TimeProvider clock,
+        Guid? captureId = null)
     {
         if (proof.RuntimeEpoch != epoch || !ReferenceEquals(proof.Session, session)
             || proof.Request != request.Observation || proof.Token != request.Token)
