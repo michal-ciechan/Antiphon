@@ -16,6 +16,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
+using Antiphon.Tests.Agents;
+using System.Text.Json;
 
 namespace Antiphon.Tests.Application;
 
@@ -23,7 +25,9 @@ namespace Antiphon.Tests.Application;
 internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
 {
     public required IsolatedTestSchema Schema { get; init; }
-    public required BridgeQueueHarness Harness { get; init; }
+    public required BridgeQueueHarness Harness { get; set; }
+    private BridgeQueueHarness.HarnessOptions? _harnessOptions;
+    private readonly List<string> _roots = [];
     public required FakeTimeProvider Clock { get; init; }
     public required SeatWire Wire { get; init; }
     public required SeatDirectory Directory { get; init; }
@@ -49,13 +53,14 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         BridgeQueueHarness harness;
         try
         {
-            harness = await BridgeQueueHarness.CreateAsync(new()
+            var harnessOptions = new BridgeQueueHarness.HarnessOptions
             {
                 ConnectionString = schema.ConnectionString, TimeProvider = clock,
                 AlwaysOn = false, PreserveDatabaseOnDispose = true,
                 ConfigureDbContext = configureDb,
                 ConfigureServices = services =>
                 {
+                    services.AddSingleton<RemoteSpillCourier>();
                     services.AddSingleton<ISessionRunnerDirectory>(directory);
                     services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
                     services.AddSingleton<SessionStateStore>();
@@ -88,10 +93,14 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
                         remoteWorkspace: sp.GetRequiredService<RemoteWorkspaceService>(), runners: directory,
                         taskLaunchSink: sp.GetRequiredService<LaunchRecorder>()));
                 }
-            });
+            };
+            harness = await BridgeQueueHarness.CreateAsync(harnessOptions);
+            wire.HarnessOptions = harnessOptions;
         }
         catch { http.Dispose(); await schema.DisposeAsync(); throw; }
         var f = new RunnerSeatReleaseFixture { Schema = schema, Harness = harness, Clock = clock, Wire = wire, Directory = directory };
+        f._harnessOptions = wire.HarnessOptions;
+        f._roots.Add(harness.TempRoot);
         try
         {
             await using var db = f.Db();
@@ -200,7 +209,78 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
     internal sealed class LaunchRecorder : IAgentTaskLaunchSink
     {
         public List<AgentLaunchSpec> Calls { get; } = [];
-        public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec) => Calls.Add(spec);
+        public Action<Guid>? OnLaunch { get; set; }
+        public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec)
+        { Calls.Add(spec); OnLaunch?.Invoke(sessionId); }
+    }
+
+    public async Task RestartAsync()
+    {
+        var task = await TaskAsync();
+        var sessionId = task.AgentSessionId ?? SessionId;
+        var agentId = task.AgentId ?? AgentId;
+        await Harness.DisposeAsync();
+        Harness = await BridgeQueueHarness.CreateAsync(_harnessOptions! with
+        { AttachSessionId = sessionId, AttachAgentId = agentId });
+        _roots.Add(Harness.TempRoot);
+    }
+
+    public FakeAgentProtocolAdapter? Recipient { get; private set; }
+    public List<string> Submitted { get; } = [];
+
+    public async Task AttachRecipientAsync(Guid sessionId, bool busy = false)
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        Recipient = adapter;
+        adapter.OnSubmitted = async body =>
+        {
+            Submitted.Add(body);
+            var spill = await Harness.Provider.GetRequiredService<RemoteSpillCourier>()
+                .FindDurableAsync(sessionId, body, default);
+            if (spill is not null)
+            {
+                var file = Path.Combine(Harness.TempRoot, spill.Spill.RelativePath);
+                System.IO.Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+                await File.WriteAllTextAsync(file, spill.Spill.Body);
+            }
+            await NativePromptAsync(sessionId, body);
+        };
+        Harness.Runtime.Register(sessionId, adapter);
+        await using var db = Db();
+        await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Running));
+        if (busy) await NativePromptAsync(sessionId, "existing turn");
+    }
+
+    public async Task NativePromptAsync(Guid sessionId, string body)
+    {
+        var line = JsonSerializer.Serialize(new { type = "user", uuid = Guid.NewGuid().ToString("D"),
+            timestamp = Clock.GetUtcNow(), message = new { role = "user", content = body } });
+        await File.AppendAllTextAsync(Path.Combine(Harness.TempRoot, $"{sessionId}.jsonl"), line + "\n");
+        await using var db = Db();
+        var sequence = await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).MaxAsync(t => (long?)t.Sequence) ?? 0;
+        var parts = Antiphon.SessionRunner.TranscriptNormalizer.Normalize(line);
+        if (parts.Count == 0) throw new InvalidOperationException("Native prompt did not normalize.");
+        await Harness.Runtime.PersistTranscriptAsync(sessionId, parts.Select(p => new SessionRunnerTranscriptEvent(
+            sessionId, ++sequence, p.Kind, p.Uuid, p.ParentUuid, p.Timestamp, p.Role, p.Text,
+            p.ToolName, p.ToolInput, p.ToolUseId, p.ToolIsError, p.StopReason)).ToArray());
+    }
+
+    public async Task EndTurnAsync(Guid sessionId)
+    {
+        await using var db = Db();
+        var sequence = (await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId)
+            .MaxAsync(t => (long?)t.Sequence) ?? 0) + 1;
+        await Harness.Runtime.PersistTranscriptAsync(sessionId,
+            [new SessionRunnerTranscriptEvent(sessionId, sequence, TranscriptKinds.TurnEnd, Guid.NewGuid().ToString("D"),
+                null, Clock.GetUtcNow(), "assistant", null, null, null, null, null, "end_turn")]);
+    }
+
+    public async Task<SessionQueuedMessage?> AnswerQueueAsync()
+    {
+        var task = await TaskAsync();
+        await using var db = Db();
+        return await db.SessionQueuedMessages.AsNoTracking().SingleOrDefaultAsync(m =>
+            m.AgentSessionId == task.AgentSessionId && m.ExecutionTaskId == TaskId);
     }
 
     public async Task IngestAsync(string kind, string? text, DateTime timestamp)
@@ -220,6 +300,8 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         await Harness.DisposeAsync();
         Wire.Dispose();
         await Schema.DisposeAsync();
+        foreach (var root in _roots)
+            if (System.IO.Directory.Exists(root)) System.IO.Directory.Delete(root, true);
     }
 
     private sealed class ClientFactory(HttpClient client) : IHttpClientFactory
@@ -227,6 +309,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
 
     internal sealed class SeatWire : HttpMessageHandler
     {
+        public BridgeQueueHarness.HarnessOptions? HarnessOptions { get; set; }
         public bool Unsupported { get; set; }
         public bool DropReply { get; set; }
         public TerminalSeatReleaseOutcome Outcome { get; set; } = TerminalSeatReleaseOutcome.Released;
