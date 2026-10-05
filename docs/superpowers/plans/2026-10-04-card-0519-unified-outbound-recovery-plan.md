@@ -1321,3 +1321,11 @@ and PC-S5-1..PC-S5-4 remain pending post-land SourceLanding Mutation.
 Mutation owns deliberate mutants, red/restore/green, and missing-control discovery;
 no PC is discharged by these ordinary results. PreparationDeadlineAt's CreatedAt
 basis and CARD-1061's hard-link reader gap remain unchanged.
+
+S6 repair group 1: run 20261005-053259-37bd at
+be96960c25689cfe8d4e229aa12f7a8bcea64f0a failed its first isolated build because
+ChannelOutboundTrailingRecoveryTests omitted the TranscriptKinds namespace import.
+No test executed. The run was stopped and its waiter returned terminal exit 6;
+all owned children were gone before source repair. The missing import is added,
+and the legacy-only watermark comments now match S6 ownership. Run After=S6 on
+the next committed tip; no per-fix rebuild, timeout widening or assertion change.

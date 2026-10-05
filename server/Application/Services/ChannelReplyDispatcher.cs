@@ -124,7 +124,7 @@ public sealed class ChannelReplyDispatcher
     internal const string LostReplyNoticePrefix =
         "[Antiphon] A reply this chat was owed was never delivered:";
 
-    // The last turn we replied for, per session. Claude can keep writing AssistantText AFTER the
+    // Legacy/default-off and catalog-less routing only. Claude can write AssistantText AFTER the
     // TurnEnd that triggered dispatch (observed live 2026-07-29, AZ Care: TurnEnd, AssistantText,
     // TurnEnd — the first dispatch consumed the correlations with only the turn's interim narration
     // extracted, and the real answer landed one second later with nothing left to match). Remembering
@@ -1194,10 +1194,8 @@ public sealed class ChannelReplyDispatcher
     // route the trailing text to the same targets. The watermark claim via TryUpdate keeps racing
     // triggers (AssistantText arrival + the closing TurnEnd) from double-sending.
     //
-    // This watermark is deliberately still process-memory only, and it is the one thing CARD-0067 did
-    // NOT make durable: it addresses a turn that has ALREADY been answered, so losing it to a restart
-    // costs at most a trailing fragment, never the answer — and a durable version would have to decide
-    // what "already sent" means for text a dead process may or may not have produced.
+    // Unified catalog-backed routes reserve from the committed delivery root instead. The
+    // process-local watermark below serves only legacy/default-off and catalog-less sends.
     //
     // Trailing text is attributed by the same sequence window ExtractTurnResponseAsync uses
     // (PromptSeq < seq < nextPromptSeq), lower-bounded at MaxTextSeq. A newer prompt is the
