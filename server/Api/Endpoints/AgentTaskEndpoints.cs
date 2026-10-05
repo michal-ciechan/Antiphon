@@ -3,6 +3,11 @@ using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Infrastructure.Security;
+using Antiphon.Server.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Api.Endpoints;
@@ -295,6 +300,34 @@ public static class AgentTaskEndpoints
         {
             var taskId = await service.ResolveTaskIdAsync(id, ct);
             return Results.Ok(await outcomes.RecordFindingAsync(taskId, request, ct));
+        });
+
+        tasks.MapPost("/{id}/review-evidence/rebind", async (
+            string id, ReviewEvidenceRecoveryRequest request, HttpContext http,
+            AgentTaskService service, ReviewEvidenceRecoveryService recovery, AppDbContext db,
+            IOptions<PhoneHomeRunnerSettings> settings, CancellationToken ct) =>
+        {
+            var taskId = await service.ResolveTaskIdAsync(id, ct);
+            string actor;
+            if (OperatorCredential.HeaderMatches(http, settings.Value)) actor = "operator";
+            else
+            {
+                // Authenticate directly: ResolveCallerAsync's anonymous UI fallback has no authority here.
+                var caller = await service.AuthenticateAsync(http.Request.Headers[TokenHeader].FirstOrDefault(), ct);
+                if (!caller.MayDelegate) throw new ForbiddenException("Recovery requires an orchestrator credential.", "review_recovery_principal_denied");
+                var review = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId, ct);
+                var project = caller.Task?.ProjectId ?? await service.DeriveCallerProjectAsync(caller, ct);
+                if (review.ProjectId is null || project != review.ProjectId)
+                    throw new ForbiddenException("Recovery requires the Review's project scope.", "review_recovery_project_denied");
+                var roots = new[] { caller.Task?.RepoPath ?? caller.WorkingDirectory }
+                    .Concat(caller.ExtraAllowedRoots ?? []);
+                if (review.RepoPath is null || !roots.Any(root => !string.IsNullOrWhiteSpace(root)
+                    && DelegationWorkspaceResolver.IsWithinRoot(review.RepoPath, root)))
+                    throw new ForbiddenException("Recovery requires the Review's repository scope.", "review_recovery_repository_denied");
+                actor = caller.Task is { } task ? $"task:{task.Id:D}"
+                    : caller.CapabilityId is { } cap ? $"capability:{cap:D}" : $"session:{caller.SessionId:D}";
+            }
+            return Results.Ok(await recovery.RebindAsync(taskId, request, actor, ct));
         });
 
         // Explicit and ordered: a succeeded Worktree task is left for review until the caller

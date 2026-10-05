@@ -17,8 +17,10 @@ namespace Antiphon.Server.Application.Services;
 public sealed class StageOutcomeService
 {
     private readonly AppDbContext _db;
+    private readonly LandDeliveryBoundary _boundary;
 
-    public StageOutcomeService(AppDbContext db) => _db = db;
+    public StageOutcomeService(AppDbContext db, LandDeliveryBoundary? boundary = null)
+    { _db = db; _boundary = boundary ?? new LandDeliveryBoundary(); }
 
     public async Task<StageOutcomeListDto> ListAsync(
         DateTime? since,
@@ -170,12 +172,21 @@ public sealed class StageOutcomeService
                     "expected_source_sha_invalid");
         }
 
+        // Preparation may race a successor with a different StageTaskId. Retry only that
+        // identity change, so we never write under the wrong Review lock.
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+        var existing = await FindingPredecessorAsync(taskId, stage, ct);
+        var lockId = existing?.StageTaskId ?? taskId;
+        await _boundary.ReachedAsync("review-finding-prepared", taskId, lockId, ct);
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        await ReviewEvidenceRecoveryService.LockTasksAsync(_db, [taskId, lockId], ct);
+        await _boundary.ReachedAsync("review-finding-locked", taskId, lockId, ct);
+        var current = await FindingPredecessorAsync(taskId, stage, ct);
+        if ((current?.StageTaskId ?? taskId) != lockId) continue;
+        existing = current;
+        await _db.Entry(task).ReloadAsync(ct);
         var now = DateTime.UtcNow;
-        var existing = await _db.StageOutcomes
-            .Where(o => o.Stage == stage && (o.StageTaskId == taskId || o.SubjectTaskId == taskId))
-            .OrderByDescending(o => o.RecordedAt)
-            .ThenByDescending(o => o.Id)
-            .FirstOrDefaultAsync(ct);
 
         var detail = (request.Detail ?? string.Empty).Trim();
         if (detail.Length > StageOutcome.DetailMaxLength)
@@ -236,8 +247,16 @@ public sealed class StageOutcomeService
             At = now,
         });
         await _db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
         return ToDto(row);
+        }
+        throw new ConflictException("Review predecessor changed during finding preparation.", "review_evidence_predecessor_changed");
     }
+
+    private Task<StageOutcome?> FindingPredecessorAsync(Guid taskId, OrchestrationStage stage, CancellationToken ct) =>
+        ActiveQuery(_db.StageOutcomes.AsNoTracking(), _db)
+            .Where(o => o.Stage == stage && (o.StageTaskId == taskId || o.SubjectTaskId == taskId))
+            .OrderByDescending(o => o.RecordedAt).ThenByDescending(o => o.Id).FirstOrDefaultAsync(ct);
 
     public static OrchestrationStage ParseRequiredStage(string? value)
     {

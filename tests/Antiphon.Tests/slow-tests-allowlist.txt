@@ -231,3 +231,6 @@ Antiphon.Tests.Application.ChannelOutboundDurabilitySchemaTests
 
 # CARD-1047: real Windows launch, native observations and bounded unwind.
 Antiphon.Tests.Scripts.ScriptHarnessWindowsOwnershipTests
+# CARD-1043 S3: PostgreSQL recovery races, real pushed refs, and actual HTTP host.
+Antiphon.Tests.Application.ReviewEvidenceRecoveryTests
+Antiphon.Tests.Application.ReviewEvidenceRecoveryEndpointTests
