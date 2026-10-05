@@ -9,6 +9,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Files;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
@@ -1012,6 +1013,14 @@ public class ChannelBridgeTests
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
         services.AddScoped<ChatChannelService>();
+        var outboundRoot = Path.Combine(Path.GetTempPath(), $"ChannelBridgeTests-outbound-{Guid.NewGuid():N}");
+        services.AddSingleton<IOptions<ChannelOutboundSettings>>(Options.Create(new ChannelOutboundSettings
+        {
+            UnifiedRecoveryEnabled = false,
+            Profiles = new(StringComparer.Ordinal),
+        }));
+        services.AddSingleton<IChannelOutboundFileStore>(new ChannelOutboundFileStore(outboundRoot));
+        services.AddScoped<ChannelOutboundService>();
         services.AddSingleton(sp => new ChannelReplyDispatcher(
             sp.GetRequiredService<IServiceScopeFactory>(),
             messaging,
@@ -1028,6 +1037,8 @@ public class ChannelBridgeTests
 
         await using (var scope = provider.CreateAsyncScope())
         {
+            // Fail at fixture setup if the dispatcher's outbound graph is incomplete.
+            _ = scope.ServiceProvider.GetRequiredService<ChannelOutboundService>();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             db.Agents.Add(new Agent
             {
@@ -1072,7 +1083,7 @@ public class ChannelBridgeTests
             provider.GetRequiredService<TimeProvider>(),
             NullLogger<ChannelBridgeService>.Instance);
 
-        return new Harness(provider, bridge, dispatcher, messaging, adapter, eventBus, sessionId, agentId, chatId);
+        return new Harness(provider, bridge, dispatcher, messaging, adapter, eventBus, sessionId, agentId, chatId, outboundRoot);
     }
 
     private sealed record Harness(
@@ -1084,7 +1095,8 @@ public class ChannelBridgeTests
         MockEventBus EventBus,
         Guid SessionId,
         Guid AgentId,
-        string ChatId) : IAsyncDisposable
+        string ChatId,
+        string OutboundRoot) : IAsyncDisposable
     {
         public ChatChannelService Channels()
         {
@@ -1220,6 +1232,8 @@ public class ChannelBridgeTests
                 await db.Agents.Where(a => a.Id == AgentId).ExecuteDeleteAsync();
             }
             await Provider.DisposeAsync();
+            if (Directory.Exists(OutboundRoot))
+                Directory.Delete(OutboundRoot, recursive: true);
         }
     }
 }
