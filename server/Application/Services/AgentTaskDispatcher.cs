@@ -4387,6 +4387,22 @@ public sealed class AgentTaskDispatcher
         && task.SourceLandingOperationId is null
         && task.VerificationRound != VerificationRound.Interim;
 
+    private async Task<IDisposable?> AcquireReleasedAnswerClaimAsync(AgentTask task, CancellationToken ct)
+    {
+        if (task.ReleasedSeatAnswerId is null) return null;
+        var sessionId = await _db.RunnerSeatReleases.Where(r => r.Id == task.ReleasedSeatAnswerReleaseId)
+            .Select(r => (Guid?)r.SessionId).SingleOrDefaultAsync(ct);
+        if (sessionId is null) return null;
+        var gate = _queue.GetLock(sessionId.Value);
+        await gate.WaitAsync(ct);
+        return new ReleasedAnswerClaim(gate);
+    }
+
+    private sealed class ReleasedAnswerClaim(SemaphoreSlim gate) : IDisposable
+    {
+        public void Dispose() => gate.Release();
+    }
+
     private async Task<DispatchOneResult> DispatchOneAsync(
         AgentTask task, CancellationToken ct, SiblingBaseGuard? siblingObservation = null)
     {
@@ -4409,6 +4425,10 @@ public sealed class AgentTaskDispatcher
             : null;
         if (needsLease && repositoryLease is null)
             return DispatchOneResult.HeldOnLease;
+
+        // Released-seat continuations claim under the source recipient's gate, in the same
+        // order as answer/release (gate, then task row). New-session input uses a different gate.
+        using var answerClaim = await AcquireReleasedAnswerClaimAsync(task, ct);
 
         // Transactional claim: re-read under the concurrency token so a second tick (or another
         // server instance) racing this one loses cleanly instead of double-launching a delegate.
@@ -4437,6 +4457,15 @@ public sealed class AgentTaskDispatcher
         // FOR UPDATE reuses the tick's tracked instance; reload so Capture sees the locked row
         // (a pre-claim route edit) rather than the outer snapshot. PC-71.
         await _db.Entry(claimed).ReloadAsync(ct);
+        if (claimed.ReleasedSeatAnswerId is not null
+            && (claimed.ReleasedSeatAnswerTargetAttempt != claimed.Attempt
+                || !await _db.RunnerSeatReleases.AnyAsync(r => r.Id == claimed.ReleasedSeatAnswerReleaseId
+                    && r.TaskId == claimed.Id && r.Attempt == claimed.Attempt - 1
+                    && r.State == RunnerSeatReleaseState.Confirmed && r.ConfirmedAt != null, ct)))
+        {
+            await transaction.RollbackAsync(ct);
+            return DispatchOneResult.NotClaimed;
+        }
         // CARD-0644 D-3. Revalidate the create-time pin before any checkout is cut. A queued
         // explicit Worktree that still names an existing agent is the conflict create should
         // have refused; a Shared/ReadOnly pin follows the agent's checkout if it has moved.

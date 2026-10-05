@@ -78,6 +78,7 @@ public sealed class AgentTaskService
     // CARD-0659 D-2. Built from the dependencies above, not injected: a harness without a
     // phone-home policy or directory simply never selects a runner.
     private readonly DefaultRunnerRoutingPolicy _defaultRunner;
+    private readonly SessionMessageQueueService? _messageQueue;
 
     public AgentTaskService(
         AppDbContext db,
@@ -115,8 +116,10 @@ public sealed class AgentTaskService
         AgentSessionRuntime? runtime = null,
         CompletionNoteFlushQueue? completionNotes = null,
         RunnerDefaultSettingsService? runnerDefaults = null,
-        AgentTaskWorktreeBaseResolver? baseResolver = null)
+        AgentTaskWorktreeBaseResolver? baseResolver = null,
+        SessionMessageQueueService? messageQueue = null)
     {
+        _messageQueue = messageQueue;
         _baseResolver = baseResolver;
         _startRefs = startRefs;
         _completionNotes = completionNotes;
@@ -2641,6 +2644,24 @@ public sealed class AgentTaskService
                 $"Task {DelegationReportFormatter.Short(id)} has not run yet — it is already queued.");
         }
 
+        if (task.ReleasedSeatAnswerId is not null && task.ReleasedSeatAnswerTargetAttempt == task.Attempt + 1
+            && task.AgentSessionId is Guid answerSession && _messageQueue is not null)
+        {
+            var gate = _messageQueue.GetLock(answerSession);
+            await gate.WaitAsync(ct);
+            try
+            {
+                await _db.Entry(task).ReloadAsync(ct);
+                await RefuseUnauthenticatedGrokAsync(task.AgentKind, task.AgentId,
+                    AgentLaunchEnv.Parse(task.LaunchEnvOverrideJson), AgentLaunchEnv.Parse(task.InheritedLaunchEnvJson),
+                    false, task.RunnerId, ct);
+                await RefuseUnauthenticatedRunnerCodexAsync(task.AgentKind, false, task.RunnerId, ct);
+                await ContinueReleasedSeatAnswerAsync(task, ct);
+                return await SummaryOfAsync(task, ct);
+            }
+            finally { gate.Release(); }
+        }
+
         var repeatOf = await FindLaunchFailureRepeatAsync(
             task.CardId, task.Goal, task.Kind, task.Role, task.AgentKind, ct);
         if (repeatOf is not null)
@@ -3080,12 +3101,155 @@ public sealed class AgentTaskService
     }
 
     /// <summary>
+    /// Called with the old session's queue gate held. Acceptance is durable even when later
+    /// admission refuses; no provider is started here. The nullable fields came from S3a.
+    /// </summary>
+    internal async Task<bool> TryAcceptReleasedSeatAnswerAsync(
+        AgentTask task, string message, AnswerOrigin origin, int? round, CancellationToken ct)
+    {
+        var answer = message.Trim().ReplaceLineEndings("\n");
+        if (task.ReleasedSeatAnswerId is not null && task.ReleasedSeatAnswerTargetAttempt == task.Attempt)
+        {
+            if (task.ReleasedSeatAnswer != answer)
+                throw new ConflictException("This question already has an accepted answer.", "answer_already_accepted");
+            return true;
+        }
+        if (task.Status != AgentTaskStatus.Blocked) return false;
+        var release = await TerminalRunnerSeatReleaseService.FindAttemptReleaseAsync(_db, task, ct);
+        if (release?.State is not (RunnerSeatReleaseState.Confirmed or RunnerSeatReleaseState.Unresolved))
+        {
+            if (task.ReleasedSeatAnswerId is not null)
+                throw new ConflictException("The accepted answer is awaiting its exact release receipt.", "runner_seat_release_pending");
+            return false;
+        }
+
+        // Authentication refusal is not acceptance. Availability/quota/workspace refusal below
+        // does retain the authorized input for an explicit retry.
+        await RefuseUnauthenticatedGrokAsync(task.AgentKind, task.AgentId,
+            AgentLaunchEnv.Parse(task.LaunchEnvOverrideJson), AgentLaunchEnv.Parse(task.InheritedLaunchEnvJson),
+            allowUnauthenticated: false, task.RunnerId, ct);
+        await RefuseUnauthenticatedRunnerCodexAsync(task.AgentKind, false, task.RunnerId, ct);
+        var revision = task.ConcurrencyToken;
+        var attempt = task.Attempt;
+        await using (var tx = await _db.Database.BeginTransactionAsync(ct))
+        {
+            await LockReleasedAnswerAsync(task.Id, release.Id, release.SessionId, ct);
+            await _db.Entry(task).ReloadAsync(ct);
+            if (task.ConcurrencyToken != revision || task.Attempt != attempt || task.Status != AgentTaskStatus.Blocked)
+                throw new ConflictException("The task changed before answer acceptance.", "answer_revision_changed");
+            var rounds = await _db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == task.Id
+                && (e.Type == AgentTaskEventType.Blocked || e.Type == AgentTaskEventType.Conflicted))
+                .OrderBy(e => e.At).ThenBy(e => e.Id).ToListAsync(ct);
+            var currentRound = Math.Max(1, rounds.Count);
+            if (round is int requested && requested != currentRound)
+                throw new ConflictException($"The task has moved on to question round {currentRound}.", "answer_round_changed");
+            var roundId = rounds.LastOrDefault()?.Id ?? Guid.Empty;
+            if (task.ReleasedSeatAnswerId is not null)
+            {
+                if (task.ReleasedSeatAnswer != answer || task.ReleasedSeatAnswerRoundId != roundId
+                    || task.ReleasedSeatAnswerReleaseId != release.Id || task.ReleasedSeatAnswerTargetAttempt != attempt + 1)
+                    throw new ConflictException("This question already has an accepted answer.", "answer_already_accepted");
+            }
+            else
+            {
+                var id = Guid.NewGuid();
+                task.ReleasedSeatAnswer = answer;
+                task.ReleasedSeatAnswerId = id;
+                task.ReleasedSeatAnswerRoundId = roundId;
+                task.ReleasedSeatAnswerReleaseId = release.Id;
+                task.ReleasedSeatAnswerTargetAttempt = attempt + 1;
+                task.ReleasedSeatAnswerAcceptedAt = UtcNow();
+                _db.AgentTaskEvents.Add(new AgentTaskEvent { Id = id, AgentTaskId = task.Id,
+                    AgentSessionId = release.SessionId, Type = AgentTaskEventType.Replied, At = UtcNow(),
+                    Detail = "Answer accepted; awaiting confirmed seat release and continuation admission. "
+                        + BlockedQuestion.RepliedEventDetail(origin, currentRound, answer),
+                    InputBody = $"{DelegationReportFormatter.TaskMarker(task.Id)}\n\n{answer}" });
+                await _db.SaveChangesAsync(ct);
+            }
+            await tx.CommitAsync(ct);
+        }
+        await _eventBus.PublishToAllAsync("AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
+        await ContinueReleasedSeatAnswerAsync(task, ct);
+        return true;
+    }
+
+    private async Task LockReleasedAnswerAsync(Guid taskId, Guid releaseId, Guid sessionId, CancellationToken ct)
+    {
+        await _db.Database.ExecuteSqlInterpolatedAsync($"""
+            SELECT "Id" FROM "AgentTasks" WHERE "Id" = {taskId} FOR UPDATE
+            """, ct);
+        await _db.Database.ExecuteSqlInterpolatedAsync($"""
+            SELECT "Id" FROM "RunnerSeatReleases" WHERE "Id" = {releaseId} FOR UPDATE
+            """, ct);
+        await _db.Database.ExecuteSqlInterpolatedAsync($"""
+            SELECT "Id" FROM "AgentSessions" WHERE "Id" = {sessionId} FOR UPDATE
+            """, ct);
+    }
+
+    private async Task ContinueReleasedSeatAnswerAsync(AgentTask task, CancellationToken ct)
+    {
+        var release = await TerminalRunnerSeatReleaseService.FindAttemptReleaseAsync(_db, task, ct);
+        if (!TerminalRunnerSeatReleaseService.IsConfirmed(release)) return;
+        var answerId = task.ReleasedSeatAnswerId;
+        var revision = task.ConcurrencyToken;
+        var attempt = task.Attempt;
+        if (answerId is null || task.ReleasedSeatAnswerTargetAttempt != attempt + 1) return;
+        if (_modelAvailability is not null)
+            await _modelAvailability.RequireAsync(task.AgentKind, ModelLevelAliases.For(task.AgentKind, task.ModelLevel), ct);
+        if (_quotaGate is not null)
+        {
+            var owner = await _db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == task.AgentId, ct);
+            await _quotaGate.EnforceAsync(task.AgentKind, SubscriptionUsageKey.For(owner, task.AgentKind),
+                false, "released-seat answer", ct);
+        }
+        await AdmitWorkspaceAsync(task, ct);
+        await using (var tx = await _db.Database.BeginTransactionAsync(ct))
+        {
+            await LockReleasedAnswerAsync(task.Id, release!.Id, release.SessionId, ct);
+            await _db.Entry(task).ReloadAsync(ct);
+            // ConcurrencyToken is an application revision, not an EF concurrency token.
+            // Compare it and the accepted answer while holding the actual task row lock.
+            if (task.ConcurrencyToken != revision || task.Attempt != attempt
+                || task.ReleasedSeatAnswerId != answerId || task.ReleasedSeatAnswerReleaseId != release.Id
+                || task.ReleasedSeatAnswerTargetAttempt != attempt + 1)
+                throw new ConflictException("The accepted answer changed before requeue.", "answer_revision_changed");
+            release = await TerminalRunnerSeatReleaseService.FindAttemptReleaseAsync(_db, task, ct);
+            if (!TerminalRunnerSeatReleaseService.IsConfirmed(release))
+                throw new ConflictException("The seat release receipt no longer matches.", "runner_seat_release_pending");
+            await RequeueCoreAsync(task, AgentTaskEventType.Retried, task.ModelLevel,
+                "Seat was released; answer queued for a new attempt.", ct,
+                acceptedAnswerId: answerId, workspaceAdmitted: true);
+            await tx.CommitAsync(ct);
+        }
+        await _eventBus.PublishToAllAsync("AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
+    }
+
+    /// <summary>
     /// Put a task back on the queue for another attempt. Shared by retry and escalation because the
     /// mechanics are identical — only the reason differs.
     /// </summary>
     private async Task RequeueAsync(
         AgentTask task, AgentTaskEventType type, AgentModelLevel level, string detail, CancellationToken ct,
         bool abandonCommitRecovery = false)
+    {
+        var gate = task.AgentSessionId is Guid sessionId ? _messageQueue?.GetLock(sessionId) : null;
+        if (gate is not null) await gate.WaitAsync(ct);
+        try
+        {
+            var current = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
+            if (current.ConcurrencyToken != task.ConcurrencyToken || current.Attempt != task.Attempt)
+                throw new ConflictException("The task changed before requeue.");
+            var release = await TerminalRunnerSeatReleaseService.FindAttemptReleaseAsync(_db, current, ct);
+            if (release?.State == RunnerSeatReleaseState.Unresolved)
+                throw new ConflictException("The seat release is awaiting reconciliation.", "runner_seat_release_pending");
+            await RequeueCoreAsync(task, type, level, detail, ct, abandonCommitRecovery);
+        }
+        finally { gate?.Release(); }
+    }
+
+    private async Task RequeueCoreAsync(
+        AgentTask task, AgentTaskEventType type, AgentModelLevel level, string detail, CancellationToken ct,
+        bool abandonCommitRecovery = false, Guid? acceptedAnswerId = null, bool workspaceAdmitted = false)
     {
         // CARD-0547 D-4: every requeue nulls the session and dispatch time the settlement digest is
         // built from, so an unresolved commit-recovery obligation could never be recovered after it.
@@ -3108,14 +3272,25 @@ public sealed class AgentTaskService
                 });
         }
 
-        await AdmitWorkspaceAsync(task, ct);
-        await StopDelegateAsync(task, ct);
+        if (!workspaceAdmitted) await AdmitWorkspaceAsync(task, ct);
+        var release = await TerminalRunnerSeatReleaseService.FindAttemptReleaseAsync(_db, task, ct);
+        if (!TerminalRunnerSeatReleaseService.IsConfirmed(release))
+            await StopDelegateAsync(task, ct);
         if (_capacityRecovery is not null)
             await _capacityRecovery.SupersedeTaskWaitsOnAsync(
                 _db, task.Id, $"requeued:{type}:attempt-{task.Attempt + 1}", ct);
 
         var now = UtcNow();
         task.Attempt++;
+        if (acceptedAnswerId is null)
+        {
+            task.ReleasedSeatAnswer = null;
+            task.ReleasedSeatAnswerId = null;
+            task.ReleasedSeatAnswerRoundId = null;
+            task.ReleasedSeatAnswerReleaseId = null;
+            task.ReleasedSeatAnswerTargetAttempt = null;
+            task.ReleasedSeatAnswerAcceptedAt = null;
+        }
         // A human asking for another go outranks the automatic attempt cap.
         if (task.Attempt > task.MaxAttempts)
             task.MaxAttempts = task.Attempt;
@@ -3164,8 +3339,9 @@ public sealed class AgentTaskService
         foreach (var obligation in pending)
             _db.AgentTaskEvents.Add(CommitRecoveryObligations.Abandon(obligation, $"requeue:{type}", detail, now));
         await _db.SaveChangesAsync(ct);
-        await _eventBus.PublishToAllAsync(
-            "AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
+        if (_db.Database.CurrentTransaction is null)
+            await _eventBus.PublishToAllAsync(
+                "AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
         _logger.LogInformation(
             "Task {ShortId} requeued as attempt {Attempt} at {Alias}: {Detail}",
             DelegationReportFormatter.Short(task.Id), task.Attempt,

@@ -368,10 +368,30 @@ public sealed class AgentTaskReplyService
 
         var task = await db.AgentTasks.FirstOrDefaultAsync(t => t.Id == taskId, ct)
             ?? throw new NotFoundException(nameof(AgentTask), taskId);
-        var admitted = await AdmitWorkspaceAsync(scope.ServiceProvider, task, ct);
+        SemaphoreSlim? answerGate = null;
+        WorkspaceReservationSnapshot? admitted = null;
         var saved = false;
         try
         {
+            // Same recipient gate as conditional release, before any row lock or input write.
+            // A live reply commits Working under it, then drops it before queue.EnqueueAsync.
+            if (task.AgentSessionId is Guid answerSession)
+            {
+                var gate = queue.GetLock(answerSession);
+                await gate.WaitAsync(ct);
+                answerGate = gate;
+                await db.Entry(task).ReloadAsync(ct);
+                if (task.AgentSessionId != answerSession)
+                    throw new ConflictException("The task moved to another attempt while the answer waited.");
+            }
+            var tasks = scope.ServiceProvider.GetRequiredService<AgentTaskService>();
+            if (await tasks.TryAcceptReleasedSeatAnswerAsync(task, message, origin, round, ct))
+            {
+                saved = true;
+                var releasedFamily = await db.AgentTasks.AsNoTracking().Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
+                return await tasks.GetSummaryAsync(task, releasedFamily);
+            }
+            admitted = await AdmitWorkspaceAsync(scope.ServiceProvider, task, ct);
             if (task.Status == AgentTaskStatus.Blocked)
             {
                 if (task.FailureCode == AgentTaskFailureCode.SubscriptionQuotaExceeded)
@@ -428,6 +448,7 @@ public sealed class AgentTaskReplyService
                 db.AgentTaskEvents.Add(replyEvent);
                 await db.SaveChangesAsync(ct);
                 saved = true;
+                answerGate?.Release(); answerGate = null;
 
                 // The marker rides the answer so the delegate's NEXT turn correlates back to this task.
                 var blockedSession = await db.AgentSessions.AsNoTracking()
@@ -451,6 +472,7 @@ public sealed class AgentTaskReplyService
 
             if (task.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
             {
+                answerGate?.Release(); answerGate = null;
                 if (task.AgentSessionId is not Guid sessionId)
                     throw new ConflictException("The delegate's session is no longer available.");
 
@@ -491,6 +513,7 @@ public sealed class AgentTaskReplyService
             await ReleaseAdmittedAsync(scope.ServiceProvider, admitted);
             throw;
         }
+        finally { answerGate?.Release(); }
     }
 
     /// <summary>
