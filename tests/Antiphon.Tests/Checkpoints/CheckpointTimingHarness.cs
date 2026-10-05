@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
 using Shouldly;
@@ -70,6 +69,21 @@ internal sealed class CheckpointTimingHarness : IDisposable
         _linked.Cancel();
         _linked.Dispose();
         _deadline.Dispose();
+    }
+}
+
+internal static class CheckpointTimingAssertions
+{
+    // Shouldly 4.3's generic ThrowAsync deliberately rethrows assertion exceptions.
+    // Capture this expected type directly, and still fail when the guard returns success.
+    public static async Task<ShouldAssertException> CaptureAsync(Task operation, string label,
+        CancellationToken cancellationToken)
+    {
+        ShouldAssertException? failure = null;
+        try { await operation.WaitAsync(cancellationToken); }
+        catch (ShouldAssertException ex) { failure = ex; }
+        failure.ShouldNotBeNull(label);
+        return failure;
     }
 }
 

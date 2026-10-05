@@ -880,7 +880,7 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
                 }
                 exit.TrySetResult();
                 await timing.PhaseAsync("execution-finished", owner.Execution);
-                var failure = await Should.ThrowAsync<ShouldAssertException>(() => verify.WaitAsync(timing.Token));
+                var failure = await CheckpointTimingAssertions.CaptureAsync(verify, "forced-abort-preserved", timing.Token);
                 failure.Message.ShouldContain("forced-fixture-abort");
                 await scope.DisposeAsync();
                 foreach (var root in roots) Directory.Exists(root).ShouldBeFalse("joined-before-root-teardown");

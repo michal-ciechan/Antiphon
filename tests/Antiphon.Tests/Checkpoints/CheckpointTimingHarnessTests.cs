@@ -91,7 +91,7 @@ public sealed class CheckpointTimingHarnessTests : CheckpointTestBase
         clock.Advance(TimeSpan.FromTicks(1));
         timing.Token.IsCancellationRequested.ShouldBeTrue("fixture-deadline-fired");
         using var rescue = new CancellationTokenSource(CheckpointTimingHarness.CleanupBudget);
-        var failure = await Should.ThrowAsync<ShouldAssertException>(() => phase.WaitAsync(rescue.Token));
+        var failure = await CheckpointTimingAssertions.CaptureAsync(phase, "fixture-deadline-fired", rescue.Token);
         failure.Message.ShouldContain("phase=release-entered condition never completed");
         clock.Events.Any(e => e.Action == "create" && e.DueTime == CheckpointTimingHarness.WorkBudget).ShouldBeTrue();
     }
@@ -106,7 +106,7 @@ public sealed class CheckpointTimingHarnessTests : CheckpointTestBase
         incoming.Cancel();
         timing.Token.IsCancellationRequested.ShouldBeTrue("test-cancel-linked");
         using var rescue = new CancellationTokenSource(CheckpointTimingHarness.CleanupBudget);
-        var failure = await Should.ThrowAsync<ShouldAssertException>(() => phase.WaitAsync(rescue.Token));
+        var failure = await CheckpointTimingAssertions.CaptureAsync(phase, "test-cancel-linked", rescue.Token);
         failure.Message.Contains("phase=driver-entered condition never completed", StringComparison.Ordinal).ShouldBeTrue("test-cancel-linked");
     }
 
@@ -143,7 +143,7 @@ public sealed class CheckpointTimingHarnessTests : CheckpointTestBase
             clock.Events.Any(e => e.Action == "create" && e.DueTime == CheckpointTimingHarness.WorkBudget).ShouldBeTrue();
             clock.Advance(CheckpointTimingHarness.WorkBudget);
             using var rescue = new CancellationTokenSource(CheckpointTimingHarness.CleanupBudget);
-            var failure = await Should.ThrowAsync<ShouldAssertException>(() => verify.WaitAsync(rescue.Token), "missing-phase-" + phase);
+            var failure = await CheckpointTimingAssertions.CaptureAsync(verify, "missing-phase-" + phase, rescue.Token);
             failure.Message.Contains($"phase={phase} condition never completed", StringComparison.Ordinal).ShouldBeTrue("missing-phase-" + phase);
             owner.Execution.IsCompleted.ShouldBeTrue("missing-phase-cleanup-joined");
             (await owner.Execution).ShouldBe(0);
