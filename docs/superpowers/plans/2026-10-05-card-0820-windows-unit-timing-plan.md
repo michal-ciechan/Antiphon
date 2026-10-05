@@ -651,6 +651,15 @@ are split. No new external delivery guard exists.
 
 ### Positive controls
 
+S1 implementation note (Code task `0b309def`): installed Shouldly 4.3's generic
+`ThrowAsync<ShouldAssertException>` rethrows the assertion exception, confirmed by
+the slot-gated library diagnostic in `.antiphon/c820-s1/probe-assertion.ps1`.
+The expected assertion-exception checks below therefore use
+`CheckpointTimingAssertions.CaptureAsync`: it catches only `ShouldAssertException`
+and requires a non-null captured exception with the listed target label. The
+exact phase/message assertions remain required. Successful return or a different
+exception still fails; no guarded condition, timeout, PC or variant is relaxed.
+
 Code runs V/R, and ordinary Review judges this design and its implementation before
 land. Mutation runs these controls only after the implementation's confirmed land,
 from its commissioned SourceLanding snapshot. This is a pending inventory, not
