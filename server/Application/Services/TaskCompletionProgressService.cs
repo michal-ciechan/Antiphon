@@ -125,7 +125,7 @@ public sealed class TaskCompletionProgressService
         try
         {
             var result = reviewEvidenceRepair
-                ? await sync.SyncForReviewEvidenceAsync(task, ct, reportedTips)
+                ? await sync.SyncForReviewEvidenceAsync(task, reportedTips, ct)
                 : await sync.SyncAsync(task, ct, reportedTips);
             return result.State == RemoteSettlementSyncState.NotApplicable
                 ? new(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.DependencyUnavailable, fullRef)
