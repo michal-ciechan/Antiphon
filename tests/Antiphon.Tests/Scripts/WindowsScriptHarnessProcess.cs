@@ -18,6 +18,10 @@ internal sealed class WindowsScriptHarnessHooks
     internal uint? PreviousSuspendCount { get; set; }
     internal bool FailAssignment { get; init; }
     internal bool FailResume { get; init; }
+    internal Func<string, FileAttributes>? ExecutableAttributes { get; init; }
+    internal bool AcknowledgeTerminationWithoutKill { get; init; }
+    internal bool FailAccounting { get; init; }
+    internal System.Collections.Concurrent.ConcurrentQueue<uint> ActiveMemberObservations { get; } = new();
     internal Action<SafeFileHandle>? Created { get; set; }
     internal Action<SafeFileHandle, SafeFileHandle>? BeforeAssign { get; set; }
     internal Action<SafeFileHandle, SafeFileHandle>? BeforeResume { get; set; }
@@ -58,7 +62,7 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
         if (!Path.IsPathFullyQualified(request.Executable) ||
             request.Executable.Contains("\\WindowsApps\\", StringComparison.OrdinalIgnoreCase) ||
-            (File.GetAttributes(request.Executable) & FileAttributes.ReparsePoint) != 0)
+            ((_hooks.ExecutableAttributes?.Invoke(request.Executable) ?? File.GetAttributes(request.Executable)) & FileAttributes.ReparsePoint) != 0)
             throw new InvalidOperationException("ScriptHarness requires a real pwsh.exe path, not an App Execution Alias; set ExecutablePath to the installed PowerShell executable.");
         _job = CreateJobObjectW(IntPtr.Zero, null);
         _hooks.Track("job", _job);
@@ -226,7 +230,8 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
         finally
         {
             _hooks.Record("terminate-job");
-            if (!TerminateJobObject(_job, 1)) throw NativeError("TerminateJobObject");
+            if (_hooks.AcknowledgeTerminationWithoutKill) _hooks.Record("terminate-ack-without-kill");
+            else if (!TerminateJobObject(_job, 1)) throw NativeError("TerminateJobObject");
         }
         return Task.CompletedTask;
     }
@@ -236,14 +241,29 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!QueryInformationJobObject(_job, JobObjectBasicAccountingInformation,
-                    out var accounting, Marshal.SizeOf<JobBasicAccounting>(), IntPtr.Zero))
+            if (!QueryAccounting(out var accounting))
                 throw NativeError("QueryInformationJobObject");
             var signaled = IsSignaled(_process);
             foreach (var process in _terminationProcesses) signaled &= IsSignaled(process);
             if (accounting.ActiveProcesses == 0 && signaled) return;
             await Task.Delay(25, cancellationToken);
         }
+    }
+
+    private bool QueryAccounting(out JobBasicAccounting accounting)
+    {
+        _hooks.Record("query-accounting");
+        if (_hooks.FailAccounting)
+        {
+            accounting = default;
+            _hooks.Record("query-accounting-failed");
+            Marshal.SetLastPInvokeError(5);
+            return false;
+        }
+        var queried = QueryInformationJobObject(_job, JobObjectBasicAccountingInformation,
+            out accounting, Marshal.SizeOf<JobBasicAccounting>(), IntPtr.Zero);
+        if (queried) _hooks.ActiveMemberObservations.Enqueue(accounting.ActiveProcesses);
+        return queried;
     }
 
     private void RetainTerminationProcesses(CancellationToken cancellationToken)
