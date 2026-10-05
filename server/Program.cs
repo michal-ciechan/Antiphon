@@ -452,6 +452,7 @@ try
     // constructor parameter picks it up so a pinned standing agent launches from its own profile.
     builder.Services.AddScoped<AgentTaskDispatcher>();
     builder.Services.AddSingleton<AgentTaskReplyService>();
+    builder.Services.AddScoped<ReviewEvidenceBindingService>();
     // Scheduled check-ins on a running delegate (CARD-0047). The probe is read-only by
     // construction — see its constructor; the queue is the hand-off that keeps the dispatcher's
     // 5 s tick from ever waiting on a check.

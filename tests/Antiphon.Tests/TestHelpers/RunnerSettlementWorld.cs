@@ -8,6 +8,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -41,6 +42,9 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
 
     private readonly bool _fenced;
     private readonly bool _mirrorPublish;
+    public Action<IServiceCollection>? ConfigureServices { get; set; }
+    public List<IInterceptor> Interceptors { get; } = [];
+    public bool UseRealSyncClock { get; set; }
 
     private RunnerSettlementWorld(SyncWorld git, bool fenced, bool controlledSyncClock, bool mirrorPublish)
     {
@@ -155,7 +159,8 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
             WorktreeBasePath = Git.Root,
             WorktreeAddTimeoutSeconds = 180,
         });
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(Schema.ConnectionString));
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(Schema.ConnectionString).AddInterceptors(Interceptors));
+        services.AddScoped<ReviewEvidenceBindingService>();
         services.AddScoped<AgentTaskService>();
         services.AddScoped<RoutingPinService>();
         services.AddScoped<AgentTaskDispatcher>();
@@ -167,11 +172,11 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
             services.AddScoped<IWorkspaceReservationJournal>(sp => new WorkspaceReservationJournal(
                 sp.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System));
             services.AddScoped(sp => Git.Service(
-                SyncClock, sp.GetRequiredService<IWorkspaceReservationJournal>(), LeaseBusy.Observe,
+                UseRealSyncClock ? null : SyncClock, sp.GetRequiredService<IWorkspaceReservationJournal>(), LeaseBusy.Observe,
                 _mirrorPublish ? new Antiphon.Tests.Application.RunnerSettlementSyncTests.LocalMirrorPublisher(Git) : null));
         }
         else
-            services.AddScoped(_ => Git.Service(SyncClock, leaseBusy: LeaseBusy.Observe,
+            services.AddScoped(_ => Git.Service(UseRealSyncClock ? null : SyncClock, leaseBusy: LeaseBusy.Observe,
                 publisher: _mirrorPublish
                     ? new Antiphon.Tests.Application.RunnerSettlementSyncTests.LocalMirrorPublisher(Git) : null));
         services.AddScoped<IRemoteSettlementSync>(sp => sp.GetRequiredService<RemoteWorkspaceService>());
@@ -193,7 +198,55 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
             ClaudeProjectsRoot = Path.Combine(Git.Root, "desktop-claude-projects"),
         }));
         services.AddSingleton<DelegateBindRefusalRecovery>();
+        ConfigureServices?.Invoke(services);
         Services = services.BuildServiceProvider();
+    }
+
+    public async Task RestartServicesAsync()
+    {
+        await Services.DisposeAsync();
+        BuildServices();
+    }
+
+    public ServiceProvider AdditionalServices()
+    {
+        var original = Services;
+        BuildServices();
+        var additional = Services;
+        Services = original;
+        return additional;
+    }
+
+    /// <summary>A real pushed Code ref and its captured endpoint, authorized by a follow-up Review.</summary>
+    public async Task<Guid> AddReviewSubjectAsync(string sha, bool followUp = true)
+    {
+        var id = Guid.NewGuid();
+        var branch = "feat/subject-" + id.ToString("N")[..8];
+        await Git.RunAsync(Git.Desktop, "push", "origin", sha + ":refs/heads/" + branch);
+        var baseline = TaskProgressJson.TryReadBaseline(Git.Task.ProgressBaselineJson)!;
+        var subjectBaseline = baseline with { Primary = baseline.Primary! with
+        {
+            OwnerTaskId = id, FullRef = "refs/heads/" + branch, LocalSha = sha,
+        } };
+        await using var db = CreateContext();
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = id, RootTaskId = id, Title = "review subject", Goal = "code",
+            Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Worktree,
+            RepoPath = Git.Task.RepoPath, WorkingDirectory = Git.Task.WorkingDirectory,
+            WorktreeBranch = branch, WorktreeBaseSha = sha,
+            ProgressBaselineJson = TaskProgressJson.SerializeBaseline(subjectBaseline),
+            Status = AgentTaskStatus.Succeeded, CreatedAt = DateTime.UtcNow,
+        });
+        var review = await db.AgentTasks.SingleAsync(t => t.Id == TaskId);
+        review.Role = AgentTaskRole.Review;
+        review.Stage = OrchestrationStage.Review;
+        review.VerificationProfileVersion = 1;
+        review.VerificationRound = VerificationRound.Final;
+        if (followUp) review.FollowUpOfTaskId = id;
+        await db.SaveChangesAsync();
+        await ReloadAsync();
+        return id;
     }
 
     public AppDbContext CreateContext() =>
