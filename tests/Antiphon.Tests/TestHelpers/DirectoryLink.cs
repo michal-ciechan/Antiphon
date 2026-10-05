@@ -1,4 +1,4 @@
-using System.Diagnostics;
+using Antiphon.Tests.Scripts;
 
 namespace Antiphon.Tests.TestHelpers;
 
@@ -15,25 +15,36 @@ internal sealed class DirectoryLink : IDisposable
 
     public static DirectoryLink? TryCreate(string path, string target)
     {
+        if (OperatingSystem.IsWindows())
+            return Task.Run(() => TryCreateWindowsAsync(path, target)).GetAwaiter().GetResult();
         try
         {
-            if (OperatingSystem.IsWindows())
-            {
-                var start = new ProcessStartInfo("cmd.exe")
-                { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-                foreach (var arg in new[] { "/d", "/c", "mklink", "/J", path, target }) start.ArgumentList.Add(arg);
-                using var process = Process.Start(start);
-                if (process is null) return null;
-                process.StandardOutput.ReadToEnd(); process.StandardError.ReadToEnd();
-                if (!process.WaitForExit(30_000) || process.ExitCode != 0) return null;
-            }
-            else Directory.CreateSymbolicLink(path, target);
+            Directory.CreateSymbolicLink(path, target);
             return IsLink(path) ? new DirectoryLink(path) : null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         {
             return null;
         }
+    }
+
+    // Owned-run failures deliberately remain outside the ordinary attribute/setup catch.
+    // Callers must retain scratch after an exception unless an independent owner observer
+    // confirms cleanup; an exception message is not process-cleanup authority.
+    internal static async Task<DirectoryLink?> TryCreateWindowsAsync(string path, string target,
+        ScriptHarnessOptions? options = null, string caseName = "Create", CancellationToken ct = default)
+    {
+        var result = await DirectoryLinkCommand.RunAsync(path, target, options, caseName, ct);
+        return Complete(path, result);
+    }
+
+    internal static DirectoryLink? Complete(string path, ScriptHarnessResult result,
+        Func<string, bool>? observe = null)
+    {
+        if (result.ExitCode != 0) return null;
+        try { return (observe ?? IsLink)(path) ? new DirectoryLink(path) : null; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        { return null; }
     }
 
     /// <summary>Renames the link itself; the target is not followed.</summary>
@@ -57,7 +68,7 @@ internal sealed class DirectoryLink : IDisposable
         }
     }
 
-    private static bool IsLink(string path)
+    internal static bool IsLink(string path)
     {
         try { return File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint); }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return false; }
