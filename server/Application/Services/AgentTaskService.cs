@@ -117,8 +117,10 @@ public sealed class AgentTaskService
         CompletionNoteFlushQueue? completionNotes = null,
         RunnerDefaultSettingsService? runnerDefaults = null,
         AgentTaskWorktreeBaseResolver? baseResolver = null,
-        SessionMessageQueueService? messageQueue = null)
+        SessionMessageQueueService? messageQueue = null,
+        IServiceScopeFactory? seatReleaseScopes = null)
     {
+        _seatReleaseScopes = seatReleaseScopes;
         _messageQueue = messageQueue;
         _baseResolver = baseResolver;
         _startRefs = startRefs;
@@ -153,6 +155,8 @@ public sealed class AgentTaskService
         _workspaceGit = workspaceGit;
         _defaultRunner = new DefaultRunnerRoutingPolicy(_settings, phoneHome, runners);
     }
+
+    private readonly IServiceScopeFactory? _seatReleaseScopes;
 
     /// <summary>
     /// Who is calling. Resolved from the bearer token by <see cref="AuthenticateAsync"/> — a manual
@@ -2621,6 +2625,12 @@ public sealed class AgentTaskService
         await MergeHelperOutcome.RecordUnresolvedAsync(_db, task, now, ct);
         await _db.SaveChangesAsync(ct);
         if (task.SourceLandingOperationId is not null) _completionNotes?.Recovery.Check(task.Id);
+        if (_seatReleaseScopes is not null)
+        {
+            await using var releaseScope = _seatReleaseScopes.CreateAsyncScope();
+            var terminalSeats = releaseScope.ServiceProvider.GetService<TerminalRunnerSeatReleaseService>();
+            if (terminalSeats is not null) await terminalSeats.TryHandleTaskAsync(task.Id, ct);
+        }
         // CARD-0664 D-2/D-3: best-effort, after the Canceled commit.
         if (_workspaceUse is not null)
             await _workspaceUse.ReleaseTaskConsumersAsync(task.Id, CancellationToken.None);

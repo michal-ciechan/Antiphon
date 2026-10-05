@@ -6,6 +6,13 @@ Date: 2026-10-01; ordering amended 2026-10-05 by Plan task 01cee5a0. Verificatio
 
 ## Outcome and scope
 
+S4b implementation task `8eed758c-eec5-4f96-a7bc-fc97381b05b8` wires the existing
+slot-reconcile job and dispatcher, sharing a 32-candidate / 4-per-runner traversal cursor.
+The orphan endpoint retains its token/reason requirement and returns typed deferred results,
+with no force fallback. Its existing sweep regression fixtures now use real native evidence.
+AutomaticEnabled remains false; CP-18 is this slice's closed checkpoint selection. The
+commission additionally requires full affected classes; S4c and all PC executions remain pending.
+
 Make release an independently recoverable consequence of every completed runner-bound attempt: Succeeded, Failed, Canceled, and **Blocked after a completed report**. Discover the same debt when settlement missed its fast path, including a runner seat whose session row is absent from the server. A successful release confirms process exit, removes that generation's runner custody, stops the corresponding server row when it exists, and produces visible attention naming runner, full session ID, task/attempt when known, and reason.
 
 Release follows the existing invariant: killed, deliberately pooled warm, or owned by a standing agent. Deliberate Shared warm pools and standing ownership remain valid dispositions; they are not free physical capacity and must not be counted as such. Worktree terminal tasks are not turned into reusable warm agents. A Working or unknown session remains owned with visible release debt. No age, stall, terminal task status, missing server row, or failed kill alone authorizes stopping it. CARD-0079 remains the sole special automatic stop of a Working session.

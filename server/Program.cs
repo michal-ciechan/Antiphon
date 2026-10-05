@@ -397,6 +397,7 @@ try
     builder.Services.Configure<TerminalRunnerSeatReleaseOptions>(
         builder.Configuration.GetSection(TerminalRunnerSeatReleaseOptions.SectionName));
     builder.Services.AddSingleton<TerminalRunnerSeatReleasePolicy>();
+    builder.Services.AddSingleton<TerminalRunnerSeatDiscoveryState>();
     builder.Services.AddScoped<TerminalRunnerSeatReleaseService>();
     builder.Services.AddScoped<AgentTaskInputService>();
     builder.Services.AddScoped<AgentTaskDecisionQuestionService>();

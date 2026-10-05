@@ -193,11 +193,13 @@ public static class SessionRunnerEndpoints
             PhoneHomeRunnerDirectory directory,
             IOptions<PhoneHomeRunnerSettings> settings,
             [FromServices] AppDbContext db,
+            [FromServices] IServiceProvider services,
             CancellationToken ct) =>
         {
             RequireOperator(http, settings.Value);
             return await ReleaseOrReconcileAsync(
-                intents => RunnerSlotService.ReleaseOrphansAsync(directory, db, runnerId, body.Reason, ct, intents),
+                intents => RunnerSlotService.ReleaseOrphansAsync(directory, db, runnerId, body.Reason, ct, intents,
+                    services.GetService<TerminalRunnerSeatReleaseService>()),
                 directory, db, ct);
         }).WithTags("SessionRunners");
 

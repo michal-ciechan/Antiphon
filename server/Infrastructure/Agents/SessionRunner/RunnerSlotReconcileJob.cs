@@ -16,13 +16,16 @@ public sealed class RunnerSlotReconcileJob
     private readonly PhoneHomeRunnerDirectory _directory;
     private readonly AppDbContext _db;
     private readonly ILogger<RunnerSlotReconcileJob> _logger;
+    private readonly TerminalRunnerSeatReleaseService? _terminalSeats;
 
     public RunnerSlotReconcileJob(
-        PhoneHomeRunnerDirectory directory, AppDbContext db, ILogger<RunnerSlotReconcileJob> logger)
+        PhoneHomeRunnerDirectory directory, AppDbContext db, ILogger<RunnerSlotReconcileJob> logger,
+        TerminalRunnerSeatReleaseService? terminalSeats = null)
     {
         _directory = directory;
         _db = db;
         _logger = logger;
+        _terminalSeats = terminalSeats;
     }
 
     [AutomaticRetry(Attempts = 0)]
@@ -34,6 +37,14 @@ public sealed class RunnerSlotReconcileJob
                 "Runner slot reconcile audited {Count} pending release(s): {SessionIds}",
                 finished.Count,
                 string.Join(",", finished));
-        return finished.Count;
+        var released = 0;
+        if (_terminalSeats is not null)
+        {
+            // Recovery remains active when discovery is disabled. Neither legacy intents nor
+            // attention recovery gain authority to force a conditional release.
+            await _terminalSeats.ReconcileAttentionAsync(cancellationToken);
+            released = await _terminalSeats.DiscoverScheduledAsync(cancellationToken);
+        }
+        return finished.Count + released;
     }
 }

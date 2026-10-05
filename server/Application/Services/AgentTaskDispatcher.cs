@@ -7238,6 +7238,8 @@ public sealed class AgentTaskDispatcher
     /// </summary>
     internal async Task<int> ReleaseUnownedPoolDelegatesAsync(CancellationToken ct)
     {
+        if (_terminalSeatRelease is not null)
+            await _terminalSeatRelease.DiscoverScheduledAsync(ct);
         if (_settings.PoolReleaseGraceSeconds <= 0)
             return 0;
 
@@ -7304,6 +7306,8 @@ public sealed class AgentTaskDispatcher
         var acted = 0;
         foreach (var (agent, sessionId, newest) in due)
         {
+            if (_terminalSeatRelease is not null
+                && await _terminalSeatRelease.TryHandleTaskAsync(newest!.Id, ct)) continue;
             var settled = DelegationReportFormatter.Short(newest!.Id);
             if (working.GetValueOrDefault(sessionId))
             {
@@ -7370,6 +7374,22 @@ public sealed class AgentTaskDispatcher
             .ToListAsync(ct);
         if (pool.Count == 0)
             return 0;
+
+        // A remote worktree's idle TTL is never stronger authority than the conditional
+        // coordinator. Exclude held seats from both retirement and stale-row deletion.
+        if (_terminalSeatRelease is not null)
+        {
+            var poolIds = pool.Select(a => a.Id).ToArray();
+            var remoteTasks = await _db.AgentTasks.AsNoTracking()
+                .Where(t => t.AgentId != null && poolIds.Contains(t.AgentId.Value))
+                .OrderByDescending(t => t.CreatedAt).ToListAsync(ct);
+            foreach (var task in remoteTasks.Where(_terminalSeatRelease.OwnsAutomaticPath)
+                .DistinctBy(t => t.AgentId))
+            {
+                await _terminalSeatRelease.TryHandleTaskAsync(task.Id, ct);
+                pool.RemoveAll(a => a.Id == task.AgentId);
+            }
+        }
 
         var now = UtcNow();
         var cutoff = now.AddMinutes(-Math.Max(1, _settings.PoolIdleRetireMinutes));
