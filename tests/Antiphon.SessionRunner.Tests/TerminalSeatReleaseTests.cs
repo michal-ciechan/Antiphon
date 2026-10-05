@@ -31,6 +31,9 @@ public class TerminalSeatReleaseTests
             await using var world = new SeatWorld("Codex");
             var request = await world.QualifyAsync();
             var legacy = new LegacySurface(world.Runtime);
+            // PC-47 must reach the forbidden-call assertion if a fallback is introduced,
+            // rather than failing earlier because the fake child never confirms exit.
+            world.Child.Kill = _ => { world.Child.Exit(); return Task.FromResult(true); };
             await using var wire = await SeatWire.StartAsync(world, legacy, phoneHome);
             legacy.Capabilities().Features.ShouldNotContain(RunnerCapabilityFeatures.TerminalSeatReleaseV1);
             var result = await wire.ReleaseAsync(request);
