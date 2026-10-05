@@ -121,14 +121,46 @@ internal static class StartRefGit
             return;
         try
         {
-            foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
-                File.SetAttributes(file, FileAttributes.Normal);
-            Directory.Delete(path, recursive: true);
+            DeleteDirectoryCore(path);
         }
         catch
         {
             // Best-effort cleanup.
         }
+    }
+
+    private static void DeleteDirectoryCore(string path)
+    {
+        // Classify the root too: it may itself be a link to an unowned directory.
+        if (File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
+        {
+            Directory.Delete(path, recursive: false);
+            return;
+        }
+
+        foreach (var entry in Directory.EnumerateFileSystemEntries(path))
+        {
+            var attributes = File.GetAttributes(entry);
+            if (attributes.HasFlag(FileAttributes.ReparsePoint))
+            {
+                // Unlink without enumerating or normalizing the target.
+                if (attributes.HasFlag(FileAttributes.Directory))
+                    Directory.Delete(entry, recursive: false);
+                else
+                    File.Delete(entry);
+            }
+            else if (attributes.HasFlag(FileAttributes.Directory))
+            {
+                DeleteDirectoryCore(entry);
+            }
+            else
+            {
+                File.SetAttributes(entry, FileAttributes.Normal);
+                File.Delete(entry);
+            }
+        }
+
+        Directory.Delete(path, recursive: false);
     }
 
     /// <summary>
