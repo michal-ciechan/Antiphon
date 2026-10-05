@@ -1482,8 +1482,12 @@ public sealed partial class SessionMessageQueueService
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             // Cancel-not-strand: a Supervision /compact that sat through a turn must not fire now.
+            var receipts = await ReconcileDeliveredSpillsLockedAsync(db, sessionId, ct);
+            lateConfirmed.Record(receipts);
             await CancelPendingSupervisionLockedAsync(db, sessionId, "turn-end", ct);
             flush = await DeliverNextLockedAsync(db, sessionId, ct, lateConfirmed);
+            if (flush == FlushResult.Nothing && receipts.Confirmed > 0)
+                flush = FlushResult.LateConfirmed;
         }
         finally
         {
@@ -1635,10 +1639,13 @@ public sealed partial class SessionMessageQueueService
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             // Boot is not the moment to compact — cancel-not-strand, a later sweep re-derives.
+            var receipts = await ReconcileDeliveredSpillsLockedAsync(db, sessionId, ct);
             await CancelPendingSupervisionLockedAsync(db, sessionId, "boot-flush", ct);
             result = !await ReadWorkingAsync(db, sessionId, ct)
                 ? await DeliverNextLockedAsync(db, sessionId, ct)
                 : FlushResult.Nothing;
+            if (result == FlushResult.Nothing && receipts.Confirmed > 0)
+                result = FlushResult.LateConfirmed;
         }
         finally
         {
@@ -1671,12 +1678,15 @@ public sealed partial class SessionMessageQueueService
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var receipts = await ReconcileDeliveredSpillsLockedAsync(db, sessionId, ct);
             if (!await ReadWorkingAsync(db, sessionId, ct))
             {
                 // A pending auto-compact after a *manual* compact is redundant; drop it.
                 await CancelPendingSupervisionLockedAsync(db, sessionId, "idle-flush", ct);
                 result = await DeliverNextLockedAsync(db, sessionId, ct);
             }
+            if (result == FlushResult.Nothing && receipts.Confirmed > 0)
+                result = FlushResult.LateConfirmed;
         }
         finally
         {
@@ -2521,6 +2531,58 @@ public sealed partial class SessionMessageQueueService
 
         await HandleDeliveryFailureAsync(sessionId, ids, outcome.Verdict, ct, capturedGeneration);
         return FlushResult.Failed;
+    }
+
+    /// <summary>
+    /// Discharge screen-delivered spill ownership from committed, complete UserPrompt evidence.
+    /// The caller owns the session semaphore. Unlike retry late-confirmation, partial evidence
+    /// changes nothing, and neither input nor the original attempt identity is touched.
+    /// </summary>
+    private async Task<LateConfirmCounts> ReconcileDeliveredSpillsLockedAsync(
+        AppDbContext db, Guid sessionId, CancellationToken ct)
+    {
+        var owed = await db.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == sessionId)
+            .Where(QueueAttention.DeliveredSpillAwaitingReceipt)
+            .ToListAsync(ct);
+        var confirmedIds = new List<Guid>();
+        var channelIds = new List<Guid>();
+        var tolerance = TimeSpan.FromSeconds(
+            Math.Max(0, _verification.UnobservableBaselineConfirmClockToleranceSeconds));
+        foreach (var message in owed)
+        {
+            if (!PromptSubmissionMatch.RequiresTextMatch(message.Body))
+                continue;
+
+            var receipts = db.TranscriptEntries.AsNoTracking()
+                .Where(e => e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.UserPrompt);
+            if (message.LastDeliveryBaselineSequence is { } baseline)
+                receipts = receipts.Where(e => e.Sequence > baseline);
+            else if (message.LastDeliveryStartedAt is { } started)
+            {
+                var from = started - tolerance;
+                receipts = receipts.Where(e => e.Timestamp != null && e.Timestamp >= from);
+            }
+            else
+                continue;
+
+            var texts = await receipts.OrderBy(e => e.Sequence).Select(e => e.Text).ToListAsync(ct);
+            if (!texts.Any(text => text != null && PromptSubmissionMatch.IsCompleteIn(message.Body, text)))
+                continue;
+
+            message.RemoteSpillBody = null;
+            message.DeliveryVerdict = DeliveryVerdict.LateConfirmed;
+            message.DeliveryVerdictAt = UtcNow();
+            confirmedIds.Add(message.Id);
+            if (message.Origin == QueuedMessageOrigin.Channel)
+                channelIds.Add(message.Id);
+        }
+
+        // The verdict and byte release are one commit. Failed saves leave the durable obligation
+        // available to the next fresh context, and callers publish only after this returns.
+        if (confirmedIds.Count > 0)
+            await db.SaveChangesAsync(ct);
+        return new LateConfirmCounts(confirmedIds.Count, 0, confirmedIds, channelIds);
     }
 
     /// <summary>

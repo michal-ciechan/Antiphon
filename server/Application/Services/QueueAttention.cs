@@ -41,6 +41,16 @@ namespace Antiphon.Server.Application.Services;
 internal static class QueueAttention
 {
     /// <summary>
+    /// A screen-delivered spill still owes a complete persisted UserPrompt receipt. This is
+    /// independent of retry discovery: reconciling it must never reopen or retype the delivery.
+    /// </summary>
+    public static Expression<Func<SessionQueuedMessage, bool>> DeliveredSpillAwaitingReceipt =>
+        m => m.Status == QueuedMessageStatus.Sent
+            && m.DeliveryVerdict == DeliveryVerdict.Delivered
+            && m.RemoteSpillBody != null
+            && m.DeliveryAttempts > 0;
+
+    /// <summary>
     /// A run that was typed and whose fate this process never learned: <c>Sent</c>, no verdict, old
     /// enough that the confirm loop would have concluded by now, and inside the bounded window past
     /// which re-pressing Enter is no longer safe. Mirrors <c>LoadInterruptedSentRunAsync</c>'s
