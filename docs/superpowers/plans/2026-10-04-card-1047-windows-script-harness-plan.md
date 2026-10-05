@@ -312,6 +312,16 @@ entire CLI run in another slot lease.
 if (-not $IsWindows) { throw 'CARD-1047 checkpoints require Windows' }
 $PLAN = 'docs/superpowers/plans/2026-10-04-card-1047-windows-script-harness-plan.md'
 $SOURCE = (git rev-parse HEAD).Trim()
+# Only the checkpoint process tree gets the installed executable first on PATH.
+# The default resolver otherwise selects an existing WindowsApps alias on this host.
+$realPwsh = $env:PATH.Split([IO.Path]::PathSeparator) | ForEach-Object {
+    $candidate = [IO.Path]::GetFullPath((Join-Path $_ 'pwsh.exe'))
+    if ((Test-Path -LiteralPath $candidate -PathType Leaf) -and
+        -not $candidate.Contains('\WindowsApps\', [StringComparison]::OrdinalIgnoreCase) -and
+        ((Get-Item -LiteralPath $candidate).Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) { $candidate }
+} | Select-Object -First 1
+if (-not $realPwsh) { throw 'Installed regular PowerShell executable required' }
+$env:PATH = [IO.Path]::GetDirectoryName($realPwsh) + [IO.Path]::PathSeparator + $env:PATH
 pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1047-tool -SlotWaitMinutes 5 -- dotnet build tools/Antiphon.Checkpoints --property:OutputPath=bin-c1047-tool/ --nologo
 if ($LASTEXITCODE -ne 0) { throw 'Checkpoint tool bootstrap failed or slot timed out' }
 # S1 uses --rows CP-1 --total-timeout 20m.

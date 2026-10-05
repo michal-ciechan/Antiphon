@@ -21,6 +21,7 @@ internal sealed class WindowsScriptHarnessHooks
     internal Func<string, FileAttributes>? ExecutableAttributes { get; init; }
     internal bool AcknowledgeTerminationWithoutKill { get; init; }
     internal bool FailAccounting { get; init; }
+    internal Action<SafeFileHandle>? BeforeAccounting { get; set; }
     internal System.Collections.Concurrent.ConcurrentQueue<uint> ActiveMemberObservations { get; } = new();
     internal Action<SafeFileHandle>? Created { get; set; }
     internal Action<SafeFileHandle, SafeFileHandle>? BeforeAssign { get; set; }
@@ -253,6 +254,7 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
     private bool QueryAccounting(out JobBasicAccounting accounting)
     {
         _hooks.Record("query-accounting");
+        _hooks.BeforeAccounting?.Invoke(_job);
         if (_hooks.FailAccounting)
         {
             accounting = default;
