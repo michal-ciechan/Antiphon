@@ -65,39 +65,39 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         var f = new RunnerSeatReleaseFixture { Schema = schema, Harness = harness, Clock = clock, Wire = wire, Directory = directory };
         try
         {
-        await using var db = f.Db();
-        var session = await db.AgentSessions.SingleAsync(s => s.Id == f.SessionId);
-        session.RunnerId = "fixture"; session.RunnerStoreId = directory.StoreId;
-        session.RunnerCwd = "/fixture";
-        session.StartedAt = f.Observation.ExpectedAcceptedStartedAt;
-        var agent = await db.Agents.SingleAsync(a => a.Id == f.AgentId);
-        agent.IsPoolDelegate = true; agent.AlwaysOn = false; agent.BoardId = null;
-        Guid? landingId = null;
-        if (sourced)
-        {
-            landingId = Guid.NewGuid();
-            var ownerId = Guid.NewGuid();
-            db.AgentTasks.Add(new AgentTask { Id = ownerId, RootTaskId = ownerId, Status = AgentTaskStatus.Succeeded,
-                CompletedAt = f.Now, CreatedAt = f.Now });
-            await db.SaveChangesAsync();
-            db.AgentTaskLandings.Add(new AgentTaskLanding
+            await using var db = f.Db();
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == f.SessionId);
+            session.RunnerId = "fixture"; session.RunnerStoreId = directory.StoreId;
+            session.RunnerCwd = "/fixture";
+            session.StartedAt = f.Observation.ExpectedAcceptedStartedAt;
+            var agent = await db.Agents.SingleAsync(a => a.Id == f.AgentId);
+            agent.IsPoolDelegate = true; agent.AlwaysOn = false; agent.BoardId = null;
+            Guid? landingId = null;
+            if (sourced)
             {
-                Id = landingId.Value, TaskId = ownerId, CreatedAt = f.Now, UpdatedAt = f.Now
+                landingId = Guid.NewGuid();
+                var ownerId = Guid.NewGuid();
+                db.AgentTasks.Add(new AgentTask { Id = ownerId, RootTaskId = ownerId, Status = AgentTaskStatus.Succeeded,
+                    CompletedAt = f.Now, CreatedAt = f.Now });
+                await db.SaveChangesAsync();
+                db.AgentTaskLandings.Add(new AgentTaskLanding
+                {
+                    Id = landingId.Value, TaskId = ownerId, CreatedAt = f.Now, UpdatedAt = f.Now
+                });
+                await db.SaveChangesAsync();
+            }
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = f.TaskId, RootTaskId = f.TaskId, AgentId = f.AgentId, AgentSessionId = f.SessionId,
+                RunnerId = "fixture", Workspace = WorkspaceMode.Worktree, Attempt = 1,
+                Status = status, CompletedAt = f.Now.AddMinutes(-3), CreatedAt = f.Now.AddHours(-1),
+                Result = "completed report", ReportEvidence = AgentTaskReportEvidence.Marked,
+                SourceLandingOperationId = landingId,
             });
             await db.SaveChangesAsync();
-        }
-        db.AgentTasks.Add(new AgentTask
-        {
-            Id = f.TaskId, RootTaskId = f.TaskId, AgentId = f.AgentId, AgentSessionId = f.SessionId,
-            RunnerId = "fixture", Workspace = WorkspaceMode.Worktree, Attempt = 1,
-            Status = status, CompletedAt = f.Now.AddMinutes(-3), CreatedAt = f.Now.AddHours(-1),
-            Result = "completed report", ReportEvidence = AgentTaskReportEvidence.Marked,
-            SourceLandingOperationId = landingId,
-        });
-        await db.SaveChangesAsync();
-        await harness.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "task", timestamp: f.Now.AddMinutes(-4));
-        await harness.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn", timestamp: f.Now.AddMinutes(-3));
-        return f;
+            await harness.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "task", timestamp: f.Now.AddMinutes(-4));
+            await harness.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn", timestamp: f.Now.AddMinutes(-3));
+            return f;
         }
         catch { await f.DisposeAsync(); throw; }
     }
@@ -134,7 +134,8 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         public int ForceCommands => Calls.Count(p => p.EndsWith("/kill") || p.EndsWith("/kill-generation") || p.EndsWith("/release"));
         public TerminalSeatObservation Qualified { get; } = new(TerminalSeatQualificationStatus.Qualified,
             new(TerminalTranscriptReadStatus.Success, TerminalTranscriptVerdict.Idle,
-                "binding", "file", 100, 12, 12, 11), "issued-token", TimeSpan.FromSeconds(120));
+                "binding", "file", 100, 12, 12, 11), "issued-token", TimeSpan.FromSeconds(120),
+            new DateTimeOffset(2026, 10, 6, 0, 0, 0, TimeSpan.Zero)); // Runner clock is +24h.
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Calls.Add(request.RequestUri!.AbsolutePath);
@@ -151,6 +152,10 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         public ISessionRunnerClient Local => Client;
         public ISessionRunnerClient Resolve(string? runnerId) => Client;
         public Guid? GetLiveStoreId(string? runnerId) => StoreId;
+        public Task<RunnerDescriptor?> DescribeAsync(string? runnerId, CancellationToken ct) =>
+            Task.FromResult<RunnerDescriptor?>(new("fixture", "fixture", "linux", null, true, true, false, 1,
+                new RunnerCapabilitiesDto("fake", "fake", "fixture", false,
+                    Features: [RunnerCapabilityFeatures.TerminalSeatReleaseV1], RunnerStoreId: StoreId)));
         public IReadOnlyList<string> KnownRunnerIds => ["fixture"];
         public Task<SessionRunnerOwner?> GetOwnerAsync(Guid id, CancellationToken ct) => Task.FromResult<SessionRunnerOwner?>(new("fixture", StoreId, "/fixture"));
         public Task<SessionRunnerBinding> GetBindingAsync(Guid id, CancellationToken ct) => Task.FromResult<SessionRunnerBinding>(new SessionRunnerBinding.Remote(new("fixture", StoreId, "/fixture")));
