@@ -660,6 +660,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         public bool AutomaticEnabled { get; set; } = true;
         public BridgeQueueHarness.HarnessOptions? HarnessOptions { get; set; }
         public bool Unsupported { get; set; }
+        public HttpStatusCode UnsupportedStatusCode { get; set; } = HttpStatusCode.NotFound;
         public bool DropReply { get; set; }
         public TerminalSeatReleaseOutcome Outcome { get; set; } = TerminalSeatReleaseOutcome.Released;
         public Func<TerminalSeatReleaseRequest, Task>? AtCommand { get; set; }
@@ -693,7 +694,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
                 return new(HttpStatusCode.OK) { Content = JsonContent.Create(RewriteReply?.Invoke(result) ?? result) };
             }
             return Unsupported
-                ? new HttpResponseMessage(HttpStatusCode.NotFound)
+                ? new HttpResponseMessage(UnsupportedStatusCode)
                 : new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(Qualified) };
         }
     }

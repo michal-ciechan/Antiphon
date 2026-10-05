@@ -31,7 +31,7 @@ public sealed class TerminalRunnerSeatReleasePolicy
     {
         if (task.SourceLandingOperationId is not null || task.VerificationCustodyContractVersion is not null)
             return TerminalRunnerSeatDecision.VerificationOwner;
-        if (task.Role is AgentTaskRole.Check or AgentTaskRole.Distill or AgentTaskRole.Diagnose
+        if (AgentTaskRoles.IsSpecialist(task.Role)
             || agent?.StandingSpecialistOwnerId is not null || agent?.StandingSpecialistRole is not null)
             return TerminalRunnerSeatDecision.SpecialistOwner;
         if (agent is not null && !agent.IsPoolDelegate) return TerminalRunnerSeatDecision.StandingOwner;

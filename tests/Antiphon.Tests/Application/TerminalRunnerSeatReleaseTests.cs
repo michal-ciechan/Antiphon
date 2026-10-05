@@ -670,10 +670,13 @@ public class TerminalRunnerSeatReleaseTests
     }
 
     [Test]
-    public async Task Unsupported_server_transport_never_falls_back_to_force()
+    [Arguments(System.Net.HttpStatusCode.NotFound)]
+    [Arguments(System.Net.HttpStatusCode.NotImplemented)]
+    public async Task Unsupported_server_transport_never_falls_back_to_force(System.Net.HttpStatusCode unsupportedStatus)
     {
         await using var f = await RunnerSeatReleaseFixture.CreateAsync();
         f.Wire.Unsupported = true;
+        f.Wire.UnsupportedStatusCode = unsupportedStatus;
         (await f.RunAsync()).Decision.ShouldBe(TerminalRunnerSeatDecision.Unsupported);
         f.Wire.ForceCommands.ShouldBe(0); f.Wire.ConditionalCommands.ShouldBe(0);
         var request = new TerminalSeatReleaseRequest(Guid.NewGuid(), f.Observation, "token");
