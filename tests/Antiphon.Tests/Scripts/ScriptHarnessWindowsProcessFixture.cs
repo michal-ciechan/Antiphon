@@ -172,6 +172,17 @@ internal sealed class ScriptHarnessWindowsProcessFixture : IDisposable
             Owner.Dispose();
         }
 
+        internal void DeletePathsAfterConfirmedDeath()
+        {
+            foreach (var process in Windows._processes)
+                process.Executing().ShouldBeFalse("Direct fixture paths cannot be removed before independent death confirmation.");
+            // Direct W4 bypasses the coordinator intentionally. Its fixture owns
+            // these scratch paths and performs the coordinator's deletion only
+            // after the retained root/child/grandchild handles have signaled.
+            if (Directory.Exists(Request.ResultsDirectory)) Directory.Delete(Request.ResultsDirectory, true);
+            if (Directory.Exists(Request.ControlDirectory)) Directory.Delete(Request.ControlDirectory, true);
+        }
+
         public async ValueTask DisposeAsync()
         {
             var clock = Stopwatch.StartNew();
