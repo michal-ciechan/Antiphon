@@ -36,6 +36,115 @@ public sealed class ChannelOutboundDispatchIntegrationTests
         await db.Agents.Where(a => a.Id == h.AgentId).ExecuteUpdateAsync(s => s.SetProperty(a => a.BoardId, boardId));
     }
 
+    private static Task<BridgeQueueHarness> CreateCataloglessHarnessAsync(string connectionString, bool unifiedRecovery) =>
+        BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            ConnectionString = connectionString,
+            Bridge = new ChannelBridgeSettings { Enabled = true, MachineTurnTextOrigins = [QueuedMessageOrigin.Check] },
+            ConfigureServices = services => services.AddSingleton<IOptions<ChannelOutboundSettings>>(Options.Create(
+                new ChannelOutboundSettings { UnifiedRecoveryEnabled = unifiedRecovery })),
+        });
+
+    private static async Task AssertDirectSettlementAsync(BridgeQueueHarness h, Guid memberId)
+    {
+        await using var observer = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString));
+        var member = await observer.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == memberId);
+        member.ChannelReplySettledAt.ShouldNotBeNull();
+        member.ChannelOutboundDeliveryId.ShouldBeNull();
+        (await observer.ChannelOutboundDeliveries.CountAsync(d => d.SourceSessionId == h.SessionId)).ShouldBe(0);
+        (await observer.ChatChannels.CountAsync(c => c.ExternalId == "catalogless")).ShouldBe(0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Missing_catalog_main_publishes_once_and_settles_without_capture(bool unifiedRecovery)
+    {
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await CreateCataloglessHarnessAsync(isolated.ConnectionString, unifiedRecovery);
+        const string prompt = "Send the source without a catalog entry";
+        var memberId = await h.SeedChannelCorrelationAsync(prompt, "telegram:catalogless");
+        var path = Path.Combine(h.TempRoot, "workspace", "source.md");
+        var bytes = "# Complete main source\r\nMiddle and tail ✨\r\n"u8.ToArray();
+        await File.WriteAllBytesAsync(path, bytes);
+        await h.InsertTurnAsync(prompt, $"Complete main answer.\n[[attach: {path}]]");
+
+        var result = await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        result.OutcomeFor(memberId).ShouldBe(ChannelReplyDispatchOutcome.Published);
+        var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
+        reply.ConversationId.ShouldBe("catalogless");
+        reply.ReplyHandle.ShouldBeNull();
+        reply.Text.ShouldBe("Complete main answer.");
+        reply.Attachments.ShouldHaveSingleItem().Content.ShouldBe(bytes);
+        await AssertDirectSettlementAsync(h, memberId);
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        (await h.TickOutboundAsync()).ShouldBe(0);
+        h.Messaging.SentReplies.Count.ShouldBe(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Missing_catalog_machine_publishes_once_and_settles_without_capture(bool unifiedRecovery)
+    {
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await CreateCataloglessHarnessAsync(isolated.ConnectionString, unifiedRecovery);
+        var contextId = await h.SeedChannelCorrelationAsync("Original chat", "telegram:catalogless");
+        await h.InsertTurnAsync("Original chat", "NO_REPLY");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        const string prompt = "[Check] Send the complete machine source";
+        var memberId = await h.SeedPendingMessageAsync(prompt, status: QueuedMessageStatus.Sent,
+            origin: QueuedMessageOrigin.Check);
+        var path = Path.Combine(h.TempRoot, "workspace", "machine.md");
+        var bytes = "# Complete machine source\r\nMiddle and tail ✨\r\n"u8.ToArray();
+        await File.WriteAllBytesAsync(path, bytes);
+        await h.InsertTurnAsync(prompt, $"Complete machine answer.\n[[attach: {path}]]");
+
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
+        reply.ConversationId.ShouldBe("catalogless");
+        reply.ReplyHandle.ShouldBeNull();
+        reply.Text.ShouldBe("Complete machine answer.");
+        reply.Attachments.ShouldHaveSingleItem().Content.ShouldBe(bytes);
+        await AssertDirectSettlementAsync(h, memberId);
+        await AssertDirectSettlementAsync(h, contextId);
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        (await h.TickOutboundAsync()).ShouldBe(0);
+        h.Messaging.SentReplies.Count.ShouldBe(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Missing_catalog_trailing_publishes_once_without_capture(bool unifiedRecovery)
+    {
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await CreateCataloglessHarnessAsync(isolated.ConnectionString, unifiedRecovery);
+        const string prompt = "An initially silent answer with a later fragment";
+        var memberId = await h.SeedChannelCorrelationAsync(prompt, "telegram:catalogless");
+        // Silence establishes the routing watermark independently of main publication.
+        // Thus this test reaches the trailing send even when the main send has a defect.
+        await h.InsertTurnAsync(prompt, "NO_REPLY");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        h.Messaging.SentReplies.ShouldBeEmpty();
+        var path = Path.Combine(h.TempRoot, "workspace", "trailing.md");
+        var bytes = "# Complete trailing source\r\nMiddle and tail ✨\r\n"u8.ToArray();
+        await File.WriteAllBytesAsync(path, bytes);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, $"Complete trailing answer.\n[[attach: {path}]]");
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
+        reply.ConversationId.ShouldBe("catalogless");
+        reply.ReplyHandle.ShouldBeNull();
+        reply.Text.ShouldBe("Complete trailing answer.");
+        reply.Attachments.ShouldHaveSingleItem().Content.ShouldBe(bytes);
+        await AssertDirectSettlementAsync(h, memberId);
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        (await h.TickOutboundAsync()).ShouldBe(0);
+        h.Messaging.SentReplies.Count.ShouldBe(1);
+    }
+
     [Test]
     public async Task Activation_captures_before_source_reads_and_publishes_the_staged_bytes()
     {
