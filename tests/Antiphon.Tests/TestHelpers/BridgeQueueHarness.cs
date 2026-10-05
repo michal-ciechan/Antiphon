@@ -174,6 +174,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         services.AddSingleton<IChannelReplyAttachmentReader, ChannelReplyAttachmentReader>();
         services.AddScoped<ChannelReplyPreparation>();
         services.AddScoped<ChannelOutboundService>();
+        services.AddSingleton<ChannelOutboundWorkCursor>();
         services.AddScoped<ChannelOutboundDeliveryPump>(sp =>
         {
             var db = sp.GetRequiredService<AppDbContext>();
@@ -186,7 +187,8 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
                 sp.GetRequiredService<IOptions<AntiphonMessagingOptions>>(), clock,
                 NullLogger<ChannelOutboundDeliveryPump>.Instance,
                 sp.GetRequiredService<IOptions<ChannelOutboundSettings>>(),
-                sp.GetRequiredService<ChannelReplyPreparation>());
+                sp.GetRequiredService<ChannelReplyPreparation>(),
+                cursor: sp.GetRequiredService<ChannelOutboundWorkCursor>());
         });
         services.AddScoped<ChatChannelService>();
         services.AddScoped<AgentSupervisorService>();

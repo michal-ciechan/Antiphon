@@ -36,7 +36,7 @@ public sealed class ChannelOutboundDiscoveryService(
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             RootsExaminedLastTick = 0;
             var examined = 0;
-            for (var page = 0; page < MaximumPages; page++)
+            for (var page = 0; page < settings.Value.MaximumPages; page++)
             {
                 var query = db.SessionQueuedMessages.AsNoTracking().Where(m =>
                     m.Status == QueuedMessageStatus.Sent && m.ChannelReplySettledAt == null
@@ -48,7 +48,7 @@ public sealed class ChannelOutboundDiscoveryService(
                     query = query.Where(m => m.CreatedAt > after
                         || m.CreatedAt == after && m.Id.CompareTo(_afterId) > 0);
                 var sources = await query.OrderBy(m => m.CreatedAt).ThenBy(m => m.Id)
-                    .Take(PageSize).ToListAsync(ct);
+                    .Take(settings.Value.PageSize).ToListAsync(ct);
                 if (sources.Count == 0)
                 {
                     _afterCreatedAt = null;
@@ -72,7 +72,7 @@ public sealed class ChannelOutboundDiscoveryService(
                     _afterId = source.Id;
                 }
             }
-            for (var page = 0; page < MaximumPages; page++)
+            for (var page = 0; page < settings.Value.MaximumPages; page++)
             {
                 var rootsQuery = db.ChannelOutboundDeliveries.AsNoTracking().Where(d =>
                     d.CaptureJson != null && d.RootDeliveryId == null && d.ReservedThroughSequence != null
@@ -81,7 +81,7 @@ public sealed class ChannelOutboundDiscoveryService(
                     rootsQuery = rootsQuery.Where(d => d.CreatedAt > afterRoot
                         || d.CreatedAt == afterRoot && d.Id.CompareTo(_afterRootId) > 0);
                 var roots = await rootsQuery.OrderBy(d => d.CreatedAt).ThenBy(d => d.Id)
-                    .Take(PageSize).ToListAsync(ct);
+                    .Take(settings.Value.PageSize).ToListAsync(ct);
                 if (roots.Count == 0)
                 {
                     _afterRootCreatedAt = null;

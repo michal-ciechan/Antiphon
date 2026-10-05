@@ -129,7 +129,9 @@ public partial class AgentTaskReplyIntegrationTests
     }
 
     [Test]
-    public async Task Deferred_is_durable_and_releases_runtime()
+    public Task Deferred_is_durable_and_releases_runtime() => VerifyDeferredRuntimeAsync();
+
+    internal async Task VerifyDeferredRuntimeAsync()
     {
         await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
         var projectId = Guid.NewGuid();

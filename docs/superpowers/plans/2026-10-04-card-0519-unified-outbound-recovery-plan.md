@@ -948,7 +948,7 @@ select CP-29 in a Linux invocation. A missing Windows lane leaves R-12 outstandi
 | CP-8 | S9 | `tests/Antiphon.Tests -> bin-c519-cp08/` | discovery | `/*/*/ChannelOutboundDiscoveryTests/*` | V-5 | all 14 listed results, 0 failed/skipped | 14 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-9 | S9 | `tests/Antiphon.Tests -> bin-c519-cp09/` | tails | `/*/*/ChannelOutboundTrailingRecoveryTests/*` | V-6 | all 5 listed results, 0 failed/skipped | 5 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-10 | S9 | `tests/Antiphon.Tests -> bin-c519-cp10/` | retry | `/*/*/ChannelOutboundRetryPolicyTests/*` | V-7 | all 22 listed results, 0 failed/skipped | 22 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-11 | S9 | `tests/Antiphon.Tests -> bin-c519-cp11/` | projections | `/*/*/ChannelOutboundMetadataRepairTests/*` | V-9 | all 5 listed results, 0 failed/skipped | 5 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-11 | S9 | `tests/Antiphon.Tests -> bin-c519-cp11/` | projections | `/*/*/ChannelOutboundMetadataRepairTests/*` | V-9, V-5 repair fairness | all 6 listed results, 0 failed/skipped | 6 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-12 | S9 | `tests/Antiphon.Tests -> bin-c519-cp12/` | unified | `/*/*/ChannelOutboundUnifiedPathTests/*` | V-4 | all 8 listed results, 0 failed/skipped | 8 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-13 | S10 | `tests/Antiphon.Tests -> bin-c519-cp13/` | retention | `/*/*/ChannelOutboundRetentionTests/*` | V-10 | all 6 listed results, 0 failed/skipped | 6 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-14 | S10 | `tests/Antiphon.Tests -> bin-c519-cp14/` | old-queue-retention | `/*/*/DataRetentionServiceTests/Queue_keeps_Pending_and_unsettled_channel_rows_and_deletes_settled_old_ones` | R-11 | all 1 listed results, 0 failed/skipped | 1 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
@@ -990,6 +990,12 @@ select CP-29 in a Linux invocation. A missing Windows lane leaves R-12 outstandi
 | CP-50 | S8 | `tests/Antiphon.Tests -> bin-c519-cp50/` | dispatch-s8 | `/*/*/ChannelOutboundDispatchIntegrationTests/*` | R-1 dispatcher | all 10 results, 0 failed/skipped | 10 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-51 | S8 | `tests/Antiphon.Tests -> bin-c519-cp51/` | bridge-s8 | `/*/*/ChannelBridgeTests/*` | R-2 bridge | all 40 results, 0 failed/skipped | 40 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-52 | S8 | `tests/Antiphon.Tests -> bin-c519-cp52/` | durability-s8 | `/*/*/ChannelReplyDurabilityTests/*` | R-2 durability | all 25 results, 0 failed/skipped | 25 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-53 | S9 | `tests/Antiphon.Tests -> bin-c519-cp53/` | storage-s9 | `/*/*/ChannelOutboundStorageTests/*` | R-7 | all 32 results, 0 failed/skipped | 32 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-54 | S9 | `tests/Antiphon.Tests -> bin-c519-cp54/` | publication-s9 | `/*/*/ChannelOutboundDeliveryTests/*` | R-5 delivery | all 38 results, 0 failed/skipped | 38 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-55 | S9 | `tests/Antiphon.Tests -> bin-c519-cp55/` | materialization-s9 | `/*/*/ChannelOutboundMaterializationTests/*` | V-3 | all 12 results, 0 failed/skipped | 12 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-56 | S9 | `tests/Antiphon.Tests -> bin-c519-cp56/` | dispatch-s9 | `/*/*/ChannelOutboundDispatchIntegrationTests/*` | R-1 dispatcher | all 10 results, 0 failed/skipped | 10 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-57 | S9 | `tests/Antiphon.Tests -> bin-c519-cp57/` | runtime-s9 | `/*/*/AgentTaskReplyIntegrationTests/Deferred_is_durable_and_releases_runtime` | R-1 runtime | all 1 result, 0 failed/skipped | 1 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+
 
 Floors come from the specified new roster and inspected source attributes:
 S=4, C=5, M=12, U=8, D=14, T=5, B=22, F=8, P=5, L=6, X=21, W=5.
@@ -1522,3 +1528,37 @@ manifest rows are justified affected-class regression work, not a whole-assembly
 run. Their cost is 18 estimated minutes including builds; the complete S8 manifest
 is now 29 estimated minutes. PC-20's original missing-catalog-loss variant stays
 superseded by the S4 routing amendment; all revised variants remain pending.
+
+## S9 implementation selection (Code a4290b71, 2026-10-05)
+
+This slice separates the fenced Published/all-member settlement commit from
+catalog and bundle projections. Frozen, hash-validated bundles.json records every
+captured task's manifest at staging; repair reads accepted attachment bytes and
+never opens current bundle files. Metadata faults retain Published with pending
+MetadataAppliedAt and cannot enter the producer. Conditional accepted-order
+catalog updates prevent old repair from regressing the preview. Send and repair
+have independent bounded keyset cursors across hosted scopes. Discovery and hosted
+cadence now consume the validated page/page-count/scan settings.
+
+Select CP-8..12 and CP-53..57, serial, at the committed expected SHA. Additional
+rows are full affected storage, delivery, materialization and dispatcher classes,
+plus the plan's exact runtime witness whose shared scenario now supplies V-4 too.
+Their estimate is 26 minutes including isolated builds; S9's selected total is
+55 minutes. No assembly/namespace or whole-Unit run is authorized by this brief.
+CP-11 adds one real repair-fairness result beyond its five original methods.
+CP-8/9 include the earlier slice's added methods; original floors stay intact.
+
+The catalog-less V-4 witness follows S4's reviewed routing amendment, with
+C519_Missing_catalog_preserves_direct_routing replacing the superseded loss name.
+The target independence and held-converter runtime witnesses share the existing
+real scenario bodies rather than duplicating their fixtures. Their database,
+producer and recipient transcript assertions remain intact. V-5 terminal-complete
+closure still depends on S10's transcript-completeness/retention work; S9 does not
+infer completeness from terminal status.
+
+PC-74..78 remain pending SourceLanding Mutation. PC-S9-1 is the independent repair
+budget/cursor control: reset Repair each tick or remove the maximum-pages bound;
+C519_Fair_bounded_send_and_repair_budgets_are_independent must observe 320 repair
+reads then two, and a due accepted envelope with no resend. Existing PC-1..100,
+PC-1059-1..6, every S4/S5/S6/S7/S8 named variant and PC-S9-1 remain pending; Code
+performs no deliberate mutants. Activation remains false; restart: none.

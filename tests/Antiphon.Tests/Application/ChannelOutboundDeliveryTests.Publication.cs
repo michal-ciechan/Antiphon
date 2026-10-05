@@ -24,7 +24,9 @@ namespace Antiphon.Tests.Application;
 public sealed partial class ChannelOutboundDeliveryTests
 {
     [Test]
-    public async Task Accepted_target_is_not_retried_when_a_second_target_fails()
+    public Task Accepted_target_is_not_retried_when_a_second_target_fails() => VerifyTargetIndependenceAsync(false);
+
+    internal async Task VerifyTargetIndependenceAsync(bool unifiedRecovery)
     {
         var root = Directory.CreateTempSubdirectory("c0418-two-targets-").FullName;
         await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -40,6 +42,7 @@ public sealed partial class ChannelOutboundDeliveryTests
         var correlationIds = new[] { Guid.NewGuid(), Guid.NewGuid() };
         var store = new ChannelOutboundFileStore(Path.Combine(root, "store"));
         var producer = new SplitTargetProducer(channelIds[1].ToString("N"));
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(now));
         try
         {
             var bundle = Path.Combine(root, "bundle");
@@ -111,9 +114,13 @@ public sealed partial class ChannelOutboundDeliveryTests
             await using (var db = new AppDbContext(options))
             {
                 var pump = new ChannelOutboundDeliveryPump(db, null!, store, producer,
-                    Options.Create(new AntiphonMessagingOptions()), TimeProvider.System,
-                    NullLogger<ChannelOutboundDeliveryPump>.Instance);
+                    Options.Create(new AntiphonMessagingOptions()), clock,
+                    NullLogger<ChannelOutboundDeliveryPump>.Instance,
+                    Options.Create(new ChannelOutboundSettings { UnifiedRecoveryEnabled = unifiedRecovery }));
                 (await pump.TickAsync(CancellationToken.None)).ShouldBe(2);
+                if (unifiedRecovery)
+                    for (var attempt = 0; attempt < 2; attempt++)
+                    { clock.Advance(TimeSpan.FromSeconds(30)); (await pump.TickAsync(default)).ShouldBe(1); }
                 (await pump.TickAsync(CancellationToken.None)).ShouldBe(0);
             }
             producer.Calls[channelIds[0].ToString("N")].ShouldBe(1);
@@ -130,8 +137,9 @@ public sealed partial class ChannelOutboundDeliveryTests
                 .ChannelReplySettledAt.ShouldNotBeNull();
             (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationIds[1]))
                 .ChannelReplySettledAt.ShouldBeNull();
-            (await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId))
-                .DeliverableDeliveredAt.ShouldNotBeNull();
+            if (!unifiedRecovery)
+                (await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId))
+                    .DeliverableDeliveredAt.ShouldNotBeNull();
         }
         finally { Directory.Delete(root, recursive: true); }
     }
