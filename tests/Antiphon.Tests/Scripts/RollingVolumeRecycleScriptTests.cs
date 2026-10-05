@@ -203,6 +203,7 @@ public sealed class RollingVolumeRecycleScriptTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Option_manifest_is_strict()
     {
+        C1008HostFixture.RequireNativeLinux();
         using (var legacy = new C1008HostFixture())
         {
             var direct = await legacy.Run(extra: "C1008_CONTEXT=''");
@@ -210,6 +211,12 @@ public sealed class RollingVolumeRecycleScriptTests
             legacy.Removed.ShouldBeEmpty("recycle-manifest-strict: no context cannot authorize volume removal");
             legacy.Trace.Any(a => a[0] == "stop" || a[0] == "rm").ShouldBeFalse();
         }
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Wrapper_option_manifest_is_strict()
+    {
         using (var good = new C1008WrapperFixture())
         {
             var run = await good.Run("retire-temp", "-DryRun");
@@ -288,10 +295,16 @@ public sealed class RollingVolumeRecycleScriptTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Documentation_and_transport_pins_match()
     {
+        C1008HostFixture.RequireNativeLinux();
         using var f = new C1008HostFixture(main: false);
         var run = await f.Run("retire-temp-runner", "detect_lane() { LANE=nested; }");
         run.Output.ShouldContain("WrongLane", Case.Sensitive, "recycle-doc-contract: host operations refuse nested lane");
         f.Removed.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void C1008_Transport_scripts_are_ascii()
+    {
         foreach (var script in new[] { "deploy-server2.ps1", "c590-real.ps1", "c590-remote.sh", "verify-docker-stack.ps1" })
             File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", script)).All(x => x < 128)
                 .ShouldBeTrue("recycle-doc-contract: ASCII transport " + script);
@@ -301,6 +314,7 @@ public sealed class RollingVolumeRecycleScriptTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Refusal_receipts_do_not_leak_secrets()
     {
+        C1008HostFixture.RequireNativeLinux();
         using (var git = new C1008HostFixture())
         {
             Directory.CreateDirectory(Path.Combine(git.Root, "work", "SENTINEL_C1008_FILENAME_CREDENTIAL", ".git"));
@@ -327,6 +341,12 @@ public sealed class RollingVolumeRecycleScriptTests
             record.ShouldNotContain("SENTINEL_C1008_DOCKER_CREDENTIAL", Case.Sensitive, "recycle-receipt-custody: approved inspection fields only");
             record.ShouldNotContain("SENTINEL_C1008_LABEL_CREDENTIAL");
         }
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Wrapper_refusal_receipts_do_not_leak_secrets()
+    {
         using var f = new C1008WrapperFixture();
         f.State["taskError"] = "SENTINEL_C1008_HTTP_CREDENTIAL";
         var run = await f.Run("retire-temp");
@@ -349,8 +369,36 @@ public sealed class RollingVolumeRecycleScriptTests
 
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
-    public async Task C1008_Retired_absent_null_is_accepted()
+    public async Task C1008_Retired_absent_null_is_accepted(CancellationToken cancellationToken)
     {
+        C1008HostFixture.RequireNativeLinux();
+        var request = await GetRetirementRequestAsync(cancellationToken);
+        using var host = new C1008HostFixture(main: false);
+        var operation = request["recycle"]!["operationId"]!.GetValue<string>();
+        var stamp = request["tempRetiredAt"]!.GetValue<string>();
+        var retired = await host.Run("retire-temp-runner", $"C1008_OPERATION='{operation}'; C590_TEMP_RETIRED_AT='{stamp}'");
+        retired.Exit.ShouldBe(0, "retire-absent-null-accepted: actual host entry using wrapper context; " + retired.Output);
+        host.Removed.ShouldBe(new[] { "antiphon-runner-temp_work", "antiphon-runner-temp_runner-tmp",
+            "antiphon-runner-temp_dind-data", "antiphon-runner-temp_runner-state" });
+        var journalPath = Path.Combine(host.Root, "server/recycle", operation + ".json");
+        File.Exists(journalPath).ShouldBeTrue("c1050-host-operation: actual wrapper operation names the persisted journal");
+        var journal = JsonNode.Parse(File.ReadAllText(journalPath))!;
+        journal["operationId"]!.GetValue<string>().ShouldBe(operation, "c1050-host-operation: wrapper identity reaches the host");
+        DateTimeOffset.Parse(journal["retiredAt"]!.GetValue<string>(), System.Globalization.CultureInfo.InvariantCulture)
+            .ToUniversalTime().ShouldBe(DateTimeOffset.Parse(stamp, System.Globalization.CultureInfo.InvariantCulture)
+                .ToUniversalTime(), "c1050-host-retirement: wrapper stamp reaches the host as a UTC instant");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Wrapper_retired_absent_null_is_accepted(CancellationToken cancellationToken)
+    {
+        await GetRetirementRequestAsync(cancellationToken);
+    }
+
+    private static async Task<JsonObject> GetRetirementRequestAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
         using var fixture = new C1008WrapperFixture();
         var run = await fixture.Run("retire-temp");
         run.Trace.Any(x => x["kind"]?.GetValue<string>() == "case" &&
@@ -365,14 +413,9 @@ public sealed class RollingVolumeRecycleScriptTests
             x["name"]?.GetValue<string>() == "retire-temp-runner");
         request["recycle"]!["dryRun"]!.GetValue<bool>().ShouldBeFalse();
         request["recycle"]!["project"]!.GetValue<string>().ShouldBe("antiphon-runner-temp");
-        using var host = new C1008HostFixture(main: false);
         var operation = request["recycle"]!["operationId"]!.GetValue<string>();
         Regex.IsMatch(operation, "^c1008[0-9a-f]{32}$").ShouldBeTrue();
-        var stamp = request["tempRetiredAt"]!.GetValue<string>();
-        var retired = await host.Run("retire-temp-runner", $"C1008_OPERATION='{operation}'; C590_TEMP_RETIRED_AT='{stamp}'");
-        retired.Exit.ShouldBe(0, "retire-absent-null-accepted: actual host entry using wrapper context; " + retired.Output);
-        host.Removed.ShouldBe(new[] { "antiphon-runner-temp_work", "antiphon-runner-temp_runner-tmp",
-            "antiphon-runner-temp_dind-data", "antiphon-runner-temp_runner-state" });
+        return request.DeepClone().AsObject();
     }
 }
 

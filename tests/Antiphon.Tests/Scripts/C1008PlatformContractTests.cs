@@ -36,7 +36,6 @@ public sealed class C1008PlatformContractTests
     ];
     private static readonly string[] RemotePortable =
     ["RemoteScriptContractTests.C849_Deploy_ordering_contract_is_pinned"];
-    // W2 is used here only as an in-memory oracle control. S2 supplies its actual child audit.
     private static readonly string[] RollingHosts =
     [
         "RollingVolumeRecycleScriptTests.C1008_Option_manifest_is_strict",
@@ -52,6 +51,7 @@ public sealed class C1008PlatformContractTests
         "RollingVolumeRecycleScriptTests.C1008_Wrapper_retired_absent_null_is_accepted",
     ];
     private const string RemoteFilter = "/*/*/RemoteScriptContractTests/(C1008_Recycle_exact_default_volumes*)|(C1008_Recycle_refuses_references_and_unknown_census*)|(C1008_Recycle_audits_work_as_1654*)|(C1008_Recycle_refuses_unpublished_and_dirty_work*)|(C1008_Recycle_refuses_uninspectable_git*)|(C1008_Recycle_preserves_tmp_copyup*)|(C1008_Recycle_resume_requires_matching_receipt*)|(C1008_Recycle_receipt_records_disk_and_partial_failure*)|(C1008_Retire_temp_rechecks_absence_and_retirement*)|(C1008_Retire_temp_reclaims_below_cache_disk_gate*)|(C1008_Recycle_dry_run_never_mutates*)|(C849_Deploy_prepares_and_verifies_before_acceptance*)|(C849_Deploy_ordering_contract_is_pinned*)";
+    private const string RollingFilter = "/*/*/RollingVolumeRecycleScriptTests/(C1008_Option_manifest_is_strict*)|(C1008_Documentation_and_transport_pins_match*)|(C1008_Refusal_receipts_do_not_leak_secrets*)|(C1008_Retired_absent_null_is_accepted*)|(C1008_Wrapper_option_manifest_is_strict*)|(C1008_Transport_scripts_are_ascii*)|(C1008_Wrapper_refusal_receipts_do_not_leak_secrets*)|(C1008_Wrapper_retired_absent_null_is_accepted*)";
     private static readonly XNamespace Trx = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010";
 
     [Test]
@@ -73,6 +73,10 @@ public sealed class C1008PlatformContractTests
     [Test]
     public void C1050_Remote_entries_guard_before_work() =>
         AssertFirstStatements("RemoteScriptContractTests.cs", RemoteHosts);
+
+    [Test]
+    public void C1050_Rolling_entries_guard_before_work() =>
+        AssertFirstStatements("RollingVolumeRecycleScriptTests.cs", RollingHosts);
 
     private static void AssertFirstStatements(string file, string[] roster)
     {
@@ -98,6 +102,14 @@ public sealed class C1008PlatformContractTests
     {
         OperatingSystem.IsWindows().ShouldBeTrue("c1050-native-windows: audit requires Windows placement");
         await RunWindowsAuditAsync(RemoteFilter, RemoteHosts, RemotePortable, cancellationToken);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1050_Windows_rolling_outcomes_are_exact(CancellationToken cancellationToken)
+    {
+        OperatingSystem.IsWindows().ShouldBeTrue("c1050-native-windows: audit requires Windows placement");
+        await RunWindowsAuditAsync(RollingFilter, RollingHosts, RollingPortable, cancellationToken);
     }
 
     private static async Task RunWindowsAuditAsync(string filter, string[] hosts, string[] portable,
