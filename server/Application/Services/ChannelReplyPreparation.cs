@@ -102,7 +102,6 @@ public sealed class ChannelReplyPreparation(IChannelReplyAttachmentReader reader
                     [task.BundleDirectory!], MaxCaptureBytes, ct);
             }
             catch (FileNotFoundException) { taskManifest = null; }
-            if (task.TaskId == delivery.SourceTaskId) manifest = taskManifest;
             if (taskManifest is not null)
             {
                 // Historical invalid manifests authorize neither implied files nor a bundle
@@ -114,6 +113,7 @@ public sealed class ChannelReplyPreparation(IChannelReplyAttachmentReader reader
                 }
                 catch (JsonException) { continue; }
                 if (frozenManifest is not { Version: 1, Sources: not null }) continue;
+                if (task.TaskId == delivery.SourceTaskId) manifest = taskManifest;
                 bundles.Add(new(task.TaskId, task.BundleDirectory!, frozenManifest));
                 if (!capture.Body.BundleTaskIds.Contains(task.TaskId)) continue;
                 paths.AddRange(frozenManifest.Sources.Select(s => s.StoredFile).Distinct(StringComparer.OrdinalIgnoreCase)

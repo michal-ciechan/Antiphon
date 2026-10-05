@@ -1776,7 +1776,7 @@ come from the enqueue callback, independently of the submitted body.
 CP-18 repairs production preparation: R-4 and D-11 preserve attachment markers
 and implied-bundle policy. DeliverableBundleService.ListAttachableFiles already
 refuses implied files for corrupt/unsupported manifests while explicit markers
-remain independent. Preparation now parses once, retains the raw manifest for
+remain independent. Preparation now parses once, retains only usable manifests for
 staging, and permits explicit attachments without inferred files or bundle stamps
 when that manifest is unusable. Read failures and budgets remain unchanged.
 The existing four historical-manifest arguments retain exact names/bytes/order
@@ -1792,3 +1792,10 @@ No full assembly/namespace run or new manual recipient acceptance is selected.
 All earlier/later V/R assignments and all pending PC variants above remain intact.
 UnifiedRecoveryEnabled stays false by default. Restart: none; caller owns any
 eventual activation after the complete card. Ordinary verification is pending.
+
+Repair group 2 completes that boundary: ChannelOutboundFileStore independently
+validates any supplied source manifest, so an unusable optional manifest must not
+be forwarded to staging. No file-store validation is loosened. The first run
+20261005-162340-d91a was stopped during its first build and awaited to exit 6;
+zero tests ran. The final full CP-15..22 selection now verifies this committed
+correction. This uses the second and final authorized repair round.
