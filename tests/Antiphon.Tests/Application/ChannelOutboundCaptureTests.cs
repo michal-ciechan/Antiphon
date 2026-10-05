@@ -315,7 +315,10 @@ public sealed class ChannelOutboundCaptureTests
         public ChannelBridgeSettings Bridge { get; } = new();
         public Store Store { get; } = new();
         public Producer Producer { get; } = new();
-        public DateTime ObligationAt { get; } = DateTime.UtcNow.AddMinutes(-5);
+        // PostgreSQL timestamps have microsecond precision. Choose an exactly
+        // representable seed so the original-age assertion remains an exact comparison.
+        public DateTime ObligationAt { get; } = DateTimeOffset.FromUnixTimeMilliseconds(
+            DateTimeOffset.UtcNow.AddMinutes(-5).ToUnixTimeMilliseconds()).UtcDateTime;
         public long NextPrompt { get; set; } = 100;
         private long _memberSequence;
         private readonly Guid _converter = Guid.NewGuid();
