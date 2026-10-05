@@ -329,7 +329,9 @@ Admission and missing setup, before CP-1:
   `--network none`, no ports/socket, and a private writable
   `/c660-home` tmpfs owned by 1654. Use the reviewed
   [CARD-1054 probe/row contract](2026-10-05-card-1054-jq-path-qualification-plan.md#verification-design)
-  at its recorded source SHA. Require exit 0 and exactly one physical success
+  at its recorded source SHA. The [CARD-1054 Code handoff](../../../.antiphon/task-dfea030e.md)
+  records the implementation candidate and per-row source receipts for separate
+  Review before S2 consumes it. Require exit 0 and exactly one physical success
   row: `C660_ROW jq-version ok jq-1.7.1 as uid 1654 lookupPath=/usr/local/bin/jq path=/usr/local/bin/jq`
   for direct lookup. For an approved alias, `lookupPath` preserves the actual
   found path with Bash `%q` escaping under `LC_ALL=C`; `path` remains canonical.
