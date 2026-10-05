@@ -18,6 +18,16 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using Antiphon.Tests.Agents;
 using System.Text.Json;
+using System.Text;
+using System.Net.WebSockets;
+using System.Threading.Channels;
+using Antiphon.SessionRunner;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging.Abstractions;
+using Shouldly;
+using SessionRunnerSettings = Antiphon.Server.Application.Settings.SessionRunnerSettings;
 
 namespace Antiphon.Tests.Application;
 
@@ -36,12 +46,38 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
     public Guid SessionId { get; private set; }
     public Guid AgentId { get; private set; }
     public DateTime Now => Clock.GetUtcNow().UtcDateTime;
+    public LiveSeat? Live { get; private set; }
+    public Guid CandidateId => Live?.SessionId ?? SessionId;
     public TerminalSeatObservationRequest Observation => new(Directory.StoreId, Now.AddHours(-1), "binding", 10);
     public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
 
+    public async Task<TerminalRunnerSeatEvidence> AcquireAsync()
+    {
+        using var scope = Harness.Provider.CreateScope();
+        var inventory = await Directory.GetInventoryAsync("fixture", default);
+        var seat = ((RunnerInventory.Available)inventory).Sessions.Single(s => s.SessionId == CandidateId);
+        return await scope.ServiceProvider.GetRequiredService<TerminalRunnerSeatReleaseService>()
+            .ObserveCapturedCandidateAsync("fixture", Directory.StoreId, seat.SessionId, seat.AcceptedStartedAt, default);
+    }
+
+    public async Task<TerminalRunnerSeatReservation> ReserveAsync(TerminalSeatObservationRequest request)
+    {
+        using var scope = Harness.Provider.CreateScope();
+        return await scope.ServiceProvider.GetRequiredService<TerminalRunnerSeatReleaseService>()
+            .RegisterAndReserveAsync(TaskId, request, default);
+    }
+
+    public async Task AdvanceAsync(Guid releaseId, TerminalSeatObservationRequest request)
+    {
+        using var scope = Harness.Provider.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<TerminalRunnerSeatReleaseService>()
+            .AdvanceAsync(releaseId, request, default);
+    }
+
     public static async Task<RunnerSeatReleaseFixture> CreateAsync(
         AgentTaskStatus status = AgentTaskStatus.Succeeded, bool sourced = false,
-        Action<DbContextOptionsBuilder>? configureDb = null)
+        Action<DbContextOptionsBuilder>? configureDb = null,
+        string? provider = null, bool phoneHome = false, bool rowless = false)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero));
@@ -106,6 +142,16 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         f._roots.Add(harness.TempRoot);
         try
         {
+            if (provider is not null)
+            {
+                wire.ForbidFixedEvidence = true;
+                f.Live = await LiveSeat.CreateAsync(rowless ? Guid.NewGuid() : f.SessionId,
+                    f.Now.AddHours(-1), provider, phoneHome);
+                directory.StoreId = f.Live.Runtime.RunnerStoreId;
+                directory.Client = f.Live.Client;
+                directory.Capabilities = () => f.Live.Client.GetCapabilitiesAsync(default);
+                directory.Inventory = async () => new RunnerInventory.Available(await f.Live.Client.ListAsync(default));
+            }
             await using var db = f.Db();
             var session = await db.AgentSessions.SingleAsync(s => s.Id == f.SessionId);
             session.RunnerId = "fixture"; session.RunnerStoreId = directory.StoreId;
@@ -237,6 +283,11 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         var sessionId = task.AgentSessionId ?? SessionId;
         var agentId = task.AgentId ?? AgentId;
         await Harness.DisposeAsync();
+        if (Live is not null)
+        {
+            await Live.RestartServerTransportAsync();
+            Directory.Client = Live.Client;
+        }
         Harness = await BridgeQueueHarness.CreateAsync(_harnessOptions! with
         { AttachSessionId = sessionId, AttachAgentId = agentId });
         _roots.Add(Harness.TempRoot);
@@ -315,10 +366,271 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await Harness.DisposeAsync();
+        if (Live is not null) await Live.DisposeAsync();
         Wire.Dispose();
         await Schema.DisposeAsync();
         foreach (var root in _roots)
             if (System.IO.Directory.Exists(root)) System.IO.Directory.Delete(root, true);
+    }
+
+    /// <summary>Only I/O is faked: the child writes the bytes it actually received into a
+    /// private native transcript. Runtime, tailer, protocol and server clients are production.</summary>
+    internal sealed class LiveSeat : IAsyncDisposable
+    {
+        private readonly string _root = Path.Combine(Path.GetTempPath(), "c667-server-seat-" + Guid.NewGuid().ToString("N"));
+        private readonly bool _phoneHome;
+        private readonly string _provider;
+        private readonly DateTime _generation;
+        private readonly SemaphoreSlim _pollPermit = new(0);
+        private readonly Channel<bool> _pollArrived = Channel.CreateUnbounded<bool>();
+        private readonly StringBuilder _composer = new();
+        private ITranscriptTailer _tailer = null!;
+        private WebApplication? _app;
+        private HttpClient? _http;
+        private PhoneHomeTestHost? _phoneHost;
+        private ClientWebSocket? _socket;
+        private CancellationTokenSource? _socketLifetime;
+        private Task? _socketLoop;
+        public Guid SessionId { get; }
+        public FakeTimeProvider Clock { get; } = new(new DateTimeOffset(2026, 10, 6, 0, 0, 0, TimeSpan.Zero));
+        public SessionRunnerRuntime Runtime { get; private set; } = null!;
+        public ISessionRunnerClient Client { get; private set; } = null!;
+        public NativeChild Child { get; } = new();
+        public List<TerminalSeatObservationRequest> Observations { get; } = [];
+        public int ConditionalCommands { get; private set; }
+        public int ForceCommands { get; private set; }
+        public string? ResponseFault { get; set; }
+        public bool SwallowNextEnter { get; set; }
+        public List<string> NativeSubmissions { get; } = [];
+        public string TranscriptPath => Path.Combine(_root, "native.jsonl");
+        private Antiphon.SessionRunner.SessionRunnerSettings Settings => new() { SessionLogPath = _root };
+
+        private LiveSeat(Guid id, DateTime generation, string provider, bool phoneHome)
+        { SessionId = id; _generation = generation; _provider = provider; _phoneHome = phoneHome; }
+
+        public static async Task<LiveSeat> CreateAsync(Guid id, DateTime generation, string provider, bool phoneHome)
+        {
+            var live = new LiveSeat(id, generation, provider, phoneHome);
+            try { await live.StartAsync(); return live; }
+            catch { await live.DisposeAsync(); throw; }
+        }
+
+        private async Task StartAsync()
+        {
+            System.IO.Directory.CreateDirectory(_root);
+            await File.WriteAllTextAsync(TranscriptPath, Prompt("previous generation", "old") + End("old"));
+            var hub = new SessionRunnerEventHub();
+            var claims = new TranscriptClaimRegistry();
+            _tailer = _provider switch
+            {
+                "Claude" => new TranscriptTailer(SessionId, _root, hub, NullLogger.Instance,
+                    knownTranscriptPath: TranscriptPath, claims: claims, forkScanInterval: TimeSpan.FromDays(1)),
+                "Grok" => new GrokTranscriptTailer(SessionId, TranscriptPath, hub, NullLogger.Instance,
+                    pollInterval: TimeSpan.FromMilliseconds(1)),
+                _ => new CodexTranscriptTailer(SessionId, _root, hub, NullLogger.Instance,
+                    knownTranscriptPath: TranscriptPath, sessionsRoot: _root, claims: claims,
+                    pollInterval: TimeSpan.FromMilliseconds(1))
+            };
+            var observer = _tailer switch
+            {
+                TranscriptTailer t => t.TerminalObservation,
+                GrokTranscriptTailer t => t.TerminalObservation,
+                CodexTranscriptTailer t => t.TerminalObservation,
+                _ => throw new InvalidOperationException()
+            };
+            observer.BeforePoll = async ct =>
+            {
+                await _pollArrived.Writer.WriteAsync(true, ct);
+                await _pollPermit.WaitAsync(ct);
+            };
+            _tailer.Start();
+            await _pollArrived.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+            _pollPermit.Release();
+            await _pollArrived.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+            (await _tailer.ObserveTerminalSeatAsync(default)).Status.ShouldBe(TerminalTranscriptReadStatus.Success);
+            Child.Write = async input =>
+            {
+                if (input != "\r") { _composer.Append(input); return; }
+                if (SwallowNextEnter) { SwallowNextEnter = false; return; }
+                if (_composer.Length == 0) return;
+                var body = _composer.ToString().Replace("\u001b[200~", "").Replace("\u001b[201~", "");
+                _composer.Clear();
+                NativeSubmissions.Add(body);
+                var id = Guid.NewGuid().ToString("N");
+                await File.AppendAllTextAsync(TranscriptPath, Prompt(body, id) + End(id), new UTF8Encoding(false));
+            };
+            BindRuntime();
+            await StartTransportAsync();
+        }
+
+        private void BindRuntime()
+        {
+            Runtime = new(Options.Create(Settings), NullLogger<SessionRunnerRuntime>.Instance, timeProvider: Clock);
+            var session = new SessionRunnerRuntime.RunnerSession(SessionId, Settings,
+                new SessionRunnerEventHub(), NullLogger.Instance);
+            session.BindChildForTest(Child, _tailer, _generation);
+            Runtime.Track(session);
+        }
+
+        public async Task SubmitAsync(string body)
+        {
+            await Client.SendInputAsync(SessionId, "\u001b[200~" + body + "\u001b[201~", default);
+            await Client.SendInputAsync(SessionId, "\r", default);
+        }
+
+        public async Task RestartRunnerAsync()
+        {
+            await StopTransportAsync();
+            Runtime.DetachTerminalTailerForTest(SessionId);
+            await Runtime.DisposeAsync();
+            BindRuntime(); // Same child, store, generation and tailer; no volatile capture.
+            await StartTransportAsync();
+        }
+
+        public async Task RestartServerTransportAsync()
+        {
+            await StopTransportAsync();
+            await StartTransportAsync(); // Recreate clients and phone-home server, keep runner alive.
+        }
+
+        private async Task StartTransportAsync()
+        {
+            var adapter = new PhoneHomeRuntimeAdapter(Runtime, RunnerBuildIdentity.Resolve());
+            if (_phoneHome)
+            {
+                _phoneHost = await PhoneHomeTestHost.StartAsync();
+                var ticket = await _phoneHost.RegisterAsync(storeId: Runtime.RunnerStoreId, capabilities: adapter.Capabilities());
+                _socket = new ClientWebSocket();
+                _socket.Options.SetRequestHeader(PhoneHomeProtocol.TicketHeader, ticket.Ticket);
+                await _socket.ConnectAsync(_phoneHost.ConnectUri, default);
+                _socketLifetime = new CancellationTokenSource();
+                var dispatcher = new PhoneHomeCommandDispatcher(adapter,
+                    new PhoneHomeSettings { LaunchGenerationsPath = Path.Combine(_root, "generations") });
+                _socketLoop = PumpAsync(dispatcher, _socketLifetime.Token);
+                Client = new PhoneHomeRunnerClient(await _phoneHost.WaitLiveAsync());
+                return;
+            }
+            var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [], EnvironmentName = "Testing" });
+            builder.WebHost.UseUrls("http://127.0.0.1:0");
+            builder.Logging.ClearProviders();
+            builder.Services.AddSingleton(Runtime);
+            builder.Services.AddSingleton<IPhoneHomeRuntimeSurface>(adapter);
+            builder.Services.Configure<HerdrSettings>(_ => { });
+            builder.Services.Configure<HostStatsSettings>(_ => { });
+            _app = builder.Build();
+            _app.Use(async (context, next) =>
+            {
+                var path = context.Request.Path.Value!;
+                if (path.EndsWith("/terminal-seat-observation"))
+                {
+                    context.Request.EnableBuffering();
+                    Observations.Add((await context.Request.ReadFromJsonAsync<TerminalSeatObservationRequest>())!);
+                    context.Request.Body.Position = 0;
+                    if (ResponseFault == "lost") { context.Abort(); return; }
+                    if (ResponseFault == "malformed") { await context.Response.WriteAsync("{}"); return; }
+                }
+                if (path.EndsWith("/release-terminal-seat")) ConditionalCommands++;
+                if (path.EndsWith("/kill") || path.EndsWith("/kill-generation") || path.EndsWith("/release"))
+                { ForceCommands++; throw new InvalidOperationException("Unexpected destructive fallback"); }
+                await next(context);
+            });
+            _app.MapRunnerCapabilitiesRoute(RunnerBuildIdentity.Resolve());
+            _app.MapTerminalSeatReleaseRoutes();
+            _app.MapGet("/sessions", () => Runtime.List());
+            _app.MapPost("/sessions/{id:guid}/input", async (Guid id, RunnerInputRequest request, CancellationToken ct) =>
+            { await Runtime.SendInputAsync(id, request.Input, ct); return Results.Ok(); });
+            await _app.StartAsync();
+            var uri = new Uri(_app.Urls.Single());
+            uri.IsLoopback.ShouldBeTrue(); uri.Port.ShouldNotBe(17204);
+            _http = new HttpClient { BaseAddress = uri, Timeout = TimeSpan.FromSeconds(10) };
+            Client = new SessionRunnerHttpClient(_http, new ClientFactory(_http),
+                Options.Create(new SessionRunnerSettings { BaseUrl = uri.ToString() }));
+        }
+
+        private async Task PumpAsync(PhoneHomeCommandDispatcher dispatcher, CancellationToken ct)
+        {
+            try
+            {
+                while (!ct.IsCancellationRequested)
+                {
+                    var frame = await PhoneHomeFraming.ReadFrameAsync(_socket!, 16 * 1024 * 1024, ct);
+                    if (frame is null) break;
+                    if (frame.Kind != PhoneHomeFrameKind.Request) continue;
+                    if (frame.Operation == PhoneHomeOperation.ObserveTerminalSeat)
+                    {
+                        Observations.Add(frame.Payload!.Value.Deserialize<PhoneHomeTerminalSeatObservationRequest>(PhoneHomeFraming.Json)!.Observation);
+                        if (ResponseFault == "lost") { _socket!.Abort(); return; }
+                    }
+                    if (frame.Operation == PhoneHomeOperation.ReleaseTerminalSeat) ConditionalCommands++;
+                    if (frame.Operation is PhoneHomeOperation.ReleaseSlot or PhoneHomeOperation.KillGeneration)
+                    { ForceCommands++; throw new InvalidOperationException("Unexpected destructive fallback"); }
+                    var reply = await dispatcher.DispatchAsync(frame, ct);
+                    if (frame.Operation == PhoneHomeOperation.ObserveTerminalSeat && ResponseFault == "malformed")
+                        reply = reply with { Payload = JsonSerializer.SerializeToElement(new { }) };
+                    await PhoneHomeFraming.WriteFrameAsync(_socket!, reply, 16 * 1024 * 1024, ct);
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+            catch (WebSocketException) when (ct.IsCancellationRequested) { }
+        }
+
+        private async Task StopTransportAsync()
+        {
+            if (_socketLifetime is not null)
+            {
+                await _socketLifetime.CancelAsync();
+                _socket?.Abort();
+                if (_socketLoop is not null) await _socketLoop;
+                _socket?.Dispose(); _socketLifetime.Dispose(); _socketLifetime = null;
+            }
+            if (_phoneHost is not null) { await _phoneHost.DisposeAsync(); _phoneHost = null; }
+            _http?.Dispose(); _http = null;
+            if (_app is not null) { await _app.DisposeAsync(); _app = null; }
+        }
+
+        private string Prompt(string body, string id) => _provider switch
+        {
+            "Claude" => JsonSerializer.Serialize(new { type = "user", uuid = id, message = new { role = "user", content = body } }) + "\n",
+            "Grok" => Grok(new { sessionUpdate = "user_message_chunk", content = new { type = "text", text = body } }, id),
+            _ => Codex(new { type = "user_message", message = body }, id)
+        };
+        private string End(string id) => _provider switch
+        {
+            "Claude" => JsonSerializer.Serialize(new { type = "assistant", uuid = id + "-end", message = new { role = "assistant", content = Array.Empty<object>(), stop_reason = "end_turn" } }) + "\n",
+            "Grok" => Grok(new { sessionUpdate = "turn_completed", prompt_id = id, stop_reason = "end_turn" }, id),
+            _ => Codex(new { type = "task_complete", turn_id = id }, id)
+        };
+        private static string Grok(object update, string id) => JsonSerializer.Serialize(new
+        { method = "session/update", @params = new { update, _meta = new { eventId = Guid.NewGuid().ToString(), promptId = id } } }) + "\n";
+        private static string Codex(object payload, string id) => JsonSerializer.Serialize(new
+        { type = "event_msg", timestamp = "2026-10-05T00:00:00Z", id, payload }) + "\n";
+
+        public async ValueTask DisposeAsync()
+        {
+            await StopTransportAsync();
+            if (Runtime is not null)
+            {
+                if (Runtime.List().Any(s => s.SessionId == SessionId)) Runtime.DetachTerminalTailerForTest(SessionId);
+                await Runtime.DisposeAsync();
+            }
+            if (_tailer is not null) await _tailer.DisposeAsync();
+            _pollPermit.Dispose();
+            if (System.IO.Directory.Exists(_root)) System.IO.Directory.Delete(_root, true);
+        }
+
+        internal sealed class NativeChild : ISessionChild
+        {
+            public Func<string, Task>? Write { get; set; }
+            public int Kills { get; private set; }
+            public event Action<ChildExit>? Exited;
+            public Task<ChildStarted> LaunchAsync(RunnerLaunchRequest request, CancellationToken ct) => throw new NotSupportedException();
+            public Task WriteAsync(string input, CancellationToken ct) => Write!(input);
+            public Task ResizeAsync(int cols, int rows, CancellationToken ct) => Task.CompletedTask;
+            public Task<bool> KillAsync(CancellationToken ct)
+            { Kills++; Exited?.Invoke(new(0, "KilledByRequest")); return Task.FromResult(true); }
+            public Task<ChildScreen?> ReadScreenAsync(CancellationToken ct) => Task.FromResult<ChildScreen?>(null);
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
     }
 
     private sealed class ClientFactory(HttpClient client) : IHttpClientFactory
@@ -326,6 +638,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
 
     internal sealed class SeatWire : HttpMessageHandler
     {
+        public bool ForbidFixedEvidence { get; set; }
         public bool AutomaticEnabled { get; set; } = true;
         public BridgeQueueHarness.HarnessOptions? HarnessOptions { get; set; }
         public bool Unsupported { get; set; }
@@ -344,6 +657,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
             new DateTimeOffset(2026, 10, 6, 0, 0, 0, TimeSpan.Zero)); // Runner clock is +24h.
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
+            if (ForbidFixedEvidence) throw new InvalidOperationException("Real-runtime mode reached fixed evidence wire.");
             Calls.Add(request.RequestUri!.AbsolutePath);
             if (request.RequestUri.AbsolutePath.EndsWith("/release-terminal-seat"))
             {
@@ -368,7 +682,9 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
 
     internal sealed class SeatDirectory(ISessionRunnerClient client) : ISessionRunnerDirectory
     {
-        public Guid StoreId { get; } = Guid.NewGuid();
+        public Guid StoreId { get; set; } = Guid.NewGuid();
+        public Func<Task<RunnerCapabilitiesDto?>>? Capabilities { get; set; }
+        public IReadOnlyList<string>? FeaturesOverride { get; set; }
         public bool Available { get; set; } = true;
         public int Capacity { get; set; } = 10;
         public bool RefuseNewWork { get; set; }
@@ -384,10 +700,15 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
             ? throw new ServiceUnavailableException("fixture runner unavailable", "runner_unavailable") : Client;
         public int? DeclaredCapacity(string runnerId) => Capacity;
         public Guid? GetLiveStoreId(string? runnerId) => LiveStoreOverride ?? StoreId;
-        public Task<RunnerDescriptor?> DescribeAsync(string? runnerId, CancellationToken ct) =>
-            Task.FromResult<RunnerDescriptor?>(new("fixture", "fixture", "linux", null, Available, Recovered, Stale, 1,
-                new RunnerCapabilitiesDto("fake", "fake", "fixture", false,
-                    Features: [RunnerCapabilityFeatures.TerminalSeatReleaseV1], RunnerStoreId: StoreId)));
+        public async Task<RunnerDescriptor?> DescribeAsync(string? runnerId, CancellationToken ct)
+        {
+            var caps = Capabilities is null
+                ? new RunnerCapabilitiesDto("fake", "fake", "fixture", false,
+                    Features: [RunnerCapabilityFeatures.TerminalSeatReleaseV1], RunnerStoreId: StoreId)
+                : await Capabilities();
+            if (FeaturesOverride is not null && caps is not null) caps = caps with { Features = FeaturesOverride };
+            return new("fixture", "fixture", "linux", null, Available, Recovered, Stale, 1, caps);
+        }
         public IReadOnlyList<string> KnownRunnerIds => ["fixture"];
         public Task<SessionRunnerOwner?> GetOwnerAsync(Guid id, CancellationToken ct) => Task.FromResult<SessionRunnerOwner?>(new("fixture", StoreId, "/fixture"));
         public Task<SessionRunnerBinding> GetBindingAsync(Guid id, CancellationToken ct) => Task.FromResult<SessionRunnerBinding>(new SessionRunnerBinding.Remote(new("fixture", StoreId, "/fixture")));

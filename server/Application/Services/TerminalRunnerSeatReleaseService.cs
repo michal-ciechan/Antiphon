@@ -16,6 +16,11 @@ public sealed class TerminalRunnerSeatReleaseOptions
 
 public sealed record TerminalRunnerSeatReservation(Guid? ReleaseId, TerminalRunnerSeatDecision Decision);
 
+public sealed record TerminalRunnerSeatEvidence(
+    TerminalRunnerSeatDecision? Hold,
+    TerminalSeatObservationRequest? Request = null,
+    TerminalSeatObservation? Observation = null);
+
 /// <summary>
 /// Only committed attempts can register debt. A durable send intent precedes runner I/O;
 /// interrupted sends reconcile authoritative inventory before any further mutation. No production
@@ -27,6 +32,12 @@ public sealed class TerminalRunnerSeatReleaseService(
     IOptions<TerminalRunnerSeatReleaseOptions> options)
 {
     internal Func<string, CancellationToken, Task>? BoundaryAsync { get; set; }
+
+    /// <summary>Acquire runner-owned evidence for an inventory identity, including a seat with
+    /// no server row. This does not reserve debt or grant ownership authority to release it.</summary>
+    public Task<TerminalRunnerSeatEvidence> ObserveCapturedCandidateAsync(
+        string runnerId, Guid runnerStoreId, Guid sessionId, DateTime? acceptedStartedAt, CancellationToken ct) =>
+        Task.FromResult(new TerminalRunnerSeatEvidence(TerminalRunnerSeatDecision.Unsupported));
 
     // This reader is shared by answer admission and retry. A missing/stopped session alone is
     // never authority to skip StopDelegateAsync. Keep every part of the accepted identity.
