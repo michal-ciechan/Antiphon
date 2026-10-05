@@ -459,6 +459,7 @@ internal static class TerminalSeatReleaseRoutes
                 : [GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1, RunnerCapabilityFeatures.CompactionContinuationStopV1];
             if (runtime.VerificationCustodyBackend is not null)
                 features = [.. features, RunnerCapabilityFeatures.VerificationCustodyV1];
+            features = [.. features, RunnerCapabilityFeatures.TerminalSeatReleaseV1];
             features = HostStatsRoutes.CapabilityFeatures(features, hostStats.Value);
             return Results.Ok(runtime.DescribeCapabilities(runnerBuild, sessionBackends, features));
         });

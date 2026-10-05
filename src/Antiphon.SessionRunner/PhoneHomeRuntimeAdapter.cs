@@ -12,6 +12,7 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
         RunnerCapabilityFeatures.SessionGenerationV1,
         RunnerCapabilityFeatures.ConditionalMaintenanceInputV1,
         RunnerCapabilityFeatures.CompactionContinuationStopV1,
+        RunnerCapabilityFeatures.TerminalSeatReleaseV1,
         RunnerCapabilityFeatures.WorkspaceRepositoryV1,
         RunnerCapabilityFeatures.WorkspacePublishV1,
         CodexCliVersionProbe.Capability,
@@ -101,4 +102,12 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
 
     public Task<CompactionTailObservation> ObserveCompactionAsync(Guid sessionId, CancellationToken ct) =>
         _runtime.ObserveCompactionAsync(sessionId, ct);
+
+    public Task<TerminalSeatObservation> ObserveTerminalSeatAsync(
+        Guid sessionId, TerminalSeatObservationRequest request, CancellationToken ct) =>
+        _runtime.ObserveTerminalSeatAsync(sessionId, request, ct);
+
+    public Task<TerminalSeatReleaseResult> ReleaseTerminalSeatAsync(
+        Guid sessionId, TerminalSeatReleaseRequest request, CancellationToken ct) =>
+        _runtime.ReleaseTerminalSeatAsync(sessionId, request, TimeSpan.FromSeconds(5), ct);
 }
