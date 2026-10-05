@@ -81,6 +81,7 @@ public sealed class AmServiceDeployReadinessTests
             run.ChildOutput.ShouldNotContain(Body, Case.Sensitive, run.Detail);
             run.ChildOutput.ShouldNotContain("c504-response-must-not-leak", Case.Sensitive, run.Detail);
             run.ShellOutput.ShouldBeEmpty(run.Detail);
+            WriteProbeEvidence(run);
         }
     }
 
@@ -133,6 +134,7 @@ public sealed class AmServiceDeployReadinessTests
             SamePath(Path.GetDirectoryName(tool)!, usrBin).ShouldBeTrue(tool);
         }
         tools.Curl.ShouldBe(FindProgram("curl", parentPath));
+        Console.WriteLine($"C1049 tools: curl={tools.Curl}; sh={tools.Sh}; sleep={tools.Sleep}; cygpath={tools.Cygpath}");
 
         var directory = Path.Combine(Path.GetTempPath(), "c1049 path with spaces " + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
@@ -182,7 +184,12 @@ public sealed class AmServiceDeployReadinessTests
         run.LaterCalls.ShouldBeGreaterThan(0, run.Detail);
         run.OuterError.ShouldBeEmpty(run.Detail);
         run.ChildOutput.ShouldContain("REMOTE DEPLOY VERDICT: ok", Case.Sensitive, run.Detail);
+        WriteProbeEvidence(run);
     }
+
+    private static void WriteProbeEvidence(Run run) => Console.WriteLine(
+        $"C1049 probe mode={run.Mode} shell={run.ShellExit} curl=[{string.Join(',', run.CurlExits)}] " +
+        $"sleeps=[{string.Join(',', run.SleepArguments)}] served={run.ServedRequests} beforeTransition={run.RequestsBeforeTransition}");
 
     private static void AssertCurlArguments(Run run)
     {
@@ -337,6 +344,16 @@ public sealed class AmServiceDeployReadinessTests
         private string Endpoint => $"http://127.0.0.1:{((IPEndPoint)_socket.LocalEndPoint!).Port}/api/channels";
         private string JournalPath => Path.Combine(_directory, "journal.txt");
 
+        private List<string> ReadJournal()
+        {
+            if (!File.Exists(JournalPath)) return new List<string>();
+            // Poll the append-only shell journal without denying its writer's open handle.
+            using var stream = new FileStream(JournalPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream);
+            // A partial final line cannot acknowledge a completed attempt.
+            return reader.ReadToEnd().Split('\n').SkipLast(1).Select(line => line.TrimEnd('\r')).ToList();
+        }
+
         public async Task<Run> RunAsync(string caseName, string deploymentScript)
         {
             var tools = ResolveTools(_originalPath, out var toolError)
@@ -415,7 +432,8 @@ public sealed class AmServiceDeployReadinessTests
                     {
                         while (!_stop.IsCancellationRequested)
                         {
-                            if (File.Exists(JournalPath) && initialCodes.Any(code => File.ReadAllLines(JournalPath).Contains($"curl-end|{_refusals}|{code}")))
+                            var journal = ReadJournal();
+                            if (initialCodes.Any(code => journal.Contains($"curl-end|{_refusals}|{code}")))
                             {
                                 _requestsBeforeTransition = Volatile.Read(ref _served);
                                 _requestsBeforeTransition.ShouldBe(_mode == "timeout-ready" ? _refusals : 0, "Socket state before readiness transition");
@@ -443,7 +461,7 @@ public sealed class AmServiceDeployReadinessTests
                 output.ShouldContain("DEPLOY-AM-SERVICE TESTS EXIT CODE: 0", Case.Sensitive);
                 output.ShouldNotContain("FAIL ", Case.Sensitive);
                 var result = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(_directory, "result.json"))).RootElement;
-                var journal = File.Exists(JournalPath) ? File.ReadAllLines(JournalPath).ToList() : new List<string>();
+                var journal = ReadJournal();
                 journal.Any(x => x.StartsWith("unexpected-", StringComparison.Ordinal)).ShouldBeFalse(output);
                 var shellOutput = result.GetProperty("shellOutput").EnumerateArray().Select(x => x.GetString()!).ToArray();
                 return new Run(result.GetProperty("shellExit").GetInt32(), shellOutput,
