@@ -7,6 +7,16 @@ fixtures are retained for release B and excluded from A's nine-row checkpoint ma
 Typed/paste parity peers explicitly use modern and choose unwrapped/wrapped encoding through
 the shared helper; changing the backend alone does not preserve a typed-input experiment.
 
+CARD-1049: `AmServiceDeployReadinessTests` uses native loopback and real curl on
+Windows. The held, non-listening fixture admits raw curl 7/28 on Windows (7 on
+Linux); accepted stalls remain exact 28 and HTTP 503 remains exact 22. Its
+timeout-then-ready case distinguishes accepted requests from delayed refusal.
+Git sh/sleep/cygpath are discovered in one installation's `usr/bin` from supplied
+PATH/Git locations, and only child PATH includes them. Curl is resolved first on
+the original PATH. Missing Git tools fail; do not edit machine PATH or use WSL.
+Run the [plan's exact native lane rows](superpowers/plans/2026-10-04-card-1049-windows-readiness-retry-plan.md#checkpoints)
+through the checkpoint tool; the production readiness deadlines/retries are unchanged.
+
 
 <!-- CARD-0254 preserved source begins -->
 
