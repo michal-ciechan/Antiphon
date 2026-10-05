@@ -122,4 +122,3 @@ Candidate follow-up ideas only, without design or implementation: evaluate CARD-
 next: investigate
 handoff: Resolve the original CPU gap with simultaneous native PID+creation-time and symbolized CPU-stack sampling; correlate the compiler burst with its build/lease, identify the dominant transcript-query callers, and obtain administrator read-only Defender evidence. CARD-0795 is existing context; desktop runaway contention remains unconfirmed.
 artifact: docs/investigations/2026-10-05-card-0795-vbcscompiler-shared-compiler-contention-isolated-builds-need-p-usesharedcompilation-false.md
-
