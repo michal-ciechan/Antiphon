@@ -104,6 +104,19 @@ public class TerminalRunnerSeatReleaseTests
             catch (InvalidOperationException) when (cut.Hit) { }
             await f.RestartAsync();
             await f.AttachRecipientAsync(target.AgentSessionId.Value);
+            if (boundary is "delivery-stamp" or "verdict-before")
+            {
+                // An interrupted Sent claim is deliberately invisible to retyping until the
+                // ordinary confirm + grace + clock-tolerance window expires. Preserve it,
+                // then advance the injected clock; never change the production window.
+                var interrupted = (await f.AnswerQueueAsync())!;
+                interrupted.Status.ShouldBe(QueuedMessageStatus.Sent, boundary);
+                interrupted.DeliveryVerdict.ShouldBeNull(boundary);
+                var settings = f.Harness.Provider.GetRequiredService<IOptions<SupervisionSettings>>().Value.DeliveryVerification;
+                f.Clock.Advance(TimeSpan.FromSeconds(settings.TranscriptConfirmTimeoutSeconds
+                    + settings.PostFailureConfirmGraceSeconds
+                    + settings.UnobservableBaselineConfirmClockToleranceSeconds).Add(TimeSpan.FromTicks(1)));
+            }
             await f.FlushAsync(target.AgentSessionId.Value);
             await f.DispatchAsync();
             if (boundary == "complete-before") await f.DispatchAsync();
