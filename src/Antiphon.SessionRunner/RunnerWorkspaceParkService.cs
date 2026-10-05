@@ -154,7 +154,7 @@ public sealed class RunnerWorkspaceParkService(RunnerWorkspaceService workspace)
         return (common, null);
     }
 
-    private async Task<(string? Sha, WorkspaceParkResult? Failure)> InspectSourceAsync(
+    internal async Task<(string? Sha, WorkspaceParkResult? Failure)> InspectSourceAsync(
         string path, WorkspaceParkBinding binding, CancellationToken ct)
     {
         var symbolic = await workspace.GitAsync(path, ct, "symbolic-ref", "-q", "HEAD");
