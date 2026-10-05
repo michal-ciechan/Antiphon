@@ -2408,7 +2408,8 @@ public sealed class RemoteScriptContractTests
 
         // The migration case, run for real: an older stack.env with no identity values and no
         // file. The compose stub refuses `up` exactly as the required bind mount would.
-        var output = LinuxShell(IdentityHarness(text, "case_persistent_restart", "ensure_runner_codex_home") + CodexHomeLines(text) + """
+        var output = LinuxShell(IdentityHarness(text, "case_persistent_restart", "ensure_runner_codex_home", "ensure_runner_github_token_dir")
+            + CodexHomeLines(text) + GithubTokenLines(text) + """
             C604_SERVER_ORIGIN=http://127.0.0.1:9
             printf 'SOURCE_SHA12=0123456789ab\n' > "$SERVER2_ENV"
             require_lane() { :; }
@@ -2427,6 +2428,7 @@ public sealed class RemoteScriptContractTests
                     stop)
                         if [ -f "$GIT_IDENTITY_PATH" ]; then echo "stop identity=present"; else echo "stop identity=missing"; fi >> "$CASE_DIR/calls.txt"
                         if [ -d "$CODEX_HOME_PATH" ] && [ "$(stat -c %a "$CODEX_HOME_PATH")" = 700 ]; then echo "stop codex-home=present"; else echo "stop codex-home=missing"; fi >> "$CASE_DIR/calls.txt"
+                        if [ -d "$GITHUB_TOKEN_DIR_PATH" ] && [ "$(stat -c %a "$GITHUB_TOKEN_DIR_PATH")" = 700 ]; then echo "stop github-token-dir=present"; else echo "stop github-token-dir=missing"; fi >> "$CASE_DIR/calls.txt"
                         ;;
                     up)
                         if [ ! -f "$GIT_IDENTITY_PATH" ] || [ -L "$GIT_IDENTITY_PATH" ]; then echo "up mount-missing" >> "$CASE_DIR/calls.txt"; return 1; fi
@@ -2442,6 +2444,7 @@ public sealed class RemoteScriptContractTests
             """);
         output.ShouldContain("stop identity=present");
         output.ShouldContain("stop codex-home=present", customMessage: "the Codex home is ensured before the older runner stops");
+        output.ShouldContain("stop github-token-dir=present", customMessage: "the token directory is ensured before the older runner stops");
         output.ShouldNotContain("up mount-missing");
         output.ShouldContain("up ok");
         output.ShouldContain("RESULT accepted=true diagnosis=\n");
@@ -2552,6 +2555,53 @@ public sealed class RemoteScriptContractTests
         Order(restart, "ensure_runner_codex_home", "compose_host stop").ShouldBeTrue();
     }
 
+    [Test]
+    public void Deploy_parent_creates_the_github_token_directory_without_reading_it()
+    {
+        var text = Remote();
+        text.ShouldContain("GITHUB_TOKEN_DIR_PATH=\"$SERVER2_ROOT/secrets/github-token\"\n");
+        text.ShouldContain("GITHUB_TOKEN_DIR_OWNER=\"1654:1654\"\n");
+        var ensure = Block(text, "ensure_runner_github_token_dir");
+        var lines = Commands(ensure);
+        var symlink = lines.IndexOf("if [ -L \"$GITHUB_TOKEN_DIR_PATH\" ]; then");
+        symlink.ShouldBeGreaterThan(0);
+        lines[symlink + 1].ShouldBe("write_result false GithubTokenDirPathIsSymlink 2");
+        ensure.ShouldContain("write_result false GithubTokenDirPathIsNotDirectory 2");
+        var create = lines.IndexOf("if [ ! -e \"$GITHUB_TOKEN_DIR_PATH\" ]; then");
+        create.ShouldBeGreaterThan(symlink);
+        lines[create + 1].ShouldBe(
+            "sudo -n install -d -o \"${GITHUB_TOKEN_DIR_OWNER%:*}\" -g \"${GITHUB_TOKEN_DIR_OWNER#*:}\" -m 0700 \"$GITHUB_TOKEN_DIR_PATH\" 2>> \"$CASE_DIR/command.log\" || write_result false GithubTokenDirCreateFailed 2");
+        lines.FindIndex(line => line.StartsWith("sudo -n install ", StringComparison.Ordinal)
+            || line.Contains("sudo -n chown ", StringComparison.Ordinal) || line.Contains("sudo -n chmod ", StringComparison.Ordinal))
+            .ShouldBeGreaterThan(symlink);
+        ensure.ShouldContain("sudo -n chown -h \"$GITHUB_TOKEN_DIR_OWNER\" \"$GITHUB_TOKEN_DIR_PATH\"");
+        ensure.ShouldContain("sudo -n chmod 0700 \"$GITHUB_TOKEN_DIR_PATH\"");
+        ensure.ShouldNotContain(" -R ");
+        ensure.ShouldNotContain("rm ");
+        ensure.ShouldContain("if sudo -n test -s \"$GITHUB_TOKEN_DIR_PATH/token\"; then");
+        ensure.ShouldContain("printf 'true\\n' > \"$CASE_DIR/github-token-present.txt\"");
+        ensure.ShouldContain("printf 'false\\n' > \"$CASE_DIR/github-token-present.txt\"");
+        ensure.ShouldContain("WARN GithubTokenAbsent");
+        foreach (var line in Commands(text).Where(line => line.Contains("$GITHUB_TOKEN_DIR_PATH", StringComparison.Ordinal)))
+            Regex.IsMatch(line, @"(^|[\s;|&(])(cat|cp|mv|ls|head|tail|less|more|grep|sed|awk|tar|rsync|sha256sum|md5sum|base64|xxd|od|strings|scp)\s|<\s*""\$GITHUB_TOKEN_DIR_PATH")
+                .ShouldBeFalse("the token directory is never read: " + line);
+        Block(text, "ensure_runner_boot_files").ShouldContain("ensure_runner_github_token_dir");
+        foreach (var (deployName, composeName) in new[] { ("case_deploy_parent", "compose_host"), ("case_deploy_temp_runner", "compose_temp") })
+        {
+            var deploy = Block(text, deployName);
+            Order(deploy, "ensure_runner_boot_files", "seed_runner_checkout").ShouldBeTrue();
+            Order(deploy, "ensure_runner_boot_files", composeName + " up -d").ShouldBeTrue();
+            deploy.ShouldContain("RUNNER_GITHUB_TOKEN_DIR=$GITHUB_TOKEN_DIR_PATH\n");
+            Block(text, composeName).ShouldContain("RUNNER_GITHUB_TOKEN_DIR=\"$GITHUB_TOKEN_DIR_PATH\" \\");
+        }
+        Order(Block(text, "case_persistent_restart"), "ensure_runner_github_token_dir", "compose_host stop").ShouldBeTrue();
+        Block(text, "c1008_compose_model").ShouldContain("--arg token \"$GITHUB_TOKEN_DIR_PATH\"");
+        Block(text, "c1008_compose_model").ShouldContain("bind($token;\"/run/antiphon/github-token\";false;false)");
+        Block(text, "c849_fixture_compose").ShouldContain("RUNNER_GITHUB_TOKEN_DIR=$dir/github-token\n");
+        Commands(EnsureDirsBody(text)).Single(line => line.Contains("-prune", StringComparison.Ordinal))
+            .ShouldContain("-path \"$GITHUB_TOKEN_DIR_PATH\"");
+    }
+
     // The same function, run for real over a throwaway server2 root with sudo reduced to a plain
     // call and the owner reduced to the current uid. The sentinel is not a credential.
     [Test]
@@ -2631,7 +2681,7 @@ public sealed class RemoteScriptContractTests
         ensure.ShouldNotContain(line => line.Contains("chown -R", StringComparison.Ordinal)
             && line.Contains("$SERVER2_ROOT", StringComparison.Ordinal), "a recursive chown over the server2 root");
         var reset = ensure.Single(line => line.Contains("-prune", StringComparison.Ordinal));
-        reset.ShouldBe("sudo -n find \"$SERVER2_ROOT\" \\( -path \"$CODEX_HOME_PATH\" -o -path \"$SERVER2_ROOT/cache\" \\) -prune -o -exec chown -h mc:mc {} +");
+        reset.ShouldBe("sudo -n find \"$SERVER2_ROOT\" \\( -path \"$CODEX_HOME_PATH\" -o -path \"$GITHUB_TOKEN_DIR_PATH\" -o -path \"$SERVER2_ROOT/cache\" \\) -prune -o -exec chown -h mc:mc {} +");
 
         var visit = reset.Replace("sudo -n ", "", StringComparison.Ordinal)
             .Replace("-exec chown -h mc:mc {} +", "-exec printf 'visit %s\\n' {} +", StringComparison.Ordinal);
@@ -2640,7 +2690,9 @@ public sealed class RemoteScriptContractTests
             "trap 'rm -rf \"$root\"' EXIT",
             "SERVER2_ROOT=\"$root/s2\"",
             text.Replace("\r\n", "\n").Split('\n').Single(line => line.StartsWith("CODEX_HOME_PATH=", StringComparison.Ordinal)),
+            text.Replace("\r\n", "\n").Split('\n').Single(line => line.StartsWith("GITHUB_TOKEN_DIR_PATH=", StringComparison.Ordinal)),
             "mkdir -p \"$CODEX_HOME_PATH/sessions\"",
+            "mkdir -p \"$GITHUB_TOKEN_DIR_PATH\"",
             "touch \"$SERVER2_ROOT/secrets/gitconfig\" \"$CODEX_HOME_PATH/auth.json\"",
             visit,
             "") + "\n").Replace("\r\n", "\n");
@@ -2648,6 +2700,7 @@ public sealed class RemoteScriptContractTests
         output.ShouldContain("/s2/secrets\n");
         output.ShouldContain("/s2/secrets/gitconfig\n");
         output.ShouldNotContain("/s2/secrets/codex");
+        output.ShouldNotContain("/s2/secrets/github-token");
     }
 
     [Test]
@@ -3154,7 +3207,7 @@ public sealed class RemoteScriptContractTests
             SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; HOST_PROJECT=main
             C604_SERVER_ORIGIN=https://example.invalid
             DEPLOY_KEY=x; PHONE_HOME_SECRET=x; CLAUDE_OAUTH_TOKEN_PATH=x
-            GIT_IDENTITY_PATH=x; CODEX_HOME_PATH=x
+            GIT_IDENTITY_PATH=x; CODEX_HOME_PATH=x; GITHUB_TOKEN_DIR_PATH=x
             RUNNER_GIT_USER_NAME=test; RUNNER_GIT_USER_EMAIL=test@example.invalid
             ensure_checkout() { :; }; ensure_runner_boot_files() { :; }
             retire_c590_leftovers() { :; }; broker_sha12() { echo aaaaaaaaaaaa; }
@@ -3431,7 +3484,7 @@ public sealed class RemoteScriptContractTests
             C604_SERVER_ORIGIN=https://example.invalid
             HOST_PROJECT=main; TEMP_PROJECT=temp; LANE=host
             DEPLOY_KEY=x; PHONE_HOME_SECRET=x; CLAUDE_OAUTH_TOKEN_PATH=x
-            GIT_IDENTITY_PATH=x; CODEX_HOME_PATH=x
+            GIT_IDENTITY_PATH=x; CODEX_HOME_PATH=x; GITHUB_TOKEN_DIR_PATH=x
             RUNNER_GIT_USER_NAME=test; RUNNER_GIT_USER_EMAIL=test@example.invalid
             require_lane() { :; }; ensure_checkout() { :; }
             ensure_runner_boot_files() { :; }; retire_c590_leftovers() { :; }
@@ -3504,7 +3557,7 @@ public sealed class RemoteScriptContractTests
             HOST_PROJECT=main; TEMP_PROJECT=temp; LANE=host; CASE=deploy-temp-runner
             C604_SERVER_ORIGIN=https://example.invalid
             DEPLOY_KEY=x; PHONE_HOME_SECRET=x; CLAUDE_OAUTH_TOKEN_PATH=x
-            GIT_IDENTITY_PATH=x; CODEX_HOME_PATH=x
+            GIT_IDENTITY_PATH=x; CODEX_HOME_PATH=x; GITHUB_TOKEN_DIR_PATH=x
             require_lane() { [ "$1" = host ]; }
             write_result() { printf 'DIAGNOSIS=%s\n' "$2"; exit "$3"; }
             realpath() {
@@ -4591,6 +4644,11 @@ public sealed class RemoteScriptContractTests
                 "CODEX_HOME_OWNER=\"$(id -u):$(id -g)\"",
             }))
         + "\n";
+
+    private static string GithubTokenLines(string text) =>
+        string.Join('\n', text.Replace("\r\n", "\n").Split('\n')
+            .Where(line => line.StartsWith("GITHUB_TOKEN_DIR_", StringComparison.Ordinal)))
+        + "\nGITHUB_TOKEN_DIR_OWNER=\"$(id -u):$(id -g)\"\n";
 
     // The real identity variables and functions, over a throwaway server2 root, with write_result
     // reduced to a printed verdict. Extra functions are extracted from the script verbatim.

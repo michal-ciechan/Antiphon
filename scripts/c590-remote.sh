@@ -120,7 +120,8 @@ ensure_dirs() {
         # CARD-0660 (amended): the Codex home under the server2 root belongs to uid 1654 and holds
         # the runner's live sign-in. Handing it to mc would lock the runner out of it (0700), and
         # walking it would read its entries, so the reset prunes it: ensure_runner_codex_home owns it.
-        sudo -n find "$SERVER2_ROOT" \( -path "$CODEX_HOME_PATH" -o -path "$SERVER2_ROOT/cache" \) -prune -o -exec chown -h mc:mc {} +
+        # The GitHub token directory has the same custody: never traverse or re-own its token.
+        sudo -n find "$SERVER2_ROOT" \( -path "$CODEX_HOME_PATH" -o -path "$GITHUB_TOKEN_DIR_PATH" -o -path "$SERVER2_ROOT/cache" \) -prune -o -exec chown -h mc:mc {} +
     fi
     mkdir -p "$CASE_DIR" "$EVIDENCE_ROOT"
     cat > /work/test-evidence/current.env <<EOF
@@ -914,6 +915,9 @@ GIT_IDENTITY_MOUNT="/run/antiphon/gitconfig"
 # the runner uid at 0700 and nothing here ever reads, lists or copies what is inside it.
 CODEX_HOME_PATH="$SERVER2_ROOT/secrets/codex"
 CODEX_HOME_OWNER="1654:1654"
+# CARD-0817: one operator-provisioned token directory shared by both runners, read-only in each.
+GITHUB_TOKEN_DIR_PATH="$SERVER2_ROOT/secrets/github-token"
+GITHUB_TOKEN_DIR_OWNER="1654:1654"
 # CARD-0631 D-10: the anonymous origin RunnerWorkspaceService clones from.
 RUNNER_CHECKOUT_ORIGIN="https://github.com/michal-ciechan/Antiphon.git"
 RUNNER_CHECKOUT_DEFAULT="/work/repos/antiphon"
@@ -942,6 +946,7 @@ compose_host() {
     CLAUDE_OAUTH_TOKEN_FILE="$CLAUDE_OAUTH_TOKEN_PATH" \
     RUNNER_GIT_IDENTITY_FILE="$GIT_IDENTITY_PATH" \
     RUNNER_CODEX_HOME_DIR="$CODEX_HOME_PATH" \
+    RUNNER_GITHUB_TOKEN_DIR="$GITHUB_TOKEN_DIR_PATH" \
     PHONE_HOME_SERVER_ORIGIN="${C604_SERVER_ORIGIN:?}" \
     SOURCE_SHA12="$sha12" \
     BUILD_SLOTS_SHA12="$(broker_sha12)" \
@@ -962,6 +967,7 @@ compose_temp() {
     CLAUDE_OAUTH_TOKEN_FILE="$CLAUDE_OAUTH_TOKEN_PATH" \
     RUNNER_GIT_IDENTITY_FILE="$GIT_IDENTITY_PATH" \
     RUNNER_CODEX_HOME_DIR="$CODEX_HOME_PATH" \
+    RUNNER_GITHUB_TOKEN_DIR="$GITHUB_TOKEN_DIR_PATH" \
     PHONE_HOME_SERVER_ORIGIN="${C604_SERVER_ORIGIN:?}" \
     SOURCE_SHA12="${SHA:0:12}" \
     SOURCE_REVISION="$SHA" \
@@ -1154,6 +1160,38 @@ ensure_runner_codex_home() {
     fi
 }
 
+# CARD-0817: create only the directory. The operator owns provisioning/rotation of the token.
+ensure_runner_github_token_dir() {
+    if [ "$LANE" != "host" ]; then
+        write_result false GithubTokenDirHostLaneOnly 2
+    fi
+    if [ -L "$GITHUB_TOKEN_DIR_PATH" ]; then
+        write_result false GithubTokenDirPathIsSymlink 2
+    fi
+    if [ -e "$GITHUB_TOKEN_DIR_PATH" ] && [ ! -d "$GITHUB_TOKEN_DIR_PATH" ]; then
+        write_result false GithubTokenDirPathIsNotDirectory 2
+    fi
+    if [ ! -e "$GITHUB_TOKEN_DIR_PATH" ]; then
+        sudo -n install -d -o "${GITHUB_TOKEN_DIR_OWNER%:*}" -g "${GITHUB_TOKEN_DIR_OWNER#*:}" -m 0700 "$GITHUB_TOKEN_DIR_PATH" 2>> "$CASE_DIR/command.log" || write_result false GithubTokenDirCreateFailed 2
+    fi
+    if [ -L "$GITHUB_TOKEN_DIR_PATH" ]; then
+        write_result false GithubTokenDirPathIsSymlink 2
+    fi
+    if [ ! -d "$GITHUB_TOKEN_DIR_PATH" ]; then
+        write_result false GithubTokenDirPathIsNotDirectory 2
+    fi
+    { sudo -n chown -h "$GITHUB_TOKEN_DIR_OWNER" "$GITHUB_TOKEN_DIR_PATH" \
+        && sudo -n chmod 0700 "$GITHUB_TOKEN_DIR_PATH"; } 2>> "$CASE_DIR/command.log" \
+        || write_result false GithubTokenDirOwnershipFailed 2
+    if sudo -n test -s "$GITHUB_TOKEN_DIR_PATH/token"; then
+        printf 'true\n' > "$CASE_DIR/github-token-present.txt"
+    else
+        printf 'false\n' > "$CASE_DIR/github-token-present.txt"
+        printf 'WARN GithubTokenAbsent: secondary repositories will refuse the push probe until the operator provisions the token (docs/agent-credentials.md)\n' \
+            | tee -a "$CASE_DIR/command.log" >&2
+    fi
+}
+
 # CARD-0631 D-9 (amended). The mounted file must be the identity uid 1654 actually commits with:
 # its origin must be the mount, so no system file or leftover stopgap is what git resolved.
 verify_runner_git_identity() {
@@ -1286,6 +1324,7 @@ ensure_runner_boot_files() {
     ensure_runner_git_identity
     # CARD-0660: before state-init runs (checkout seed, below) or the runner binds it.
     ensure_runner_codex_home
+    ensure_runner_github_token_dir
 }
 
 build_server2_images() {
@@ -2701,6 +2740,7 @@ c849_fixture_model_fault() {
 c849_fixture_compose() {
     local dir="$SERVER2_ROOT/compose" env="$SERVER2_ROOT/compose/fixture.env" project file model
     mkdir -p "$dir"
+    mkdir -p "$dir/github-token"
     for file in token gitconfig codex-home deploy-key phone-home grok-home; do
         : > "$dir/$file"
     done
@@ -2711,6 +2751,7 @@ PHONE_HOME_SERVER_ORIGIN=http://127.0.0.1:9
 CLAUDE_OAUTH_TOKEN_FILE=$dir/token
 RUNNER_GIT_IDENTITY_FILE=$dir/gitconfig
 RUNNER_CODEX_HOME_DIR=$dir/codex-home
+RUNNER_GITHUB_TOKEN_DIR=$dir/github-token
 ANTIPHON_DEPLOY_KEY_FILE=$dir/deploy-key
 PHONE_HOME_SECRET_FILE=$dir/phone-home
 RUNNER_GROK_STORE_DIR=$dir/grok-home
@@ -3801,7 +3842,7 @@ c1008_compose_model() {
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then model="$(compose_temp config --format json 2>/dev/null)"
     else model="$(compose_host config --format json 2>/dev/null)"; fi || c1008_refuse RecycleComposeMismatch
     model="$(printf '%s' "$model" | jq -ce --arg claude "$CLAUDE_OAUTH_TOKEN_PATH" --arg git "$GIT_IDENTITY_PATH" \
-        --arg codex "$CODEX_HOME_PATH" --arg grok "$grok" --arg key "$DEPLOY_KEY" --arg phone "$PHONE_HOME_SECRET" \
+        --arg codex "$CODEX_HOME_PATH" --arg token "$GITHUB_TOKEN_DIR_PATH" --arg grok "$grok" --arg key "$DEPLOY_KEY" --arg phone "$PHONE_HOME_SECRET" \
         --argjson temp "$([ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && echo true || echo false)" '
       def boolfield($k): (has($k)|not) or (.[$k]|type)=="boolean";
       def allowed($approved): (keys - $approved | length)==0;
@@ -3818,6 +3859,7 @@ c1008_compose_model() {
          volume("runner-nuget-scratch";"/var/cache/antiphon/nuget-scratch";true),
          volume("runner-npm-content";"/home/app/.npm/_cacache";true),
          bind($claude;"/run/antiphon/claude-oauth-token";false;true),
+         bind($token;"/run/antiphon/github-token";false;false),
          bind($git;"/run/antiphon/gitconfig";false;true),bind($codex;"/state/codex";true;false)] +
          if $temp then [bind($grok;"/state/grok";true;false)] else [] end)} as $expected |
       (reduce ["state-init","session-runner"][] as $service ({};
@@ -4585,6 +4627,7 @@ PHONE_HOME_SECRET_FILE=$PHONE_HOME_SECRET
 CLAUDE_OAUTH_TOKEN_FILE=$CLAUDE_OAUTH_TOKEN_PATH
 RUNNER_GIT_IDENTITY_FILE=$GIT_IDENTITY_PATH
 RUNNER_CODEX_HOME_DIR=$CODEX_HOME_PATH
+RUNNER_GITHUB_TOKEN_DIR=$GITHUB_TOKEN_DIR_PATH
 RUNNER_GIT_USER_NAME=$RUNNER_GIT_USER_NAME
 RUNNER_GIT_USER_EMAIL=$RUNNER_GIT_USER_EMAIL
 BUILD_SLOTS_SHA12=$pinned_broker_sha12
@@ -4780,6 +4823,7 @@ PHONE_HOME_SECRET_FILE=$PHONE_HOME_SECRET
 CLAUDE_OAUTH_TOKEN_FILE=$CLAUDE_OAUTH_TOKEN_PATH
 RUNNER_GIT_IDENTITY_FILE=$GIT_IDENTITY_PATH
 RUNNER_CODEX_HOME_DIR=$CODEX_HOME_PATH
+RUNNER_GITHUB_TOKEN_DIR=$GITHUB_TOKEN_DIR_PATH
 RUNNER_GROK_STORE_DIR=$RUNNER_GROK_STORE_DIR
 BUILD_SLOTS_SHA12=$(broker_sha12)
 EOF
@@ -5183,6 +5227,7 @@ case_persistent_restart() {
     # ensured (created when missing, refused when unusable) while the old runner is still up.
     ensure_runner_git_identity
     ensure_runner_codex_home
+    ensure_runner_github_token_dir
 
     compose_host stop >> "$CASE_DIR/command.log" 2>&1 || write_result false StopFailed 2
     if ! compose_host up -d --no-build >> "$CASE_DIR/command.log" 2>&1; then

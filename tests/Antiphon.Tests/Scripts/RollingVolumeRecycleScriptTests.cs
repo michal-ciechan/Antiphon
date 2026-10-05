@@ -644,6 +644,7 @@ internal sealed class C1008HostFixture : IDisposable
             SERVER2_ENV='{{Root}}/main.env'; SERVER2_TEMP_ENV='{{Root}}/temp.env'; mkdir -p "$CASE_DIR"
             DEPLOY_KEY='{{Root}}/deploy-key'; PHONE_HOME_SECRET='{{Root}}/phone-home'
             CLAUDE_OAUTH_TOKEN_PATH='{{Root}}/claude-token'; GIT_IDENTITY_PATH='{{Root}}/gitconfig'; CODEX_HOME_PATH='{{Root}}/codex'; RUNNER_GROK_STORE_DIR='{{Root}}/grok'
+            GITHUB_TOKEN_DIR_PATH='{{Root}}/github-token'
             RUNNER_GIT_USER_NAME=Fixture; RUNNER_GIT_USER_EMAIL=fixture@example.invalid
             C1008_OPERATION=c100800000000000000000000000000000001; C1008_CONTEXT={{(hostCase == "retire-temp-containers" ? "''" : "default")}}; C1008_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1
             C994_VERSION=1; C994_OPERATION=c99400000000000000000000000000000001; C994_PROJECT=antiphon-runner-temp

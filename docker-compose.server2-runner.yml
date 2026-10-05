@@ -60,6 +60,7 @@ services:
       PhoneHome__SecretPath: /run/antiphon/phone-home
       PhoneHome__StoreIdPath: /state/runner-store-id
       PhoneHome__AllowedCwd: /work
+      PhoneHome__PushCredentialPolicyPath: /run/antiphon/push-allow-list
       PhoneHome__Capacity: "10"
       # CARD-0589 D-4: the host build/test driver budget the runner brokers at /build-slots. Ten seats
       # share four concurrent build or test drivers at six MSBuild nodes each, refused below 16 GB
@@ -133,6 +134,8 @@ services:
       # deploy-parent creates on server2 when missing and never overwrites. Never baked into the
       # image. Read-only: a session cannot rewrite the identity every later commit uses.
       - ${RUNNER_GIT_IDENTITY_FILE:?RUNNER_GIT_IDENTITY_FILE is required}:/run/antiphon/gitconfig:ro
+      # CARD-0817: a directory bind makes an atomic token rotation visible on the next open.
+      - ${RUNNER_GITHUB_TOKEN_DIR:?RUNNER_GITHUB_TOKEN_DIR is required}:/run/antiphon/github-token:ro
       # CARD-0660 (amended): the Codex home, where the operator's ChatGPT sign-in lives. A host
       # DIRECTORY (secrets/codex, uid 1654, 0700, created by deploy-parent), read-write and never a
       # single-file mount: Codex rewrites its credential file by rename on every token refresh,

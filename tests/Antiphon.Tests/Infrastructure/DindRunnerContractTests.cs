@@ -182,6 +182,7 @@ public sealed class DindRunnerContractTests
                          "DEPLOY_KEY_SOURCE", "DEPLOY_KEY_TARGET",
                          "PHONE_HOME_SECRET_SOURCE", "PHONE_HOME_SECRET_TARGET",
                          "CLAUDE_OAUTH_TOKEN_SOURCE", "CLAUDE_CODE_OAUTH_TOKEN", "claude_oauth_token",
+                         "GITHUB_TOKEN_SOURCE",
                      })
                 trimmed.Contains(secret, StringComparison.Ordinal)
                     .ShouldBeFalse("entrypoint line prints a secret path's contents: " + trimmed);
@@ -252,14 +253,105 @@ public sealed class DindRunnerContractTests
     }
 
     [Test]
-    public void Gitconfig_pushes_over_ssh_only()
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Gitconfig_pushes_antiphon_over_ssh_and_other_repositories_over_https()
     {
         var text = GitConfig();
         text.ShouldContain("sshCommand = ssh -F /etc/antiphon/ssh_config");
-        text.ShouldContain("pushInsteadOf = https://github.com/");
+        const string primary = "https://github.com/michal-ciechan/Antiphon.git";
+        text.ShouldContain("[url \"git@github.com:michal-ciechan/Antiphon.git\"]");
+        text.ShouldContain("pushInsteadOf = " + primary + "\n");
+        Read("src/Antiphon.SessionRunner/RunnerWorkspaceService.cs")
+            .ShouldContain("DefaultCloneSource = \"" + primary + "\"");
+        text.ShouldContain("[credential \"https://github.com\"]");
+        text.ShouldContain("helper = /usr/local/bin/antiphon-github-credential");
+        text.ShouldContain("useHttpPath = true");
+        text.ShouldContain("username = x-access-token");
         // insteadOf (without "push") would send anonymous fetches over SSH too.
         text.Replace("pushInsteadOf", "", StringComparison.Ordinal)
             .Contains("insteadOf", StringComparison.Ordinal).ShouldBeFalse("fetches stay anonymous HTTPS");
+        var root = Directory.CreateTempSubdirectory("c0817-rewrite-").FullName;
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "empty.gitconfig"), "");
+            await Git(root, "init");
+            await Git(root, "remote", "add", "origin", primary);
+            foreach (var (url, expected) in new[]
+            {
+                (primary, "git@github.com:michal-ciechan/Antiphon.git"),
+                ("https://github.com/michal-ciechan/antiphon.git", "https://github.com/michal-ciechan/antiphon.git"),
+                ("https://github.com/michal-ciechan/markdown-package.git", "https://github.com/michal-ciechan/markdown-package.git")
+            })
+            {
+                await Git(root, "remote", "set-url", "origin", url);
+                (await Git(root, "remote", "get-url", "--push", "origin")).Trim().ShouldBe(expected);
+                (await Git(root, "remote", "get-url", "origin")).Trim().ShouldBe(url);
+            }
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Test]
+    public void Entrypoint_notes_github_token_presence_without_printing_it()
+    {
+        var text = Entrypoint();
+        text.ShouldContain("GITHUB_TOKEN_SOURCE=\"$RUNTIME_DIR/github-token/token\"");
+        text.ShouldContain("if [ -s \"$GITHUB_TOKEN_SOURCE\" ]; then");
+        text.ShouldContain("C604_ENTRYPOINT_NOTE GithubTokenPresent");
+        text.ShouldContain("C604_ENTRYPOINT_NOTE GithubTokenAbsent");
+        text.ShouldNotContain("refuse GithubToken");
+        Order(text, "GitIdentityUnusable", "C604_ENTRYPOINT_NOTE GithubTokenPresent").ShouldBeTrue();
+        foreach (var line in text.Split('\n').Where(line => line.Contains("GITHUB_TOKEN_SOURCE", StringComparison.Ordinal)))
+            System.Text.RegularExpressions.Regex.IsMatch(line, @"\b(cat|tr|install|export)\b").ShouldBeFalse();
+        text.All(c => c <= 127).ShouldBeTrue();
+        var helper = Read("docker/session-runner-grok/github-credential.sh");
+        helper.All(c => c <= 127).ShouldBeTrue();
+        var image = DockerStackDocuments.Stages(Read("docker/session-runner-grok/Dockerfile"))
+            .Single(stage => stage.Name == "session-testing").Body;
+        image.ShouldContain("COPY docker/session-runner-grok/github-credential.sh /usr/local/bin/antiphon-github-credential");
+        image.ShouldContain("chown root:root /usr/local/bin/antiphon-github-credential");
+        image.ShouldContain("chmod 0755 /usr/local/bin/antiphon-github-credential");
+        image.ShouldContain("sh -n /usr/local/bin/antiphon-github-credential");
+    }
+
+    [Test]
+    public void Server2_compose_binds_the_github_token_directory_read_only()
+    {
+        var compose = Server2Compose();
+        var runner = DockerStackDocuments.Service(compose, "session-runner");
+        DockerStackDocuments.List(runner, "volumes").ShouldContain(
+            "${RUNNER_GITHUB_TOKEN_DIR:?RUNNER_GITHUB_TOKEN_DIR is required}:/run/antiphon/github-token:ro");
+        DockerStackDocuments.Env(runner, "PhoneHome__PushCredentialPolicyPath").ShouldBe("/run/antiphon/push-allow-list");
+        DockerStackDocuments.Service(compose, "state-init").ShouldNotContain("RUNNER_GITHUB_TOKEN_DIR");
+        var temp = Read("docker-compose.server2-runner.temp.yml");
+        temp.ShouldNotContain("RUNNER_GITHUB_TOKEN_DIR");
+        temp.ShouldNotContain("PhoneHome__PushCredentialPolicyPath");
+        Read("docker/stack.env.example").ShouldContain("RUNNER_GITHUB_TOKEN_DIR=/home/mc/antiphon-server2/secrets/github-token");
+        foreach (var yaml in new[] { compose, temp })
+            System.Text.RegularExpressions.Regex.IsMatch(yaml, @"(?m)^\s*(GH_TOKEN|GITHUB_TOKEN)\s*[:=]").ShouldBeFalse();
+    }
+
+    private static async Task<string> Git(string root, params string[] args)
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = root, UseShellExecute = false,
+            RedirectStandardOutput = true, RedirectStandardError = true
+        };
+        foreach (var arg in args) start.ArgumentList.Add(arg);
+        start.Environment.Remove("GIT_CONFIG_NOSYSTEM");
+        start.Environment["GIT_CONFIG_SYSTEM"] = Path.Combine(DockerStackDocuments.RepoRoot, "docker/session-runner-grok/gitconfig");
+        start.Environment["GIT_CONFIG_GLOBAL"] = Path.Combine(root, "empty.gitconfig");
+        start.Environment["GIT_CONFIG_COUNT"] = "0";
+        start.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        using var process = Process.Start(start)!;
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        try { await process.WaitForExitAsync(timeout.Token); }
+        catch { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); throw; }
+        process.ExitCode.ShouldBe(0, await stderr);
+        return await stdout;
     }
 
     // CARD-0631 V-6, D-9 as amended by the operator: the runner's commit identity is a FILE on
