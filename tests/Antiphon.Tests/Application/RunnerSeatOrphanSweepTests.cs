@@ -52,7 +52,16 @@ public class RunnerSeatOrphanSweepTests
         await using var f = await RunnerSeatReleaseFixture.CreateAsync();
         f.Harness.EventBus.Clear();
         f.Harness.EventBus.ThrowOnceOnEvent = "AgentChanged";
-        var id = (await f.ReleaseAsync())!.Value;
+        var committedBeforePublish = false;
+        var id = (await f.ReleaseAsync(async (cut, _) =>
+        {
+            if (cut != "BeforeAttentionPublish") return;
+            await using var read = f.Db();
+            (await read.RunnerSeatReleases.SingleAsync()).State.ShouldBe(RunnerSeatReleaseState.Confirmed);
+            (await read.AgentSessions.SingleAsync(s => s.Id == f.SessionId)).Status.ShouldBe(SessionStatus.Stopped);
+            committedBeforePublish = true;
+        }))!.Value;
+        committedBeforePublish.ShouldBeTrue("a separate database context must see the commit before invalidation");
         await using (var db = f.Db())
             (await db.RunnerSeatReleases.SingleAsync()).State.ShouldBe(RunnerSeatReleaseState.Confirmed);
         f.Harness.EventBus.PublishedEvents.ShouldNotContain(e => e.EventName == "AgentChanged");
@@ -92,6 +101,7 @@ public class RunnerSeatOrphanSweepTests
             await using var db = f.Db();
             var ledger = JsonSerializer.Serialize(await db.RunnerSeatReleases.ToListAsync());
             var logs = JsonSerializer.Serialize(f.AttentionLogs.Entries.Select(e => new { e.Message, e.Properties }));
+            logs.ShouldContain("Runner seat release"); // Nonempty release diagnostics, not a vacuous exclusion.
             foreach (var canary in canaries)
             {
                 JsonSerializer.Serialize(items).ShouldNotContain(canary);

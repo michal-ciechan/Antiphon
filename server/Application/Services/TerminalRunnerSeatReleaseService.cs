@@ -30,7 +30,8 @@ public sealed record TerminalRunnerSeatEvidence(
 public sealed class TerminalRunnerSeatReleaseService(
     AppDbContext db, TerminalRunnerSeatReleasePolicy policy, SessionMessageQueueService queue,
     SessionStateStore states, ISessionRunnerDirectory runners, TimeProvider clock,
-    IOptions<TerminalRunnerSeatReleaseOptions> options)
+    IOptions<TerminalRunnerSeatReleaseOptions> options, IEventBus events,
+    ILogger<TerminalRunnerSeatReleaseService> logger)
 {
     internal Func<string, CancellationToken, Task>? BoundaryAsync { get; set; }
 
@@ -140,7 +141,8 @@ public sealed class TerminalRunnerSeatReleaseService(
         else if (session is null)
         {
             releaseId = await RegisterRowlessAsync(runnerId, seat.SessionId, evidence.Request, ct);
-            await AdvanceAsync(releaseId.Value, evidence.Request, ct);
+            try { await AdvanceAsync(releaseId.Value, evidence.Request, ct); }
+            finally { await PublishAttentionAsync(releaseId.Value, ct); }
         }
         else return new(runnerId, seat.SessionId, null, "Owned");
         if (releaseId is null) return new(runnerId, seat.SessionId, null, "Owned");
@@ -318,10 +320,62 @@ public sealed class TerminalRunnerSeatReleaseService(
         Guid taskId, TerminalSeatObservationRequest observation, CancellationToken ct)
     {
         var reservation = await RegisterAndReserveAsync(taskId, observation, ct);
-        if (reservation.ReleaseId is Guid releaseId
-            && reservation.Decision is TerminalRunnerSeatDecision.Reserved or TerminalRunnerSeatDecision.AlreadyReserved)
-            await AdvanceAsync(releaseId, observation, ct);
+        if (reservation.ReleaseId is Guid releaseId)
+        {
+            try
+            {
+                if (reservation.Decision is TerminalRunnerSeatDecision.Reserved or TerminalRunnerSeatDecision.AlreadyReserved)
+                    await AdvanceAsync(releaseId, observation, ct);
+            }
+            finally { await PublishAttentionAsync(releaseId, ct); }
+        }
         return reservation.ReleaseId;
+    }
+
+    /// <summary>Recover committed audits and missed attention invalidations. This boundary is
+    /// intentionally independent of AutomaticEnabled: it cannot discover, qualify or send a
+    /// release. S4b connects it to the existing scheduled reconciliation entry point.</summary>
+    public async Task ReconcileAttentionAsync(CancellationToken ct)
+    {
+        if (db.Database.CurrentTransaction is not null || System.Transactions.Transaction.Current is not null) return;
+        var since = clock.GetUtcNow().UtcDateTime.AddHours(-24);
+        // Republish the same durable identity on every reconciliation. There is no delivery
+        // stamp to lose or advance before publication, and no second alert/outbox sink.
+        var ids = await db.RunnerSeatReleases.AsNoTracking()
+            .Where(r => r.State != RunnerSeatReleaseState.Confirmed || r.ConfirmedAt == null || r.ConfirmedAt >= since)
+            .OrderBy(r => r.Id).Select(r => r.Id).ToListAsync(ct);
+        foreach (var id in ids)
+        {
+            try { await ReconcileAcceptedAnswerAsync(id, ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                // Keep one bad audit from hiding other release debt; no raw error/payload text.
+                logger.LogWarning("Runner seat release audit remains pending for {ReleaseId}", id);
+            }
+            await PublishAttentionAsync(id, ct);
+        }
+    }
+
+    private async Task PublishAttentionAsync(Guid releaseId, CancellationToken ct)
+    {
+        if (db.Database.CurrentTransaction is not null || System.Transactions.Transaction.Current is not null) return;
+        var release = await db.RunnerSeatReleases.AsNoTracking().SingleOrDefaultAsync(r => r.Id == releaseId, ct);
+        if (release is null) return;
+        try
+        {
+            if (BoundaryAsync is not null) await BoundaryAsync("BeforeAttentionPublish", ct);
+            logger.LogInformation("Runner seat release {ReleaseId} for {RunnerId}/{SessionId}: {State} {Reason} {Outcome}",
+                release.Id, release.RunnerId, release.SessionId, release.State, release.ReasonCode, release.OutcomeCode);
+            await events.PublishToAllAsync("AgentChanged", new
+            {
+                agentId = release.AgentId, sessionId = release.SessionId, releaseId = release.Id,
+                conditionKey = $"runner-seat-release:{release.Id:D}"
+            }, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            logger.LogWarning("Runner seat release attention invalidation remains pending for {ReleaseId}", releaseId);
+        }
     }
 
     public async Task AdvanceAsync(Guid releaseId, TerminalSeatObservationRequest observation, CancellationToken ct)

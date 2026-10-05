@@ -8,6 +8,47 @@ namespace Antiphon.Server.Application.Services;
 
 public sealed partial class AttentionService
 {
+    private async Task<List<AttentionItemDto>> BuildRunnerSeatReleaseItemsAsync(DateTime since, CancellationToken ct)
+    {
+        // PostgreSQL timestamps have microsecond precision. Select a slightly wider candidate
+        // window, then enforce the exact clock boundary in memory (including a single .NET tick).
+        var candidatesSince = since.AddSeconds(-1);
+        var releases = await _db.RunnerSeatReleases.AsNoTracking()
+            .Where(r => r.State != RunnerSeatReleaseState.Confirmed || r.ConfirmedAt == null
+                || r.ConfirmedAt >= candidatesSince).ToListAsync(ct);
+        var taskIds = releases.Where(r => r.TaskId != null).Select(r => r.TaskId!.Value).Distinct().ToArray();
+        var tasks = await _db.AgentTasks.AsNoTracking().Where(t => taskIds.Contains(t.Id))
+            .Select(t => new { t.Id, t.CardId, t.Attempt, t.Status }).ToDictionaryAsync(t => t.Id, ct);
+        var cardIds = tasks.Values.Where(t => t.CardId != null).Select(t => t.CardId!.Value).Distinct().ToArray();
+        var cards = await _db.Cards.AsNoTracking().Where(c => cardIds.Contains(c.Id))
+            .Select(c => new { c.Id, c.BoardId }).ToDictionaryAsync(c => c.Id, ct);
+        var items = new List<AttentionItemDto>();
+        foreach (var release in releases)
+        {
+            var confirmed = TerminalRunnerSeatReleaseService.IsConfirmed(release);
+            if (confirmed && release.ConfirmedAt < since) continue;
+            var task = release.TaskId is Guid taskId ? tasks.GetValueOrDefault(taskId) : null;
+            var card = task?.CardId is Guid cardId ? cards.GetValueOrDefault(cardId) : null;
+            var reason = release.OutcomeCode ?? release.ReasonCode;
+            var status = task is not null && task.Attempt == release.Attempt ? task.Status.ToString() : "unknown";
+            // No Agent/AgentSession join: rowless custody is exactly what this debt describes.
+            // Display only ledger coordinates/codes, never task text, transcript or native paths.
+            items.Add(new(AttentionKind.SessionDisagreement, AlertSeverity.Warning,
+                release.TaskId, release.SessionId, release.AgentId, null,
+                $"Runner {release.RunnerId}: {release.SessionId:D}",
+                confirmed ? "Runner seat released" : $"Runner seat release held: {reason}",
+                $"runner={release.RunnerId}; store={release.RunnerStoreId:D}; session={release.SessionId:D}; " +
+                $"generation={release.AcceptedStartedAt:O}; task={release.TaskId?.ToString("D") ?? "unknown"}; " +
+                $"attempt={release.Attempt?.ToString() ?? "unknown"}; status={status}; " +
+                $"reason={release.ReasonCode}; outcome={release.OutcomeCode ?? "Unresolved"}; confirmed={confirmed}",
+                confirmed ? release.ConfirmedAt : release.CreatedAt, null,
+                task is null ? [] : [AttentionAction.OpenDrawer],
+                CardId: card?.Id, BoardId: card?.BoardId,
+                ConditionKey: $"runner-seat-release:{release.Id:D}"));
+        }
+        return items;
+    }
+
     private async Task<List<AttentionItemDto>> BuildSessionLeakItemsAsync(
         DateTime now, IReadOnlyList<SessionRunnerSessionDto>? localInventory,
         HashSet<Guid> remoteLive, HashSet<Guid> remoteUnknown, CancellationToken ct)
