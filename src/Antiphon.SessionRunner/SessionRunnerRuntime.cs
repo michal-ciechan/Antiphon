@@ -117,14 +117,29 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         session.TerminalReleaseInProgress ? InputAuthorization.ReleaseInProgress
             : session.HasExited ? InputAuthorization.Exited : InputAuthorization.Allowed;
 
-    private static async Task<InputAuthorization> WriteInputUnderGateAsync(
+    private async Task<InputAuthorization> WriteInputUnderGateAsync(
         RunnerSession session, string input, CancellationToken ct)
     {
         var authorization = AuthorizeInputUnderGate(session);
         if (authorization != InputAuthorization.Allowed) return authorization;
-        // WriteAsync records attempted/uncertain composer custody and advances BackendInput
-        // for every completed write. Do not recurse through a public lock-taking input API.
-        await session.WriteAsync(input, ct);
+        try
+        {
+            if (session.BeginDeliveryWrite(input))
+            {
+                if (_terminalSeatQualifications.TryGetValue(session.SessionId, out var qualification))
+                    qualification.Discard();
+                await session.CaptureDeliveryEvidenceAsync(_terminalSeatEpoch, RunnerStoreId, ct);
+            }
+            // Capture precedes every backend/composer byte. WriteAsync still owns the
+            // original input log, composer custody and completed-write revision.
+            await session.WriteAsync(input, ct);
+            session.CompleteDeliveryWrite(input);
+        }
+        catch
+        {
+            session.InvalidateDeliveryEvidence();
+            throw;
+        }
         return InputAuthorization.Allowed;
     }
 
@@ -1923,6 +1938,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             _custodyLedger = ledger;
         }
         private readonly Guid _sessionId;
+        internal Guid SessionId => _sessionId;
         private readonly SessionRunnerSettings _settings;
         private readonly SessionRunnerEventHub _events;
         private readonly ILogger _logger;
@@ -1972,6 +1988,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private bool _terminalInputUncertain;
         private bool _terminalComposerPending;
         private readonly TerminalSeatDeliveryEvidence _deliveryEvidence = new();
+        private long _deliveryEvidenceVersion;
+        private bool _deliveryDisposed;
         internal TerminalSeatDeliverySnapshot DeliveryEvidence
         {
             get { lock (_gate) return _deliveryEvidence.Snapshot; }
@@ -2008,8 +2026,85 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         internal ConcurrentQueue<string> BackendInput { get; } = new();
 
-        internal void BindAcceptedGeneration(DateTime? value) =>
-            _acceptedStartedAt = value is { } v ? SessionGeneration.Normalize(v) : null;
+        internal void BindAcceptedGeneration(DateTime? value)
+        {
+            lock (_gate)
+            {
+                ClearDeliveryEvidence();
+                _acceptedStartedAt = value is { } v ? SessionGeneration.Normalize(v) : null;
+            }
+        }
+
+        // Caller holds the monitor; the revision fences clears during the awaited read.
+        private void ClearDeliveryEvidence(bool preserveComposer = false)
+        {
+            _deliveryEvidenceVersion++;
+            if (preserveComposer) _deliveryEvidence.ClearCapture();
+            else _deliveryEvidence.Clear();
+        }
+
+        internal bool BeginDeliveryWrite(string input)
+        {
+            lock (_gate)
+            {
+                if (_deliveryDisposed) return false;
+                var first = _deliveryEvidence.BeginWrite(input);
+                if (first) _deliveryEvidenceVersion++;
+                return first;
+            }
+        }
+
+        internal async Task CaptureDeliveryEvidenceAsync(Guid runtimeEpoch, Guid runnerStoreId, CancellationToken ct)
+        {
+            ITranscriptTailer? tailer;
+            DateTime? generation;
+            long version;
+            lock (_gate)
+            {
+                tailer = _tailer;
+                generation = _acceptedStartedAt;
+                version = _deliveryEvidenceVersion;
+                if (_deliveryDisposed || _deliveryEvidence.Snapshot.State != TerminalSeatDeliveryState.Missing) return;
+            }
+            if (tailer is null) return;
+
+            TerminalTranscriptObservation observation;
+            try
+            {
+                // Never hold _gate across a native read. Claim revocation, replacement or
+                // disposal may clear the capture while the read is suspended.
+                observation = await tailer.ObserveTerminalSeatAsync(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch
+            {
+                observation = new(TerminalTranscriptReadStatus.Unavailable, TerminalTranscriptVerdict.Unknown);
+            }
+            lock (_gate)
+            {
+                if (_deliveryDisposed || version != _deliveryEvidenceVersion
+                    || !ReferenceEquals(tailer, _tailer) || generation != _acceptedStartedAt) return;
+                if (observation.Status == TerminalTranscriptReadStatus.Unbound) return;
+                if (generation is null || observation.Status != TerminalTranscriptReadStatus.Success
+                    || string.IsNullOrEmpty(observation.BindingIdentity) || observation.TranscriptRevision < 0)
+                {
+                    _deliveryEvidence.Invalidate();
+                    return;
+                }
+                _deliveryEvidence.Prepare(new(Guid.NewGuid(), runtimeEpoch, runnerStoreId, this, _sessionId,
+                    generation.Value, observation.BindingIdentity, observation.TranscriptRevision));
+            }
+        }
+
+        internal void CompleteDeliveryWrite(string input)
+        {
+            lock (_gate) _deliveryEvidence.CompleteWrite(input);
+        }
+
+        internal void InvalidateDeliveryEvidence()
+        {
+            lock (_gate) _deliveryEvidence.Invalidate();
+        }
 
         private RunnerSessionExitedEvent ExitEnvelope(int? exitCode, string reason, long lastSequence) =>
             new(_sessionId, exitCode, reason, lastSequence, AcceptedStartedAt: _acceptedStartedAt);
@@ -2032,8 +2127,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         public DateTime StartedAt => _startedAt;
 
-        public void OnTranscriptClaimRevoked(string path, Guid newOwner) =>
+        public void OnTranscriptClaimRevoked(string path, Guid newOwner)
+        {
+            lock (_gate) ClearDeliveryEvidence(preserveComposer: true);
             _tailer?.NotifyClaimRevoked(path, newOwner);
+        }
 
         /// <summary>CARD-0162: pane id when this session is on the herdr lane.</summary>
         private HerdrPaneSidecar? _retiredHerdrSidecar;
@@ -2348,7 +2446,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     How = TranscriptBindMethods.Deterministic,
                     Format = TranscriptFormats.Grok,
                 });
-                _tailer = new GrokTranscriptTailer(
+                Tailer = new GrokTranscriptTailer(
                     _sessionId, grokPath, _events, _logger, inputLog: _inputLog);
                 _tailer.Start();
                 return;
@@ -2366,7 +2464,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     How = null,
                     Format = TranscriptFormats.Codex,
                 });
-                _tailer = new CodexTranscriptTailer(
+                Tailer = new CodexTranscriptTailer(
                     _sessionId, cwd, _events, _logger,
                     claims: _transcriptClaims,
                     inputLog: _inputLog,
@@ -2414,7 +2512,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 How = knownPath is null ? null : TranscriptBindMethods.Exact,
                 Format = TranscriptFormats.Claude,
             });
-            _tailer = new TranscriptTailer(
+            Tailer = new TranscriptTailer(
                 _sessionId, cwd, _events, _logger,
                 claims: _transcriptClaims,
                 inputLog: _inputLog,
@@ -2461,7 +2559,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     Format = TranscriptFormats.Grok,
                 });
 
-                _tailer = new GrokTranscriptTailer(
+                Tailer = new GrokTranscriptTailer(
                     _sessionId, updatesPath, _events, _logger, inputLog: _inputLog);
                 _tailer.Start();
             }
@@ -2479,7 +2577,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     ApiErrorTimeZoneId = CodexTranscriptTailer.ResolveApiErrorTimeZoneId(request.Env),
                 });
 
-                _tailer = new CodexTranscriptTailer(
+                Tailer = new CodexTranscriptTailer(
                     _sessionId, request.Cwd, _events, _logger,
                     claims: _transcriptClaims,
                     inputLog: _inputLog,
@@ -2507,7 +2605,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     How = null,
                 });
 
-                _tailer = new TranscriptTailer(
+                Tailer = new TranscriptTailer(
                     _sessionId, request.Cwd, _events, _logger,
                     claims: _transcriptClaims,
                     inputLog: _inputLog,
@@ -2738,8 +2836,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
 
         /// <summary>Persists the transcript binding so the next runner re-tails it without guessing.</summary>
-        private void RecordTranscriptBinding(string transcriptPath, string how)
+        internal void RecordTranscriptBinding(string transcriptPath, string how)
         {
+            lock (_gate) ClearDeliveryEvidence(preserveComposer: true);
             var current = _sidecar ?? new TranscriptSidecar { SessionId = _sessionId, ChildStartUtc = _startedAt };
             var persistedHow = how == TranscriptBindMethods.Sidecar
                 && current.TranscriptPath is { } existing
@@ -2750,8 +2849,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             SaveSidecar(current with { TranscriptPath = transcriptPath, How = persistedHow });
         }
 
-        private void RecordTranscriptUnbinding()
+        internal void RecordTranscriptUnbinding()
         {
+            lock (_gate) ClearDeliveryEvidence(preserveComposer: true);
             var current = _sidecar ?? new TranscriptSidecar { SessionId = _sessionId, ChildStartUtc = _startedAt };
             SaveSidecar(current with { TranscriptPath = null, How = null });
         }
@@ -3048,7 +3148,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _sidecar = sidecar;
                 var updatesPath = sidecar!.TranscriptPath
                     ?? GrokTranscriptTailer.ResolveUpdatesPath(null, cwd, _sessionId);
-                _tailer = new GrokTranscriptTailer(
+                Tailer = new GrokTranscriptTailer(
                     _sessionId, updatesPath, _events, _logger, inputLog: _inputLog);
                 _tailer.Start();
                 return;
@@ -3057,7 +3157,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (string.Equals(sidecar?.Format, TranscriptFormats.Codex, StringComparison.OrdinalIgnoreCase))
             {
                 _sidecar = sidecar;
-                _tailer = new CodexTranscriptTailer(
+                Tailer = new CodexTranscriptTailer(
                     _sessionId, cwd, _events, _logger,
                     claims: _transcriptClaims,
                     inputLog: _inputLog,
@@ -3079,7 +3179,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 ChildStartUtc = childStartUtc,
             };
 
-            _tailer = new TranscriptTailer(
+            Tailer = new TranscriptTailer(
                 _sessionId, cwd, _events, _logger,
                 claims: _transcriptClaims,
                 inputLog: _inputLog,
@@ -3123,9 +3223,20 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _liveBuffer.Remove(0, _liveBuffer.Length - cap);
         }
 
-        internal ITranscriptTailer? Tailer => _tailer;
+        internal ITranscriptTailer? Tailer
+        {
+            get => _tailer;
+            private set
+            {
+                lock (_gate)
+                {
+                    if (!ReferenceEquals(_tailer, value)) ClearDeliveryEvidence(preserveComposer: true);
+                    _tailer = value;
+                }
+            }
+        }
 
-        internal void DetachTailerForTest() => _tailer = null;
+        internal void DetachTailerForTest() => Tailer = null;
 
         internal Task<CompactionTailObservation> ObserveCompactionAsync(CancellationToken ct) =>
             _tailer?.ObserveCompactionSilenceAsync(ct) ?? Task.FromResult(CompactionTailObservation.Unbound());
@@ -3147,7 +3258,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         {
             _herdrChild = child;
             child.Exited += exit => HandleExited(new ExitedMessage(exit.ExitCode, exit.Reason, LastSequence));
-            _tailer = tailer;
+            Tailer = tailer;
             _sidecar = TranscriptSidecar.TryLoad(TranscriptSidecar.PathFor(_settings.SessionLogPath, _sessionId));
             BindAcceptedGeneration(acceptedStartedAt);
             _startedAt = acceptedStartedAt;
@@ -3475,6 +3586,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         public async ValueTask DisposeAsync()
         {
+            lock (_gate)
+            {
+                _deliveryDisposed = true;
+                ClearDeliveryEvidence();
+            }
             _custodyLifetime.Cancel();
             _launchFinished.TrySetResult();
             if (_custodyShutdown is not null) await _custodyShutdown;
@@ -3694,7 +3810,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 if (observed.Receipt is not null && _tailer is { } tailer)
                 {
                     await tailer.DisposeAsync();
-                    _tailer = null;
+                    Tailer = null;
                 }
                 return _custodyLedger.Accept(observed);
             }
