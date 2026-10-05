@@ -45,7 +45,7 @@ This table applies **only** to the native 60.004-second window. Kernel time is i
 | 11 | All claude.exe | 0.84% | Live sessions. |
 | 12 | com.docker.backend.exe | 0.73% | Docker host plumbing, outside container accounting. |
 | 13 | Antiphon.SessionRunner.exe | 0.57% | Production session runtime. |
-| — | Other observed processes | 3.79% | Browser/UI/PTY/Git and other services. |
+| — | Other observed processes | 3.68% | Browser/UI/PTY/Git and other services. |
 | — | **Total observed process CPU** | **97.15%** | Includes observer work and vmmem accounting; not a claim that the original ~50% gap is solved. |
 
 Compiler raw native rows: user ticks **500,937,500 → 3,716,406,250**, kernel **44,062,500 → 79,375,000** (100 ns units): **325.078125 CPU seconds** in 60.003963 wall seconds. Creation identity stays `134357015415721739`. Follow-up Get-Process confirmed executable/start time and total CPU ~715 seconds. Trace identifies SDK path `C:\Program Files\dotnet\sdk\10.0.300\Roslyn\bincore\VBCSCompiler.exe`. Its later 30-second trace contains waits (`WaitHandle.WaitOneNoCheck` 37.53%, `ManualResetEventSlim.Wait` 18.76%) and 43.71% unresolved exclusive time; it does not show a sustained runaway after the burst.
@@ -122,3 +122,4 @@ Candidate follow-up ideas only, without design or implementation: evaluate CARD-
 next: investigate
 handoff: Resolve the original CPU gap with simultaneous native PID+creation-time and symbolized CPU-stack sampling; correlate the compiler burst with its build/lease, identify the dominant transcript-query callers, and obtain administrator read-only Defender evidence. CARD-0795 is existing context; desktop runaway contention remains unconfirmed.
 artifact: docs/investigations/2026-10-05-card-0795-vbcscompiler-shared-compiler-contention-isolated-builds-need-p-usesharedcompilation-false.md
+
