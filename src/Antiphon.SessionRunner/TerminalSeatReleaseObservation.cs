@@ -145,6 +145,13 @@ internal sealed class TerminalSeatReleaseObservation
 
     internal void RecordConsumed(long offset) => _consumedByPoll = Math.Max(_consumedByPoll, offset);
 
+    internal bool IsCurrentFile(string path)
+    {
+        try { return _boundFileIdentity is not null && CaptureFile(path)?.Identity == _boundFileIdentity; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        { return false; }
+    }
+
     internal async Task<TerminalTranscriptObservation> ObserveAsync(
         Func<(string Path, string Identity)?> captureBinding,
         Func<string, IReadOnlyList<TranscriptPart>> normalize,

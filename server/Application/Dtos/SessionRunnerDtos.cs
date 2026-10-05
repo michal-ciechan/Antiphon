@@ -96,7 +96,9 @@ public sealed record SessionRunnerTranscriptEvent(
 public sealed record SessionRunnerTranscriptDto(
     Guid SessionId,
     IReadOnlyList<SessionRunnerTranscriptEvent> Entries,
-    long LastSequence);
+    long LastSequence,
+    bool TerminalComplete = false,
+    DateTime? AcceptedStartedAt = null);
 
 /// <summary>A restarted runner re-attached to a surviving pty-host; the session never stopped.</summary>
 public sealed record SessionRunnerAdoptedEvent(

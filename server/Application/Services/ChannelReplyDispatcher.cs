@@ -232,6 +232,8 @@ public sealed class ChannelReplyDispatcher
         if (!scope.ServiceProvider.GetRequiredService<ChannelOutboundService>().UnifiedRecoveryEnabled)
             return null;
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var terminalGeneration = await ChannelOutboundTerminalTranscript.CatchUpAsync(
+            scope.ServiceProvider, source.AgentSessionId, ct);
         var prompts = await db.TranscriptEntries.AsNoTracking()
             .Where(t => t.AgentSessionId == source.AgentSessionId && t.Sequence > afterPrompt
                 && (t.Kind == TranscriptKinds.UserPrompt || t.Kind == TranscriptKinds.QueuedUserPrompt))
@@ -259,7 +261,7 @@ public sealed class ChannelReplyDispatcher
             else
             {
                 await DispatchMachineTurnFollowUpAsync(source.AgentSessionId, prompt, ct);
-                if (next is not null)
+                if (next is not null || terminalGeneration is not null)
                 {
                     var (text, _, apiError) = await ExtractTurnResponseAsync(db, source.AgentSessionId, prompt.Sequence, ct);
                     var (_, paths) = ChannelContracts.ExtractAttachments(text ?? "");
@@ -272,7 +274,10 @@ public sealed class ChannelReplyDispatcher
                     if (ineligible)
                         await db.SessionQueuedMessages.Where(m => m.Id == source.Id
                             && m.ChannelOutboundDeliveryId == null && m.ChannelReplySettledAt == null
-                            && m.ChannelReplyDiscoveryClosedAt == null)
+                            && m.ChannelReplyDiscoveryClosedAt == null
+                            && (next != null || db.AgentSessions.Any(s => s.Id == m.AgentSessionId
+                                && s.StartedAt == terminalGeneration
+                                && (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed))))
                             .ExecuteUpdateAsync(s => s.SetProperty(m => m.ChannelReplyDiscoveryClosedAt,
                                 _timeProvider.GetUtcNow().UtcDateTime), ct);
                 }
@@ -1182,6 +1187,8 @@ public sealed class ChannelReplyDispatcher
         var root = await db.ChannelOutboundDeliveries.AsNoTracking().SingleOrDefaultAsync(d => d.Id == rootId, ct);
         if (root is not { RootDeliveryId: null, CaptureJson: not null, TailClosedAt: null,
                 ReservedThroughSequence: long cursor }) return;
+        var terminalGeneration = await ChannelOutboundTerminalTranscript.CatchUpAsync(
+            scope.ServiceProvider, root.SourceSessionId, ct);
         var (next, late) = await QueryTurnWindowAsync(db, root.SourceSessionId, root.PromptSequence, cursor, ct);
         var texts = late.Where(t => !string.IsNullOrWhiteSpace(t.Text)).ToArray();
         if (!late.Any(t => TranscriptKinds.IsApiErrorStub(t.Kind, t.IsApiError)) && texts.Length > 0)
@@ -1211,7 +1218,8 @@ public sealed class ChannelReplyDispatcher
                 root.ReservedThroughSequence!.Value, ct);
             if (remaining.Count > 0) return;
         }
-        if (next is not null) await outbound.CloseTailAsync(root, ct);
+        if (next is not null || terminalGeneration is not null)
+            await outbound.CloseTailAsync(root, ct, next is null ? terminalGeneration : null);
     }
 
     private async Task DispatchFollowUpAsync(Guid sessionId, CancellationToken ct)

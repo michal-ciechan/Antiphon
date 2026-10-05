@@ -49,6 +49,7 @@ internal sealed class GrokTranscriptTailer : ITranscriptTailer
     private Task? _loop;
     private long _seq;
     private DateTime? _childExitedAtUtc;
+    private readonly TerminalTranscriptCompletion _completion = new();
 
     public GrokTranscriptTailer(
         Guid sessionId,
@@ -166,7 +167,7 @@ internal sealed class GrokTranscriptTailer : ITranscriptTailer
     public RunnerTranscriptDto Snapshot()
     {
         lock (_gate)
-            return new RunnerTranscriptDto(_sessionId, _entries.ToArray(), _seq);
+            return new RunnerTranscriptDto(_sessionId, _entries.ToArray(), _seq, _completion.IsComplete);
     }
 
     internal TerminalSeatReleaseObservation TerminalObservation { get; } = new();
@@ -241,15 +242,19 @@ internal sealed class GrokTranscriptTailer : ITranscriptTailer
                         // Mid-write / transiently locked — retry on the next poll.
                     }
 
-                    if (_childExitedAtUtc is { } exitedAt && DateTime.UtcNow - exitedAt >= ChildExitSettle)
+                    lock (_gate)
                     {
-                        // Chunks whose turn_completed never arrived (child died mid-turn) are emitted
-                        // rather than lost; no TurnEnd is synthesized — the relaunch path's
-                        // SessionRestartBoundary is what ends a turn the process abandoned.
-                        Publish(_normalizer.FlushPending());
-                        if (!everExisted)
-                            ReportMissingAfterChildExit();
-                        return;
+                        if (_completion.Observe(_updatesPath, offset, pending.Count, _childExitedAtUtc, ChildExitSettle,
+                            TerminalObservation.IsCurrentFile(_updatesPath)))
+                        {
+                            // Chunks whose turn_completed never arrived (child died mid-turn) are emitted
+                            // rather than lost; no TurnEnd is synthesized — the relaunch path's
+                            // SessionRestartBoundary is what ends a turn the process abandoned.
+                            Publish(_normalizer.FlushPending());
+                            if (!everExisted)
+                                ReportMissingAfterChildExit();
+                            return;
+                        }
                     }
 
                 }
@@ -293,10 +298,12 @@ internal sealed class GrokTranscriptTailer : ITranscriptTailer
 
     private void EmitLine(string line)
     {
+        _completion.ObserveLine(line);
         IReadOnlyList<TranscriptPart> parts;
         try { parts = _normalizer.Normalize(line); }
         catch (Exception ex)
         {
+            _completion.ParseFailed();
             _logger.LogDebug(ex, "Failed to normalize Grok update row for session {SessionId}", _sessionId);
             return;
         }

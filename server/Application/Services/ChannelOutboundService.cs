@@ -214,7 +214,8 @@ public sealed class ChannelOutboundService
     }
 
     /// <summary>Close only the version of the root whose next-prompt window was examined.</summary>
-    internal async Task CloseTailAsync(ChannelOutboundDelivery root, CancellationToken ct)
+    internal async Task CloseTailAsync(ChannelOutboundDelivery root, CancellationToken ct,
+        DateTime? terminalGeneration = null)
     {
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
         var lockBytes = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
@@ -222,7 +223,10 @@ public sealed class ChannelOutboundService
         await _db.Database.ExecuteSqlInterpolatedAsync(
             $"SELECT pg_advisory_xact_lock({BitConverter.ToInt64(lockBytes, 0)})", ct);
         await _db.ChannelOutboundDeliveries.Where(d => d.Id == root.Id && d.Version == root.Version
-            && d.ReservedThroughSequence == root.ReservedThroughSequence && d.TailClosedAt == null)
+            && d.ReservedThroughSequence == root.ReservedThroughSequence && d.TailClosedAt == null
+            && (terminalGeneration == null || _db.AgentSessions.Any(s => s.Id == d.SourceSessionId
+                && s.StartedAt == terminalGeneration
+                && (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed))))
             .ExecuteUpdateAsync(s => s.SetProperty(d => d.TailClosedAt, _clock.GetUtcNow().UtcDateTime)
                 .SetProperty(d => d.Version, d => d.Version + 1), ct);
         await transaction.CommitAsync(ct);

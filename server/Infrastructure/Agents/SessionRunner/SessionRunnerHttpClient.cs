@@ -572,7 +572,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         return new SessionRunnerTranscriptDto(
             transcript.SessionId,
             transcript.Entries.Select(MapTranscript).ToList(),
-            transcript.LastSequence);
+            transcript.LastSequence, transcript.TerminalComplete, transcript.AcceptedStartedAt);
     }
 
     public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)

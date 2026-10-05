@@ -99,6 +99,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
     private Task? _loop;
     private long _seq;
     private DateTime? _childExitedAtUtc;
+    private readonly TerminalTranscriptCompletion _completion = new();
     private DateTime? _firstInputObservedUtc;
     private string? _unboundReason;
 
@@ -218,7 +219,8 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
     public RunnerTranscriptDto Snapshot()
     {
         lock (_gate)
-            return new RunnerTranscriptDto(_sessionId, _entries.ToArray(), _seq);
+            return new RunnerTranscriptDto(_sessionId, _entries.ToArray(), _seq,
+                _completion.IsComplete && !_claimRevoked);
     }
 
     internal TerminalSeatReleaseObservation TerminalObservation { get; } = new();
@@ -295,7 +297,8 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
                         // Mid-write / transiently locked — retry on the next poll.
                     }
 
-                    if (_childExitedAtUtc is { } exitedAt && DateTime.UtcNow - exitedAt >= ChildExitSettle)
+                    if (_completion.Observe(path, offset, pending.Count, _childExitedAtUtc, ChildExitSettle,
+                        TerminalObservation.IsCurrentFile(path)))
                         return;
 
                 }
@@ -368,10 +371,12 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
 
     private void EmitLine(string line)
     {
+        _completion.ObserveLine(line);
         IReadOnlyList<TranscriptPart> parts;
         try { parts = _normalizer.Normalize(line); }
         catch (Exception ex)
         {
+            _completion.ParseFailed();
             _logger.LogDebug(ex, "Failed to normalize Codex rollout row for session {SessionId}", _sessionId);
             return;
         }

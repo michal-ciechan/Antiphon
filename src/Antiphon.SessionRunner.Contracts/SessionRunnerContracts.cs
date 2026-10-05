@@ -350,7 +350,9 @@ public sealed record RunnerTranscriptEvent(
 public sealed record RunnerTranscriptDto(
     Guid SessionId,
     IReadOnlyList<RunnerTranscriptEvent> Entries,
-    long LastSequence);
+    long LastSequence,
+    bool TerminalComplete = false,
+    DateTime? AcceptedStartedAt = null);
 
 /// <summary>Normalized transcript entry kinds (see <see cref="RunnerTranscriptEvent.Kind"/>).</summary>
 public static class TranscriptKinds
