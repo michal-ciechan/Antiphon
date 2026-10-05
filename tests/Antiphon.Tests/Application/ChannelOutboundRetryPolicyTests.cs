@@ -64,6 +64,25 @@ public sealed class ChannelOutboundRetryPolicyTests
         }
         finally { release.TrySetResult(); await first.WaitAsync(TimeSpan.FromSeconds(10)); }
         (await w.LoadAsync(id)).State.ShouldBe(ChannelOutboundDeliveryState.Published);
+        // Isolate the claim's expiry check from the earlier candidate predicate:
+        // install a live lease after selection without changing its version.
+        var next = await w.ReadyAsync();
+        var foreignOwner = Guid.NewGuid();
+        var selected = false;
+        await w.TickAsync(async (at, delivery, _) =>
+        {
+            if (at != "before-claim") return;
+            delivery.ShouldBe(next); selected = true;
+            await w.SetAsync(next, d => { d.LeaseOwner = foreignOwner; d.LeaseUntil = w.Now.AddSeconds(300); });
+        });
+        selected.ShouldBeTrue();
+        w.Producer.Entries.ShouldBe(1);
+        (await w.LoadAsync(next)).LeaseOwner.ShouldBe(foreignOwner);
+        (await w.MemberAsync(next)).ChannelReplySettledAt.ShouldBeNull();
+        await w.SetAsync(next, d => { d.LeaseOwner = null; d.LeaseUntil = null; });
+        w.Producer.OnSend = null;
+        await w.TickAsync();
+        w.Producer.Receipts.Last().Text.ShouldBe("frozen reply " + next);
     }
 
     [Test]
@@ -307,8 +326,10 @@ public sealed class ChannelOutboundRetryPolicyTests
         await w.TickAsync();
         var due = (await w.LoadAsync(id)).NextAttemptAt;
         due.ShouldBe(w.Now.AddSeconds(30));
+        var version = (await w.LoadAsync(id)).Version;
         w.Clock.Advance(TimeSpan.FromSeconds(29)); await w.TickAsync();
         w.Producer.Entries.ShouldBe(1);
+        (await w.LoadAsync(id)).Version.ShouldBe(version); // No claim before due, even if entry also checks due.
         (await w.LoadAsync(id)).NextAttemptAt.ShouldBe(due);
         w.Producer.OnSend = null;
         w.Clock.Advance(TimeSpan.FromSeconds(1)); await w.TickAsync();
