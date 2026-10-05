@@ -1,3 +1,11 @@
+using System.Net;
+using System.Net.Http.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -15,6 +23,279 @@ namespace Antiphon.SessionRunner.Tests;
 [NotInParallel("ClaudeConfigDirEnv")]
 public class TerminalSeatReleaseTests
 {
+    [Test]
+    public async Task Unsupported_capability_never_falls_back_to_force()
+    {
+        foreach (var phoneHome in new[] { false, true })
+        {
+            await using var world = new SeatWorld("Codex");
+            var request = await world.QualifyAsync();
+            var legacy = new LegacySurface(world.Runtime);
+            await using var wire = await SeatWire.StartAsync(world, legacy, phoneHome);
+            legacy.Capabilities().Features.ShouldNotContain(RunnerCapabilityFeatures.TerminalSeatReleaseV1);
+            var result = await wire.ReleaseAsync(request);
+            result.Outcome.ShouldBe(TerminalSeatReleaseOutcome.Unsupported);
+            result.SessionId.ShouldBe(world.Tail.SessionId);
+            result.ActionId.ShouldBe(request.ActionId);
+            result.ConfirmsExit.ShouldBeFalse();
+            await wire.AssertObservationUnsupportedAsync();
+            legacy.ForceCalls.ShouldBe(0, "unsupported must not invoke force release");
+            legacy.GenerationKillCalls.ShouldBe(0, "unsupported must not invoke generation kill");
+            world.AssertRetained();
+        }
+    }
+
+    [Test]
+    public async Task Http_and_phone_home_share_conditional_semantics()
+    {
+        // PC-81 pins the public wire identity, independently of serializer round trips.
+        ((int)PhoneHomeOperation.Input).ShouldBe(9);
+        ((int)PhoneHomeOperation.ReleaseSlot).ShouldBe(23);
+        ((int)PhoneHomeOperation.CodexCliVersion).ShouldBe(33);
+        ((int)PhoneHomeOperation.ObserveTerminalSeat).ShouldBe(34);
+        ((int)PhoneHomeOperation.ReleaseTerminalSeat).ShouldBe(35);
+        foreach (var phoneHome in new[] { false, true })
+        foreach (var outcome in new[] { TerminalSeatReleaseOutcome.Released, TerminalSeatReleaseOutcome.AlreadyExited,
+            TerminalSeatReleaseOutcome.Working, TerminalSeatReleaseOutcome.StaleObservation,
+            TerminalSeatReleaseOutcome.GenerationMismatch, TerminalSeatReleaseOutcome.Unknown,
+            TerminalSeatReleaseOutcome.PendingDelivery, TerminalSeatReleaseOutcome.Unresolved })
+        {
+            await using var world = new SeatWorld("Codex");
+            await world.StartAsync();
+            await world.DeliverAsync();
+            var surface = new CurrentSurface(world.Runtime);
+            await using var wire = await SeatWire.StartAsync(world, surface, phoneHome);
+            var first = await wire.ObserveAsync();
+            first.Status.ShouldBe(TerminalSeatQualificationStatus.Waiting);
+            first.Token.ShouldBeNull();
+            world.Clock.Advance(TimeSpan.FromSeconds(120));
+            var qualified = await wire.ObserveAsync();
+            qualified.Status.ShouldBe(TerminalSeatQualificationStatus.Qualified);
+            qualified.Transcript.Verdict.ShouldBe(TerminalTranscriptVerdict.Idle);
+            qualified.StableFor.ShouldBe(TimeSpan.FromSeconds(120));
+            var request = new TerminalSeatReleaseRequest(Guid.NewGuid(), world.Request, qualified.Token!);
+            switch (outcome)
+            {
+                case TerminalSeatReleaseOutcome.Working:
+                    await world.Tail.AppendAsync(world.Tail.Activity("wire-working"));
+                    break;
+                case TerminalSeatReleaseOutcome.StaleObservation:
+                    request = request with { Token = "not-the-issued-token" };
+                    break;
+                case TerminalSeatReleaseOutcome.GenerationMismatch:
+                    request = request with { Observation = world.Request with { ExpectedRunnerStoreId = Guid.NewGuid() } };
+                    break;
+                case TerminalSeatReleaseOutcome.Unknown:
+                    world.Session.SetTerminalBackendStateForTest("Starting", null, SessionBackends.PtyHost);
+                    break;
+                case TerminalSeatReleaseOutcome.PendingDelivery:
+                    await world.Runtime.SendInputAsync(world.Tail.SessionId, "held composer", CancellationToken.None);
+                    break;
+                case TerminalSeatReleaseOutcome.Unresolved:
+                    world.Child.Kill = _ => throw new IOException("wire kill failed");
+                    break;
+                case TerminalSeatReleaseOutcome.AlreadyExited:
+                    world.Child.Exit();
+                    break;
+                default:
+                    world.Child.Kill = _ => { world.Child.Exit(); return Task.FromResult(true); };
+                    break;
+            }
+            var result = await wire.ReleaseAsync(request);
+            result.Outcome.ShouldBe(outcome, phoneHome ? "phone-home" : "http");
+            result.SessionId.ShouldBe(world.Tail.SessionId);
+            result.ActionId.ShouldBe(request.ActionId);
+            result.AcceptedStartedAt.ShouldBe(world.Request.ExpectedAcceptedStartedAt);
+            var confirmsExit = outcome is TerminalSeatReleaseOutcome.Released or TerminalSeatReleaseOutcome.AlreadyExited;
+            result.ConfirmsExit.ShouldBe(confirmsExit);
+            if (confirmsExit)
+            {
+                world.AssertReleased(outcome == TerminalSeatReleaseOutcome.AlreadyExited ? 0 : 1);
+                (await wire.ReleaseAsync(request)).ShouldBe(result, "same action replays its disposition");
+                var absent = await wire.ReleaseAsync(request with { ActionId = Guid.NewGuid() });
+                absent.Outcome.ShouldBe(TerminalSeatReleaseOutcome.AlreadyAbsent);
+                absent.ConfirmsExit.ShouldBeTrue();
+            }
+            else world.AssertRetained(outcome == TerminalSeatReleaseOutcome.Unresolved ? 1 : 0);
+            surface.ForceCalls.ShouldBe(0);
+            surface.GenerationKillCalls.ShouldBe(0);
+            var capabilities = await wire.CapabilitiesAsync();
+            capabilities.Features.ShouldContain(RunnerCapabilityFeatures.TerminalSeatReleaseV1);
+            capabilities.RunnerStoreId.ShouldBe(world.Runtime.RunnerStoreId);
+        }
+    }
+
+    [Test]
+    public async Task Explicit_operator_release_keeps_its_contract()
+    {
+        await using var world = new SeatWorld("Codex");
+        await world.StartAsync();
+        await world.DeliverAsync();
+        await world.Tail.AppendAsync(world.Tail.Activity("still-working"));
+        (await world.ObserveAsync()).Status.ShouldBe(TerminalSeatQualificationStatus.Working);
+        var surface = new CurrentSurface(world.Runtime);
+        await using var wire = await SeatWire.StartAsync(world, surface, phoneHome: true);
+        foreach (var reason in new string?[] { null, "", "  " })
+        {
+            var refused = await wire.DispatchAsync(PhoneHomeOperation.ReleaseSlot,
+                new { sessionId = world.Tail.SessionId, reason });
+            refused.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+            refused.StatusCode.ShouldBe(400);
+            surface.ForceCalls.ShouldBe(0);
+            world.AssertRetained();
+        }
+        var foreign = world.TrackForeign();
+        world.Child.Kill = _ => { world.Child.Exit(); return Task.FromResult(true); };
+        var reply = await wire.DispatchAsync(PhoneHomeOperation.ReleaseSlot,
+            new { sessionId = world.Tail.SessionId, reason = "explicit operator test" });
+        reply.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        var released = reply.Payload!.Value.Deserialize<RunnerSessionDto>(PhoneHomeFraming.Json)!;
+        released.SessionId.ShouldBe(world.Tail.SessionId);
+        released.Status.ShouldBe("Exited");
+        surface.ForceCalls.ShouldBe(1);
+        surface.GenerationKillCalls.ShouldBe(0);
+        world.AssertReleased();
+        world.AssertForeignRetained(foreign);
+        world.Runtime.LiveSessionCount.ShouldBe(1);
+        using var audit = JsonDocument.Parse(File.ReadAllLines(world.ReleaseAuditPath).Single());
+        audit.RootElement.GetProperty("reason").GetString().ShouldBe("explicit operator test");
+        audit.RootElement.GetProperty("sessionId").GetGuid().ShouldBe(world.Tail.SessionId);
+    }
+
+    // An older surface inherits the real refusing defaults. Destructive spies forward to the
+    // real runtime, so a fallback both increments a counter and changes actual fixture custody.
+    private class LegacySurface(SessionRunnerRuntime runtime) : IPhoneHomeRuntimeSurface
+    {
+        protected IPhoneHomeRuntimeSurface Adapter { get; } = new PhoneHomeRuntimeAdapter(runtime, RunnerBuildIdentity.Resolve());
+        public int ForceCalls { get; private set; }
+        public int GenerationKillCalls { get; private set; }
+        public virtual RunnerCapabilitiesDto Capabilities() => Adapter.Capabilities() with { Features = [] };
+        public string Health() => Adapter.Health();
+        public IReadOnlyList<RunnerSessionDto> List() => Adapter.List();
+        public Task<RunnerSessionDto> GetAsync(Guid id, CancellationToken ct) => Adapter.GetAsync(id, ct);
+        public Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct) => throw new InvalidOperationException("No provider launch permitted");
+        public RunnerBufferDto GetBuffer(Guid id) => Adapter.GetBuffer(id);
+        public RunnerSnapshotDto GetSnapshot(Guid id) => Adapter.GetSnapshot(id);
+        public RunnerTranscriptDto GetTranscript(Guid id) => Adapter.GetTranscript(id);
+        public Task SendInputAsync(Guid id, string input, CancellationToken ct) => Adapter.SendInputAsync(id, input, ct);
+        public Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid id, RunnerConditionalInputRequest request, CancellationToken ct) => Adapter.SendConditionalInputAsync(id, request, ct);
+        public Task ClearLiveBufferAsync(Guid id, CancellationToken ct) => Adapter.ClearLiveBufferAsync(id, ct);
+        public Task ResizeAsync(Guid id, int cols, int rows, CancellationToken ct) => Adapter.ResizeAsync(id, cols, rows, ct);
+        public Task<RunnerKillGenerationResult> KillGenerationAsync(Guid id, DateTime generation, CancellationToken ct)
+        { GenerationKillCalls++; return Adapter.KillGenerationAsync(id, generation, ct); }
+        public Task<RunnerSessionDto> ReleaseSlotAsync(Guid id, string reason, CancellationToken ct)
+        { ForceCalls++; return Adapter.ReleaseSlotAsync(id, reason, ct); }
+        public int OwnedSessionCount => Adapter.OwnedSessionCount;
+    }
+
+    private sealed class CurrentSurface(SessionRunnerRuntime runtime) : LegacySurface(runtime), IPhoneHomeRuntimeSurface
+    {
+        public override RunnerCapabilitiesDto Capabilities() => Adapter.Capabilities();
+        public Task<TerminalSeatObservation> ObserveTerminalSeatAsync(Guid id, TerminalSeatObservationRequest request, CancellationToken ct) =>
+            Adapter.ObserveTerminalSeatAsync(id, request, ct);
+        public Task<TerminalSeatReleaseResult> ReleaseTerminalSeatAsync(Guid id, TerminalSeatReleaseRequest request, CancellationToken ct) =>
+            Adapter.ReleaseTerminalSeatAsync(id, request, ct);
+    }
+
+    private sealed class SeatWire(SeatWorld world, IPhoneHomeRuntimeSurface surface, bool phoneHome) : IAsyncDisposable
+    {
+        private readonly PhoneHomeCommandDispatcher _dispatcher = new(surface, new PhoneHomeSettings());
+        private WebApplication? _app;
+        private HttpClient? _http;
+
+        public static async Task<SeatWire> StartAsync(SeatWorld world, IPhoneHomeRuntimeSurface surface, bool phoneHome)
+        {
+            var wire = new SeatWire(world, surface, phoneHome);
+            if (phoneHome) return wire;
+            try
+            {
+                var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [], EnvironmentName = "Testing" });
+                builder.WebHost.UseUrls("http://127.0.0.1:0");
+                builder.Logging.ClearProviders();
+                builder.Services.AddSingleton(world.Runtime);
+                builder.Services.AddSingleton(surface);
+                builder.Services.Configure<HerdrSettings>(_ => { });
+                builder.Services.Configure<HostStatsSettings>(_ => { });
+                wire._app = builder.Build();
+                wire._app.MapRunnerCapabilitiesRoute(RunnerBuildIdentity.Resolve());
+                wire._app.MapTerminalSeatReleaseRoutes();
+                await wire._app.StartAsync();
+                var address = wire._app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
+                var uri = new Uri(address);
+                uri.IsLoopback.ShouldBeTrue();
+                uri.Port.ShouldNotBe(17204);
+                wire._http = new HttpClient { BaseAddress = uri, Timeout = TimeSpan.FromSeconds(10) };
+                return wire;
+            }
+            catch { await wire.DisposeAsync(); throw; }
+        }
+
+        public async Task<PhoneHomeFrame> DispatchAsync(PhoneHomeOperation operation, object body)
+        {
+            var request = new PhoneHomeFrame(PhoneHomeFrameKind.Request, 667, Guid.NewGuid(), operation,
+                JsonSerializer.SerializeToElement(body, PhoneHomeFraming.Json));
+            // Exercise both frame directions, with production framing JSON (not the HTTP defaults).
+            request = JsonSerializer.Deserialize<PhoneHomeFrame>(JsonSerializer.Serialize(request, PhoneHomeFraming.Json), PhoneHomeFraming.Json)!;
+            var result = await _dispatcher.DispatchAsync(request, CancellationToken.None);
+            result.Epoch.ShouldBe(request.Epoch);
+            result.RequestId.ShouldBe(request.RequestId);
+            result.Operation.ShouldBe(operation);
+            return JsonSerializer.Deserialize<PhoneHomeFrame>(JsonSerializer.Serialize(result, PhoneHomeFraming.Json), PhoneHomeFraming.Json)!;
+        }
+
+        public async Task<TerminalSeatObservation> ObserveAsync() => phoneHome
+            ? ReadResult<TerminalSeatObservation>(await DispatchAsync(PhoneHomeOperation.ObserveTerminalSeat,
+                new PhoneHomeTerminalSeatObservationRequest(world.Tail.SessionId, world.Request)))
+            : await PostAsync<TerminalSeatObservation>("terminal-seat-observation", world.Request);
+
+        public async Task<TerminalSeatReleaseResult> ReleaseAsync(TerminalSeatReleaseRequest request) => phoneHome
+            ? ReadResult<TerminalSeatReleaseResult>(await DispatchAsync(PhoneHomeOperation.ReleaseTerminalSeat,
+                new PhoneHomeTerminalSeatReleaseRequest(world.Tail.SessionId, request)))
+            : await PostAsync<TerminalSeatReleaseResult>("release-terminal-seat", request);
+
+        public async Task<RunnerCapabilitiesDto> CapabilitiesAsync() => phoneHome
+            ? ReadResult<RunnerCapabilitiesDto>(await DispatchAsync(PhoneHomeOperation.Capabilities, new { }))
+            : (await _http!.GetFromJsonAsync<RunnerCapabilitiesDto>("/capabilities"))!;
+
+        public async Task AssertObservationUnsupportedAsync()
+        {
+            if (phoneHome)
+            {
+                var refused = await DispatchAsync(PhoneHomeOperation.ObserveTerminalSeat,
+                    new PhoneHomeTerminalSeatObservationRequest(world.Tail.SessionId, world.Request));
+                refused.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+                refused.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedOperation);
+                refused.StatusCode.ShouldBe(409);
+            }
+            else
+            {
+                using var refused = await _http!.PostAsJsonAsync($"/sessions/{world.Tail.SessionId}/terminal-seat-observation", world.Request);
+                refused.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+                using var problem = JsonDocument.Parse(await refused.Content.ReadAsStringAsync());
+                problem.RootElement.GetProperty("type").GetString().ShouldBe(PhoneHomeProblemTypes.UnsupportedOperation);
+            }
+        }
+
+        private static T ReadResult<T>(PhoneHomeFrame frame)
+        {
+            frame.Kind.ShouldBe(PhoneHomeFrameKind.Result, frame.ErrorCode);
+            return frame.Payload!.Value.Deserialize<T>(PhoneHomeFraming.Json)!;
+        }
+
+        private async Task<T> PostAsync<T>(string route, object request)
+        {
+            using var reply = await _http!.PostAsJsonAsync($"/sessions/{world.Tail.SessionId}/{route}", request);
+            reply.StatusCode.ShouldBe(HttpStatusCode.OK, "conditional runtime transport must be wired");
+            return (await reply.Content.ReadFromJsonAsync<T>())!;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            _http?.Dispose();
+            if (_app is not null) { await _app.StopAsync(); await _app.DisposeAsync(); }
+        }
+    }
+
     [Test]
     public async Task Activity_resets_the_qualification_window()
     {
@@ -728,6 +1009,8 @@ public class TerminalSeatReleaseTests
 
         public Task<TerminalSeatReleaseResult> ReleaseAsync(TerminalSeatReleaseRequest request) =>
             Runtime.ReleaseTerminalSeatAsync(Tail.SessionId, request, TimeSpan.Zero, CancellationToken.None);
+
+        public string ReleaseAuditPath => System.IO.Path.Combine(_root, "slot-releases.jsonl");
 
         public int ReleaseAuditCount => File.Exists(System.IO.Path.Combine(_root, "slot-releases.jsonl"))
             ? File.ReadAllLines(System.IO.Path.Combine(_root, "slot-releases.jsonl")).Length : 0;

@@ -64,14 +64,13 @@ builder.Services.AddSingleton<CodexCliVersionProbe>();
 builder.Services.AddHostedService<CodexCliVersionRefreshService>();
 builder.Services.AddSingleton(sp => new RunnerCapacityState(sp.GetRequiredService<IOptions<PhoneHomeSettings>>().Value));
 builder.Services.AddSingleton<IPhoneHomeAdoptionGate, PhoneHomeAdoptionGate>();
+builder.Services.AddSingleton<IPhoneHomeRuntimeSurface>(sp =>
+    new PhoneHomeRuntimeAdapter(sp.GetRequiredService<SessionRunnerRuntime>(), RunnerBuildIdentity.Resolve()));
 builder.Services.AddSingleton<PhoneHomeCommandDispatcher>(sp =>
 {
-    var runtime = sp.GetRequiredService<SessionRunnerRuntime>();
-    var build = RunnerBuildIdentity.Resolve();
     var hostStatsOptions = sp.GetRequiredService<IOptions<HostStatsSettings>>().Value;
     return new PhoneHomeCommandDispatcher(
-        new PhoneHomeRuntimeAdapter(runtime, new RunnerBuildDto(
-            build.InformationalVersion, build.CommitSha, build.AssemblyWriteTimeUtc, build.ProcessStartUtc)),
+        sp.GetRequiredService<IPhoneHomeRuntimeSurface>(),
         sp.GetRequiredService<IOptions<PhoneHomeSettings>>().Value,
         sp.GetRequiredService<IProviderAuthProbe>(),
         sp.GetRequiredService<ILogger<PhoneHomeCommandDispatcher>>(),
@@ -218,23 +217,8 @@ app.MapCodexCliVersionRoutes();
 // environment: runner and server are separate processes with separate config, so a server that
 // assumed they matched would size bodies for a pty that cannot carry them. Resolved live rather
 // than captured at startup so a runner restarted with a different flag reports the truth.
-app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings, IOptions<HostStatsSettings> hostStats, SessionRunnerRuntime runtime) =>
-{
-    // CARD-0160: advertise from the actual dispatch surface. pty-host is always available;
-    // herdr is advertised only when SessionRunner:Herdr:Enabled is true — an Enabled=false
-    // runner must not claim herdr or the server's capability gate would green-light a launch
-    // that HerdrClient then refuses.
-    IReadOnlyList<string> sessionBackends = herdrSettings.Value.Enabled
-        ? [SessionBackends.PtyHost, SessionBackends.Herdr]
-        : [SessionBackends.PtyHost];
-    IReadOnlyList<string> features = herdrSettings.Value.Enabled
-        ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement, HerdrPaneDisposalCodes.Capability, HerdrPaneDisposalCodes.BestEffortCapability, GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1, RunnerCapabilityFeatures.CompactionContinuationStopV1]
-        : [GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1, RunnerCapabilityFeatures.CompactionContinuationStopV1];
-    if (runtime.VerificationCustodyBackend is not null)
-        features = [.. features, RunnerCapabilityFeatures.VerificationCustodyV1];
-    features = HostStatsRoutes.CapabilityFeatures(features, hostStats.Value);
-    return Results.Ok(runtime.DescribeCapabilities(runnerBuild, sessionBackends, features));
-});
+app.MapRunnerCapabilitiesRoute(runnerBuild);
+app.MapTerminalSeatReleaseRoutes();
 
 app.MapGet("/sessions", (SessionRunnerRuntime runtime) => Results.Ok(runtime.List()));
 // CARD-0589: build/test driver leases for scripts/run-checkpoint.ps1, scripts/build-slot.ps1 and the land verifier.
@@ -455,3 +439,48 @@ app.MapGet("/events", async (HttpContext context, SessionRunnerRuntime runtime, 
 });
 
 app.Run();
+
+// Callable production mappings: isolated wire tests do not boot adoption/watchdog services.
+internal static class TerminalSeatReleaseRoutes
+{
+    internal static void MapRunnerCapabilitiesRoute(this IEndpointRouteBuilder app, RunnerBuildDto runnerBuild)
+    {
+        app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings, IOptions<HostStatsSettings> hostStats, SessionRunnerRuntime runtime) =>
+        {
+            // CARD-0160: advertise from the actual dispatch surface. pty-host is always available;
+            // herdr is advertised only when SessionRunner:Herdr:Enabled is true — an Enabled=false
+            // runner must not claim herdr or the server's capability gate would green-light a launch
+            // that HerdrClient then refuses.
+            IReadOnlyList<string> sessionBackends = herdrSettings.Value.Enabled
+                ? [SessionBackends.PtyHost, SessionBackends.Herdr]
+                : [SessionBackends.PtyHost];
+            IReadOnlyList<string> features = herdrSettings.Value.Enabled
+                ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement, HerdrPaneDisposalCodes.Capability, HerdrPaneDisposalCodes.BestEffortCapability, GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1, RunnerCapabilityFeatures.CompactionContinuationStopV1]
+                : [GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1, RunnerCapabilityFeatures.CompactionContinuationStopV1];
+            if (runtime.VerificationCustodyBackend is not null)
+                features = [.. features, RunnerCapabilityFeatures.VerificationCustodyV1];
+            features = HostStatsRoutes.CapabilityFeatures(features, hostStats.Value);
+            return Results.Ok(runtime.DescribeCapabilities(runnerBuild, sessionBackends, features));
+        });
+    }
+
+    internal static void MapTerminalSeatReleaseRoutes(this IEndpointRouteBuilder app)
+    {
+        app.MapPost("/sessions/{id:guid}/terminal-seat-observation", async (
+            Guid id, TerminalSeatObservationRequest request, IPhoneHomeRuntimeSurface runtime, CancellationToken ct) =>
+        {
+            try { return Results.Ok(await runtime.ObserveTerminalSeatAsync(id, request, ct)); }
+            catch (PhoneHomeAdmissionException ex)
+            {
+                return Results.Problem(title: ex.Code, type: ex.Code, statusCode: ex.StatusCode);
+            }
+        });
+        app.MapPost("/sessions/{id:guid}/release-terminal-seat", async (
+            Guid id, TerminalSeatReleaseRequest request, IPhoneHomeRuntimeSurface runtime, CancellationToken ct) =>
+        {
+            if (request.Observation is null)
+                return Results.Problem(title: "Terminal seat observation is required.", statusCode: 400);
+            return Results.Ok(await runtime.ReleaseTerminalSeatAsync(id, request, ct));
+        });
+    }
+}
