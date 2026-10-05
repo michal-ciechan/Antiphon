@@ -222,7 +222,7 @@ baselines at 3 minutes plus four red/restored-green cycles at 6 minutes gives a
 36-minute execution floor, before setup/reporting. TestDesign must refine that
 estimate rather than absorb deliberate PCs or activation waits into Code.
 
-### Checkpoints
+### Proposed checkpoints (superseded by the frozen manifest below)
 
 Proposed closed list for S1, **pending TestDesign freeze**. Every group names
 the native Linux lane. No CARD-1040 consumer rows, host installer battery, image
@@ -250,4 +250,390 @@ handoff. No deployment is authorized by this Plan dispatch.
 --- next stage ---
 next: test-design
 handoff: Freeze CARD-1054's four image PATH behaviors, one exact-method PC each and the 18-result native-Linux manifest; reuse landed CARD-1025 host admission, update CARD-1040 S2's row contract, and retain its image-activation gate. No whole Unit, host provisioning or rollout.
+artifact: docs/superpowers/plans/2026-10-05-card-1054-jq-path-qualification-plan.md
+
+## Verification design
+
+TestDesign task: `a1db6174-4243-46e5-875f-4589a0f9fb02`, 2026-10-05.
+Source read: `0ffa99b28fd675d0e8d04d3cd35a684f1f197028`. D-1 through D-6 and
+S1/S2 remain the fix design. This section freezes their verification. The Plan
+handoff and proposed table above are historical; the sole exact `### Checkpoints`
+heading below is the importer entry point. `PlanTableImporter.ExtractSection`
+selects the first such heading, not the last.
+
+The ordinary roster remains **four new methods plus twelve existing argument
+results and two existing source contracts: eighteen results**. PC-1..PC-4 remain
+the four proposed behavior controls, each confined to its exact method. The
+standing TestDesign rule also requires a distinct PC for each independently
+bypassable guard. PC-5..PC-13 therefore split the additional observation,
+escaping, discovery and execution guards within those same four methods. They
+add no ordinary methods or Code runs. Four mutations alone would not audit all
+the safety assertions in D-1..D-3. All thirteen are designed, **not executed**.
+
+### Inspection
+
+| Bodies read | Boundaries -> V/R IDs or exclusion |
+|---|---|
+| `JqRunnerImageContractTests.Pinned_download_is_verified_before_root_owned_install_in_every_runner_target`, `Qualification_grades_the_jq_row_for_both_targets`, all twelve attributes and the body of `Version_row_accepts_only_exact_successful_pin_without_stderr`, and `Read` | Two source checks plus twelve version results -> V-5/R-5. The current extracted-row fixture replaces `env` and checks only stdout. It must gain a real admitted file and actual exit/trace assertions; another path refusal must not pass a version case. |
+| `verify-codex-image.sh` constants, `need_uid`, `result`, `jq-version`; other row bodies inspected for shared-helper impact | Actual PATH, resolved identity, canonical leaf, status and diagnostic output -> V-1..V-4/R-1..R-4. Other provider rows are excluded: leave their bodies and shared `need_uid`/`result` unchanged. |
+| `HostJqPrerequisiteScriptTests.C1025_Check_qualifies_deployment_shell`, `C1025_Check_rejects_canonical_leaf_symlink`, `C1025_Receipt_rejects_canonical_lookup_with_unapproved_target`; `HostJqFixture` constructor, `Existing`, `HomeShadow`, `JqScript`, `Start`, `Run`, `Collect`, `ReplaceOnce`, `Locate`, `Executable`, `Dispose` | Nearest fixture for new private filesystem setup in the existing image test file: identical-byte shadow, alias and live symlink target; exact counted constant replacement; child-only PATH, bounded stream collection -> V-1..V-4. Do not reuse its jq/SSH/Docker/privilege fakes or require installed jq for the image fixture. No new shared helper file is necessary. |
+| `RemoteScriptContractTests.PrepareLinuxShellScript` and `LinuxShell` | Existing native/WSL launcher returns stdout without checking exit and can skip on Windows; insufficient for the new image admission oracle. Leave it unchanged; use a local result carrying exit/stdout/stderr -> all executable cases. |
+| `DockerStackDocuments.Read`, `FindRoot`, `Stages`, `Closure`; `ProcessSpawnLimit.Limit` | Repository source lookup, Docker stage closure and assembly-local limiter=1 -> V-5 and private fixture process ownership. No fixture writes under the source binary directories or outside its owned root. |
+| Dockerfile jq arguments/RUN; wrapper `Invoke-Probe`, jq row assignment and retained `row-jq-version.txt` | Digest-before-root-owned-install and exit-zero/exactly-one-ok-row wrapper admission -> V-5. Wrapper already accepts added detail. No wrapper/Dockerfile change, Docker build or live provider proof. |
+| `server2-host-jq.sh` `qualify`/`refuse_path`; `deploy-server2.ps1` successful proof shape/path admission | Landed CARD-1025 clears hashing, resolves actual lookup, refuses home targets and canonical-leaf links; wrapper requires resolved canonical proof. Dependency only; no new host test, installer or host PC execution. |
+| CARD-1040 verification admission, Delivery inventory, Guard inventory, fifteen-method Checkpoints and Cost; testing owner's jq qualification section | Only row grammar/dependency wording changes here. Preserve immutable outer image/activation receipt, actual-child qualification and all fifteen consumers -> documentary check in S2; no CARD-1040 test runs. |
+| `PlanTableImporter.ImportMarkdown`, `ExtractSection`, `SplitRow`, `RosterTokens`; testing owner's manifest, runner, build-slot and Mutation sections | One active table, escaped OR separators, CP-2 build reuse within S1, 4/14 floors and explicit serial rows -> CP-1/CP-2. Actual TRX equality is a separate check from the tool's minimum. |
+
+Missing setup to implement in S1, with no new production test seam:
+
+- Add a private fixture in `JqRunnerImageContractTests.cs`. Native Linux is the
+  checkpoint prerequisite. Bash, `id`, `env` and `readlink` must be real executable
+  host tools; absence fails setup. No installed jq, Docker, root access, external
+  network, database or currently activated image is required. No missing-tool
+  skip is accepted in these Linux rows.
+- Allocate `/tmp/c1054-<guid>` with a simple ASCII name, private mode 0700,
+  `destination/jq`, `home/app/.local/bin/jq`, `alias/jq`, `tools`, `probe-home` and
+  a NUL-delimited invocation log. The parent creates all directories. Real
+  executable fixtures use mode 0755; symlinks use the native filesystem. Remove
+  only this root after all owned processes and redirected streams finish.
+- Copy the **whole** probe. Freeze three substitutions, each counted once before
+  replacement: `JQ_DESTINATION=/usr/local/bin/jq` to a shell-quoted private
+  destination; `PROBE_HOME=/c660-home` to a shell-quoted private home; and the
+  single `need_uid 1654` inside the identified `jq-version` arm to the measured
+  test uid. Locate that arm uniquely and preserve its remaining bytes. Leave
+  `JQ_VERSION`, the actual uid function, result function, admission expressions,
+  `command -v`, `readlink` and formatter unchanged. A replacement-count mismatch
+  fails setup. These substitutions cannot qualify real uid 1654 or image custody.
+- Start absolute native Bash without login/profile processing. Supply only
+  fixture environment values, `LC_ALL=C`, the test-owned HOME, trace and version
+  vector variables. PATH consists exclusively of the chosen private candidate
+  directories plus `tools`; `tools` has symlinks to real `id`, `env`, `readlink`
+  and no jq. No inherited PATH tail, imported shell functions or `BASH_ENV` may
+  supply an accidental jq. Invoke the copied script with `jq-version`.
+- For the stale-hash vector only, a Bash prelude first installs a real
+  `hash -p <private-canonical> jq`, asserts `command -v jq` sees that cached
+  canonical path, then sources the same copied script with argument `jq-version`
+  **in that shell**. PATH already has home before canonical and is not reassigned
+  after seeding the hash. The production `hash -r` must expose the home shadow.
+  This is shell state setup, not replacement of discovery with a fake answer.
+- Healthy home/canonical executable files have identical script bytes. The
+  stand-in logs its actual `$0`, argc, argv and HOME as NUL-delimited values,
+  emits the configured stdout/stderr and exit, and uses Bash builtins only.
+  Establish byte equality and successful direct `--version` execution before
+  the rejection vector, then clear the log. Thus a zero execution assertion
+  cannot pass because the supposedly healthy rejected fixture was broken.
+- Return `(Exit, Stdout, Stderr)` from every child; use `ArgumentList`, concurrently
+  drain both streams, close stdin, and bound process exit plus both EOFs by the
+  existing `LinuxShell` 60-second ceiling. On timeout/failure kill the owned tree,
+  await exit and drain within a separate 10-second cleanup ceiling; failed cleanup
+  fails the test. Retain `ParallelLimiter<ProcessSpawnLimit>` on all five
+  process-spawning methods, including the existing parameterized method. No
+  Pty test host or second Antiphon.Tests host runs beside these serial rows.
+
+Receipt grammar, frozen for Code and the CARD-1040 handoff:
+
+```text
+C660_ROW jq-version ok jq-1.7.1 as uid 1654 lookupPath=Q(found) path=Q(resolved)
+C660_ROW jq-version fail reason=REASON lookupPath=Q(found-or-unavailable) path=Q(resolved-or-unavailable)
+```
+
+`Q(value)` means Bash builtin `printf '%q'` with `LC_ALL=C` for these fields;
+`Q(...)` is specification notation, not literal output. Fixed unavailable value
+is `unavailable` (no quotes in its encoded form). An observation is retained once
+known, even if refused. The failure line above applies to path admission; the
+existing version/exit/stderr failure explanations remain intact. Path cases
+have exactly one nonempty physical stdout line, one matching row and no raw
+CR/tab/other control bytes inside that line. Success exits 0; every path refusal
+exits 1, never 0 or usage exit 2. Stderr is empty in these controlled path cases.
+Diagnostics use Bash builtins and must not execute a refused jq.
+
+| First failed boundary | REASON | Retained observations |
+|---|---|---|
+| `command -v jq` fails/returns empty | `JqNotFound` | Both `unavailable`; an off-PATH canonical file is not fallback authority. |
+| Found value is not an absolute executable regular file | `JqLookupInvalid` | Actual found text, resolved `unavailable` because resolution was not attempted. |
+| Real `readlink -f -- <found>` fails/returns empty | `JqResolveFailed` | Actual found text, resolved `unavailable`. |
+| Resolved target differs from the fixed destination, or canonical leaf fails regular/executable/non-symlink admission | `JqPathUnapproved` | Actual found and resolved values. Canonical spelling cannot override an unapproved target. |
+
+Freeze the new methods as non-parameterized `[Test]` methods. Each vector below
+is an internal case and contributes no additional TUnit result:
+
+| Method / IDs | Internal boundary combinations and decisive observations |
+|---|---|
+| `C1054_Jq_row_rejects_home_shadow` / V-1, R-1 | Run canonical-present home shadow **first**, then canonical-absent home shadow; identical healthy binaries, home first on PATH, exit 1 and `JqPathUnapproved`, exact two home paths, trace empty. Add missing discovery with canonical present but off PATH, then absent everywhere (`JqNotFound`); PATH entry `.` with cwd=canonical parent (`./jq`, `JqLookupInvalid`); canonical found with only the fixture's readlink link omitted (`JqResolveFailed`); and the same-shell cached-canonical/home-first vector (`JqPathUnapproved`). Each asserts actual exit, exact fail row/no ok row, correct fields and no jq invocation. |
+| `C1054_Jq_row_accepts_canonical_file_and_alias` / V-2, R-2 | Direct canonical first; earlier absolute alias to it second. Both exit 0 with exact success prefix/fields and one invocation whose `$0` is the resolved canonical path, argc=1, argv=`--version`, HOME=private probe home. Include a nonexecutable earlier home candidate plus executable canonical fallback: Bash must discover canonical, since the nonexecutable home file is not a shadow. |
+| `C1054_Jq_row_rejects_canonical_leaf_symlink` / V-3, R-3 | Canonical PATH spelling is a symlink to a healthy executable home target, both with direct lookup and an earlier alias to that leaf. Require exit 1, `JqPathUnapproved`, found spelling preserved, resolved home preserved and empty trace. Additional static layouts: dangling leaf, self-loop leaf, directory leaf and nonexecutable canonical leaf with no later jq all refuse `JqNotFound`, with unavailable observations and empty trace. These layouts never reach execution or block on a FIFO. |
+| `C1054_Jq_row_records_found_and_resolved_paths` / V-4, R-4 | Direct, accepted alias, home shadow, canonical-link-to-home, unavailable lookup and unavailable resolution. Assert complete row equality using independent fixture expectations. Add accepted alias directory containing a newline **first**, then space, tab, CR, quote and backslash as separate vectors; then a plain alias to an unapproved home path with those characters, again newline first. Cover each field independently: encoded found differs from encoded target. Assert a single physical row before field equality so PC-6/PC-13 reach their named assertion; no unsafe `eval` of receipt text. Preserve exact sentinel and reason expectations. |
+
+Use literal expected encodings for those fixed filename suffixes, composed with
+the safe ASCII private root, rather than calling the production formatter to
+generate expected output. A space is `\ `; a newline-bearing full path uses
+Bash's `$'...\n...'` form, and likewise for tab/CR. C# should compare the exact
+encoded values as strings. Do not split shell-escaped fields on spaces.
+
+The existing version method keeps all twelve attributes unchanged and uses the
+same private file fixture with healthy canonical admission; configure only the
+stand-in's stdout, exit and stderr. Require one traced canonical `--version`
+invocation in **every** vector, actual exit 0 for the one good row and 1 for the
+eleven refusal rows, and the existing correct refusal explanation: `exit=1`,
+`stdout=[...] expected jq-1.7.1`, or `unexpected version stderr`. No
+`reason=Jq...` path refusal is allowed to satisfy these assertions. Its two
+source-contract companions remain unchanged.
+
+Boundary exclusions are deliberate. Bash cannot discover a nonexecutable file,
+directory, dangling link or loop as executable jq in this private PATH; they
+exercise discovery refusal, not artificial `readlink` output. Readlink failure
+is exercised independently by omitting that utility from the child PATH while
+canonical jq remains discoverable. Relative lookup is independently reachable
+with PATH=`.`. NUL and slash inside a filename are impossible Linux filenames;
+PATH components containing colon cannot designate the intended single directory.
+No such pseudo-case is claimed. Parent symlink policy, hardlink custody and
+check-to-use replacement remain CARD-1058; adding a race to isolate a redundant
+leaf test would cross D-2's explicit static-directory trust boundary.
+
+### Delivery inventory
+
+New/changed asynchronous delivery paths: **none**. The probe synchronously
+returns a row and process exit to its waiting wrapper. The wrapper retains
+`row-jq-version.txt`; its existing producer, persistence and recovery are not
+changed. Test fixture tasks await owned processes and are not message delivery.
+There is no new queue, recipient, durable session identity, enqueue handoff,
+crash recovery, busy-recipient branch or already-eligible-recipient branch to
+test. No session input or UserPrompt receipt is claimed. Consequently the real
+queue/transcript requirement is inapplicable, not replaced by a queue ack.
+
+For the local synchronous oracle, join the private fixture root/vector identity,
+child exit, captured row and **actual executable invocation log**. A row alone
+does not prove what ran. The copied fixed-path script and stand-in executables
+prove real Bash lookup/resolution/admission and execution effects; they cannot
+prove artifact digest, root ownership, real uid 1654, actual runner activation
+or recipient delivery. Source contracts only check checked-in install/wrapper
+structure. CARD-1040 S2 still supplies outer container ID/creation/start, immutable
+image ID/digest, build/activation receipts, runner buildVersion and matching
+actual-child path/version/hash/owner/mode before its own fifteen results.
+
+### Proves it works now
+
+- V-1: Reject actual home shadows, unavailable discovery/resolution and relative
+  lookup, including a stale command cache | real native Bash/private filesystem |
+  CP-1 `C1054_Jq_row_rejects_home_shadow` | fail exit/row/reason/paths and no jq
+  execution in every listed vector.
+- V-2: Accept canonical file and an earlier alias to that same file | native
+  Bash/symlink/invocation trace | CP-1
+  `C1054_Jq_row_accepts_canonical_file_and_alias` | success and exactly one
+  invocation through resolved canonical path with the expected argv/HOME.
+- V-3: Refuse a working home target behind the canonical spelling | native
+  filesystem | CP-1 `C1054_Jq_row_rejects_canonical_leaf_symlink` | fail exit/row,
+  correct observed home target and zero execution; unusable leaves also refuse.
+- V-4: Keep truthful, unambiguous found/resolved evidence in success and refusal |
+  captured real stdout | CP-1 `C1054_Jq_row_records_found_and_resolved_paths` |
+  exact independently expected fields, sentinels, reasons and one physical row.
+- V-5: Preserve pin/install/wrapper and all existing version semantics | source
+  contracts plus executable version fixture | CP-2 three existing methods |
+  exactly 14 results; twelve version vectors reach canonical invocation, only
+  exact successful pin with empty stderr passes qualification.
+
+### Guards the regression
+
+- R-1: A healthy absolute canonical binary must not conceal home-first PATH |
+  V-1 method | first vector `Exit.ShouldBe(1, "c1054-home-present-refused")`,
+  exact fail row and `Trace.ShouldBeEmpty("c1054-refusal-no-execution")`.
+  Additional vectors independently label `c1054-missing-refused`,
+  `c1054-relative-refused`, `c1054-resolution-refused` and
+  `c1054-cache-cleared-refused` on their exit-1 assertions.
+- R-2: An approved alias must not be rejected or used as the invocation spelling |
+  V-2 method | `Exit.ShouldBe(0, "c1054-alias-accepted")`, then
+  `InvokedPath.ShouldBe(Destination, "c1054-invoke-resolved")` and exact argv/HOME.
+- R-3: Canonical lookup alone must not authorize a home target |
+  V-3 method | first vector
+  `Exit.ShouldBe(1, "c1054-canonical-leaf-refused")`; healthy target confirmed
+  before the probe, path evidence retained and trace empty.
+- R-4: A receipt must not collapse alias/home identity or add physical lines |
+  V-4 method | exact expected lookup/path assertions labelled
+  `c1054-found-path` and `c1054-resolved-path`; both control-character families
+  first assert `PhysicalLines.Length.ShouldBe(1, "c1054-row-single-line")`.
+  Unknown fields must equal literal `unavailable`, never canonical fallback.
+- R-5: The path gate must not mask a version regression | existing version method
+  and two source contracts | each of twelve rows asserts traced canonical
+  invocation before its outcome/explanation; the original pin/digest/install
+  ordering and wrapper-row assertions remain effective.
+
+### Guard inventory
+
+| Guard | Plan reference and safety-critical invariant | Positive control |
+|---|---|---|
+| G-1 | D-1/D-2: a discovered home target cannot pass resolved-target equality even with a healthy canonical leaf. | PC-1 |
+| G-2 | D-2: an earlier absolute alias resolving to the regular canonical leaf is accepted. | PC-2 |
+| G-3 | D-2: canonical lookup spelling cannot override resolved-target/non-symlink-leaf admission. | PC-3 |
+| G-4 | D-3: lookupPath always carries the actual found observation, including refusal/unknown states. | PC-4 |
+| G-5 | D-3: path always carries the actual resolved observation, including refusal/unknown states. | PC-5 |
+| G-6 | D-3: lookupPath is shell-escaped so found-path characters cannot inject physical receipt lines. | PC-6 |
+| G-7 | D-1: missing discovery refuses; an off-PATH canonical executable is not an implicit fallback. | PC-7 |
+| G-8 | D-1: relative lookup cannot qualify even when readlink would normalize it to canonical. | PC-8 |
+| G-9 | D-1: unavailable resolution refuses; canonical cannot be invented as the resolved observation. | PC-9 |
+| G-10 | D-1: command cache is cleared before observing the current PATH. | PC-10 |
+| G-11 | D-2: the admitted resolved path is the executable actually invoked. | PC-11 |
+| G-12 | D-1/D-3: no rejected jq executes, including for diagnostics. | PC-12 |
+| G-13 | D-3: path is independently shell-escaped so resolved-target characters cannot inject physical receipt lines. | PC-13 |
+
+Scope census: **guards=13, mapped=13, missing=0, duplicate PC maps=0**.
+G-1 and G-3 retain the two different bypass shapes of the compound identity
+gate. The canonical `-f`/`-x`/`! -L` terms are recorded in G-3, not omitted: with
+real discovery, real resolution and a static directory they cannot independently
+admit an invalid leaf while resolved equality remains true. Removing only
+`! -L` is therefore an equivalent mutant in this scope and earns no PC credit.
+PC-3 deliberately exercises the executable canonical-spelling shortcut proposed
+by Plan, retaining the other checks on the alternative path. G-4/G-5 and
+G-6/G-13 are split because field assignment and field escaping are independently
+breakable. No async delivery/recovery guard exists.
+
+Unchanged safety guards are explicitly outside this card's mutation census:
+uid=1654 and result exit conventions (CARD-0660), exact version/exit/empty-stderr
+and download digest/root-owned-install (CARD-0927), wrapper row admission, and
+host qualification/provision/receipt guards (CARD-1025). V-5 retains the relevant
+ordinary regression checks; uid ownership/activation remains S2's runtime
+evidence obligation. This design claims no new PCs for those owners. If Code
+edits those guards, shared helpers or their policies, return to TestDesign
+instead of treating the thirteen-control inventory as covering the extra edit.
+
+### Positive controls
+
+All mutations below modify the copied-from production probe in the sourced
+verification checkout, never the test's expectations or native discovery tools.
+They are valid Bash edits and leave C# compilation unchanged. Require a single
+expected source match; after implementation, Review identifies each concrete
+statement fulfilling that description. A missing seam returns to Plan/TestDesign;
+Mutation must not improvise a different defect. The method names below are in
+`JqRunnerImageContractTests`; every phase's filter is exactly
+`/*/*/JqRunnerImageContractTests/<listed-method>` without a class wildcard.
+
+| PC / guard | Compiling defect | Exact method | Required assertion red |
+|---|---|---|---|
+| PC-1 / G-1 | Replace only resolved-target equality in compound admission with `true`; retain canonical regular/executable/non-symlink checks. | `C1054_Jq_row_rejects_home_shadow` | First canonical-present vector: `c1054-home-present-refused`, actual exit 0 versus expected 1; home stand-in ran successfully. |
+| PC-2 / G-2 | Add lookup-equals-destination as a required conjunct of otherwise unchanged path admission. | `C1054_Jq_row_accepts_canonical_file_and_alias` | Direct vector passes; alias `c1054-alias-accepted`, actual exit 1 versus expected 0. |
+| PC-3 / G-3 | Admit `lookup == JQ_DESTINATION` as an OR alternative to the complete resolved-target/regular-leaf predicate. | `C1054_Jq_row_rejects_canonical_leaf_symlink` | First executable-home-target vector: `c1054-canonical-leaf-refused`, actual exit 0 versus expected 1. This is not merely deleting the redundant `! -L` term. |
+| PC-4 / G-4 | Feed the resolved observation into the lookupPath formatting argument instead of the found observation. | `C1054_Jq_row_records_found_and_resolved_paths` | Accepted alias: `c1054-found-path`, canonical text versus expected alias; success status remains valid. |
+| PC-5 / G-5 | Feed the found observation into the path formatting argument instead of the resolved observation. | `C1054_Jq_row_records_found_and_resolved_paths` | Accepted alias: `c1054-resolved-path`, alias text versus expected canonical. |
+| PC-6 / G-6 | Change only the lookupPath conversion from `%q` to `%s`. | `C1054_Jq_row_records_found_and_resolved_paths` | Newline-containing accepted alias: `c1054-row-single-line`, more than one physical stdout line. Keep path escaping intact. |
+| PC-7 / G-7 | Replace the not-found refusal with assignment of the canonical destination to lookup, then continue normal admission. | `C1054_Jq_row_rejects_home_shadow` | Canonical-present/off-PATH vector: `c1054-missing-refused`, exit 0 versus 1. Other healthy admission checks are reached. |
+| PC-8 / G-8 | Remove only the absolute-path requirement from the discovered-file check. | `C1054_Jq_row_rejects_home_shadow` | PATH=`.` vector: `c1054-relative-refused`, exit 0 versus 1 after real resolution to canonical. |
+| PC-9 / G-9 | On failed/empty readlink resolution, assign the canonical destination instead of refusing; suppress readlink's tool-error stderr as in ordinary probe. | `C1054_Jq_row_rejects_home_shadow` | Canonical-found/readlink-omitted vector: `c1054-resolution-refused`, exit 0 versus 1. No shell launch or fixture failure counts. |
+| PC-10 / G-10 | Replace production `hash -r` with `:`. | `C1054_Jq_row_rejects_home_shadow` | Same-shell seeded-cache vector: `c1054-cache-cleared-refused`, exit 0 versus 1 because cached canonical obscures actual home-first PATH. |
+| PC-11 / G-11 | Invoke the admitted lookup path instead of resolved path for `--version`. | `C1054_Jq_row_accepts_canonical_file_and_alias` | Alias vector succeeds qualification but `c1054-invoke-resolved` sees the alias in `$0` rather than canonical destination. |
+| PC-12 / G-12 | Immediately before path-refusal emission, run a nonempty found path once with `--version`, redirecting its stdout/stderr to `/dev/null`; preserve refusal status and fields. | `C1054_Jq_row_rejects_home_shadow` | First healthy home shadow passes exit/row checks, then `c1054-refusal-no-execution` sees one forbidden invocation. |
+| PC-13 / G-13 | Change only the path conversion from `%q` to `%s`. | `C1054_Jq_row_records_found_and_resolved_paths` | Plain alias to newline-containing unapproved home target: `c1054-row-single-line`, more than one physical stdout line. Keep lookupPath escaping intact. |
+
+Code runs V/R; ordinary Review judges this pending design and the implementation;
+Mutation runs baseline/break/red/restore/green **after confirmed land**. Each PC
+gets its own exact-method baseline, red and restored-green driver invocation,
+`-MinExecuted 1`, exact `-Expect JqRunnerImageContractTests.<method>`, and fresh
+phase-specific `bin-c1054-pcN-<phase>/` plus external results directory. Each phase
+must execute exactly one result, no skip. These thirteen controls all edit the
+same probe file, so they run serially, never as a concurrent batch.
+
+Use the unchanged `scripts/run-checkpoint.ps1` and `scripts/lib/build-slot.ps1`
+copies in the SourceLanding external evidence root as prescribed by the testing
+owner. The driver takes its own slot. Red requires a completed successful build,
+driver exit 1, and the precise assertion above in fresh TRX. Build/fixture/tool
+errors, wrong assertion, equivalent mutant, zero tests, skip or timeout earn no
+credit. Restore exact source bytes and observe the same method green before the
+next defect; refresh restored timestamps/build outputs. Keep all runs foreground
+supervised and awaited. The sourced snapshot never commits or pushes; mutation
+evidence/restoration belongs in its assigned external root. No mutation is part
+of this TestDesign or Code run.
+
+### Out of scope
+
+- Whole Unit/class/namespace/assembly runs, changing test limits/retries/skip
+  policy, provider qualification, Docker image builds, rollout/restart or
+  installing jq in any standing environment. Private fixtures do not admit
+  CARD-1040 S2 execution or close its activation obligation.
+- CARD-1025 helper/wrapper/installer implementation and controls, and the
+  unchanged CARD-0927/CARD-0660 guards listed above. Their owner artifacts remain
+  dependencies; this plan adds no duplicate host admission mechanism.
+- Hardlinks, concurrent writers and parent-directory custody policies
+  (CARD-1058). They require a different trust/design decision, not a synthetic
+  readlink answer. Windows/WSL qualification is excluded by native Linux placement.
+- No repeated passing selection or new timeout experiment. A failed existing
+  method is compared at the recorded base using that exact selection before
+  calling it inherited; a new missing method cannot be tested at a base where
+  it does not exist. Report that as NEW, not inherited or zero-test green.
+
+### Checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
+|---|---|---|---|---|---|---|---:|---:|---|
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1054-jq/` | linux-jq-path | `/*/*/JqRunnerImageContractTests/(C1054_Jq_row_rejects_home_shadow*)\|(C1054_Jq_row_accepts_canonical_file_and_alias*)\|(C1054_Jq_row_rejects_canonical_leaf_symlink*)\|(C1054_Jq_row_records_found_and_resolved_paths*)` | V-1, V-2, V-3, V-4, R-1, R-2, R-3, R-4 | exactly the four literal C1054 methods listed above, 4 passed, 0 failed/skipped, no extra methods | 4 | 6 | true |
+| CP-2 | S1 | CP-1 | linux-jq-pin-regression | `/*/*/JqRunnerImageContractTests/(Version_row_accepts_only_exact_successful_pin_without_stderr*)\|(Pinned_download_is_verified_before_root_owned_install_in_every_runner_target*)\|(Qualification_grades_the_jq_row_for_both_targets*)` | V-5, R-5 | exactly 12 argument-expanded version results and the 2 literal source-contract methods, 14 passed, 0 failed/skipped, no extra methods | 14 | 3 | true |
+
+The union is the complete ordinary executable scope: seven unique methods,
+eighteen TUnit executions, **one isolated build** reused only within committed S1.
+Internal vector/assertion counts are not `Min`. Prefix stars are the pinned OR
+discovery convention; compare fresh TRX method names/counts for exact equality,
+including all twelve version argument sets. CP-1/CP-2 minima alone cannot prove
+that equality or the receipt/trace assertions.
+
+Bootstrap the checkpoint tool once through the host build-slot gate:
+
+```powershell
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1054-tool -- dotnet build tools/Antiphon.Checkpoints --property:OutputPath=bin-c1054-tool/ --property:UseAppHost=false --nologo
+$c1054Source = (git rev-parse HEAD).Trim()
+dotnet tools/Antiphon.Checkpoints/bin-c1054-tool/Antiphon.Checkpoints.dll run --plan docs/superpowers/plans/2026-10-05-card-1054-jq-path-qualification-plan.md --after S1 --serial --expected-source-sha $c1054Source --max-wait 50s
+```
+
+The tool owns each row/build lease; do not wrap it in a second slot. If it returns
+75, use the emitted run ID with `wait --max-wait 50s` until terminal. Source is
+committed/pushed before running and frozen until every owned driver exits.
+Derived row deadlines are 18 and 15 minutes; total derived deadline is 28
+minutes. These are limits, not estimates or reasons to retry. Slot timeout=not
+run. Keep unedited CHECKPOINT lines, actual rosters, selected SHA and validated
+clean source/build provenance in the Code report; generated receipts stay ignored.
+Clean exact task-owned alternate outputs, including tool outputs, after exit.
+
+S2 has no build/test row. Check the two documentary row contracts against the
+grammar above and confirm CARD-1040's three checkpoint rows, fifteen names,
+18-minute floor and all activation/uid/digest/owner/mode obligations survive
+unchanged. Record the reviewed S1 SHA for that owner. Run `git diff --check`,
+resolve edited relative links, and Code/Review run
+`scripts/check-evidence-diff.ps1` over their complete task range. This static
+document review is not an additional TUnit group or activation receipt.
+
+### Cost
+
+- **Ordinary V/R floor (Code), estimated: 9 minutes** = CP-1 four-method OR,
+  6 minutes (isolated build 3, fixture startup/execution/teardown 3), plus CP-2
+  three-method OR, 3 minutes (reused build, fourteen results). Exact filters are
+  frozen in the table. No whole Unit or CARD-1040 consumer run is included.
+- **Setup outside the rows, estimated: 3 minutes** = tool bootstrap build 2
+  plus static document/link/manifest/source-receipt preparation 1. Code-side
+  verification total is **12 minutes**, excluding implementation authoring.
+- **PC floor (Mutation), estimated: 130 minutes**. Each of PC-1..PC-13 uses its
+  exact method filter above: baseline build/run 3 + defect application 0.5 +
+  red build/run 3 + byte restoration 0.5 + restored-green build/run 3 = 10
+  minutes. Totals: 39 baseline + 39 red + 39 green + 6.5 break + 6.5 restore.
+  Phase builds are included, not charged twice. They cannot share mutation
+  builds because they touch the same script and each phase needs its own receipt.
+- **Total verification estimate: 142 minutes** = setup 3 + ordinary 9 + PCs
+  130. These are estimates, not measured runs. Split commissioning by the
+  exact-method controls if needed; Code never absorbs the 130-minute Mutation
+  floor. Four primary controls account for 40 minutes; nine required guard
+  splits account for 90. Runtime activation waits and host slot contention are
+  external waits to report separately, not hidden inside authoring or PC time.
+- CP-2 reuse saves **one estimated 3-minute isolated test-project build** versus
+  rebuilding both ordinary rows. No additional wall saving is claimed against
+  historical broad runs: this bounded scope has no fresh timing measurement.
+  One ordinary pass is exactly eighteen results, with no duplicate host/image
+  battery or post-green repeat.
+
+Handoff audit: selected test/fixture/helper bodies read; all boundary vectors
+above assigned or explicitly excluded; guards=13, mapped=13, missing=0,
+duplicate PC maps=0; all thirteen PCs specify executable Bash defects and exact
+method/assertion outcomes. Fixture work is concrete S1 test implementation, not
+an unverifiable production seam. Numeric floors: ordinary=9, setup=3, PC=130,
+total=142 minutes. No build, test or mutation was run by TestDesign; static
+manifest/roster/link checks are the available design validation. Code may proceed
+on native Linux; activation and all deliberate controls remain separate gates.
+
+--- next stage ---
+next: code
+handoff: Implement CARD-1054 S1/S2 with the frozen receipt grammar and four private-filesystem methods; run the sole 18-result Linux checkpoint manifest. Keep all 13 exact-method PCs pending post-land, reuse CARD-1025 host admission, and preserve CARD-1040 S2 activation plus its fifteen-consumer gate.
 artifact: docs/superpowers/plans/2026-10-05-card-1054-jq-path-qualification-plan.md
