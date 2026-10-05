@@ -1225,12 +1225,13 @@ no rebuild per individual fix and at most one further repair round if necessary.
 
 | PC/variant (pending SourceLanding Mutation) | Deliberate guarded defect | Exact ordinary witness |
 |---|---|---|
-| PC-S5-1 / event closure | Remove MatchMachineSources' closed-source exclusion. | ChannelOutboundDiscoveryTests.C519_Discovery_closure_waits_for_complete_window: later attachment turn cannot resurrect the closed System source; fresh attachment companion captures and publishes. |
+| PC-S5-1 / event closure | Remove MatchMachineSources' closed-source exclusion. | ChannelOutboundDiscoveryTests.C519_Discovery_closure_waits_for_complete_window: later attachment turn cannot even enter capture for the closed System source; observed capture-admission member IDs exclude it, while the fresh attachment companion enters capture and publishes. |
 | PC-S5-2 / transactional closure | Remove both closed-source rejection and the redundant closure predicate on conditional member assignment in CaptureAsync. | ChannelOutboundDiscoveryTests.C519_Closed_machine_source_cannot_be_captured: Conflict code, zero orphan/root/member assignment; fresh eligible companion publishes. |
 | PC-S5-3 / complete machine batch | Keep only the opening machine source when the complete shared-attempt composed batch is present. | ChannelOutboundDiscoveryTests.C519_Complete_machine_batch_has_one_owner_for_every_member: three independent members have the same root before preparation and all settle after one complete envelope. |
 
-PC-S5-1's publication safety also has the transactional fence: its event witness
-must observe the attempted admission to discriminate that exclusion alone from
-the remaining fence. Mutation owns missing-control discovery and reconciliation;
-no red/restore/green cycle is claimed by Code. Every pre-existing PC/variant and
-all three new S5 variants remain pending.
+PC-S5-1's event witness observes the existing service probe's new capture-admission
+barrier (before source validation) so the transactional fence cannot mask removal
+of the event exclusion. Its valid companion proves that barrier is wired to the
+real scoped service. Mutation owns deliberate mutants, red/restore/green and
+missing-control discovery. Every pre-existing PC/variant and all three new S5
+variants remain pending.
