@@ -42,12 +42,13 @@ internal static class UnifiedRecoveryProbe
         });
         var clock = new ProbeClock(config.ClockOffsetSeconds);
         var settings = Options.Create(new ChannelOutboundSettings
-            { UnifiedRecoveryEnabled = true, ScanIntervalSeconds = 1 });
+            { UnifiedRecoveryEnabled = true, ScanIntervalSeconds = 1,
+                LeaseSeconds = config.ConverterAgentId == Guid.Empty ? 300 : 60 });
         if (config.ConverterAgentId != Guid.Empty)
             settings.Value.Profiles["crash-pdf"] = new ChannelOutboundProfile
             {
                 ProjectId = config.ProjectId, AgentId = config.ConverterAgentId, PromptFile = "convert.md",
-                Trigger = ChannelOutboundTrigger.EveryAgentReply, TimeoutSeconds = 900,
+                Trigger = ChannelOutboundTrigger.EveryAgentReply, TimeoutSeconds = 300,
             };
         services.AddSingleton<TimeProvider>(clock);
         services.AddSingleton(settings);
@@ -113,6 +114,7 @@ internal static class UnifiedRecoveryProbe
         var marker = JsonSerializer.SerializeToUtf8Bytes(new
         {
             point, deliveryId = id, pid = process.Id, startedAt = process.StartTime.ToUniversalTime(),
+            nativeStart = NativeStart(process),
             mvid = assembly.ManifestModule.ModuleVersionId,
             build = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion,
             expectedSourceSha = config.ExpectedSourceSha,
@@ -124,6 +126,13 @@ internal static class UnifiedRecoveryProbe
             file.Flush(true);
         }
         File.Move(config.MarkerPath + ".tmp", config.MarkerPath);
+    }
+
+    private static string NativeStart(Process process)
+    {
+        if (OperatingSystem.IsWindows()) return process.StartTime.ToUniversalTime().Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var stat = File.ReadAllText($"/proc/{process.Id}/stat");
+        return stat[(stat.LastIndexOf(')') + 2)..].Split(' ', StringSplitOptions.RemoveEmptyEntries)[19];
     }
 
     private sealed class EntryProducer(IAntiphonMessagingProducer inner,

@@ -211,9 +211,9 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         return new OwnedProbe(Process.Start(start) ?? throw new InvalidOperationException("Probe did not start"), marker, source);
     }
 
-    public async Task RecoverAsync(int offset = 600)
+    public async Task RecoverAsync(int? offset = null)
     {
-        await using var child = await StartProbeAsync(null, offset);
+        await using var child = await StartProbeAsync(null, offset ?? (ConverterId == Guid.Empty ? 600 : 120));
         await child.CompleteAsync();
     }
 
@@ -235,6 +235,13 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
     {
         private readonly Task<string> _stdout = process.StandardOutput.ReadToEndAsync();
         private readonly Task<string> _stderr = process.StandardError.ReadToEndAsync();
+        private readonly string _nativeStart = ReadNativeStart(process);
+        private static string ReadNativeStart(Process child)
+        {
+            if (OperatingSystem.IsWindows()) return child.StartTime.ToUniversalTime().Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var stat = File.ReadAllText($"/proc/{child.Id}/stat");
+            return stat[(stat.LastIndexOf(')') + 2)..].Split(' ', StringSplitOptions.RemoveEmptyEntries)[19];
+        }
         public async Task ReachAsync(string point)
         {
             await WaitForAsync(() => File.Exists(marker) || process.HasExited);
@@ -249,7 +256,9 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
             receipt.RootElement.GetProperty("mvid").GetGuid().ShouldNotBe(Guid.Empty);
             receipt.RootElement.GetProperty("expectedSourceSha").GetString().ShouldBe(source);
             receipt.RootElement.GetProperty("build").GetString()!.ShouldContain(source);
-            receipt.RootElement.GetProperty("startedAt").GetDateTime().ShouldBe(process.StartTime.ToUniversalTime());
+            // Linux Process.StartTime reconstructs UTC from a sampled uptime. The kernel's
+            // exact start tick is stable across these independent parent/child observations.
+            receipt.RootElement.GetProperty("nativeStart").GetString().ShouldBe(_nativeStart);
         }
         public async Task KillAsync()
         {
