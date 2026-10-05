@@ -255,6 +255,8 @@ public class AgentTaskStandingAgentDispatchTests
         {
             var (dispatcher, _) = CreateHarness(worktreeBasePath: worktreeRoot);
 
+            // These synthetic profile-backed delegates own their worktrees. A non-ephemeral
+            // existing-agent pin is rejected earlier by CARD-0644, before profile preflight.
             var disabledProfile = await SeedCodexProfileAsync(enabled: false, withActiveRevision: true);
             var (disabledAgent, _) = await SeedStandingAgentAsync(
                 workspace.Path,
@@ -268,7 +270,8 @@ public class AgentTaskStandingAgentDispatchTests
                 pinnedAgentId: disabledAgent,
                 agentKind: AgentKind.Codex,
                 workspaceMode: WorkspaceMode.Worktree,
-                repoPath: workspace.Path);
+                repoPath: workspace.Path,
+                ephemeral: true);
 
             var unvalidatedProfile = await SeedCodexProfileAsync(enabled: true, withActiveRevision: false);
             var (unvalidatedAgent, _) = await SeedStandingAgentAsync(
@@ -283,7 +286,8 @@ public class AgentTaskStandingAgentDispatchTests
                 pinnedAgentId: unvalidatedAgent,
                 agentKind: AgentKind.Codex,
                 workspaceMode: WorkspaceMode.Worktree,
-                repoPath: workspace.Path);
+                repoPath: workspace.Path,
+                ephemeral: true);
 
             var sessionsBefore = await CountSessionsAsync(workspace.Path);
             await dispatcher.TickAsync(CancellationToken.None);
@@ -676,7 +680,8 @@ public class AgentTaskStandingAgentDispatchTests
         Guid? projectId = null,
         AgentKind agentKind = AgentKind.ClaudeCode,
         WorkspaceMode workspaceMode = WorkspaceMode.Shared,
-        string? repoPath = null)
+        string? repoPath = null,
+        bool ephemeral = false)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -695,7 +700,7 @@ public class AgentTaskStandingAgentDispatchTests
             RepoPath = repoPath,
             ProjectId = projectId,
             AgentId = pinnedAgentId,
-            Ephemeral = false,
+            Ephemeral = ephemeral,
             Status = AgentTaskStatus.Queued,
             CreatedAt = DateTime.UtcNow.AddSeconds(-createdSecondsAgo),
         };

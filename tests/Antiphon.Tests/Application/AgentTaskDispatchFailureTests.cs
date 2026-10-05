@@ -89,7 +89,12 @@ public class AgentTaskDispatchFailureTests
 
         var hooks = Path.Combine(slow.Path, ".git-hooks-sleep");
         Directory.CreateDirectory(hooks);
-        await File.WriteAllTextAsync(Path.Combine(hooks, "post-checkout"), "#!/bin/sh\nsleep 30\nexit 0\n");
+        var hook = Path.Combine(hooks, "post-checkout");
+        await File.WriteAllTextAsync(hook, "#!/bin/sh\nsleep 30\nexit 0\n");
+        // Git ignores non-executable hooks on Unix, which would skip the timeout boundary.
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
         await slow.GitAsync("config", "core.hooksPath", hooks);
 
         var (dispatcher, _) = CreateHarness(worktreeAddTimeoutSeconds: 1);
