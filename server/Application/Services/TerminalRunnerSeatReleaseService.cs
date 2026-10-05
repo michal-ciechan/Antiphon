@@ -35,9 +35,69 @@ public sealed class TerminalRunnerSeatReleaseService(
 
     /// <summary>Acquire runner-owned evidence for an inventory identity, including a seat with
     /// no server row. This does not reserve debt or grant ownership authority to release it.</summary>
-    public Task<TerminalRunnerSeatEvidence> ObserveCapturedCandidateAsync(
-        string runnerId, Guid runnerStoreId, Guid sessionId, DateTime? acceptedStartedAt, CancellationToken ct) =>
-        Task.FromResult(new TerminalRunnerSeatEvidence(TerminalRunnerSeatDecision.Unsupported));
+    public async Task<TerminalRunnerSeatEvidence> ObserveCapturedCandidateAsync(
+        string runnerId, Guid runnerStoreId, Guid sessionId, DateTime? acceptedStartedAt, CancellationToken ct)
+    {
+        if (!options.Value.AutomaticEnabled) return new(TerminalRunnerSeatDecision.Disabled);
+        if (string.IsNullOrWhiteSpace(runnerId) || runnerStoreId == Guid.Empty || sessionId == Guid.Empty
+            || acceptedStartedAt is null || acceptedStartedAt == default(DateTime))
+            return new(TerminalRunnerSeatDecision.IdentityUnknown);
+        TerminalSeatObservationRequest? request = null;
+        try
+        {
+            if (await CapturedPeerHoldAsync(runnerId, runnerStoreId, ct) is { } hold) return new(hold);
+            // No server ingestion sequence or retroactive native floor is release evidence.
+            // Only the runner's pre-write capture can fill these deliberately unusable fields.
+            request = new(runnerStoreId, acceptedStartedAt.Value, "", -1, UseCapturedDeliveryEvidence: true);
+            var observed = await runners.Resolve(runnerId).ObserveTerminalSeatAsync(sessionId, request, ct);
+            if (await CapturedPeerHoldAsync(runnerId, runnerStoreId, ct) is { } afterRead)
+                return new(afterRead, request);
+            if (observed?.Transcript is not { } transcript) return new(TerminalRunnerSeatDecision.Unknown, request);
+            if (observed.Status != TerminalSeatQualificationStatus.Qualified)
+                return new(observed.Status switch
+                {
+                    TerminalSeatQualificationStatus.Working => TerminalRunnerSeatDecision.Working,
+                    TerminalSeatQualificationStatus.Waiting => TerminalRunnerSeatDecision.Waiting,
+                    _ => TerminalRunnerSeatDecision.Unknown
+                }, request, observed);
+            // Treat a malformed "Qualified" response as unknown, never as a release receipt.
+            if (transcript.Status != TerminalTranscriptReadStatus.Success
+                || transcript.Verdict != TerminalTranscriptVerdict.Idle
+                || string.IsNullOrWhiteSpace(transcript.BindingIdentity)
+                || string.IsNullOrWhiteSpace(transcript.FileRevision)
+                || transcript.LastPromptRevision is not long prompt || prompt <= 0
+                || transcript.LastEndRevision is not long end || end <= prompt
+                || transcript.TranscriptRevision < end
+                || observed.StableFor < TimeSpan.FromSeconds(120) || string.IsNullOrWhiteSpace(observed.Token))
+                return new(TerminalRunnerSeatDecision.Unknown, request);
+            return new(null, request, observed);
+        }
+        catch (NotSupportedException) { return new(TerminalRunnerSeatDecision.Unsupported, request); }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            // Bounded hold only: a lost/malformed reply proves neither absence nor idleness.
+            return new(TerminalRunnerSeatDecision.Unknown, request);
+        }
+    }
+
+    private async Task<TerminalRunnerSeatDecision?> CapturedPeerHoldAsync(
+        string runnerId, Guid runnerStoreId, CancellationToken ct)
+    {
+        if (runners.RemoteInventoryPending(runnerId)) return TerminalRunnerSeatDecision.Unknown;
+        var peer = await runners.DescribeAsync(runnerId, ct);
+        if (peer is not { Available: true, DispatchEligible: true, Stale: false })
+            return TerminalRunnerSeatDecision.Unknown;
+        if (peer.Capabilities is null) return TerminalRunnerSeatDecision.Unsupported;
+        // A local runner has no phone-home live-store entry; its fresh descriptor supplies it.
+        if (peer.RunnerId != runnerId || peer.Capabilities.RunnerStoreId != runnerStoreId
+            || (runners.GetLiveStoreId(runnerId) is Guid liveStore && liveStore != runnerStoreId))
+            return TerminalRunnerSeatDecision.IdentityUnknown;
+        var features = peer.Capabilities.Features;
+        if (features?.Contains(RunnerCapabilityFeatures.TerminalSeatReleaseV1) != true
+            || features.Contains(RunnerCapabilityFeatures.TerminalSeatDeliveryEvidenceV1) != true)
+            return TerminalRunnerSeatDecision.Unsupported;
+        return null;
+    }
 
     // This reader is shared by answer admission and retry. A missing/stopped session alone is
     // never authority to skip StopDelegateAsync. Keep every part of the accepted identity.
@@ -98,6 +158,18 @@ public sealed class TerminalRunnerSeatReleaseService(
             {
                 await PendingAsync(release, "Unknown", ct);
                 return;
+            }
+            if (observation.UseCapturedDeliveryEvidence)
+            {
+                // A persisted token survives a server restart, but is never fresh authority.
+                // In particular runner restart/adoption loses capture while retaining identity.
+                var fresh = await ObserveCapturedCandidateAsync(release.RunnerId, release.RunnerStoreId,
+                    release.SessionId, release.AcceptedStartedAt, ct);
+                if (fresh.Hold is not null || fresh.Observation?.Token != release.ObservationToken)
+                {
+                    await PendingAsync(release, fresh.Hold?.ToString() ?? "StaleObservation", ct);
+                    return;
+                }
             }
 
             // Queue gate -> short task/release/session transaction. Commit before touching the
@@ -199,7 +271,17 @@ public sealed class TerminalRunnerSeatReleaseService(
         // action. Reusing its token would spend old authority after an unknown interval.
         if (observation is null) return;
         TerminalSeatObservation fresh;
-        try { fresh = await runners.Resolve(release.RunnerId).ObserveTerminalSeatAsync(release.SessionId, observation, ct); }
+        try
+        {
+            if (observation.UseCapturedDeliveryEvidence)
+            {
+                var evidence = await ObserveCapturedCandidateAsync(release.RunnerId, release.RunnerStoreId,
+                    release.SessionId, release.AcceptedStartedAt, ct);
+                if (evidence.Hold is not null || evidence.Observation is null) return;
+                fresh = evidence.Observation;
+            }
+            else fresh = await runners.Resolve(release.RunnerId).ObserveTerminalSeatAsync(release.SessionId, observation, ct);
+        }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { return; }
         if (fresh.Status != TerminalSeatQualificationStatus.Qualified
             || fresh.StableFor < TimeSpan.FromSeconds(120) || string.IsNullOrWhiteSpace(fresh.Token)
@@ -414,15 +496,25 @@ public sealed class TerminalRunnerSeatReleaseService(
             TerminalSeatObservation observed;
             try
             {
-                if (runners.GetLiveStoreId(runnerId) != release.RunnerStoreId)
-                    return await HoldAsync(release, TerminalRunnerSeatDecision.IdentityUnknown, ct);
-                var descriptor = await runners.DescribeAsync(runnerId, ct);
-                if (descriptor is not { Available: true, DispatchEligible: true, Stale: false }
-                    || runners.RemoteInventoryPending(runnerId))
-                    return await HoldAsync(release, TerminalRunnerSeatDecision.Unknown, ct);
-                if (descriptor.Capabilities?.Features?.Contains(RunnerCapabilityFeatures.TerminalSeatReleaseV1) != true)
-                    return await HoldAsync(release, TerminalRunnerSeatDecision.Unsupported, ct);
-                observed = await runners.Resolve(runnerId).ObserveTerminalSeatAsync(sessionId, observation, ct);
+                if (observation.UseCapturedDeliveryEvidence)
+                {
+                    var evidence = await ObserveCapturedCandidateAsync(runnerId, release.RunnerStoreId,
+                        sessionId, release.AcceptedStartedAt, ct);
+                    if (evidence.Hold is { } hold) return await HoldAsync(release, hold, ct);
+                    observed = evidence.Observation!;
+                }
+                else
+                {
+                    if (runners.GetLiveStoreId(runnerId) != release.RunnerStoreId)
+                        return await HoldAsync(release, TerminalRunnerSeatDecision.IdentityUnknown, ct);
+                    var descriptor = await runners.DescribeAsync(runnerId, ct);
+                    if (descriptor is not { Available: true, DispatchEligible: true, Stale: false }
+                        || runners.RemoteInventoryPending(runnerId))
+                        return await HoldAsync(release, TerminalRunnerSeatDecision.Unknown, ct);
+                    if (descriptor.Capabilities?.Features?.Contains(RunnerCapabilityFeatures.TerminalSeatReleaseV1) != true)
+                        return await HoldAsync(release, TerminalRunnerSeatDecision.Unsupported, ct);
+                    observed = await runners.Resolve(runnerId).ObserveTerminalSeatAsync(sessionId, observation, ct);
+                }
             }
             catch (NotSupportedException)
             {
