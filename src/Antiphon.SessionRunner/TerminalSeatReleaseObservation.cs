@@ -27,7 +27,7 @@ internal sealed class TerminalSeatQualification
     internal TerminalSeatObservation Observe(
         Guid epoch, object session, TerminalSeatObservationRequest request,
         TerminalTranscriptObservation transcript, long inputRevision, long outputRevision,
-        TimeProvider clock)
+        TimeProvider clock, Guid? captureId = null)
     {
         var evidence = CheckEvidence(request, transcript);
         if (evidence != TerminalSeatQualificationStatus.Qualified)
@@ -39,17 +39,17 @@ internal sealed class TerminalSeatQualification
         if (Proof is not { } previous || previous.RuntimeEpoch != epoch
             || !ReferenceEquals(previous.Session, session) || previous.Request != request
             || previous.Transcript != transcript || previous.InputRevision != inputRevision
-            || previous.OutputRevision != outputRevision)
+            || previous.OutputRevision != outputRevision || previous.CaptureId != captureId)
         {
             Proof = new(epoch, session, request, transcript, inputRevision, outputRevision,
-                clock.GetTimestamp(), clock.GetUtcNow(), Guid.NewGuid().ToString("N"));
+                clock.GetTimestamp(), clock.GetUtcNow(), Guid.NewGuid().ToString("N"), captureId);
             // A long scheduler pause cannot turn the FIRST successful read into two reads.
             return new(TerminalSeatQualificationStatus.Waiting, transcript,
                 FirstObservedAt: Proof.FirstObservedAt);
         }
 
         var proof = Proof!;
-        var status = Authorize(proof, epoch, session, request, transcript, inputRevision, outputRevision, clock);
+        var status = Authorize(proof, epoch, session, request, transcript, inputRevision, outputRevision, clock, captureId);
         return new(status, transcript,
             status == TerminalSeatQualificationStatus.Qualified ? proof.Token : null,
             clock.GetElapsedTime(proof.FirstTimestamp), proof.FirstObservedAt);
@@ -59,13 +59,14 @@ internal sealed class TerminalSeatQualification
     // without a downstream dictionary miss or a different session object masking that guard.
     internal static TerminalSeatQualificationStatus Authorize(
         TerminalSeatProof proof, Guid epoch, object session, TerminalSeatObservationRequest request,
-        TerminalTranscriptObservation transcript, long inputRevision, long outputRevision, TimeProvider clock)
+        TerminalTranscriptObservation transcript, long inputRevision, long outputRevision, TimeProvider clock,
+        Guid? captureId = null)
     {
         if (proof.RuntimeEpoch != epoch)
             return TerminalSeatQualificationStatus.StaleObservation;
         if (!ReferenceEquals(proof.Session, session) || proof.Request != request
             || proof.Transcript != transcript || proof.InputRevision != inputRevision
-            || proof.OutputRevision != outputRevision)
+            || proof.OutputRevision != outputRevision || proof.CaptureId != captureId)
             return TerminalSeatQualificationStatus.StaleObservation;
         var evidence = CheckEvidence(request, transcript);
         if (evidence != TerminalSeatQualificationStatus.Qualified) return evidence;
@@ -81,7 +82,8 @@ internal sealed class TerminalSeatQualification
         Guid? captureId = null)
     {
         if (proof.RuntimeEpoch != epoch || !ReferenceEquals(proof.Session, session)
-            || proof.Request != request.Observation || proof.Token != request.Token)
+            || proof.Request != request.Observation || proof.Token != request.Token
+            || proof.CaptureId != captureId)
             return TerminalSeatReleaseOutcome.StaleObservation;
         if (transcript.Status != TerminalTranscriptReadStatus.Success
             || transcript.Verdict == TerminalTranscriptVerdict.Unknown)

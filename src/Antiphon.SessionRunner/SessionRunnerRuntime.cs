@@ -1071,13 +1071,16 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (!wasExited)
             {
                 if (session.TerminalReleaseCustodyHold is { } hold) return Refuse(hold);
+                if (!TryResolveTerminalSeatRequest(session, expected, out var canonical, out var captureId))
+                    return Refuse(TerminalSeatReleaseOutcome.Unknown);
                 if (TerminalSeatProofFor(sessionId) is not { } proof)
                     return Refuse(TerminalSeatReleaseOutcome.StaleObservation);
                 if (TerminalReleaseBeforeFinalCheck is { } beforeFinal) await beforeFinal(sessionId);
                 if (session.Tailer is not { } tailer) return Refuse(TerminalSeatReleaseOutcome.Unknown);
                 var transcript = await tailer.ObserveTerminalSeatAsync(ct);
                 var refusal = TerminalSeatQualification.AuthorizeRelease(proof, _terminalSeatEpoch, session,
-                    request, transcript, session.BackendInput.Count, session.LastSequence, _labelClock);
+                    request with { Observation = canonical }, transcript, session.BackendInput.Count,
+                    session.LastSequence, _labelClock, captureId);
                 if (refusal is { } outcome) return Refuse(outcome);
                 var tailRevision = tailer.Snapshot().LastSequence;
 
@@ -1088,7 +1091,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 if (session.TerminalReleaseCustodyHold is { } finalHold) return Refuse(finalHold);
                 if (!ReferenceEquals(tailer, session.Tailer)
                     || tailRevision != tailer.Snapshot().LastSequence
-                    || proof.InputRevision != session.BackendInput.Count || proof.OutputRevision != session.LastSequence)
+                    || proof.InputRevision != session.BackendInput.Count || proof.OutputRevision != session.LastSequence
+                    || !TryResolveTerminalSeatRequest(session, expected, out var finalRequest, out var finalCaptureId)
+                    || finalRequest != canonical || finalCaptureId != captureId)
                     return Refuse(TerminalSeatReleaseOutcome.StaleObservation);
                 // No await remains between these revision fences and entry to the signal helper.
                 // Independent file writers cannot be transactionally locked by the runner.
@@ -1130,6 +1135,32 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         Guid sessionId, TerminalSeatObservationRequest request, string token, CancellationToken ct) =>
         InspectTerminalSeatAsync(sessionId, request, token, ct);
 
+    // Called only under the launch gate. Capture is volatile and bound to this runtime,
+    // session object and accepted generation; caller-supplied evidence cannot repair it.
+    private bool TryResolveTerminalSeatRequest(RunnerSession session, TerminalSeatObservationRequest request,
+        out TerminalSeatObservationRequest canonical, out Guid? captureId)
+    {
+        canonical = request;
+        captureId = null;
+        if (!request.UseCapturedDeliveryEvidence) return true;
+        var evidence = session.DeliveryEvidence;
+        if (evidence.State != TerminalSeatDeliveryState.Submitted || evidence.Submitted is not { } capture
+            || capture.RuntimeEpoch != _terminalSeatEpoch || capture.RunnerStoreId != RunnerStoreId
+            || capture.RunnerStoreId != request.ExpectedRunnerStoreId
+            || !ReferenceEquals(capture.Session, session) || capture.SessionId != session.SessionId
+            || !SessionGeneration.Equal(capture.AcceptedStartedAt, session.AcceptedStartedAt)
+            || !SessionGeneration.Equal(capture.AcceptedStartedAt, request.ExpectedAcceptedStartedAt)
+            || string.IsNullOrEmpty(capture.BindingIdentity) || capture.PromptFloorRevision < 0)
+            return false;
+        canonical = request with
+        {
+            PromptBindingIdentity = capture.BindingIdentity,
+            PromptFloorRevision = capture.PromptFloorRevision
+        };
+        captureId = capture.CaptureId;
+        return true;
+    }
+
     private async Task<TerminalSeatObservation> InspectTerminalSeatAsync(
         Guid sessionId, TerminalSeatObservationRequest request, string? token, CancellationToken ct)
     {
@@ -1151,6 +1182,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (session.HasExited || session.IsPendingHerdr || session.VerificationBinding is not null
                 || session.Tailer is not { } tailer)
                 return Refuse(TerminalSeatQualificationStatus.Unknown);
+            if (!TryResolveTerminalSeatRequest(session, request, out var canonical, out var captureId))
+                return Refuse(TerminalSeatQualificationStatus.Unknown);
 
             // Both public input routes share this gate; completed writes invalidate evidence,
             // and failed/unsubmitted writes retain their separate custody veto at release.
@@ -1160,10 +1193,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (!_sessions.TryGetValue(sessionId, out var current) || !ReferenceEquals(session, current)
                 || !ReferenceEquals(tailer, session.Tailer) || session.HasExited
                 || !SessionGeneration.Equal(session.AcceptedStartedAt, request.ExpectedAcceptedStartedAt)
-                || input != session.BackendInput.Count || output != session.LastSequence)
+                || input != session.BackendInput.Count || output != session.LastSequence
+                || !TryResolveTerminalSeatRequest(session, request, out var currentRequest, out var currentCaptureId)
+                || currentRequest != canonical || currentCaptureId != captureId)
                 return Refuse(TerminalSeatQualificationStatus.StaleObservation);
 
-            var observed = qualification.Observe(_terminalSeatEpoch, session, request, transcript, input, output, _labelClock);
+            var observed = qualification.Observe(_terminalSeatEpoch, session, canonical, transcript, input, output, _labelClock, captureId);
             return token is not null && (observed.Status != TerminalSeatQualificationStatus.Qualified
                     || !string.Equals(token, observed.Token, StringComparison.Ordinal))
                 ? observed with { Status = TerminalSeatQualificationStatus.StaleObservation, Token = null }

@@ -145,6 +145,35 @@ public class TerminalSeatReleaseTests
             (await world.ReleaseAsync(release)).Outcome.ShouldBe(TerminalSeatReleaseOutcome.StaleObservation);
             world.AssertRetained();
         }
+
+        foreach (var provider in new[] { "Claude", "Grok", "Codex" })
+        foreach (var change in new[] { "file", "claim-at-signal" })
+        {
+            await using var world = new SeatWorld(provider);
+            await world.StartAsync();
+            world.UseCapturedRequest();
+            world.EnableNativeSubmission();
+            await SendCapturedInputAsync(world, "submission before evidence replacement", false);
+            await SendCapturedInputAsync(world, "\r", false);
+            (await world.ObserveAsync()).Status.ShouldBe(TerminalSeatQualificationStatus.Waiting);
+            world.Clock.Advance(TimeSpan.FromSeconds(120));
+            var qualified = await world.ObserveAsync();
+            qualified.Status.ShouldBe(TerminalSeatQualificationStatus.Qualified);
+            if (change == "file")
+            {
+                var replacement = world.Tail.Path + ".replacement";
+                await File.WriteAllTextAsync(replacement, await File.ReadAllTextAsync(world.Tail.Path));
+                File.Move(replacement, world.Tail.Path, overwrite: true);
+            }
+            else world.Runtime.TerminalReleaseBeforeSignal = _ =>
+            {
+                world.Session.OnTranscriptClaimRevoked(world.Tail.Path, Guid.NewGuid());
+                return Task.CompletedTask;
+            };
+            (await world.ReleaseAsync(new(Guid.NewGuid(), world.Request, qualified.Token!)))
+                .Outcome.ShouldBe(TerminalSeatReleaseOutcome.StaleObservation, change);
+            world.AssertRetained();
+        }
     }
 
     [Test]
