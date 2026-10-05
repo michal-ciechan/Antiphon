@@ -34,6 +34,8 @@ internal static class ChannelOutboundEvidence
             // Settled channel context is still needed to route an undiscovered machine answer.
             || m.Origin == QueuedMessageOrigin.Channel
                 && sources.Any(s => s.AgentSessionId == m.AgentSessionId
-                    && s.Origin != QueuedMessageOrigin.Channel && s.CreatedAt >= m.CreatedAt));
+                    && s.Origin != QueuedMessageOrigin.Channel && m.Sequence < s.Sequence
+                    && (m.LastDeliveryStartedAt ?? m.SentAt ?? m.CreatedAt)
+                        <= (s.LastDeliveryStartedAt ?? s.SentAt ?? s.CreatedAt)));
     }
 }

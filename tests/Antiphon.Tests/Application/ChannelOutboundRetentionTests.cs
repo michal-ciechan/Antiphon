@@ -85,6 +85,10 @@ public sealed class ChannelOutboundRetentionTests
         var closed = await w.SourceAsync(session, QueuedMessageOrigin.Check, closed: true);
         var unrelated = await w.SourceAsync(session, QueuedMessageOrigin.Ui);
         await using var db = w.Db();
+        // Enqueue time is not injection time: a parked machine message can predate its
+        // qualifying channel context while being delivered after that context.
+        await db.SessionQueuedMessages.Where(m => m.Id == context).ExecuteUpdateAsync(u =>
+            u.SetProperty(m => m.CreatedAt, w.Old.AddDays(1)));
         await w.Retention(db).PruneQueuedMessagesAsync(default);
         (await db.SessionQueuedMessages.Where(m => kept.Contains(m.Id)).CountAsync()).ShouldBe(kept.Count);
         (await db.SessionQueuedMessages.AnyAsync(m => m.Id == context)).ShouldBeTrue("original machine route context");
@@ -130,7 +134,8 @@ public sealed class ChannelOutboundRetentionTests
             await w.TranscriptAsync(session);
             var id = await w.DeliveryAsync(session, state, closed: true, metadata: false);
             var snapshot = await files.StageAsync(id, new ChannelReply { Channel = "telegram", ConversationId = w.Key[9..],
-                Text = "original frozen reply", Attachments = [new OutboundAttachment { Name = "source.md", Content = "frozen"u8.ToArray() }] }, default);
+                Text = "original frozen reply", Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
+                    Name = "source.md", Content = "frozen"u8.ToArray() }] }, default);
             await using var seed = w.Db();
             await seed.ChannelOutboundDeliveries.Where(d => d.Id == id).ExecuteUpdateAsync(u =>
                 u.SetProperty(d => d.InputPath, snapshot.ReplyPath).SetProperty(d => d.InputSha256, snapshot.ReplySha256));
@@ -155,14 +160,16 @@ public sealed class ChannelOutboundRetentionTests
     [Test]
     public async Task C519_Closed_roots_eventually_become_prunable()
     {
-        await using (var machine = await World.CreateAsync())
+        foreach (var silent in new[] { true, false })
         {
+            await using var machine = await World.CreateAsync();
             var session = await machine.SessionAsync();
-            var source = await machine.SourceAsync(session, QueuedMessageOrigin.System);
+            var source = await machine.SourceAsync(session, silent ? QueuedMessageOrigin.System : QueuedMessageOrigin.Check);
+            if (!silent) await machine.SourceAsync(session, QueuedMessageOrigin.Channel, settled: true);
             await machine.TranscriptAsync(session);
             await using var db = machine.Db();
             await db.TranscriptEntries.Where(t => t.AgentSessionId == session && t.Kind == TranscriptKinds.AssistantText)
-                .ExecuteUpdateAsync(u => u.SetProperty(t => t.Text, "NO_REPLY"));
+                .ExecuteUpdateAsync(u => u.SetProperty(t => t.Text, silent ? "NO_REPLY" : "pre-chat machine text"));
             var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == source);
             await machine.H.Dispatcher.DiscoverSourceAsync(row, 0, default);
             (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == source)).ChannelReplyDiscoveryClosedAt.ShouldBeNull();
