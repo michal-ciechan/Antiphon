@@ -1,11 +1,15 @@
 using System.Text.Json;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -16,6 +20,184 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public class TerminalRunnerSeatReleaseTests
 {
+    [Test]
+    public async Task Answer_racing_release_preserves_one_owner()
+    {
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = f.ReleaseAsync(async (at, _) =>
+        {
+            if (at != "BeforeDispatch") return;
+            entered.SetResult(); await resume.Task;
+        });
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var answer = f.TryAnswerAsync("race answer");
+        try
+        {
+            (await f.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Blocked, "answer cannot mutate while release owns the queue gate");
+        }
+        finally { resume.TrySetResult(); await release; await answer; }
+        var duplicate = await Task.WhenAll(f.TryAnswerAsync("race answer"), f.TryAnswerAsync("race answer"));
+        var task = await f.TaskAsync();
+        task.Attempt.ShouldBe(2, "one accepted answer produces exactly one target attempt");
+        task.ReleasedSeatAnswer.ShouldBe("race answer");
+        task.ReleasedSeatAnswerTargetAttempt.ShouldBe(2);
+        await using var db = f.Db();
+        (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == f.SessionId)).ShouldBe(0);
+
+        await using var uncertain = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
+        uncertain.Wire.DropReply = true;
+        await uncertain.ReleaseAsync();
+        await uncertain.TryAnswerAsync("persist through an ambiguous release");
+        var held = await uncertain.TaskAsync();
+        held.ReleasedSeatAnswer.ShouldBe("persist through an ambiguous release");
+        held.Status.ShouldBe(AgentTaskStatus.Blocked); held.Attempt.ShouldBe(1);
+        await using var heldDb = uncertain.Db();
+        (await heldDb.SessionQueuedMessages.CountAsync()).ShouldBe(0, "no input to an uncertain corpse");
+    }
+
+    [Test]
+    public async Task Answer_recovery_preserves_round_and_admission_guards()
+    {
+        var cut = new AnswerSaveCut();
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked,
+            configureDb: options => options.AddInterceptors(cut));
+        await f.ReleaseAsync();
+        var before = await f.TaskAsync();
+        (await f.TryAnswerAsync("stale", round: 2)).ShouldBeOfType<ConflictException>();
+        var stale = await f.TaskAsync(); stale.Attempt.ShouldBe(before.Attempt);
+        stale.ReleasedSeatAnswerId.ShouldBeNull(); stale.ConcurrencyToken.ShouldBe(before.ConcurrencyToken);
+        cut.Armed = true;
+        await f.TryAnswerAsync("atomic answer");
+        var after = await f.TaskAsync();
+        cut.Hit.ShouldBeTrue("the test reaches the new-attempt save boundary");
+        after.Attempt.ShouldBe(1, "transaction rolls back the interrupted new attempt");
+        after.ReleasedSeatAnswer.ShouldBe("atomic answer", "accepted input survives a failed admission transaction");
+        cut.Armed = false;
+        await f.AnswerAsync("atomic answer");
+        (await f.TaskAsync()).Attempt.ShouldBe(2);
+    }
+
+    [Test]
+    public async Task Answer_stop_bypass_requires_the_exact_release_receipt()
+    {
+        foreach (var shape in new[] { "confirmed", "missing-session", "wrong-attempt", "wrong-store", "wrong-generation" })
+        {
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
+            if (shape != "missing-session") await f.ReleaseAsync();
+            await using var db = f.Db();
+            if (shape == "missing-session") await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteDeleteAsync();
+            if (shape == "wrong-attempt") await f.EditAsync((t, _) => t.Attempt++);
+            if (shape is "wrong-store" or "wrong-generation")
+            {
+                var session = await db.AgentSessions.SingleAsync(s => s.Id == f.SessionId);
+                if (shape == "wrong-store") session.RunnerStoreId = Guid.NewGuid();
+                else session.StartedAt = session.StartedAt.AddSeconds(1);
+                await db.SaveChangesAsync();
+            }
+            await f.RetryAsync();
+            f.RecordedStops.Killed.Count.ShouldBe(shape == "confirmed" ? 0 : 1, shape);
+        }
+    }
+
+    [Test]
+    public async Task Answer_admission_guards_preserve_the_accepted_reply()
+    {
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
+        await f.ReleaseAsync();
+        await using var db = f.Db();
+        var task = await f.TaskAsync();
+        db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold { Id = Guid.NewGuid(), Kind = task.AgentKind,
+            ModelAlias = "*", Source = ModelAvailabilitySource.Manual, HitAt = f.Now, Reason = "active quota" });
+        await db.SaveChangesAsync();
+        await f.TryAnswerAsync("retain admission answer");
+        var held = await f.TaskAsync();
+        held.ReleasedSeatAnswer.ShouldBe("retain admission answer");
+        held.Attempt.ShouldBe(1); held.AgentKind.ShouldBe(task.AgentKind); held.RunnerId.ShouldBe(task.RunnerId);
+        f.RecordedStops.Killed.ShouldBeEmpty();
+        await db.ModelAvailabilityHolds.ExecuteDeleteAsync();
+        db.AgentTaskEvents.Add(new AgentTaskEvent { Id = Guid.NewGuid(), AgentTaskId = f.TaskId,
+            Type = AgentTaskEventType.CommitRecoveryStarted, Detail = "settlement-to-preserve", At = f.Now });
+        await db.SaveChangesAsync();
+        await f.TryAnswerAsync("retain admission answer");
+        (await f.TaskAsync()).Attempt.ShouldBe(1, "commit recovery must retain the original settlement identity");
+        (await db.AgentTaskEvents.CountAsync(e => e.Type == AgentTaskEventType.CommitRecoveryStarted)).ShouldBe(1);
+        (await f.TaskAsync()).ReleasedSeatAnswer.ShouldBe("retain admission answer");
+    }
+
+    [Test]
+    public async Task Answer_fields_do_not_leak_into_a_later_attempt()
+    {
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
+        await f.ReleaseAsync(); await f.TryAnswerAsync("answer-only-canary");
+        var accepted = await f.TaskAsync();
+        DelegationReportFormatter.BuildBrief(accepted, new DelegationSettings()).ShouldContain("answer-only-canary");
+        accepted.Attempt++;
+        DelegationReportFormatter.BuildBrief(accepted, new DelegationSettings()).ShouldNotContain("answer-only-canary",
+            "formatter independently rejects fields belonging to another attempt");
+        await f.EditAsync((t, _) => t.Status = AgentTaskStatus.Failed);
+        await f.RetryAsync();
+        var retried = await f.TaskAsync();
+        retried.ReleasedSeatAnswer.ShouldBeNull(); retried.ReleasedSeatAnswerId.ShouldBeNull();
+        DelegationReportFormatter.BuildBrief(retried, new DelegationSettings()).ShouldNotContain("answer-only-canary");
+    }
+
+    [Test]
+    public async Task Answer_keeps_workspace_and_report_context()
+    {
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
+        await f.EditAsync((t, _) => { t.WorktreePath = f.Harness.TempRoot; t.WorktreeBranch = "feat/retained";
+            t.WorktreeBaseRef = "master"; t.Result = "retained report"; t.ResultFilePath = "report.md"; });
+        var before = await f.TaskAsync();
+        await f.ReleaseAsync(); await f.TryAnswerAsync("continue retained work");
+        var task = await f.TaskAsync();
+        task.Attempt.ShouldBe(2); task.Status.ShouldBe(AgentTaskStatus.Queued); task.AgentSessionId.ShouldBeNull();
+        task.WorktreePath.ShouldBe(before.WorktreePath); task.WorktreeBranch.ShouldBe(before.WorktreeBranch);
+        task.WorktreeBaseRef.ShouldBe(before.WorktreeBaseRef); task.Result.ShouldBe(before.Result);
+        task.ResultFilePath.ShouldBe(before.ResultFilePath); task.RootTaskId.ShouldBe(before.RootTaskId);
+        task.RunnerId.ShouldBe(before.RunnerId); task.CardId.ShouldBe(before.CardId);
+        f.RecordedStops.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Reply_on_live_local_or_warm_session_is_unchanged()
+    {
+        foreach (var shape in new[] { "remote-live", "local", "warm" })
+        {
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
+            if (shape != "remote-live")
+            {
+                await using var db = f.Db();
+                var session = await db.AgentSessions.SingleAsync(s => s.Id == f.SessionId);
+                session.RunnerId = null; session.RunnerStoreId = null;
+                await db.SaveChangesAsync();
+                await f.EditAsync((t, a) => { t.RunnerId = null; t.Workspace = WorkspaceMode.Shared;
+                    if (shape == "warm") a.PoolIdleSince = f.Now; });
+            }
+            await f.IngestAsync(TranscriptKinds.UserPrompt, "busy", f.Now);
+            await f.AnswerAsync("same conversation");
+            var task = await f.TaskAsync(); task.Attempt.ShouldBe(1); task.AgentSessionId.ShouldBe(f.SessionId);
+            task.Status.ShouldBe(AgentTaskStatus.Working); task.ReleasedSeatAnswerId.ShouldBeNull();
+            await using var read = f.Db();
+            (await read.SessionQueuedMessages.SingleAsync()).Body.ShouldContain("same conversation");
+            f.RecordedStops.Killed.ShouldBeEmpty();
+        }
+    }
+
+    private sealed class AnswerSaveCut : SaveChangesInterceptor
+    {
+        public bool Armed { get; set; }
+        public bool Hit { get; private set; }
+        public override ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData data, int result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Armed && data.Context!.ChangeTracker.Entries<AgentTask>().Any(e => e.Entity.Attempt == 2))
+            { Hit = true; throw new InvalidOperationException("answer save cut"); }
+            return ValueTask.FromResult(result);
+        }
+    }
+
     [Test]
     [Arguments(AgentTaskStatus.Succeeded)]
     [Arguments(AgentTaskStatus.Failed)]

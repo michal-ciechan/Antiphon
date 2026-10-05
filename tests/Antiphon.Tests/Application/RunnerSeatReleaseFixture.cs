@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
@@ -25,6 +26,8 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
     public required FakeTimeProvider Clock { get; init; }
     public required SeatWire Wire { get; init; }
     public required SeatDirectory Directory { get; init; }
+    public RecordingSessionStopper Stopper { get; } = new();
+    public LaunchRecorder Launches { get; } = new();
     public Guid TaskId { get; } = Guid.NewGuid();
     public Guid SessionId => Harness.SessionId;
     public Guid AgentId => Harness.AgentId;
@@ -33,7 +36,8 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
     public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
 
     public static async Task<RunnerSeatReleaseFixture> CreateAsync(
-        AgentTaskStatus status = AgentTaskStatus.Succeeded, bool sourced = false)
+        AgentTaskStatus status = AgentTaskStatus.Succeeded, bool sourced = false,
+        Action<DbContextOptionsBuilder>? configureDb = null)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero));
@@ -49,6 +53,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
             {
                 ConnectionString = schema.ConnectionString, TimeProvider = clock,
                 AlwaysOn = false, PreserveDatabaseOnDispose = true,
+                ConfigureDbContext = configureDb,
                 ConfigureServices = services =>
                 {
                     services.AddSingleton<ISessionRunnerDirectory>(directory);
@@ -58,6 +63,11 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
                     services.AddSingleton(Options.Create(new TerminalRunnerSeatReleaseOptions { AutomaticEnabled = true }));
                     services.AddSingleton<TerminalRunnerSeatReleasePolicy>();
                     services.AddScoped<TerminalRunnerSeatReleaseService>();
+                    services.AddSingleton<DelegationWorkspaceResolver>();
+                    services.AddDelegationWorktreeGraph(new GitSettings());
+                    services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
+                    services.AddScoped<AgentTaskService>();
+                    services.AddSingleton<AgentTaskReplyService>();
                 }
             });
         }
@@ -91,10 +101,17 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
                 Id = f.TaskId, RootTaskId = f.TaskId, AgentId = f.AgentId, AgentSessionId = f.SessionId,
                 RunnerId = "fixture", Workspace = WorkspaceMode.Worktree, Attempt = 1,
                 Status = status, CompletedAt = f.Now.AddMinutes(-3), CreatedAt = f.Now.AddHours(-1),
+                Ephemeral = true, Goal = "Continue the seat transaction", WorkingDirectory = harness.TempRoot,
                 Result = "completed report", ReportEvidence = AgentTaskReportEvidence.Marked,
                 SourceLandingOperationId = landingId,
             });
             await db.SaveChangesAsync();
+            if (status == AgentTaskStatus.Blocked)
+            {
+                db.AgentTaskEvents.Add(new AgentTaskEvent { Id = Guid.NewGuid(), AgentTaskId = f.TaskId,
+                    Type = AgentTaskEventType.Blocked, At = f.Now.AddMinutes(-3), Detail = "Which answer?" });
+                await db.SaveChangesAsync();
+            }
             await f.IngestAsync(TranscriptKinds.UserPrompt, "task", f.Now.AddMinutes(-4));
             await f.IngestAsync(TranscriptKinds.TurnEnd, null, f.Now.AddMinutes(-3));
             return f;
@@ -122,6 +139,36 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         await using var db = Db();
         edit(await db.AgentTasks.SingleAsync(t => t.Id == TaskId), await db.Agents.SingleAsync(a => a.Id == AgentId));
         await db.SaveChangesAsync();
+    }
+
+    public async Task<AgentTask> TaskAsync()
+    {
+        await using var db = Db();
+        return await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == TaskId);
+    }
+
+    public Task<AgentTaskSummaryDto> AnswerAsync(string text, int? round = 1) =>
+        Harness.Provider.GetRequiredService<AgentTaskReplyService>()
+            .AnswerAsync(TaskId, text, AnswerOrigin.Web, round, CancellationToken.None);
+
+    public async Task<Exception?> TryAnswerAsync(string text, int? round = 1)
+    {
+        try { await AnswerAsync(text, round); return null; }
+        catch (Exception ex) { return ex; }
+    }
+
+    public async Task RetryAsync()
+    {
+        using var scope = Harness.Provider.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<AgentTaskService>().RetryAsync(TaskId, default);
+    }
+
+    public RecordingSessionStopper RecordedStops => (RecordingSessionStopper)Harness.Provider.GetRequiredService<IDelegateSessionStopper>();
+
+    internal sealed class LaunchRecorder : IAgentTaskLaunchSink
+    {
+        public List<AgentLaunchSpec> Calls { get; } = [];
+        public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec) => Calls.Add(spec);
     }
 
     public async Task IngestAsync(string kind, string? text, DateTime timestamp)
