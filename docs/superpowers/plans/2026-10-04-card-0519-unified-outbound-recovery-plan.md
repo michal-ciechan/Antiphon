@@ -2001,7 +2001,7 @@ Method-scoped, `/*/*/ClassName/ExactMethod*` where arguments require the suffix.
 | PC-S12-4 | Return Dispatched from that catch without enqueueing the brief. | same witness as PC-S12-3 | no Delegation row for the task although the claim survived; after resume the worker has no UserPrompt. |
 | PC-S12-5 | In `ProcessClaimAsync`'s generic catch, drop the Publishing exclusion so a failed refusal save reverts the row to Ready. | `ChannelOutboundUnifiedTransportTests.C519_Queue_to_adapter*` (refusal-save cut, every kind) | state Ready instead of Publishing after the fault; a second automatic publish instead of PublishUncertain. |
 
-### Checkpoints
+### S12 checkpoint groups
 
 The closed ordinary scope for S12c..S12g is CP-61..CP-75 in the main `### Checkpoints`
 table above (one isolated build per slice, exact filters, `--row-timeout 15m
