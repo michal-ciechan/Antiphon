@@ -43,6 +43,157 @@ public sealed class ChannelOutboundService
         _clock = clock;
     }
 
+    /// <summary>
+    /// Capture without reading attachments, prompts, manifests or calling the producer.
+    /// Dormant until S4 switches the agent paths; legacy SendAsync remains unchanged.
+    /// A tail supplies its root and never claims or settles that root's queue members.
+    /// </summary>
+    public async Task<ChannelOutboundDelivery> CaptureAsync(ChannelReply route,
+        ChannelOutboundSource source, ChannelReplyBodyDescriptor body,
+        ChannelBridgeSettings bridge, CancellationToken ct, Guid? rootDeliveryId = null,
+        IReadOnlyList<Guid>? sourceTaskIds = null)
+    {
+        if (string.IsNullOrWhiteSpace(route.Channel) || string.IsNullOrWhiteSpace(route.ConversationId)
+            || route.Attachments.Count != 0 || source.SessionId == Guid.Empty
+            || source.PromptSequence < 0 || source.FirstTextSequence <= source.PromptSequence
+            || source.LastTextSequence < source.FirstTextSequence
+            || (rootDeliveryId is null ? source.SendKind is not ("main" or "machine") : source.SendKind != "trailing")
+            || bridge.PendingReplyTtlMinutes <= 0 || bridge.MaxAttachmentBytes <= 0)
+            throw new ArgumentException("Capture requires a valid source window and a route without attachment bytes.");
+        var channel = await _db.ChatChannels.AsNoTracking().SingleOrDefaultAsync(c =>
+            c.Provider == route.Channel && c.ExternalId == route.ConversationId, ct)
+            ?? throw new InvalidOperationException("Capture requires the original channel catalog row.");
+
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        var committedCapture = false;
+        try
+        {
+            var lockBytes = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+                "channel-outbound:" + channel.Id.ToString("N")));
+            await _db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT pg_advisory_xact_lock({BitConverter.ToInt64(lockBytes, 0)})", ct);
+            ChannelOutboundDelivery? root = null;
+            if (rootDeliveryId is Guid rootId)
+            {
+                root = await _db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == rootId, ct);
+                if (root.RootDeliveryId is not null || root.CaptureJson is null
+                    || root.ChannelId != channel.Id || root.SourceSessionId != source.SessionId
+                    || root.PromptSequence != source.PromptSequence || root.TailClosedAt is not null
+                    || root.ReservedThroughSequence is null)
+                    throw new ConflictException("The trailing window requires its open original root.", "channel_outbound_root_mismatch");
+                var priorTail = await _db.ChannelOutboundDeliveries.AsNoTracking().SingleOrDefaultAsync(d =>
+                    d.RootDeliveryId == rootId && d.FirstTextSequence == source.FirstTextSequence, ct);
+                if (priorTail is not null)
+                {
+                    await transaction.CommitAsync(ct);
+                    return priorTail;
+                }
+                if (source.FirstTextSequence <= root.ReservedThroughSequence)
+                    throw new ConflictException("The trailing window overlaps an already reserved interval.", "channel_outbound_interval_owned");
+                // The tail inherits the original route/policy, even if the current catalog changed.
+                route = ChannelReplyPreparation.Deserialize(root.CaptureJson).Route;
+            }
+
+            var memberIds = root is null ? source.CorrelationIds.Distinct().Order().ToArray() : [];
+            var members = new List<SessionQueuedMessage>();
+            foreach (var memberId in memberIds)
+            {
+                // Lock before reloading: contexts may have stale tracked correlations and
+                // overlapping batches must not replace a source claimed on another destination.
+                var member = await _db.SessionQueuedMessages.FromSqlInterpolated(
+                    $"SELECT * FROM \"SessionQueuedMessages\" WHERE \"Id\" = {memberId} FOR UPDATE")
+                    .AsNoTracking().SingleAsync(ct);
+                if (member.AgentSessionId != source.SessionId)
+                    throw new ArgumentException("A capture member belongs to another source session.");
+                members.Add(member);
+            }
+            var owners = members.Where(m => m.ChannelOutboundDeliveryId != null)
+                .Select(m => m.ChannelOutboundDeliveryId!.Value).Distinct().ToArray();
+            if (owners.Length > 1)
+                throw new ConflictException("The batch already has multiple outbound owners.", "channel_outbound_members_owned");
+            var existing = owners.Length == 1
+                ? await _db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == owners[0], ct)
+                : root is null ? await _db.ChannelOutboundDeliveries.AsNoTracking().SingleOrDefaultAsync(d =>
+                    d.SourceSessionId == source.SessionId && d.PromptSequence == source.PromptSequence
+                    && d.ChannelId == channel.Id && d.RootDeliveryId == null && d.CaptureJson != null
+                    && (d.SendKind == "main" || d.SendKind == "machine"), ct) : null;
+            if (existing is not null)
+            {
+                await transaction.CommitAsync(ct);
+                return existing;
+            }
+            if (members.Any(m => m.ChannelReplySettledAt != null))
+                throw new ConflictException("A historical settled source cannot acquire a new owner.", "channel_outbound_source_settled");
+
+            var now = _clock.GetUtcNow().UtcDateTime;
+            var tasks = members.Where(m => m.SourceTaskId != null).Select(m => m.SourceTaskId!.Value)
+                .Concat(sourceTaskIds ?? []).Concat(source.SourceTaskId is Guid taskId ? [taskId] : [])
+                .Distinct().Order().ToArray();
+            var taskDescriptors = new List<ChannelReplyTaskDescriptor>();
+            foreach (var id in tasks)
+                taskDescriptors.Add(new(id, await _db.AgentTasks.AsNoTracking().Where(t => t.Id == id)
+                    .Select(t => t.DeliverableBundleDir).SingleOrDefaultAsync(ct)));
+            var projectId = await _db.Agents.Where(a => a.Id == channel.AgentId)
+                .Join(_db.Boards, a => a.BoardId, b => b.Id, (a, b) => b.ProjectId).FirstOrDefaultAsync(ct);
+            ChannelReplyProfileDescriptor? profile = null;
+            if (channel.OutboundAgentProfile is string name && _settings.Profiles.TryGetValue(name, out var policy))
+            {
+                var converter = await _db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == policy.AgentId, ct);
+                profile = new(name, policy.ProjectId, policy.AgentId, converter?.WorkingDirectory, policy.PromptFile, policy.Trigger.ToString(),
+                    policy.TimeoutSeconds, policy.MaxPending);
+            }
+            var capture = root is null
+                ? new ChannelReplyCapture(1, route with { Text = null }, body, memberIds, taskDescriptors, profile, bridge.MaxAttachmentBytes)
+                : ChannelReplyPreparation.Deserialize(root.CaptureJson!) with { Body = body, MemberIds = [] };
+            var createdAt = root?.CreatedAt ?? (members.Count == 0 ? now : members.Min(m => m.CreatedAt));
+            var delivery = new ChannelOutboundDelivery
+            {
+                Id = Guid.NewGuid(), SourceKey = SourceKey(source, route), ChannelId = channel.Id,
+                ProjectId = root?.ProjectId ?? projectId, InboundAgentId = root?.InboundAgentId ?? channel.AgentId ?? Guid.Empty,
+                SourceSessionId = source.SessionId, PromptSequence = source.PromptSequence,
+                FirstTextSequence = source.FirstTextSequence, LastTextSequence = source.LastTextSequence,
+                SendKind = source.SendKind, SourceTaskId = root?.SourceTaskId ?? source.SourceTaskId,
+                CaptureJson = ChannelReplyPreparation.Serialize(capture), RootDeliveryId = root?.Id,
+                ReservedThroughSequence = root is null ? source.LastTextSequence : null,
+                ProfileName = capture.Profile?.Name ?? "", ConverterAgentId = capture.Profile?.AgentId ?? Guid.Empty,
+                Trigger = capture.Profile?.Trigger ?? "Passthrough", MaxPending = capture.Profile?.MaxPending ?? 0,
+                State = ChannelOutboundDeliveryState.Captured, CreatedAt = now,
+                DeadlineAt = now.AddSeconds(capture.Profile?.TimeoutSeconds ?? 120),
+                PreparationDeadlineAt = root?.PreparationDeadlineAt ?? createdAt.AddMinutes(bridge.PendingReplyTtlMinutes),
+            };
+            _db.ChannelOutboundDeliveries.Add(delivery);
+            await _db.SaveChangesAsync(ct);
+            var claimed = await _db.SessionQueuedMessages.Where(m => memberIds.Contains(m.Id)
+                && m.ChannelOutboundDeliveryId == null && m.ChannelReplySettledAt == null)
+                .ExecuteUpdateAsync(s => s.SetProperty(m => m.ChannelOutboundDeliveryId, delivery.Id), ct);
+            if (claimed != memberIds.Length)
+                throw new ConflictException("A capture source was claimed concurrently.", "channel_outbound_members_owned");
+            if (root is not null)
+            {
+                var advanced = await _db.ChannelOutboundDeliveries.Where(d => d.Id == root.Id
+                    && d.Version == root.Version && d.ReservedThroughSequence == root.ReservedThroughSequence)
+                    .ExecuteUpdateAsync(s => s.SetProperty(d => d.ReservedThroughSequence, source.LastTextSequence)
+                        .SetProperty(d => d.Version, d => d.Version + 1), ct);
+                if (advanced != 1)
+                    throw new ConflictException("The root reservation changed concurrently.", "channel_outbound_root_changed");
+            }
+            if (ProbeBarrierAsync is { } beforeCommit)
+                await beforeCommit("capture-before-commit", delivery.Id, ct);
+            await transaction.CommitAsync(ct);
+            committedCapture = true;
+            if (ProbeBarrierAsync is { } committed)
+                await committed("capture-committed", delivery.Id, ct);
+            return delivery;
+        }
+        catch
+        {
+            if (!committedCapture)
+                await transaction.RollbackAsync(CancellationToken.None);
+            _db.ChangeTracker.Clear();
+            throw;
+        }
+    }
+
     /// <summary>Human retry of an ambiguous broker attempt. It may duplicate a prior accepted send.</summary>
     public async Task RetryUncertainAsync(Guid id, bool acknowledgePossibleDuplicate, CancellationToken ct)
     {
