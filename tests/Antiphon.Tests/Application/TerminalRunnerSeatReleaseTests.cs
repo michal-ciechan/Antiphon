@@ -24,6 +24,37 @@ namespace Antiphon.Tests.Application;
 public class TerminalRunnerSeatReleaseTests
 {
     [Test]
+    [Arguments(false, "Working")]
+    [Arguments(true, "Working")]
+    [Arguments(false, "UnsupportedPeer")]
+    [Arguments(true, "UnsupportedPeer")]
+    [Arguments(false, "UnsupportedTransport")]
+    [Arguments(true, "UnsupportedTransport")]
+    public async Task Unpooled_remote_shared_release_never_uses_the_legacy_stopper(bool sweep, string hold)
+    {
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync();
+        f.Harness.Provider.GetRequiredService<IOptions<DelegationSettings>>().Value.PoolEnabled = false;
+        await f.EditAsync((task, _) => task.Workspace = WorkspaceMode.Shared);
+        if (hold == "Working")
+            f.Wire.Qualified = f.Wire.Qualified with { Status = TerminalSeatQualificationStatus.Working, Token = null };
+        else if (hold == "UnsupportedPeer")
+            f.Directory.FeaturesOverride = [];
+        else
+            f.Wire.Unsupported = true;
+
+        if (sweep) await f.SweepAsync();
+        else await f.ReleaseFromSettlementAsync();
+
+        f.RecordedStops.Killed.ShouldBeEmpty("D-1: remote Shared retirement must use conditional release");
+        f.Wire.ForceCommands.ShouldBe(0);
+        f.Wire.ConditionalCommands.ShouldBe(0);
+        await using var db = f.Db();
+        (await db.RunnerSeatReleases.SingleAsync()).ReasonCode.ShouldBe(hold == "Working" ? "Working" : "Unsupported");
+        (await db.Agents.AnyAsync(a => a.Id == f.AgentId)).ShouldBeTrue();
+        (await db.AgentSessions.SingleAsync(s => s.Id == f.SessionId)).Status.ShouldBe(SessionStatus.Running);
+    }
+
+    [Test]
     public async Task Working_session_keeps_ownership_and_visible_debt()
     {
         foreach (var status in new[] { AgentTaskStatus.Failed, AgentTaskStatus.Succeeded, AgentTaskStatus.Blocked })
