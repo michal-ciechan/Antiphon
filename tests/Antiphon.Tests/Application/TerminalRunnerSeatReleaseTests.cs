@@ -29,7 +29,7 @@ public class TerminalRunnerSeatReleaseTests
         var answer = string.Concat(Enumerable.Repeat("retain λ 日本語 😀\r\n", 650)) + "FINAL-ANSWER-CANARY";
         await f.PrepareContinuationAsync();
         await f.ReleaseAsync();
-        await f.AnswerAsync(answer);
+        (await f.TryAnswerAsync(answer)).ShouldBeNull("the complete Unicode answer must be accepted without a bounded-detail database error");
         var accepted = await f.TaskAsync();
         f.Launches.OnLaunch = id => f.AttachRecipientAsync(id, busy: true).GetAwaiter().GetResult();
         await f.DispatchAsync();
@@ -43,7 +43,7 @@ public class TerminalRunnerSeatReleaseTests
         await f.RestartAsync();
         await f.AttachRecipientAsync(queued.AgentSessionId);
         await f.EndTurnAsync(queued.AgentSessionId);
-        await f.Harness.Queue.FlushSessionAsync(queued.AgentSessionId, default);
+        await f.FlushAsync(queued.AgentSessionId);
         await f.DispatchAsync();
         var file = Path.Combine(f.Harness.TempRoot, queued.RemoteSpillRelativePath!);
         (await File.ReadAllTextAsync(file)).ShouldBe(queued.RemoteSpillBody);
@@ -64,6 +64,7 @@ public class TerminalRunnerSeatReleaseTests
             await f.PrepareContinuationAsync(); await f.ReleaseAsync();
             f.Harness.Provider.GetRequiredService<IOptions<TerminalRunnerSeatReleaseOptions>>().Value.AutomaticEnabled = false;
             cut.Armed = true;
+            if (boundary == "accept-after") f.Harness.EventBus.ThrowOnceOnEvent = "AgentTaskChanged";
             await f.TryAnswerAsync("recover exactly once");
             if (boundary == "accept-before")
             {
@@ -88,14 +89,14 @@ public class TerminalRunnerSeatReleaseTests
             var queued = await f.AnswerQueueAsync();
             queued.ShouldNotBeNull(boundary);
             await f.EndTurnAsync(target.AgentSessionId.Value);
-            try { await f.Harness.Queue.FlushSessionAsync(target.AgentSessionId.Value, default); }
+            try { await f.FlushAsync(target.AgentSessionId.Value); }
             catch (InvalidOperationException) when (cut.Hit) { }
             await f.RestartAsync();
             await f.AttachRecipientAsync(target.AgentSessionId.Value);
-            await f.Harness.Queue.FlushSessionAsync(target.AgentSessionId.Value, default);
+            await f.FlushAsync(target.AgentSessionId.Value);
             await f.DispatchAsync();
             if (boundary == "complete-before") await f.DispatchAsync();
-            cut.Hit.ShouldBeTrue($"must reach {boundary}");
+            if (boundary != "accept-after") cut.Hit.ShouldBeTrue($"must reach {boundary}");
             f.Submitted.Count.ShouldBe(1, boundary);
             (await f.TaskAsync()).ReleasedSeatAnswer.ShouldBeNull($"{boundary}: matching prompt completes recovery");
             await using var db = f.Db();
@@ -147,7 +148,7 @@ public class TerminalRunnerSeatReleaseTests
                 .SetProperty(m => m.LastDeliveryGeneration, (DateTime?)null)
                 .SetProperty(m => m.LastDeliveryBaselineSequence, (long?)null));
             await f.EndTurnAsync(row.AgentSessionId);
-            await f.Harness.Queue.FlushSessionAsync(row.AgentSessionId, default);
+            await f.FlushAsync(row.AgentSessionId);
             await f.DispatchAsync();
             (await f.TaskAsync()).ReleasedSeatAnswer.ShouldBeNull($"{shape}: real complete receipt finishes recovery");
         }
@@ -160,7 +161,7 @@ public class TerminalRunnerSeatReleaseTests
         public bool Hit { get; private set; }
         private bool Matches(DbContext db) => Boundary switch
         {
-            "accept-before" or "accept-after" => db.ChangeTracker.Entries<AgentTask>().Any(e => e.Entity.Attempt == 1 && e.Entity.ReleasedSeatAnswerId != null),
+            "accept-before" => db.ChangeTracker.Entries<AgentTask>().Any(e => e.Entity.Attempt == 1 && e.Entity.ReleasedSeatAnswerId != null),
             "attempt-before" or "attempt-after" => db.ChangeTracker.Entries<AgentTask>().Any(e => e.Entity.Attempt == 2 && e.Entity.Status == AgentTaskStatus.Queued),
             "queue-before" or "queue-after" => db.ChangeTracker.Entries<SessionQueuedMessage>().Any(e => e.Entity.ExecutionTaskId != null),
             "delivery-before" => db.ChangeTracker.Entries<SessionQueuedMessage>().Any(e => e.Entity.DeliveryAttempts > 0 && e.Entity.DeliveryVerdict == null),
