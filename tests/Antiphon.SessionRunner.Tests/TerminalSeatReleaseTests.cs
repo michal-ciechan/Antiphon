@@ -33,7 +33,9 @@ public class TerminalSeatReleaseTests
         fresh.TranscriptRevision.ShouldBeGreaterThan(idle.TranscriptRevision);
         fresh.FileRevision.ShouldNotBe(idle.FileRevision);
         fresh.BindingIdentity.ShouldBe(idle.BindingIdentity);
-        fresh.LastPromptRevision.ShouldBeGreaterThan(fresh.LastEndRevision);
+        fresh.LastPromptRevision.ShouldNotBeNull();
+        fresh.LastEndRevision.ShouldNotBeNull();
+        fresh.LastPromptRevision.Value.ShouldBeGreaterThan(fresh.LastEndRevision.Value);
         fresh.ConsumedBytes.ShouldBe(new FileInfo(world.Path).Length);
         TranscriptWorkingState.Classify(world.Tailer.Snapshot().Entries)
             .ShouldBe(TranscriptWorkingState.WorkingVerdict.Idle, "fresh reads must not advance ingestion");
