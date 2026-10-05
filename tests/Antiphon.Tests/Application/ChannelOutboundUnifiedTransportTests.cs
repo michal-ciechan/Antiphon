@@ -462,9 +462,16 @@ public sealed class ChannelOutboundUnifiedTransportTests
                 Trigger = ChannelOutboundTrigger.EveryAgentReply, TimeoutSeconds = 300,
             };
             worker.RegisterOnStart = w.H.Runtime;
+            long? workerPreSubmitBoundary = null;
             worker.OnSubmitted = async submitted =>
             {
                 var session = worker.StartedSessionId!.Value;
+                // Capture the recipient's transcript before the first submission, independently
+                // of queue bookkeeping (an initially empty transcript has no queue baseline).
+                await using var beforeSubmit = w.Db();
+                workerPreSubmitBoundary ??= await beforeSubmit.TranscriptEntries
+                    .Where(t => t.AgentSessionId == session)
+                    .MaxAsync(t => (long?)t.Sequence) ?? 0;
                 await BridgeQueueHarness.InsertEntryAsync(session, TranscriptKinds.UserPrompt, submitted,
                     timestamp: w.H.Now, connectionString: w.Schema.ConnectionString, createdAtUtc: w.H.Now);
                 await BridgeQueueHarness.InsertEntryAsync(session, TranscriptKinds.TurnEnd, stopReason: "end_turn",
@@ -544,9 +551,10 @@ public sealed class ChannelOutboundUnifiedTransportTests
                 spilledBrief.ShouldContain(dispatchedTask.Goal);
                 spilledBrief.ShouldContain(delivery.Id.ToString("D"));
                 spilledBrief.ShouldContain("request.json");
+                workerPreSubmitBoundary.ShouldNotBeNull();
                 (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == workerSession
                     && t.Kind == TranscriptKinds.UserPrompt && t.Text == brief.Body
-                    && t.Sequence > brief.LastDeliveryBaselineSequence)).ShouldBe(1);
+                    && t.Sequence > workerPreSubmitBoundary.Value)).ShouldBe(1);
                 (await db.AgentTasks.CountAsync(t => t.OutboundDeliveryId == delivery.Id)).ShouldBe(1);
             }
             var prepared = (await w.DeliveryAsync("main"))!;
