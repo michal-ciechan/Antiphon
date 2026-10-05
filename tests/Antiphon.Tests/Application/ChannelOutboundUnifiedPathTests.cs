@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -134,6 +135,9 @@ public sealed class ChannelOutboundUnifiedPathTests
             w.H.Messaging.SentReplies.ShouldBeEmpty();
             await using var db = w.Db();
             (await db.ChannelOutboundDeliveries.AnyAsync(d => d.PublishedAt != null)).ShouldBeFalse();
+            await w.MainAsync("valid companion after the withheld window");
+            await w.DispatchAsync(); await w.DrainAsync();
+            w.H.Messaging.SentReplies.ShouldHaveSingleItem().Text.ShouldBe("valid companion after the withheld window");
         }
     }
 

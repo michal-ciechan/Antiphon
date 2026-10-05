@@ -1562,3 +1562,15 @@ C519_Fair_bounded_send_and_repair_budgets_are_independent must observe 320 repai
 reads then two, and a due accepted envelope with no resend. Existing PC-1..100,
 PC-1059-1..6, every S4/S5/S6/S7/S8 named variant and PC-S9-1 remain pending; Code
 performs no deliberate mutants. Activation remains false; restart: none.
+
+S9 repair group 1: the checkpoint launcher refused before creating any row/run
+(`CHECKPOINT owner owner-unverified`, exit 7): this mirror has the correct task and
+session identities but no ANTIPHON_TASK_TOKEN. The guard was not bypassed.
+A separately reported slot-gated diagnostic compile at ee319a4a12839c8ad792354c00a6128ec9b28305
+found five CS0103 references to TranscriptKinds in the new unified-path class;
+this group adds the missing Contracts import. Static review also restores the
+legacy exact-filename completeness check, adds the API-withholding positive
+companion, and adapts the shared target fixture to S8's Failed+loss settlement
+contract (including an incident and durable episode assertion). No timeout or
+production assertion was weakened. Ordinary rows remain unexecuted pending the
+session credential; diagnostic compilation is not checkpoint evidence.

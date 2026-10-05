@@ -719,6 +719,9 @@ public sealed class ChannelOutboundDeliveryPump
         if (manifest.Sources is null || files.Count != manifest.Sources.Select(s => s.StoredFile)
                 .Distinct(StringComparer.OrdinalIgnoreCase).Count())
             return false;
+        if (!manifest.Sources.All(source => files.Any(path => string.Equals(
+                Path.GetFileName(path), source.StoredFile, StringComparison.OrdinalIgnoreCase))))
+            return false;
         return task.DeliverableBundleDir is { } directory
             && HasCompleteFrozenSourceAttachments(directory, manifest, attachments);
     }

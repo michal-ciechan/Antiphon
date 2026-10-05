@@ -136,7 +136,12 @@ public sealed partial class ChannelOutboundDeliveryTests
             (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationIds[0]))
                 .ChannelReplySettledAt.ShouldNotBeNull();
             (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationIds[1]))
-                .ChannelReplySettledAt.ShouldBeNull();
+                .ChannelReplySettledAt.HasValue.ShouldBe(unifiedRecovery);
+            if (unifiedRecovery)
+            {
+                rows.Single(d => d.Id == deliveryIds[1]).FailureReportedEpisode.ShouldBeGreaterThan(0);
+                (await verify.AgentIncidents.CountAsync(i => i.Kind == AgentIncidentKind.ChannelReplyLost)).ShouldBe(1);
+            }
             if (!unifiedRecovery)
                 (await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId))
                     .DeliverableDeliveredAt.ShouldNotBeNull();
