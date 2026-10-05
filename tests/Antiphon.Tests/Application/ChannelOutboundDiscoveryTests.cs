@@ -1,5 +1,7 @@
 using System.Threading.Channels;
 using System.Collections.Concurrent;
+using System.Data;
+using System.Data.Common;
 using Antiphon.Messaging;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
@@ -11,6 +13,7 @@ using Antiphon.Server.Infrastructure.Supervision;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -358,7 +361,7 @@ public sealed class ChannelOutboundDiscoveryTests
     }
 
     [Test]
-    public async Task C519_Fair_cursors_and_finite_source_budget()
+    public async Task C519_Discovery_has_a_finite_cycle_budget()
     {
         await using var w = await World.CreateAsync();
         await using (var db = w.Db())
@@ -381,6 +384,205 @@ public sealed class ChannelOutboundDiscoveryTests
         w.H.Messaging.SentReplies.ShouldHaveSingleItem().Text.ShouldBe("fairly recovered answer");
     }
 
+    [Test]
+    public async Task C519_Each_discovery_page_is_bounded()
+    {
+        var pages = new DiscoveryPages();
+        await using var w = await World.CreateAsync(interceptor: pages);
+        await w.WithheldAsync(321);
+        var target = await w.MainAsync("page boundary prompt", "page boundary answer");
+        pages.Enabled = true;
+        (await w.Discovery.TickAsync(default)).ShouldBe(320);
+        pages.Counts.ShouldBe(Enumerable.Repeat(32, 10));
+        (await w.MemberAsync(target)).ChannelOutboundDeliveryId.ShouldBeNull();
+        pages.Counts.Clear();
+        (await w.Discovery.TickAsync(default)).ShouldBe(2);
+        pages.Counts.ShouldBe(new[] { 2, 0 });
+        (await w.DeliveryAsync(target)).State.ShouldBe(ChannelOutboundDeliveryState.Captured);
+    }
+
+    [Test]
+    public async Task C519_Fair_cursors_reach_work_behind_idle_prefixes()
+    {
+        await using var w = await World.CreateAsync();
+        var member = await w.MainAsync("tail behind idle roots", "root answer");
+        await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, default);
+        await w.DrainAsync();
+        var root = await w.DeliveryAsync(member);
+        await using (var db = w.Db())
+        {
+            for (var i = 0; i < 321; i++) db.ChannelOutboundDeliveries.Add(new()
+            {
+                Id = Guid.NewGuid(), SourceKey = "idle-root-" + i, SourceSessionId = root.SourceSessionId,
+                ChannelId = root.ChannelId, ProjectId = root.ProjectId, InboundAgentId = root.InboundAgentId,
+                PromptSequence = 1000 + i, ReservedThroughSequence = 2000, CaptureJson = root.CaptureJson,
+                SendKind = "main", State = ChannelOutboundDeliveryState.Published,
+                PublishedAt = root.PublishedAt, MetadataAppliedAt = root.MetadataAppliedAt,
+                CreatedAt = w.H.Now.AddDays(-1).AddSeconds(i)
+            });
+            await db.SaveChangesAsync();
+        }
+        await w.H.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "tail beyond idle prefix");
+        await w.Discovery.TickAsync(default);
+        w.Discovery.RootsExaminedLastTick.ShouldBe(320);
+        await using (var db = w.Db())
+            (await db.ChannelOutboundDeliveries.CountAsync(d => d.RootDeliveryId == root.Id)).ShouldBe(0);
+        await w.Discovery.TickAsync(default);
+        w.Discovery.RootsExaminedLastTick.ShouldBe(2);
+        await w.DrainAsync();
+        w.H.Messaging.SentReplies.Select(r => r.Text).ShouldBe(new[] { "root answer", "tail beyond idle prefix" });
+        await using (var db = w.Db())
+            (await db.ChannelOutboundDeliveries.CountAsync(d => d.RootDeliveryId == root.Id)).ShouldBe(1);
+    }
+
+    [Test]
+    public async Task C519_Each_work_kind_gets_a_bounded_share()
+    {
+        await using var w = await World.CreateAsync();
+        var accepted = await w.MainAsync("accepted prompt", "repair this accepted answer");
+        await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, default);
+        await w.DrainAsync();
+        var acceptedRow = await w.DeliveryAsync(accepted);
+        var due = await w.MainAsync("due prompt", "publish this due answer");
+        await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, default);
+        await w.H.TickOutboundAsync();
+        (await w.DeliveryAsync(due)).State.ShouldBe(ChannelOutboundDeliveryState.Ready);
+        await using (var db = w.Db())
+        {
+            await db.ChannelOutboundDeliveries.Where(d => d.Id == acceptedRow.Id).ExecuteUpdateAsync(s =>
+                s.SetProperty(d => d.MetadataAppliedAt, (DateTime?)null));
+            await db.ChatChannels.Where(c => c.Id == acceptedRow.ChannelId).ExecuteUpdateAsync(s =>
+                s.SetProperty(c => c.LastReplyAt, (DateTime?)null).SetProperty(c => c.LastReplyPreview, (string?)null));
+        }
+        await w.WithheldAsync(321);
+        using var host = w.Host();
+        await host.StartAsync(default);
+        try
+        {
+            await w.CycleAsync();
+            (await w.DeliveryAsync(accepted)).MetadataAppliedAt.ShouldNotBeNull();
+            (await w.DeliveryAsync(due)).State.ShouldBe(ChannelOutboundDeliveryState.Published);
+            (await w.MemberAsync(due)).ChannelReplySettledAt.ShouldNotBeNull();
+            w.H.Messaging.SentReplies.Select(r => r.Text)
+                .ShouldBe(new[] { "repair this accepted answer", "publish this due answer" });
+            await using var db = w.Db();
+            (await db.ChatChannels.SingleAsync(c => c.Id == acceptedRow.ChannelId)).LastReplyPreview
+                .ShouldBe("publish this due answer");
+        }
+        finally { await host.StopAsync(default); }
+    }
+
+    [Test]
+    public async Task C519_Ttl_waits_for_discovery_and_serializes_with_capture()
+    {
+        await using (var w = await World.CreateAsync())
+        {
+            var id = await w.H.SeedChannelCorrelationAsync("old complete prompt", w.Key);
+            var original = w.H.Now;
+            for (var i = 0; i < 32; i++) await w.H.InsertTurnAsync("unrelated " + i, "unrelated answer");
+            await w.H.InsertTurnAsync("old complete prompt", "original old answer");
+            w.Clock.Advance(TimeSpan.FromHours(2));
+            (await w.H.Dispatcher.SweepStaleCorrelationsAsync(default)).ShouldBe(0);
+            (await w.MemberAsync(id)).ChannelReplySettledAt.ShouldBeNull();
+            (await w.MemberAsync(id)).ChannelOutboundDeliveryId.ShouldBeNull();
+            await w.Discovery.TickAsync(default);
+            await w.Discovery.TickAsync(default);
+            var captured = await w.DeliveryAsync(id);
+            captured.State.ShouldBe(ChannelOutboundDeliveryState.Captured);
+            captured.PreparationDeadlineAt.ShouldBeLessThan(w.H.Now);
+            captured.CreatedAt.ShouldBeGreaterThanOrEqualTo(original);
+            ChannelReplyPreparation.Deserialize(captured.CaptureJson!).Body.Text.ShouldBe("original old answer");
+            (await w.MemberAsync(id)).ChannelReplySettledAt.ShouldBeNull();
+            await using var db = w.Db();
+            (await db.AgentIncidents.CountAsync(i => i.Kind == AgentIncidentKind.ChannelReplyLost)).ShouldBe(0);
+        }
+
+        foreach (var captureWins in new[] { true, false })
+        {
+            await using var w = await World.CreateAsync();
+            var id = await w.MainAsync("racing old prompt", "racing old answer");
+            var stale = await w.MemberAsync(id);
+            w.Clock.Advance(TimeSpan.FromHours(2));
+            var cutoff = w.H.Now.AddMinutes(-1);
+            await using var scope = w.H.Provider.CreateAsyncScope();
+            var service = scope.ServiceProvider.GetRequiredService<ChannelOutboundService>();
+            Task<ChannelOutboundDelivery> CaptureAsync() => service.CaptureAsync(
+                new ChannelReply { Channel = "telegram", ConversationId = w.Key[9..], Text = "racing old answer" },
+                new ChannelOutboundSource(w.H.SessionId, 1, 2, 2, "main", [id]),
+                ChannelReplyPreparation.Describe("racing old answer"), new ChannelBridgeSettings(), default);
+            var lockProbe = new LossLockProbe();
+            var options = new DbContextOptionsBuilder<AppDbContext>(TestDbFixture.CreateDbContextOptions(w.H.ConnectionString))
+                .AddInterceptors(lockProbe).Options;
+            await using var lossDb = new AppDbContext(options);
+            var recorder = new ChannelOutboundFailureRecorder(lossDb, w.Clock);
+            if (captureWins)
+            {
+                var locked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                service.ProbeBarrierAsync = async (name, _, ct) =>
+                { if (name == "capture-before-commit") { locked.TrySetResult(); await release.Task.WaitAsync(ct); } };
+                var capture = CaptureAsync();
+                Task<bool>? loss = null;
+                try
+                {
+                    await locked.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                    loss = recorder.RecordSourcesAsync(w.H.SessionId, [stale], "StaleTtl", "racing loss", cutoff, default);
+                    await lockProbe.Entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                    loss.IsCompleted.ShouldBeFalse();
+                }
+                finally
+                {
+                    release.TrySetResult();
+                    await capture;
+                    if (loss is not null) (await loss).ShouldBeFalse();
+                }
+                (await w.MemberAsync(id)).ChannelOutboundDeliveryId.ShouldBe((await capture).Id);
+                (await w.MemberAsync(id)).ChannelReplySettledAt.ShouldBeNull();
+            }
+            else
+            {
+                (await recorder.RecordSourcesAsync(w.H.SessionId, [stale], "StaleTtl", "loss first", cutoff, default)).ShouldBeTrue();
+                (await Should.ThrowAsync<ConflictException>(() => CaptureAsync())).Code.ShouldBe("channel_outbound_source_settled");
+                (await w.MemberAsync(id)).ChannelReplySettledAt.ShouldNotBeNull();
+                (await w.MemberAsync(id)).ChannelOutboundDeliveryId.ShouldBeNull();
+            }
+            await using var db = w.Db();
+            (await db.AgentIncidents.CountAsync(i => i.Kind == AgentIncidentKind.ChannelReplyLost)).ShouldBe(captureWins ? 0 : 1);
+            (await db.Alerts.CountAsync(a => a.Title.StartsWith("ChannelReplyLost"))).ShouldBe(captureWins ? 0 : 1);
+            w.H.Messaging.SentReplies.ShouldBeEmpty();
+        }
+    }
+
+    private sealed class LossLockProbe : DbCommandInterceptor
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("pg_advisory_xact_lock", StringComparison.Ordinal)) Entered.TrySetResult();
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    private sealed class DiscoveryPages : DbCommandInterceptor
+    {
+        public bool Enabled { get; set; }
+        public List<int> Counts { get; } = [];
+        public override ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command, CommandExecutedEventData eventData,
+            DbDataReader result, CancellationToken cancellationToken = default)
+        {
+            if (!Enabled || !command.CommandText.Contains("FROM \"SessionQueuedMessages\"", StringComparison.Ordinal)
+                || !command.CommandText.Contains("ORDER BY s.\"CreatedAt\", s.\"Id\"", StringComparison.Ordinal))
+                return ValueTask.FromResult(result);
+            // Count actual returned records, then replay those same records to EF.
+            var table = new DataTable();
+            table.Load(result);
+            result.Dispose();
+            Counts.Add(table.Rows.Count);
+            return ValueTask.FromResult<DbDataReader>(table.CreateDataReader());
+        }
+    }
+
     private sealed class World : IAsyncDisposable
     {
         public required BridgeQueueHarness H { get; init; }
@@ -391,7 +593,7 @@ public sealed class ChannelOutboundDiscoveryTests
         private readonly Channel<bool> _cycles = Channel.CreateUnbounded<bool>();
         public ChannelOutboundDiscoveryService Discovery => H.Provider.GetRequiredService<ChannelOutboundDiscoveryService>();
         public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(H.ConnectionString));
-        public static async Task<World> CreateAsync(bool enabled = true)
+        public static async Task<World> CreateAsync(bool enabled = true, IInterceptor? interceptor = null)
         {
             var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
             var clock = new ControlledTimeProvider(DateTimeOffset.UtcNow);
@@ -399,6 +601,7 @@ public sealed class ChannelOutboundDiscoveryTests
             var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
             {
                 ConnectionString = isolated.ConnectionString, TimeProvider = clock,
+                ConfigureDbContext = options => { if (interceptor is not null) options.AddInterceptors(interceptor); },
                 Bridge = new ChannelBridgeSettings { Enabled = true, MachineTurnTextOrigins = [QueuedMessageOrigin.Check] },
                 ConfigureServices = services =>
                 {
@@ -435,6 +638,20 @@ public sealed class ChannelOutboundDiscoveryTests
             var id = await H.SeedChannelCorrelationAsync(prompt, Key);
             await H.InsertTurnAsync(prompt, answer);
             return id;
+        }
+        public async Task WithheldAsync(int count)
+        {
+            await using var db = Db();
+            var sequence = await db.SessionQueuedMessages.Where(m => m.AgentSessionId == H.SessionId)
+                .MaxAsync(m => (long?)m.Sequence) ?? 0;
+            for (var i = 0; i < count; i++) db.SessionQueuedMessages.Add(new()
+            {
+                Id = Guid.NewGuid(), AgentSessionId = H.SessionId, Sequence = sequence + i + 1,
+                Origin = QueuedMessageOrigin.System, Status = QueuedMessageStatus.Sent,
+                Body = "withheld source " + i, CreatedAt = H.Now.AddSeconds(-400 + i),
+                SentAt = H.Now.AddSeconds(-400 + i), DeliveryAttempts = 1, LastDeliveryBaselineSequence = 0
+            });
+            await db.SaveChangesAsync();
         }
         public async Task ContextAsync()
         {
