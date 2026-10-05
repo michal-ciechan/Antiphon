@@ -30,7 +30,9 @@ public class TerminalRunnerSeatReleaseTests
         var boardId = Guid.NewGuid(); var columnId = Guid.NewGuid(); var cardId = Guid.NewGuid();
         await using (var db = f.Db())
         {
-            db.Boards.Add(new Board { Id = boardId, Name = "release board" });
+            var project = new Project { Id = Guid.NewGuid(), Name = "release project" };
+            db.Projects.Add(project);
+            db.Boards.Add(new Board { Id = boardId, ProjectId = project.Id, Name = "release board" });
             db.BoardColumns.Add(new BoardColumn { Id = columnId, BoardId = boardId, Name = "Done" });
             db.Cards.Add(new Card { Id = cardId, BoardId = boardId, BoardColumnId = columnId, Title = "release card" });
             (await db.AgentTasks.SingleAsync()).CardId = cardId;
