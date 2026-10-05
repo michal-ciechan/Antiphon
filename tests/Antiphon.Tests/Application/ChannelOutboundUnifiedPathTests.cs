@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text.Json;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -119,18 +121,50 @@ public sealed class ChannelOutboundUnifiedPathTests
                 w.H.Messaging.SentReplies.ShouldHaveSingleItem().Text.ShouldBe("allowed Check companion");
             }
         }
+        // An implied Delegation bundle is eligible even with an empty text-origin policy.
+        // Exact NO_REPLY still withholds that bundle until the same window gains real prose.
+        await using var implied = await World.CreateAsync(attachmentsOnly: true);
+        var task = await implied.BundleAsync();
+        var source = await implied.MachineAsync("NO_REPLY", QueuedMessageOrigin.Delegation, task);
+        await implied.DispatchAsync(); await implied.DrainAsync();
+        implied.H.Messaging.SentReplies.ShouldBeEmpty();
+        await using (var db = implied.Db())
+        {
+            (await db.SessionQueuedMessages.SingleAsync(m => m.Id == source)).ChannelOutboundDeliveryId.ShouldBeNull();
+            (await db.AgentTasks.SingleAsync(t => t.Id == task)).DeliverableDeliveredAt.ShouldBeNull();
+        }
+        await implied.H.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "complete implied source answer");
+        await implied.DispatchAsync(); await implied.DrainAsync();
+        implied.H.Messaging.SentReplies.ShouldHaveSingleItem().Attachments.ShouldHaveSingleItem()
+            .Content.ShouldBe("frozen implied source"u8.ToArray());
+        await using (var db = implied.Db())
+        {
+            (await db.SessionQueuedMessages.SingleAsync(m => m.Id == source)).ChannelReplySettledAt.ShouldNotBeNull();
+            (await db.AgentTasks.SingleAsync(t => t.Id == task)).DeliverableDeliveredAt.ShouldNotBeNull();
+        }
     }
 
     [Test]
     public async Task C519_Api_error_withholds_the_whole_window()
     {
         foreach (var kind in new[] { "main", "trailing", "machine" })
+        foreach (var position in new[] { "before", "middle", "after" })
         {
             await using var w = await World.CreateAsync();
             if (kind == "machine") await w.MachineAsync("otherwise valid prose");
             else await w.MainAsync(kind == "trailing" ? "NO_REPLY" : "otherwise valid prose");
             if (kind == "trailing") { await w.DispatchAsync(); await w.H.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "valid tail"); }
-            await w.H.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "API error", isApiError: true);
+            if (position == "before")
+            {
+                await using var errors = w.Db();
+                var first = await errors.TranscriptEntries.Where(t => t.AgentSessionId == w.H.SessionId
+                    && t.Kind == TranscriptKinds.AssistantText).OrderByDescending(t => t.Sequence).FirstAsync();
+                first.Text = "API error"; first.IsApiError = true;
+                await errors.SaveChangesAsync();
+            }
+            else await w.H.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "API error", isApiError: true);
+            if (position != "after")
+                await w.H.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "otherwise valid suffix prose");
             await w.DispatchAsync(); await w.DrainAsync();
             w.H.Messaging.SentReplies.ShouldBeEmpty();
             await using var db = w.Db();
@@ -153,15 +187,16 @@ public sealed class ChannelOutboundUnifiedPathTests
     {
         public BridgeQueueHarness H => harness;
         public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(harness.ConnectionString));
-        public static async Task<World> CreateAsync(bool allowSystem = false, string profile = "none")
+        public static async Task<World> CreateAsync(bool allowSystem = false, string profile = "none", bool attachmentsOnly = false)
         {
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             var settings = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true };
             var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
             {
                 ConnectionString = schema.ConnectionString,
-                Bridge = new ChannelBridgeSettings { Enabled = true, MachineTurnTextOrigins = allowSystem
-                    ? [QueuedMessageOrigin.Check, QueuedMessageOrigin.System] : [QueuedMessageOrigin.Check] },
+                Bridge = new ChannelBridgeSettings { Enabled = true, MachineTurnTextOrigins = attachmentsOnly ? [] : allowSystem
+                    ? [QueuedMessageOrigin.Delegation, QueuedMessageOrigin.Check, QueuedMessageOrigin.Scheduled, QueuedMessageOrigin.System]
+                    : new ChannelBridgeSettings().MachineTurnTextOrigins },
                 ConfigureServices = s => s.AddSingleton<IOptions<ChannelOutboundSettings>>(Options.Create(settings)),
             });
             await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString));
@@ -182,15 +217,42 @@ public sealed class ChannelOutboundUnifiedPathTests
             return new(h, schema, "telegram:" + conversation);
         }
         public async Task<Guid> MainAsync(string answer)
-        { var id = await H.SeedChannelCorrelationAsync("original question", key); await H.InsertTurnAsync("original question", answer); return id; }
-        public async Task<Guid> MachineAsync(string answer, QueuedMessageOrigin origin = QueuedMessageOrigin.Check)
+        {
+            var prompt = "original question " + Guid.NewGuid().ToString("N");
+            var id = await H.SeedChannelCorrelationAsync(prompt, key); await H.InsertTurnAsync(prompt, answer); return id;
+        }
+        public async Task<Guid> BundleAsync()
+        {
+            var id = Guid.NewGuid();
+            var dir = Directory.CreateDirectory(Path.Combine(H.TempRoot, "bundle-" + id.ToString("N"))).FullName;
+            var bytes = "frozen implied source"u8.ToArray();
+            await File.WriteAllBytesAsync(Path.Combine(dir, "source.md"), bytes);
+            var manifest = new DeliverableBundleService.SourceManifest(1, true,
+                [new("source.md", "source.md", null, bytes.Length, Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant())], []);
+            await File.WriteAllTextAsync(Path.Combine(dir, DeliverableBundleService.SourceManifestName),
+                JsonSerializer.Serialize(manifest, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            await using var db = Db();
+            db.AgentTasks.Add(new() { Id = id, RootTaskId = id, ProjectId = (await db.Projects.SingleAsync()).Id,
+                AgentId = H.AgentId, Title = "implied source", Goal = "implied source", WorkingDirectory = H.TempRoot,
+                RepoPath = H.TempRoot, Status = AgentTaskStatus.Succeeded, DeliverableBundleDir = dir,
+                CreatedAt = H.Now, CompletedAt = H.Now });
+            await db.SaveChangesAsync();
+            return id;
+        }
+        public async Task<Guid> MachineAsync(string answer, QueuedMessageOrigin origin = QueuedMessageOrigin.Check, Guid? sourceTask = null)
         {
             var context = await H.SeedChannelCorrelationAsync("prior context", key);
             await using (var db = Db()) await db.SessionQueuedMessages.Where(m => m.Id == context)
                 .ExecuteUpdateAsync(s => s.SetProperty(m => m.ChannelReplySettledAt, H.Now));
-            var prompt = $"[{origin}] {Guid.NewGuid():N}";
+            var prompt = sourceTask is Guid task ? $"[task {DelegationReportFormatter.Short(task)} done]\nComplete source report"
+                : $"[{origin}] {Guid.NewGuid():N}";
             var id = await H.SeedPendingMessageAsync(prompt, status: QueuedMessageStatus.Sent, origin: origin,
                 deliveryAttempts: 1, baselineSequence: await H.CurrentTranscriptMaxSequenceAsync(), lastDeliveryStartedAt: H.Now, legacyNullGeneration: true);
+            if (sourceTask is not null)
+            {
+                await using var db = Db();
+                await db.SessionQueuedMessages.Where(m => m.Id == id).ExecuteUpdateAsync(s => s.SetProperty(m => m.SourceTaskId, sourceTask));
+            }
             await H.InsertTurnAsync(prompt, answer); return id;
         }
         public Task<ChannelReplyDispatchResult> DispatchAsync() => H.Dispatcher.OnTurnEndAsync(H.SessionId, default);
