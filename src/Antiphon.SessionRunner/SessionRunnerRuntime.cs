@@ -114,7 +114,19 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
     // Shared production decision, called only while the launch gate is held.
     internal static InputAuthorization AuthorizeInputUnderGate(RunnerSession session) =>
-        session.HasExited ? InputAuthorization.Exited : InputAuthorization.Allowed;
+        session.TerminalReleaseInProgress ? InputAuthorization.ReleaseInProgress
+            : session.HasExited ? InputAuthorization.Exited : InputAuthorization.Allowed;
+
+    private static async Task<InputAuthorization> WriteInputUnderGateAsync(
+        RunnerSession session, string input, CancellationToken ct)
+    {
+        var authorization = AuthorizeInputUnderGate(session);
+        if (authorization != InputAuthorization.Allowed) return authorization;
+        // WriteAsync records attempted/uncertain composer custody and advances BackendInput
+        // for every completed write. Do not recurse through a public lock-taking input API.
+        await session.WriteAsync(input, ct);
+        return InputAuthorization.Allowed;
+    }
 
     /// <summary>CARD-0079 test seam: after the stop request is accepted and before the final observation.</summary>
     internal Func<Guid, Task>? CompactionStopBeforeFinalCheck { get; set; }
@@ -840,10 +852,18 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
     public RunnerTranscriptDto GetTranscript(Guid sessionId) => GetSession(sessionId).GetTranscript();
 
-    public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) =>
-        string.IsNullOrEmpty(input)
-            ? Task.CompletedTask
-            : GetSession(sessionId).WriteAsync(input, ct);
+    public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(input)) return;
+        var gate = _launchLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            var authorization = await WriteInputUnderGateAsync(GetSession(sessionId), input, ct);
+            if (authorization != InputAuthorization.Allowed) throw new InputRefusedException(authorization);
+        }
+        finally { gate.Release(); }
+    }
 
     public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct)
     {
@@ -985,7 +1005,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     internal Func<Guid, Task>? TerminalReleaseBeforeFinalCheck { get; set; }
     internal Func<Guid, Task>? TerminalReleaseBeforeSignal { get; set; }
 
-    // Dormant until S2b fences both input entry points and S2c exposes the wire protocol.
+    // Dormant until S2c exposes the wire protocol. Both input entry points share this gate.
     // Never call either public lock-taking release/observation method from inside this gate.
     internal async Task<TerminalSeatReleaseResult> ReleaseTerminalSeatAsync(
         Guid sessionId, TerminalSeatReleaseRequest request, TimeSpan timeout, CancellationToken ct)
@@ -1117,8 +1137,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 || session.Tailer is not { } tailer)
                 return Refuse(TerminalSeatQualificationStatus.Unknown);
 
-            // S2b supplies attempted-input fencing. No mutation/wire caller may use this
-            // read-only API before that slice; completed writes already invalidate evidence.
+            // Both public input routes share this gate; completed writes invalidate evidence,
+            // and failed/unsubmitted writes retain their separate custody veto at release.
             var input = session.BackendInput.Count;
             var output = session.LastSequence;
             var transcript = await tailer.ObserveTerminalSeatAsync(ct);
@@ -1193,9 +1213,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     sessionId, outcome, session.AcceptedStartedAt, session.LastSequence);
             }
 
-            await session.WriteAsync(request.Input, ct);
+            var authorization = await WriteInputUnderGateAsync(session, request.Input, ct);
             return new RunnerConditionalInputResult(
-                sessionId, ConditionalInputOutcomes.Written, session.AcceptedStartedAt, session.LastSequence);
+                sessionId, authorization switch
+                {
+                    InputAuthorization.ReleaseInProgress => ReleaseInProgressInputOutcome,
+                    InputAuthorization.Exited => ConditionalInputOutcomes.Exited,
+                    _ => ConditionalInputOutcomes.Written
+                }, session.AcceptedStartedAt, session.LastSequence);
         }
         finally { gate.Release(); }
     }
