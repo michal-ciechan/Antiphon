@@ -148,20 +148,27 @@ public class TerminalRunnerSeatReleaseTests
     [Test]
     public async Task Pending_delivery_prevents_release()
     {
-        foreach (var origin in Enum.GetValues<QueuedMessageOrigin>())
+        var inputs = new (string Kind, QueuedMessageOrigin Origin)[]
+        {
+            ("brief", QueuedMessageOrigin.Delegation), ("answer", QueuedMessageOrigin.Delegation),
+            ("channel", QueuedMessageOrigin.Channel), ("mention", QueuedMessageOrigin.Mention),
+            ("completion", QueuedMessageOrigin.Delegation), ("continuation", QueuedMessageOrigin.System),
+            ("recovery", QueuedMessageOrigin.System),
+        };
+        foreach (var input in inputs)
         foreach (var shape in new[] { "pending", "attempted", "held" })
         {
             await using var f = await RunnerSeatReleaseFixture.CreateAsync();
             await using var db = f.Db();
             var message = new SessionQueuedMessage { Id = Guid.NewGuid(), AgentSessionId = f.SessionId,
-                Body = "complete delivery canary", Origin = origin, CreatedAt = f.Now,
+                Body = $"{input.Kind}: complete delivery canary", Origin = input.Origin, CreatedAt = f.Now,
                 Status = shape == "attempted" ? QueuedMessageStatus.Sent : QueuedMessageStatus.Pending,
                 DeliveryAttempts = shape == "attempted" ? 1 : 0,
                 LastDeliveryStartedAt = shape == "attempted" ? f.Now : null,
                 HoldUntil = shape == "held" ? f.Now.AddHours(1) : null };
             db.SessionQueuedMessages.Add(message); await db.SaveChangesAsync();
             var before = JsonSerializer.Serialize(message);
-            (await f.RunAsync()).Decision.ShouldBe(TerminalRunnerSeatDecision.PendingDelivery, $"{origin}/{shape}");
+            (await f.RunAsync()).Decision.ShouldBe(TerminalRunnerSeatDecision.PendingDelivery, $"{input.Kind}/{shape}");
             f.Wire.ConditionalCommands.ShouldBe(0);
             (await db.RunnerSeatReleases.CountAsync(r => r.ActionId != null)).ShouldBe(0);
             db.ChangeTracker.Clear();
