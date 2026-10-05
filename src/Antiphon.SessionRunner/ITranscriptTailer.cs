@@ -27,6 +27,11 @@ internal interface ITranscriptTailer : IAsyncDisposable
     /// <summary>Full ordered snapshot of everything parsed so far (for catch-up after a missed stream).</summary>
     RunnerTranscriptDto Snapshot();
 
+    /// <summary>Fresh bounded read of the bound native file, without publishing or advancing ingestion.</summary>
+    Task<TerminalTranscriptObservation> ObserveTerminalSeatAsync(CancellationToken ct) =>
+        Task.FromResult(new TerminalTranscriptObservation(
+            TerminalTranscriptReadStatus.Unavailable, TerminalTranscriptVerdict.Unknown));
+
     /// <summary>
     /// CARD-0079 read-to-end of the bound file. Non-Claude tailers cannot certify silence.
     /// </summary>

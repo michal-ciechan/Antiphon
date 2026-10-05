@@ -338,6 +338,13 @@ internal sealed class TranscriptTailer : ITranscriptTailer
 
     private sealed record BindingCapture(string Path, string Identity);
 
+    internal TerminalSeatReleaseObservation TerminalObservation { get; } = new();
+
+    public Task<TerminalTranscriptObservation> ObserveTerminalSeatAsync(CancellationToken ct) =>
+        TerminalObservation.ObserveAsync(
+            () => BoundTranscriptPath is { } path && !_claimRevoked
+                ? (path, $"{path}|{BindHow}|{_bindGeneration}") : null, Snapshot, ct);
+
     private async Task RunAsync(CancellationToken ct)
     {
         try
@@ -356,6 +363,11 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                 var dropped = false;
                 while (!ct.IsCancellationRequested)
                 {
+                    if (TerminalObservation.BeforePoll is { } beforePoll)
+                        await beforePoll(ct);
+                    await TerminalObservation.ReadGate.WaitAsync(ct);
+                    try
+                    {
                     if (_claimRevoked)
                     {
                         HandleClaimRevoked(path);
@@ -411,6 +423,9 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                 {
                     // File is mid-write / transiently locked — retry on the next poll.
                 }
+
+                    }
+                    finally { TerminalObservation.ReadGate.Release(); }
 
                     await Task.Delay(PollInterval, ct);
                 }

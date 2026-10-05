@@ -169,6 +169,13 @@ internal sealed class GrokTranscriptTailer : ITranscriptTailer
             return new RunnerTranscriptDto(_sessionId, _entries.ToArray(), _seq);
     }
 
+    internal TerminalSeatReleaseObservation TerminalObservation { get; } = new();
+
+    public Task<TerminalTranscriptObservation> ObserveTerminalSeatAsync(CancellationToken ct) =>
+        TerminalObservation.ObserveAsync(
+            () => BoundTranscriptPath is { } path
+                ? (path, $"{path}|{BindHow}") : null, Snapshot, ct);
+
     private async Task RunAsync(CancellationToken ct)
     {
         try
@@ -183,6 +190,11 @@ internal sealed class GrokTranscriptTailer : ITranscriptTailer
 
             while (!ct.IsCancellationRequested)
             {
+                if (TerminalObservation.BeforePoll is { } beforePoll)
+                    await beforePoll(ct);
+                await TerminalObservation.ReadGate.WaitAsync(ct);
+                try
+                {
                 try
                 {
                     var info = new FileInfo(_updatesPath);
@@ -233,6 +245,9 @@ internal sealed class GrokTranscriptTailer : ITranscriptTailer
                         ReportMissingAfterChildExit();
                     return;
                 }
+
+                }
+                finally { TerminalObservation.ReadGate.Release(); }
 
                 await Task.Delay(_pollInterval, ct);
             }

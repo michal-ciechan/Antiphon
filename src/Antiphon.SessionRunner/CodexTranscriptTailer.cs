@@ -89,6 +89,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
     private readonly Action? _onUnbound;
     private volatile bool _claimRevoked;
     private Guid _claimRevokedBy;
+    private int _bindGeneration;
     private readonly CodexTranscriptNormalizer _normalizer;
     private readonly CancellationTokenSource _cts = new();
     private readonly object _gate = new();
@@ -218,6 +219,13 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
             return new RunnerTranscriptDto(_sessionId, _entries.ToArray(), _seq);
     }
 
+    internal TerminalSeatReleaseObservation TerminalObservation { get; } = new();
+
+    public Task<TerminalTranscriptObservation> ObserveTerminalSeatAsync(CancellationToken ct) =>
+        TerminalObservation.ObserveAsync(
+            () => BoundTranscriptPath is { } path && !_claimRevoked
+                ? (path, $"{path}|{BindHow}|{_bindGeneration}") : null, Snapshot, ct);
+
     private async Task RunAsync(CancellationToken ct)
     {
         try
@@ -237,6 +245,11 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
 
             while (!ct.IsCancellationRequested)
             {
+                if (TerminalObservation.BeforePoll is { } beforePoll)
+                    await beforePoll(ct);
+                await TerminalObservation.ReadGate.WaitAsync(ct);
+                try
+                {
                 if (_claimRevoked)
                 {
                     HandleClaimRevoked(path);
@@ -277,6 +290,9 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
                 if (_childExitedAtUtc is { } exitedAt && DateTime.UtcNow - exitedAt >= ChildExitSettle)
                     return;
 
+                }
+                finally { TerminalObservation.ReadGate.Release(); }
+
                 await Task.Delay(_pollInterval, ct);
             }
 
@@ -299,6 +315,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
         _claimRevoked = false;
         BoundTranscriptPath = null;
         BindHow = null;
+        _bindGeneration++;
         _knownTranscriptPath = null;
         _logger.LogWarning(
             "Session {SessionId}: Codex rollout {Path} was reclaimed by its namesake session {NewOwner}; "
@@ -470,6 +487,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
 
         BoundTranscriptPath = path;
         BindHow = how;
+        _bindGeneration++;
         try { _onBound?.Invoke(path, how); }
         catch (Exception ex)
         {
