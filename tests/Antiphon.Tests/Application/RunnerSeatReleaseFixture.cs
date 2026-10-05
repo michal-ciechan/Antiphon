@@ -65,7 +65,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
                     services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
                     services.AddSingleton<SessionStateStore>();
                     services.AddSingleton(Options.Create(new SessionStateSettings()));
-                    services.AddSingleton(Options.Create(new TerminalRunnerSeatReleaseOptions { AutomaticEnabled = true }));
+                    services.AddSingleton(Options.Create(new TerminalRunnerSeatReleaseOptions { AutomaticEnabled = wire.AutomaticEnabled }));
                     services.AddSingleton<TerminalRunnerSeatReleasePolicy>();
                     services.AddScoped<TerminalRunnerSeatReleaseService>();
                     services.AddSingleton<DelegationWorkspaceResolver>();
@@ -91,7 +91,8 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
                         dispatchWarnings: sp.GetRequiredService<DispatchBaseWarningIntentService>(),
                         workspaceUse: sp.GetRequiredService<WorkspaceUseAdmission>(),
                         remoteWorkspace: sp.GetRequiredService<RemoteWorkspaceService>(), runners: directory,
-                        taskLaunchSink: sp.GetRequiredService<LaunchRecorder>()));
+                        taskLaunchSink: sp.GetRequiredService<LaunchRecorder>(),
+                        terminalSeatRelease: sp.GetRequiredService<TerminalRunnerSeatReleaseService>()));
                 }
             };
             harness = await BridgeQueueHarness.CreateAsync(harnessOptions);
@@ -325,6 +326,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
 
     internal sealed class SeatWire : HttpMessageHandler
     {
+        public bool AutomaticEnabled { get; set; } = true;
         public BridgeQueueHarness.HarnessOptions? HarnessOptions { get; set; }
         public bool Unsupported { get; set; }
         public bool DropReply { get; set; }

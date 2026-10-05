@@ -14,6 +14,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using System.Data.Common;
 using Shouldly;
 using TUnit.Core;
 
@@ -25,8 +26,12 @@ public class TerminalRunnerSeatReleaseTests
     [Test]
     public async Task Long_answer_keeps_complete_content_and_spill_receipt()
     {
+        foreach (var length in new[] { 3999, 4000, 4001, 12000 })
+        {
         await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
-        var answer = string.Concat(Enumerable.Repeat("retain λ 日本語 😀\r\n", 650)) + "FINAL-ANSWER-CANARY";
+        var answer = length == 12000
+            ? string.Concat(Enumerable.Repeat("retain λ 日本語 😀\r\n", 650)) + "FINAL-ANSWER-CANARY"
+            : new string('x', length - "FINAL-ANSWER-CANARY".Length) + "FINAL-ANSWER-CANARY";
         await f.PrepareContinuationAsync();
         await f.ReleaseAsync();
         (await f.TryAnswerAsync(answer)).ShouldBeNull("the complete Unicode answer must be accepted without a bounded-detail database error");
@@ -50,18 +55,24 @@ public class TerminalRunnerSeatReleaseTests
         f.Submitted.ShouldBe(new[] { queued.Body });
         f.Recipient!.Inputs.Last().ShouldBe("\r");
         (await f.TaskAsync()).ReleasedSeatAnswer.ShouldBeNull("only the complete pointer receipt finishes answer recovery");
+        }
     }
 
     [Test]
     public async Task Accepted_answer_after_release_is_delivered_once()
     {
         foreach (var boundary in new[] { "accept-before", "accept-after", "attempt-before", "attempt-after",
-                     "queue-before", "queue-after", "delivery-before", "verdict-before", "complete-before" })
+                     "queue-before", "queue-after", "delivery-stamp", "verdict-before", "complete-before", "release-ambiguous", "idle" })
         {
             var cut = new DeliverySaveCut { Boundary = boundary };
             await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked,
-                configureDb: options => options.AddInterceptors(cut));
-            await f.PrepareContinuationAsync(); await f.ReleaseAsync();
+                configureDb: options => options.AddInterceptors(cut, new DeliveryCommitCut(cut)));
+            await f.PrepareContinuationAsync();
+            f.Wire.DropReply = boundary == "release-ambiguous";
+            await f.ReleaseAsync();
+            if (boundary == "release-ambiguous")
+                f.Directory.Inventory = () => Task.FromResult<RunnerInventory>(new RunnerInventory.Available([]));
+            f.Wire.AutomaticEnabled = false;
             f.Harness.Provider.GetRequiredService<IOptions<TerminalRunnerSeatReleaseOptions>>().Value.AutomaticEnabled = false;
             cut.Armed = true;
             if (boundary == "accept-after") f.Harness.EventBus.ThrowOnceOnEvent = "AgentTaskChanged";
@@ -76,12 +87,12 @@ public class TerminalRunnerSeatReleaseTests
             answerId.ShouldNotBeNull();
             // Restart reconstructs scoped and singleton services over the same migrated clone.
             await f.RestartAsync();
-            f.Launches.OnLaunch = id => f.AttachRecipientAsync(id, busy: true).GetAwaiter().GetResult();
+            f.Launches.OnLaunch = id => f.AttachRecipientAsync(id, busy: boundary != "idle").GetAwaiter().GetResult();
             await f.DispatchAsync();
             var target = await f.TaskAsync();
             target.Attempt.ShouldBe(2, boundary);
             target.AgentSessionId.ShouldNotBeNull(boundary);
-            f.Recipient?.Inputs.ShouldBeEmpty("busy recipient must see no input before its committed turn end");
+            if (boundary != "idle") f.Recipient?.Inputs.ShouldBeEmpty("busy recipient must see no input before its committed turn end");
             (await f.TaskAsync()).ReleasedSeatAnswerId.ShouldBe(answerId, boundary);
             await f.RestartAsync();
             await f.AttachRecipientAsync(target.AgentSessionId!.Value);
@@ -96,7 +107,7 @@ public class TerminalRunnerSeatReleaseTests
             await f.FlushAsync(target.AgentSessionId.Value);
             await f.DispatchAsync();
             if (boundary == "complete-before") await f.DispatchAsync();
-            if (boundary != "accept-after") cut.Hit.ShouldBeTrue($"must reach {boundary}");
+            if (boundary is not ("accept-after" or "release-ambiguous" or "idle")) cut.Hit.ShouldBeTrue($"must reach {boundary}");
             f.Submitted.Count.ShouldBe(1, boundary);
             (await f.TaskAsync()).ReleasedSeatAnswer.ShouldBeNull($"{boundary}: matching prompt completes recovery");
             await using var db = f.Db();
@@ -105,6 +116,9 @@ public class TerminalRunnerSeatReleaseTests
             (await db.SessionQueuedMessages.CountAsync(m => m.ExecutionTaskId == f.TaskId)).ShouldBe(1, boundary);
             (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == f.SessionId
                 && m.ExecutionTaskId == f.TaskId)).ShouldBe(0, "no delivery to the released seat");
+            f.Wire.ConditionalCommands.ShouldBe(1, "answer recovery sends no new release commands while disabled");
+            (await f.TaskAsync()).ReleasedSeatAnswerId.ShouldBeNull();
+            (await f.TaskAsync()).ReleasedSeatAnswerTargetAttempt.ShouldBeNull();
         }
     }
 
@@ -133,6 +147,7 @@ public class TerminalRunnerSeatReleaseTests
             var max = await db.TranscriptEntries.Where(t => t.AgentSessionId == row.AgentSessionId).MaxAsync(t => t.Sequence);
             await db.SessionQueuedMessages.Where(m => m.Id == row.Id).ExecuteUpdateAsync(u => u
                 .SetProperty(m => m.Status, QueuedMessageStatus.Sent)
+                .SetProperty(m => m.DeliveryAttempts, 1)
                 .SetProperty(m => m.DeliveryVerdict, DeliveryVerdict.Delivered)
                 .SetProperty(m => m.LastDeliveryStartedAt, f.Now)
                 .SetProperty(m => m.LastDeliveryGeneration, shape == "generation" ? generation.AddSeconds(-1) : generation)
@@ -143,6 +158,7 @@ public class TerminalRunnerSeatReleaseTests
             // The positive witness comes from actual queue submit bytes, normalizer and ingest.
             await db.SessionQueuedMessages.Where(m => m.Id == row.Id).ExecuteUpdateAsync(u => u
                 .SetProperty(m => m.Status, QueuedMessageStatus.Pending)
+                .SetProperty(m => m.DeliveryAttempts, 0)
                 .SetProperty(m => m.DeliveryVerdict, (DeliveryVerdict?)null)
                 .SetProperty(m => m.LastDeliveryStartedAt, (DateTime?)null)
                 .SetProperty(m => m.LastDeliveryGeneration, (DateTime?)null)
@@ -164,15 +180,22 @@ public class TerminalRunnerSeatReleaseTests
             "accept-before" => db.ChangeTracker.Entries<AgentTask>().Any(e => e.Entity.Attempt == 1 && e.Entity.ReleasedSeatAnswerId != null),
             "attempt-before" or "attempt-after" => db.ChangeTracker.Entries<AgentTask>().Any(e => e.Entity.Attempt == 2 && e.Entity.Status == AgentTaskStatus.Queued),
             "queue-before" or "queue-after" => db.ChangeTracker.Entries<SessionQueuedMessage>().Any(e => e.Entity.ExecutionTaskId != null),
-            "delivery-before" => db.ChangeTracker.Entries<SessionQueuedMessage>().Any(e => e.Entity.DeliveryAttempts > 0 && e.Entity.DeliveryVerdict == null),
+            "delivery-stamp" => db.ChangeTracker.Entries<SessionQueuedMessage>().Any(e => e.Entity.DeliveryAttempts > 0 && e.Entity.DeliveryVerdict == null),
             "verdict-before" => db.ChangeTracker.Entries<SessionQueuedMessage>().Any(e => e.Entity.DeliveryVerdict == DeliveryVerdict.Delivered),
             "complete-before" => db.ChangeTracker.Entries<AgentTask>().Any(e => e.Entity.Attempt == 2 && e.Entity.ReleasedSeatAnswer == null),
             _ => false
         };
         private void Cut(DbContext db, bool after)
         {
-            if (!Armed || Hit || Boundary.EndsWith("after") != after || !Matches(db)) return;
+            if (!Armed || Hit || (Boundary.EndsWith("after") || Boundary == "delivery-stamp") != after || !Matches(db)) return;
+            if (Boundary == "attempt-after") { CommitPending = true; return; }
             Hit = true; throw new InvalidOperationException($"injected {Boundary}");
+        }
+        public bool CommitPending { get; private set; }
+        public void CutCommit()
+        {
+            if (!CommitPending || Hit) return;
+            Hit = true; throw new InvalidOperationException("injected attempt-after commit");
         }
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data,
             InterceptionResult<int> result, CancellationToken cancellationToken = default)
@@ -180,6 +203,13 @@ public class TerminalRunnerSeatReleaseTests
         public override ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData data, int result,
             CancellationToken cancellationToken = default)
         { Cut(data.Context!, true); return ValueTask.FromResult(result); }
+    }
+
+    private sealed class DeliveryCommitCut(DeliverySaveCut cut) : DbTransactionInterceptor
+    {
+        public override Task TransactionCommittedAsync(DbTransaction transaction, TransactionEndEventData eventData,
+            CancellationToken cancellationToken = default)
+        { cut.CutCommit(); return Task.CompletedTask; }
     }
 
     [Test]

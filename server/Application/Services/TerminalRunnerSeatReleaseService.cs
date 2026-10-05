@@ -143,8 +143,25 @@ public sealed class TerminalRunnerSeatReleaseService(
         finally { gate.Release(); }
     }
 
+    /// <summary>Read-only recovery of an already-sent release for an accepted answer. The
+    /// rollout switch must not strand input; this path cannot qualify or send another kill.</summary>
+    internal async Task ReconcileAcceptedAnswerAsync(Guid releaseId, CancellationToken ct)
+    {
+        var release = await db.RunnerSeatReleases.AsNoTracking().SingleOrDefaultAsync(r => r.Id == releaseId, ct);
+        if (release is not { State: RunnerSeatReleaseState.Unresolved, ActionId: not null }) return;
+        var gate = queue.GetLock(release.SessionId);
+        await gate.WaitAsync(ct);
+        try
+        {
+            release = await db.RunnerSeatReleases.AsNoTracking().SingleAsync(r => r.Id == releaseId, ct);
+            if (release.State == RunnerSeatReleaseState.Unresolved)
+                await ReconcileAsync(release, null, ct);
+        }
+        finally { gate.Release(); }
+    }
+
     private async Task ReconcileAsync(RunnerSeatRelease release,
-        TerminalSeatObservationRequest observation, CancellationToken ct)
+        TerminalSeatObservationRequest? observation, CancellationToken ct)
     {
         if (await RevalidateAsync(release, ct) is not null || !await RunnerReadyAsync(release, ct)) return;
         RunnerInventory inventory;
@@ -169,6 +186,7 @@ public sealed class TerminalRunnerSeatReleaseService(
 
         // A remaining seat needs new runner qualification, never a replay of the ambiguous
         // action. Reusing its token would spend old authority after an unknown interval.
+        if (observation is null) return;
         TerminalSeatObservation fresh;
         try { fresh = await runners.Resolve(release.RunnerId).ObserveTerminalSeatAsync(release.SessionId, observation, ct); }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { return; }

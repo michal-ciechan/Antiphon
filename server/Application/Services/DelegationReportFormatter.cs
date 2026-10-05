@@ -240,6 +240,7 @@ public static class DelegationReportFormatter
             && task.ReleasedSeatAnswer is { } answer)
         {
             sb.AppendLine("The previous seat was released; this answer continues the task in a new attempt.");
+            sb.AppendLine($"Accepted answer: {task.ReleasedSeatAnswerId:D}; target attempt: {task.Attempt}.");
             sb.AppendLine($"Source release: {task.ReleasedSeatAnswerReleaseId:D}; question: {task.ReleasedSeatAnswerRoundId:D}.");
             sb.AppendLine("--- accepted answer ---");
             sb.AppendLine(answer).AppendLine();
