@@ -109,6 +109,14 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
             .RegisterAndReserveAsync(taskId ?? TaskId, Observation, CancellationToken.None);
     }
 
+    public async Task<Guid?> ReleaseAsync(Func<string, CancellationToken, Task>? boundary = null)
+    {
+        using var scope = Harness.Provider.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<TerminalRunnerSeatReleaseService>();
+        service.BoundaryAsync = boundary;
+        return await service.RegisterAndReleaseAsync(TaskId, Observation, CancellationToken.None);
+    }
+
     public async Task EditAsync(Action<AgentTask, Agent> edit)
     {
         await using var db = Db();
@@ -129,6 +137,11 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
     internal sealed class SeatWire : HttpMessageHandler
     {
         public bool Unsupported { get; set; }
+        public bool DropReply { get; set; }
+        public TerminalSeatReleaseOutcome Outcome { get; set; } = TerminalSeatReleaseOutcome.Released;
+        public Func<TerminalSeatReleaseRequest, Task>? AtCommand { get; set; }
+        public Func<TerminalSeatReleaseResult, TerminalSeatReleaseResult>? RewriteReply { get; set; }
+        public List<TerminalSeatReleaseRequest> Requests { get; } = [];
         public List<string> Calls { get; } = [];
         public int ConditionalCommands => Calls.Count(p => p.EndsWith("/release-terminal-seat"));
         public int ForceCommands => Calls.Count(p => p.EndsWith("/kill") || p.EndsWith("/kill-generation") || p.EndsWith("/release"));
@@ -136,29 +149,51 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
             new(TerminalTranscriptReadStatus.Success, TerminalTranscriptVerdict.Idle,
                 "binding", "file", 100, 12, 12, 11), "issued-token", TimeSpan.FromSeconds(120),
             new DateTimeOffset(2026, 10, 6, 0, 0, 0, TimeSpan.Zero)); // Runner clock is +24h.
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Calls.Add(request.RequestUri!.AbsolutePath);
-            return Task.FromResult(Unsupported
+            if (request.RequestUri.AbsolutePath.EndsWith("/release-terminal-seat"))
+            {
+                var command = (await request.Content!.ReadFromJsonAsync<TerminalSeatReleaseRequest>(ct))!;
+                Requests.Add(command);
+                if (AtCommand is not null) await AtCommand(command);
+                if (DropReply) throw new HttpRequestException("fixture dropped the reply after execution");
+                var sessionId = Guid.Parse(request.RequestUri.AbsolutePath.Split('/')[2]);
+                var result = new TerminalSeatReleaseResult(sessionId, command.ActionId, Outcome,
+                    command.Observation.ExpectedAcceptedStartedAt);
+                return new(HttpStatusCode.OK) { Content = JsonContent.Create(RewriteReply?.Invoke(result) ?? result) };
+            }
+            return Unsupported
                 ? new HttpResponseMessage(HttpStatusCode.NotFound)
-                : new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(Qualified) });
+                : new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(Qualified) };
         }
     }
 
     internal sealed class SeatDirectory(ISessionRunnerClient client) : ISessionRunnerDirectory
     {
         public Guid StoreId { get; } = Guid.NewGuid();
+        public bool Available { get; set; } = true;
+        public bool Stale { get; set; }
+        public bool Recovered { get; set; } = true;
+        public Guid? LiveStoreOverride { get; set; }
+        public int InventoryCalls { get; private set; }
+        public Func<Task<RunnerInventory>>? Inventory { get; set; }
         public ISessionRunnerClient Client { get; set; } = client;
         public ISessionRunnerClient Local => Client;
         public ISessionRunnerClient Resolve(string? runnerId) => Client;
-        public Guid? GetLiveStoreId(string? runnerId) => StoreId;
+        public Guid? GetLiveStoreId(string? runnerId) => LiveStoreOverride ?? StoreId;
         public Task<RunnerDescriptor?> DescribeAsync(string? runnerId, CancellationToken ct) =>
-            Task.FromResult<RunnerDescriptor?>(new("fixture", "fixture", "linux", null, true, true, false, 1,
+            Task.FromResult<RunnerDescriptor?>(new("fixture", "fixture", "linux", null, Available, Recovered, Stale, 1,
                 new RunnerCapabilitiesDto("fake", "fake", "fixture", false,
                     Features: [RunnerCapabilityFeatures.TerminalSeatReleaseV1], RunnerStoreId: StoreId)));
         public IReadOnlyList<string> KnownRunnerIds => ["fixture"];
         public Task<SessionRunnerOwner?> GetOwnerAsync(Guid id, CancellationToken ct) => Task.FromResult<SessionRunnerOwner?>(new("fixture", StoreId, "/fixture"));
         public Task<SessionRunnerBinding> GetBindingAsync(Guid id, CancellationToken ct) => Task.FromResult<SessionRunnerBinding>(new SessionRunnerBinding.Remote(new("fixture", StoreId, "/fixture")));
-        public Task<RunnerInventory> GetInventoryAsync(string? id, CancellationToken ct) => Task.FromResult<RunnerInventory>(new RunnerInventory.Unavailable("not part of S3a"));
+        public async Task<RunnerInventory> GetInventoryAsync(string? id, CancellationToken ct)
+        {
+            InventoryCalls++;
+            return Inventory is null ? new RunnerInventory.Unavailable("fixture inventory not supplied") : await Inventory();
+        }
+        public bool RemoteInventoryPending(string? runnerId) => !Recovered;
     }
 }

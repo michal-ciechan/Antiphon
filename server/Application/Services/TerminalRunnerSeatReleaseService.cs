@@ -26,6 +26,15 @@ public sealed class TerminalRunnerSeatReleaseService(
     SessionStateStore states, ISessionRunnerDirectory runners, TimeProvider clock,
     IOptions<TerminalRunnerSeatReleaseOptions> options)
 {
+    internal Func<string, CancellationToken, Task>? BoundaryAsync { get; set; }
+
+    public async Task<Guid?> RegisterAndReleaseAsync(
+        Guid taskId, TerminalSeatObservationRequest observation, CancellationToken ct)
+    {
+        var reservation = await RegisterAndReserveAsync(taskId, observation, ct);
+        return reservation.ReleaseId;
+    }
+
     public async Task<TerminalRunnerSeatReservation> RegisterAndReserveAsync(
         Guid taskId, TerminalSeatObservationRequest observation, CancellationToken ct)
     {
@@ -140,6 +149,7 @@ public sealed class TerminalRunnerSeatReleaseService(
                 || observed.Transcript.Verdict != TerminalTranscriptVerdict.Idle
                 || string.IsNullOrWhiteSpace(observed.Token))
                 return await HoldAsync(release, TerminalRunnerSeatDecision.Unknown, ct);
+            if (BoundaryAsync is not null) await BoundaryAsync("BeforeReservation", ct);
             var changed = await TryReserveAsync(release, task, observed, ct);
             return new(release.Id, changed == 1 ? TerminalRunnerSeatDecision.Reserved : TerminalRunnerSeatDecision.StaleAttempt);
         }
