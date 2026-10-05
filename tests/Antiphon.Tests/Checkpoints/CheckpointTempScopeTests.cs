@@ -3,12 +3,65 @@ using System.Text.Json;
 using Antiphon.Checkpoints;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.Tests.TestHelpers;
 
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
 public sealed class CheckpointTempScopeTests : CheckpointTestBase
 {
+    [Test]
+    public async Task unfinished_registered_work_retains_roots(CancellationToken cancellationToken)
+    {
+        using var timing = new CheckpointTimingHarness(nameof(unfinished_registered_work_retains_roots), "two-roots", cancellationToken);
+        var clock = new ControlledTimeProvider();
+        var scope = new CheckpointTestScope(cleanupClock: clock);
+        var roots = new[] { scope.TempDir(), scope.TempDir() };
+        foreach (var root in roots) File.WriteAllText(Path.Combine(root, "payload"), "keep");
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        scope.Register(held.Task);
+        var disposal = scope.DisposeAsync().AsTask();
+        try
+        {
+            clock.Events.Any(e => e.Action == "create" && e.DueTime == TimeSpan.FromSeconds(10)).ShouldBeTrue();
+            clock.Advance(TimeSpan.FromSeconds(10));
+            var failure = await Should.ThrowAsync<IOException>(() => disposal.WaitAsync(timing.Token));
+            failure.Message.ShouldContain("unfinished registered work");
+            foreach (var root in roots)
+            {
+                File.ReadAllText(Path.Combine(root, "payload")).ShouldBe("keep", "unfinished-work-roots-retained");
+                File.Exists(Path.Combine(root, CheckpointTestScope.MarkerName)).ShouldBeTrue("unfinished-work-roots-retained");
+                File.Exists(IndexPath(root)).ShouldBeTrue("unfinished-work-roots-retained");
+            }
+        }
+        finally
+        {
+            held.TrySetResult();
+            using var cleanup = new CancellationTokenSource(CheckpointTimingHarness.CleanupBudget);
+            await held.Task.WaitAsync(cleanup.Token);
+            try { await disposal.WaitAsync(cleanup.Token); }
+            catch (IOException) { }
+            // A second safe teardown removes only the roots this scope owns.
+            await scope.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task completed_faulted_work_reports_failure_and_deletes_roots()
+    {
+        var scope = new CheckpointTestScope();
+        var roots = new[] { scope.TempDir(), scope.TempDir() };
+        scope.Register(Task.FromException(new IOException("synthetic-registered-fault")));
+        var failure = await Should.ThrowAsync<IOException>(async () => await scope.DisposeAsync(), "registered-fault-reported");
+        failure.Message.ShouldContain("synthetic-registered-fault", "registered-fault-reported");
+        foreach (var root in roots)
+        {
+            Directory.Exists(root).ShouldBeFalse("completed-work-roots-deleted");
+            File.Exists(IndexPath(root)).ShouldBeFalse("completed-work-roots-deleted");
+        }
+    }
+
+    private static string IndexPath(string root) => Path.Combine(Path.GetTempPath(), ".checkpoint-temp-roots", Path.GetFileName(root) + ".json");
     [Test]
     public void allocation_requires_an_owner()
     {

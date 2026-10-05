@@ -15,16 +15,19 @@ internal sealed class CheckpointTestScope : IAsyncDisposable
     private readonly Action<string>? _beforeMarker;
     private readonly Action<string, IReadOnlyList<string>>? _beforeReturn;
     private readonly Action<string>? _beforeDelete;
+    private readonly TimeProvider _cleanupClock;
     private readonly string _attemptId = Guid.NewGuid().ToString("N");
     private bool _sealed;
 
     public CheckpointTestScope(ProcessIdentityProbe? probe = null, Action<string>? beforeMarker = null,
-        Action<string, IReadOnlyList<string>>? beforeReturn = null, Action<string>? beforeDelete = null)
+        Action<string, IReadOnlyList<string>>? beforeReturn = null, Action<string>? beforeDelete = null,
+        TimeProvider? cleanupClock = null)
     {
         _probe = probe ?? new ProcessIdentityProbe();
         _beforeMarker = beforeMarker;
         _beforeReturn = beforeReturn;
         _beforeDelete = beforeDelete;
+        _cleanupClock = cleanupClock ?? TimeProvider.System;
     }
 
     public IReadOnlyList<string> Roots => _roots;
@@ -86,12 +89,14 @@ internal sealed class CheckpointTestScope : IAsyncDisposable
         var failures = new List<string>();
         if (originalFailure is not null) failures.Add("original test failure: " + originalFailure.Message);
         var unsafeChild = false;
-        using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10), _cleanupClock);
         foreach (var work in _work)
         {
             try { await work.WaitAsync(cleanup.Token); }
             catch (Exception ex) { failures.Add("registered work: " + ex.Message); }
         }
+        // A failed join is not permission to remove paths that work can still write.
+        var unfinishedWork = _work.Any(work => !work.IsCompleted);
         foreach (var child in _children)
         {
             var observed = _probe.Observe(child);
@@ -116,6 +121,7 @@ internal sealed class CheckpointTestScope : IAsyncDisposable
             try
             {
                 if (!Directory.Exists(root)) continue;
+                if (unfinishedWork) { failures.Add(root + ": unfinished registered work; root retained"); continue; }
                 if (unsafeChild) { failures.Add(root + ": live or uncertain child"); continue; }
                 if (!ContainedCleanup.SafeAncestors(root) || !ContainedCleanup.SafeTree(root, 100000))
                     throw new IOException("linked or incomplete root inventory");
