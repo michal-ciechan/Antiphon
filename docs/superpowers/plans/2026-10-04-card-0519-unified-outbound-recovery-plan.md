@@ -1651,7 +1651,7 @@ V-10's six named methods include all eight unresolved states, pending repair,
 Published/Suppressed open and closed roots, machine closure, stale generation,
 late native text catch-up, hash-validated staged bytes and unrelated prunable
 companions. PC-79..84 stay pending SourceLanding Mutation. Additional method-scoped
-controls stay pending: PC-S10-1a/b/c remove EOF/partial/malformed guards in
+controls stay pending: PC-S10-1a/b/c/d remove EOF/partial/malformed/file-identity guards in
 TerminalTranscriptCompletion, detected by TerminalSeatReleaseTests.
 C519_Terminal_completion_requires_drained_native_file for Claude/Codex/Grok;
 PC-S10-2a/b remove terminal generation/persisted-payload checks in
@@ -1661,3 +1661,13 @@ root and ineligible machine-source variants. Earlier PC-1..100, PC-1059-1..6,
 S4/S5/S6/S7/S8 variants and PC-S9-1 remain pending, not rerun here. No deliberate
 mutants are part of Code. UnifiedRecoveryEnabled stays false by default.
 Restart performed: none; caller owns eventual server/runner activation.
+
+S10 repair group 1: initial CP-8 build found a missing required attachment Kind
+in the new retention fixture (CS9035); zero tests executed. Stopped the remaining
+run before editing. The fixture now supplies File. Static inspection also aligned
+retained machine context with the dispatcher's sequence/original injection-time
+predicate, including a parked-message witness, and classifies fully examined
+pre-chat machine windows as ineligible (a later channel is not authorization).
+These use PC-81 and PC-84's context/classification variants. No deadline, assertion
+tolerance or inherited CP-51/52 result changed. Rerun the entire still-unverified
+six-row selection at this group's committed SHA.

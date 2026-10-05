@@ -266,9 +266,15 @@ public sealed class ChannelReplyDispatcher
                     var (text, _, apiError) = await ExtractTurnResponseAsync(db, source.AgentSessionId, prompt.Sequence, ct);
                     var (_, paths) = ChannelContracts.ExtractAttachments(text ?? "");
                     var (_, tasks) = await CollectImpliedAttachmentsAsync(db, [source], ct, describeOnly: true);
+                    var injectionAt = source.LastDeliveryStartedAt ?? source.SentAt ?? source.CreatedAt;
+                    var hasOriginalContext = await db.SessionQueuedMessages.AnyAsync(m =>
+                        m.AgentSessionId == source.AgentSessionId && m.Origin == QueuedMessageOrigin.Channel
+                        && m.Status == QueuedMessageStatus.Sent && m.ConversationKey != null
+                        && m.Sequence < source.Sequence
+                        && (m.LastDeliveryStartedAt ?? m.SentAt ?? m.CreatedAt) <= injectionAt, ct);
                     // Only conclusive policy silence closes a machine source. Failed routing,
                     // missing text and API withholding still need later recovery/loss handling.
-                    var ineligible = !apiError && !string.IsNullOrWhiteSpace(text)
+                    var ineligible = !hasOriginalContext || !apiError && !string.IsNullOrWhiteSpace(text)
                         && paths.Count == 0 && (ChannelContracts.IsNoReply(text)
                             || tasks.Count == 0 && !AdmitsMachineTurnText([source]));
                     if (ineligible)
