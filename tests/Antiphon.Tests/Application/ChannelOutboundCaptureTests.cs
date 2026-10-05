@@ -283,9 +283,9 @@ public sealed class ChannelOutboundCaptureTests
 
     private sealed class Reader(Func<string, Task> observe) : IChannelReplyAttachmentReader
     {
-        public async Task<byte[]> ReadAttachmentAsync(string path, CancellationToken ct)
+        public async Task<byte[]> ReadAttachmentAsync(string path, IReadOnlyList<string> roots, long maxBytes, CancellationToken ct)
         { await observe("attachment"); return "original bytes"u8.ToArray(); }
-        public async Task<string> ReadTextAsync(string path, CancellationToken ct)
+        public async Task<string> ReadTextAsync(string path, IReadOnlyList<string> roots, long maxBytes, CancellationToken ct)
         { await observe("prompt"); return "frozen converter goal"; }
     }
 

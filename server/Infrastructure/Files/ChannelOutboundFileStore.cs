@@ -7,7 +7,7 @@ using Antiphon.Server.Application.Services;
 
 namespace Antiphon.Server.Infrastructure.Files;
 
-/// <summary>Stages a complete reply before any database intent becomes visible.</summary>
+/// <summary>Stages immutable replies; captured preparation can adopt a complete validated snapshot.</summary>
 public sealed class ChannelOutboundFileStore : IChannelOutboundFileStore
 {
     private const long MaxRawAttachmentBytes = 14L * 1024 * 1024;
@@ -22,8 +22,18 @@ public sealed class ChannelOutboundFileStore : IChannelOutboundFileStore
 
     public ChannelOutboundFileStore(string root) => _root = Path.GetFullPath(root);
 
-    public async Task<ChannelOutboundSnapshot> StageAsync(Guid deliveryId, ChannelReply reply,
-        CancellationToken ct, string? sourceManifestJson = null)
+    public Task<ChannelOutboundSnapshot> StageAsync(Guid deliveryId, ChannelReply reply,
+        CancellationToken ct, string? sourceManifestJson = null) => StageCoreAsync(deliveryId, reply, ct, sourceManifestJson, null, null);
+
+    public async Task<ChannelOutboundMaterialized> StageCapturedAsync(Guid deliveryId, string captureJson,
+        ChannelReplyPrepared prepared, CancellationToken ct)
+    {
+        var snapshot = await StageCoreAsync(deliveryId, prepared.Reply, ct, prepared.SourceManifestJson, captureJson, prepared);
+        return new(snapshot, prepared.PromptText, prepared.PromptRevision, prepared.SourceManifestJson);
+    }
+
+    private async Task<ChannelOutboundSnapshot> StageCoreAsync(Guid deliveryId, ChannelReply reply,
+        CancellationToken ct, string? sourceManifestJson, string? captureJson, ChannelReplyPrepared? prepared)
     {
         if (deliveryId == Guid.Empty)
             throw new ArgumentException("A delivery id is required.", nameof(deliveryId));
@@ -90,9 +100,24 @@ public sealed class ChannelOutboundFileStore : IChannelOutboundFileStore
             await File.WriteAllBytesAsync(Path.Combine(temporary, "reply.json"), replyBytes, ct);
             await File.WriteAllBytesAsync(Path.Combine(temporary, "request.json"),
                 JsonSerializer.SerializeToUtf8Bytes(request, new JsonSerializerOptions(JsonSerializerDefaults.Web)), ct);
+            if (captureJson is not null && prepared is not null)
+            {
+                var retained = new List<RetainedFile>();
+                foreach (var path in Directory.GetFiles(temporary, "*", SearchOption.AllDirectories))
+                {
+                    var retainedHash = await ChannelReplyAttachmentReader.HashFileAsync(path, [_root], MaxExpandedSourceBytes, ct);
+                    retained.Add(new(Path.GetRelativePath(temporary, path).Replace('\\', '/'), retainedHash.Length, retainedHash.Sha256));
+                }
+                var complete = new CompleteStage(1, deliveryId, Hash(System.Text.Encoding.UTF8.GetBytes(captureJson)),
+                    hash, prepared.PromptText, prepared.PromptRevision, sourceManifestJson, retained);
+                await File.WriteAllBytesAsync(Path.Combine(temporary, "complete.json"),
+                    JsonSerializer.SerializeToUtf8Bytes(complete), ct);
+            }
             if (ProbeBarrierAsync is { } temporaryBarrier)
                 await temporaryBarrier("input-temporary-complete", deliveryId, ct);
             Directory.Move(temporary, final);
+            if (ProbeBarrierAsync is { } committedBarrier)
+                await committedBarrier("input-stage-complete", deliveryId, ct);
             return new ChannelOutboundSnapshot(Path.Combine(final, "reply.json"), hash,
                 Path.Combine(final, "request.json"), Path.Combine(final, "output"));
         }
@@ -102,6 +127,49 @@ public sealed class ChannelOutboundFileStore : IChannelOutboundFileStore
                 Directory.Delete(temporary, recursive: true);
             throw;
         }
+    }
+
+    private sealed record RetainedFile(string Path, long Length, string Sha256);
+    private sealed record CompleteStage(int Version, Guid DeliveryId, string CaptureSha256,
+        string ReplySha256, string PromptText, string PromptRevision, string? SourceManifestJson,
+        IReadOnlyList<RetainedFile> Files);
+    private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+
+    public async Task<ChannelOutboundMaterialized?> TryAdoptAsync(Guid deliveryId, string captureJson, CancellationToken ct)
+    {
+        var final = Path.Combine(_root, deliveryId.ToString("N"));
+        if (!Directory.Exists(final)) return null;
+        var reader = new ChannelReplyAttachmentReader();
+        var bytes = await reader.ReadAttachmentAsync(Path.Combine(final, "complete.json"), [_root], 1024 * 1024, ct);
+        var complete = JsonSerializer.Deserialize<CompleteStage>(bytes)
+            ?? throw new InvalidDataException("The completed snapshot has no manifest.");
+        if (complete.Version != 1 || complete.DeliveryId != deliveryId
+            || complete.CaptureSha256 != Hash(System.Text.Encoding.UTF8.GetBytes(captureJson))
+            || complete.Files is not { Count: > 0 and <= 600 }
+            || complete.PromptText is null || complete.PromptRevision != Hash(System.Text.Encoding.UTF8.GetBytes(complete.PromptText))
+            || !complete.Files.Any(f => f.Path == "request.json")
+            || !complete.Files.Any(f => f.Path == "reply.json" && f.Sha256 == complete.ReplySha256))
+            throw new InvalidDataException("The completed snapshot does not match its capture.");
+        var paths = new HashSet<string>(StringComparer.Ordinal);
+        long totalBytes = 0;
+        foreach (var file in complete.Files)
+        {
+            if (!SafeSourcePath(file.Path) || !paths.Add(file.Path) || file.Length < 0 || file.Length > MaxExpandedSourceBytes)
+                throw new InvalidDataException("The completed snapshot has unsafe retained files.");
+            totalBytes += file.Length;
+            if (totalBytes > 128L * 1024 * 1024)
+                throw new InvalidDataException("The completed snapshot exceeds its total validation budget.");
+            var retained = await ChannelReplyAttachmentReader.HashFileAsync(Path.Combine(final, file.Path), [_root], MaxExpandedSourceBytes, ct);
+            if (retained.Length != file.Length || retained.Sha256 != file.Sha256)
+                throw new InvalidDataException("A retained snapshot file changed.");
+        }
+        var request = JsonDocument.Parse(await reader.ReadAttachmentAsync(Path.Combine(final, "request.json"), [_root], MaxRequestBytes, ct));
+        using (request)
+            if (request.RootElement.GetProperty("deliveryId").GetGuid() != deliveryId)
+                throw new InvalidDataException("The staged request belongs to another delivery.");
+        return new(new(Path.Combine(final, "reply.json"), complete.ReplySha256,
+            Path.Combine(final, "request.json"), Path.Combine(final, "output")),
+            complete.PromptText, complete.PromptRevision, complete.SourceManifestJson);
     }
 
     private sealed record StagedSource(string OriginalRelativePath, string LocalName,

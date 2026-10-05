@@ -20,7 +20,10 @@ public sealed record ChannelReplyProfileDescriptor(string Name, Guid ProjectId, 
 public sealed record ChannelReplyCapture(int Version, ChannelReply Route,
     ChannelReplyBodyDescriptor Body, IReadOnlyList<Guid> MemberIds,
     IReadOnlyList<ChannelReplyTaskDescriptor> Tasks, ChannelReplyProfileDescriptor? Profile,
-    long MaxAttachmentBytes);
+    long MaxAttachmentBytes)
+{
+    public IReadOnlyList<string> AttachmentRoots { get; init; } = [];
+}
 
 public sealed record ChannelReplyPrepared(ChannelReply Reply, string PromptText,
     string PromptRevision, string? SourceManifestJson);
@@ -59,6 +62,7 @@ public sealed class ChannelReplyPreparation(IChannelReplyAttachmentReader reader
         if (capture is not { Version: 1, Route: not null, Body: not null,
                 MemberIds: not null, Tasks: not null, MaxAttachmentBytes: > 0 }
             || capture.Body.AttachmentPaths is null || capture.Body.OriginalResponse is null
+            || capture.Body.AttachmentPaths.Count > 64 || capture.AttachmentRoots is null || capture.AttachmentRoots.Count > 64
             || capture.Body.Text is null || capture.Route.Attachments.Count != 0
             || string.IsNullOrWhiteSpace(capture.Route.Channel)
             || string.IsNullOrWhiteSpace(capture.Route.ConversationId))
@@ -66,7 +70,8 @@ public sealed class ChannelReplyPreparation(IChannelReplyAttachmentReader reader
         return capture;
     }
 
-    public async Task<ChannelReplyPrepared> PrepareAsync(ChannelOutboundDelivery delivery, CancellationToken ct)
+    public async Task<ChannelReplyPrepared> PrepareAsync(ChannelOutboundDelivery delivery, CancellationToken ct,
+        bool prepareConversion = true)
     {
         var capture = Deserialize(delivery.CaptureJson
             ?? throw new InvalidDataException("An original outbound capture is required."));
@@ -76,10 +81,11 @@ public sealed class ChannelReplyPreparation(IChannelReplyAttachmentReader reader
         foreach (var path in capture.Body.AttachmentPaths)
         {
             // Read failures remain preparation failures; the pump, not extraction, owns retries.
-            var bytes = await reader.ReadAttachmentAsync(path, ct);
-            if (bytes.LongLength > budget)
+            byte[] bytes;
+            try { bytes = await reader.ReadAttachmentAsync(path, capture.AttachmentRoots, budget, ct); }
+            catch (ChannelReplyFileTooLargeException ex)
             {
-                notes.Add($"⚠️ attachment skipped — {Path.GetFileName(path)} is {bytes.LongLength / (1024 * 1024)} MB, over the {capture.MaxAttachmentBytes / (1024 * 1024)} MB limit");
+                notes.Add($"⚠️ attachment skipped — {Path.GetFileName(path)} is {ex.Length / (1024 * 1024)} MB, over the {capture.MaxAttachmentBytes / (1024 * 1024)} MB limit");
                 continue;
             }
             attachments.Add(new OutboundAttachment { Kind = ChannelReplyDispatcher.InferAttachmentKind(Path.GetExtension(path)),
@@ -90,20 +96,22 @@ public sealed class ChannelReplyPreparation(IChannelReplyAttachmentReader reader
         var text = capture.Body.Text;
         if (notes.Count > 0)
             text = text.Length == 0 ? string.Join("\n", notes) : text + "\n\n" + string.Join("\n", notes);
+        var bundle = capture.Tasks.FirstOrDefault(t => t.TaskId == delivery.SourceTaskId)?.BundleDirectory;
+        var manifest = bundle is null ? null
+            : await reader.ReadTextAsync(Path.Combine(bundle, DeliverableBundleService.SourceManifestName), [bundle], MaxCaptureBytes, ct);
+        var reply = capture.Route with { Text = text, Attachments = attachments };
         var prompt = "";
-        if (capture.Profile is { } profile)
+        if (prepareConversion && capture.Profile is { } profile
+            && (profile.Trigger == "EveryAgentReply" || ChannelOutboundService.MatchesMarkdownSources(reply, manifest)))
         {
             // Workspace/path authorization may inspect the filesystem, so it belongs here,
             // after capture, never in descriptor extraction or the admission transaction.
             if (!ChatChannelService.TryGetPromptPath(new Agent { WorkingDirectory = profile.PromptWorkspace ?? "" },
                     profile.PromptFile, out var promptPath))
                 throw new InvalidDataException("The captured conversion prompt is outside its workspace.");
-            prompt = await reader.ReadTextAsync(promptPath, ct);
+            prompt = await reader.ReadTextAsync(promptPath, [profile.PromptWorkspace!], MaxCaptureBytes, ct);
         }
         var revision = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(prompt))).ToLowerInvariant();
-        var bundle = capture.Tasks.FirstOrDefault(t => t.TaskId == delivery.SourceTaskId)?.BundleDirectory;
-        var manifest = bundle is null ? null
-            : await reader.ReadTextAsync(Path.Combine(bundle, DeliverableBundleService.SourceManifestName), ct);
-        return new(capture.Route with { Text = text, Attachments = attachments }, prompt, revision, manifest);
+        return new(reply, prompt, revision, manifest);
     }
 }

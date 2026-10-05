@@ -27,6 +27,7 @@ public sealed class ChannelOutboundDeliveryPump
     private readonly TimeProvider _clock;
     private readonly ILogger<ChannelOutboundDeliveryPump> _logger;
     private readonly Guid _owner = Guid.NewGuid();
+    private readonly ChannelReplyPreparation? _preparation;
 
     // Test-only, per-instance stop point. Production leaves this null. Write-boundary
     // callbacks run after commit; before-conversion-claim runs after the worker's
@@ -37,7 +38,8 @@ public sealed class ChannelOutboundDeliveryPump
         IChannelOutboundFileStore files, IAntiphonMessagingProducer producer,
         IOptions<AntiphonMessagingOptions> messaging, TimeProvider clock,
         ILogger<ChannelOutboundDeliveryPump> logger,
-        IOptions<ChannelOutboundSettings>? outboundSettings = null)
+        IOptions<ChannelOutboundSettings>? outboundSettings = null,
+        ChannelReplyPreparation? preparation = null)
     {
         _db = db;
         _runner = runner;
@@ -47,17 +49,20 @@ public sealed class ChannelOutboundDeliveryPump
         _outboundSettings = outboundSettings?.Value ?? new ChannelOutboundSettings();
         _clock = clock;
         _logger = logger;
+        _preparation = preparation;
     }
 
     public async Task<int> TickAsync(CancellationToken ct)
     {
         var now = UtcNow();
         var candidates = await _db.ChannelOutboundDeliveries.AsNoTracking()
-            .Where(d => (d.State == ChannelOutboundDeliveryState.Pending
+            .Where(d => (d.State == ChannelOutboundDeliveryState.Captured && _preparation != null
+                    || d.State == ChannelOutboundDeliveryState.Pending
                     || d.State == ChannelOutboundDeliveryState.Converting
                     || d.State == ChannelOutboundDeliveryState.Ready
                     || d.State == ChannelOutboundDeliveryState.Publishing)
-                && (d.LeaseUntil == null || d.LeaseUntil <= now))
+                && (d.LeaseUntil == null || d.LeaseUntil <= now)
+                && (d.State != ChannelOutboundDeliveryState.Captured || d.NextAttemptAt == null || d.NextAttemptAt <= now))
             .OrderBy(d => d.CreatedAt).ThenBy(d => d.Id)
             .Take(32).Select(d => new { d.Id, d.Version, d.State }).ToListAsync(ct);
         var processed = 0;
@@ -101,6 +106,11 @@ public sealed class ChannelOutboundDeliveryPump
                 await _db.SaveChangesAsync(ct);
                 return;
             }
+            if (delivery.State == ChannelOutboundDeliveryState.Captured)
+            {
+                await MaterializeAsync(delivery, ct);
+                return;
+            }
             if (delivery.State == ChannelOutboundDeliveryState.Pending)
             {
                 await PrepareAsync(delivery, ct);
@@ -129,7 +139,11 @@ public sealed class ChannelOutboundDeliveryPump
             var current = await _db.ChannelOutboundDeliveries.SingleOrDefaultAsync(d => d.Id == id, ct);
             if (current?.LeaseOwner == _owner && current.State != ChannelOutboundDeliveryState.Publishing)
             {
-                current.State = ChannelOutboundDeliveryState.Failed;
+                current.State = current.State == ChannelOutboundDeliveryState.Captured
+                    && current.PreparationAttempts < 3 && current.PreparationDeadlineAt > UtcNow()
+                    && ex is not (InvalidDataException or System.Text.Json.JsonException)
+                    ? ChannelOutboundDeliveryState.Captured : ChannelOutboundDeliveryState.Failed;
+                current.NextAttemptAt = current.State == ChannelOutboundDeliveryState.Captured ? UtcNow().AddSeconds(30) : null;
                 current.FailureReason = Bound(ex.Message);
                 current.Version++;
                 await _db.SaveChangesAsync(ct);
@@ -143,6 +157,63 @@ public sealed class ChannelOutboundDeliveryPump
                 .ExecuteUpdateAsync(s => s.SetProperty(d => d.LeaseOwner, (Guid?)null)
                     .SetProperty(d => d.LeaseUntil, (DateTime?)null), CancellationToken.None);
         }
+    }
+
+    private async Task MaterializeAsync(ChannelOutboundDelivery delivery, CancellationToken ct)
+    {
+        var capture = ChannelReplyPreparation.Deserialize(delivery.CaptureJson
+            ?? throw new InvalidDataException("A captured reply requires its original intent."));
+        if (!await RevalidateAsync(delivery, beforePublish: false, ct)) return;
+        if (delivery.PreparationDeadlineAt is null
+            || delivery.PreparationDeadlineAt <= UtcNow())
+            throw new InvalidDataException("The captured preparation budget or original obligation deadline was exhausted.");
+        var materialized = await _files.TryAdoptAsync(delivery.Id, delivery.CaptureJson!, ct);
+        if (materialized is null)
+        {
+            if (delivery.PreparationAttempts >= 3)
+                throw new InvalidDataException("The captured preparation attempt budget was exhausted.");
+            delivery.PreparationAttempts++;
+            delivery.NextAttemptAt = null;
+            delivery.Version++;
+            await _db.SaveChangesAsync(ct);
+            var prepared = await _preparation!.PrepareAsync(delivery, ct,
+                prepareConversion: delivery.ConversionOutcome != "Revoked");
+            materialized = await _files.StageCapturedAsync(delivery.Id, delivery.CaptureJson!, prepared, ct);
+        }
+        if (ProbeBarrierAsync is { } staged) await staged("captured-staged", delivery.Id, ct);
+        // The lease can expire while reading or staging. A stale owner leaves the
+        // complete directory for the next owner; it cannot transition this row.
+        if (!await _db.ChannelOutboundDeliveries.AsNoTracking().AnyAsync(d => d.Id == delivery.Id
+            && d.Version == delivery.Version && d.LeaseOwner == _owner && d.LeaseUntil > UtcNow(), ct))
+            throw new DbUpdateConcurrencyException("The captured materialization lease expired.");
+        var reply = await _files.ReadReplyAsync(materialized.Snapshot.ReplyPath, materialized.Snapshot.ReplySha256, ct);
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        var key = BitConverter.ToInt64(SHA256.HashData(Encoding.UTF8.GetBytes(
+            "channel-outbound:" + delivery.ChannelId.ToString("N"))), 0);
+        await _db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({key})", ct);
+        // Revalidate again after fallible I/O and lock acquisition. Revocation
+        // never substitutes today's prompt/profile for the captured policy.
+        if (!await RevalidateAsync(delivery, beforePublish: false, ct))
+        { await transaction.CommitAsync(ct); return; }
+        if (!await _db.ChannelOutboundDeliveries.AsNoTracking().AnyAsync(d => d.Id == delivery.Id
+            && d.Version == delivery.Version && d.LeaseOwner == _owner && d.LeaseUntil > UtcNow(), ct))
+            throw new DbUpdateConcurrencyException("The captured materialization lease expired during admission.");
+        delivery.InputPath = materialized.Snapshot.ReplyPath;
+        delivery.InputSha256 = materialized.Snapshot.ReplySha256;
+        delivery.PromptText = materialized.PromptText;
+        delivery.PromptRevision = materialized.PromptRevision;
+        var qualifies = capture.Profile is { } profile && delivery.ConversionOutcome != "Revoked"
+            && (profile.Trigger == "EveryAgentReply" || ChannelOutboundService.MatchesMarkdownSources(reply, materialized.SourceManifestJson));
+        var pending = await _db.ChannelOutboundDeliveries.CountAsync(d => d.ChannelId == delivery.ChannelId
+            && d.State == ChannelOutboundDeliveryState.Pending, ct);
+        var overflow = qualifies && pending >= capture.Profile!.MaxPending;
+        delivery.State = qualifies && !overflow ? ChannelOutboundDeliveryState.Pending : ChannelOutboundDeliveryState.Ready;
+        if (!qualifies && delivery.ConversionOutcome != "Revoked") delivery.ConversionOutcome = "Passthrough";
+        if (overflow)
+        { delivery.ConversionOutcome = "QueueOverflow"; delivery.FailureReason = "Conversion queue full; original files retained."; }
+        delivery.Version++;
+        await _db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
     }
 
     private async Task PrepareAsync(ChannelOutboundDelivery delivery, CancellationToken ct)
@@ -393,10 +464,11 @@ public sealed class ChannelOutboundDeliveryPump
             delivery.OutputPath = null;
             delivery.OutputSha256 = null;
             delivery.ConversionOutcome = "Revoked";
-            delivery.State = ChannelOutboundDeliveryState.Ready;
+            var captured = delivery.State == ChannelOutboundDeliveryState.Captured;
+            if (!captured) delivery.State = ChannelOutboundDeliveryState.Ready;
             delivery.Version++;
             await _db.SaveChangesAsync(ct);
-            return false;
+            return captured;
         }
         return true;
     }

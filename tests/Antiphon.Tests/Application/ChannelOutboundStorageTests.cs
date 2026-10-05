@@ -13,6 +13,91 @@ namespace Antiphon.Tests.Application;
 public sealed class ChannelOutboundStorageTests
 {
     [Test]
+    public async Task C1059_Source_reads_require_captured_roots_without_traversal()
+    {
+        var root = Directory.CreateTempSubdirectory("c1059-roots-").FullName;
+        try
+        {
+            var allowed = Directory.CreateDirectory(Path.Combine(root, "allowed")).FullName;
+            var file = Path.Combine(allowed, "source.txt");
+            await File.WriteAllTextAsync(file, "authorized bytes");
+            var reader = new ChannelReplyAttachmentReader();
+            (await reader.ReadTextAsync(file, [allowed], 64, default)).ShouldBe("authorized bytes");
+            await Should.ThrowAsync<InvalidDataException>(() => reader.ReadAttachmentAsync(file, [allowed + "-sibling"], 64, default));
+            await Should.ThrowAsync<InvalidDataException>(() => reader.ReadTextAsync(Path.Combine(allowed, "..", "allowed", "source.txt"), [allowed], 64, default));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Test]
+    public async Task C1059_Source_reads_reject_file_and_directory_links()
+    {
+        var root = Directory.CreateTempSubdirectory("c1059-links-").FullName;
+        try
+        {
+            var real = Directory.CreateDirectory(Path.Combine(root, "real")).FullName;
+            var file = Path.Combine(real, "source.txt");
+            await File.WriteAllTextAsync(file, "valid companion");
+            File.CreateSymbolicLink(Path.Combine(root, "file-link"), file);
+            Directory.CreateSymbolicLink(Path.Combine(root, "dir-link"), real);
+            var reader = new ChannelReplyAttachmentReader();
+            (await reader.ReadTextAsync(file, [root], 64, default)).ShouldBe("valid companion");
+            await Should.ThrowAsync<InvalidDataException>(() => reader.ReadAttachmentAsync(Path.Combine(root, "file-link"), [root], 64, default));
+            await Should.ThrowAsync<InvalidDataException>(() => reader.ReadTextAsync(Path.Combine(root, "dir-link", "source.txt"), [root], 64, default));
+            await Should.ThrowAsync<InvalidDataException>(() => reader.ReadTextAsync(Path.Combine(root, "dir-link", "source.txt"), [Path.Combine(root, "dir-link")], 64, default));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Test]
+    public async Task C1059_Source_length_is_checked_before_reading_with_a_finite_budget()
+    {
+        var root = Directory.CreateTempSubdirectory("c1059-budget-").FullName;
+        try
+        {
+            var file = Path.Combine(root, "source.txt");
+            await File.WriteAllTextAsync(file, "12345678");
+            var reader = new ChannelReplyAttachmentReader();
+            (await reader.ReadAttachmentAsync(file, [root], 8, default)).ShouldBe("12345678"u8.ToArray());
+            var ex = await Should.ThrowAsync<Antiphon.Server.Application.Interfaces.ChannelReplyFileTooLargeException>(() => reader.ReadAttachmentAsync(file, [root], 7, default));
+            ex.Length.ShouldBe(8);
+            // A sparse file proves refusal before allocating/reading the entire payload.
+            using (var sparse = File.OpenWrite(file)) sparse.SetLength(1024L * 1024 * 1024);
+            using var canceled = new CancellationTokenSource();
+            canceled.Cancel();
+            var oversized = await Should.ThrowAsync<Antiphon.Server.Application.Interfaces.ChannelReplyFileTooLargeException>(() => reader.ReadTextAsync(file, [root], 256 * 1024, canceled.Token));
+            oversized.Length.ShouldBe(1024L * 1024 * 1024);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Test]
+    public async Task C1059_Source_reads_refuse_nonregular_files_without_blocking()
+    {
+        var root = Directory.CreateTempSubdirectory("c1059-regular-").FullName;
+        try
+        {
+            var reader = new ChannelReplyAttachmentReader();
+            var companion = Path.Combine(root, "regular");
+            await File.WriteAllTextAsync(companion, "regular");
+            (await reader.ReadTextAsync(companion, [root], 64, default)).ShouldBe("regular");
+            await Should.ThrowAsync<InvalidDataException>(() => reader.ReadAttachmentAsync(root, [Path.GetTempPath()], 64, default));
+            if (OperatingSystem.IsLinux())
+            {
+                var fifo = Path.Combine(root, "fifo");
+                var start = new System.Diagnostics.ProcessStartInfo("mkfifo") { UseShellExecute = false };
+                start.ArgumentList.Add(fifo);
+                using var process = System.Diagnostics.Process.Start(start)!;
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                process.ExitCode.ShouldBe(0);
+                await Should.ThrowAsync<InvalidDataException>(() => reader.ReadAttachmentAsync(fifo, [root], 64, default).WaitAsync(TimeSpan.FromSeconds(5)));
+                await Should.ThrowAsync<InvalidDataException>(() => reader.ReadTextAsync("/dev/null", ["/dev"], 64, default));
+            }
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Test]
     [Arguments("partial_write")]
     [Arguments("complete_write")]
     [Arguments("rename_refusal")]
