@@ -1,4 +1,6 @@
 # CARD-0110 S6 / CARD-0475 S6 / CARD-0487: Slow classes in Antiphon.Tests.
+# CARD-1065 S1: migrated PostgreSQL clones, transaction cuts and repeated DI recreation; measured 8-9s per method.
+Antiphon.Tests.Application.BlockedTaskParkStateTests
 # CARD-0804: lifecycle host launches verify real TUnit teardown across failure paths.
 Antiphon.Tests.Checkpoints.CheckpointTempLifecycleTests
 # CARD-0804: native child processes exercise checkpoint recovery and root vetoes.
