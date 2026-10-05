@@ -95,6 +95,12 @@ were read. Historical test counts below are card evidence, not runs by this Plan
 
 ## Host helper and rollout contract
 
+`/usr/local/bin` integrity remains the trust boundary (Backlog CARD-1058).
+Canonical-leaf symlink and home-PATH admission are repaired in S1; a hardlink
+at the canonical path or a check-to-use swap by a writer of `/usr/local/bin`
+can still qualify user-controlled bytes. S2 adds phase admission and runbook
+guidance without claiming either residual weakness fixed.
+
 The new bash helper accepts only `check` or `provision`. Its production
 destination and release URL/hash are fixed, not operator-controlled install
 paths. Stream the reviewed helper over the existing SSH transport with argument

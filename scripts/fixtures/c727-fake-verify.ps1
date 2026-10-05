@@ -25,6 +25,37 @@ if ($Case -eq 'recycle-discover') {
 }
 $request = Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json
 if ($request.sourceSha -cne $state.sha -or $request.runId -notmatch '^c727[0-9a-f]{12}$') { exit 2 }
+if ($Case -eq 'host-jq-prerequisite') {
+    if ($request.mode -notin @('check', 'provision') -or
+        $request.phase -notin @('deploy-temp', 'drain-old', 'redeploy-old', 'drain-temp', 'retire-temp', 'check-host-jq', 'provision-host-jq')) { exit 2 }
+    $outcome = 'healthy'
+    if ($state.hostJqSequence -and $state.hostJqSequence.Count) {
+        $outcome = [string]$state.hostJqSequence[0]
+        $state.hostJqSequence = @($state.hostJqSequence | Select-Object -Skip 1)
+        $state | ConvertTo-Json -Compress -Depth 30 | Set-Content -LiteralPath $env:C727_TEST_STATE
+    }
+    Add-Content -LiteralPath $env:C727_TEST_TRACE -Value (@{
+        kind='prerequisite'; name=$Case; mode=$request.mode; phase=$request.phase;
+        selectedPhase=$request.selectedPhase; sourceSha=$request.sourceSha; runId=$request.runId;
+        evidenceRoot=$request.evidenceRoot; outcome=$outcome
+    } | ConvertTo-Json -Compress)
+    switch ($outcome) {
+        'missing' { [Console]::Error.WriteLine('HostJqMissing'); exit 2 }
+        'invalid' { [Console]::Error.WriteLine('HostJqInvalid'); exit 2 }
+        'ssh-failed' { exit 255 }
+        'malformed-proof' { Write-Output '{'; exit 0 }
+        'receipt-write-failed' {
+            New-Item -ItemType Directory -Path (Join-Path $request.evidenceRoot ("host-jq-$($request.phase).json")) | Out-Null
+        }
+        'healthy' { }
+        default { exit 2 }
+    }
+    @{ schema=1; lane='host'; mode=$request.mode; lookupPath='/usr/local/bin/jq'; path='/usr/local/bin/jq';
+        version='jq-1.7.1'; digest='5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5';
+        uid=0; gid=0; permissions='755'; trueExit=0; falseExit=1; installed=$false; outcome='existing' } |
+        ConvertTo-Json -Compress
+    exit 0
+}
 if ($Case -eq 'verify-runner-caches' -and $request.runnerId -notin @('server2', 'server2-temp')) { exit 2 }
 $savedDonor = if ($request.PSObject.Properties.Name -contains 'savedDonor') { [string]$request.savedDonor } else { '' }
 if ($Case -eq 'temp-project-absent') {

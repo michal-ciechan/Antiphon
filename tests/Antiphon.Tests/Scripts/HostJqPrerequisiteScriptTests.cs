@@ -520,6 +520,16 @@ public sealed class HostJqPrerequisiteScriptTests
         shadow.Transport = ""; var fresh = DateTime.UtcNow;
         var refused = await shadow.Wrapper("check-host-jq"); refused.Exit.ShouldBe(2);
         shadow.AssertRefusalReceipt("check-host-jq", "check", fresh, DateTime.UtcNow);
+        foreach (var phase in new[] { "deploy-temp", "drain-old", "redeploy-old", "drain-temp", "retire-temp" })
+        {
+            using var entry = new HostJqFixture(); entry.Existing(); entry.Transport = "block-receipt"; await entry.InitializeRepo();
+            var blocked = await entry.Wrapper(phase);
+            blocked.Exit.ShouldBe(2, blocked.Output);
+            blocked.Output.ShouldContain("HostJqReceiptUnavailable", Case.Sensitive, "receipt-required");
+            entry.Trace.ShouldNotContain("HTTP", Case.Sensitive, "receipt-required: no body effects");
+            entry.Trace.ShouldNotContain("case ", Case.Sensitive, "receipt-required: no case effects");
+            entry.Receipts.ShouldBeEmpty();
+        }
     }
 
     [Test, ParallelLimiter<ProcessSpawnLimit>]
@@ -555,6 +565,208 @@ public sealed class HostJqPrerequisiteScriptTests
             f.Trace.ShouldContain("bash -s -- " + (phase == "check-host-jq" ? "check" : "provision"));
         }
     }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1025_Preflight_precedes_every_phase()
+    {
+        var faults = new[] { "healthy", "missing", "invalid", "ssh-failed", "malformed-proof", "receipt-write-failed" };
+        foreach (var shape in C1025RolloutFixture.Shapes)
+        foreach (var fault in faults)
+        {
+            using var f = new C1025RolloutFixture(shape);
+            f.Sequence(fault);
+            var start = DateTime.UtcNow;
+            var r = await f.Run();
+            r.Trace.ShouldNotBeEmpty(shape + ": " + r.Output);
+            r.Trace[0]["kind"]!.GetValue<string>().ShouldBe("prerequisite", "preflight-first: " + shape);
+            f.AssertChecks(r.Trace, 1);
+            if (fault == "healthy")
+            {
+                r.Exit.ShouldBe(0, shape + ": " + r.Output);
+                r.Trace.Length.ShouldBeGreaterThan(1, "healthy reaches phase body: " + shape);
+                f.AssertReceipt(r.Trace[0], start, DateTime.UtcNow);
+            }
+            else
+            {
+                r.Exit.ShouldBe(2, shape + ": " + fault + ": " + r.Output);
+                r.Output.ShouldContain(C1025RolloutFixture.Diagnosis(fault));
+                r.Trace.Length.ShouldBe(1, "preflight-first: failed prerequisite has phase-body trace count=0: " + shape + "/" + fault);
+                File.Exists(C1025RolloutFixture.ReceiptPath(r.Trace[0])).ShouldBeFalse("failed proof cannot persist success");
+            }
+        }
+
+        foreach (var shape in new[] { "deploy-temp", "redeploy-old", "retire-temp", "redeploy-old:same-sha" })
+        foreach (var fault in new[] { "missing", "healthy" })
+        {
+            using var f = new C1025RolloutFixture(shape);
+            f.Sequence(fault);
+            if (shape.EndsWith(":same-sha", StringComparison.Ordinal)) f.State["incompleteRecycle"] = true;
+            else f.Busy();
+            var r = await f.Run();
+            r.Exit.ShouldBe(2, r.Output);
+            r.Trace[0]["kind"]!.GetValue<string>().ShouldBe("prerequisite", "preflight-first");
+            r.Output.ShouldContain(fault == "missing" ? "HostJqMissing" : shape.Contains(':') ? "RecycleResumeRequired" : "RunnerBusy");
+            if (fault == "missing") r.Trace.Length.ShouldBe(1, "missing wins before busy/journal");
+            else f.AssertReceipt(r.Trace[0], f.Started, DateTime.UtcNow);
+        }
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1025_Preflight_is_fresh_for_each_entry()
+    {
+        var phases = new[] { "deploy-temp", "drain-old", "redeploy-old", "drain-temp", "retire-temp" };
+        for (var failAt = 0; failAt <= 5; failAt++)
+        {
+            using var f = new C1025RolloutFixture("all");
+            f.Sequence(Enumerable.Range(1, 5).Select(i => i == failAt ? "missing" : "healthy").ToArray());
+            var r = await f.Run();
+            r.Exit.ShouldBe(failAt == 0 ? 0 : 2, r.Output);
+            var checks = r.Trace.Where(x => x["kind"]!.GetValue<string>() == "prerequisite").ToArray();
+            var count = failAt == 0 ? 5 : failAt;
+            f.AssertChecks(r.Trace, count);
+            checks.Select(x => x["phase"]!.GetValue<string>()).ShouldBe(phases.Take(count).ToArray(), "fresh-preflight: phase order");
+            for (var i = 0; i < count; i++)
+            {
+                if (failAt > 0 && i == count - 1)
+                {
+                    Array.IndexOf(r.Trace, checks[i]).ShouldBe(r.Trace.Length - 1,
+                        "fresh-preflight: refused entry and later phases have no body effects");
+                    File.Exists(C1025RolloutFixture.ReceiptPath(checks[i])).ShouldBeFalse();
+                }
+                else
+                {
+                    f.AssertReceipt(checks[i], f.Started, DateTime.UtcNow);
+                    var next = i + 1 < count ? Array.IndexOf(r.Trace, checks[i + 1]) : r.Trace.Length;
+                    (next - Array.IndexOf(r.Trace, checks[i])).ShouldBeGreaterThan(1, "each healthy phase reaches its own body");
+                }
+            }
+            if (failAt == 2) checks.Length.ShouldBe(2, "fresh-preflight: fail-second all has exactly two check attempts");
+            var evidence = checks[0]["evidenceRoot"]!.GetValue<string>();
+            Directory.GetFiles(evidence, "host-jq-*.json").Count(x => !x.EndsWith(".manifest.json", StringComparison.Ordinal))
+                .ShouldBe(failAt == 0 ? 5 : failAt - 1, "fresh-preflight: independent persisted receipts");
+        }
+        foreach (var shape in C1025RolloutFixture.Shapes.Where(x => x.Contains(':')))
+        {
+            using var f = new C1025RolloutFixture(shape);
+            f.Sequence("healthy");
+            var first = await f.Run(); first.Exit.ShouldBe(0, first.Output);
+            f.AssertReceipt(first.Trace[0], f.Started, DateTime.UtcNow);
+            f.Sequence("missing");
+            var second = await f.Run(); second.Exit.ShouldBe(2, second.Output);
+            second.Output.ShouldContain("HostJqMissing");
+            f.AssertChecks(second.Trace, 1);
+            second.Trace.Length.ShouldBe(1, "fresh-preflight: earlier receipt cannot admit a fresh invocation");
+            second.Trace[0]["runId"]!.GetValue<string>().ShouldNotBe(first.Trace[0]["runId"]!.GetValue<string>());
+        }
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1025_Final_recycle_guard_remains()
+    {
+        OperatingSystem.IsLinux().ShouldBeTrue("C1025 prerequisite: native Linux");
+        foreach (var hostCase in new[] { "deploy-parent", "retire-temp-runner" })
+        foreach (var mode in new[] { "normal", "preview", "resume" })
+        {
+            using var f = new C1008HostFixture(main: hostCase == "deploy-parent");
+            var sentinels = Directory.GetFiles(f.Root + "/volumes", "sentinel", SearchOption.AllDirectories)
+                .ToDictionary(x => x, File.ReadAllText);
+            // Intercept only jq lookup; all other command discovery stays native.
+            var extra = "command() { if [ \"$1\" = -v ] && [ \"${2:-}\" = jq ]; then return 1; fi; builtin command \"$@\"; }\n" +
+                (mode == "resume" ? "C1008_RESUME=1" : "");
+            var r = await f.Run(hostCase, extra, dryRun: mode == "preview");
+            r.Exit.ShouldBe(2, r.Output);
+            r.Output.ShouldContain("RecycleToolsMissing", Case.Sensitive, "final-recycle-guard: " + hostCase + "/" + mode);
+            f.Removed.ShouldBeEmpty(); f.Trace.ShouldBeEmpty("missing jq precedes compose/status/removal");
+            foreach (var (path, bytes) in sentinels) File.ReadAllText(path).ShouldBe(bytes, "unchanged volume sentinel");
+            Directory.Exists(f.Root + "/server/recycle").ShouldBeFalse("missing jq precedes journal");
+        }
+    }
+}
+
+// Uses the existing HTTP/case boundaries unchanged. Generic C727 state permits
+// real wrapper deploy/drain/all flows; C1008 state preserves shortcut/refusal semantics.
+internal sealed class C1025RolloutFixture : IDisposable
+{
+    internal static string[] Shapes => ["deploy-temp", "drain-old", "redeploy-old", "drain-temp", "retire-temp",
+        "deploy-temp:same-sha", "redeploy-old:same-sha", "redeploy-old:preview", "redeploy-old:resume", "retire-temp:preview", "retire-temp:resume"];
+    private readonly C1008WrapperFixture _wrapper = new();
+    private readonly string _phase;
+    private readonly string[] _options;
+    internal JsonObject State => _wrapper.State;
+    internal DateTime Started { get; private set; }
+
+    internal C1025RolloutFixture(string shape)
+    {
+        OperatingSystem.IsLinux().ShouldBeTrue("C1025 prerequisite: native Linux");
+        _phase = shape.Split(':')[0];
+        var variant = shape.Split(':').ElementAtOrDefault(1) ?? "";
+        _options = variant == "preview" ? ["-DryRun"] : variant == "resume" ? ["-ResumeRecycle", "c100800000000000000000000000000000001"] : [];
+        if (_phase == "all" || (shape == "deploy-temp"))
+        {
+            State.Clear();
+            foreach (var (key, value) in new JsonObject { ["scenario"]="c1025", ["sha"]=new string('a',40), ["clockMs"]=0,
+                ["tempDeployed"]=false, ["oldDeployed"]=false, ["oldDraining"]=false, ["tempDraining"]=false,
+                ["tempRetiredAt"]=null, ["tempContainer"]=false, ["tempOffline"]=false,
+                ["tempRedirectTo"]="server2", ["tempRetireWhenIdle"]=true,
+                ["faultRunner"]="", ["faultField"]="", ["faultKind"]="", ["faultValue"]=null, ["failVerify"]="" })
+                State[key] = value?.DeepClone();
+        }
+        else if (_phase == "drain-old" || (_phase == "redeploy-old" && variant != "same-sha"))
+        {
+            _wrapper.MainDrained(); State["allowClear"] = true;
+        }
+        else if (_phase == "deploy-temp")
+        {
+            var vectors = JsonNode.Parse(File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1008-recycle-cases.json")))!;
+            State["statuses"]!["server2-temp"] = vectors["tempAccepting"]!.DeepClone();
+        }
+    }
+    internal void Sequence(params string[] outcomes) => State["hostJqSequence"] = new JsonArray(outcomes.Select(x => (JsonNode?)JsonValue.Create(x)).ToArray());
+    internal void Busy()
+    {
+        if (State["scenario"]!.GetValue<string>() != "c1008")
+        {
+            State["faultRunner"]="server2-temp"; State["faultField"]="sessions"; State["faultKind"]="value"; State["faultValue"]=1;
+        }
+        else State["statuses"]![_phase == "redeploy-old" ? "server2" : "server2-temp"]!["sessions"] = 1;
+    }
+    internal async Task<(int Exit, string Output, JsonObject[] Trace)> Run()
+    {
+        if (File.Exists(_wrapper.TracePath)) File.Delete(_wrapper.TracePath);
+        Started = DateTime.UtcNow;
+        return await _wrapper.Run(_phase, _options);
+    }
+    internal void AssertChecks(JsonObject[] trace, int count)
+    {
+        var checks = trace.Where(x => x["kind"]!.GetValue<string>() == "prerequisite").ToArray();
+        checks.Length.ShouldBe(count, "fresh-preflight: exact check attempts");
+        foreach (var check in checks)
+        {
+            check["mode"]!.GetValue<string>().ShouldBe("check", "no implicit provision");
+            check["name"]!.GetValue<string>().ShouldBe("host-jq-prerequisite");
+        }
+    }
+    internal static string ReceiptPath(JsonObject check) => Path.Combine(check["evidenceRoot"]!.GetValue<string>(), "host-jq-" + check["phase"]!.GetValue<string>() + ".json");
+    internal void AssertReceipt(JsonObject check, DateTime start, DateTime end)
+    {
+        var p = JsonNode.Parse(File.ReadAllText(ReceiptPath(check)))!;
+        p["schema"]!.GetValue<int>().ShouldBe(1); p["lane"]!.GetValue<string>().ShouldBe("host");
+        p["sourceSha"]!.GetValue<string>().ShouldBe(new string('a',40), "receipt-sha");
+        p["runId"]!.GetValue<string>().ShouldBe(Path.GetFileName(check["evidenceRoot"]!.GetValue<string>()), "receipt-run");
+        p["selectedPhase"]!.GetValue<string>().ShouldBe(_phase, "receipt-phase");
+        p["phase"]!.GetValue<string>().ShouldBe(check["phase"]!.GetValue<string>(), "receipt-phase");
+        p["mode"]!.GetValue<string>().ShouldBe("check", "receipt-mode"); p["sshExit"]!.GetValue<int>().ShouldBe(0);
+        var observed = DateTime.Parse(p["observedAtUtc"]!.GetValue<string>()).ToUniversalTime();
+        (observed >= start && observed <= end).ShouldBeTrue("receipt-time");
+        p["lookupPath"]!.GetValue<string>().ShouldBe("/usr/local/bin/jq"); p["path"]!.GetValue<string>().ShouldBe("/usr/local/bin/jq");
+        p["version"]!.GetValue<string>().ShouldBe("jq-1.7.1"); p["digest"]!.GetValue<string>().ShouldBe(HostJqFixture.Pin);
+        p["uid"]!.GetValue<int>().ShouldBe(0); p["gid"]!.GetValue<int>().ShouldBe(0); p["permissions"]!.GetValue<string>().ShouldBe("755");
+        p["trueExit"]!.GetValue<int>().ShouldBe(0); p["falseExit"]!.GetValue<int>().ShouldBe(1);
+        p["installed"]!.GetValue<bool>().ShouldBeFalse("no implicit install"); p["outcome"]!.GetValue<string>().ShouldBe("existing");
+    }
+    internal static string Diagnosis(string fault) => fault switch { "missing"=>"HostJqMissing", "invalid"=>"HostJqInvalid",
+        "ssh-failed"=>"HostJqRemoteRefused", "malformed-proof"=>"HostJqProofInvalid", "receipt-write-failed"=>"HostJqReceiptUnavailable", _=>throw new ArgumentException(fault) };
+    public void Dispose() => _wrapper.Dispose();
 }
 
 // All mutations/effects are private; only fixed filesystem literals and test deadlines are copied.
@@ -580,6 +792,7 @@ internal sealed class HostJqFixture : IDisposable
     internal string? Linked { get; set; }
     internal string RequestSha { get; set; } = "";
     internal string Transport { get; set; } = "";
+    private string _executingPhase = "check-host-jq";
     internal bool IncludeDestination { get; set; } = true;
     internal string? SyntheticProof { get; set; }
     internal string Trace => File.Exists(Root + "/trace") ? File.ReadAllText(Root + "/trace") : "";
@@ -622,7 +835,7 @@ internal sealed class HostJqFixture : IDisposable
         WriteTool("flock", "echo flock-request >> \"$HJ_ROOT/trace\"\nexec /usr/bin/flock \"$@\"");
         // Boundary for the planned non-atomic-copy control; production uses native ln.
         WriteTool("cp", "source=${@: -2:1}; destination=${@: -1}\nif [ \"$destination\" != \"$HJ_DEST\" ]; then exec /usr/bin/cp \"$@\"; fi\nprintf 'stage-owner %s\\n' \"$(stat -c '%u:%g:%a' -- \"$source\")\" >> \"$HJ_ROOT/trace\"\necho ready > \"$HJ_ROOT/publish-ready\"\nwhile [ ! -f \"$HJ_ROOT/publish-release\" ]; do /usr/bin/sleep .01; done\n/usr/bin/head -c 10 \"$source\" > \"$destination\"\n/usr/bin/sleep .1\n/usr/bin/cp -- \"$source\" \"$destination\"");
-        WriteTool("ssh", "printf 'ssh %s\\n' \"$*\" >> \"$HJ_ROOT/trace\"\necho $$ > \"$HJ_ROOT/ssh-pid\"\n/usr/bin/cat > \"$HJ_ROOT/stdin\"\nif [ \"$HJ_TRANSPORT\" = block-receipt ]; then\n for d in \"$HJ_WRAPPER\"/.antiphon/rolling-server2/*; do /usr/bin/mkdir \"$d/host-jq-check-host-jq.json\"; done\nfi\nif [ \"$HJ_TRANSPORT\" = block-refusal ]; then\n for d in \"$HJ_WRAPPER\"/.antiphon/rolling-server2/*; do /usr/bin/mkdir \"$d/host-jq-check-host-jq-refused.json\"; done\nfi\nprintf 'remote-C1025-secret\\n' >&2\nif [ \"$HJ_TRANSPORT\" = late ]; then /usr/bin/sleep .5; fi\nif [ \"$HJ_TRANSPORT\" = empty ]; then exit 0; fi\nif [ \"$HJ_TRANSPORT\" = truncated ]; then echo '{'; exit 0; fi\nif [ -f \"$HJ_ROOT/proof\" ]; then /usr/bin/cat \"$HJ_ROOT/proof\"; else /usr/bin/bash -s -- \"${!#}\" < \"$HJ_ROOT/stdin\"; code=$?; [ \"$code\" = 0 ] || exit \"$code\"; fi\n[ \"$HJ_TRANSPORT\" != ssh-exit ] || exit 255\n[ \"$HJ_TRANSPORT\" != ssh-refused ] || exit 2");
+        WriteTool("ssh", "printf 'ssh %s\\n' \"$*\" >> \"$HJ_ROOT/trace\"\necho $$ > \"$HJ_ROOT/ssh-pid\"\n/usr/bin/cat > \"$HJ_ROOT/stdin\"\nif [ \"$HJ_TRANSPORT\" = block-receipt ]; then\n for d in \"$HJ_WRAPPER\"/.antiphon/rolling-server2/*; do /usr/bin/mkdir \"$d/host-jq-${HJ_PHASE}.json\"; done\nfi\nif [ \"$HJ_TRANSPORT\" = block-refusal ]; then\n for d in \"$HJ_WRAPPER\"/.antiphon/rolling-server2/*; do /usr/bin/mkdir \"$d/host-jq-${HJ_PHASE}-refused.json\"; done\nfi\nprintf 'remote-C1025-secret\\n' >&2\nif [ \"$HJ_TRANSPORT\" = late ]; then /usr/bin/sleep .5; fi\nif [ \"$HJ_TRANSPORT\" = empty ]; then exit 0; fi\nif [ \"$HJ_TRANSPORT\" = truncated ]; then echo '{'; exit 0; fi\nif [ -f \"$HJ_ROOT/proof\" ]; then /usr/bin/cat \"$HJ_ROOT/proof\"; else /usr/bin/bash -s -- \"${!#}\" < \"$HJ_ROOT/stdin\"; code=$?; [ \"$code\" = 0 ] || exit \"$code\"; fi\n[ \"$HJ_TRANSPORT\" != ssh-exit ] || exit 255\n[ \"$HJ_TRANSPORT\" != ssh-refused ] || exit 2");
     }
 
     private string JqScript(string fault) => "#!/usr/bin/bash\nprintf 'jq-call %s\\n' \"$*\" >> \"$HJ_ROOT/trace\"\nfault=$(/usr/bin/cat \"$HJ_ROOT/fault\" 2>/dev/null)\nif [ \"$1\" = --version ]; then\n" + (fault == "version-exit" ? "exit 1\n" : fault == "version-empty" ? "exit 0\n" : fault == "version-other" ? "echo jq-other; exit 0\n" : "[ \"$fault\" != final-version ] || { echo jq-other; exit 0; }\n") +
@@ -675,6 +888,7 @@ internal sealed class HostJqFixture : IDisposable
     }
     internal async Task<HostJqRun> Wrapper(string phase)
     {
+        _executingPhase = phase;
         if (SyntheticProof is not null) File.WriteAllText(Root + "/proof", SyntheticProof);
         File.WriteAllText(Root + "/token", "operator-C1025-secret");
         if (Transport == "start") { File.Delete(Tools + "/ssh"); File.WriteAllText(Tools + "/ssh", "not executable"); }
@@ -723,6 +937,7 @@ internal sealed class HostJqFixture : IDisposable
         psi.Environment["PATH"] = PathPrefix + Tools + (!IncludeDestination || (File.Exists(Root + "/fault") && File.ReadAllText(Root + "/fault") == "path-absent") ? "" : ":" + Parent);
         psi.Environment["TMPDIR"] = Temp; psi.Environment["HJ_ROOT"] = Root; psi.Environment["HJ_DEST"] = Destination;
         psi.Environment["HJ_DEST_PARENT"] = Parent; psi.Environment["HJ_LOCK"] = Lock; psi.Environment["HJ_WRAPPER"] = WrapperRoot;
+        psi.Environment["HJ_PHASE"] = _executingPhase;
         psi.Environment["HJ_TRANSPORT"] = Transport; psi.Environment["ANTIPHON_OPERATOR_TOKEN_FILE"] = Root + "/token";
         psi.Environment["ANTIPHON_TASK_TOKEN"] = "task-C1025-secret";
         psi.Environment["C727_TEST_VERIFY_STUB"] = Root + "/scripts/fake-verify.ps1";
