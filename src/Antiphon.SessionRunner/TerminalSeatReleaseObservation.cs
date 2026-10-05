@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -19,7 +21,7 @@ internal sealed class TerminalSeatReleaseObservation
     internal Func<CancellationToken, Task>? BeforePoll { get; set; }
     internal Func<CancellationToken, Task>? AfterRead { get; set; }
     internal Func<string, Stream>? OpenRead { get; set; }
-    private DateTime? _boundCreationUtc;
+    private NativeFileIdentity? _boundFileIdentity;
     private long _consumedByPoll;
     private long _largestObservation;
 
@@ -27,15 +29,14 @@ internal sealed class TerminalSeatReleaseObservation
     // merely because the next observation sees an old idle transcript at the same pathname.
     internal void Bind(string path)
     {
-        _boundCreationUtc = null;
+        _boundFileIdentity = null;
         _consumedByPoll = 0;
         _largestObservation = 0;
         try
         {
-            var info = new FileInfo(path);
-            if (info.Exists) _boundCreationUtc = info.CreationTimeUtc;
+            _boundFileIdentity = CaptureFile(path)?.Identity;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException) { }
     }
 
     internal void RecordConsumed(long offset) => _consumedByPoll = Math.Max(_consumedByPoll, offset);
@@ -54,7 +55,7 @@ internal sealed class TerminalSeatReleaseObservation
             var (path, identity) = binding.Value;
             var before = CaptureFile(path);
             if (before is null) return Refuse(TerminalTranscriptReadStatus.Unavailable);
-            if (_boundCreationUtc is null || before.Created != _boundCreationUtc
+            if (_boundFileIdentity is null || before.Identity != _boundFileIdentity
                 || before.Length < Math.Max(_consumedByPoll, _largestObservation))
                 return Refuse(TerminalTranscriptReadStatus.StaleObservation);
             _largestObservation = before.Length;
@@ -81,7 +82,7 @@ internal sealed class TerminalSeatReleaseObservation
                 }
             }
 
-            var first = await ReadAsync(path, before.Length, line => Add(normalize(line)), ct);
+            var first = await ReadAsync(path, before, line => Add(normalize(line)), ct);
             if (first.Status != TerminalTranscriptReadStatus.Success) return Refuse(first.Status);
             // Grok coalesces output until turn_completed. Pending chunks are activity, not idle.
             // Flushing this PRIVATE parser does not change the live normalizer or publish rows.
@@ -103,7 +104,7 @@ internal sealed class TerminalSeatReleaseObservation
                 _ => TerminalTranscriptVerdict.Unknown
             };
             return new(TerminalTranscriptReadStatus.Success, verdict,
-                Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity + "|" + before.Created.Ticks))),
+                Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity + "|" + before.Identity))),
                 first.Digest, before.Length, entries.Count, lastEnd, lastPrompt);
         }
         catch (ReadBudgetException) { return Refuse(TerminalTranscriptReadStatus.BudgetExceeded); }
@@ -119,10 +120,13 @@ internal sealed class TerminalSeatReleaseObservation
     }
 
     private async Task<(TerminalTranscriptReadStatus Status, string? Digest)> ReadAsync(
-        string path, long length, Action<string>? consume, CancellationToken ct)
+        string path, FileStamp expected, Action<string>? consume, CancellationToken ct)
     {
         await using var stream = OpenRead?.Invoke(path) ?? new FileStream(path, FileMode.Open,
             FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 64 * 1024, FileOptions.Asynchronous);
+        if (stream is not FileStream file || CaptureHandle(file.SafeFileHandle) != expected)
+            return (TerminalTranscriptReadStatus.StaleObservation, null);
+        var length = expected.Length;
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         using var record = new MemoryStream();
         var utf8 = new UTF8Encoding(false, true);
@@ -159,6 +163,8 @@ internal sealed class TerminalSeatReleaseObservation
         // Growth beyond our initial bounded extent also refuses, even if the new row is complete.
         if (await stream.ReadAsync(buffer.AsMemory(0, 1), ct) != 0)
             return (TerminalTranscriptReadStatus.StaleObservation, null);
+        if (CaptureHandle(file.SafeFileHandle) != expected)
+            return (TerminalTranscriptReadStatus.StaleObservation, null);
         return (TerminalTranscriptReadStatus.Success, Convert.ToHexString(hash.GetHashAndReset()));
     }
 
@@ -167,10 +173,63 @@ internal sealed class TerminalSeatReleaseObservation
 
     private static FileStamp? CaptureFile(string path)
     {
-        var info = new FileInfo(path);
-        return info.Exists ? new(info.CreationTimeUtc, info.LastWriteTimeUtc, info.Length) : null;
+        if (!File.Exists(path)) return null;
+        using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        return CaptureHandle(handle);
     }
 
-    private sealed record FileStamp(DateTime Created, DateTime Written, long Length);
+    private static FileStamp CaptureHandle(SafeFileHandle handle)
+    {
+        NativeFileIdentity identity;
+        if (OperatingSystem.IsLinux())
+        {
+            // Same stable statx ABI as AgentPinPosixReader; AT_EMPTY_PATH inspects this
+            // opened descriptor. Birth/creation timestamps are not file identity on Linux.
+            const uint requested = 0x101; // STATX_TYPE | STATX_INO
+            if (Statx(handle, "", 0x1000, requested, out var stat) != 0
+                || (stat.Mask & requested) != requested || (stat.Mode & 0xf000) != 0x8000)
+                throw new IOException("Cannot identify native transcript file.");
+            identity = new(((ulong)stat.DeviceMajor << 32) | stat.DeviceMinor, stat.Inode, 0);
+        }
+        else if (OperatingSystem.IsWindows())
+        {
+            // Volume serial + 128-bit FILE_ID_INFO, stable across appends and renames.
+            if (!GetFileInformationByHandleEx(handle, 18, out var id, (uint)Marshal.SizeOf<WindowsFileId>()))
+                throw new IOException("Cannot identify native transcript file.");
+            identity = new(id.Volume, id.Low, id.High);
+        }
+        else throw new PlatformNotSupportedException("Native transcript identity is unavailable.");
+        return new(identity, File.GetLastWriteTimeUtc(handle), RandomAccess.GetLength(handle));
+    }
+
+    private sealed record NativeFileIdentity(ulong Volume, ulong Low, ulong High);
+    private sealed record FileStamp(NativeFileIdentity Identity, DateTime Written, long Length);
     private sealed class ReadBudgetException : Exception;
+
+    [StructLayout(LayoutKind.Explicit, Size = 256)]
+    private struct StatxInfo
+    {
+        [FieldOffset(0)] public uint Mask;
+        [FieldOffset(28)] public ushort Mode;
+        [FieldOffset(32)] public ulong Inode;
+        [FieldOffset(136)] public uint DeviceMajor;
+        [FieldOffset(140)] public uint DeviceMinor;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WindowsFileId
+    {
+        public ulong Volume;
+        public ulong Low;
+        public ulong High;
+    }
+
+    [DllImport("libc", EntryPoint = "statx", SetLastError = true)]
+    private static extern int Statx(SafeFileHandle file, string path, int flags, uint mask, out StatxInfo result);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandleEx(
+        SafeFileHandle file, int informationClass, out WindowsFileId result, uint size);
 }
