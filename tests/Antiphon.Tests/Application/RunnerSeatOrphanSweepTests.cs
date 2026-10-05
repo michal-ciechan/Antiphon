@@ -94,9 +94,9 @@ public class RunnerSeatOrphanSweepTests
             var logs = JsonSerializer.Serialize(f.AttentionLogs.Entries.Select(e => new { e.Message, e.Properties }));
             foreach (var canary in canaries)
             {
-                JsonSerializer.Serialize(items).ShouldNotContain(canary, "GET excludes payloads");
-                ledger.ShouldNotContain(canary, "ledger excludes payloads");
-                logs.ShouldNotContain(canary, "structured logs exclude payloads");
+                JsonSerializer.Serialize(items).ShouldNotContain(canary);
+                ledger.ShouldNotContain(canary);
+                logs.ShouldNotContain(canary);
             }
             await f.RecoverAttentionAsync();
         }

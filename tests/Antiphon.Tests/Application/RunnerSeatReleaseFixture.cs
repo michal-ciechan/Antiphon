@@ -53,7 +53,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
     public TerminalSeatObservationRequest Observation => new(Directory.StoreId, Now.AddHours(-1), "binding", 10);
     public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
 
-    public CapturingLoggerProvider AttentionLogs { get; } = new();
+    public CapturingLoggerProvider AttentionLogs => Wire.Logs;
 
     public async Task<AttentionDto> AttentionAsync()
     {
@@ -150,6 +150,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
                 ConfigureDbContext = configureDb,
                 ConfigureServices = services =>
                 {
+                    services.AddLogging(b => b.AddProvider(wire.Logs));
                     services.AddSingleton<RemoteSpillCourier>();
                     services.AddSingleton<ISessionRunnerDirectory>(directory);
                     services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
@@ -714,6 +715,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
 
     internal sealed class SeatWire : HttpMessageHandler
     {
+        public CapturingLoggerProvider Logs { get; } = new();
         public bool ForbidFixedEvidence { get; set; }
         public bool AutomaticEnabled { get; set; } = true;
         public BridgeQueueHarness.HarnessOptions? HarnessOptions { get; set; }
