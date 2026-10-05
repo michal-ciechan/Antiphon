@@ -219,11 +219,361 @@ measurements. The brief explicitly excludes whole-Unit execution; four common
 tests, two Windows tests and five named existing regression methods bound the
 scope. No whole namespace, assembly, E2E or provider run is authorized here.
 
+## Verification design
+
+TestDesign task `c9945af6`, inspected at
+`fd9a5c2bc78c43c090a1c28c621472c69a6c1350` on 2026-10-05.
+This section owns verification; D-1 through D-6 and the production fix design
+above are unchanged. The proposed eight controls are not a complete independent
+inventory: PC-4 needs separate type/link-mask controls, and byte/text admission,
+the shared multiple-link predicate and the extracted regular-mode check need
+their own controls. Retain PC-1 through PC-8 identities, narrow PC-4, and add
+PC-9 through PC-13 below. Four checkpoint rows still suffice.
+
+**Disposition: return to Plan for the junction-fixture execution seam.** The
+product witnesses and compiling mutations are specified below, but D-5 cannot
+currently be met by reusing `DirectoryLink.TryCreate` unchanged. It synchronously
+drains stdout, then stderr, *before* `WaitForExit(30_000)`; neither read has a
+deadline. On a wait timeout it returns null without terminating and joining the
+owned process. `Process.Dispose`, `ProcessSpawnLimit` and a test `WaitAsync` do
+not repair that ownership gap. Do not label the Windows controls safely
+executable or hand this plan to Code until Plan resolves that setup contract.
+No native test, build or mutation has run in this TestDesign task.
+
+### Inspection
+
+Bodies read, rather than inferred from names:
+
+| Bodies read | Boundaries -> verification or exclusion |
+|---|---|
+| `ChannelReplyAttachmentReader.ReadAttachmentAsync`, `ReadTextAsync`, `ValidatePath`, `HashFileAsync`, `OpenRegularFile`, `OpenAt`, `OpenWindows`, both native layouts/declarations | V-1 through V-6; the byte, text and hash entry points are separate bypass opportunities. Linux metadata is descriptor-based; Windows parent flag and attribute check are independent. |
+| `ChannelOutboundStorageTests.C1059_Source_reads_require_captured_roots_without_traversal`, `C1059_Source_reads_reject_file_and_directory_links`, `C1059_Source_length_is_checked_before_reading_with_a_finite_budget`, `C1059_Source_reads_refuse_nonregular_files_without_blocking` | R-1; all four bodies and their inline fixtures read. The budget-growth and device/FIFO arms only execute on Linux. Windows exclusion is limited to the symbolic-link method. |
+| `ChannelOutboundStorageTests.Frozen_reply_and_input_bytes_survive_source_mutation` and `Failed_staging_never_exposes_a_partial_snapshot` | R-2 uses the former only. The latter is fixture context, not an added checkpoint. No DB/container fixture is needed for either. |
+| `ChannelOutboundFileStore.StageAsync`, `StageCapturedAsync`, `StageCoreAsync`, `TryAdoptAsync`, `ReadReplyAsync` | V-2 covers the shared retained-file hashing primitive. R-2's `StageAsync` does **not** enter `StageCapturedAsync`'s retained-file loop. Add the explicit regular captured-stage/adoption companion described under V-2. |
+| `ChannelOutboundDeliveryPump` preparation exception handling and `MaterializeAsync` | Delivery inventory: existing `InvalidDataException` failure owner and existing adoption boundary, no new enqueue/publication protocol. |
+| `DirectoryLink.TryCreate`, `MoveTo`, `Dispose`, `IsLink`; `ProcessSpawnLimit.Limit`; `AgentTaskLandHalfResetWindowsTests.C883_CaseAliasCannotChangeRegisteredIdentity` and native host requirement | Nearest fixtures for the new Windows tests and helper. Required-success junction setup and nonrecursive link disposal are reusable; bounded/joined command execution is missing. |
+| `Scripts/ScriptHarness.RunHarnessCaseAsync` and `Validate` | Existing script entry delegates to a process owner; it cannot directly wrap an arbitrary synchronous C# `DirectoryLink.TryCreate` call. Not accepted as an already available substitute for that missing setup. |
+| `IChannelReplyAttachmentReader`; outbound section of `docs/telegram.md`; project-context owner; testing/build checkpoint, filter, process, slot, mutation and receipt rules; orchestration stage handoff rules | Contract documentation, OS lanes, exact source evidence and post-land PC execution. |
+| `PlanTableImporter.ImportMarkdown`, `ExtractSection`, `SplitRow`, `ExtractPayload` | One nine-column table; escaped OR pipes; reuse only within the same After group. The importer does not choose a host from Group. |
+
+Missing setup is concrete: the two new reader test files, `NativeHardLink`,
+`BeforeOpenAsync`, `RequireSingleLinkCount` and the pure Linux validator do not
+yet exist. They are S1/S2 implementation work, not existing passing evidence.
+Use a validator callable as `ValidateLinuxMetadata(uint mask, ushort mode,
+uint links)` for the pure witnesses; it must be called by the real Linux opener.
+This is the parameter-level binding of D-2, not a native-I/O substitute.
+
+Plan must resolve the junction helper's bounded execution before Code: provide
+one deadline across process exit and both pipe drains, terminate/join only the
+owned child on failure, and dispose the junction before recursive scratch
+cleanup. Either amend the existing helper with reviewed coverage of that
+contract, or specify another owned native junction fixture. Keep `mklink /J`
+semantics, visible setup failure, the ProcessSpawnLimit and no privilege/WSL
+fallback. That fixture repair's tests, guards and cost must be added by the
+returning Plan/TestDesign; the current product matrix does not certify it.
+
+### Delivery inventory
+
+Changed asynchronous delivery paths: **zero**. Async file reads return to their
+caller; they do not create a new queue, destination, durable handoff or recovery
+worker. The existing context, which this card does not requalify, is:
+
+| Producer / identity | Destination | Persistence boundary | Recovery | Receipt and limit of this plan |
+|---|---|---|---|---|
+| Existing preparation/pump, `ChannelOutboundDelivery.Id` | `StageCapturedAsync` then the existing conversion/publication pipeline | `complete.json` and retained files under that delivery's directory, followed by the existing DB transition | `TryAdoptAsync` revalidates the same capture and retained files; existing preparation exception handling persists failure | V-2 observes materialization/adoption bytes and hashes only. R-2 observes a frozen local snapshot only. Neither proves worker input or channel receipt. |
+
+The new refusal is an `InvalidDataException` at the existing file-read boundary;
+the inspected pump already treats that exception as terminal preparation failure.
+No test here treats a request, queue insert, event, Sent flag, acknowledgement,
+file hash or successful staging as delivery. No producer-to-recipient claim is
+made. The busy/already-eligible real-queue cases and per-handoff crash/enqueue
+recovery are excluded because their paths are unchanged under D-6; existing
+CARD-0519 obligations remain, including matching complete `UserPrompt` evidence
+for any session input. If Code changes those paths, return to Plan and add the
+real queue and recipient witnesses before widening this acceptance claim.
+
+Substitutes: pure metadata/count cases establish decisions, not OS observations;
+native scratch files establish reader admission, not provider delivery; the
+before-open hook establishes the validation/open cut, not every possible
+concurrent rename. Linux success cannot substitute for native Windows proof.
+
+### Proves it works now
+
+All six methods are unparameterized. Internal combinations below contribute one
+TUnit execution per method, not one execution per assertion. Assertion labels
+are required diagnostic messages so every PC has a decisive red location.
+
+- V-1: bytes and text enforce D-1/D-2 | native filesystem, Linux and Windows |
+  `ChannelReplyAttachmentReaderTests.C1061_Byte_and_text_reads_reject_hard_links`
+  | Create separate allowed/outside sibling directories in one unique scratch
+  root. Cover outside alias plus allowed name, two names inside one allowed root,
+  and names in two separately allowed roots. Observe count two and matching
+  native file identity independently of the production validator (Linux
+  device/inode; Windows volume/file index), and fixture bytes. Assert both
+  entry points throw `InvalidDataException`, labeled `Links.BytesRefused` and
+  `Links.TextRefused` with the arrangement. Test count-one exact bytes and UTF-8
+  text, then remove the second name, independently observe count one and read
+  the former linked file successfully. Also install a second name from
+  `BeforeOpenAsync` for byte and text attempts: hook count one, same token,
+  link creation completed, and refusal. This catches checking only at preflight.
+  Close independent observation handles before the reader call on Windows.
+- V-2: hashing retains safe-open admission and usable single-link snapshots |
+  native filesystem plus local file store, both OSes |
+  `ChannelReplyAttachmentReaderTests.C1061_Hashes_reject_hard_links` |
+  Repeat V-1's three static alias arrangements with `HashFileAsync`;
+  `Links.HashRefused` requires `InvalidDataException`. Independently compute
+  SHA-256 from the known fixture bytes and assert returned length/hash for a
+  single-link file and after removal of the second name. Within the same method,
+  create an ordinary `ChannelReplyPrepared`, call real `StageCapturedAsync` with
+  a fresh delivery ID and fixed nonempty capture string, then `TryAdoptAsync`
+  for that same ID/string. Assert nonnull adoption, same prompt/revision,
+  snapshot path/hash, and exact stored attachment bytes. Use an independently
+  computed prompt revision, not a comparison of two defaults. This companion
+  reaches both retained-hash call sites; it is not a recovery/delivery test.
+- V-3: metadata requires each returned bit and regular mode | pure production
+  validator on both hosts; native call-site evidence from V-1/V-2 |
+  `ChannelReplyAttachmentReaderTests.C1061_Linux_metadata_requires_type_and_link_count`
+  | For regular mode `0x8000` and count one, masks `0`, `1` and `4` refuse;
+  `5` and `5 | 0x200` accept. Label missing-type (`mask=4`)
+  `Metadata.TypeRequired`, missing-link (`mask=1`) `Metadata.LinksRequired`,
+  and both-missing `Metadata.BothRequired`. With mask `5` and count one,
+  directory `0x4000`, FIFO `0x1000` and device `0x2000` refuse at
+  `Metadata.RegularRequired`. This prevents an extracted validator from
+  preserving count checks while dropping the old regular-mode check.
+- V-4: exact-one policy covers conservative zero and unsigned extremes | pure
+  shared production validator, both hosts |
+  `ChannelReplyAttachmentReaderTests.C1061_Zero_link_count_is_rejected` |
+  Zero refuses at `Count.ZeroRefused`, one accepts, two and `uint.MaxValue`
+  refuse at `Count.MultipleRefused`. Also exercise these counts with mask `5`
+  and regular mode through the Linux validator. No unlink scheduling race is
+  needed to fabricate a zero result.
+- V-5: preflight rejects a junction before opening | native NTFS |
+  `ChannelReplyAttachmentReaderWindowsTests.C1061_Preexisting_junction_is_refused_before_open`
+  | Require Windows and an NTFS scratch volume; fail, do not skip, if either
+  check or `DirectoryLink.TryCreate` fails. Verify ReparsePoint on the actual
+  junction. For an outward junction nested under an allowed root and for that
+  junction itself supplied as allowed root, capture the exception without
+  asserting it first, assert hook count zero at `Junction.PreflightHookZero`,
+  then assert the exact `InvalidDataException` message
+  `Linked paths and devices are not source files.`. Exercise byte and text
+  attempts independently; reset the hook count each time. An ordinary sibling
+  returns exact bytes/text and reaches the hook once. Hook ordering prevents
+  the later native refusal from hiding the preflight mutant.
+- V-6: a junction introduced at the cut reaches native parent refusal | native
+  NTFS | `ChannelReplyAttachmentReaderWindowsTests.C1061_Junction_after_validation_is_refused_by_native_open`
+  | Use distinct trusted/outside bytes under the same leaf filename. In the
+  awaited instance hook, rename the ordinary parent aside and install the real
+  outward junction at its old name, then return. Record `hookCount == 1`,
+  successful junction setup and ReparsePoint independently. Capture outcome,
+  assert setup first, then require `InvalidDataException` with message
+  `A source directory is linked or invalid.` at `Junction.NativeRefused`.
+  Assert no result bytes escaped. Dispose the junction, restore the ordinary
+  parent and verify original bytes; read failures must leave cleanup possible.
+  Repeat with the replaced directory as the allowed root, using fresh paths.
+
+V-1/V-2 fixtures must not create a second name by copying. New-file, same-volume
+setup plus independent identity/count observations are mandatory. The metadata
+matrix partitions type-bit presence, link-bit presence, mode and count with all
+other fields valid for each refusal; full Cartesian repetition adds no distinct
+guard witness. Counts zero/one/two/max bound the policy. Native zero and missing
+mask cases are intentionally supplied to the pure validator because ordinary
+scratch files cannot deterministically produce them.
+
+Native Windows PC reachability follows the existing opener: OPEN_REPARSE_POINT
+opens the named parent junction itself; removing its attribute rejection then
+lets the later pathname-based leaf open traverse that parent. Removing the flag
+instead opens the ordinary target directory, whose attributes pass. Both leave
+the leaf single-linked. This is a code/API-based expectation, not a measured
+Windows result. See [CreateFileW reparse flag and directory contract](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew).
+The count/identity fixture uses the documented
+[handle information members](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/ns-fileapi-by_handle_file_information);
+Linux offsets/masks follow the [kernel UAPI](https://github.com/torvalds/linux/blob/master/include/uapi/linux/stat.h).
+
+### Guards the regression
+
+- R-1: keep the four inspected `ChannelOutboundStorageTests.C1059_Source_*`
+  methods unchanged. `C1059_Source_reads_require_captured_roots_without_traversal`
+  asserts allowed content, sibling-root refusal and traversal refusal;
+  `C1059_Source_reads_reject_file_and_directory_links` asserts file symlink,
+  parent symlink and symlink-as-root refusal;
+  `C1059_Source_length_is_checked_before_reading_with_a_finite_budget` asserts
+  equality-at-budget acceptance, oversize length, Linux growth length nine,
+  and sparse-file length refusal before canceled reading;
+  `C1059_Source_reads_refuse_nonregular_files_without_blocking` asserts regular
+  success, directory refusal and Linux device/FIFO refusal. CP-2 executes all
+  four. CP-4 excludes only the symlink method; its native Windows privilege
+  prerequisite is not needed for the real junction witnesses.
+- R-2: `ChannelOutboundStorageTests.Frozen_reply_and_input_bytes_survive_source_mutation`
+  asserts original serialized reply and input bytes after source-array mutation,
+  matching delivery ID, no temporary stage directories, and
+  `InvalidDataException` after tampering with the stored reply. Both lanes run it.
+  It is a compatibility regression, not proof of captured adoption; V-2 adds
+  that missing ordinary companion explicitly.
+
+### Guard inventory
+
+This inventory covers CARD-1061's newly introduced or newly qualified product
+guards. Existing R-1/R-2 contracts are retained compatibility tests, not renewed
+mutation qualification of every pre-existing path, budget and snapshot guard.
+That exclusion does not excuse any changed guard; a change there reopens this
+inventory and the owning plan before Code can claim coverage.
+
+| Guard | Plan reference and independently bypassable guard/invariant | Control |
+|---|---|---|
+| G-1 | D-1/D-2 Linux opened-leaf metadata reaches the count policy | PC-1 |
+| G-2 | D-1/D-2 Windows opened-leaf information reaches the count policy | PC-2 |
+| G-3 | D-2 hash entry uses the safe opener | PC-3 |
+| G-4 | D-2 returned STATX_TYPE bit is required | PC-4 |
+| G-5 | D-1 count zero is refused by the shared policy | PC-5 |
+| G-6 | D-4 preflight rejects reparse components, including an allowed-root junction | PC-6 |
+| G-7 | D-4 native Windows parent inspection rejects reparse attributes | PC-7 |
+| G-8 | D-4 native Windows parent opens inspect the reparse object | PC-8 |
+| G-9 | D-2 returned STATX_NLINK bit is independently required | PC-9 |
+| G-10 | D-1/D-2 byte entry uses the safe opener | PC-10 |
+| G-11 | D-1/D-2 text entry inherits guarded byte reading | PC-11 |
+| G-12 | D-1 counts above one are refused by the shared policy | PC-12 |
+| G-13 | D-2 extracted Linux metadata validator retains regular-mode rejection | PC-13 |
+
+No row combines independently bypassable type/link availability predicates or
+Windows parent flag/attribute guards. None is declared unnecessary. The fixture
+ownership defect is a setup seam, not an additional implemented product guard
+or an excuse to mark a test passed.
+
+### Positive controls
+
+Each row changes only the named production guard, leaving the test and its
+fixture observations intact. Filters in this table are exact methods; do not
+substitute the ordinary checkpoint class filters. The original PC-4 that
+removed the entire mask check is replaced by PC-4 and PC-9 so neither bit hides
+the absence of the other. All changes below are compiling defects after S1/S2.
+
+| PC / guard / lane | Break by | Exact method filter | Required red assertion |
+|---|---|---|---|
+| PC-1 / G-1 / Linux | In the Linux native call to the production metadata validator, pass `1u` as the link count instead of `stat.Links`; keep mask and mode unchanged. | `/*/*/ChannelReplyAttachmentReaderTests/C1061_Byte_and_text_reads_reject_hard_links` | `Links.BytesRefused` for the outside two-link fixture: expected InvalidDataException absent. |
+| PC-2 / G-2 / Windows | Bypass only `RequireSingleLinkCount(info.Links)` in the Windows leaf branch. | `/*/*/ChannelReplyAttachmentReaderTests/C1061_Byte_and_text_reads_reject_hard_links` | `Links.BytesRefused` on the real NTFS two-link fixture: expected exception absent. |
+| PC-3 / G-3 / Linux | In `HashFileAsync` only, replace `OpenRegularFile(path)` with `new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read)`; retain ValidatePath. | `/*/*/ChannelReplyAttachmentReaderTests/C1061_Hashes_reject_hard_links` | `Links.HashRefused`: hash incorrectly returned for two links. |
+| PC-4 / G-4 / Linux | Weaken the result-mask predicate from requiring `0x5` to requiring only `0x4`; preserve count and mode gates. | `/*/*/ChannelReplyAttachmentReaderTests/C1061_Linux_metadata_requires_type_and_link_count` | `Metadata.TypeRequired`: mask 4, regular mode, count one incorrectly accepted. |
+| PC-5 / G-5 / Linux | Change the shared rejection from `links != 1` to `links > 1`. | `/*/*/ChannelReplyAttachmentReaderTests/C1061_Zero_link_count_is_rejected` | `Count.ZeroRefused`: zero incorrectly accepted. |
+| PC-6 / G-6 / Windows | Remove only ReparsePoint from ValidatePath's component rejection mask; retain Device and final Directory checks. | `/*/*/ChannelReplyAttachmentReaderWindowsTests/C1061_Preexisting_junction_is_refused_before_open` | `Junction.PreflightHookZero`: hook count is one despite a later native refusal. |
+| PC-7 / G-7 / Windows | Remove only `(info.Attributes & 0x400) != 0` from the native parent predicate. | `/*/*/ChannelReplyAttachmentReaderWindowsTests/C1061_Junction_after_validation_is_refused_by_native_open` | `Junction.NativeRefused`: no unsafe-directory exception, outside bytes returned. |
+| PC-8 / G-8 / Windows | Remove only `0x00200000` from parent OpenWindows flags; retain BACKUP_SEMANTICS and sharing flags. | `/*/*/ChannelReplyAttachmentReaderWindowsTests/C1061_Junction_after_validation_is_refused_by_native_open` | `Junction.NativeRefused`: followed target passes attributes and outside bytes returned. |
+| PC-9 / G-9 / Linux | Weaken the result-mask predicate from requiring `0x5` to requiring only `0x1`; preserve count and mode gates. | `/*/*/ChannelReplyAttachmentReaderTests/C1061_Linux_metadata_requires_type_and_link_count` | `Metadata.LinksRequired`: mask 1 with fabricated count one incorrectly accepted. |
+| PC-10 / G-10 / Linux | In `ReadAttachmentAsync` only, replace the safe opener with the ordinary FileStream expression used in PC-3; retain path validation and budgets. | `/*/*/ChannelReplyAttachmentReaderTests/C1061_Byte_and_text_reads_reject_hard_links` | `Links.BytesRefused`: native enforcement is bypassed for bytes. |
+| PC-11 / G-11 / Linux | Replace `ReadTextAsync`'s body with `return await File.ReadAllTextAsync(path, ct);`. | `/*/*/ChannelReplyAttachmentReaderTests/C1061_Byte_and_text_reads_reject_hard_links` | `Links.TextRefused`: bytes still refuse, text incorrectly returns fixture contents. |
+| PC-12 / G-12 / Linux | Change the shared rejection from `links != 1` to `links == 0`. | `/*/*/ChannelReplyAttachmentReaderTests/C1061_Zero_link_count_is_rejected` | `Count.MultipleRefused`: zero still refuses and one accepts, but two incorrectly accepts. |
+| PC-13 / G-13 / Linux | Remove only the regular-mode predicate from the pure Linux metadata validator. | `/*/*/ChannelReplyAttachmentReaderTests/C1061_Linux_metadata_requires_type_and_link_count` | `Metadata.RegularRequired`: mask 5, count one, directory mode incorrectly accepted. |
+
+Mutation runs baseline green, break/red, exact restoration and fresh-build green
+**after land**. Code runs V/R; ordinary Review judges this design and ordinary
+evidence before land. All PCs touch the same reader file: run serially within
+each OS lane, no combined mutants. Each phase uses the listed filter and
+`-MinExecuted 1`, its own alternate `bin-` output and fresh results under the
+assigned external SourceLanding evidence root. Use the owner's copied
+`run-checkpoint.ps1` driver with its slot gate; refresh restored source timestamps.
+No snapshot commits, remote executor access or automatic latest-master rerun.
+Retain build success, actual method, exact failing assertion and restored clean
+source evidence per PC. Wrong exception, setup failure, missing fixture,
+timeout, skip, build error or zero tests is not the specified red.
+
+Audit: **product guards=13, mapped=13, missing=0, duplicate PC maps=0**.
+Thirteen method-scoped compiling mutations are specified. PC-1..5 and PC-9..13
+have sufficient fixture designs; PC-6..8 additionally require the bounded/joined
+junction fixture repair. Thus **10 controls are design-executable, 3 have a
+known setup seam**, and none has been executed. The all-controls-executable
+Code-handoff criterion is deliberately **not** claimed. Plan must resolve the
+seam and return for TestDesign completion; this is not a human policy choice.
+
+### Out of scope
+
+- Continuous link exclusivity, inode provenance, adversarial changes after the
+  native metadata observation, and ownership/snapshot redesign: excluded by D-3.
+- Exhaustive pre-existing reader defenses (Linux descriptor-walk flags, Windows
+  delete sharing/leaf reparse flags, absolute-path/device checks), converted-output
+  sealing, and storage/queue guard mutation qualification: unchanged by D-6.
+  R-1/R-2 retain their existing assertions and prior-card obligations; this card
+  cannot claim their full mutation or race coverage. The regular-mode check
+  moved by D-2 is specifically included as G-13.
+- Windows symbolic-link privileges and non-NTFS/network filesystems: qualification
+  targets real NTFS hard links/junctions. Native fixture failure is visible and
+  leaves the Windows lane incomplete; Linux, WSL, a fake attribute or a skip
+  cannot substitute for it.
+- Real broker/provider/session delivery, DB recovery and busy recipients: no
+  changed handoff; local file evidence does not establish delivery.
+- Whole Unit, namespace, assembly, provider or E2E runs: excluded by the brief.
+  No additional repetition after green without a changed source or new concern.
+
 ### Checkpoints
+
+This is the sole importable manifest. Verification-only correction to the
+earlier proposed execution schedule: both S1 and S2 must be committed/pushed
+before the formal four-row run so Linux and Windows certify the **same final
+candidate SHA**. The production slice boundaries are unchanged. Running Linux
+only at the earlier S1 SHA would require another Linux qualification after S2;
+the table avoids that extra run. Do not call the earlier S1 result final-source
+evidence. Plan's junction-fixture repair may change this roster and must be
+reviewed before execution; the current rows are the product verification floor.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1061-linux/` | linux-link-policy | `/*/*/ChannelReplyAttachmentReaderTests/*` | V-1, V-2, V-3, V-4 | exactly 4 listed methods, 0 failed/skipped | 4 | 8 |
-| CP-2 | S1 | CP-1 | linux-reader-regressions | `/*/*/ChannelOutboundStorageTests/(C1059_Source_*)\|(Frozen_reply_and_input_bytes_survive_source_mutation*)` | R-1, R-2 | exactly 5 listed methods, 0 failed/skipped | 5 | 2 |
-| CP-3 | S2 | `tests/Antiphon.Tests -> bin-c1061-windows/` | windows-native-links | `/*/*/(ChannelReplyAttachmentReaderTests*)\|(ChannelReplyAttachmentReaderWindowsTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6 | exactly 6 listed methods, 0 failed/skipped | 6 | 10 |
-| CP-4 | S2 | CP-3 | windows-reader-regressions | `/*/*/ChannelOutboundStorageTests/(C1059_Source_reads_require_captured_roots_without_traversal*)\|(C1059_Source_length_is_checked_before_reading_with_a_finite_budget*)\|(C1059_Source_reads_refuse_nonregular_files_without_blocking*)\|(Frozen_reply_and_input_bytes_survive_source_mutation*)` | R-1 Windows-applicable methods, R-2 | exactly 4 listed methods, 0 failed/skipped | 4 | 2 |
+| CP-1 | S1-S2 | `tests/Antiphon.Tests -> bin-c1061-linux/` | linux-link-policy | `/*/*/ChannelReplyAttachmentReaderTests/*` | V-1, V-2, V-3, V-4 | exactly 4 listed methods, 0 failed/skipped | 4 | 8 |
+| CP-2 | S1-S2 | CP-1 | linux-reader-regressions | `/*/*/ChannelOutboundStorageTests/(C1059_Source_*)\|(Frozen_reply_and_input_bytes_survive_source_mutation*)` | R-1, R-2 | exactly 5 listed methods, 0 failed/skipped | 5 | 2 |
+| CP-3 | S1-S2 | `tests/Antiphon.Tests -> bin-c1061-windows/` | windows-native-links | `/*/*/(ChannelReplyAttachmentReaderTests*)\|(ChannelReplyAttachmentReaderWindowsTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6 | exactly 6 listed methods, 0 failed/skipped | 6 | 10 |
+| CP-4 | S1-S2 | CP-3 | windows-reader-regressions | `/*/*/ChannelOutboundStorageTests/(C1059_Source_reads_require_captured_roots_without_traversal*)\|(C1059_Source_length_is_checked_before_reading_with_a_finite_budget*)\|(C1059_Source_reads_refuse_nonregular_files_without_blocking*)\|(Frozen_reply_and_input_bytes_survive_source_mutation*)` | R-1 Windows-applicable methods, R-2 | exactly 4 listed methods, 0 failed/skipped | 4 | 2 |
+
+Min means TUnit executions: Linux 4+5=9, Windows 6+4=10, total 19, with 11
+distinct methods. CP-2 reuses CP-1's one isolated build; CP-4 reuses CP-3's.
+Each row has exactly one filter and one identified build. These are counts,
+not assertion-loop iterations or minutes. Inspect the actual executed names
+and zero skips; the importer derives roster tokens from Filter, not from
+the prose `exactly` in Expect.
+
+Run one checkpoint-tool group on Linux with `--rows CP-1,CP-2`, one on native
+Windows with `--rows CP-3,CP-4`, both with `--expected-source-sha` set to the
+same complete committed candidate SHA. Pass this plan to `run --plan`, keep
+the source frozen and await all `wait` exits until not 75. Use the host slot
+wrapper for the tool launcher; each driver owns its own slot. Do not nest
+`run-checkpoint.ps1` behind another slot wrapper. Never run the whole table
+on one OS. Host/catalog availability must be checked when commissioning the
+OS lanes, without a hard-coded runner name. No host dispatch is done here.
+
+Ordinary Review requires all four source-qualified receipts for that same SHA,
+`dirty=0`, stable clean source, verified build provenance, exact roster and
+zero failed/skipped. Preserve unedited CHECKPOINT lines in the stored report;
+generated logs/TRX/JSON stay ignored. Run the evidence-diff guard over the full
+task range. A later source change requires affected rows at the new candidate;
+do not relabel receipts. Clean only each run's exact owned output inventory
+after its children finish. Slot refusal/timeout never authorizes an unleased
+retry. Baseline any suspected inherited failure with its exact failing method.
+
+### Cost
+
+All figures are **estimates**, not measurements. Costs below cover the specified
+product matrix; the fixture-safety repair is a separate missing Plan scope,
+so these are a numeric floor, not an assertion of a complete Code estimate.
+
+- Ordinary V/R floor (Code): **22 minutes** = CP-1 8 + CP-2 2 (Linux exact
+  filters above) + CP-3 10 + CP-4 2 (Windows exact filters above). This includes
+  two isolated builds, budgeted at 5 minutes each, and 12 minutes of selected
+  test execution. One minute per host for tool/setup gives **24 minutes**
+  setup/build/V/R. Proposed implementation authoring/review remains 48-78
+  minutes, so that product work plus ordinary verification is **72-102 minutes**.
+- PC floor (Mutation): **117 minutes** = 13 controls x (3-minute baseline
+  build/test + 3-minute mutated build/test + 3-minute restored build/test),
+  39 method-scoped invocations. Linux PC-1,3,4,5,9,10,11,12,13 cost **81**;
+  Windows PC-2,6,7,8 cost **36**. Every invocation uses its exact Positive
+  controls table filter. Allocate a further **20 minutes** to two-host setup,
+  discovery, edits/restoration and evidence: Mutation commissioning floor
+  **137 minutes**. The three blocked fixture-dependent controls remain in the
+  cost; omitting them cannot make the battery complete.
+- Combined verification floor: **161 minutes** = setup 2 + ordinary builds
+  10 + ordinary V/R execution 12 + PC cycles 117 + Mutation handling 20.
+  Including product authoring/review gives **209-239 minutes**, plus the
+  as-yet-uncommissioned fixture repair. This explicit scope gap is why the
+  next stage is Plan rather than Code; no zero-cost repair is assumed.
+- Savings: two reused builds save **10 estimated minutes** against four
+  5-minute builds. Certifying both OS lanes after the final source commit
+  saves another **10 minutes** against repeating CP-1/2 solely because S2
+  changed the candidate SHA. Independent controls add **45 PC minutes** to
+  the proposed eight-control 72-minute floor; this is required coverage, not
+  optional repetition. No whole-Unit savings number is claimed because no
+  current whole-Unit timing was measured for this task.
