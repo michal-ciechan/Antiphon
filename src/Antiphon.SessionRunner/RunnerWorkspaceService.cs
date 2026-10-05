@@ -185,6 +185,7 @@ public sealed partial class RunnerWorkspaceService
     private async Task ProbePushAccessAsync(string repository, string identity, CancellationToken ct)
     {
         var pushUrl = await GitAsync(repository, ct, "remote", "get-url", "--push", "origin");
+        var category = PushProbeCategory.Unknown;
         if (pushUrl.ExitCode == 0 && pushUrl.Stdout.Trim().Length > 0)
         {
             // Use receive-pack to check write access. A read through the push URL also succeeds
@@ -195,9 +196,11 @@ public sealed partial class RunnerWorkspaceService
                 pushUrl.Stdout.Trim(), probeRef);
             if (probe.ExitCode == 0)
                 return;
+            category = PushProbeOutcome.Classify(probe.ExitCode, probe.Stderr);
         }
+        Serilog.Log.Warning("Runner cannot push to {RepositoryIdentity} ({PushProbeCategory})", identity, category);
         throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.RepositoryPushUnauthorized,
-            $"Runner cannot push to {identity}; register a push credential for it on server2.", 409);
+            $"Runner cannot push to {identity} ({category}): {PushProbeOutcome.Remedy(category)}", 409);
     }
 
     private async Task EnsureRepositoryAsync(string repository, string cloneSource, CancellationToken ct)
