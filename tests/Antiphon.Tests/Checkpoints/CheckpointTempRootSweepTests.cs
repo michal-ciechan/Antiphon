@@ -322,6 +322,18 @@ public sealed class CheckpointTempRootSweepTests : CheckpointTestBase
     }
 
     [Test]
+    public void absent_root_pointer_is_dropped_by_the_sweep()
+    {
+        var sandbox = TempDir();
+        var root = Candidate(sandbox);
+        Directory.Delete(root, recursive: true);
+        var receipt = Sweep(sandbox).SweepOnce();
+        receipt.Skips["absent"].ShouldBe(1, "absent-pointer-counted");
+        receipt.CompletedRoots.ShouldBe(0, "absent-pointer-deletes-nothing");
+        File.Exists(IndexPath(sandbox, root)).ShouldBeFalse("absent-pointer-dropped");
+    }
+
+    [Test]
     public void disposed_roots_do_not_consume_the_next_sweep_budget()
     {
         var sandbox = TempDir();

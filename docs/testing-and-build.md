@@ -1088,7 +1088,10 @@ or failed delete leaves the marked root visible for a later guarded retry. Do no
 The assembly startup hook admits a bounded sweep every five minutes. Registration
 uses one independent index file per marked root under `.checkpoint-temp-roots/`, so
 allocations do not wait for the shared sweep lock. Disposal removes its index file;
-stale entries for absent roots are removed when visited. The sweep checks the
+stale entries for absent roots are removed when visited. A test that deliberately
+makes teardown retain a root releases it with a second scope disposal after clearing
+its veto, never a bare `Directory.Delete`, so the root's index pointer leaves with it
+(CARD-1063). The sweep checks the
 persisted interval before trying the lock. An older shared JSONL index is migrated
 under that lock, with disposed entries discarded. It considers only exact indexed direct
 children of the OS temp directory, waits ten minutes from
