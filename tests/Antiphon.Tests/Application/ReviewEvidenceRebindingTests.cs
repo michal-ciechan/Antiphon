@@ -33,7 +33,8 @@ public sealed class ReviewEvidenceRebindingTests
                      block + "\n" + block, "--- next stage ---\nnext: review\n" + block })
         {
             var c = await w.PrepareAsync(text);
-            c.Bound.ShouldBeFalse("G10");
+            c.Bound.ShouldBeFalse(text == block + "\n" + block ? "G110"
+                : text.StartsWith("--- next stage") ? "G111" : "G10");
             if (text == block + "\n" + block) c.Warnings.ShouldContain("review_evidence_duplicate", "G110");
             if (text.StartsWith("--- next stage")) c.Warnings.ShouldContain("review_evidence_after_next_stage", "G111");
         }
@@ -190,9 +191,9 @@ public sealed class ReviewEvidenceRebindingTests
         await using var w = await World.CreateAsync();
         w.Git.ActualFingerprint = new string('b', 64);
         var c = await w.PrepareAsync();
-        w.Git.ExpectedFingerprints.ShouldBe(new[] { Fingerprint }, "G29");
+        w.Git.ExpectedFingerprints.ShouldBe(new[] { Fingerprint }, Case.Sensitive, "G29");
         c.Bound.ShouldBeFalse("G29");
-        w.Git.RequestedRefs.ShouldBe(new[] { "refs/heads/subject" }, "G29");
+        w.Git.RequestedRefs.ShouldBe(new[] { "refs/heads/subject" }, Case.Sensitive, "G29");
         w.Subject.ProgressBaselineJson = null;
         await w.Db.SaveChangesAsync();
         w.Git.RequestedRefs.Clear();
