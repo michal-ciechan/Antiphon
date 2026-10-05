@@ -40,7 +40,7 @@ public sealed class ReviewEvidenceRecoveryEndpointTests
     private static async Task<Guid> ProjectAsync(ReviewRecoveryWorld w)
     {
         await using var db = w.Db();
-        var project = new Project { Id = Guid.NewGuid(), Name = "recovery HTTP", LocalRepositoryPath = w.World.Git.Desktop,
+        var project = new Project { Id = Guid.NewGuid(), Name = "recovery HTTP " + Guid.NewGuid().ToString("N"), LocalRepositoryPath = w.World.Git.Desktop,
             CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
         db.Projects.Add(project);
         (await db.AgentTasks.SingleAsync(t => t.Id == w.ReviewId)).ProjectId = project.Id;
