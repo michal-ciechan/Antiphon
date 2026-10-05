@@ -239,3 +239,7 @@ Antiphon.Tests.Application.ReviewEvidenceResettlementTests
 Antiphon.Tests.Application.ReviewEvidenceRecoveryTests
 # CARD-1043 S3: actual HTTP host, isolated PostgreSQL, and reviewed-source recovery boundaries.
 Antiphon.Tests.Application.ReviewEvidenceRecoveryEndpointTests
+
+# CARD-1061: sequential native NTFS junction commands and bounded process/pipe timeout witnesses.
+Antiphon.Tests.Application.ChannelReplyAttachmentReaderWindowsTests
+Antiphon.Tests.TestHelpers.DirectoryLinkFixtureWindowsTests
