@@ -3165,8 +3165,10 @@ public sealed class AgentTaskService
                 task.ReleasedSeatAnswerAcceptedAt = UtcNow();
                 _db.AgentTaskEvents.Add(new AgentTaskEvent { Id = id, AgentTaskId = task.Id,
                     AgentSessionId = release.SessionId, Type = AgentTaskEventType.Replied, At = UtcNow(),
-                    Detail = "Answer accepted; awaiting confirmed seat release and continuation admission. "
-                        + BlockedQuestion.RepliedEventDetail(origin, currentRound, answer),
+                    // Detail is a bounded timeline label, while InputBody and the task's text
+                    // retain the entire authorized answer (including Unicode and its tail).
+                    Detail = BlockedQuestion.RepliedEventDetail(origin, currentRound,
+                        $"Answer {id:D} accepted; awaiting confirmed seat release and continuation admission."),
                     InputBody = $"{DelegationReportFormatter.TaskMarker(task.Id)}\n\n{answer}" });
                 await _db.SaveChangesAsync(ct);
             }
@@ -3239,7 +3241,11 @@ public sealed class AgentTaskService
         AgentTask task, AgentTaskEventType type, AgentModelLevel level, string detail, CancellationToken ct,
         bool abandonCommitRecovery = false)
     {
-        var gate = task.AgentSessionId is Guid sessionId ? _messageQueue?.GetLock(sessionId) : null;
+        var sourceSession = task.ReleasedSeatAnswerId is not null
+            ? await _db.RunnerSeatReleases.Where(r => r.Id == task.ReleasedSeatAnswerReleaseId)
+                .Select(r => (Guid?)r.SessionId).SingleOrDefaultAsync(ct)
+            : null;
+        var gate = (sourceSession ?? task.AgentSessionId) is Guid sessionId ? _messageQueue?.GetLock(sessionId) : null;
         if (gate is not null) await gate.WaitAsync(ct);
         try
         {

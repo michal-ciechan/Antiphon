@@ -24,6 +24,8 @@ namespace Antiphon.Server.Application.Services;
 /// </summary>
 public sealed class AgentTaskDispatcher
 {
+    private readonly TerminalRunnerSeatReleaseService? _terminalSeatRelease;
+    private readonly int _answerReceiptClockToleranceSeconds;
     private readonly AppDbContext _db;
     private readonly AgentRegistry _agentRegistry;
     private readonly AgentSessionLaunchQueue _launchQueue;
@@ -184,8 +186,11 @@ public sealed class AgentTaskDispatcher
         RepositoryLeaseWaiters? leaseWaiters = null,
         ILandingGit? landingGit = null,
         AgentTaskWorktreeBaseResolver? baseResolver = null,
-        HostBudgetService? hostBudgets = null)
+        HostBudgetService? hostBudgets = null,
+        TerminalRunnerSeatReleaseService? terminalSeatRelease = null)
     {
+        _terminalSeatRelease = terminalSeatRelease;
+        _answerReceiptClockToleranceSeconds = supervision?.Value.DeliveryVerification.UnobservableBaselineConfirmClockToleranceSeconds ?? 30;
         _hostBudgets = hostBudgets;
         _baseResolver = baseResolver;
         _leaseWaiters = leaseWaiters;
@@ -323,6 +328,9 @@ public sealed class AgentTaskDispatcher
         // sweep would abort the tick before the check sweep and the dispatch loop had run, on every
         // tick, and the only trace was one "Delegation dispatch tick failed" line that named
         // neither which clock had died nor what had stopped as a result.
+        // Accepted input is an existing obligation even when automatic seat release is off.
+        sweepFailures += await RunSweepAsync("released-seat answers", (d, ct2) => d.RecoverReleasedSeatAnswersAsync(ct2), ct);
+
         // CARD-0302: Check-role Blocked rows with a reading are stale evidence, not questions.
         // Remap them before anything else so the attention feed and notifier see Succeeded.
         sweepFailures += await RunSweepAsync(
@@ -4387,6 +4395,124 @@ public sealed class AgentTaskDispatcher
         && task.SourceLandingOperationId is null
         && task.VerificationRound != VerificationRound.Interim;
 
+    private static string ReleasedAnswerDeliveryKey(AgentTask task, AgentSession session) =>
+        $"released-seat-answer:{task.ReleasedSeatAnswerId:D}:{task.Attempt}:{session.Id:D}:{SessionGeneration.Normalize(session.StartedAt):O}";
+
+    /// <summary>Recover accepted input independently of the automatic release rollout. The
+    /// task fields are the producer obligation; the normal queue owns typing and late receipts.</summary>
+    internal async Task<int> RecoverReleasedSeatAnswersAsync(CancellationToken ct)
+    {
+        var ids = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.ReleasedSeatAnswerId != null && t.ReleasedSeatAnswer != null)
+            .OrderBy(t => t.ReleasedSeatAnswerAcceptedAt).ThenBy(t => t.Id)
+            .Select(t => t.Id).ToListAsync(ct);
+        var recovered = 0;
+        foreach (var id in ids)
+        {
+            try
+            {
+                var task = await _db.AgentTasks.SingleAsync(t => t.Id == id, ct);
+                await _db.Entry(task).ReloadAsync(ct);
+                if (task.ReleasedSeatAnswerTargetAttempt == task.Attempt + 1
+                    && task.Status == AgentTaskStatus.Blocked)
+                {
+                    if (_terminalSeatRelease is not null && task.ReleasedSeatAnswerReleaseId is Guid releaseId)
+                        await _terminalSeatRelease.ReconcileAcceptedAnswerAsync(releaseId, ct);
+                    // Retry owns auth, quota, workspace and exact-release admission, including
+                    // its queue gate. It consumes this accepted input without a new answer ID.
+                    await _tasks.RetryAsync(task.Id, ct);
+                    recovered++;
+                    continue;
+                }
+                if (task.ReleasedSeatAnswerTargetAttempt != task.Attempt
+                    || task.AgentSessionId is not Guid sessionId || task.DispatchedAt is null)
+                    continue;
+                using var claim = await AcquireReleasedAnswerClaimAsync(task, ct);
+                await _db.Entry(task).ReloadAsync(ct);
+                if (task.AgentSessionId != sessionId || task.ReleasedSeatAnswerTargetAttempt != task.Attempt
+                    || task.ReleasedSeatAnswerId is null || task.ReleasedSeatAnswer is null) continue;
+                var session = await _db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
+                if (session is null) continue;
+                var key = ReleasedAnswerDeliveryKey(task, session);
+                // Grok's rules owner queues the normal brief after its receipt. Share that
+                // owner's advisory lock and bind its row, rather than creating a second brief.
+                if (session.GrokRulesState != GrokRulesState.None)
+                {
+                    if (session.GrokRulesState != GrokRulesState.Ready) continue;
+                    await using var rulesTx = await _db.Database.BeginTransactionAsync(ct);
+                    var lockKey = $"grok-rules-brief:{session.Id:N}";
+                    await _db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtextextended({lockKey}, 0))", ct);
+                    var rulesBrief = await _db.SessionQueuedMessages.SingleOrDefaultAsync(m =>
+                        m.AgentSessionId == sessionId && m.SourceTaskId == task.Id
+                        && m.Origin == QueuedMessageOrigin.Delegation, ct);
+                    if (rulesBrief is null)
+                        await EnqueueReleasedSeatAnswerBriefAsync(task, session, ct);
+                    else if (rulesBrief.ContentDigest is null)
+                    {
+                        rulesBrief.ContentDigest = key;
+                        rulesBrief.ExecutionTaskId = task.Id;
+                        await _db.SaveChangesAsync(ct);
+                    }
+                    await rulesTx.CommitAsync(ct);
+                }
+                var row = await _db.SessionQueuedMessages.AsNoTracking().SingleOrDefaultAsync(m =>
+                    m.AgentSessionId == sessionId && m.ExecutionTaskId == task.Id && m.ContentDigest == key, ct);
+                if (row is null)
+                {
+                    if (task.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working
+                        && session.Status is SessionStatus.Starting or SessionStatus.Running)
+                        await EnqueueReleasedSeatAnswerBriefAsync(task, session, ct);
+                    continue;
+                }
+                if (row.LastDeliveryGeneration is not DateTime generation
+                    || !SessionGeneration.Equal(generation, session.StartedAt) || row.DeliveryAttempts == 0)
+                    continue;
+                var prompts = LandNoteReceipt.Prompts(_db.TranscriptEntries.AsNoTracking(), sessionId,
+                    isLegacy: true, LandNotificationKind.TaskCompletion, row.LastDeliveryBaselineSequence,
+                    row.LastDeliveryStartedAt, _answerReceiptClockToleranceSeconds);
+                if (prompts is null || !(await prompts.Select(p => p.Text!).ToListAsync(ct))
+                    .Any(text => LandNoteReceipt.IsReceipt(row.Body, text))) continue;
+
+                // A queue status or a transport ack is never the consume marker. Clear only
+                // this exact obligation under a task lock after matching the complete prompt.
+                var answerId = task.ReleasedSeatAnswerId;
+                var attempt = task.Attempt;
+                await using var tx = await _db.Database.BeginTransactionAsync(ct);
+                await _db.Database.ExecuteSqlInterpolatedAsync($"SELECT \"Id\" FROM \"AgentTasks\" WHERE \"Id\" = {id} FOR UPDATE", ct);
+                await _db.Entry(task).ReloadAsync(ct);
+                var currentSession = await _db.AgentSessions.FromSqlInterpolated(
+                    $"SELECT * FROM \"AgentSessions\" WHERE \"Id\" = {sessionId} FOR UPDATE").AsNoTracking().SingleOrDefaultAsync(ct);
+                if (task.ReleasedSeatAnswerId != answerId || task.Attempt != attempt
+                    || task.AgentSessionId != sessionId || task.ReleasedSeatAnswerTargetAttempt != attempt
+                    || currentSession is null || !SessionGeneration.Equal(generation, currentSession.StartedAt)) continue;
+                task.ReleasedSeatAnswer = null;
+                task.ReleasedSeatAnswerId = null;
+                task.ReleasedSeatAnswerRoundId = null;
+                task.ReleasedSeatAnswerReleaseId = null;
+                task.ReleasedSeatAnswerTargetAttempt = null;
+                task.ReleasedSeatAnswerAcceptedAt = null;
+                task.ConcurrencyToken = Guid.NewGuid();
+                await _db.SaveChangesAsync(ct);
+                await tx.CommitAsync(ct);
+                recovered++;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                // Admission refusal or an interrupted persistence boundary leaves the original
+                // input owed. Never carry a failed tracked write into another candidate's save.
+                _db.ChangeTracker.Clear();
+                _logger.LogWarning(ex, "Released-seat answer recovery deferred for task {TaskId}", id);
+            }
+        }
+        return recovered;
+    }
+
+    private Task EnqueueReleasedSeatAnswerBriefAsync(AgentTask task, AgentSession session, CancellationToken ct) =>
+        _queue.EnqueueAsync(session.Id, FitBriefForSession(task, session), MessageSendMode.WhenIdle, ct,
+            QueuedMessageOrigin.Delegation, conversationKey: $"released-seat-answer:{task.ReleasedSeatAnswerId:D}",
+            sourceTaskId: task.Id, contentDigest: ReleasedAnswerDeliveryKey(task, session),
+            executionDeadlineAt: task.ExecutionDeadlineAt, executionTaskId: task.Id);
+
     private async Task<IDisposable?> AcquireReleasedAnswerClaimAsync(AgentTask task, CancellationToken ct)
     {
         if (task.ReleasedSeatAnswerId is null) return null;
@@ -5011,12 +5137,14 @@ public sealed class AgentTaskDispatcher
         // off the session is what makes a Grok delegate spill instead of arriving run-on.
         if (spec.GrokRulesPayload is null)
         {
-        var brief = FitBriefForSession(claimed, session);
         try
         {
-            await _queue.EnqueueAsync(
-                session.Id, brief, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation,
-                executionDeadlineAt: claimed.ExecutionDeadlineAt, executionTaskId: claimed.Id);
+            if (claimed.ReleasedSeatAnswerId is not null && claimed.ReleasedSeatAnswerTargetAttempt == claimed.Attempt)
+                await EnqueueReleasedSeatAnswerBriefAsync(claimed, session, ct);
+            else
+                await _queue.EnqueueAsync(
+                    session.Id, FitBriefForSession(claimed, session), MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation,
+                    executionDeadlineAt: claimed.ExecutionDeadlineAt, executionTaskId: claimed.Id);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -5414,12 +5542,14 @@ public sealed class AgentTaskDispatcher
         }
 
         if (deferRulesBrief) return;
-        var brief = FitBriefForSession(task, session);
         try
         {
-            await _queue.EnqueueAsync(
-                session.Id, brief, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation,
-                executionDeadlineAt: task.ExecutionDeadlineAt, executionTaskId: task.Id);
+            if (task.ReleasedSeatAnswerId is not null && task.ReleasedSeatAnswerTargetAttempt == task.Attempt)
+                await EnqueueReleasedSeatAnswerBriefAsync(task, session, ct);
+            else
+                await _queue.EnqueueAsync(
+                    session.Id, FitBriefForSession(task, session), MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation,
+                    executionDeadlineAt: task.ExecutionDeadlineAt, executionTaskId: task.Id);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
