@@ -117,6 +117,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
             Conversation = new Conversation { Id = w.Conversation, Kind = ConversationKind.Group },
             Author = new Participant { Id = "source", DisplayName = "source" }, Timestamp = DateTimeOffset.UtcNow,
             Text = body, ReplyHandle = w.Conversation + "|" + w.Thread,
+            Raw = JsonSerializer.SerializeToElement(new { fixture = "C519", complete = body }),
         };
         try { await bridge.HandleInboundAsync(inbound, ct); }
         catch (IOException) when (fault.Fired == 1) { }
@@ -356,8 +357,9 @@ public sealed class ChannelOutboundUnifiedTransportTests
             }
             var prepared = (await w.DeliveryAsync("main"))!;
             var output = Path.Combine(Path.GetDirectoryName(prepared.InputPath)!, "output");
+            var convertedText = w.Answer + " converted by the linked worker";
             await File.WriteAllTextAsync(Path.Combine(output, "manifest.json"), JsonSerializer.Serialize(new
-                { version = 1, deliveryId = delivery.Id, disposition = "converted", replacementText = w.Answer, files = Array.Empty<object>() }));
+                { version = 1, deliveryId = delivery.Id, disposition = "converted", replacementText = convertedText, files = Array.Empty<object>() }));
             await AgentTaskReplyIntegrationTests.SettleExistingConversionTaskAsync(w.Schema.ConnectionString, taskId, workerSession);
             if (cut == "result-committed")
             {
@@ -369,13 +371,13 @@ public sealed class ChannelOutboundUnifiedTransportTests
                 await child.KillAsync();
             }
             await w.RecoverAsync();
-            await w.AssertReceiptAsync();
+            await w.AssertReceiptAsync(expectedText: convertedText);
             var published = (await w.DeliveryAsync("main"))!;
             published.ConversionTaskId.ShouldBe(taskId);
             published.ConversionOutcome.ShouldBe("Converted");
             published.State.ShouldBe(ChannelOutboundDeliveryState.Published);
             published.PublicationAttempts.ShouldBe(1);
-            await w.RecoverAsync(); await w.AssertReceiptAsync();
+            await w.RecoverAsync(); await w.AssertReceiptAsync(expectedText: convertedText);
         }
     }
 
