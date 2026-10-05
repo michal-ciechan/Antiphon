@@ -139,6 +139,13 @@ public class TerminalSeatReleaseTests
             world.Tailer.Snapshot().LastSequence.ShouldBe(before);
             await world.PollAsync();
             var published = world.DrainTranscript();
+            published.Select(e => e.Kind).ShouldBe(new[]
+            {
+                TranscriptKinds.UserPrompt,
+                provider == "Claude" ? TranscriptKinds.ToolCall
+                    : provider == "Grok" ? TranscriptKinds.AssistantText : TranscriptKinds.Thinking,
+                TranscriptKinds.TurnEnd
+            }, "private inspection must preserve every later ingestion part exactly once");
             published.Count(e => e.Kind == TranscriptKinds.UserPrompt && e.Text == "second prompt").ShouldBe(1);
             published.Count(e => e.Kind == TranscriptKinds.TurnEnd).ShouldBe(1);
             published.Select(e => e.Sequence).Distinct().Count().ShouldBe(published.Length);

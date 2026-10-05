@@ -171,10 +171,14 @@ internal sealed class GrokTranscriptTailer : ITranscriptTailer
 
     internal TerminalSeatReleaseObservation TerminalObservation { get; } = new();
 
-    public Task<TerminalTranscriptObservation> ObserveTerminalSeatAsync(CancellationToken ct) =>
-        TerminalObservation.ObserveAsync(
+    public Task<TerminalTranscriptObservation> ObserveTerminalSeatAsync(CancellationToken ct)
+    {
+        var normalizer = new GrokTranscriptNormalizer();
+        return TerminalObservation.ObserveAsync(
             () => BoundTranscriptPath is { } path
-                ? (path, $"{path}|{BindHow}") : null, Snapshot, ct);
+                ? (path, $"{path}|{BindHow}") : null,
+            normalizer.Normalize, normalizer.FlushPending, ct);
+    }
 
     private async Task RunAsync(CancellationToken ct)
     {
@@ -195,56 +199,58 @@ internal sealed class GrokTranscriptTailer : ITranscriptTailer
                 await TerminalObservation.ReadGate.WaitAsync(ct);
                 try
                 {
-                try
-                {
-                    var info = new FileInfo(_updatesPath);
-                    if (info.Exists)
+                    try
                     {
-                        everExisted = true;
-                        if (BoundTranscriptPath is null)
+                        var info = new FileInfo(_updatesPath);
+                        if (info.Exists)
                         {
-                            BoundTranscriptPath = _updatesPath;
-                            BindHow = TranscriptBindMethods.Deterministic;
-                        }
-                        if (info.Length > offset)
-                        {
-                            byte[] buffer;
-                            int read;
-                            // Grok keeps the file open for the session's lifetime; share everything.
-                            await using (var fs = new FileStream(
-                                _updatesPath, FileMode.Open, FileAccess.Read,
-                                FileShare.ReadWrite | FileShare.Delete))
+                            everExisted = true;
+                            if (BoundTranscriptPath is null)
                             {
-                                fs.Seek(offset, SeekOrigin.Begin);
-                                var len = (int)Math.Min(info.Length - offset, MaxReadChunkBytes);
-                                buffer = new byte[len];
-                                read = await fs.ReadAsync(buffer.AsMemory(0, len), ct);
+                                TerminalObservation.Bind(_updatesPath);
+                                BoundTranscriptPath = _updatesPath;
+                                BindHow = TranscriptBindMethods.Deterministic;
                             }
-
-                            if (read > 0)
+                            if (info.Length > offset)
                             {
-                                offset += read;
-                                pending.AddRange(read == buffer.Length ? buffer : buffer[..read]);
-                                ProcessPending(pending);
+                                byte[] buffer;
+                                int read;
+                                // Grok keeps the file open for the session's lifetime; share everything.
+                                await using (var fs = new FileStream(
+                                    _updatesPath, FileMode.Open, FileAccess.Read,
+                                    FileShare.ReadWrite | FileShare.Delete))
+                                {
+                                    fs.Seek(offset, SeekOrigin.Begin);
+                                    var len = (int)Math.Min(info.Length - offset, MaxReadChunkBytes);
+                                    buffer = new byte[len];
+                                    read = await fs.ReadAsync(buffer.AsMemory(0, len), ct);
+                                }
+
+                                if (read > 0)
+                                {
+                                    offset += read;
+                                    TerminalObservation.RecordConsumed(offset);
+                                    pending.AddRange(read == buffer.Length ? buffer : buffer[..read]);
+                                    ProcessPending(pending);
+                                }
                             }
                         }
                     }
-                }
-                catch (IOException)
-                {
-                    // Mid-write / transiently locked — retry on the next poll.
-                }
+                    catch (IOException)
+                    {
+                        // Mid-write / transiently locked — retry on the next poll.
+                    }
 
-                if (_childExitedAtUtc is { } exitedAt && DateTime.UtcNow - exitedAt >= ChildExitSettle)
-                {
-                    // Chunks whose turn_completed never arrived (child died mid-turn) are emitted
-                    // rather than lost; no TurnEnd is synthesized — the relaunch path's
-                    // SessionRestartBoundary is what ends a turn the process abandoned.
-                    Publish(_normalizer.FlushPending());
-                    if (!everExisted)
-                        ReportMissingAfterChildExit();
-                    return;
-                }
+                    if (_childExitedAtUtc is { } exitedAt && DateTime.UtcNow - exitedAt >= ChildExitSettle)
+                    {
+                        // Chunks whose turn_completed never arrived (child died mid-turn) are emitted
+                        // rather than lost; no TurnEnd is synthesized — the relaunch path's
+                        // SessionRestartBoundary is what ends a turn the process abandoned.
+                        Publish(_normalizer.FlushPending());
+                        if (!everExisted)
+                            ReportMissingAfterChildExit();
+                        return;
+                    }
 
                 }
                 finally { TerminalObservation.ReadGate.Release(); }

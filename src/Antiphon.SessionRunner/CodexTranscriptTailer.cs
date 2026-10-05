@@ -91,6 +91,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
     private Guid _claimRevokedBy;
     private int _bindGeneration;
     private readonly CodexTranscriptNormalizer _normalizer;
+    private readonly string? _apiErrorTimeZoneId;
     private readonly CancellationTokenSource _cts = new();
     private readonly object _gate = new();
     private readonly List<RunnerTranscriptEvent> _entries = new();
@@ -132,6 +133,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
     {
         _sessionId = sessionId;
         _normalizer = new CodexTranscriptNormalizer(apiErrorTimeZoneId);
+        _apiErrorTimeZoneId = apiErrorTimeZoneId;
         _cwd = cwd;
         _events = events;
         _logger = logger;
@@ -221,10 +223,15 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
 
     internal TerminalSeatReleaseObservation TerminalObservation { get; } = new();
 
-    public Task<TerminalTranscriptObservation> ObserveTerminalSeatAsync(CancellationToken ct) =>
-        TerminalObservation.ObserveAsync(
+    public Task<TerminalTranscriptObservation> ObserveTerminalSeatAsync(CancellationToken ct)
+    {
+        var normalizer = new CodexTranscriptNormalizer(_apiErrorTimeZoneId);
+        return TerminalObservation.ObserveAsync(
             () => BoundTranscriptPath is { } path && !_claimRevoked
-                ? (path, $"{path}|{BindHow}|{_bindGeneration}") : null, Snapshot, ct);
+                && (_claims is null || _claims.OwnerOf(path)?.Owner == _sessionId)
+                ? (path, $"{path}|{BindHow}|{_bindGeneration}") : null,
+            normalizer.Normalize, null, ct);
+    }
 
     private async Task RunAsync(CancellationToken ct)
     {
@@ -250,45 +257,46 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
                 await TerminalObservation.ReadGate.WaitAsync(ct);
                 try
                 {
-                if (_claimRevoked)
-                {
-                    HandleClaimRevoked(path);
-                    dropped = true;
-                    break;
-                }
-                try
-                {
-                    var info = new FileInfo(path);
-                    if (info.Exists && info.Length > offset)
+                    if (_claimRevoked)
                     {
-                        byte[] buffer;
-                        int read;
-                        // Codex keeps the rollout open for the session's lifetime; share everything.
-                        await using (var fs = new FileStream(
-                            path, FileMode.Open, FileAccess.Read,
-                            FileShare.ReadWrite | FileShare.Delete))
+                        HandleClaimRevoked(path);
+                        dropped = true;
+                        break;
+                    }
+                    try
+                    {
+                        var info = new FileInfo(path);
+                        if (info.Exists && info.Length > offset)
                         {
-                            fs.Seek(offset, SeekOrigin.Begin);
-                            var len = (int)Math.Min(info.Length - offset, MaxReadChunkBytes);
-                            buffer = new byte[len];
-                            read = await fs.ReadAsync(buffer.AsMemory(0, len), ct);
-                        }
+                            byte[] buffer;
+                            int read;
+                            // Codex keeps the rollout open for the session's lifetime; share everything.
+                            await using (var fs = new FileStream(
+                                path, FileMode.Open, FileAccess.Read,
+                                FileShare.ReadWrite | FileShare.Delete))
+                            {
+                                fs.Seek(offset, SeekOrigin.Begin);
+                                var len = (int)Math.Min(info.Length - offset, MaxReadChunkBytes);
+                                buffer = new byte[len];
+                                read = await fs.ReadAsync(buffer.AsMemory(0, len), ct);
+                            }
 
-                        if (read > 0)
-                        {
-                            offset += read;
-                            pending.AddRange(read == buffer.Length ? buffer : buffer[..read]);
-                            ProcessPending(pending);
+                            if (read > 0)
+                            {
+                                offset += read;
+                                TerminalObservation.RecordConsumed(offset);
+                                pending.AddRange(read == buffer.Length ? buffer : buffer[..read]);
+                                ProcessPending(pending);
+                            }
                         }
                     }
-                }
-                catch (IOException)
-                {
-                    // Mid-write / transiently locked — retry on the next poll.
-                }
+                    catch (IOException)
+                    {
+                        // Mid-write / transiently locked — retry on the next poll.
+                    }
 
-                if (_childExitedAtUtc is { } exitedAt && DateTime.UtcNow - exitedAt >= ChildExitSettle)
-                    return;
+                    if (_childExitedAtUtc is { } exitedAt && DateTime.UtcNow - exitedAt >= ChildExitSettle)
+                        return;
 
                 }
                 finally { TerminalObservation.ReadGate.Release(); }
@@ -485,6 +493,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
             return false;
         }
 
+        TerminalObservation.Bind(path);
         BoundTranscriptPath = path;
         BindHow = how;
         _bindGeneration++;
