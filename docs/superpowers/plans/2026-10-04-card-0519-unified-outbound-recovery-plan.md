@@ -1329,3 +1329,20 @@ No test executed. The run was stopped and its waiter returned terminal exit 6;
 all owned children were gone before source repair. The missing import is added,
 and the legacy-only watermark comments now match S6 ownership. Run After=S6 on
 the next committed tip; no per-fix rebuild, timeout widening or assertion change.
+
+S6 ordinary qualification: run 20261005-053654-b508 at
+635baa68fe6d67f5a0eb0014dc9cc77ccc1999b1 completed exit 0 in 20m11s.
+CP-34..CP-40 executed 8/10/16/5/38/31/13 results respectively: 121 passed,
+zero failures/skips. Fresh TRX rosters were inspected per intended class/method;
+all seven clean-source/build receipts validated for that exact SHA. Each selected
+build and row had slot=granted, waited=0s; no automatic repetitions or additional
+application builds/tests ran. One repair group was used, solely for the missing
+namespace import; no second repair was needed. Full receipts and the cumulative
+V/R/PC disposition are in .antiphon/task-7d285cb5.md. This qualification applies
+only to the S6 closed scope, not later-slice or full-card qualification.
+
+PC-S6-2 has three independent pending variants, all detected by the same exact
+fair-root method: reset the root cursor every tick; remove Take(PageSize) from
+the root query; remove the MaximumPages root-loop limit. Mutation must execute
+each separately and budget each red/restore/green cycle. All prior pending PC
+IDs/variants remain pending; ordinary green does not discharge any control.
