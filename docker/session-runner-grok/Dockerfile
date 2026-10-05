@@ -210,6 +210,10 @@ COPY docker/session-runner-grok/daemon.json /etc/docker/daemon.json
 COPY docker/session-runner-grok/ssh_config /etc/antiphon/ssh_config
 COPY docker/session-runner-grok/github_known_hosts /etc/antiphon/github_known_hosts
 COPY docker/session-runner-grok/gitconfig /etc/gitconfig
+COPY docker/session-runner-grok/github-credential.sh /usr/local/bin/antiphon-github-credential
+RUN chown root:root /usr/local/bin/antiphon-github-credential \
+    && chmod 0755 /usr/local/bin/antiphon-github-credential \
+    && sh -n /usr/local/bin/antiphon-github-credential
 COPY docker/session-runner-grok/dind-entrypoint.sh /usr/local/bin/antiphon-dind-entrypoint.sh
 COPY docker/session-runner-grok/seed-claude-onboarding.mjs /usr/local/bin/antiphon-seed-claude-onboarding.mjs
 # CARD-0604 D-17 (Cut B): the custody mechanism. Both helpers are root-owned 0755 and the

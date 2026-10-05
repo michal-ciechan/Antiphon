@@ -7,15 +7,16 @@ import { fileURLToPath } from 'node:url';
 export function materialize(root, project = 'antiphon-runner', temp = false) {
   if (!path.isAbsolute(root) || fs.realpathSync(root) !== root) throw Error('FixtureRootInvalid');
   const paths = {deployKey:root+'/deploy-key', phoneHome:root+'/phone-home',
-    claude:root+'/claude-token', git:root+'/gitconfig', codex:root+'/codex', grok:root+'/grok'};
+    claude:root+'/claude-token', git:root+'/gitconfig', codex:root+'/codex', grok:root+'/grok', githubToken:root+'/github-token'};
   for (const key of ['deployKey','phoneHome','claude','git']) {
     if (!fs.existsSync(paths[key])) fs.writeFileSync(paths[key], 'inert-fixture-'+key+'\n');
   }
-  for (const key of ['codex','grok']) fs.mkdirSync(paths[key], {recursive:true});
+  for (const key of ['codex','grok','githubToken']) fs.mkdirSync(paths[key], {recursive:true});
   const env = {SOURCE_REVISION:'a'.repeat(40), SOURCE_SHA12:'a'.repeat(12), BUILD_SLOTS_SHA12:'a'.repeat(12),
     PHONE_HOME_SERVER_ORIGIN:'http://fixture.invalid', ANTIPHON_DEPLOY_KEY_FILE:paths.deployKey,
     PHONE_HOME_SECRET_FILE:paths.phoneHome, CLAUDE_OAUTH_TOKEN_FILE:paths.claude,
-    RUNNER_GIT_IDENTITY_FILE:paths.git, RUNNER_CODEX_HOME_DIR:paths.codex, RUNNER_GROK_STORE_DIR:paths.grok};
+    RUNNER_GIT_IDENTITY_FILE:paths.git, RUNNER_CODEX_HOME_DIR:paths.codex, RUNNER_GROK_STORE_DIR:paths.grok,
+    RUNNER_GITHUB_TOKEN_DIR:paths.githubToken};
   const envFile=root+'/compose.env';
   fs.writeFileSync(envFile,Object.entries(env).map(([k,v])=>k+'='+v).join('\n')+'\n');
   const args=['compose','--env-file',envFile,'-p',project,'-f','docker-compose.server2-runner.yml'];

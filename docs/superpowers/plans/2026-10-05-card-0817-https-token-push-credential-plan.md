@@ -316,6 +316,10 @@ Files:
   `c849_fixture_compose` and both `stack.env` heredocs, the `c1008_compose_model` roster line.
 - `scripts/fixtures/c994-production-compose-model.mjs`: `githubToken` directory and
   `RUNNER_GITHUB_TOKEN_DIR`.
+- Caller-authorized S2 fixture-only amendment (2026-10-05):
+  `tests/Antiphon.Tests/Scripts/RollingVolumeRecycleScriptTests.cs` (`C1008HostFixture.Run`)
+  and `scripts/fixtures/c1008-recycle-real-cases.mjs` inject a scratch
+  `GITHUB_TOKEN_DIR_PATH` matching the materialized Compose bind. No live harness run is added.
 - `tests/Antiphon.Tests/Infrastructure/GithubCredentialHelperTests.cs` (new,
   `[ParallelLimiter<ProcessSpawnLimit>]`, guarded for Linux the way
   `RemoteScriptContractTests` guards its `sh` runs): six methods, V-6..V-11. Each runs the real

@@ -201,6 +201,7 @@ SERVER2_ENV='${f.root}/main.env'; SERVER2_TEMP_ENV='${f.root}/temp.env'; C849_RE
 C1008_CONTEXT=${hostCase==='retire-temp-containers'?"''":'default'}; C1008_OPERATION="\${C1008_OPERATION:-${f.op}}"; C1008_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1; C1008_RESUME=${options.resume?1:0}; C1008_DRY_RUN=${options.dryRun&&hostCase!=='retire-temp-containers'?1:0}; C1008_CLEANUP_OPERATION='${options.cleanupOperation||''}'
 C994_VERSION=1; C994_OPERATION="\${C994_OPERATION:-${f.cleanupOp}}"; C994_PROJECT='${f.temp}'; C994_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1; C994_RETIRED_AT=2026-10-03T09:30:00Z; C994_DRY_RUN=${options.dryRun?1:0}
 DEPLOY_KEY='${f.root}/deploy-key'; PHONE_HOME_SECRET='${f.root}/phone-home'; CLAUDE_OAUTH_TOKEN_PATH='${f.root}/claude-token'; GIT_IDENTITY_PATH='${f.root}/gitconfig'; CODEX_HOME_PATH='${f.root}/codex'; RUNNER_GROK_STORE_DIR='${f.root}/grok'
+GITHUB_TOKEN_DIR_PATH='${f.root}/github-token'
 C590_TEMP_RETIRED_AT=2026-10-03T09:30:00Z; RUNNER_GIT_USER_NAME=Fixture; RUNNER_GIT_USER_EMAIL=fixture@example.invalid
 mkdir -p "$CASE_DIR"
 exec 3>'${f.root}/${name}.trace'; export BASH_XTRACEFD=3; set -x

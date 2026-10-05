@@ -4,5 +4,9 @@
 # GIT_CONFIG_GLOBAL, which outranks this system file for every uid-1654 git.
 [core]
 	sshCommand = ssh -F /etc/antiphon/ssh_config
-[url "git@github.com:"]
-	pushInsteadOf = https://github.com/
+[url "git@github.com:michal-ciechan/Antiphon.git"]
+	pushInsteadOf = https://github.com/michal-ciechan/Antiphon.git
+[credential "https://github.com"]
+	helper = /usr/local/bin/antiphon-github-credential
+	useHttpPath = true
+	username = x-access-token

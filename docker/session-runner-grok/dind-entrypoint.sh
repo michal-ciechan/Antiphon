@@ -97,6 +97,15 @@ if ! setpriv --reuid="$APP_UID" --regid="$APP_GID" --clear-groups \
   refuse ClaudeOnboardingSeedFailed
 fi
 
+# --- step 2d: GitHub token presence only (CARD-0817) ---------------------------------
+# Read live by the credential helper, never staged or exported at boot.
+GITHUB_TOKEN_SOURCE="$RUNTIME_DIR/github-token/token"
+if [ -s "$GITHUB_TOKEN_SOURCE" ]; then
+  echo 'C604_ENTRYPOINT_NOTE GithubTokenPresent' >&2
+else
+  echo 'C604_ENTRYPOINT_NOTE GithubTokenAbsent' >&2
+fi
+
 # --- step 3: cgroup preparation (D-3 step 3, D-17 custody root) -----------------------
 if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
   # cgroup v2 (Docker Desktop). Block attributed to the upstream docker:dind entrypoint:
