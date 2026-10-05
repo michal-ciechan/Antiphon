@@ -280,10 +280,10 @@ public sealed class ChannelOutboundService
             d.ChannelId == channel.Id && d.State != ChannelOutboundDeliveryState.Published
             && d.State != ChannelOutboundDeliveryState.Failed, ct);
 
-        if (!_settings.UnifiedRecoveryEnabled && !qualifies && !hasOlderIntent)
+        // Catalog-less conversation-id replies have no durable channel owner. Preserve
+        // their direct route for either switch value, including trailing fragments.
+        if (channel is null || !_settings.UnifiedRecoveryEnabled && !qualifies && !hasOlderIntent)
             return await PublishDirectAsync(reply, source, ct);
-        if (channel is null)
-            throw new InvalidOperationException("A queued reply requires a channel catalog row.");
 
         var key = SourceKey(source, reply);
         var prior = await _db.ChannelOutboundDeliveries.AsNoTracking()

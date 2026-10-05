@@ -82,7 +82,7 @@ public sealed record ChannelReplyDispatchResult(
 public sealed class ChannelReplyDispatcher
 {
     private sealed record ReplyTarget(string Provider, string? ReplyHandle, string ConversationId,
-        IReadOnlyList<Guid> CorrelationIds);
+        IReadOnlyList<Guid> CorrelationIds, bool HasCatalog);
 
     /// <summary>Why a correlation was abandoned without an answer. All are Critical incidents.</summary>
     private enum LossReason
@@ -367,7 +367,7 @@ public sealed class ChannelReplyDispatcher
 
             var replyHandle = await ResolveInboundReplyHandleAsync(db, group, channel?.ReplyHandle, ct);
             targets.Add(new ReplyTarget(provider, replyHandle, conversationId,
-                group.Select(m => m.Id).ToArray()));
+                group.Select(m => m.Id).ToArray(), channel is not null));
         }
 
         var failed = unroutable.Select(m => m.Id).ToHashSet();
@@ -406,8 +406,6 @@ public sealed class ChannelReplyDispatcher
         var (bodyText, attachments) = outbound.UnifiedRecoveryEnabled
             ? (descriptor.Text, new List<OutboundAttachment>())
             : PrepareReplyBody(responseText, sessionId);
-        var text = Truncate(bodyText);
-        var kind = ClassifyKind(bodyText);
 
         // One reply per distinct conversation. With same-conversation batching this loop is
         // degenerate (exactly one send) — the fan-out is a deliberate latent safety net in case
@@ -419,21 +417,27 @@ public sealed class ChannelReplyDispatcher
         {
             try
             {
+                // A conversation-id route without a catalog cannot own a captured delivery.
+                // Keep its existing preparation and direct publication contract when enabled.
+                var captureReply = outbound.UnifiedRecoveryEnabled && target.HasCatalog;
+                var (targetBody, targetAttachments) = outbound.UnifiedRecoveryEnabled && !captureReply
+                    ? PrepareReplyBody(responseText, sessionId) : (bodyText, attachments);
+                var targetText = Truncate(targetBody);
                 var reply = new ChannelReply
                 {
                     Channel = target.Provider,
                     ReplyHandle = target.ReplyHandle,
                     ConversationId = target.ConversationId,
-                    Text = text.Length == 0 ? null : text,
-                    Kind = kind,
-                    Attachments = attachments,
+                    Text = targetText.Length == 0 ? null : targetText,
+                    Kind = ClassifyKind(targetBody),
+                    Attachments = targetAttachments,
                 };
                 var targetRows = matches.Where(m => target.CorrelationIds.Contains(m.Id)).ToList();
                 ChannelOutboundSendOutcome outcome;
                 var source = new ChannelOutboundSource(sessionId, userPrompt.Sequence,
                     userPrompt.Sequence + 1, maxTextSeq, "main", target.CorrelationIds,
                     targetRows.Select(m => m.SourceTaskId).FirstOrDefault(id => id.HasValue));
-                if (outbound.UnifiedRecoveryEnabled)
+                if (captureReply)
                 {
                     var delivery = await outbound.CaptureAsync(reply, source, descriptor, _settings, ct);
                     outcome = delivery.State == ChannelOutboundDeliveryState.Published
@@ -446,7 +450,7 @@ public sealed class ChannelReplyDispatcher
                 if (outcome == ChannelOutboundSendOutcome.Published)
                 {
                     published.UnionWith(target.CorrelationIds);
-                    try { await channels.StampLastReplyAsync(target.Provider, target.ConversationId, text, ct); }
+                    try { await channels.StampLastReplyAsync(target.Provider, target.ConversationId, targetText, ct); }
                     catch (Exception stampError) when (stampError is not OperationCanceledException)
                     {
                         _logger.LogWarning(stampError,
@@ -458,7 +462,7 @@ public sealed class ChannelReplyDispatcher
                     deferred.UnionWith(target.CorrelationIds);
                 _logger.LogInformation(
                     "{Outcome} {Kind} reply ({Chars} chars, {AttachmentCount} attachment(s)) to {Provider} conversation {ConversationId} from session {SessionId}",
-                    outcome, reply.Kind, text.Length, attachments.Count, target.Provider, target.ConversationId, sessionId);
+                    outcome, reply.Kind, targetText.Length, targetAttachments.Count, target.Provider, target.ConversationId, sessionId);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -1304,8 +1308,15 @@ public sealed class ChannelReplyDispatcher
         }
 
         var outbound = scope.ServiceProvider.GetRequiredService<ChannelOutboundService>();
+        var captureReply = outbound.UnifiedRecoveryEnabled;
+        if (captureReply)
+        {
+            captureReply = TrySplitConversationKey(conversationKey, out var captureProvider, out var captureConversation)
+                && await db.ChatChannels.AnyAsync(c => c.Provider == captureProvider
+                    && c.ExternalId == captureConversation, ct);
+        }
         var (impliedPaths, impliedTasks) = await CollectImpliedAttachmentsAsync(db, matches, ct,
-            describeOnly: outbound.UnifiedRecoveryEnabled);
+            describeOnly: captureReply);
 
         // CARD-0337 S3: an exact NO_REPLY with no explicit markers holds the bundle. The
         // orchestrator chose silence; S5's Done-time check catches it later.
@@ -1313,7 +1324,7 @@ public sealed class ChannelReplyDispatcher
             return;
 
         var hasAttachments = explicitPaths.Count > 0 || impliedPaths.Count > 0
-            || outbound.UnifiedRecoveryEnabled && impliedTasks.Count > 0;
+            || captureReply && impliedTasks.Count > 0;
         var deliverText = !hasAttachments && AdmitsMachineTurnText(matches);
         if (!hasAttachments && !deliverText)
         {
@@ -1350,7 +1361,7 @@ public sealed class ChannelReplyDispatcher
             RequiresAttachment = explicitPaths.Count == 0 && !AdmitsMachineTurnText(matches),
             MaxTextChars = _settings.MaxReplyChars,
         };
-        var (bodyText, attachments) = outbound.UnifiedRecoveryEnabled
+        var (bodyText, attachments) = captureReply
             ? (descriptor.Text, new List<OutboundAttachment>())
             : PrepareReplyBody(responseText, sessionId, impliedPaths);
         // A remaining-text of NO_REPLY still sends — the marker is the explicit ask. Empty text
@@ -1362,7 +1373,7 @@ public sealed class ChannelReplyDispatcher
         var kind = ClassifyKind(bodyText);
         var replyHandle = await ResolveInboundReplyHandleAsync(db, matches, channel?.ReplyHandle, ct);
         var target = new ReplyTarget(provider, replyHandle, conversationId,
-            matches.Select(m => m.Id).ToArray());
+            matches.Select(m => m.Id).ToArray(), channel is not null);
 
         var publicationAccepted = false;
         try
@@ -1380,7 +1391,7 @@ public sealed class ChannelReplyDispatcher
             var source = new ChannelOutboundSource(sessionId, userPrompt.Sequence,
                 userPrompt.Sequence + 1, maxTextSeq, "machine", target.CorrelationIds,
                 impliedTasks.FirstOrDefault()?.Id);
-            if (outbound.UnifiedRecoveryEnabled)
+            if (captureReply)
             {
                 var delivery = await outbound.CaptureAsync(reply, source, descriptor, _settings, ct,
                     sourceTaskIds: impliedTasks.Select(t => t.Id).ToArray());
@@ -1403,7 +1414,7 @@ public sealed class ChannelReplyDispatcher
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            if (!publicationAccepted && !outbound.UnifiedRecoveryEnabled)
+            if (!publicationAccepted && !captureReply)
             {
                 foreach (var m in matches)
                     m.ChannelReplySettledAt = null;
@@ -1418,7 +1429,7 @@ public sealed class ChannelReplyDispatcher
             return;
         }
 
-        if (!outbound.UnifiedRecoveryEnabled && matches.All(m => m.ChannelOutboundDeliveryId is null))
+        if (!captureReply && matches.All(m => m.ChannelOutboundDeliveryId is null))
         {
             var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
             await channels.StampLastReplyAsync(provider, conversationId, text, ct);
