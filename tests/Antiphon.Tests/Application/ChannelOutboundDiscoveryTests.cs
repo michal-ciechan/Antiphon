@@ -443,6 +443,8 @@ public sealed class ChannelOutboundDiscoveryTests
         await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, default);
         await w.DrainAsync();
         var acceptedRow = await w.DeliveryAsync(accepted);
+        // Give the due publication a later acceptance time than the reply awaiting repair.
+        w.Clock.Advance(TimeSpan.FromSeconds(1));
         var due = await w.MainAsync("due prompt", "publish this due answer");
         await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, default);
         await w.H.TickOutboundAsync();
