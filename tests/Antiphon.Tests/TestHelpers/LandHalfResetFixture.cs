@@ -4,6 +4,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Update;
+using Antiphon.Server.Infrastructure.Git;
+using System.Security.Cryptography;
+using Shouldly;
 
 namespace Antiphon.Tests.TestHelpers;
 
@@ -119,6 +122,102 @@ internal sealed class LandHalfResetFixture : IAsyncDisposable
     }
 
     public ValueTask DisposeAsync() => Harness.DisposeAsync();
+
+    /// <summary>Independent observations and a single owned admin-file write, restored only at disposal.</summary>
+    internal sealed class BacklinkCorruption(
+        LandingGitFixture fixture, LandingGitFixture.FixtureGit reader, string backlink, byte[] original,
+        string worktrees, DateTime stamp, int entryCount, string sourceImage, string observerImage,
+        string remoteRefs) : IAsyncDisposable
+    {
+        private bool redirected;
+
+        public static async Task<BacklinkCorruption> CreateAsync(LandingGitFixture fixture)
+        {
+            var reader = new LandingGitFixture.FixtureGit(Path.Combine(fixture.Root, "home"), fixture.TaskId);
+            var admin = (await RequiredAsync(reader, fixture.Source, "rev-parse", "--absolute-git-dir")).Trim();
+            var common = Path.GetFullPath((await RequiredAsync(reader, fixture.Repository,
+                "rev-parse", "--git-common-dir")).Trim(), fixture.Repository);
+            var worktrees = Path.Combine(common, "worktrees");
+            LandingGit.PathsEqual(Path.GetDirectoryName(admin)!, worktrees).ShouldBeTrue();
+            var backlink = Path.Combine(admin, "gitdir");
+            return new(fixture, reader, backlink, await File.ReadAllBytesAsync(backlink), worktrees,
+                Directory.GetLastWriteTimeUtc(worktrees), Directory.EnumerateFileSystemEntries(worktrees).Count(),
+                await CheckoutImageAsync(reader, fixture.Source), await ObserverImageAsync(reader, fixture.Observer),
+                await RequiredAsync(reader, fixture.Remote, "show-ref", "--heads"));
+        }
+
+        public async Task RedirectAsync()
+        {
+            redirected.ShouldBeFalse("each scenario injects exactly once");
+            redirected = true;
+            await File.WriteAllTextAsync(backlink, Path.Combine(fixture.Observer, ".git") + "\n");
+            AssertStamp();
+            var rows = LandingGit.ParseRegistrations(await RequiredAsync(reader, fixture.Repository,
+                "worktree", "list", "--porcelain", "-z"));
+            rows.Any(row => LandingGit.PathsEqual(row.Path, fixture.Source)).ShouldBeFalse();
+            rows.Any(row => LandingGit.PathsEqual(row.Path, fixture.Observer)).ShouldBeTrue();
+        }
+
+        public async Task AssertPreservedAsync(string ownerSha)
+        {
+            Directory.Exists(fixture.Source).ShouldBeTrue("the refused checkout stays in place");
+            AssertStamp();
+            (await RequiredAsync(reader, fixture.Source, "rev-parse", "HEAD")).Trim().ShouldBe(ownerSha);
+            (await RequiredAsync(reader, fixture.Repository, "show-ref", "--verify", "--hash", fixture.SourceRef))
+                .Trim().ShouldBe(ownerSha);
+            (await RequiredAsync(reader, fixture.Source, "symbolic-ref", "HEAD")).Trim().ShouldBe(fixture.SourceRef);
+            (await CheckoutImageAsync(reader, fixture.Source)).ShouldBe(sourceImage,
+                "owner index, tracked bytes and .git file must survive the refusal");
+            (await ObserverImageAsync(reader, fixture.Observer)).ShouldBe(observerImage,
+                "observer HEAD, refs, index and bytes must stay unchanged");
+            (await RequiredAsync(reader, fixture.Remote, "show-ref", "--heads")).ShouldBe(remoteRefs,
+                "compare captured owner/adoption/target remotes, which need not share a SHA");
+        }
+
+        private void AssertStamp()
+        {
+            Directory.GetLastWriteTimeUtc(worktrees).ShouldBe(stamp,
+                "nested corruption must leave the parent registration stamp unchanged");
+            Directory.EnumerateFileSystemEntries(worktrees).Count().ShouldBe(entryCount);
+        }
+
+        private static async Task<string> CheckoutImageAsync(LandingGitFixture.FixtureGit reader, string checkout)
+        {
+            var admin = (await RequiredAsync(reader, checkout, "rev-parse", "--absolute-git-dir")).Trim();
+            var facts = new List<string> { await DigestAsync(Path.Combine(admin, "index")) };
+            var dotGit = Path.Combine(checkout, ".git");
+            if (File.Exists(dotGit)) facts.Add(await DigestAsync(dotGit));
+            foreach (var path in (await RequiredAsync(reader, checkout, "ls-files", "-z"))
+                         .Split('\0', StringSplitOptions.RemoveEmptyEntries).Order(StringComparer.Ordinal))
+            {
+                facts.Add(path);
+                facts.Add(await DigestAsync(Path.Combine(checkout, path)));
+            }
+            return string.Join('\0', facts);
+        }
+
+        private static async Task<string> ObserverImageAsync(LandingGitFixture.FixtureGit reader, string observer) =>
+            string.Join('\0', await RequiredAsync(reader, observer, "rev-parse", "HEAD"),
+                await RequiredAsync(reader, observer, "show-ref"), await CheckoutImageAsync(reader, observer));
+
+        private static async Task<string> DigestAsync(string path) =>
+            Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(path)));
+
+        private static async Task<string> RequiredAsync(LandingGitFixture.FixtureGit reader, string path,
+            params string[] arguments)
+        {
+            var result = await reader.RunAsync(path, arguments, CancellationToken.None);
+            result.Succeeded.ShouldBeTrue(result.Diagnostic);
+            return result.Output;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            fixture.Git.AfterCommand = null;
+            fixture.Git.BeforeCommand = null;
+            if (redirected) await File.WriteAllBytesAsync(backlink, original);
+        }
+    }
 
     internal sealed class PairObservationGit(string home, LandingSafetyHarness h) : LandingGitFixture.FixtureGit(home, h.Fixture.TaskId)
     {
