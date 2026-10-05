@@ -1067,6 +1067,20 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         expected.ExpectedRunnerStoreId == RunnerStoreId
         && (session is null || SessionGeneration.Equal(session.AcceptedStartedAt, expected.ExpectedAcceptedStartedAt));
 
+    // The production replay decision is observable separately from the independent
+    // release-in-progress custody fence, which must also keep a failed kill from retrying.
+    internal TerminalSeatReleaseResult? PriorTerminalRelease(
+        Guid sessionId, TerminalSeatReleaseRequest request, RunnerSession? session)
+    {
+        if (!_terminalReleases.TryGetValue((sessionId, request.ActionId), out var prior)) return null;
+        if (prior.Request.Observation.ExpectedRunnerStoreId != request.Observation.ExpectedRunnerStoreId
+            || !SessionGeneration.Equal(prior.Request.Observation.ExpectedAcceptedStartedAt, request.Observation.ExpectedAcceptedStartedAt)
+            || (session is not null && !ReferenceEquals(prior.Session, session)))
+            return new(sessionId, request.ActionId, TerminalSeatReleaseOutcome.GenerationMismatch, session?.AcceptedStartedAt);
+        return prior.Request == request ? prior.Result
+            : new(sessionId, request.ActionId, TerminalSeatReleaseOutcome.StaleObservation, session?.AcceptedStartedAt);
+    }
+
     // Dormant until S2c exposes the wire protocol. Both input entry points share this gate.
     // Never call either public lock-taking release/observation method from inside this gate.
     internal async Task<TerminalSeatReleaseResult> ReleaseTerminalSeatAsync(
@@ -1093,13 +1107,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (request.ActionId == Guid.Empty)
                 return Refuse(TerminalSeatReleaseOutcome.StaleObservation);
             var key = (sessionId, request.ActionId);
-            if (_terminalReleases.TryGetValue(key, out var prior))
+            if (PriorTerminalRelease(sessionId, request, session) is { } prior)
             {
-                if (prior.Request.Observation.ExpectedRunnerStoreId != expected.ExpectedRunnerStoreId
-                    || !SessionGeneration.Equal(prior.Request.Observation.ExpectedAcceptedStartedAt, expected.ExpectedAcceptedStartedAt)
-                    || (session is not null && !ReferenceEquals(prior.Session, session)))
-                    return Refuse(TerminalSeatReleaseOutcome.GenerationMismatch);
-                return prior.Request == request ? prior.Result : Refuse(TerminalSeatReleaseOutcome.StaleObservation);
+                return prior.Outcome is TerminalSeatReleaseOutcome.GenerationMismatch or TerminalSeatReleaseOutcome.StaleObservation
+                    ? Refuse(prior.Outcome) : prior;
             }
 
             if (request.Publication is { } publication
@@ -1433,6 +1444,15 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         var id = session.ToDto().SessionId;
         if (!_sessions.TryAdd(id, session))
             throw new InvalidOperationException($"Session '{id:D}' is already tracked.");
+    }
+
+    // Test-only replacement of concrete registry state at the final I/O barrier. This
+    // supplies no eligibility verdict and does not bypass the real release fences.
+    internal void ReplaceTrackedSessionForTest(RunnerSession expected, RunnerSession replacement)
+    {
+        if (expected.SessionId != replacement.SessionId
+            || !_sessions.TryUpdate(expected.SessionId, replacement, expected))
+            throw new InvalidOperationException("The expected fixture session is not current.");
     }
 
     private void ForgetDurableSession(Guid sessionId)

@@ -179,7 +179,7 @@ public sealed class BlockedParkWireTests
                 {
                     switch (guard)
                     {
-                        case "G-52": world.TrackReplacement(release.Observation.ExpectedAcceptedStartedAt); break;
+                        case "G-52": world.ReplaceTracked(release.Observation.ExpectedAcceptedStartedAt); break;
                         case "G-53": world.Session.BindAcceptedGeneration(release.Observation.ExpectedAcceptedStartedAt.AddSeconds(1)); break;
                         case "G-54": world.Runtime.DetachTerminalTailerForTest(world.Tail.SessionId); break;
                         case "G-55": world.Session.BackendInput.Enqueue("racing input"); break;
@@ -571,9 +571,9 @@ public sealed class BlockedParkWireTests
         {
             await using var world = new SeatWorld(provider);
             var request = await world.QualifyAsync();
-            world.Runtime.TerminalReleaseBeforeFinalCheck = _ =>
+            world.Runtime.TerminalParkBeforeVerification = _ =>
                 world.Tail.AppendAsync(world.Tail.Prompt("racing native prompt", "racing"));
-            (await world.ReleaseAsync(request)).Outcome.ShouldBe(TerminalSeatReleaseOutcome.Working);
+            (await world.ReleaseAsync(request)).Outcome.ShouldBe(TerminalSeatReleaseOutcome.Working, "G-51");
             world.AssertRetained();
         }
     }
@@ -608,6 +608,8 @@ public sealed class BlockedParkWireTests
             result.ConfirmsExit.ShouldBeFalse();
             world.AssertRetained(expectedKills: 1);
             world.ReleaseAuditCount.ShouldBe(0);
+            world.Runtime.PriorTerminalRelease(world.Tail.SessionId, request, world.Session)
+                .ShouldBe(result, "G-64");
             (await world.ReleaseAsync(request)).ShouldBe(result, "G-64");
             world.Child.Kills.ShouldBe(1);
         }
@@ -1038,6 +1040,7 @@ public sealed class BlockedParkWireTests
         private readonly string _manifest;
         private readonly string _sidecar;
         private readonly DateTime _generation = new(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc);
+        private SessionRunnerRuntime.RunnerSession? _replacedSession;
         public World Source { get; private set; } = null!;
         public TailWorld Tail { get; }
         public SeatChild Child { get; } = new();
@@ -1123,6 +1126,15 @@ public sealed class BlockedParkWireTests
             Runtime.Track(Session);
         }
 
+        public void ReplaceTracked(DateTime generation)
+        {
+            _replacedSession = Session;
+            Session = new SessionRunnerRuntime.RunnerSession(Tail.SessionId, _settings,
+                new SessionRunnerEventHub(), NullLogger.Instance);
+            Session.BindChildForTest(new SeatChild(), Tail.Tailer, generation);
+            Runtime.ReplaceTrackedSessionForTest(_replacedSession, Session);
+        }
+
         public Guid TrackForeign()
         {
             var id = Guid.NewGuid();
@@ -1155,7 +1167,7 @@ public sealed class BlockedParkWireTests
             Runtime.List().ShouldNotContain(s => s.SessionId == Tail.SessionId);
             File.Exists(_manifest).ShouldBeFalse();
             File.Exists(HerdrPaneSidecar.PathFor(_root, Tail.SessionId)).ShouldBeFalse();
-            File.Exists(_sidecar).ShouldBeTrue("transcript history is not session custody");
+            File.Exists(_sidecar).ShouldBeTrue("G-66 transcript history is not session custody");
             Child.Kills.ShouldBe(expectedKills);
             ReleaseAuditCount.ShouldBe(1);
         }
@@ -1243,6 +1255,11 @@ public sealed class BlockedParkWireTests
 
         public async ValueTask DisposeAsync()
         {
+            if (_replacedSession is not null)
+            {
+                _replacedSession.DetachTailerForTest();
+                await _replacedSession.DisposeAsync();
+            }
             if (Runtime.List().Any(s => s.SessionId == Tail.SessionId))
                 Runtime.DetachTerminalTailerForTest(Tail.SessionId);
             await Runtime.DisposeAsync();
