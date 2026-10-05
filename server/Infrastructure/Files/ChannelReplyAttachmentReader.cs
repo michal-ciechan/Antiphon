@@ -7,6 +7,7 @@ namespace Antiphon.Server.Infrastructure.Files;
 
 public sealed class ChannelReplyAttachmentReader : IChannelReplyAttachmentReader
 {
+    internal Func<string, CancellationToken, Task>? BeforeReadAsync { get; set; }
     public async Task<byte[]> ReadAttachmentAsync(string path, IReadOnlyList<string> allowedRoots,
         long maxBytes, CancellationToken ct)
     {
@@ -16,6 +17,7 @@ public sealed class ChannelReplyAttachmentReader : IChannelReplyAttachmentReader
         await using var stream = OpenRegularFile(path);
         var length = stream.Length;
         if (length > maxBytes) throw new ChannelReplyFileTooLargeException(length);
+        if (BeforeReadAsync is { } beforeRead) await beforeRead(path, ct);
         using var output = new MemoryStream();
         var buffer = new byte[64 * 1024];
         int read;
@@ -107,10 +109,34 @@ public sealed class ChannelReplyAttachmentReader : IChannelReplyAttachmentReader
         }
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("Safe source reads require Windows or Linux.");
-        var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
-            64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        try { ValidatePath(path, [Path.GetDirectoryName(path)!]); _ = stream.Length; return stream; }
-        catch { stream.Dispose(); throw; }
+        // Pin every parent without delete sharing before opening the leaf.
+        // Each handle is inspected with OPEN_REPARSE_POINT, so a junction swap
+        // cannot redirect the read between path validation and file open.
+        var parents = new List<SafeFileHandle>();
+        try
+        {
+            var chain = new Stack<string>();
+            for (var parent = Path.GetDirectoryName(path); parent is not null; parent = Path.GetDirectoryName(parent))
+                chain.Push(parent);
+            foreach (var parent in chain)
+            {
+                var handle = OpenWindows(parent, 0x80, 0x1 | 0x2, 0x00200000 | 0x02000000);
+                parents.Add(handle);
+                if (!GetFileInformationByHandle(handle, out var info)
+                    || (info.Attributes & 0x400) != 0 || (info.Attributes & 0x10) == 0)
+                    throw new InvalidDataException("A source directory is linked or invalid.");
+            }
+            var file = OpenWindows(path, 0x80000000, 0x1, 0x00200000);
+            try
+            {
+                if (GetFileType(file) != 1 || !GetFileInformationByHandle(file, out var info)
+                    || (info.Attributes & (0x400 | 0x10 | 0x40)) != 0)
+                    throw new InvalidDataException("A source must be an unlinked regular disk file.");
+                return new FileStream(file, FileAccess.Read, 64 * 1024, isAsync: false);
+            }
+            catch { file.Dispose(); throw; }
+        }
+        finally { foreach (var parent in parents) parent.Dispose(); }
     }
 
     private static SafeFileHandle OpenAt(int directory, string path, int flags)
@@ -126,4 +152,26 @@ public sealed class ChannelReplyAttachmentReader : IChannelReplyAttachmentReader
     private static extern int NativeOpenAt(int directory, string path, int flags);
     [DllImport("libc", EntryPoint = "statx", SetLastError = true)]
     private static extern int Statx(int directory, string path, int flags, uint mask, out FileStat stat);
+
+    private static SafeFileHandle OpenWindows(string path, uint access, uint share, uint flags)
+    {
+        var handle = CreateFileW(path, access, share, IntPtr.Zero, 3, flags, IntPtr.Zero);
+        if (!handle.IsInvalid) return handle;
+        handle.Dispose();
+        throw new IOException("The source could not be safely opened.");
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileInformation
+    {
+        public uint Attributes, CreationLow, CreationHigh, AccessLow, AccessHigh,
+            WriteLow, WriteHigh, VolumeSerial, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
+    }
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security,
+        uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandle(SafeFileHandle handle, out FileInformation info);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint GetFileType(SafeFileHandle handle);
 }

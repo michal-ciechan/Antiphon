@@ -63,7 +63,7 @@ public sealed class ChannelReplyPreparation(IChannelReplyAttachmentReader reader
                 MemberIds: not null, Tasks: not null, MaxAttachmentBytes: > 0 }
             || capture.Body.AttachmentPaths is null || capture.Body.OriginalResponse is null
             || capture.Body.AttachmentPaths.Count > 64 || capture.AttachmentRoots is null || capture.AttachmentRoots.Count > 64
-            || capture.Body.Text is null || capture.Route.Attachments.Count != 0
+            || capture.Body.Text is null || capture.Route.Attachments is null || capture.Route.Attachments.Count != 0
             || string.IsNullOrWhiteSpace(capture.Route.Channel)
             || string.IsNullOrWhiteSpace(capture.Route.ConversationId))
             throw new InvalidDataException("The outbound capture has an unsupported or malformed descriptor.");

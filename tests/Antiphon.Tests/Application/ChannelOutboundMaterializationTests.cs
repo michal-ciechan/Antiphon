@@ -118,6 +118,13 @@ public sealed class ChannelOutboundMaterializationTests
         frozen.PromptRevision.ShouldBe(Hash("original converter prompt"));
         frozen.DeadlineAt.ShouldBe(first.DeadlineAt);
         frozen.MaxPending.ShouldBe(8);
+        frozen.ConversionTaskId.ShouldNotBeNull();
+        await using (var db = w.Db())
+        {
+            var worker = await db.AgentTasks.SingleAsync(t => t.Id == frozen.ConversionTaskId);
+            worker.Goal.ShouldContain("original converter prompt");
+            worker.Goal.ShouldNotContain("edited converter prompt");
+        }
         (await w.LoadAsync(next.Id)).PromptText.ShouldBe("edited converter prompt");
     }
 
@@ -138,6 +145,17 @@ public sealed class ChannelOutboundMaterializationTests
         }
         await w.TickAsync(reader);
         reader.Calls.ShouldBe(3);
+        var incomplete = await w.CaptureAsync(attachment: true);
+        Directory.CreateDirectory(Path.Combine(w.StoreRoot, incomplete.Id.ToString("N")));
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            await w.TickAsync(reader);
+            (await w.LoadAsync(incomplete.Id)).PreparationAttempts.ShouldBe(attempt);
+            w.Clock.Advance(TimeSpan.FromSeconds(30));
+        }
+        (await w.LoadAsync(incomplete.Id)).State.ShouldBe(ChannelOutboundDeliveryState.Failed);
+        await w.TickAsync(reader);
+        reader.Calls.ShouldBe(3); // Missing adoption metadata cannot grant new source I/O.
         w.Producer.SentReplies.ShouldBeEmpty();
     }
 
@@ -244,6 +262,24 @@ public sealed class ChannelOutboundMaterializationTests
         row.DeadlineAt.ShouldBe(original.DeadlineAt);
         row.ConversionTaskId.ShouldBeNull();
         row.ConversionOutcome.ShouldBe("Fallback");
+        var late = await w.CaptureAsync(profile: true);
+        await w.TickAsync(); await w.TickAsync();
+        var converting = await w.LoadAsync(late.Id);
+        converting.State.ShouldBe(ChannelOutboundDeliveryState.Converting);
+        converting.ConversionTaskId.ShouldNotBeNull();
+        await using (var db = w.Db())
+            await db.AgentTasks.Where(t => t.Id == converting.ConversionTaskId).ExecuteUpdateAsync(s =>
+                s.SetProperty(t => t.Status, AgentTaskStatus.Succeeded));
+        // A valid unchanged output would be accepted if the original deadline
+        // were incorrectly replaced by a retry clock.
+        await File.WriteAllTextAsync(Path.Combine(Path.GetDirectoryName(converting.InputPath)!, "output", "manifest.json"),
+            System.Text.Json.JsonSerializer.Serialize(new { version = 1, deliveryId = late.Id, disposition = "unchanged", files = Array.Empty<object>() }));
+        w.Clock.Advance(TimeSpan.FromSeconds(120));
+        await w.TickAsync();
+        var ignored = await w.LoadAsync(late.Id);
+        ignored.ConversionOutcome.ShouldBe("Fallback");
+        ignored.OutputPath.ShouldBeNull();
+        ignored.DeadlineAt.ShouldBe(converting.DeadlineAt);
     }
 
     private static string Hash(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
