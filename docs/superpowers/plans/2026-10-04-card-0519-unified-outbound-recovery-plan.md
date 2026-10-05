@@ -1587,3 +1587,19 @@ refused capture. The existing finite-source test takes PC-34's planned method na
 CP-8 now requires all 20 results. These are ordinary witnesses; PC-34..37/97/98 and
 all other controls remain pending SourceLanding Mutation. Terminal-complete
 closure remains S10-owned. Run only CP-8..12 and CP-53..57 at the committed SHA.
+
+Continuation repair 2 follows one 157-result run (150 pass, 7 fail) and a pinned
+base reproduction: the six earlier retry/unified/runtime failures also fail at
+84f39527b0c0711739a46eef38bfced8821888ec. The new page probe now delegates provider
+reads unchanged instead of replaying DataTable values that lose UTC kind. Retry
+witnesses assert S8's Failed + settled loss + Critical incident/alert after a
+definite pre-entry failure, require the tick's cancellation exception while keeping
+all uncertainty/receipt assertions, and inject the terminal incident write through
+both EF command paths. The unified fixture gives each main prompt a distinct
+identity; its API error matrix covers beginning/middle/end, and attachment-only
+policy exercises an implied Delegation bundle plus exact NO_REPLY withholding.
+The real runtime fixture supplies a native timestamp for its synthetic submitted
+prompt, as required when the original attempt has no observable sequence floor.
+No production behavior, assertion tolerance or timeout changes. Rerun only the
+four red rows CP-8, CP-10, CP-12 and CP-57; other rows retain their first clean
+receipts. All controls and terminal-complete closure remain pending as above.

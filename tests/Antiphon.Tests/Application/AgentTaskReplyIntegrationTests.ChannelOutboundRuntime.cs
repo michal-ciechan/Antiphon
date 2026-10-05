@@ -275,7 +275,7 @@ public partial class AgentTaskReplyIntegrationTests
 
             // The harness adapter writes a synthetic TurnEnd immediately after delivery.
             // Start the answering turn explicitly, as the production transcript does.
-            await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, note.Body);
+            await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, note.Body, timestamp: h.Now);
             await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText,
                 "Here is the complete source document.");
             const string nextPrompt = "Next queued prompt after the source answer";

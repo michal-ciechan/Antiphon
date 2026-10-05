@@ -44,7 +44,18 @@ public sealed class ChannelOutboundRetryPolicyTests
         fault.Fired.ShouldBeTrue();
         (await w.LoadAsync(faultId)).PublicationAttempts.ShouldBe(0);
         w.Producer.Entries.ShouldBe(1);
-        (await w.MemberAsync(faultId)).ChannelReplySettledAt.ShouldBeNull();
+        // S8's definite pre-entry failure atomically settles a loss, never a publication.
+        var failed = await w.LoadAsync(faultId);
+        failed.State.ShouldBe(ChannelOutboundDeliveryState.Failed);
+        failed.PublishedAt.ShouldBeNull();
+        failed.FailureEpisode.ShouldBe(1);
+        failed.FailureReportedEpisode.ShouldBe(1);
+        (await w.MemberAsync(faultId)).ChannelReplySettledAt.ShouldBe(w.Now);
+        await using var observer = w.Db();
+        var incident = await observer.AgentIncidents.SingleAsync(i => i.Message.Contains(faultId.ToString()));
+        incident.Kind.ShouldBe(AgentIncidentKind.ChannelReplyLost);
+        incident.Severity.ShouldBe(AlertSeverity.Critical);
+        (await observer.Alerts.SingleAsync(a => a.Detail!.Contains(faultId.ToString()))).Severity.ShouldBe(AlertSeverity.Critical);
     }
 
     [Test]
@@ -180,9 +191,9 @@ public sealed class ChannelOutboundRetryPolicyTests
             w.Producer.OnSend = (_, ct) => { if (phase == "entry") { host.Cancel(); ct.ThrowIfCancellationRequested(); } return Task.CompletedTask; };
             Func<string, Guid, CancellationToken, Task> barrier = (at, _, ct) =>
             { if (at == phase) { host.Cancel(); ct.ThrowIfCancellationRequested(); } return Task.CompletedTask; };
-            if (phase == "before-publication-attempt")
-                await Should.ThrowAsync<OperationCanceledException>(() => w.TickAsync(barrier, ct: host.Token));
-            else await w.TickAsync(barrier, ct: host.Token);
+            // The bounded multi-page tick observes cancellation at its next query after
+            // persisting the conservative outcome. Cancellation is not a successful tick.
+            await Should.ThrowAsync<OperationCanceledException>(() => w.TickAsync(barrier, ct: host.Token));
             var row = await w.LoadAsync(id);
             row.PublicationAttempts.ShouldBe(phase == "before-publication-attempt" ? 0 : 1);
             row.State.ShouldBe(phase == "before-publication-attempt" ? ChannelOutboundDeliveryState.Ready : ChannelOutboundDeliveryState.PublishUncertain);
@@ -515,12 +526,21 @@ public sealed class ChannelOutboundRetryPolicyTests
     private sealed class RefusalCommandFault : DbCommandInterceptor
     {
         public bool Fired { get; private set; }
+        private void Check(System.Data.Common.DbCommand command)
+        {
+            // Terminal refusal now saves its incident/alert with the outcome (S8).
+            if (!Fired && command.CommandText.Contains("INSERT INTO \"AgentIncidents\"", StringComparison.Ordinal))
+            { Fired = true; throw new IOException("refusal incident commit refusal"); }
+        }
         public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(System.Data.Common.DbCommand command, CommandEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
         {
-            if (!Fired && command.CommandText.StartsWith("UPDATE \"ChannelOutboundDeliveries\"") && command.CommandText.Contains("\"FailureReason\"") && command.CommandText.Contains("\"NextAttemptAt\""))
-            { Fired = true; throw new IOException("refusal commit refusal"); }
+            Check(command);
             return ValueTask.FromResult(result);
         }
+        public override ValueTask<InterceptionResult<System.Data.Common.DbDataReader>> ReaderExecutingAsync(
+            System.Data.Common.DbCommand command, CommandEventData eventData,
+            InterceptionResult<System.Data.Common.DbDataReader> result, CancellationToken cancellationToken = default)
+        { Check(command); return ValueTask.FromResult(result); }
     }
     private sealed class World(IsolatedTestSchema schema, string root) : IAsyncDisposable
     {
