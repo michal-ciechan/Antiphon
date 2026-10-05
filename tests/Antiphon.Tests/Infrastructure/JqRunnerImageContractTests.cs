@@ -159,8 +159,9 @@ public sealed class JqRunnerImageContractTests
         Directory.Delete(f.Destination);
         f.WriteJq(f.Destination);
         File.SetUnixFileMode(f.Destination, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        // Bash command -v retains a nonexecutable file when no executable fallback exists.
         AssertRefused(f, await f.ProbeAsync([f.DestinationDirectory]),
-            "JqNotFound", "unavailable", "unavailable", "c1054-nonexecutable-leaf-refused");
+            "JqLookupInvalid", f.Destination, "unavailable", "c1054-nonexecutable-leaf-refused");
     }
 
     [Test]

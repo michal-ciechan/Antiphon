@@ -361,7 +361,7 @@ is an internal case and contributes no additional TUnit result:
 |---|---|
 | `C1054_Jq_row_rejects_home_shadow` / V-1, R-1 | Run canonical-present home shadow **first**, then canonical-absent home shadow; identical healthy binaries, home first on PATH, exit 1 and `JqPathUnapproved`, exact two home paths, trace empty. Add missing discovery with canonical present but off PATH, then absent everywhere (`JqNotFound`); PATH entry `.` with cwd=canonical parent (`./jq`, `JqLookupInvalid`); canonical found with only the fixture's readlink link omitted (`JqResolveFailed`); and the same-shell cached-canonical/home-first vector (`JqPathUnapproved`). Each asserts actual exit, exact fail row/no ok row, correct fields and no jq invocation. |
 | `C1054_Jq_row_accepts_canonical_file_and_alias` / V-2, R-2 | Direct canonical first; earlier absolute alias to it second. Both exit 0 with exact success prefix/fields and one invocation whose `$0` is the resolved canonical path, argc=1, argv=`--version`, HOME=private probe home. Include a nonexecutable earlier home candidate plus executable canonical fallback: Bash must discover canonical, since the nonexecutable home file is not a shadow. |
-| `C1054_Jq_row_rejects_canonical_leaf_symlink` / V-3, R-3 | Canonical PATH spelling is a symlink to a healthy executable home target, both with direct lookup and an earlier alias to that leaf. Require exit 1, `JqPathUnapproved`, found spelling preserved, resolved home preserved and empty trace. Additional static layouts: dangling leaf, self-loop leaf, directory leaf and nonexecutable canonical leaf with no later jq all refuse `JqNotFound`, with unavailable observations and empty trace. These layouts never reach execution or block on a FIFO. |
+| `C1054_Jq_row_rejects_canonical_leaf_symlink` / V-3, R-3 | Canonical PATH spelling is a symlink to a healthy executable home target, both with direct lookup and an earlier alias to that leaf. Require exit 1, `JqPathUnapproved`, found spelling preserved, resolved home preserved and empty trace. Additional static layouts: dangling leaf, self-loop leaf and directory leaf refuse `JqNotFound`, with unavailable observations and empty trace. A nonexecutable canonical leaf with no later jq is discovered by Bash and refuses `JqLookupInvalid`, retaining found canonical spelling and unavailable resolution. These layouts never reach execution or block on a FIFO. |
 | `C1054_Jq_row_records_found_and_resolved_paths` / V-4, R-4 | Direct, accepted alias, home shadow, canonical-link-to-home, unavailable lookup and unavailable resolution. Assert complete row equality using independent fixture expectations. Add accepted alias directory containing a newline **first**, then space, tab, CR, quote and backslash as separate vectors; then a plain alias to an unapproved home path with those characters, again newline first. Cover each field independently: encoded found differs from encoded target. Assert a single physical row before field equality so PC-6/PC-13 reach their named assertion; no unsafe `eval` of receipt text. Preserve exact sentinel and reason expectations. |
 
 Use literal expected encodings for those fixed filename suffixes, composed with
@@ -379,9 +379,18 @@ eleven refusal rows, and the existing correct refusal explanation: `exit=1`,
 `reason=Jq...` path refusal is allowed to satisfy these assertions. Its two
 source-contract companions remain unchanged.
 
-Boundary exclusions are deliberate. Bash cannot discover a nonexecutable file,
-directory, dangling link or loop as executable jq in this private PATH; they
-exercise discovery refusal, not artificial `readlink` output. Readlink failure
+Code correction (2026-10-05, task `dfea030e`): native CP-1 at
+`f25bea3cdf7d1f50719a1cbb299cdffb570ee6a9` disproved the original assumption
+that Bash never reports a nonexecutable file. With no executable fallback,
+`command -v` returns its path; the frozen first-failed-boundary grammar therefore
+requires `JqLookupInvalid` and the actual lookup observation. The vector above
+now asserts that exact receipt, exit 1 and zero invocations. Production admission,
+receipt grammar, checkpoint roster and all thirteen control seams are unchanged.
+
+Boundary exclusions are deliberate. Bash cannot discover a directory, dangling
+link or loop as executable jq in this private PATH; they exercise discovery
+refusal, not artificial `readlink` output. A nonexecutable file instead reaches
+lookup validation, as measured above. Readlink failure
 is exercised independently by omitting that utility from the child PATH while
 canonical jq remains discoverable. Relative lookup is independently reachable
 with PATH=`.`. NUL and slash inside a filename are impossible Linux filenames;
