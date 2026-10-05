@@ -138,6 +138,7 @@ public sealed class ScriptHarnessWindowsOwnershipTests
             await WaitForAsync(() => !tree.Root.Executing() && !tree.Child.Executing() && !tree.Grandchild.Executing(),
                 TimeSpan.FromSeconds(2), "Closing only the private job must signal the whole retained tree.");
             hooks.Calls.ShouldNotContain("terminate-job", "This guard must exercise disposal without explicit termination.");
+            owned.DeletePathsAfterConfirmedDeath();
             tree.AssertDeadBeforeEmergencySweep();
         }, drainStreams: false);
     }
