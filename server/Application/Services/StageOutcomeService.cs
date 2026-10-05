@@ -38,6 +38,8 @@ public sealed class StageOutcomeService
             query = query.Where(o => o.Stage == parsedStage);
         if (cardId is not null)
             query = query.Where(o => o.CardId == cardId);
+        if (latestOnly)
+            query = ActiveQuery(query, _db);
 
         var rows = await query.OrderBy(o => o.RecordedAt).ThenBy(o => o.Id).ToListAsync(ct);
         if (latestOnly)
@@ -81,12 +83,27 @@ public sealed class StageOutcomeService
     /// same grain an orchestrator override supersedes.
     /// </summary>
     public static IReadOnlyList<StageOutcome> LatestPerTaskStage(IReadOnlyList<StageOutcome> rows) =>
-        rows
+        ActiveLeaves(rows)
             .GroupBy(o => (o.SubjectTaskId ?? o.StageTaskId, o.Stage))
             .Select(g => g.OrderByDescending(o => o.RecordedAt).ThenByDescending(o => o.Id).First())
             .OrderBy(o => o.RecordedAt)
             .ThenBy(o => o.Id)
             .ToList();
+
+    /// <summary>Successors are checked against the full relation, even outside a caller's filters.</summary>
+    public static IQueryable<StageOutcome> ActiveQuery(IQueryable<StageOutcome> query, AppDbContext db) =>
+        query.Where(o => !db.StageOutcomes.Any(successor => successor.SupersedesId == o.Id));
+
+    /// <summary>Remove predecessors before grouping: a replacement may name a different subject.</summary>
+    public static IReadOnlyList<StageOutcome> ActiveLeaves(IReadOnlyList<StageOutcome> rows)
+    {
+        var superseded = rows.Where(o => o.SupersedesId != null).Select(o => o.SupersedesId!.Value).ToHashSet();
+        return rows.Where(o => !superseded.Contains(o.Id)).ToList();
+    }
+
+    public static StageOutcome? ActiveReview(IReadOnlyList<StageOutcome> rows, Guid reviewId) =>
+        ActiveLeaves(rows).Where(o => o.StageTaskId == reviewId && o.Stage == OrchestrationStage.Review)
+            .OrderByDescending(o => o.RecordedAt).ThenByDescending(o => o.Id).FirstOrDefault();
 
     /// <summary>
     /// A Merge delegate finishing is the cost of the Rebase finding it resolved. No row → nothing

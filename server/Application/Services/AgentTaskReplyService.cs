@@ -4560,72 +4560,12 @@ public sealed class AgentTaskReplyService
         if (task.CompletedAt is DateTime completed && task.DispatchedAt is DateTime dispatched)
             duration = (int)Math.Clamp(Math.Round((completed - dispatched).TotalSeconds), 0, int.MaxValue);
 
-        Guid? subjectId = task.FollowUpOfTaskId;
-        string? reviewedSha = null;
-        bool? reviewedSourceClean = null;
-        string? reviewedRef = null;
-        string? reviewedRepo = null;
-        // CARD-0544 D-5: a profiled Review records its commissioned round and the scope it declared,
-        // capped by that round; anything short of a completed Clean/Found turn with a usable block is
-        // Unknown. A Found Full review binds subject coordinates too (a baseline, never approval).
+        var binding = await new ReviewEvidenceBindingService(db)
+            .PrepareFirstSettlementAsync(task, outcome, reviewEvidence, ct);
         var profiled = task.VerificationProfileVersion is not null && task.VerificationRound is not null;
-        var completedScope = profiled ? VerificationScope.Unknown : (VerificationScope?)null;
-        var bindsEvidence = outcome == StageOutcomeKind.Clean
-            || profiled && outcome == StageOutcomeKind.Found;
-        if (task.Role == AgentTaskRole.Review && task.Status == AgentTaskStatus.Succeeded
-            && stage == OrchestrationStage.Review && bindsEvidence)
-        {
-            var evidence = reviewEvidence;
-            if (evidence.Usable && evidence.SubjectTaskId is { } named)
-            {
-                if (task.FollowUpOfTaskId is { } follow && follow != named)
-                {
-                    db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning,
-                        "Review evidence subject does not match the follow-up subject.", now));
-                }
-                else
-                {
-                    var subject = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == named, ct);
-                    if (subject is null || subject.Workspace != WorkspaceMode.Worktree
-                        || !ReviewSubjectAuthorized(task, subject))
-                    {
-                        db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning,
-                            "Review evidence named a subject that is not an authorized Worktree landing owner.", now));
-                    }
-                    else
-                    {
-                        subjectId = subject.Id;
-                        reviewedSha = evidence.ReviewedSourceSha;
-                        reviewedSourceClean = evidence.ReviewedSourceClean;
-                        reviewedRef = subject.WorktreeBranch is null ? null
-                            : subject.WorktreeBranch.StartsWith("refs/", StringComparison.Ordinal)
-                                ? subject.WorktreeBranch : "refs/heads/" + subject.WorktreeBranch;
-                        reviewedRepo = subject.RepoPath;
-                        if (profiled)
-                            completedScope = ReviewEvidence.CapToRound(evidence.Scope, task.VerificationRound!.Value);
-                        if (GitObjectId.IsFull(task.WorktreeBaseSha)
-                            && !string.Equals(task.WorktreeBaseSha, reviewedSha, StringComparison.OrdinalIgnoreCase))
-                            consistencyWarnings.Add($"review-evidence-warning=review_evidence_sha_not_review_base: "
-                                + $"This review's checkout was cut at {task.WorktreeBaseSha}; the block claims {reviewedSha}.");
-                        var progress = TaskProgressJson.TryReadEvidence(subject.CompletionProgressEvidenceJson);
-                        var tip = progress?.RemoteSync?.ConfirmedSha;
-                        if (!GitObjectId.IsFull(tip))
-                            tip = progress?.Sources?.FirstOrDefault(s => s.Origin == ProgressOrigin.Primary)?.VerifiedSha;
-                        if (GitObjectId.IsFull(tip)
-                            && !string.Equals(tip, reviewedSha, StringComparison.OrdinalIgnoreCase))
-                            consistencyWarnings.Add($"review-evidence-warning=review_evidence_subject_tip_mismatch: "
-                                + $"Subject {DelegationReportFormatter.Short(subject.Id)} on {reviewedRef} was at {tip} "
-                                + $"as confirmed at its settlement; the block claims {reviewedSha}. "
-                                + "If a different task's pushed branch was reviewed, commission a fresh same-card Review naming that task.");
-                    }
-                }
-            }
-            else
-            {
-                db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning,
-                    evidence.Warning ?? "Review settled without usable review evidence.", now));
-            }
-        }
+        foreach (var warning in binding.Warnings)
+            db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, warning, now));
+        consistencyWarnings.AddRange(binding.ConsistencyWarnings);
 
         db.StageOutcomes.Add(new StageOutcome
         {
@@ -4633,7 +4573,7 @@ public sealed class AgentTaskReplyService
             Stage = stage,
             Outcome = outcome,
             Source = StageOutcomeSource.Delegate,
-            SubjectTaskId = subjectId,
+            SubjectTaskId = binding.SubjectTaskId,
             StageTaskId = task.Id,
             CardId = task.CardId,
             CostUsd = task.CostUsd,
@@ -4642,23 +4582,18 @@ public sealed class AgentTaskReplyService
             DurationSeconds = duration,
             Detail = AgentTaskLandService.Clip(detail),
             RecordedAt = now,
-            ReviewedSourceSha = reviewedSha,
-            ReviewedSourceClean = reviewedSourceClean,
-            ReviewedSourceRef = reviewedRef,
-            ReviewedRepositoryPath = reviewedRepo,
+            ReviewedSourceSha = binding.ReviewedSourceSha,
+            ReviewedSourceClean = binding.ReviewedSourceClean,
+            ReviewedSourceRef = binding.ReviewedSourceRef,
+            ReviewedRepositoryPath = binding.ReviewedRepositoryPath,
             VerificationProfileVersion = profiled ? task.VerificationProfileVersion : null,
             CommissionedRound = profiled ? task.VerificationRound : null,
-            OrdinaryScopeCompleted = completedScope,
+            OrdinaryScopeCompleted = binding.Scope,
         });
         foreach (var warning in consistencyWarnings)
             db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, warning, now));
         return consistencyWarnings.Count == 0 ? null : string.Join("\n\n", consistencyWarnings);
     }
-
-    private static bool ReviewSubjectAuthorized(AgentTask review, AgentTask subject) =>
-        review.Id == subject.Id
-        || review.FollowUpOfTaskId == subject.Id
-        || (review.CardId is { } card && subject.CardId == card);
 
     private static async Task<int?> TryCountWorktreeCommitsAsync(
         IServiceProvider services, AgentTask task, CancellationToken ct)
