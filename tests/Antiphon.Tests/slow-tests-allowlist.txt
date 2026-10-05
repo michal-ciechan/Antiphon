@@ -245,3 +245,5 @@ Antiphon.Tests.Application.ChannelReplyAttachmentReaderWindowsTests
 Antiphon.Tests.TestHelpers.DirectoryLinkFixtureWindowsTests
 # CARD-0519 S12: owned crash children, isolated broker and durable gateway receipts.
 Antiphon.Tests.Application.ChannelOutboundUnifiedCrashTests
+# CARD-0519 S12: real queue, isolated broker, converter launch and gateway handoff matrices.
+Antiphon.Tests.Application.ChannelOutboundUnifiedTransportTests
