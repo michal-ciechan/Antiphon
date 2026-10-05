@@ -314,7 +314,7 @@ public sealed class ChannelOutboundFailureRecordingTests
             if (enable)
             {
                 await db.Database.ExecuteSqlRawAsync("CREATE SEQUENCE c519_loss_fault_seq");
-                await db.Database.ExecuteSqlRawAsync("CREATE FUNCTION c519_reject_loss() RETURNS trigger LANGUAGE plpgsql AS $ BEGIN PERFORM nextval('c519_loss_fault_seq'); RAISE EXCEPTION 'injected loss insert failure'; END $$");
+                await db.Database.ExecuteSqlRawAsync("CREATE FUNCTION c519_reject_loss() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM nextval('c519_loss_fault_seq'); RAISE EXCEPTION 'injected loss insert failure'; END $$");
                 await db.Database.ExecuteSqlRawAsync($"CREATE TRIGGER c519_loss BEFORE INSERT ON \"{table}\" FOR EACH ROW EXECUTE FUNCTION c519_reject_loss()");
             }
             else
