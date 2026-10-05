@@ -88,7 +88,9 @@ public sealed class ReviewEvidenceResettlementTests
     private static async Task<StageOutcome> ReplacementAsync(RunnerSettlementWorld w, Guid old)
     {
         var rows = await RowsAsync(w);
-        rows.Count.ShouldBe(2, "a real successor must replace the stranded outcome");
+        rows.Count.ShouldBe(2, "a real successor must replace the stranded outcome; "
+            + w.Task.NextHandoff + "; " + string.Join(" | ", (await w.EventsAsync())
+                .Where(e => e.Type == AgentTaskEventType.Warning).Select(e => e.Detail)));
         return rows.Single(o => o.Id != old);
     }
 
@@ -264,6 +266,14 @@ public sealed class ReviewEvidenceResettlementTests
     {
         var (w, subject, old) = await IncidentAsync();
         await using var owned = w;
+        await using (var db = w.CreateContext())
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == w.TaskId);
+            task.CompletionProgressEvidenceJson = TaskProgressJson.SerializeEvidence(new(1,
+                CompletionProgressAssessment.NoAttributedProgress, RemoteSync: new(task.Attempt,
+                    RemoteSettlementSyncState.NoPushedProgress, w.Git.FullRef, w.Git.Baseline, w.Git.Baseline)));
+            await db.SaveChangesAsync();
+        }
         await AnswerAsync(w);
         await BlockAsync(w, Report(w, subject, w.Git.Baseline));
         w.Task.Status.ShouldBe(AgentTaskStatus.Blocked, "G104");

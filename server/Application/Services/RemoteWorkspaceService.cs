@@ -154,8 +154,16 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     /// fast-forward to that full object id. A refusal leaves the checkout exactly as found; an
     /// unreadable answer is Unavailable, never a guessed success.
     /// </summary>
-    public async Task<RemoteSettlementSyncResult> SyncAsync(
-        AgentTask task, CancellationToken ct, IReadOnlyCollection<string>? reportedTips = null)
+    public Task<RemoteSettlementSyncResult> SyncAsync(
+        AgentTask task, CancellationToken ct, IReadOnlyCollection<string>? reportedTips = null) =>
+        SyncCoreAsync(task, reportedTips, inspectMirror: false, ct);
+
+    public Task<RemoteSettlementSyncResult> SyncForReviewEvidenceAsync(
+        AgentTask task, CancellationToken ct, IReadOnlyCollection<string>? reportedTips = null) =>
+        SyncCoreAsync(task, reportedTips, inspectMirror: true, ct);
+
+    private async Task<RemoteSettlementSyncResult> SyncCoreAsync(
+        AgentTask task, IReadOnlyCollection<string>? reportedTips, bool inspectMirror, CancellationToken ct)
     {
         if (!IsEligible(task))
             return RemoteSettlementSyncResult.NotApplicable;
@@ -184,7 +192,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         RemoteSettlementSyncResult result;
         try
         {
-            result = await SyncAdmittedAsync(task, baseline, fullRef, reportedTips, deadline.Token, ct);
+            result = await SyncAdmittedAsync(task, baseline, fullRef, reportedTips, inspectMirror, deadline.Token, ct);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested && budget.IsCancellationRequested)
         {
@@ -217,10 +225,10 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     /// </summary>
     private async Task<RemoteSettlementSyncResult> SyncAdmittedAsync(
         AgentTask task, ProgressSourceBaseline baseline, string fullRef, IReadOnlyCollection<string>? reportedTips,
-        CancellationToken ct, CancellationToken caller)
+        bool inspectMirror, CancellationToken ct, CancellationToken caller)
     {
         if (_reservations is null)
-            return await SyncOwnedCheckoutAsync(task, baseline, fullRef, reportedTips, ct, caller);
+            return await SyncOwnedCheckoutAsync(task, baseline, fullRef, reportedTips, inspectMirror, ct, caller);
 
         var admitted = await _reservations.TryAdmitConsumerAsync(new WorkspaceReservationCommand(
             WorkspaceReservationKey.ForTask(task.WorktreePath, task.WorkingDirectory, task.WorktreeBranch, task.RepoPath),
@@ -230,7 +238,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
                 fullRef, baseline.LocalSha);
         try
         {
-            return await SyncOwnedCheckoutAsync(task, baseline, fullRef, reportedTips, ct, caller);
+            return await SyncOwnedCheckoutAsync(task, baseline, fullRef, reportedTips, inspectMirror, ct, caller);
         }
         finally
         {
@@ -251,7 +259,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
 
     private async Task<RemoteSettlementSyncResult> SyncOwnedCheckoutAsync(
         AgentTask task, ProgressSourceBaseline baseline, string fullRef, IReadOnlyCollection<string>? reportedTips,
-        CancellationToken ct, CancellationToken caller)
+        bool inspectMirror, CancellationToken ct, CancellationToken caller)
     {
         var repo = baseline.CanonicalRepository;
         var b = baseline.LocalSha;
@@ -274,7 +282,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         string? mirrorInspection = null;
         if (reportedTips is null
             && (observed.State is ProgressRemoteState.Missing or ProgressRemoteState.Present)
-            && (observed.State == ProgressRemoteState.Missing || observed.Sha == b))
+            && (inspectMirror || observed.State == ProgressRemoteState.Missing || observed.Sha == b))
         {
             try
             {

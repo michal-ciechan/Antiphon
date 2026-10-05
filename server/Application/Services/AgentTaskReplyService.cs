@@ -37,6 +37,7 @@ public sealed class AgentTaskReplyService
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentTaskReplyService> _logger;
     private readonly PtyDeliveryProfile? _ptyProfile;
+    private const string ReviewRepairRefusalPrefix = "Review evidence repair refused: ";
     // CARD-0320: one in-flight OnTurnEndAsync per session. Arm 0 used to re-enter while the live
     // observer was still inside SettleAsync; ConcurrencyToken is not an EF token, so both saves
     // succeeded and both delivered.
@@ -1893,7 +1894,8 @@ public sealed class AgentTaskReplyService
     /// before any Git-dependent completion decision. Null for every task outside that flow.
     /// </summary>
     private static async Task<RemoteSettlementSyncResult?> PrepareRemoteAsync(
-        IServiceProvider services, AgentTask task, CancellationToken ct, IReadOnlyCollection<string>? reportedTips = null)
+        IServiceProvider services, AgentTask task, CancellationToken ct, IReadOnlyCollection<string>? reportedTips = null,
+        bool reviewEvidenceRepair = false)
     {
         if (!RemoteWorkspaceService.IsEligible(task))
             return null;
@@ -1906,7 +1908,7 @@ public sealed class AgentTaskReplyService
         {
             sync = null;
         }
-        return await TaskCompletionProgressService.PrepareAsync(sync, task, ct, reportedTips);
+        return await TaskCompletionProgressService.PrepareAsync(sync, task, ct, reportedTips, reviewEvidenceRepair);
     }
 
     /// <summary>
@@ -2515,10 +2517,11 @@ public sealed class AgentTaskReplyService
     private static PipelineHandoff.Result SettledHandoff(AgentTask task, string report)
     {
         var parsed = InterimVerificationPolicy.CapHandoff(task, PipelineHandoff.TryParse(report));
-        return task.Status == AgentTaskStatus.Blocked
-            && task.NextStage == PipelineHandoffKind.Decide
+        var repairRefusal = task.Role == AgentTaskRole.Review && task.Stage == OrchestrationStage.Review
+            && task.NextHandoff?.StartsWith(ReviewRepairRefusalPrefix, StringComparison.Ordinal) == true;
+        return task.NextStage == PipelineHandoffKind.Decide
             && parsed.Kind != PipelineHandoffKind.Decide
-            && RemoteWorkspaceService.IsEligible(task)
+            && (repairRefusal || task.Status == AgentTaskStatus.Blocked && RemoteWorkspaceService.IsEligible(task))
                 ? parsed with { Found = true, Kind = PipelineHandoffKind.Decide, Handoff = task.NextHandoff ?? parsed.Handoff }
                 : parsed;
     }
@@ -3456,7 +3459,14 @@ public sealed class AgentTaskReplyService
         {
             // CARD-0657 D-1: a correlated successful candidate prepares its runner checkout ONCE,
             // before the commit matcher and every file reader below it.
-            remote.Result = await PrepareRemoteAsync(services, task, ct);
+            var repair = task.Role == AgentTaskRole.Review && task.Stage == OrchestrationStage.Review
+                && ReviewEvidence.TryParse(body).Found
+                ? await StageOutcomeService.ActiveQuery(db.StageOutcomes.AsNoTracking(), db)
+                    .Where(o => o.StageTaskId == task.Id && o.Stage == OrchestrationStage.Review)
+                    .OrderByDescending(o => o.RecordedAt).ThenByDescending(o => o.Id).FirstOrDefaultAsync(ct)
+                : null;
+            remote.Result = await PrepareRemoteAsync(services, task, ct, reviewEvidenceRepair:
+                repair is { Source: StageOutcomeSource.Delegate, ReviewedSourceSha: null });
             if (StillWaitingForLease(task, remote.Result))
                 return null;
             if (await TryClassifyCompletedWithoutProgressAsync(services, task, body, remote.Result, ct) is { } noProgress)
@@ -4540,7 +4550,8 @@ public sealed class AgentTaskReplyService
             task.Role, task.Stage, task.Workspace);
     }
 
-    private sealed record ReviewSettlementRepair(Guid PredecessorId, ReviewSettlementIdentity Identity,
+    private sealed record ReviewSettlementRepair(Guid PredecessorId, StageOutcomeSource Source, string? SourceSha,
+        ReviewSettlementIdentity Identity,
         Guid? SubjectId, string? SubjectRepository, string? SubjectBranch, string? SubjectBaseline);
     private sealed record StageRecording(string? Warning, ReviewSettlementRepair? Repair);
 
@@ -4555,7 +4566,9 @@ public sealed class AgentTaskReplyService
         if (ReviewSettlementIdentity.Capture(current) != repair.Identity) return false;
         var rows = await StageOutcomeService.ActiveQuery(db.StageOutcomes.AsNoTracking(), db)
             .Where(o => o.StageTaskId == taskId).ToListAsync(ct);
-        if (StageOutcomeService.ActiveReview(rows, taskId)?.Id != repair.PredecessorId) return false;
+        var predecessor = StageOutcomeService.ActiveReview(rows, taskId);
+        if (predecessor?.Id != repair.PredecessorId || predecessor.Source != repair.Source
+            || predecessor.ReviewedSourceSha != repair.SourceSha) return false;
         if (repair.SubjectId is not { } subjectId) return true;
         var subject = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == subjectId, ct);
         return subject is not null && subject.Workspace == WorkspaceMode.Worktree
@@ -4583,7 +4596,9 @@ public sealed class AgentTaskReplyService
             && stage == OrchestrationStage.Review && task.Status == AgentTaskStatus.Succeeded
             && previous is { Source: StageOutcomeSource.Delegate, ReviewedSourceSha: null };
         if (rows.Count != 0 && !repairing)
-            return null;
+            return task.Role == AgentTaskRole.Review && stage == OrchestrationStage.Review && previous is not null
+                ? new(null, new(previous.Id, previous.Source, previous.ReviewedSourceSha, identity, null, null, null, null))
+                : null;
 
         var consistencyWarnings = new List<string>();
 
@@ -4627,13 +4642,13 @@ public sealed class AgentTaskReplyService
         ReviewSettlementRepair? repair = null;
         if (repairing)
         {
-            repair = new(previous!.Id, identity, binding.Bound ? binding.SubjectTaskId : null,
+            repair = new(previous!.Id, previous.Source, previous.ReviewedSourceSha, identity, binding.Bound ? binding.SubjectTaskId : null,
                 binding.ReviewedRepositoryPath, binding.SubjectBranch, binding.SubjectBaseline);
             consistencyWarnings.AddRange(binding.Warnings);
             if (!binding.Bound)
             {
                 task.NextStage = PipelineHandoffKind.Decide;
-                task.NextHandoff = "Review evidence repair refused: "
+                task.NextHandoff = ReviewRepairRefusalPrefix
                     + (binding.Warnings.FirstOrDefault() ?? "final report has no usable approval coordinates");
             }
             // A failed source witness cannot replace the historical row. Missing/invalid report
