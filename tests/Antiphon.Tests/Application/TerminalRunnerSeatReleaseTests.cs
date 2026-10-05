@@ -176,9 +176,9 @@ public class TerminalRunnerSeatReleaseTests
     {
         await using var f = await RunnerSeatReleaseFixture.CreateAsync();
         // Registration first, then two independent connections race on the SAME existing row.
-        await f.EditAsync((t, _) => t.CompletedAt = f.Now);
+        f.Wire.Unsupported = true;
         await f.RunAsync();
-        await f.EditAsync((t, _) => t.CompletedAt = f.Now.AddMinutes(-3));
+        f.Wire.Unsupported = false;
         await using var read = f.Db();
         var release = await read.RunnerSeatReleases.SingleAsync();
         var task = await read.AgentTasks.SingleAsync();
