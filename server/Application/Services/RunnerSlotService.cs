@@ -72,27 +72,13 @@ public static class RunnerSlotService
 
     public static async Task<RunnerSlotReleaseDto> ReleaseOrphansAsync(
         PhoneHomeRunnerDirectory directory, AppDbContext db, string runnerId, string? reason, CancellationToken ct,
-        ICollection<Guid>? intents = null)
+        ICollection<Guid>? intents = null, TerminalRunnerSeatReleaseService? terminalSeats = null)
     {
-        var text = RequireReason(reason);
-        var listed = await ListAsync(directory, db, runnerId, ct);
-        var released = new List<Guid>();
-        foreach (var slot in listed.Slots)
-        {
-            if (!slot.Orphan)
-                continue;
-            // The list is a snapshot. A task can claim the seat before this loop reaches it.
-            var current = await LoadDesktopAsync(db, [slot.SessionId], ct);
-            if (!current.TryGetValue(slot.SessionId, out var row)
-                || row.Status != slot.DesktopStatus
-                || row.OpenTaskId != slot.OpenTaskId
-                || !IsOrphan(row.Live, row.OpenTaskId is not null, row.PooledWarm))
-                continue;
-            await ReleaseOneAsync(directory, db, runnerId, slot.SessionId, text, fromOrphanSweep: true, intents, ct);
-            released.Add(slot.SessionId);
-        }
-
-        return new RunnerSlotReleaseDto(released.Count, released);
+        RequireReason(reason);
+        // An orphan label is selection, never force authority. A missing/disabled coordinator
+        // holds the sweep; explicit single-seat operator release keeps its separate contract.
+        return terminalSeats is null ? new(0, [], Candidates: 0, Deferred: 0)
+            : await terminalSeats.ReleaseOrphansAsync(runnerId, reason, ct);
     }
 
     /// <summary>
@@ -354,7 +340,7 @@ public static class RunnerSlotService
         CreatedAt = DateTime.UtcNow,
     };
 
-    private static string RequireReason(string? reason)
+    internal static string RequireReason(string? reason)
     {
         var text = reason?.Trim();
         if (string.IsNullOrEmpty(text))

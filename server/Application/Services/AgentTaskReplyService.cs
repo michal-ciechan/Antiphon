@@ -1127,7 +1127,9 @@ public sealed class AgentTaskReplyService
         // Running with no PoolIdleSince and no owner, invisible to the janitor, for days. Blocked
         // still keeps: its session is the conversation the caller continues.
         var shouldRelease = task.FailureCode == AgentTaskFailureCode.CompletedWithoutProgress
-            || task.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed;
+            || task.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed
+            || (task.Status == AgentTaskStatus.Blocked
+                && services.GetService<TerminalRunnerSeatReleaseService>()?.OwnsAutomaticPath(task) == true);
         var killSession = task.FailureCode != AgentTaskFailureCode.CompletedWithoutProgress;
 
         await PersistDeliverThenReleaseAsync(
@@ -2364,6 +2366,13 @@ public sealed class AgentTaskReplyService
         IServiceProvider services, AppDbContext db, AgentTask task, DateTime now, CancellationToken ct,
         bool killSession = true)
     {
+        // Settlement and its parent obligation are already committed. Never share its dirty
+        // tracker with the coordinator, and never fall back to a stopper after a held release.
+        await using (var releaseScope = _scopeFactory.CreateAsyncScope())
+        {
+            var terminalSeats = releaseScope.ServiceProvider.GetService<TerminalRunnerSeatReleaseService>();
+            if (terminalSeats is not null && await terminalSeats.TryHandleTaskAsync(task.Id, ct)) return;
+        }
         if (task.AgentId is not Guid agentId)
             return;
 

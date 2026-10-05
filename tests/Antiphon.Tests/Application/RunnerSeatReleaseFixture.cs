@@ -127,7 +127,8 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
     public static async Task<RunnerSeatReleaseFixture> CreateAsync(
         AgentTaskStatus status = AgentTaskStatus.Succeeded, bool sourced = false,
         Action<DbContextOptionsBuilder>? configureDb = null,
-        string? provider = null, bool phoneHome = false, bool rowless = false)
+        string? provider = null, bool phoneHome = false, bool rowless = false,
+        bool productionDefaults = false)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero));
@@ -152,14 +153,19 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
                     services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
                     services.AddSingleton<SessionStateStore>();
                     services.AddSingleton(Options.Create(new SessionStateSettings()));
-                    services.AddSingleton(Options.Create(new TerminalRunnerSeatReleaseOptions { AutomaticEnabled = wire.AutomaticEnabled }));
+                    var releaseOptions = new TerminalRunnerSeatReleaseOptions();
+                    if (!productionDefaults) releaseOptions.AutomaticEnabled = wire.AutomaticEnabled;
+                    services.AddSingleton(Options.Create(releaseOptions));
                     services.AddSingleton<TerminalRunnerSeatReleasePolicy>();
+                    services.AddSingleton<TerminalRunnerSeatDiscoveryState>();
                     services.AddScoped<TerminalRunnerSeatReleaseService>();
                     services.AddSingleton<DelegationWorkspaceResolver>();
                     services.AddDelegationWorktreeGraph(new GitSettings());
                     services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
                     services.AddScoped<AgentTaskService>();
                     services.AddSingleton<AgentTaskReplyService>();
+                    services.AddSingleton<Antiphon.Server.Infrastructure.Orchestration.CompletionNoteFlushQueue>();
+                    services.AddScoped<AgentTaskLandNotificationService>();
                     services.AddScoped<SubscriptionUsageReader>();
                     services.AddScoped<SubscriptionQuotaGate>();
                     services.AddSingleton(Options.Create(new SubscriptionQuotaGateSettings()));
@@ -252,6 +258,77 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         using var scope = Harness.Provider.CreateScope();
         return await scope.ServiceProvider.GetRequiredService<TerminalRunnerSeatReleaseService>()
             .RegisterAndReserveAsync(taskId ?? TaskId, Observation, CancellationToken.None);
+    }
+
+    public async Task ReleaseFromSettlementAsync()
+    {
+        using var scope = Harness.Provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == TaskId);
+        var method = typeof(AgentTaskReplyService).GetMethod("ReleaseDelegateAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        await (Task)method.Invoke(scope.ServiceProvider.GetRequiredService<AgentTaskReplyService>(),
+            [scope.ServiceProvider, db, task, Now, CancellationToken.None, true])!;
+        await db.SaveChangesAsync();
+    }
+
+    public async Task SweepAsync(bool janitor = false)
+    {
+        using var scope = Harness.Provider.CreateScope();
+        var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+        if (janitor) await dispatcher.RetireIdleWarmAgentsAsync(default);
+        else await dispatcher.ReleaseUnownedPoolDelegatesAsync(default);
+    }
+
+    public async Task<int> JobAsync(PhoneHomeRunnerDirectory? legacyDirectory = null)
+    {
+        using var scope = Harness.Provider.CreateScope();
+        var directory = legacyDirectory ?? new PhoneHomeRunnerDirectory(Directory.Client,
+            Options.Create(new PhoneHomeRunnerSettings()), Harness.Provider.GetRequiredService<IServiceScopeFactory>(), Clock);
+        return await new RunnerSlotReconcileJob(directory, scope.ServiceProvider.GetRequiredService<AppDbContext>(),
+            NullLogger<RunnerSlotReconcileJob>.Instance,
+            scope.ServiceProvider.GetRequiredService<TerminalRunnerSeatReleaseService>()).ExecuteAsync(default);
+    }
+
+    public async Task<Guid> AddParentAsync(bool busy)
+    {
+        var id = Guid.NewGuid();
+        await using var db = Db();
+        db.AgentSessions.Add(new AgentSession { Id = id, DefinitionName = "fake", AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Running, StartedAt = Now.AddHours(-1), Cwd = Harness.TempRoot });
+        await db.SaveChangesAsync();
+        await AttachRecipientAsync(id, busy);
+        await EditAsync((t, _) => { t.ParentSessionId = id; t.ReplyTo = AgentTaskReplyTo.Session;
+            t.Role = AgentTaskRole.Code; t.VerificationProfileVersion = 1; t.VerificationRound = VerificationRound.Final; });
+        return id;
+    }
+
+    public async Task SettleAsync(string verdict)
+    {
+        await EditAsync((t, _) => { t.Status = AgentTaskStatus.Working; t.CompletedAt = null;
+            t.DispatchedAt = Now.AddMinutes(-1); t.Result = null; t.ReportEvidence = default; });
+        await IngestAsync(TranscriptKinds.UserPrompt, DelegationReportFormatter.TaskMarker(TaskId), Now);
+        await IngestAsync(TranscriptKinds.AssistantText,
+            $"Complete seat report canary.\n[antiphon-report:{DelegationReportFormatter.Short(TaskId)} {verdict}]", Now);
+        await IngestAsync(TranscriptKinds.TurnEnd, null, Now);
+        await Harness.Provider.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(SessionId, default);
+    }
+
+    public async Task ReconcileParentAsync()
+    {
+        using var scope = Harness.Provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var id = await db.AgentTaskLandNotifications.Where(n => n.TaskId == TaskId).Select(n => n.Id).SingleAsync();
+        await scope.ServiceProvider.GetRequiredService<AgentTaskLandNotificationService>().ReconcileAsync(id, default);
+    }
+
+    public void ConfigureReleaseEndpointServices(IServiceCollection services)
+    {
+        services.AddScoped(sp => new TerminalRunnerSeatReleaseService(sp.GetRequiredService<AppDbContext>(),
+            new TerminalRunnerSeatReleasePolicy(), Harness.Queue, Harness.Provider.GetRequiredService<SessionStateStore>(),
+            Directory, Clock, Harness.Provider.GetRequiredService<IOptions<TerminalRunnerSeatReleaseOptions>>(),
+            Harness.EventBus, sp.GetRequiredService<ILogger<TerminalRunnerSeatReleaseService>>(),
+            Harness.Provider.GetRequiredService<TerminalRunnerSeatDiscoveryState>()));
     }
 
     public async Task<Guid?> ReleaseAsync(Func<string, CancellationToken, Task>? boundary = null)
@@ -787,7 +864,8 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
             if (DescriptorByRunner is not null) return await DescriptorByRunner(runnerId);
             var caps = Capabilities is null
                 ? new RunnerCapabilitiesDto("fake", "fake", "fixture", false,
-                    Features: [RunnerCapabilityFeatures.TerminalSeatReleaseV1], RunnerStoreId: StoreId)
+                    Features: [RunnerCapabilityFeatures.TerminalSeatReleaseV1,
+                        RunnerCapabilityFeatures.TerminalSeatDeliveryEvidenceV1], RunnerStoreId: StoreId)
                 : await Capabilities();
             if (FeaturesOverride is not null && caps is not null) caps = caps with { Features = FeaturesOverride };
             return new(RunnerId, RunnerId, "linux", null, Available, Recovered, Stale, 1, caps);

@@ -29,7 +29,10 @@ public sealed record RunnerSlotReleaseRequest(string? Reason);
 public sealed record RunnerSlotReleaseDto(
     int Released,
     IReadOnlyList<Guid> SessionIds,
-    IReadOnlyList<RunnerSlotIntentOutcomeDto>? Intents = null);
+    IReadOnlyList<RunnerSlotIntentOutcomeDto>? Intents = null,
+    int? Candidates = null,
+    int? Deferred = null,
+    IReadOnlyList<RunnerSeatDiscoveryItem>? Dispositions = null);
 
 public sealed record RunnerSlotIntentOutcomeDto(Guid IntentId, Guid SessionId, string Outcome);
 

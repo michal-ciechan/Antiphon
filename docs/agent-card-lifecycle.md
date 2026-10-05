@@ -1,5 +1,12 @@
 # Agent Card Lifecycle
 
+CARD-0667's dormant terminal-seat integration does not settle a Blocked task or move its
+card. With automatic release explicitly enabled, a completed remote worktree report can
+relinquish its physical seat only through fresh conditional evidence. Its report, branch,
+workspace and question remain. Answering a confirmed released attempt queues a new attempt
+with retained context; it does not promise native provider conversation resume. Local and
+deliberately warm Shared replies retain their existing same-session behavior.
+
 An attributable provider usage-limit API error blocks its delegated task with
 `SubscriptionQuotaExceeded` (CARD-0719). It keeps the session and worktree and leaves
 `CompletedAt` null. The failure reason names the parsed reset and padded hold deadline

@@ -10,12 +10,60 @@ using TUnit.Core;
 using System.Data.Common;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Antiphon.Tests.TestHelpers;
 
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 public class RunnerSeatOrphanSweepTests
 {
+    [Test]
+    public async Task Existing_job_discovers_debt_without_settlement_callback()
+    {
+        foreach (var status in new[] { AgentTaskStatus.Succeeded, AgentTaskStatus.Failed,
+            AgentTaskStatus.Canceled, AgentTaskStatus.Blocked })
+        {
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(status, provider: "Codex");
+            await f.Live!.SubmitAsync("callback-free completed attempt");
+            await f.JobAsync();
+            f.Live.Clock.Advance(TimeSpan.FromSeconds(120));
+            await f.SweepAsync();
+            f.Live.Child.Kills.ShouldBe(1, status.ToString());
+            f.Live.ConditionalCommands.ShouldBe(1); f.Live.ForceCommands.ShouldBe(0);
+            await using var db = f.Db();
+            (await db.RunnerSeatReleases.SingleAsync()).State.ShouldBe(RunnerSeatReleaseState.Confirmed);
+        }
+        await using (var rowless = await RunnerSeatReleaseFixture.CreateAsync(provider: "Codex", rowless: true))
+        {
+            await rowless.Live!.SubmitAsync("callback-free rowless generation");
+            await rowless.JobAsync(); rowless.Live.Clock.Advance(TimeSpan.FromSeconds(120));
+            (await rowless.JobAsync()).ShouldBe(1);
+            rowless.Live.Runtime.LiveSessionCount.ShouldBe(0);
+        }
+        await using var dormant = await RunnerSeatReleaseFixture.CreateAsync(provider: "Codex", productionDefaults: true);
+        await dormant.Live!.SubmitAsync("must remain dormant");
+        await using var legacy = await PhoneHomeTestHost.StartAsync(connectionString: dormant.Schema.ConnectionString);
+        await using var peer = await legacy.ConnectPeerAsync();
+        legacy.Directory.MarkRecovered(await legacy.WaitLiveAsync());
+        var intentId = Guid.NewGuid();
+        await using (var db = dormant.Db())
+        {
+            db.AgentIncidents.Add(new AgentIncident { Id = intentId, SessionId = Guid.NewGuid(),
+                Kind = AgentIncidentKind.RunnerSlotReleaseIntent, Severity = AlertSeverity.Warning,
+                Message = "legacy audit", FailureReason = "pending:" + legacy.AllowedRunnerId, CreatedAt = dormant.Now });
+            await db.SaveChangesAsync();
+        }
+        (await dormant.JobAsync(legacy.Directory)).ShouldBe(1, "default-off still reconciles legacy intents");
+        await dormant.SweepAsync();
+        dormant.Live.Observations.ShouldBeEmpty("PC-104: production default option, no observation");
+        dormant.Live.ConditionalCommands.ShouldBe(0); dormant.Live.Child.Kills.ShouldBe(0);
+        await using (var db = dormant.Db())
+        {
+            (await db.RunnerSeatReleases.CountAsync()).ShouldBe(0, "PC-104: no reservation");
+            (await db.AgentIncidents.SingleAsync(i => i.Id == intentId)).FailureReason.ShouldBe("reconciled");
+        }
+    }
+
     [Test]
     public async Task Failed_audit_commit_recovers_stopped_row_and_attention()
     {

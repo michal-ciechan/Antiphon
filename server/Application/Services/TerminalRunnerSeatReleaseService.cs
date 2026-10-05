@@ -15,6 +15,13 @@ public sealed class TerminalRunnerSeatReleaseOptions
     public bool AutomaticEnabled { get; set; } = false;
 }
 
+// Shared by the existing job and dispatcher; losing traversal position on restart is safe.
+public sealed class TerminalRunnerSeatDiscoveryState
+{
+    internal SemaphoreSlim Gate { get; } = new(1, 1);
+    internal RunnerSeatDiscoveryCursor? Continuation { get; set; }
+}
+
 public sealed record TerminalRunnerSeatReservation(Guid? ReleaseId, TerminalRunnerSeatDecision Decision);
 
 public sealed record TerminalRunnerSeatEvidence(
@@ -25,19 +32,75 @@ public sealed record TerminalRunnerSeatEvidence(
 /// <summary>
 /// Only committed attempts can register debt. A durable send intent precedes runner I/O;
 /// interrupted sends reconcile authoritative inventory before any further mutation. No production
-/// hook calls this coordinator until the later integration slice; automatic release ships disabled.
+/// hooks use fresh scopes; automatic release ships disabled.
 /// </summary>
 public sealed class TerminalRunnerSeatReleaseService(
     AppDbContext db, TerminalRunnerSeatReleasePolicy policy, SessionMessageQueueService queue,
     SessionStateStore states, ISessionRunnerDirectory runners, TimeProvider clock,
     IOptions<TerminalRunnerSeatReleaseOptions> options, IEventBus events,
-    ILogger<TerminalRunnerSeatReleaseService> logger)
+    ILogger<TerminalRunnerSeatReleaseService> logger, TerminalRunnerSeatDiscoveryState discovery)
 {
     internal Func<string, CancellationToken, Task>? BoundaryAsync { get; set; }
 
+    public bool OwnsAutomaticPath(AgentTask task) => options.Value.AutomaticEnabled
+        && !string.IsNullOrWhiteSpace(task.RunnerId) && !RunnerRequestIntent.IsDesktopAlias(task.RunnerId)
+        && task.Workspace == WorkspaceMode.Worktree && task.SourceLandingOperationId is null;
+
+    /// <summary>True means this path owns disposition, including a hold or unavailable peer.
+    /// Callers must never fall through to the ordinary stopper after a conditional refusal.</summary>
+    public async Task<bool> TryHandleTaskAsync(Guid taskId, CancellationToken ct)
+    {
+        if (!options.Value.AutomaticEnabled) return false;
+        var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == taskId, ct);
+        if (task is null || !OwnsAutomaticPath(task)) return false;
+        try
+        {
+            if (task.AgentSessionId is not Guid sessionId) return true;
+            var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
+            if (session?.RunnerStoreId is not Guid store || session.RunnerId != task.RunnerId) return true;
+            await RegisterAndReleaseAsync(taskId,
+                new(store, session.StartedAt, "", -1, UseCapturedDeliveryEvidence: true), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            logger.LogWarning("Terminal runner seat release remains pending for task {TaskId}", taskId);
+        }
+        return true;
+    }
+
+    public async Task<int> DiscoverScheduledAsync(CancellationToken ct)
+    {
+        if (!options.Value.AutomaticEnabled || !await discovery.Gate.WaitAsync(0, ct)) return 0;
+        try
+        {
+            var result = await DiscoverAsync(32, 4, discovery.Continuation, ct);
+            discovery.Continuation = result.Continuation;
+            return result.Released;
+        }
+        finally { discovery.Gate.Release(); }
+    }
+
+    public async Task<RunnerSlotReleaseDto> ReleaseOrphansAsync(string runnerId, string? reason, CancellationToken ct)
+    {
+        RunnerSlotService.RequireReason(reason);
+        if (!options.Value.AutomaticEnabled) return new(0, [], Candidates: 0, Deferred: 0);
+        if (await DiscoveryInventoryAsync(runnerId, ct) is not RunnerInventory.Available inventory)
+            return new(0, [], Candidates: 0, Deferred: 0);
+        var items = new List<RunnerSeatDiscoveryItem>();
+        foreach (var seat in inventory.Sessions.OrderBy(s => s.SessionId).Take(32))
+        {
+            try { items.Add(await DiscoverCandidateAsync(runnerId, seat, ct)); }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            { items.Add(new(runnerId, seat.SessionId, null, "Unknown")); }
+        }
+        var released = items.Where(i => i.Disposition == "Confirmed").Select(i => i.SessionId).ToArray();
+        return new(released.Length, released, Candidates: items.Count,
+            Deferred: items.Count - released.Length, Dispositions: items);
+    }
+
     /// <summary>Bounded candidate processing over fresh complete inventory RPCs. The caller
     /// retains the returned cursor between ticks; losing it only restarts enumeration, never
-    /// the durable release identity. No scheduler or automatic production caller is wired yet.</summary>
+    /// the durable release identity.</summary>
     public async Task<RunnerSeatDiscoveryResult> DiscoverAsync(int candidateBudget, int pageSize,
         RunnerSeatDiscoveryCursor? continuation, CancellationToken ct)
     {

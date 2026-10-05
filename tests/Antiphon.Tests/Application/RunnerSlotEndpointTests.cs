@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -218,39 +219,40 @@ public class RunnerSlotEndpointTests
     [Test]
     public async Task A_refused_sweep_is_a_failure_even_when_reconcile_finishes_an_unrelated_intent()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var host = await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString);
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(provider: "Codex", rowless: true);
+        await using var host = await PhoneHomeTestHost.StartAsync(connectionString: f.Schema.ConnectionString,
+            configureServices: f.ConfigureReleaseEndpointServices);
         await using var peer = await host.ConnectPeerAsync();
         host.Directory.MarkRecovered(await host.WaitLiveAsync());
-        var refusedId = Guid.NewGuid();
         var earlierId = Guid.NewGuid();
         var now = DateTime.UtcNow;
-        peer.Sessions.Add(new RunnerSessionDto(refusedId, 4, now, "Running", null, "", 0));
-        peer.Reply = frame => frame.Operation == PhoneHomeOperation.ReleaseSlot
-            ? new PhoneHomeFrame(
-                PhoneHomeFrameKind.Error, frame.Epoch, frame.RequestId, frame.Operation,
-                ErrorCode: "unsupported_target", ErrorDetail: "custody was retained", StatusCode: 409)
-            : null;
-        await SeedRunningSessionAsync(schema.ConnectionString, refusedId, now, host.StoreId);
+        await f.Live!.SubmitAsync("safe sweep native proof");
+        await f.DiscoverAsync();
+        f.Live.Clock.Advance(TimeSpan.FromSeconds(120));
+        // A fresh later turn invalidates the previously qualified idle generation.
+        f.Live.SwallowNextEnter = true;
+        await f.Live.SubmitAsync("unconfirmed input keeps custody");
         // An earlier request's release reached the runner and its audit did not save.
-        await SeedRunningSessionAsync(schema.ConnectionString, earlierId, now, host.StoreId);
-        await SeedIntentAsync(schema.ConnectionString, earlierId, "pending:grok-linux", now.AddMinutes(-5));
+        await SeedRunningSessionAsync(f.Schema.ConnectionString, earlierId, now, host.StoreId);
+        await SeedIntentAsync(f.Schema.ConnectionString, earlierId, "pending:grok-linux", now.AddMinutes(-5));
+        await f.JobAsync(host.Directory);
 
         using var response = await host.PostOperatorAsync(
-            $"/api/session-runners/{host.AllowedRunnerId}/slots/release-orphans",
+            "/api/session-runners/fixture/slots/release-orphans",
             new RunnerSlotReleaseRequest("sweep"),
             OperatorTokenFile.ReadOrCreate(host.OperatorTokenPath));
 
-        ((int)response.StatusCode).ShouldBe(409);
-        peer.RequestCount(PhoneHomeOperation.ReleaseSlot).ShouldBe(1);
-        await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
-        (await verify.AgentIncidents.SingleAsync(incident => incident.SessionId == refusedId))
-            .FailureReason.ShouldBe("failed:custody was retained");
-        // The reconcile still ran and finished the unrelated intent; it just is not this answer.
+        response.EnsureSuccessStatusCode();
+        var result = (await response.Content.ReadFromJsonAsync<RunnerSlotReleaseDto>(Json))!;
+        result.Released.ShouldBe(0); result.Candidates.ShouldBe(1); result.Deferred.ShouldBe(1);
+        result.Dispositions!.ShouldHaveSingleItem().Disposition.ShouldNotBe("Confirmed");
+        peer.RequestCount(PhoneHomeOperation.ReleaseSlot).ShouldBe(0);
+        f.Live.Child.Kills.ShouldBe(0); f.Live.ForceCommands.ShouldBe(0);
+        await using var verify = f.Db();
         (await verify.AgentIncidents.SingleAsync(incident =>
                 incident.SessionId == earlierId && incident.Kind == AgentIncidentKind.RunnerSlotReleaseIntent))
             .FailureReason.ShouldBe("reconciled");
-        (await verify.AgentSessions.SingleAsync(session => session.Id == refusedId)).Status.ShouldBe(SessionStatus.Running);
+        f.Live.Runtime.LiveSessionCount.ShouldBe(1);
     }
 
     [Test]
@@ -294,34 +296,26 @@ public class RunnerSlotEndpointTests
     [Test]
     public async Task Release_orphans_skips_a_seat_claimed_after_the_list()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var host = await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString);
-        await using var peer = await host.ConnectPeerAsync();
-        host.Directory.MarkRecovered(await host.WaitLiveAsync());
-        var sessionId = Guid.NewGuid();
-        var now = DateTime.UtcNow;
-        peer.Sessions.Add(new RunnerSessionDto(sessionId, 4, now, "Running", null, "", 0));
-        peer.Reply = frame =>
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(provider: "Codex", rowless: true);
+        await using var host = await PhoneHomeTestHost.StartAsync(connectionString: f.Schema.ConnectionString,
+            configureServices: f.ConfigureReleaseEndpointServices);
+        var sessionId = f.Live!.SessionId;
+        await f.Live.SubmitAsync("rowless before claim");
+        await f.DiscoverAsync(); f.Live.Clock.Advance(TimeSpan.FromSeconds(120));
+        f.Directory.Inventory = async () =>
         {
-            if (frame.Operation != PhoneHomeOperation.ReleaseSlot)
-                return null;
-            peer.Sessions.RemoveAll(session => session.SessionId == sessionId);
-            return new PhoneHomeFrame(
-                PhoneHomeFrameKind.Result, frame.Epoch, frame.RequestId, frame.Operation,
-                JsonSerializer.SerializeToElement(
-                    new RunnerSessionDto(sessionId, 4, now, "Exited", 0, "KilledByRequest", 0),
-                    PhoneHomeFraming.Json));
+            var listed = await f.Live.Client.ListAsync(default);
+            await SeedRunningSessionAsync(f.Schema.ConnectionString, sessionId, f.Now.AddHours(-1), f.Directory.StoreId);
+            await SeedOpenTaskAsync(f.Schema.ConnectionString, sessionId, f.Now);
+            return new RunnerInventory.Available(listed);
         };
-        await SeedRunningSessionAsync(schema.ConnectionString, sessionId, now, host.StoreId);
-
-        await using var db = new AppDbContext(OptionsWith(
-            schema.ConnectionString, new ClaimOnFirstTaskRead(schema.ConnectionString, sessionId)));
-        var released = await RunnerSlotService.ReleaseOrphansAsync(
-            host.Directory, db, host.AllowedRunnerId, "sweep", CancellationToken.None);
-
-        released.Released.ShouldBe(0);
-        peer.RequestCount(PhoneHomeOperation.ReleaseSlot).ShouldBe(0);
-        await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        using var response = await host.PostOperatorAsync("/api/session-runners/fixture/slots/release-orphans",
+            new RunnerSlotReleaseRequest("sweep"), OperatorTokenFile.ReadOrCreate(host.OperatorTokenPath));
+        response.EnsureSuccessStatusCode();
+        var released = (await response.Content.ReadFromJsonAsync<RunnerSlotReleaseDto>(Json))!;
+        released.Released.ShouldBe(0); released.Deferred.ShouldBe(1);
+        f.Live.Child.Kills.ShouldBe(0); f.Live.ForceCommands.ShouldBe(0);
+        await using var verify = f.Db();
         (await verify.AgentTasks.CountAsync(task =>
             task.AgentSessionId == sessionId && task.Status == AgentTaskStatus.Dispatched)).ShouldBe(1);
         (await verify.AgentSessions.SingleAsync(session => session.Id == sessionId)).Status.ShouldBe(SessionStatus.Running);

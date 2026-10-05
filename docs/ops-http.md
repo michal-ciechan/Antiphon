@@ -1,5 +1,15 @@
 # Inspecting agents, boards and live sessions over HTTP
 
+CARD-0667 S4b changes only the **orphan sweep** release contract described below:
+`POST /api/session-runners/{runnerId}/slots/release-orphans` retains operator authentication
+and its required reason, but uses conditional discovery instead of force release. Its response
+adds `candidates`, `deferred` and per-seat `dispositions`; `released` counts confirmed
+removals only. The sweep processes at most 32 inventory seats per request. With
+`TerminalRunnerSeatRelease:AutomaticEnabled=false` (the shipping default), it is a no-op.
+Unsupported peers and uncertain evidence stay deferred. Explicit single-seat operator force
+release is unchanged. The existing slot job separately recovers legacy intents and attention,
+then performs bounded conditional discovery when enabled; no new scheduler is introduced.
+
 For CARD-0719 quota refusals, inspect the task's `SubscriptionQuotaExceeded` failure
 code and Blocked event, its session transcript's API-error class and captured
 `apiErrorTimeZoneId`, and the `(kind, modelAlias)` availability hold. Automatic

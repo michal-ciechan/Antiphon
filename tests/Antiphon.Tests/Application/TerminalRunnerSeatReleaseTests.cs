@@ -24,6 +24,165 @@ namespace Antiphon.Tests.Application;
 public class TerminalRunnerSeatReleaseTests
 {
     [Test]
+    public async Task Working_session_keeps_ownership_and_visible_debt()
+    {
+        foreach (var status in new[] { AgentTaskStatus.Failed, AgentTaskStatus.Succeeded, AgentTaskStatus.Blocked })
+        {
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(status);
+            await f.IngestAsync(TranscriptKinds.UserPrompt, "still working", f.Now);
+            await f.ReleaseFromSettlementAsync();
+            f.RecordedStops.Killed.ShouldBeEmpty("PC-14: the settlement hook cannot use the ordinary stopper");
+            f.Wire.ConditionalCommands.ShouldBe(0, "PC-28: server Working independently vetoes runner Idle");
+            await using var db = f.Db();
+            (await db.Agents.AnyAsync(a => a.Id == f.AgentId)).ShouldBeTrue();
+            (await db.RunnerSeatReleases.SingleAsync()).ReasonCode.ShouldBe("Working");
+            (await f.AttentionAsync()).Items.ShouldContain(i => i.ConditionKey!.StartsWith("runner-seat-release:"));
+        }
+    }
+
+    [Test]
+    public async Task Janitor_cannot_bypass_a_release_hold()
+    {
+        foreach (var hold in new[] { TerminalSeatQualificationStatus.Working, TerminalSeatQualificationStatus.Unknown })
+        {
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Failed);
+            f.Wire.Qualified = f.Wire.Qualified with { Status = hold, Token = null };
+            await f.EditAsync((_, a) => { a.Status = AgentStatus.Idle; a.PoolIdleSince = f.Now.AddDays(-2); });
+            await f.SweepAsync(janitor: true);
+            f.RecordedStops.Killed.ShouldBeEmpty("PC-15: neither TTL nor pool-cap retirement can bypass the hold");
+            f.Wire.ConditionalCommands.ShouldBe(0);
+            await using var db = f.Db();
+            (await db.Agents.AnyAsync(a => a.Id == f.AgentId)).ShouldBeTrue();
+            (await db.RunnerSeatReleases.SingleAsync()).ReasonCode.ShouldBe(hold.ToString());
+        }
+    }
+
+    [Test]
+    public async Task Cancellation_reconciles_without_second_stop()
+    {
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Working);
+        await f.EditAsync((t, _) => t.CompletedAt = null);
+        f.RecordedStops.StopsSessionsIn = f.Schema.ConnectionString;
+        using (var scope = f.Harness.Provider.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CancelAsync(f.TaskId, default);
+        f.RecordedStops.Killed.ShouldBe([f.SessionId], "PC-16: exactly the explicit requested stop");
+        f.Wire.ForceCommands.ShouldBe(0);
+        await using var db = f.Db();
+        (await db.AgentTasks.SingleAsync(t => t.Id == f.TaskId)).Status.ShouldBe(AgentTaskStatus.Canceled);
+        (await db.RunnerSeatReleases.SingleAsync()).ReasonCode.ShouldBe("SettlementTooYoung");
+    }
+
+    [Test]
+    public async Task Blocked_report_with_running_runner_frees_the_seat()
+    {
+        foreach (var syncBlock in new[] { false, true })
+        {
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, provider: "Codex");
+            await f.PrepareContinuationAsync();
+            if (syncBlock) await f.EditAsync((t, _) => t.FailureReason = "Runner workspace sync refused; report retained.");
+            await f.Live!.SubmitAsync("completed blocked task");
+            await f.ReleaseFromSettlementAsync();
+            f.Live.Child.Kills.ShouldBe(0);
+            f.Live.Clock.Advance(TimeSpan.FromSeconds(120));
+            await f.JobAsync();
+            f.Live.Child.Kills.ShouldBe(1); f.Live.Runtime.LiveSessionCount.ShouldBe(0);
+            f.RecordedStops.Killed.ShouldBeEmpty();
+            await using var db = f.Db();
+            var row = await db.AgentSessions.SingleAsync(s => s.Id == f.SessionId);
+            row.Status.ShouldBe(SessionStatus.Stopped); row.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
+            var task = await f.TaskAsync();
+            task.Status.ShouldBe(AgentTaskStatus.Blocked); task.Result.ShouldBe("completed report");
+            task.WorktreeBranch.ShouldBe("feat/retained"); Directory.Exists(task.WorktreePath).ShouldBeTrue();
+        }
+    }
+
+    [Test]
+    public async Task Failed_settlement_releases_without_success_branch()
+    {
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(provider: "Codex");
+        await f.Live!.SubmitAsync("real failed task");
+        await f.SettleAsync("failed");
+        (await f.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Failed);
+        await using (var db = f.Db()) (await db.RunnerSeatReleases.CountAsync()).ShouldBe(1, "fast hook records debt");
+        f.Clock.Advance(TimeSpan.FromSeconds(120));
+        await f.SweepAsync();
+        f.Live.Clock.Advance(TimeSpan.FromSeconds(120));
+        await f.SweepAsync();
+        f.Live.Child.Kills.ShouldBe(1); f.RecordedStops.Killed.ShouldBeEmpty();
+        (await f.TaskAsync()).Result.ShouldContain("Complete seat report canary.");
+    }
+
+    [Test]
+    public async Task Settlement_delivery_precedes_release_and_survives_release_fault()
+    {
+        foreach (var busy in new[] { false, true })
+        {
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync();
+            var parent = await f.AddParentAsync(busy);
+            await f.SettleAsync("failed");
+            (await f.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Failed);
+            await using var db = f.Db();
+            var owed = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == f.TaskId);
+            owed.Body.ShouldContain("Complete seat report canary.");
+            owed.SourceEventId.ShouldNotBe(Guid.Empty);
+            f.Wire.AtCommand = async _ =>
+            {
+                await using var read = f.Db();
+                (await read.AgentTasks.SingleAsync(t => t.Id == f.TaskId)).Result.ShouldContain("Complete seat report canary.");
+                (await read.AgentTaskLandNotifications.SingleAsync(n => n.Id == owed.Id)).Body.ShouldBe(owed.Body, "PC-71");
+            };
+            f.Wire.DropReply = true;
+            f.Clock.Advance(TimeSpan.FromSeconds(120));
+            await f.ReleaseFromSettlementAsync();
+            f.Wire.ConditionalCommands.ShouldBe(1); f.Wire.CallbackFailure.ShouldBeNull();
+            await f.FlushAsync(parent);
+            if (busy)
+            {
+                f.Submitted.ShouldBeEmpty("PC-82: completion waits for committed parent TurnEnd");
+                await f.EndTurnAsync(parent); await f.FlushAsync(parent);
+            }
+            await f.ReconcileParentAsync();
+            var confirmed = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == owed.Id);
+            confirmed.ConfirmedAt.ShouldNotBeNull();
+            f.Submitted.ShouldHaveSingleItem().ShouldContain("Complete seat report canary.");
+            (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == parent
+                && t.Kind == TranscriptKinds.UserPrompt && t.Text == f.Submitted[0])).ShouldBe(1);
+        }
+    }
+
+    [Test]
+    public async Task Parent_receipt_rejects_ack_stale_or_partial_prompt()
+    {
+        foreach (var shape in new[] { "ack", "wrong", "stale", "partial", "queued" })
+        {
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync();
+            var parent = await f.AddParentAsync(busy: true);
+            await f.SettleAsync("failed");
+            await using var db = f.Db();
+            var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == f.TaskId);
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == note.QueueMessageId);
+            var text = shape == "wrong" ? "different report" : shape == "partial" ? row.Body[..40] : row.Body;
+            if (shape != "ack") await f.NativePromptAsync(parent, text);
+            if (shape == "queued") await db.TranscriptEntries.Where(t => t.AgentSessionId == parent && t.Text == text)
+                .ExecuteUpdateAsync(u => u.SetProperty(t => t.Kind, TranscriptKinds.QueuedUserPrompt));
+            var max = await db.TranscriptEntries.Where(t => t.AgentSessionId == parent).MaxAsync(t => t.Sequence);
+            await db.SessionQueuedMessages.Where(m => m.Id == row.Id).ExecuteUpdateAsync(u => u
+                .SetProperty(m => m.Status, QueuedMessageStatus.Sent).SetProperty(m => m.DeliveryAttempts, 1)
+                .SetProperty(m => m.LastDeliveryStartedAt, f.Now)
+                .SetProperty(m => m.LastDeliveryBaselineSequence, shape == "stale" ? max : 0));
+            await f.ReconcileParentAsync();
+            (await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id))
+                .ConfirmedAt.ShouldBeNull("PC-74: " + shape);
+            await db.SessionQueuedMessages.Where(m => m.Id == row.Id).ExecuteUpdateAsync(u => u
+                .SetProperty(m => m.Status, QueuedMessageStatus.Pending).SetProperty(m => m.DeliveryAttempts, 0)
+                .SetProperty(m => m.LastDeliveryStartedAt, (DateTime?)null)
+                .SetProperty(m => m.LastDeliveryBaselineSequence, (long?)null));
+            await f.EndTurnAsync(parent); await f.FlushAsync(parent); await f.ReconcileParentAsync();
+            (await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id)).ConfirmedAt.ShouldNotBeNull();
+        }
+    }
+
+    [Test]
     public async Task Attention_contains_release_identity_and_reason()
     {
         await using var f = await RunnerSeatReleaseFixture.CreateAsync();
