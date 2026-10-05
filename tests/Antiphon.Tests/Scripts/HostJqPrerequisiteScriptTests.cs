@@ -1123,8 +1123,8 @@ internal sealed class HostJqFixture : IDisposable
             nonce=$(/usr/bin/cat "$HJ_ROOT/control/nonce")
             printf 'event|%s|%s|%s\n' "$nonce" "$event" "$target" >> "$HJ_ROOT/control/ledger"
             if [ -f "$HJ_ROOT/control/$event.arm" ]; then
-                read -r -a parts < /proc/$/stat
-                printf '%s %s %s\n' "$" "${parts[21]}" "$nonce" >> "$HJ_ROOT/control/$event.ready"
+                read -r -a parts < /proc/$$/stat
+                printf '%s %s %s\n' "$$" "${parts[21]}" "$nonce" >> "$HJ_ROOT/control/$event.ready"
                 local deadline=$((SECONDS+5))
                 while [ ! -f "$HJ_ROOT/control/$event.release" ]; do
                     [ "$SECONDS" -lt "$deadline" ] || { echo fixture-barrier-timeout >&2; exit 98; }
