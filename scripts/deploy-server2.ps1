@@ -66,14 +66,13 @@ function Invoke-HostJq {
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $fixture = $env:C727_TEST_VERIFY_STUB -and $env:C727_TEST_STATE
+    $tokens = @()
     if ($fixture) {
         # Use the existing offline verifier boundary; its proof still passes the
         # same parser and durable receipt admission as the real SSH child.
         $manifestPath = Join-Path $evidenceRoot ("host-jq-$ExecutingPhase.manifest.json")
         @{ sourceSha=$Sha; runId=$runId; selectedPhase=$Phase; phase=$ExecutingPhase; mode=$Mode; evidenceRoot=$evidenceRoot } |
             ConvertTo-Json -Compress | Set-Content -LiteralPath $manifestPath -Encoding ascii
-        $psi.FileName = 'pwsh'
-        $tokens = @('-NoProfile', '-File', $env:C727_TEST_VERIFY_STUB, '-Case', 'host-jq-prerequisite', '-Manifest', $manifestPath)
     } else {
         $psi.FileName = 'ssh'
         $tokens = @('-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', 'mc@server2', 'bash', '-s', '--', $Mode)
@@ -87,29 +86,42 @@ function Invoke-HostJq {
     $deadlineMs = if ($Mode -eq 'check') { 30000 } else { 180000 }
     $timer = [Diagnostics.Stopwatch]::StartNew()
     try {
-        try {
-            [void]$proc.Start()
-            $stdout = $proc.StandardOutput.ReadToEndAsync()
-            $stderr = $proc.StandardError.ReadToEndAsync()
-            if (-not $fixture) {
-                $helper = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'server2-host-jq.sh')).Replace("`r`n", "`n")
-                $inputTask = $proc.StandardInput.WriteAsync($helper)
-                if (-not $inputTask.Wait([Math]::Max(1, $deadlineMs - [int]$timer.ElapsedMilliseconds))) { throw 'timeout' }
-                $inputTask.GetAwaiter().GetResult()
+        if ($fixture) {
+            # Match the existing in-process HTTP fixture convention. Synthetic
+            # prerequisite results are fresh per entry; real SSH below remains
+            # bounded and reaped, as exercised by the private SSH fixture.
+            $result = @(& $env:C727_TEST_VERIFY_STUB -Case 'host-jq-prerequisite' -Manifest $manifestPath 2>&1)
+            $hostJqExit = $LASTEXITCODE
+            $hostJqStdout = (@($result | Where-Object { $_ -isnot [Management.Automation.ErrorRecord] }) -join "`n")
+            $hostJqStderr = (@($result | Where-Object { $_ -is [Management.Automation.ErrorRecord] } | ForEach-Object { $_.Exception.Message }) -join "`n")
+        } else {
+            try {
+                [void]$proc.Start()
+                $stdout = $proc.StandardOutput.ReadToEndAsync()
+                $stderr = $proc.StandardError.ReadToEndAsync()
+                if (-not $fixture) {
+                    $helper = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'server2-host-jq.sh')).Replace("`r`n", "`n")
+                    $inputTask = $proc.StandardInput.WriteAsync($helper)
+                    if (-not $inputTask.Wait([Math]::Max(1, $deadlineMs - [int]$timer.ElapsedMilliseconds))) { throw 'timeout' }
+                    $inputTask.GetAwaiter().GetResult()
+                }
+                $proc.StandardInput.Close()
+                if (-not $proc.WaitForExit([Math]::Max(1, $deadlineMs - [int]$timer.ElapsedMilliseconds))) { throw 'timeout' }
+                if (-not [Threading.Tasks.Task]::WhenAll([Threading.Tasks.Task[]]@($stdout, $stderr)).Wait([Math]::Max(1, $deadlineMs - [int]$timer.ElapsedMilliseconds))) { throw 'timeout' }
+            } catch {
+                if ($timer.ElapsedMilliseconds -ge $deadlineMs) { throw 'HostJqTransportTimeout' }
+                throw 'HostJqTransportUnavailable'
             }
-            $proc.StandardInput.Close()
-            if (-not $proc.WaitForExit([Math]::Max(1, $deadlineMs - [int]$timer.ElapsedMilliseconds))) { throw 'timeout' }
-            if (-not [Threading.Tasks.Task]::WhenAll([Threading.Tasks.Task[]]@($stdout, $stderr)).Wait([Math]::Max(1, $deadlineMs - [int]$timer.ElapsedMilliseconds))) { throw 'timeout' }
-        } catch {
-            if ($timer.ElapsedMilliseconds -ge $deadlineMs) { throw 'HostJqTransportTimeout' }
-            throw 'HostJqTransportUnavailable'
+            $hostJqStdout = $stdout.GetAwaiter().GetResult()
+            $hostJqStderr = $stderr.GetAwaiter().GetResult()
+            $hostJqExit = $proc.ExitCode
         }
-        if ($proc.ExitCode -ne 0) {
+        if ($hostJqExit -ne 0) {
             # Retain the found path for this specific refusal; never copy raw remote diagnostics.
-            if ($proc.ExitCode -eq 2) {
+            if ($hostJqExit -eq 2) {
                 $pathRefusal = $null
                 try {
-                    $document = [Text.Json.JsonDocument]::Parse($stdout.GetAwaiter().GetResult())
+                    $document = [Text.Json.JsonDocument]::Parse($hostJqStdout)
                     try {
                         if ($document.RootElement.ValueKind -ne [Text.Json.JsonValueKind]::Object) { throw 'shape' }
                         $names = @($document.RootElement.EnumerateObject() | ForEach-Object Name)
@@ -121,7 +133,7 @@ function Invoke-HostJq {
                         }
                         $number = 0L
                         if (-not $document.RootElement.GetProperty('schema').TryGetInt64([ref]$number) -or $number -ne 1) { throw 'shape' }
-                        $candidate = $stdout.GetAwaiter().GetResult() | ConvertFrom-Json
+                        $candidate = $hostJqStdout | ConvertFrom-Json
                         if ($candidate.lane -cne 'host' -or $candidate.mode -cne $Mode -or $candidate.reason -cne 'HostJqPathUnapproved' -or
                             $candidate.lookupPath -cnotmatch '^/[^\x00-\x1f]{1,4095}$' -or $candidate.path -cnotmatch '^/[^\x00-\x1f]{1,4095}$' -or
                             $candidate.path -ceq $hostJqDestination) { throw 'shape' }
@@ -131,7 +143,7 @@ function Invoke-HostJq {
                 if ($null -ne $pathRefusal) {
                     $observation = [ordered]@{ schema=1; qualified=$false; lane='host'; mode=$Mode; reason='HostJqPathUnapproved';
                         lookupPath=$pathRefusal.lookupPath; path=$pathRefusal.path; sourceSha=$Sha; runId=$runId;
-                        selectedPhase=$Phase; phase=$ExecutingPhase; observedAtUtc=[DateTime]::UtcNow.ToString('o'); sshExit=$proc.ExitCode }
+                        selectedPhase=$Phase; phase=$ExecutingPhase; observedAtUtc=[DateTime]::UtcNow.ToString('o'); sshExit=$hostJqExit }
                     try {
                         $file = [IO.File]::Open((Join-Path $evidenceRoot ("host-jq-$ExecutingPhase-refused.json")), [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
                         try {
@@ -143,12 +155,12 @@ function Invoke-HostJq {
                 }
             }
             # Only fixed helper diagnoses cross this boundary, never raw remote stderr.
-            $diagnosis = $stderr.GetAwaiter().GetResult().Trim()
+            $diagnosis = $hostJqStderr.Trim()
             if ($diagnosis -cin @('HostJqMissing', 'HostJqInvalid', 'HostJqWrongLane', 'HostJqLaneUnavailable')) { throw $diagnosis }
             throw 'HostJqRemoteRefused'
         }
         try {
-            $raw = $stdout.GetAwaiter().GetResult()
+            $raw = $hostJqStdout
             $document = [Text.Json.JsonDocument]::Parse($raw)
             try {
                 if ($document.RootElement.ValueKind -ne [Text.Json.JsonValueKind]::Object) { throw 'shape' }
@@ -188,7 +200,7 @@ function Invoke-HostJq {
         $receipt.phase = $ExecutingPhase
         $receipt.mode = $Mode
         $receipt.observedAtUtc = [DateTime]::UtcNow.ToString('o')
-        $receipt.sshExit = $proc.ExitCode
+        $receipt.sshExit = $hostJqExit
         try {
             # CreateNew refuses stale/blocked paths; successful close precedes admission/banner.
             $file = [IO.File]::Open((Join-Path $evidenceRoot ("host-jq-$ExecutingPhase.json")), [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
@@ -201,7 +213,7 @@ function Invoke-HostJq {
     } finally {
         # Custody covers timeout, broken stdin and inherited pipe handles, including root exit.
         try {
-            if ($proc.Id -gt 0) {
+            if (-not $fixture -and $proc.Id -gt 0) {
                 if (-not $proc.HasExited) { $proc.Kill($true) }
                 if (-not $proc.WaitForExit(5000)) { throw 'HostJqTransportCustodyUnknown' }
                 $tasks = @($stdout, $stderr, $inputTask) | Where-Object { $null -ne $_ }
