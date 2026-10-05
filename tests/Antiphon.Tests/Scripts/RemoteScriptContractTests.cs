@@ -1692,6 +1692,39 @@ public sealed class RemoteScriptContractTests
         Executable(nestedText, "python3").ShouldBeEmpty("nested lane invokes python3");
         Executable(nestedText, "python ").ShouldBeEmpty("nested lane invokes python");
 
+        CheckNestedLaneSudo(text);
+    }
+
+    [Test]
+    [Arguments("undeclared-sudo")]
+    [Arguments("owned-mounts-guard")]
+    [Arguments("lookup-guard")]
+    [Arguments("retire-guard")]
+    public void C1067_Nested_lane_sudo_guard_is_sensitive(string control)
+    {
+        var original = Remote().ReplaceLineEndings("\n");
+        var (function, message) = control switch
+        {
+            "undeclared-sudo" => ("c1008_verify_tmp", "sudo outside a declared host-lane case or helper"),
+            "owned-mounts-guard" => ("c1008_owned_mounts", "c1008_owned_mounts refuses off the host lane"),
+            "lookup-guard" => ("c994_lookup_image", "c994_lookup_image refuses off the host lane"),
+            "retire-guard" => ("case_retire_temp_containers", "the retire case is host-lane only"),
+            _ => throw new ArgumentOutOfRangeException(nameof(control), control, "unknown control")
+        };
+        var body = Block(original, function);
+        var changed = control == "undeclared-sudo"
+            ? body.Replace("    docker exec -u 1654:1654", "    sudo -n docker exec -u 1654:1654", StringComparison.Ordinal)
+            : body.Replace("    require_lane host\n", "", StringComparison.Ordinal);
+        var mutant = original.Replace(body, changed, StringComparison.Ordinal);
+
+        mutant.ShouldNotBe(original, "control must change the guarded source");
+        Should.Throw<ShouldAssertException>(() => CheckNestedLaneSudo(mutant))
+            .Message.ShouldContain(message);
+        CheckNestedLaneSudo(original);
+    }
+
+    private static void CheckNestedLaneSudo(string text)
+    {
         // sudo is the host lane's alone: the nested lane runs as uid 1654, whose ONLY sudo grant
         // is the two custody helpers (CARD-0604 D-17), so a general sudo invocation from nested
         // shell would fail anyway and a new one is an unconditional failure here. Merely naming
@@ -1741,6 +1774,12 @@ public sealed class RemoteScriptContractTests
         var recycleCaches = Block(text, "c1008_cache_preservation");
         foreach (var body in new[] { recycleLock, recycle, recycleReferences, recycleDisk, recycleCaches })
             body.ShouldContain("require_lane host");
+        var ownedMounts = Block(text, "c1008_owned_mounts");
+        var lookupImage = Block(text, "c994_lookup_image");
+        var retire = Block(text, "case_retire_temp_containers");
+        Commands(ownedMounts)[1].ShouldBe("require_lane host", "c1008_owned_mounts refuses off the host lane before any sudo");
+        Commands(lookupImage)[1].ShouldBe("require_lane host", "c994_lookup_image refuses off the host lane before any sudo");
+        retire.ShouldContain("require_lane host", "the retire case is host-lane only");
         foreach (var line in sudoLines)
             (EnsureDirsBody(text).Contains(line, StringComparison.Ordinal)
                 || containment.Contains(line, StringComparison.Ordinal)
@@ -1765,7 +1804,10 @@ public sealed class RemoteScriptContractTests
                 || recycle.Contains(line, StringComparison.Ordinal)
                 || recycleReferences.Contains(line, StringComparison.Ordinal)
                 || recycleDisk.Contains(line, StringComparison.Ordinal)
-                || recycleCaches.Contains(line, StringComparison.Ordinal))
+                || recycleCaches.Contains(line, StringComparison.Ordinal)
+                || ownedMounts.Contains(line, StringComparison.Ordinal)
+                || lookupImage.Contains(line, StringComparison.Ordinal)
+                || retire.Contains(line, StringComparison.Ordinal))
                 .ShouldBeTrue("sudo outside a declared host-lane case or helper: " + line);
         EnsureDirsBody(text).ShouldContain("if [ \"$LANE\" = \"host\" ]; then");
         var codexCommands = Commands(codexHome);
@@ -1782,6 +1824,11 @@ public sealed class RemoteScriptContractTests
             (line.Contains("sudo -n test -d \"$grok_dir\"", StringComparison.Ordinal)
                 || line.Contains("sudo -n df -Pk \"$mount\"", StringComparison.Ordinal))
                 .ShouldBeTrue("temp deploy only inspects the host volume filesystem: " + line);
+        foreach (var line in sudoLines.Where(l => ownedMounts.Contains(l, StringComparison.Ordinal)
+                     || lookupImage.Contains(l, StringComparison.Ordinal) || retire.Contains(l, StringComparison.Ordinal)))
+            (line.Contains("sudo -n readlink -e --", StringComparison.Ordinal)
+                || line.Contains("sudo -n stat -c %F --", StringComparison.Ordinal))
+                .ShouldBeTrue("host-lane helper only inspects: " + line);
     }
 
     // CARD-0604 S12 / R-5, G-40 (Cut B). The fence inverts with the cut: the session-testing
