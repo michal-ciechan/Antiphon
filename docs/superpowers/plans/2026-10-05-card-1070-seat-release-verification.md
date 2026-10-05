@@ -17,7 +17,7 @@ regression and preserve unsupported/no-force behavior. S2: ordinary verification
 V-1: SpecialistRoleContractTests.no_Check_comparison_survives_outside_the_allowlist
 must find no direct Check comparison outside its existing allowlist.
 V-2: TerminalRunnerSeatReleaseTests.Unsupported_server_transport_never_falls_back_to_force
-must return Unsupported for HTTP and phone-home peers and make zero force calls.
+must return Unsupported for HTTP 404/501 and phone-home peers and make zero force calls.
 R-1: full server TerminalRunnerSeatReleaseTests preserves durable reservation,
 answer delivery, recovery, custody and conservative refusal.
 R-2: full runner TerminalSeatReleaseTests preserves generation/evidence fences and
@@ -31,8 +31,8 @@ M-3: AutomaticEnabled stays false and migration diff is empty.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1070-server/` | role-guard | `/*/*/SpecialistRoleContractTests*/no_Check_comparison_survives_outside_the_allowlist*` | V-1 | all listed, 0 failed | 1 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-2 | S1 | CP-1 | unsupported-transport | `/*/*/TerminalRunnerSeatReleaseTests*/Unsupported_server_transport_never_falls_back_to_force*` | V-2 | all listed, 0 failed | 1 | 1 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-3 | S1 | CP-1 | server-seat-class | `/*/*/TerminalRunnerSeatReleaseTests*/*` | R-1 | all listed, 0 failed | 21 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-2 | S1 | CP-1 | unsupported-transport | `/*/*/TerminalRunnerSeatReleaseTests*/Unsupported_server_transport_never_falls_back_to_force*` | V-2 | both HTTP variants, 0 failed | 2 | 1 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-3 | S1 | CP-1 | server-seat-class | `/*/*/TerminalRunnerSeatReleaseTests*/*` | R-1 | all listed, 0 failed | 22 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-4 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c1070-runner/` | runner-seat-class | `/*/*/TerminalSeatReleaseTests*/*` | R-2 | all listed, 0 failed | 38 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
 ### Cost
@@ -44,6 +44,9 @@ the same CP-2 method in a detached local worktree and checkpoint tool row, one
 isolated build per selected SHA (up to 15 minutes); compile failures are skipped,
 never classified as test failures. This is the explicit reason for historical
 runs outside the final table. Tool bootstrap is the only non-checkpoint build.
+After bisect, CP-1/CP-2 also run at the committed test-authoring slice: both HTTP
+variants must expose the fixture defect before its repair. Final CP-1..CP-4 run
+after the repair. No deliberate production mutants are part of this Code round.
 
 PC-1070-1 (specialist predicate bypass), PC-1070-2 (unsupported transport acceptance
 or force fallback, HTTP 404/501 and phone-home unsupported variants) remain pending
