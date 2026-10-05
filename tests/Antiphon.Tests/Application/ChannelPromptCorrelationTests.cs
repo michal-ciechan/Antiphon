@@ -29,6 +29,7 @@ public class ChannelPromptCorrelationTests
 
     private static Task<BridgeQueueHarness> HarnessAsync(IAntiphonMessagingProducer? producer = null) => BridgeQueueHarness.CreateAsync(new()
     {
+        Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
         AlwaysOn = false,
         Bridge = new() { Enabled = true, DebounceWindowMs = 0 },
         // Ingest via the runtime but let each scenario choose when publication/sweep happens.
@@ -128,6 +129,7 @@ public class ChannelPromptCorrelationTests
         await ReplayAsync(h, joined);
         var dispatcher = Dispatcher(h);
         await dispatcher.OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.ShouldHaveSingleItem().ConversationId.ShouldBe(chat);
         (await RowAsync(h, id)).ChannelReplySettledAt.ShouldNotBeNull();
         await AgeAsync(h, id);
@@ -164,6 +166,7 @@ public class ChannelPromptCorrelationTests
         var green = await h.SeedChannelCorrelationAsync(head + " deploy green", $"telegram:{chat}");
         await ReplayAsync(h, head + " deploy blue");
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         (await RowAsync(h, green)).ChannelReplySettledAt.ShouldBeNull();
         (await RowAsync(h, blue)).ChannelReplySettledAt.ShouldNotBeNull();
         h.Messaging.SentReplies.ShouldHaveSingleItem();
@@ -181,6 +184,7 @@ public class ChannelPromptCorrelationTests
             origin: QueuedMessageOrigin.Channel, status: QueuedMessageStatus.Sent,
             lastDeliveryStartedAt: DateTime.UtcNow, conversationKey: $"telegram:{chat}");
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         (await RowAsync(h, id)).ChannelReplySettledAt.ShouldBeNull();
         h.Messaging.SentReplies.ShouldBeEmpty();
     }
@@ -201,10 +205,12 @@ public class ChannelPromptCorrelationTests
         {
             await ReplayAsync(h, wrong);
             await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+            await h.DrainOutboundAsync();
             h.Messaging.SentReplies.ShouldBeEmpty();
         }
         await ReplayAsync(h, flattened);
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.ShouldHaveSingleItem();
         (await RowAsync(h, a)).ChannelReplySettledAt.ShouldNotBeNull();
         (await RowAsync(h, b)).ChannelReplySettledAt.ShouldBeNull();
@@ -239,7 +245,9 @@ public class ChannelPromptCorrelationTests
         confirmed.SentAt!.Value.ShouldBeGreaterThan(promptTime.UtcDateTime);
         h.Adapter.Inputs.ShouldBeEmpty();
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.ShouldHaveSingleItem();
     }
 
@@ -261,7 +269,9 @@ public class ChannelPromptCorrelationTests
         var machine = await SeedMachineAsync(h, "[task deadbeef done]");
         await ReplayAsync(h, typed.Replace("\n", ""));
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.ShouldHaveSingleItem();
         (await RowAsync(h, a)).ChannelReplySettledAt.ShouldNotBeNull();
         (await RowAsync(h, b)).ChannelReplySettledAt.ShouldNotBeNull();
@@ -294,6 +304,7 @@ public class ChannelPromptCorrelationTests
 
         await using var restarted = await BridgeQueueHarness.CreateAsync(new()
         {
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
             AlwaysOn = false, AttachSessionId = h.SessionId, AttachAgentId = h.AgentId,
             ConnectionString = h.ConnectionString,
             Bridge = new() { Enabled = true, DebounceWindowMs = 0 },
@@ -307,12 +318,14 @@ public class ChannelPromptCorrelationTests
         Directory.GetFiles(folder).Length.ShouldBe(1);
         await ReplayAsync(restarted, pointer.ReplaceLineEndings("\n").Replace("\n", ""));
         await Dispatcher(restarted).OnTurnEndAsync(h.SessionId, Ct);
+        await restarted.DrainOutboundAsync();
         restarted.Messaging.SentReplies.ShouldHaveSingleItem().ConversationId.ShouldBe(chat);
         (await RowAsync(h, a)).ChannelReplySettledAt.ShouldNotBeNull();
         (await RowAsync(h, b)).ChannelReplySettledAt.ShouldNotBeNull();
         var courier = new RemoteSpillCourier();
         await using var remote = await BridgeQueueHarness.CreateAsync(new()
         {
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
             AlwaysOn = false,
             Bridge = new() { Enabled = true, DebounceWindowMs = 0 },
             ConfigureServices = services =>
@@ -363,6 +376,7 @@ public class ChannelPromptCorrelationTests
         Directory.Exists(Path.Combine(remote.TempRoot, "workspace", ".antiphon", "inbox")).ShouldBeFalse();
         await ReplayAsync(remote, owned.Body.ReplaceLineEndings("\n").Replace("\n", ""));
         await Dispatcher(remote).OnTurnEndAsync(remote.SessionId, Ct);
+        await remote.DrainOutboundAsync();
         remote.Messaging.SentReplies.ShouldHaveSingleItem().ConversationId.ShouldBe(remoteChat);
 
     }
@@ -378,14 +392,21 @@ public class ChannelPromptCorrelationTests
         var body = (await RowAsync(h, id)).Body;
         await ReplayAsync(h, body.Replace("\n", ""), "Done. " + ChannelPromptCorrelation.OpeningMarker(body));
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         producer.Calls.ShouldBe(1, "the failure must reach the service's active producer seam");
         (await RowAsync(h, id)).ChannelReplySettledAt.ShouldBeNull();
         h.Messaging.SentReplies.ShouldBeEmpty();
         producer.Fail = false;
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
+        producer.Calls.ShouldBe(1, "an uncertain publication cannot replay on a fresh dispatcher");
+        await ChannelOutboundTestDriver.AcknowledgeUncertainAsync(h, id);
+        await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         producer.Calls.ShouldBe(2);
         h.Messaging.SentReplies.ShouldHaveSingleItem().Text.ShouldBe("Done.");
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.Count.ShouldBe(1);
     }
 
@@ -403,6 +424,7 @@ public class ChannelPromptCorrelationTests
             .SetProperty(m => m.LastDeliveryBaselineSequence, (long?)null));
         await ReplayAsync(h, legacy);
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         (await RowAsync(h, old)).ChannelReplySettledAt.ShouldNotBeNull();
         var pending = await h.SeedPendingMessageAsync(Envelope + "fresh legacy row", origin: QueuedMessageOrigin.Channel,
             conversationKey: $"telegram:{chat}");
@@ -411,6 +433,7 @@ public class ChannelPromptCorrelationTests
         var joined = await h.SeedChannelCorrelationAsync(legacy, $"telegram:{chat}");
         await ReplayAsync(h, legacy.Replace("\n", ""));
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         (await RowAsync(h, joined)).ChannelReplySettledAt.ShouldBeNull();
         (await RowAsync(h, joined)).Body.ShouldBe(legacy);
         const string ambiguous = Envelope + "two indistinguishable historical requests";
@@ -418,6 +441,7 @@ public class ChannelPromptCorrelationTests
         var second = await h.SeedChannelCorrelationAsync(ambiguous, $"telegram:{chat}");
         await ReplayAsync(h, ambiguous);
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         (await RowAsync(h, first)).ChannelReplySettledAt.ShouldBeNull();
         (await RowAsync(h, second)).ChannelReplySettledAt.ShouldBeNull();
         h.Messaging.SentReplies.Count.ShouldBe(1);
@@ -433,6 +457,7 @@ public class ChannelPromptCorrelationTests
             origin: QueuedMessageOrigin.Channel, status: QueuedMessageStatus.Sent, conversationKey: $"telegram:{chat}");
         await ReplayAsync(h, ChannelPromptFormat.FormatBatch([legacyA], legacyB));
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         (await RowAsync(h, batchA)).ChannelReplySettledAt.ShouldNotBeNull();
         (await RowAsync(h, batchB)).ChannelReplySettledAt.ShouldNotBeNull();
         h.Messaging.SentReplies.Count.ShouldBe(2);
@@ -471,6 +496,7 @@ public class ChannelPromptCorrelationTests
         {
             await ReplayAsync(h, clipped);
             await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+            await h.DrainOutboundAsync();
             (await RowAsync(h, id)).ChannelReplySettledAt.ShouldBeNull();
             h.Messaging.SentReplies.ShouldBeEmpty();
         }
@@ -478,11 +504,13 @@ public class ChannelPromptCorrelationTests
         var old = await h.SeedChannelCorrelationAsync(note, $"telegram:{chat}");
         await ReplayAsync(h, note, "Earlier channel answer.");
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         (await RowAsync(h, old)).ChannelReplySettledAt.ShouldNotBeNull();
         var oldFloor = (await RowAsync(h, old)).LastDeliveryBaselineSequence;
         var machine = await DeliverMachineAsync(h, note, QueuedMessageOrigin.Delegation);
         await ReplayAsync(h, note, "Machine follow-up.");
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.Count.ShouldBe(2);
         h.Messaging.SentReplies.Last().Text.ShouldBe("Machine follow-up.");
         (await RowAsync(h, machine)).ChannelReplySettledAt.ShouldNotBeNull();
@@ -514,11 +542,13 @@ public class ChannelPromptCorrelationTests
         await ReplayAsync(h, markedBody, "Only the new request's answer.");
         h.Adapter.SubmittedBodies.ShouldBe([markedBody], "already delivered legacy input must never be retyped");
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.ShouldHaveSingleItem().ConversationId.ShouldBe(chat);
         (await RowAsync(h, marked)).ChannelReplySettledAt.ShouldNotBeNull();
         (await RowAsync(h, legacy)).ChannelReplySettledAt.ShouldBeNull("legacy text cannot consume a marked request");
         (await RowAsync(h, machine)).ChannelReplySettledAt.ShouldBeNull("the channel owns the quoted task header");
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.Count.ShouldBe(1, "settled marked ownership still suppresses machine duplicates");
     }
 
@@ -578,6 +608,7 @@ public class ChannelPromptCorrelationTests
         channelRow.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
         await ReplayAsync(h, channelRow.Body, "Earlier channel answer.");
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.ShouldHaveSingleItem().Text.ShouldBe("Earlier channel answer.");
         var settled = (await RowAsync(h, channel)).ChannelReplySettledAt;
         settled.ShouldNotBeNull();
@@ -586,11 +617,12 @@ public class ChannelPromptCorrelationTests
         var quoted = fullBody ? channelRow.Body : ChannelPromptCorrelation.OpeningMarker(channelRow.Body);
         var report = header + " Correlation repair report.\n```text\n" + quoted + "\n```";
         var machine = await DeliverMachineAsync(h, report, origin);
-        var path = Path.Combine(h.TempRoot, "repair-report.txt");
+        var path = Path.Combine(h.TempRoot, "workspace", "repair-report.txt");
         if (attachment)
             await File.WriteAllTextAsync(path, "test-owned report attachment");
         await ReplayAsync(h, report, "Repair verified." + (attachment ? $"\n[[attach: {path}]]" : ""));
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.Count.ShouldBe(2, "a full quoted channel body must not suppress a delivered report");
         var reply = h.Messaging.SentReplies.Last();
         reply.ConversationId.ShouldBe(chat);
@@ -606,6 +638,7 @@ public class ChannelPromptCorrelationTests
         unchanged.LastDeliveryStartedAt.ShouldBe(channelRow.LastDeliveryStartedAt);
         unchanged.LastDeliveryGeneration.ShouldBe(channelRow.LastDeliveryGeneration);
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.Count.ShouldBe(2, "a fresh dispatcher must not republish the report");
     }
 
@@ -620,10 +653,12 @@ public class ChannelPromptCorrelationTests
         var machine = await DeliverMachineAsync(h, report, QueuedMessageOrigin.Delegation);
         await ReplayAsync(h, report, "Machine answer only.");
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         (await RowAsync(h, channel)).ChannelReplySettledAt.ShouldBeNull("the report is not a channel receipt");
         (await RowAsync(h, machine)).ChannelReplySettledAt.ShouldNotBeNull();
         h.Messaging.SentReplies.ShouldHaveSingleItem().Text.ShouldBe("Machine answer only.");
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.Count.ShouldBe(1);
     }
 
@@ -683,6 +718,7 @@ public class ChannelPromptCorrelationTests
         {
             await ReplayAsync(h, prompt);
             await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+            await h.DrainOutboundAsync();
             h.Messaging.SentReplies.ShouldBeEmpty("clipped single and batch receipts retain channel framing");
         }
         await ReplayAsync(h, body);
@@ -693,6 +729,7 @@ public class ChannelPromptCorrelationTests
             .SetProperty(m => m.LastDeliveryStartedAt, DateTime.UtcNow)
             .SetProperty(m => m.LastDeliveryBaselineSequence, retryFloor));
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.ShouldBeEmpty("a stale full channel receipt cannot become a task report");
         (await RowAsync(h, machine)).ChannelReplySettledAt.ShouldBeNull();
         (await RowAsync(h, id)).ChannelReplySettledAt.ShouldBeNull();

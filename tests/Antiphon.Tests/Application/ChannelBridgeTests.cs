@@ -128,6 +128,7 @@ public class ChannelBridgeTests
 
         await h.InsertTurnAsync(deliveredPrompt, "Pasta tonight — Ola already started the sauce.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
         reply.Channel.ShouldBe("telegram");
@@ -158,6 +159,7 @@ public class ChannelBridgeTests
 
             await h.InsertTurnAsync(deliveredPrompt, "Pasta tonight — Ola already started the sauce.");
             await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+            await h.DrainOutboundAsync();
 
             await using var afterScope = h.Provider.CreateAsyncScope();
             var after = await afterScope.ServiceProvider.GetRequiredService<AppDbContext>()
@@ -187,6 +189,7 @@ public class ChannelBridgeTests
         await h.InsertEntryAsync(TranscriptKinds.AssistantText, "Pasta tonight — Ola already started the sauce.");
         await h.InsertEntryAsync(TranscriptKinds.TurnEnd, null, stopReason: "end_turn");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
         reply.Channel.ShouldBe("telegram");
@@ -226,11 +229,13 @@ public class ChannelBridgeTests
         await h.InsertEntryAsync(TranscriptKinds.AssistantText, hiPhil);
 
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.ShouldBeEmpty(
             "AssistantText before this turn's TurnEnd still attributes to the previous turn; the correlation stays owed");
 
         await h.InsertEntryAsync(TranscriptKinds.TurnEnd, null, stopReason: "end_turn");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
         reply.Channel.ShouldBe("telegram");
@@ -259,6 +264,7 @@ public class ChannelBridgeTests
         await h.InsertEntryAsync(TranscriptKinds.UserPrompt, h.Adapter.Inputs[0]);
         await h.InsertEntryAsync(TranscriptKinds.TurnEnd, null, stopReason: "end_turn");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldBeEmpty();
         (await h.Dispatcher.PendingCountAsync(h.SessionId))
@@ -267,6 +273,7 @@ public class ChannelBridgeTests
         // The reply text lands after the stop marker; its arrival re-triggers dispatch.
         await h.InsertEntryAsync(TranscriptKinds.AssistantText, "Turn off the car's Bluetooth autoplay setting.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldHaveSingleItem().Text
             .ShouldBe("Turn off the car's Bluetooth autoplay setting.");
@@ -291,6 +298,7 @@ public class ChannelBridgeTests
         await h.InsertEntryAsync(TranscriptKinds.AssistantText, "I don't see Ola's question — checking the message bus.");
         await h.InsertEntryAsync(TranscriptKinds.TurnEnd, null, stopReason: "end_turn");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldHaveSingleItem().Text
             .ShouldBe("I don't see Ola's question — checking the message bus.");
@@ -300,8 +308,10 @@ public class ChannelBridgeTests
         // re-triggers dispatch, which must deliver it as a follow-up to the same conversation.
         await h.InsertEntryAsync(TranscriptKinds.AssistantText, "Ola's question: stop Apple Music autoplaying — delete the Music app.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         await h.InsertEntryAsync(TranscriptKinds.TurnEnd, null, stopReason: "end_turn");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2, "the trailing text must be sent, and only once");
         h.Messaging.SentReplies[1].Text
@@ -322,12 +332,14 @@ public class ChannelBridgeTests
 
         await h.InsertTurnAsync(h.Adapter.Inputs[0], "Answered.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.Count.ShouldBe(1);
 
         // Next turn begins (human typed in the terminal); text after it belongs to that turn.
         await h.InsertEntryAsync(TranscriptKinds.UserPrompt, "run the tests please");
         await h.InsertEntryAsync(TranscriptKinds.AssistantText, "All green.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(1, "text after the next prompt must not be sent as a follow-up");
     }
@@ -346,11 +358,13 @@ public class ChannelBridgeTests
 
         await h.InsertTurnAsync(h.Adapter.Inputs[0], "Answered.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.Count.ShouldBe(1);
 
         await h.InsertEntryAsync(TranscriptKinds.QueuedUserPrompt, "a completion note that queued while busy");
         await h.InsertEntryAsync(TranscriptKinds.AssistantText, "All green.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(1, "text after the next queued prompt must not be sent as a follow-up");
     }
@@ -374,6 +388,7 @@ public class ChannelBridgeTests
         await h.InsertEntryAsync(TranscriptKinds.AssistantText, "Transcribed. Let me save it properly first.");
         await h.InsertEntryAsync(TranscriptKinds.TurnEnd, null, stopReason: "end_turn");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldHaveSingleItem().Text
             .ShouldBe("Transcribed. Let me save it properly first.");
@@ -384,6 +399,7 @@ public class ChannelBridgeTests
             (TranscriptKinds.AssistantText, realAnswer, null),
             (TranscriptKinds.UserPrompt, "run the tests please", null));
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2,
             "in-window trailing text must follow-up even though a newer prompt shares the batch");
@@ -393,6 +409,7 @@ public class ChannelBridgeTests
         // Text after the newer prompt still must not go out as a follow-up of the settled turn.
         await h.InsertEntryAsync(TranscriptKinds.AssistantText, "All green.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.Count.ShouldBe(2, "text after the next prompt must not be sent as a follow-up");
     }
 
@@ -407,6 +424,7 @@ public class ChannelBridgeTests
 
         await h.InsertTurnAsync(h.Adapter.Inputs[0], "I can do Tuesday 10:00 or Thursday 15:30. Which works?");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldHaveSingleItem().Kind.ShouldBe(ChannelReplyKind.Question);
     }
@@ -423,6 +441,7 @@ public class ChannelBridgeTests
         // A human typed directly into the terminal: the turn's prompt matches no pending correlation.
         await h.InsertTurnAsync("run the tests please", "All green.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldBeEmpty();
         (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(1, "the channel's correlation must survive for ITS turn");
@@ -609,6 +628,7 @@ public class ChannelBridgeTests
 
             await h.InsertTurnAsync(h.Adapter.Inputs[0], $"Here's the invoice 🩵\n[[attach: {pdf}]]");
             await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+            await h.DrainOutboundAsync();
 
             var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
             reply.Text.ShouldBe("Here's the invoice 🩵");
@@ -639,6 +659,7 @@ public class ChannelBridgeTests
 
             await h.InsertTurnAsync(h.Adapter.Inputs[0], $"[[attach: {png}]]");
             await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+            await h.DrainOutboundAsync();
 
             var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
             reply.Text.ShouldBeNull("a marker-only reply has no text — the file IS the reply");
@@ -661,6 +682,7 @@ public class ChannelBridgeTests
 
         await h.InsertTurnAsync(h.Adapter.Inputs[0], "Here you go:\n[[attach: C:\\nope\\missing.pdf]]");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
         reply.Attachments.ShouldBeEmpty();
@@ -683,6 +705,7 @@ public class ChannelBridgeTests
 
             await h.InsertTurnAsync(h.Adapter.Inputs[0], $"Sending.\n[[attach: {big}]]");
             await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+            await h.DrainOutboundAsync();
 
             var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
             reply.Attachments.ShouldBeEmpty();
@@ -1016,11 +1039,21 @@ public class ChannelBridgeTests
         var outboundRoot = Path.Combine(Path.GetTempPath(), $"ChannelBridgeTests-outbound-{Guid.NewGuid():N}");
         services.AddSingleton<IOptions<ChannelOutboundSettings>>(Options.Create(new ChannelOutboundSettings
         {
-            UnifiedRecoveryEnabled = false,
+            UnifiedRecoveryEnabled = true,
             Profiles = new(StringComparer.Ordinal),
         }));
         services.AddSingleton<IChannelOutboundFileStore>(new ChannelOutboundFileStore(outboundRoot));
         services.AddScoped<ChannelOutboundService>();
+        services.AddSingleton<IChannelReplyAttachmentReader, ChannelReplyAttachmentReader>();
+        services.AddScoped<ChannelReplyPreparation>();
+        services.AddScoped<ChannelOutboundDeliveryPump>(sp => new ChannelOutboundDeliveryPump(
+            sp.GetRequiredService<AppDbContext>(), null!,
+            sp.GetRequiredService<IChannelOutboundFileStore>(),
+            sp.GetRequiredService<IAntiphonMessagingProducer>(),
+            Options.Create(new AntiphonMessagingOptions()), TimeProvider.System,
+            NullLogger<ChannelOutboundDeliveryPump>.Instance,
+            sp.GetRequiredService<IOptions<ChannelOutboundSettings>>(),
+            sp.GetRequiredService<ChannelReplyPreparation>()));
         services.AddSingleton(sp => new ChannelReplyDispatcher(
             sp.GetRequiredService<IServiceScopeFactory>(),
             messaging,
@@ -1098,6 +1131,8 @@ public class ChannelBridgeTests
         string ChatId,
         string OutboundRoot) : IAsyncDisposable
     {
+        public Task DrainOutboundAsync() => ChannelOutboundTestDriver.DrainAsync(Provider, SessionId);
+
         public ChatChannelService Channels()
         {
             var scope = Provider.CreateScope();
@@ -1227,6 +1262,10 @@ public class ChannelBridgeTests
         {
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
             {
+                await db.SessionQueuedMessages.Where(m => m.AgentSessionId == SessionId).ExecuteDeleteAsync();
+                var deliveries = db.ChannelOutboundDeliveries.Where(d => d.SourceSessionId == SessionId);
+                await deliveries.Where(d => d.RootDeliveryId != null).ExecuteDeleteAsync();
+                await deliveries.ExecuteDeleteAsync();
                 await db.ChatChannels.Where(c => c.ExternalId == ChatId).ExecuteDeleteAsync();
                 await db.AgentSessions.Where(s => s.Id == SessionId).ExecuteDeleteAsync();
                 await db.Agents.Where(a => a.Id == AgentId).ExecuteDeleteAsync();

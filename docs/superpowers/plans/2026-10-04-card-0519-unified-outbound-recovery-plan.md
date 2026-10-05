@@ -1698,3 +1698,40 @@ row BASE-CP59 ran via the checkpoint tool in an isolated detached base checkout,
 No assertion, timeout or platform skip is changed. All three new native provider
 results passed. Rerun red CP-13/58/59 and affected CP-8/9 at this final repair SHA;
 CP-14 retains its clean 1/1 receipt. Both permitted repair rounds are then used.
+
+## S11 implementation selection (Code 6ff18828, 2026-10-05)
+
+Select CP-15..22, serial, at committed expected HEAD. These eight complete-class
+rows are the closed S11a/S11b selection: R-2, R-3, R-4, R-5, R-6 and R-10.
+Estimated cost is 53 minutes including isolated builds. The explicit slice brief
+and manifest prohibit a whole-Unit run; the generic Final profile does not expand
+this selection. No whole assembly or namespace run is needed. V-1..10 and R-1/7/11
+remain with earlier slices, V-11..13 and R-8/9 with S12, and Windows R-12 with S13.
+No new manual recipient acceptance belongs to S11; queue-to-recipient proof is S12.
+
+The selected bridge, durability, correlation, machine, attachment and batching
+fixtures opt into unified recovery. The shared harness remains default-off for
+unselected callers. Dispatch and runtime catch-up are followed by explicit,
+bounded preparation/publication steps with fresh contexts. Independent database
+reads check capture ownership before settlement and Published/metadata/source
+outcomes afterward; existing text, routing, attachment bytes and withholding
+oracles remain. Positive batching fixtures have a real bound catalog. Attachment
+fixtures put source files in their owned session workspace. The pump resolves the
+registered producer, including each test's fault injector, instead of capturing
+the default fake outside DI. Generic producer faults retain Uncertain across a
+fresh trigger and require explicit acknowledged retry. Gate/shape fixtures check
+Captured then Pending/Ready, and profile passthrough now checks durable publication.
+Existing lower-level seeded-delivery/deadline tests also retain legacy-row coverage.
+
+Existing controls own these behaviors: PC-8/19/21..24/47/49/50/74/77/78 remain
+pending SourceLanding Mutation. The strengthened ordinary S11 witnesses include
+ChannelBatchingTests.Batched_reply_fans_out_once_to_the_conversation (PC-8/74),
+ChannelReplyDurabilityTests.A_runtime_batch_redispatches_a_late_confirmed_channel_reply_once
+(PC-19/88), ChannelOutboundDeliveryTests.Main_trailing_and_machine_use_the_same_policy
+(PC-19, each existing shape argument), and the producer-failure methods in
+ChannelPromptCorrelationTests, ChannelMachineTurnTextTests and
+ChannelFollowUpAttachmentTests (PC-47/49). Their independent source, producer and
+stored-outcome assertions must detect the mapped defects; no new duplicate PC is
+introduced. Every PC-1..100, PC-1059-1..6 and S4/S5/S6/S7/S8/S9/S10 variant remains
+pending; Code executes no deliberate mutants. Activation remains false by default.
+Restart: none; caller owns eventual server/runner activation after the full card.

@@ -44,6 +44,7 @@ public sealed partial class ChannelOutboundDeliveryTests
         var store = new ChannelOutboundFileStore(Path.Combine(root, "outbound"));
         var settings = Options.Create(new ChannelOutboundSettings
         {
+            UnifiedRecoveryEnabled = true,
             Profiles = new Dictionary<string, ChannelOutboundProfile>
             {
                 ["conversion"] = new()
@@ -75,6 +76,8 @@ public sealed partial class ChannelOutboundDeliveryTests
         {
             await using (var db = Db(h))
             {
+                await db.AgentSessions.Where(s => s.Id == h.SessionId)
+                    .ExecuteUpdateAsync(u => u.SetProperty(s => s.Cwd, root));
                 var now = DateTime.UtcNow;
                 db.Projects.Add(new Project { Id = projectId, Name = "shape-" + projectId.ToString("N"),
                     CreatedAt = now, UpdatedAt = now });
@@ -151,6 +154,8 @@ public sealed partial class ChannelOutboundDeliveryTests
                 await h.SeedChannelCorrelationAsync(prompt, "telegram:" + conversation);
                 await h.InsertTurnAsync(prompt, "Initial text only.");
                 await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+                await ChannelOutboundTestDriver.AssertCapturedAsync(h.Provider, h.SessionId, "main", 1);
+                await h.DrainOutboundAsync();
                 if (sendKind == "trailing")
                 {
                     await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText,
@@ -181,15 +186,19 @@ public sealed partial class ChannelOutboundDeliveryTests
                 }
             }
 
+            await ChannelOutboundTestDriver.AssertCapturedAsync(h.Provider, h.SessionId,
+                sendKind, sendKind == "trailing" ? 0 : 1);
+            h.Messaging.SentReplies.Count.ShouldBe(sendKind == "main" ? 0 : 1);
+            (await h.TickOutboundAsync()).ShouldBeGreaterThan(0);
             await using (var db = Db(h))
             {
                 var intents = await db.ChannelOutboundDeliveries.AsNoTracking()
-                    .Where(d => d.ChannelId == channelId).ToListAsync();
+                    .Where(d => d.ChannelId == channelId && d.SendKind == sendKind).ToListAsync();
                 var directDetails = shape == "manifest-zip" && intents.Count == 0
                     ? $" direct=[{string.Join(", ", h.Messaging.SentReplies.Select(r =>
                         r.Text + ":" + string.Join("/", r.Attachments.Select(a => a.Name))))}]"
                     : "";
-                intents.Count.ShouldBe(converts ? 1 : 0, shape + directDetails);
+                intents.Count.ShouldBe(1, shape + directDetails);
                 if (converts)
                 {
                     var intent = intents.ShouldHaveSingleItem();
@@ -222,6 +231,12 @@ public sealed partial class ChannelOutboundDeliveryTests
                 }
                 else
                 {
+                    var intent = intents.ShouldHaveSingleItem();
+                    intent.State.ShouldBe(ChannelOutboundDeliveryState.Ready);
+                    intent.PublishedAt.ShouldBeNull();
+                    await h.TickOutboundAsync();
+                    (await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == intent.Id))
+                        .State.ShouldBe(ChannelOutboundDeliveryState.Published);
                     var direct = h.Messaging.SentReplies.Last();
                     direct.Text.ShouldBe(shape == "plain-markdown"
                         ? "Source answer\n# Markdown body without an attachment" : "Source answer");
@@ -254,6 +269,8 @@ public sealed partial class ChannelOutboundDeliveryTests
             await db.AgentTasks.Where(t => t.Id == taskId
                 || (t.OutboundDeliveryId != null
                     && deliveryIds.Contains(t.OutboundDeliveryId.Value)))
+                .ExecuteDeleteAsync();
+            await db.ChannelOutboundDeliveries.Where(d => deliveryIds.Contains(d.Id) && d.RootDeliveryId != null)
                 .ExecuteDeleteAsync();
             await db.ChannelOutboundDeliveries.Where(d => deliveryIds.Contains(d.Id))
                 .ExecuteDeleteAsync();

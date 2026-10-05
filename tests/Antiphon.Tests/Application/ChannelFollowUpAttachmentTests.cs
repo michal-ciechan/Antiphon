@@ -37,6 +37,7 @@ public class ChannelFollowUpAttachmentTests
         Action<IServiceCollection>? configure = null) =>
         BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
             AlwaysOn = true,
             Bridge = new ChannelBridgeSettings { Enabled = true, DebounceWindowMs = 0 },
             ConfigureServices = configure,
@@ -73,6 +74,7 @@ public class ChannelFollowUpAttachmentTests
         var channelRowId = await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "On it — a delegate is producing the PDF.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(1, "the ack turn is the main-path reply");
         (await RowAsync(channelRowId)).ChannelReplySettledAt.ShouldNotBeNull();
@@ -81,6 +83,7 @@ public class ChannelFollowUpAttachmentTests
         var injectionId = await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation);
         await h.InsertTurnAsync(note, $"Here it is.\n[[attach: {pdf}]]");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2, "the [task done] turn must follow-up the same conversation");
         var followUp = h.Messaging.SentReplies[1];
@@ -112,6 +115,7 @@ public class ChannelFollowUpAttachmentTests
         var channelRowId = await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "On it — a delegate is producing the PDF.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(1, "the ack turn is the main-path reply");
 
@@ -122,6 +126,7 @@ public class ChannelFollowUpAttachmentTests
         var injectionId = await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation, taskId);
         await h.InsertTurnAsync(flattened, $"Here it is.\n[[attach: {pdf}]]");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2, "the flattened [task done] turn must follow-up");
         var followUp = h.Messaging.SentReplies[1];
@@ -149,6 +154,7 @@ public class ChannelFollowUpAttachmentTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "On it.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.Count.ShouldBe(1);
 
         // Already-settled historical Channel body — Gate 2 loads every Channel body, not only
@@ -166,6 +172,7 @@ public class ChannelFollowUpAttachmentTests
         await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation, taskId);
         await h.InsertTurnAsync(FlattenNewlines(note), $"Here.\n[[attach: {pdf}]]");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2,
             "a Channel body of \"done\" must not skip an injection-shaped turn");
@@ -185,6 +192,7 @@ public class ChannelFollowUpAttachmentTests
             "[task deadbeef done] git=landed\n\nWrote developer notes.",
             $"Here.\n[[attach: {pdf}]]");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldBeEmpty("no machine row means no follow-up");
         await using var db = CreateContext();
@@ -210,23 +218,28 @@ public class ChannelFollowUpAttachmentTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Working.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var note = "[task cd34ef56 done] attached";
         var injectionId = await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation);
         await h.InsertTurnAsync(note, $"[[attach: {pdf}]]");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.Count.ShouldBe(2);
 
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         await Restarted(h).OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2, "claim-before-produce makes re-triggers a no-op");
         (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldNotBeNull();
     }
 
     [Test]
-    public async Task A_produce_failure_un_claims_so_the_next_trigger_sends_once()
+    public async Task A_produce_failure_stays_uncertain_until_acknowledged_retry()
     {
         await using var h = await CreateHarnessAsync(services =>
         {
@@ -244,6 +257,7 @@ public class ChannelFollowUpAttachmentTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Soon.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.Count.ShouldBe(1);
 
         var note = "[task 11223344 done] file ready";
@@ -252,12 +266,18 @@ public class ChannelFollowUpAttachmentTests
 
         fail!.FailRemaining = 1;
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(1, "the failed produce must not leave a reply recorded");
         (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldBeNull(
-            "un-claim on produce failure, or the attachment is lost forever");
+            "an ambiguous publication retains its unsettled source");
 
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
+
+        h.Messaging.SentReplies.Count.ShouldBe(1, "a repeat trigger cannot replay an uncertain result");
+        await ChannelOutboundTestDriver.AcknowledgeUncertainAsync(h, injectionId);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2);
         h.Messaging.SentReplies[1].Attachments.ShouldHaveSingleItem().Name.ShouldBe("again.pdf");
@@ -277,6 +297,7 @@ public class ChannelFollowUpAttachmentTests
             "run the tests please",
             $"All green.\n[[attach: {pdf}]]");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldBeEmpty("an operator-typed turn must never follow-up a chat");
         (await RowAsync(channelRowId)).ChannelReplySettledAt.ShouldBeNull(
@@ -293,6 +314,7 @@ public class ChannelFollowUpAttachmentTests
         incident.FailureReason.ShouldStartWith("UnmatchedHuman:");
 
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         await using var db2 = CreateContext();
         (await db2.AgentIncidents.CountAsync(
                 i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.ChannelAttachmentsDropped))
@@ -308,6 +330,7 @@ public class ChannelFollowUpAttachmentTests
         await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation);
         await h.InsertTurnAsync(note, $"[[attach: {pdf}]]");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldBeEmpty();
         await using var db = CreateContext();
@@ -330,6 +353,7 @@ public class ChannelFollowUpAttachmentTests
         await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation);
         await h.InsertTurnAsync(note, $"[[attach: {pdf}]]");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldBeEmpty();
         await using var db = CreateContext();
@@ -356,6 +380,7 @@ public class ChannelFollowUpAttachmentTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var note = origin == QueuedMessageOrigin.Check
             ? "[check] the PDF is ready now"
@@ -365,6 +390,7 @@ public class ChannelFollowUpAttachmentTests
         await SeedMachineInjectionAsync(h, note, origin);
         await h.InsertTurnAsync(note, $"[[attach: {pdf}]]");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2, $"{origin} is a machine injection; the file must follow-up");
         h.Messaging.SentReplies[1].Attachments.ShouldHaveSingleItem().Name.ShouldBe($"{origin}.pdf");
@@ -381,11 +407,13 @@ public class ChannelFollowUpAttachmentTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var note = "[task 00ff00ff done] silent attach";
         await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation);
         await h.InsertTurnAsync(note, $"NO_REPLY\n[[attach: {pdf}]]");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2);
         var followUp = h.Messaging.SentReplies[1];
@@ -404,6 +432,7 @@ public class ChannelFollowUpAttachmentTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var note = "[task stub0001 done] died";
         var injectionId = await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation);
@@ -411,6 +440,7 @@ public class ChannelFollowUpAttachmentTests
         await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, $"[[attach: {pdf}]]");
         await h.InsertApiErrorStubAsync();
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(1, "CARD-0071: an API-error stub withholds the whole turn");
         (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldBeNull(
@@ -434,11 +464,13 @@ public class ChannelFollowUpAttachmentTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var note = "[task html0001 done] page";
         await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation);
         await h.InsertTurnAsync(note, $"[[attach: {html}]]");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2);
         var attachment = h.Messaging.SentReplies[1].Attachments.ShouldHaveSingleItem();
@@ -460,6 +492,7 @@ public class ChannelFollowUpAttachmentTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var note = "[task late0001 done] coming";
         var injectionId = await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation);
@@ -467,6 +500,7 @@ public class ChannelFollowUpAttachmentTests
         await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "Working on the file.");
         await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2, "unmarked Delegation text is a follow-up");
         h.Messaging.SentReplies[1].Text.ShouldBe("Working on the file.");
@@ -475,6 +509,7 @@ public class ChannelFollowUpAttachmentTests
         await h.InsertTranscriptEntryAsync(
             TranscriptKinds.AssistantText, $"[[attach: {pdf}]]");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(3);
         h.Messaging.SentReplies[2].Attachments.ShouldHaveSingleItem().Name.ShouldBe("late.pdf");
@@ -489,12 +524,14 @@ public class ChannelFollowUpAttachmentTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "On it.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var (taskId, files) = await SeedBundleTaskAsync(h, mdCount: 4);
         var note = "[task 3f4a6029 done] CARD-0002 is Done at 7bd8eba0";
         await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation, taskId);
         await h.InsertTurnAsync(note, "CARD-0002 is Done at 7bd8eba0");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2);
         var followUp = h.Messaging.SentReplies[1];
@@ -513,16 +550,20 @@ public class ChannelFollowUpAttachmentTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var (taskId, _) = await SeedBundleTaskAsync(h, mdCount: 2);
         var note = "[task ab12cd34 done] shipped";
         var injectionId = await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation, taskId);
         await h.InsertTurnAsync(note, "Shipped.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.Count.ShouldBe(2);
 
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         await Restarted(h).OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2);
         (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldNotBeNull();
@@ -538,6 +579,7 @@ public class ChannelFollowUpAttachmentTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var (taskId, files) = await SeedBundleTaskAsync(h, mdCount: 2, withPdf: true);
         var pdf = files[0];
@@ -545,6 +587,7 @@ public class ChannelFollowUpAttachmentTests
         await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation, taskId);
         await h.InsertTurnAsync(note, $"Here.\n[[attach: {pdf}]]");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var followUp = h.Messaging.SentReplies[1];
         followUp.Attachments.Count.ShouldBe(3, "pdf + 2 md, not a duplicate pdf");
@@ -564,6 +607,7 @@ public class ChannelFollowUpAttachmentTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var (taskId, files) = await SeedBundleTaskAsync(h, mdCount: 2, withPdf: true);
         var pdf = files[0];
@@ -598,6 +642,7 @@ public class ChannelFollowUpAttachmentTests
         await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation, taskId);
         await h.InsertTurnAsync(note, $"Here.\n[[attach: {pdf}]]");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var reply = h.Messaging.SentReplies[1];
         var names = reply.Attachments.Select(a => a.Name).ToArray();
@@ -625,12 +670,14 @@ public class ChannelFollowUpAttachmentTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var (taskId, _) = await SeedBundleTaskAsync(h, mdCount: 2);
         var note = "[task 00ff00ff done] silent";
         var injectionId = await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation, taskId);
         await h.InsertTurnAsync(note, "NO_REPLY");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(1, "NO_REPLY holds; the bundle is not sent");
         (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldBeNull();
@@ -646,12 +693,14 @@ public class ChannelFollowUpAttachmentTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var (taskId, files) = await SeedBundleTaskAsync(h, mdCount: 1, withPdf: true, pdfBytes: 15 * 1024 * 1024);
         var note = "[task big00001 done] spec";
         await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation, taskId);
         await h.InsertTurnAsync(note, $"The spec.\n[[attach: {files[0]}]]");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var followUp = h.Messaging.SentReplies[1];
         followUp.Text.ShouldContain("⚠️");
@@ -669,12 +718,14 @@ public class ChannelFollowUpAttachmentTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var (taskId, files) = await SeedBundleTaskAsync(h, mdCount: 0, withPdf: true, pdfBytes: 15 * 1024 * 1024);
         var note = "[task huge0001 done] spec";
         await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation, taskId);
         await h.InsertTurnAsync(note, $"The spec.\n[[attach: {files[0]}]]");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2);
         var followUp = h.Messaging.SentReplies[1];
@@ -688,7 +739,7 @@ public class ChannelFollowUpAttachmentTests
 
     private static string WriteFile(BridgeQueueHarness h, string name, byte[] bytes)
     {
-        var path = Path.Combine(h.TempRoot, name);
+        var path = Path.Combine(h.TempRoot, "workspace", name);
         File.WriteAllBytes(path, bytes);
         return path;
     }

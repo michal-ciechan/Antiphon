@@ -32,6 +32,7 @@ public class ChannelMachineTurnTextTests
         ChannelBridgeSettings? bridge = null) =>
         BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
             AlwaysOn = true,
             Bridge = bridge ?? new ChannelBridgeSettings { Enabled = true, DebounceWindowMs = 0 },
             ConfigureServices = configure,
@@ -59,6 +60,7 @@ public class ChannelMachineTurnTextTests
         var channelRowId = await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "On it.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(1, "the ack turn is the main-path reply");
         (await RowAsync(channelRowId)).ChannelReplySettledAt.ShouldNotBeNull();
@@ -67,6 +69,7 @@ public class ChannelMachineTurnTextTests
         var injectionId = await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation);
         await h.InsertTurnAsync(note, "CARD-0003 implemented, 665 tests pass; review dispatched.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2, "the [task done] turn must follow-up the same conversation");
         var followUp = h.Messaging.SentReplies[1];
@@ -93,6 +96,7 @@ public class ChannelMachineTurnTextTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var taskId = Guid.NewGuid();
         var shortId = DelegationReportFormatter.Short(taskId);
@@ -105,6 +109,7 @@ public class ChannelMachineTurnTextTests
             conversationKey: AgentTaskCheckService.ConversationKey(taskId));
         await h.InsertTurnAsync(typed, "review looping on claude-fable-5, canceling");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2, "Check ConversationKey must match when the body was amended");
         h.Messaging.SentReplies[1].Text.ShouldBe("review looping on claude-fable-5, canceling");
@@ -121,6 +126,7 @@ public class ChannelMachineTurnTextTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "On it.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var taskId = Guid.NewGuid();
         var note = $"[task {DelegationReportFormatter.Short(taskId)} done] git=landed\n\nWrote developer notes.";
@@ -129,6 +135,7 @@ public class ChannelMachineTurnTextTests
             FlattenNewlines(note),
             "CARD-0003 implemented, 665 tests pass; review dispatched.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2, "flattened [task done] plain text must follow-up");
         var followUp = h.Messaging.SentReplies[1];
@@ -155,11 +162,13 @@ public class ChannelMachineTurnTextTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "On it.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var note = "[task 15ed2644 done] CARD-0003 implemented";
         await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation);
         await h.InsertTurnAsync(note, "CARD-0003 implemented, 665 tests pass; review dispatched.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         await using var verify = CreateContext();
         var row = await verify.ChatChannels.AsNoTracking().SingleAsync(c => c.ExternalId == chatId);
@@ -183,10 +192,12 @@ public class ChannelMachineTurnTextTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var injectionId = await SeedMachineInjectionAsync(h, note, origin);
         await h.InsertTurnAsync(note, reply);
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2, $"{origin} plain text must follow-up");
         h.Messaging.SentReplies[1].Text.ShouldBe(reply);
@@ -203,11 +214,13 @@ public class ChannelMachineTurnTextTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var note = ChannelPreamble.BootstrapBody;
         var injectionId = await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.System);
         await h.InsertTurnAsync(note, "READY");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(1, "System origin stays marker-only");
         (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldBeNull();
@@ -223,11 +236,13 @@ public class ChannelMachineTurnTextTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var note = "[System note from Antiphon: file ready]";
         await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.System);
         await h.InsertTurnAsync(note, $"[[attach: {pdf}]]");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2);
         h.Messaging.SentReplies[1].Attachments.ShouldHaveSingleItem().Name.ShouldBe("system.pdf");
@@ -242,11 +257,13 @@ public class ChannelMachineTurnTextTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var note = "[check abcd0001 #1] anything new?";
         var injectionId = await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Check);
         await h.InsertTurnAsync(note, "NO_REPLY");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(1);
         (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldBeNull();
@@ -261,11 +278,13 @@ public class ChannelMachineTurnTextTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var note = "[check abcd0002 #1] still going";
         await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Check);
         await h.InsertTurnAsync(note, "Noted — NO_REPLY");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2);
         h.Messaging.SentReplies[1].Text.ShouldBe("Noted — NO_REPLY");
@@ -280,16 +299,21 @@ public class ChannelMachineTurnTextTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var note = "[task cd34ef56 done] shipped";
         var injectionId = await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation);
         await h.InsertTurnAsync(note, "Shipped.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.Count.ShouldBe(2);
 
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         await Restarted(h).OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2, "claim-before-produce makes re-triggers a no-op");
         (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldNotBeNull();
@@ -304,15 +328,18 @@ public class ChannelMachineTurnTextTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var note = "[task trail001 done] first";
         await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation);
         await h.InsertTurnAsync(note, "CARD-0003 implemented.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.Count.ShouldBe(2);
 
         await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "review dispatched.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(3, "trailing AssistantText of the same turn follows");
         h.Messaging.SentReplies[2].Text.ShouldBe("review dispatched.");
@@ -328,15 +355,18 @@ public class ChannelMachineTurnTextTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var note = "[task stub0002 done] first";
         await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation);
         await h.InsertTurnAsync(note, "CARD-0003 implemented.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.Count.ShouldBe(2);
 
         await h.InsertApiErrorStubAsync();
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2, "DispatchFollowUpAsync withholds an API-error stub");
     }
@@ -350,18 +380,21 @@ public class ChannelMachineTurnTextTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var note = "[task stop0001 done] later";
         var injectionId = await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation);
         await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, note);
         await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(1, "empty window must not claim");
         (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldBeNull();
 
         await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "choose another kind?");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2);
         h.Messaging.SentReplies[1].Text.ShouldBe("choose another kind?");
@@ -370,7 +403,7 @@ public class ChannelMachineTurnTextTests
     }
 
     [Test]
-    public async Task A_produce_failure_un_claims_so_the_next_trigger_sends_once()
+    public async Task A_produce_failure_stays_uncertain_until_acknowledged_retry()
     {
         await using var h = await CreateHarnessAsync(services =>
         {
@@ -386,6 +419,7 @@ public class ChannelMachineTurnTextTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.Count.ShouldBe(1);
 
         var note = "[task fail0001 done] retry";
@@ -394,12 +428,18 @@ public class ChannelMachineTurnTextTests
 
         fail.FailRemaining = 1;
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(1, "the failed produce must not leave a reply recorded");
         (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldBeNull(
-            "un-claim on produce failure, or the status is lost forever");
+            "an ambiguous publication retains its unsettled source");
 
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
+
+        h.Messaging.SentReplies.Count.ShouldBe(1, "a repeat trigger cannot replay an uncertain result");
+        await ChannelOutboundTestDriver.AcknowledgeUncertainAsync(h, injectionId);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2);
         h.Messaging.SentReplies[1].Text.ShouldBe("Grok review died on the sign-in screen.");
@@ -422,11 +462,13 @@ public class ChannelMachineTurnTextTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var textNote = "[task dial0001 done] status";
         var textId = await SeedMachineInjectionAsync(h, textNote, QueuedMessageOrigin.Delegation);
         await h.InsertTurnAsync(textNote, "CARD-0003 implemented.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(1, "empty origins is attachments-only");
         (await RowAsync(textId)).ChannelReplySettledAt.ShouldBeNull();
@@ -435,6 +477,7 @@ public class ChannelMachineTurnTextTests
         await SeedMachineInjectionAsync(h, fileNote, QueuedMessageOrigin.Delegation);
         await h.InsertTurnAsync(fileNote, $"[[attach: {pdf}]]");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2);
         h.Messaging.SentReplies[1].Attachments.ShouldHaveSingleItem().Name.ShouldBe("dial.pdf");
@@ -476,6 +519,7 @@ public class ChannelMachineTurnTextTests
         var channelRowId = await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync("run the tests please", "All green.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldBeEmpty("an operator-typed turn must never follow-up a chat");
         (await RowAsync(channelRowId)).ChannelReplySettledAt.ShouldBeNull();
@@ -494,12 +538,14 @@ public class ChannelMachineTurnTextTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "On it.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var (taskId, files) = await SeedBundleTaskAsync(h, mdCount: 2);
         var note = "[task 3f4a6029 done] CARD-0002 is Done";
         await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation, taskId);
         await h.InsertTurnAsync(note, "CARD-0002 cleanup landed.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(2);
         var followUp = h.Messaging.SentReplies[1];
@@ -514,7 +560,7 @@ public class ChannelMachineTurnTextTests
 
     private static string WriteFile(BridgeQueueHarness h, string name, byte[] bytes)
     {
-        var path = Path.Combine(h.TempRoot, name);
+        var path = Path.Combine(h.TempRoot, "workspace", name);
         File.WriteAllBytes(path, bytes);
         return path;
     }
