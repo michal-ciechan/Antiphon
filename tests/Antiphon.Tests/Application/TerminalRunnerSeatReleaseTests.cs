@@ -134,8 +134,7 @@ public class TerminalRunnerSeatReleaseTests
         var accepted = await f.TaskAsync();
         DelegationReportFormatter.BuildBrief(accepted, new DelegationSettings()).ShouldContain("answer-only-canary");
         accepted.Attempt++;
-        DelegationReportFormatter.BuildBrief(accepted, new DelegationSettings()).ShouldNotContain("answer-only-canary",
-            "formatter independently rejects fields belonging to another attempt");
+        DelegationReportFormatter.BuildBrief(accepted, new DelegationSettings()).ShouldNotContain("answer-only-canary");
         await f.EditAsync((t, _) => t.Status = AgentTaskStatus.Failed);
         await f.RetryAsync();
         var retried = await f.TaskAsync();
