@@ -137,12 +137,14 @@ public class TerminalRunnerSeatReleaseTests
             {
                 var settled = await f.TaskAsync();
                 settled.NextStage.ShouldBe(PipelineHandoffKind.Decide);
-                settled.NextHandoff.ShouldBe("Runner sync blocked (runner_sync_branch_mismatch): repair the desktop checkout or the task branch "
+                // The fixture has no IRemoteSettlementSync; production records that missing
+                // dependency in the Decide handoff and Warning, not in FailureReason.
+                settled.NextHandoff.ShouldBe("Runner sync blocked (runner_sync_dependency_unavailable): repair the desktop checkout or the task branch "
                     + "on origin, then reply to this task for a fresh completion report.");
                 await using var syncDb = f.Db();
                 (await syncDb.AgentTaskEvents.Where(e => e.AgentTaskId == f.TaskId && e.Type == AgentTaskEventType.Warning)
                     .Select(e => e.Detail).ToListAsync()).ShouldContain(
-                        "Runner sync refused: runner_sync_branch_mismatch. The report is retained and the desktop checkout was left as found; repair it, then reply "
+                        "Runner sync unavailable: runner_sync_dependency_unavailable. The report is retained and the desktop checkout was left as found; repair it, then reply "
                         + "to this task for a fresh completion report.");
             }
             f.Live.Child.Kills.ShouldBe(0);
