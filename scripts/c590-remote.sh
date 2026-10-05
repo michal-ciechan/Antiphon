@@ -2820,7 +2820,8 @@ c849_fixture_prepare() {
 }
 
 c849_fixture_tree_fault() {
-    local fault="$1" tree="$SERVER2_ROOT/.tree-$fault"
+    local fault="$1"
+    local tree="$SERVER2_ROOT/.tree-$fault"
     cp -a "$SERVER2_ROOT/.donor-tree" "$tree" || return 1
     case "$fault" in
         host) find "$tree/packages" -name .nupkg.metadata -delete ;;
@@ -3141,7 +3142,12 @@ c849_fixture_apphost() {
 }
 
 c849_fixture_npm_install() {
-    local image="$1" root="$2" cache="$3" project="$4" output="$SERVER2_ROOT/npm-$project.log" code=0
+    local image="$1"
+    local root="$2"
+    local cache="$3"
+    local project="$4"
+    local output="$SERVER2_ROOT/npm-$project.log"
+    local code=0
     docker run --rm --name "c849-${RUN}-npm-$project" --network none --user 1654:1654 \
         --entrypoint /bin/sh -e HOME=/home/app -e NPM_CONFIG_CACHE=/home/app/.npm \
         --mount "type=volume,source=$cache,target=/home/app/.npm/_cacache,volume-nocopy" \
@@ -3397,7 +3403,12 @@ c849_fixture_prune() {
 }
 
 c849_fixture_warm_probe() {
-    local image="$1" packages="$2" scratch="$3" kind="$4" code=0 output="$SERVER2_ROOT/warm-$kind.txt"
+    local image="$1"
+    local packages="$2"
+    local scratch="$3"
+    local kind="$4"
+    local code=0
+    local output="$SERVER2_ROOT/warm-$kind.txt"
     docker run --rm --network antiphon-build-slots --user 1654:1654 --entrypoint /bin/bash \
         -e ANTIPHON_BUILD_SLOTS_URL=http://build-slots:8080/build-slots \
         --tmpfs /c660-home:exec,uid=1654,gid=1654,mode=0700 \
