@@ -157,7 +157,7 @@ public sealed class ChannelOutboundService
                         .OfType<string>()).Where(p => !string.IsNullOrWhiteSpace(p)).Distinct().ToArray(),
                 }
                 : ChannelReplyPreparation.Deserialize(root.CaptureJson!) with { Route = route, Body = body, MemberIds = [] };
-            var createdAt = root?.CreatedAt ?? (members.Count == 0 ? now : members.Min(m => m.CreatedAt));
+            var obligationAt = members.Count == 0 ? now : members.Min(m => m.SentAt ?? m.CreatedAt);
             var delivery = new ChannelOutboundDelivery
             {
                 Id = Guid.NewGuid(), SourceKey = SourceKey(source, route), ChannelId = channel.Id,
@@ -172,7 +172,8 @@ public sealed class ChannelOutboundService
                 State = suppress ? ChannelOutboundDeliveryState.Suppressed : ChannelOutboundDeliveryState.Captured,
                 CreatedAt = now,
                 DeadlineAt = now.AddSeconds(capture.Profile?.TimeoutSeconds ?? 120),
-                PreparationDeadlineAt = root?.PreparationDeadlineAt ?? createdAt.AddMinutes(bridge.PendingReplyTtlMinutes),
+                PreparationDeadlineAt = root?.PreparationDeadlineAt ?? obligationAt.AddMinutes(bridge.PendingReplyTtlMinutes),
+                FailureEpisode = 1,
             };
             _db.ChannelOutboundDeliveries.Add(delivery);
             await _db.SaveChangesAsync(ct);
@@ -245,6 +246,7 @@ public sealed class ChannelOutboundService
         {
             delivery.PublicationAttemptBudgetBase = delivery.PublicationAttempts;
             delivery.NextAttemptAt = _clock.GetUtcNow().UtcDateTime;
+            delivery.FailureEpisode = Math.Max(delivery.FailureEpisode, delivery.FailureReportedEpisode) + 1;
         }
         delivery.FailureReason = "Explicit retry requested after possible broker acceptance.";
         delivery.Version++;
