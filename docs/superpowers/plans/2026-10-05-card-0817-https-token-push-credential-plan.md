@@ -499,12 +499,12 @@ CP-1 and CP-2 run on any lane with git. CP-3 to CP-6 run on a Linux lane with `s
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c0817-runner/` | probe-policy-any | `/*/*/(PushProbeOutcomeTests)\|(PushCredentialPolicyFileTests)/*` | V-1, V-2, V-3, V-4 | all 8 methods; 0 failed/skipped | 8 | 4 |
+| CP-1 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c0817-runner/` | probe-policy-any | `/*/*/(PushProbeOutcomeTests*)\|(PushCredentialPolicyFileTests*)/*` | V-1, V-2, V-3, V-4 | all 8 methods; 0 failed/skipped | 8 | 4 |
 | CP-2 | S1 | CP-1 | workspace-any | `/*/*/RunnerWorkspaceServiceTests/(Mirror_refuses_a_secondary_repository_the_push_credential_cannot_push_to*)\|(Mirror_accepts_a_secondary_repository_when_push_dry_run_succeeds*)\|(Mirror_refuses_a_repository_outside_the_allowed_clone_sources*)\|(Mirror_of_a_second_repository_clones_beside_the_primary_and_removes_through_its_own_checkout*)\|(Mirror_creates_worktree_on_branch_at_sha*)\|(Publish_pushes_only_own_fast_forward_branch*)` | V-5, R-1 | all 6 methods; 0 failed/skipped | 6 | 2 |
 | CP-3 | S2 | `tests/Antiphon.Tests -> bin-c0817-image/` | helper-linux | `/*/*/GithubCredentialHelperTests/*` | V-6, V-7, V-8, V-9, V-10, V-11 | all 6 methods; 0 failed/skipped | 6 | 8 |
 | CP-4 | S2 | CP-3 | custody-linux | `/*/*/DindRunnerContractTests/*` | V-12, V-13, V-14, R-2 | all 25 methods; 0 failed/skipped | 25 | 1 |
 | CP-5 | S2 | CP-3 | deploy-script-linux | `/*/*/RemoteScriptContractTests/(Deploy_parent_creates_the_github_token_directory_without_reading_it*)\|(Deploy_parent_creates_the_codex_home_directory_without_reading_it*)\|(Deploy_parent_seeds_or_verifies_runner_checkout*)\|(Persistent_restart_ensures_the_identity_file_before_stopping_an_older_runner*)\|(C1008_Recycle_exact_default_volumes*)\|(Scrub_covers_github_token_prefixes*)` | V-15, R-3 | all 6 methods; 0 failed/skipped | 6 | 3 |
-| CP-6 | S3 | `tests/Antiphon.Tests -> bin-c0817-docs/` | rotation-docs-linux | `/*/*/(RefreshGithubTokenScriptTests)\|(RunnerPushCredentialDocsTests)/*` | V-16, V-17, V-18 | all 3 methods; 0 failed/skipped | 3 | 8 |
+| CP-6 | S3 | `tests/Antiphon.Tests -> bin-c0817-docs/` | rotation-docs-linux | `/*/*/(RefreshGithubTokenScriptTests*)\|(RunnerPushCredentialDocsTests*)/*` | V-16, V-17, V-18 | all 3 methods; 0 failed/skipped | 3 | 8 |
 
 ## Publication and handoff
 
