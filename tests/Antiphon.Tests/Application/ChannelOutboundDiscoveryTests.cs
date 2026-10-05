@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using System.Collections.Concurrent;
 using Antiphon.Messaging;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
@@ -252,11 +253,13 @@ public sealed class ChannelOutboundDiscoveryTests
         await w.H.InsertTurnAsync("[System] complete system prompt", $"do not resurrect\n[[attach: {path}]]");
         await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, default);
         (await w.MemberAsync(system)).ChannelOutboundDeliveryId.ShouldBeNull();
+        w.CaptureAdmissions.ShouldNotContain(system, "the transactional fence must not mask a missing event exclusion");
         w.H.Messaging.SentReplies.Count.ShouldBe(1);
         var fresh = await w.MachineAsync("[System] fresh system attachment prompt", $"fresh attachment\n[[attach: {path}]]",
             QueuedMessageOrigin.System);
         await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, default);
         (await w.DeliveryAsync(fresh)).State.ShouldBe(ChannelOutboundDeliveryState.Captured);
+        w.CaptureAdmissions.ShouldContain(fresh);
         await w.DrainAsync();
         w.H.Messaging.SentReplies.Count.ShouldBe(2);
         w.H.Messaging.SentReplies[^1].Attachments.ShouldHaveSingleItem().Content
@@ -374,6 +377,7 @@ public sealed class ChannelOutboundDiscoveryTests
         public required IsolatedTestSchema Isolated { get; init; }
         public required ControlledTimeProvider Clock { get; init; }
         public required string Key { get; init; }
+        public required ConcurrentBag<Guid> CaptureAdmissions { get; init; }
         private readonly Channel<bool> _cycles = Channel.CreateUnbounded<bool>();
         public ChannelOutboundDiscoveryService Discovery => H.Provider.GetRequiredService<ChannelOutboundDiscoveryService>();
         public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(H.ConnectionString));
@@ -381,6 +385,7 @@ public sealed class ChannelOutboundDiscoveryTests
         {
             var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
             var clock = new ControlledTimeProvider(DateTimeOffset.UtcNow);
+            var admissions = new ConcurrentBag<Guid>();
             var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
             {
                 ConnectionString = isolated.ConnectionString, TimeProvider = clock,
@@ -390,6 +395,16 @@ public sealed class ChannelOutboundDiscoveryTests
                     services.AddSingleton<IOptions<ChannelOutboundSettings>>(Options.Create(
                         new ChannelOutboundSettings { UnifiedRecoveryEnabled = enabled }));
                     services.AddSingleton<ChannelOutboundDiscoveryService>();
+                    services.AddScoped<ChannelOutboundService>(sp =>
+                    {
+                        var service = ActivatorUtilities.CreateInstance<ChannelOutboundService>(sp);
+                        service.ProbeBarrierAsync = (name, member, _) =>
+                        {
+                            if (name == "capture-admission") admissions.Add(member);
+                            return Task.CompletedTask;
+                        };
+                        return service;
+                    });
                 },
             });
             await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString));
@@ -399,7 +414,7 @@ public sealed class ChannelOutboundDiscoveryTests
             await db.SaveChangesAsync();
             await db.Agents.Where(a => a.Id == h.AgentId).ExecuteUpdateAsync(s => s.SetProperty(a => a.BoardId, boardId));
             var key = "telegram:" + await h.BindChannelAsync();
-            return new World { H = h, Isolated = isolated, Clock = clock, Key = key };
+            return new World { H = h, Isolated = isolated, Clock = clock, Key = key, CaptureAdmissions = admissions };
         }
         public ChannelOutboundHostedService Host() => new(H.Provider.GetRequiredService<IServiceScopeFactory>(),
             NullLogger<ChannelOutboundHostedService>.Instance, Clock)

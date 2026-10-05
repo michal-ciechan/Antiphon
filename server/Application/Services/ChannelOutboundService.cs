@@ -54,6 +54,8 @@ public sealed class ChannelOutboundService
         ChannelBridgeSettings bridge, CancellationToken ct, Guid? rootDeliveryId = null,
         IReadOnlyList<Guid>? sourceTaskIds = null)
     {
+        if (ProbeBarrierAsync is { } admissionProbe)
+            await admissionProbe("capture-admission", source.CorrelationIds.FirstOrDefault(), ct);
         if (string.IsNullOrWhiteSpace(route.Channel) || string.IsNullOrWhiteSpace(route.ConversationId)
             || route.Attachments.Count != 0 || source.SessionId == Guid.Empty
             || source.PromptSequence < 0 || source.FirstTextSequence <= source.PromptSequence
