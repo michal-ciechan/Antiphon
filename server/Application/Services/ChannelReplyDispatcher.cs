@@ -383,14 +383,10 @@ public sealed class ChannelReplyDispatcher
                     new HashSet<Guid>(), new HashSet<Guid>(), failed);
         }
 
-        // CLAIM BEFORE SENDING. Marking settled first is what makes a restart safe in the other
-        // direction: the dispatcher is re-triggered for the same turn all the time (an AssistantText
-        // arrival, the closing TurnEnd, a reconnect's backfilled boundary), and with a durable
-        // correlation an unclaimed row would answer the same turn again — a duplicate into a real
-        // family chat. Same shape, and the same reasoning, as the queue stamping Sent before it types.
-        // A produce failure below un-claims, so a broker blip retries on the next turn end.
-        // Settling the correlations closes the turn — remember its watermark so text that lands
-        // AFTER this dispatch (stop marker mid-stream) can still be delivered as a follow-up.
+        // Remember routing for the current trailing-text path (durable trailing recovery is S6).
+        // With activation enabled, CaptureAsync owns the main sources before any preparation;
+        // settlement is the pump's accepted outcome. Default-off retains the legacy service's
+        // claim/reopen protocol. This cache does not authorize settlement or publication.
         _dispatched[sessionId] = new DispatchedTurn(userPrompt.Sequence, maxTextSeq, targets);
 
         // The frozen silent-turn contract: a whole-turn NO_REPLY settles the correlations and
