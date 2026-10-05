@@ -11,6 +11,85 @@ namespace Antiphon.Tests.Scripts;
 [Category("Unit")]
 public sealed class HostJqPrerequisiteScriptTests
 {
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1058_Check_rejects_canonical_hardlink()
+    {
+        // Put the transient witness first: later link guards cannot mask P0's policy.
+        using (var f = new HostJqFixture())
+        {
+            await f.Identity(); await f.Link();
+            var r = await f.Observe("check", [("P0.after", () => f.UnlinkAlias())]);
+            r.Exit.ShouldBe(2, "c1058-initial-link-refused");
+            f.Calls.Length.ShouldBe(0, "c1058-hardlink-no-execution");
+            f.Ledger.ShouldContain("P0|", Case.Sensitive, "fixture captured P0");
+        }
+        foreach (var mode in new[] { "check", "provision" })
+        {
+            using var f = new HostJqFixture(); await f.Identity(); await f.Link(); await f.InitializeRepo();
+            var identity = await f.NativeIdentity(f.Destination); var hash = f.Hash(f.Destination); var sentinels = f.Sentinels();
+            (await f.Helper(mode)).Exit.ShouldBe(2, "persistent hardlink");
+            (await f.Wrapper(mode + "-host-jq")).Exit.ShouldBe(2);
+            f.Calls.Length.ShouldBe(0, "c1058-hardlink-no-execution");
+            f.Receipts.ShouldBeEmpty(); f.InstallEffects.ShouldBeEmpty();
+            (await f.NativeIdentity(f.Destination)).ShouldBe(identity); f.Hash(f.Destination).ShouldBe(hash);
+            f.Sentinels().ShouldBe(sentinels);
+        }
+        using (var f = new HostJqFixture())
+        {
+            await f.Identity(); File.Delete(f.Destination);
+            var r = await f.Locked(async () => { f.IdentityExisting(); await f.Link(); }, () => f.Helper("provision"));
+            r.Exit.ShouldBe(2); f.Calls.Length.ShouldBe(0, "c1058-hardlink-no-execution");
+            f.Trace.ShouldNotContain("download");
+        }
+        foreach (var alias in new[] { false, true })
+        {
+            using var f = new HostJqFixture(); f.Existing();
+            if (alias) File.CreateSymbolicLink(f.OtherJq, f.Destination);
+            (await f.Helper("check")).Exit.ShouldBe(0, "native single-link control");
+        }
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1058_Provision_removes_only_owned_stage_link()
+    {
+        using var f = new HostJqFixture(); await f.Identity(existing: false);
+        var sentinels = f.Sentinels();
+        var r = await f.Helper("provision");
+        r.Exit.ShouldBe(0, "c1058-install-single-link-before-probe: " + r.Output);
+        f.Ledger.ShouldContain("publish|2", Case.Sensitive, "native publication has two links");
+        f.Ledger.ShouldContain("unlink|1", Case.Sensitive, "native owned unlink leaves one link");
+        f.Trace.Split('\n').Where(x => x.StartsWith("jq-nlink ")).ShouldAllBe(x => x == "jq-nlink 1",
+            "c1058-install-single-link-before-probe");
+        f.Trace.ShouldContain("jq-nlink 1", Case.Sensitive, "first probe observed");
+        var hash = f.Hash(f.Destination); var identity = await f.NativeIdentity(f.Destination);
+        hash.ShouldBe(f.Hash(f.Payload));
+        f.ClearTrace(); (await f.Helper("provision")).Exit.ShouldBe(0);
+        f.InstallEffects.ShouldBeEmpty(); f.Hash(f.Destination).ShouldBe(hash);
+        (await f.NativeIdentity(f.Destination)).ShouldBe(identity); f.Sentinels().ShouldBe(sentinels);
+        Directory.GetDirectories(f.Parent, ".antiphon-jq.*").ShouldBeEmpty();
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1058_Staged_unlink_failure_refuses()
+    {
+        foreach (var fault in new[] { "unlink-after", "unlink-before" })
+        {
+            using var f = new HostJqFixture(); await f.Identity(existing: false); f.Fault(fault);
+            var sentinels = f.Sentinels();
+            var r = await f.Helper("provision");
+            r.Exit.ShouldBe(2, "c1058-unlink-status-refused: " + fault);
+            f.Trace.ShouldNotContain("jq-call", Case.Sensitive, "no execution after unlink error");
+            r.Stdout.ShouldBeEmpty(); f.Hash(f.Destination).ShouldBe(f.Hash(f.Payload));
+            f.Ledger.Split('\n').Count(x => x.StartsWith("stage-unlink|")).ShouldBe(1);
+            f.Ledger.ShouldContain("publish|2");
+            if (fault == "unlink-after") f.Ledger.ShouldContain("unlink|1");
+            (await f.NativeIdentity(f.Destination)).Split(' ')[2].ShouldBe("1");
+            f.Sentinels().ShouldBe(sentinels);
+            Directory.GetDirectories(f.Parent, ".antiphon-jq.*").ShouldBeEmpty();
+        }
+    }
+
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Check_qualifies_deployment_shell()
     {
@@ -838,7 +917,7 @@ internal sealed class HostJqFixture : IDisposable
         WriteTool("ssh", "printf 'ssh %s\\n' \"$*\" >> \"$HJ_ROOT/trace\"\necho $$ > \"$HJ_ROOT/ssh-pid\"\n/usr/bin/cat > \"$HJ_ROOT/stdin\"\nif [ \"$HJ_TRANSPORT\" = block-receipt ]; then\n for d in \"$HJ_WRAPPER\"/.antiphon/rolling-server2/*; do /usr/bin/mkdir \"$d/host-jq-${HJ_PHASE}.json\"; done\nfi\nif [ \"$HJ_TRANSPORT\" = block-refusal ]; then\n for d in \"$HJ_WRAPPER\"/.antiphon/rolling-server2/*; do /usr/bin/mkdir \"$d/host-jq-${HJ_PHASE}-refused.json\"; done\nfi\nprintf 'remote-C1025-secret\\n' >&2\nif [ \"$HJ_TRANSPORT\" = late ]; then /usr/bin/sleep .5; fi\nif [ \"$HJ_TRANSPORT\" = empty ]; then exit 0; fi\nif [ \"$HJ_TRANSPORT\" = truncated ]; then echo '{'; exit 0; fi\nif [ -f \"$HJ_ROOT/proof\" ]; then /usr/bin/cat \"$HJ_ROOT/proof\"; else /usr/bin/bash -s -- \"${!#}\" < \"$HJ_ROOT/stdin\"; code=$?; [ \"$code\" = 0 ] || exit \"$code\"; fi\n[ \"$HJ_TRANSPORT\" != ssh-exit ] || exit 255\n[ \"$HJ_TRANSPORT\" != ssh-refused ] || exit 2");
     }
 
-    private string JqScript(string fault) => "#!/usr/bin/bash\nprintf 'jq-call %s\\n' \"$*\" >> \"$HJ_ROOT/trace\"\nfault=$(/usr/bin/cat \"$HJ_ROOT/fault\" 2>/dev/null)\nif [ \"$1\" = --version ]; then\n" + (fault == "version-exit" ? "exit 1\n" : fault == "version-empty" ? "exit 0\n" : fault == "version-other" ? "echo jq-other; exit 0\n" : "[ \"$fault\" != final-version ] || { echo jq-other; exit 0; }\n") +
+    private string JqScript(string fault) => "#!/usr/bin/bash\nprintf 'jq-nlink %s\\n' \"$(/usr/bin/stat -Lc %h -- \"$0\")\" >> \"$HJ_ROOT/trace\"\nprintf 'jq-call %s\\n' \"$*\" >> \"$HJ_ROOT/trace\"\nfault=$(/usr/bin/cat \"$HJ_ROOT/fault\" 2>/dev/null)\nif [ \"$1\" = --version ]; then\n" + (fault == "version-exit" ? "exit 1\n" : fault == "version-empty" ? "exit 0\n" : fault == "version-other" ? "echo jq-other; exit 0\n" : "[ \"$fault\" != final-version ] || { echo jq-other; exit 0; }\n") +
         "fi\n" + (fault == "true" ? "[ \"$1\" != -en ] || { echo false; exit 1; }\n" : fault == "false" ? "[ \"$1\" != -en ] || { echo true; exit 0; }\n" : "") +
         "if [ \"$1\" = -en ] && [ \"$fault\" = final-true ]; then echo false; exit 1; fi\nif [ \"$1\" = -en ] && [ \"$fault\" = final-false ]; then echo true; exit 0; fi\nexec '" + _jq + "' \"$@\"\n";
 
@@ -881,7 +960,7 @@ internal sealed class HostJqFixture : IDisposable
         File.WriteAllText(Root + "/scripts/deploy-server2.ps1", source);
         File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-real.ps1"), Root + "/scripts/c590-real.ps1");
         File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/lib/runner-operator-token.ps1"), Root + "/scripts/lib/runner-operator-token.ps1");
-        File.WriteAllText(Root + "/.gitignore", ".antiphon/\n/tools/\n/home/\n/foreign/\n/destination/\n/lock/\n/temporary/\n/payload\n/fault\n/dockerenv\n/trace\n/stdin\n/ssh-pid\n/proof\n/token\n/*-ready\n/*-release\n");
+        File.WriteAllText(Root + "/.gitignore", ".antiphon/\n/tools/\n/home/\n/foreign/\n/destination/\n/lock/\n/temporary/\n/control/\n/payload\n/fault\n/dockerenv\n/trace\n/stdin\n/ssh-pid\n/proof\n/token\n/*-ready\n/*-release\n");
         (await Git("init", "-q")).Exit.ShouldBe(0);
         (await Git("config", "user.name", "fixture")).Exit.ShouldBe(0); (await Git("config", "user.email", "fixture@example.invalid")).Exit.ShouldBe(0);
         (await Git("add", ".")).Exit.ShouldBe(0); (await Git("commit", "-qm", "private baseline")).Exit.ShouldBe(0);
@@ -931,6 +1010,185 @@ internal sealed class HostJqFixture : IDisposable
         var observed = DateTime.Parse(p["observedAtUtc"]!.GetValue<string>()).ToUniversalTime();
         (observed >= start && observed <= end).ShouldBeTrue("refusal-time");
     }
+
+    internal string Control => Root + "/control";
+    internal string Ledger => File.Exists(Control + "/ledger") ? File.ReadAllText(Control + "/ledger") : "";
+    internal string[] Calls => Trace.Split('\n').Where(x => x.StartsWith("identity-call ")).ToArray();
+    internal string OriginalHash { get; private set; } = "";
+    internal string ReplacementHash { get; private set; } = "";
+    internal async Task<string> NativeIdentity(string path) => (await Run("/usr/bin/stat", "-c", "%d %i %h %a", path)).Stdout.Trim();
+    internal async Task Link() => (await Run("/usr/bin/ln", Destination, Control + "/alias")).Exit.ShouldBe(0, "fixture native hardlink");
+    internal Task UnlinkAlias() { File.Delete(Control + "/alias"); return Task.CompletedTask; }
+    internal Task Swap(bool symlink = false)
+    {
+        File.Move(Destination, Control + "/held");
+        if (symlink) File.CreateSymbolicLink(Destination, Control + "/replacement");
+        else File.Move(Control + "/replacement", Destination);
+        return Task.CompletedTask;
+    }
+    internal Task RestoreSwap()
+    {
+        if (new FileInfo(Destination).LinkTarget is not null) File.Delete(Destination);
+        else File.Move(Destination, Control + "/replacement");
+        File.Move(Control + "/held", Destination); return Task.CompletedTask;
+    }
+    internal Task Mode(string path, string mode)
+    { File.SetUnixFileMode(path, (UnixFileMode)Convert.ToInt32(mode, 8)); return Task.CompletedTask; }
+    internal void IdentityExisting() { File.WriteAllText(Destination, IdentityScript("original")); Executable(Destination); }
+    internal async Task Identity(bool existing = true)
+    {
+        Directory.CreateDirectory(Control);
+        File.WriteAllText(Control + "/nonce", Guid.NewGuid().ToString("N"));
+        File.WriteAllText(Root + "/scripts/identity-hook.sh", IdentityHook);
+        File.WriteAllText(Control + "/replacement", IdentityScript("foreign")); Executable(Control + "/replacement");
+        // Verify the foreign program is fully functional before any fault, then clear setup markers.
+        foreach (var args in new[] { new[] { "--version" }, new[] { "-en", "true" }, new[] { "-en", "false" }, new[] { "-cn", "{schema:1}" } })
+        {
+            var r = await Run(Control + "/replacement", args);
+            r.Exit.ShouldBe(args.Last() == "false" ? 1 : 0, "fixture foreign executable health");
+            r.Stdout.Trim().ShouldBe(args[0] == "--version" ? "jq-1.7.1" : args.Last() == "{schema:1}" ? "{\"schema\":1}" : args.Last());
+        }
+        ClearTrace(); File.WriteAllText(Control + "/ledger", ""); File.Delete(Control + "/next");
+        if (existing)
+        {
+            IdentityExisting(); OriginalHash = Hash(Destination); ReplacementHash = Hash(Control + "/replacement");
+            OriginalHash.ShouldNotBe(ReplacementHash, "fixture distinct bytes");
+            (await NativeIdentity(Destination)).ShouldNotBe(await NativeIdentity(Control + "/replacement"), "fixture distinct native inodes");
+        }
+        WrapIdentityTool("readlink", "result=$(\"$HJ_ROOT/tools/inner-readlink\" \"$@\"); code=$?\necho P0 > \"$HJ_ROOT/control/next\"\nprintf '%s\\n' \"$result\"\nexit \"$code\"");
+        WrapIdentityTool("stat", """
+            last=${!#}
+            if [ "$2" != '%d %i %h' ]; then exec "$HJ_ROOT/tools/inner-stat" "$@"; fi
+            phase=$(/usr/bin/cat "$HJ_ROOT/control/next")
+            case "$phase" in P0) next=F0;; F0) next=L0;; L0) next=H;; L1) next=F1;; F1) next=done;; *) echo bad-phase >&2; exit 97;; esac
+            observe "$phase.before" "$last"
+            native=$(/usr/bin/stat "$@"); code=$?
+            mode=$(/usr/bin/stat -Lc '%a' -- "$last" 2>/dev/null)
+            hash=$(/usr/bin/sha256sum -- "$last" 2>/dev/null); hash=${hash%% *}
+            supplied=$native
+            observe "$phase.after" "$last"
+            if [ -f "$HJ_ROOT/control/supply" ]; then supplied=$(/usr/bin/cat "$HJ_ROOT/control/supply"); fi
+            if [ -f "$HJ_ROOT/control/status" ]; then code=$(/usr/bin/cat "$HJ_ROOT/control/status"); fi
+            printf '%s|%s|%s|%s|%s|%s\n' "$phase" "$last" "$native" "$supplied" "$mode" "$hash" >> "$HJ_ROOT/control/ledger"
+            echo "$next" > "$HJ_ROOT/control/next"
+            printf '%s\n' "$supplied"
+            exit "$code"
+            """);
+        WrapIdentityTool("sha256sum", """
+            last=${!#}
+            if [[ "$last" != /proc/self/fd/8 && "$last" != "$HJ_DEST" ]]; then exec "$HJ_ROOT/tools/inner-sha256sum" "$@"; fi
+            observe H.before "$last"
+            result=$(/usr/bin/sha256sum "$@"); code=$?
+            printf 'H|%s|%s\n' "$last" "$result" >> "$HJ_ROOT/control/ledger"
+            observe H.after "$last"
+            if [ -f "$HJ_ROOT/control/hash-supply" ]; then result=$(/usr/bin/cat "$HJ_ROOT/control/hash-supply"); fi
+            if [ -f "$HJ_ROOT/control/hash-status" ]; then code=$(/usr/bin/cat "$HJ_ROOT/control/hash-status"); fi
+            # Pin simulation is solely for exact unmodified installation Payload bytes.
+            if [ ! -f "$HJ_ROOT/control/raw-hash" ] && /usr/bin/cmp -s "$last" "$HJ_ROOT/payload"; then
+                result="PIN  $last"
+            fi
+            printf '%s\n' "$result"; exit "$code"
+            """.Replace("PIN", Pin, StringComparison.Ordinal));
+        WrapIdentityTool("ln", "\"$HJ_ROOT/tools/inner-ln\" \"$@\" || exit $?\nprintf 'publish|%s|%s\\n' \"$(/usr/bin/stat -c %h \"$HJ_DEST\")\" \"$(/usr/bin/stat -c '%d %i' \"$HJ_DEST\")\" >> \"$HJ_ROOT/control/ledger\"");
+        WrapIdentityTool("rm", """
+            last=${!#}
+            if [[ "$last" != */.antiphon-jq.*/jq ]]; then exec "$HJ_ROOT/tools/inner-rm" "$@"; fi
+            printf 'stage-unlink|%s\n' "$last" >> "$HJ_ROOT/control/ledger"
+            [ "$fault" != unlink-before ] || exit 1
+            "$HJ_ROOT/tools/inner-rm" "$@" || exit $?
+            printf 'unlink|%s|%s\n' "$(/usr/bin/stat -c %h "$HJ_DEST")" "$(/usr/bin/stat -c '%d %i' "$HJ_DEST")" >> "$HJ_ROOT/control/ledger"
+            observe unlink.after "$last"
+            [ "$fault" != unlink-after ] || exit 1
+            """);
+    }
+    private void WrapIdentityTool(string tool, string body)
+    {
+        File.Move(Tools + "/" + tool, Tools + "/inner-" + tool);
+        WriteTool(tool, ". \"$HJ_ROOT/scripts/identity-hook.sh\"\n" + body);
+    }
+    private string IdentityScript(string kind) => """
+        #!/usr/bin/bash
+        . "$HJ_ROOT/scripts/identity-hook.sh"
+        case "$1" in --version) phase=Qv;; -cn) phase=Qj;; *) if [[ "$*" = *false* ]]; then phase=Qf; else phase=Qt; fi;; esac
+        printf 'identity-call KIND %s %s\n' "$phase" "$*" >> "$HJ_ROOT/trace"
+        result=$('NATIVE' "$@"); code=$?
+        printf 'jq-result KIND %s %s %s\n' "$phase" "$code" "$result" >> "$HJ_ROOT/trace"
+        if [ "$phase" = Qj ]; then echo L1 > "$HJ_ROOT/control/next"; fi
+        observe "$phase.after" "$0"
+        printf '%s\n' "$result"; exit "$code"
+        """.Replace("KIND", kind, StringComparison.Ordinal).Replace("NATIVE", _jq, StringComparison.Ordinal);
+    private const string IdentityHook = """
+        observe() {
+            local event=$1 target=$2 nonce parts
+            nonce=$(/usr/bin/cat "$HJ_ROOT/control/nonce")
+            printf 'event|%s|%s|%s\n' "$nonce" "$event" "$target" >> "$HJ_ROOT/control/ledger"
+            if [ -f "$HJ_ROOT/control/$event.arm" ]; then
+                read -r -a parts < /proc/$/stat
+                printf '%s %s %s\n' "$" "${parts[21]}" "$nonce" >> "$HJ_ROOT/control/$event.ready"
+                local deadline=$((SECONDS+5))
+                while [ ! -f "$HJ_ROOT/control/$event.release" ]; do
+                    [ "$SECONDS" -lt "$deadline" ] || { echo fixture-barrier-timeout >&2; exit 98; }
+                    /usr/bin/sleep .01
+                done
+            fi
+        }
+        """;
+    internal async Task<HostJqRun> Observe(string mode, (string Event, Func<Task> Action)[] barriers, bool wrapper = false)
+    {
+        foreach (var b in barriers) File.WriteAllText(Control + "/" + b.Event + ".arm", "");
+        var children = new List<(int Pid, string Start)>();
+        var pending = wrapper ? Wrapper(mode + "-host-jq") : Helper(mode);
+        try
+        {
+            foreach (var b in barriers)
+            {
+                await WaitMarker("control/" + b.Event + ".ready");
+                var lines = File.ReadAllLines(Control + "/" + b.Event + ".ready");
+                lines.Length.ShouldBe(1, "fixture barrier exactly one hit: " + b.Event);
+                var fields = lines[0].Split(' ');
+                fields[2].ShouldBe(File.ReadAllText(Control + "/nonce"), "fixture nonce");
+                children.Add((int.Parse(fields[0]), fields[1]));
+                await b.Action();
+                File.WriteAllText(Control + "/" + b.Event + ".release", "");
+            }
+            return await pending;
+        }
+        finally
+        {
+            foreach (var b in barriers) File.WriteAllText(Control + "/" + b.Event + ".release", "");
+            try { await pending; }
+            finally
+            {
+                foreach (var child in children)
+                {
+                    var proc = "/proc/" + child.Pid + "/stat";
+                    if (File.Exists(proc) && File.ReadAllText(proc).Split(' ')[21] == child.Start)
+                    {
+                        using var p = Process.GetProcessById(child.Pid);
+                        if (!p.HasExited) { p.Kill(true); await p.WaitForExitAsync(); throw new InvalidOperationException("fixture rescued barrier child"); }
+                    }
+                }
+                foreach (var b in barriers)
+                    foreach (var suffix in new[] { ".arm", ".ready", ".release" }) File.Delete(Control + "/" + b.Event + suffix);
+            }
+        }
+    }
+    internal async Task<HostJqRun> Locked(Func<Task> appeared, Func<Task<HostJqRun>> invoke)
+    {
+        using var held = Start("/usr/bin/bash", "-c", "exec 9<\"$HJ_LOCK\"; /usr/bin/flock 9; echo ready; read -r release");
+        var stderr = held.StandardError.ReadToEndAsync();
+        (await held.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(5))).ShouldBe("ready");
+        var stdout = held.StandardOutput.ReadToEndAsync();
+        var pending = invoke();
+        try { await WaitTrace("flock-request", 1); await appeared(); }
+        finally
+        {
+            held.StandardInput.WriteLine("release"); held.StandardInput.Close();
+            await held.WaitForExitAsync(); await stdout; await stderr;
+        }
+        return await pending;
+    }
+
     internal Process Start(string executable, params string[] args)
     {
         var psi = new ProcessStartInfo(executable) { UseShellExecute = false, WorkingDirectory = Root, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
@@ -941,6 +1199,7 @@ internal sealed class HostJqFixture : IDisposable
         psi.Environment["HJ_PHASE"] = _executingPhase;
         psi.Environment["HJ_TRANSPORT"] = Transport; psi.Environment["ANTIPHON_OPERATOR_TOKEN_FILE"] = Root + "/token";
         psi.Environment["ANTIPHON_TASK_TOKEN"] = "task-C1025-secret";
+        psi.Environment.Remove("C727_TEST_STATE");
         psi.Environment["C727_TEST_VERIFY_STUB"] = Root + "/scripts/fake-verify.ps1";
         psi.Environment["C727_TEST_HTTP_STUB"] = Root + "/scripts/fake-http.ps1";
         return Process.Start(psi)!;

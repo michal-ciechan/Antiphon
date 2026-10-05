@@ -18,8 +18,19 @@ own=$(hostname 2>/dev/null) || refuse HostJqLaneUnavailable
 [ -n "$daemon" ] && [ -n "$own" ] || refuse HostJqLaneUnavailable
 [ "$daemon" = "$own" ] && [ ! -e "$CONTAINER_MARKER" ] || refuse HostJqWrongLane
 
+# Direct call: observation failures must leave the main shell, not a subshell.
+snapshot() {
+    local -n fields=$1
+    local record
+    record=$(stat "$2" '%d %i %h' -- "$3" 2>/dev/null) || refuse HostJqInvalid
+    [[ "$record" =~ ^([^[:space:]]+)\ ([^[:space:]]+)\ ([^[:space:]]+)$ ]] || refuse HostJqInvalid
+    fields=("${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")
+    [[ "${fields[0]}" =~ ^[0-9]+$ ]] || refuse HostJqInvalid
+    [[ "${fields[1]}" =~ ^[0-9]+$ ]] || refuse HostJqInvalid
+}
 qualify() {
     local truth falsehood meta
+    local -a initial
     hash -r
     if ! lookup=$(command -v jq); then
         local directory
@@ -35,6 +46,8 @@ qualify() {
     resolved=$(readlink -f -- "$lookup" 2>/dev/null) || return 4
     # Accept aliases only to the regular canonical leaf; its lookup name alone is not proof.
     [ "$resolved" = "$DESTINATION" ] && [ -f "$DESTINATION" ] && [ ! -L "$DESTINATION" ] || return 5
+    snapshot initial -c "$DESTINATION"
+    [ "${initial[2]}" = 1 ] || return 4
     version=$("$resolved" --version 2>/dev/null) || return 4
     [[ "$version" =~ [^[:space:]] && "$version" != *$'\n'* ]] || return 4
     # Require the actual outputs as well as both exit codes (constant-success is invalid).
@@ -132,6 +145,8 @@ actual=$(sudo -n -- sha256sum -- "$stage_root/jq" 2>/dev/null) || refuse HostJqD
 [ "$(sudo -n -- stat -c '%u:%g:%a' -- "$stage_root/jq" 2>/dev/null)" = 0:0:755 ] || refuse HostJqStageUnsafe
 # Hard-link publication is atomic, same-filesystem and refuses any existing leaf.
 sudo -n -- ln -T -- "$stage_root/jq" "$DESTINATION" 2>/dev/null || refuse HostJqPublishUnavailable
+# Publication temporarily has two names. Remove only our staging name before admission.
+sudo -n -- rm -- "$stage_root/jq" 2>/dev/null || refuse HostJqInvalid
 qualify; result=$?
 [ "$result" != 5 ] || refuse_path
 [ "$result" != 3 ] || refuse HostJqFinalPathInvalid
