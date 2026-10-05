@@ -1409,3 +1409,17 @@ atomic loss and PC-55's incident-save variants remain S8/S9 prerequisites; S7's
 refusal-state-save variant is independently exercised. Mutation owns every deliberate
 mutant, red/restore/green cycle and missing-control discovery. No PC is discharged.
 PreparationDeadlineAt still uses enqueue CreatedAt; CARD-1061 remains unfixed.
+
+S7 repair group 1 strengthens the lease-claim witness after inspection identified
+that the candidate query could mask removal of the claim-update expiry predicate.
+The per-instance before-claim barrier installs a live foreign lease after candidate
+selection without changing Version, so the claim predicate alone must reject it;
+the genuine two-pump held-producer race and a resumed valid companion remain.
+The due-time witness also requires Version to remain unchanged before the due time,
+so an entry guard cannot mask removal of candidate admission's due predicate.
+No mutant was executed. Run 20261005-065158-fcfb at
+472b67b5278ca63d7fa91fb319a49f78856230af passed CP-41 (22) and CP-42 (3), then was
+explicitly stopped and awaited (terminal exit 6, executor/children gone) before
+source edits. Its CP-43 build and all later rows are incomplete, and these earlier
+receipts are superseded. Run all nine After=S7 rows once on the next committed tip;
+no per-fix rebuild, assertion relaxation or timeout change is authorized.

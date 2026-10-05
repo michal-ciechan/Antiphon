@@ -71,6 +71,8 @@ public sealed class ChannelOutboundDeliveryPump
         var processed = 0;
         foreach (var candidate in candidates)
         {
+            if (ProbeBarrierAsync is { } beforeClaimBarrier)
+                await beforeClaimBarrier("before-claim", candidate.Id, ct);
             if (candidate.State == ChannelOutboundDeliveryState.Converting
                 && ProbeBarrierAsync is { } beforeClaim)
                 await beforeClaim("before-conversion-claim", candidate.Id, ct);
