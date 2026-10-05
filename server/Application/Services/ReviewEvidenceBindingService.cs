@@ -19,7 +19,8 @@ public sealed class ReviewEvidenceBindingService(AppDbContext db, ITaskProgressG
         string? ReviewedSourceRef, string? ReviewedRepositoryPath, VerificationScope? Scope,
         IReadOnlyList<string> Warnings, IReadOnlyList<string> ConsistencyWarnings,
         string? ReportSha256 = null, DateTime? ObservedAt = null, string? ConfirmedReviewSha = null,
-        string? ObservedSubjectSha = null)
+        string? ObservedSubjectSha = null, bool WitnessRefused = false,
+        string? SubjectBranch = null, string? SubjectBaseline = null)
     {
         public bool Bound => ReviewedSourceSha is not null;
     }
@@ -77,10 +78,13 @@ public sealed class ReviewEvidenceBindingService(AppDbContext db, ITaskProgressG
             ReviewedRepositoryPath = null, Scope = review.VerificationProfileVersion is not null
                 && review.VerificationRound is not null ? VerificationScope.Unknown : null,
             Warnings = [reason], ConsistencyWarnings = [],
+            WitnessRefused = true,
         };
         if (evidence.ReviewedSourceClean != true)
             return Refuse("review_evidence_source_not_clean");
         var subject = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == candidate.SubjectTaskId, ct);
+        if (subject.RepoPath != candidate.ReviewedRepositoryPath || FullRef(subject.WorktreeBranch) != candidate.ReviewedSourceRef)
+            return Refuse("review_evidence_subject_changed");
         if (!SameRepository(review.RepoPath, subject.RepoPath))
             return Refuse("review_evidence_repository_mismatch");
         if (candidate.ReviewedSourceRef is not { } sourceRef || !sourceRef.StartsWith("refs/heads/", StringComparison.Ordinal))
@@ -125,6 +129,7 @@ public sealed class ReviewEvidenceBindingService(AppDbContext db, ITaskProgressG
             ReportSha256 = ReportDigest(report), ObservedAt = DateTime.UtcNow,
             ConfirmedReviewSha = currentSync?.DesktopAfterSha?.ToLowerInvariant(),
             ObservedSubjectSha = observation.Sha!.ToLowerInvariant(), ConsistencyWarnings = [],
+            SubjectBranch = subject.WorktreeBranch, SubjectBaseline = subject.ProgressBaselineJson,
         };
     }
 

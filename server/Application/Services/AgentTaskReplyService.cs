@@ -819,6 +819,7 @@ public sealed class AgentTaskReplyService
         using var observation = new RuntimePhase(_logger, _timeProvider, task.AgentSessionId ?? Guid.Empty,
             "settlement.entry", task.Id);
         var now = UtcNow();
+        var settlementIdentity = ReviewSettlementIdentity.Capture(task);
         if (!DelegationReportFormatter.TryReadReportVerdict(task.Id, report, out var verdict, out var body))
         {
             body = report;
@@ -1029,9 +1030,10 @@ public sealed class AgentTaskReplyService
         // omits the final token and may itself contain a token-shaped line.
         var reviewEvidence = task.Role == AgentTaskRole.Review && task.Stage == OrchestrationStage.Review
             ? ReviewEvidence.TryParse(report) : default;
-        if (task.Stage is not null
-            && await RecordDelegateStageOutcomeAsync(services, db, task, report, reviewEvidence, now, ct)
-                is { } consistencyWarning)
+        var stageRecording = task.Stage is not null
+            ? await RecordDelegateStageOutcomeAsync(services, db, task, report, reviewEvidence, now,
+                remote.Result, settlementEvent, settlementIdentity, ct) : null;
+        if (stageRecording?.Warning is { } consistencyWarning)
             callerWarning = string.IsNullOrWhiteSpace(callerWarning)
                 ? consistencyWarning : callerWarning.Trim() + "\n\n" + consistencyWarning;
         if (task.Role == AgentTaskRole.Review && task.Status == AgentTaskStatus.Succeeded
@@ -1114,6 +1116,7 @@ public sealed class AgentTaskReplyService
             git: gitHeader,
             commitOutcome: commitNote?.Durable == true,
             completion: completion,
+            reviewRepair: stageRecording?.Repair,
             afterPersist: async token =>
             {
                 if (turn.FinalMessageMissing && task.AgentSessionId is Guid missingFrom)
@@ -2144,7 +2147,8 @@ public sealed class AgentTaskReplyService
         string? git = null,
         bool commitOutcome = false,
         Func<CancellationToken, Task>? afterPersist = null,
-        AgentTaskLandNotification? completion = null)
+        AgentTaskLandNotification? completion = null,
+        ReviewSettlementRepair? reviewRepair = null)
     {
         // Reuse the durable outbox (also used by dispatch warnings). Its immutable body and
         // source event commit with settlement and any spawned child, before queue insertion.
@@ -2186,6 +2190,13 @@ public sealed class AgentTaskReplyService
                 // Keep the Review verdict, evidence and completion obligation in one transaction.
                 // The second boundary observes saved but still uncommitted rows on this connection.
                 await using var transaction = await db.Database.BeginTransactionAsync(ct);
+                if (reviewRepair is not null && !await ReviewRepairStillCurrentAsync(db, task.Id, reviewRepair, ct))
+                {
+                    // Another settlement/override owns the current history. Do not flush this
+                    // stale tracker or mint a second completion obligation.
+                    _logger.LogInformation("Review {TaskId}: prepared continuation became stale", task.Id);
+                    return;
+                }
                 if (boundary is not null)
                     await boundary.ReachedAsync("settlement-before-save", task.Id, task.Id, ct);
                 await db.SaveChangesAsync(ct);
@@ -2567,7 +2578,7 @@ public sealed class AgentTaskReplyService
     }
 
     private static StageOutcome? SettlementOutcome(AppDbContext db, AgentTask task) =>
-        db.StageOutcomes.Local.LastOrDefault(o => o.StageTaskId == task.Id && o.Stage == OrchestrationStage.Review);
+        StageOutcomeService.ActiveReview(db.StageOutcomes.Local.ToList(), task.Id);
 
     /// <summary>
     /// CARD-0544 D-9. Compose the immutable snapshot and add the Completion obligation to the
@@ -4519,16 +4530,56 @@ public sealed class AgentTaskReplyService
     /// line is Unreported, never a guess. Worktree rows gain <c>commits=n</c> corroboration and
     /// stay Unreported if the line was absent.
     /// </summary>
-    private async Task<string?> RecordDelegateStageOutcomeAsync(
+    private sealed record ReviewSettlementIdentity(Guid Token, AgentTaskStatus Status, string? Result,
+        Guid? SessionId, Guid? FollowUpId, Guid? CardId, string? Repository, string? Branch,
+        int? Profile, VerificationRound? Round)
+    {
+        public static ReviewSettlementIdentity Capture(AgentTask task) => new(task.ConcurrencyToken,
+            task.Status, task.Result, task.AgentSessionId, task.FollowUpOfTaskId, task.CardId,
+            task.RepoPath, task.WorktreeBranch, task.VerificationProfileVersion, task.VerificationRound);
+    }
+
+    private sealed record ReviewSettlementRepair(Guid PredecessorId, ReviewSettlementIdentity Identity,
+        Guid? SubjectId, string? SubjectRepository, string? SubjectBranch, string? SubjectBaseline);
+    private sealed record StageRecording(string? Warning, ReviewSettlementRepair? Repair);
+
+    private static async Task<bool> ReviewRepairStillCurrentAsync(
+        AppDbContext db, Guid taskId, ReviewSettlementRepair repair, CancellationToken ct)
+    {
+        // All external preparation is finished. This lock is shared with S3's recovery/override
+        // writers; re-read persisted facts rather than EF's already-mutated tracked task.
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT 1 FROM \"AgentTasks\" WHERE \"Id\" = {taskId} FOR UPDATE", ct);
+        var current = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId, ct);
+        if (ReviewSettlementIdentity.Capture(current) != repair.Identity) return false;
+        var rows = await StageOutcomeService.ActiveQuery(db.StageOutcomes.AsNoTracking(), db)
+            .Where(o => o.StageTaskId == taskId).ToListAsync(ct);
+        if (StageOutcomeService.ActiveReview(rows, taskId)?.Id != repair.PredecessorId) return false;
+        if (repair.SubjectId is not { } subjectId) return true;
+        var subject = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == subjectId, ct);
+        return subject is not null && subject.Workspace == WorkspaceMode.Worktree
+            && subject.RepoPath == repair.SubjectRepository && subject.WorktreeBranch == repair.SubjectBranch
+            && subject.ProgressBaselineJson == repair.SubjectBaseline
+            && (current.FollowUpOfTaskId == subject.Id || current.CardId is { } card && subject.CardId == card);
+    }
+
+    private async Task<StageRecording?> RecordDelegateStageOutcomeAsync(
         IServiceProvider services, AppDbContext db, AgentTask task, string report,
         ReviewEvidence.Result reviewEvidence, DateTime now,
+        RemoteSettlementSyncResult? sync, AgentTaskEvent settlementEvent, ReviewSettlementIdentity identity,
         CancellationToken ct)
     {
         if (task.Stage is not { } stage)
             return null;
 
-        var already = await db.StageOutcomes.AnyAsync(o => o.StageTaskId == task.Id && o.Stage == stage, ct);
-        if (already)
+        var rows = await db.StageOutcomes.Where(o => o.StageTaskId == task.Id && o.Stage == stage).ToListAsync(ct);
+        var activeRows = await StageOutcomeService.ActiveQuery(db.StageOutcomes.AsNoTracking(), db)
+            .Where(o => o.StageTaskId == task.Id && o.Stage == stage).ToListAsync(ct);
+        var previous = StageOutcomeService.ActiveReview(activeRows, task.Id);
+        var repairing = rows.Count != 0 && task.Role == AgentTaskRole.Review
+            && stage == OrchestrationStage.Review && task.Status == AgentTaskStatus.Succeeded
+            && previous is { Source: StageOutcomeSource.Delegate, ReviewedSourceSha: null };
+        if (rows.Count != 0 && !repairing)
             return null;
 
         var consistencyWarnings = new List<string>();
@@ -4560,14 +4611,35 @@ public sealed class AgentTaskReplyService
         if (task.CompletedAt is DateTime completed && task.DispatchedAt is DateTime dispatched)
             duration = (int)Math.Clamp(Math.Round((completed - dispatched).TotalSeconds), 0, int.MaxValue);
 
-        var binding = await new ReviewEvidenceBindingService(db)
-            .PrepareFirstSettlementAsync(task, outcome, reviewEvidence, ct);
+        var binder = services.GetService<ReviewEvidenceBindingService>()
+            ?? new ReviewEvidenceBindingService(db, services.GetService<ITaskProgressGit>());
+        var binding = repairing
+            ? await binder.PrepareRepairAsync(task, outcome, report, false, sync, null, ct)
+            : await binder.PrepareFirstSettlementAsync(task, outcome, reviewEvidence, ct);
         var profiled = task.VerificationProfileVersion is not null && task.VerificationRound is not null;
         foreach (var warning in binding.Warnings)
             db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, warning, now));
         consistencyWarnings.AddRange(binding.ConsistencyWarnings);
 
-        db.StageOutcomes.Add(new StageOutcome
+        ReviewSettlementRepair? repair = null;
+        if (repairing)
+        {
+            repair = new(previous!.Id, identity, binding.Bound ? binding.SubjectTaskId : null,
+                binding.ReviewedRepositoryPath, binding.SubjectBranch, binding.SubjectBaseline);
+            consistencyWarnings.AddRange(binding.Warnings);
+            if (!binding.Bound)
+            {
+                task.NextStage = PipelineHandoffKind.Decide;
+                task.NextHandoff = "Review evidence repair refused: "
+                    + (binding.Warnings.FirstOrDefault() ?? "final report has no usable approval coordinates");
+            }
+            // A failed source witness cannot replace the historical row. Missing/invalid report
+            // evidence can append an unbound finding, revoking an earlier Clean finding.
+            if (binding.WitnessRefused)
+                return new(string.Join("\n\n", consistencyWarnings), repair);
+        }
+
+        var row = new StageOutcome
         {
             Id = Guid.NewGuid(),
             Stage = stage,
@@ -4589,10 +4661,22 @@ public sealed class AgentTaskReplyService
             VerificationProfileVersion = profiled ? task.VerificationProfileVersion : null,
             CommissionedRound = profiled ? task.VerificationRound : null,
             OrdinaryScopeCompleted = binding.Scope,
-        });
+            SupersedesId = repairing ? previous!.Id : null,
+            Ref = repairing && binding.Bound
+                ? new ReviewRebindProvenance("settlement", binding.ReportSha256!, settlementEvent.Id,
+                    binding.ObservedAt!.Value, binding.ConfirmedReviewSha, binding.ObservedSubjectSha!, null).Serialize()
+                : null,
+        };
+        db.StageOutcomes.Add(row);
+        if (repairing)
+            db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.FindingRecorded,
+                $"Review continuation superseded {previous!.Id:D} with {row.Id:D}; "
+                + $"reportSha256={ReviewEvidenceBindingService.ReportDigest(report)}; "
+                + $"sourceEventId={settlementEvent.Id:D}; confirmedReviewSha={binding.ConfirmedReviewSha}; "
+                + $"observedSubjectSha={binding.ObservedSubjectSha}", now));
         foreach (var warning in consistencyWarnings)
             db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, warning, now));
-        return consistencyWarnings.Count == 0 ? null : string.Join("\n\n", consistencyWarnings);
+        return new(consistencyWarnings.Count == 0 ? null : string.Join("\n\n", consistencyWarnings), repair);
     }
 
     private static async Task<int?> TryCountWorktreeCommitsAsync(
