@@ -24,6 +24,51 @@ namespace Antiphon.Tests.Application;
 public class TerminalRunnerSeatReleaseTests
 {
     [Test]
+    public async Task Attention_contains_release_identity_and_reason()
+    {
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync();
+        var boardId = Guid.NewGuid(); var columnId = Guid.NewGuid(); var cardId = Guid.NewGuid();
+        await using (var db = f.Db())
+        {
+            db.Boards.Add(new Board { Id = boardId, Name = "release board" });
+            db.BoardColumns.Add(new BoardColumn { Id = columnId, BoardId = boardId, Name = "Done" });
+            db.Cards.Add(new Card { Id = cardId, BoardId = boardId, BoardColumnId = columnId, Title = "release card" });
+            (await db.AgentTasks.SingleAsync()).CardId = cardId;
+            await db.SaveChangesAsync();
+        }
+        var id = (await f.ReleaseAsync())!.Value;
+        var item = (await f.AttentionAsync()).Items.Where(i => i.ConditionKey == $"runner-seat-release:{id:D}").ShouldHaveSingleItem();
+        item.Kind.ShouldBe(AttentionKind.SessionDisagreement); item.Severity.ShouldBe(AlertSeverity.Warning);
+        item.Headline.ShouldBe("Runner seat released"); item.TaskId.ShouldBe(f.TaskId);
+        item.SessionId.ShouldBe(f.SessionId); item.AgentId.ShouldBe(f.AgentId);
+        item.CardId.ShouldBe(cardId); item.BoardId.ShouldBe(boardId);
+        foreach (var identity in new[] { "fixture", f.Directory.StoreId.ToString("D"), f.SessionId.ToString("D"),
+                     f.Observation.ExpectedAcceptedStartedAt.ToString("O"), "attempt=1", "Succeeded", "Released" })
+            item.Evidence.ShouldContain(identity);
+
+        // A distinct rowless Working seat is a hold, never a successful release count/headline.
+        var heldSession = Guid.NewGuid();
+        f.Directory.FeaturesOverride = [RunnerCapabilityFeatures.TerminalSeatReleaseV1, RunnerCapabilityFeatures.TerminalSeatDeliveryEvidenceV1];
+        f.Directory.Inventory = () => Task.FromResult<RunnerInventory>(new RunnerInventory.Available(
+            [new(heldSession, null, f.Now.AddHours(-1), "Running", null, default, 0, AcceptedStartedAt: f.Now.AddHours(-1))]));
+        f.Wire.Qualified = f.Wire.Qualified with { Status = TerminalSeatQualificationStatus.Working,
+            Transcript = f.Wire.Qualified.Transcript with { Verdict = TerminalTranscriptVerdict.Working } };
+        var deferred = await f.DiscoverAsync();
+        deferred.Released.ShouldBe(0, "G-77: deferred-only discovery must report Released=0");
+        var heldId = deferred.Candidates.ShouldHaveSingleItem().ReleaseId.ShouldNotBeNull();
+        var held = (await f.AttentionAsync()).Items.Single(i => i.ConditionKey == $"runner-seat-release:{heldId:D}");
+        held.Headline.ShouldNotBe("Runner seat released"); held.Evidence.ShouldContain("Working");
+        held.BoardId.ShouldBeNull(); held.CardId.ShouldBeNull();
+        f.Clock.Advance(TimeSpan.FromHours(24) - TimeSpan.FromTicks(1));
+        (await f.AttentionAsync()).Items.ShouldContain(i => i.ConditionKey == $"runner-seat-release:{id:D}");
+        f.Clock.Advance(TimeSpan.FromTicks(2));
+        var expired = (await f.AttentionAsync()).Items;
+        expired.ShouldNotContain(i => i.ConditionKey == $"runner-seat-release:{id:D}");
+        expired.ShouldContain(i => i.ConditionKey == $"runner-seat-release:{heldId:D}", "G-88: unresolved debt never ages out");
+        f.Wire.ConditionalCommands.ShouldBe(1); f.Wire.ForceCommands.ShouldBe(0);
+    }
+
+    [Test]
     public async Task Long_answer_keeps_complete_content_and_spill_receipt()
     {
         foreach (var length in new[] { 3999, 4000, 4001, 12000 })

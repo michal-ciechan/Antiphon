@@ -7,12 +7,145 @@ using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
+using System.Data.Common;
+using System.Text.Json;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 public class RunnerSeatOrphanSweepTests
 {
+    [Test]
+    public async Task Failed_audit_commit_recovers_stopped_row_and_attention()
+    {
+        var fault = new FailReleaseAudit();
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(configureDb: b => b.AddInterceptors(fault));
+        fault.Armed = true;
+        f.Directory.Inventory = () => Task.FromResult<RunnerInventory>(new RunnerInventory.Available([]));
+        await Should.ThrowAsync<IOException>(() => f.ReleaseAsync());
+        fault.Hits.ShouldBe(1);
+        await using (var db = f.Db())
+        {
+            (await db.RunnerSeatReleases.SingleAsync()).State.ShouldBe(RunnerSeatReleaseState.Unresolved);
+            (await db.AgentSessions.SingleAsync(s => s.Id == f.SessionId)).Status.ShouldBe(SessionStatus.Running);
+        }
+        var before = (await f.AttentionAsync()).Items.Where(i => i.ConditionKey?.StartsWith("runner-seat-release:") == true).ShouldHaveSingleItem();
+        before.Headline.ShouldNotBe("Runner seat released", "rolled back audit cannot publish success");
+        await f.RestartAsync();
+        f.Wire.AutomaticEnabled = false;
+        await f.RestartAsync();
+        await f.RecoverAttentionAsync();
+        await f.RecoverAttentionAsync();
+        await using var read = f.Db();
+        var release = await read.RunnerSeatReleases.SingleAsync();
+        release.State.ShouldBe(RunnerSeatReleaseState.Confirmed);
+        (await read.AgentSessions.SingleAsync(s => s.Id == f.SessionId)).Status.ShouldBe(SessionStatus.Stopped);
+        var note = (await f.AttentionAsync()).Items.Where(i => i.ConditionKey == $"runner-seat-release:{release.Id:D}").ShouldHaveSingleItem();
+        note.Headline.ShouldBe("Runner seat released"); note.Evidence.ShouldContain("AlreadyAbsent");
+        f.Wire.ConditionalCommands.ShouldBe(1); f.Wire.ForceCommands.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Attention_recovers_a_missed_invalidation_after_commit()
+    {
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync();
+        f.Harness.EventBus.Clear();
+        f.Harness.EventBus.ThrowOnceOnEvent = "AgentChanged";
+        var id = (await f.ReleaseAsync())!.Value;
+        await using (var db = f.Db())
+            (await db.RunnerSeatReleases.SingleAsync()).State.ShouldBe(RunnerSeatReleaseState.Confirmed);
+        f.Harness.EventBus.PublishedEvents.ShouldNotContain(e => e.EventName == "AgentChanged");
+        await f.RestartAsync();
+        f.Harness.EventBus.Clear();
+        await f.RecoverAttentionAsync();
+        var invalidation = f.Harness.EventBus.PublishedEvents.Where(e => e.EventName == "AgentChanged").ShouldHaveSingleItem();
+        JsonSerializer.Serialize(invalidation.Payload).ShouldContain($"runner-seat-release:{id:D}");
+        var note = (await f.AttentionAsync()).Items.Where(i => i.ConditionKey == $"runner-seat-release:{id:D}").ShouldHaveSingleItem();
+        note.Evidence.ShouldContain("Released");
+        f.Wire.ConditionalCommands.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task Attention_recovery_deduplicates_rowless_seats_without_leaking_payload()
+    {
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync();
+        var canaries = new[] { "C667-RAW-TRANSCRIPT", "/private/C667-NATIVE-PATH", "C667-SECRET-ANSWER" };
+        await f.EditAsync((t, _) => { t.Result = canaries[0]; t.WorktreePath = canaries[1]; t.ReleasedSeatAnswer = canaries[2]; });
+        f.Directory.FeaturesOverride = [RunnerCapabilityFeatures.TerminalSeatReleaseV1, RunnerCapabilityFeatures.TerminalSeatDeliveryEvidenceV1];
+        var ids = new[] { Guid.NewGuid(), Guid.NewGuid() };
+        f.Directory.Inventory = () => Task.FromResult<RunnerInventory>(new RunnerInventory.Available(ids.Select(id =>
+            new SessionRunnerSessionDto(id, null, f.Now.AddDays(-2), "Running", null, default, 0, AcceptedStartedAt: f.Now.AddDays(-2))).ToArray()));
+        f.Wire.Qualified = f.Wire.Qualified with { Status = TerminalSeatQualificationStatus.Unknown,
+            Transcript = f.Wire.Qualified.Transcript with { BindingIdentity = canaries[1], FileRevision = canaries[0] } };
+        (await f.DiscoverAsync()).Released.ShouldBe(0);
+        await f.RestartAsync();
+        await f.RecoverAttentionAsync();
+        foreach (var pass in new[] { 1, 2 })
+        {
+            var attention = await f.AttentionAsync();
+            var items = attention.Items.Where(i => i.ConditionKey?.StartsWith("runner-seat-release:") == true).ToArray();
+            items.Length.ShouldBe(2, "G-75/G-76: rowless seats retain distinct release identities");
+            items.Select(i => i.ConditionKey).Distinct().Count().ShouldBe(2);
+            items.Select(i => i.SessionId!.Value).Order().ShouldBe(ids.Order());
+            items.ShouldAllBe(i => i.AgentId == null && i.BoardId == null && i.CardId == null);
+            await using var db = f.Db();
+            var ledger = JsonSerializer.Serialize(await db.RunnerSeatReleases.ToListAsync());
+            var logs = JsonSerializer.Serialize(f.AttentionLogs.Entries.Select(e => new { e.Message, e.Properties }));
+            foreach (var canary in canaries)
+            {
+                JsonSerializer.Serialize(items).ShouldNotContain(canary, "GET excludes payloads");
+                ledger.ShouldNotContain(canary, "ledger excludes payloads");
+                logs.ShouldNotContain(canary, "structured logs exclude payloads");
+            }
+            await f.RecoverAttentionAsync();
+        }
+        f.Wire.ConditionalCommands.ShouldBe(0); f.Wire.ForceCommands.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Unknown_server_session_with_live_work_is_preserved()
+    {
+        foreach (var working in new[] { true, false })
+        foreach (var phoneHome in new[] { false, true })
+        {
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(provider: "Codex", phoneHome: phoneHome, rowless: true);
+            var live = f.Live!;
+            if (working)
+            {
+                await live.SubmitAsync("current live work");
+                // A subsequent native prompt, without its turn end, is positive Working evidence.
+                await File.AppendAllTextAsync(live.TranscriptPath, JsonSerializer.Serialize(new {
+                    type = "event_msg", timestamp = f.Clock.GetUtcNow(),
+                    payload = new { type = "user_message", message = "still working" } }) + "\n");
+            }
+            f.Clock.Advance(TimeSpan.FromDays(30)); live.Clock.Advance(TimeSpan.FromDays(30));
+            var result = await f.DiscoverAsync();
+            result.Released.ShouldBe(0);
+            var debt = result.Candidates.ShouldHaveSingleItem();
+            debt.Disposition.ShouldBe(working ? "Working" : "Unknown");
+            var item = (await f.AttentionAsync()).Items.Where(i => i.ConditionKey == $"runner-seat-release:{debt.ReleaseId:D}").ShouldHaveSingleItem();
+            item.Evidence.ShouldContain(working ? "Working" : "Unknown");
+            item.Headline.ShouldNotBe("Runner seat released");
+            live.Child.Kills.ShouldBe(0); live.Runtime.LiveSessionCount.ShouldBe(1);
+            live.ConditionalCommands.ShouldBe(0); live.ForceCommands.ShouldBe(0);
+        }
+    }
+
+    private sealed class FailReleaseAudit : DbCommandInterceptor
+    {
+        public bool Armed { get; set; }
+        public int Hits { get; private set; }
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<int> result, CancellationToken ct = default)
+        {
+            if (Armed && command.CommandText.StartsWith("UPDATE \"AgentSessions\"")
+                && command.CommandText.Contains("\"TerminationSource\""))
+            { Armed = false; Hits++; throw new IOException("audit commit cut"); }
+            return ValueTask.FromResult(result);
+        }
+    }
+
     [Test]
     public async Task Sweep_budget_is_bounded_and_resumes_fairly()
     {
