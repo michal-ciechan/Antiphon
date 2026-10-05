@@ -140,9 +140,9 @@ public sealed class CodexCliObservationGapTests
                 w.Launch(); await w.JoinLaunchAsync();
                 await w.EligibleAsync(retried.AgentSessionId!.Value); await w.FlushAsync(retried.AgentSessionId.Value);
                 await AssertReceiptAsync(w, retried, observed, "preinsert-retry/remote=" + remote);
-                await using var db = w.Context();
-                (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == id && e.Type == AgentTaskEventType.Retried)).ShouldBe(1);
-                (await db.TranscriptEntries.CountAsync(e => e.AgentSessionId == oldSession && e.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
+                await using var finalDb = w.Context();
+                (await finalDb.AgentTaskEvents.CountAsync(e => e.AgentTaskId == id && e.Type == AgentTaskEventType.Retried)).ShouldBe(1);
+                (await finalDb.TranscriptEntries.CountAsync(e => e.AgentSessionId == oldSession && e.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
             }
         }
     }
@@ -158,20 +158,23 @@ public sealed class CodexCliObservationGapTests
             var task = await TaskAsync(w, id);
             var observed = ObserveFile(w, task);
             var held = HoldPrompts(w);
+            var record = w.Recipient.RecordPrompt!;
+            w.Recipient.RecordPrompt = async (sessionId, text) =>
+            {
+                await record(sessionId, text);
+                var attempt = await QueueAsync(w, id);
+                await using var db = w.Context();
+                var old = await db.TranscriptEntries.SingleAsync(e => e.AgentSessionId == sessionId && e.Sequence == attempt.LastDeliveryBaselineSequence);
+                old.Kind = TranscriptKinds.UserPrompt; old.Text = text;
+                old.Timestamp = attempt.LastDeliveryStartedAt!.Value.AddMinutes(-5);
+                await db.SaveChangesAsync();
+            };
             w.Launch(); await w.JoinLaunchAsync();
             var session = task.AgentSessionId!.Value;
             await w.EligibleAsync(session); await w.FlushAsync(session);
             var attempted = await QueueAsync(w, id);
             var floor = attempted.LastDeliveryBaselineSequence.ShouldNotBeNull();
             held.ShouldHaveSingleItem();
-            // An old whole prompt at the original floor is a negative adversary, never positive receipt.
-            await using (var db = w.Context())
-            {
-                var old = await db.TranscriptEntries.SingleAsync(e => e.AgentSessionId == session && e.Sequence == floor);
-                old.Kind = TranscriptKinds.UserPrompt; old.Text = held[0].Text;
-                old.Timestamp = attempted.LastDeliveryStartedAt!.Value.AddMinutes(-5);
-                await db.SaveChangesAsync();
-            }
             await w.RecreateAsync(session);
             var retained = await QueueAsync(w, id);
             retained.LastDeliveryBaselineSequence.ShouldBe(floor, "C959-pc-223 original floor survives recreation");
@@ -213,40 +216,35 @@ public sealed class CodexCliObservationGapTests
             await w.DispatchAsync();
             var task = await TaskAsync(w, id);
             var observed = ObserveFile(w, task, requireNullFloor: true);
-            var held = HoldPrompts(w);
+            var held = HoldPrompts(w, loseInputReply: true);
             w.Launch(); await w.JoinLaunchAsync();
             var row = await QueueAsync(w, id);
+            row.Status.ShouldBe(QueuedMessageStatus.Pending);
             row.LastDeliveryBaselineSequence.ShouldBeNull();
             var started = row.LastDeliveryStartedAt.ShouldNotBeNull();
             var floor = started.AddSeconds(-30);
             held.ShouldHaveSingleItem();
-            if (variant is "older" or "null")
-            {
-                await using var db = w.Context();
-                db.TranscriptEntries.Add(new() { Id = Guid.NewGuid(), AgentSessionId = task.AgentSessionId!.Value,
-                    Sequence = 10000, Kind = TranscriptKinds.UserPrompt, Text = held[0].Text,
-                    Timestamp = variant == "null" ? null : floor.AddTicks(-10), CreatedAt = DateTime.UtcNow });
-                await db.SaveChangesAsync();
-            }
-            else
-            {
-                // The scripted recipient publishes its actual captured submission at the boundary.
-                w.Recipient.Append(task.AgentSessionId!.Value, TranscriptKinds.UserPrompt, held[0].Text,
-                    timestamp: new DateTimeOffset(variant == "equal" ? floor : floor.AddTicks(10), TimeSpan.Zero));
-            }
-            await w.RecreateAsync(task.AgentSessionId!.Value);
+            // Retained recipient source timestamp differs from ingestion time. PostgreSQL's
+            // microsecond precision makes one microsecond the representable boundary step.
+            var stamp = variant switch { "older" => floor.AddTicks(-10), "newer" => floor.AddTicks(10), _ => floor };
+            w.Recipient.Append(task.AgentSessionId!.Value, TranscriptKinds.UserPrompt, held[0].Text,
+                timestamp: new DateTimeOffset(stamp, TimeSpan.Zero), nullTimestamp: variant == "null", sequence: 10000);
+            w.Recipient.Append(task.AgentSessionId.Value, TranscriptKinds.TurnEnd, stopReason: "end_turn");
+            w.Clock.Advance(TimeSpan.FromMinutes(2));
+            await w.RecreateAsync(task.AgentSessionId.Value);
             (await QueueAsync(w, id)).LastDeliveryStartedAt.ShouldBe(started, "C959-pc-246 recreation cannot move attempt start");
             if (variant is "older" or "null")
             {
+                // Late confirmation runs before the next attempt save. This fault stops that
+                // later claim, so a correct negative cannot retype or overwrite the original floor.
+                w.Fault.QueueId = row.Id; w.Fault.RejectRetry = true;
+                await Should.ThrowAsync<InvalidOperationException>(() => w.FlushAsync(task.AgentSessionId.Value));
+                w.Fault.Hits.ShouldBe(1, "C959-pc-246 stale timestamp did not falsely settle");
                 await AssertRetainedAsync(w, task);
-                // Remove the synthetic high-sequence adversary so actual retained source records can be ingested.
-                // No positive prompt is written by the test to the database.
-                await using (var db = w.Context())
-                    await db.TranscriptEntries.Where(e => e.AgentSessionId == task.AgentSessionId && e.Sequence == 10000).ExecuteDeleteAsync();
-                await w.RecreateAsync(task.AgentSessionId.Value);
+                (await QueueAsync(w, id)).LastDeliveryStartedAt.ShouldBe(started);
                 await ReleaseAsync(w, task.AgentSessionId.Value, held);
             }
-            else { await w.FlushAsync(task.AgentSessionId.Value); }
+            else await w.FlushAsync(task.AgentSessionId.Value);
             await AssertReceiptAsync(w, task, observed, "timestamp/" + variant);
             (await QueueAsync(w, id)).LastDeliveryStartedAt.ShouldBe(started, "C959-pc-246 settled original floor");
         }
@@ -306,6 +304,7 @@ public sealed class CodexCliObservationGapTests
             interrupted.DeliveryVerdict.ShouldBeNull("C959-pc-220 interrupted verdict did not persist");
             await AssertRetainedAsync(w, task);
             if (busyAfterRecreate) w.Recipient.Append(task.AgentSessionId.Value, TranscriptKinds.AssistantText, "actual recipient still working");
+            w.Clock.Advance(TimeSpan.FromSeconds(37)); // Original interrupted-attempt age, not a changed timeout.
             await w.RecreateAsync(task.AgentSessionId.Value);
             (await QueueAsync(w, id)).LastDeliveryStartedAt.ShouldBe(interrupted.LastDeliveryStartedAt);
             await ReleaseAsync(w, task.AgentSessionId.Value, held);
@@ -326,10 +325,10 @@ public sealed class CodexCliObservationGapTests
     private static List<string> TaskBodies(World w, Guid session) => w.Recipient.Terminals[session].SubmittedBodies
         .Where(t => !t.StartsWith("[antiphon-grok-rules:", StringComparison.Ordinal)).ToList();
     private sealed record Submitted(Guid Session, string Text, DateTimeOffset Timestamp);
-    private static List<Submitted> HoldPrompts(World w)
+    private static List<Submitted> HoldPrompts(World w, bool loseInputReply = false)
     {
         var held = new List<Submitted>();
-        w.Recipient.RecordPrompt = (id, text) => { held.Add(new(id, text, DateTimeOffset.UtcNow)); return Task.CompletedTask; };
+        w.Recipient.RecordPrompt = (id, text) => { held.Add(new(id, text, DateTimeOffset.UtcNow)); if (loseInputReply) throw new InvalidOperationException("C1029 lost reply after actual terminal submit"); return Task.CompletedTask; };
         return held;
     }
     private static async Task ReleaseAsync(World w, Guid session, List<Submitted> held)
@@ -347,7 +346,7 @@ public sealed class CodexCliObservationGapTests
         w.Recipient.BeforeBody = async (id, input) =>
         {
             if (!input.Contains(DelegationReportFormatter.TaskMarker(task.Id), StringComparison.Ordinal) || observed.Exists is not null) return;
-            id.ShouldBe(task.AgentSessionId);
+            id.ShouldBe(task.AgentSessionId!.Value);
             var q = await QueueAsync(w, task.Id);
             if (requireNullFloor) q.LastDeliveryBaselineSequence.ShouldBeNull("C1029 null baseline committed before first body input");
             var path = SpillPath(w, task, q);

@@ -213,10 +213,13 @@ internal static partial class CodexCliRemoteDeliveryFixture
         public Guid? QueueId { get; set; }
         public bool AfterSave { get; set; }
         public bool Verdict { get; set; }
+        public bool RejectRetry { get; set; }
         public int Hits { get; private set; }
         private bool _saving;
         private bool Matches(DbContext? db) => db is not null && db.ChangeTracker.Entries<SessionQueuedMessage>().Any(e =>
-            Verdict ? e.Entity.Id == QueueId && e.State == EntityState.Modified && e.Entity.DeliveryVerdict != null
+            RejectRetry ? e.Entity.Id == QueueId && e.State == EntityState.Modified
+                && e.Property(x => x.DeliveryAttempts).CurrentValue > e.Property(x => x.DeliveryAttempts).OriginalValue
+                : Verdict ? e.Entity.Id == QueueId && e.State == EntityState.Modified && e.Entity.DeliveryVerdict != null
             : e.State == EntityState.Added && (e.Entity.ExecutionTaskId == TaskId || e.Entity.SourceTaskId == TaskId) && TaskId != null);
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data, InterceptionResult<int> result, CancellationToken ct = default)
         {

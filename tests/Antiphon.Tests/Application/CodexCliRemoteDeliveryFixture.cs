@@ -272,10 +272,10 @@ internal static partial class CodexCliRemoteDeliveryFixture
         public List<RunnerCodexCliProbeRequest> ProbeRequests { get; } = [];
         public Func<Guid, string, Task>? BeforeBody { get; set; }
         public Func<Guid, string, Task>? RecordPrompt { get; set; }
-        public void Append(Guid id, string kind, string? text = null, string? stopReason = null, DateTimeOffset? timestamp = null)
+        public void Append(Guid id, string kind, string? text = null, string? stopReason = null, DateTimeOffset? timestamp = null, bool nullTimestamp = false, long? sequence = null)
         {
             var entries = _transcripts[id];
-            entries.Add(new(id, entries.Count + 1, kind, Guid.NewGuid().ToString("N"), null, timestamp ?? DateTimeOffset.UtcNow,
+            entries.Add(new(id, sequence ?? (entries.LastOrDefault()?.Sequence ?? 0) + 1, kind, Guid.NewGuid().ToString("N"), null, nullTimestamp ? null : timestamp ?? DateTimeOffset.UtcNow,
                 kind == TranscriptKinds.UserPrompt ? "user" : null, text, null, null, null, null, stopReason));
         }
         public RunnerCapabilitiesDto Capabilities() => new("InboxConhost", "inbox", "test", false,
@@ -345,7 +345,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
             using var doc = GrokStartupFixture.Read();
             return GrokStartupFixture.Screen(GrokStartupFixture.Capture(doc, "startup-"), 15);
         }
-        public RunnerTranscriptDto GetTranscript(Guid id) => new(id, _transcripts[id].ToArray(), _transcripts[id].Count);
+        public RunnerTranscriptDto GetTranscript(Guid id) => new(id, _transcripts[id].ToArray(), _transcripts[id].LastOrDefault()?.Sequence ?? 0);
         public async Task SendInputAsync(Guid id, string input, CancellationToken ct)
         {
             if (BeforeBody is { } check) await check(id, input);
