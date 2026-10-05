@@ -144,6 +144,11 @@ public sealed class ChannelOutboundService
             }
             var capture = root is null
                 ? new ChannelReplyCapture(1, route with { Text = null }, body, memberIds, taskDescriptors, profile, bridge.MaxAttachmentBytes)
+                {
+                    AttachmentRoots = new[] { await _db.AgentSessions.Where(s => s.Id == source.SessionId)
+                        .Select(s => s.Cwd).SingleAsync(ct) }.Concat(taskDescriptors.Select(t => t.BundleDirectory)
+                        .OfType<string>()).Where(p => !string.IsNullOrWhiteSpace(p)).Distinct().ToArray(),
+                }
                 : ChannelReplyPreparation.Deserialize(root.CaptureJson!) with { Body = body, MemberIds = [] };
             var createdAt = root?.CreatedAt ?? (members.Count == 0 ? now : members.Min(m => m.CreatedAt));
             var delivery = new ChannelOutboundDelivery
@@ -232,7 +237,8 @@ public sealed class ChannelOutboundService
                 "channel_outbound_binding_held");
         // A binding can be held before the first conversion claim. Preserve that
         // work when it is released; Ready would publish the untouched original.
-        delivery.State = delivery.ConverterAgentId != Guid.Empty
+        delivery.State = delivery.CaptureJson != null && delivery.InputPath.Length == 0
+            ? ChannelOutboundDeliveryState.Captured : delivery.ConverterAgentId != Guid.Empty
             && delivery.ConversionOutcome is null && delivery.ConversionTaskId is null
             ? ChannelOutboundDeliveryState.Pending : ChannelOutboundDeliveryState.Ready;
         delivery.LeaseOwner = null;

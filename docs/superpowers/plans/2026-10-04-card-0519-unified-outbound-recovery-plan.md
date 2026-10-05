@@ -610,7 +610,7 @@ must change their expectations to Uncertain/explicit retry, never automatic repl
 | R-4 | ChannelMachineTurnTextTests (19), ChannelFollowUpAttachmentTests (26) | All allowed origins, NO_REPLY, flattened headers, marker/implied attachments and actual bundle completeness preserved. Generic failure remains uncertain until acknowledged. |
 | R-5 | ChannelOutboundDeliveryTests (38 across five partial files); ChannelOutboundPolicyTests (29); ChannelOutboundContractTests (2) | Existing capture/lease/publication/shape/gate/conversion/binding/source guards remain; rewrite direct-route and “no delivery for passthrough” assertions for universal admission. Control notices remain outside agent capture. |
 | R-6 | ChannelOutboundDeadlineTests (13 across two partial files) | Original conversion deadline, held resume, final create/dispatch checks, converter/global capacity and fallback original bytes unchanged. |
-| R-7 | ChannelOutboundStorageTests (28) | Atomic staging, byte/hash integrity, wire size, manifest/zip/path/link validation and frozen routing retained. V-3 adds capture-aware adoption rather than treating directory presence as success. |
+| R-7 | ChannelOutboundStorageTests (32) | Atomic staging, byte/hash integrity, wire size, manifest/zip/path/link validation and frozen routing retained. CARD-1059 adds four source-read tests for allowed roots/traversal, file/directory links, pre-read finite byte budgets, and regular files (including Linux FIFO/device refusal). V-3 adds capture-aware adoption rather than treating directory presence as success. |
 | R-8 | ChannelOutboundRecoveryTests: Expired_publishing_lease_is_uncertain_until_explicit_retry; Held_head_blocks_later_reply_until_original_binding_is_repaired_and_resumed; Restart_preserves_two_inbound_slack_routes_behind_an_uncertain_head; Broker_ack_before_process_death_remains_uncertain_without_replay (4) | No send from Uncertain without acknowledgement; Held order; native inbound Slack handles after restart; independent consumer observed accepted message and no automatic replay. |
 | R-9 | ChannelOutboundComposedTransportTests.Sealed_four_source_pdf_crosses_pump_broker_gateway_and_fake_slack (1) | Fake Slack receives original four source byte arrays and PDF on exact native thread; one publication attempt. This Ready-seeded test supplements V-13, not a substitute for it. |
 | R-10 | ChannelBatchingTests (10) | Same-chat members share real queue delivery and one answer; mixed origin/chat boundaries; intentional silence and batching kill switch. Add bound catalog to positive reply fixtures. |
@@ -916,7 +916,7 @@ select CP-29 in a Linux invocation. A missing Windows lane leaves R-12 outstandi
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c519-cp01/` | schema | `/*/*/ChannelOutboundDurabilitySchemaTests/*` | V-1 | all 4 listed results, 0 failed/skipped | 4 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c519-cp02/` | capture | `/*/*/ChannelOutboundCaptureTests/*` | V-2 | all 5 listed results, 0 failed/skipped | 5 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-3 | S3 | `tests/Antiphon.Tests -> bin-c519-cp03/` | storage | `/*/*/ChannelOutboundStorageTests/*` | R-7 | all 28 listed results, 0 failed/skipped | 28 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-3 | S3 | `tests/Antiphon.Tests -> bin-c519-cp03/` | storage | `/*/*/ChannelOutboundStorageTests/*` | R-7, CARD-1059 | all 32 listed results, 0 failed/skipped | 32 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-4 | S4 | `tests/Antiphon.Tests -> bin-c519-cp04/` | dispatch | `/*/*/ChannelOutboundDispatchIntegrationTests/*` | R-1 | all 1 listed results, 0 failed/skipped | 1 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-5 | S4 | `tests/Antiphon.Tests -> bin-c519-cp05/` | runtime | `/*/*/AgentTaskReplyIntegrationTests/Deferred_is_durable_and_releases_runtime` | R-1 | all 1 listed results, 0 failed/skipped | 1 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-6 | S8 | `tests/Antiphon.Tests -> bin-c519-cp06/` | materialize | `/*/*/ChannelOutboundMaterializationTests/*` | V-3 | all 12 listed results, 0 failed/skipped | 12 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
@@ -950,7 +950,7 @@ The seven X methods each expand to three path results; cut variants remain inter
 assertions. Existing Delivery has 18 methods / 38 results across its five partial
 files, including SendShape and Gate. Existing Deadline has nine methods / 13 results
 across its two files. All other existing floors are shown in R-1..R-12.
-Table total = **397 minimum executed TUnit results**; no loop/child/assertion counts
+Table total = **401 minimum executed TUnit results**; no loop/child/assertion counts
 are smuggled into Min. If Code adds/removes arguments, update the explicit roster,
 floor and cost before running; do not lower a floor to excuse skipped tests.
 

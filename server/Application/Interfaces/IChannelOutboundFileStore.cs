@@ -1,4 +1,5 @@
 using Antiphon.Messaging;
+using Antiphon.Server.Application.Services;
 
 namespace Antiphon.Server.Application.Interfaces;
 
@@ -10,7 +11,14 @@ public interface IChannelOutboundFileStore
     Task<ChannelReply> ReadReplyAsync(string path, string expectedSha256, CancellationToken ct);
     Task<ChannelOutboundSealed> ValidateAndSealAsync(Guid deliveryId, string replyPath,
         string replySha256, int maxMessageBytes, CancellationToken ct);
+    Task<ChannelOutboundMaterialized?> TryAdoptAsync(Guid deliveryId, string captureJson, CancellationToken ct) =>
+        throw new NotSupportedException("Capture-aware staging is required.");
+    Task<ChannelOutboundMaterialized> StageCapturedAsync(Guid deliveryId, string captureJson,
+        ChannelReplyPrepared prepared, CancellationToken ct) => throw new NotSupportedException("Capture-aware staging is required.");
 }
+
+public sealed record ChannelOutboundMaterialized(ChannelOutboundSnapshot Snapshot,
+    string PromptText, string PromptRevision, string? SourceManifestJson);
 
 public sealed record ChannelOutboundSnapshot(string ReplyPath, string ReplySha256,
     string RequestPath, string OutputDirectory);
