@@ -37,6 +37,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
     private readonly TimeSpan _wait;
     private readonly Func<DateTimeOffset> _clock;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+    private readonly Func<TimeSpan, CancellationToken, Task> _renewalDelay;
     private readonly Action<string>? _log;
     private readonly int _pid;
     private readonly string? _processStartUtc;
@@ -48,7 +49,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
         TimeSpan? wait = null, Func<DateTimeOffset>? clock = null,
         Func<TimeSpan, CancellationToken, Task>? delay = null, Action<string>? log = null,
         int? pid = null, string? processStartUtc = null, ILeaseHolderSource? holders = null,
-        string? sensitiveToken = null)
+        string? sensitiveToken = null, Func<TimeSpan, CancellationToken, Task>? renewalDelay = null)
     {
         _http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
         _endpoint = endpoint.TrimEnd('/');
@@ -56,6 +57,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
         _wait = wait ?? TimeSpan.FromMinutes(45);
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
         _delay = delay ?? ((span, token) => Task.Delay(span, token));
+        _renewalDelay = renewalDelay ?? ((span, token) => Task.Delay(span, token));
         _log = log;
         _pid = pid ?? Environment.ProcessId;
         _processStartUtc = processStartUtc;
@@ -312,7 +314,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
         {
             try
             {
-                await Task.Delay(TimeSpan.FromSeconds(everySeconds), ct).ConfigureAwait(false);
+                await _renewalDelay(TimeSpan.FromSeconds(everySeconds), ct).ConfigureAwait(false);
                 using var response = await _http.PostAsync(_endpoint + "/" + leaseId + "/renew", null, ct).ConfigureAwait(false);
                 if (response.StatusCode != HttpStatusCode.NoContent)
                 {

@@ -242,26 +242,63 @@ public sealed class CheckpointSlotContractTests
     }
 
     [Test]
-    public async Task renew_and_release_diagnostics_keep_status_and_body()
+    public async Task renew_and_release_diagnostics_keep_status_and_body(CancellationToken cancellationToken)
     {
+        using var timing = new CheckpointTimingHarness(nameof(renew_and_release_diagnostics_keep_status_and_body),
+            "L/diag,L-drain/drain", cancellationToken);
+        var clock = new CheckpointStepClock();
         var handler = new RenewDiagnosticHandler();
         var log = new System.Collections.Concurrent.ConcurrentQueue<string>();
-        var client = Client(handler, log: log.Enqueue);
-        var lease = await client.AcquireAsync(Enabled, "diag", CancellationToken.None);
-        await handler.RenewObserved.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        var diagnosticDeadline = DateTime.UtcNow.AddSeconds(10);
-        while (!log.Any(line => line.Contains("operation=renew status=404")) && DateTime.UtcNow < diagnosticDeadline)
-            await Task.Delay(10);
-        await lease.DisposeAsync();
-        log.ShouldContain(line => line.Contains("operation=renew status=404") && line.Contains("renew gone"));
-        log.ShouldContain(line => line.Contains("operation=release status=404") && line.Contains("release gone"));
-        var gated = new GatedRenewHandler();
-        var gatedLease = await Client(gated).AcquireAsync(Enabled, "drain", CancellationToken.None);
-        await gated.RenewEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
-        var disposal = gatedLease.DisposeAsync().AsTask();
-        await disposal.WaitAsync(TimeSpan.FromSeconds(3));
-        gated.Events.ShouldBe(["renew-entered", "renew-drained", "delete"],
-            "renewal-drained-before-delete: cancellation must finish before DELETE");
+        var emitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = Client(handler, renewalDelay: clock.Delay, log: line =>
+        {
+            log.Enqueue(line);
+            // Signal the actual appended operation, independently of the content assertions.
+            if (line.Contains("operation=renew", StringComparison.Ordinal)
+                && line.Contains("label=\"diag\"", StringComparison.Ordinal))
+                emitted.TrySetResult();
+        });
+        var lease = await client.AcquireAsync(Enabled, "diag", timing.Token);
+        var owner = new CheckpointLeaseOwner(lease);
+        await owner.VerifyAsync(async () =>
+        {
+            var step = clock.NextAsync(timing.Token);
+            await timing.PhaseAsync("renew-delay", step);
+            step.Result.Advance();
+            await timing.PhaseAsync("renew-http", handler.RenewObserved.Task);
+            await timing.PhaseAsync("renew-diagnostic", emitted.Task);
+            var renewal = log.Single(line => line.Contains("operation=renew", StringComparison.Ordinal));
+            renewal.ShouldContain("status=404", "renew-status-preserved");
+            renewal.ShouldContain("renew gone", "renew-body-preserved");
+            await timing.PhaseAsync("lease-disposed", owner.ReleaseAsync());
+            var release = log.Single(line => line.Contains("operation=release", StringComparison.Ordinal));
+            release.ShouldContain("status=404", "release-status-preserved");
+            release.ShouldContain("release gone", "release-body-preserved");
+            handler.DeleteCount.ShouldBe(1);
+        });
+
+        var drainClock = new CheckpointStepClock();
+        var gated = new GatedRenewHandler(timing.Token);
+        var gatedLease = await Client(gated, renewalDelay: drainClock.Delay)
+            .AcquireAsync(Enabled, "drain", timing.Token);
+        var drainOwner = new CheckpointLeaseOwner(gatedLease, () => gated.DrainRelease.TrySetResult());
+        await drainOwner.VerifyAsync(async () =>
+        {
+            var step = drainClock.NextAsync(timing.Token);
+            await timing.PhaseAsync("renew-delay", step);
+            step.Result.Advance();
+            await timing.PhaseAsync("drain-entered", gated.RenewEntered.Task);
+            var disposal = drainOwner.ReleaseAsync();
+            await timing.PhaseAsync("drain-canceled", gated.RenewCanceled.Task, disposal);
+            gated.DeleteCount.ShouldBe(0,
+                "renewal-drained-before-delete: DELETE cannot begin while acknowledged drain is held");
+            disposal.IsCompleted.ShouldBeFalse("renewal-drained-before-delete: disposal awaits the drain");
+            gated.DrainRelease.TrySetResult();
+            await timing.PhaseAsync("lease-disposed", disposal);
+            gated.Events.ToArray().ShouldBe(["renew-entered", "renew-canceled", "renew-drained", "delete"],
+                "renewal-drained-before-delete: cancellation must finish before DELETE");
+            gated.DeleteCount.ShouldBe(1);
+        });
     }
 
     [Test]
@@ -324,8 +361,10 @@ public sealed class CheckpointSlotContractTests
     }
 
     private static BuildSlotClient Client(HttpMessageHandler handler,
-        Func<TimeSpan, CancellationToken, Task>? delay = null, Action<string>? log = null) =>
-        new(handler, "http://slots.test/build-slots", delay: delay, log: log, pid: 100, processStartUtc: Start);
+        Func<TimeSpan, CancellationToken, Task>? delay = null, Action<string>? log = null,
+        Func<TimeSpan, CancellationToken, Task>? renewalDelay = null) =>
+        new(handler, "http://slots.test/build-slots", delay: delay, log: log, pid: 100, processStartUtc: Start,
+            renewalDelay: renewalDelay);
 
     private static (BuildSlotClient Client, Func<TimeSpan> Elapsed) Virtual(HttpMessageHandler handler)
     {
@@ -378,24 +417,32 @@ public sealed class CheckpointSlotContractTests
         }
     }
 
-    private sealed class GatedRenewHandler : HttpMessageHandler
+    private sealed class GatedRenewHandler(CancellationToken fixtureToken) : HttpMessageHandler
     {
+        private int _deletes;
+        public int DeleteCount => Volatile.Read(ref _deletes);
         public TaskCompletionSource RenewEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public List<string> Events { get; } = [];
+        public TaskCompletionSource RenewCanceled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource DrainRelease { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public System.Collections.Concurrent.ConcurrentQueue<string> Events { get; } = new();
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
             if (request.RequestUri!.AbsolutePath.EndsWith("/renew", StringComparison.Ordinal))
             {
-                Events.Add("renew-entered");
+                Events.Enqueue("renew-entered");
                 RenewEntered.TrySetResult();
                 try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-                Events.Add("renew-drained");
+                Events.Enqueue("renew-canceled");
+                RenewCanceled.TrySetResult();
+                await DrainRelease.Task.WaitAsync(fixtureToken);
+                Events.Enqueue("renew-drained");
                 return new HttpResponseMessage(HttpStatusCode.NoContent);
             }
             if (request.Method == HttpMethod.Delete)
             {
-                Events.Add("delete");
+                Interlocked.Increment(ref _deletes);
+                Events.Enqueue("delete");
                 return new HttpResponseMessage(HttpStatusCode.NoContent);
             }
             return new HttpResponseMessage(HttpStatusCode.OK)
@@ -407,6 +454,8 @@ public sealed class CheckpointSlotContractTests
 
     private sealed class RenewDiagnosticHandler : HttpMessageHandler
     {
+        private int _deletes;
+        public int DeleteCount => Volatile.Read(ref _deletes);
         public TaskCompletionSource RenewObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
@@ -418,8 +467,11 @@ public sealed class CheckpointSlotContractTests
                     """{"type":"build_slot_unknown","detail":"renew gone"}"""));
             }
             if (request.Method == HttpMethod.Delete)
+            {
+                Interlocked.Increment(ref _deletes);
                 return Task.FromResult(Reply(HttpStatusCode.NotFound,
                     """{"type":"build_slot_unknown","detail":"release gone"}"""));
+            }
             return Task.FromResult(Reply(HttpStatusCode.OK,
                 """{"leaseId":"L","maxCpuCount":6,"renewEverySeconds":1}"""));
         }

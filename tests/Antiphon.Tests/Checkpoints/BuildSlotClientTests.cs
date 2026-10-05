@@ -97,13 +97,22 @@ public sealed class BuildSlotClientTests
         var handler = ScriptProbe();
         handler.Enqueue(HttpStatusCode.OK, """{"leaseId":"L-pid","maxCpuCount":3,"renewEverySeconds":null}""");
         handler.Enqueue(HttpStatusCode.NoContent, "");
-        var (client, _) = Client(handler);
+        var renewalDelays = 0;
+        var (client, _) = Client(handler, renewalDelay: (_, token) =>
+        {
+            Interlocked.Increment(ref renewalDelays);
+            return Task.Delay(Timeout.InfiniteTimeSpan, token);
+        });
         var session = await client.ProbeAsync(CancellationToken.None);
         var lease = await client.AcquireAsync(session, "CP-9@bin-pdf", CancellationToken.None);
-        lease.State.ShouldBe("granted");
-        lease.LeaseId.ShouldBe("L-pid");
-        lease.MaxCpuCount.ShouldBe(3);
-        await lease.DisposeAsync();
+        await new CheckpointLeaseOwner(lease).VerifyAsync(() =>
+        {
+            lease.State.ShouldBe("granted");
+            lease.LeaseId.ShouldBe("L-pid");
+            lease.MaxCpuCount.ShouldBe(3);
+            return Task.CompletedTask;
+        });
+        Volatile.Read(ref renewalDelays).ShouldBe(0, "null-renewal-no-delay");
         handler.Calls.ShouldNotContain(call => call.Uri.EndsWith("/renew", StringComparison.Ordinal));
         handler.Calls.ShouldContain(call => call.Method == "DELETE"
             && call.Uri.EndsWith("/L-pid", StringComparison.Ordinal));
@@ -119,33 +128,93 @@ public sealed class BuildSlotClientTests
         var (client, _) = Client(handler);
         var session = await client.ProbeAsync(CancellationToken.None);
         var lease = await client.AcquireAsync(session, "CP-null-renew", CancellationToken.None);
-        lease.State.ShouldBe("granted");
-        lease.LeaseId.ShouldBe("L5");
-        lease.MaxCpuCount.ShouldBe(2);
-        await lease.DisposeAsync();
+        await new CheckpointLeaseOwner(lease).VerifyAsync(() =>
+        {
+            lease.State.ShouldBe("granted");
+            lease.LeaseId.ShouldBe("L5");
+            lease.MaxCpuCount.ShouldBe(2);
+            return Task.CompletedTask;
+        });
         handler.Calls.ShouldNotContain(call => call.Uri.EndsWith("/renew", StringComparison.Ordinal));
         handler.Calls.ShouldContain(call => call.Method == "DELETE" && call.Uri.EndsWith("/L5", StringComparison.Ordinal));
     }
 
     [Test]
-    public async Task renewable_grant_is_renewed_until_the_checkpoint_releases_it()
+    public async Task renewable_grant_is_renewed_until_the_checkpoint_releases_it(CancellationToken cancellationToken)
     {
+        using var timing = new CheckpointTimingHarness(nameof(renewable_grant_is_renewed_until_the_checkpoint_releases_it),
+            "L-renew/CP-renew", cancellationToken);
+        var clock = new CheckpointStepClock();
         var handler = new RenewableSlotHandler();
-        var (client, _) = Client(handler);
-        var session = await client.ProbeAsync(CancellationToken.None);
-        var lease = await client.AcquireAsync(session, "CP-renew", CancellationToken.None);
-        try
+        var (client, _) = Client(handler, renewalDelay: clock.Delay);
+        var session = await client.ProbeAsync(timing.Token);
+        var lease = await client.AcquireAsync(session, "CP-renew", timing.Token);
+        CheckpointStepClock.DelayRequest? held = null;
+        var owner = new CheckpointLeaseOwner(lease, () => held?.Advance());
+        await owner.VerifyAsync(async () =>
         {
-            await handler.Renewed.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            var first = clock.NextAsync(timing.Token);
+            await timing.PhaseAsync("renew-delay", first);
+            held = first.Result;
+            handler.RenewCount.ShouldBe(0, "renewal waits for its first permit");
+            first.Result.Span.ShouldBe(TimeSpan.FromSeconds(1));
+            first.Result.Advance();
+            await timing.PhaseAsync("renew-http", handler.Renewed.Task);
             handler.Calls.ShouldContain(call => call.Method == "POST"
                 && call.Uri.EndsWith("/L-renew/renew", StringComparison.Ordinal));
-        }
-        finally
+            var next = clock.NextAsync(timing.Token);
+            await timing.PhaseAsync("renew-next-delay", next);
+            held = next.Result;
+            next.Result.Completed.Task.IsCompleted.ShouldBeFalse();
+            var disposal = owner.ReleaseAsync();
+            await timing.PhaseAsync("renew-stop", next.Result.Canceled.Task, disposal);
+            await timing.PhaseAsync("lease-disposed", disposal);
+            next.Result.Finished.Task.IsCompletedSuccessfully.ShouldBeTrue("renewal delay finished before disposal");
+            handler.RenewCount.ShouldBe(1, "one permit invokes exactly one renewal");
+            handler.Calls.Count(call => call.Method == "DELETE"
+                && call.Uri.EndsWith("/L-renew", StringComparison.Ordinal)).ShouldBe(1);
+        });
+    }
+
+    [Test]
+    public async Task renewal_delay_is_separate_from_acquisition_delay(CancellationToken cancellationToken)
+    {
+        using var timing = new CheckpointTimingHarness(nameof(renewal_delay_is_separate_from_acquisition_delay),
+            "L-renew/CP-separated", cancellationToken);
+        var clock = new CheckpointStepClock();
+        var acquisitionDelays = 0;
+        var acquisitionElapsed = TimeSpan.Zero;
+        var handler = new RenewableSlotHandler(busyFirst: true);
+        var (client, _) = Client(handler, acquisitionDelay: (span, _) =>
         {
-            await lease.DisposeAsync();
-        }
-        handler.Calls.ShouldContain(call => call.Method == "DELETE"
-            && call.Uri.EndsWith("/L-renew", StringComparison.Ordinal));
+            acquisitionDelays++;
+            acquisitionElapsed += span;
+            return Task.CompletedTask;
+        }, renewalDelay: clock.Delay);
+        var session = await client.ProbeAsync(timing.Token);
+        var lease = await client.AcquireAsync(session, "CP-separated", timing.Token);
+        CheckpointStepClock.DelayRequest? held = null;
+        var owner = new CheckpointLeaseOwner(lease, () => held?.Advance());
+        await owner.VerifyAsync(async () =>
+        {
+            acquisitionDelays.ShouldBe(1, "renewal-clock-separated: only the busy retry uses acquisition delay");
+            acquisitionElapsed.ShouldBe(TimeSpan.FromMilliseconds(5));
+            handler.RenewCount.ShouldBe(0, "renewal-clock-separated: no renewal without a permit");
+            var first = clock.NextAsync(timing.Token);
+            await timing.PhaseAsync("renew-delay", first);
+            held = first.Result;
+            first.Result.Advance();
+            await timing.PhaseAsync("renew-http", handler.Renewed.Task);
+            var next = clock.NextAsync(timing.Token);
+            await timing.PhaseAsync("renew-next-delay", next);
+            held = next.Result;
+            var disposal = owner.ReleaseAsync();
+            await timing.PhaseAsync("renew-stop", next.Result.Canceled.Task, disposal);
+            await timing.PhaseAsync("lease-disposed", disposal);
+            acquisitionDelays.ShouldBe(1, "renewal-clock-separated: renewal never uses acquisition delay");
+            handler.RenewCount.ShouldBe(1);
+            handler.Calls.Count(call => call.Method == "DELETE").ShouldBe(1);
+        });
     }
 
     [Test]
@@ -210,13 +279,15 @@ public sealed class BuildSlotClientTests
         TimeSpan? grace = null,
         TimeSpan? wait = null,
         int? pid = null,
-        ILeaseHolderSource? holders = null)
+        ILeaseHolderSource? holders = null,
+        Func<TimeSpan, CancellationToken, Task>? renewalDelay = null,
+        Func<TimeSpan, CancellationToken, Task>? acquisitionDelay = null)
     {
         var now = DateTimeOffset.UtcNow;
         Task Delay(TimeSpan span, CancellationToken _)
         {
             now = now.Add(span);
-            return Task.CompletedTask;
+            return acquisitionDelay?.Invoke(span, _) ?? Task.CompletedTask;
         }
 
         var client = new BuildSlotClient(
@@ -228,7 +299,8 @@ public sealed class BuildSlotClientTests
             Delay,
             pid: pid,
             processStartUtc: "2026-09-30T00:00:00.0000000Z",
-            holders: holders);
+            holders: holders,
+            renewalDelay: renewalDelay);
         return (client, now);
     }
 
@@ -261,8 +333,11 @@ public sealed class BuildSlotClientTests
         }
     }
 
-    private sealed class RenewableSlotHandler : HttpMessageHandler
+    private sealed class RenewableSlotHandler(bool busyFirst = false) : HttpMessageHandler
     {
+        private int _acquires;
+        private int _renews;
+        public int RenewCount => Volatile.Read(ref _renews);
         public System.Collections.Concurrent.ConcurrentQueue<(string Method, string Uri)> Calls { get; } = new();
         public TaskCompletionSource Renewed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -272,11 +347,18 @@ public sealed class BuildSlotClientTests
             Calls.Enqueue((request.Method.Method, uri));
             if (uri.EndsWith("/renew", StringComparison.Ordinal))
             {
+                // Cap an incorrect immediately completing renewal delay without hiding its count.
+                var count = Interlocked.Increment(ref _renews);
                 Renewed.TrySetResult();
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+                return Task.FromResult(new HttpResponseMessage(count >= 2
+                    ? HttpStatusCode.NotFound : HttpStatusCode.NoContent)
+                    { Content = new StringContent("{}") });
             }
             if (request.Method == HttpMethod.Delete)
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+            if (request.Method == HttpMethod.Post && Interlocked.Increment(ref _acquires) == 1 && busyFirst)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Conflict)
+                { Content = new StringContent("""{"type":"build_slot_busy","retryAfterMs":5}""") });
             var body = request.Method == HttpMethod.Get
                 ? "{\"enabled\":true,\"budget\":2,\"maxCpuCount\":2}"
                 : "{\"leaseId\":\"L-renew\",\"maxCpuCount\":2,\"renewEverySeconds\":1}";

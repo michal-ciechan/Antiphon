@@ -101,10 +101,19 @@ internal sealed class CheckpointStepClock
     {
         var request = new DelayRequest(span);
         await _requests.Writer.WriteAsync(request, cancellationToken);
-        await request.Permit.Task.WaitAsync(cancellationToken);
-        cancellationToken.ThrowIfCancellationRequested();
-        lock (_gate) _now += span;
-        request.Completed.TrySetResult();
+        try
+        {
+            await request.Permit.Task.WaitAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_gate) _now += span;
+            request.Completed.TrySetResult();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            request.Canceled.TrySetResult();
+            throw;
+        }
+        finally { request.Finished.TrySetResult(); }
     }
 
     internal sealed class DelayRequest(TimeSpan span)
@@ -112,7 +121,33 @@ internal sealed class CheckpointStepClock
         public TimeSpan Span { get; } = span;
         internal TaskCompletionSource Permit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Canceled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Finished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public void Advance() => Permit.TrySetResult();
+    }
+}
+
+/// <summary>Owns one disposal and releases synthetic drain gates on every assertion failure.</summary>
+internal sealed class CheckpointLeaseOwner(Antiphon.Checkpoints.SlotLease lease, Action? release = null)
+{
+    private Task? _disposal;
+    public Task ReleaseAsync() => _disposal ??= lease.DisposeAsync().AsTask();
+
+    public async Task VerifyAsync(Func<Task> assertions)
+    {
+        Exception? primary = null;
+        try { await assertions(); }
+        catch (Exception ex) { primary = ex; }
+        try
+        {
+            using var cleanup = new CancellationTokenSource(CheckpointTimingHarness.CleanupBudget);
+            release?.Invoke();
+            await ReleaseAsync().WaitAsync(cleanup.Token);
+            Console.WriteLine($"C820 LEASE JOIN lease={lease.LeaseId} completed={_disposal!.IsCompleted} status={_disposal.Status}");
+        }
+        catch (Exception cleanup) when (primary is not null)
+        { throw new AggregateException("checkpoint assertion and lease cleanup failed", primary, cleanup); }
+        if (primary is not null) ExceptionDispatchInfo.Capture(primary).Throw();
     }
 }
 
