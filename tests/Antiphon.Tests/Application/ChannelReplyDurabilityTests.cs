@@ -45,6 +45,7 @@ public class ChannelReplyDurabilityTests
     private static Task<BridgeQueueHarness> CreateHarnessAsync() =>
         BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
             AlwaysOn = true,
             Bridge = new ChannelBridgeSettings { Enabled = true, DebounceWindowMs = 0 },
         });
@@ -123,6 +124,9 @@ public class ChannelReplyDurabilityTests
         h.Runner.SetTranscript(LateConfirmBatch(h.SessionId, prompt, answer));
 
         await h.Runtime.SyncTranscriptAsync(h.SessionId, CancellationToken.None);
+        h.Messaging.SentReplies.ShouldBeEmpty();
+        await ChannelOutboundTestDriver.AssertCapturedAsync(h.Provider, h.SessionId, "main", 1);
+        await h.DrainOutboundAsync();
 
         var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
         reply.ConversationId.ShouldBe(chatId);
@@ -137,11 +141,12 @@ public class ChannelReplyDurabilityTests
     }
 
     [Test]
-    public async Task A_failed_late_confirm_recovery_warns_with_the_correlation_and_leaves_it_owed()
+    public async Task A_failed_late_confirm_publication_is_durably_uncertain_and_leaves_it_owed()
     {
         var logs = new List<string>();
         await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
             AlwaysOn = true,
             Bridge = new ChannelBridgeSettings { Enabled = true, DebounceWindowMs = 0 },
             ConfigureServices = services =>
@@ -164,16 +169,30 @@ public class ChannelReplyDurabilityTests
         h.Runner.SetTranscript(LateConfirmBatch(h.SessionId, prompt, answer));
 
         await h.Runtime.SyncTranscriptAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldBeEmpty();
         var row = await RowAsync(messageId);
         row.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
         row.ChannelReplySettledAt.ShouldBeNull();
-        logs.ShouldContain(log => log.Contains("Late-confirmed channel reply was not published after recovery dispatch", StringComparison.Ordinal)
-            && log.Contains(h.SessionId.ToString(), StringComparison.Ordinal)
-            && log.Contains(messageId.ToString(), StringComparison.Ordinal)
-            && log.Contains(conversationKey, StringComparison.Ordinal)
-            && log.Contains(ChannelReplyDispatchOutcome.PublicationFailed.ToString(), StringComparison.Ordinal));
+        row.ChannelOutboundDeliveryId.ShouldNotBeNull();
+        await using var db = CreateContext();
+        var delivery = await db.ChannelOutboundDeliveries.AsNoTracking()
+            .SingleAsync(d => d.Id == row.ChannelOutboundDeliveryId);
+        delivery.State.ShouldBe(ChannelOutboundDeliveryState.PublishUncertain);
+        delivery.PublicationAttempts.ShouldBe(1);
+        delivery.PublishedAt.ShouldBeNull();
+        (await db.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
+            && i.Kind == AgentIncidentKind.ChannelReplyLost)).ShouldBe(1);
+        (await db.Alerts.CountAsync(a => a.AgentId == h.AgentId)).ShouldBe(1);
+        await Restarted(h).OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
+        h.Messaging.SentReplies.ShouldBeEmpty();
+        (await RowAsync(messageId)).ChannelReplySettledAt.ShouldBeNull();
+        (await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == delivery.Id))
+            .PublicationAttempts.ShouldBe(1);
+        logs.ShouldNotContain(log => log.Contains(
+            "Late-confirmed channel reply was not published after recovery dispatch", StringComparison.Ordinal));
     }
 
     [Test]
@@ -182,6 +201,7 @@ public class ChannelReplyDurabilityTests
         var logs = new List<string>();
         await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
             AlwaysOn = true,
             Bridge = new ChannelBridgeSettings { Enabled = true, DebounceWindowMs = 0 },
             ConfigureServices = services => services.AddSingleton<ILogger<AgentSessionRuntime>>(
@@ -198,6 +218,7 @@ public class ChannelReplyDurabilityTests
         h.Runner.SetTranscript(LateConfirmBatch(h.SessionId, prompt, "NO_REPLY"));
 
         await h.Runtime.SyncTranscriptAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldBeEmpty();
         (await RowAsync(messageId)).ChannelReplySettledAt.ShouldNotBeNull();
@@ -211,6 +232,7 @@ public class ChannelReplyDurabilityTests
         var logs = new List<string>();
         await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
             AlwaysOn = true,
             Bridge = new ChannelBridgeSettings { Enabled = true, DebounceWindowMs = 0 },
             ConfigureServices = services => services.AddSingleton<ILogger<AgentSessionRuntime>>(
@@ -228,6 +250,7 @@ public class ChannelReplyDurabilityTests
             h.SessionId, prompt, "API Error: 529 Overloaded", isApiError: true));
 
         await h.Runtime.SyncTranscriptAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         (await RowAsync(messageId)).DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
         logs.ShouldNotContain(log => log.Contains(
@@ -250,6 +273,7 @@ public class ChannelReplyDurabilityTests
         // Restart. The old design lost the reply route here and answered into nothing, twice.
         var afterRestart = Restarted(h);
         await afterRestart.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
         reply.Channel.ShouldBe("telegram");
@@ -298,6 +322,7 @@ public class ChannelReplyDurabilityTests
         await h.InsertTurnAsync(prompt, "answer for the first thread");
 
         await Restarted(h).OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var sent = h.Messaging.SentReplies.ShouldHaveSingleItem();
         sent.ReplyHandle.ShouldBe(conversationId + "|thread-one");
@@ -319,11 +344,14 @@ public class ChannelReplyDurabilityTests
         await h.InsertTurnAsync(prompt, "Ola | Michal");
 
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.Count.ShouldBe(1);
 
         // Same turn, same transcript, brand-new process. Must be a no-op.
         await Restarted(h).OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         await Restarted(h).OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(1, "a restart must never re-send a reply to a human");
     }
@@ -403,6 +431,7 @@ public class ChannelReplyDurabilityTests
         await h.InsertTurnAsync(prompt, "Booked for 19:00.");
 
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldBeEmpty();
         (await RowAsync(messageId)).ChannelReplySettledAt.ShouldNotBeNull();
@@ -430,6 +459,7 @@ public class ChannelReplyDurabilityTests
         // The operator types straight into the terminal while the chat message is still in flight.
         await h.InsertTurnAsync("run the tests please", "All green.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldBeEmpty();
         (await RowAsync(messageId)).ChannelReplySettledAt.ShouldBeNull();
@@ -458,6 +488,7 @@ public class ChannelReplyDurabilityTests
         await h.InsertApiErrorStubAsync();
 
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldBeEmpty("an API error string must never reach a chat");
         (await RowAsync(messageId)).ChannelReplySettledAt.ShouldBeNull(
@@ -479,6 +510,7 @@ public class ChannelReplyDurabilityTests
         await using var h = await BridgeQueueHarness.CreateAsync(
             new BridgeQueueHarness.HarnessOptions
             {
+                Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
                 AlwaysOn = true,
                 TimeProvider = time,
                 Bridge = new ChannelBridgeSettings { Enabled = true, DebounceWindowMs = 0 },
@@ -536,6 +568,7 @@ public class ChannelReplyDurabilityTests
         }
 
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldBeEmpty("a session-limit wall stays owed for the scheduled resume");
         (await RowAsync(messageId)).ChannelReplySettledAt.ShouldBeNull();
@@ -573,6 +606,7 @@ public class ChannelReplyDurabilityTests
             errorText: "API Error: 529 Overloaded", apiErrorClass: "server_error", apiErrorStatus: 529);
 
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldBeEmpty(
             "half an answer would settle the correlation against an interim fragment");
@@ -591,6 +625,7 @@ public class ChannelReplyDurabilityTests
         await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
         await h.InsertTurnAsync(prompt, "Ordered — peonies, pickup Friday.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.Count.ShouldBe(1, "the real answer goes out normally");
 
         // The turn keeps writing (stop marker mid-stream) and then dies on the API: real trailing
@@ -599,6 +634,7 @@ public class ChannelReplyDurabilityTests
         await h.InsertApiErrorStubAsync(
             errorText: "API Error: 529 Overloaded", apiErrorClass: "server_error", apiErrorStatus: 529);
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Count.ShouldBe(1,
             "the follow-up window contains a stub, so the whole follow-up is withheld");
@@ -749,6 +785,7 @@ public class ChannelReplyDurabilityTests
             apiErrorStatus: 402);
 
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var notice = h.Messaging.SentReplies.Where(r => r.ConversationId == chatId).ShouldHaveSingleItem();
         notice.Text.ShouldNotBeNull();
@@ -813,6 +850,7 @@ public class ChannelReplyDurabilityTests
             apiErrorStatus: 402);
 
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         var notice = h.Messaging.SentReplies.Where(r => r.ConversationId == chatId).ShouldHaveSingleItem();
         notice.Text.ShouldNotBeNull();
@@ -850,6 +888,7 @@ public class ChannelReplyDurabilityTests
             apiErrorStatus: null);
 
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         await AssertTransportNoticeAsync(h, chatId, messageId);
     }
@@ -866,6 +905,7 @@ public class ChannelReplyDurabilityTests
         h.Runner.SetTranscript(TransportFixtureBatch(h.SessionId));
 
         await h.Runtime.SyncTranscriptAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         await AssertTransportNoticeAsync(h, chatId, messageId);
     }
@@ -888,6 +928,7 @@ public class ChannelReplyDurabilityTests
             apiErrorClass: TranscriptKinds.ApiErrorClasses.Transport);
 
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
         h.Messaging.SentReplies.Where(r => r.ConversationId == chatId).Count().ShouldBe(1);
         (await RowAsync(firstId)).ChannelReplySettledAt.ShouldNotBeNull();
 
@@ -902,6 +943,7 @@ public class ChannelReplyDurabilityTests
             apiErrorClass: TranscriptKinds.ApiErrorClasses.Transport);
 
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Where(r => r.ConversationId == chatId).Count().ShouldBe(2,
             "ApiErrorTurnDied dedup must not swallow the second channel notice");
@@ -940,6 +982,7 @@ public class ChannelReplyDurabilityTests
             apiErrorStatus: 500);
 
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.Where(r => r.ConversationId == chatId).ShouldBeEmpty();
         (await RowAsync(messageId)).ChannelReplySettledAt.ShouldBeNull();

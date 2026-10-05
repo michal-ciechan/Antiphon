@@ -42,14 +42,21 @@ public sealed partial class ChannelOutboundDeliveryTests
             await world.Harness.InsertTurnAsync(prompt, "NO_REPLY");
         await world.Harness.Dispatcher.OnTurnEndAsync(world.Harness.SessionId, CancellationToken.None);
 
-        await world.AssertNoConversionAsync();
+        await world.AssertNoConversionAsync(suppressed: gate == "NO_REPLY");
         world.Harness.Messaging.SentReplies.ShouldBeEmpty();
         await using (var db = world.Db())
         {
             var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlation);
-            row.ChannelOutboundDeliveryId.ShouldBeNull();
-            if (gate == "NO_REPLY") row.ChannelReplySettledAt.ShouldNotBeNull();
-            else row.ChannelReplySettledAt.ShouldBeNull();
+            if (gate == "NO_REPLY")
+            {
+                row.ChannelOutboundDeliveryId.ShouldNotBeNull();
+                row.ChannelReplySettledAt.ShouldNotBeNull();
+            }
+            else
+            {
+                row.ChannelOutboundDeliveryId.ShouldBeNull();
+                row.ChannelReplySettledAt.ShouldBeNull();
+            }
         }
 
         if (gate == "NO_REPLY")
@@ -260,6 +267,7 @@ public sealed partial class ChannelOutboundDeliveryTests
             var store = new ChannelOutboundFileStore(Path.Combine(root, "outbound"));
             var settings = Options.Create(new ChannelOutboundSettings
             {
+                UnifiedRecoveryEnabled = true,
                 Profiles = new Dictionary<string, ChannelOutboundProfile>
                 {
                     ["conversion"] = new()
@@ -313,10 +321,16 @@ public sealed partial class ChannelOutboundDeliveryTests
         public ChannelOutboundService Outbound(AppDbContext db) =>
             new(db, _store, Harness.Messaging, Settings, TimeProvider.System);
 
-        public async Task AssertNoConversionAsync()
+        public async Task AssertNoConversionAsync(bool suppressed = false)
         {
             await using var db = Db();
-            (await db.ChannelOutboundDeliveries.CountAsync(d => d.ChannelId == ChannelId)).ShouldBe(0);
+            var deliveries = await db.ChannelOutboundDeliveries.Where(d => d.ChannelId == ChannelId).ToListAsync();
+            deliveries.Count.ShouldBe(suppressed ? 1 : 0);
+            if (suppressed)
+            {
+                deliveries[0].State.ShouldBe(ChannelOutboundDeliveryState.Suppressed);
+                deliveries[0].PublishedAt.ShouldBeNull();
+            }
             (await db.AgentTasks.CountAsync(t => t.OutboundDeliveryId != null)).ShouldBe(0);
         }
 
@@ -324,8 +338,10 @@ public sealed partial class ChannelOutboundDeliveryTests
         {
             await using var db = Db();
             var intent = (await db.ChannelOutboundDeliveries.AsNoTracking()
-                .Where(d => d.ChannelId == ChannelId).ToListAsync()).ShouldHaveSingleItem();
-            intent.State.ShouldBe(ChannelOutboundDeliveryState.Pending);
+                .Where(d => d.ChannelId == ChannelId && d.State != ChannelOutboundDeliveryState.Suppressed).ToListAsync()).ShouldHaveSingleItem();
+            intent.State.ShouldBe(ChannelOutboundDeliveryState.Captured);
+            (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlation))
+                .ChannelReplySettledAt.ShouldBeNull();
             intent.Trigger.ShouldBe(nameof(ChannelOutboundTrigger.EveryAgentReply));
             (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlation))
                 .ChannelOutboundDeliveryId.ShouldBe(intent.Id);
@@ -338,7 +354,12 @@ public sealed partial class ChannelOutboundDeliveryTests
             var pump = new ChannelOutboundDeliveryPump(db,
                 new OutboundConversionTaskRunner(db, tasks), _store, Harness.Messaging,
                 Options.Create(new AntiphonMessagingOptions()), TimeProvider.System,
-                NullLogger<ChannelOutboundDeliveryPump>.Instance, Settings);
+                NullLogger<ChannelOutboundDeliveryPump>.Instance, Settings,
+                new ChannelReplyPreparation(new ChannelReplyAttachmentReader()));
+            (await pump.TickAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
+            db.ChangeTracker.Clear();
+            (await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == intent.Id))
+                .State.ShouldBe(ChannelOutboundDeliveryState.Pending);
             (await pump.TickAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
             db.ChangeTracker.Clear();
             (await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == intent.Id))

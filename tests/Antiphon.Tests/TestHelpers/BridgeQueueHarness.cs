@@ -64,6 +64,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         public double? ClockSpeed { get; init; }
         public SupervisionSettings? Supervision { get; init; }
         public ChannelBridgeSettings? Bridge { get; init; }
+        public ChannelOutboundSettings? Outbound { get; init; }
         public DelegationSettings? Delegation { get; init; }
         public Action<IServiceCollection>? ConfigureServices { get; init; }
 
@@ -168,7 +169,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         services.AddSingleton<CapacityRecoveryService>();
         services.AddScoped<ModelAvailability>();
         services.AddSingleton<ChannelReplyDispatcher>();
-        services.AddSingleton<IOptions<ChannelOutboundSettings>>(Options.Create(new ChannelOutboundSettings()));
+        services.AddSingleton<IOptions<ChannelOutboundSettings>>(Options.Create(options.Outbound ?? new ChannelOutboundSettings()));
         services.AddSingleton<IOptions<AntiphonMessagingOptions>>(Options.Create(new AntiphonMessagingOptions()));
         services.AddSingleton<IChannelOutboundFileStore>(new ChannelOutboundFileStore(Path.Combine(tempRoot, "outbound")));
         services.AddSingleton<IChannelReplyAttachmentReader, ChannelReplyAttachmentReader>();
@@ -183,7 +184,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
                 Options.Create(new DelegationSettings { AllowedRoots = [tempRoot] }), eventBus,
                 new RecordingSessionStopper(), clock, NullLogger<AgentTaskService>.Instance);
             return new ChannelOutboundDeliveryPump(db, new OutboundConversionTaskRunner(db, tasks),
-                sp.GetRequiredService<IChannelOutboundFileStore>(), messaging,
+                sp.GetRequiredService<IChannelOutboundFileStore>(), sp.GetRequiredService<IAntiphonMessagingProducer>(),
                 sp.GetRequiredService<IOptions<AntiphonMessagingOptions>>(), clock,
                 NullLogger<ChannelOutboundDeliveryPump>.Instance,
                 sp.GetRequiredService<IOptions<ChannelOutboundSettings>>(),
@@ -620,6 +621,8 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         return await scope.ServiceProvider.GetRequiredService<ChannelOutboundDeliveryPump>()
             .TickAsync(CancellationToken.None);
     }
+
+    public Task DrainOutboundAsync() => ChannelOutboundTestDriver.DrainAsync(Provider, SessionId);
 
     public async ValueTask DisposeAsync()
     {

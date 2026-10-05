@@ -41,6 +41,7 @@ public sealed class ChannelOutboundPolicyTests
         var promptPath = Path.Combine(root, "convert.md");
         var settings = Options.Create(new ChannelOutboundSettings
         {
+            UnifiedRecoveryEnabled = true,
             Profiles = new Dictionary<string, ChannelOutboundProfile>
             {
                 ["convert"] = new() { ProjectId = projectId, AgentId = converterId,
@@ -123,6 +124,7 @@ public sealed class ChannelOutboundPolicyTests
             Trigger = ChannelOutboundTrigger.EveryAgentReply };
         var settings = Options.Create(new ChannelOutboundSettings
         {
+            UnifiedRecoveryEnabled = true,
             Profiles = new Dictionary<string, ChannelOutboundProfile> { ["convert"] = profile },
         });
         try
@@ -308,6 +310,7 @@ public sealed class ChannelOutboundPolicyTests
         };
         var settings = Options.Create(new ChannelOutboundSettings
         {
+            UnifiedRecoveryEnabled = true,
             Profiles = new Dictionary<string, ChannelOutboundProfile> { ["conversion"] = profile },
         });
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
@@ -400,6 +403,7 @@ public sealed class ChannelOutboundPolicyTests
         };
         var settings = Options.Create(new ChannelOutboundSettings
         {
+            UnifiedRecoveryEnabled = true,
             Profiles = new Dictionary<string, ChannelOutboundProfile> { ["pdf-project"] = profile },
         });
         new ChannelOutboundSettings().Profiles.ShouldBeEmpty();
@@ -481,8 +485,21 @@ public sealed class ChannelOutboundPolicyTests
             settings.Value.Profiles.Clear();
             (await outbound.SendAsync(reply with { Text = "new source-only message" },
                 ChannelOutboundOrigin.AgentReply, source with { PromptSequence = 4 },
-                CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Published);
+                CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Deferred);
+            producer.SentReplies.ShouldBeEmpty();
+            var passthrough = await db.ChannelOutboundDeliveries.SingleAsync(d => d.ChannelId == channelId);
+            passthrough.State.ShouldBe(ChannelOutboundDeliveryState.Ready);
+            passthrough.PublishedAt.ShouldBeNull();
+            var pump = new ChannelOutboundDeliveryPump(db, null!,
+                new ChannelOutboundFileStore(Path.Combine(directory, "outbound")), producer,
+                Options.Create(new AntiphonMessagingOptions()), TimeProvider.System,
+                NullLogger<ChannelOutboundDeliveryPump>.Instance, settings);
+            await pump.TickAsync(CancellationToken.None);
             producer.SentReplies.ShouldHaveSingleItem().Text.ShouldBe("new source-only message");
+            db.ChangeTracker.Clear();
+            (await db.ChannelOutboundDeliveries.SingleAsync(d => d.Id == passthrough.Id))
+                .State.ShouldBe(ChannelOutboundDeliveryState.Published);
+            await db.ChannelOutboundDeliveries.Where(d => d.Id == passthrough.Id).ExecuteDeleteAsync();
         }
         finally
         {
@@ -505,6 +522,7 @@ public sealed class ChannelOutboundPolicyTests
         };
         var settings = new ChannelOutboundSettings
         {
+            UnifiedRecoveryEnabled = true,
             Profiles = new Dictionary<string, ChannelOutboundProfile> { ["conversion"] = profile },
         };
         validator.Validate(null, settings).Succeeded.ShouldBeTrue();

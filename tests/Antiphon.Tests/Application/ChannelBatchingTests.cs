@@ -26,12 +26,17 @@ public class ChannelBatchingTests
 
     private static AppDbContext CreateContext() => BridgeQueueHarness.CreateContext();
 
-    private static Task<BridgeQueueHarness> CreateHarnessAsync(bool batching = true) =>
-        BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+    private static async Task<BridgeQueueHarness> CreateHarnessAsync(bool batching = true)
+    {
+        var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = true },
             AlwaysOn = true,
             Bridge = new ChannelBridgeSettings { Enabled = true, BatchingEnabled = batching, DebounceWindowMs = 0 },
         });
+        await harness.BindChannelAsync("-100777");
+        return harness;
+    }
 
     private static async Task EnqueueChannelAsync(BridgeQueueHarness h, string body, string conversationKey = ConvKey)
         => await h.Queue.EnqueueAsync(
@@ -84,6 +89,9 @@ public class ChannelBatchingTests
         // send exactly ONE reply.
         await h.InsertTurnAsync(batchBody, "Keys are on the hook; dinner is pasta.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        h.Messaging.SentReplies.ShouldBeEmpty();
+        await ChannelOutboundTestDriver.AssertCapturedAsync(h.Provider, h.SessionId, "main", 2);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldHaveSingleItem().ConversationId.ShouldBe("-100777");
         (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(0, "both correlations settled by the one reply");
@@ -185,6 +193,7 @@ public class ChannelBatchingTests
 
         await h.InsertTurnAsync(prompt, "NO_REPLY");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldBeEmpty("a whole-turn NO_REPLY is the silent-turn contract");
         (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(0, "the correlation is consumed, not leaked");
@@ -200,6 +209,7 @@ public class ChannelBatchingTests
 
         await h.InsertTurnAsync(prompt, "Sure — I'll reply NO_REPLY when there's nothing to say.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldHaveSingleItem();
     }
