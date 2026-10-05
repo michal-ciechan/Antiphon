@@ -116,10 +116,10 @@ public sealed class AmServiceDeployReadinessTests
             throw new TUnit.Core.Exceptions.SkipTestException("Native Windows Git tool discovery qualification");
 
         var parentPath = Environment.GetEnvironmentVariable("PATH") ?? "";
-        var git = FindProgram("git", parentPath);
-        git.ShouldNotBeNull("Git installation must be discoverable before the supplied-PATH proof");
-        var gitRoot = Directory.GetParent(Path.GetDirectoryName(git!)!)!.FullName;
-        var usrBin = Path.Combine(gitRoot, "usr", "bin");
+        var parentTools = ResolveTools(parentPath, out var parentError);
+        parentTools.ShouldNotBeNull("A complete Git installation must be discoverable before the supplied-PATH proof: " + parentError);
+        var usrBin = parentTools!.Directory;
+        var gitRoot = Directory.GetParent(usrBin)!.Parent!.FullName;
         Directory.Exists(usrBin).ShouldBeTrue("Git installation-relative usr/bin precondition");
         var suppliedPath = string.Join(Path.PathSeparator,
             parentPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries).Where(path => !SamePath(path, usrBin))
@@ -322,15 +322,16 @@ public sealed class AmServiceDeployReadinessTests
 
     private sealed record ToolPaths(string Curl, string Sh, string Sleep, string? Cygpath, string Directory);
 
-    private static string? FindProgram(string name, string searchPath)
+    private static string? FindProgram(string name, string searchPath) => FindPrograms(name, searchPath).FirstOrDefault();
+
+    private static IEnumerable<string> FindPrograms(string name, string searchPath)
     {
         foreach (var entry in searchPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
             var candidate = Path.GetFullPath(Path.Combine(entry.Trim('"'), name));
-            if (File.Exists(candidate)) return candidate;
-            if (OperatingSystem.IsWindows() && File.Exists(candidate + ".exe")) return candidate + ".exe";
+            if (File.Exists(candidate)) yield return candidate;
+            if (OperatingSystem.IsWindows() && File.Exists(candidate + ".exe")) yield return candidate + ".exe";
         }
-        return null;
     }
 
     private static bool SamePath(string left, string right) =>
@@ -353,7 +354,7 @@ public sealed class AmServiceDeployReadinessTests
 
         var candidates = originalPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
             .Select(path => Path.GetFullPath(path.Trim('"'))).ToList();
-        foreach (var launcher in new[] { FindProgram("git", originalPath), FindProgram("sh", originalPath) }.OfType<string>())
+        foreach (var launcher in FindPrograms("git", originalPath).Concat(FindPrograms("sh", originalPath)))
         {
             var directory = new DirectoryInfo(Path.GetDirectoryName(launcher)!);
             // Only installation-relative candidates, never a machine PATH edit or a disk search.
@@ -361,6 +362,7 @@ public sealed class AmServiceDeployReadinessTests
             for (var depth = 0; depth < 3 && ancestor is not null; depth++, ancestor = ancestor.Parent)
                 candidates.Add(Path.Combine(ancestor.FullName, "usr", "bin"));
         }
+        var skipped = new List<string>();
         foreach (var directory in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var info = new DirectoryInfo(directory);
@@ -371,13 +373,17 @@ public sealed class AmServiceDeployReadinessTests
             var sh = Path.Combine(directory, "sh.exe");
             var sleep = Path.Combine(directory, "sleep.exe");
             var cygpath = Path.Combine(directory, "cygpath.exe");
-            if (new[] { sh, sleep, cygpath }.All(File.Exists))
+            var missing = new[] { "sh.exe", "sleep.exe", "cygpath.exe" }
+                .Where(name => !File.Exists(Path.Combine(directory, name))).ToList();
+            if (missing.Count == 0)
             {
                 error = "";
                 return new ToolPaths(curl, sh, sleep, cygpath, directory);
             }
+            skipped.Add($"Skipped incomplete Git installation {root}: missing {string.Join(", ", missing)}");
         }
         error = "Required Git for Windows prerequisites sh.exe, sleep.exe and cygpath.exe were not found in one installation's usr/bin; expose Git cmd/bin on the supplied PATH";
+        if (skipped.Count > 0) error += ". " + string.Join("; ", skipped);
         return null;
     }
 

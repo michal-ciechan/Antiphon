@@ -14,6 +14,8 @@ timeout-then-ready case distinguishes accepted requests from delayed refusal.
 Git sh/sleep/cygpath are discovered in one installation's `usr/bin` from supplied
 PATH/Git locations, and only child PATH includes them. Curl is resolved first on
 the original PATH. Missing Git tools fail; do not edit machine PATH or use WSL.
+Every git.exe/sh.exe on the supplied PATH is a discovery root (CARD-1060).
+An incomplete earlier installation, such as Grok's bundled Git missing sleep.exe/cygpath.exe, is skipped and named with its missing files in the refusal message.
 Run the [plan's exact native lane rows](superpowers/plans/2026-10-04-card-1049-windows-readiness-retry-plan.md#checkpoints)
 through the checkpoint tool; the production readiness deadlines/retries are unchanged.
 
