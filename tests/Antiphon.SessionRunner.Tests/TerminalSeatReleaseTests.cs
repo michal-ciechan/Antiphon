@@ -164,6 +164,7 @@ public class TerminalSeatReleaseTests
                 var replacement = world.Tail.Path + ".replacement";
                 await File.WriteAllTextAsync(replacement, await File.ReadAllTextAsync(world.Tail.Path));
                 File.Move(replacement, world.Tail.Path, overwrite: true);
+                (await world.Tail.ObserveAsync()).Status.ShouldBe(TerminalTranscriptReadStatus.StaleObservation);
             }
             else world.Runtime.TerminalReleaseBeforeSignal = _ =>
             {
@@ -171,7 +172,8 @@ public class TerminalSeatReleaseTests
                 return Task.CompletedTask;
             };
             (await world.ReleaseAsync(new(Guid.NewGuid(), world.Request, qualified.Token!)))
-                .Outcome.ShouldBe(TerminalSeatReleaseOutcome.StaleObservation, change);
+                .Outcome.ShouldBe(change == "file" ? TerminalSeatReleaseOutcome.Unknown
+                    : TerminalSeatReleaseOutcome.StaleObservation, change);
             world.AssertRetained();
         }
     }
