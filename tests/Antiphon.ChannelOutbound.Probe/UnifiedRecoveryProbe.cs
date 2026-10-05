@@ -25,10 +25,12 @@ internal static class UnifiedRecoveryProbe
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var ct = deadline.Token;
+        var observedId = config.DeliveryId;
         async Task BarrierAsync(string point, Guid id, CancellationToken token)
         {
+            if (id != config.DeliveryId) observedId = id;
             if (point != config.Barrier) return;
-            await WriteMarkerAsync(config, point, id, token);
+            await WriteMarkerAsync(config, point, observedId, token);
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
         }
         var services = new ServiceCollection();
@@ -41,6 +43,12 @@ internal static class UnifiedRecoveryProbe
         var clock = new ProbeClock(config.ClockOffsetSeconds);
         var settings = Options.Create(new ChannelOutboundSettings
             { UnifiedRecoveryEnabled = true, ScanIntervalSeconds = 1 });
+        if (config.ConverterAgentId != Guid.Empty)
+            settings.Value.Profiles["crash-pdf"] = new ChannelOutboundProfile
+            {
+                ProjectId = config.ProjectId, AgentId = config.ConverterAgentId, PromptFile = "convert.md",
+                Trigger = ChannelOutboundTrigger.EveryAgentReply, TimeoutSeconds = 900,
+            };
         services.AddSingleton<TimeProvider>(clock);
         services.AddSingleton(settings);
         services.AddSingleton(Options.Create(new ChannelBridgeSettings
@@ -55,6 +63,15 @@ internal static class UnifiedRecoveryProbe
         services.AddSingleton<IChannelOutboundFileStore>(files);
         services.AddSingleton<IChannelReplyAttachmentReader, ChannelReplyAttachmentReader>();
         services.AddScoped<ChannelReplyPreparation>();
+        services.AddScoped<OutboundConversionTaskRunner>(sp =>
+        {
+            var db = sp.GetRequiredService<AppDbContext>();
+            var tasks = new AgentTaskService(db,
+                new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+                Options.Create(new DelegationSettings { AllowedRoots = [config.WorkspaceRoot] }),
+                new ProbeEventBus(), new RefusingSessionStopper(), clock, NullLogger<AgentTaskService>.Instance);
+            return new OutboundConversionTaskRunner(db, tasks) { ProbeBarrierAsync = BarrierAsync };
+        });
         services.AddScoped<ChannelOutboundService>(sp =>
         {
             var service = ActivatorUtilities.CreateInstance<ChannelOutboundService>(sp);
@@ -62,10 +79,11 @@ internal static class UnifiedRecoveryProbe
             return service;
         });
         services.AddSingleton<ChannelReplyDispatcher>();
+        services.AddScoped<ChatChannelService>();
         services.AddSingleton<ChannelOutboundDiscoveryService>();
         services.AddSingleton<ChannelOutboundWorkCursor>();
         services.AddScoped<ChannelOutboundDeliveryPump>(sp => new(
-            sp.GetRequiredService<AppDbContext>(), null!, files,
+            sp.GetRequiredService<AppDbContext>(), sp.GetRequiredService<OutboundConversionTaskRunner>(), files,
             sp.GetRequiredService<IAntiphonMessagingProducer>(),
             sp.GetRequiredService<IOptions<AntiphonMessagingOptions>>(), clock,
             NullLogger<ChannelOutboundDeliveryPump>.Instance, settings,
@@ -88,7 +106,7 @@ internal static class UnifiedRecoveryProbe
         return 0;
     }
 
-    private static async Task WriteMarkerAsync(ProbeConfig config, string point, Guid id, CancellationToken ct)
+    internal static async Task WriteMarkerAsync(ProbeConfig config, string point, Guid id, CancellationToken ct)
     {
         var process = Process.GetCurrentProcess();
         var assembly = typeof(UnifiedRecoveryProbe).Assembly;
@@ -99,10 +117,12 @@ internal static class UnifiedRecoveryProbe
             build = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion,
             expectedSourceSha = config.ExpectedSourceSha,
         });
-        await using var file = new FileStream(config.MarkerPath + ".tmp", FileMode.Create,
-            FileAccess.Write, FileShare.Read, 4096, FileOptions.WriteThrough);
-        await file.WriteAsync(marker, ct);
-        file.Flush(true);
+        await using (var file = new FileStream(config.MarkerPath + ".tmp", FileMode.Create,
+            FileAccess.Write, FileShare.Read, 4096, FileOptions.WriteThrough))
+        {
+            await file.WriteAsync(marker, ct);
+            file.Flush(true);
+        }
         File.Move(config.MarkerPath + ".tmp", config.MarkerPath);
     }
 
@@ -126,7 +146,9 @@ internal static class UnifiedRecoveryProbe
             if (eventData.Context!.ChangeTracker.Entries<Antiphon.Server.Domain.Entities.ChannelOutboundDelivery>()
                 .Any(e => e.Entity.State == ChannelOutboundDeliveryState.Published))
             {
-                await WriteMarkerAsync(config, "outcome-refused", config.DeliveryId, cancellationToken);
+                var id = eventData.Context.ChangeTracker.Entries<Antiphon.Server.Domain.Entities.ChannelOutboundDelivery>()
+                    .Single(e => e.Entity.State == ChannelOutboundDeliveryState.Published).Entity.Id;
+                await WriteMarkerAsync(config, "outcome-refused", id, cancellationToken);
                 throw new IOException("Injected accepted-outcome commit refusal.");
             }
             return result;

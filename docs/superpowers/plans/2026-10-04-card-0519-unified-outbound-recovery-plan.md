@@ -997,6 +997,15 @@ select CP-29 in a Linux invocation. A missing Windows lane leaves R-12 outstandi
 | CP-57 | S9 | `tests/Antiphon.Tests -> bin-c519-cp57/` | runtime-s9 | `/*/*/AgentTaskReplyIntegrationTests/Deferred_is_durable_and_releases_runtime` | R-1 runtime | all 1 result, 0 failed/skipped | 1 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-58 | S10 | `tests/Antiphon.Tests -> bin-c519-cp58/` | retention-regression-s10 | `/*/*/DataRetentionServiceTests/*` | R-11 full affected class | all class results, 0 failed/skipped | 55 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-59 | S10 | `tests/Antiphon.SessionRunner.Tests -> bin-c519-cp59/` | terminal-reader-s10 | `/*/*/(TerminalSeatReleaseTests*)\|(TranscriptTailerObservationTests*)\|(CodexTranscriptTailerTests*)\|(GrokTranscriptTailerTests*)/*` | V-5, V-10 terminal completeness | all four class results, 0 failed/skipped | 70 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-60 | S12Final | `tests/Antiphon.Tests -> bin-c519-cp60/` | unit-s12-final | `/*/*/*/*[Category=Unit]` | Final profile v1 Unit lane | all Unit results, 0 failed/skipped | 1 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-61 | S12Final | `tests/Antiphon.Tests -> bin-c519-cp61/` | recovery-s12-final | `/*/*/ChannelOutboundRecoveryTests/*` | R-8 full affected probe consumer | all 18 results, 0 failed/skipped | 18 | 10 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+
+S12 Code task `5724b53e` is commissioned Final profile v1. CP-60/61 supplement
+CP-23..28 to satisfy that profile's whole Unit lane and full affected class
+requirements; this supersedes the earlier no-Unit exclusion for this dispatch.
+The existing probe's old modes remain regression subjects because S12 extends its
+configuration and launch boundary. No whole assembly or namespace run is added.
+PC-89..96 and every path/cut variant remain pending SourceLanding Mutation.
 
 
 Floors come from the specified new roster and inspected source attributes:

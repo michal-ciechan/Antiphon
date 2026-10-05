@@ -44,9 +44,11 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
     public string SourcePath => Path.Combine(H.TempRoot, "workspace", "original.md");
     public byte[] OriginalBytes { get; } = "# frozen original S12 source\nwith complete middle and tail"u8.ToArray();
     public string Answer { get; } = "original complete reply " + Guid.NewGuid().ToString("N");
-    public Guid MemberId { get; private set; }
-    public Guid? RootId { get; private set; }
-    public int BaselineReceipts { get; private set; }
+    public Guid MemberId { get; set; }
+    public Guid? RootId { get; set; }
+    public int BaselineReceipts { get; set; }
+    public Guid ConverterId { get; set; }
+    public Guid ProjectId { get; set; }
     private bool _gatewayStarted;
     public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
 
@@ -137,10 +139,10 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
             await using var db = Db();
             await db.SessionQueuedMessages.Where(m => m.Id == context)
                 .ExecuteUpdateAsync(s => s.SetProperty(m => m.ChannelReplySettledAt, H.Now));
-            MemberId = await H.SeedPendingMessageAsync("machine complete prompt", status: QueuedMessageStatus.Sent,
+            MemberId = await H.SeedPendingMessageAsync("[Check] machine complete prompt", status: QueuedMessageStatus.Sent,
                 origin: QueuedMessageOrigin.Check, deliveryAttempts: 1, baselineSequence: 0,
                 createdAtUtc: H.Now, lastDeliveryStartedAt: H.Now, legacyNullGeneration: true);
-            await H.InsertTurnAsync("machine complete prompt", Answer + "\n[[attach: " + SourcePath + "]]");
+            await H.InsertTurnAsync("[Check] machine complete prompt", Answer + "\n[[attach: " + SourcePath + "]]");
         }
         else
         {
@@ -187,7 +189,8 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         ledger.Flush(true);
     }
 
-    public async Task<OwnedProbe> StartProbeAsync(string? barrier, int offset = 0, bool refuseOutcome = false)
+    public async Task<OwnedProbe> StartProbeAsync(string? barrier, int offset = 0, bool refuseOutcome = false,
+        string mode = "unified", Guid? deliveryId = null)
     {
         var marker = Path.Combine(H.TempRoot, "cut-" + Guid.NewGuid().ToString("N") + ".json");
         var config = marker + ".config";
@@ -195,10 +198,11 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion.Split('+').Last();
         await File.WriteAllTextAsync(config, JsonSerializer.Serialize(new
         {
-            ConnectionString = Schema.ConnectionString, StoreRoot, DeliveryId = H.SessionId,
+            ConnectionString = Schema.ConnectionString, StoreRoot, DeliveryId = deliveryId ?? H.SessionId,
             EvidencePath = marker + ".unused", MarkerPath = marker, Barrier = barrier,
-            ClockOffsetSeconds = offset, Mode = "unified", BootstrapServers = Bootstrap, Topic,
+            ClockOffsetSeconds = offset, Mode = mode, BootstrapServers = Bootstrap, Topic,
             FailPublishCommit = refuseOutcome, ExpectedSourceSha = source,
+            ConverterAgentId = ConverterId, ProjectId, WorkspaceRoot = H.TempRoot,
         }));
         var start = new ProcessStartInfo("dotnet")
             { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
@@ -235,6 +239,10 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         {
             await WaitForAsync(() => File.Exists(marker) || process.HasExited);
             if (process.HasExited) throw new InvalidOperationException("Child exited before cut: " + await _stderr);
+            await AssertMarkerAsync(point);
+        }
+        public async Task AssertMarkerAsync(string point)
+        {
             using var receipt = JsonDocument.Parse(await File.ReadAllTextAsync(marker));
             receipt.RootElement.GetProperty("point").GetString().ShouldBe(point);
             receipt.RootElement.GetProperty("pid").GetInt32().ShouldBe(process.Id);

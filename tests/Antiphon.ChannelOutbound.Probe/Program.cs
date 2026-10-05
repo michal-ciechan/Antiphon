@@ -100,9 +100,10 @@ try
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentTaskDispatcher>();
         services.AddSingleton<IAgentTaskLaunchSink>(config.Mode == "dispatch-running"
-            ? new CapturingTaskLaunchSink(config.LaunchSpecPath!) : new RefusingTaskLaunchSink());
-        services.AddSingleton<LandDeliveryBoundary>(new ProbeDispatchBoundary(
-            config.ConnectionString, config.MarkerPath, config.Barrier, config.DeliveryId));
+            ? new CapturingTaskLaunchSink(config.LaunchSpecPath!) : new RefusingTaskLaunchSink(config.ExpectedSourceSha is null ? null : config));
+        services.AddSingleton<LandDeliveryBoundary>(config.ExpectedSourceSha is null
+            ? new ProbeDispatchBoundary(config.ConnectionString, config.MarkerPath, config.Barrier, config.DeliveryId)
+            : new UnifiedDispatchBoundary(config));
         await using var provider = services.BuildServiceProvider();
         await using var scope = provider.CreateAsyncScope();
         await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
@@ -239,10 +240,26 @@ internal sealed class RefusingSessionStopper : IDelegateSessionStopper
         throw new InvalidOperationException("Unexpected external session stop from conversion probe.");
 }
 
-internal sealed class RefusingTaskLaunchSink : IAgentTaskLaunchSink
+internal sealed class RefusingTaskLaunchSink(ProbeConfig? config = null) : IAgentTaskLaunchSink
 {
-    public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec) =>
+    public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec)
+    {
+        if (config is not null)
+            UnifiedRecoveryProbe.WriteMarkerAsync(config, "enqueue-refused", config.DeliveryId, default).GetAwaiter().GetResult();
         throw new InvalidOperationException("Unexpected external worker launch from crash probe.");
+    }
+}
+
+internal sealed class UnifiedDispatchBoundary(ProbeConfig config) : LandDeliveryBoundary
+{
+    public override async Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
+    {
+        if (config.Barrier != "conversion-dispatched" || boundary != "dispatch-warning-claim-committed") return;
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(config.ConnectionString).Options);
+        if (!await db.AgentTasks.AnyAsync(t => t.Id == taskId && t.OutboundDeliveryId == config.DeliveryId, ct)) return;
+        await UnifiedRecoveryProbe.WriteMarkerAsync(config, "conversion-dispatched", config.DeliveryId, ct);
+        await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+    }
 }
 
 internal sealed class CapturingTaskLaunchSink(string path) : IAgentTaskLaunchSink
