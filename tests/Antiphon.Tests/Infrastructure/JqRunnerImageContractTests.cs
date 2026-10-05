@@ -241,8 +241,8 @@ public sealed class JqRunnerImageContractTests
         var physicalLines = run.Stdout[..^1].Split('\n');
         physicalLines.Length.ShouldBe(1, "c1054-row-single-line");
         physicalLines[0].Any(char.IsControl).ShouldBeFalse("receipt contains no raw control bytes");
-        physicalLines[0].ShouldStartWith(prefix + " lookupPath=" + lookup + " path=", "c1054-found-path");
-        physicalLines[0].ShouldEndWith(" path=" + resolved, "c1054-resolved-path");
+        physicalLines[0].ShouldStartWith(prefix + " lookupPath=" + lookup + " path=", Case.Sensitive, "c1054-found-path");
+        physicalLines[0].ShouldEndWith(" path=" + resolved, Case.Sensitive, "c1054-resolved-path");
         run.Stdout.ShouldBe(prefix + " lookupPath=" + lookup + " path=" + resolved + "\n");
     }
 
