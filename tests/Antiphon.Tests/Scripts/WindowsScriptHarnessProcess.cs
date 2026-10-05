@@ -58,7 +58,12 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
             throw new InvalidOperationException("ScriptHarness requires a real pwsh.exe path, not an App Execution Alias; set ExecutablePath to the installed PowerShell executable.");
         _job = CreateJobObjectW(IntPtr.Zero, null);
         _hooks.Track("job", _job);
-        if (_job.IsInvalid) { _job.Dispose(); throw NativeError("CreateJobObjectW"); }
+        if (_job.IsInvalid)
+        {
+            var error = NativeError("CreateJobObjectW");
+            _job.Dispose();
+            throw error;
+        }
         SafeFileHandle? stdoutRead = null, stdoutWrite = null, stderrRead = null, stderrWrite = null,
             stdinRead = null, stdinWrite = null;
         try
@@ -129,8 +134,10 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
                         flags, IntPtr.Zero,
                         Directory.GetCurrentDirectory(), ref startup, out var information))
                     throw NativeError("CreateProcessW");
-                _process = information.Process;
-                _thread = information.Thread;
+                // PROCESS_INFORMATION is filled by native code. SafeHandle fields
+                // cannot be unmarshalled here; take ownership after a successful call.
+                _process = new SafeFileHandle(information.Process, ownsHandle: true);
+                _thread = new SafeFileHandle(information.Thread, ownsHandle: true);
                 _hooks.Track("process", _process);
                 _hooks.Track("thread", _thread);
                 _hooks.Created?.Invoke(_process);
@@ -146,6 +153,7 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
                 if (previous == uint.MaxValue) throw NativeError("ResumeThread");
                 _hooks.PreviousSuspendCount = previous;
                 _hooks.Record("resumed");
+                _thread.Dispose();
             }
             finally
             {
@@ -287,8 +295,11 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
         return result.ToString();
     }
 
-    private static Win32Exception NativeError(string operation) =>
-        new(Marshal.GetLastWin32Error(), operation + " failed");
+    private static Win32Exception NativeError(string operation)
+    {
+        var code = Marshal.GetLastWin32Error();
+        return new Win32Exception(code, $"{operation} failed ({code}): {new Win32Exception(code).Message}");
+    }
 
     [StructLayout(LayoutKind.Sequential)] private struct SecurityAttributes
     { public int Length; public IntPtr SecurityDescriptor; [MarshalAs(UnmanagedType.Bool)] public bool InheritHandle; }
@@ -303,7 +314,7 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
     [StructLayout(LayoutKind.Sequential)] private struct StartupInfoEx
     { public StartupInfo StartupInfo; public IntPtr AttributeList; }
     [StructLayout(LayoutKind.Sequential)] private struct ProcessInformation
-    { public SafeFileHandle Process; public SafeFileHandle Thread; public int ProcessId; public int ThreadId; }
+    { public IntPtr Process; public IntPtr Thread; public int ProcessId; public int ThreadId; }
     [StructLayout(LayoutKind.Sequential)] private struct JobBasicLimitInformation
     {
         public long PerProcessUserTimeLimit; public long PerJobUserTimeLimit; public uint LimitFlags;
