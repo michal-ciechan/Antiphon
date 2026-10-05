@@ -516,7 +516,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
             builder.Services.AddSingleton(Runtime);
             builder.Services.AddSingleton<IPhoneHomeRuntimeSurface>(adapter);
             builder.Services.Configure<HerdrSettings>(_ => { });
-            builder.Services.Configure<HostStatsSettings>(_ => { });
+            builder.Services.Configure<Antiphon.SessionRunner.HostStatsSettings>(_ => { });
             _app = builder.Build();
             _app.Use(async (context, next) =>
             {
