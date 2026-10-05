@@ -117,6 +117,7 @@ function Get-NamespaceCensus {
             'Antiphon.Tests.Checkpoints.DetachedLauncherTests.executor_survives_its_starter'
         )
         linuxSkips = @(
+            'Antiphon.Tests.Checkpoints.EvidenceFolderTests.tool_copy_removal_retries_while_a_file_is_still_held_open'
             'Antiphon.Tests.Checkpoints.CheckpointRecoveryWindowsTests.*'
             'Antiphon.Tests.Checkpoints.TimeoutTests.windows_quick_row_finishes_beside_a_slow_row'
             'Antiphon.Tests.Checkpoints.TimeoutTests.windows_row_arguments_round_trip_intact'
