@@ -139,7 +139,18 @@ internal sealed class CheckpointTempRootSweep
             if (!Directory.Exists(root))
             { Unregister(root); receipt.Skip("absent"); continue; }
             if (!ContainedCleanup.SafeAncestors(root)) { receipt.Skip("linked-root-or-ancestor"); continue; }
-            if (ReadMarker(root) is null) { receipt.Skip("marker-invalid"); continue; }
+            // Preflight only excludes candidates: a live/uncertain owner must be
+            // able to register a nested run without contending with this sweep.
+            // None of these observations grants permission to delete. Eligible
+            // re-reads all authority, identity and inventory facts under rootGate.
+            var preflightMarker = ReadMarker(root);
+            if (preflightMarker is null) { receipt.Skip("marker-invalid"); continue; }
+            if (_clock() - preflightMarker.CreatedAt < _options.Grace)
+            { receipt.Skip("grace"); continue; }
+            if (timer.Elapsed >= _options.MaxDuration) { receipt.Skip("time-budget"); continue; }
+            var preflightOwner = _probe.Observe(preflightMarker.Owner);
+            if (preflightOwner.Verdict != ProcessVerdict.Dead)
+            { receipt.Skip(preflightOwner.Reason); continue; }
             using var rootGate = TestRootGuard.TryLock(root);
             if (rootGate is null) { receipt.Skip("root-busy"); continue; }
             var reason = Eligible(root, timer);

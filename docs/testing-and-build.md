@@ -1071,7 +1071,12 @@ stale entries for absent roots are removed when visited. The sweep checks the
 persisted interval before trying the lock. An older shared JSONL index is migrated
 under that lock, with disposed entries discarded. It considers only exact indexed direct
 children of the OS temp directory, waits ten minutes from
-marker creation, and requires confirmed owner and nested executor death. One pass
+marker creation, and requires confirmed owner and nested executor death. Before
+taking a root lock, a validated marker excludes young roots and live or uncertain
+owners so their nested runs can register without sweep contention. This preflight
+never authorizes deletion: after acquiring the root lock the sweep freshly checks
+marker identity, grace, owner death, containment, inventory and nested custody.
+One pass
 is bounded by 512 index entries, 10000 descendants per root, 16 completed roots,
 256 MiB of payload and two seconds. A partially deleted root keeps its marker and
 is rechecked on resumption. Unknown identities, linked paths, malformed/unmarked
