@@ -24,7 +24,7 @@ namespace Antiphon.Tests.Application;
 
 // Only the terminal/provider is scripted. Producer, git mirror, launch queue, adapter,
 // phone-home frames, runner spill writer, delivery queue and transcript pull are real.
-internal static class CodexCliRemoteDeliveryFixture
+internal static partial class CodexCliRemoteDeliveryFixture
 {
     public static Task RunAsync(string body, string version, bool busy) =>
         RunAsync(body, new RunnerCodexCliVersionDto(version, DateTimeOffset.UtcNow, null, new string('a', 64)), busy);
@@ -32,74 +32,17 @@ internal static class CodexCliRemoteDeliveryFixture
     public static async Task RunAsync(string body, RunnerCodexCliVersionDto? sample, bool busy, AgentModelLevel level = AgentModelLevel.High, string? negative = null)
     {
         var vector = $"remote/{sample?.CodexCliVersion}/{sample?.CodexCliVersionError}/busy={busy}";
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        using var git = new ScratchGitRepo("c959-remote");
-        await git.CommitFileAsync("seed.txt", "C959 real runner mirror\n");
-        await git.AddBareOriginAsync();
-        var root = System.IO.Directory.CreateTempSubdirectory("c959-recipient-").FullName;
-        try
+        await using var world = await World.CreateAsync(sample, busy);
         {
-            await using var runtime = new Recipient(sample);
-            var dispatcher = new PhoneHomeCommandDispatcher(runtime, new PhoneHomeSettings
-            {
-                AllowedCwd = root, RunnerRepository = Path.Combine(root, "repo"),
-                RunnerCloneSource = (await git.GitReadAsync("remote", "get-url", "origin")).Trim(),
-                CapacityStatePath = Path.Combine(root, "capacity"),
-                LaunchGenerationsPath = Path.Combine(root, "generations"),
-            });
-            await using var host = await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString,
-                configureRunnerSettings: settings =>
-                {
-                    settings.AllowDelegatedTasks = true;
-                    settings.HostWorkspaceRoot = git.Path;
-                    settings.RunnerWorkspace = root;
-                    settings.RunnerRepository = Path.Combine(root, "repo");
-                    settings.CallbackOrigin = "https://antiphon.test";
-                },
-                configureServices: services =>
-                {
-                    services.AddSingleton<RemoteSpillCourier>();
-                    services.AddSingleton(sp => new PhoneHomeRunnerDirectory(
-                        sp.GetRequiredService<ISessionRunnerClient>(),
-                        sp.GetRequiredService<IOptions<PhoneHomeRunnerSettings>>(),
-                        sp.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System,
-                        sp.GetRequiredService<RemoteSpillCourier>()));
-                });
-            await using var peer = await host.ConnectPeerAsync(capabilities: runtime.Capabilities());
-            peer.Reply = request => dispatcher.DispatchAsync(request, CancellationToken.None).GetAwaiter().GetResult();
-            host.Directory.MarkRecovered(await host.WaitLiveAsync());
-            var registry = CodexCliObservationTests.Registry();
-            var freeze = new Freeze(schema.ConnectionString);
-            var launches = new HeldLaunches();
-            await using var h = await BridgeQueueHarness.CreateAsync(new()
-            {
-                AlwaysOn = false, ConnectionString = schema.ConnectionString,
-                Delegation = new() { DefaultWorkerWorkspace = WorkspaceMode.Worktree, MaxConcurrentTasks = 20, RolePolicy = new() },
-                ConfigureServices = services =>
-                {
-                    services.AddSingleton<ISessionRunnerDirectory>(host.Directory);
-                    services.AddSingleton<ISessionRunnerClient>(new RoutingSessionRunnerClient(host.Directory));
-                    services.AddSingleton(host.App.Services.GetRequiredService<IOptions<PhoneHomeRunnerSettings>>());
-                    services.AddSingleton<PhoneHomeLaunchPolicy>();
-                    services.AddSingleton<IOptions<AgentRegistrySettings>>(Options.Create(registry));
-                    services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new BridgeQueueHarness.OptionsMonitorStub<AgentRegistrySettings>(registry));
-                    services.AddSingleton<IAgentProtocolAdapterFactory>(_ => new RemoteFactory(host.Directory, host.AllowedRunnerId, registry));
-                    services.AddSingleton<LandDeliveryBoundary>(freeze);
-                    services.AddSingleton<IAgentTaskLaunchSink>(launches);
-                    services.AddSingleton<RemoteSpillCourier>();
-                    services.AddScoped<RemoteWorkspaceService>();
-                    services.AddSingleton<RemoteWorkspacePreparer>();
-                    services.RemoveAll<IWorktreeManager>();
-                    services.AddDelegationWorktreeGraph(new GitSettings { WorktreeBasePath = git.WorktreeRoot });
-                    services.AddSingleton<DelegationWorkspaceResolver>();
-                    services.AddScoped<AgentTaskService>();
-                    services.AddScoped<IDelegateSessionStopper>(sp => sp.GetRequiredService<AgentSessionService>());
-                    services.AddScoped<AgentTaskDispatcher>();
-                    if (busy) services.AddSingleton<IEventBus>(sp => new BusyBus(sp.GetRequiredService<MockEventBus>(), runtime,
-                        () => sp.GetRequiredService<AgentSessionRuntime>()));
-                },
-            });
-            freeze.Settings = h.Delegation;
+            var schema = world.Schema;
+            var git = world.Git;
+            var root = world.Root;
+            var runtime = world.Recipient;
+            var host = world.Host;
+            var peer = world.Peer;
+            var h = world.Harness;
+            var freeze = world.Freeze;
+            var launches = world.Launches;
             AgentTaskCreatedDto created;
             using (var scope = h.Provider.CreateScope())
                 created = await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CreateAsync(
@@ -242,13 +185,14 @@ internal static class CodexCliRemoteDeliveryFixture
             (await File.ReadAllBytesAsync(spillPath)).ShouldBe(Encoding.UTF8.GetBytes(expectedFull));
             await runtime.StopAsync();
         }
-        finally { System.IO.Directory.Delete(root, recursive: true); }
+
     }
 
-    private sealed class HeldLaunches : IAgentTaskLaunchSink
+    internal sealed class HeldLaunches : IAgentTaskLaunchSink
     {
         private readonly List<(Guid Session, Guid Agent, DateTime Generation, AgentLaunchSpec Spec)> _items = [];
         public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec) => _items.Add((sessionId, agentId, acceptedGeneration, spec));
+        public void Discard() => _items.Clear();
         public void Release(AgentSessionLaunchQueue queue)
         {
             _items.ShouldHaveSingleItem("C959-v21-one-real-launch");
@@ -257,7 +201,7 @@ internal static class CodexCliRemoteDeliveryFixture
         }
     }
 
-    private sealed class Freeze(string connection) : LandDeliveryBoundary
+    internal sealed class Freeze(string connection) : LandDeliveryBoundary
     {
         public DelegationSettings Settings { get; set; } = new();
         public Dictionary<Guid, AgentTask> Tasks { get; } = [];
@@ -267,9 +211,9 @@ internal static class CodexCliRemoteDeliveryFixture
             if (boundary != "dispatch-warning-claim-committed") return;
             await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
             var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId, ct);
-            Tasks.Add(taskId, task);
-            Full.Add(taskId, DelegationReportFormatter.BuildBrief(task, Settings,
-                Settings.CeilingsFor(PtyBackend.InboxConhost, "runner").ForAgentKind(task.AgentKind).ReplyInlineMaxChars, refocus: false));
+            Tasks[taskId] = task;
+            Full[taskId] = DelegationReportFormatter.BuildBrief(task, Settings,
+                Settings.CeilingsFor(PtyBackend.InboxConhost, "runner").ForAgentKind(task.AgentKind).ReplyInlineMaxChars, refocus: false);
         }
     }
 
@@ -308,21 +252,34 @@ internal static class CodexCliRemoteDeliveryFixture
         }
     }
 
-    private sealed class Recipient(RunnerCodexCliVersionDto? sample) : IPhoneHomeRuntimeSurface, IAsyncDisposable
+    internal sealed class Recipient(RunnerCodexCliVersionDto? sample) : IPhoneHomeRuntimeSurface, IAsyncDisposable
     {
+        public AgentKind Kind { get; init; } = AgentKind.Codex;
+        public bool Ready { get; set; } = true;
+        public bool Ack { get; set; } = true;
+        public bool HoldTurnEnd { get; set; }
+        public int SnapshotReads { get; private set; }
+        private readonly Dictionary<Guid, GrokRulesReceipt> _rules = [];
+        private readonly List<(Guid Session, string Text)> _heldAcks = [];
+        public void ReleaseAcks()
+        {
+            Ack = true;
+            foreach (var (id, text) in _heldAcks) { Append(id, TranscriptKinds.AssistantText, text); Append(id, TranscriptKinds.TurnEnd, stopReason: "end_turn"); }
+            _heldAcks.Clear();
+        }
         public Dictionary<Guid, FakeAgentProtocolAdapter> Terminals { get; } = [];
         private readonly Dictionary<Guid, List<RunnerTranscriptEvent>> _transcripts = [];
         public List<RunnerCodexCliProbeRequest> ProbeRequests { get; } = [];
         public Func<Guid, string, Task>? BeforeBody { get; set; }
         public Func<Guid, string, Task>? RecordPrompt { get; set; }
-        public void Append(Guid id, string kind, string? text = null, string? stopReason = null)
+        public void Append(Guid id, string kind, string? text = null, string? stopReason = null, DateTimeOffset? timestamp = null)
         {
             var entries = _transcripts[id];
-            entries.Add(new(id, entries.Count + 1, kind, null, null, DateTimeOffset.UtcNow,
+            entries.Add(new(id, entries.Count + 1, kind, Guid.NewGuid().ToString("N"), null, timestamp ?? DateTimeOffset.UtcNow,
                 kind == TranscriptKinds.UserPrompt ? "user" : null, text, null, null, null, null, stopReason));
         }
         public RunnerCapabilitiesDto Capabilities() => new("InboxConhost", "inbox", "test", false,
-            Version: "d40c1670", Platform: "linux", Features: [RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.WorkspaceRepositoryV1],
+            Version: "d40c1670", Platform: "linux", Features: [RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.WorkspaceRepositoryV1, GrokRulesTransport.Capability],
             CodexCliVersion: sample?.CodexCliVersion, CodexCliVersionCheckedAtUtc: sample?.CodexCliVersionCheckedAtUtc,
             CodexCliVersionError: sample?.CodexCliVersionError, CodexCliLauncherFingerprint: sample?.CodexCliLauncherFingerprint);
         public Task<RunnerCodexCliVersionDto?> GetCodexCliVersionAsync(RunnerCodexCliProbeRequest request, CancellationToken ct)
@@ -334,20 +291,36 @@ internal static class CodexCliRemoteDeliveryFixture
         public IReadOnlyList<RunnerSessionDto> List() => Terminals.Keys.Select(Session).ToList();
         private RunnerSessionDto Session(Guid id) => new(id, 1234, Terminals[id].StartedAcceptedGeneration!.Value,
             Terminals[id].Killed ? "Exited" : "Running", Terminals[id].Killed ? 0 : null, "Unknown", _transcripts[id].Count,
-            AcceptedStartedAt: Terminals[id].StartedAcceptedGeneration);
-        public Task<RunnerSessionDto> GetAsync(Guid id, CancellationToken ct) => Task.FromResult(Session(id));
+            GrokRulesReceipt: _rules.GetValueOrDefault(id), AcceptedStartedAt: Terminals[id].StartedAcceptedGeneration);
+        public Task<RunnerSessionDto> GetAsync(Guid id, CancellationToken ct) => Task.FromResult(Terminals.ContainsKey(id) ? Session(id) : new RunnerSessionDto(id, null, DateTime.UtcNow, "Exited", 0, "Unknown", 0));
         public async Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct)
         {
             var terminal = new FakeAgentProtocolAdapter();
             Terminals.Add(request.SessionId, terminal);
             _transcripts.Add(request.SessionId, []);
+            if (request.GrokRulesPayload is { } payload)
+            {
+                var bytes = Encoding.UTF8.GetBytes(payload.Content);
+                var path = Path.Combine(request.Cwd, "instructions", "grok", request.SessionId.ToString("N"), "rules.md");
+                System.IO.Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                await File.WriteAllBytesAsync(path, bytes, ct);
+                _rules[request.SessionId] = new(path, GrokRulesTransport.Hash(bytes), bytes.Length, 1, payload.Generation);
+            }
             terminal.OnSubmitted = async text =>
             {
-                if (RecordPrompt is { } record) await record(request.SessionId, text);
+                if (text.StartsWith("[antiphon-grok-rules:", StringComparison.Ordinal))
+                {
+                    Append(request.SessionId, TranscriptKinds.UserPrompt, text);
+                    var receipt = _rules[request.SessionId];
+                    var ack = $"ANTIPHON_RULES_ACK id={text[21..text.IndexOf(']')]} generation={receipt.Generation:N} sha256={receipt.Sha256}";
+                    if (!Ack) { _heldAcks.Add((request.SessionId, ack)); return; }
+                    Append(request.SessionId, TranscriptKinds.AssistantText, ack);
+                }
+                else if (RecordPrompt is { } record) await record(request.SessionId, text);
                 else Append(request.SessionId, TranscriptKinds.UserPrompt, text);
-                Append(request.SessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn");
+                if (!HoldTurnEnd) Append(request.SessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn");
             };
-            await terminal.StartAsync(new AgentLaunchSpec("codex", AgentKind.Codex, request.Exe, request.Args, request.Env, request.Cwd,
+            await terminal.StartAsync(new AgentLaunchSpec(Kind.ToString(), Kind, request.Exe, request.Args, request.Env, request.Cwd,
                 request.Cols, request.Rows,
                 SessionId: request.SessionId, AcceptedStartedAt: request.AcceptedStartedAt), ct);
             return Session(request.SessionId);
@@ -356,8 +329,21 @@ internal static class CodexCliRemoteDeliveryFixture
         public RunnerSnapshotDto GetSnapshot(Guid id)
         {
             var terminal = Terminals[id];
-            return new(id, terminal.SnapshotRawOutput(), terminal.Inputs.Count == 0 ? CodexStartupFixtures.P3 : terminal.SnapshotRenderedScreen(),
-                _transcripts[id].Count, terminal.StartedAcceptedGeneration!.Value, terminal.StartedAcceptedGeneration);
+            SnapshotReads++;
+            string startup = Kind switch
+            {
+                AgentKind.Grok => Ready ? GrokStartupFixture.ReadyScreen() : GrokStartingScreen(),
+                AgentKind.ClaudeCode => "Claude Code\n> \n  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+                _ => CodexStartupFixtures.P3,
+            };
+            var screen = terminal.Inputs.Count == 0 ? startup : terminal.SnapshotRenderedScreen();
+            return new(id, terminal.SnapshotRawOutput(), screen,
+                _transcripts[id].Count + terminal.Inputs.Count, terminal.StartedAcceptedGeneration!.Value, terminal.StartedAcceptedGeneration);
+        }
+        private static string GrokStartingScreen()
+        {
+            using var doc = GrokStartupFixture.Read();
+            return GrokStartupFixture.Screen(GrokStartupFixture.Capture(doc, "startup-"), 15);
         }
         public RunnerTranscriptDto GetTranscript(Guid id) => new(id, _transcripts[id].ToArray(), _transcripts[id].Count);
         public async Task SendInputAsync(Guid id, string input, CancellationToken ct)
@@ -370,6 +356,7 @@ internal static class CodexCliRemoteDeliveryFixture
         public Task ResizeAsync(Guid id, int cols, int rows, CancellationToken ct) => Terminals[id].ResizeAsync(cols, rows, ct);
         public async Task<RunnerKillGenerationResult> KillGenerationAsync(Guid id, DateTime expected, CancellationToken ct)
         {
+            if (!Terminals.ContainsKey(id)) return new(id, true, KillGenerationOutcomes.Killed, DateTime.UtcNow);
             var killed = await Terminals[id].KillGenerationAsync(expected, TimeSpan.FromSeconds(1), ct);
             return new(id, killed, killed ? KillGenerationOutcomes.Killed : KillGenerationOutcomes.Mismatch, DateTime.UtcNow);
         }
