@@ -73,7 +73,7 @@ public sealed class CheckpointTimingHarnessTests : CheckpointTestBase
         var missing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var execute = Task.FromException(new IOException("synthetic-executor-fault"));
         var failure = await Should.ThrowAsync<IOException>(() => timing.PhaseAsync("driver-entered", missing.Task, execute));
-        failure.Message.ShouldContain("synthetic-executor-fault", "early-execution-fault");
+        failure.Message.Contains("synthetic-executor-fault", StringComparison.Ordinal).ShouldBeTrue("early-execution-fault");
     }
 
     [Test]
@@ -107,7 +107,7 @@ public sealed class CheckpointTimingHarnessTests : CheckpointTestBase
         timing.Token.IsCancellationRequested.ShouldBeTrue("test-cancel-linked");
         using var rescue = new CancellationTokenSource(CheckpointTimingHarness.CleanupBudget);
         var failure = await Should.ThrowAsync<ShouldAssertException>(() => phase.WaitAsync(rescue.Token));
-        failure.Message.ShouldContain("phase=driver-entered condition never completed", "test-cancel-linked");
+        failure.Message.Contains("phase=driver-entered condition never completed", StringComparison.Ordinal).ShouldBeTrue("test-cancel-linked");
     }
 
     [Test]
@@ -144,7 +144,7 @@ public sealed class CheckpointTimingHarnessTests : CheckpointTestBase
             clock.Advance(CheckpointTimingHarness.WorkBudget);
             using var rescue = new CancellationTokenSource(CheckpointTimingHarness.CleanupBudget);
             var failure = await Should.ThrowAsync<ShouldAssertException>(() => verify.WaitAsync(rescue.Token), "missing-phase-" + phase);
-            failure.Message.ShouldContain($"phase={phase} condition never completed", "missing-phase-" + phase);
+            failure.Message.Contains($"phase={phase} condition never completed", StringComparison.Ordinal).ShouldBeTrue("missing-phase-" + phase);
             owner.Execution.IsCompleted.ShouldBeTrue("missing-phase-cleanup-joined");
             (await owner.Execution).ShouldBe(0);
         }

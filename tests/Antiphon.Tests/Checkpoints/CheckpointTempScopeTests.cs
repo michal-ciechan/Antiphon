@@ -53,7 +53,7 @@ public sealed class CheckpointTempScopeTests : CheckpointTestBase
         var roots = new[] { scope.TempDir(), scope.TempDir() };
         scope.Register(Task.FromException(new IOException("synthetic-registered-fault")));
         var failure = await Should.ThrowAsync<IOException>(async () => await scope.DisposeAsync(), "registered-fault-reported");
-        failure.Message.ShouldContain("synthetic-registered-fault", "registered-fault-reported");
+        failure.Message.Contains("synthetic-registered-fault", StringComparison.Ordinal).ShouldBeTrue("registered-fault-reported");
         foreach (var root in roots)
         {
             Directory.Exists(root).ShouldBeFalse("completed-work-roots-deleted");
