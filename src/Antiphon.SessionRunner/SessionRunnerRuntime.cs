@@ -954,6 +954,22 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     internal ITranscriptTailer? TailerFor(Guid sessionId) =>
         _sessions.TryGetValue(sessionId, out var session) ? session.Tailer : null;
 
+    internal void DetachTerminalTailerForTest(Guid sessionId) => GetSession(sessionId).DetachTailerForTest();
+
+    /// <summary>CARD-0667 S1b: unused read-only qualification boundary; no release caller.</summary>
+    internal async Task<TerminalSeatObservation> ObserveTerminalSeatAsync(
+        Guid sessionId, TerminalSeatObservationRequest request, CancellationToken ct)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var session))
+            return new(TerminalSeatQualificationStatus.Missing,
+                new(TerminalTranscriptReadStatus.Unbound, TerminalTranscriptVerdict.Unknown));
+        var transcript = session.Tailer is { } tailer
+            ? await tailer.ObserveTerminalSeatAsync(ct)
+            : new TerminalTranscriptObservation(TerminalTranscriptReadStatus.Unbound, TerminalTranscriptVerdict.Unknown);
+        // Safe compiling seam for the CP-8 behavioral baseline; qualification follows in S1b.
+        return new(TerminalSeatQualificationStatus.Unknown, transcript);
+    }
+
     /// <summary>
     /// CARD-0514 D-8: write only if this object still matches the accepted generation and
     /// expected output sequence. Lookup, check and write share the launch gate.
@@ -2881,6 +2897,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         internal ITranscriptTailer? Tailer => _tailer;
 
+        internal void DetachTailerForTest() => _tailer = null;
+
         internal Task<CompactionTailObservation> ObserveCompactionAsync(CancellationToken ct) =>
             _tailer?.ObserveCompactionSilenceAsync(ct) ?? Task.FromResult(CompactionTailObservation.Unbound());
 
@@ -2895,6 +2913,17 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         /// <summary>Test seam: a child whose kill throws or never exits.</summary>
         internal void BindChildForTest(ISessionChild child) => _herdrChild = child;
+
+        /// <summary>Fake child I/O with a real provider tailer; supplies no qualification verdict.</summary>
+        internal void BindChildForTest(ISessionChild child, ITranscriptTailer tailer, DateTime acceptedStartedAt)
+        {
+            _herdrChild = child;
+            _tailer = tailer;
+            BindAcceptedGeneration(acceptedStartedAt);
+            _startedAt = acceptedStartedAt;
+            _status = "Running";
+            _clientReady.TrySetResult(true);
+        }
 
         public RunnerSessionDto ToDto()
         {
