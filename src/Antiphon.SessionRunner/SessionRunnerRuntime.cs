@@ -98,6 +98,24 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// </summary>
     internal Func<Guid, RunnerConditionalInputRequest, Task>? ConditionalInputBeforeWrite { get; set; }
 
+    // Tests hold the same gate as launch/replacement without starting a provider.
+    internal SemaphoreSlim LaunchGateForTest(Guid sessionId) =>
+        _launchLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
+
+    internal enum InputAuthorization { Allowed, ReleaseInProgress, Exited }
+
+    internal sealed class InputRefusedException(InputAuthorization outcome)
+        : InvalidOperationException($"Session input refused: {outcome}.")
+    {
+        internal InputAuthorization Outcome { get; } = outcome;
+    }
+
+    internal const string ReleaseInProgressInputOutcome = "release-in-progress";
+
+    // Shared production decision, called only while the launch gate is held.
+    internal static InputAuthorization AuthorizeInputUnderGate(RunnerSession session) =>
+        session.HasExited ? InputAuthorization.Exited : InputAuthorization.Allowed;
+
     /// <summary>CARD-0079 test seam: after the stop request is accepted and before the final observation.</summary>
     internal Func<Guid, Task>? CompactionStopBeforeFinalCheck { get; set; }
 
