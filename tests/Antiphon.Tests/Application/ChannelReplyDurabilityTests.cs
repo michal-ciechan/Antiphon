@@ -546,9 +546,11 @@ public class ChannelReplyDurabilityTests
                 .ToListAsync())
             .ShouldHaveSingleItem();
         hold.RawText.ShouldBe(text);
-        hold.Reason.ShouldBe("session-limit resets 17:20 Europe/London");
-        hold.DisabledUntil.ShouldBe(new DateTime(2026, 9, 5, 16, 22, 0, DateTimeKind.Utc));
         var recovery = await verify.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == h.SessionId);
+        recovery.EvidenceAt.ShouldBe(now.UtcDateTime);
+        recovery.ResetAtUtc.ShouldBe(new DateTime(2026, 9, 5, 16, 20, 0, DateTimeKind.Utc));
+        hold.Reason.ShouldBe("session-limit resets 2026-09-05T16:20:00Z (2026-09-05 17:20 Europe/London; You've hit your session limit · resets 5:20pm (Europe/London))");
+        hold.DisabledUntil.ShouldBe(new DateTime(2026, 9, 5, 16, 22, 0, DateTimeKind.Utc));
         recovery.ResolvedAt.ShouldBeNull();
         recovery.NextAttemptAt.ShouldBe(hold.DisabledUntil);
         await verify.ModelAvailabilityHolds.Where(x => x.Id == hold.Id).ExecuteDeleteAsync();
