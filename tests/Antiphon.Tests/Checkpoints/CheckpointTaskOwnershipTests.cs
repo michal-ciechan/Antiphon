@@ -221,93 +221,117 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
     }
 
     [Test]
-    public async Task ownership_loss_cancels_slot_wait_and_rejects_a_late_grant()
+    public async Task ownership_loss_cancels_slot_wait_and_rejects_a_late_grant(CancellationToken cancellationToken)
     {
-        var handler = new OwnerHandler();
-        var poll = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var slots = new BoundarySlots
+        using var timing = new CheckpointTimingHarness(nameof(ownership_loss_cancels_slot_wait_and_rejects_a_late_grant), "CP-1", cancellationToken);
+        foreach (var late in new[] { false, true })
         {
-            Acquire = async token =>
+            var releases = 0;
+            var handler = new OwnerHandler();
+            var poll = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var slots = new BoundarySlots
             {
-                entered.TrySetResult();
-                try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
-                catch (OperationCanceledException) { canceled.TrySetResult(); throw; }
-                return new SlotLease { State = "granted" };
-            },
-        };
-        var run = NewBoundRun();
-        var execute = CheckpointApp.ExecuteAsync(run, CancellationToken.None,
-            Runtime(handler, new FakeDriver(), slots, (_, token) => poll.Task.WaitAsync(token)));
-        try
-        {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            handler.TaskStatus = "Succeeded";
-            poll.TrySetResult();
-            await canceled.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            (await execute).ShouldBe(ExitCodes.OwnerEnded);
-        }
-        finally { poll.TrySetResult(); }
-    }
-
-    [Test]
-    public async Task process_driver_cancellation_kills_each_local_tree()
-    {
-        var factory = new BlockingHandleFactory();
-        var driver = new ProcessDriver(factory);
-        using var first = new CancellationTokenSource();
-        using var second = new CancellationTokenSource();
-        var a = driver.RunAsync(new DriverRequest("fake", [], TempDir()), first.Token);
-        var b = driver.RunAsync(new DriverRequest("fake", [], TempDir()), second.Token);
-        factory.Handles.Count.ShouldBe(2);
-        first.Cancel();
-        await Should.ThrowAsync<OperationCanceledException>(() => a);
-        factory.Handles[0].Kills.ShouldBe(1);
-        factory.Handles[0].KilledTree.ShouldBeTrue();
-        factory.Handles[1].Kills.ShouldBe(0);
-        second.Cancel();
-        await Should.ThrowAsync<OperationCanceledException>(() => b);
-        factory.Handles[1].Kills.ShouldBe(1);
-        factory.Handles[1].KilledTree.ShouldBeTrue();
-    }
-
-    [Test]
-    public async Task one_row_deadline_does_not_kill_its_sibling_handle()
-    {
-        var factory = new BlockingHandleFactory();
-        var driver = new ProcessDriver(factory);
-        using var keepRunning = new CancellationTokenSource();
-        var timed = RowTimeout.RunWithDeadlineAsync(driver,
-            new DriverRequest("fake", [], TempDir()), TimeSpan.FromMilliseconds(50), CancellationToken.None);
-        var sibling = RowTimeout.RunWithDeadlineAsync(driver,
-            new DriverRequest("fake", [], TempDir()), TimeSpan.FromMinutes(1), keepRunning.Token);
-        try
-        {
-            factory.Handles.Count.ShouldBe(2);
-            (await timed.WaitAsync(TimeSpan.FromSeconds(5))).TimedOut.ShouldBeTrue();
-            factory.Handles[0].Kills.ShouldBe(1);
-            factory.Handles[1].Kills.ShouldBe(0);
-        }
-        finally
-        {
-            keepRunning.Cancel();
-            await Should.ThrowAsync<OperationCanceledException>(() => sibling.WaitAsync(TimeSpan.FromSeconds(5)));
-        }
-    }
-
-    [Test]
-    public async Task owner_read_allows_slow_recovery_and_uses_twelve_second_deadline()
-    {
-        var handler = new OwnerHandler();
-        for (var i = 0; i < 4; i++) handler.Next.Enqueue("HTTP500");
-        handler.Next.Enqueue("Working");
-        using var owner = new TaskOwnerGuard(OwnerEnvironment(), handler, (_, _) => Task.CompletedTask,
-            deadline: (span, token) =>
+                Acquire = async token =>
+                {
+                    entered.TrySetResult();
+                    try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+                    catch (OperationCanceledException)
+                    {
+                        canceled.TrySetResult();
+                        if (!late) throw;
+                    }
+                    // Deliberately return a lease despite the observed cancellation.
+                    return new SlotLease { State = "granted", ReleaseAsync = _ =>
+                    {
+                        Interlocked.Increment(ref releases);
+                        return Task.CompletedTask;
+                    } };
+                },
+            };
+            var run = NewBoundRun();
+            var driver = new FakeDriver();
+            var owner = new CheckpointExecutionOwner(timing,
+                token => CheckpointApp.ExecuteAsync(run, token, Runtime(handler, driver, slots, (_, ct) => poll.Task.WaitAsync(ct))),
+                RegisterCheckpointWork, () => poll.TrySetResult());
+            var execute = owner.Execution;
+            await owner.VerifyAsync(async () =>
             {
-                span.ShouldBe(TimeSpan.FromSeconds(12));
-                return CancellationTokenSource.CreateLinkedTokenSource(token);
+                await timing.PhaseAsync("slot-entered", entered.Task, execute);
+                handler.TaskStatus = "Succeeded";
+                poll.TrySetResult();
+                await timing.PhaseAsync("slot-canceled", canceled.Task, execute);
+                await timing.PhaseAsync("execution-finished", execute);
+                (await execute).ShouldBe(ExitCodes.OwnerEnded);
+                driver.Count(_ => true).ShouldBe(0, "late-grant-no-launch");
+                releases.ShouldBe(late ? 1 : 0, "late-grant-release-once");
+                var state = new RunStateStore().TryRead(Path.Combine(run, "state.json"))!;
+                state.Phase.ShouldBe("done");
+                state.Reason.ShouldBe("owner-ended");
+                state.ExitCode.ShouldBe(ExitCodes.OwnerEnded);
+                File.ReadAllText(Path.Combine(run, "report.md")).ShouldContain("exit=7");
             });
+            }
+        }
+    
+        [Test]
+        public async Task process_driver_cancellation_kills_each_local_tree()
+        {
+            var factory = new BlockingHandleFactory();
+            var driver = new ProcessDriver(factory);
+            using var first = new CancellationTokenSource();
+            using var second = new CancellationTokenSource();
+            var a = driver.RunAsync(new DriverRequest("fake", [], TempDir()), first.Token);
+            var b = driver.RunAsync(new DriverRequest("fake", [], TempDir()), second.Token);
+            factory.Handles.Count.ShouldBe(2);
+            first.Cancel();
+            await Should.ThrowAsync<OperationCanceledException>(() => a);
+            factory.Handles[0].Kills.ShouldBe(1);
+            factory.Handles[0].KilledTree.ShouldBeTrue();
+            factory.Handles[1].Kills.ShouldBe(0);
+            second.Cancel();
+            await Should.ThrowAsync<OperationCanceledException>(() => b);
+            factory.Handles[1].Kills.ShouldBe(1);
+            factory.Handles[1].KilledTree.ShouldBeTrue();
+        }
+    
+        [Test]
+        public async Task one_row_deadline_does_not_kill_its_sibling_handle()
+        {
+            var factory = new BlockingHandleFactory();
+            var driver = new ProcessDriver(factory);
+            using var keepRunning = new CancellationTokenSource();
+            var timed = RowTimeout.RunWithDeadlineAsync(driver,
+                new DriverRequest("fake", [], TempDir()), TimeSpan.FromMilliseconds(50), CancellationToken.None);
+            var sibling = RowTimeout.RunWithDeadlineAsync(driver,
+                new DriverRequest("fake", [], TempDir()), TimeSpan.FromMinutes(1), keepRunning.Token);
+            try
+            {
+                factory.Handles.Count.ShouldBe(2);
+                (await timed.WaitAsync(TimeSpan.FromSeconds(5))).TimedOut.ShouldBeTrue();
+                factory.Handles[0].Kills.ShouldBe(1);
+                factory.Handles[1].Kills.ShouldBe(0);
+            }
+            finally
+            {
+                keepRunning.Cancel();
+                await Should.ThrowAsync<OperationCanceledException>(() => sibling.WaitAsync(TimeSpan.FromSeconds(5)));
+            }
+        }
+    
+        [Test]
+        public async Task owner_read_allows_slow_recovery_and_uses_twelve_second_deadline()
+        {
+            var handler = new OwnerHandler();
+            for (var i = 0; i < 4; i++) handler.Next.Enqueue("HTTP500");
+            handler.Next.Enqueue("Working");
+            using var owner = new TaskOwnerGuard(OwnerEnvironment(), handler, (_, _) => Task.CompletedTask,
+                deadline: (span, token) =>
+                {
+                    span.ShouldBe(TimeSpan.FromSeconds(12));
+                    return CancellationTokenSource.CreateLinkedTokenSource(token);
+                });
         (await owner.EnsureLiveAsync(CancellationToken.None)).ShouldBeTrue();
         handler.Calls.ShouldBe(5);
         owner.Reason.ShouldBeNull();
@@ -347,14 +371,16 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
     }
 
     [Test]
-    public async Task terminal_publication_waits_for_driver_exit_and_lease_disposal()
+    public async Task terminal_publication_waits_for_driver_exit_and_lease_disposal(CancellationToken cancellationToken)
     {
+        using var timing = new CheckpointTimingHarness(nameof(terminal_publication_waits_for_driver_exit_and_lease_disposal), "CP-1", cancellationToken);
         var handler = new OwnerHandler();
         var poll = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var observed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var driverExit = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var driver = new FakeDriver();
         driver.When(_ => true, async (_, token) =>
         {
@@ -364,24 +390,34 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
             await driverExit.Task;
             throw new OperationCanceledException(token);
         });
-        var slots = new BoundarySlots { Release = _ => release.Task };
+        var slots = new BoundarySlots { Release = _ => { releaseEntered.TrySetResult(); return release.Task; } };
         var run = NewBoundRun();
-        var execute = CheckpointApp.ExecuteAsync(run, CancellationToken.None, Runtime(handler, driver, slots, (_, token) => poll.Task.WaitAsync(token)));
-        try
+        var owner = new CheckpointExecutionOwner(timing,
+            token => CheckpointApp.ExecuteAsync(run, token, Runtime(handler, driver, slots, (_, ct) => poll.Task.WaitAsync(ct))),
+            RegisterCheckpointWork, () => { poll.TrySetResult(); driverExit.TrySetResult(); release.TrySetResult(); });
+        var execute = owner.Execution;
+        await owner.VerifyAsync(async () =>
         {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await timing.PhaseAsync("driver-entered", entered.Task, execute);
             handler.TaskStatus = "Succeeded";
             poll.TrySetResult();
-            await observed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await timing.PhaseAsync("driver-canceled", observed.Task, execute);
             execute.IsCompleted.ShouldBeFalse();
-            new RunStateStore().TryRead(Path.Combine(run, "state.json"))!.Phase.ShouldNotBe("done");
+            new RunStateStore().TryRead(Path.Combine(run, "state.json"))!.Phase.ShouldNotBe("done", "driver-exit-barrier");
             driverExit.TrySetResult();
+            await timing.PhaseAsync("release-entered", releaseEntered.Task, execute);
             execute.IsCompleted.ShouldBeFalse();
+            new RunStateStore().TryRead(Path.Combine(run, "state.json"))!.Phase.ShouldNotBe("done", "lease-release-barrier");
             release.TrySetResult();
+            await timing.PhaseAsync("execution-finished", execute);
             (await execute).ShouldBe(ExitCodes.OwnerEnded);
             slots.Releases.ShouldBe(1);
-        }
-        finally { poll.TrySetResult(); driverExit.TrySetResult(); release.TrySetResult(); }
+            var state = new RunStateStore().TryRead(Path.Combine(run, "state.json"))!;
+            state.Phase.ShouldBe("done");
+            state.ExitCode.ShouldBe(ExitCodes.OwnerEnded);
+            state.Reason.ShouldBe("owner-ended");
+            File.ReadAllText(Path.Combine(run, "report.md")).ShouldContain("exit=7");
+        });
     }
 
     [Test]
@@ -524,8 +560,9 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
     }
 
     [Test]
-    public async Task uncertainty_lets_the_running_row_finish_and_marks_pending_owner_unverified()
+    public async Task uncertainty_lets_the_running_row_finish_and_marks_pending_owner_unverified(CancellationToken cancellationToken)
     {
+        using var timing = new CheckpointTimingHarness(nameof(uncertainty_lets_the_running_row_finish_and_marks_pending_owner_unverified), "CP-1/CP-2", cancellationToken);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -552,27 +589,28 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
         }, repo);
         var handler = new OwnerHandler();
         var slots = new BoundarySlots();
-        var clock = new GatedUncertaintyClock();
+        var clock = new CheckpointStepClock();
         var sink = new OwnerLineSink();
-        var execute = CheckpointApp.ExecuteAsync(run, CancellationToken.None, new CheckpointApp.Runtime
+        var owner = new CheckpointExecutionOwner(timing, token => CheckpointApp.ExecuteAsync(run, token, new CheckpointApp.Runtime
         {
             SourceCapture = _ => CheckpointFixtures.CleanSource(),
             EnvironmentLookup = OwnerEnvironment(), OwnerHandler = handler, Delay = clock.Delay, OwnerClock = clock.Now,
             Driver = driver, Slots = slots, LogSinkFactory = _ => sink,
-        });
-        try
+        }), RegisterCheckpointWork, () => release.TrySetResult());
+        var execute = owner.Execution;
+        await owner.VerifyAsync(async () =>
         {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await timing.PhaseAsync("driver-entered", entered.Task, execute);
             handler.TaskStatus = "HTTP500";
-            clock.Release();
-            var observed = await Task.WhenAny(sink.Unverified.Task, cancelled.Task).WaitAsync(TimeSpan.FromSeconds(5));
-            cancelled.Task.IsCompleted.ShouldBeFalse();
-            observed.ShouldBe(sink.Unverified.Task);
+            await ReachUnverifiedAsync(timing, clock, sink, execute, TimeSpan.FromMinutes(3));
+            await NextOwnerDelayAsync(timing, clock, execute); // End has returned; future delay is closed.
+            cancelled.Task.IsCompleted.ShouldBeFalse("uncertainty-keeps-running");
             slots.Acquires.ShouldBe(1);
             slots.Releases.ShouldBe(0);
             driver.KillCount.ShouldBe(0);
             release.TrySetResult();
-            (await execute.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBe(ExitCodes.OwnerEnded);
+            await timing.PhaseAsync("execution-finished", execute);
+            (await execute).ShouldBe(ExitCodes.OwnerEnded);
             calls.ShouldBe(1);
             slots.Releases.ShouldBe(1);
             driver.KillCount.ShouldBe(0);
@@ -583,24 +621,18 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
             running.State.ShouldBe("green");
             running.ExitCode.ShouldBe(0);
             var pending = state.Rows.Single(row => row.Id == "CP-2");
-            pending.State.ShouldBe("owner-unverified");
-            pending.ExitCode.ShouldBe(ExitCodes.OwnerEnded);
+            pending.State.ShouldBe("owner-unverified", "pending-owner-unverified");
+            pending.ExitCode.ShouldBe(ExitCodes.OwnerEnded, "pending-owner-unverified");
             var report = File.ReadAllText(Path.Combine(run, "report.md"));
             report.ShouldContain("exit=7");
             report.ShouldContain("reason=owner-unverified");
-        }
-        finally
-        {
-            clock.Release();
-            release.TrySetResult();
-            try { await execute.WaitAsync(TimeSpan.FromSeconds(5)); }
-            catch (TimeoutException) { }
-        }
+        });
     }
 
     [Test]
-    public async Task late_settlement_after_owner_unverified_cancels_the_running_row()
+    public async Task late_settlement_after_owner_unverified_cancels_the_running_row(CancellationToken cancellationToken)
     {
+        using var timing = new CheckpointTimingHarness(nameof(late_settlement_after_owner_unverified_cancels_the_running_row), "CP-1/CP-2", cancellationToken);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = 0;
@@ -624,28 +656,30 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
         }, repo);
         var handler = new OwnerHandler();
         var slots = new BoundarySlots();
-        var clock = new GatedUncertaintyClock();
+        var clock = new CheckpointStepClock();
         var sink = new OwnerLineSink();
-        var execute = CheckpointApp.ExecuteAsync(run, CancellationToken.None, new CheckpointApp.Runtime
+        var owner = new CheckpointExecutionOwner(timing, token => CheckpointApp.ExecuteAsync(run, token, new CheckpointApp.Runtime
         {
             SourceCapture = _ => CheckpointFixtures.CleanSource(),
             EnvironmentLookup = OwnerEnvironment(), OwnerHandler = handler, Delay = clock.Delay, OwnerClock = clock.Now,
             OwnerUncertaintyBudget = TimeSpan.FromSeconds(6),
             Driver = driver, Slots = slots, LogSinkFactory = _ => sink,
-        });
-        try
+        }), RegisterCheckpointWork, () => { });
+        var execute = owner.Execution;
+        await owner.VerifyAsync(async () =>
         {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await timing.PhaseAsync("driver-entered", entered.Task, execute);
             handler.TaskStatus = "HTTP500";
-            clock.Release();
-            var observed = await Task.WhenAny(sink.Unverified.Task, cancelled.Task).WaitAsync(TimeSpan.FromSeconds(5));
-            cancelled.Task.IsCompleted.ShouldBeFalse();
-            observed.ShouldBe(sink.Unverified.Task);
+            await ReachUnverifiedAsync(timing, clock, sink, execute, TimeSpan.FromSeconds(6));
+            var next = await NextOwnerDelayAsync(timing, clock, execute);
+            cancelled.Task.IsCompleted.ShouldBeFalse("uncertainty-keeps-running");
             slots.Acquires.ShouldBe(1);
             slots.Releases.ShouldBe(0);
             handler.TaskStatus = "Canceled";
-            await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            (await execute.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBe(ExitCodes.OwnerEnded);
+            next.Advance();
+            await timing.PhaseAsync("driver-canceled", cancelled.Task, execute);
+            await timing.PhaseAsync("execution-finished", execute);
+            (await execute).ShouldBe(ExitCodes.OwnerEnded);
             calls.ShouldBe(1);
             slots.Releases.ShouldBe(1);
             var state = new RunStateStore().TryRead(Path.Combine(run, "state.json"))!;
@@ -653,13 +687,8 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
             state.Reason.ShouldBe("owner-ended");
             state.Rows.Single(row => row.Id == "CP-1").State.ShouldBe("owner-ended");
             driver.Count(_ => true).ShouldBe(1);
-        }
-        finally
-        {
-            clock.Release();
-            try { await execute.WaitAsync(TimeSpan.FromSeconds(5)); }
-            catch (TimeoutException) { }
-        }
+            File.ReadAllText(Path.Combine(run, "report.md")).ShouldContain("reason=owner-ended");
+        });
     }
 
     [Test]
@@ -786,25 +815,143 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
         PlanTableImporter.ImportMarkdown(head + "| CP-1 | S1 | n/a | good | `true` | V-1 | exit 0 | n/a | 9 | 27 |").ExitCode.ShouldBe(0);
     }
 
+    [Test]
+    public async Task aborted_phase_joins_execution_before_root_teardown(CancellationToken cancellationToken)
+    {
+        using var timing = new CheckpointTimingHarness(nameof(aborted_phase_joins_execution_before_root_teardown), "CP-1/abort", cancellationToken);
+        foreach (var checkRegistration in new[] { false, true })
+        {
+            var cleanupClock = new Antiphon.Tests.TestHelpers.ControlledTimeProvider();
+            var scope = new CheckpointTestScope(cleanupClock: cleanupClock);
+            var roots = new[] { scope.TempDir(), scope.TempDir() };
+            foreach (var root in roots) File.WriteAllText(Path.Combine(root, "payload"), "keep");
+            var run = CreateFixtureRun(CommandManifest(), new RunRequest
+            {
+                Slots = "off", KeepOutputs = true,
+            }, roots[0]);
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var exit = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var driver = new FakeDriver();
+            driver.When(_ => true, async (_, token) =>
+            {
+                using var registration = token.Register(() => canceled.TrySetResult());
+                entered.TrySetResult();
+                try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+                catch (OperationCanceledException) { canceled.TrySetResult(); }
+                await exit.Task;
+                throw new OperationCanceledException(token);
+            });
+            var owner = new CheckpointExecutionOwner(timing,
+                token => CheckpointApp.ExecuteAsync(run, token, new CheckpointApp.Runtime
+                {
+                    EnvironmentLookup = _ => null, Driver = driver, Slots = new FixedSlotClient("off"),
+                    SourceCapture = _ => CheckpointFixtures.CleanSource(),
+                }), scope.Register, () => { });
+            Task? verify = null;
+            Task? scopeDisposal = null;
+            try
+            {
+                await timing.PhaseAsync("driver-entered", entered.Task, owner.Execution);
+                verify = owner.VerifyAsync(() => throw new ShouldAssertException("forced-fixture-abort"));
+                await timing.PhaseAsync("abort-disposal-entered", owner.DisposalEntered.Task, owner.Execution);
+                // The known abort boundary is synchronous: this assertion detects removing abort.Cancel.
+                canceled.Task.IsCompleted.ShouldBeTrue("abort-token-observed");
+                await timing.PhaseAsync("driver-canceled", canceled.Task, owner.Execution);
+                verify.IsCompleted.ShouldBeFalse("abort-join-pending");
+                owner.Execution.IsCompleted.ShouldBeFalse("abort-join-pending");
+                if (checkRegistration)
+                {
+                    scopeDisposal = scope.DisposeAsync().AsTask();
+                    cleanupClock.Advance(TimeSpan.FromSeconds(10));
+                    // Root existence is the assertion before consuming the expected teardown failure.
+                    using var cleanup = new CancellationTokenSource(CheckpointTimingHarness.CleanupBudget);
+                    Exception? disposalFailure = null;
+                    try { await scopeDisposal.WaitAsync(cleanup.Token); }
+                    catch (IOException ex) { disposalFailure = ex; }
+                    foreach (var root in roots)
+                    {
+                        Directory.Exists(root).ShouldBeTrue("registered-execution-retained");
+                        File.Exists(Path.Combine(root, CheckpointTestScope.MarkerName)).ShouldBeTrue("registered-execution-retained");
+                        File.Exists(Path.Combine(Path.GetTempPath(), ".checkpoint-temp-roots", Path.GetFileName(root) + ".json"))
+                            .ShouldBeTrue("registered-execution-retained");
+                    }
+                    disposalFailure.ShouldNotBeNull("registered-execution-retained");
+                }
+                exit.TrySetResult();
+                await timing.PhaseAsync("execution-finished", owner.Execution);
+                var failure = await Should.ThrowAsync<ShouldAssertException>(() => verify.WaitAsync(timing.Token));
+                failure.Message.ShouldContain("forced-fixture-abort");
+                await scope.DisposeAsync();
+                foreach (var root in roots) Directory.Exists(root).ShouldBeFalse("joined-before-root-teardown");
+            }
+            finally
+            {
+                // Independent rescue owns the deliberately held exit gate in this negative proof.
+                owner.RescueCancel();
+                exit.TrySetResult();
+                using var cleanup = new CancellationTokenSource(CheckpointTimingHarness.CleanupBudget);
+                await owner.Execution.WaitAsync(cleanup.Token);
+                if (verify is not null)
+                {
+                    try { await verify.WaitAsync(cleanup.Token); }
+                    catch (ShouldAssertException) { }
+                }
+                if (scopeDisposal is not null)
+                {
+                    try { await scopeDisposal.WaitAsync(cleanup.Token); }
+                    catch (IOException) { }
+                }
+                await scope.DisposeAsync();
+            }
+        }
+    }
+
+    private static async Task<CheckpointStepClock.DelayRequest> NextOwnerDelayAsync(
+        CheckpointTimingHarness timing, CheckpointStepClock clock, Task execute)
+    {
+        var next = clock.NextAsync(timing.Token);
+        await timing.PhaseAsync("owner-delay", next, execute);
+        return await next;
+    }
+
+    private static async Task ReachUnverifiedAsync(CheckpointTimingHarness timing, CheckpointStepClock clock,
+        OwnerLineSink sink, Task execute, TimeSpan uncertaintyBudget)
+    {
+        // First watch step causes the first failed read, then exactly budget/3 failed-read steps.
+        for (var i = 0; i <= uncertaintyBudget.TotalSeconds / 3; i++)
+        {
+            var next = await NextOwnerDelayAsync(timing, clock, execute);
+            next.Span.ShouldBe(TimeSpan.FromSeconds(3));
+            next.Advance();
+            await timing.PhaseAsync("owner-delay", next.Completed.Task, execute);
+        }
+        await timing.PhaseAsync("owner-unverified", sink.Unverified.Task, execute);
+        sink.Lines.ShouldContain(line => line.Contains("owner-unverified", StringComparison.Ordinal));
+    }
+
     private sealed class OwnerHandler : HttpMessageHandler
     {
-        public string TaskStatus { get; set; } = "Working";
-        public string SessionStatus { get; set; } = "Running";
+        private string _taskStatus = "Working";
+        private string _sessionStatus = "Running";
+        private int _calls;
+        public string TaskStatus { get => Volatile.Read(ref _taskStatus); set => Volatile.Write(ref _taskStatus, value); }
+        public string SessionStatus { get => Volatile.Read(ref _sessionStatus); set => Volatile.Write(ref _sessionStatus, value); }
         public bool WrongTask { get; set; }
         public bool WrongSession { get; set; }
-        public Queue<string> Next { get; } = new();
+        public System.Collections.Concurrent.ConcurrentQueue<string> Next { get; } = new();
         public List<TaskCompletionSource> HeldCanceled { get; } = [];
-        public int Calls { get; private set; }
+        public int Calls => Volatile.Read(ref _calls);
         public string? SeenToken { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             request.Method.ShouldBe(HttpMethod.Get);
             request.RequestUri!.AbsoluteUri.ShouldBe("http://owner.invalid/api/agent-tasks/" + TaskId);
-            Calls++;
+            Interlocked.Increment(ref _calls);
             SeenToken = request.Headers.GetValues("X-Antiphon-Task-Token").Single();
             SeenToken.ShouldBe(Token);
-            var status = Next.Count > 0 ? Next.Dequeue() : TaskStatus;
+            var status = Next.TryDequeue(out var queued) ? queued : TaskStatus;
             if (status == "HTTP500")
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError));
             if (status == "IO")
@@ -935,24 +1082,13 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
         }
     }
 
-    private sealed class GatedUncertaintyClock
-    {
-        private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private DateTimeOffset _now = new(2026, 9, 26, 0, 0, 0, TimeSpan.Zero);
-        public void Release() => _gate.TrySetResult();
-        public DateTimeOffset Now() => _now;
-        public async Task Delay(TimeSpan span, CancellationToken token)
-        {
-            await _gate.Task.WaitAsync(token);
-            _now += span;
-        }
-    }
-
     private sealed class OwnerLineSink : IExecutorLogSink
     {
+        public System.Collections.Concurrent.ConcurrentQueue<string> Lines { get; } = new();
         public TaskCompletionSource Unverified { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task AppendAsync(string line, CancellationToken cancellationToken)
         {
+            Lines.Enqueue(line);
             if (line.Contains("owner-unverified", StringComparison.Ordinal))
                 Unverified.TrySetResult();
             return Task.CompletedTask;
