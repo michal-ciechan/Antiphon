@@ -108,6 +108,7 @@ public sealed class BlockedTaskParkStateTests
             f.Options.Enabled = true;
             var before = await RetainedAsync(f);
             var id = (await f.RegisterAsync()).ShouldNotBeNull("G-7");
+            var captured = await CapturedAsync(f, id);
             foreach (var state in new[] { AgentTaskParkState.Requested, AgentTaskParkState.Held,
                 AgentTaskParkState.Requested, AgentTaskParkState.Published, AgentTaskParkState.ReleasePending, AgentTaskParkState.Parked })
             {
@@ -122,14 +123,27 @@ public sealed class BlockedTaskParkStateTests
                 AgentTaskService.IsSettled(task.Status).ShouldBeFalse("G-5");
                 (await fresh.Cards.SingleAsync(c => c.Id == f.CardId)).Status.ShouldBe(CardStatus.InProgress, "G-5");
                 (await RetainedAsync(f)).ShouldBe(before, "G-6: full retained task/artifact/transcript/history snapshot");
+                (await CapturedAsync(f, id)).ShouldBe(captured, "G-6: episode coordinates remain immutable");
                 if (!shape.Report) task.CompletedAt.ShouldBeNull("G-7");
                 var saved = await fresh.AgentTaskParks.SingleAsync(p => p.Id == id);
                 saved.State.ShouldBe(state);
+                if (!shape.Report) saved.CompletedAt.ShouldBeNull("G-7");
                 saved.PublicationReceiptId.ShouldBeNull("state storage is not publication authority");
                 saved.RunnerSeatReleaseId.ShouldBeNull("state storage is not exit authority");
                 (await fresh.RunnerSeatReleases.CountAsync()).ShouldBe(0);
             }
         }
+    }
+
+    private static async Task<string> CapturedAsync(BlockedTaskParkFixture f, Guid id)
+    {
+        await using var db = f.Db();
+        var p = await db.AgentTaskParks.AsNoTracking().SingleAsync(p => p.Id == id);
+        return JsonSerializer.Serialize(new { p.Id, p.TaskId, p.Attempt, p.BlockEventId,
+            p.TaskConcurrencyToken, p.AgentId, p.SessionId, p.RunnerId, p.RunnerStoreId,
+            p.AcceptedStartedAt, p.Workspace, p.WorktreeId, p.WorktreePath, p.RemoteWorktreePath,
+            p.FullRef, p.BaselineSha, p.ReportReference, p.ReportDigest, p.TranscriptSequence,
+            p.BlockedAt, p.CompletedAt, p.CreatedAt });
     }
 
     private static async Task<string> RetainedAsync(BlockedTaskParkFixture f)

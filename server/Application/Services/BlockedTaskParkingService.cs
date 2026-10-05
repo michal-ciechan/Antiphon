@@ -86,7 +86,8 @@ public sealed class BlockedTaskParkingService(
             SELECT "Id" FROM "AgentSessions" WHERE "Id" = {snapshot.SessionId} FOR UPDATE
             """, ct);
         var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == snapshot.SessionId, ct);
-        if (snapshot.SessionId is not null && (session is null || session.RunnerStoreId != snapshot.RunnerStoreId
+        if (snapshot.SessionId is not null && (session is null || session.RunnerId != snapshot.RunnerId
+            || session.RunnerStoreId != snapshot.RunnerStoreId
             || session.StartedAt != snapshot.AcceptedStartedAt)) return false;
         var now = clock.GetUtcNow().UtcDateTime;
         var changed = await db.AgentTaskParks.Where(p => p.Id == parkId && p.Revision == revision && p.State == expected)
