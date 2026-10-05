@@ -16,6 +16,162 @@ namespace Antiphon.SessionRunner.Tests;
 public class TerminalSeatReleaseTests
 {
     [Test]
+    public async Task Activity_resets_the_qualification_window()
+    {
+        await using var world = new SeatWorld("Codex");
+        await world.QualifyAsync();
+        await world.Tail.AppendAsync(world.Tail.Prompt("next prompt", "next")
+            + world.Tail.Activity("next") + world.Tail.End("next"));
+        (await world.ObserveAsync()).Status.ShouldBe(TerminalSeatQualificationStatus.Waiting);
+        world.Clock.Advance(TimeSpan.FromSeconds(120));
+        (await world.ObserveAsync()).Status.ShouldBe(TerminalSeatQualificationStatus.Qualified);
+        var proof = world.Runtime.TerminalSeatProofFor(world.Tail.SessionId)!;
+        foreach (var component in new[] { "binding", "file", "transcript", "bytes", "prompt", "end", "input", "output" })
+        {
+            var qualification = new TerminalSeatQualification();
+            qualification.Observe(proof.RuntimeEpoch, proof.Session, proof.Request, proof.Transcript,
+                proof.InputRevision, proof.OutputRevision, world.Clock).Status.ShouldBe(TerminalSeatQualificationStatus.Waiting);
+            world.Clock.Advance(TimeSpan.FromSeconds(120));
+            qualification.Observe(proof.RuntimeEpoch, proof.Session, proof.Request, proof.Transcript,
+                proof.InputRevision, proof.OutputRevision, world.Clock).Status.ShouldBe(TerminalSeatQualificationStatus.Qualified);
+
+            var request = proof.Request;
+            var transcript = component switch
+            {
+                "binding" => proof.Transcript with { BindingIdentity = "new-binding" },
+                "file" => proof.Transcript with { FileRevision = "new-file-revision" },
+                "transcript" => proof.Transcript with { TranscriptRevision = proof.Transcript.TranscriptRevision + 1 },
+                "bytes" => proof.Transcript with { ConsumedBytes = proof.Transcript.ConsumedBytes + 1 },
+                "prompt" => proof.Transcript with { LastPromptRevision = proof.Transcript.LastPromptRevision + 1 },
+                "end" => proof.Transcript with { LastEndRevision = proof.Transcript.LastEndRevision + 1 },
+                _ => proof.Transcript
+            };
+            // Keep the prompt evidence valid when changing the bound identity so the
+            // qualification reset is observed, rather than masked by OldPrompt.
+            if (component == "binding") request = request with { PromptBindingIdentity = transcript.BindingIdentity! };
+            var input = proof.InputRevision + (component == "input" ? 1 : 0);
+            var output = proof.OutputRevision + (component == "output" ? 1 : 0);
+            var changed = qualification.Observe(proof.RuntimeEpoch, proof.Session, request, transcript, input, output, world.Clock);
+            changed.Status.ShouldBe(TerminalSeatQualificationStatus.Waiting, component);
+            changed.StableFor.ShouldBe(TimeSpan.Zero, component);
+            changed.FirstObservedAt.ShouldBe(world.Clock.GetUtcNow(), component);
+            changed.Token.ShouldBeNull(component);
+            world.Clock.Advance(TimeSpan.FromMilliseconds(119999));
+            qualification.Observe(proof.RuntimeEpoch, proof.Session, request, transcript, input, output, world.Clock)
+                .Status.ShouldBe(TerminalSeatQualificationStatus.Waiting, component);
+            world.Clock.Advance(TimeSpan.FromMilliseconds(1));
+            qualification.Observe(proof.RuntimeEpoch, proof.Session, request, transcript, input, output, world.Clock)
+                .Status.ShouldBe(TerminalSeatQualificationStatus.Qualified, component);
+        }
+        world.AssertRetained();
+    }
+
+    [Test]
+    public async Task Input_winning_the_gate_invalidates_release()
+    {
+        await AssertInputOrderingAsync(conditional: false);
+    }
+
+    [Test]
+    public async Task Conditional_input_invalidates_release()
+    {
+        await AssertInputOrderingAsync(conditional: true);
+    }
+
+    private static async Task AssertInputOrderingAsync(bool conditional)
+    {
+        await using var world = new SeatWorld("Codex");
+        var request = await world.QualifyAsync();
+        var before = world.Child.Inputs.Count;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        Task? input = null;
+        var gate = world.Runtime.LaunchGateForTest(world.Tail.SessionId);
+        await gate.WaitAsync(deadline.Token);
+        try
+        {
+            world.Session.TerminalReleaseInProgress.ShouldBeFalse();
+            // Calling the async route synchronously reaches either its gate wait or the
+            // fake child. No scheduler delay stands in for evidence of exclusion.
+            input = WriteAsync("\r");
+            world.Child.Inputs.Count.ShouldBe(before, "the launch owner must exclude the input writer");
+            input.IsCompleted.ShouldBeFalse("input is waiting for the shared launch gate");
+        }
+        finally
+        {
+            gate.Release();
+            if (input is not null) await input;
+        }
+        world.Child.Inputs.Skip(before).ShouldBe(new[] { "\r" });
+        // Native transcript/output are unchanged, the composer is clear, and only the
+        // completed input revision can invalidate this otherwise valid release token.
+        (await world.ReleaseAsync(request)).Outcome.ShouldBe(TerminalSeatReleaseOutcome.StaleObservation);
+        world.AssertRetained();
+
+        // Both entry points must preserve the caller's LF/bracketed-paste body and a
+        // separate Enter exactly; the launch gate must not normalize or coalesce input.
+        const string body = "\u001b[200~first line\nsecond line\u001b[201~";
+        await WriteAsync(body);
+        await WriteAsync("\r");
+        world.Child.Inputs.TakeLast(2).ShouldBe(new[] { body, "\r" });
+
+        async Task WriteAsync(string text)
+        {
+            if (conditional)
+                (await world.Runtime.SendConditionalInputAsync(world.Tail.SessionId,
+                    new(request.Observation.ExpectedAcceptedStartedAt, world.Session.LastSequence, text), deadline.Token))
+                    .Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+            else
+                await world.Runtime.SendInputAsync(world.Tail.SessionId, text, deadline.Token);
+        }
+    }
+
+    [Test]
+    public async Task Release_winning_the_gate_refuses_later_input()
+    {
+        await using var world = new SeatWorld("Codex");
+        var request = await world.QualifyAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        world.Child.Kill = async _ =>
+        {
+            entered.TrySetResult();
+            await finish.Task.WaitAsync(deadline.Token);
+            return false; // Retain a live generation so Exited/Missing cannot mask PC-37.
+        };
+        var release = world.ReleaseAsync(request);
+        Task? normal = null;
+        Task<RunnerConditionalInputResult>? conditional = null;
+        var before = world.Child.Inputs.Count;
+        try
+        {
+            await entered.Task.WaitAsync(deadline.Token);
+            world.Session.HasExited.ShouldBeFalse();
+            SessionRunnerRuntime.AuthorizeInputUnderGate(world.Session)
+                .ShouldBe(SessionRunnerRuntime.InputAuthorization.ReleaseInProgress,
+                    "release owns the live generation before exit can mask the decision");
+            normal = world.Runtime.SendInputAsync(world.Tail.SessionId, "later normal", deadline.Token);
+            conditional = world.Runtime.SendConditionalInputAsync(world.Tail.SessionId,
+                new(request.Observation.ExpectedAcceptedStartedAt, world.Session.LastSequence, "later conditional"), deadline.Token);
+            normal.IsCompleted.ShouldBeFalse();
+            conditional.IsCompleted.ShouldBeFalse();
+            world.Child.Inputs.Count.ShouldBe(before);
+        }
+        finally
+        {
+            finish.TrySetResult();
+            (await release).Outcome.ShouldBe(TerminalSeatReleaseOutcome.Unresolved);
+            if (normal is not null)
+                (await Should.ThrowAsync<SessionRunnerRuntime.InputRefusedException>(() => normal))
+                    .Outcome.ShouldBe(SessionRunnerRuntime.InputAuthorization.ReleaseInProgress);
+            if (conditional is not null)
+                (await conditional).Outcome.ShouldBe(SessionRunnerRuntime.ReleaseInProgressInputOutcome);
+        }
+        world.Child.Inputs.Count.ShouldBe(before, "both public routes must refuse with zero child writes");
+        world.AssertRetained(expectedKills: 1);
+    }
+
+    [Test]
     public async Task Replacement_generation_is_never_released()
     {
         foreach (var replaceStore in new[] { true, false })
