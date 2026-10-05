@@ -26,13 +26,18 @@ public static class ReviewEvidence
     public const string SourceCleanKey = "reviewedSourceClean";
     public const string NotStandaloneWarning = "review_evidence_not_standalone";
 
-    public static Result TryParse(string? report)
+    public static Result TryParse(string? report) => Parse(report, storedBody: false);
+
+    /// <summary>The stored Result already has its outer closing token removed. Embedded tokens are body text.</summary>
+    public static Result TryParseStoredBody(string? report) => Parse(report, storedBody: true);
+
+    private static Result Parse(string? report, bool storedBody)
     {
         if (string.IsNullOrWhiteSpace(report))
             return default;
 
         var normalized = report.ReplaceLineEndings("\n");
-        var searchable = TextBeforeClosingReportToken(normalized);
+        var searchable = storedBody ? normalized : TextBeforeClosingReportToken(normalized);
         var (headings, ignoredHeading) = ScanHeadings(searchable);
         if (headings.Count == 0)
             return ignoredHeading ? new(true, false, null, null, NotStandaloneWarning) : default;

@@ -23,14 +23,12 @@ public sealed record LandCompletionFacts(string Publication, string Cleanup, str
 
     public static async Task<ReviewEvidenceFacts?> LoadReviewAsync(AppDbContext db, AgentTask task, CancellationToken ct)
     {
-        var row = await db.StageOutcomes.AsNoTracking()
-            // CARD-0544: a Found Full baseline also binds coordinates; only Clean is approval evidence.
-            .Where(o => o.StageTaskId == task.Id && o.Stage == OrchestrationStage.Review
-                && o.Outcome == StageOutcomeKind.Clean
-                && o.ReviewedSourceSha != null && o.SubjectTaskId != null)
+        var row = await StageOutcomeService.ActiveQuery(db.StageOutcomes.AsNoTracking(), db)
+            .Where(o => o.StageTaskId == task.Id && o.Stage == OrchestrationStage.Review)
             .OrderByDescending(o => o.RecordedAt).ThenByDescending(o => o.Id)
             .FirstOrDefaultAsync(ct);
-        return row?.SubjectTaskId is { } subject && row.ReviewedSourceSha is { } sha
+        // Interpret the selected active finding, so a later Found/unbound row cannot revive Clean.
+        return row?.Outcome == StageOutcomeKind.Clean && row.SubjectTaskId is { } subject && row.ReviewedSourceSha is { } sha
             ? new ReviewEvidenceFacts(row.Id, subject, sha) : null;
     }
 }
