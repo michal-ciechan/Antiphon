@@ -210,6 +210,16 @@ public sealed class ChannelOutboundDiscoveryTests
             if (prior) await w.ContextAsync();
             var id = await w.MachineAsync("[Check] complete injected prompt", "complete machine answer");
             if (!prior) await w.ContextAsync();
+            else
+            {
+                // Late-confirm updates SentAt after the injection, but cannot replace the
+                // earlier original attempt that established the channel context.
+                w.Clock.Advance(TimeSpan.FromMinutes(1));
+                await using var db = w.Db();
+                await db.SessionQueuedMessages.Where(m => m.AgentSessionId == w.H.SessionId
+                    && m.Origin == QueuedMessageOrigin.Channel).ExecuteUpdateAsync(s =>
+                        s.SetProperty(m => m.SentAt, w.H.Now));
+            }
             await w.Discovery.TickAsync(default);
             if (prior)
             {
