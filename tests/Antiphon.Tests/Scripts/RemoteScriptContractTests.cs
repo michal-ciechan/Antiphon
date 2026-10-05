@@ -19,6 +19,86 @@ namespace Antiphon.Tests.Scripts;
 public sealed class RemoteScriptContractTests
 {
     [Test]
+    [Arguments("host", "CacheDonorPackagesEmpty")]
+    [Arguments("metadata", "CacheDonorPackagesEmpty")]
+    [Arguments("reference", "CacheDonorPackagesEmpty")]
+    [Arguments("symlink", "CacheDonorUnsafeEntry")]
+    [Arguments("hardlink", "CacheDonorUnsafeEntry")]
+    [Arguments("special", "CacheDonorUnsafeEntry")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1066_Fixture_tree_fault_reaches_validator_under_nounset(string variant, string diagnosis)
+    {
+        var output = LinuxShell(C1066FixtureHarness("c849_validate_seed_relative", "c849_validate_seed_tree",
+            "c849_fixture_tree_fault") + $$"""
+            mkdir -p "$SERVER2_ROOT/.donor-tree/packages/c913.probe/1.0.0" \
+                "$SERVER2_ROOT/.donor-tree/packages/c913.tools/2.0.0" "$SERVER2_ROOT/.donor-tree/npm"
+            printf complete > "$SERVER2_ROOT/.donor-tree/packages/c913.probe/1.0.0/.nupkg.metadata"
+            printf complete > "$SERVER2_ROOT/.donor-tree/packages/c913.tools/2.0.0/.nupkg.metadata"
+            c849_validate_seed_tree "$SERVER2_ROOT/.donor-tree"
+            status=0
+            actual="$(c849_fixture_tree_fault '{{variant}}')" || status=$?
+            [ "$status" = 2 ] && [ "$actual" = '{{diagnosis}}' ] || {
+                printf 'unexpected status=%s diagnosis=%s\n' "$status" "$actual"; exit 1;
+            }
+            [ -s "$SERVER2_ROOT/.donor-tree/packages/c913.probe/1.0.0/.nupkg.metadata" ]
+            [ -s "$SERVER2_ROOT/.donor-tree/packages/c913.tools/2.0.0/.nupkg.metadata" ]
+            printf 'PASS tree {{variant}} {{diagnosis}}\n'
+            """);
+        output.ShouldContain($"PASS tree {variant} {diagnosis}");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1066_Fixture_npm_install_uses_argument_log_under_nounset(bool miss)
+    {
+        var output = LinuxShell(C1066FixtureHarness("c849_fixture_npm_install") + $$"""
+            mkdir -p "$SERVER2_ROOT/project/b/node_modules/c849-cache-probe"
+            printf C849_NPM_OFFLINE > "$SERVER2_ROOT/project/b/node_modules/c849-cache-probe/sentinel"
+            docker() { printf '{{(miss ? "ENOTCACHED" : "installed")}}\n'; return {{(miss ? 1 : 0)}}; }
+            status=0
+            actual="$(c849_fixture_npm_install fixture-image "$SERVER2_ROOT/project" fixture-cache b)" || status=$?
+            [ "$status" = {{(miss ? 2 : 0)}} ] && [ "$actual" = '{{(miss ? "NpmOfflineCacheMiss" : "")}}' ] || {
+                printf 'unexpected status=%s diagnosis=%s\n' "$status" "$actual"; exit 1;
+            }
+            grep -Fxq '{{(miss ? "ENOTCACHED" : "installed")}}' "$SERVER2_ROOT/npm-b.log"
+            printf 'PASS npm {{(miss ? "miss" : "success")}}\n'
+            """);
+        output.ShouldContain($"PASS npm {(miss ? "miss" : "success")}");
+    }
+
+    [Test]
+    [Arguments("packages")]
+    [Arguments("scratch")]
+    [Arguments("home")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1066_Fixture_warm_probe_uses_argument_log_under_nounset(string variant)
+    {
+        var output = LinuxShell(C1066FixtureHarness("c849_fixture_warm_probe") + $$"""
+            docker() { printf 'C660_ROW net9-offline fail NuGet {{variant}} is not empty\n'; return 1; }
+            status=0
+            actual="$(c849_fixture_warm_probe fixture-image fixture-packages fixture-scratch '{{variant}}')" || status=$?
+            [ "$status" = 2 ] && [ "$actual" = 'WarmCacheRefused:{{variant}}' ] || {
+                printf 'unexpected status=%s diagnosis=%s\n' "$status" "$actual"; exit 1;
+            }
+            grep -Fxq 'C660_ROW net9-offline fail NuGet {{variant}} is not empty' "$SERVER2_ROOT/warm-{{variant}}.txt"
+            printf 'PASS warm {{variant}}\n'
+            """);
+        output.ShouldContain($"PASS warm {variant}");
+    }
+
+    private static string C1066FixtureHarness(params string[] functions) => """
+        set -euo pipefail
+        unset fault tree project output kind image packages scratch code
+        fixture_root="$(mktemp -d)"
+        trap 'rm -rf -- "$fixture_root"' EXIT
+        SERVER2_ROOT="$fixture_root/server2"; CASE_DIR="$fixture_root/case"
+        CHECKOUT="$fixture_root/checkout"; RUN=c1066
+        mkdir -p "$SERVER2_ROOT" "$CASE_DIR"
+        """ + "\n" + string.Join('\n', functions.Select(function => Block(Remote(), function))) + "\n";
+
+    [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C913_Seed_accepts_complete_ordinary_packages_without_framework_packs() =>
         C913Run("tree", "ordinary-only-accepted");
