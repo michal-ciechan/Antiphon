@@ -375,9 +375,18 @@ the failing method/phase and measured cause, not guessed larger timeouts.
 
 ### Checkpoints
 
+S1 execution correction (2026-10-05): native Windows run
+`20261005-011419-ffac` at `2b0862f962fc70efb72fa9346c9b7fbe47fb9934`
+built cleanly but the exact-class OR filter produced a fresh zero-result TRX.
+CP-1 now uses the owner-documented trailing-wildcard class operands to avoid
+TUnit 1.44 source-generated discovery treating the OR as a literal hint.
+The admitted classes, exact 14-result roster, budgets and scope are unchanged;
+independently audit every executed method. Later slices must qualify their own
+filters and may not treat this zero-result run as passed coverage.
+
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1047-s1/` | windows-launch | `/*/*/(ScriptHarnessProcessTests)\|(ScriptHarnessWindowsOwnershipTests)/*` | V-1/V-3, R-1/R-2/R-3 | Windows only; N1-N11 plus W1-W3 at S1: exactly 14, 0 failed/skipped; 10m row cap | 14 | 9 | true |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1047-s1/` | windows-launch | `/*/*/(ScriptHarnessProcessTests*)\|(ScriptHarnessWindowsOwnershipTests*)/*` | V-1/V-3, R-1/R-2/R-3 | Windows only; N1-N11 plus W1-W3 at S1: exactly 14, 0 failed/skipped; 10m row cap | 14 | 9 | true |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1047-s2/` | windows-job-handles | `/*/*/ScriptHarnessWindowsOwnershipTests/(Child_is_assigned_before_first_instruction)\|(Assignment_failure_never_resumes_child)\|(Resume_failure_terminates_suspended_child)\|(Closing_private_job_kills_owned_tree)\|(Nested_job_timeout_kills_owned_descendants_only)\|(Private_job_handle_is_not_inherited)\|(Only_standard_handles_are_inherited)\|(Parent_closes_child_pipe_write_handles)` | V-1/V-2, R-1/R-2/R-3 | Windows only; W1-W8: exactly 8, 0 failed/skipped; 10m row cap | 8 | 8 | true |
 | CP-4 | S1-S3 | `tests/Antiphon.Tests -> bin-c1047-final/` | windows-contract | `/*/*/(ScriptHarnessProcessContractTests)\|(ProcessSpawnLimitTests)\|(TestLaneCategoryGuardTests)\|(SlowTestTripwireTests)/*` | V-4, R-4 | Windows only; 26+3+1+2: exactly 32, 0 failed/skipped; 10m row cap | 32 | 8 | true |
 | CP-5 | S1-S3 | CP-4 | windows-native | `/*/*/(ScriptHarnessProcessTests)\|(ScriptHarnessWindowsOwnershipTests)/*` | V-1/V-2/V-3, R-1/R-2/R-3 | Windows only; N1-N11 plus W1-W10: exactly 21, 0 failed/skipped; 10m row cap | 21 | 5 | true |
