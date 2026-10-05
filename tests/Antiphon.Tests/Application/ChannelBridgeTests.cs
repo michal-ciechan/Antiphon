@@ -675,7 +675,9 @@ public class ChannelBridgeTests
     [Test]
     public async Task A_missing_attachment_remains_captured_until_its_due_retry_recovers_the_file()
     {
-        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var now = DateTimeOffset.UtcNow;
+        // PostgreSQL persists microseconds; keep the exact retry oracle representable.
+        var clock = new FakeTimeProvider(now.AddTicks(-(now.Ticks % TimeSpan.TicksPerMicrosecond)));
         await using var h = await HarnessAsync(outboundClock: clock);
         await h.BindChannelAsync();
         var path = Path.Combine(Path.GetTempPath(), $"bridge-missing-{Guid.NewGuid():N}.pdf");
