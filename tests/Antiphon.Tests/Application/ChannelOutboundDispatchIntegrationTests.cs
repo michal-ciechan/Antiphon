@@ -95,7 +95,9 @@ public sealed class ChannelOutboundDispatchIntegrationTests
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
         const string prompt = "[Check] Send the complete machine source";
         var memberId = await h.SeedPendingMessageAsync(prompt, status: QueuedMessageStatus.Sent,
-            origin: QueuedMessageOrigin.Check);
+            origin: QueuedMessageOrigin.Check, deliveryAttempts: unifiedRecovery ? 1 : 0,
+            baselineSequence: unifiedRecovery ? await h.CurrentTranscriptMaxSequenceAsync() : null,
+            lastDeliveryStartedAt: unifiedRecovery ? h.Now : null, legacyNullGeneration: true);
         var path = Path.Combine(h.TempRoot, "workspace", "machine.md");
         var bytes = "# Complete machine source\r\nMiddle and tail ✨\r\n"u8.ToArray();
         await File.WriteAllBytesAsync(path, bytes);
@@ -241,7 +243,9 @@ public sealed class ChannelOutboundDispatchIntegrationTests
             (QueuedMessageOrigin.Check, "[Check] Answer this turn", "Allowed complete machine answer"),
         })
         {
-            var id = await h.SeedPendingMessageAsync(prompt, status: QueuedMessageStatus.Sent, origin: origin);
+            var id = await h.SeedPendingMessageAsync(prompt, status: QueuedMessageStatus.Sent, origin: origin,
+                deliveryAttempts: 1, baselineSequence: await h.CurrentTranscriptMaxSequenceAsync(),
+                lastDeliveryStartedAt: h.Now, legacyNullGeneration: true);
             await h.InsertTurnAsync(prompt, response);
             await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
             await using var observer = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString));

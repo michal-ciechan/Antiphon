@@ -218,6 +218,73 @@ public sealed class ChannelReplyDispatcher
     }
 
     /// <summary>
+    /// Examine one bounded historical prompt page for an open source. The returned sequence
+    /// is only a scheduling hint; source linkage in CaptureAsync remains the durable owner.
+    /// Unlike OnTurnEndAsync this never selects the newest turn or changes the trailing cache.
+    /// </summary>
+    internal async Task<long?> DiscoverSourceAsync(SessionQueuedMessage source, long afterPrompt,
+        CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        if (!scope.ServiceProvider.GetRequiredService<ChannelOutboundService>().UnifiedRecoveryEnabled)
+            return null;
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var prompts = await db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == source.AgentSessionId && t.Sequence > afterPrompt
+                && (t.Kind == TranscriptKinds.UserPrompt || t.Kind == TranscriptKinds.QueuedUserPrompt))
+            .OrderBy(t => t.Sequence).Take(ChannelOutboundDiscoveryService.PageSize).ToListAsync(ct);
+        foreach (var prompt in prompts)
+        {
+            if (prompt.Text is null)
+                continue;
+            var matched = source.Origin == QueuedMessageOrigin.Channel
+                ? (await MatchChannelRowsAsync(db, prompt, ct)).Any(m => m.Id == source.Id)
+                : ChannelPromptCorrelation.MatchesMachineDelivery(source, prompt, _correlationTolerance);
+            if (!matched)
+                continue;
+            var next = await TranscriptTurnWindow.FindNextTurnOpeningPromptSeqAsync(
+                db, source.AgentSessionId, prompt.Sequence, ct);
+            var end = await db.TranscriptEntries.Where(t => t.AgentSessionId == source.AgentSessionId
+                && t.Kind == TranscriptKinds.TurnEnd && t.Sequence > prompt.Sequence
+                && (next == null || t.Sequence < next)).OrderBy(t => t.Sequence)
+                .Select(t => (long?)t.Sequence).FirstOrDefaultAsync(ct);
+            if (end is null || (await TranscriptTurnWindow.FindOwningPromptAsync(
+                db, source.AgentSessionId, end.Value, ct))?.Id != prompt.Id)
+                continue;
+            if (source.Origin == QueuedMessageOrigin.Channel)
+                await DispatchAsync(source.AgentSessionId, ct, prompt);
+            else
+            {
+                await DispatchMachineTurnFollowUpAsync(source.AgentSessionId, ct, prompt);
+                if (next is not null)
+                {
+                    var (text, _, apiError) = await ExtractTurnResponseAsync(db, source.AgentSessionId, prompt.Sequence, ct);
+                    var (_, paths) = ChannelContracts.ExtractAttachments(text ?? "");
+                    var (_, tasks) = await CollectImpliedAttachmentsAsync(db, [source], ct, describeOnly: true);
+                    // Only conclusive policy silence closes a machine source. Failed routing,
+                    // missing text and API withholding still need later recovery/loss handling.
+                    var ineligible = !apiError && !string.IsNullOrWhiteSpace(text)
+                        && paths.Count == 0 && (ChannelContracts.IsNoReply(text)
+                            || tasks.Count == 0 && !AdmitsMachineTurnText([source]));
+                    if (ineligible)
+                        await db.SessionQueuedMessages.Where(m => m.Id == source.Id
+                            && m.ChannelOutboundDeliveryId == null && m.ChannelReplySettledAt == null
+                            && m.ChannelReplyDiscoveryClosedAt == null)
+                            .ExecuteUpdateAsync(s => s.SetProperty(m => m.ChannelReplyDiscoveryClosedAt,
+                                _timeProvider.GetUtcNow().UtcDateTime), ct);
+                }
+            }
+            if (await db.SessionQueuedMessages.AsNoTracking().AnyAsync(m => m.Id == source.Id
+                && (m.ChannelOutboundDeliveryId != null || m.ChannelReplySettledAt != null
+                    || m.ChannelReplyDiscoveryClosedAt != null), ct))
+                return null;
+            // A later complete receipt can own a resumed answer. Do not let an earlier
+            // withheld attempt hide it. On wrap we still revisit late text in the old window.
+        }
+        return prompts.Count == ChannelOutboundDiscoveryService.PageSize ? prompts[^1].Sequence : null;
+    }
+
+    /// <summary>
     /// The global abandon sweep, for the periodic supervision tick. The per-session sweep inside
     /// <see cref="DispatchAsync"/> only ever runs when that session ends ANOTHER turn — and the
     /// 2026-08-17 shape is precisely a session that answered into a void, so a correlation on a
@@ -238,12 +305,14 @@ public sealed class ChannelReplyDispatcher
         }
     }
 
-    private async Task<ChannelReplyDispatchResult> DispatchAsync(Guid sessionId, CancellationToken ct)
+    private async Task<ChannelReplyDispatchResult> DispatchAsync(Guid sessionId, CancellationToken ct,
+        TranscriptEntry? historicalPrompt = null)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        await AbandonStaleCorrelationsAsync(db, sessionId, ct);
+        if (historicalPrompt is null)
+            await AbandonStaleCorrelationsAsync(db, sessionId, ct);
 
         var open = await OpenCorrelations(db)
             .Where(m => m.AgentSessionId == sessionId)
@@ -274,7 +343,8 @@ public sealed class ChannelReplyDispatcher
             return ChannelReplyDispatchResult.Empty;
         }
 
-        var userPrompt = await TranscriptTurnWindow.FindOwningPromptAsync(db, sessionId, endSeq, ct);
+        var userPrompt = historicalPrompt
+            ?? await TranscriptTurnWindow.FindOwningPromptAsync(db, sessionId, endSeq, ct);
         if (userPrompt?.Text is not string promptText)
         {
             _logger.LogDebug(
@@ -307,10 +377,12 @@ public sealed class ChannelReplyDispatcher
         // ChannelReplyLost incident is the designed backstop (no second timeout here).
         if (containsApiErrorStub)
         {
+            var withheld = historicalPrompt is null ? open
+                : open.Where(m => ChannelPromptCorrelation.Matches(m, userPrompt, _correlationTolerance, out _)).ToList();
             await HandleApiErrorWithholdAsync(
-                db, sessionId, userPrompt.Sequence, open, ct);
+                db, sessionId, userPrompt.Sequence, withheld, ct);
             return new ChannelReplyDispatchResult(
-                new HashSet<Guid>(), open.Select(m => m.Id).ToHashSet(), new HashSet<Guid>());
+                new HashSet<Guid>(), withheld.Select(m => m.Id).ToHashSet(), new HashSet<Guid>());
         }
 
         if (string.IsNullOrWhiteSpace(responseText))
@@ -387,7 +459,8 @@ public sealed class ChannelReplyDispatcher
         // With activation enabled, CaptureAsync owns the main sources before any preparation;
         // settlement is the pump's accepted outcome. Default-off retains the legacy service's
         // claim/reopen protocol. This cache does not authorize settlement or publication.
-        _dispatched[sessionId] = new DispatchedTurn(userPrompt.Sequence, maxTextSeq, targets);
+        if (historicalPrompt is null)
+            _dispatched[sessionId] = new DispatchedTurn(userPrompt.Sequence, maxTextSeq, targets);
 
         // The frozen silent-turn contract: a whole-turn NO_REPLY settles the correlations and
         // sends nothing — system notes and housekeeping turns must never spam the chat.
@@ -1221,7 +1294,8 @@ public sealed class ChannelReplyDispatcher
     /// A successful send records the <c>_dispatched</c> watermark so trailing AssistantText of the
     /// same turn follows via <see cref="DispatchFollowUpAsync"/>.
     /// </summary>
-    private async Task DispatchMachineTurnFollowUpAsync(Guid sessionId, CancellationToken ct)
+    private async Task DispatchMachineTurnFollowUpAsync(Guid sessionId, CancellationToken ct,
+        TranscriptEntry? historicalPrompt = null)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -1244,7 +1318,8 @@ public sealed class ChannelReplyDispatcher
         if (turnEndSeq is not long endSeq)
             return;
 
-        var userPrompt = await TranscriptTurnWindow.FindOwningPromptAsync(db, sessionId, endSeq, ct);
+        var userPrompt = historicalPrompt
+            ?? await TranscriptTurnWindow.FindOwningPromptAsync(db, sessionId, endSeq, ct);
         if (userPrompt?.Text is not string promptText)
             return;
         if (await GrokRulesRefreshService.IsRefreshPromptAsync(db, sessionId, promptText, ct))
@@ -1281,9 +1356,31 @@ public sealed class ChannelReplyDispatcher
                 && m.ChannelOutboundDeliveryId == null)
             .OrderBy(m => m.Sequence)
             .ToListAsync(ct);
+        var outbound = scope.ServiceProvider.GetRequiredService<ChannelOutboundService>();
         var ids = ChannelContracts.CollectInjectionShortIds(promptText);
         var matches = candidates.Where(m =>
             MatchesByTaskId(m, ids) || MatchesHeaderLine(m, normalizedTurn)).ToList();
+        SessionQueuedMessage? originalContext = null;
+        if (outbound.UnifiedRecoveryEnabled)
+        {
+            // Task/header routing is not a delivered-prompt receipt. Historical and event
+            // dispatch share the complete matcher and original attempt floors.
+            matches = matches.Where(m => ChannelPromptCorrelation.MatchesMachineDelivery(
+                m, userPrompt, _correlationTolerance)).ToList();
+            if (matches.Count > 0)
+            {
+                var first = matches.OrderBy(m => m.Sequence).First();
+                var injectionAt = first.LastDeliveryStartedAt ?? first.SentAt ?? first.CreatedAt;
+                originalContext = await db.SessionQueuedMessages.AsNoTracking()
+                    .Where(m => m.AgentSessionId == sessionId && m.Origin == QueuedMessageOrigin.Channel
+                        && m.Status == QueuedMessageStatus.Sent && m.ConversationKey != null
+                        && m.Sequence < first.Sequence && (m.SentAt ?? m.CreatedAt) <= injectionAt)
+                    .OrderByDescending(m => m.Sequence).FirstOrDefaultAsync(ct);
+                if (originalContext is null)
+                    return;
+                conversationKey = originalContext.ConversationKey!;
+            }
+        }
         if (matches.Count == 0)
         {
             var injection = ChannelContracts.IsAntiphonInjectionPrompt(promptText);
@@ -1307,7 +1404,6 @@ public sealed class ChannelReplyDispatcher
             return;
         }
 
-        var outbound = scope.ServiceProvider.GetRequiredService<ChannelOutboundService>();
         var captureReply = outbound.UnifiedRecoveryEnabled;
         if (captureReply)
         {
@@ -1371,7 +1467,8 @@ public sealed class ChannelReplyDispatcher
         descriptor = descriptor with { Text = bodyText };
         var text = Truncate(bodyText);
         var kind = ClassifyKind(bodyText);
-        var replyHandle = await ResolveInboundReplyHandleAsync(db, matches, channel?.ReplyHandle, ct);
+        var replyHandle = await ResolveInboundReplyHandleAsync(db,
+            originalContext is null ? matches : [originalContext], channel?.ReplyHandle, ct);
         var target = new ReplyTarget(provider, replyHandle, conversationId,
             matches.Select(m => m.Id).ToArray(), channel is not null);
 
@@ -1406,7 +1503,8 @@ public sealed class ChannelReplyDispatcher
                 StampDeliveredBundles(impliedTasks, attachments, _timeProvider.GetUtcNow().UtcDateTime);
                 await db.SaveChangesAsync(ct);
             }
-            _dispatched[sessionId] = new DispatchedTurn(userPrompt.Sequence, maxTextSeq, [target]);
+            if (historicalPrompt is null)
+                _dispatched[sessionId] = new DispatchedTurn(userPrompt.Sequence, maxTextSeq, [target]);
             _logger.LogInformation(
                 "Sent machine-turn follow-up {Kind} reply ({Chars} chars, {AttachmentCount} attachment(s)) "
                 + "to {Provider} conversation {ConversationId} from session {SessionId}",

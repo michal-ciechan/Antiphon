@@ -747,6 +747,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     {
         builder.Services.AddSingleton<IChannelReplyAttachmentReader, Antiphon.Server.Infrastructure.Files.ChannelReplyAttachmentReader>();
         builder.Services.AddScoped<ChannelReplyPreparation>();
+        builder.Services.AddSingleton<ChannelOutboundDiscoveryService>();
     }
     builder.Services.AddScoped<OutboundConversionTaskRunner>();
     builder.Services.AddScoped<ChannelOutboundDeliveryPump>();
