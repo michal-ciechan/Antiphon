@@ -241,7 +241,16 @@ public sealed class WorkspaceParkPublicationTests
                 if (fault == "start") throw new IOException("synthetic private endpoint must not escape");
                 ReplaceCommand(psi, "rev-parse", "--verify", "refs/heads/not-present");
             };
-            var result = await world.Publisher().PrepareAsync(world.Request, CancellationToken.None);
+            var publisher = world.Publisher();
+            if (fault == "head" || fault == "status")
+            {
+                // Assert the actual first inspection decision as well: a later ancestry or
+                // equality check must not mask removal of this read-error guard (PC-22).
+                var decision = await publisher.InspectSourceAsync(world.Mirror, world.Request.Binding, CancellationToken.None);
+                decision.Failure.ShouldNotBeNull("G-22 first read decision").Outcome
+                    .ShouldBe(WorkspaceParkOutcome.Unknown, "G-22 first read decision");
+            }
+            var result = await publisher.PrepareAsync(world.Request, CancellationToken.None);
             result.Outcome.ShouldBe(WorkspaceParkOutcome.Unknown, "G-22 " + fault);
             result.Receipt.ShouldBeNull("G-22");
             result.Reason.ShouldBe("park_inspection_unavailable", "G-22 bounded refusal");
