@@ -61,7 +61,6 @@ public sealed class CheckpointTempScopeTests : CheckpointTestBase
         }
     }
 
-    private static string IndexPath(string root) => Path.Combine(Path.GetTempPath(), ".checkpoint-temp-roots", Path.GetFileName(root) + ".json");
     [Test]
     public void allocation_requires_an_owner()
     {
@@ -100,7 +99,8 @@ public sealed class CheckpointTempScopeTests : CheckpointTestBase
     [Test]
     public async Task live_child_prevents_scope_deletion()
     {
-        var scope = new CheckpointTestScope(new UnknownProbe());
+        var probe = new UnknownProbe();
+        var scope = new CheckpointTestScope(probe);
         var root = scope.TempDir();
         using var child = Process.GetCurrentProcess();
         scope.Register(child);
@@ -109,11 +109,14 @@ public sealed class CheckpointTempScopeTests : CheckpointTestBase
             var failure = await Should.ThrowAsync<IOException>(async () => await scope.DisposeAsync());
             failure.Message.ShouldContain("identity-unknown");
             Directory.Exists(root).ShouldBeTrue();
+            File.Exists(IndexPath(root)).ShouldBeTrue("retained-root-stays-indexed");
         }
         finally
         {
-            Directory.Delete(root, true);
-            CheckpointUsageEvent.Write("root-delete", root);
+            probe.Verdict = ProcessVerdict.Dead;
+            await scope.DisposeAsync();
+            Directory.Exists(root).ShouldBeFalse("released-after-dead-verdict");
+            File.Exists(IndexPath(root)).ShouldBeFalse("released-root-unregistered");
         }
     }
 
@@ -133,9 +136,10 @@ public sealed class CheckpointTempScopeTests : CheckpointTestBase
     public async Task teardown_preserves_failure_and_attempts_other_roots()
     {
         string? denied = null;
+        var deny = true;
         var scope = new CheckpointTestScope(beforeDelete: root =>
         {
-            if (root == denied) throw new IOException("delete-denied");
+            if (deny && root == denied) throw new IOException("delete-denied");
         });
         denied = scope.TempDir();
         var other = scope.TempDir();
@@ -145,8 +149,12 @@ public sealed class CheckpointTempScopeTests : CheckpointTestBase
         failure.Message.ShouldContain("delete-denied");
         Directory.Exists(denied).ShouldBeTrue();
         Directory.Exists(other).ShouldBeFalse();
-        Directory.Delete(denied, true);
-        CheckpointUsageEvent.Write("root-delete", denied);
+        File.Exists(IndexPath(denied)).ShouldBeTrue("retained-root-stays-indexed");
+        File.Exists(IndexPath(other)).ShouldBeFalse("deleted-root-unregistered");
+        deny = false;
+        await scope.DisposeAsync();
+        Directory.Exists(denied).ShouldBeFalse("denied-root-released");
+        File.Exists(IndexPath(denied)).ShouldBeFalse("denied-root-unregistered");
     }
 
     [Test]
@@ -187,6 +195,8 @@ public sealed class CheckpointTempScopeTests : CheckpointTestBase
         Directory.Exists(root).ShouldBeFalse();
     }
 
+    private static string IndexPath(string root) => Path.Combine(Path.GetTempPath(), ".checkpoint-temp-roots", Path.GetFileName(root) + ".json");
+
     private sealed class UnopenedProbe : CheckpointTestBase
     {
         public string Allocate() => TempDir();
@@ -194,6 +204,9 @@ public sealed class CheckpointTempScopeTests : CheckpointTestBase
 
     private sealed class UnknownProbe : ProcessIdentityProbe
     {
-        public override ProcessObservation Observe(ProcessIdentity? expected) => new(ProcessVerdict.Unknown, "identity-unknown");
+        public ProcessVerdict Verdict = ProcessVerdict.Unknown;
+
+        public override ProcessObservation Observe(ProcessIdentity? expected) =>
+            new(Verdict, Verdict == ProcessVerdict.Dead ? "identity-dead" : "identity-unknown");
     }
 }
