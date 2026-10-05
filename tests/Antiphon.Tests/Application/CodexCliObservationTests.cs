@@ -36,8 +36,17 @@ public sealed class CodexCliObservationTests
     [Test]
     public void C959_Ladder_and_exact_models_share_floor()
     {
-        var metadata = typeof(ModelLevelAliases).GetMethod("MinimumCodexCliVersion", BindingFlags.Public | BindingFlags.Static);
-        string? Floor(AgentKind kind, string? model) => metadata?.Invoke(null, [kind, model])?.ToString();
+        string? Floor(AgentKind kind, string? model) => ModelLevelAliases.MinimumCodexCliVersion(kind, model)?.ToString();
+        foreach (var level in new[] { AgentModelLevel.High, AgentModelLevel.Medium, (AgentModelLevel)999 })
+            (ModelLevelAliases.ForCodexEntry(level).MinimumCliVersion?.ToString())
+                .ShouldBe("0.159.1", "C959-pc-124 Sol entry floor " + level);
+        ModelLevelAliases.ForCodexEntry(AgentModelLevel.Frontier).MinimumCliVersion
+            .ShouldBeNull("C959-pc-125 Frontier entry floor");
+        ModelLevelAliases.ForCodexEntry(AgentModelLevel.Low).MinimumCliVersion
+            .ShouldBeNull("C1029-pc-264 Low entry floor");
+        Floor(AgentKind.Codex, "GPT-6.1-SOL").ShouldBe("0.159.1", "C959-pc-126 exact canonical lookup");
+        foreach (var level in new[] { AgentModelLevel.High, AgentModelLevel.Medium })
+            ModelLevelAliases.ForCodex(level).ShouldBe("gpt-6.1-sol", "C959-pc-127 public alias " + level);
         foreach (var (level, model, floor) in new[]
         {
             (AgentModelLevel.High, "gpt-6.1-sol", "0.159.1"),
@@ -48,8 +57,8 @@ public sealed class CodexCliObservationTests
         })
         {
             var entry = ModelLevelAliases.ForCodexEntry(level);
-            entry.ModelId.ShouldBe(model, "C959-pc-126 entry " + level);
-            (entry.MinimumCliVersion?.ToString()).ShouldBe(floor, "C959-pc-127 entry " + level);
+            entry.ModelId.ShouldBe(model, "C959-v14-entry-model " + level);
+            (entry.MinimumCliVersion?.ToString()).ShouldBe(floor, "C959-v14-entry-floor " + level);
             ModelLevelAliases.ForCodex(level).ShouldBe(model, "C959-v14-existing-alias " + level);
             Floor(AgentKind.Codex, model).ShouldBe(floor, "C959-v14-floor " + level);
         }
@@ -89,10 +98,27 @@ public sealed class CodexCliObservationTests
             remote.Exe, remote.Args, remote.Env, remote.Cwd);
         projected.Request!.Executable.ShouldBe("codex", "C959-pc-159");
         projected.Request.ResolutionCwd.ShouldBe("/runner/worktrees/selected", "C959-pc-159 cwd");
-        foreach (var unsafeValue in new[] { "NUL\0sentinel", "{{key:C959}}", "${secret:C959}", new string('X', 32769) })
-            CodexCliProbeDescriptor.FromSpec("desktop", "gpt-6.1-sol", null, "/fixture/codex", [],
-                new Dictionary<string,string> { ["PATH"] = unsafeValue }, "/fixture").Request
-                .ShouldBeNull("C959-descriptor-unrepresentable-input");
+        foreach (var vector in CodexCliDescriptorCases.All(new("/fixture/codex", "/fixture")))
+        {
+            var input = vector.Request;
+            // FromSpec only reads a prefix for node launchers; no filesystem is involved here.
+            if (vector.Field == "CodexJsPrefix") input = input with { Executable = "/fixture/node" };
+            var observed = CodexCliProbeDescriptor.FromSpec("desktop", "gpt-6.1-sol", revision,
+                input.Executable, input.CodexJsPrefix is null ? [] : [input.CodexJsPrefix],
+                new Dictionary<string, string> { ["PATH"] = input.Path!, ["PATHEXT"] = input.PathExt! },
+                input.ResolutionCwd!);
+            var label = $"{vector.DescriptorControl} {vector.Field}/{vector.Name}";
+            if (vector.Accepted)
+            {
+                observed.Request.ShouldBe(input, label + " exact boundary is representable");
+                observed.Error.ShouldBeNull(label);
+            }
+            else
+            {
+                observed.Request.ShouldBeNull(label);
+                observed.Error.ShouldBe("launcher_unverified", label);
+            }
+        }
         foreach (var loader in new[] { "NODE_OPTIONS", "NODE_PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "DOTNET_STARTUP_HOOKS" })
         {
             var unverified = CodexCliProbeDescriptor.FromSpec("desktop", "gpt-6.1-sol", null,
