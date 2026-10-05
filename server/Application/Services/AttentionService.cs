@@ -228,6 +228,7 @@ public sealed partial class AttentionService
         items.AddRange(await BuildStandingContinuityItemsAsync(ct));
         items.AddRange(await BuildChannelOutboundDeliveryItemsAsync(ct));
         items.AddRange(await BuildAgentOutlivedTaskItemsAsync(now, ct));
+        items.AddRange(await BuildRunnerSeatReleaseItemsAsync(since, ct));
         // One local List for both stop evidence and disagreement. Remote liveness is the
         // CARD-0679 cached live/unknown inventory, never an RPC to an unavailable runner.
         var runnerSessions = await TryListRunnerSessionsAsync(ct);

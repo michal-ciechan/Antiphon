@@ -87,13 +87,9 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
 
     public async Task RecoverAttentionAsync()
     {
-        await using var db = Db();
-        foreach (var id in await db.RunnerSeatReleases.Select(r => r.Id).ToListAsync())
-        {
-            using var scope = Harness.Provider.CreateScope();
-            await scope.ServiceProvider.GetRequiredService<TerminalRunnerSeatReleaseService>()
-                .ReconcileAcceptedAnswerAsync(id, default);
-        }
+        using var scope = Harness.Provider.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<TerminalRunnerSeatReleaseService>()
+            .ReconcileAttentionAsync(default);
     }
 
     public async Task<RunnerSeatDiscoveryResult> DiscoverAsync(int budget = 3, int pageSize = 2,
