@@ -330,25 +330,31 @@ public sealed class ScriptHarnessWindowsOwnershipTests
                     ready.Child.WindowsObservation!.IsInJob(job).ShouldBeTrue();
                     ready.Grandchild.WindowsObservation!.IsInJob(job).ShouldBeTrue();
                     ScriptHarnessWindowsProcessFixture.ReadActiveJobMembers(job).ShouldBeGreaterThanOrEqualTo(2u);
-                    hooks.BeforeCloseJob = () =>
+                    hooks.BeforeAccounting = queriedJob =>
                     {
-                    hooks.Calls.ShouldContain("query-accounting");
-                    if (queryFailure) hooks.Calls.ShouldContain("query-accounting-failed");
-                    else
-                    {
-                        hooks.ActiveMemberObservations.ShouldNotBeEmpty();
-                        hooks.ActiveMemberObservations.All(count => count >= 2).ShouldBeTrue();
-                        ScriptHarnessWindowsProcessFixture.ReadActiveJobMembers(job).ShouldBeGreaterThanOrEqualTo(2u);
-                        ready.Child.Executing().ShouldBeTrue();
-                        ready.Grandchild.Executing().ShouldBeTrue();
-                    }
-                    observedBeforeClose = true;
+                        hooks.Calls.ShouldNotContain("close-job", "Accounting evidence must precede job disposal.");
+                        if (!queryFailure)
+                        {
+                            ScriptHarnessWindowsProcessFixture.ReadActiveJobMembers(queriedJob).ShouldBeGreaterThanOrEqualTo(2u);
+                            ready.Child.Executing().ShouldBeTrue();
+                            ready.Grandchild.Executing().ShouldBeTrue();
+                        }
+                        observedBeforeClose = true;
                     };
                 });
                 var error = await ScriptHarnessProcessFixture.CaptureAsync(run);
                 error.ShouldBeOfType<IOException>().Message.ShouldContain("death confirmation:");
-                if (queryFailure) error.Message.ShouldContain("QueryInformationJobObject");
-                else hooks.Calls.ShouldContain("terminate-ack-without-kill");
+                if (queryFailure)
+                {
+                    error.Message.ShouldContain("QueryInformationJobObject");
+                    hooks.Calls.ShouldContain("query-accounting-failed");
+                }
+                else
+                {
+                    hooks.Calls.ShouldContain("terminate-ack-without-kill");
+                    hooks.ActiveMemberObservations.ShouldNotBeEmpty();
+                    hooks.ActiveMemberObservations.All(count => count >= 2).ShouldBeTrue();
+                }
                 observedBeforeClose.ShouldBeTrue("Accounting evidence must precede kill-on-close.");
                 hooks.StdoutEof.ShouldBeTrue();
                 hooks.StderrEof.ShouldBeTrue();
@@ -358,11 +364,17 @@ public sealed class ScriptHarnessWindowsOwnershipTests
                 Directory.Exists(request.ControlDirectory).ShouldBeTrue("Uncertain cleanup must retain control evidence.");
                 error.Message.ShouldContain(request.ResultsDirectory);
                 error.Message.ShouldContain(request.ControlDirectory);
-                // Disposal is only the safety net, never the earlier cleanup verdict.
-                // Independently join the known handles before removing fixture scratch.
+                // The expired cleanup token may return before Task.Run(Dispose)
+                // runs. W10 owns this deliberate uncertainty: independently reap
+                // and join exact known handles under the existing five-second cap.
                 var join = System.Diagnostics.Stopwatch.StartNew();
                 foreach (var process in new[] { tree.Root, tree.Child, tree.Grandchild })
+                    if (process.Executing()) process.WindowsObservation!.Terminate();
+                foreach (var process in new[] { tree.Root, tree.Child, tree.Grandchild })
                     process.WindowsObservation!.Join(TimeSpan.FromSeconds(5) - join.Elapsed);
+                await WaitForAsync(() => hooks.Handles.All(entry => entry.Handle.IsClosed),
+                    TimeSpan.FromSeconds(5) - join.Elapsed, "The queued adapter disposal must finish within fixture cleanup.");
+                Array.IndexOf(hooks.Calls, "close-job").ShouldBeGreaterThan(Array.IndexOf(hooks.Calls, "query-accounting"));
                 fixture.Windows!.AssertStoppedBeforeDispose();
                 Directory.Delete(request.ResultsDirectory, true);
                 Directory.Delete(request.ControlDirectory, true);
