@@ -19,8 +19,8 @@ try {
         $pickup = Join-Path $HOME '.bw-session'
         if (Test-Path -LiteralPath $pickup) { $session = (Get-Content -Raw -LiteralPath $pickup).Trim() }
     }
-    if (-not $session -or -not (Get-Command bw -ErrorAction SilentlyContinue)
-        -or -not (Get-Command ssh -ErrorAction SilentlyContinue)) {
+    if (-not $session -or -not (Get-Command bw -ErrorAction SilentlyContinue) -or
+        -not (Get-Command ssh -ErrorAction SilentlyContinue)) {
         Write-Warning $skipped
         exit 2
     }
@@ -60,8 +60,8 @@ if test -s "$d/token"; then printf 'present=true\n'; else printf 'present=false\
     $remote = "sudo -n sh -c '" + $verify.Replace("'", "'\''") + "'"
     $stage = 'verify'
     $metadata = @(& ssh -o BatchMode=yes -o ConnectTimeout=30 $Server $remote 2>$null)
-    if ($LASTEXITCODE -ne 0 -or $metadata.Count -ne 2
-        -or $metadata[0] -cne '1654:1654 400' -or $metadata[1] -cne 'present=true') {
+    if ($LASTEXITCODE -ne 0 -or $metadata.Count -ne 2 -or
+        $metadata[0] -cne '1654:1654 400' -or $metadata[1] -cne 'present=true') {
         Write-Warning 'GitHub token was delivered, but owner/mode/presence verification failed. No file contents were printed.'
         exit 1
     }
