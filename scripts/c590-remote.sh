@@ -4179,6 +4179,7 @@ c1008_private_identity() {
 
 # Ownership includes the actual inspected mount topology, not labels alone.
 c1008_owned_mounts() {
+    require_lane host
     local owned="$1" model="$2" volumes="$3" source canonical kind file
     # Metadata in the Docker host namespace only; no contents or inode pinning.
     while IFS=$'\t' read -r source file; do
@@ -4925,6 +4926,7 @@ c994_status_proof() {
 # Only bound host-owned receipts can supply an offline audit image. A preview is
 # never a lookup authority. Multiple matching receipts must carry the same digest.
 c994_lookup_image() {
+    require_lane host
     local operation="${1:-}" file record image='' candidate found='' root
     C994_IMAGE=''; C994_ORIGINAL=''
     root="$SERVER2_ROOT/temp-container-retirement"
