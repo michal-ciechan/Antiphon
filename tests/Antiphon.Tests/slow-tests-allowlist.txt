@@ -222,6 +222,8 @@ Antiphon.Tests.Application.TaskInputAttentionCostTests
 
 # CARD-1008: isolated real Docker/Git volume recycle comparison.
 Antiphon.Tests.Scripts.RollingVolumeRecycleDockerTests
+# CARD-0994: real Docker/Git retired-temp lifecycle and ten cleanup outcomes.
+Antiphon.Tests.Scripts.RetiredTempContainerDockerTests
 
 # CARD-1017: real Git, isolated PostgreSQL and worktree preservation boundary vectors.
 Antiphon.Tests.Infrastructure.CompletedCardWorktreeRemovalTests
@@ -231,6 +233,8 @@ Antiphon.Tests.Application.ChannelOutboundDurabilitySchemaTests
 
 # CARD-1047: real Windows launch, native observations and bounded unwind.
 Antiphon.Tests.Scripts.ScriptHarnessWindowsOwnershipTests
+# CARD-1043 S2: isolated PostgreSQL, real Git runner sync, and reply resettlement races.
+Antiphon.Tests.Application.ReviewEvidenceResettlementTests
 # CARD-1043 S3: PostgreSQL recovery races, real pushed refs, and actual HTTP host.
 Antiphon.Tests.Application.ReviewEvidenceRecoveryTests
 Antiphon.Tests.Application.ReviewEvidenceRecoveryEndpointTests
