@@ -28,6 +28,7 @@ public sealed class ChannelOutboundDeliveryPump
     private readonly ILogger<ChannelOutboundDeliveryPump> _logger;
     private readonly Guid _owner = Guid.NewGuid();
     private readonly ChannelReplyPreparation? _preparation;
+    private readonly ChannelOutboundFailureRecorder _failures;
 
     // Test-only, per-instance stop point. Production leaves this null. Write-boundary
     // callbacks run after commit; before-conversion-claim runs after the worker's
@@ -39,7 +40,8 @@ public sealed class ChannelOutboundDeliveryPump
         IOptions<AntiphonMessagingOptions> messaging, TimeProvider clock,
         ILogger<ChannelOutboundDeliveryPump> logger,
         IOptions<ChannelOutboundSettings>? outboundSettings = null,
-        ChannelReplyPreparation? preparation = null)
+        ChannelReplyPreparation? preparation = null,
+        ChannelOutboundFailureRecorder? failures = null)
     {
         _db = db;
         _runner = runner;
@@ -50,6 +52,7 @@ public sealed class ChannelOutboundDeliveryPump
         _clock = clock;
         _logger = logger;
         _preparation = preparation;
+        _failures = failures ?? new ChannelOutboundFailureRecorder(db, clock);
     }
 
     public async Task<int> TickAsync(CancellationToken ct)
@@ -106,6 +109,12 @@ public sealed class ChannelOutboundDeliveryPump
         {
             if (delivery.State == ChannelOutboundDeliveryState.Publishing)
             {
+                if (_outboundSettings.UnifiedRecoveryEnabled)
+                {
+                    await _failures.RecordDeliveryAsync(delivery, ChannelOutboundDeliveryState.PublishUncertain,
+                        "Publication began before the server stopped; broker acceptance is unknown.", ct);
+                    return;
+                }
                 delivery.State = ChannelOutboundDeliveryState.PublishUncertain;
                 delivery.FailureReason = "Publication began before the server stopped; broker acceptance is unknown.";
                 delivery.Version++;
@@ -114,6 +123,13 @@ public sealed class ChannelOutboundDeliveryPump
             }
             if (delivery.State == ChannelOutboundDeliveryState.Captured)
             {
+                if (_outboundSettings.UnifiedRecoveryEnabled && delivery.FailureReason is not null
+                    && delivery.NextAttemptAt is null)
+                {
+                    await _failures.RecordDeliveryAsync(delivery, ChannelOutboundDeliveryState.Failed,
+                        delivery.FailureReason, ct);
+                    return;
+                }
                 await MaterializeAsync(delivery, ct);
                 return;
             }
@@ -138,6 +154,10 @@ public sealed class ChannelOutboundDeliveryPump
             _logger.LogWarning("Outbound delivery {DeliveryId} lost its preparation lease", id);
             _db.ChangeTracker.Clear();
         }
+        catch (ChannelOutboundFailureRecordingException ex)
+        {
+            _logger.LogError(ex, "Outbound delivery {DeliveryId} still needs loss recording", id);
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "Outbound delivery {DeliveryId} preparation failed", id);
@@ -145,10 +165,26 @@ public sealed class ChannelOutboundDeliveryPump
             var current = await _db.ChannelOutboundDeliveries.SingleOrDefaultAsync(d => d.Id == id, ct);
             if (current?.LeaseOwner == _owner && current.State != ChannelOutboundDeliveryState.Publishing)
             {
-                current.State = current.State == ChannelOutboundDeliveryState.Captured
+                var state = current.State == ChannelOutboundDeliveryState.Captured
                     && current.PreparationAttempts < PreparationAttemptLimit && current.PreparationDeadlineAt > UtcNow()
                     && ex is not (InvalidDataException or System.Text.Json.JsonException)
                     ? ChannelOutboundDeliveryState.Captured : ChannelOutboundDeliveryState.Failed;
+                if (_outboundSettings.UnifiedRecoveryEnabled && state == ChannelOutboundDeliveryState.Failed)
+                {
+                    // Retain definite preparation failure while loss recording is unavailable.
+                    // This is still an open obligation, not a terminal outcome. A fresh
+                    // owner repairs recording without reopening sources or staged files.
+                    if (current.State == ChannelOutboundDeliveryState.Captured)
+                    {
+                        current.FailureReason = Bound(ex.Message);
+                        current.NextAttemptAt = null;
+                        current.Version++;
+                        await _db.SaveChangesAsync(ct);
+                    }
+                    await _failures.RecordDeliveryAsync(current, state, Bound(ex.Message), ct);
+                    return;
+                }
+                current.State = state;
                 current.NextAttemptAt = current.State == ChannelOutboundDeliveryState.Captured ? UtcNow().AddSeconds(RetryDelaySeconds) : null;
                 current.FailureReason = Bound(ex.Message);
                 current.Version++;
@@ -181,6 +217,7 @@ public sealed class ChannelOutboundDeliveryPump
         {
             delivery.PreparationAttempts++;
             delivery.NextAttemptAt = null;
+            delivery.FailureReason = null;
             delivery.Version++;
             await _db.SaveChangesAsync(ct);
         }
@@ -349,6 +386,13 @@ public sealed class ChannelOutboundDeliveryPump
 
     private async Task PublishReadyAsync(ChannelOutboundDelivery delivery, CancellationToken ct)
     {
+        if (_outboundSettings.UnifiedRecoveryEnabled
+            && delivery.PublicationAttempts - delivery.PublicationAttemptBudgetBase >= _outboundSettings.PublicationAttemptLimit)
+        {
+            await _failures.RecordDeliveryAsync(delivery, ChannelOutboundDeliveryState.Failed,
+                "The publication attempt budget was exhausted.", ct);
+            return;
+        }
         if (!await RevalidateAsync(delivery, beforePublish: true, ct))
             return;
         if (await _db.ChannelOutboundDeliveries.AnyAsync(d => d.ChannelId == delivery.ChannelId
@@ -366,6 +410,12 @@ public sealed class ChannelOutboundDeliveryPump
         var bytes = JsonSerializer.SerializeToUtf8Bytes(reply, global::Antiphon.Messaging.MessagingJson.Options);
         if (bytes.Length > _messaging.MaxMessageBytes)
         {
+            if (_outboundSettings.UnifiedRecoveryEnabled)
+            {
+                await _failures.RecordDeliveryAsync(delivery, ChannelOutboundDeliveryState.Failed,
+                    "The frozen reply exceeds the messaging size cap.", ct);
+                return;
+            }
             delivery.State = ChannelOutboundDeliveryState.Failed;
             delivery.FailureReason = "The frozen reply exceeds the messaging size cap.";
             delivery.Version++;
@@ -455,11 +505,8 @@ public sealed class ChannelOutboundDeliveryPump
         if (delivery.NextAttemptAt > UtcNow()) return;
         if (delivery.PublicationAttempts - delivery.PublicationAttemptBudgetBase >= _outboundSettings.PublicationAttemptLimit)
         {
-            delivery.State = ChannelOutboundDeliveryState.Failed;
-            delivery.FailureReason = "The publication attempt budget was exhausted.";
-            delivery.NextAttemptAt = null;
-            delivery.Version++;
-            await _db.SaveChangesAsync(ct);
+            await _failures.RecordDeliveryAsync(delivery, ChannelOutboundDeliveryState.Failed,
+                "The publication attempt budget was exhausted.", ct);
             return;
         }
         if (ProbeBarrierAsync is { } beforeAttempt)
@@ -544,6 +591,11 @@ public sealed class ChannelOutboundDeliveryPump
     private async Task FinishAttemptAsync(ChannelOutboundDelivery delivery, ChannelOutboundDeliveryState state,
         string reason, DateTime? due, CancellationToken ct)
     {
+        if (state is ChannelOutboundDeliveryState.Failed or ChannelOutboundDeliveryState.PublishUncertain)
+        {
+            await _failures.RecordDeliveryAsync(delivery, state, reason, ct);
+            return;
+        }
         var now = UtcNow();
         await _db.ChannelOutboundDeliveries.Where(d => d.Id == delivery.Id && d.Version == delivery.Version
             && d.LeaseOwner == _owner && d.LeaseUntil > now && d.State == ChannelOutboundDeliveryState.Publishing)

@@ -1447,3 +1447,48 @@ assertion relaxation or timeout widening without a new brief.
 PC-S7-1 supplements PC-45's owner/version/expiry/state variants. Every original
 PC/variant remains pending, including this null-lease variant. Mutation owns all
 deliberate red/restore/green runs; none was executed in Code.
+
+## S8 implementation selection (Code 23e91309, 2026-10-05)
+
+S8 selects the existing After=S8 rows CP-6 and CP-7, unchanged filters,
+floors (12 and 8) and deadlines. This task's explicit no-whole-Unit and S8-only
+brief takes the narrow checkpoint selection; it does not claim the generic Final
+profile's whole Unit lane or the later S11 regression rows. V-3 and V-8 are the
+ordinary S8 IDs; all other V/R IDs remain with their owning slices. Activation
+stays default-off; no server or runner restart is required for this source slice.
+
+`ChannelOutboundFailureRecorder` uses the existing delivery episode fields, source
+settlement marker, incident and alert tables. Delivery loss rechecks the held
+lease/version/state under a row lock. Pre-capture loss takes capture's destination
+lock before locking/reloading each source and refuses a captured, settled or no
+longer stale source. Incident and alert inserts share the outcome transaction;
+notices/event routing run after commit. A definite exhausted preparation failure
+retains its reason on the open Captured obligation while recording is unavailable,
+so recording repair does not reread files. A third completed stage with no recorded
+failure still supports adoption. Publication budget repair checks before file I/O.
+
+PreparationDeadlineAt uses the earliest member SentAt, falling back to CreatedAt
+only when SentAt is absent, and a tail inherits the root's deadline. The deadline
+witness now captures actual old-enqueue/new-delivery sources, checks minus-one,
+equality and after, and checks retry immutability and legacy fallback. It no longer
+manufactures the deadline by updating the delivery directly.
+
+CP-7's eight named tests implement PC-67..73/PC-100 ordinary witnesses. The two
+insert-fault tests each exercise Failed, exhausted preparation, Uncertain, TTL,
+unroutable and terminal transport-provider routes through real pump/dispatcher
+entry points. Separate PostgreSQL triggers fail incident versus alert inserts;
+fresh readers check rollback, fresh owners repair, and repeated scans dedupe.
+Owner cases cover captured/current/deleted/absent; notices cover enabled, disabled
+and refused, with an independent committed-state read at producer entry.
+
+| PC/variant (pending SourceLanding Mutation) | Guarded defect | Exact ordinary witness |
+|---|---|---|
+| PC-S8-1 / SentAt origin | Use enqueue CreatedAt for a member with a later SentAt. | ChannelOutboundMaterializationTests.C519_Preparation_deadline_uses_original_obligation: old enqueue/new SentAt retains its delivery-relative preparation window. |
+| PC-S8-2 / recording-only preparation repair | Ignore the persisted definite preparation failure and reopen preparation while loss insertion is unavailable. | ChannelOutboundFailureRecordingTests.C519_Loss_and_source_outcome_are_atomic: preparation variant observes exactly one reader call at the last authorized attempt across fresh-owner recording failures and repair. |
+
+PC-12..18, PC-20, PC-36/37, PC-55, PC-67..73 and PC-100, including the two S8
+variants above, remain pending. Every other PC and variant in the plan also remains
+pending; no deliberate mutant or red/restore/green cycle runs in Code. S9 still
+owns bounded discovery completion/fairness and metadata repair; CARD-1061 is not
+expanded by this slice. Checkpoint receipts and actual counts are in the task's
+stored evidence report, not inferred from these planned floors.

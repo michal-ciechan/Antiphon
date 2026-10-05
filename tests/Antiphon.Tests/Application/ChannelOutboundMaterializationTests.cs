@@ -20,8 +20,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
-// CP-6 is scheduled after S8: that slice adds the atomic loss/alert oracles to
-// the failure cases here. S3 delivers materialization without activating it.
+// S8 qualifies the durable loss outcomes as well as preparation.
 [Category("Integration")]
 [NotInParallel]
 public sealed class ChannelOutboundMaterializationTests
@@ -40,6 +39,7 @@ public sealed class ChannelOutboundMaterializationTests
             stored.State.ShouldBe(ChannelOutboundDeliveryState.Failed);
             stored.FailureReason.ShouldNotBeNullOrEmpty();
             stored.InputPath.ShouldBeEmpty();
+            await w.AssertLossAsync(d.Id);
         }
         w.Producer.SentReplies.ShouldBeEmpty();
     }
@@ -145,6 +145,7 @@ public sealed class ChannelOutboundMaterializationTests
         }
         await w.TickAsync(reader);
         reader.Calls.ShouldBe(3);
+        await w.AssertLossAsync(d.Id);
         var incomplete = await w.CaptureAsync(attachment: true);
         Directory.CreateDirectory(Path.Combine(w.StoreRoot, incomplete.Id.ToString("N")));
         for (var attempt = 1; attempt <= 3; attempt++)
@@ -154,6 +155,7 @@ public sealed class ChannelOutboundMaterializationTests
             w.Clock.Advance(TimeSpan.FromSeconds(30));
         }
         (await w.LoadAsync(incomplete.Id)).State.ShouldBe(ChannelOutboundDeliveryState.Failed);
+        await w.AssertLossAsync(incomplete.Id);
         await w.TickAsync(reader);
         reader.Calls.ShouldBe(3); // Missing adoption metadata cannot grant new source I/O.
         w.Producer.SentReplies.ShouldBeEmpty();
@@ -162,16 +164,31 @@ public sealed class ChannelOutboundMaterializationTests
     [Test]
     public async Task C519_Preparation_deadline_uses_original_obligation()
     {
-        await using var w = await World.CreateAsync();
         foreach (var offset in new[] { -1, 0, 1 })
         {
-            var d = await w.CaptureAsync();
-            await using (var db = w.Db())
-                await db.ChannelOutboundDeliveries.Where(x => x.Id == d.Id).ExecuteUpdateAsync(s =>
-                    s.SetProperty(x => x.PreparationDeadlineAt, w.Clock.GetUtcNow().UtcDateTime.AddSeconds(-offset)));
+            await using var w = await World.CreateAsync();
+            var now = w.Clock.GetUtcNow().UtcDateTime;
+            var sent = now.AddMinutes(-30).AddSeconds(-offset);
+            var d = await w.CaptureAsync(createdAt: now.AddDays(-1), sentAt: sent);
+            d.PreparationDeadlineAt.ShouldBe(sent.AddMinutes(30));
             await w.TickAsync();
             (await w.LoadAsync(d.Id)).State.ShouldBe(offset < 0 ? ChannelOutboundDeliveryState.Ready : ChannelOutboundDeliveryState.Failed);
+            if (offset >= 0) await w.AssertLossAsync(d.Id);
         }
+        await using var queued = await World.CreateAsync();
+        var admitted = queued.Clock.GetUtcNow().UtcDateTime;
+        var fresh = await queued.CaptureAsync(attachment: true, createdAt: admitted.AddDays(-1), sentAt: admitted);
+        fresh.PreparationDeadlineAt.ShouldBe(admitted.AddMinutes(30));
+        var reader = new RefusingReader();
+        await queued.TickAsync(reader);
+        queued.Clock.Advance(TimeSpan.FromSeconds(30));
+        await queued.TickAsync(reader);
+        reader.Calls.ShouldBe(2);
+        (await queued.LoadAsync(fresh.Id)).PreparationDeadlineAt.ShouldBe(admitted.AddMinutes(30));
+        // Legacy sources without SentAt use enqueue time, but retries never refresh it.
+        var legacy = await queued.CaptureAsync(createdAt: admitted.AddMinutes(-31));
+        legacy.PreparationDeadlineAt.ShouldBe(admitted.AddMinutes(-1));
+        await queued.TickAsync(); await queued.AssertLossAsync(legacy.Id);
     }
 
     [Test]
@@ -301,7 +318,7 @@ public sealed class ChannelOutboundMaterializationTests
         public ChannelReplyPreparation Preparation { get; } = new(new ChannelReplyAttachmentReader());
         public FakeTimeProvider Clock { get; } = new(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
         public FakeAntiphonMessagingClient Producer { get; } = new();
-        public ChannelOutboundSettings Settings { get; } = new();
+        public ChannelOutboundSettings Settings { get; } = new() { UnifiedRecoveryEnabled = true };
         private readonly Guid _project = Guid.NewGuid(), _board = Guid.NewGuid(), _inbound = Guid.NewGuid(), _session = Guid.NewGuid();
         private Guid _channel = Guid.NewGuid();
         private string _profileName = "convert";
@@ -335,7 +352,7 @@ public sealed class ChannelOutboundMaterializationTests
             await db.SaveChangesAsync();
             Settings.Profiles[_profileName] = new() { ProjectId = _project, AgentId = id, PromptFile = "convert.md", Trigger = ChannelOutboundTrigger.EveryAgentReply };
         }
-        public async Task<ChannelOutboundDelivery> CaptureAsync(bool attachment = false, bool profile = false, string kind = "main")
+        public async Task<ChannelOutboundDelivery> CaptureAsync(bool attachment = false, bool profile = false, string kind = "main", DateTime? createdAt = null, DateTime? sentAt = null)
         {
             await File.WriteAllTextAsync(SourcePath, "original attachment");
             await using var db = Db();
@@ -344,11 +361,19 @@ public sealed class ChannelOutboundMaterializationTests
             await db.SaveChangesAsync();
             var service = new ChannelOutboundService(db, Files, Producer, Options.Create(Settings), Clock);
             var prompt = _prompt += 10;
+            var members = new List<Guid>();
+            if (createdAt is DateTime created)
+            {
+                var member = new SessionQueuedMessage { Id = Guid.NewGuid(), AgentSessionId = _session, Sequence = prompt,
+                    Body = "original prompt", Origin = QueuedMessageOrigin.Channel, Status = QueuedMessageStatus.Sent,
+                    ConversationKey = "slack:" + _channel.ToString("N"), CreatedAt = created, SentAt = sentAt };
+                db.SessionQueuedMessages.Add(member); await db.SaveChangesAsync(); members.Add(member.Id);
+            }
             Guid? rootId = null;
             var route = new ChannelReply { Channel = "slack", ConversationId = _channel.ToString("N"), ReplyHandle = "original-native-thread" };
             if (kind == "trailing")
                 rootId = (await service.CaptureAsync(route, new(_session, prompt, prompt + 1, prompt + 2, "main", []), ChannelReplyPreparation.Describe("root"), new(), default)).Id;
-            return await service.CaptureAsync(route, new(_session, prompt, prompt + (rootId == null ? 1 : 3), prompt + (rootId == null ? 2 : 4), kind, []),
+            return await service.CaptureAsync(route, new(_session, prompt, prompt + (rootId == null ? 1 : 3), prompt + (rootId == null ? 2 : 4), kind, members),
                 ChannelReplyPreparation.Describe("original reply", attachment ? [SourcePath] : []), new(), default, rootId);
         }
         public ChannelOutboundDeliveryPump Pump(AppDbContext db, IChannelReplyAttachmentReader? reader = null)
@@ -361,6 +386,14 @@ public sealed class ChannelOutboundMaterializationTests
         }
         public async Task TickAsync(IChannelReplyAttachmentReader? reader = null)
         { await using var db = Db(); await Pump(db, reader).TickAsync(default); }
+        public async Task AssertLossAsync(Guid id)
+        {
+            await using var db = Db();
+            var row = await db.ChannelOutboundDeliveries.SingleAsync(d => d.Id == id);
+            row.FailureReportedEpisode.ShouldBe(1);
+            (await db.AgentIncidents.CountAsync(i => i.Message.Contains(id.ToString()))).ShouldBe(1);
+            (await db.Alerts.CountAsync(a => a.Detail != null && a.Detail.Contains(id.ToString()))).ShouldBe(1);
+        }
         public async Task<ChannelOutboundDelivery> LoadAsync(Guid id)
         { await using var db = Db(); return await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == id); }
         public async ValueTask DisposeAsync()

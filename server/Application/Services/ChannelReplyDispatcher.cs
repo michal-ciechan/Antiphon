@@ -3,6 +3,7 @@ using System.Text.Json;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -418,6 +419,7 @@ public sealed class ChannelReplyDispatcher
 
         // Freeze the native handle from the inbound that caused this turn. The catalog handle may
         // already name a newer Slack thread when an earlier answer is finally published.
+        var unified = scope.ServiceProvider.GetRequiredService<ChannelOutboundService>().UnifiedRecoveryEnabled;
         var targets = new List<ReplyTarget>();
         var unroutable = new List<SessionQueuedMessage>();
         foreach (var group in matches.GroupBy(m => m.ConversationKey!, StringComparer.Ordinal))
@@ -432,6 +434,11 @@ public sealed class ChannelReplyDispatcher
                 .Where(c => c.Provider == provider && c.ExternalId == conversationId)
                 .Select(c => new { c.ReplyHandle })
                 .FirstOrDefaultAsync(ct);
+            if (channel is null && unified)
+            {
+                unroutable.AddRange(group);
+                continue;
+            }
             if (channel is null)
             {
                 _logger.LogWarning(
@@ -449,7 +456,6 @@ public sealed class ChannelReplyDispatcher
         {
             // The turn was answered and there is nowhere to send it. That is a lost reply, not a
             // skip, so it settles with a Critical incident rather than being retried forever.
-            await SettleAsync(db, unroutable, ct);
             await ReportLostAsync(sessionId, unroutable, LossReason.Unroutable, ct);
             matches = matches.Except(unroutable).ToList();
             if (matches.Count == 0)
@@ -655,12 +661,11 @@ public sealed class ChannelReplyDispatcher
             lossReason = LossReason.ProviderError;
         }
 
-        await NotifyCapacityAsync(db, open, notice, ct);
-        await SettleAsync(db, open, ct);
-        await ReportLostAsync(
+        var recorded = await ReportLostAsync(
             sessionId, open, lossReason, ct,
             apiErrorClass: stub?.ApiErrorClass ?? recovery?.ApiErrorClass,
             apiErrorStatus: stub?.ApiErrorStatus ?? recovery?.ApiErrorStatus);
+        if (recorded) await NotifyCapacityAsync(db, open, notice, ct);
         _logger.LogWarning(
             "Turn on session {SessionId} (prompt seq {PromptSeq}) died on a terminal API error "
             + "({Reason}); {Count} correlation(s) settled with a {Loss} notice.",
@@ -796,7 +801,20 @@ public sealed class ChannelReplyDispatcher
         if (stale.Count == 0)
             return 0;
 
-        await SettleAsync(db, stale, ct);
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        if (scope.ServiceProvider.GetRequiredService<ChannelOutboundService>().UnifiedRecoveryEnabled)
+        {
+            var examined = new List<SessionQueuedMessage>();
+            foreach (var source in stale)
+            {
+                // Never declare TTL loss before its historical answer has been examined.
+                // A remaining page defers classification to discovery's bounded cursor work.
+                if (await DiscoverSourceAsync(source, -1, ct) is not null) continue;
+                if (await OpenCorrelations(db).AsNoTracking().AnyAsync(m => m.Id == source.Id, ct))
+                    examined.Add(source);
+            }
+            stale = examined;
+        }
         foreach (var bySession in stale.GroupBy(m => m.AgentSessionId))
         {
             var classified = new List<(SessionQueuedMessage Msg, LossReason Reason, TranscriptEntry? Prompt, int Chars)>();
@@ -927,11 +945,10 @@ public sealed class ChannelReplyDispatcher
     /// which routes through the normal alert pipeline, i.e. it reaches a human. Always Critical: a
     /// channel correlation exists only because somebody in a chat asked something.
     ///
-    /// <para>Runs in its OWN scope on purpose. The caller's context holds the rows it has just marked
-    /// settled; a failed incident insert (an agent row deleted underneath us, a constraint) would
-    /// otherwise leave a poisoned entity tracked there and break every later save on it.</para>
+    /// <para>Settlement, incident and alert share one transaction in a fresh scope.
+    /// Failure leaves the source owed; notices run only after commit.</para>
     /// </summary>
-    private async Task ReportLostAsync(
+    private async Task<bool> ReportLostAsync(
         Guid sessionId,
         IReadOnlyList<SessionQueuedMessage> lost,
         LossReason reason,
@@ -969,78 +986,23 @@ public sealed class ChannelReplyDispatcher
             lost.Count, conversations, sessionId, why, oldest,
             string.Join(", ", lost.Select(m => m.Id)));
 
-        try
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var recorder = new ChannelOutboundFailureRecorder(db, _timeProvider,
+            scope.ServiceProvider.GetService<IEventBus>(), scope.ServiceProvider.GetService<IAlertRouter>());
+        var message = $"A reply owed {conversations} was never sent because {why}.";
+        if (reason == LossReason.TurnUnmatched && unmatchedPrompt?.Text is string promptBody)
+            message += $" Unmatched prompt: \"{ColumnText.Clip(Normalize(ChannelPromptCorrelation.RemoveMarkers(promptBody)), 80)}\".";
+        var cutoff = reason is LossReason.StaleTtl or LossReason.TurnIncomplete or LossReason.TurnUnmatched
+            ? _timeProvider.GetUtcNow().UtcDateTime.AddMinutes(-_settings.PendingReplyTtlMinutes) : (DateTime?)null;
+        var recorded = await recorder.RecordSourcesAsync(sessionId, lost, reason.ToString(), message, cutoff, ct);
+        if (recorded && reason is not LossReason.Unroutable
+            and not LossReason.ProviderCapacity and not LossReason.ProviderTransport and not LossReason.ProviderError)
         {
-            await using var scope = _scopeFactory.CreateAsyncScope();
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var sessionIdText = sessionId.ToString("D");
-            var agentId = await db.Agents
-                .Where(a => a.PersistentSessionId == sessionIdText)
-                .Select(a => (Guid?)a.Id)
-                .FirstOrDefaultAsync(ct);
-            if (agentId is null && TrySplitConversationKey(lost[0].ConversationKey!, out var p, out var cid))
-            {
-                // A session the agent no longer points at (relaunched, re-adopted) still belongs to
-                // whichever agent the conversation is bound to — that is the agent a human is waiting on.
-                agentId = await db.ChatChannels
-                    .Where(c => c.Provider == p && c.ExternalId == cid && c.AgentId != null)
-                    .Select(c => c.AgentId)
-                    .FirstOrDefaultAsync(ct);
-            }
-            if (agentId is not Guid owner)
-            {
-                // Nothing to hang an incident on — the Error line above is the whole record. Never
-                // swallow: an unowned session that answers a chat is itself worth seeing.
-                _logger.LogError(
-                    "No agent owns session {SessionId}, so the lost channel reply could not be recorded as an "
-                    + "incident. {Count} message(s) from {Conversations} went unanswered.",
-                    sessionId, lost.Count, conversations);
-                return;
-            }
-
-            // Scoped supervisor sharing this scope's AppDbContext; RecordIncidentAsync does NOT save.
-            var supervisor = scope.ServiceProvider.GetService<AgentSupervisorService>();
-            if (supervisor is not null)
-            {
-                var incidentMessage =
-                    $"A reply this agent owed {conversations} was never sent: {lost.Count} message(s) went "
-                    + $"unanswered because {why}.";
-                if (reason == LossReason.TurnUnmatched && unmatchedPrompt?.Text is string promptBody)
-                {
-                    var excerpt = ColumnText.Clip(Normalize(ChannelPromptCorrelation.RemoveMarkers(promptBody)), 80);
-                    incidentMessage += $" Unmatched prompt: \"{excerpt}\".";
-                }
-                incidentMessage += " Someone in that chat asked a question and got silence.";
-
-                await supervisor.RecordIncidentAsync(
-                    owner,
-                    sessionId,
-                    AgentIncidentKind.ChannelReplyLost,
-                    AlertSeverity.Critical,
-                    ColumnText.Clip(incidentMessage, AgentIncident.MessageMaxLength),
-                    failureReason: reason.ToString(),
-                    ct: ct);
-                await db.SaveChangesAsync(ct);
-            }
-
-            // CARD-0233 decision 2: tell the originating conversation, not ChannelAlertRouter
-            // (every AlertMinSeverity is null today; filling one would dump every Critical into
-            // Family). Unroutable has nowhere to send. A send failure is a Warning, never a
-            // failed sweep — the incident has already committed.
-            // ProviderCapacity / ProviderTransport / ProviderError already sent their own
-            // notice at withhold time; do not follow with the contradictory "no turn completed"
-            // sentence.
-            if (reason is not LossReason.Unroutable
-                and not LossReason.ProviderCapacity
-                and not LossReason.ProviderTransport
-                and not LossReason.ProviderError)
-                await NotifyOriginatingConversationsAsync(scope.ServiceProvider, lost, why, ct);
+            try { await NotifyOriginatingConversationsAsync(scope.ServiceProvider, lost, why, ct); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Lost reply notice failed after durable recording"); }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogWarning(ex,
-                "Recording the lost channel reply incident for session {SessionId} failed", sessionId);
-        }
+        return recorded;
     }
 
     /// <summary>
