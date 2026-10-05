@@ -23,6 +23,7 @@ var config = JsonSerializer.Deserialize<ProbeConfig>(await File.ReadAllTextAsync
 if (config is null || config.DeliveryId == Guid.Empty && config.Mode != "admit") return 2;
 try
 {
+    if (config.Mode == "unified") return await UnifiedRecoveryProbe.RunAsync(config);
     var options = new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(config.ConnectionString);
     if (config.FailPublishCommit)
         options.AddInterceptors(new RefusingCommitInterceptor(
@@ -177,7 +178,7 @@ internal sealed record ProbeConfig(string ConnectionString, string StoreRoot, Gu
     Guid CorrelationId = default, bool AllowPublication = false,
     bool FailPublishCommit = false, string? BootstrapServers = null, string? Topic = null,
     string? WorkerExe = null, string? WorkerHome = null, string? WorkerGate = null,
-    string? LaunchSpecPath = null);
+    string? LaunchSpecPath = null, string? ExpectedSourceSha = null);
 
 internal sealed class ProbeClock(int offsetSeconds) : TimeProvider
 {
