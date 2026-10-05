@@ -327,9 +327,24 @@ Admission and missing setup, before CP-1:
   `/c660/verify-codex-image.sh jq-version` in a throwaway container of the recorded
   immutable image, with the reviewed script mounted readonly, uid `1654:1654`,
   `--network none`, no ports/socket, and a private writable
-  `/c660-home` tmpfs owned by 1654. Require exit 0 and exactly
-  `C660_ROW jq-version ok jq-1.7.1 as uid 1654`. This supplements the active
-  container checks; a successful throwaway probe alone is not activation.
+  `/c660-home` tmpfs owned by 1654. Use the reviewed
+  [CARD-1054 probe/row contract](2026-10-05-card-1054-jq-path-qualification-plan.md#verification-design)
+  at its recorded source SHA. Require exit 0 and exactly one physical success
+  row: `C660_ROW jq-version ok jq-1.7.1 as uid 1654 lookupPath=/usr/local/bin/jq path=/usr/local/bin/jq`
+  for direct lookup. For an approved alias, `lookupPath` preserves the actual
+  found path with Bash `%q` escaping under `LC_ALL=C`; `path` remains canonical.
+  Resolve the actual child PATH after clearing hashing; do not conceal a shadow
+  by prepending canonical. The canonical leaf must be regular, executable and
+  not a symlink. Retain path refusal exit 1 and its single row with reason
+  `JqNotFound`, `JqLookupInvalid`, `JqResolveFailed` or `JqPathUnapproved`, plus
+  escaped actual lookupPath/path observations or `unavailable` where not observed;
+  no refused jq may execute for diagnostics. The older path-free row and private
+  CARD-1054 fixture results do not admit S2. Reuse the landed
+  [CARD-1025 host admission](2026-10-04-card-1025-host-jq-prerequisite-plan.md)
+  separately; canonical-directory hardlinks and writer swaps remain CARD-1058.
+  This supplements the active container checks; a successful throwaway probe
+  alone is not activation. All preceding image/digest/owner/mode/uid and
+  activation obligations, and the fifteen-method manifest below, remain required.
   Do not invoke the full wrapper, which also runs unrelated provider probes.
 - Record the Code source SHA and clean source before the three rows. Probe with
   the same PATH inherited by their children; do not dump the environment. Record

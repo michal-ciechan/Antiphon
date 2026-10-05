@@ -192,23 +192,40 @@ Qualify these three locations independently:
 |---|---|
 | Test child shell | Resolve bash and jq in the non-login environment inherited by the actual child. Record OS/architecture, uid, executable paths and resolved symlinks, jq version/SHA-256/owner/mode, and any child-only prerequisite adjustment. A login-shell probe with a different PATH does not qualify the child. |
 | Executing runner image | Reuse the [CARD-0927 image pin](../docker/session-runner-grok/Dockerfile) and [image contract](docker-stack.md). The outer container's owning host supplies container ID, creation/start times, immutable image ID/digest and selected source provenance, joined to build/activation receipts and runner `buildVersion`. Nested Docker and runner health cannot establish the outer image identity. |
-| Outer deployment host | [CARD-1025](/api/cards/66b75498-78a5-4e97-a699-0ba4fe8db651) owns jq on the host PATH used by real recycling and its separate receipt. A runner-image binary does not qualify the host; coordinate its prerequisite before rollout phases that recycle. |
+| Outer deployment host | The landed [CARD-1025 helper and receipt contract](superpowers/plans/2026-10-04-card-1025-host-jq-prerequisite-plan.md) owns jq on the host PATH used by real recycling. Reuse that implementation and its separate receipt; a runner-image binary does not qualify the host. Coordinate its prerequisite before rollout phases that recycle. |
 
 For the native Linux CARD-1040 proof, the actual child must resolve the qualified
 `/usr/local/bin/jq` (or an explicit alias to that same verified file): `jq-1.7.1`,
 SHA-256 `5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5`,
 root:root mode 0755, executable as uid 1654. A matching user-home copy alone is
-provisional diagnostic evidence. Record missing image identity or activation
+provisional diagnostic evidence. Discover jq on the actual non-login child PATH
+after clearing command hashing; do not prepend the canonical directory to hide
+a shadow. An alias must resolve to the regular, executable, non-symlink canonical
+leaf. A canonical spelling that points into home refuses. This trusts canonical
+directory integrity; hardlinks and a writer's check-to-use swap remain CARD-1058.
+Record missing image identity or activation
 receipts as pending obligations; do not install into a standing container or
 infer activation from a checkout SHA.
 
 Reuse only the existing [jq-version probe](../docker/session-runner-grok/verify-codex-image.sh)
 in a throwaway container of the recorded immutable image: reviewed script mounted
 readonly, uid `1654:1654`, `--network none`, no ports/socket and private writable
-`/c660-home` tmpfs owned by 1654. Require exit 0 and exactly
-`C660_ROW jq-version ok jq-1.7.1 as uid 1654`. This supplements the active-container
-checks; it does not prove activation. The full image wrapper also runs unrelated
-provider probes and is outside this bounded qualification.
+`/c660-home` tmpfs owned by 1654. Consume the reviewed
+[CARD-1054 probe and frozen row contract](superpowers/plans/2026-10-05-card-1054-jq-path-qualification-plan.md#verification-design)
+at its recorded source SHA. Require exit 0 and exactly one physical success row:
+`C660_ROW jq-version ok jq-1.7.1 as uid 1654 lookupPath=/usr/local/bin/jq path=/usr/local/bin/jq`
+for direct lookup. An approved alias changes only `lookupPath` to the actual
+found path, Bash `%q`-escaped with `LC_ALL=C`; `path` retains the canonical target.
+Retain the unedited row. Path refusals exit 1 and retain one
+`C660_ROW jq-version fail reason=REASON lookupPath=Q(found) path=Q(resolved)`
+row, where `Q` denotes that same escaping, not literal output; unavailable
+observations are `unavailable`. Reasons are `JqNotFound`, `JqLookupInvalid`,
+`JqResolveFailed` or `JqPathUnapproved`. A refused jq must never execute, even to
+format diagnostics. Older path-free rows cannot satisfy this updated gate.
+These observations supplement the active-container checks; they do not prove
+activation. Private CARD-1054 fixtures cannot satisfy the immutable-image or
+activation gate. The full image wrapper also runs unrelated provider probes and
+is outside this bounded qualification.
 
 The [CARD-1040 Plan/TestDesign](superpowers/plans/2026-10-04-card-1040-jq-prerequisites-and-unit-timing-plan.md#checkpoints)
 freezes CP-1/CP-2/CP-3: exactly twelve Remote methods, two Rolling methods and the
