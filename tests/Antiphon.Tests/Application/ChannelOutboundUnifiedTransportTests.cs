@@ -89,7 +89,8 @@ public sealed class ChannelOutboundUnifiedTransportTests
                         refusalSave.CommandText.ShouldContain("\"" + column + "\" =");
                     refusalSave.StateParameter.ShouldBe((int)ChannelOutboundDeliveryState.Ready);
                     row.LeaseOwner.ShouldNotBeNull();
-                    row.LeaseUntil.ShouldBeGreaterThan(w.H.Now);
+                    row.LeaseUntil.ShouldNotBeNull();
+                    row.LeaseUntil.Value.ShouldBeGreaterThan(w.H.Now);
                     await w.H.TickOutboundAsync();
                     var stillPublishing = (await w.DeliveryAsync(kind))!;
                     stillPublishing.State.ShouldBe(ChannelOutboundDeliveryState.Publishing);
