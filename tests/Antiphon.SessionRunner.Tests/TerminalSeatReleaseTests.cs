@@ -114,6 +114,33 @@ public class TerminalSeatReleaseTests
         await WriteAsync("\r");
         world.Child.Inputs.TakeLast(2).ShouldBe(new[] { body, "\r" });
 
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        world.Child.Write = async _ =>
+        {
+            entered.TrySetResult();
+            await finish.Task.WaitAsync(deadline.Token);
+        };
+        var pending = WriteAsync("held composer body");
+        Task<TerminalSeatReleaseResult>? release = null;
+        try
+        {
+            await entered.Task.WaitAsync(deadline.Token);
+            release = world.ReleaseAsync(request);
+            release.IsCompleted.ShouldBeFalse("release waits for the active input owner");
+            world.Child.Kills.ShouldBe(0);
+        }
+        finally
+        {
+            finish.TrySetResult();
+            await pending;
+            if (release is not null)
+                (await release).Outcome.ShouldBe(TerminalSeatReleaseOutcome.PendingDelivery,
+                    "the unsubmitted composer still vetoes release after the writer leaves");
+            world.Child.Write = null;
+        }
+        world.AssertRetained();
+
         async Task WriteAsync(string text)
         {
             if (conditional)
@@ -261,7 +288,16 @@ public class TerminalSeatReleaseTests
                     pending = world.Runtime.SendInputAsync(world.Tail.SessionId, "pending body", CancellationToken.None);
                     await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
                 }
-                (await world.ReleaseAsync(request)).Outcome.ShouldBe(
+                var release = world.ReleaseAsync(request);
+                if (condition == "pending-input")
+                {
+                    // S2b serializes release behind the writer. Finish the body first;
+                    // the unchanged pending-composer assertion below still owns the veto.
+                    release.IsCompleted.ShouldBeFalse();
+                    finish.TrySetResult();
+                    await pending!;
+                }
+                (await release).Outcome.ShouldBe(
                     condition is "composer" or "failed-input" or "pending-input"
                         ? TerminalSeatReleaseOutcome.PendingDelivery : TerminalSeatReleaseOutcome.Unknown, condition);
             }
