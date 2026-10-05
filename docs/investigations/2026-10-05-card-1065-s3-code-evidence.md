@@ -1,6 +1,6 @@
 # CARD-1065 S3 Code evidence — f69e8b6e
 
-S3 wire implementation is pushed and CP-3 is green, but this slice is **not ready for Review/adoption**: final inspection found a source-verification bypass for an already-exited child. The brief allowed at most two repair rounds; both were used. A further authorized Code repair is required.
+S3 is implemented, pushed and ready for ordinary Review. The caller explicitly authorized a third bounded repair round after inspection found an exited/absent source-verification bypass. New ordinary scenarios first failed against the unchanged production code; the repair then passed CP-3 with all three methods. PCs remain pending post-land SourceLanding Mutation.
 
 ## Ownership and source
 
@@ -9,9 +9,9 @@ S3 wire implementation is pushed and CP-3 is green, but this slice is **not read
 - Worktree: `/work/worktrees/task-f69e8b6e`.
 - Desktop companion (not accessible here): `C:\Antiphon\worktrees\card-task-f69e8b6e`.
 - Full task base: `c1adb878a42f4c69258483e33dab3cd2a9797351` (S2, owner `bc986d96-6c94-49bb-a8dd-66e79f10da6c`).
-- Tested implementation: `9652e7b90bc6e8c8447e10ab99af07a973e8f295`. The subsequent commit containing this report changes documentation only.
+- Final tested implementation: `c6f8caef1dcb920f162240623fdd6e05ddc6122e`. The subsequent commit containing this report changes documentation only.
 - Plan: [2026-10-05-card-1065-blocked-task-parking-plan.md](../superpowers/plans/2026-10-05-card-1065-blocked-task-parking-plan.md).
-- Intended eventual landing remains adoption after S2 lands; do not adopt the current implementation with the finding unresolved.
+- Intended eventual landing remains adoption of this original Code task after ordinary Review and S2 landing, followed by S4 source-policy.
 - Task token was present. Read CARD-1065 and authenticated GET /api/runner-defaults and /api/session-runners. No fleet location was embedded.
 
 ## Implemented footprint
@@ -28,13 +28,15 @@ Missing either parking or conditional-release capability, unknown versions and u
 local runtimes refuse without force-release/generation-kill fallback. The configured
 runner performs publication under the session input/generation gate; a live conditional
 release revalidates source and then fresh native transcript evidence before its final
-synchronous fences. The server routing/scoped clients preserve session selection.
+synchronous fences. Fresh exited/absent confirmations also verify publication and
+recheck session identity, generation and durable custody after the source read.
+The server routing/scoped clients preserve session selection.
 Parking remains default-off. No migrations, automatic callers, deployment, restarts,
 live session stop, workspace deletion or provider launches were added/performed.
 
-## Remaining finding — final source check is skipped when the child already exited
+## Round 3 — exited/absent source confirmation repaired
 
-Inspection of SessionRunnerRuntime.ReleaseTerminalSeatAsync at tested SHA:
+Inspection at the previous green SHA `9652e7b90bc6e8c8447e10ab99af07a973e8f295` found:
 
 - The source VerifyAsync call is inside `if (!wasExited)` (around lines 1134–1154).
 - An already-exited child proceeds to ReleaseSlotUnderGateAsync without that verification.
@@ -44,12 +46,36 @@ Inspection of SessionRunnerRuntime.ReleaseTerminalSeatAsync at tested SHA:
   the repair must reconcile that branch with the same publication contract while retaining
   truthful physical occupancy and generation-watermark semantics.
 
-This is an inspection finding, **not an executed red test**. Existing V-8 covers valid
-already-exited/absent cases; its green does not cover source drift combined with them.
-The next Code slice should place publication validation on every relevant confirmation
-path and extend the existing three-method roster with these ordinary scenarios, preserving
-the successful exited/absent controls. No timeout or assertion may be relaxed.
-Mutation owns the final missing-control/variant inventory and deliberate red/restore/green.
+The caller then authorized: “one further bounded repair round (round 3). Add a red test
+first, then fix final source verification for already-exited/absent paths and matching
+ordinary scenarios, rerun CP-3, push, report.”
+
+Test-only commit `07e8632201d5fd57dc452d8cb93489f42152a91c` added 17 ordinary
+scenarios inside V-8: exited and fresh absent states crossed with matching source,
+advanced HEAD, dirty checkout, changed ref, changed endpoint, unavailable source read,
+changed generation and replacement object, plus an absent durable-manifest race.
+Receipts come from real scratch Git publication. The absence cases restart the runtime
+so historical cached success cannot mask a fresh decision. Both valid controls pass.
+The source-read failure is a real failing Git child; race callbacks change concrete
+runtime/manifest state during the real Git read.
+
+CP-3 then failed at the intended V-8 assertion with 15 unsafe confirmations:
+exited returned AlreadyExited for seven negative scenarios; absent returned AlreadyAbsent
+for eight. V-6 and V-7 passed. This is executed defect evidence against unchanged
+production code, not a deliberate Mutation cycle or an inherited-red claim.
+
+Production-only repair `c6f8caef1dcb920f162240623fdd6e05ddc6122e` extracts the shared
+publication verifier and uses it before fresh exited/absent confirmation. After the
+await, exited rechecks object identity, accepted generation, physical exit and verification
+ownership; absent rechecks tracked-session absence and both durable seat manifests.
+Negative source results refuse without removing custody metadata or signaling a child.
+Live release retains its fresh native transcript read and synchronous final fences.
+Historical cached success is still a replay, not a new release/absence confirmation.
+
+The unchanged tests pass after the repair, including no signal, retained neighboring
+session, unchanged generation watermark/transcript sidecar, retained refused custody
+and truthful physical occupancy. No timeout, retry or assertion was loosened.
+Mutation owns deliberate mutants and the final missing-control/variant inventory.
 
 ## Ordinary verification and repairs
 
@@ -60,17 +86,17 @@ No assembly/namespace run was needed.
 | ID | Exact method | Actual outcome |
 |---|---|---|
 | V-6 | BlockedParkWireTests.C1065_OldRunnerNeverReceivesFallbackKill | Passed, 1 |
-| V-7 | BlockedParkWireTests.C1065_ActivityOrReplacementInvalidatesParkRelease | Passed, 1 after two fixture repairs; remaining combination above is not covered |
-| V-8 | BlockedParkWireTests.C1065_ExitUnconfirmedRetainsSeatAndCustody | Passed, 1; final inspection gap above remains |
+| V-7 | BlockedParkWireTests.C1065_ActivityOrReplacementInvalidatesParkRelease | Passed, 1; earlier fixture repairs recorded below |
+| V-8 | BlockedParkWireTests.C1065_ExitUnconfirmedRetainsSeatAndCustody | Passed, 1; includes all 17 new exited/absent scenarios after the observed defect red |
 
 Fresh TRX was inspected for all three exact class/method identities: total/executed/passed=3,
 failed/skipped=0. Receipt validation returned:
 
 ```text
-CHECKPOINT SOURCE VALID source=9652e7b90bc6e8c8447e10ab99af07a973e8f295 rows=1
+CHECKPOINT SOURCE VALID source=c6f8caef1dcb920f162240623fdd6e05ddc6122e rows=1
 ```
 
-Both preceding reds were new fixture failures, not claimed inherited failures:
+The first two reds were new fixture failures, not claimed inherited failures:
 1. `847c7a5768b38b155dfa923799c1ada8e7ec949e`: 2 pass / 1 fail. G-47 mistakenly inspected the completed-write counter during an attempted write. Repair checks the actual production pre-write proof invalidation and still asserts no signal/retained custody.
 2. `54f659e0816f4cdea2d287d4cdc4eb8044ad91bb`: 2 pass / 1 fail. The final object-replacement scenario used Track, which correctly refuses duplicate registration. Repair supplies concrete replacement state at the final I/O barrier, and separately exposes the real replay decision so the independent release-in-progress guard cannot mask it.
 
@@ -83,21 +109,26 @@ Unedited receipts:
 CHECKPOINT CP-3 commit=847c7a5768b38b155dfa923799c1ada8e7ec949e build=ok filter=/*/*/BlockedParkWireTests/C1065_* executed=3 passed=2 failed=1 skipped=0 trx=/work/worktrees/task-f69e8b6e/.antiphon/checkpoints/20261005-231422-6b95/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=847c7a5768b38b155dfa923799c1ada8e7ec949e sourceState=clean buildSource=verified
 CHECKPOINT CP-3 commit=54f659e0816f4cdea2d287d4cdc4eb8044ad91bb build=ok filter=/*/*/BlockedParkWireTests/C1065_* executed=3 passed=2 failed=1 skipped=0 trx=/work/worktrees/task-f69e8b6e/.antiphon/checkpoints/20261005-231535-2511/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=54f659e0816f4cdea2d287d4cdc4eb8044ad91bb sourceState=clean buildSource=verified
 CHECKPOINT CP-3 commit=9652e7b90bc6e8c8447e10ab99af07a973e8f295 build=ok filter=/*/*/BlockedParkWireTests/C1065_* executed=3 passed=3 failed=0 skipped=0 trx=/work/worktrees/task-f69e8b6e/.antiphon/checkpoints/20261005-231749-b049/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=9652e7b90bc6e8c8447e10ab99af07a973e8f295 sourceState=clean buildSource=verified
+CHECKPOINT CP-3 commit=07e8632201d5fd57dc452d8cb93489f42152a91c build=ok filter=/*/*/BlockedParkWireTests/C1065_* executed=3 passed=2 failed=1 skipped=0 trx=/work/worktrees/task-f69e8b6e/.antiphon/checkpoints/20261005-232649-9b2e/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=07e8632201d5fd57dc452d8cb93489f42152a91c sourceState=clean buildSource=verified
+CHECKPOINT CP-3 commit=c6f8caef1dcb920f162240623fdd6e05ddc6122e build=ok filter=/*/*/BlockedParkWireTests/C1065_* executed=3 passed=3 failed=0 skipped=0 trx=/work/worktrees/task-f69e8b6e/.antiphon/checkpoints/20261005-232819-103d/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=c6f8caef1dcb920f162240623fdd6e05ddc6122e sourceState=clean buildSource=verified
 ```
 
-All three runs: slot=granted, waited=0s, sourceState=clean, buildSource=verified.
-Final CP-3 build: 17.3221237s; test host: 26.8716429s; overall: 45s.
+All five runs: slot=granted, waited=0s, sourceState=clean, buildSource=verified.
+Final CP-3 build: 19.5787537s; test host: 31.4055785s; overall: 52s.
+These were one run per changed source selection, not unchanged-proof repetitions.
 
 Additional builds, explicitly explained before execution:
 - Checkpoint-tool bootstrap, required by the plan: output bin-c1065-driver/, slot=granted waited=0s, 0 errors / 1 warning, 4.59s MSBuild.
+- Round-3 checkpoint-tool bootstrap after prior cleanup: same isolated output, slot=granted waited=0s, 0 errors / 1 warning, 3.89s MSBuild.
 - Server adapter compile, because CP-3's runner project does not compile the five changed server files: output bin-c1065-server/, tested source 9652e7b90bc6e8c8447e10ab99af07a973e8f295, slot=granted waited=0s, 0 errors / 15 warnings, 44.73s MSBuild.
   Log: `.antiphon/c1065-s3-server-build.log`.
-- No additional test driver or repetition after green.
+- No additional test driver or unchanged repetition after green. Round 3 changed only runtime/test source, so no second server adapter build was needed.
 
 ## Coverage lint and deferred obligations
 
-Full-plan coverage ran at the initial and final implementation commits. Both exited 2
-because future selected classes do not yet exist. The final complete text is:
+Full-plan coverage ran at the initial implementation, previous green implementation and
+final repaired implementation commits. Each exited 2 because future selected classes
+do not yet exist. The final complete text is:
 
 ```text
 PLAN-COVERAGE schema=1 mode=static plan="docs/superpowers/plans/2026-10-05-card-1065-blocked-task-parking-plan.md" planSha256=8d780a561c59779df30b528061caea4c6842e64dfeb8d89259b377b0530cb7f3 inputsSha256= files=0
@@ -129,6 +160,10 @@ decision (the precursor uses delivery-proof invalidation, not an attempted-write
 PC-64's actual replay decision is PriorTerminalRelease; its assertion precedes the separate
 release-in-progress protection. Other slices' PCs (PC-1–28 and PC-68–200) also remain pending
 their commissioned SourceLanding owners.
+Round 3 adds ordinary exited/absent variants for G-57–60 and final identity/custody guards;
+these do not discharge PC-52/53/57/58/59/60/67 or their required variants. Mutation must
+inspect both fresh confirmation paths, including post-source-read generation/object/
+manifest races and same-SHA ref/endpoint changes.
 
 ## Custody, cleanup and next action
 
@@ -138,11 +173,10 @@ producer-owned row outputs; red-run clean was awaited. All six server alternate 
 directories and the checkpoint bootstrap directory were removed using their exact producer
 inventory. No owned child/build/test run remains active.
 
-Run the full task-range evidence guard after this documentation commit:
+Run the full task-range evidence guard after this documentation commit (final result
+reported with the pushed SHA in the caller report):
 `pwsh -NoProfile -File scripts/check-evidence-diff.ps1 -BaseRef c1adb878a42f4c69258483e33dab3cd2a9797351 -HeadRef HEAD`.
 
 Restart: **none**. Future activation owner: caller/orchestrator after integrated qualification.
-Next: another authorized S3 Code repair, then ordinary Review, then S4 source-policy.
-The current two-repair commissioning is exhausted; do not advance to Review or land on
-the green checkpoint alone.
-
+Next: ordinary Review of S3, then caller adoption of the original Code task after S2
+lands, then S4 source-policy. The authorized third repair round is complete.
