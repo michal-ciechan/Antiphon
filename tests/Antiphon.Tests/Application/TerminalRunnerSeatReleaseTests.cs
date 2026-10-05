@@ -36,7 +36,8 @@ public class TerminalRunnerSeatReleaseTests
             await using var db = f.Db();
             (await db.Agents.AnyAsync(a => a.Id == f.AgentId)).ShouldBeTrue();
             (await db.RunnerSeatReleases.SingleAsync()).ReasonCode.ShouldBe("Working");
-            (await f.AttentionAsync()).Items.ShouldContain(i => i.ConditionKey!.StartsWith("runner-seat-release:"));
+            (await f.AttentionAsync()).Items.ShouldContain(i => i.ConditionKey != null
+                && i.ConditionKey.StartsWith("runner-seat-release:"));
         }
     }
 
@@ -79,10 +80,13 @@ public class TerminalRunnerSeatReleaseTests
         {
             await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, provider: "Codex");
             await f.PrepareContinuationAsync();
-            if (syncBlock) await f.EditAsync((t, _) => t.FailureReason = "Runner workspace sync refused; report retained.");
             await f.Live!.SubmitAsync("completed blocked task");
-            await f.ReleaseFromSettlementAsync();
+            await f.SettleAsync(syncBlock ? "done" : "blocked");
+            (await f.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Blocked);
+            if (syncBlock) (await f.TaskAsync()).FailureReason.ShouldNotBeNull();
             f.Live.Child.Kills.ShouldBe(0);
+            f.Clock.Advance(TimeSpan.FromSeconds(120));
+            await f.JobAsync();
             f.Live.Clock.Advance(TimeSpan.FromSeconds(120));
             await f.JobAsync();
             f.Live.Child.Kills.ShouldBe(1); f.Live.Runtime.LiveSessionCount.ShouldBe(0);
@@ -91,7 +95,7 @@ public class TerminalRunnerSeatReleaseTests
             var row = await db.AgentSessions.SingleAsync(s => s.Id == f.SessionId);
             row.Status.ShouldBe(SessionStatus.Stopped); row.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
             var task = await f.TaskAsync();
-            task.Status.ShouldBe(AgentTaskStatus.Blocked); task.Result.ShouldBe("completed report");
+            task.Status.ShouldBe(AgentTaskStatus.Blocked); task.Result.ShouldContain("Complete seat report canary.");
             task.WorktreeBranch.ShouldBe("feat/retained"); Directory.Exists(task.WorktreePath).ShouldBeTrue();
         }
     }
@@ -161,24 +165,32 @@ public class TerminalRunnerSeatReleaseTests
             await using var db = f.Db();
             var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == f.TaskId);
             var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == note.QueueMessageId);
-            var text = shape == "wrong" ? "different report" : shape == "partial" ? row.Body[..40] : row.Body;
-            if (shape != "ack") await f.NativePromptAsync(parent, text);
-            if (shape == "queued") await db.TranscriptEntries.Where(t => t.AgentSessionId == parent && t.Text == text)
-                .ExecuteUpdateAsync(u => u.SetProperty(t => t.Kind, TranscriptKinds.QueuedUserPrompt));
-            var max = await db.TranscriptEntries.Where(t => t.AgentSessionId == parent).MaxAsync(t => t.Sequence);
-            await db.SessionQueuedMessages.Where(m => m.Id == row.Id).ExecuteUpdateAsync(u => u
-                .SetProperty(m => m.Status, QueuedMessageStatus.Sent).SetProperty(m => m.DeliveryAttempts, 1)
-                .SetProperty(m => m.LastDeliveryStartedAt, f.Now)
-                .SetProperty(m => m.LastDeliveryBaselineSequence, shape == "stale" ? max : 0));
+            if (shape == "stale") await f.NativePromptAsync(parent, row.Body);
+            var submitted = new List<string>();
+            f.Recipient!.OnSubmitted = async body =>
+            {
+                submitted.Add(body);
+                if (shape is "ack" or "stale") return;
+                var text = shape == "wrong" ? "different report" : shape == "partial" ? body[..40] : body;
+                await f.NativePromptAsync(parent, text);
+                if (shape == "queued") await db.TranscriptEntries.Where(t => t.AgentSessionId == parent && t.Text == text)
+                    .ExecuteUpdateAsync(u => u.SetProperty(t => t.Kind, TranscriptKinds.QueuedUserPrompt));
+            };
+            await f.EndTurnAsync(parent);
+            await f.FlushAsync(parent);
+            submitted.ShouldHaveSingleItem("one actual queue attempt, no fabricated attempt stamp");
+            var attempted = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id);
+            var rendering = TaskCompletionNotification.TryReadDelivery(attempted.CompletionDeliveryJson).ShouldNotBeNull();
+            rendering.WireText.ShouldBe(submitted[0]);
+            (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == row.Id)).DeliveryAttempts.ShouldBeGreaterThan(0);
             await f.ReconcileParentAsync();
             (await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id))
                 .ConfirmedAt.ShouldBeNull("PC-74: " + shape);
-            await db.SessionQueuedMessages.Where(m => m.Id == row.Id).ExecuteUpdateAsync(u => u
-                .SetProperty(m => m.Status, QueuedMessageStatus.Pending).SetProperty(m => m.DeliveryAttempts, 0)
-                .SetProperty(m => m.LastDeliveryStartedAt, (DateTime?)null)
-                .SetProperty(m => m.LastDeliveryBaselineSequence, (long?)null));
-            await f.EndTurnAsync(parent); await f.FlushAsync(parent); await f.ReconcileParentAsync();
+            // Late native confirmation of the exact submitted bytes finishes the same
+            // attempt; recovery must not type the report a second time.
+            await f.NativePromptAsync(parent, submitted[0]); await f.ReconcileParentAsync();
             (await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id)).ConfirmedAt.ShouldNotBeNull();
+            submitted.Count.ShouldBe(1);
         }
     }
 
