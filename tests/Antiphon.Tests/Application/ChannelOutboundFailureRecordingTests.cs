@@ -37,6 +37,7 @@ public sealed class ChannelOutboundFailureRecordingTests
             await w.SeedAsync(route);
             await w.FaultAsync(table, enable: true);
             await w.RunAsync(route);
+            await w.AssertFaultFiredAsync(route + "/" + table);
             await using (var db = w.Db())
             {
                 (await db.AgentIncidents.CountAsync()).ShouldBe(0, route + "/" + table);
@@ -121,7 +122,10 @@ public sealed class ChannelOutboundFailureRecordingTests
             await using (var db = w.Db())
             {
                 if (owner == "captured")
+                {
                     await db.ChatChannels.ExecuteUpdateAsync(s => s.SetProperty(c => c.AgentId, (Guid?)null));
+                    await db.Agents.ExecuteUpdateAsync(s => s.SetProperty(a => a.PersistentSessionId, (string?)null));
+                }
                 if (owner is "deleted" or "none") await db.Agents.ExecuteDeleteAsync();
             }
             await w.RunAsync(route); await w.AssertLossAsync();
@@ -261,7 +265,8 @@ public sealed class ChannelOutboundFailureRecordingTests
                 if (route == "Failed") File.Delete(snapshot.ReplyPath); // spent budget must not reopen even the frozen payload
             }
             db.SessionQueuedMessages.Add(new() { Id = Source, AgentSessionId = Session, Sequence = 1, Body = "original prompt",
-                Origin = QueuedMessageOrigin.Channel, Status = QueuedMessageStatus.Sent, ConversationKey = route == "Unroutable" ? "fake:missing" : "fake:chat",
+                Origin = QueuedMessageOrigin.Channel, Status = QueuedMessageStatus.Sent, ConversationKey = route == "Unroutable" ? "invalid-conversation-key" : "fake:chat",
+                DeliveryAttempts = 1, LastDeliveryBaselineSequence = 0, LastDeliveryStartedAt = Now,
                 CreatedAt = Now.AddDays(-1), SentAt = route == "TTL" ? Now.AddMinutes(-31) : Now, ChannelOutboundDeliveryId = Delivery });
             if (route is "Unroutable" or "Provider")
             {
@@ -308,14 +313,22 @@ public sealed class ChannelOutboundFailureRecordingTests
             await using var db = Db();
             if (enable)
             {
-                await db.Database.ExecuteSqlRawAsync("CREATE FUNCTION c519_reject_loss() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected loss insert failure'; END $$");
+                await db.Database.ExecuteSqlRawAsync("CREATE SEQUENCE c519_loss_fault_seq");
+                await db.Database.ExecuteSqlRawAsync("CREATE FUNCTION c519_reject_loss() RETURNS trigger LANGUAGE plpgsql AS $ BEGIN PERFORM nextval('c519_loss_fault_seq'); RAISE EXCEPTION 'injected loss insert failure'; END $$");
                 await db.Database.ExecuteSqlRawAsync($"CREATE TRIGGER c519_loss BEFORE INSERT ON \"{table}\" FOR EACH ROW EXECUTE FUNCTION c519_reject_loss()");
             }
             else
             {
                 await db.Database.ExecuteSqlRawAsync($"DROP TRIGGER c519_loss ON \"{table}\"");
                 await db.Database.ExecuteSqlRawAsync("DROP FUNCTION c519_reject_loss()");
+                await db.Database.ExecuteSqlRawAsync("DROP SEQUENCE c519_loss_fault_seq");
             }
+        }
+        public async Task AssertFaultFiredAsync(string scenario)
+        {
+            await using var db = Db();
+            // PostgreSQL sequence advancement survives the rejected transaction.
+            (await db.Database.SqlQueryRaw<bool>("SELECT is_called AS \"Value\" FROM c519_loss_fault_seq").SingleAsync()).ShouldBeTrue(scenario);
         }
         public async Task AssertLossAsync(bool uncertain = false)
         {
