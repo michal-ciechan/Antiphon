@@ -23,9 +23,10 @@ public sealed record TerminalTranscriptObservation(
     long? LastPromptRevision = null);
 
 /// <summary>
-/// The delivery owner supplies the native binding and file-order floor captured before the
-/// current generation's task prompt. These are expected evidence, never a caller-supplied age.
-/// An unknown floor/binding cannot qualify. Server ownership and delivery checks remain required.
+/// Legacy callers supply the native binding and file-order floor captured before the prompt.
+/// Captured mode ignores those fields and resolves the runner's current submitted capture;
+/// discovery uses empty binding/-1 placeholders. Missing capture cannot qualify. Server
+/// ownership and delivery checks remain required in either mode.
 /// </summary>
 public sealed record TerminalSeatObservationRequest(
     Guid ExpectedRunnerStoreId,
