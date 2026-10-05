@@ -444,6 +444,13 @@ internal sealed class C1008WrapperFixture : IDisposable
 
 internal sealed class C1008HostFixture : IDisposable
 {
+    internal static void RequireNativeLinux()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new TUnit.Core.Exceptions.SkipTestException(
+                "CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.");
+    }
+
     internal string Root { get; } = Directory.CreateTempSubdirectory("c1008-host-").FullName;
     internal JsonObject Docker { get; }
     internal JsonObject Statuses { get; }
