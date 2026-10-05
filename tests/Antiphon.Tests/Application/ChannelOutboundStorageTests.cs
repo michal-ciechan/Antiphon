@@ -10,6 +10,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Unit")]
+[ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
 public sealed class ChannelOutboundStorageTests
 {
     [Test]
