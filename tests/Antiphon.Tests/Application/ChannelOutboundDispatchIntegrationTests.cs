@@ -56,7 +56,7 @@ public sealed class ChannelOutboundDispatchIntegrationTests
         var conversation = await h.BindChannelAsync();
         var prompt = "Send the complete source, including its middle and tail.";
         var correlationId = await h.SeedChannelCorrelationAsync(prompt, "telegram:" + conversation);
-        var path = Path.Combine(h.TempRoot, "late-source.md");
+        var path = Path.Combine(h.TempRoot, "workspace", "late-source.md");
         // The source does not exist during dispatch. A read-before-capture implementation
         // either drops it or cannot commit the durable owner.
         await h.InsertTurnAsync(prompt, $"Complete answer.\n[[attach: {path}]]");
