@@ -588,7 +588,7 @@ ordinary assertions. Passing names/counts without those bodies do not qualify.
 | V-10 | Real DataRetentionService passes; `ChannelOutboundRetentionTests`, roster below | remove all incidental persistent-agent/task/inbound protections; stale sessions/transcripts/queue/task trees and files across Captured/Pending/Converting/Ready/Publishing/Held/Uncertain/Failed, incomplete repair and open roots; closed ineligible/fully examined companions prune; transcript-lock race. |
 | V-11 | Owned process death before publish; `ChannelOutboundUnifiedCrashTests`, roster below | Before_capture_death_is_discovered, Captured_death_needs_no_wake_signal, Partial_stage_death_retries_preparation, Complete_stage_death_preserves_snapshot; each main/tail/machine. Fresh process starts real hosted recovery; exact original adapter receipt. |
 | V-12 | Owned process death during/after publish; `ChannelOutboundUnifiedCrashTests`, roster below | Attempt_death_stays_uncertain (Publishing, attempt and producer-entry cuts), Accepted_death_stays_uncertain (acceptance and outcome-commit-failure cuts), Published_death_never_replays; each main/tail/machine. Receiver count 0 or 1 before manual retry, never automatic duplicate. |
-| V-13 | Real queue -> broker -> recipient; `ChannelOutboundUnifiedTransportTests`, roster below | C519_Queue_to_adapter has explicit main/tail/machine arguments, each looping idle/busy recipient x gateway already eligible/late, with named upstream/capture/definite-refusal handoff faults above. C519_Size_refusal uses broker max.message.bytes below serialized envelope, actual MsgSizeTooLarge, Failed+loss, no automatic retry; distinct valid companion reaches fake Slack. C519_Converter_handoff exercises task/create/dispatch/result crash and enqueue refusal recovery, worker full UserPrompt and resulting converted adapter receipt. Also requires the partial-prompt negative/full-receipt companion and enabled loss notice through the gateway. Converter cuts have independent idle/busy arguments. Counts: 3+1+8+1+1=14. |
+| V-13 | Real queue -> broker -> recipient; `ChannelOutboundUnifiedTransportTests`, roster below | C519_Queue_to_adapter has explicit main/tail/machine arguments, each looping idle/busy recipient x gateway already eligible/late, with named upstream/capture/definite-refusal handoff faults above. C519_Size_refusal uses broker max.message.bytes below serialized envelope, actual MsgSizeTooLarge, Failed+loss, no automatic retry; distinct valid companion reaches fake Slack. C519_Converter_handoff exercises task/create/dispatch/result crash and enqueue refusal recovery, worker full UserPrompt and resulting converted adapter receipt. Counts: 3+1+1=5. |
 
 The matrices are mandatory within the named tests, even when implemented as internal
 loops. Isolate every negative from masking guards: different SourceKeys for root/start
@@ -956,16 +956,16 @@ select CP-29 in a Linux invocation. A missing Windows lane leaves R-12 outstandi
 | CP-16 | S11a | `tests/Antiphon.Tests -> bin-c519-cp16/` | reply-durability | `/*/*/ChannelReplyDurabilityTests/*` | R-2 | all 25 listed results, 0 failed/skipped | 25 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-17 | S11a | `tests/Antiphon.Tests -> bin-c519-cp17/` | correlation | `/*/*/(ChannelPromptCorrelationTests*)\|(ChannelPromptCorrelationUnitTests*)\|(ChannelMachineTurnMatchTests*)/*` | R-3 | all 42 listed results, 0 failed/skipped | 42 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-18 | S11b | `tests/Antiphon.Tests -> bin-c519-cp18/` | machine-attachments | `/*/*/(ChannelMachineTurnTextTests*)\|(ChannelFollowUpAttachmentTests*)/*` | R-4 | all 45 listed results, 0 failed/skipped | 45 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-19 | S12Final | `tests/Antiphon.Tests -> bin-c519-cp19/` | outbound-partials | `/*/*/ChannelOutboundDeliveryTests/*` | R-5 | all 38 listed results, 0 failed/skipped | 38 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-19 | S11b | `tests/Antiphon.Tests -> bin-c519-cp19/` | outbound-partials | `/*/*/ChannelOutboundDeliveryTests/*` | R-5 | all 38 listed results, 0 failed/skipped | 38 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-20 | S11b | `tests/Antiphon.Tests -> bin-c519-cp20/` | profile-contract | `/*/*/(ChannelOutboundPolicyTests*)\|(ChannelOutboundContractTests*)/*` | R-5 | all 31 listed results, 0 failed/skipped | 31 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-21 | S11b | `tests/Antiphon.Tests -> bin-c519-cp21/` | batching | `/*/*/ChannelBatchingTests/*` | R-10 | all 10 listed results, 0 failed/skipped | 10 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-22 | S11b | `tests/Antiphon.Tests -> bin-c519-cp22/` | deadlines | `/*/*/ChannelOutboundDeadlineTests/*` | R-6 | all 13 listed results, 0 failed/skipped | 13 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-23 | S12a | `tests/Antiphon.Tests -> bin-c519-cp23/` | crash-preparation | `/*/*/ChannelOutboundUnifiedCrashTests/(C519_Before_capture_death_is_discovered*)\|(C519_Captured_death_needs_no_wake_signal*)\|(C519_Partial_stage_death_retries_preparation*)\|(C519_Complete_stage_death_preserves_snapshot*)` | V-11 | all 12 listed results, 0 failed/skipped | 12 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-24 | S12a | `tests/Antiphon.Tests -> bin-c519-cp24/` | crash-publication | `/*/*/ChannelOutboundUnifiedCrashTests/(C519_Attempt_death_stays_uncertain*)\|(C519_Accepted_death_stays_uncertain*)\|(C519_Published_death_never_replays*)` | V-12 | all 9 listed results, 0 failed/skipped | 9 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-25 | S12Final | `CP-19` | queue-recipient | `/*/*/ChannelOutboundUnifiedTransportTests/C519_Queue_to_adapter*` | V-13 | all 3 listed results, 0 failed/skipped | 3 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-26 | S12Final | `CP-19` | transport-handoffs | `/*/*/ChannelOutboundUnifiedTransportTests/(C519_Size_refusal*)\|(C519_Converter_handoff*)\|(C519_Partial_prompt_requires_complete_receipt*)\|(C519_Enabled_loss_notice_reaches_adapter*)` | V-13 | all 11 listed results, 0 failed/skipped | 11 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-27 | S12Final | `CP-19` | composed-files | `/*/*/ChannelOutboundComposedTransportTests/*` | R-9 | all 1 listed results, 0 failed/skipped | 1 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-28 | S12Final | `CP-19` | manual-recovery | `/*/*/ChannelOutboundRecoveryTests/(Expired_publishing_lease_is_uncertain_until_explicit_retry*)\|(Held_head_blocks_later_reply_until_original_binding_is_repaired_and_resumed*)\|(Restart_preserves_two_inbound_slack_routes_behind_an_uncertain_head*)\|(Broker_ack_before_process_death_remains_uncertain_without_replay*)` | R-8 | all 4 listed results, 0 failed/skipped | 4 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-25 | S12b | `tests/Antiphon.Tests -> bin-c519-cp25/` | queue-recipient | `/*/*/ChannelOutboundUnifiedTransportTests/C519_Queue_to_adapter*` | V-13 | all 3 listed results, 0 failed/skipped | 3 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-26 | S12b | `tests/Antiphon.Tests -> bin-c519-cp26/` | transport-handoffs | `/*/*/ChannelOutboundUnifiedTransportTests/(C519_Size_refusal*)\|(C519_Converter_handoff*)` | V-13 | all 2 listed results, 0 failed/skipped | 2 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-27 | S12b | `tests/Antiphon.Tests -> bin-c519-cp27/` | composed-files | `/*/*/ChannelOutboundComposedTransportTests/*` | R-9 | all 1 listed results, 0 failed/skipped | 1 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-28 | S12b | `tests/Antiphon.Tests -> bin-c519-cp28/` | manual-recovery | `/*/*/ChannelOutboundRecoveryTests/(Expired_publishing_lease_is_uncertain_until_explicit_retry*)\|(Held_head_blocks_later_reply_until_original_binding_is_repaired_and_resumed*)\|(Restart_preserves_two_inbound_slack_routes_behind_an_uncertain_head*)\|(Broker_ack_before_process_death_remains_uncertain_without_replay*)` | R-8 | all 4 listed results, 0 failed/skipped | 4 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-29 | S13 | `tests/Antiphon.Tests -> bin-c519-cp29/` | windows-parity | `/*/*/HerdrAlwaysOnChannelParityTests/AlwaysOn_channel_bound_survives_child_death_and_replies*` | R-12 | all 2 listed results, 0 failed/skipped | 2 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-30 | S5 | `tests/Antiphon.Tests -> bin-c519-cp30/` | discovery-s5 | `/*/*/ChannelOutboundDiscoveryTests/*` | V-5 (S5 subset) | all 16 S5 results, 0 failed/skipped | 16 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-31 | S5 | `tests/Antiphon.Tests -> bin-c519-cp31/` | dispatch-s5 | `/*/*/ChannelOutboundDispatchIntegrationTests/*` | R-1 (dispatcher) | all 10 results, 0 failed/skipped | 10 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
@@ -997,21 +997,27 @@ select CP-29 in a Linux invocation. A missing Windows lane leaves R-12 outstandi
 | CP-57 | S9 | `tests/Antiphon.Tests -> bin-c519-cp57/` | runtime-s9 | `/*/*/AgentTaskReplyIntegrationTests/Deferred_is_durable_and_releases_runtime` | R-1 runtime | all 1 result, 0 failed/skipped | 1 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-58 | S10 | `tests/Antiphon.Tests -> bin-c519-cp58/` | retention-regression-s10 | `/*/*/DataRetentionServiceTests/*` | R-11 full affected class | all class results, 0 failed/skipped | 55 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-59 | S10 | `tests/Antiphon.SessionRunner.Tests -> bin-c519-cp59/` | terminal-reader-s10 | `/*/*/(TerminalSeatReleaseTests*)\|(TranscriptTailerObservationTests*)\|(CodexTranscriptTailerTests*)\|(GrokTranscriptTailerTests*)/*` | V-5, V-10 terminal completeness | all four class results, 0 failed/skipped | 70 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-60 | S12Final | `CP-19` | unit-s12-final | `/*/*/*/*[Category=Unit]` | Final profile v1 Unit lane | all Unit results, 0 failed/skipped | 1 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-61 | S12Final | `CP-19` | recovery-s12-final | `/*/*/ChannelOutboundRecoveryTests/*` | R-8 full affected probe consumer | all 18 results, 0 failed/skipped | 18 | 10 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-61 | S12e | `tests/Antiphon.Tests -> bin-c519-cp61/` | recovery-s12-final | `/*/*/ChannelOutboundRecoveryTests/*` | R-8 full affected probe consumer | all 18 results, 0 failed/skipped | 18 | 10 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-62 | S12c | `tests/Antiphon.Tests -> bin-c519-cp62/` | queue-recipient-s12c | `/*/*/ChannelOutboundUnifiedTransportTests/C519_Queue_to_adapter*` | V-13 fixture boundary (D-S12-1, D-S12-2) | all 3 listed results, 0 failed/skipped; record measured minutes | 3 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-63 | S12c | `CP-62` | unit-guards-s12c | `/*/*/(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)/*` | S12 affected Unit guards (D-S12-7, CARD-1075) | all 3 results, 0 failed/skipped | 3 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-64 | S12d | `tests/Antiphon.Tests -> bin-c519-cp64/` | converter-recovery-s12d | `/*/*/ChannelOutboundUnifiedTransportTests/C519_Converter_handoff*` | V-13 converter cuts after CARD-1074 fixes | all 8 listed results, 0 failed/skipped | 8 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-65 | S12d | `CP-64` | brief-recovery-s12d | `/*/*/DelegationBriefRecoveryTests/*` | CARD-1074 generic witnesses (PC-S12-1..4) | all 3 listed results, 0 failed/skipped | 3 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-66 | S12d | `CP-64` | dispatch-resume-s12d | `/*/*/(AgentSessionInterruptedLaunchResumeTests*)\|(AgentTaskDispatchFailureTests*)\|(AgentSessionLaunchQueueOwnershipTests*)/*` | affected resume/dispatch consumers | all three class results, 0 failed/skipped | 28 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-67 | S12e | `CP-61` | outbound-partials-final | `/*/*/ChannelOutboundDeliveryTests/*` | R-5 final candidate | all 38 listed results, 0 failed/skipped | 38 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-68 | S12e | `CP-61` | composed-files-final | `/*/*/ChannelOutboundComposedTransportTests/*` | R-9 final candidate | all 1 listed results, 0 failed/skipped | 1 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-69 | S12e | `CP-61` | manual-recovery-final | `/*/*/ChannelOutboundRecoveryTests/(Expired_publishing_lease_is_uncertain_until_explicit_retry*)\|(Held_head_blocks_later_reply_until_original_binding_is_repaired_and_resumed*)\|(Restart_preserves_two_inbound_slack_routes_behind_an_uncertain_head*)\|(Broker_ack_before_process_death_remains_uncertain_without_replay*)` | R-8 final candidate | all 4 listed results, 0 failed/skipped | 4 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-70 | S12f | `tests/Antiphon.Tests -> bin-c519-cp70/` | queue-recipient-final | `/*/*/ChannelOutboundUnifiedTransportTests/C519_Queue_to_adapter*` | V-13 final candidate | all 3 listed results, 0 failed/skipped | 3 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-71 | S12f | `CP-70` | transport-handoffs-final | `/*/*/ChannelOutboundUnifiedTransportTests/(C519_Size_refusal*)\|(C519_Converter_handoff*)\|(C519_Partial_prompt_requires_complete_receipt*)\|(C519_Enabled_loss_notice_reaches_adapter*)` | V-13 final candidate | all 11 listed results, 0 failed/skipped | 11 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-72 | S12f | `CP-70` | unit-guards-final | `/*/*/(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)/*` | S12 affected Unit guards, final candidate | all 3 results, 0 failed/skipped | 3 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-73 | S12f | `CP-70` | dispatch-resume-final | `/*/*/(AgentSessionInterruptedLaunchResumeTests*)\|(AgentTaskDispatchFailureTests*)\|(AgentSessionLaunchQueueOwnershipTests*)\|(DelegationBriefRecoveryTests*)/*` | CARD-1074 witnesses and affected consumers, final candidate | all four class results, 0 failed/skipped | 31 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-74 | S12g | `tests/Antiphon.Tests -> bin-c519-cp74/` | crash-preparation-final | `/*/*/ChannelOutboundUnifiedCrashTests/(C519_Before_capture_death_is_discovered*)\|(C519_Captured_death_needs_no_wake_signal*)\|(C519_Partial_stage_death_retries_preparation*)\|(C519_Complete_stage_death_preserves_snapshot*)` | V-11 final candidate | all 12 listed results, 0 failed/skipped | 12 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-75 | S12g | `CP-74` | crash-publication-final | `/*/*/ChannelOutboundUnifiedCrashTests/(C519_Attempt_death_stays_uncertain*)\|(C519_Accepted_death_stays_uncertain*)\|(C519_Published_death_never_replays*)` | V-12 final candidate | all 9 listed results, 0 failed/skipped | 9 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
-S12 Code task `5724b53e` is commissioned Final profile v1. CP-60/61 supplement
-CP-23..28 to satisfy that profile's whole Unit lane and full affected class
-requirements; this supersedes the earlier no-Unit exclusion for this dispatch.
-The existing probe's old modes remain regression subjects because S12 extends its
-configuration and launch boundary. No whole assembly or namespace run is added.
-PC-89..96 and every path/cut variant remain pending SourceLanding Mutation.
-
-S12 continuation `9bbc9566` groups CP-19, CP-25..28 and CP-60/61 at one
-committed source under S12Final. CP-19 builds the isolated output once; the
-remaining exact filters reuse its verified build stamp and run serially. This
-changes neither selected cases nor deadlines. CP-26 now exposes eight converter
-variants and the partial-prompt and enabled-notice companions as native results.
+S12 execution rows are CP-61..CP-75, appended by the S12 split selection below
+(Plan 02c16198). The landed CP-19 and CP-25..CP-28 rows keep their TestDesign text and
+are superseded for execution by CP-67..CP-71; the whole-Unit row the S12 tasks had
+added as CP-60 is withdrawn (D-S12-7). No whole assembly, namespace or whole-Unit run
+is a Code row. PC-89..96 and every path/cut variant remain pending SourceLanding Mutation.
 
 
 Floors come from the specified new roster and inspected source attributes:
@@ -1814,3 +1820,220 @@ be forwarded to staging. No file-store validation is loosened. The first run
 20261005-162340-d91a was stopped during its first build and awaited to exit 6;
 zero tests ran. The final full CP-15..22 selection now verifies this committed
 correction. This uses the second and final authorized repair round.
+
+
+## S12 split selection (Plan 02c16198, 2026-10-05)
+
+S12 has run as two Code dispatches (5724b53e, continuation 9bbc9566; tip
+b727f59084abba02b72b8a478059f16b3cf6583d on feat/card-task-9bbc9566) without going
+green. This amendment replaces the one-shot "S12 Final" selection with bounded slices,
+each with its own committed source, its own isolated build and a checkpoint runtime
+that fits one dispatch. Landed text is untouched: V-13, CP-19 and CP-25..CP-28 are
+restored to their master bytes, the unlanded CP-60 row is withdrawn, the unlanded
+CP-61 row now owns the S12e build, and CP-62..CP-75 are appended. Every S1..S11
+row and every PC row is byte-identical to master ffb819a6.
+
+State at b727f590: CP-23 12/12 and CP-24 9/9 (at 8607b06a, test-only changes since),
+CP-19 38/38, CP-27 1/1, CP-28 4/4, CP-25 0/3, CP-26 3/11 (eight converter results
+red), CP-60 total timeout with no TRX, CP-61 not run. Two Unit failures reproduce at
+the untouched base 1011c7b5 (BASE-C519-UNIT-GUARD, BASE-C519-ROLE-GUARD, both 1/0/1
+with verified clean builds).
+
+### Ground truth
+
+| The reports or the brief assume | What the code does (read 2026-10-05 at b727f590) |
+|---|---|
+| The refusal-save fault can be injected through `SaveChangesInterceptor`. | `ChannelOutboundDeliveryPump.PublishWithRecoveryAsync` catches `Local_QueueFull` and calls `FinishAttemptAsync(delivery, Ready, ...)`, which persists the Ready transition with `ExecuteUpdateAsync` under the lease/version/Publishing fence. Only Failed and PublishUncertain go through `_failures.RecordDeliveryAsync`. No tracked entity is saved, so the fixture's `HandoffFault("refusal-save")` never fires and the row really reaches Ready. `ExecuteUpdateAsync` is observable only through `IDbCommandInterceptor.NonQueryExecutingAsync`. |
+| A fault thrown during that save leaves the row recoverable but not auto-retried. | `ProcessClaimAsync`'s generic catch skips rows whose state is Publishing or Published, and its `finally` releases the lease only when `State != Publishing`. A refused save therefore leaves the row Publishing and leased; the second in-process tick skips it; only an expired lease (the probe's +600 s clock) turns it into PublishUncertain, and `RetryUncertainAsync` publishes it. The test's expected chain Publishing -> PublishUncertain -> Published is right; the injection point was wrong. |
+| The machine variant's Check message should be Sent after NO_REPLY. | `TranscriptWorkingStateQuery` marks a session Working when any activity row (AssistantText included) follows the last TurnEnd. `BridgeQueueHarness` submission callbacks insert UserPrompt then TurnEnd; the test then inserts `NO_REPLY` as AssistantText after that TurnEnd, so the session reads Working and the WhenIdle Check row stays Pending. The parameterized method stops at this first machine scenario, which leaves the 72-scenario matrix unproven. |
+| Interrupted converter dispatch keeps its brief. | `AgentTaskDispatcher.DispatchOneAsync` commits the claim (task Dispatched, session Starting), then enqueues the launch (`IAgentTaskLaunchSink` or `AgentSessionLaunchQueue.EnqueueInteractiveSession`), then persists the brief through the singleton `SessionMessageQueueService.EnqueueAsync` (own scopes; cannot join the claim transaction). `AgentSessionService.ResumeInterruptedLaunchAsync` attaches, flips Running, publishes SessionStarted and flushes existing rows; it never notices a missing brief. The probe's `conversion-dispatched` barrier (`dispatch-warning-claim-committed`) dies exactly in that window. |
+| Enqueue refusal leaves the converter task recoverable. | The launch enqueue sits outside any try/catch; the exception reaches `TickAsync`'s generic catch and `FailAndNotifyAsync(task, "Dispatch failed before a session existed: ...")`, although the session row exists and stays Starting (CARD-0382 special-cased only the Grok rules refusal). The pump's `ObserveConversionAsync` then sees Failed and falls back. In production `EnqueueInteractiveSession` cannot throw synchronously (TryAdd + Task.Run), so the probe's `RefusingTaskLaunchSink` is the only synchronous refuser today; the generic path is still the live path for any exception at that boundary. |
+| These two defects are S12-only. | Neither is gated by `ChannelOutbound:UnifiedRecoveryEnabled`; both sit in the generic delegation dispatcher and resume path used by every delegated task. They affect the live non-unified path today. No card covered them (searched `interrupted launch`, `ResumeInterruptedLaunch`, `enqueue refus`, `launch sink`, `brief is lost`, `claim before`): **CARD-1074** filed (High/Normal). |
+| The converter brief is typed inline so the queued body contains the goal. | `DelegationSettings.BriefInlineMaxBytes` defaults to 900 (inbox read-chunk measurement) and the fixture registers default settings with no `PtyDeliveryProfile`, so `AgentTaskDispatcher.FitBriefForTyping` compares against the inbox ceiling; the brief floor is ~915 bytes (reporting contract alone 838), so every brief spills to `<task.WorkingDirectory>/.antiphon/task-<short>-brief.md` and the queue row carries `BuildBriefPointer` output (task marker at both ends, title, the spill path). The converter task's `WorkingDirectory` is the converter agent's working directory (`OutboundConversionTaskRunner`). Phone-home sessions always use the inbox ceiling (`SessionDeliveryProfile`), so the spill is the live behaviour, not a fixture artefact. |
+| `C519_Converter_handoff*conversion-dispatched*` can select the four launch-recovery results. | The predecessor's argument-specific filter matched zero tests; only method-level filters are reliable. Rows therefore select whole methods, and the red-first proof is a recorded method-level baseline with the failing result names. |
+| CP-60 (whole Unit lane) is a Code row. | The operator avoids whole-Unit runs; the lane did not finish inside the 15-minute row cap, carried two inherited reds, and left no TRX. `docs/testing-and-build.md` requires bounded affected classes for Code/Review and names the whole lane as caller-owned qualification. |
+| The two base Unit failures are S12's. | `SpecialistRoleContractTests.no_Check_comparison_survives_outside_the_allowlist`: fixed on master by CARD-1070 (ad6dcf5b3/653eee75d: `TerminalRunnerSeatReleasePolicy` uses `AgentTaskRoles.IsSpecialist`); the S12 branch base 0682344b predates it and inherits the red until it is rebased/landed. `TestClassificationGuardTests.Registry_matches_compiled_metadata`: `missing-reason Antiphon.Tests.TestHelpers.DirectoryLinkFixtureWindowsTests`; CARD-1061 S3 (22373b509) registered two classes under one reason comment and `TestClassificationMetadata` consumes the pending reason on the first entry; the same bytes are on master ffb819a6, so master is red today: **CARD-1075** filed. |
+| The checkpoint tool accepts any appended row. | `PlanTableImporter` requires the nine named columns (plus optional Serial/Environment), a reused build must name an EARLIER row with the same `After` group, Min is the executed-result floor, and `RosterTokens` derives the roster from `(Name*)` groups or path parts. CP-61 therefore owns the S12e build and later S12e rows reuse `CP-61`; each other slice owns one build. |
+| The activation switch state. | `ChannelOutboundSettings.UnifiedRecoveryEnabled` defaults to false; the fixtures set it true explicitly; no AppHost configuration enables it. |
+| The resume path needs new dependencies for a brief backfill. | `AgentSessionService` already holds `_delegationSettings`, `_ptyProfile`, `_messageQueue` and `_logger`; `AgentTaskDispatcher.FitBriefForTyping` and `CeilingsForBrief` are internal static. `FakeAgentProtocolAdapter` implements `IAttachableProtocolAdapter`, so tests resume through the real attach path. |
+
+### Decisions
+
+- **D-S12-1 — inject the refusal save where the pump writes it.** The fixture adds a
+  `DbCommandInterceptor` (`NonQueryExecutingAsync`) that, while armed for the
+  `refusal-save` cut, throws `IOException` for the `FinishAttemptAsync` statement:
+  an `UPDATE "ChannelOutboundDeliveries"` whose text sets `"State"`, `"FailureReason"`,
+  `"NextAttemptAt"` and `"Version"` and whose State parameter equals Ready. It records
+  the matched command text and parameter value so the test proves the boundary was
+  reached (`Fired == 1`, witnessed statement) independently of the resulting state.
+  Expected chain after the fault: Publishing with PublicationAttempts 1 and one
+  refusal; the second in-process tick leaves it (lease retained); `RecoverAsync`
+  (expired lease) yields PublishUncertain; `RetryUncertainAsync(row.Id, true)` then
+  `RecoverAsync` yields Published with exactly one receipt. Rejected: a new pump
+  `ProbeBarrierAsync` point (a production seam for a fixture need; EF already exposes
+  the real boundary) and keeping the SaveChanges interceptor (never fires; root cause).
+- **D-S12-2 — the machine variant owns its Check handoff.** For `kind == "machine"`
+  the source submission callback writes UserPrompt, AssistantText `NO_REPLY` and
+  TurnEnd as one complete silent turn, so the dispatcher's `OnTurnEndAsync` sees
+  machine silence and the session reads idle. Before enqueueing the Check brief the
+  test asserts the queue's working predicate is false (independent boundary proof),
+  then enqueues `[Check] ...` WhenIdle with origin Check, asserts the row is Sent with
+  exactly one exact UserPrompt and zero extra submissions, and only then inserts the
+  late answer text that belongs to the Check prompt. Rejected: a bare TurnEnd after
+  NO_REPLY (creates a prompt-less turn the dispatcher's descriptor attributes
+  wrongly, as the test's own comment records) and seeding a Sent Check row (bypasses
+  the real queue handoff under test; forbidden by the predecessor report).
+- **D-S12-3 — the converter brief oracle is the 900-byte spill policy.** The queued
+  Delegation row for the converter task must have `Origin == Delegation`,
+  `ExecutionTaskId == taskId`, Status Sent after the worker's turn, a Body equal to
+  `BuildBriefPointer` output (contains `TaskMarker(taskId)` and the spill path
+  `Path.Combine(task.WorkingDirectory, ".antiphon", $"task-{Short(taskId)}-brief.md")`),
+  and the spill file must contain the frozen goal, `delivery.Id.ToString("D")` and
+  `request.json`; the worker transcript holds exactly one UserPrompt equal to the
+  Body. The same oracle applies to all eight cuts, including the backfilled brief,
+  because the backfill uses the dispatcher's fitting function on the same inputs.
+  Rejected: raising `BriefInlineMaxBytes` in the fixture (tests a non-default profile
+  and hides the spill path that the phone-home runner always uses).
+- **D-S12-4 — resume backfills a missing brief (production; CARD-1074 part 1).**
+  `ResumeInterruptedLaunchAsync`, after the session is Running and before
+  `FlushSessionAsync`, loads the newest Dispatched task for the session and, when no
+  `SessionQueuedMessage` with `Origin == Delegation && ExecutionTaskId == task.Id`
+  exists and no UserPrompt containing `TaskMarker(task.Id)` exists after
+  `task.DispatchedAt`, enqueues `AgentTaskDispatcher.FitBriefForTyping(task,
+  _delegationSettings, CeilingsForBrief(_ptyProfile?.Ceilings, session.RunnerCwd,
+  _delegationSettings), _logger, session.AgentKind, runnerCwd: session.RunnerCwd,
+  stageRemoteSpill: ...)` WhenIdle with origin Delegation, `executionDeadlineAt`,
+  `executionTaskId`, `deliverIfIdle: false`, and adds a Warning `AgentTaskEvent`
+  ("brief re-queued: the interrupted dispatch died before its brief row was
+  persisted") only when it backfills. The existing flush then delivers it. The
+  existing warning count in `Delegate_Starting_row_attaches_becomes_Running_and_flushes_the_pending_brief`
+  stays 1 because that fixture seeds a brief. Rejected: persisting the brief inside
+  the claim transaction (the queue is a singleton with its own scopes; copying its
+  row construction into the dispatcher is invasive and noted on CARD-1074 as a later
+  option) and a sweep-time backfill in `FailNeverStartedAsync` (ten-minute latency;
+  that arm fails rather than repairs and stays unchanged).
+- **D-S12-5 — a launch enqueue refusal keeps the committed claim (production;
+  CARD-1074 part 2).** `DispatchOneAsync` wraps only the launch enqueue call
+  (`_taskLaunchSink.Enqueue` or `_launchQueue.EnqueueInteractiveSession`): on any
+  exception that is not cancellation it logs a warning, adds a Warning
+  `AgentTaskEvent` ("launch enqueue refused after the committed claim: {message};
+  the Starting session awaits interrupted-launch recovery"), saves, continues to the
+  brief enqueue and returns Dispatched. It never calls `FailAndNotifyAsync` for that
+  boundary. Composition exceptions before the launch enqueue (`FinishDispatchedLaunchSpecAsync`,
+  bundle load) keep their existing CARD-0382/generic paths; they are out of this
+  slice and recorded on CARD-1074. Rejected: reverting the claim to Queued (unwinds
+  agent, session, first-check and consumer state and creates a second session row on
+  the retry) and failing with a corrected reason (still terminal; D-8 requires the
+  committed converter task to survive without a second task).
+- **D-S12-6 — CP-25 runtime is measured, never widened.** The three-argument shape of
+  `C519_Queue_to_adapter` is landed V-13/PC text and stays. S12c records CP-62's
+  measured minutes. If the method cannot finish inside the 15-minute row cap, S12c
+  ends with the measurement and this manifest is amended before any other run: the
+  busy half of the internal matrix moves to a new `C519_Queue_to_busy_adapter`
+  method with the same three arguments and its own row; nothing landed changes.
+- **D-S12-7 — the whole Unit lane is not a Code row.** CP-60 is withdrawn. S12's
+  affected Unit classes are bounded to `TestClassificationGuardTests` and
+  `SlowTestTripwireTests` (the slice edits `slow-tests-allowlist.txt`); they run as
+  CP-63 and CP-72. The two inherited Unit reds and their owners: the role guard is
+  CARD-1070 (Done; on master, disappears when S12 is rebased or landed) and the
+  allowlist missing reason is CARD-1075 (Backlog; S12c carries the same one-line
+  reason comment because the guard is S12's own affected test and the file is
+  already in the slice, so whichever lands first closes it). The whole lane
+  `/*/*/*/*[Category=Unit]` runs once as the **caller-owned Unit qualification** on
+  the Linux lane after landing, outside any Code task and without the 15-minute row
+  cap, with the two inherited reds resolved on master as its precondition. The S12
+  "Final profile v1" Unit obligation is discharged there, not by a Code row.
+- **D-S12-8 — the activation switch stays off.** `ChannelOutbound:UnifiedRecoveryEnabled`
+  remains false by default and in every deployed configuration until all of the
+  following hold: CP-74/75 (V-11/V-12 crash matrices), CP-70/71 (V-13), CP-61 and
+  CP-67..69 (R-5/R-8/R-9) green at one frozen final candidate; CARD-1074's fixes
+  landed (converter launch recovery depends on them); CP-29 (R-12) green on the
+  Windows lane; the caller-owned Unit qualification green; S13 documentation landed;
+  then post-land SourceLanding Mutation of PC-89..96 and PC-S12-1..5. Activation is a
+  caller-owned AppHost configuration change after that, never part of a Code slice.
+- **D-S12-9 — the final candidate is requalified in three checkpoint-only dispatches.**
+  S12d's production change invalidates the build binding of every earlier S12 receipt,
+  so CP-61, CP-67..CP-75 rerun at the frozen final SHA. They are split by runtime so
+  each dispatch fits its budget, each owns one isolated build, and they may run in
+  parallel worktrees at the same SHA (per-test schema and topic isolation holds; the
+  build-slot gate serialises builds). No row is relabelled from an earlier SHA.
+- **D-S12-10 — red-first proof is a recorded method-level baseline.** Because
+  argument filters do not select, S12c records `BASE-S12D-HANDOFF` at its own tip
+  (unchanged production, corrected oracle): `C519_Converter_handoff*` 8 executed,
+  expected 4 passed (`conversion-task-committed` and `result-committed`, idle and
+  busy) and 4 failed (`conversion-dispatched` and `enqueue-refused`, idle and busy)
+  with the failing result names copied from the TRX. S12d records `BASE-S12D-BRIEF`
+  at its tests-only commit: `DelegationBriefRecoveryTests/*` 3 executed, expected 1
+  passed (the no-duplicate control) and 2 failed. Neither baseline is a checkpoint
+  pass; both are preserved as unedited lines in the slice report.
+
+### Slices
+
+Each slice is one Code dispatch on the Linux lane (`GET /api/runner-defaults` names
+server2 as the global default; omit `-Runner` and `-Platform`). Authoring estimates
+exclude slot waits; the runtime column is the checkpoint budget the dispatch must
+hold, measured from the predecessors' receipts where they exist.
+
+| Slice / minutes | Files and concrete result | Checkpoints and runtime |
+|---|---|---|
+| S12c / 50 (fixture boundary) | `tests/Antiphon.Tests/Application/ChannelOutboundUnifiedTransportTests.cs`: refusal-save command interceptor and boundary witness (D-S12-1); machine Check handoff (D-S12-2); converter brief oracle (D-S12-3). `tests/Antiphon.Tests/TestHelpers/UnifiedOutboundTransport.cs` only for a brief spill path helper. `tests/Antiphon.Tests/slow-tests-allowlist.txt`: one reason comment above `DirectoryLinkFixtureWindowsTests` (CARD-1075). No production change. | CP-62, CP-63 green; `BASE-S12D-HANDOFF` recorded (D-S12-10); CP-62 minutes recorded (D-S12-6). Runtime about 20 min plus the converter baseline (about 8). |
+| S12d / 60 (production, CARD-1074) | `server/Application/Services/AgentSessionService.cs` resume backfill (D-S12-4); `server/Application/Services/AgentTaskDispatcher.cs` launch-enqueue catch (D-S12-5). New `tests/Antiphon.Tests/Application/DelegationBriefRecoveryTests.cs` (Integration, PostgreSQL, `FakeAgentProtocolAdapter`, a refusing `IAgentTaskLaunchSink`): `Interrupted_dispatch_backfills_the_missing_brief_on_resume`, `Launch_enqueue_refusal_after_the_committed_claim_keeps_the_task_dispatched`, `Resume_never_duplicates_an_existing_brief`. Register the class in the test classification registry if its category requires it. Commit the tests first and record `BASE-S12D-BRIEF`, then commit the production change. | CP-64, CP-65, CP-66 green at the production commit. Runtime about 25 min. |
+| S12e / 15 (final group A) | No source change; checkpoint-only at the frozen final SHA. | CP-61, CP-67, CP-68, CP-69. Runtime about 25 min. |
+| S12f / 15 (final group B) | No source change; checkpoint-only at the frozen final SHA. | CP-70, CP-71, CP-72, CP-73. Runtime about 30 min; CP-70 is capped at 15 min (D-S12-6). |
+| S12g / 15 (final group C) | No source change; checkpoint-only at the frozen final SHA. | CP-74, CP-75. Runtime about 26 min (predecessor: build 4, tests 7 and 11). |
+| S13 / 45 (unchanged, Windows) | As landed: `HerdrAlwaysOnChannelParityTests.cs` fixture only as needed, `docs/telegram.md`, source/entity comments. Dispatch with `-Platform Windows`, no host pin. | CP-29 (R-12). |
+| Caller-owned Unit qualification | Not a slice. After land/rebase onto master with CARD-1070 and CARD-1075 present: `/*/*/*/*[Category=Unit]` once on the Linux lane, its own budget, fresh TRX, zero failures. | Discharges the Final-profile Unit obligation (D-S12-7). |
+
+S12c and S12d are sequential (S12d's red-first baseline depends on S12c's oracle).
+S12e, S12f and S12g run only after S12d is the last source change; they are
+independent of each other. If any final row fails, the repair is a new Code slice and
+the three groups rerun at the new frozen SHA.
+
+### Positive controls (pending SourceLanding Mutation)
+
+Method-scoped, `/*/*/ClassName/ExactMethod*` where arguments require the suffix.
+
+| PC | Compiling defect | Exact detecting method | Intended assertion red |
+|---|---|---|---|
+| PC-S12-1 | Remove the resume backfill (treat the brief as always present). | `DelegationBriefRecoveryTests.Interrupted_dispatch_backfills_the_missing_brief_on_resume`; also `ChannelOutboundUnifiedTransportTests.C519_Converter_handoff*` (conversion-dispatched results) | no Delegation row with `ExecutionTaskId == taskId` after resume; worker never receives its UserPrompt. |
+| PC-S12-2 | Drop the existence predicate so resume always enqueues a brief. | `DelegationBriefRecoveryTests.Resume_never_duplicates_an_existing_brief`; also `AgentSessionInterruptedLaunchResumeTests.Delegate_Starting_row_attaches_becomes_Running_and_flushes_the_pending_brief` | two Delegation rows for one task; Warning event count 2 instead of 1. |
+| PC-S12-3 | Rethrow from the launch-enqueue catch (restore the generic failure path). | `DelegationBriefRecoveryTests.Launch_enqueue_refusal_after_the_committed_claim_keeps_the_task_dispatched`; also `C519_Converter_handoff*` (enqueue-refused results) | task Status Failed instead of Dispatched; session Failed instead of Starting. |
+| PC-S12-4 | Return Dispatched from that catch without enqueueing the brief. | same witness as PC-S12-3 | no Delegation row for the task although the claim survived; after resume the worker has no UserPrompt. |
+| PC-S12-5 | In `ProcessClaimAsync`'s generic catch, drop the Publishing exclusion so a failed refusal save reverts the row to Ready. | `ChannelOutboundUnifiedTransportTests.C519_Queue_to_adapter*` (refusal-save cut, every kind) | state Ready instead of Publishing after the fault; a second automatic publish instead of PublishUncertain. |
+
+### Checkpoints
+
+The closed ordinary scope for S12c..S12g is CP-61..CP-75 in the main `### Checkpoints`
+table above (one isolated build per slice, exact filters, `--row-timeout 15m
+--total-timeout 60m --serial`, Linux lane, no host or OS pin). Per slice:
+
+| Slice | Rows | Isolated build | Expected results |
+|---|---|---|---|
+| S12c | CP-62, CP-63 | `bin-c519-cp62/` | 3 + 3; plus recorded `BASE-S12D-HANDOFF` 8 executed / 4 passed / 4 failed |
+| S12d | CP-64, CP-65, CP-66 | `bin-c519-cp64/` | 8 + 3 + 28; plus recorded `BASE-S12D-BRIEF` 3 executed / 1 passed / 2 failed |
+| S12e | CP-61, CP-67, CP-68, CP-69 | `bin-c519-cp61/` | 18 + 38 + 1 + 4 |
+| S12f | CP-70, CP-71, CP-72, CP-73 | `bin-c519-cp70/` | 3 + 11 + 3 + 31 |
+| S12g | CP-74, CP-75 | `bin-c519-cp74/` | 12 + 9 |
+| S13 | CP-29 | `bin-c519-cp29/` | 2 (Windows) |
+
+Example first command (S12c):
+
+```powershell
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c519-s12c -- dotnet run --project tools/Antiphon.Checkpoints -- run --plan docs/superpowers/plans/2026-10-04-card-0519-unified-outbound-recovery-plan.md --after S12c --expected-source-sha (git rev-parse HEAD) --row-timeout 15m --total-timeout 60m --serial
+```
+
+Baselines use the same gated driver with the exact method filter and the committed
+SHA, are reported as `BASE-S12D-HANDOFF`/`BASE-S12D-BRIEF` lines with their TRX paths
+and failing result names, and are never counted as passes. Tool bootstrap is the only
+other gated build. The S12 floor adds **175 ordinary results** across CP-61..CP-75
+(**104 estimated minutes**, five isolated builds) to the landed 404/178; the landed
+CP-25..CP-28 rows are not executed again. Verify inherited red only with the exact
+method at the recorded base. Every S12 Code report preserves unedited CHECKPOINT
+lines, runs `scripts/check-evidence-diff.ps1` over its task range, removes only its
+own `bin-c519-cp*` outputs and ends with the next-stage block.
+
+Owners of the inherited Unit reds, for the caller-owned qualification:
+`SpecialistRoleContractTests.no_Check_comparison_survives_outside_the_allowlist`
+-> CARD-1070 (Done, on master); `TestClassificationGuardTests.Registry_matches_compiled_metadata`
+(`missing-reason ...DirectoryLinkFixtureWindowsTests`) -> CARD-1075 (Backlog; S12c carries
+the one-line repair). S12 itself introduces no Unit failure.
