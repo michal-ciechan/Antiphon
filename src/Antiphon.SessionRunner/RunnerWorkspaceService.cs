@@ -348,20 +348,22 @@ public sealed partial class RunnerWorkspaceService
             : new(tip, relation, descendsFromBaseline, dirty, false, "push_rejected");
     }
 
-    private async Task<string> OwningRepositoryAsync(string path, CancellationToken ct)
+    internal async Task<string> OwningRepositoryAsync(string path, CancellationToken ct)
     {
         var common = await GitAsync(path, ct, "rev-parse", "--path-format=absolute", "--git-common-dir");
-        if (common.ExitCode == 0)
-        {
-            var directory = Path.GetDirectoryName(common.Stdout.Trim());
-            if (directory is not null && Path.GetFileName(common.Stdout.Trim()) == ".git"
-                && (PathsEqual(directory, _repository)
-                    || (PathsEqual(Path.GetDirectoryName(directory) ?? "", _policy.RepositoriesRoot)
-                        && Directory.Exists(Path.Combine(directory, ".git")))))
-                return directory;
-        }
+        if (common.ExitCode == 0 && IsOwnedCommonDirectory(common.Stdout.Trim()))
+            return Path.GetDirectoryName(common.Stdout.Trim())!;
         throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
             $"Mirror {path} does not belong to a runner repository.", 409);
+    }
+
+    internal bool IsOwnedCommonDirectory(string common)
+    {
+        var directory = Path.GetDirectoryName(common);
+        return directory is not null && Path.GetFileName(common) == ".git"
+            && (PathsEqual(directory, _repository)
+                || (PathsEqual(Path.GetDirectoryName(directory) ?? "", _policy.RepositoriesRoot)
+                    && Directory.Exists(Path.Combine(directory, ".git"))));
     }
 
     private async Task PruneRepositoriesAsync(CancellationToken ct)
@@ -493,7 +495,7 @@ public sealed partial class RunnerWorkspaceService
     }
 
     /// <summary>Follow directory and file links. Null when a link cannot be resolved.</summary>
-    private static string? TryResolveFinal(string path)
+    internal static string? TryResolveFinal(string path)
     {
         string full;
         try
@@ -589,7 +591,7 @@ public sealed partial class RunnerWorkspaceService
         return true;
     }
 
-    private static bool IsInside(string candidate, string root)
+    internal static bool IsInside(string candidate, string root)
     {
         var comparison = OperatingSystem.IsWindows()
             ? StringComparison.OrdinalIgnoreCase
@@ -598,7 +600,7 @@ public sealed partial class RunnerWorkspaceService
         return Path.GetFullPath(candidate).StartsWith(prefix, comparison);
     }
 
-    private static bool PathsEqual(string left, string right)
+    internal static bool PathsEqual(string left, string right)
     {
         var comparison = OperatingSystem.IsWindows()
             ? StringComparison.OrdinalIgnoreCase
@@ -609,7 +611,7 @@ public sealed partial class RunnerWorkspaceService
             comparison);
     }
 
-    private bool IsUnderRoot(string path)
+    internal bool IsUnderRoot(string path)
     {
         if (string.IsNullOrWhiteSpace(path))
             return false;
@@ -621,7 +623,7 @@ public sealed partial class RunnerWorkspaceService
         return rest.Length > 0 && !rest.Contains('/', StringComparison.Ordinal) && rest is not ("." or "..");
     }
 
-    private async Task<(int ExitCode, string Stdout, string Stderr)> GitAsync(
+    internal async Task<(int ExitCode, string Stdout, string Stderr)> GitAsync(
         string workingDirectory, CancellationToken ct, params string[] args)
     {
         var psi = new ProcessStartInfo
