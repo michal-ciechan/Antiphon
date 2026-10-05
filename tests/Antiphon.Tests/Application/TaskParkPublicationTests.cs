@@ -15,13 +15,14 @@ namespace Antiphon.Tests.Application;
 public sealed class TaskParkPublicationTests
 {
     [Test]
-    public async Task C1065_WorkspaceModesPreservePublicationAuthority()
+    public Task C1065_WorkspaceModesPreservePublicationAuthority()
     {
-        await using var f = await BlockedTaskParkFixture.CreateAsync();
-        f.Options.Enabled = true;
-        var id = (await f.RegisterAsync()).ShouldNotBeNull();
-        (await f.AdvanceAsync(id, AgentTaskParkState.Published)).ShouldBeFalse(
-            "G-69: state-only advance cannot claim publication without exact source proof");
+        var task = new AgentTask { Id = Guid.NewGuid(), Workspace = WorkspaceMode.Shared,
+            Role = AgentTaskRole.Code, Goal = "Inspect landed source", SourceLandingOperationId = Guid.NewGuid() };
+        DelegationReportFormatter.BuildBrief(task, new DelegationSettings())
+            .ShouldNotContain(DelegationReportFormatter.SharedWriteCommitLine,
+                "G-73: SourceLanding custody overrides generic writable instructions");
+        return Task.CompletedTask;
     }
 
     [Test]
