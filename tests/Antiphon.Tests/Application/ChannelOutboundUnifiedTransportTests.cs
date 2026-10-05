@@ -30,12 +30,16 @@ namespace Antiphon.Tests.Application;
 public sealed class ChannelOutboundUnifiedTransportTests
 {
     [Test, Arguments("main"), Arguments("trailing"), Arguments("machine")]
-    public async Task C519_Queue_to_adapter(string kind)
+    public Task C519_Queue_to_adapter(string kind) => QueueToAdapterAsync(kind, busy: false);
+
+    [Test, Arguments("main"), Arguments("trailing"), Arguments("machine")]
+    public Task C519_Queue_to_busy_adapter(string kind) => QueueToAdapterAsync(kind, busy: true);
+
+    private static async Task QueueToAdapterAsync(string kind, bool busy)
     {
         await using var broker = new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v25.3.4").Build();
         using var startup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await broker.StartAsync(startup.Token);
-        foreach (var busy in new[] { false, true })
         foreach (var lateGateway in new[] { false, true })
         foreach (var cut in new[] { "queue-insert", "queue-committed", "confirm-save", "capture", "definite-refusal", "refusal-save" })
         {
