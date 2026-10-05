@@ -33,8 +33,8 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
     public required SeatDirectory Directory { get; init; }
     public LaunchRecorder Launches => Harness.Provider.GetRequiredService<LaunchRecorder>();
     public Guid TaskId { get; } = Guid.NewGuid();
-    public Guid SessionId => Harness.SessionId;
-    public Guid AgentId => Harness.AgentId;
+    public Guid SessionId { get; private set; }
+    public Guid AgentId { get; private set; }
     public DateTime Now => Clock.GetUtcNow().UtcDateTime;
     public TerminalSeatObservationRequest Observation => new(Directory.StoreId, Now.AddHours(-1), "binding", 10);
     public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
@@ -100,6 +100,8 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         catch { http.Dispose(); await schema.DisposeAsync(); throw; }
         var f = new RunnerSeatReleaseFixture { Schema = schema, Harness = harness, Clock = clock, Wire = wire, Directory = directory };
         f._harnessOptions = wire.HarnessOptions;
+        f.SessionId = harness.SessionId;
+        f.AgentId = harness.AgentId;
         f._roots.Add(harness.TempRoot);
         try
         {
@@ -194,8 +196,22 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
     public async Task<AgentTaskDispatcher.TickResult> DispatchAsync()
     {
         using var scope = Harness.Provider.CreateScope();
-        return await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+        var work = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+        await DriveAsync(work);
+        return await work;
     }
+
+    private async Task DriveAsync(Task work)
+    {
+        while (!work.IsCompleted)
+        {
+            await Task.WhenAny(work, Task.Delay(10));
+            Clock.Advance(TimeSpan.FromMilliseconds(20));
+        }
+        await work;
+    }
+
+    public Task FlushAsync(Guid sessionId) => DriveAsync(Harness.Queue.FlushSessionAsync(sessionId, default));
 
     public Task PrepareContinuationAsync() => EditAsync((t, _) =>
     {
@@ -230,7 +246,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
 
     public async Task AttachRecipientAsync(Guid sessionId, bool busy = false)
     {
-        var adapter = new FakeAgentProtocolAdapter();
+        var adapter = sessionId == Harness.SessionId ? Harness.Adapter : new FakeAgentProtocolAdapter();
         Recipient = adapter;
         adapter.OnSubmitted = async body =>
         {
@@ -245,7 +261,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
             }
             await NativePromptAsync(sessionId, body);
         };
-        Harness.Runtime.Register(sessionId, adapter);
+        if (sessionId != Harness.SessionId) Harness.Runtime.Register(sessionId, adapter);
         await using var db = Db();
         await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Running));
         if (busy) await NativePromptAsync(sessionId, "existing turn");
