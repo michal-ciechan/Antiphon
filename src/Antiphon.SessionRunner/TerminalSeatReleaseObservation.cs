@@ -8,6 +8,89 @@ using Antiphon.SessionRunner.Contracts;
 namespace Antiphon.SessionRunner;
 
 /// <summary>
+/// Volatile authority for one runtime/session object. The token is random and returned only
+/// after two matching fresh observations; wall time is diagnostic, never elapsed authority.
+/// This is a read-only decision. A future conditional signal must reobserve under the gate.
+/// </summary>
+internal sealed record TerminalSeatProof(
+    Guid RuntimeEpoch, object Session, TerminalSeatObservationRequest Request,
+    TerminalTranscriptObservation Transcript, long InputRevision, long OutputRevision,
+    long FirstTimestamp, DateTimeOffset FirstObservedAt, string Token);
+
+internal sealed class TerminalSeatQualification
+{
+    internal static readonly TimeSpan SafetyMargin = TimeSpan.FromSeconds(120);
+    internal TerminalSeatProof? Proof { get; private set; }
+
+    internal void Discard() => Proof = null;
+
+    internal TerminalSeatObservation Observe(
+        Guid epoch, object session, TerminalSeatObservationRequest request,
+        TerminalTranscriptObservation transcript, long inputRevision, long outputRevision,
+        TimeProvider clock)
+    {
+        var evidence = CheckEvidence(request, transcript);
+        if (evidence != TerminalSeatQualificationStatus.Qualified)
+        {
+            Discard();
+            return new(evidence, transcript);
+        }
+
+        if (Proof is not { } previous || previous.RuntimeEpoch != epoch
+            || !ReferenceEquals(previous.Session, session) || previous.Request != request
+            || previous.Transcript != transcript || previous.InputRevision != inputRevision
+            || previous.OutputRevision != outputRevision)
+        {
+            Proof = new(epoch, session, request, transcript, inputRevision, outputRevision,
+                clock.GetTimestamp(), clock.GetUtcNow(), Guid.NewGuid().ToString("N"));
+            // A long scheduler pause cannot turn the FIRST successful read into two reads.
+            return new(TerminalSeatQualificationStatus.Waiting, transcript,
+                FirstObservedAt: Proof.FirstObservedAt);
+        }
+
+        var proof = Proof!;
+        var status = Authorize(proof, epoch, session, request, transcript, inputRevision, outputRevision, clock);
+        return new(status, transcript,
+            status == TerminalSeatQualificationStatus.Qualified ? proof.Token : null,
+            clock.GetElapsedTime(proof.FirstTimestamp), proof.FirstObservedAt);
+    }
+
+    // Kept as the actual typed production decision so a guard's refusal can be witnessed
+    // without a downstream dictionary miss or a different session object masking that guard.
+    internal static TerminalSeatQualificationStatus Authorize(
+        TerminalSeatProof proof, Guid epoch, object session, TerminalSeatObservationRequest request,
+        TerminalTranscriptObservation transcript, long inputRevision, long outputRevision, TimeProvider clock)
+    {
+        if (proof.RuntimeEpoch != epoch)
+            return TerminalSeatQualificationStatus.StaleObservation;
+        if (!ReferenceEquals(proof.Session, session) || proof.Request != request
+            || proof.Transcript != transcript || proof.InputRevision != inputRevision
+            || proof.OutputRevision != outputRevision)
+            return TerminalSeatQualificationStatus.StaleObservation;
+        var evidence = CheckEvidence(request, transcript);
+        if (evidence != TerminalSeatQualificationStatus.Qualified) return evidence;
+        return clock.GetElapsedTime(proof.FirstTimestamp) >= SafetyMargin
+            ? TerminalSeatQualificationStatus.Qualified : TerminalSeatQualificationStatus.Waiting;
+    }
+
+    private static TerminalSeatQualificationStatus CheckEvidence(
+        TerminalSeatObservationRequest request, TerminalTranscriptObservation transcript)
+    {
+        if (transcript.Status != TerminalTranscriptReadStatus.Success
+            || transcript.Verdict == TerminalTranscriptVerdict.Unknown
+            || string.IsNullOrEmpty(request.PromptBindingIdentity) || request.PromptFloorRevision < 0)
+            return TerminalSeatQualificationStatus.Unknown;
+        if (transcript.Verdict == TerminalTranscriptVerdict.Working)
+            return TerminalSeatQualificationStatus.Working;
+        if (transcript.BindingIdentity != request.PromptBindingIdentity
+            || transcript.LastPromptRevision is not { } prompt || prompt <= request.PromptFloorRevision
+            || transcript.LastEndRevision is not { } end || end <= prompt)
+            return TerminalSeatQualificationStatus.OldPrompt;
+        return TerminalSeatQualificationStatus.Qualified;
+    }
+}
+
+/// <summary>
 /// Owns read serialization, never the ingestion cursor. Each observation uses a private parser
 /// and bounded streaming passes: parse the complete file, then verify the consumed bytes still
 /// name the same file. A successful read supplies evidence only, never permission to release.

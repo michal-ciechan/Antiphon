@@ -28,6 +28,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     private readonly ConcurrentDictionary<Guid, RunnerSession> _sessions = new();
     private int _startCoreSessionRegistrations;
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _launchLocks = new();
+    private readonly Guid _terminalSeatEpoch = Guid.NewGuid();
+    private readonly ConcurrentDictionary<Guid, TerminalSeatQualification> _terminalSeatQualifications = new();
     private readonly SessionRunnerEventHub _events = new();
     // One transcript, one session (CARD-0006 rule C1). Process-wide because the runner process is
     // the only thing that knows which sessions are live.
@@ -956,18 +958,64 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
     internal void DetachTerminalTailerForTest(Guid sessionId) => GetSession(sessionId).DetachTailerForTest();
 
+    internal TerminalSeatProof? TerminalSeatProofFor(Guid sessionId) =>
+        _terminalSeatQualifications.TryGetValue(sessionId, out var qualification) ? qualification.Proof : null;
+
     /// <summary>CARD-0667 S1b: unused read-only qualification boundary; no release caller.</summary>
-    internal async Task<TerminalSeatObservation> ObserveTerminalSeatAsync(
-        Guid sessionId, TerminalSeatObservationRequest request, CancellationToken ct)
+    internal Task<TerminalSeatObservation> ObserveTerminalSeatAsync(
+        Guid sessionId, TerminalSeatObservationRequest request, CancellationToken ct) =>
+        InspectTerminalSeatAsync(sessionId, request, null, ct);
+
+    /// <summary>Freshly inspect an opaque token; success is still not permission to signal.</summary>
+    internal Task<TerminalSeatObservation> AuthorizeTerminalSeatTokenAsync(
+        Guid sessionId, TerminalSeatObservationRequest request, string token, CancellationToken ct) =>
+        InspectTerminalSeatAsync(sessionId, request, token, ct);
+
+    private async Task<TerminalSeatObservation> InspectTerminalSeatAsync(
+        Guid sessionId, TerminalSeatObservationRequest request, string? token, CancellationToken ct)
     {
-        if (!_sessions.TryGetValue(sessionId, out var session))
-            return new(TerminalSeatQualificationStatus.Missing,
-                new(TerminalTranscriptReadStatus.Unbound, TerminalTranscriptVerdict.Unknown));
-        var transcript = session.Tailer is { } tailer
-            ? await tailer.ObserveTerminalSeatAsync(ct)
-            : new TerminalTranscriptObservation(TerminalTranscriptReadStatus.Unbound, TerminalTranscriptVerdict.Unknown);
-        // Safe compiling seam for the CP-8 behavioral baseline; qualification follows in S1b.
-        return new(TerminalSeatQualificationStatus.Unknown, transcript);
+        var gate = _launchLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        var qualification = _terminalSeatQualifications.GetOrAdd(sessionId, _ => new());
+        TerminalSeatObservation Refuse(TerminalSeatQualificationStatus status)
+        {
+            qualification.Discard();
+            return new(status, new(TerminalTranscriptReadStatus.Unavailable, TerminalTranscriptVerdict.Unknown));
+        }
+        try
+        {
+            if (!_sessions.TryGetValue(sessionId, out var session))
+                return Refuse(TerminalSeatQualificationStatus.Missing);
+            if (request.ExpectedRunnerStoreId != RunnerStoreId
+                || !SessionGeneration.Equal(session.AcceptedStartedAt, request.ExpectedAcceptedStartedAt))
+                return Refuse(TerminalSeatQualificationStatus.GenerationMismatch);
+            if (session.HasExited || session.IsPendingHerdr || session.VerificationBinding is not null
+                || session.Tailer is not { } tailer)
+                return Refuse(TerminalSeatQualificationStatus.Unknown);
+
+            // S2b supplies attempted-input fencing. No mutation/wire caller may use this
+            // read-only API before that slice; completed writes already invalidate evidence.
+            var input = session.BackendInput.Count;
+            var output = session.LastSequence;
+            var transcript = await tailer.ObserveTerminalSeatAsync(ct);
+            if (!_sessions.TryGetValue(sessionId, out var current) || !ReferenceEquals(session, current)
+                || !ReferenceEquals(tailer, session.Tailer) || session.HasExited
+                || !SessionGeneration.Equal(session.AcceptedStartedAt, request.ExpectedAcceptedStartedAt)
+                || input != session.BackendInput.Count || output != session.LastSequence)
+                return Refuse(TerminalSeatQualificationStatus.StaleObservation);
+
+            var observed = qualification.Observe(_terminalSeatEpoch, session, request, transcript, input, output, _labelClock);
+            return token is not null && (observed.Status != TerminalSeatQualificationStatus.Qualified
+                    || !string.Equals(token, observed.Token, StringComparison.Ordinal))
+                ? observed with { Status = TerminalSeatQualificationStatus.StaleObservation, Token = null }
+                : observed;
+        }
+        catch
+        {
+            qualification.Discard();
+            throw;
+        }
+        finally { gate.Release(); }
     }
 
     /// <summary>
@@ -1691,6 +1739,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// </summary>
     public async ValueTask DisposeAsync()
     {
+        _terminalSeatQualifications.Clear();
         foreach (var (sessionId, session) in _sessions)
         {
             _sessions.TryRemove(sessionId, out _);
@@ -2919,6 +2968,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         {
             _herdrChild = child;
             _tailer = tailer;
+            _sidecar = TranscriptSidecar.TryLoad(TranscriptSidecar.PathFor(_settings.SessionLogPath, _sessionId));
             BindAcceptedGeneration(acceptedStartedAt);
             _startedAt = acceptedStartedAt;
             _status = "Running";
