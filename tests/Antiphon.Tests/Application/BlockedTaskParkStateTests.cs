@@ -45,7 +45,11 @@ public sealed class BlockedTaskParkStateTests
         f.Cut.Fail = false; f.Cut.Entered = null; f.Cut.Continue = null;
         await using (var reader = f.Db()) (await reader.AgentTaskParks.CountAsync()).ShouldBe(0, "rollback");
 
-        var ids = await Task.WhenAll(f.RegisterAsync(), f.RegisterAsync());
+        Guid?[] ids = [];
+        Exception? concurrentError = null;
+        try { ids = await Task.WhenAll(f.RegisterAsync(), f.RegisterAsync()); }
+        catch (Exception ex) { concurrentError = ex; }
+        concurrentError.ShouldBeNull("G-2: concurrent registrations succeed through the reuse decision");
         ids[0].ShouldNotBeNull("G-2");
         ids[1].ShouldBe(ids[0], "G-2: concurrent registration reuses identity");
         await f.RestartAsync();
@@ -78,6 +82,12 @@ public sealed class BlockedTaskParkStateTests
         await using var db = f.Db();
         (await db.AgentTaskParks.CountAsync()).ShouldBe(3, "distinct attempt/event identities");
         var current = await db.AgentTaskParks.SingleAsync(p => p.Id == nextEvent);
+        f.Cut.Fail = true;
+        await Should.ThrowAsync<InvalidOperationException>(() => f.AdvanceAsync(current.Id, AgentTaskParkState.Published));
+        f.Cut.Fail = false;
+        await using (var rolledBack = f.Db())
+            (await rolledBack.AgentTaskParks.SingleAsync(p => p.Id == current.Id)).State
+                .ShouldBe(AgentTaskParkState.Requested, "uncommitted publication state rolls back");
         (await f.AdvanceAsync(current.Id, AgentTaskParkState.Held)).ShouldBeTrue();
         (await f.RunAsync((s, _) => s.PersistStateAsync(current.Id, current.Revision, current.State,
             AgentTaskParkState.Published, "park_stale", default))).ShouldBeFalse("stale episode revision");

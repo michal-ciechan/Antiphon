@@ -38,10 +38,12 @@ internal sealed class BlockedTaskParkFixture : IAsyncDisposable
             f.SessionId = f._harness.SessionId;
             f.AgentId = f._harness.AgentId;
             await using var db = f.Db();
-            var board = new Board { Id = Guid.NewGuid(), Name = "park-state", CreatedAt = f.Now, UpdatedAt = f.Now };
+            var project = new Project { Id = Guid.NewGuid(), Name = "park-state", CreatedAt = f.Now, UpdatedAt = f.Now,
+                LocalRepositoryPath = f._harness.TempRoot, GitRepositoryUrl = "https://example.test/park.git" };
+            var board = new Board { Id = Guid.NewGuid(), ProjectId = project.Id, Name = "park-state", CreatedAt = f.Now, UpdatedAt = f.Now };
             var column = new BoardColumn { Id = Guid.NewGuid(), BoardId = board.Id, Name = "In Progress",
                 StateKey = "in-progress", CardStatus = CardStatus.InProgress, IsActive = true, CreatedAt = f.Now, UpdatedAt = f.Now };
-            db.AddRange(board, column, new Card { Id = f.CardId, BoardId = board.Id, BoardColumnId = column.Id,
+            db.AddRange(project, board, column, new Card { Id = f.CardId, BoardId = board.Id, BoardColumnId = column.Id,
                 Identifier = "CARD-0001", Title = "retained park", Status = CardStatus.InProgress,
                 CreatedAt = f.Now, UpdatedAt = f.Now });
             var worker = await db.AgentSessions.SingleAsync(s => s.Id == f.SessionId);
