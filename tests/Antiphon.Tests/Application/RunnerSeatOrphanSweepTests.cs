@@ -90,7 +90,7 @@ public class RunnerSeatOrphanSweepTests
                     await db.SaveChangesAsync();
                 }
                 if (variant == "working")
-                    await f.Harness.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "new work", timestamp: f.Now);
+                    await f.IngestAsync(TranscriptKinds.UserPrompt, "new work", f.Now);
             });
             f.Wire.ConditionalCommands.ShouldBe(0, $"pre-command {variant}");
         }
@@ -117,7 +117,8 @@ public class RunnerSeatOrphanSweepTests
                 if (variant == "session")
                 {
                     db.AgentSessions.Add(new AgentSession { Id = replacementId, Status = SessionStatus.Running,
-                        RunnerId = session.RunnerId, RunnerStoreId = session.RunnerStoreId, StartedAt = session.StartedAt });
+                        RunnerId = session.RunnerId, RunnerStoreId = session.RunnerStoreId,
+                        RunnerCwd = session.RunnerCwd, StartedAt = session.StartedAt });
                     (await db.AgentTasks.SingleAsync(t => t.Id == f.TaskId)).AgentSessionId = replacementId;
                 }
                 if (variant == "owner") session.StandingAgentId = replacementId;
@@ -129,6 +130,7 @@ public class RunnerSeatOrphanSweepTests
                 await db.SaveChangesAsync();
             };
             await f.ReleaseAsync();
+            f.Wire.CallbackFailure.ShouldBeNull("the concurrent replacement must commit successfully");
             f.Wire.ConditionalCommands.ShouldBe(1, variant);
             await using var read = f.Db();
             var saved = await read.AgentSessions.SingleAsync(s => s.Id == f.SessionId);

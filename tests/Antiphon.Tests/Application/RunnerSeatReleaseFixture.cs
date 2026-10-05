@@ -95,8 +95,8 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
                 SourceLandingOperationId = landingId,
             });
             await db.SaveChangesAsync();
-            await harness.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "task", timestamp: f.Now.AddMinutes(-4));
-            await harness.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn", timestamp: f.Now.AddMinutes(-3));
+            await f.IngestAsync(TranscriptKinds.UserPrompt, "task", f.Now.AddMinutes(-4));
+            await f.IngestAsync(TranscriptKinds.TurnEnd, null, f.Now.AddMinutes(-3));
             return f;
         }
         catch { await f.DisposeAsync(); throw; }
@@ -124,6 +124,18 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         await db.SaveChangesAsync();
     }
 
+    public async Task IngestAsync(string kind, string? text, DateTime timestamp)
+    {
+        await using var db = Db();
+        var sequence = (await db.TranscriptEntries.Where(t => t.AgentSessionId == SessionId)
+            .MaxAsync(t => (long?)t.Sequence) ?? 0) + 1;
+        var result = await Harness.Runtime.PersistTranscriptAsync(SessionId,
+            [new SessionRunnerTranscriptEvent(SessionId, sequence, kind, Guid.NewGuid().ToString("D"), null,
+                new DateTimeOffset(timestamp), kind == TranscriptKinds.UserPrompt ? "user" : "assistant",
+                text, null, null, null, null, kind == TranscriptKinds.TurnEnd ? "end_turn" : null)]);
+        if (result.LastStoredSeq is null) throw new InvalidOperationException("Fixture transcript ingestion did not commit.");
+    }
+
     public async ValueTask DisposeAsync()
     {
         await Harness.DisposeAsync();
@@ -140,6 +152,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         public bool DropReply { get; set; }
         public TerminalSeatReleaseOutcome Outcome { get; set; } = TerminalSeatReleaseOutcome.Released;
         public Func<TerminalSeatReleaseRequest, Task>? AtCommand { get; set; }
+        public Exception? CallbackFailure { get; private set; }
         public Func<TerminalSeatReleaseResult, TerminalSeatReleaseResult>? RewriteReply { get; set; }
         public List<TerminalSeatReleaseRequest> Requests { get; } = [];
         public List<string> Calls { get; } = [];
@@ -156,7 +169,11 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
             {
                 var command = (await request.Content!.ReadFromJsonAsync<TerminalSeatReleaseRequest>(ct))!;
                 Requests.Add(command);
-                if (AtCommand is not null) await AtCommand(command);
+                if (AtCommand is not null)
+                {
+                    try { await AtCommand(command); }
+                    catch (Exception ex) { CallbackFailure = ex; throw; }
+                }
                 if (DropReply) throw new HttpRequestException("fixture dropped the reply after execution");
                 var sessionId = Guid.Parse(request.RequestUri.AbsolutePath.Split('/')[2]);
                 var result = new TerminalSeatReleaseResult(sessionId, command.ActionId, Outcome,
