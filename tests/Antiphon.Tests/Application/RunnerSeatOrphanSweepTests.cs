@@ -100,7 +100,10 @@ public class RunnerSeatOrphanSweepTests
             items.ShouldAllBe(i => i.AgentId == null && i.BoardId == null && i.CardId == null);
             await using var db = f.Db();
             var ledger = JsonSerializer.Serialize(await db.RunnerSeatReleases.ToListAsync());
-            var logs = JsonSerializer.Serialize(f.AttentionLogs.Entries.Select(e => new { e.Message, e.Properties }));
+            // Framework metadata can contain reflection objects; inspect every property's
+            // rendered value as well as message/exception text without serializing MethodInfo.
+            var logs = string.Join("\n", f.AttentionLogs.Entries.Select(e => e.Message + "\n" + e.Exception + "\n"
+                + string.Join("\n", e.Properties.Select(p => $"{p.Key}={p.Value}"))));
             logs.ShouldContain("Runner seat release"); // Nonempty release diagnostics, not a vacuous exclusion.
             foreach (var canary in canaries)
             {
