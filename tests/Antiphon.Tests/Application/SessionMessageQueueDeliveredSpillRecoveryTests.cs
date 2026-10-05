@@ -243,7 +243,9 @@ public sealed class SessionMessageQueueDeliveredSpillRecoveryTests
         foreach (var cut in new[] { "ingestion", "release", "publication" })
         {
             var fault = new ReceiptSaveFault();
-            await using var f = await DeliveredSpillFixture.CreateAsync(schema.ConnectionString, interceptor: fault);
+            await using var f = await DeliveredSpillFixture.CreateAsync(schema.ConnectionString, interceptor: fault,
+                configureServices: s => s.AddSingleton<IEventBus>(sp =>
+                    new ReceiptEventBus(sp.GetRequiredService<MockEventBus>())));
             await f.ScreenAsync();
             var receipt = f.StageReceipt();
             // A DTO in the runner is not committed evidence, even when its complete text matches.
@@ -279,9 +281,11 @@ public sealed class SessionMessageQueueDeliveredSpillRecoveryTests
             if (cut == "publication")
             {
                 f.H.EventBus.ThrowOnceOnEvent = "SessionQueueChanged";
-                var ex = await Should.ThrowAsync<InvalidOperationException>(() => f.FlushAsync());
-                ex.Message.Contains("MockEventBus throw-once", StringComparison.Ordinal)
-                    .ShouldBeTrue("publication-fault-hit");
+                await f.FlushAsync(); // Publication is best-effort; observe the fault at the bus boundary.
+                ((ReceiptEventBus)f.H.Provider.GetRequiredService<IEventBus>()).FaultHits
+                    .ShouldBe(1, "publication-fault-hit");
+                f.H.EventBus.PublishedEvents.ShouldNotContain(e => e.EventName == "SessionQueueChanged",
+                    "failed-publication-no-refresh-event");
             }
             else await f.FlushAsync();
             await f.ReleasedAsync("recovered-atomic-release", from);
@@ -357,6 +361,25 @@ public sealed class SessionMessageQueueDeliveredSpillRecoveryTests
         SessionStatus Status = SessionStatus.Running, bool Absent = false, bool Unavailable = false);
 
     private sealed class ReceiptSaveException : Exception;
+
+    private sealed class ReceiptEventBus(MockEventBus inner) : IEventBus
+    {
+        public int FaultHits { get; private set; }
+        public Task PublishToGroupAsync(string group, string eventName, object payload, CancellationToken ct = default) =>
+            ObserveAsync(() => inner.PublishToGroupAsync(group, eventName, payload, ct));
+        public Task PublishToAllAsync(string eventName, object payload, CancellationToken ct = default) =>
+            ObserveAsync(() => inner.PublishToAllAsync(eventName, payload, ct));
+
+        private async Task ObserveAsync(Func<Task> publish)
+        {
+            try { await publish(); }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("MockEventBus throw-once", StringComparison.Ordinal))
+            {
+                FaultHits++;
+                throw;
+            }
+        }
+    }
 
     private sealed class ReceiptSaveFault : SaveChangesInterceptor
     {
