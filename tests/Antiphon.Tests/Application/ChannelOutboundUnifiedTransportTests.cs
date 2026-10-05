@@ -288,7 +288,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
             w.H.Provider.GetRequiredService<IOptions<ChannelOutboundSettings>>().Value.Profiles["crash-pdf"] = new()
             {
                 ProjectId = w.ProjectId, AgentId = w.ConverterId, PromptFile = "convert.md",
-                Trigger = ChannelOutboundTrigger.EveryAgentReply, TimeoutSeconds = 900,
+                Trigger = ChannelOutboundTrigger.EveryAgentReply, TimeoutSeconds = 300,
             };
             worker.RegisterOnStart = w.H.Runtime;
             worker.OnSubmitted = async submitted =>
@@ -363,7 +363,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
             await AgentTaskReplyIntegrationTests.SettleExistingConversionTaskAsync(w.Schema.ConnectionString, taskId, workerSession);
             if (cut == "result-committed")
             {
-                await using var child = await w.StartProbeAsync("before-conversion-claim", offset: 600, deliveryId: delivery.Id);
+                await using var child = await w.StartProbeAsync("before-conversion-claim", offset: 120, deliveryId: delivery.Id);
                 await child.ReachAsync("before-conversion-claim");
                 await using var db = w.Db();
                 (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId)).Status.ShouldBe(AgentTaskStatus.Succeeded);
