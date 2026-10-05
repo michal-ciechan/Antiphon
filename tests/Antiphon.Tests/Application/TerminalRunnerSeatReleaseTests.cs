@@ -23,6 +23,165 @@ namespace Antiphon.Tests.Application;
 public class TerminalRunnerSeatReleaseTests
 {
     [Test]
+    public async Task Long_answer_keeps_complete_content_and_spill_receipt()
+    {
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
+        var answer = string.Concat(Enumerable.Repeat("retain λ 日本語 😀\r\n", 650)) + "FINAL-ANSWER-CANARY";
+        await f.PrepareContinuationAsync();
+        await f.ReleaseAsync();
+        await f.AnswerAsync(answer);
+        var accepted = await f.TaskAsync();
+        f.Launches.OnLaunch = id => f.AttachRecipientAsync(id, busy: true).GetAwaiter().GetResult();
+        await f.DispatchAsync();
+        var queued = (await f.AnswerQueueAsync())!;
+        queued.ShouldNotBeNull();
+        queued.RemoteSpillBody.ShouldNotBeNull();
+        queued.RemoteSpillBody.ShouldContain(answer.ReplaceLineEndings("\n"));
+        queued.RemoteSpillBody.Split("FINAL-ANSWER-CANARY").Length.ShouldBe(2);
+        queued.RemoteSpillBody.ShouldContain($"Accepted answer: {accepted.ReleasedSeatAnswerId:D}");
+        f.Recipient!.Inputs.ShouldBeEmpty();
+        await f.RestartAsync();
+        await f.AttachRecipientAsync(queued.AgentSessionId);
+        await f.EndTurnAsync(queued.AgentSessionId);
+        await f.Harness.Queue.FlushSessionAsync(queued.AgentSessionId, default);
+        await f.DispatchAsync();
+        var file = Path.Combine(f.Harness.TempRoot, queued.RemoteSpillRelativePath!);
+        (await File.ReadAllTextAsync(file)).ShouldBe(queued.RemoteSpillBody);
+        f.Submitted.ShouldBe(new[] { queued.Body });
+        f.Recipient!.Inputs.Last().ShouldBe("\r");
+        (await f.TaskAsync()).ReleasedSeatAnswer.ShouldBeNull("only the complete pointer receipt finishes answer recovery");
+    }
+
+    [Test]
+    public async Task Accepted_answer_after_release_is_delivered_once()
+    {
+        foreach (var boundary in new[] { "accept-before", "accept-after", "attempt-before", "attempt-after",
+                     "queue-before", "queue-after", "delivery-before", "verdict-before", "complete-before" })
+        {
+            var cut = new DeliverySaveCut { Boundary = boundary };
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked,
+                configureDb: options => options.AddInterceptors(cut));
+            await f.PrepareContinuationAsync(); await f.ReleaseAsync();
+            f.Harness.Provider.GetRequiredService<IOptions<TerminalRunnerSeatReleaseOptions>>().Value.AutomaticEnabled = false;
+            cut.Armed = true;
+            await f.TryAnswerAsync("recover exactly once");
+            if (boundary == "accept-before")
+            {
+                (await f.TaskAsync()).ReleasedSeatAnswerId.ShouldBeNull();
+                f.Launches.Calls.ShouldBeEmpty();
+                await f.AnswerAsync("recover exactly once");
+            }
+            var answerId = (await f.TaskAsync()).ReleasedSeatAnswerId;
+            answerId.ShouldNotBeNull();
+            // Restart reconstructs scoped and singleton services over the same migrated clone.
+            await f.RestartAsync();
+            f.Launches.OnLaunch = id => f.AttachRecipientAsync(id, busy: true).GetAwaiter().GetResult();
+            await f.DispatchAsync();
+            var target = await f.TaskAsync();
+            target.Attempt.ShouldBe(2, boundary);
+            target.AgentSessionId.ShouldNotBeNull(boundary);
+            f.Recipient?.Inputs.ShouldBeEmpty("busy recipient must see no input before its committed turn end");
+            (await f.TaskAsync()).ReleasedSeatAnswerId.ShouldBe(answerId, boundary);
+            await f.RestartAsync();
+            await f.AttachRecipientAsync(target.AgentSessionId!.Value);
+            await f.DispatchAsync(); // restores a lost enqueue or acknowledgement
+            var queued = await f.AnswerQueueAsync();
+            queued.ShouldNotBeNull(boundary);
+            await f.EndTurnAsync(target.AgentSessionId.Value);
+            try { await f.Harness.Queue.FlushSessionAsync(target.AgentSessionId.Value, default); }
+            catch (InvalidOperationException) when (cut.Hit) { }
+            await f.RestartAsync();
+            await f.AttachRecipientAsync(target.AgentSessionId.Value);
+            await f.Harness.Queue.FlushSessionAsync(target.AgentSessionId.Value, default);
+            await f.DispatchAsync();
+            if (boundary == "complete-before") await f.DispatchAsync();
+            cut.Hit.ShouldBeTrue($"must reach {boundary}");
+            f.Submitted.Count.ShouldBe(1, boundary);
+            (await f.TaskAsync()).ReleasedSeatAnswer.ShouldBeNull($"{boundary}: matching prompt completes recovery");
+            await using var db = f.Db();
+            (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == target.AgentSessionId
+                && t.Kind == TranscriptKinds.UserPrompt && t.Text == queued!.Body)).ShouldBe(1, boundary);
+            (await db.SessionQueuedMessages.CountAsync(m => m.ExecutionTaskId == f.TaskId)).ShouldBe(1, boundary);
+            (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == f.SessionId
+                && m.ExecutionTaskId == f.TaskId)).ShouldBe(0, "no delivery to the released seat");
+        }
+    }
+
+    [Test]
+    public async Task Answer_receipt_rejects_ack_stale_or_partial_prompt()
+    {
+        foreach (var shape in new[] { "ack", "wrong", "partial", "stale", "wrong-session", "queued", "assistant", "generation" })
+        {
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
+            await f.PrepareContinuationAsync(); await f.ReleaseAsync(); await f.AnswerAsync("receipt canary");
+            f.Launches.OnLaunch = id => f.AttachRecipientAsync(id, busy: true).GetAwaiter().GetResult();
+            await f.DispatchAsync();
+            var row = (await f.AnswerQueueAsync())!;
+            var task = await f.TaskAsync();
+            await using var db = f.Db();
+            var generation = (await db.AgentSessions.SingleAsync(s => s.Id == row.AgentSessionId)).StartedAt;
+            var text = shape == "wrong" ? "different prompt" : shape == "partial" ? row.Body[..100] : row.Body;
+            if (shape != "ack")
+            {
+                await f.NativePromptAsync(shape == "wrong-session" ? f.SessionId : row.AgentSessionId, text);
+                if (shape is "queued" or "assistant")
+                    await db.TranscriptEntries.Where(t => t.AgentSessionId == row.AgentSessionId && t.Text == text)
+                        .ExecuteUpdateAsync(u => u.SetProperty(t => t.Kind,
+                            shape == "queued" ? TranscriptKinds.QueuedUserPrompt : TranscriptKinds.AssistantText));
+            }
+            var max = await db.TranscriptEntries.Where(t => t.AgentSessionId == row.AgentSessionId).MaxAsync(t => t.Sequence);
+            await db.SessionQueuedMessages.Where(m => m.Id == row.Id).ExecuteUpdateAsync(u => u
+                .SetProperty(m => m.Status, QueuedMessageStatus.Sent)
+                .SetProperty(m => m.DeliveryVerdict, DeliveryVerdict.Delivered)
+                .SetProperty(m => m.LastDeliveryStartedAt, f.Now)
+                .SetProperty(m => m.LastDeliveryGeneration, shape == "generation" ? generation.AddSeconds(-1) : generation)
+                .SetProperty(m => m.LastDeliveryBaselineSequence, shape == "stale" ? max : 1));
+            await f.DispatchAsync();
+            (await f.TaskAsync()).ReleasedSeatAnswerId.ShouldBe(task.ReleasedSeatAnswerId, shape);
+            (await f.TaskAsync()).ReleasedSeatAnswer.ShouldBe("receipt canary", shape);
+            // The positive witness comes from actual queue submit bytes, normalizer and ingest.
+            await db.SessionQueuedMessages.Where(m => m.Id == row.Id).ExecuteUpdateAsync(u => u
+                .SetProperty(m => m.Status, QueuedMessageStatus.Pending)
+                .SetProperty(m => m.DeliveryVerdict, (DeliveryVerdict?)null)
+                .SetProperty(m => m.LastDeliveryStartedAt, (DateTime?)null)
+                .SetProperty(m => m.LastDeliveryGeneration, (DateTime?)null)
+                .SetProperty(m => m.LastDeliveryBaselineSequence, (long?)null));
+            await f.EndTurnAsync(row.AgentSessionId);
+            await f.Harness.Queue.FlushSessionAsync(row.AgentSessionId, default);
+            await f.DispatchAsync();
+            (await f.TaskAsync()).ReleasedSeatAnswer.ShouldBeNull($"{shape}: real complete receipt finishes recovery");
+        }
+    }
+
+    private sealed class DeliverySaveCut : SaveChangesInterceptor
+    {
+        public required string Boundary { get; init; }
+        public bool Armed { get; set; }
+        public bool Hit { get; private set; }
+        private bool Matches(DbContext db) => Boundary switch
+        {
+            "accept-before" or "accept-after" => db.ChangeTracker.Entries<AgentTask>().Any(e => e.Entity.Attempt == 1 && e.Entity.ReleasedSeatAnswerId != null),
+            "attempt-before" or "attempt-after" => db.ChangeTracker.Entries<AgentTask>().Any(e => e.Entity.Attempt == 2 && e.Entity.Status == AgentTaskStatus.Queued),
+            "queue-before" or "queue-after" => db.ChangeTracker.Entries<SessionQueuedMessage>().Any(e => e.Entity.ExecutionTaskId != null),
+            "delivery-before" => db.ChangeTracker.Entries<SessionQueuedMessage>().Any(e => e.Entity.DeliveryAttempts > 0 && e.Entity.DeliveryVerdict == null),
+            "verdict-before" => db.ChangeTracker.Entries<SessionQueuedMessage>().Any(e => e.Entity.DeliveryVerdict == DeliveryVerdict.Delivered),
+            "complete-before" => db.ChangeTracker.Entries<AgentTask>().Any(e => e.Entity.Attempt == 2 && e.Entity.ReleasedSeatAnswer == null),
+            _ => false
+        };
+        private void Cut(DbContext db, bool after)
+        {
+            if (!Armed || Hit || Boundary.EndsWith("after") != after || !Matches(db)) return;
+            Hit = true; throw new InvalidOperationException($"injected {Boundary}");
+        }
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data,
+            InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        { Cut(data.Context!, false); return ValueTask.FromResult(result); }
+        public override ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData data, int result,
+            CancellationToken cancellationToken = default)
+        { Cut(data.Context!, true); return ValueTask.FromResult(result); }
+    }
+
+    [Test]
     public async Task Answer_racing_release_preserves_one_owner()
     {
         await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
