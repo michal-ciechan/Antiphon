@@ -84,6 +84,15 @@ configure a named profile with placeholders replaced by the approved project and
 Then PATCH only the intended conversation with `{"outboundAgentProfile":"project-pdf"}`.
 Keep other conversations unbound unless their owners explicitly select the profile.
 
+Attachment bytes, text sources and retained-file hashing require an opened regular file
+with exactly one link, in addition to the captured-root and symlink/junction checks.
+Hard links are refused even when both names lie inside allowed roots; copy legitimate
+hard-linked artifacts to independent regular files before attaching them. Zero or
+unavailable link counts are also refused. This is a handle-time observation, not proof
+of historical inode origin or continuous exclusivity: a local writer can copy bytes,
+remove an alias before inspection, or change links/content afterward. Writable allowed
+roots are not an inode sandbox.
+
 The delivery record owns publication while conversion runs. A queued reply has not yet been
 published; the normal correlation and source-delivery timestamps are saved only after Kafka
 accepts the final `ChannelReply`. The payload retains the inbound conversation and native reply

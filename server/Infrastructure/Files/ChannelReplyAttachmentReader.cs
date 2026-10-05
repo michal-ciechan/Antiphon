@@ -7,6 +7,7 @@ namespace Antiphon.Server.Infrastructure.Files;
 
 public sealed class ChannelReplyAttachmentReader : IChannelReplyAttachmentReader
 {
+    internal Func<string, CancellationToken, Task>? BeforeOpenAsync { get; set; }
     internal Func<string, CancellationToken, Task>? BeforeReadAsync { get; set; }
     public async Task<byte[]> ReadAttachmentAsync(string path, IReadOnlyList<string> allowedRoots,
         long maxBytes, CancellationToken ct)
@@ -14,6 +15,7 @@ public sealed class ChannelReplyAttachmentReader : IChannelReplyAttachmentReader
         if (maxBytes < 0 || maxBytes > 20 * 1024 * 1024)
             throw new ArgumentOutOfRangeException(nameof(maxBytes));
         ValidatePath(path, allowedRoots);
+        if (BeforeOpenAsync is { } beforeOpen) await beforeOpen(path, ct);
         await using var stream = OpenRegularFile(path);
         var length = stream.Length;
         if (length > maxBytes) throw new ChannelReplyFileTooLargeException(length);
@@ -98,9 +100,9 @@ public sealed class ChannelReplyAttachmentReader : IChannelReplyAttachmentReader
                     0x800 | 0x20000 | 0x80000);
                 try
                 {
-                    if (Statx(file.DangerousGetHandle().ToInt32(), "", 0x1000, 1, out var stat) != 0
-                        || (stat.Mode & 0xf000) != 0x8000)
-                        throw new InvalidDataException("A source must be a regular file.");
+                    if (Statx(file.DangerousGetHandle().ToInt32(), "", 0x1000, 0x5, out var stat) != 0)
+                        throw new InvalidDataException("Source file metadata is unavailable.");
+                    ValidateLinuxMetadata(stat.Mask, stat.Mode, stat.Links);
                     return new FileStream(file, FileAccess.Read, 64 * 1024, isAsync: false);
                 }
                 catch { file.Dispose(); throw; }
@@ -132,6 +134,7 @@ public sealed class ChannelReplyAttachmentReader : IChannelReplyAttachmentReader
                 if (GetFileType(file) != 1 || !GetFileInformationByHandle(file, out var info)
                     || (info.Attributes & (0x400 | 0x10 | 0x40)) != 0)
                     throw new InvalidDataException("A source must be an unlinked regular disk file.");
+                RequireSingleLinkCount(info.Links);
                 return new FileStream(file, FileAccess.Read, 64 * 1024, isAsync: false);
             }
             catch { file.Dispose(); throw; }
@@ -146,8 +149,27 @@ public sealed class ChannelReplyAttachmentReader : IChannelReplyAttachmentReader
         return new SafeFileHandle((IntPtr)fd, ownsHandle: true);
     }
 
+    internal static void RequireSingleLinkCount(uint links)
+    {
+        if (links != 1) throw new InvalidDataException("A source file must have exactly one link.");
+    }
+
+    internal static void ValidateLinuxMetadata(uint mask, ushort mode, uint links)
+    {
+        if ((mask & 0x5) != 0x5)
+            throw new InvalidDataException("Source file type and link count are required.");
+        if ((mode & 0xf000) != 0x8000)
+            throw new InvalidDataException("A source must be a regular file.");
+        RequireSingleLinkCount(links);
+    }
+
     [StructLayout(LayoutKind.Explicit, Size = 256)]
-    private struct FileStat { [FieldOffset(28)] public ushort Mode; }
+    private struct FileStat
+    {
+        [FieldOffset(0)] public uint Mask;
+        [FieldOffset(16)] public uint Links;
+        [FieldOffset(28)] public ushort Mode;
+    }
     [DllImport("libc", EntryPoint = "openat", SetLastError = true)]
     private static extern int NativeOpenAt(int directory, string path, int flags);
     [DllImport("libc", EntryPoint = "statx", SetLastError = true)]
