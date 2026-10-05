@@ -1,16 +1,19 @@
 # CARD-1061: reject hard-linked attachment sources and qualify Windows junction checks
 
-Date: 2026-10-05. Stage: Plan; TestDesign remains a separate dispatch.
-Inspected source: `14316228eaac5afd8a404d75fca69d7a9fa94382`.
+Date: 2026-10-05. Stage: Plan repair; verification design complete for Code.
+Product inspection: `14316228eaac5afd8a404d75fca69d7a9fa94382`.
+Repair inspection/base: `84859a041f68b7430b16f1a64b01624063a9734f`, including
+the TestDesign amendment; task `54118627`.
 Card: Antiphon CARD-1061, read through `scripts/card.ps1 get CARD-1061 -Board Antiphon -Json`.
 
 Reject a source file unless its opened handle reports exactly one link. Apply this
 to attachment bytes, text and the retained-file hashing path. Qualify the existing
 Windows parent-directory reparse checks with real NTFS junctions, including a
-junction installed after pathname validation. Deliver two independently committed
-30-60 minute slices. This plan changes no production code and claims no runtime
-qualification. The brief does not fold TestDesign into Plan; the proposed tests,
-controls and checkpoint roster below are its concrete starting point.
+junction installed after pathname validation. Deliver three independently committed
+30-60 minute slices. This repair resolves TestDesign's D-5 fixture seam and folds
+its fixture verification into the existing verification design. It changes only
+this plan and claims no runtime qualification. The single manifest below is the
+closed Code scope; Mutation remains post-land work.
 
 ## Ground truth
 
@@ -22,8 +25,10 @@ controls and checkpoint roster below are its concrete starting point.
 | Only `ReadAttachmentAsync` is affected. | `ReadTextAsync` calls it. Static `HashFileAsync` independently validates the path and calls the same `OpenRegularFile`. `ChannelOutboundFileStore.StageCapturedAsync` and `TryAdoptAsync` hash retained snapshot files through it. | Put enforcement in the shared opener and retain coverage of hashing. Staged files are written as new files, not hard links. |
 | A junction test alone proves Windows native checks. | A pre-existing junction is refused by `ValidatePath` before `OpenRegularFile`. Windows then separately opens each parent with `OPEN_REPARSE_POINT`, rejects reparse attributes and pins parents without delete sharing until leaf open. | Prove preflight and native checks separately. A deterministic post-validation junction fixture must reach the latter. |
 | Existing reader tests cover the request. | `tests/Antiphon.Tests/Application/ChannelOutboundStorageTests.cs` has four C1059 reader tests for roots, symbolic links, budgets and nonregular files. None creates a hard link. Its link test uses `CreateSymbolicLink`, not a Windows junction. | Add focused cases; preserve the existing narrow regression selection. Windows symbolic-link privilege is not a prerequisite for the new junction proof. |
-| A fixture framework must be invented. | `tests/Antiphon.Tests/TestHelpers/DirectoryLink.cs` creates a junction on Windows and removes only the link on disposal. It can return null. `BeforeReadAsync` already exists on the reader, but runs after safe open and length inspection. | Reuse the directory-link helper with a required-success assertion. Add a distinct per-instance before-open barrier at the correct boundary. |
-| Platform follows the card automatically. | Card `requiredPlatform` is Any. GET `/api/runner-defaults` returned revision 2 with no kind overrides; GET `/api/session-runners` showed eligible Linux and Windows lanes and an unavailable descriptor. | Require Linux for CP-1/2 and native Windows for CP-3/4. Resolve hosts from the live catalogue; embed no fleet location or runner pin. |
+| Existing junction creation is bounded. | `DirectoryLink.TryCreate` drains stdout synchronously, then stderr, before `WaitForExit(30_000)`. Timeout returns null without terminating/joining the child. `Dispose` only removes the link. | ProcessSpawnLimit and a caller timeout cannot make this safe. Replace that Windows launch path under D-5a before V-5/V-6 or PC-6..8 execute. |
+| No reusable process owner exists. | `Scripts/ScriptHarnessProcess.RunAsync` concurrently pumps both streams, uses one execution deadline, and finally terminates/confirms death/drains with a fresh cleanup budget. `WindowsScriptHarnessProcess` owns a private non-breakaway job before resume. `ScriptHarness.RunHarnessCaseAsync` adds unrelated PASS-marker validation. | Use the lower-level process runner through a new junction script adapter; do not call the marker validator, duplicate native custody, or change the shared owner. |
+| A read barrier already exists at the needed boundary. | `BeforeReadAsync` runs after safe open and length inspection. | Add the per-instance before-open barrier in D-4. |
+| Platform follows the card automatically. | Card `requiredPlatform` is Any. Repair reads of GET `/api/runner-defaults` on 2026-10-05 returned revision 2 with no kind overrides; GET `/api/session-runners` showed available Linux and Windows descriptors and one unavailable descriptor. | Require Linux for CP-1/2 and native Windows for CP-3/4. Resolve hosts from the live catalogue; embed no fleet location or runner pin. Availability is not NTFS/pwsh qualification. |
 
 ## Decisions
 
@@ -94,6 +99,78 @@ Windows, use the existing assembly-local ProcessSpawnLimit for the junction
 helper's child process, and dispose the junction before recursive scratch cleanup.
 Keep all test-owned child work bounded and joined. Do not probe real user files.
 
+**D-5a — Repair the junction launch by reusing the existing process owner.**
+Replace the raw `Process.Start`/`ReadToEnd`/`WaitForExit` block in `DirectoryLink`
+with an internal async `DirectoryLinkCommand.RunAsync` adapter around
+`ScriptHarnessProcess.RunAsync`. Keep `TryCreate(string, string)` for existing
+callers; its Windows branch synchronously joins the complete async operation
+(a joined `Task.Run` bridge avoids capturing a caller synchronization context).
+Add `TryCreateWindowsAsync` for the new awaited junction tests. Both use the
+same adapter and result gate. Linux `CreateSymbolicLink`, `MoveTo` and
+nonrecursive link disposal retain their behavior. No global hooks or mutable
+defaults. Inject `ScriptHarnessOptions`/owner, script/case and cancellation per
+call for the fixture witnesses, never via a static override. The default
+TryCreate entry chooses the Windows path only on Windows; the internal async
+orchestration and result gate remain callable with fake owners on either host.
+Pure cases supply a dummy ExecutablePath with their fake owner so neither PATH
+resolution nor native launch is a hidden test prerequisite.
+
+Add `tests/Antiphon.Tests/Scripts/Fixtures/directory-link.ps1`, accepting the
+owner's `-Case`/`-ResultsDirectory` arguments and distinct literal link/target
+arguments. Its only normal case calls the system `cmd.exe /d /v:off /c mklink /J`,
+with quoted owned paths, inherited stdout/stderr, and returns the actual native
+exit code. Preserve spaces and Unicode in paths; fail setup for unsupported
+cmd expansion characters instead of executing interpolated commands. No
+`Start-Process`, detached work, symlink fallback, WSL or elevation. `/J` creates
+a directory junction ([Microsoft command contract](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/mklink)).
+The installed real `pwsh.exe` is a fixture prerequisite; resolve it with the
+existing installed-PowerShell resolver. The Windows job owns pwsh, cmd and any
+descendants before they execute; inherited child membership and job termination
+are the [Windows ownership contract](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
+
+Use **30 seconds execution and 10 seconds cleanup** for ordinary junction
+creation, supplied explicitly rather than the harness's 300-second default.
+The shared runner starts stdout and stderr pumps together and observes root exit
+and both EOFs under **one monotonic execution allowance**; root exit does not
+restart it. A read fault enters cleanup promptly. Success, nonzero exit, launch
+failure, timeout, caller cancellation and pipe fault all go through the same
+owner finalization. Cleanup uses one fresh allowance independent of the expired
+execution/caller token: terminate the owned job even if the root already exited,
+confirm zero active members and retained process handles signaled, join/drain
+both pumps, then close/dispose handles. Do not equate `Kill`, root exit or
+`Process.Dispose` with joined descendants or EOF. Reuse these inspected owner
+operations unchanged; do not add an unbounded fallback wait.
+
+Keep ordinary unsupported/nonzero creation as null **only after successful owner
+cleanup**, and require the resulting path's ReparsePoint observation before
+returning a `DirectoryLink`. Timeout, cancellation, pipe/launch/cleanup errors
+from the owned run must escape the helper's old broad IOException catch. In
+particular, unknown cleanup cannot become null, skip or successful setup.
+Preserve the primary error and cleanup diagnostics. When cleanup is unconfirmed,
+retain owned scratch/evidence, fail the fixture and stop the lane for diagnosis;
+do not recursively erase paths under an uncertain writer. Conservatively retain
+scratch on any owned-run exception unless the independent observer confirms
+cleanup; do not parse diagnostic strings to manufacture cleanup authority.
+
+The caller establishes that its link name was absent, owns the unique scratch
+root and uses `finally` to remove only that created reparse entry before restoring
+a renamed ordinary directory or deleting scratch. After a failed command with
+confirmed process cleanup, inspect/remove a partially created junction even when
+no `DirectoryLink` was returned; never remove a pre-existing ordinary directory
+or follow a target. V-5/V-6 require nonnull success and independent ReparsePoint
+proof. The native witnesses include target survival after move/disposal and
+partial-fixture cleanup. This is a test-fixture failure policy, not a change to
+the reader's InvalidDataException contract.
+
+Reject simply adding `WaitAsync` around the old helper: its child and pipe reads
+would still outlive the timeout. Reject a root-only `Kill(true)` plus dispose:
+the root may have exited while a descendant holds a pipe. Reject a new Win32
+junction/Job Object implementation: the repository already owns and tests the
+required process contract. The small script adapter is additional implementation
+work, not an assertion that the existing marker-based ScriptHarness can directly
+wrap arbitrary synchronous C# code. Its wiring, failures and cost are F-1..F-7
+and PC-14..PC-20 below. Shared-owner repairs, if discovered, return to Plan.
+
 **D-6 — Bound scope to this reader and its immediate consumers.** No new package,
 settings, migration, channel binding, broker traffic or retry behavior. Update
 the outbound section of `docs/telegram.md` and the interface summary to describe
@@ -104,141 +181,85 @@ this card supplies the specifically missing reader/junction evidence.
 
 ## Implementation slices
 
-### S1 — Shared policy, Linux proof and bounded regressions (35-50 minutes)
+### S1 — Shared policy, Linux proof and bounded regressions (30-40 minutes)
 
 Files:
 
 - `server/Infrastructure/Files/ChannelReplyAttachmentReader.cs`: metadata layout,
-  mask request/validation, shared count gate in both OS branches, before-open hook.
+  mask request/validation, both OS count gates, before-open hook.
 - `server/Application/Interfaces/IChannelReplyAttachmentReader.cs`: contract comment.
 - `tests/Antiphon.Tests/TestHelpers/NativeHardLink.cs` (new): owned hard-link fixture.
 - `tests/Antiphon.Tests/Application/ChannelReplyAttachmentReaderTests.cs` (new):
-  four unparameterized methods listed below, with real native reads on the current OS.
-- `docs/telegram.md`: operational behavior and compatibility/trust-boundary wording.
+  V-1..V-4, including V-2's regular captured-stage/adoption companion.
+- `docs/telegram.md`: refusal, compatibility and trust-limit wording.
 
-Implement both OS checks together so there is one shared policy change. Commit
-and push before CP-1/2. Run those rows on Linux and report the Windows branch as
-awaiting S2 qualification. Stage and hash a regular fixture through the normal
-reader to ensure refusal did not replace all successful reads. Do not modify
-the C1059 tests to weaken existing requirements.
+Implement both OS checks together. Preserve the C1059 tests. Commit and push this
+slice; ordinary source qualification waits for the complete S1-S3 candidate.
+There is no whole-Unit or extra S1 checkpoint run.
 
-### S2 — Native Windows hard-link and junction qualification (35-50 minutes)
+### S2 — Owned junction command and fixture contract (40-60 minutes)
+
+Files:
+
+- `tests/Antiphon.Tests/TestHelpers/DirectoryLink.cs`: shared async Windows
+  path, synchronous compatibility bridge, post-command result gate and exception
+  boundaries; Linux creation and MoveTo/Dispose behavior preserved.
+- `tests/Antiphon.Tests/TestHelpers/DirectoryLinkCommand.cs` (new): D-5a adapter,
+  per-call options, exact execution/cleanup budgets and caller token.
+- `tests/Antiphon.Tests/Scripts/Fixtures/directory-link.ps1` (new): foreground
+  mklink command, native exit propagation and literal fixture path arguments.
+- `tests/Antiphon.Tests/TestHelpers/DirectoryLinkFixtureTests.cs` (new): five
+  unparameterized contract methods F-1..F-5, Unit category, no native children.
+
+Call the existing lower-level ScriptHarnessProcess; do not modify its owner or
+marker validator. The pure witnesses use fake owners/streams and FakeTimeProvider
+through per-call options. They call the actual adapter/result gate, not a copied
+implementation. Commit and push before S3. No separate build is added.
+
+### S3 — Native Windows fixture and reader qualification (40-60 minutes)
 
 Files:
 
 - `tests/Antiphon.Tests/Application/ChannelReplyAttachmentReaderWindowsTests.cs`
-  (new): two unparameterized Windows-only methods below; Integration category and
-  ProcessSpawnLimit. Fail explicitly if selected on the wrong OS.
-- Reuse `tests/Antiphon.Tests/TestHelpers/DirectoryLink.cs` without widening its
-  semantics; a null creation result is a fixture failure in these tests.
-- This plan: record any justified roster/name changes before the run. Generated
-  evidence remains ignored; receipt facts go in the stored task report.
+  (new): V-5/V-6, two unparameterized Windows-only methods.
+- `tests/Antiphon.Tests/TestHelpers/DirectoryLinkFixtureWindowsTests.cs` (new):
+  two unparameterized native methods F-6/F-7 with independent retained handles,
+  per-invocation watchdog and finally cleanup patterned on the existing fixtures.
+- This plan only if a justified exact roster change is needed before qualification.
 
-Run CP-3/4 on native Windows against the committed S2 SHA. CP-3 also executes
-S1's real hard-link tests, qualifying the Windows count check. If native proof
-finds a production defect, repair it in a new committed slice, update the manifest
-to requalify the affected Linux rows at that source, and report the reason for
-the added runs. A Linux green does not close S2; unavailable Windows prerequisites
-leave that qualification pending.
+Both native classes carry Integration, Slow where required by the duration owner,
+and the assembly-local `ParallelLimiter<ProcessSpawnLimit>`; fail if explicitly
+selected on the wrong OS. F-6/F-7 reuse the existing Windows owner hooks,
+`ScriptHarnessWindowsProcessFixture`, staged ScriptHarnessHost and process
+fixture script via per-call adapter options; no new helper executable or project.
+The new test-local wrapper retains and awaits its own invocation; do not edit the
+shared fixture just to add a wrapper entry point. Read its cleanup pattern and
+reuse its independent observers. Windows qualification needs installed real
+pwsh and local NTFS supporting hard links/junctions.
 
-## TestDesign handoff
-
-TestDesign must add the owner's full `## Verification design` structure, complete
-the inspection/guard inventory and confirm these exact method bindings and costs.
-Move the single Checkpoints section into it; do not leave duplicate manifests.
-No changed asynchronous delivery path is proposed: this is the file-read boundary
-feeding the existing preparation pipeline, not new publication or recipient proof.
-
-### Proposed behavior and regression roster
-
-| ID | Test method (new unless identified otherwise) | Decisive observations |
-|---|---|---|
-| V-1 | `ChannelReplyAttachmentReaderTests.C1061_Byte_and_text_reads_reject_hard_links` | Byte and text entry points reject an in-root hard link to an outside sibling file and two names wholly inside allowed roots. The fixture independently confirms a real two-link file. A separate ordinary file returns exact bytes/text; deleting the second name makes the formerly linked file readable. Each entry point is asserted, not merely invoked. |
-| V-2 | `ChannelReplyAttachmentReaderTests.C1061_Hashes_reject_hard_links` | `HashFileAsync` refuses the same outside/inside alias arrangements. A single-link file returns its exact length and independently computed SHA-256. This protects retained-file staging/adoption's use of the shared opener without a database fixture. |
-| V-3 | `ChannelReplyAttachmentReaderTests.C1061_Linux_metadata_requires_type_and_link_count` | Through the production Linux metadata validator, regular mode with count one is refused when either requested result-mask bit is missing, including both missing; both present accepts. A fabricated count of one with its bit absent must fail. Real Linux V-1/2 prove the validator is wired to a native handle. |
-| V-4 | `ChannelReplyAttachmentReaderTests.C1061_Zero_link_count_is_rejected` | Shared production count validator refuses zero, accepts one, refuses two. This explicitly covers the conservative zero-count policy without a nondeterministic unlink race. Native V-1/2 establish call-site use. |
-| V-5 | `ChannelReplyAttachmentReaderWindowsTests.C1061_Preexisting_junction_is_refused_before_open` | Real outward junction in an allowed path, and the same junction used as allowed root, both refuse before the before-open hook is reached. An ordinary-directory companion returns expected bytes and reaches the hook. Check hook count per attempt and reset between cases. |
-| V-6 | `ChannelReplyAttachmentReaderWindowsTests.C1061_Junction_after_validation_is_refused_by_native_open` | Start with an ordinary valid path; the before-open hook moves its parent aside and installs a junction to an outside directory with the same leaf name and distinguishable bytes. Assert hook and junction creation occurred, then exact unsafe-directory refusal and no returned bytes. Restore the ordinary path and prove exact original bytes are readable. |
-| R-1 | Four existing `ChannelOutboundStorageTests.C1059_Source_*` methods | Roots/traversal, symbolic links, finite length/growth and nonregular rejection retain their current assertions. Linux executes all four. Windows executes all except the symbolic-link method, whose privilege-dependent setup is unnecessary for this junction card. |
-| R-2 | Existing `ChannelOutboundStorageTests.Frozen_reply_and_input_bytes_survive_source_mutation` | Frozen reply/input contents remain correct and tampered stored reply is rejected. No new DB, broker or session fixture is required. |
-
-### Proposed positive controls
-
-One control per named behavior/independently bypassable guard. V-1 has separate
-native call sites and V-6 has separate open-flag and attribute guards, so each
-requires its own control. These are later method-scoped Mutation work, not ordinary
-Code runs. Regressions retain their prior cards' control obligations.
-
-| PC | Lane | Compiling mutation | Detecting filter | Required red |
-|---|---|---|---|---|
-| PC-1 | Linux | Bypass the single-link policy call in the Linux leaf validation path only. | `/*/*/ChannelReplyAttachmentReaderTests/C1061_Byte_and_text_reads_reject_hard_links` | Expected unsafe-file exception is absent for the real two-link fixture. |
-| PC-2 | Windows | Bypass the single-link policy call in the Windows leaf validation path only. | `/*/*/ChannelReplyAttachmentReaderTests/C1061_Byte_and_text_reads_reject_hard_links` | The same hard-link refusal assertion fails on NTFS. |
-| PC-3 | Linux | In `HashFileAsync` only, replace the safe opener with an ordinary read-only FileStream, retaining pathname validation. | `/*/*/ChannelReplyAttachmentReaderTests/C1061_Hashes_reject_hard_links` | A hard-linked file incorrectly produces a hash instead of refusing. |
-| PC-4 | Linux | Remove the required statx result-mask check, leaving mode/count checks intact. | `/*/*/ChannelReplyAttachmentReaderTests/C1061_Linux_metadata_requires_type_and_link_count` | Missing-mask inputs with fabricated valid values incorrectly pass. |
-| PC-5 | Linux | Weaken the shared link-count gate from count != 1 to count > 1. | `/*/*/ChannelReplyAttachmentReaderTests/C1061_Zero_link_count_is_rejected` | Zero incorrectly passes; valid one remains the companion. |
-| PC-6 | Windows | Remove ReparsePoint from `ValidatePath`'s component rejection mask, retaining device and directory checks. | `/*/*/ChannelReplyAttachmentReaderWindowsTests/C1061_Preexisting_junction_is_refused_before_open` | The hook is reached for a linked path, even if the native gate later refuses it. |
-| PC-7 | Windows | Remove only the parent-handle reparse-attribute predicate. | `/*/*/ChannelReplyAttachmentReaderWindowsTests/C1061_Junction_after_validation_is_refused_by_native_open` | The outside fixture becomes readable; expected refusal is absent. |
-| PC-8 | Windows | Remove only OPEN_REPARSE_POINT from Windows parent opens, retaining BACKUP_SEMANTICS and sharing flags. | `/*/*/ChannelReplyAttachmentReaderWindowsTests/C1061_Junction_after_validation_is_refused_by_native_open` | Parent inspection follows the junction and expected refusal is absent. |
-
-Missing fixtures, build errors, timeouts, zero tests or skips never count as PC red.
-Run baseline, mutation and restored green with precisely the listed method filter;
-retain separate evidence per PC. These controls share the reader file and must
-run serially. TestDesign must reject a control if the proposed native fixture
-cannot reach its asserted boundary, and resolve the fixture before Code handoff.
-
-### Execution and cost
-
-CP-1/2 are the **Linux lane**; CP-3/4 are the **native Windows lane**, on a local
-NTFS scratch volume supporting hard links and junctions. Read GET
-`/api/runner-defaults` and GET `/api/session-runners` again before dispatch. Omit
-`-Runner`. Use `-Platform Linux` or `-Platform Windows` only for the OS-bound
-execution slices; planning/TestDesign need no OS pin. `-Platform Any` unpins an
-inherited requirement. A checkpoint group names its lane because the importer
-does not support a Lane column or automatically select rows by host OS.
-
-After S1's commit use the checkpoint tool's `run --plan <this-plan> --rows CP-1,CP-2
---expected-source-sha <S1-sha>`. After S2's commit use `--rows CP-3,CP-4` and that
-SHA on Windows. Launch the tool through the host build-slot wrapper; checkpoint
-drivers acquire their own slots. Await every run and continue `wait` on exit 75
-until completion. Never launch the entire table on one OS. Slot timeout exit 4
-is not permission to run without a lease. Preserve the emitted CHECKPOINT lines
-and source-qualified receipts, including actual counts, skips and failures.
-
-Each slice commits and pushes before its checkpoint group. Keep tracked files
-frozen during the run. Verify failures at the base with the same narrow failing
-method before labeling them inherited; no assembly rerun. Clean only the exact
-owned alternate-output directories after their children finish. Code/Review run
-the full-task-range evidence diff guard. TRX, JSON and logs remain gitignored.
-
-Estimated ordinary floor: 8 + 2 + 10 + 2 = **22 minutes** (Linux 10, Windows 12),
-plus **48-78 minutes** combined authoring/review across the two slices. Each slice
-is estimated at 35-50 minutes including its rows. Eight serial PCs need 24 phase
-build/test invocations at an estimated 3 minutes each: **72 minutes** Mutation,
-plus about 15 minutes for mutation/restoration work. These are estimates, not
-measurements. The brief explicitly excludes whole-Unit execution; four common
-tests, two Windows tests and five named existing regression methods bound the
-scope. No whole namespace, assembly, E2E or provider run is authorized here.
+Commit and push S3, then run CP-1/2 in the Linux lane and CP-3/4 in the native
+Windows lane at that **same complete candidate SHA**. This slice includes the
+30-minute setup/ordinary verification allowance below and 10-30 minutes native
+fixture/test authoring. All native scenarios are sequential under the limiter;
+Antiphon.Agents.Pty.Tests is not co-scheduled. A new product/shared-owner defect
+requires a new committed repair with the manifest and estimates updated before
+running affected rows; unavailable native prerequisites leave qualification
+pending. Linux success cannot close the Windows obligations.
 
 ## Verification design
 
-TestDesign task `c9945af6`, inspected at
-`fd9a5c2bc78c43c090a1c28c621472c69a6c1350` on 2026-10-05.
-This section owns verification; D-1 through D-6 and the production fix design
-above are unchanged. The proposed eight controls are not a complete independent
-inventory: PC-4 needs separate type/link-mask controls, and byte/text admission,
-the shared multiple-link predicate and the extracted regular-mode check need
-their own controls. Retain PC-1 through PC-8 identities, narrow PC-4, and add
-PC-9 through PC-13 below. Four checkpoint rows still suffice.
+TestDesign task `c9945af6` inspected
+`fd9a5c2bc78c43c090a1c28c621472c69a6c1350` and produced amendment
+`84859a041f68b7430b16f1a64b01624063a9734f`. Plan repair task `54118627`
+resolves its known D-5 setup seam by D-5a, adds F-1..F-7 and PC-14..PC-20,
+and replaces superseded proposed rosters/costs with this single design.
+D-1..D-4/D-6 and the thirteen product controls retain their selected policy.
 
-**Disposition: return to Plan for the junction-fixture execution seam.** The
-product witnesses and compiling mutations are specified below, but D-5 cannot
-currently be met by reusing `DirectoryLink.TryCreate` unchanged. It synchronously
-drains stdout, then stderr, *before* `WaitForExit(30_000)`; neither read has a
-deadline. On a wait timeout it returns null without terminating and joining the
-owned process. `Process.Dispose`, `ProcessSpawnLimit` and a test `WaitAsync` do
-not repair that ownership gap. Do not label the Windows controls safely
-executable or hand this plan to Code until Plan resolves that setup contract.
-No native test, build or mutation has run in this TestDesign task.
+**Disposition: ready for Code.** All product and fixture controls have concrete
+setup, observation, restoration and bounded execution designs. This is design
+readiness, not executed evidence: no build, native test or mutation has run in
+this Plan repair. PC-6..8 use only the repaired owned fixture after S2/S3; they
+must never execute against the old unbounded DirectoryLink helper.
 
 ### Inspection
 
@@ -252,25 +273,23 @@ Bodies read, rather than inferred from names:
 | `ChannelOutboundFileStore.StageAsync`, `StageCapturedAsync`, `StageCoreAsync`, `TryAdoptAsync`, `ReadReplyAsync` | V-2 covers the shared retained-file hashing primitive. R-2's `StageAsync` does **not** enter `StageCapturedAsync`'s retained-file loop. Add the explicit regular captured-stage/adoption companion described under V-2. |
 | `ChannelOutboundDeliveryPump` preparation exception handling and `MaterializeAsync` | Delivery inventory: existing `InvalidDataException` failure owner and existing adoption boundary, no new enqueue/publication protocol. |
 | `DirectoryLink.TryCreate`, `MoveTo`, `Dispose`, `IsLink`; `ProcessSpawnLimit.Limit`; `AgentTaskLandHalfResetWindowsTests.C883_CaseAliasCannotChangeRegisteredIdentity` and native host requirement | Nearest fixtures for the new Windows tests and helper. Required-success junction setup and nonrecursive link disposal are reusable; bounded/joined command execution is missing. |
-| `Scripts/ScriptHarness.RunHarnessCaseAsync` and `Validate` | Existing script entry delegates to a process owner; it cannot directly wrap an arbitrary synchronous C# `DirectoryLink.TryCreate` call. Not accepted as an already available substitute for that missing setup. |
+| `Scripts/ScriptHarness.RunHarnessCaseAsync` and `Validate` | This marker-checking entry cannot directly wrap the C# helper. D-5a instead adds an actual foreground script and calls the lower-level process runner. |
+| Repair: `ScriptHarnessProcess.RunAsync`, `PumpAsync`, `CreateOwner`, `ResolvePowerShell`; `ScriptHarnessOptions`/`ScriptProcessRequest` | Shared exit/EOF execution deadline, prompt fault path, separate cleanup allowance, unconditional termination/death confirmation, diagnostics/retention; adapter F-1..F-5 exercises these through the actual call. |
+| Repair: `WindowsScriptHarnessProcess` constructor, `StartAndWaitForRootAsync`, `TerminateAsync`, `ConfirmDeadAsync`, `RetainTerminationProcesses`; `ScriptHarnessProcessFixture.Invocation` and `ScriptHarnessWindowsProcessFixture` retained observers | Native process job membership before resume, retained process joins, independent emergency cleanup; F-6/F-7 use the existing machinery without changing it. |
+| Repair: `ScriptHarnessProcessContractTests` deadline/fault/cancellation/cleanup bodies; `ScriptHarnessProcessTests` timeout/pipe-holder bodies; `ScriptHarnessWindowsOwnershipTests.Nested_job_timeout_kills_owned_descendants_only`; `Scripts/Fixtures/script-harness-process.ps1`; `Antiphon.Tests.csproj` helper-copy target | Existing fake-clock and live native fixture patterns make the bounded adapter witnesses concrete. Existing staged helper and exact scenarios are reusable; no new executable/build project. These read bodies are design evidence, not claimed executed tests. |
 | `IChannelReplyAttachmentReader`; outbound section of `docs/telegram.md`; project-context owner; testing/build checkpoint, filter, process, slot, mutation and receipt rules; orchestration stage handoff rules | Contract documentation, OS lanes, exact source evidence and post-land PC execution. |
 | `PlanTableImporter.ImportMarkdown`, `ExtractSection`, `SplitRow`, `ExtractPayload` | One nine-column table; escaped OR pipes; reuse only within the same After group. The importer does not choose a host from Group. |
 
 Missing setup is concrete: the two new reader test files, `NativeHardLink`,
 `BeforeOpenAsync`, `RequireSingleLinkCount` and the pure Linux validator do not
-yet exist. They are S1/S2 implementation work, not existing passing evidence.
+yet exist. They are S1/S3 implementation work, not existing passing evidence.
 Use a validator callable as `ValidateLinuxMetadata(uint mask, ushort mode,
 uint links)` for the pure witnesses; it must be called by the real Linux opener.
 This is the parameter-level binding of D-2, not a native-I/O substitute.
 
-Plan must resolve the junction helper's bounded execution before Code: provide
-one deadline across process exit and both pipe drains, terminate/join only the
-owned child on failure, and dispose the junction before recursive scratch
-cleanup. Either amend the existing helper with reviewed coverage of that
-contract, or specify another owned native junction fixture. Keep `mklink /J`
-semantics, visible setup failure, the ProcessSpawnLimit and no privilege/WSL
-fallback. That fixture repair's tests, guards and cost must be added by the
-returning Plan/TestDesign; the current product matrix does not certify it.
+D-5a resolves the identified seam. The command adapter, junction script and
+F-1..F-7 methods are also missing implementation and are fully assigned to S2/S3.
+No existing helper is relabeled safe merely because its caller has a timeout.
 
 ### Delivery inventory
 
@@ -389,6 +408,47 @@ The count/identity fixture uses the documented
 [handle information members](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/ns-fileapi-by_handle_file_information);
 Linux offsets/masks follow the [kernel UAPI](https://github.com/torvalds/linux/blob/master/include/uapi/linux/stat.h).
 
+### Fixture verification
+
+F-1..F-5 are five unparameterized methods in `DirectoryLinkFixtureTests`, selected
+on both OS lanes. A small per-test fake owner implements the existing
+`IOwnedScriptProcess`; fake streams expose start/EOF/fault barriers and every
+created task is released and awaited in `finally`. Use `FakeTimeProvider` to
+advance the actual shared runner; no sleep-based timeout assertions. Options
+are composed from the adapter's real 30/10-second defaults, replacing only the
+owner/clock unless a case explicitly needs the native 5/2-second test allowance.
+The result gate used by `TryCreateWindowsAsync` is internal and directly callable
+without executing cmd; F-5 supplies real absent/ordinary paths. No fake can prove
+Windows termination; F-6/F-7 supply that separate native evidence.
+
+| ID | Exact method | Setup and decisive observations |
+|---|---|---|
+| F-1 | `DirectoryLinkFixtureTests.C1061_Command_budgets_cover_exit_and_both_pipes` | Inspect the real adapter options at `Fixture.ExecutionBudget` (30 seconds) and `Fixture.CleanupBudget` (10 seconds). Exercise root pending with both EOFs, root exited with only stdout held, and root exited with only stderr held. Both pump-start barriers must arrive before either is released (`Fixture.ConcurrentDrains`). Advance 29 seconds, complete the root where applicable, then one second; each invocation enters cleanup at the original deadline (`Fixture.OneDeadline`), without a fresh allowance for a pipe. Release/await all tasks, and assert termination/death confirmation precede return. |
+| F-2 | `DirectoryLinkFixtureTests.C1061_Command_timeout_and_pipe_fault_remain_visible` | Through the async creation path and actual adapter, complete a timeout with clean owner teardown; require TimeoutException at `Fixture.TimeoutVisible`, never null. Separately fault each pipe while root and the opposite pipe remain pending; require the original IOException at `Fixture.PipeFaultVisible` without advancing the execution clock, plus terminate, confirm and drain/close observations. A caller timeout is only an outer test fail-safe. |
+| F-3 | `DirectoryLinkFixtureTests.C1061_Command_cancellation_joins_before_return` | Pre-canceled token starts no owner; cancel after both pumps start and require cleanup to receive a fresh uncanceled token, then the original caller token in OperationCanceledException (`Fixture.CallerCancellation`). Record that termination, death confirmation and released pump completion happen before outward completion. Use a bounded fake-clock completion probe; if cancellation is lost, release the fake normally before making the failing assertion, so a mutant leaves no task behind. |
+| F-4 | `DirectoryLinkFixtureTests.C1061_Command_cleanup_failure_is_not_null` | Root exit/EOF succeed, but fake death confirmation faults; async creation must throw IOException at `Fixture.CleanupVisible` and retain diagnostic owner paths. Separately hold termination/death/pump tasks and advance the single ten-second cleanup allowance; require failure, retained paths, and no successful result. Release/join fake tasks in finally, then remove only test-owned diagnostics. Also check primary timeout plus cleanup-fault diagnostics, without replacing the primary error. |
+| F-5 | `DirectoryLinkFixtureTests.C1061_Command_result_requires_zero_exit_and_link` | Call the same completion gate as TryCreate with exit 37 (`Fixture.NonzeroRefused`), then exit 0 and a real ordinary directory (`Fixture.ReparseRequired`). Both return null. For the nonzero arm a per-call observation delegate records calls and would return true; assert null before asserting zero observations, so bypassing the exit gate fails the intended assertion rather than a fixture error. For zero, use actual attributes. The default observer is the existing IsLink function. F-6 is the positive real-junction companion. |
+| F-6 | `DirectoryLinkFixtureWindowsTests.C1061_Junction_fixture_creates_moves_and_disposes_owned_link` | Native Windows/NTFS only; use real default TryCreate (synchronous compatibility path) and TryCreateWindowsAsync on fresh paths with spaces/Unicode. Observe nonnull link, ReparsePoint and target bytes in both. The async companion supplies per-call native owner hooks to observe normal exit, both EOFs and stopped retained handles. Move and dispose the junction; target sentinel and contents must survive. An existing ordinary link-name directory yields visible setup failure/null with its contents intact. Capture an intentional test-body sentinel exception and prove finally removed the junction before restoring/deleting scratch. Also inject a nonzero completion result after real, confirmed-clean creation, so no DirectoryLink is returned: the caller's partial-creation cleanup must remove only its reparse entry and preserve target bytes. No recursive traversal through a junction. |
+| F-7 | `DirectoryLinkFixtureWindowsTests.C1061_Junction_command_joins_live_root_and_pipe_holders` | Call the actual DirectoryLinkCommand with per-call script/case/options overrides to run the existing `LiveRoot`, `ExitedStdout`, `ExitedStderr`, `HighVolume` and `Nonzero` fixtures sequentially. Use 5 seconds execution/2 seconds cleanup. The three held cases retain root/child/grandchild handles and cross the nonce/readiness barrier before releasing root exit; HighVolume/Nonzero retain the root only and need no tree-ready barrier. Require bounded TimeoutException for each held case, opposite EOF observed for each pipe-holder case, both output-end markers for HighVolume, and exit 37 plus both markers for Nonzero. All observed handles must signal and job active count reach zero **before** emergency cleanup; an independently owned outer-only sentinel stays live. Capture a root-only completed state while descendants still hold the selected pipe. Finish every invocation/watchdog/sentinel in finally. |
+
+F-7's test-local wrapper follows the existing `Invocation` ownership pattern but
+starts the new adapter, so invoking the old harness alone cannot satisfy this
+row. Register root handles via `WindowsScriptHarnessHooks.Created` and retain
+descendant handles before releasing the existing observed barrier. Use its
+30-second independent watchdog per scenario and five-second emergency join;
+never abandon an in-flight Task. If the shared runner reports unknown cleanup,
+preserve its results/control directory and fail. The emergency observer may stop
+only the exact retained fixture handles; its success is not the helper's verdict.
+All normal success assertions are taken before that rescue. The generated native
+receipts stay ignored. F-6 plus V-5/V-6 prove real mklink integration; F-7's command
+substitution proves custody/pipe failure handling, not junction semantics.
+
+The shared owner's independent internal guards are unchanged and retain their
+prior-card PCs. New controls below mutate only the adapter/helper's defaults,
+token/error propagation and result gates. Unsafe native custody mutants are not
+introduced by this card. The fake owners make each new fixture PC safely red
+without leaving a deliberately unowned OS child.
+
 ### Guards the regression
 
 - R-1: keep the four inspected `ChannelOutboundStorageTests.C1059_Source_*`
@@ -413,7 +473,8 @@ Linux offsets/masks follow the [kernel UAPI](https://github.com/torvalds/linux/b
 ### Guard inventory
 
 This inventory covers CARD-1061's newly introduced or newly qualified product
-guards. Existing R-1/R-2 contracts are retained compatibility tests, not renewed
+guards and the new fixture adapter's safety boundaries. Existing R-1/R-2
+contracts are retained compatibility tests, not renewed
 mutation qualification of every pre-existing path, budget and snapshot guard.
 That exclusion does not excuse any changed guard; a change there reopens this
 inventory and the owning plan before Code can claim coverage.
@@ -433,19 +494,29 @@ inventory and the owning plan before Code can claim coverage.
 | G-11 | D-1/D-2 text entry inherits guarded byte reading | PC-11 |
 | G-12 | D-1 counts above one are refused by the shared policy | PC-12 |
 | G-13 | D-2 extracted Linux metadata validator retains regular-mode rejection | PC-13 |
+| G-14 | D-5a adapter execution deadline is finite and explicitly 30 seconds, not the harness default | PC-14 |
+| G-15 | D-5a cleanup gets a separate finite ten-second total allowance | PC-15 |
+| G-16 | D-5a owned-command timeout is observable, not converted into unsupported/null | PC-16 |
+| G-17 | D-5a caller cancellation reaches the owned runner | PC-17 |
+| G-18 | D-5a owned-command I/O and cleanup uncertainty escape the legacy IOException catch | PC-18 |
+| G-19 | D-5a nonzero command exit cannot produce a successful fixture | PC-19 |
+| G-20 | D-5a exit zero alone is insufficient without the actual reparse observation | PC-20 |
 
 No row combines independently bypassable type/link availability predicates or
-Windows parent flag/attribute guards. None is declared unnecessary. The fixture
-ownership defect is a setup seam, not an additional implemented product guard
-or an excuse to mark a test passed.
+Windows parent flag/attribute guards. None is declared unnecessary. The repair
+adds seven adapter guards; concurrent drains, common clock accounting, private
+job assignment/termination and native death confirmation belong to the unchanged
+shared owner. F-1..F-4/F-7 exercise their use here; their existing guard PCs are
+not duplicated or claimed newly mutation-qualified by this card. Any change to
+that shared owner invalidates this exclusion and returns to Plan.
 
 ### Positive controls
 
-Each row changes only the named production guard, leaving the test and its
+Each row changes only the named product or fixture-adapter guard, leaving the test and its
 fixture observations intact. Filters in this table are exact methods; do not
 substitute the ordinary checkpoint class filters. The original PC-4 that
 removed the entire mask check is replaced by PC-4 and PC-9 so neither bit hides
-the absence of the other. All changes below are compiling defects after S1/S2.
+the absence of the other. All changes below are compiling defects after S1-S3.
 
 | PC / guard / lane | Break by | Exact method filter | Required red assertion |
 |---|---|---|---|
@@ -462,11 +533,19 @@ the absence of the other. All changes below are compiling defects after S1/S2.
 | PC-11 / G-11 / Linux | Replace `ReadTextAsync`'s body with `return await File.ReadAllTextAsync(path, ct);`. | `/*/*/ChannelReplyAttachmentReaderTests/C1061_Byte_and_text_reads_reject_hard_links` | `Links.TextRefused`: bytes still refuse, text incorrectly returns fixture contents. |
 | PC-12 / G-12 / Linux | Change the shared rejection from `links != 1` to `links == 0`. | `/*/*/ChannelReplyAttachmentReaderTests/C1061_Zero_link_count_is_rejected` | `Count.MultipleRefused`: zero still refuses and one accepts, but two incorrectly accepts. |
 | PC-13 / G-13 / Linux | Remove only the regular-mode predicate from the pure Linux metadata validator. | `/*/*/ChannelReplyAttachmentReaderTests/C1061_Linux_metadata_requires_type_and_link_count` | `Metadata.RegularRequired`: mask 5, count one, directory mode incorrectly accepted. |
+| PC-14 / G-14 / Linux | Change DirectoryLinkCommand's execution budget from 30 to 300 seconds. | `/*/*/DirectoryLinkFixtureTests/C1061_Command_budgets_cover_exit_and_both_pipes` | `Fixture.ExecutionBudget`: actual options exceed the 30-second contract. This is an assertion failure before any fake/native work, not a watchdog timeout. |
+| PC-15 / G-15 / Linux | Change only DirectoryLinkCommand's cleanup budget from 10 to 300 seconds. | `/*/*/DirectoryLinkFixtureTests/C1061_Command_budgets_cover_exit_and_both_pipes` | `Fixture.CleanupBudget`: actual options exceed the ten-second cleanup contract. |
+| PC-16 / G-16 / Linux | In TryCreateWindowsAsync, catch TimeoutException from the owned adapter and return null. | `/*/*/DirectoryLinkFixtureTests/C1061_Command_timeout_and_pipe_fault_remain_visible` | `Fixture.TimeoutVisible`: required TimeoutException is absent after the fake owner has been fully joined. |
+| PC-17 / G-17 / Linux | Pass CancellationToken.None instead of the caller token to ScriptHarnessProcess.RunAsync in DirectoryLinkCommand. | `/*/*/DirectoryLinkFixtureTests/C1061_Command_cancellation_joins_before_return` | `Fixture.CallerCancellation`: no caller-token OperationCanceledException; bounded test probe then releases/joins the fake before asserting. |
+| PC-18 / G-18 / Linux | Widen TryCreateWindowsAsync's legacy IOException catch to include the owned adapter invocation and return null. | `/*/*/DirectoryLinkFixtureTests/C1061_Command_cleanup_failure_is_not_null` | `Fixture.CleanupVisible`: fake death-confirmation failure becomes null instead of an IOException carrying retained-path diagnostics. |
+| PC-19 / G-19 / Linux | Remove only the nonzero-exit refusal from DirectoryLink's shared completion gate. | `/*/*/DirectoryLinkFixtureTests/C1061_Command_result_requires_zero_exit_and_link` | `Fixture.NonzeroRefused`: exit 37 plus the would-be-positive observation incorrectly returns a DirectoryLink. |
+| PC-20 / G-20 / Linux | Replace only the completion gate's IsLink/observation predicate with true. | `/*/*/DirectoryLinkFixtureTests/C1061_Command_result_requires_zero_exit_and_link` | `Fixture.ReparseRequired`: exit zero on an ordinary directory incorrectly returns a DirectoryLink. |
 
 Mutation runs baseline green, break/red, exact restoration and fresh-build green
 **after land**. Code runs V/R; ordinary Review judges this design and ordinary
-evidence before land. All PCs touch the same reader file: run serially within
-each OS lane, no combined mutants. Each phase uses the listed filter and
+evidence before land. PC-1..13 share the reader file; PC-14..20 share the helper
+and adapter. Keep all twenty serial within each OS lane, no combined mutants.
+Each phase uses the listed filter and
 `-MinExecuted 1`, its own alternate `bin-` output and fresh results under the
 assigned external SourceLanding evidence root. Use the owner's copied
 `run-checkpoint.ps1` driver with its slot gate; refresh restored source timestamps.
@@ -475,13 +554,12 @@ Retain build success, actual method, exact failing assertion and restored clean
 source evidence per PC. Wrong exception, setup failure, missing fixture,
 timeout, skip, build error or zero tests is not the specified red.
 
-Audit: **product guards=13, mapped=13, missing=0, duplicate PC maps=0**.
-Thirteen method-scoped compiling mutations are specified. PC-1..5 and PC-9..13
-have sufficient fixture designs; PC-6..8 additionally require the bounded/joined
-junction fixture repair. Thus **10 controls are design-executable, 3 have a
-known setup seam**, and none has been executed. The all-controls-executable
-Code-handoff criterion is deliberately **not** claimed. Plan must resolve the
-seam and return for TestDesign completion; this is not a human policy choice.
+Audit: **guards=20 (13 product + 7 fixture), mapped=20, missing=0,
+duplicate PC maps=0**. All **20 controls are design-executable** after their
+assigned S1-S3 implementation. PC-6..8 now have the explicit owned-junction
+setup and F-6/F-7 proof; PC-14..20 use bounded fake-owner witnesses rather than
+unsafe OS custody mutations. None has run. No further product choice or
+verification-design dispatch is needed before Code.
 
 ### Out of scope
 
@@ -501,27 +579,30 @@ seam and return for TestDesign completion; this is not a human policy choice.
   changed handoff; local file evidence does not establish delivery.
 - Whole Unit, namespace, assembly, provider or E2E runs: excluded by the brief.
   No additional repetition after green without a changed source or new concern.
+- Shared ScriptHarnessProcess/WindowsScriptHarnessProcess implementation and
+  unrelated DirectoryLinkHelper variants: unchanged. This card repairs the
+  selected DirectoryLink Windows entry and tests its integration with the
+  existing process owner, not all repository process-launch helpers.
 
 ### Checkpoints
 
-This is the sole importable manifest. Verification-only correction to the
-earlier proposed execution schedule: both S1 and S2 must be committed/pushed
-before the formal four-row run so Linux and Windows certify the **same final
-candidate SHA**. The production slice boundaries are unchanged. Running Linux
-only at the earlier S1 SHA would require another Linux qualification after S2;
-the table avoids that extra run. Do not call the earlier S1 result final-source
-evidence. Plan's junction-fixture repair may change this roster and must be
-reviewed before execution; the current rows are the product verification floor.
+This is the sole importable manifest. All S1-S3 slices must be committed/pushed
+before the four-row run so Linux and Windows certify the **same final candidate
+SHA**. The fixture methods join CP-1/CP-3, preserving exactly four narrow rows.
+Running Linux only at S1 would require another Linux qualification after S3;
+do not present that earlier result as final-source evidence.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1-S2 | `tests/Antiphon.Tests -> bin-c1061-linux/` | linux-link-policy | `/*/*/ChannelReplyAttachmentReaderTests/*` | V-1, V-2, V-3, V-4 | exactly 4 listed methods, 0 failed/skipped | 4 | 8 |
-| CP-2 | S1-S2 | CP-1 | linux-reader-regressions | `/*/*/ChannelOutboundStorageTests/(C1059_Source_*)\|(Frozen_reply_and_input_bytes_survive_source_mutation*)` | R-1, R-2 | exactly 5 listed methods, 0 failed/skipped | 5 | 2 |
-| CP-3 | S1-S2 | `tests/Antiphon.Tests -> bin-c1061-windows/` | windows-native-links | `/*/*/(ChannelReplyAttachmentReaderTests*)\|(ChannelReplyAttachmentReaderWindowsTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6 | exactly 6 listed methods, 0 failed/skipped | 6 | 10 |
-| CP-4 | S1-S2 | CP-3 | windows-reader-regressions | `/*/*/ChannelOutboundStorageTests/(C1059_Source_reads_require_captured_roots_without_traversal*)\|(C1059_Source_length_is_checked_before_reading_with_a_finite_budget*)\|(C1059_Source_reads_refuse_nonregular_files_without_blocking*)\|(Frozen_reply_and_input_bytes_survive_source_mutation*)` | R-1 Windows-applicable methods, R-2 | exactly 4 listed methods, 0 failed/skipped | 4 | 2 |
+| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1061-linux/` | linux-link-policy-and-fixture | `/*/*/(ChannelReplyAttachmentReaderTests*)\|(DirectoryLinkFixtureTests*)/*` | V-1, V-2, V-3, V-4, F-1, F-2, F-3, F-4, F-5 | exactly 9 listed methods, 0 failed/skipped | 9 | 10 |
+| CP-2 | S1-S3 | CP-1 | linux-reader-regressions | `/*/*/ChannelOutboundStorageTests/(C1059_Source_*)\|(Frozen_reply_and_input_bytes_survive_source_mutation*)` | R-1, R-2 | exactly 5 listed methods, 0 failed/skipped | 5 | 2 |
+| CP-3 | S1-S3 | `tests/Antiphon.Tests -> bin-c1061-windows/` | windows-native-links-and-fixture | `/*/*/(ChannelReplyAttachmentReaderTests*)\|(ChannelReplyAttachmentReaderWindowsTests*)\|(DirectoryLinkFixtureTests*)\|(DirectoryLinkFixtureWindowsTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, F-1, F-2, F-3, F-4, F-5, F-6, F-7 | exactly 13 listed methods, 0 failed/skipped | 13 | 14 |
+| CP-4 | S1-S3 | CP-3 | windows-reader-regressions | `/*/*/ChannelOutboundStorageTests/(C1059_Source_reads_require_captured_roots_without_traversal*)\|(C1059_Source_length_is_checked_before_reading_with_a_finite_budget*)\|(C1059_Source_reads_refuse_nonregular_files_without_blocking*)\|(Frozen_reply_and_input_bytes_survive_source_mutation*)` | R-1 Windows-applicable methods, R-2 | exactly 4 listed methods, 0 failed/skipped | 4 | 2 |
 
-Min means TUnit executions: Linux 4+5=9, Windows 6+4=10, total 19, with 11
-distinct methods. CP-2 reuses CP-1's one isolated build; CP-4 reuses CP-3's.
+Min means TUnit executions: Linux 9+5=14, Windows 13+4=17, total **31**, with
+**18 distinct methods** (six reader, seven fixture, five regression). F-7's five
+sequential scenarios still contribute one TUnit execution. CP-2 reuses CP-1's
+one isolated build; CP-4 reuses CP-3's.
 Each row has exactly one filter and one identified build. These are counts,
 not assertion-loop iterations or minutes. Inspect the actual executed names
 and zero skips; the importer derives roster tokens from Filter, not from
@@ -533,8 +614,12 @@ same complete committed candidate SHA. Pass this plan to `run --plan`, keep
 the source frozen and await all `wait` exits until not 75. Use the host slot
 wrapper for the tool launcher; each driver owns its own slot. Do not nest
 `run-checkpoint.ps1` behind another slot wrapper. Never run the whole table
-on one OS. Host/catalog availability must be checked when commissioning the
-OS lanes, without a hard-coded runner name. No host dispatch is done here.
+on one OS. Read GET `/api/runner-defaults` and GET `/api/session-runners` when
+commissioning the OS lanes. Omit `-Runner`; set `-Platform Linux` for CP-1/2 and
+`-Platform Windows` for CP-3/4. Planning/contract authoring needs no OS pin;
+`-Platform Any` clears an inherited pin. Group names name lanes; the importer
+does not choose hosts or automatically exclude wrong-OS rows. No host dispatch
+is done here.
 
 Ordinary Review requires all four source-qualified receipts for that same SHA,
 `dirty=0`, stable clean source, verified build provenance, exact roster and
@@ -547,33 +632,38 @@ retry. Baseline any suspected inherited failure with its exact failing method.
 
 ### Cost
 
-All figures are **estimates**, not measurements. Costs below cover the specified
-product matrix; the fixture-safety repair is a separate missing Plan scope,
-so these are a numeric floor, not an assertion of a complete Code estimate.
+All figures are **estimates**, not measurements. Fixture authoring, ordinary
+witnesses and controls are now included, rather than an unpriced setup seam.
 
-- Ordinary V/R floor (Code): **22 minutes** = CP-1 8 + CP-2 2 (Linux exact
-  filters above) + CP-3 10 + CP-4 2 (Windows exact filters above). This includes
-  two isolated builds, budgeted at 5 minutes each, and 12 minutes of selected
-  test execution. One minute per host for tool/setup gives **24 minutes**
-  setup/build/V/R. Proposed implementation authoring/review remains 48-78
-  minutes, so that product work plus ordinary verification is **72-102 minutes**.
-- PC floor (Mutation): **117 minutes** = 13 controls x (3-minute baseline
+- Ordinary V/R floor (Code): **28 minutes** = CP-1 10 + CP-2 2 (Linux filters
+  above) + CP-3 14 + CP-4 2 (native Windows filters above). This includes two
+  isolated builds at 5 minutes each and 18 minutes of selected execution/receipt
+  handling. Of the six-minute increase from TestDesign's 22-minute floor,
+  two minutes cover the five contract witnesses on each host (four total), and
+  two cover native F-6/F-7. One minute per host for tool setup gives **30 minutes**
+  setup/build/ordinary qualification. Fixture timeouts are short intentional
+  cases within those allowances, not new long-running suite runs.
+- Implementation authoring/self-review: S1 **30-40**, S2 **40-60**, and S3 native
+  authoring **10-30** minutes, total **80-130**. S3 also owns the 30-minute
+  qualification allowance, so the three slices are **30-40, 40-60, 40-60 minutes**
+  respectively. Complete Code commission: **110-160 minutes**. No slice exceeds
+  60 minutes by design; report observed overruns rather than dropping coverage.
+- PC phase floor (Mutation): **180 minutes** = 20 controls x (3-minute baseline
   build/test + 3-minute mutated build/test + 3-minute restored build/test),
-  39 method-scoped invocations. Linux PC-1,3,4,5,9,10,11,12,13 cost **81**;
-  Windows PC-2,6,7,8 cost **36**. Every invocation uses its exact Positive
-  controls table filter. Allocate a further **20 minutes** to two-host setup,
-  discovery, edits/restoration and evidence: Mutation commissioning floor
-  **137 minutes**. The three blocked fixture-dependent controls remain in the
-  cost; omitting them cannot make the battery complete.
-- Combined verification floor: **161 minutes** = setup 2 + ordinary builds
-  10 + ordinary V/R execution 12 + PC cycles 117 + Mutation handling 20.
-  Including product authoring/review gives **209-239 minutes**, plus the
-  as-yet-uncommissioned fixture repair. This explicit scope gap is why the
-  next stage is Plan rather than Code; no zero-cost repair is assumed.
-- Savings: two reused builds save **10 estimated minutes** against four
-  5-minute builds. Certifying both OS lanes after the final source commit
-  saves another **10 minutes** against repeating CP-1/2 solely because S2
-  changed the candidate SHA. Independent controls add **45 PC minutes** to
-  the proposed eight-control 72-minute floor; this is required coverage, not
-  optional repetition. No whole-Unit savings number is claimed because no
-  current whole-Unit timing was measured for this task.
+  **60 exact-method invocations**. Linux PC-1,3,4,5,9..20 are sixteen controls
+  costing **144** minutes; Windows PC-2,6,7,8 are four costing **36**. Each uses
+  its Positive controls table filter with MinExecuted 1. All three phases are
+  retained even where two PCs use the same method. Allocate **25 minutes** for
+  two-host setup, discovery, edits/restoration and evidence: full Mutation
+  commissioning floor **205 minutes**.
+- Combined verification floor: **235 minutes** = Code setup 2 + ordinary builds
+  10 + ordinary execution/receipts 18 + PC phases 180 + Mutation handling 25.
+  Including authoring/self-review gives **315-365 minutes**; separate ordinary
+  Review dispatch effort is not estimated here. The seven fixture controls add
+  **63 PC minutes**, with five more handling minutes, to the prior 137-minute
+  Mutation commission. No blocked or zero-cost controls remain in the floor.
+- Savings: two reused builds save **10 estimated minutes** against four separate
+  five-minute builds. Final-candidate qualification avoids a second CP-1/2 run
+  solely for a later source SHA, saving **12 minutes** under this roster. Shared
+  custody reuse avoids implementing another native process owner, but no measured
+  time saving is claimed for it. No whole-Unit timing/saving is claimed.
