@@ -1603,3 +1603,16 @@ prompt, as required when the original attempt has no observable sequence floor.
 No production behavior, assertion tolerance or timeout changes. Rerun only the
 four red rows CP-8, CP-10, CP-12 and CP-57; other rows retain their first clean
 receipts. All controls and terminal-complete closure remain pending as above.
+
+Continuation outcome (170e6f0d): latest selected results are 155/157 passed,
+2 failed, 0 skipped. Repair 2 verified CP-10 22/22 and CP-57 1/1, resolving all
+six base-reproduced failures. CP-8 remains 19/20: its hosted work-share fixture
+creates two publications at the same frozen timestamp, so the valid GUID
+tie-break can select the earlier reply for the catalog preview. Advance its
+controlled clock between the accepted and due replies, retaining the assertion.
+CP-12 remains 7/8: the newly added implied-bundle fixture uses Projects.SingleAsync
+although the harness seeds multiple projects; scope it to the harness project.
+These are proposed repairs, not verified resolutions. Both permitted repair
+rounds are used; next Code owns these two fixes and committed CP-8/CP-12 reruns,
+then Review. Evidence, actual tested SHAs, all V/R outcomes and pending controls
+are in .antiphon/task-170e6f0d.md. Adoption/landing owner remains a4290b71.
