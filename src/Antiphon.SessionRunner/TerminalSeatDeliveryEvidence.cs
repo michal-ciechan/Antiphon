@@ -30,10 +30,17 @@ internal sealed class TerminalSeatDeliveryEvidence
 
     internal void Clear()
     {
-        _state = TerminalSeatDeliveryState.Missing;
-        _pending = _submitted = null;
+        ClearCapture();
         _open = _paste = false;
         _delimiter = _characters = 0;
+    }
+
+    // Binding can change mid-body. Drop evidence, but keep that submission open so
+    // its next chunk cannot acquire a baseline after bytes were already delivered.
+    internal void ClearCapture()
+    {
+        _state = TerminalSeatDeliveryState.Missing;
+        _pending = _submitted = null;
     }
 
     // Returns true only for the first bytes of a new submission. Even an unavailable
