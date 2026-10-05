@@ -35,6 +35,7 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
     private const uint JobObjectLimitKillOnJobClose = 0x00002000;
     private const int JobObjectExtendedLimitInformation = 9;
     private const int JobObjectBasicAccountingInformation = 1;
+    private const int JobObjectBasicProcessIdList = 3;
     private const int ProcThreadAttributeHandleList = 0x00020002;
     private const uint WaitObject0 = 0;
 
@@ -44,6 +45,7 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
     private readonly StreamReader _stdout;
     private readonly StreamReader _stderr;
     private readonly WindowsScriptHarnessHooks _hooks;
+    private readonly List<SafeFileHandle> _terminationProcesses = [];
     private bool _terminated;
     public StreamReader Stdout => _stdout;
     public StreamReader Stderr => _stderr;
@@ -213,8 +215,14 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
         cancellationToken.ThrowIfCancellationRequested();
         if (_terminated) return Task.CompletedTask;
         _terminated = true;
-        _hooks.Record("terminate-job");
-        if (!TerminateJobObject(_job, 1)) throw NativeError("TerminateJobObject");
+        // Termination clears the job roster/accounting before its processes signal.
+        // Pin the roster first; a failed observation must still request termination.
+        try { RetainTerminationProcesses(cancellationToken); }
+        finally
+        {
+            _hooks.Record("terminate-job");
+            if (!TerminateJobObject(_job, 1)) throw NativeError("TerminateJobObject");
+        }
         return Task.CompletedTask;
     }
 
@@ -226,10 +234,53 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
             if (!QueryInformationJobObject(_job, JobObjectBasicAccountingInformation,
                     out var accounting, Marshal.SizeOf<JobBasicAccounting>(), IntPtr.Zero))
                 throw NativeError("QueryInformationJobObject");
-            if (accounting.ActiveProcesses == 0) return;
+            var signaled = IsSignaled(_process);
+            foreach (var process in _terminationProcesses) signaled &= IsSignaled(process);
+            if (accounting.ActiveProcesses == 0 && signaled) return;
             await Task.Delay(25, cancellationToken);
         }
     }
+
+    private void RetainTerminationProcesses(CancellationToken cancellationToken)
+    {
+        var bytes = 256;
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var buffer = Marshal.AllocHGlobal(bytes);
+            try
+            {
+                if (!QueryInformationJobObject(_job, JobObjectBasicProcessIdList, buffer, bytes, IntPtr.Zero))
+                {
+                    var code = Marshal.GetLastWin32Error();
+                    if (code == 234) { bytes = checked(bytes * 2); continue; }
+                    throw new Win32Exception(code, "Snapshot job process list");
+                }
+                var count = Marshal.ReadInt32(buffer, 4);
+                for (var index = 0; index < count; index++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var pid = checked((int)Marshal.ReadIntPtr(buffer, 8 + index * IntPtr.Size));
+                    using var source = OpenProcess(0x100000, false, pid); // SYNCHRONIZE
+                    if (source.IsInvalid) throw NativeError("Open job process for death observation");
+                    var current = GetCurrentProcess();
+                    if (!DuplicateHandle(current, source, current, out var retained, 0, false, 2))
+                        throw NativeError("Duplicate job process for death observation");
+                    _terminationProcesses.Add(retained);
+                    _hooks.Track("termination-process", retained);
+                }
+                return;
+            }
+            finally { Marshal.FreeHGlobal(buffer); }
+        }
+    }
+
+    private static bool IsSignaled(SafeFileHandle process) => WaitForSingleObject(process, 0) switch
+    {
+        WaitObject0 => true,
+        258 => false,
+        _ => throw NativeError("Process death observation")
+    };
 
     public void CloseStreams()
     {
@@ -244,6 +295,7 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
         _stderr.Dispose();
         _thread.Dispose();
         _process.Dispose();
+        foreach (var process in _terminationProcesses) process.Dispose();
         CloseJob();
     }
 
@@ -365,4 +417,10 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool QueryInformationJobObject(
         SafeFileHandle job, int informationClass, out JobBasicAccounting accounting, int length, IntPtr returned);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool TerminateJobObject(SafeFileHandle job, uint exitCode);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool QueryInformationJobObject(
+        SafeFileHandle job, int informationClass, IntPtr buffer, int length, IntPtr returned);
+    [DllImport("kernel32.dll")] private static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern SafeFileHandle OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool DuplicateHandle(
+        IntPtr sourceProcess, SafeFileHandle source, IntPtr targetProcess, out SafeFileHandle copy, uint access, bool inherit, uint options);
 }

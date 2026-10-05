@@ -123,8 +123,18 @@ internal static class ScriptHarnessProcessFixture
     internal static async Task WithInvocationAsync(Func<Invocation, Task> body, int watchdogSeconds = 30,
         WindowsScriptHarnessHooks? hooks = null, bool requireWindows = false, CancellationToken watchdogToken = default)
     {
-        await using var invocation = new Invocation(hooks, requireWindows);
-        await body(invocation).WaitAsync(TimeSpan.FromSeconds(watchdogSeconds), watchdogToken);
+        var invocation = new Invocation(hooks, requireWindows);
+        Exception? primary = null;
+        try { await body(invocation).WaitAsync(TimeSpan.FromSeconds(watchdogSeconds), watchdogToken); }
+        catch (Exception ex) { primary = ex; throw; }
+        finally
+        {
+            try { await invocation.DisposeAsync(); }
+            catch (Exception cleanup) when (primary is not null)
+            {
+                throw new AggregateException("Native assertion and fixture cleanup both failed.", primary, cleanup);
+            }
+        }
     }
 
     internal sealed class Invocation : IAsyncDisposable
@@ -227,17 +237,12 @@ internal static class ScriptHarnessProcessFixture
         }
         internal void AssertDeadBeforeEmergencySweep()
         {
-            try
-            {
                 Root.Executing().ShouldBeFalse("Script root remained executing after cleanup.");
                 Child.Executing().ShouldBeFalse("Fixture child remained executing after cleanup.");
                 Grandchild.Executing().ShouldBeFalse("Fixture grandchild remained executing after cleanup.");
                 Directory.Exists(ResultsDirectory).ShouldBeFalse("Owned results path survived confirmed cleanup.");
-            }
-            finally
-            {
-                EmergencyStop();
-            }
+            // WithInvocationAsync owns the safety sweep and preserves its error
+            // alongside this assertion if both fail.
         }
     }
 }
