@@ -918,6 +918,25 @@ public class InstructionBundleTests
             "Worker/Code"));
     }
 
+    [Test]
+    public void C1065_BlockedSeatInstructionsStayTrueWhileParkingIsOff()
+    {
+        var basics = InstructionBundles.TextOf(InstructionBundles.DelegateBasics);
+        basics.ShouldContain("Commit and push all assigned work before reporting blocked.", customMessage: "c1065-push-before-blocked");
+        basics.ShouldContain("unless this task is SourceLanding, ReadOnly, or CommitOnSettle Never", customMessage: "c1065-push-exclusion");
+        basics.ShouldContain("A parked session may be released and resumed from that pushed branch.", customMessage: "c1065-resume-branch");
+        basics.ShouldContain("Parking will not autosave", customMessage: "c1065-no-autosave");
+
+        var orchestrator = InstructionBundles.TextOf(InstructionBundles.Orchestrator);
+        orchestrator.ShouldContain("A Blocked child holds its seat until it is answered or cancelled.", customMessage: "c1065-blocked-child");
+        orchestrator.ShouldContain("do not leave one overnight", customMessage: "c1065-overnight");
+        orchestrator.ShouldContain("GET /api/session-runners/{id}/slots", customMessage: "c1065-slots");
+        orchestrator.ShouldContain("count orphan=true", customMessage: "c1065-orphan-count");
+
+        var plan = InstructionBundles.TextOf(InstructionBundles.StagePlan);
+        plan.ShouldContain("what releases a session that waits for input, and after how long", customMessage: "c1065-release-question");
+    }
+
     private static int CountOccurrences(string haystack, string needle)
     {
         var count = 0;
