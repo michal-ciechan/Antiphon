@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -158,6 +159,9 @@ public sealed class BlockedTaskParkResumeTests
         {
             await PublishAsync(f, handle: false);
             var session = f.SessionId;
+            // Mid-turn keeps WhenIdle queued. An idle Running seat delivers at once and
+            // waits out transcript confirmation on the fixture clock.
+            await f.IngestAsync(TranscriptKinds.UserPrompt, "still busy", f.Now);
             await f.AnswerAsync(Answer);
             var live = await f.TaskAsync();
             live.Attempt.ShouldBe(1, "G-136");
