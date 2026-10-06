@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Antiphon.Server.Api.Endpoints;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -235,9 +236,11 @@ public sealed class HostOccupancySampleEndpointTests
         {
             using var response = await host.Http.GetAsync(
                 "/api/hosts/local/occupancy-samples?limit=" + Uri.EscapeDataString(limit));
-            response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
-            response.Content.Headers.ContentType?.MediaType.ShouldBe("application/problem+json");
+            response.StatusCode.ShouldBe(HttpStatusCode.BadRequest, limit);
+            var mediaType = response.Content.Headers.ContentType?.MediaType;
+            mediaType.ShouldBe("application/problem+json", limit);
             var body = await response.Content.ReadAsStringAsync();
+            body.Length.ShouldBeGreaterThan(0, limit);
             body.ShouldNotContain("An unexpected error occurred.");
             body.ShouldNotContain("limit_invalid");
             using var json = JsonDocument.Parse(body);
@@ -281,6 +284,10 @@ public sealed class HostOccupancySampleEndpointTests
                 services.AddSingleton<IOptions<DelegationSettings>>(
                     Options.Create(new DelegationSettings { MaxConcurrentTasks = 4 }));
                 services.AddScoped<HostBudgetService>();
+                // The AppHost pins Development, where a query bind failure throws and
+                // ExceptionMiddleware writes the 400. An unset environment is Production:
+                // minimal APIs then return an empty 400 and the middleware never runs.
+                services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadRequest = true);
             }, mapEndpoints: app => app.MapHostEndpoints());
 
     private static async Task SeedAsync(PhoneHomeTestHost host, params HostOccupancySample[] rows)
