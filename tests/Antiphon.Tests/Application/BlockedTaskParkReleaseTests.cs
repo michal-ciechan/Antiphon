@@ -32,11 +32,16 @@ public sealed class BlockedTaskParkReleaseTests
             (await db.RunnerSeatReleases.AnyAsync(r => r.ActionId != null)).ShouldBeFalse("G-95: no reservation without source proof");
         }
 
-        foreach (var invalid in new[] { "prefix", "destination", "kind", "floor", "generation" })
+        foreach (var invalid in new[] { "prefix", "destination", "kind", "floor", "timestamp", "generation", "valid" })
         {
             await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
             await f.CreateSourceAsync();
             var parent = await f.AddParentAsync(busy: false);
+            if (invalid != "timestamp")
+            {
+                await f.NativePromptAsync(parent, "previous caller request");
+                await f.EndTurnAsync(parent);
+            }
             await f.SettleAsync("blocked");
             (await NoteAsync(f)).ConfirmedAt.ShouldBeNull("G-98 enqueue is not receipt");
             f.Recipient!.OnSubmitted = async body =>
@@ -45,12 +50,22 @@ public sealed class BlockedTaskParkReleaseTests
                 await f.NativePromptAsync(invalid == "destination" ? f.SessionId : parent,
                     invalid == "prefix" ? body[..(body.Length / 2)] : body);
                 await using var native = f.Db();
-                if (invalid == "kind" || invalid == "floor")
+                if (invalid is "kind" or "floor" or "timestamp")
                 {
+                    var attempt = await native.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == f.TaskId);
                     var entry = await native.TranscriptEntries.Where(e => e.AgentSessionId == parent && e.Kind == TranscriptKinds.UserPrompt)
                         .OrderByDescending(e => e.Sequence).FirstAsync();
                     if (invalid == "kind") entry.Kind = TranscriptKinds.QueuedUserPrompt;
-                    else entry.Sequence = -1;
+                    else if (invalid == "floor")
+                    {
+                        attempt.LastDeliveryBaselineSequence.ShouldNotBeNull("G-102: exercise the captured sequence floor").ShouldBeGreaterThan(0);
+                        entry.Sequence = -1;
+                    }
+                    else
+                    {
+                        attempt.LastDeliveryBaselineSequence.ShouldBeNull("G-102: empty history uses the timestamp fallback");
+                        entry.Timestamp = attempt.LastDeliveryStartedAt.ShouldNotBeNull().AddSeconds(-1);
+                    }
                     await native.SaveChangesAsync();
                 }
                 if (invalid == "generation")
@@ -59,8 +74,9 @@ public sealed class BlockedTaskParkReleaseTests
             };
             await f.FlushAsync(parent);
             await f.ReconcileParentAsync();
-            var guard = invalid switch { "prefix" => "G-99", "destination" => "G-100", "kind" => "G-101", "floor" => "G-102", _ => "G-103" };
-            (await NoteAsync(f)).ConfirmedAt.ShouldBeNull(guard + ": invalid native receipt " + invalid);
+            var guard = invalid switch { "prefix" => "G-99", "destination" => "G-100", "kind" => "G-101", "floor" or "timestamp" => "G-102", _ => "G-103" };
+            if (invalid == "valid") (await NoteAsync(f)).ConfirmedAt.ShouldNotBeNull("complete current caller receipt control");
+            else (await NoteAsync(f)).ConfirmedAt.ShouldBeNull(guard + ": invalid native receipt " + invalid);
         }
 
         // Actual settlement -> durable notification -> real queue -> native caller prompt.
@@ -74,6 +90,11 @@ public sealed class BlockedTaskParkReleaseTests
                 configureDb: b => b.AddInterceptors(fault));
             await f.CreateSourceAsync();
             var parent = await f.AddParentAsync(busy);
+            if (!busy)
+            {
+                await f.NativePromptAsync(parent, "previous caller request");
+                await f.EndTurnAsync(parent);
+            }
             if (cut is "obligation-insert" or "settled-committed" or "note-insert" or "note-committed") fault.Cut = cut;
             await f.SettleAsync("blocked");
             if (cut == "obligation-insert")
@@ -129,6 +150,7 @@ public sealed class BlockedTaskParkReleaseTests
             await using var verify = f.Db();
             var queue = (await verify.SessionQueuedMessages.Where(m => m.SourceLandNotificationId == note.Id).ToListAsync())
                 .ShouldHaveSingleItem("G-104 one queue identity");
+            queue.LastDeliveryBaselineSequence.ShouldNotBeNull("G-102 recovery retains the attempt floor");
             var prompts = await verify.TranscriptEntries.Where(e => e.AgentSessionId == parent
                 && e.Kind == TranscriptKinds.UserPrompt && e.Sequence > queue.LastDeliveryBaselineSequence).ToListAsync();
             prompts.Count(e => PromptSubmissionMatch.IsConfirmedBy(rendering.WireText, e.Text)).ShouldBe(1, "G-99/G-100/G-101/G-102 complete recipient receipt");
@@ -311,11 +333,23 @@ public sealed class BlockedTaskParkReleaseTests
 
             // Independently challenge pool and retirement reservations with an otherwise reusable row.
             await world.EditAsync((_, a) => { a.Status = AgentStatus.Idle; a.PoolIdleSince = world.Now.AddDays(-2); });
+            // Make the identity otherwise live/reusable, so a missing reservation predicate
+            // cannot hide behind the stopped-session check or a pool attribute mismatch.
+            await store.AgentSessions.Where(s => s.Id == world.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Running));
+            var candidate = await store.Agents.AsNoTracking().SingleAsync(a => a.Id == world.AgentId);
+            AgentTask Unrelated(bool pinned) => new() { Id = Guid.NewGuid(), AgentId = pinned ? world.AgentId : null,
+                Workspace = WorkspaceMode.Shared, AgentKind = candidate.Kind, ModelLevel = candidate.ModelLevel,
+                ProjectId = candidate.PoolProjectId, RunnerId = candidate.RunnerId,
+                WorkingDirectory = candidate.WorkingDirectory, InheritedLaunchEnvJson = candidate.LaunchEnvJson };
             using (var scope = world.Harness.Provider.CreateScope())
             {
                 var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
-                var unrelated = new AgentTask { Id = Guid.NewGuid(), AgentId = world.AgentId, Workspace = WorkspaceMode.Shared };
+                var unrelated = Unrelated(pinned: true);
                 (await dispatcher.TryReuseWarmAgentAsync(unrelated, world.Now, default)).ShouldBe(AgentTaskDispatcher.ReuseOutcome.WaitForAgent, "G-111 reservation vetoes admission");
+                var unpinned = Unrelated(pinned: false);
+                (await dispatcher.TryReuseWarmAgentAsync(unpinned, world.Now, default)).ShouldBe(AgentTaskDispatcher.ReuseOutcome.SpawnFresh, "G-111 unpinned selection excludes parked identity");
+                unpinned.AgentId.ShouldBeNull("G-111 no acquisition of reserved identity");
                 await dispatcher.RetireIdleWarmAgentsAsync(default);
             }
             (await store.Agents.AsNoTracking().AnyAsync(a => a.Id == world.AgentId)).ShouldBeTrue("G-112 retirement keeps reserved identity");
@@ -323,15 +357,61 @@ public sealed class BlockedTaskParkReleaseTests
                 await scope.ServiceProvider.GetRequiredService<AgentTaskService>().RemoveEphemeralAgentAsync(await world.TaskAsync(), world.AgentId, default);
             (await store.Agents.AsNoTracking().AnyAsync(a => a.Id == world.AgentId)).ShouldBeTrue("G-109 generic removal keeps identity");
 
+            // A completed reservation makes the same candidate reusable: neither the live
+            // session nor another pool filter can supply a false-positive G-111 refusal.
+            await store.AgentTaskParks.Where(p => p.Id == park.Id)
+                .ExecuteUpdateAsync(u => u.SetProperty(p => p.State, AgentTaskParkState.Resumed));
+            using (var scope = world.Harness.Provider.CreateScope())
+            {
+                var reusable = Unrelated(pinned: false);
+                (await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
+                    .TryReuseWarmAgentAsync(reusable, world.Now, default)).ShouldBe(AgentTaskDispatcher.ReuseOutcome.Reused, "G-111 otherwise reusable control");
+                reusable.AgentId.ShouldBe(world.AgentId);
+            }
+        }
+
+        foreach (var close in new[] { "cancellation", "continuation" })
+        {
+            await using var world = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
+            await world.CreateSourceAsync(WorkspaceMode.Shared);
+            await world.HandleParkAsync();
+            var original = await world.ParkAsync();
+            original.State.ShouldBe(AgentTaskParkState.Parked);
+            await using var store = world.Db();
             // Closing this attempt does not clear a different task's reservation on the identity.
             var other = new AgentTask { Id = Guid.NewGuid(), AgentId = world.AgentId, Attempt = 1, Status = AgentTaskStatus.Blocked };
             store.AgentTasks.Add(other);
             store.AgentTaskParks.Add(new AgentTaskPark { Id = Guid.NewGuid(), TaskId = other.Id, Attempt = 1,
                 AgentId = world.AgentId, BlockEventId = Guid.NewGuid(), State = AgentTaskParkState.Requested });
             await store.SaveChangesAsync();
-            await world.EditAsync((task, _) => task.Status = AgentTaskStatus.Canceled);
+            if (close == "continuation")
+            {
+                await world.AnswerAsync("Continue from the retained checkpoint.");
+                var continued = await world.TaskAsync();
+                continued.Status.ShouldBe(AgentTaskStatus.Queued, "G-117 answer admits a continuation");
+                continued.Attempt.ShouldBe(original.Attempt + 1);
+            }
+            else
+            {
+                using var scope = world.Harness.Provider.CreateScope();
+                await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CancelAsync(world.TaskId, default);
+                (await world.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Canceled);
+            }
             (await PoolDelegateRelease.Reservations(store).Where(p => p.AgentId == world.AgentId).Select(p => p.TaskId).ToListAsync())
-                .ShouldHaveSingleItem("G-117 cancellation releases only its own reservation").ShouldBe(other.Id);
+                .ShouldHaveSingleItem("G-117 " + close + " releases only its own reservation").ShouldBe(other.Id);
+            (await store.Agents.AsNoTracking().AnyAsync(a => a.Id == world.AgentId)).ShouldBeTrue("G-117 another reservation keeps the identity");
+            if (close == "continuation")
+            {
+                var replacement = new AgentTaskPark { Id = Guid.NewGuid(), TaskId = world.TaskId,
+                    Attempt = original.Attempt + 1, AgentId = world.AgentId, BlockEventId = Guid.NewGuid(), State = AgentTaskParkState.Requested };
+                store.AgentTaskParks.Add(replacement);
+                await store.SaveChangesAsync();
+                await world.EditAsync((task, _) => task.Status = AgentTaskStatus.Blocked);
+                var active = await PoolDelegateRelease.Reservations(store).Where(p => p.AgentId == world.AgentId).Select(p => p.Id).ToListAsync();
+                active.ShouldContain(replacement.Id, "G-117 replacement attempt retains its own reservation");
+                active.ShouldNotContain(original.Id, "G-117 previous attempt stays cleared");
+                active.Count.ShouldBe(2, "G-117 replacement and unrelated reservation survive");
+            }
         }
     }
 
