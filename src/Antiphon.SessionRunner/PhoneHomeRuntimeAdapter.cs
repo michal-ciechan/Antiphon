@@ -39,7 +39,10 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
         IReadOnlyList<string> backends = [SessionBackends.PtyHost];
         IReadOnlyList<string> features = StaticFeatures;
         if (_runtime.SupportsWorkspacePark)
-            features = [.. features, RunnerCapabilityFeatures.WorkspaceParkV1];
+            features = [.. features, RunnerCapabilityFeatures.WorkspaceParkV1,
+                RunnerCapabilityFeatures.WorkspaceRepositoryIdentityV1];
+        if (_runtime.SupportsWorkspaceSourceModes)
+            features = [.. features, RunnerCapabilityFeatures.WorkspaceParkSourceModesV1];
         // CARD-0604 D-17 (Cut B). Phone-home advertises the LINUX custody backend, and only
         // when the runner's live probe passed. It never advertises windows-job-v1: a Windows
         // answer reaching the server over this lane is precisely how a Linux execution would be
@@ -116,4 +119,7 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
 
     public Task<WorkspaceParkResult> ParkWorkspaceAsync(WorkspaceParkCommand request, CancellationToken ct) =>
         _runtime.ParkWorkspaceAsync(request, ct);
+
+    public Task<WorkspaceRepositoryIdentityResult> ReadWorkspaceRepositoryIdentityAsync(WorkspaceRepositoryIdentityRequest request, CancellationToken ct) =>
+        _runtime.ReadWorkspaceRepositoryIdentityAsync(request, ct);
 }

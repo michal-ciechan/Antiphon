@@ -17,6 +17,8 @@ namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 /// </summary>
 public sealed class RunnerScopedSessionRunnerClient : ISessionRunnerClient, IVerificationWorkspaceTransport
 {
+    public Task<WorkspaceRepositoryIdentityResult> ReadWorkspaceRepositoryIdentityAsync(WorkspaceRepositoryIdentityRequest request, CancellationToken ct) =>
+        Current.ReadWorkspaceRepositoryIdentityAsync(request, ct);
     public Task<TerminalSeatObservation> ObserveTerminalSeatAsync(
         Guid sessionId, TerminalSeatObservationRequest request, CancellationToken ct) =>
         Current.ObserveTerminalSeatAsync(sessionId, request, ct);

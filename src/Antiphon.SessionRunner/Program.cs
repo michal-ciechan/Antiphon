@@ -463,7 +463,10 @@ internal static class TerminalSeatReleaseRoutes
             features = [.. features, RunnerCapabilityFeatures.TerminalSeatReleaseV1,
                 RunnerCapabilityFeatures.TerminalSeatDeliveryEvidenceV1];
             if (runtime.SupportsWorkspacePark)
-                features = [.. features, RunnerCapabilityFeatures.WorkspaceParkV1];
+                features = [.. features, RunnerCapabilityFeatures.WorkspaceParkV1,
+                    RunnerCapabilityFeatures.WorkspaceRepositoryIdentityV1];
+            if (runtime.SupportsWorkspaceSourceModes)
+                features = [.. features, RunnerCapabilityFeatures.WorkspaceParkSourceModesV1];
             features = HostStatsRoutes.CapabilityFeatures(features, hostStats.Value);
             return Results.Ok(runtime.DescribeCapabilities(runnerBuild, sessionBackends, features));
         });
@@ -471,6 +474,15 @@ internal static class TerminalSeatReleaseRoutes
 
     internal static void MapTerminalSeatReleaseRoutes(this IEndpointRouteBuilder app)
     {
+        app.MapPost("/sessions/{id:guid}/workspace-repository-identity", async (
+            Guid id, WorkspaceRepositoryIdentityRequest request, IPhoneHomeRuntimeSurface runtime, CancellationToken ct) =>
+        {
+            if (request.Version != 1 || !WorkspaceRepositoryIdentityRequest.Supported(runtime.Capabilities()))
+                return Results.Ok(new WorkspaceRepositoryIdentityResult(WorkspaceRepositoryIdentityOutcome.Held, "identity_unsupported"));
+            if (id != request.SessionId)
+                return Results.Ok(new WorkspaceRepositoryIdentityResult(WorkspaceRepositoryIdentityOutcome.Held, "identity_generation_changed"));
+            return Results.Ok(await runtime.ReadWorkspaceRepositoryIdentityAsync(request, ct));
+        });
         app.MapPost("/sessions/{id:guid}/workspace-park", async (
             Guid id, WorkspaceParkCommand request, IPhoneHomeRuntimeSurface runtime, CancellationToken ct) =>
         {
@@ -494,8 +506,7 @@ internal static class TerminalSeatReleaseRoutes
         {
             if (request.Observation is null)
                 return Results.Problem(title: "Terminal seat observation is required.", statusCode: 400);
-            if (request.ParkVersion != 1 || request.Publication is not null
-                && !WorkspaceParkCommand.Supported(runtime.Capabilities()))
+            if (!request.Supported(runtime.Capabilities()))
                 return Results.Ok(new TerminalSeatReleaseResult(id, request.ActionId,
                     TerminalSeatReleaseOutcome.Unsupported, null));
             return Results.Ok(await runtime.ReleaseTerminalSeatAsync(id, request, ct));

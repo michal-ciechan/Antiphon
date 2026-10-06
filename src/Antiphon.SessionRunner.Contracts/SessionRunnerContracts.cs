@@ -146,6 +146,8 @@ public static class RunnerCapabilityFeatures
 
     public const string WorkspacePublishV1 = "workspacePublishV1";
     public const string WorkspaceParkV1 = "workspaceParkV1";
+    public const string WorkspaceRepositoryIdentityV1 = "workspaceRepositoryIdentityV1";
+    public const string WorkspaceParkSourceModesV1 = "workspaceParkSourceModesV1";
     public const string WorkspaceRepositoryV1 = "workspaceRepositoryV1";
     public const string VerificationCustodyV1 = "verificationCustodyV1";
     public const string HerdrAttach = "herdr-attach";

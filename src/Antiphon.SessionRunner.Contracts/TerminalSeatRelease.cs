@@ -50,7 +50,17 @@ public sealed record TerminalSeatObservation(
 
 public sealed record TerminalSeatReleaseRequest(
     Guid ActionId, TerminalSeatObservationRequest Observation, string Token,
-    WorkspaceParkReceipt? Publication = null, int ParkVersion = 1);
+    WorkspaceParkReceipt? Publication = null, int ParkVersion = 1)
+{
+    public bool Supported(RunnerCapabilitiesDto? capabilities) => ParkVersion switch
+    {
+        1 => Publication is null || WorkspaceParkCommand.Supported(capabilities),
+        2 => Publication is not null
+            && capabilities?.Features?.Contains(RunnerCapabilityFeatures.WorkspaceParkSourceModesV1) == true
+            && capabilities.Features.Contains(RunnerCapabilityFeatures.TerminalSeatReleaseV1),
+        _ => false
+    };
+}
 
 public enum TerminalSeatReleaseOutcome
 {

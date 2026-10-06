@@ -626,8 +626,13 @@ public sealed partial class RunnerWorkspaceService
         return rest.Length > 0 && !rest.Contains('/', StringComparison.Ordinal) && rest is not ("." or "..");
     }
 
-    internal async Task<(int ExitCode, string Stdout, string Stderr)> GitAsync(
-        string workingDirectory, CancellationToken ct, params string[] args)
+    internal Task<(int ExitCode, string Stdout, string Stderr)> GitAsync(
+        string workingDirectory, CancellationToken ct, params string[] args) =>
+        RunGitAsync(workingDirectory, _startProcess, _timeout, ct, args);
+
+    internal static async Task<(int ExitCode, string Stdout, string Stderr)> RunGitAsync(
+        string workingDirectory, Func<ProcessStartInfo, Process?> startProcess, TimeSpan budget,
+        CancellationToken ct, params string[] args)
     {
         var psi = new ProcessStartInfo
         {
@@ -642,6 +647,7 @@ public sealed partial class RunnerWorkspaceService
         // No interactive credential prompt can ever block this process: the deploy key is the only
         // credential and it is BatchMode.
         psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        psi.Environment["GIT_OPTIONAL_LOCKS"] = "0";
 
         // CARD-0631 D-8: a git that cannot start (missing binary, missing or unreadable cwd, access
         // denial, no process at all) is a named workspace admission the server can answer.
@@ -649,7 +655,7 @@ public sealed partial class RunnerWorkspaceService
         Process? started;
         try
         {
-            started = _startProcess(psi);
+            started = startProcess(psi);
         }
         catch (Exception ex) when (ex is Win32Exception or IOException or UnauthorizedAccessException
                                        or InvalidOperationException)
@@ -661,7 +667,7 @@ public sealed partial class RunnerWorkspaceService
             ?? throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
                 $"{stage} could not start: no process was created.", 409);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(_timeout);
+        timeout.CancelAfter(budget);
         var stdout = process.StandardOutput.ReadToEndAsync(timeout.Token);
         var stderr = process.StandardError.ReadToEndAsync(timeout.Token);
         try

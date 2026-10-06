@@ -8,6 +8,8 @@ namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
 public sealed class RoutingSessionRunnerClient : ISessionRunnerClient
 {
+    public async Task<WorkspaceRepositoryIdentityResult> ReadWorkspaceRepositoryIdentityAsync(WorkspaceRepositoryIdentityRequest request, CancellationToken ct) =>
+        await (await Route(request.SessionId, ct)).ReadWorkspaceRepositoryIdentityAsync(request, ct);
     public async Task<TerminalSeatObservation> ObserveTerminalSeatAsync(
         Guid sessionId, TerminalSeatObservationRequest request, CancellationToken ct) =>
         await (await Route(sessionId, ct)).ObserveTerminalSeatAsync(sessionId, request, ct);
