@@ -53,7 +53,7 @@ sync-block classification are CARD-1081; instruction lines are CARD-1083.
 | "Any runner" includes the desktop. | The desktop host's seat unit is the delegated task (`HostStatsPollService.cs:142-149`: `delegatedTasks` vs `sessions`); `Resolve(desktop alias)` returns the local client (`PhoneHomeRunnerDirectory.cs:153-156`). Standing agents, orchestrators and Check seats are desktop sessions with no Dispatched/Working task, so `IsOrphan` would mark every one of them. | Seat rows are scoped to phone-home runner hosts; the local host gets occupancy samples only. Desktop session leaks stay with `PoolDelegateUnreleased`/`SessionUnowned` (D-4, flagged for a human). |
 | Migrations are generated. | `docs/project-context.md:125`: CLI only; `.config/dotnet-tools.json` pins `dotnet-ef` 9.0.20; the latest migration is `20261005222935_AddAgentTaskParks`. | `dotnet tool restore` then `dotnet ef migrations add AddHostOccupancySamples --project server` through `scripts/build-slot.ps1`; reported as an unlisted build with that reason. |
 | The client renders any kind the server sends. | `client/src/api/attention.ts` is a string union mirroring the enum; `ATTENTION_VISUALS` is `Record<AttentionKind, AttentionVisual>` (compile-time completeness) and `attentionVisuals.test.ts` keeps an `ALL_KINDS` census (currently 23 `it` + 1 `it.each`); `groupOf` falls through severity. Icons already imported: `TbClockPause`, `TbUserOff`, `TbHourglassHigh`, `TbAlertTriangle` among others. | Add the three kinds to the union, visuals and census (S4). |
-| Existing tests pin the surfaces this plan touches. | `RunnerSlotRulesTests` (2), `RunnerSlotEndpointTests` (8), `HostEndpointTests` (4), `HostBudgetPipelineTests` (4), `RunnerAlarmAttentionTests` (3), `CardClosedAttentionTests` (4); none uses `[Arguments]` except `DispatchHeldAttentionTests` (not selected). | R-1 to R-6 below. |
+| Existing tests pin the surfaces this plan touches. | `RunnerSlotRulesTests` (2), `RunnerSlotEndpointTests` (8), `HostEndpointTests` (4), `AgentTaskPipelineStatusTests` C654_* (4, file `HostBudgetPipelineTests.cs`), `RunnerAlarmAttentionTests` (3), `CardClosedAttentionTests` (4); none uses `[Arguments]` except `DispatchHeldAttentionTests` (not selected). | R-1 to R-6 below. |
 
 ## Decisions
 
@@ -293,7 +293,7 @@ unchanged and no `ParallelLimiter<ProcessSpawnLimit>` is needed.
 | R-1 | `RunnerSlotRulesTests.Exited_records_do_not_occupy_and_a_warm_pool_is_not_an_orphan`; `RunnerSlotRulesTests.Pending_release_reconcile_is_scheduled_and_triggered_at_startup` | `OccupiesCapacity`/`IsOrphan` truth table unchanged. |
 | R-2 | `RunnerSlotEndpointTests` (8 methods) | The slots route still reports `orphan`, `occupiesCapacity`, `occupied`, `declaredCapacity` and release behaviour identically after the join extraction. |
 | R-3 | `HostEndpointTests` (4 methods) | `/api/hosts` and the budget route are unchanged with the new sibling route mapped. |
-| R-4 | `HostBudgetPipelineTests` (4 methods) | Pipeline host occupancy arithmetic untouched. |
+| R-4 | `AgentTaskPipelineStatusTests` C654_* (4 methods in `HostBudgetPipelineTests.cs`) | Pipeline host occupancy arithmetic untouched. |
 | R-5 | `RunnerAlarmAttentionTests` (3 methods) | `AttentionService` still constructs with the alarm parameter alone; alarm rows unchanged. |
 | R-6 | `CardClosedAttentionTests` (4 methods) | A task-keyed row family is unaffected by the new builders. |
 
@@ -388,7 +388,7 @@ or one task at about 255 minutes. Mutation: 16 method-scoped PCs at about 8 minu
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1079-s1/` | seat-rules | `/*/Antiphon.Tests.Application/(SeatOccupancyProjectionTests*)\|(AttentionSettingsValidatorTests*)\|(SeatDesktopJoinTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6 | all 8 methods executed (19 results with the V-1 and V-3 argument rows), 0 failed/skipped | 19 | 9 | false |
 | CP-2 | S1 | CP-1 | slot-regressions | `/*/Antiphon.Tests.Application/(RunnerSlotRulesTests*)\|(RunnerSlotEndpointTests*)/*` | R-1, R-2 | all 10 methods, 0 failed/skipped | 10 | 4 | false |
 | CP-3 | S2 | `tests/Antiphon.Tests -> bin-c1079-s2/` | seat-sampler | `/*/Antiphon.Tests.Application/SeatOccupancySamplerTests/*` | V-7, V-8, V-9, V-10, V-11, V-12 | all 6 methods, 0 failed/skipped | 6 | 9 | false |
-| CP-4 | S2 | CP-3 | host-regressions | `/*/Antiphon.Tests.Application/(HostEndpointTests*)\|(HostBudgetPipelineTests*)/*` | R-3, R-4 | all 8 methods, 0 failed/skipped | 8 | 4 | false |
+| CP-4 | S2 | CP-3 | host-regressions | `/*/Antiphon.Tests.Application/(HostEndpointTests*)\|(AgentTaskPipelineStatusTests*)/C654_*` | R-3, R-4 | all 8 methods, 0 failed/skipped | 8 | 4 | false |
 | CP-5 | S3 | `tests/Antiphon.Tests -> bin-c1079-s3/` | seat-attention | `/*/Antiphon.Tests.Application/SeatOccupancyAttentionTests/*` | V-13, V-14, V-15, V-16, V-17, V-18, V-19, V-20 | all 8 methods, 0 failed/skipped | 8 | 9 | false |
 | CP-6 | S3 | CP-5 | attention-regressions | `/*/Antiphon.Tests.Application/(RunnerAlarmAttentionTests*)\|(CardClosedAttentionTests*)/*` | R-5, R-6 | all 7 methods, 0 failed/skipped | 7 | 4 | false |
 | CP-7 | S4 | `tests/Antiphon.Tests -> bin-c1079-s4/` | occupancy-endpoint | `/*/Antiphon.Tests.Application/HostOccupancySampleEndpointTests/*` | V-21, V-22, V-23 | all 3 methods, 0 failed/skipped | 3 | 8 | false |
