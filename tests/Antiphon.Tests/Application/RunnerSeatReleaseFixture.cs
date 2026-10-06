@@ -128,7 +128,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         AgentTaskStatus status = AgentTaskStatus.Succeeded, bool sourced = false,
         Action<DbContextOptionsBuilder>? configureDb = null,
         string? provider = null, bool phoneHome = false, bool rowless = false,
-        bool productionDefaults = false)
+        bool productionDefaults = false, bool parking = false)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero));
@@ -159,6 +159,8 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
                     services.AddSingleton<TerminalRunnerSeatReleasePolicy>();
                     services.AddSingleton<TerminalRunnerSeatDiscoveryState>();
                     services.AddScoped<TerminalRunnerSeatReleaseService>();
+                    services.AddSingleton(Options.Create(new BlockedTaskParkingOptions { Enabled = parking }));
+                    services.AddScoped<BlockedTaskParkingService>();
                     services.AddSingleton<DelegationWorkspaceResolver>();
                     services.AddDelegationWorktreeGraph(new GitSettings());
                     services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
