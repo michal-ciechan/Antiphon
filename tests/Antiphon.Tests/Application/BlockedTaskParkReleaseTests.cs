@@ -64,7 +64,9 @@ public sealed class BlockedTaskParkReleaseTests
                     else
                     {
                         attempt.LastDeliveryBaselineSequence.ShouldBeNull("G-102: empty history uses the timestamp fallback");
-                        entry.Timestamp = attempt.LastDeliveryStartedAt.ShouldNotBeNull().AddSeconds(-1);
+                        var tolerance = f.Harness.Provider.GetRequiredService<IOptions<SupervisionSettings>>()
+                            .Value.DeliveryVerification.UnobservableBaselineConfirmClockToleranceSeconds;
+                        entry.Timestamp = attempt.LastDeliveryStartedAt.ShouldNotBeNull().AddSeconds(-tolerance - 1);
                     }
                     await native.SaveChangesAsync();
                 }
@@ -175,7 +177,7 @@ public sealed class BlockedTaskParkReleaseTests
         foreach (var cut in new[] { "BeforeReservation", "BeforeDispatch", "BeforeResponse", "lost-reply" })
         {
             await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
-            await f.CreateSourceAsync();
+            await f.PreparePublishedBlockedSourceAsync();
             // First stop at the ordinary idle refusal, after real publication has persisted.
             f.Wire.Qualified = f.Wire.Qualified with { Status = TerminalSeatQualificationStatus.Working };
             await f.HandleParkAsync();
