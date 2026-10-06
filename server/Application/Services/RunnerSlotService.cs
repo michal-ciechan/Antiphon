@@ -387,39 +387,12 @@ public static class RunnerSlotService
     private static async Task<Dictionary<Guid, DesktopRow>> LoadDesktopAsync(
         AppDbContext db, Guid[] ids, CancellationToken ct)
     {
-        var rows = new Dictionary<Guid, DesktopRow>();
-        if (ids.Length == 0)
-            return rows;
-        var sessions = await db.AgentSessions.AsNoTracking()
-            .Where(s => ids.Contains(s.Id))
-            .Select(s => new { s.Id, s.Status })
-            .ToListAsync(ct);
-        var open = await db.AgentTasks.AsNoTracking()
-            .Where(t => t.AgentSessionId != null
-                && ids.Contains(t.AgentSessionId.Value)
-                && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working))
-            .Select(t => new { SessionId = t.AgentSessionId!.Value, t.Id })
-            .ToListAsync(ct);
-        var keys = ids.Select(id => id.ToString("D")).ToArray();
-        var pooled = await db.Agents.AsNoTracking()
-            .Where(a => a.PersistentSessionId != null
-                && keys.Contains(a.PersistentSessionId)
-                && a.Status == AgentStatus.Idle
-                && a.PoolIdleSince != null)
-            .Select(a => a.PersistentSessionId!)
-            .ToListAsync(ct);
-        var pooledIds = pooled
-            .Select(text => Guid.TryParse(text, out var id) ? id : Guid.Empty)
-            .Where(id => id != Guid.Empty)
-            .ToHashSet();
+        var joined = await SeatDesktopJoin.LoadAsync(db, ids, ct);
+        var rows = new Dictionary<Guid, DesktopRow>(ids.Length);
         foreach (var id in ids)
         {
-            var session = sessions.FirstOrDefault(s => s.Id == id);
-            var live = session is not null
-                && session.Status is SessionStatus.Created or SessionStatus.Starting
-                    or SessionStatus.Running or SessionStatus.Stopping;
-            var taskId = open.FirstOrDefault(t => t.SessionId == id)?.Id;
-            rows[id] = new DesktopRow(live, session?.Status.ToString(), taskId, pooledIds.Contains(id));
+            joined.TryGetValue(id, out var row);
+            rows[id] = new DesktopRow(row.Live, row.Status, row.OpenTaskId, row.PooledWarm);
         }
 
         return rows;

@@ -203,6 +203,11 @@ try
     builder.Services.AddOptions<AlarmSettings>()
         .Bind(builder.Configuration.GetSection("Alarms"))
         .ValidateOnStart();
+    // CARD-1079: idle-seat attention thresholds. Detection only.
+    builder.Services.AddSingleton<IValidateOptions<AttentionSettings>, AttentionSettingsValidator>();
+    builder.Services.AddOptions<AttentionSettings>()
+        .Bind(builder.Configuration.GetSection(AttentionSettings.SectionName))
+        .ValidateOnStart();
     builder.Services.AddSingleton<IValidateOptions<WorktreeResidueSettings>, WorktreeResidueSettingsValidator>();
     builder.Services.AddOptions<WorktreeResidueSettings>()
         .Bind(builder.Configuration.GetSection("WorktreeResidue"))
