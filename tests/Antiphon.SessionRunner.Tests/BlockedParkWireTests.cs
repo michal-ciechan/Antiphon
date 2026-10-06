@@ -903,7 +903,7 @@ public sealed class BlockedParkWireTests
         { ReleaseCalls++; ReleaseReceived = request; return Adapter.ReleaseTerminalSeatAsync(id, request, ct); }
     }
 
-    private sealed class SeatWire(SeatWorld world, IPhoneHomeRuntimeSurface surface, bool phoneHome) : IAsyncDisposable
+    internal sealed class SeatWire(SeatWorld world, IPhoneHomeRuntimeSurface surface, bool phoneHome) : IAsyncDisposable
     {
         private readonly PhoneHomeCommandDispatcher _dispatcher = new(surface, new PhoneHomeSettings());
         private WebApplication? _app;
@@ -1006,7 +1006,7 @@ public sealed class BlockedParkWireTests
         }
     }
 
-    private sealed class World : IDisposable
+    internal sealed class World : IDisposable
     {
         public const string Branch = "feat/card-task-deadbeef";
         public const string FullRef = "refs/heads/" + Branch;
@@ -1125,7 +1125,7 @@ public sealed class BlockedParkWireTests
             Directory.Delete(Root, recursive: true);
         }
     }
-    private sealed class SeatWorld : IAsyncDisposable
+    internal sealed class SeatWorld : IAsyncDisposable
     {
         internal const string TaskPrompt = "[antiphon-task:c667-s1b] Current generation delivery, complete distinctive task prompt.";
         private readonly string _root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "c667-seat-" + Guid.NewGuid().ToString("N"));
@@ -1369,7 +1369,7 @@ public sealed class BlockedParkWireTests
         }
     }
 
-    private sealed class SeatChild : ISessionChild
+    internal sealed class SeatChild : ISessionChild
     {
         public List<string> Inputs { get; } = [];
         public int Kills { get; private set; }
@@ -1385,7 +1385,7 @@ public sealed class BlockedParkWireTests
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
-    private sealed class TailWorld : IAsyncDisposable
+    internal sealed class TailWorld : IAsyncDisposable
     {
         private readonly string _root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "c667-" + Guid.NewGuid().ToString("N"));
         private readonly string? _oldClaudeConfig = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
