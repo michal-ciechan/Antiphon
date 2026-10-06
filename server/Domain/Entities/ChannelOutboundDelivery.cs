@@ -2,7 +2,13 @@ using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Domain.Entities;
 
-/// <summary>Durable preparation and publication intent for one reply to one conversation.</summary>
+/// <summary>
+/// Durable preparation and publication owner for one reply to one conversation. With unified
+/// recovery enabled this includes passthrough main, trailing and eligible machine replies.
+/// Published records producer acceptance, not provider receipt; uncertain outcomes require an
+/// explicit possible-duplicate acknowledgement before retry. Open tails and unresolved evidence
+/// remain protected from retention, independently of incident-history pruning.
+/// </summary>
 public sealed class ChannelOutboundDelivery
 {
     public Guid Id { get; set; }
@@ -41,6 +47,7 @@ public sealed class ChannelOutboundDelivery
     public DateTime? LeaseUntil { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime DeadlineAt { get; set; }
+    /// <summary>Producer acceptance committed with source settlement; null for intentional suppression.</summary>
     public DateTime? PublishedAt { get; set; }
     public int PublicationAttempts { get; set; }
     /// <summary>Lifetime attempt count at the start of the current explicit authorization.</summary>

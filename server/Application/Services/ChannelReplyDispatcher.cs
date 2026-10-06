@@ -58,6 +58,8 @@ public sealed record ChannelReplyDispatchResult(
 /// extracts the assistant's text for that turn, classifies it (final answer vs question — see
 /// <see cref="ChannelReplyKind"/>; Progress is reserved for future mid-turn notes), and produces a
 /// <see cref="ChannelReply"/> to the outbound topic.
+/// With unified recovery enabled, catalog-backed replies capture the original intent before preparation;
+/// the outbound pump owns publication and historical discovery can recover without a new turn.
 ///
 /// <para><b>ONE STORE (CARD-0067).</b> There is no correlation map. The reply target is resolved at
 /// dispatch time from the <see cref="SessionQueuedMessage"/> row the bridge already persisted for
@@ -70,9 +72,10 @@ public sealed record ChannelReplyDispatchResult(
 /// live correlations and the Family agent's guest list — 42 people, then 64 — was emitted twice and
 /// published never, with no log line and no incident anywhere.</para>
 ///
-/// <para><b>NO SILENT LOSS.</b> Every channel correlation now ends in exactly one of two states: a
-/// published reply, or a Critical <see cref="AgentIncidentKind.ChannelReplyLost"/> incident when it
-/// is abandoned unanswered (TTL expiry, or a conversation key nothing can be routed to). The
+/// <para><b>NO SILENT LOSS.</b> An owed reply retains recoverable ownership until producer acceptance,
+/// deliberate policy suppression or a durable visible loss. Unified recovery commits a Critical
+/// <see cref="AgentIncidentKind.ChannelReplyLost"/> incident with Failed/PublishUncertain or
+/// terminal source loss; uncertain publication never authorizes automatic replay. The
 /// abandon sweep runs both per-session on turn end and globally via
 /// <see cref="SweepStaleCorrelationsAsync"/>, because a session that answers into a void may never
 /// end another turn to be swept on.</para>

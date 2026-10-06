@@ -81,7 +81,8 @@ public partial class HerdrAlwaysOnChannelParityTests
                 }
                 : Array.Empty<FakeAgentProtocolAdapter>();
 
-            await using var harness = BuildHarness(tempRoot, backend, fake, ptyAdapters);
+            await using var harness = BuildHarness(tempRoot, backend, fake, ptyAdapters,
+                unifiedRecovery: true);
             foreach (var adapter in ptyAdapters)
                 adapter.RegisterOnStart = harness.Runtime;
 
@@ -194,7 +195,7 @@ public partial class HerdrAlwaysOnChannelParityTests
             if (backend == SessionBackend.Herdr)
             {
                 fake.ShouldNotBeNull();
-                var confirm = ConfirmHerdrDeliveryAsync(fake, resumedSessionId, nonce);
+                var confirm = ConfirmHerdrDeliveryAsync(fake, resumedSessionId, nonce, harness.Clock);
                 await harness.Bridge.HandleInboundAsync(inbound, CancellationToken.None);
                 await confirm;
             }
@@ -204,7 +205,7 @@ public partial class HerdrAlwaysOnChannelParityTests
                 resumeAdapter.OnSubmitted = async submitted =>
                 {
                     await InsertEntryAsync(resumedSessionId, TranscriptKinds.UserPrompt, submitted,
-                        timestamp: DateTime.UtcNow);
+                        timestamp: harness.Clock.GetUtcNow().UtcDateTime);
                 };
                 await harness.Bridge.HandleInboundAsync(inbound, CancellationToken.None);
             }
@@ -216,23 +217,42 @@ public partial class HerdrAlwaysOnChannelParityTests
                 queued.Status.ShouldBe(QueuedMessageStatus.Sent);
                 queued.ConversationKey.ShouldBe($"telegram:{chatId}");
                 queued.Body.ShouldContain(nonce);
+                var receipt = (await db.TranscriptEntries.Where(t =>
+                    t.AgentSessionId == resumedSessionId && t.Kind == TranscriptKinds.UserPrompt
+                    && t.Text == queued.Body).ToListAsync()).ShouldHaveSingleItem();
+                receipt.Sequence.ShouldBeGreaterThan(queued.LastDeliveryBaselineSequence ?? 0);
+                receipt.Timestamp.ShouldNotBeNull();
+                queued.LastDeliveryStartedAt.ShouldNotBeNull();
+                receipt.Timestamp.Value.ShouldBeGreaterThanOrEqualTo(queued.LastDeliveryStartedAt.Value);
             }
 
-            await using (var db = CreateContext())
-            {
-                var prompt = await db.SessionQueuedMessages.SingleAsync(
-                    m => m.AgentSessionId == resumedSessionId && m.Origin == QueuedMessageOrigin.Channel);
-                await InsertEntryAsync(resumedSessionId, TranscriptKinds.AssistantText,
-                    $"Pasta tonight — {nonce}.");
-                await InsertEntryAsync(resumedSessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn");
-                _ = prompt;
-            }
+            await InsertEntryAsync(resumedSessionId, TranscriptKinds.AssistantText,
+                $"Pasta tonight — {nonce}.");
+            await InsertEntryAsync(resumedSessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn");
 
             await harness.Dispatcher.OnTurnEndAsync(resumedSessionId, CancellationToken.None);
+            await ChannelOutboundTestDriver.AssertCapturedAsync(harness.Provider, resumedSessionId,
+                "main", memberCount: 1);
+            harness.Messaging.SentReplies.ShouldBeEmpty("capture owns the reply before producer entry");
+            await ChannelOutboundTestDriver.DrainAsync(harness.Provider, resumedSessionId);
             var reply = harness.Messaging.SentReplies.ShouldHaveSingleItem();
             reply.Channel.ShouldBe("telegram");
             reply.ConversationId.ShouldBe(chatId);
-            reply.Text.ShouldContain(nonce);
+            reply.ReplyHandle.ShouldBe(chatId);
+            reply.Text.ShouldBe($"Pasta tonight — {nonce}.");
+            await using (var db = CreateContext())
+            {
+                var delivery = await db.ChannelOutboundDeliveries.SingleAsync(
+                    d => d.SourceSessionId == resumedSessionId);
+                delivery.State.ShouldBe(ChannelOutboundDeliveryState.Published);
+                delivery.PublicationAttempts.ShouldBe(1);
+                delivery.PublishedAt.ShouldNotBeNull();
+                delivery.MetadataAppliedAt.ShouldNotBeNull();
+                var source = await db.SessionQueuedMessages.SingleAsync(
+                    m => m.AgentSessionId == resumedSessionId && m.Origin == QueuedMessageOrigin.Channel);
+                source.ChannelOutboundDeliveryId.ShouldBe(delivery.Id);
+                source.ChannelReplySettledAt.ShouldBe(delivery.PublishedAt);
+            }
             (await harness.Dispatcher.PendingCountAsync(resumedSessionId)).ShouldBe(0);
         }
         finally
@@ -500,7 +520,8 @@ public partial class HerdrAlwaysOnChannelParityTests
     private static int CountAgentPanes(FakeHerdrServer fake) =>
         fake.Workspaces.SelectMany(w => w.Tabs.SelectMany(t => t.Panes)).Count(p => p.Agent is not null);
 
-    private static async Task ConfirmHerdrDeliveryAsync(FakeHerdrServer fake, Guid sessionId, string nonce)
+    private static async Task ConfirmHerdrDeliveryAsync(FakeHerdrServer fake, Guid sessionId, string nonce,
+        TimeProvider? clock = null)
     {
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(8);
         while (DateTime.UtcNow < deadline)
@@ -519,7 +540,7 @@ public partial class HerdrAlwaysOnChannelParityTests
                     .OrderByDescending(m => m.Sequence)
                     .FirstAsync();
                 await InsertEntryAsync(sessionId, TranscriptKinds.UserPrompt, row.Body,
-                    timestamp: DateTime.UtcNow);
+                    timestamp: clock?.GetUtcNow().UtcDateTime ?? DateTime.UtcNow);
                 return;
             }
 
@@ -608,7 +629,8 @@ public partial class HerdrAlwaysOnChannelParityTests
         int launchDetectTimeoutMs = 60_000,
         IProcessLivenessProbe? processLiveness = null,
         bool nativePty = false,
-        bool fixtureTranscriptPump = false)
+        bool fixtureTranscriptPump = false,
+        bool unifiedRecovery = false)
     {
         var clock = new MutableTimeProvider(DateTimeOffset.UtcNow);
         var services = new ServiceCollection();
@@ -755,6 +777,32 @@ public partial class HerdrAlwaysOnChannelParityTests
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<ChannelReplyDispatcher>();
+        services.AddSingleton<IOptions<ChannelOutboundSettings>>(Options.Create(new ChannelOutboundSettings
+        {
+            // R-12 opts in locally; deployed configuration remains disabled.
+            UnifiedRecoveryEnabled = unifiedRecovery,
+        }));
+        services.AddSingleton<IOptions<AntiphonMessagingOptions>>(Options.Create(new AntiphonMessagingOptions()));
+        services.AddSingleton<IChannelOutboundFileStore>(new ChannelOutboundFileStore(Path.Combine(tempRoot, "outbound")));
+        services.AddSingleton<IChannelReplyAttachmentReader, ChannelReplyAttachmentReader>();
+        services.AddScoped<ChannelReplyPreparation>();
+        services.AddScoped<ChannelOutboundService>();
+        services.AddSingleton<ChannelOutboundWorkCursor>();
+        services.AddScoped<ChannelOutboundDeliveryPump>(sp =>
+        {
+            var db = sp.GetRequiredService<AppDbContext>();
+            var tasks = new AgentTaskService(db,
+                new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+                Options.Create(new DelegationSettings { AllowedRoots = [tempRoot] }), eventBus,
+                new RecordingSessionStopper(), clock, NullLogger<AgentTaskService>.Instance);
+            return new ChannelOutboundDeliveryPump(db, new OutboundConversionTaskRunner(db, tasks),
+                sp.GetRequiredService<IChannelOutboundFileStore>(), messaging,
+                sp.GetRequiredService<IOptions<AntiphonMessagingOptions>>(), clock,
+                NullLogger<ChannelOutboundDeliveryPump>.Instance,
+                sp.GetRequiredService<IOptions<ChannelOutboundSettings>>(),
+                sp.GetRequiredService<ChannelReplyPreparation>(),
+                cursor: sp.GetRequiredService<ChannelOutboundWorkCursor>());
+        });
         services.AddScoped<ChatChannelService>();
         services.AddScoped<AgentSessionService>();
         services.AddScoped<RetryScheduler>();
@@ -814,6 +862,9 @@ public partial class HerdrAlwaysOnChannelParityTests
             .Select(s => s.Id)
             .ToListAsync();
         await db.SessionQueuedMessages.Where(m => sessionIds.Contains(m.AgentSessionId)).ExecuteDeleteAsync();
+        await db.ChannelOutboundDeliveries.Where(d => sessionIds.Contains(d.SourceSessionId)
+            && d.RootDeliveryId != null).ExecuteDeleteAsync();
+        await db.ChannelOutboundDeliveries.Where(d => sessionIds.Contains(d.SourceSessionId)).ExecuteDeleteAsync();
         await db.TranscriptEntries.Where(t => sessionIds.Contains(t.AgentSessionId)).ExecuteDeleteAsync();
         await db.AgentIncidents.Where(i => i.AgentId != null && agentIds.Contains(i.AgentId.Value)).ExecuteDeleteAsync();
         await db.Alerts.Where(a => a.AgentId != null && agentIds.Contains(a.AgentId.Value)).ExecuteDeleteAsync();
