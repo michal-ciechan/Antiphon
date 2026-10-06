@@ -149,15 +149,27 @@ public sealed class RetiredTempContainerHostTests
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Production_mount_topology_is_proven() {
-        foreach(var fault in new[]{"valid","bind","tmpfs","private","compose"}) {
+        foreach(var fault in new[]{"valid","bind","tmpfs","private","compose","token-missing","token-source","token-writable"}) {
             using var f=Fixture("session-runner","state-init");var runner=f.Docker["containers"]!.AsArray()[1]!;
+            var tokenMount=runner["Mounts"]!.AsArray().Single(m=>m!["Destination"]!.GetValue<string>()=="/run/antiphon/github-token")!;
+            if(fault=="token-missing")runner["Mounts"]!.AsArray().Remove(tokenMount);
+            if(fault=="token-source")tokenMount["Source"]="/foreign";
+            if(fault=="token-writable")tokenMount["RW"]=true;
             if(fault=="bind")runner["Mounts"]!.AsArray().Single(m=>m!["Destination"]!.GetValue<string>()=="/state/codex")!["Source"]="/foreign";
             if(fault=="tmpfs")runner["HostConfig"]=new JsonObject();
             if(fault=="private")f.Docker["volumes"]![Project+"_work"]!["Labels"]!["com.docker.compose.project"]="foreign";
             if(fault=="compose")f.Docker["models"]![Project]!["services"]!["state-init"]!["volumes"]![1]!["target"]="/state";
             var run=await Cleanup(f);run.Exit.ShouldBe(fault=="valid"?0:2,"c994-mounts c994-private-identity c994-compose: "+fault+"; "+run.Output);
             if(fault!="valid")NoMutation(f,"c994-mounts");
-            else Receipt(f)["candidates"]!.AsArray().Select(c=>c!["Topology"]!["mounts"]!.AsArray().Count).ShouldBe(new[]{14,3},"c994-mounts: logical roster");
+            else {
+                var candidates=Receipt(f)["candidates"]!.AsArray();
+                candidates.Select(c=>c!["Topology"]!["mounts"]!.AsArray().Count).ShouldBe(new[]{15,3},"c994-mounts: logical roster including the token bind");
+                var token=candidates[0]!["Topology"]!["mounts"]!.AsArray().Single(m=>m!["target"]!.GetValue<string>()=="/run/antiphon/github-token")!;
+                token["kind"]!.GetValue<string>().ShouldBe("bind","c994-mounts: token directory bind");
+                token["source"]!.GetValue<string>().ShouldBe(f.Root+"/github-token","c994-mounts: owned token directory");
+                token["rw"]!.GetValue<bool>().ShouldBeFalse("c994-mounts: token bind is read-only");
+                token["file"]!.GetValue<bool>().ShouldBeFalse("c994-mounts: token directory supports atomic rotation");
+            }
         }
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
