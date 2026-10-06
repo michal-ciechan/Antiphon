@@ -303,12 +303,12 @@ the existing classes named in its row (lesson from CARD-1065 S5).
 | S3: Pending progress evaluation | 45 min | `server/Application/Services/TaskCompletionProgressService.cs` (`EvaluateRemoteAsync`) | `RunnerCompletionProgressTests`: `C1082_PendingWithLocalObjectsAttributesClaimAgainstObservedTip`, `C1082_PendingEqualTipIsNoPushedProgress`, `C1082_PendingWithoutLocalObjectsIsIndeterminate`; whole class stays green. |
 | S4a: debt entity, migration, `SyncSettledAsync`, mirror removal fallback | 50 min | New `server/Domain/Entities/AgentTaskSyncDebt.cs`; `server/Infrastructure/Data/AppDbContext.cs` (DbSet + configuration); `server/Migrations/<stamp>_AddAgentTaskSyncDebts.cs` + snapshot via `dotnet ef`; `RemoteWorkspaceService.cs` (`SyncSettledAsync`, `RemoveMirrorAsync` fallback) | `RunnerSettlementSyncTests`: `C1082_SettledDebtSyncOnlyFastForwardsToTheRecordedSource`, `C1082_SettledDebtSyncRefusesAChangedEpisode`; new `tests/Antiphon.Tests/Application/SettlementSyncDebtSchemaTests.C1082_SchemaMigrationMatchesModel`. |
 | S4b: sweep service, dispatcher hook, registration | 60 min | New `server/Application/Services/SettlementSyncRecoveryService.cs`; `server/Application/Services/AgentTaskDispatcher.cs`; `server/Program.cs`; `RunnerSettlementWorld.cs` (register the sweep and a `SweepSettlementSyncAsync()` helper) | New Slow class `tests/Antiphon.Tests/Application/SettlementSyncRecoveryTests.cs` (6 methods, 9 results) seeding debt rows directly; registered in `tests/Antiphon.Tests/slow-tests-allowlist.txt` with its reason. `BlockedTaskSyncRecoveryTests` stays green. |
-| S5: settlement integration | 60 min | `server/Application/Services/AgentTaskReplyService.cs` (`PrepareRemoteAsync` → `Classify`; `RemoteSyncBlockReason` → policy; pending warning and workspace note; debt row insert; deliverable and `git=` from S when local; no change to `SettledHandoff`, release or obligation code) | `RunnerTaskSettlementTests`: `C1082_ReviewLeaseBusySettlesSucceededWithPendingSyncDebt`, `C1082_CodeLeaseBusyWithLocalObjectsSettlesSucceededPending`, `C1082_CodeLeaseBusyEqualTipFailsOnItsOwnVerdict`, `C1082_DisabledSettingKeepsLeaseBusyBlocked`, `C1082_PendingDebtRecoversThroughTheDispatcherSweep`. Whole `RunnerTaskSettlementTests`, `ReviewEvidenceResettlementTests`, `TerminalRunnerSeatReleaseTests`, `BlockedTaskSyncRecoveryTests`, `BlockedTaskParkDeliveryTests` must stay green (CP-8). |
+| S5: settlement integration | 60 min | `server/Application/Services/AgentTaskReplyService.cs` (`PrepareRemoteAsync` → `Classify`; `RemoteSyncBlockReason` → policy; pending warning and workspace note; debt row insert; deliverable and `git=` from S when local; no change to `SettledHandoff`, release or obligation code) | `RunnerTaskSettlementTests`: `C1082_ReviewLeaseBusySettlesSucceededWithPendingSyncDebt`, `C1082_CodeLeaseBusyWithLocalObjectsSettlesSucceededPending`, `C1082_CodeLeaseBusyEqualTipFailsOnItsOwnVerdict`, `C1082_DisabledSettingKeepsLeaseBusyBlocked`, `C1082_PendingDebtRecoversThroughTheDispatcherSweep`. Whole `RunnerTaskSettlementTests`, `ReviewEvidenceResettlementTests`, `TerminalRunnerSeatReleaseTests`, `BlockedTaskSyncRecoveryTests`, `BlockedTaskParkDeliveryTests` must stay green (CP-7, CP-8, CP-9). |
 | S6: projection, attention, CLI, docs | 50 min | `server/Application/Dtos/AgentTaskDtos.cs`; `server/Application/Services/AgentTaskService.cs`; new `server/Application/Services/SettlementSyncDebtAttention.cs`; `server/Application/Services/AttentionService.cs`; `scripts/delegate.ps1`; `docs/orchestration-loop.md`, `docs/session-runtime-invariants.md`, `docs/ops-http.md`, `docs/antiphon-api.md` | `SettlementSyncDebtPolicyTests.C1082_AttentionWarnsOnHeldAndStalePendingDebt` (4 arguments); `SettlementSyncRecoveryTests.C1082_TaskDetailExposesSyncDebt`; `RunnerBranchContractDocumentationTests.C1082_settlement_sync_debt_is_documented`. |
 | S7: fail-closed evidence and land controls | 45 min | Tests only unless a defect appears; a production defect is repaired in its owning slice's files and reported | `ReviewEvidenceResettlementTests.C1082_PendingContinuationRefusesStrictRebind`; `ReviewEvidenceRecoveryTests.C1043_StoredSyncRequired` gains a Pending arm (same method count); new `tests/Antiphon.Tests/Application/SettlementSyncDebtLandingTests.C1082_PendingSyncOwnerLandsOnPushedBranch` on `LandingSafetyHarness` (model: `AgentTaskLandAdoptionTests`). |
 
-After S7 the Code task for the last slice (or Review) runs CP-F1 and CP-F2 at the final committed
-SHA so the whole closed list has one certificate.
+After S7 the Code task for the last slice (or Review) runs CP-13, CP-14 and CP-15 at the final
+committed SHA so the whole closed list has one certificate.
 
 ## Verification design
 
@@ -433,7 +433,9 @@ with N `[Arguments]` rows contributes N. Existing rosters counted at `ed0f0d920`
 `ReviewEvidenceRecoveryTests` 21, `TerminalRunnerSeatReleaseTests` 39 (29 methods),
 `BlockedTaskSyncRecoveryTests` 2, `BlockedTaskParkDeliveryTests` 4, `DelegationLeaseSettingsTests`
 11 (4 methods), `RunnerBranchContractDocumentationTests` 4. Confirm the TRX roster equals the
-expected set, not merely at least `Min`.
+expected set, not merely at least `Min`. The table below was validated at planning time with the
+checkpoint importer (`import --plan`, tool built through `scripts/build-slot.ps1`): 15 rows, exit
+0, no advisory warnings; every derived row timeout is at or under 42 minutes.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
@@ -444,11 +446,14 @@ expected set, not merely at least `Min`.
 | CP-5 | S4a | `tests/Antiphon.Tests -> bin-c1082-cp5/` | debt-schema-sync | `/*/*/(RunnerSettlementSyncTests*)\|(SettlementSyncDebtSchemaTests*)/C1082_*` | V-12, V-13 | exact 6 results (3 from S2 + 2 S4a sync + 1 schema), 0 failed/skipped | 6 | 7 | |
 | CP-6 | S4b | `tests/Antiphon.Tests -> bin-c1082-cp6/` | sweep | `/*/*/(SettlementSyncRecoveryTests*)\|(BlockedTaskSyncRecoveryTests*)/*` | V-14, V-15, V-16, V-17, V-18, V-19, R-4 | exact 11 results (9 new + 2 existing park sweep), 0 failed/skipped | 11 | 12 | true |
 | CP-7 | S5 | `tests/Antiphon.Tests -> bin-c1082-cp7/` | settlement | `/*/*/RunnerTaskSettlementTests/*` | V-2, V-20, V-21, V-22, V-23, R-1, R-2 | exact 31 results (26 existing + 5 C1082_*), 0 failed/skipped | 31 | 14 | true |
-| CP-8 | S5 | CP-7 | legacy-blocked-paths | `/*/*/(ReviewEvidenceResettlementTests*)\|(TerminalRunnerSeatReleaseTests*)\|(BlockedTaskSyncRecoveryTests*)\|(BlockedTaskParkDeliveryTests*)/*` | R-1, R-3, R-4, R-6 | exact 54 results (9 + 39 + 2 + 4), 0 failed/skipped | 54 | 18 | true |
-| CP-9 | S6 | `tests/Antiphon.Tests -> bin-c1082-cp9/` | projection-docs | `/*/*/(SettlementSyncDebtPolicyTests*)\|(RunnerBranchContractDocumentationTests*)\|(SettlementSyncRecoveryTests*)/*` | V-24, V-25, V-26 | exact 36 results (17 + 4 attention, 4 + 1 docs, 9 + 1 detail), 0 failed/skipped | 36 | 14 | true |
-| CP-10 | S7 | `tests/Antiphon.Tests -> bin-c1082-cp10/` | evidence-land-controls | `/*/*/(ReviewEvidenceResettlementTests*)\|(ReviewEvidenceRecoveryTests*)\|(SettlementSyncDebtLandingTests*)/*` | V-27, V-28, V-29, R-3 | exact 32 results (9 + 1, 21, 1), 0 failed/skipped | 32 | 16 | true |
-| CP-F1 | all | `tests/Antiphon.Tests -> bin-c1082-f1/` | final-settlement | `/*/*/(RunnerTaskSettlementTests*)\|(ReviewEvidenceResettlementTests*)\|(TerminalRunnerSeatReleaseTests*)\|(BlockedTaskParkDeliveryTests*)\|(BlockedTaskSyncRecoveryTests*)\|(SettlementSyncRecoveryTests*)\|(SettlementSyncDebtLandingTests*)\|(ReviewEvidenceRecoveryTests*)/*` | V-14-V-24, V-27-V-29, R-1-R-4, R-6 | exact 118 results (31 + 10 + 39 + 4 + 2 + 10 + 1 + 21), 0 failed/skipped | 118 | 20 | true |
-| CP-F2 | all | CP-F1 | final-units-git | `/*/*/(SettlementSyncDebtPolicyTests*)\|(DelegationLeaseSettingsTests*)\|(RunnerSettlementSyncTests*)\|(TaskProgressGitTests*)\|(RunnerCompletionProgressTests*)\|(SettlementSyncDebtSchemaTests*)\|(RunnerBranchContractDocumentationTests*)/*` | V-1-V-13, V-25, V-26, V-30, R-1, R-5, R-7 | exact 92 results (21 + 14 + 29 + 11 + 11 + 1 + 5), 0 failed/skipped | 92 | 12 | |
+| CP-8 | S5 | CP-7 | legacy-evidence-park | `/*/*/(ReviewEvidenceResettlementTests*)\|(BlockedTaskSyncRecoveryTests*)\|(BlockedTaskParkDeliveryTests*)/*` | R-1, R-3, R-4 | exact 15 results (9 + 2 + 4), 0 failed/skipped | 15 | 9 | true |
+| CP-9 | S5 | CP-7 | legacy-seat-release | `/*/*/TerminalRunnerSeatReleaseTests/*` | R-1, R-6 | exact 39 results (29 methods with their argument rows), 0 failed/skipped | 39 | 10 | true |
+| CP-10 | S6 | `tests/Antiphon.Tests -> bin-c1082-cp10/` | projection-docs | `/*/*/(SettlementSyncDebtPolicyTests*)\|(RunnerBranchContractDocumentationTests*)\|(SettlementSyncRecoveryTests*)/*` | V-24, V-25, V-26 | exact 36 results (17 + 4 attention, 4 + 1 docs, 9 + 1 detail), 0 failed/skipped | 36 | 14 | true |
+| CP-11 | S7 | `tests/Antiphon.Tests -> bin-c1082-cp11/` | evidence-land-controls | `/*/*/(ReviewEvidenceResettlementTests*)\|(SettlementSyncDebtLandingTests*)/*` | V-27, V-29, R-3 | exact 11 results (9 + 1, 1), 0 failed/skipped | 11 | 9 | true |
+| CP-12 | S7 | CP-11 | recovery-controls | `/*/*/ReviewEvidenceRecoveryTests/*` | V-28 | exact 21 results (the Pending arm extends an existing method), 0 failed/skipped | 21 | 8 | true |
+| CP-13 | all | `tests/Antiphon.Tests -> bin-c1082-final/` | final-settlement-a | `/*/*/(RunnerTaskSettlementTests*)\|(ReviewEvidenceResettlementTests*)\|(SettlementSyncDebtLandingTests*)\|(ReviewEvidenceRecoveryTests*)/*` | V-2, V-20-V-23, V-27-V-29, R-1-R-3 | exact 63 results (31 + 10 + 1 + 21), 0 failed/skipped | 63 | 12 | true |
+| CP-14 | all | CP-13 | final-settlement-b | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(BlockedTaskParkDeliveryTests*)\|(BlockedTaskSyncRecoveryTests*)\|(SettlementSyncRecoveryTests*)/*` | V-14-V-19, V-24, R-1, R-4, R-6 | exact 55 results (39 + 4 + 2 + 10), 0 failed/skipped | 55 | 12 | true |
+| CP-15 | all | CP-13 | final-units-git | `/*/*/(SettlementSyncDebtPolicyTests*)\|(DelegationLeaseSettingsTests*)\|(RunnerSettlementSyncTests*)\|(TaskProgressGitTests*)\|(RunnerCompletionProgressTests*)\|(SettlementSyncDebtSchemaTests*)\|(RunnerBranchContractDocumentationTests*)/*` | V-1-V-13, V-25, V-26, V-30, R-1, R-5, R-7 | exact 92 results (21 + 14 + 29 + 11 + 11 + 1 + 5), 0 failed/skipped | 92 | 12 | |
 
 Run each group once its slice is committed, through the checkpoint tool:
 
@@ -458,7 +463,7 @@ dotnet tools/Antiphon.Checkpoints/bin-c1082-driver/Antiphon.Checkpoints.dll run 
 ```
 
 `S4a` and `S4b` are literal After tokens (`--after S4a`); a numeric range does not select them.
-The last slice runs `--rows CP-F1,CP-F2` at the final committed SHA. Continue `wait` while the exit
+The last slice runs `--rows CP-13,CP-14,CP-15` at the final committed SHA. Continue `wait` while the exit
 is 75. Exit 4 is a slot timeout: report the row as not run. Preserve every tool-produced
 `CHECKPOINT` line. No unlisted build or test loop; a failure-driven rerun is the same `CP-n` with
 its reason and commit. Code and Review run `scripts/check-evidence-diff.ps1` over the task range.
@@ -466,9 +471,9 @@ Delete only producer-owned `bin-c1082-*` outputs; evidence stays ignored.
 
 ### Cost
 
-Ordinary Code V/R floor = **139 minutes**, the sum of the `EstimatedMinutes` column
-(8 + 9 + 3 + 6 + 7 + 12 + 14 + 18 + 14 + 16 + 20 + 12). Authoring: about 6.5 hours across eight
-slices. `-ExpectAbout` for each Code dispatch is its slice's rows plus its authoring budget.
+Ordinary Code V/R floor = **145 minutes**, the sum of the `EstimatedMinutes` column
+(8 + 9 + 3 + 6 + 7 + 12 + 14 + 9 + 10 + 14 + 9 + 8 + 12 + 12 + 12). Authoring: about 6.5 hours
+across eight slices. `-ExpectAbout` for each Code dispatch is its slice's rows plus its authoring budget.
 Mutation (post-land): 16 method-scoped controls, about 90 minutes.
 
 ## Activation and rollout
