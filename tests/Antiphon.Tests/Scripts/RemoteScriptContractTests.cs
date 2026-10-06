@@ -194,6 +194,50 @@ public sealed class RemoteScriptContractTests
         C1008HostFixture.RequireNativeLinux();
         const string project = C994TaskVectors.Project;
         const string id = "11111111-1111-1111-1111-111111111111";
+        using (var shapes = new C1008HostFixture())
+        {
+            var vectors = new JsonArray();
+            void Shape(string field, Action<JsonObject> change)
+            {
+                var envelope = shapes.Vectors["emptyTasks"]!.DeepClone().AsObject();
+                change(envelope);
+                vectors.Add(new JsonObject { ["field"] = field, ["input"] = new JsonObject {
+                    ["scopes"] = new JsonObject { [project] = new JsonObject { ["open"] = envelope } } } });
+            }
+            Shape("items", e => e["items"] = new JsonObject());
+            Shape("excluded", e => e.Remove("excluded"));
+            Shape("excluded.byProject", e => e["excluded"]!["byProject"] = false);
+            Shape("scope.projectId", e => e["scope"]!["projectId"] = "SENTINEL_BAD_SCOPE");
+            Shape("scope.unscoped", e => e["scope"]!["unscoped"] = "exclude");
+            Shape("excluded.total", e => e["excluded"]!["total"] = 1);
+            Shape("excluded.unscoped", e => e["excluded"]!["unscoped"] = 1);
+            Shape("excluded.byProject.projectId", e => { e["excluded"]!["total"] = 1;
+                e["excluded"]!["byProject"]!.AsArray().Add(new JsonObject { ["projectId"] = project, ["count"] = 1 }); });
+            Shape("excluded.byProject.count", e => e["excluded"]!["byProject"]!.AsArray().Add(
+                new JsonObject { ["projectId"] = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", ["count"] = 0 }));
+            var row = new JsonObject { ["id"] = id, ["status"] = "Blocked", ["runnerId"] = "other",
+                ["projectId"] = project, ["scopeSource"] = "Task", ["landRequestedAt"] = null, ["landStartedAt"] = null };
+            foreach (var field in new[] { "id", "status", "runnerId", "projectId", "scopeSource", "landRequestedAt", "landStartedAt" })
+                Shape(field, e => { var bad = row.DeepClone().AsObject(); bad.Remove(field); e["items"]!.AsArray().Add(bad); });
+            foreach (var field in new[] { "id", "status", "runnerId", "projectId", "scopeSource", "landRequestedAt", "landStartedAt" })
+                Shape(field, e => { var bad = row.DeepClone(); bad[field] = false; e["items"]!.AsArray().Add(bad); });
+            File.WriteAllText(Path.Combine(shapes.Root, "shape-vectors.json"), vectors.ToJsonString());
+            var shapeRun = await shapes.Run(extra: """
+                while IFS= read -r vector; do
+                    printf '%s' "$vector" | jq '.input' > "$C1008_FIXTURE_ROOT/tasks.json"
+                    code=0; c1008_tasks >/dev/null || code=$?
+                    expected="RecycleTaskCensusUnknown cause=Malformed field=$(printf '%s' "$vector" | jq -r .field) path=/api/agent-tasks?"
+                    if [ "$code" != 2 ] || [[ "$C1008_TASK_ERROR" != "$expected"* ]]; then
+                        printf 'expected=%s actual=%s code=%s\n' "$expected" "$C1008_TASK_ERROR" "$code"
+                        exit 3
+                    fi
+                done < <(jq -c '.[]' "$C1008_FIXTURE_ROOT/shape-vectors.json")
+                write_result true '' 0
+                """);
+            shapeRun.Exit.ShouldBe(0, "malformed host members: " + shapeRun.Output);
+            shapeRun.Output.ShouldNotContain("SENTINEL");
+            shapes.Removed.ShouldBeEmpty();
+        }
         foreach (var vector in new[] { "Failed", "Canceled", "Succeeded", "Queued", "Dispatched", "Working", "Blocked",
                      "pending", "unfiltered-open", "unfiltered-land", "timeout", "http", "transport", "empty", "malformed" })
         {
