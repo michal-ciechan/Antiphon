@@ -228,6 +228,25 @@ public static class DispatchHoldDetails
         return (match.Groups["task"].Value, request.Success ? request.Value : null);
     }
 
+    private static readonly System.Text.RegularExpressions.Regex LeaseOwnerTaskPattern = new(
+        @"occupied by task (?<id>[0-9a-fA-F]{32}) purpose=",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// CARD-1076 D-6: the task id in a <see cref="LeaseHeldByOwner"/> sentence
+    /// (<c>occupied by task &lt;32 hex&gt; purpose=</c>). Null for every other sentence,
+    /// including a fenced journal that happens to contain a 32-hex task id.
+    /// </summary>
+    public static Guid? LeaseOwnerTaskId(string? reason)
+    {
+        if (string.IsNullOrEmpty(reason))
+            return null;
+        var match = LeaseOwnerTaskPattern.Match(reason);
+        if (!match.Success)
+            return null;
+        return Guid.TryParseExact(match.Groups["id"].Value, "N", out var id) ? id : null;
+    }
+
     /// <summary>CARD-0650: the cap a <see cref="ConcurrencyCap"/> hold names. Null for any other hold.</summary>
     public static int? ConcurrencyCapLimit(string reason)
     {
