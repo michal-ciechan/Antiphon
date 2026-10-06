@@ -190,7 +190,8 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                             sp.GetRequiredService<ITaskProgressGit>() as ILandingGit ?? throw new InvalidOperationException(),
                             sp.GetRequiredService<ILogger<RemoteWorkspaceService>>(),
                             new TaskParkPublicationTests.ParkGit(sp.GetRequiredService<IRepositoryMutationLease>()),
-                            sp.GetRequiredService<IRepositoryMutationLease>(), sp.GetRequiredService<IWorkspaceReservationJournal>())
+                            sp.GetRequiredService<IRepositoryMutationLease>(), sp.GetRequiredService<IWorkspaceReservationJournal>(),
+                            mirrorPublisher: new SeatMirrorPublisher())
                         { Clock = clock, LeaseBusyObserved = () => wire.LeaseBusyObserved?.Invoke() });
                         services.AddScoped<IRemoteSettlementSync>(sp => sp.GetRequiredService<RemoteWorkspaceService>());
                         services.AddScoped(sp => new TaskCompletionProgressService(sp.GetRequiredService<ITaskProgressGit>(),

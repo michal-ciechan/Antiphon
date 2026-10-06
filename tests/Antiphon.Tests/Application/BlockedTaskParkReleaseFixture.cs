@@ -1,6 +1,7 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner;
@@ -121,6 +122,58 @@ internal sealed partial class RunnerSeatReleaseFixture
         (await scope.ServiceProvider.GetRequiredService<TerminalRunnerSeatReleaseService>()
             .TryHandleTaskAsync(TaskId, default)).ShouldBeTrue();
         Wire.CallbackFailure.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// The parked runner checkout is the mirror a later review repair inspects. A missing
+    /// publisher leaves MirrorDirty null, and a confirmed park then cannot bind evidence.
+    /// </summary>
+    private sealed class SeatMirrorPublisher : IRunnerMirrorPublisher
+    {
+        public async Task<PhoneHomeWorkspacePublishResponse?> PublishAsync(
+            AgentTask task, string baselineSha, string? remoteSha, CancellationToken ct)
+        {
+            var path = task.RemoteWorktreePath;
+            if (string.IsNullOrWhiteSpace(path) || !System.IO.Directory.Exists(path))
+                return null;
+            var head = await RunAsync(path, ct, "rev-parse", "HEAD");
+            var status = await RunAsync(path, ct, "status", "--porcelain");
+            if (head.Code != 0 || status.Code != 0 || !GitObjectId.IsFull(head.Text))
+                return new(null, "unknown", null, false, false, "inspection_unavailable");
+            var dirty = status.Text.Length > 0;
+            var remote = remoteSha ?? baselineSha;
+            if (string.Equals(head.Text, remote, StringComparison.OrdinalIgnoreCase))
+                return new(head.Text, "equal", true, dirty, false, null);
+            var fromBase = await RunAsync(path, ct, "merge-base", "--is-ancestor", baselineSha, head.Text);
+            if (fromBase.Code is not (0 or 1))
+                return new(head.Text, "unknown", null, dirty, false, "inspection_unavailable");
+            if (fromBase.Code != 0)
+                return new(head.Text, "diverged", false, dirty, false, null);
+            var forward = await RunAsync(path, ct, "merge-base", "--is-ancestor", remote, head.Text);
+            if (forward.Code == 0)
+                return new(head.Text, "descends", true, dirty, false, null);
+            var reverse = await RunAsync(path, ct, "merge-base", "--is-ancestor", head.Text, remote);
+            var relation = reverse.Code switch { 0 => "behind", 1 => "diverged", _ => "unknown" };
+            return new(head.Text, relation, relation != "unknown", dirty, false, null);
+        }
+
+        private static async Task<(int Code, string Text)> RunAsync(
+            string path, CancellationToken ct, params string[] args)
+        {
+            var start = new ProcessStartInfo("git")
+            {
+                WorkingDirectory = path, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
+            };
+            foreach (var arg in args)
+                start.ArgumentList.Add(arg);
+            TaskParkPublicationTests.ParkGit.Isolate(start);
+            using var process = Process.Start(start) ?? throw new InvalidOperationException("git did not start");
+            var stdout = process.StandardOutput.ReadToEndAsync(ct);
+            var stderr = process.StandardError.ReadToEndAsync(ct);
+            await process.WaitForExitAsync(ct);
+            await Task.WhenAll(stdout, stderr);
+            return (process.ExitCode, (await stdout).Trim());
+        }
     }
 
     public async Task<AgentTaskPark> ParkAsync()
