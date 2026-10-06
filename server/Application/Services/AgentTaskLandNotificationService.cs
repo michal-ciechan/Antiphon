@@ -227,6 +227,16 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
             }
             if (row.DeliveryAttempts > 0)
             {
+                // A parked delegate's caller may restart while delivery is uncertain. A
+                // prompt from that replacement generation cannot discharge the old attempt.
+                if (note.Kind == LandNotificationKind.TaskCompletion && row.LastDeliveryGeneration is DateTime deliveredGeneration
+                    && await db.AgentSessions.Where(s => s.Id == session).Select(s => s.StartedAt).SingleAsync(ct) != deliveredGeneration)
+                {
+                    note.LastErrorCode = "completion_delivery_generation_changed";
+                    note.LastErrorAt = now;
+                    await db.SaveChangesAsync(ct);
+                    return;
+                }
                 await runtime.CatchUpTranscriptAsync(session, ct);
                 // CARD-0641 D-2 kinds, destination and delivery floor: LandNoteReceipt, shared with
                 // the CARD-0650 watchdog's read-only note-debt check.

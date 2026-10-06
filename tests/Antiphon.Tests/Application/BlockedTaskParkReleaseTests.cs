@@ -32,6 +32,37 @@ public sealed class BlockedTaskParkReleaseTests
             (await db.RunnerSeatReleases.AnyAsync(r => r.ActionId != null)).ShouldBeFalse("G-95: no reservation without source proof");
         }
 
+        foreach (var invalid in new[] { "prefix", "destination", "kind", "floor", "generation" })
+        {
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
+            await f.CreateSourceAsync();
+            var parent = await f.AddParentAsync(busy: false);
+            await f.SettleAsync("blocked");
+            (await NoteAsync(f)).ConfirmedAt.ShouldBeNull("G-98 enqueue is not receipt");
+            f.Recipient!.OnSubmitted = async body =>
+            {
+                // Fault the native recipient evidence produced by a real queue submission.
+                await f.NativePromptAsync(invalid == "destination" ? f.SessionId : parent,
+                    invalid == "prefix" ? body[..(body.Length / 2)] : body);
+                await using var native = f.Db();
+                if (invalid == "kind" || invalid == "floor")
+                {
+                    var entry = await native.TranscriptEntries.Where(e => e.AgentSessionId == parent && e.Kind == TranscriptKinds.UserPrompt)
+                        .OrderByDescending(e => e.Sequence).FirstAsync();
+                    if (invalid == "kind") entry.Kind = TranscriptKinds.QueuedUserPrompt;
+                    else entry.Sequence = -1;
+                    await native.SaveChangesAsync();
+                }
+                if (invalid == "generation")
+                    await native.AgentSessions.Where(s => s.Id == parent)
+                        .ExecuteUpdateAsync(u => u.SetProperty(s => s.StartedAt, s => s.StartedAt.AddSeconds(1)));
+            };
+            await f.FlushAsync(parent);
+            await f.ReconcileParentAsync();
+            var guard = invalid switch { "prefix" => "G-99", "destination" => "G-100", "kind" => "G-101", "floor" => "G-102", _ => "G-103" };
+            (await NoteAsync(f)).ConfirmedAt.ShouldBeNull(guard + ": invalid native receipt " + invalid);
+        }
+
         // Actual settlement -> durable notification -> real queue -> native caller prompt.
         // Every cut is crossed with busy-at-enqueue and eligible-at-enqueue recipients.
         foreach (var busy in new[] { false, true })
@@ -75,7 +106,7 @@ public sealed class BlockedTaskParkReleaseTests
             };
             f.Clock.Advance(TimeSpan.FromMinutes(3));
             await f.HandleParkAsync();
-            (await f.ParkAsync()).State.ShouldBe(AgentTaskParkState.Parked, cut);
+            (await f.ParkAsync()).State.ShouldBe(AgentTaskParkState.Parked, cut + " " + await f.ParkDiagnosticAsync());
             if (cut is "render-committed" or "attempt-committed" or "prompt-accepted")
             {
                 fault.Cut = cut;
@@ -192,7 +223,7 @@ public sealed class BlockedTaskParkReleaseTests
             }
             world.Wire.Qualified = world.Wire.Qualified with { Status = TerminalSeatQualificationStatus.Qualified };
             await world.HandleParkAsync();
-            (await world.ParkAsync()).State.ShouldBe(AgentTaskParkState.Parked, "G-106 " + cause);
+            (await world.ParkAsync()).State.ShouldBe(AgentTaskParkState.Parked, "G-106 " + cause + " " + await world.ParkDiagnosticAsync());
             (await world.ParkAsync()).ReportDigest.ShouldNotBeNullOrEmpty("durable nonreport transcript checkpoint");
             (await world.TaskAsync()).Result.ShouldBeNull();
             (await world.TaskAsync()).CompletedAt.ShouldBeNull();
@@ -266,7 +297,7 @@ public sealed class BlockedTaskParkReleaseTests
             if (owner == "failed-stop") world.Wire.Outcome = TerminalSeatReleaseOutcome.Unresolved;
             await world.HandleParkAsync();
             var park = await world.ParkAsync();
-            if (owner == "none") park.State.ShouldBe(AgentTaskParkState.Parked);
+            if (owner == "none") park.State.ShouldBe(AgentTaskParkState.Parked, await world.ParkDiagnosticAsync());
             if (owner is "standing" or "always-on" or "board" or "specialist")
                 world.Wire.ConditionalCommands.ShouldBe(0, "G-113/G-114/G-115/G-116 " + owner);
             await using var store = world.Db();
@@ -307,6 +338,8 @@ public sealed class BlockedTaskParkReleaseTests
     private static async Task<AgentTaskLandNotification> NoteAsync(RunnerSeatReleaseFixture f)
     {
         await using var db = f.Db();
-        return await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.TaskId == f.TaskId);
+        return (await db.AgentTaskLandNotifications.AsNoTracking().SingleOrDefaultAsync(n => n.TaskId == f.TaskId))
+            .ShouldNotBeNull("missing durable completion: " + string.Join("\n", f.AttentionLogs.Entries
+                .Where(e => e.Level >= Microsoft.Extensions.Logging.LogLevel.Warning).Select(e => e.Message + " " + e.Exception)));
     }
 }

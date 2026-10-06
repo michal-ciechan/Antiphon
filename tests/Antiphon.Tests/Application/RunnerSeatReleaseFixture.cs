@@ -135,7 +135,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero));
         var wire = new SeatWire();
         var http = new HttpClient(wire);
-        var client = new SessionRunnerHttpClient(http, new ClientFactory(http),
+        var client = new SessionRunnerHttpClient(http, new ClientFactory(wire),
             Options.Create(new SessionRunnerSettings { BaseUrl = "http://seat.test" }));
         var directory = new SeatDirectory(client);
         BridgeQueueHarness harness;
@@ -796,8 +796,8 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         }
     }
 
-    private sealed class ClientFactory(HttpClient client) : IHttpClientFactory
-    { public HttpClient CreateClient(string name) => client; }
+    private sealed class ClientFactory(HttpMessageHandler handler) : IHttpClientFactory
+    { public HttpClient CreateClient(string name) => new(handler, disposeHandler: false); }
 
     internal sealed class SeatWire : HttpMessageHandler
     {
