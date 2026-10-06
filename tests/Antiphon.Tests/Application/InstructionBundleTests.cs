@@ -925,10 +925,12 @@ public class InstructionBundleTests
         basics.ShouldContain("Commit and push all assigned work before reporting blocked.", customMessage: "c1065-push-before-blocked");
         basics.ShouldContain("unless this task is SourceLanding, ReadOnly, or CommitOnSettle Never", customMessage: "c1065-push-exclusion");
         basics.ShouldContain("A parked session may be released and resumed from that pushed branch.", customMessage: "c1065-resume-branch");
-        basics.ShouldContain("Parking will not autosave", customMessage: "c1065-no-autosave");
+        basics.ShouldContain("Parking will not autosave (CARD-1083).", customMessage: "c1065-card-1083");
 
         var plan = InstructionBundles.TextOf(InstructionBundles.StagePlan);
-        plan.ShouldContain("what releases a session that waits for input, and after how long", customMessage: "c1065-release-question");
+        plan.ShouldContain(
+            "only when the plan adds or changes a session that waits for input: what releases a session that waits for input, and after how long? Today nothing releases such a session automatically (CARD-1083).",
+            customMessage: "c1065-release-question");
     }
 
     private static int CountOccurrences(string haystack, string needle)

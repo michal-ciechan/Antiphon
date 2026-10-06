@@ -22,7 +22,7 @@ branch. It must advance the owned branch by fast-forward pushes. Land performs t
 use a fresh task with `-StartRef` when a different base is needed. A confirmation-only step is a
 Review task, not a Code task requiring new attributed progress (CARD-0779).
 
-A Blocked child holds its seat until it is answered or cancelled. Answer or cancel it within the session; do not leave one overnight. When a host reads at capacity, read GET /api/session-runners/{id}/slots and count orphan=true before concluding the host is busy. BlockedTaskParking:Enabled defaults to false, so that seat stays until an operator enables parking and automatic seat release. Parking never stops a Working session.
+A Blocked child holds its seat until it is answered or cancelled. Answer or cancel it within the session; do not leave one overnight. When a host reads at capacity, read GET /api/session-runners/{id}/slots and count orphan=true before concluding the host is busy. BlockedTaskParking:Enabled defaults to false, so that seat stays until an operator enables parking and automatic seat release. Parking never stops a Working session (CARD-1083).
 
 The owner is `docs/orchestration-loop.md` §1, "Standing pipeline policy" (CARD-0533); this is the
 short form.

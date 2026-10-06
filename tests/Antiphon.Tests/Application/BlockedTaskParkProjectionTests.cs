@@ -33,6 +33,7 @@ public sealed class BlockedTaskParkProjectionTests
 
         var lifecycle = Read("docs/agent-card-lifecycle.md");
         Require(lifecycle, "A Blocked session keeps its runner seat until parking releases it.", "c1065-lifecycle-seat");
+        Require(lifecycle, "outside MaxOpenTasks and the role gate", "c1065-lifecycle-gate");
         Require(lifecycle, "SeatIdle", "c1065-lifecycle-seat-idle");
         Require(lifecycle, "SlotOrphan", "c1065-lifecycle-slot-orphan");
         Require(lifecycle, "runner-seat-release:", "c1065-lifecycle-attention-key");
@@ -68,7 +69,8 @@ public sealed class BlockedTaskParkProjectionTests
         Require(runtime, "The caller UserPrompt receipt is proven on the inline path only. The fixture sets completionSingleWriteBytes to 86400 while production PtySingleChunkBytes stays 1024, so a spilled completion note's transcript line is the pointer.", "c1065-v27-inline");
         Require(runtime, "ReclaimLegacyAsync(32, 3) runs from the dispatcher pool-release sweep and from RunnerSlotReconcileJob.", "c1065-reclaim-callers");
         Require(runtime, "The reclaim cursor is the singleton BlockedTaskParkReclaimCursors row Id 1 and advances after every visit, including failure.", "c1065-reclaim-cursor");
-        Require(runtime, "A short tail wraps, a call makes at most three visits, and there is no discovery gate.", "c1065-reclaim-page");
+        Require(runtime, "The park bound is this release path (CARD-1083).", "c1065-park-bound");
+        Require(runtime, "A short tail wraps. One call runs at most three passes of up to 32 rows (at most 96 row visits), and after wrap-around the same row at most three times. There is no discovery gate.", "c1065-reclaim-page");
         Require(runtime, "The reconcile job's released total includes those visit counts.", "c1065-reclaim-count");
         Require(runtime, "FreshLegacyWindow mixes the runner observation clock with park.CreatedAt. An old CompletedAt is not the idle window.", "c1065-fresh-window");
         Require(runtime, "With Enabled and ReclaimExisting set, physical release still requires AutomaticEnabled.", "c1065-automatic-still-required");
@@ -82,7 +84,7 @@ public sealed class BlockedTaskParkProjectionTests
         Require(loop, "including Blocked", "c1065-including-blocked");
 
         var agents = Read("AGENTS.md");
-        Require(agents, "no session waits for input while holding a seat beyond the park rule", "c1065-park-rule");
+        Require(agents, "the park bound in [docs/session-runtime-invariants.md](docs/session-runtime-invariants.md) is dormant (CARD-1083)", "c1065-park-rule");
         Require(agents, "BlockedTaskParking:Enabled defaults to false", "c1065-agents-default");
         Require(agents, "Parking never stops a Working session.", "c1065-agents-working");
 
@@ -90,7 +92,7 @@ public sealed class BlockedTaskParkProjectionTests
         Require(basics, "Commit and push all assigned work before reporting blocked.", "c1065-push-before-blocked");
         Require(basics, "unless this task is SourceLanding, ReadOnly, or CommitOnSettle Never", "c1065-push-exclusion");
         Require(basics, "A parked session may be released and resumed from that pushed branch.", "c1065-resume-branch");
-        Require(basics, "Parking will not autosave", "c1065-no-autosave");
+        Require(basics, "Parking will not autosave (CARD-1083).", "c1065-card-1083");
 
         foreach (var relative in new[] { ".claude/skills/antiphon-orchestrator/SKILL.md" })
         {
@@ -99,10 +101,12 @@ public sealed class BlockedTaskParkProjectionTests
             Require(text, "do not leave one overnight", "c1065-overnight:" + relative);
             Require(text, "GET /api/session-runners/{id}/slots", "c1065-slots:" + relative);
             Require(text, "count orphan=true", "c1065-orphan-count:" + relative);
+            Require(text, "(CARD-1083)", "c1065-card-1083:" + relative);
         }
 
         Require(Read("server/Bundles/stage-plan.md"),
-            "what releases a session that waits for input, and after how long", "c1065-release-question");
+            "only when the plan adds or changes a session that waits for input: what releases a session that waits for input, and after how long? Today nothing releases such a session automatically (CARD-1083).",
+            "c1065-release-question");
 
         Require(Read("server/Application/Settings/BlockedTaskParkingOptions.cs"),
             "public bool Enabled { get; set; } = false;", "c1065-options-enabled");

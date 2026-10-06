@@ -75,6 +75,7 @@ Legacy discovery additionally requires ReclaimExisting.
 Disabling does not delete a publication receipt, does not abandon an accepted answer, and does not stop release reconciliation or sync-debt recovery.
 Parking never stops a Working session.
 With Enabled and ReclaimExisting set, physical release still requires AutomaticEnabled.
+The park bound is this release path (CARD-1083). It is dormant while BlockedTaskParking:Enabled is false, and while it is dormant nothing automatically releases a session that waits for input.
 
 OccupiesCapacity is true for any non-empty runner status other than Exited or Failed.
 OpenTaskId is set only for Dispatched or Working, so a live Blocked or Queued owner remains orphan=true.
@@ -107,7 +108,7 @@ The caller UserPrompt receipt is proven on the inline path only. The fixture set
 
 ReclaimLegacyAsync(32, 3) runs from the dispatcher pool-release sweep and from RunnerSlotReconcileJob.
 The reclaim cursor is the singleton BlockedTaskParkReclaimCursors row Id 1 and advances after every visit, including failure.
-A short tail wraps, a call makes at most three visits, and there is no discovery gate.
+A short tail wraps. One call runs at most three passes of up to 32 rows (at most 96 row visits), and after wrap-around the same row at most three times. There is no discovery gate.
 The reconcile job's released total includes those visit counts.
 FreshLegacyWindow mixes the runner observation clock with park.CreatedAt. An old CompletedAt is not the idle window.
 Known limits stay on CARD-1097, CARD-1103, CARD-1104, and CARD-1108.
