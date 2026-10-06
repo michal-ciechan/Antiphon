@@ -30,7 +30,8 @@ internal sealed class BlockedTaskParkFixture : IAsyncDisposable
 
     private BlockedTaskParkFixture(IsolatedTestSchema schema) => _schema = schema;
 
-    public static async Task<BlockedTaskParkFixture> CreateAsync(bool report = true, bool session = true)
+    public static async Task<BlockedTaskParkFixture> CreateAsync(bool report = true, bool session = true,
+        bool sourceLanding = false)
     {
         var f = new BlockedTaskParkFixture(await TestDbFixture.CreateIsolatedSchemaAsync());
         try
@@ -52,6 +53,24 @@ internal sealed class BlockedTaskParkFixture : IAsyncDisposable
             worker.RunnerStoreId = Guid.NewGuid();
             worker.RunnerCwd = f._harness.TempRoot;
             worker.StartedAt = f.Now;
+            Guid? sourceLandingId = null;
+            if (sourceLanding)
+            {
+                var ownerId = Guid.NewGuid();
+                sourceLandingId = Guid.NewGuid();
+                db.AgentTasks.Add(new AgentTask
+                {
+                    Id = ownerId, RootTaskId = ownerId, Title = "source owner", Goal = "source custody fixture",
+                    Status = AgentTaskStatus.Succeeded, CreatedAt = f.Now, CompletedAt = f.Now
+                });
+                // Only a valid custody reference is needed for the unconditional exclusion.
+                // Do not seed a successful landing/publication receipt or bypass EF immutability.
+                db.AgentTaskLandings.Add(new AgentTaskLanding
+                {
+                    Id = sourceLandingId.Value, TaskId = ownerId, Phase = LandPhase.Inspected,
+                    OriginalSourceSha = new string('a', 40), CreatedAt = f.Now, UpdatedAt = f.Now
+                });
+            }
             db.AgentTasks.Add(new AgentTask
             {
                 Id = f.TaskId, RootTaskId = f.TaskId, AgentId = f.AgentId,
@@ -60,6 +79,8 @@ internal sealed class BlockedTaskParkFixture : IAsyncDisposable
                 Attempt = 1, Workspace = WorkspaceMode.Worktree, WorktreePath = f._harness.TempRoot,
                 RemoteWorktreePath = f._harness.TempRoot, WorktreeBranch = "feat/park-state",
                 WorktreeBaseSha = new string('a', 40), RunnerId = session ? "fixture" : null,
+                SourceLandingOperationId = sourceLandingId,
+                SourceLandingSha = sourceLanding ? new string('a', 40) : null,
                 CreatedAt = f.Now, DispatchedAt = f.Now.AddMinutes(1),
                 CompletedAt = report ? f.Now.AddMinutes(2) : null,
                 Result = report ? "Stored full blocked report with final canary" : null,
