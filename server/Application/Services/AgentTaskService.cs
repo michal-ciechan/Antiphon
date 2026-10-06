@@ -506,10 +506,21 @@ public sealed class AgentTaskService
                             s => s.Id == blockedSessionId
                                 && (s.Status == SessionStatus.Starting || s.Status == SessionStatus.Running),
                             ct);
+                    // CARD-1037 still refuses a remote pool continuation when a Blocked
+                    // task is pinned to that agent. Local guidance is the branch below.
+                    RefuseRemotePoolFollowUp(followAgent, retainedRunnerId, priorId);
+
                     if (sessionLive)
                     {
                         throw new ConflictException(
                             $"Task {priorShort} ran on agent '{followAgent.Name}', which is parked on Blocked task {blockedShort} waiting for an answer; a follow-up would queue behind it indefinitely. Reply to it (delegate.ps1 -Reply {blockedShort} \"...\") or cancel it (POST /api/agent-tasks/{blockedShort}/cancel), then re-send.",
+                            "follow_up_agent_blocked");
+                    }
+
+                    if (await HasConfirmedPublishedParkAsync(blockedOnAgent.Id, ct))
+                    {
+                        throw new ConflictException(
+                            $"Task {priorShort} ran on agent '{followAgent.Name}', which is parked on Blocked task {blockedShort}. The published seat was released. Reply to continue that task (delegate.ps1 -Reply {blockedShort} \"...\"); do not cancel it to start a follow-up.",
                             "follow_up_agent_blocked");
                     }
 
@@ -543,18 +554,7 @@ public sealed class AgentTaskService
 
                 // CARD-1037: remote pool continuations cannot reuse the retained process,
                 // and their Shared/ReadOnly fallback cannot launch on that runner either.
-                var poolRunnerId = RunnerRequestIntent.CanonicalRunnerId(retainedRunnerId);
-                if (followAgent.IsPoolDelegate && poolRunnerId is not null)
-                {
-                    var message =
-                        $"Task {DelegationReportFormatter.Short(priorId)} ran on a remote pool delegate "
-                        + $"on runner '{poolRunnerId}'. Remote pool continuations cannot reuse that process. "
-                        + "Publish the intended source, then create a fresh task with "
-                        + "-Worktree -StartRef <published-sha> without -OnAgent.";
-                    throw new ValidationException(
-                        nameof(CreateAgentTaskRequest.FollowUpOnTask), message,
-                        "follow_up_remote_pool_unsupported", message);
-                }
+                RefuseRemotePoolFollowUp(followAgent, retainedRunnerId, priorId);
 
                 request = request with
                 {
@@ -2475,7 +2475,10 @@ public sealed class AgentTaskService
                 q.GrantId, q.Disposition, q.Reason, q.CreatedAt))
             .ToListAsync(ct);
 
-        var blocked = await BlockedContextBuilder.BuildAsync(task, family, events, _checkProbe, ct);
+        var confirmedPark = task.Status == AgentTaskStatus.Blocked
+            && await HasConfirmedPublishedParkAsync(task.Id, ct);
+        var blocked = await BlockedContextBuilder.BuildAsync(
+            task, family, events, _checkProbe, ct, confirmedPark);
         var landing = task.ActiveLandingId is Guid landingId
             ? await _db.AgentTaskLandings.AsNoTracking().SingleOrDefaultAsync(o => o.Id == landingId && o.TaskId == task.Id, ct)
             : null;
@@ -3244,6 +3247,38 @@ public sealed class AgentTaskService
             SELECT "Id" FROM "AgentSessions" WHERE "Id" = {sessionId} FOR UPDATE
             """, ct);
     }
+
+    private static void RefuseRemotePoolFollowUp(Agent followAgent, string? retainedRunnerId, Guid priorId)
+    {
+        var poolRunnerId = RunnerRequestIntent.CanonicalRunnerId(retainedRunnerId);
+        if (!followAgent.IsPoolDelegate || poolRunnerId is null)
+            return;
+        var message =
+            $"Task {DelegationReportFormatter.Short(priorId)} ran on a remote pool delegate "
+            + $"on runner '{poolRunnerId}'. Remote pool continuations cannot reuse that process. "
+            + "Publish the intended source, then create a fresh task with "
+            + "-Worktree -StartRef <published-sha> without -OnAgent.";
+        throw new ValidationException(
+            nameof(CreateAgentTaskRequest.FollowUpOnTask), message,
+            "follow_up_remote_pool_unsupported", message);
+    }
+
+    /// <summary>
+    /// A published park whose seat release is already confirmed. Receipts and the release
+    /// ledger are the evidence; park state alone is not.
+    /// </summary>
+    private async Task<bool> HasConfirmedPublishedParkAsync(Guid taskId, CancellationToken ct) =>
+        await _db.AgentTaskParks.AsNoTracking().AnyAsync(p =>
+            p.TaskId == taskId
+            && p.PublicationReceiptId != null
+            && p.RunnerSeatReleaseId != null
+            && (p.State == AgentTaskParkState.Parked
+                || p.State == AgentTaskParkState.ResumePending
+                || p.State == AgentTaskParkState.Resumed)
+            && _db.RunnerSeatReleases.Any(r =>
+                r.Id == p.RunnerSeatReleaseId
+                && r.State == RunnerSeatReleaseState.Confirmed
+                && r.ConfirmedAt != null), ct);
 
     private async Task<bool> ParkContinuationReceiptMissingAsync(AgentTask task, CancellationToken ct)
     {

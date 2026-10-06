@@ -159,7 +159,7 @@ public static class DelegationReportFormatter
     /// </param>
     public static string BuildBrief(
         AgentTask task, DelegationSettings settings, int? replyInlineMaxChars = null, bool refocus = false,
-        string? parkedSourceSha = null, string? parkedFullRef = null)
+        string? parkedSourceSha = null, string? parkedFullRef = null, Guid? parkedTranscriptSessionId = null)
     {
         var sb = new StringBuilder();
         sb.Append(TaskMarker(task.Id))
@@ -238,8 +238,14 @@ public static class DelegationReportFormatter
             sb.AppendLine(handoff).AppendLine();
 
         if (!string.IsNullOrWhiteSpace(parkedSourceSha) && !string.IsNullOrWhiteSpace(parkedFullRef))
+        {
             sb.Append("Parked source SHA: ").Append(parkedSourceSha)
                 .Append("; full ref: ").Append(parkedFullRef).AppendLine(".");
+            sb.AppendLine(FullReportPointer(task, task.ResultFilePath));
+            if (parkedTranscriptSessionId is Guid transcriptSession)
+                sb.Append("Prior transcript: GET /api/sessions/").Append(transcriptSession)
+                    .AppendLine("/transcript?since=0");
+        }
 
         if (task.ReleasedSeatAnswerId is not null && task.ReleasedSeatAnswerTargetAttempt == task.Attempt
             && task.ReleasedSeatAnswer is { } answer)
