@@ -206,6 +206,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                         dispatchWarnings: sp.GetRequiredService<DispatchBaseWarningIntentService>(),
                         workspaceUse: sp.GetRequiredService<WorkspaceUseAdmission>(),
                         remoteWorkspace: sp.GetRequiredService<RemoteWorkspaceService>(), runners: directory,
+                        repositoryLeases: sp.GetRequiredService<IRepositoryMutationLease>(),
                         taskLaunchSink: sp.GetRequiredService<LaunchRecorder>(),
                         terminalSeatRelease: sp.GetRequiredService<TerminalRunnerSeatReleaseService>(),
                         blockedTaskSync: sp.GetRequiredService<BlockedTaskSyncRecoveryService>()));
