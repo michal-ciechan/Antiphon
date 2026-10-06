@@ -519,7 +519,7 @@ function Get-RecycleProjectId {
             foreach ($key in @('gitRepositoryUrl','localRepositoryPath')) {
                 if ($null -ne $project.$key -and $project.$key -isnot [string]) { Stop-RecycleMalformed $key $path 'RecycleProjectUnresolved' }
             }
-            if ($explicit -and $project.name -isnot [string]) { Stop-RecycleMalformed 'name' $path 'RecycleProjectUnresolved' }
+            if (($explicit -or $Phase -eq 'check-census') -and $project.name -isnot [string]) { Stop-RecycleMalformed 'name' $path 'RecycleProjectUnresolved' }
             try { $localPath = ConvertTo-RecycleRepositoryPath $project.localRepositoryPath }
             catch { Stop-RecycleMalformed 'localRepositoryPath' $path 'RecycleProjectUnresolved' }
             $urlMatch = (ConvertTo-RecycleRepositoryUrl $project.gitRepositoryUrl) -ceq 'https://github.com/michal-ciechan/antiphon'
@@ -543,8 +543,8 @@ function Get-RecycleProjectId {
         $resolvedBy = if ($explicit) { 'explicit' } elseif ($urlMatches.Contains($selected.id) -and $pathMatches.Contains($selected.id)) { 'both' }
             elseif ($urlMatches.Contains($selected.id)) { 'url' } else { 'path' }
         if ($null -ne $script:recycleReceipt) {
-            $script:recycleReceipt.project = [ordered]@{ id=$selected.id; resolvedBy=$resolvedBy }
-            if ($explicit) { $script:recycleReceipt.project['name'] = $selected.name }
+            $script:recycleReceipt.project = [ordered]@{ id=$selected.id; resolvedBy=$resolvedBy;
+                name=$(if ($selected.name -is [string]) { $selected.name } else { $null }) }
         }
         $script:resolvedRecycleProjectId = [string]$selected.id
         return $script:resolvedRecycleProjectId

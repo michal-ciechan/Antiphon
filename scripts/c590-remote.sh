@@ -4035,7 +4035,7 @@ c1008_tasks_collect() {
                 counts="$(printf '%s' "$counts" | jq -c --arg id "$id" --argjson row "$row" '.[$id]=$row.count')" || return 2
             done < <(printf '%s' "$envelope" | jq -c '.excluded.byProject[]')
             snapshot="$(printf '%s' "$snapshot" | jq -c --arg scope "$scope" --argjson envelope "$envelope" \
-                '.[$scope]={ids:($envelope.items|map(.id)|sort),excluded:$envelope.excluded}')"
+                '.[$scope]={ids:($envelope.items|map(.id)|sort),excluded:($envelope.excluded|{total,unscoped,byProject:(.byProject|map({projectId,count}))})}')"
             excluded="$(printf '%s' "$envelope" | jq -r '.excluded.byProject[] | .projectId')" || return 2
             if [ -n "$excluded" ]; then pending="${pending:+$pending$'\n'}$excluded"; fi
             while IFS= read -r row; do
