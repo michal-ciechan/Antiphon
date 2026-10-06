@@ -424,6 +424,15 @@ After restart, check `/api/attention`: a phone-home runner still ineligible afte
 Antiphon also inspects registered child journals at startup and every
 `Alarms:SweepMinutes` (15 by default); a stale record raises
 `RepositoryChildJournalStale` with the manual recovery command.
+`Attention:SeatWatchEnabled` (true by default) is the CARD-1079 rollback.
+False stops the occupancy sampler before its first tick and hides `SeatIdle`,
+`OccupancyDivergence` and `SlotOrphan` from `/api/attention`. While it is true,
+`SeatOccupancyHostedService` samples every `Attention:OccupancySampleIntervalSeconds`
+(60) and keeps rows for `Attention:OccupancySampleRetentionDays` (14).
+`Attention:SeatIdleWarningMinutes` (30) and `Attention:SeatIdleErrorMinutes` (180)
+set the idle and divergence ages. `Attention:InventoryTimeoutMs` (3000) bounds
+each runner inventory call. The sampler only records; it does not stop, kill or
+release a session. Read the series at `GET /api/hosts/{hostId}/occupancy-samples`.
 
 Simple-mode fallback (no Aspire): `.\dev-start.ps1` / `.\restart.ps1`, ports
 17281 (API) / 17282 (Vite) / 17204 (session-runner, the always-on daemon). Postgres is still 17280.

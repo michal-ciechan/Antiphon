@@ -545,6 +545,7 @@ GET    /api/session-runners/{runnerId}/capacity       declared capacity, server 
 PUT    /api/session-runners/{runnerId}/capacity       capacity, reason (required); live runner push
 GET    /api/hosts/stats                               latest per-host sample, rollups, state, Antiphon counts
 GET    /api/hosts/{hostId}/stats/series?metric=cpu&window=30m
+GET    /api/hosts/{hostId}/occupancy-samples?from=&to=&limit=   read-only occupancy audit, newest first (CARD-1079)
 ```
 
 Host stats are sampled by each session runner every five seconds and held in a 30-minute memory
@@ -559,6 +560,21 @@ lands, sessions, seats, and build slots. `metric=cpu|load|memory` and
 physical swap use/capacity. `HostStatsUpdated` publishes the same list to SignalR group `hosts`.
 The server settings are `HostStats:PollIntervalMs`, `StaleAfterMs`, `RequestTimeoutMs`, and
 `SeriesTimeoutMs`; runner settings are under `SessionRunner:HostStats`.
+
+`GET /api/hosts/{hostId}/occupancy-samples` is the durable occupancy audit (CARD-1079).
+It is read-only: there is no write route. An unknown host is 404 through the same
+host budget lookup as `PUT /api/hosts/{hostId}/budget`. The default window is the
+last 24 hours (`from` defaults to `to` minus 24 hours, `to` defaults to now, both
+UTC). `limit` defaults to 500 and is clamped to 2000; the applied value is the
+response `limit`. A `limit` below 1 is 400 `limit_invalid`. A reversed window
+returns no rows. Rows are newest first and carry the stored counters (`inFlight`,
+`dispatchedWorking`, `sessions`, `pendingLaunch`, `inFlightMirrors`, `idleSeats`,
+`pooledWarmSeats`, `orphanSlots`, `effectiveLimit`, `declaredCapacity`,
+`oldestIdleSince`, `inventoryState`, `inventoryReason`). `Attention:SeatWatchEnabled`
+defaults true; setting it false is the rollback (the sampler writes nothing and
+`SeatIdle` (57), `OccupancyDivergence` (58) and `SlotOrphan` (59) are omitted).
+Seat rows are phone-home hosts only. Nothing on this route stops, kills, releases
+or dispatches.
 
 Host budgets are separate from the sampled host stats. A local budget overrides
 `Delegation:MaxConcurrentTasks`; a runner's effective limit is the minimum of its configured

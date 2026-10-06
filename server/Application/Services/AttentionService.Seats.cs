@@ -119,11 +119,13 @@ public sealed partial class AttentionService
     private static string AgeText(TimeSpan age) =>
         age.TotalMinutes.ToString("0.#", CultureInfo.InvariantCulture);
 
+    private static string AgeField(TimeSpan age) => $"age={AgeText(age)}min";
+
     private static string SeatEvidence(
         HostOccupancyObservation host, SeatObservation seat, SeatOccupancySnapshot snapshot, TimeSpan age) =>
         $"runner={seat.RunnerId}; session={seat.SessionId:D}; task={seat.TaskId?.ToString("D") ?? "unknown"}; "
         + $"attempt={seat.Attempt?.ToString(CultureInfo.InvariantCulture) ?? "unknown"}; "
-        + $"status={seat.TaskStatus?.ToString() ?? "none"}; age={AgeText(age)}; pushed={seat.Pushed}; "
+        + $"status={seat.TaskStatus?.ToString() ?? "none"}; {AgeField(age)}; pushed={seat.Pushed}; "
         + $"observedAt={snapshot.GeneratedAt:O}; "
         + $"slotOrphan={SlotOrphanKey(seat)}; divergence={DivergenceKey(host)}";
 
@@ -133,7 +135,7 @@ public sealed partial class AttentionService
         var age = now - (IsIdle(seat.Class) ? seat.IdleSince : seat.StartedAt);
         return $"runner={seat.RunnerId}; session={seat.SessionId:D}; task={seat.TaskId?.ToString("D") ?? "unknown"}; "
             + $"attempt={seat.Attempt?.ToString(CultureInfo.InvariantCulture) ?? "unknown"}; "
-            + $"status={seat.TaskStatus?.ToString() ?? "none"}; age={AgeText(age)}; pushed={seat.Pushed}; "
+            + $"status={seat.TaskStatus?.ToString() ?? "none"}; {AgeField(age)}; pushed={seat.Pushed}; "
             + $"observedAt={snapshot.GeneratedAt:O}; "
             + $"seatIdle={SeatIdleKey(seat)}; divergence={DivergenceKey(host)}";
     }
