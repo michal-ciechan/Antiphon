@@ -33,8 +33,9 @@ public sealed class BlockedTaskSyncRecoveryTests
     {
         foreach (var dirty in new[] { false, true })
         {
+            // CARD-1082 D-8: park sync debt stays reachable with the settlement kill switch off.
             await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked,
-                parking: true, syncRecovery: true);
+                parking: true, syncRecovery: true, syncDebt: false);
             await f.CreateSourceAsync(remote: true);
             await f.AddParentAsync(busy: true);
             await File.WriteAllTextAsync(Path.Combine(f.SourcePath, "published.txt"), "retained work");

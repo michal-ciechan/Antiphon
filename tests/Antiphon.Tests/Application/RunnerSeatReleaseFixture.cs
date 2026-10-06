@@ -131,7 +131,8 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         string? provider = null, bool phoneHome = false, bool rowless = false,
         bool productionDefaults = false, bool parking = false, bool syncRecovery = false,
         bool reclaim = false,
-        int? completionSingleWriteBytes = null)
+        int? completionSingleWriteBytes = null,
+        bool syncDebt = true)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero));
@@ -149,9 +150,10 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                 AlwaysOn = false, PreserveDatabaseOnDispose = true,
                 // Inbox fallback spills a normal completion batch into a pointer. The caller
                 // receipt names the evidence only when that batch is typed whole.
+                // CARD-1082 D-1: null keeps the harness default, which is sync debt on.
                 Delegation = completionSingleWriteBytes is int writeBytes
-                    ? new DelegationSettings { PtySingleChunkBytes = writeBytes }
-                    : null,
+                    ? new DelegationSettings { PtySingleChunkBytes = writeBytes, RunnerSyncDebtOnSettlement = syncDebt }
+                    : syncDebt ? null : new DelegationSettings { RunnerSyncDebtOnSettlement = false },
                 ConfigureDbContext = configureDb,
                 ConfigureServices = services =>
                 {

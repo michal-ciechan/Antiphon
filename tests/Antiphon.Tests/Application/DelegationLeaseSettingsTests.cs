@@ -63,4 +63,27 @@ public sealed class DelegationLeaseSettingsTests
         result.Failures.ShouldNotBeNull()
             .ShouldContain("Delegation:RemotePrepPushBudgetMinutes must be at least 1.");
     }
+
+    /// <summary>CARD-1082 D-1/V-30. Sync debt defaults on; the attention age rejects 0.</summary>
+    [Test]
+    [Arguments(0, false)]
+    [Arguments(1, true)]
+    [Arguments(30, true)]
+    public void C1082_RunnerSyncDebtSettingsDefaultOnAndAttentionFloor(int minutes, bool valid)
+    {
+        var defaults = new DelegationSettings();
+        defaults.RunnerSyncDebtOnSettlement.ShouldBeTrue();
+        defaults.RunnerSyncDebtAttentionMinutes.ShouldBe(30);
+        var result = new DelegationSettingsValidator().Validate(
+            null, new DelegationSettings { RunnerSyncDebtAttentionMinutes = minutes });
+        if (valid)
+        {
+            result.Succeeded.ShouldBeTrue(string.Join("; ", result.Failures ?? []));
+            return;
+        }
+
+        result.Succeeded.ShouldBeFalse();
+        result.Failures.ShouldNotBeNull()
+            .ShouldContain("Delegation:RunnerSyncDebtAttentionMinutes must be at least 1.");
+    }
 }

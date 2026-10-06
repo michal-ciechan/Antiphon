@@ -36,8 +36,9 @@ public sealed class ReviewEvidenceResettlementTests
 
     private static async Task<(RunnerSettlementWorld World, Guid Subject, StageOutcome Old)> IncidentAsync()
     {
+        // CARD-1082 D-8: the CARD-1043 incident stays reachable with the kill switch off.
         var w = await RunnerSettlementWorld.CreateAsync(AgentTaskRole.Review, profiled: true,
-            controlledSyncClock: true, mirrorPublish: true);
+            controlledSyncClock: true, mirrorPublish: true, syncDebt: false);
         try
         {
             await w.Git.EnsureRunnerAsync();

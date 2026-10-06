@@ -42,15 +42,17 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
 
     private readonly bool _fenced;
     private readonly bool _mirrorPublish;
+    private readonly bool _syncDebt;
     public Action<IServiceCollection>? ConfigureServices { get; set; }
     public List<IInterceptor> Interceptors { get; } = [];
     public bool UseRealSyncClock { get; set; }
 
-    private RunnerSettlementWorld(SyncWorld git, bool fenced, bool controlledSyncClock, bool mirrorPublish)
+    private RunnerSettlementWorld(SyncWorld git, bool fenced, bool controlledSyncClock, bool mirrorPublish, bool syncDebt)
     {
         Git = git;
         _fenced = fenced;
         _mirrorPublish = mirrorPublish;
+        _syncDebt = syncDebt;
         SyncClock = controlledSyncClock ? new FakeTimeProvider() : null;
     }
 
@@ -60,12 +62,14 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
     /// settlement owes the caller the CARD-0544 D-9 durable completion obligation.</param>
     /// <param name="controlledSyncClock">Measure the settlement sync's budget on <see cref="SyncClock"/>,
     /// so a lease-busy wait ends only when the test advances it.</param>
+    /// <param name="syncDebt">CARD-1082 D-1. Production default is on. A caller passes false to keep
+    /// the pre-debt Blocked settlement reachable.</param>
     public static async Task<RunnerSettlementWorld> CreateAsync(
         AgentTaskRole role = AgentTaskRole.Code, bool pushBranch = true, bool fenced = false, bool profiled = false,
-        bool controlledSyncClock = false, bool mirrorPublish = false)
+        bool controlledSyncClock = false, bool mirrorPublish = false, bool syncDebt = true)
     {
         var world = new RunnerSettlementWorld(await SyncWorld.CreateAsync(pushBranch), fenced, controlledSyncClock,
-            mirrorPublish);
+            mirrorPublish, syncDebt);
         world.Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         world.BuildServices();
 
@@ -134,6 +138,7 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
             MaxConcurrentTasks = 512,
             AllowedRoots = [Git.Desktop],
             OutputDistillerEnabled = false,
+            RunnerSyncDebtOnSettlement = _syncDebt,
         }));
         services.AddSingleton(Options.Create(new AgentSessionSettings()));
         services.AddSingleton<ApiErrorRecoveryService>();

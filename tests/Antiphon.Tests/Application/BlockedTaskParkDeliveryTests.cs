@@ -591,8 +591,9 @@ public sealed class BlockedTaskParkDeliveryTests
 
         public static async Task<ReviewWorld> StartAsync(bool busyCaller)
         {
+            // CARD-1082 D-8: parked-review rebinding stays on the CARD-1065 path with sync debt off.
             var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true, syncRecovery: true,
-                completionSingleWriteBytes: 86_400);
+                completionSingleWriteBytes: 86_400, syncDebt: false);
             try
             {
                 await f.CreateSourceAsync(remote: true);
