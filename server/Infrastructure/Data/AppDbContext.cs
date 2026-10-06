@@ -124,6 +124,7 @@ public class AppDbContext : DbContext
     public DbSet<SessionRunnerState> SessionRunnerStates => Set<SessionRunnerState>();
     public DbSet<RunnerSeatRelease> RunnerSeatReleases => Set<RunnerSeatRelease>();
     public DbSet<AgentTaskPark> AgentTaskParks => Set<AgentTaskPark>();
+    public DbSet<HostOccupancySample> HostOccupancySamples => Set<HostOccupancySample>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -151,6 +152,15 @@ public class AppDbContext : DbContext
             entity.HasIndex(p => p.AgentId);
             entity.HasIndex(p => p.RunnerSeatReleaseId);
             entity.HasIndex(p => p.PublicationReceiptId).IsUnique();
+        });
+
+        modelBuilder.Entity<HostOccupancySample>(entity =>
+        {
+            entity.HasKey(s => s.Id);
+            entity.Property(s => s.HostId).HasMaxLength(200);
+            entity.Property(s => s.InventoryState).HasMaxLength(32);
+            entity.Property(s => s.InventoryReason).HasMaxLength(256);
+            entity.HasIndex(s => new { s.HostId, s.SampledAt });
         });
 
         modelBuilder.Entity<RunnerSeatRelease>(entity =>
