@@ -404,6 +404,7 @@ try
     builder.Services.AddScoped<BlockedTaskParkingService>();
     builder.Services.AddScoped<LocalTaskParkPublisher>();
     builder.Services.AddScoped<TaskParkPublicationService>();
+    builder.Services.AddScoped<BlockedTaskSyncRecoveryService>();
     builder.Services.AddScoped<AgentTaskInputService>();
     builder.Services.AddScoped<AgentTaskDecisionQuestionService>();
     builder.Services.AddScoped<SourceLandingAdmission>();

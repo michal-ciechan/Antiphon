@@ -196,6 +196,12 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
             .ExecuteUpdateAsync(s => s.SetProperty(p => p.PublicationReceiptId, evidence.ReceiptId)
                 .SetProperty(p => p.PublicationReceiptDigest, Digest(evidence))
                 .SetProperty(p => p.SourceSha, evidence.SourceSha).SetProperty(p => p.VerifiedRemoteSha, evidence.RemoteSha)
+                // The runner's immutable proof frees physical custody independently of the
+                // desktop lease. Persist its sync obligation in the same publication commit.
+                .SetProperty(p => p.SyncState, remote ? AgentTaskParkSyncState.Pending : AgentTaskParkSyncState.NotRequired)
+                .SetProperty(p => p.SyncSourceSha, remote ? evidence.SourceSha : null)
+                .SetProperty(p => p.SyncReasonCode, remote ? "park_sync_pending" : null)
+                .SetProperty(p => p.SyncNextAttemptAt, remote ? now : (DateTime?)null)
                 .SetProperty(p => p.State, AgentTaskParkState.Published).SetProperty(p => p.ReasonCode, fresh.Reason)
                 .SetProperty(p => p.PublishedAt, now).SetProperty(p => p.UpdatedAt, now)
                 .SetProperty(p => p.Revision, p => p.Revision + 1), ct);

@@ -4,6 +4,8 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner;
+using Antiphon.SessionRunner.Contracts;
+using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
@@ -32,10 +34,11 @@ internal sealed partial class RunnerSeatReleaseFixture
 
     public string SourcePath { get; private set; } = "";
     public string SourceOrigin { get; private set; } = "";
+    public string DesktopSourcePath { get; private set; } = "";
     public TaskParkPublicationTests.ParkGit SourceGit =>
         (TaskParkPublicationTests.ParkGit)Harness.Provider.GetRequiredService<ITaskProgressGit>();
 
-    public async Task CreateSourceAsync(WorkspaceMode mode = WorkspaceMode.Worktree)
+    public async Task CreateSourceAsync(WorkspaceMode mode = WorkspaceMode.Worktree, bool remote = false)
     {
         var root = Path.Combine(Path.GetTempPath(), "c1065-release-" + Guid.NewGuid().ToString("N"));
         _roots.Add(root);
@@ -56,19 +59,41 @@ internal sealed partial class RunnerSeatReleaseFixture
         var sha = await GitAsync(repository, "rev-parse", "HEAD");
         var branch = RemoteWorkspaceService.OwnedBranch(TaskId);
         await GitAsync(repository, "worktree", "add", "-b", branch, SourcePath, sha);
+        DesktopSourcePath = SourcePath;
+        if (remote)
+        {
+            var runnerRepo = Path.Combine(root, "runner-repo");
+            var allowed = Path.Combine(root, "runner");
+            SourcePath = Path.Combine(allowed, "worktrees", RemoteWorkspaceService.MirrorName(TaskId));
+            await GitAsync(root, "clone", SourceOrigin, runnerRepo);
+            await GitAsync(runnerRepo, "config", "user.name", "park test");
+            await GitAsync(runnerRepo, "config", "user.email", "park@example.invalid");
+            await GitAsync(runnerRepo, "config", "commit.gpgsign", "false");
+            await GitAsync(runnerRepo, "worktree", "add", "-b", branch, SourcePath, sha);
+            Wire.ParkRuntime = new(new RunnerWorkspaceService(runnerRepo, allowed, SourceOrigin, start =>
+            {
+                TaskParkPublicationTests.ParkGit.Isolate(start);
+                return Process.Start(start);
+            }));
+            Directory.RemotePath = SourcePath;
+            Directory.FeaturesOverride = [RunnerCapabilityFeatures.TerminalSeatReleaseV1,
+                RunnerCapabilityFeatures.TerminalSeatDeliveryEvidenceV1, RunnerCapabilityFeatures.WorkspaceParkV1,
+                RunnerCapabilityFeatures.WorkspaceRepositoryIdentityV1, RunnerCapabilityFeatures.WorkspaceParkSourceModesV1];
+        }
         if (mode == WorkspaceMode.Shared) await GitAsync(SourcePath, "push", "origin", branch);
         var source = new ProgressSourceBaseline(repository, await SourceGit.CommonDirectoryAsync(repository, default),
-            TaskId, SourcePath, "refs/heads/" + branch, sha,
+            TaskId, DesktopSourcePath, "refs/heads/" + branch, sha,
             new(ProgressRemoteState.Missing, EndpointFingerprint: BlockedTaskParkingService.Digest(SourceOrigin)));
         await EditAsync((task, _) =>
         {
-            task.Workspace = mode; task.RepoPath = repository; task.WorktreePath = SourcePath;
-            task.WorktreeBranch = branch; task.WorktreeBaseSha = sha; task.RemoteWorktreePath = null;
+            task.Workspace = mode; task.RepoPath = repository; task.WorktreePath = DesktopSourcePath;
+            task.WorktreeBranch = branch; task.WorktreeBaseSha = sha; task.RemoteWorktreePath = remote ? SourcePath : null;
             task.ProgressBaselineJson = TaskProgressJson.SerializeBaseline(new(1, Now, Now, source, null));
         });
         await using var db = Db();
-        await db.AgentSessions.Where(s => s.Id == SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.Cwd, SourcePath));
-        Directory.LocalBinding = true;
+        await db.AgentSessions.Where(s => s.Id == SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.Cwd, SourcePath)
+            .SetProperty(s => s.RunnerCwd, SourcePath));
+        Directory.LocalBinding = !remote;
         if (Live is not null)
         {
             Live.Checkout = SourcePath;
@@ -78,7 +103,8 @@ internal sealed partial class RunnerSeatReleaseFixture
         {
             var verifier = new RunnerWorkspaceParkService();
             Wire.VerifySource = async command => command is { ParkVersion: 2, Publication: not null }
-                && (await verifier.VerifySessionCheckoutAsync(command.Publication, SourcePath, default)).Receipt is not null;
+                && (remote ? await Wire.ParkRuntime!.VerifyAsync(command.Publication, default)
+                    : await verifier.VerifySessionCheckoutAsync(command.Publication, SourcePath, default)).Receipt is not null;
         }
     }
 

@@ -25,6 +25,7 @@ namespace Antiphon.Server.Application.Services;
 public sealed class AgentTaskDispatcher
 {
     private readonly TerminalRunnerSeatReleaseService? _terminalSeatRelease;
+    private readonly BlockedTaskSyncRecoveryService? _blockedTaskSync;
     private readonly int _answerReceiptClockToleranceSeconds;
     private readonly AppDbContext _db;
     private readonly AgentRegistry _agentRegistry;
@@ -187,9 +188,11 @@ public sealed class AgentTaskDispatcher
         ILandingGit? landingGit = null,
         AgentTaskWorktreeBaseResolver? baseResolver = null,
         HostBudgetService? hostBudgets = null,
-        TerminalRunnerSeatReleaseService? terminalSeatRelease = null)
+        TerminalRunnerSeatReleaseService? terminalSeatRelease = null,
+        BlockedTaskSyncRecoveryService? blockedTaskSync = null)
     {
         _terminalSeatRelease = terminalSeatRelease;
+        _blockedTaskSync = blockedTaskSync;
         _answerReceiptClockToleranceSeconds = supervision?.Value.DeliveryVerification.UnobservableBaselineConfirmClockToleranceSeconds ?? 30;
         _hostBudgets = hostBudgets;
         _baseResolver = baseResolver;
@@ -330,6 +333,7 @@ public sealed class AgentTaskDispatcher
         // neither which clock had died nor what had stopped as a result.
         // Accepted input is an existing obligation even when automatic seat release is off.
         sweepFailures += await RunSweepAsync("released-seat answers", (d, ct2) => d.RecoverReleasedSeatAnswersAsync(ct2), ct);
+        sweepFailures += await RunSweepAsync("blocked-task sync", (d, ct2) => d.RecoverBlockedTaskSyncAsync(ct2), ct);
 
         // CARD-0302: Check-role Blocked rows with a reading are stale evidence, not questions.
         // Remap them before anything else so the attention feed and notifier see Succeeded.
@@ -7246,6 +7250,9 @@ public sealed class AgentTaskDispatcher
         });
         await _db.SaveChangesAsync(ct);
     }
+
+    internal Task<int> RecoverBlockedTaskSyncAsync(CancellationToken ct) =>
+        _blockedTaskSync?.SweepAsync(ct) ?? Task.FromResult(0);
 
     /// <summary>
     /// CARD-0691 D-1: release enforced by state. A pool delegate that is not Stopped, has no pool

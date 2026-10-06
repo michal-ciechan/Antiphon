@@ -450,7 +450,12 @@ public sealed record AgentTaskDetailDto(
     Guid? RequestedWorktreeBaseTaskId = null,
     string? WorktreeBaseBranch = null,
     string? WorktreeBasePreviewJson = null,
-    IReadOnlyList<InternalDecisionQuestionHistoryDto>? InternalDecisionQuestions = null);
+    IReadOnlyList<InternalDecisionQuestionHistoryDto>? InternalDecisionQuestions = null,
+    TaskParkSyncDto? ParkSync = null);
+
+/// <summary>Desktop source readiness is independent of the historical task verdict and release.</summary>
+public sealed record TaskParkSyncDto(Guid ParkId, string State, string? SourceSha, string? ReasonCode,
+    int Attempts, DateTime? NextAttemptAt, DateTime? SourceReadyAt);
 
 /// <summary>One accepted launch attempt for a sourced Mutation snapshot. Receipt bytes stay on the server.</summary>
 public sealed record VerificationExecutionDetailDto(

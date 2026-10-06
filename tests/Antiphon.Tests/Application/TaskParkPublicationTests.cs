@@ -411,6 +411,8 @@ public sealed class TaskParkPublicationTests
 
     internal sealed class ParkGit : TaskProgressGit
     {
+        public ParkGit() { }
+        internal ParkGit(IRepositoryMutationLease leases) : base(leases) { }
         public List<string[]> Commands { get; } = [];
         public Func<IReadOnlyList<string>, Task>? Before { get; set; }
         protected override void ConfigureProcess(ProcessStartInfo start) => Isolate(start);
