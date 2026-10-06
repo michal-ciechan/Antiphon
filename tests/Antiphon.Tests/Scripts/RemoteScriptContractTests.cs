@@ -1712,6 +1712,11 @@ public sealed class RemoteScriptContractTests
         // host Codex home for uid 1654 -- a chown the host user mc cannot do. It refuses off the
         // host lane before any of its sudo lines.
         var codexHome = Block(text, "ensure_runner_codex_home");
+        // CARD-0817: only this guarded host helper may provision the token directory.
+        var githubToken = Block(text, "ensure_runner_github_token_dir");
+        var githubCommands = Commands(githubToken);
+        githubCommands[1].ShouldBe("if [ \"$LANE\" != \"host\" ]; then", "the token directory refuses off the host lane first");
+        githubCommands[2].ShouldBe("write_result false GithubTokenDirHostLaneOnly 2");
         var cacheLock = Block(text, "c849_lock");
         var cacheEvidence = Block(text, "c849_evidence_dir");
         var cacheSeed = Block(text, "c849_seed");
@@ -1741,6 +1746,7 @@ public sealed class RemoteScriptContractTests
                 || containment.Contains(line, StringComparison.Ordinal)
                 || tempDeploy.Contains(line, StringComparison.Ordinal)
                 || codexHome.Contains(line, StringComparison.Ordinal)
+                || githubToken.Contains(line, StringComparison.Ordinal)
                 || cacheLock.Contains(line, StringComparison.Ordinal)
                 || cacheEvidence.Contains(line, StringComparison.Ordinal)
                 || cacheSeed.Contains(line, StringComparison.Ordinal)
@@ -2563,6 +2569,8 @@ public sealed class RemoteScriptContractTests
         text.ShouldContain("GITHUB_TOKEN_DIR_OWNER=\"1654:1654\"\n");
         var ensure = Block(text, "ensure_runner_github_token_dir");
         var lines = Commands(ensure);
+        lines[1].ShouldBe("if [ \"$LANE\" != \"host\" ]; then", "the token directory refuses off the host lane before any sudo");
+        lines[2].ShouldBe("write_result false GithubTokenDirHostLaneOnly 2");
         var symlink = lines.IndexOf("if [ -L \"$GITHUB_TOKEN_DIR_PATH\" ]; then");
         symlink.ShouldBeGreaterThan(0);
         lines[symlink + 1].ShouldBe("write_result false GithubTokenDirPathIsSymlink 2");
