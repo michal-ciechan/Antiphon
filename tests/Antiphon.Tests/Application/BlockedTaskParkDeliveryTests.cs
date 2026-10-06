@@ -64,12 +64,17 @@ public sealed class BlockedTaskParkDeliveryTests
                     "partial" => row.Body[..Math.Min(100, row.Body.Length)],
                     _ => row.Body,
                 };
+                // A prior shape's complete destination prompt stays in the transcript. The next
+                // shape's floor keeps that prompt below the receipt window.
+                var floor = await db.TranscriptEntries.Where(t => t.AgentSessionId == row.AgentSessionId)
+                    .MaxAsync(t => (long?)t.Sequence) ?? 0;
                 if (shape != "ack")
                 {
                     await f.NativePromptAsync(shape == "wrong-session" ? f.SessionId : row.AgentSessionId, text);
                     if (shape is "queued" or "assistant")
                     {
-                        await db.TranscriptEntries.Where(t => t.AgentSessionId == row.AgentSessionId && t.Text == text)
+                        await db.TranscriptEntries.Where(t => t.AgentSessionId == row.AgentSessionId && t.Text == text
+                                && t.Sequence > floor)
                             .ExecuteUpdateAsync(u => u.SetProperty(t => t.Kind,
                                 shape == "queued" ? TranscriptKinds.QueuedUserPrompt : TranscriptKinds.AssistantText));
                     }
@@ -82,7 +87,7 @@ public sealed class BlockedTaskParkDeliveryTests
                     .SetProperty(m => m.DeliveryVerdict, DeliveryVerdict.Delivered)
                     .SetProperty(m => m.LastDeliveryStartedAt, f.Now)
                     .SetProperty(m => m.LastDeliveryGeneration, shape == "generation" ? generation.AddSeconds(-1) : generation)
-                    .SetProperty(m => m.LastDeliveryBaselineSequence, shape == "stale" ? max : 1));
+                    .SetProperty(m => m.LastDeliveryBaselineSequence, shape == "stale" ? max : floor));
                 await f.DispatchAsync();
                 var pending = await f.TaskAsync();
                 pending.ReleasedSeatAnswerId.ShouldBe(held.ReleasedSeatAnswerId, Label(shape));
@@ -96,6 +101,10 @@ public sealed class BlockedTaskParkDeliveryTests
                     .SetProperty(m => m.LastDeliveryBaselineSequence, (long?)null));
             }
 
+            // The wrong-session probe is the test's own old-session prompt. Remove it so the
+            // following receipt check counts only a prompt the product delivered.
+            await db.TranscriptEntries.Where(t => t.AgentSessionId == f.SessionId && t.Text == row.Body)
+                .ExecuteDeleteAsync();
             await f.EndTurnAsync(row.AgentSessionId);
             await f.FlushAsync(row.AgentSessionId);
             await f.DispatchAsync();
@@ -361,7 +370,7 @@ public sealed class BlockedTaskParkDeliveryTests
             (await OutcomesAsync(f)).Count.ShouldBe(1, "G-192");
             (await f.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Blocked, "G-192");
 
-            await f.AnswerAsync("report the final evidence again");
+            await f.AnswerAsync("report the final evidence again", round: null);
             f.Launches.Calls.ShouldBeEmpty("G-192");
             await ConfirmContinuationAsync(f, busy: true);
             await SettleReviewAsync(f, (await f.TaskAsync()).AgentSessionId!.Value, world.Report());
@@ -379,7 +388,7 @@ public sealed class BlockedTaskParkDeliveryTests
             var world = await ReviewWorld.StartAsync(busyCaller: true);
             await using var f = world.Fixture;
             var old = (await OutcomesAsync(f)).Single();
-            await f.AnswerAsync("report the final evidence again");
+            await f.AnswerAsync("report the final evidence again", round: null);
             await ConfirmContinuationAsync(f, busy: true);
             if (shape == "dirty")
                 await File.WriteAllTextAsync(Path.Combine(f.SourcePath, "dirty-review.txt"), "unpublished");
