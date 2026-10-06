@@ -2297,15 +2297,25 @@ public sealed class AgentTaskService
         CancellationToken ct) =>
         ListAsync(rootId, statuses, includeChecks, since, scope: null, ct);
 
+    public Task<AgentTaskListEnvelopeDto> ListAsync(
+        Guid? rootId,
+        IReadOnlyCollection<AgentTaskStatus>? statuses,
+        bool includeChecks,
+        DateTime? since,
+        AgentTaskScopeRequest? scope,
+        CancellationToken ct) =>
+        ListAsync(rootId, statuses, includeChecks, since, scope, landPending: false, ct);
+
     public async Task<AgentTaskListEnvelopeDto> ListAsync(
         Guid? rootId,
         IReadOnlyCollection<AgentTaskStatus>? statuses,
         bool includeChecks,
         DateTime? since,
         AgentTaskScopeRequest? scope,
+        bool landPending,
         CancellationToken ct)
     {
-        var candidates = await LoadListCandidatesAsync(rootId, statuses, includeChecks, since, ct);
+        var candidates = await LoadListCandidatesAsync(rootId, statuses, includeChecks, since, landPending, ct);
         var labels = await LoadScopeLabelsAsync(candidates, scope, ct);
         var (items, excluded) = AgentTaskScope.Partition(candidates, labels, scope);
         return new AgentTaskListEnvelopeDto(
@@ -2383,6 +2393,7 @@ public sealed class AgentTaskService
         IReadOnlyCollection<AgentTaskStatus>? statuses,
         bool includeChecks,
         DateTime? since,
+        bool landPending,
         CancellationToken ct)
     {
         var query = _db.AgentTasks.AsNoTracking();
@@ -2393,6 +2404,7 @@ public sealed class AgentTaskService
             query = query.Where(t => requested.Contains(t.Status));
         }
         if (!includeChecks) query = query.Where(AgentTaskRoles.NotSpecialist);
+        if (landPending) query = query.Where(t => t.LandRequestedAt != null || t.LandStartedAt != null);
 
         // AgentTask has no mutable UpdatedAt column. A settled row's CompletedAt is its final
         // state transition, and every not-yet-settled state is retained irrespective of age.

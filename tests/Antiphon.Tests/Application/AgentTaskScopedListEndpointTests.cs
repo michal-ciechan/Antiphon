@@ -249,6 +249,7 @@ public class AgentTaskScopedListEndpointTests
             var supported = problem.RootElement.GetProperty("supported").EnumerateArray()
                 .Select(e => e.GetString()).ToArray();
             supported.ShouldBe(AgentTaskScope.SupportedListQueryKeys);
+            supported.ShouldContain("landPending");
         }
 
         using var accepted = await host.Client.GetAsync(
