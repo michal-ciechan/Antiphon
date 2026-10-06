@@ -238,6 +238,9 @@ export const QUEUE_REASON_LABEL: Record<AgentTaskPipelineQueueReason, string> = 
   siblingLandInFlight: 'waiting: a sibling is landing',
   concurrencyCap: 'waiting: task slots in use',
   routingPinNotBefore: 'waiting: not before',
+  repositoryLease: 'waiting: repository lease held by',
+  remotePrep: 'waiting: remote workspace preparation',
+  hostBudget: 'waiting: runner host at its budget',
   awaitingDispatch: 'queued — next dispatch tick',
 }
 
@@ -296,9 +299,31 @@ function queueReasonLine(
         ? `waiting: not before ${clock} (routing pin)`
         : 'waiting: not before (routing pin)'
     }
+    case 'repositoryLease': {
+      const first = queued.heldBy[0]
+      return first
+        ? `${QUEUE_REASON_LABEL.repositoryLease} task-${first.shortId} — ${first.title}`
+        : `${QUEUE_REASON_LABEL.repositoryLease} another process`
+    }
+    case 'remotePrep': {
+      const first = queued.heldBy[0]
+      return first
+        ? `${QUEUE_REASON_LABEL.remotePrep} (behind task-${first.shortId} — ${first.title})`
+        : `${QUEUE_REASON_LABEL.remotePrep} (branch push and mirror)`
+    }
+    case 'hostBudget':
+      return QUEUE_REASON_LABEL.hostBudget
     case 'awaitingDispatch':
       return QUEUE_REASON_LABEL.awaitingDispatch
+    default:
+      return unknownQueueReasonLine(queued.queueReason)
   }
+}
+
+/** A reason the server emits before this client knows it. Do not echo the raw token. */
+function unknownQueueReasonLine(reason: never): string {
+  void reason
+  return QUEUE_REASON_LABEL.awaitingDispatch
 }
 
 function formatClockUtc(iso: string): string {

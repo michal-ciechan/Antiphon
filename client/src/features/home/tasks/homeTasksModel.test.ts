@@ -26,6 +26,7 @@ import {
   livenessFor,
   pipelineRowFor,
   questionFor,
+  QUEUE_REASON_LABEL,
   queueReasonFor,
   readyLine,
   readinessFor,
@@ -550,6 +551,53 @@ describe('queueReasonFor', () => {
     expect(queueReasonFor(queued, pipe)?.line).toBe(
       'waiting: a sibling is landing (task-dddddddd — plan sibling landing)',
     )
+  })
+
+  it('labels repositoryLease, remotePrep and hostBudget', () => {
+    expect(QUEUE_REASON_LABEL.repositoryLease).toBe('waiting: repository lease held by')
+    expect(QUEUE_REASON_LABEL.remotePrep).toBe('waiting: remote workspace preparation')
+    expect(QUEUE_REASON_LABEL.hostBudget).toBe('waiting: runner host at its budget')
+  })
+
+  it('names a repository-lease holder and an empty hold', () => {
+    const held = queuedPipeline('repositoryLease', {
+      heldBy: [holder({ shortId: '1a2b3c4d', title: 'in-flight docs pass' })],
+    })
+    expect(queueReasonFor(held.item, held.pipe)?.line).toBe(
+      'waiting: repository lease held by task-1a2b3c4d — in-flight docs pass',
+    )
+    const empty = queuedPipeline('repositoryLease')
+    expect(queueReasonFor(empty.item, empty.pipe)?.line).toBe(
+      'waiting: repository lease held by another process',
+    )
+  })
+
+  it('names the task ahead in remote preparation and an empty hold', () => {
+    const held = queuedPipeline('remotePrep', {
+      heldBy: [holder({ shortId: '9f8e7d6c', title: 'push the branch' })],
+    })
+    expect(queueReasonFor(held.item, held.pipe)?.line).toBe(
+      'waiting: remote workspace preparation (behind task-9f8e7d6c — push the branch)',
+    )
+    const empty = queuedPipeline('remotePrep')
+    expect(queueReasonFor(empty.item, empty.pipe)?.line).toBe(
+      'waiting: remote workspace preparation (branch push and mirror)',
+    )
+  })
+
+  it('prints hostBudget as the runner host at its budget', () => {
+    const { pipe, item: queued } = queuedPipeline('hostBudget')
+    expect(queueReasonFor(queued, pipe)?.line).toBe('waiting: runner host at its budget')
+  })
+
+  it('renders an unknown future reason without throwing or echoing it', () => {
+    const reason = 'futureBudget' as AgentTaskPipelineQueueReason
+    const { pipe, item: queued } = queuedPipeline(reason, {
+      heldBy: [holder({ title: 'futureBudget holder' })],
+    })
+    const line = queueReasonFor(queued, pipe)?.line
+    expect(line).toBe('queued — next dispatch tick')
+    expect(line).not.toContain('futureBudget')
   })
 
   it('returns null for a card whose worker is not queued', () => {

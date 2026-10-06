@@ -26,6 +26,23 @@ public class RunnerBranchContractDocumentationTests
     }
 
     [Test]
+    public void C1076_remote_prep_push_contract_is_documented()
+    {
+        foreach (var relative in new[] { "docs/orchestration-loop.md", "docs/ops-http.md" })
+        {
+            var text = Read(relative);
+            text.ShouldContain("RemotePrepPushBudgetMinutes");
+            text.ShouldContain("remote-prep-push");
+            text.ShouldContain("repositoryLease");
+            text.ShouldContain("remotePrep");
+            text.ShouldContain("does not track origin");
+            text.ShouldContain("BehindTaskId");
+            text.ShouldContain("enqueue-time snapshot");
+            text.ShouldContain("CARD-1093");
+        }
+    }
+
+    [Test]
     public void Operations_document_the_new_wire_and_removal_guard()
     {
         var text = Read("docs/ops-http.md");
