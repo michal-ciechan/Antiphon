@@ -3,7 +3,7 @@
 Original Code / landing owner: `2a876d8a-7681-47be-94bb-c8cba4abfade`.
 Repair branch: `feat/card-task-f3fc782f`; base: `73e469314ea9d13a65c5ad21375b924e7a21e925`.
 Implementation plan: [HTTPS token plan](2026-10-05-card-0817-https-token-push-credential-plan.md).
-Prior evidence: [.antiphon/task-2a876d8a.md](../../..//.antiphon/task-2a876d8a.md).
+Prior evidence: [.antiphon/task-2a876d8a.md](../../../.antiphon/task-2a876d8a.md).
 
 The direct repair brief commissions one repair round for F-1/F-2, exact narrow
 filters only, trailing method wildcards, no whole-Unit or baseline sweep.
