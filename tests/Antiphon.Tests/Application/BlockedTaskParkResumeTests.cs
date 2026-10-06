@@ -320,8 +320,12 @@ public sealed class BlockedTaskParkResumeTests
                 accepted.Attempt.ShouldBe(1, shape == "quota" ? "G-145" : "G-152");
                 accepted.AgentId.ShouldBe(f.AgentId, shape);
                 f.Launches.Calls.ShouldBeEmpty("G-153");
-                refusal.ShouldBeOfType<ConflictException>(shape);
-                if (shape == "commit") refusal.ShouldBeOfType<ConflictException>().Code.ShouldBe("commit_recovery_pending", "G-152");
+                if (shape == "quota")
+                    refusal.ShouldBeOfType<SubscriptionQuotaLowException>("G-145").Code
+                        .ShouldBe(SubscriptionQuotaLowException.ErrorCode, "G-145");
+                else
+                    refusal.ShouldBeOfType<ConflictException>("G-152").Code
+                        .ShouldBe("commit_recovery_pending", "G-152");
                 continue;
             }
 
