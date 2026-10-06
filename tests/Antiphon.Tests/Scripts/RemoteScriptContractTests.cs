@@ -188,6 +188,55 @@ public sealed class RemoteScriptContractTests
         }
     }
 
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1087_Host_census_filters_and_names_cause()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        const string project = C994TaskVectors.Project;
+        const string id = "11111111-1111-1111-1111-111111111111";
+        foreach (var vector in new[] { "Failed", "Canceled", "Succeeded", "Queued", "Dispatched", "Working", "Blocked",
+                     "pending", "unfiltered-open", "unfiltered-land", "timeout", "http", "transport", "empty", "malformed" })
+        {
+            using var f = new C1008HostFixture();
+            var envelope = f.TaskScopes[project]!;
+            var bound = vector is "Queued" or "Dispatched" or "Working" or "Blocked";
+            var accepted = vector is "Failed" or "Canceled" or "Succeeded";
+            if (accepted || bound || vector is "pending" or "unfiltered-open" or "unfiltered-land")
+            {
+                var row = new JsonObject { ["id"] = id, ["status"] = accepted || bound ? vector : "Succeeded",
+                    ["runnerId"] = "server2", ["projectId"] = project, ["scopeSource"] = "Task",
+                    ["landRequestedAt"] = vector == "pending" ? "2020-01-01T00:00:00Z" : null, ["landStartedAt"] = null,
+                    ["title"] = "SENTINEL_TASK_BODY" };
+                envelope["items"]!.AsArray().Add(row);
+                if (vector.StartsWith("unfiltered-")) f.TaskScopes[project] = new JsonObject {
+                    ["open"] = vector == "unfiltered-open" ? envelope.DeepClone() : f.Vectors["emptyTasks"]!.DeepClone(),
+                    ["land"] = vector == "unfiltered-land" ? envelope.DeepClone() : f.Vectors["emptyTasks"]!.DeepClone() };
+            }
+            else f.HttpFaults["/api/agent-tasks?"] = vector;
+            var run = await f.Run(dryRun: true);
+            run.Exit.ShouldBe(accepted ? 0 : 2, vector + ": " + run.Output);
+            f.Removed.ShouldBeEmpty();
+            f.Trace.Any(a => a[0] == "stop").ShouldBeFalse();
+            var paths = File.ReadAllLines(Path.Combine(f.Root, "http-trace"));
+            paths.All(p => p == RollingVolumeRecycleScriptTests.C1087ListPath(project, "open") ||
+                p == RollingVolumeRecycleScriptTests.C1087ListPath(project, "land")).ShouldBeTrue(vector);
+            File.ReadAllLines(Path.Combine(f.Root, "http-budgets")).All(b => b == "60").ShouldBeTrue("60 second production read budget");
+            if (accepted) paths.Distinct().Order().ShouldBe(new[] {
+                RollingVolumeRecycleScriptTests.C1087ListPath(project, "open"),
+                RollingVolumeRecycleScriptTests.C1087ListPath(project, "land") }.Order());
+            else if (bound) run.Output.ShouldContain($"RecycleBoundTasks {id} status={vector} runner=server2");
+            else if (vector == "pending") run.Output.ShouldContain("RecycleLandInFlight " + id);
+            else
+            {
+                var cause = vector.StartsWith("unfiltered-") ? "UnfilteredRow" : char.ToUpperInvariant(vector[0]) + vector[1..];
+                run.Output.ShouldContain("RecycleTaskCensusUnknown cause=" + cause);
+                run.Output.ShouldContain("path=/api/agent-tasks?");
+                if (vector == "http") run.Output.ShouldContain("status=503");
+            }
+            run.Output.ShouldNotContain("SENTINEL");
+        }
+    }
+
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_exact_default_volumes()
@@ -397,12 +446,12 @@ public sealed class RemoteScriptContractTests
             else
             {
                 var id = "22222222-2222-2222-2222-222222222222";
-                var row = new JsonObject { ["id"] = id, ["status"] = fault == "bound-task" ? "Blocked" : "Succeeded",
-                    ["runnerId"] = "server2", ["projectId"] = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1", ["scopeSource"] = "Task",
+                var row = new JsonObject { ["id"] = id, ["status"] = "Blocked",
+                    ["runnerId"] = fault == "bound-task" ? "server2" : "other", ["projectId"] = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1", ["scopeSource"] = "Task",
                     ["landRequestedAt"] = null, ["landStartedAt"] = null };
                 envelope["items"]!.AsArray().Add(row);
                 var detail = new JsonObject { ["summary"] = row.DeepClone(), ["landRequest"] = null };
-                if (fault == "summary") detail["summary"]!["runnerId"] = "other";
+                if (fault == "summary") detail["summary"]!["runnerId"] = "different";
                 else if (fault is "terminal" or "active-land") detail["landRequest"] = new JsonObject
                     { ["state"] = fault == "active-land" ? "NeedsResolution" : "Completed", ["terminalEventId"] = "not-a-guid" };
                 f.TaskDetails[id] = detail;

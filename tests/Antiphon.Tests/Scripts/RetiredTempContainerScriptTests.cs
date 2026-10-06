@@ -95,7 +95,7 @@ public sealed class RetiredTempContainerScriptTests
                 foreach($v in $vectors){
                     $script:vector=$v.input
                     function Invoke-RecycleRead {param([string]$Path)
-                        if($Path -match 'projectId=([^&]+)'){$value=$script:vector.scopes.($Matches[1])}else{$value=$script:vector.details.($Path.Split('/')[-1])}
+                        if($Path -match 'projectId=([^&]+)'){$scope=$Matches[1];$kind=if($Path.Contains('&landPending=true')){'land'}elseif($Path.Contains('&status=Queued,Dispatched,Working,Blocked')){'open'}else{throw 'unfiltered query'};$value=$script:vector.scopes.$scope.$kind}else{$value=$script:vector.details.($Path.Split('/')[-1])}
                         if($null -eq $value){throw 'api failed'};return $value
                     }
                     $script:called=0;function Invoke-HostCase {$script:called++}

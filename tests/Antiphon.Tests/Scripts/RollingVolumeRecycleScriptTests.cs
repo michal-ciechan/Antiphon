@@ -17,7 +17,7 @@ public sealed class RollingVolumeRecycleScriptTests
     {
         const string project = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1";
         const string task = "11111111-1111-1111-1111-111111111111";
-        var listPath = $"/api/agent-tasks?projectId={project}&unscoped=include&includeChecks=true";
+        var listPath = C1087ListPath(project, "open");
         foreach (var path in new[] { "/api/projects?includeArchived=true", listPath, $"/api/agent-tasks/{task}" })
         foreach (var (fault, cause) in new[] { ("timeout", "Timeout"), ("503", "Http"), ("400", "Http"),
                      ("401", "Http"), ("transport", "Transport"), ("empty", "Empty"), ("malformed", "Malformed") })
@@ -58,6 +58,7 @@ public sealed class RollingVolumeRecycleScriptTests
                 case "scope.projectId": f.State["tasks"]!["scope"]!["projectId"] = "SENTINEL_SHAPE"; break;
                 default: row[field] = new JsonObject { ["SENTINEL_SHAPE"] = true }; break;
             }
+            f.State["taskQueries"] = new JsonObject { [listPath] = f.State["tasks"]!.DeepClone() };
             var run = await f.Run("retire-temp");
             run.Exit.ShouldBe(2, run.Output);
             run.Output.ShouldContain($"RecycleTaskCensusUnknown cause=Malformed field={field} path={listPath}");
@@ -160,6 +161,124 @@ public sealed class RollingVolumeRecycleScriptTests
         }
     }
 
+    internal static string C1087ListPath(string project, string kind) =>
+        $"/api/agent-tasks?projectId={project}&unscoped=include&includeChecks=true&" +
+        (kind == "open" ? "status=Queued,Dispatched,Working,Blocked" : "landPending=true");
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1087_Census_filters_open_work_and_pending_lands()
+    {
+        const string project = C994TaskVectors.Project;
+        const string id = "11111111-1111-1111-1111-111111111111";
+        foreach (var status in new[] { "Failed", "Canceled", "Succeeded", "Queued", "Dispatched", "Working", "Blocked" })
+        {
+            using var f = new C1008WrapperFixture();
+            var row = C1087TaskRow(id, project); row["status"] = status; row["runnerId"] = "server2-temp";
+            f.State["tasks"]!["items"]!.AsArray().Add(row);
+            var run = await f.Run("retire-temp");
+            var bound = status is "Queued" or "Dispatched" or "Working" or "Blocked";
+            run.Exit.ShouldBe(bound ? 2 : 0, status + ": " + run.Output);
+            if (bound)
+            {
+                run.Output.ShouldContain($"RecycleBoundTasks {id} status={status} runner=server2-temp");
+                run.Trace.Any(t => t["kind"]?.GetValue<string>() == "case").ShouldBeFalse();
+                C1087Receipt(run.Trace)["tasks"]!.AsArray().Single()!["status"]!.GetValue<string>().ShouldBe(status);
+            }
+            else
+            {
+                run.Trace.Where(t => t["path"]?.GetValue<string>().StartsWith("/api/agent-tasks?") == true)
+                    .Select(t => t["path"]!.GetValue<string>()).Distinct().Order()
+                    .ShouldBe(new[] { C1087ListPath(project, "open"), C1087ListPath(project, "land") }.Order());
+                run.Trace.Any(t => t["path"]?.GetValue<string>() == "/api/agent-tasks/" + id).ShouldBeFalse();
+            }
+        }
+        foreach (var vector in new[] { "pending-requested", "pending-started", "unfiltered-open", "unfiltered-land", "unstable", "closure" })
+        {
+            using var f = new C1008WrapperFixture();
+            var empty = f.State["tasks"]!.DeepClone();
+            var row = C1087TaskRow(id, project);
+            var envelope = empty.DeepClone(); envelope["items"]!.AsArray().Add(row);
+            var queries = new JsonObject(); f.State["taskQueries"] = queries;
+            var expected = "RecycleLandInFlight " + id;
+            switch (vector)
+            {
+                case "pending-requested": case "pending-started":
+                    row["status"] = "Succeeded";
+                    row[vector == "pending-requested" ? "landRequestedAt" : "landStartedAt"] = "2020-01-01T00:00:00Z";
+                    queries[C1087ListPath(project, "land")] = envelope; break;
+                case "unfiltered-open":
+                    row["status"] = "Succeeded"; queries[C1087ListPath(project, "open")] = envelope;
+                    expected = "RecycleTaskCensusUnknown cause=UnfilteredRow id=" + id; break;
+                case "unfiltered-land":
+                    queries[C1087ListPath(project, "land")] = envelope;
+                    expected = "RecycleTaskCensusUnknown cause=UnfilteredRow id=" + id; break;
+                case "unstable":
+                    queries[C1087ListPath(project, "open")] = new JsonArray(empty.DeepClone(), envelope);
+                    f.State["details"] = new JsonObject { [id] = new JsonObject { ["summary"] = row.DeepClone(), ["landRequest"] = null } };
+                    expected = "RecycleTaskCensusUnknown cause=Unstable"; break;
+                case "closure":
+                    const string other = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+                    // Both closures independently walk the excluded scope, with their own filter.
+                    foreach (var kind in new[] { "open", "land" })
+                    {
+                        var entry = empty.DeepClone(); entry["excluded"]!["total"] = 1;
+                        entry["excluded"]!["byProject"]!.AsArray().Add(new JsonObject { ["projectId"] = other, ["count"] = 1 });
+                        queries[C1087ListPath(project, kind)] = entry;
+                        var next = envelope.DeepClone(); next["scope"]!["projectId"] = other;
+                        next["items"]![0]!["projectId"] = other;
+                        if (kind == "land") next["items"]![0]!["landRequestedAt"] = "2020-01-01T00:00:00Z";
+                        else f.State["details"] = new JsonObject { [id] = new JsonObject { ["summary"] = next["items"]![0]!.DeepClone(), ["landRequest"] = null } };
+                        queries[C1087ListPath(other, kind)] = next;
+                    }
+                    break;
+            }
+            var run = await f.Run("retire-temp");
+            run.Exit.ShouldBe(2, vector + ": " + run.Output); run.Output.ShouldContain(expected);
+            run.Trace.Any(t => t["kind"]?.GetValue<string>() == "case").ShouldBeFalse();
+            var paths = run.Trace.Select(t => t["path"]?.GetValue<string>()).Where(p => p?.StartsWith("/api/agent-tasks?") == true).ToArray();
+            paths.All(p => p!.EndsWith("&status=Queued,Dispatched,Working,Blocked") || p.EndsWith("&landPending=true")).ShouldBeTrue();
+            if (vector == "closure") paths.ShouldContain(C1087ListPath("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "land"));
+            C1087Receipt(run.Trace).ToJsonString().ShouldNotContain("SENTINEL");
+        }
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1087_Check_census_phase_is_read_only()
+    {
+        const string project = C994TaskVectors.Project;
+        using var f = new C1008WrapperFixture();
+        var id = "11111111-1111-1111-1111-111111111111";
+        var row = C1087TaskRow(id, project); row["runnerId"] = "server2";
+        f.State["tasks"]!["items"]!.AsArray().Add(row);
+        var landed = C1087TaskRow("22222222-2222-2222-2222-222222222222", project);
+        landed["status"] = "Succeeded"; landed["landRequestedAt"] = "2020-01-01T00:00:00Z";
+        f.State["tasks"]!["items"]!.AsArray().Add(landed);
+        var run = await f.Run("check-census");
+        run.Exit.ShouldBe(0, run.Output);
+        run.Output.ShouldContain($"RECYCLE_PROJECT id={project} name=Antiphon resolvedBy=url");
+        run.Output.ShouldContain("RECYCLE_CENSUS runner=server2 open=1 boundOpen=1 landPending=1 scopes=1 elapsedMs=");
+        run.Output.ShouldContain("RECYCLE_CENSUS runner=server2-temp open=1 boundOpen=0 landPending=1 scopes=1 elapsedMs=");
+        run.Trace.All(t => t["kind"]?.GetValue<string>() == "http" && t["method"]?.GetValue<string>() == "GET").ShouldBeTrue("no host jq, SSH, verify or POST");
+        var root = Regex.Match(run.Output, @"(?m)^Census check complete: (.+)").Groups[1].Value.Trim();
+        foreach (var runner in new[] { "server2", "server2-temp" })
+        {
+            var receipt = JsonNode.Parse(File.ReadAllText(Path.Combine(root, $"census-check-census-{runner}.json")))!;
+            receipt["project"]!["id"]!.GetValue<string>().ShouldBe(project);
+            receipt["reads"]!.AsArray().Count.ShouldBeGreaterThanOrEqualTo(4);
+            receipt.ToJsonString().ShouldNotContain("SENTINEL");
+        }
+        foreach (var fault in new[] { "project", "read" })
+        {
+            using var bad = new C1008WrapperFixture();
+            if (fault == "project") bad.State["projects"] = new JsonArray();
+            else bad.State["readFaults"] = new JsonObject { ["&landPending=true"] = "400" };
+            var refused = await bad.Run("check-census");
+            refused.Exit.ShouldBe(2, refused.Output);
+            refused.Output.ShouldContain(fault == "project" ? "RecycleProjectUnresolved cause=NoMatch" : "RecycleTaskCensusUnknown cause=Http status=400");
+            refused.Trace.All(t => t["kind"]?.GetValue<string>() == "http" && t["method"]?.GetValue<string>() == "GET").ShouldBeTrue();
+        }
+    }
+
     private static JsonObject C1087Project(string id, string url, string path) => new()
     {
         ["id"] = id, ["name"] = "Antiphon", ["gitRepositoryUrl"] = url,
@@ -168,7 +287,7 @@ public sealed class RollingVolumeRecycleScriptTests
 
     private static JsonObject C1087TaskRow(string id, string project) => new()
     {
-        ["id"] = id, ["status"] = "Succeeded", ["runnerId"] = "other", ["projectId"] = project,
+        ["id"] = id, ["status"] = "Blocked", ["runnerId"] = "other", ["projectId"] = project,
         ["scopeSource"] = "Task", ["landRequestedAt"] = null, ["landStartedAt"] = null,
         ["title"] = "SENTINEL_TITLE", ["goal"] = "SENTINEL_GOAL", ["result"] = "SENTINEL_RESULT"
     };
@@ -282,7 +401,7 @@ public sealed class RollingVolumeRecycleScriptTests
             var run = await f.Run("retire-temp");
             run.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse("recycle-work-gates: typed " + field);
         }
-        foreach (var status in new[] { "Queued", "Dispatched", "Working", "Blocked", "Failed", "Succeeded" })
+        foreach (var status in new[] { "Queued", "Dispatched", "Working", "Blocked", "Succeeded" })
         {
             using var f = new C1008WrapperFixture();
             f.State["tasks"]!["items"]!.AsArray().Add(new JsonObject
@@ -682,6 +801,7 @@ internal sealed class C1008HostFixture : IDisposable
     internal JsonObject Vectors { get; }
     internal JsonObject TaskScopes { get; } = new();
     internal JsonObject TaskDetails { get; } = new();
+    internal JsonObject HttpFaults { get; } = new();
 
     internal C1008HostFixture(bool main = true)
     {
@@ -806,7 +926,7 @@ internal sealed class C1008HostFixture : IDisposable
         File.WriteAllText(StatePath, Docker.ToJsonString());
         File.WriteAllText(Path.Combine(Root, "statuses.json"), Statuses.ToJsonString());
         File.WriteAllText(Path.Combine(Root, "tasks.json"), new JsonObject
-            { ["scopes"] = TaskScopes.DeepClone(), ["details"] = TaskDetails.DeepClone() }.ToJsonString());
+            { ["scopes"] = TaskScopes.DeepClone(), ["details"] = TaskDetails.DeepClone(), ["faults"] = HttpFaults.DeepClone() }.ToJsonString());
         var source = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"));
         var injection = $$"""
             C1008_FIXTURE_ROOT='{{Root}}'; export C1008_FIXTURE_ROOT
@@ -833,7 +953,7 @@ internal sealed class C1008HostFixture : IDisposable
             c849_lock() { :; }
             c849_budget_gate() { :; }
             c849_status_body() { jq -ec --arg runner "$1" '.[$runner]' '{{Root}}/statuses.json'; }
-            c1008_http() { local key="$1"; if [[ "$key" == *projectId=* ]]; then key="${key#*projectId=}"; key="${key%%&*}"; jq -ec --arg key "$key" '.scopes[$key]' '{{Root}}/tasks.json'; else jq -ec --arg key "${key##*/}" '.details[$key]' '{{Root}}/tasks.json'; fi; }
+            source '{{DelegateScriptRunner.RepoRoot}}/scripts/fixtures/c1087-host-http.sh'
             sudo() { [ "$1" = -n ] && shift; if [ "$1" = install ]; then mkdir -p "${@: -1}"; elif [ "$1" = df ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nfixture 99999999 1 25000000 1%% /fixture\n'; else "$@"; fi; }
             {{extra}}
             """;

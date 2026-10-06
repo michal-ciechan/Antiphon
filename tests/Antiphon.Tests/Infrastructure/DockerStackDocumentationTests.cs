@@ -9,6 +9,18 @@ namespace Antiphon.Tests.Infrastructure;
 public sealed class DockerStackDocumentationTests
 {
     [Test]
+    public void Recycle_census_preflight_is_documented()
+    {
+        var text = Read("docs/docker-stack.md");
+        var preflight = text.IndexOf("-Phase check-census", StringComparison.Ordinal);
+        preflight.ShouldBeGreaterThanOrEqualTo(0);
+        preflight.ShouldBeLessThan(text.IndexOf("-Phase check-host-jq", StringComparison.Ordinal));
+        foreach (var pin in new[] { "RECYCLE_PROJECT", "RECYCLE_CENSUS", "RecycleProjectUnresolved",
+                     "landPending", "Queued/Dispatched/Working/Blocked", "cause=NoMatch", "-ProjectId", "cause=Http status=400" })
+            text.ShouldContain(pin);
+    }
+
+    [Test]
     public void Retired_temp_cleanup_and_retirement_gates_match()
     {
         var text = Read("docs/docker-stack.md");
