@@ -8,12 +8,17 @@ param(
     [ValidateSet('all', 'deploy-temp', 'drain-old', 'redeploy-old', 'drain-temp', 'retire-temp', 'check-host-jq', 'provision-host-jq')]
     [string]$Phase = 'all',
     [string]$SavedDonor = '',
+    [string]$ProjectId,
     [ValidateRange(1, 10080)][int]$WaitIdleMinutes = 480,
     [switch]$DryRun,
     [ValidatePattern('^c1008[0-9a-f]{32}$')][ValidateNotNullOrEmpty()][string]$ResumeRecycle
 )
 
 $ErrorActionPreference = 'Stop'
+# Keep the requested id separate from phase-local $projectId (PowerShell names
+# are case-insensitive). It is an entry scope, never a project update.
+$script:recycleProjectIdWasProvided = $PSBoundParameters.ContainsKey('ProjectId')
+$script:requestedRecycleProjectId = $ProjectId
 if ($PSBoundParameters.ContainsKey('ResumeRecycle') -and $ResumeRecycle -cnotmatch '^c1008[0-9a-f]{32}$') { throw 'RecycleContextInvalid' }
 if ($PSVersionTable.PSVersion.Major -lt 7) { throw 'PowerShell 7 is required' }
 if (($DryRun -or $ResumeRecycle) -and $Phase -notin @('redeploy-old', 'retire-temp')) { throw 'RecycleContextInvalid' }
@@ -369,6 +374,7 @@ function Start-RecycleReceipt {
     $script:recycleReceipt = [ordered]@{ schema=1; phase=$ExecutingPhase; runnerId=$RunnerId;
         project=$null; reads=[System.Collections.Generic.List[object]]::new(); tasks=@() }
     $script:recycleReceiptTasks = @{}
+    $script:resolvedRecycleProjectId = $null
     Write-RecycleReceipt
 }
 
@@ -383,12 +389,12 @@ function Write-RecycleReceipt {
 }
 
 function Stop-RecycleMalformed {
-    param([string]$Field, [string]$Path)
+    param([string]$Field, [string]$Path, [string]$ReasonCode = 'RecycleTaskCensusUnknown')
     if ($null -ne $script:recycleReceipt) {
         $read = @($script:recycleReceipt.reads | Where-Object path -CEQ $Path | Select-Object -Last 1)
         if ($read.Count -eq 1) { $read[0].outcome = 'Malformed'; $read[0]['field'] = $Field }
     }
-    throw "RecycleTaskCensusUnknown cause=Malformed field=$Field path=$Path"
+    throw "$ReasonCode cause=Malformed field=$Field path=$Path"
 }
 
 function Test-RecycleGuid {
@@ -456,11 +462,93 @@ function Invoke-RecycleRead {
     }
 }
 
+function ConvertTo-RecycleRepositoryUrl {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return '' }
+    $value = $Value.Trim()
+    if ($value -match '^git@([^:]+):(.+)$') { $value = 'https://' + $Matches[1] + '/' + $Matches[2] }
+    $uri = $null
+    if (-not [uri]::TryCreate($value, [UriKind]::Absolute, [ref]$uri) -or
+        $uri.Scheme -cne 'https' -or -not $uri.IsDefaultPort -or $uri.UserInfo -or $uri.Query -or $uri.Fragment) { return '' }
+    # GitHub repository identity is case-insensitive, including its owner/name.
+    $repository = $uri.AbsolutePath.TrimEnd('/') -replace '\.git$', ''
+    return 'https://' + $uri.Host.ToLowerInvariant() + $repository.ToLowerInvariant()
+}
+
+function ConvertTo-RecycleRepositoryPath {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return '' }
+    if ($IsWindows) { $Value = $Value.Replace('/', '\') }
+    $full = [IO.Path]::GetFullPath($Value)
+    $root = [IO.Path]::GetPathRoot($full)
+    if ($full.Length -gt $root.Length) { $full = $full.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) }
+    if ($IsWindows) { return $full.ToLowerInvariant() }
+    return $full
+}
+
 function Get-RecycleProjectId {
-    $projects = Invoke-RecycleRead -Path '/api/projects?includeArchived=true'
-    $projectMatches = @($projects | Where-Object { $_.gitRepositoryUrl -eq 'https://github.com/michal-ciechan/Antiphon.git' })
-    if ($projectMatches.Count -ne 1 -or [string]$projectMatches[0].id -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { throw 'RecycleTaskCensusUnknown' }
-    return [string]$projectMatches[0].id
+    if ($script:resolvedRecycleProjectId) { return $script:resolvedRecycleProjectId }
+    try {
+        $explicit = $script:recycleProjectIdWasProvided
+        if ($explicit) {
+            if (-not (Test-RecycleGuid $script:requestedRecycleProjectId)) { throw 'RecycleProjectUnresolved cause=InvalidId' }
+            $path = '/api/projects/' + $script:requestedRecycleProjectId
+            try { $projects = @(Invoke-RecycleRead -Path $path) }
+            catch {
+                if ($_.Exception.Message -cmatch '^RecycleTaskCensusUnknown cause=Http status=404 ') {
+                    throw "RecycleProjectUnresolved cause=NotFound id=$script:requestedRecycleProjectId"
+                }
+                throw
+            }
+        } else {
+            $path = '/api/projects?includeArchived=true'
+            $projects = Invoke-RecycleRead -Path $path
+            if ($projects -isnot [array]) { Stop-RecycleMalformed 'projects' $path 'RecycleProjectUnresolved' }
+        }
+        $projectMatches = @{}
+        $urlMatches = [System.Collections.Generic.HashSet[string]]::new()
+        $pathMatches = [System.Collections.Generic.HashSet[string]]::new()
+        $checkout = ConvertTo-RecycleRepositoryPath $repoRoot
+        foreach ($project in $projects) {
+            foreach ($key in @('id','archivedAt','gitRepositoryUrl','localRepositoryPath')) {
+                if ($project.PSObject.Properties.Name -cnotcontains $key) { Stop-RecycleMalformed $key $path 'RecycleProjectUnresolved' }
+            }
+            if (-not (Test-RecycleGuid $project.id)) { Stop-RecycleMalformed 'id' $path 'RecycleProjectUnresolved' }
+            if ($explicit -and $project.id -cne $script:requestedRecycleProjectId) { Stop-RecycleMalformed 'id' $path 'RecycleProjectUnresolved' }
+            if (-not (Test-RecycleTimestamp $project.archivedAt)) { Stop-RecycleMalformed 'archivedAt' $path 'RecycleProjectUnresolved' }
+            foreach ($key in @('gitRepositoryUrl','localRepositoryPath')) {
+                if ($null -ne $project.$key -and $project.$key -isnot [string]) { Stop-RecycleMalformed $key $path 'RecycleProjectUnresolved' }
+            }
+            if ($explicit -and $project.name -isnot [string]) { Stop-RecycleMalformed 'name' $path 'RecycleProjectUnresolved' }
+            try { $localPath = ConvertTo-RecycleRepositoryPath $project.localRepositoryPath }
+            catch { Stop-RecycleMalformed 'localRepositoryPath' $path 'RecycleProjectUnresolved' }
+            $urlMatch = (ConvertTo-RecycleRepositoryUrl $project.gitRepositoryUrl) -ceq 'https://github.com/michal-ciechan/antiphon'
+            $pathMatch = $localPath -cne '' -and $localPath -ceq $checkout
+            if ($urlMatch) { [void]$urlMatches.Add($project.id) }
+            if ($pathMatch) { [void]$pathMatches.Add($project.id) }
+            if ($explicit -or $urlMatch -or $pathMatch) {
+                if ($projectMatches.ContainsKey($project.id) -and
+                    ($projectMatches[$project.id] | ConvertTo-Json -Compress) -cne ($project | ConvertTo-Json -Compress)) {
+                    Stop-RecycleMalformed 'id' $path 'RecycleProjectUnresolved'
+                }
+                $projectMatches[$project.id] = $project
+            }
+        }
+        if ($projectMatches.Count -eq 0) {
+            throw "RecycleProjectUnresolved cause=NoMatch candidates=$($projects.Count) urlMatches=$($urlMatches.Count) pathMatches=$($pathMatches.Count)"
+        }
+        if ($projectMatches.Count -gt 1) { throw "RecycleProjectUnresolved cause=Ambiguous candidates=$($projects.Count) matches=$($projectMatches.Count)" }
+        $selected = @($projectMatches.Values)[0]
+        if ($null -ne $selected.archivedAt) { throw "RecycleProjectUnresolved cause=Archived id=$($selected.id)" }
+        $resolvedBy = if ($explicit) { 'explicit' } elseif ($urlMatches.Contains($selected.id) -and $pathMatches.Contains($selected.id)) { 'both' }
+            elseif ($urlMatches.Contains($selected.id)) { 'url' } else { 'path' }
+        if ($null -ne $script:recycleReceipt) {
+            $script:recycleReceipt.project = [ordered]@{ id=$selected.id; resolvedBy=$resolvedBy }
+            if ($explicit) { $script:recycleReceipt.project['name'] = $selected.name }
+        }
+        $script:resolvedRecycleProjectId = [string]$selected.id
+        return $script:resolvedRecycleProjectId
+    } finally { Write-RecycleReceipt }
 }
 
 function Assert-RecycleTaskCensus {
@@ -978,6 +1066,9 @@ function Invoke-Phase {
 }
 
 try {
+    if ($script:recycleProjectIdWasProvided -and -not (Test-RecycleGuid $script:requestedRecycleProjectId)) {
+        throw 'RecycleProjectUnresolved cause=InvalidId'
+    }
     if ($Phase -in @('check-host-jq', 'provision-host-jq')) {
         $mode = if ($Phase -eq 'check-host-jq') { 'check' } else { 'provision' }
         Invoke-HostJq -Mode $mode -ExecutingPhase $Phase
