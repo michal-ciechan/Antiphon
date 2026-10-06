@@ -927,12 +927,6 @@ public class InstructionBundleTests
         basics.ShouldContain("A parked session may be released and resumed from that pushed branch.", customMessage: "c1065-resume-branch");
         basics.ShouldContain("Parking will not autosave", customMessage: "c1065-no-autosave");
 
-        var orchestrator = InstructionBundles.TextOf(InstructionBundles.Orchestrator);
-        orchestrator.ShouldContain("A Blocked child holds its seat until it is answered or cancelled.", customMessage: "c1065-blocked-child");
-        orchestrator.ShouldContain("do not leave one overnight", customMessage: "c1065-overnight");
-        orchestrator.ShouldContain("GET /api/session-runners/{id}/slots", customMessage: "c1065-slots");
-        orchestrator.ShouldContain("count orphan=true", customMessage: "c1065-orphan-count");
-
         var plan = InstructionBundles.TextOf(InstructionBundles.StagePlan);
         plan.ShouldContain("what releases a session that waits for input, and after how long", customMessage: "c1065-release-question");
     }

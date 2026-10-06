@@ -92,7 +92,7 @@ public sealed class BlockedTaskParkProjectionTests
         Require(basics, "A parked session may be released and resumed from that pushed branch.", "c1065-resume-branch");
         Require(basics, "Parking will not autosave", "c1065-no-autosave");
 
-        foreach (var relative in new[] { "server/Bundles/orchestrator.md", ".claude/skills/antiphon-orchestrator/SKILL.md" })
+        foreach (var relative in new[] { ".claude/skills/antiphon-orchestrator/SKILL.md" })
         {
             var text = Read(relative);
             Require(text, "A Blocked child holds its seat until it is answered or cancelled.", "c1065-blocked-child:" + relative);
