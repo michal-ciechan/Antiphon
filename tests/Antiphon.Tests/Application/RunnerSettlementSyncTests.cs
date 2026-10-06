@@ -649,6 +649,114 @@ public sealed class RunnerSettlementSyncTests
         (await world.HeadAsync()).ShouldBe(head);
     }
 
+    /// <summary>
+    /// CARD-1082 V-12. The debt names S. Origin later advancing to S2 is
+    /// <c>runner_sync_tip_not_reported</c> and the desktop stays at S. Passing no reported
+    /// tip would fast-forward to S2.
+    /// </summary>
+    [Test]
+    public async Task C1082_SettledDebtSyncOnlyFastForwardsToTheRecordedSource()
+    {
+        await using var world = await SyncWorld.CreateAsync();
+        var s = await world.RunnerPushAsync("work.txt", "recorded");
+        var debt = DebtFor(world, s);
+        world.Git.Clear();
+
+        var synced = await world.Service().SyncSettledAsync(world.Task, debt, CancellationToken.None);
+
+        synced.State.ShouldBe(RemoteSettlementSyncState.Synchronized, "reason=" + synced.Reason);
+        synced.RemoteSha.ShouldBe(s);
+        synced.DesktopBeforeSha.ShouldBe(world.Baseline);
+        synced.DesktopAfterSha.ShouldBe(s);
+        synced.Confirmed.ShouldBeTrue();
+        (await world.HeadAsync()).ShouldBe(s);
+        world.Git.Commands.Where(c => c.Contains("--ff-only", StringComparison.Ordinal))
+            .ShouldAllBe(c => c.EndsWith(" " + s, StringComparison.Ordinal));
+        File.ReadAllText(Path.Combine(world.Worktree, "work.txt")).ShouldBe("recorded");
+
+        var advanced = await world.RunnerPushAsync("later.txt", "advanced");
+        advanced.ShouldNotBe(s);
+        world.Git.Clear();
+        var refused = await world.Service().SyncSettledAsync(world.Task, debt, CancellationToken.None);
+
+        refused.State.ShouldBe(RemoteSettlementSyncState.Refused);
+        refused.Reason.ShouldBe(RemoteSettlementSyncReasons.TipNotReported);
+        refused.RemoteSha.ShouldBe(advanced);
+        refused.DesktopAfterSha.ShouldBeNull();
+        refused.Confirmed.ShouldBeFalse();
+        world.Git.Commands.ShouldNotContain(c => c.Contains("--ff-only", StringComparison.Ordinal)
+            || c.StartsWith("update-ref", StringComparison.Ordinal));
+        (await world.HeadAsync()).ShouldBe(s);
+        File.Exists(Path.Combine(world.Worktree, "later.txt")).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// CARD-1082 V-12 negative control. A debt that no longer matches the task episode, or whose
+    /// source is not a full object id, refuses <c>settlement_sync_source_changed</c> and does not
+    /// fast-forward. A missing check would sync the pushed tip.
+    /// </summary>
+    [Test]
+    public async Task C1082_SettledDebtSyncRefusesAChangedEpisode()
+    {
+        await using var world = await SyncWorld.CreateAsync();
+        var s = await world.RunnerPushAsync("work.txt", "recorded");
+        var head = await world.HeadAsync();
+        head.ShouldBe(world.Baseline);
+
+        async Task Refuse(string name, AgentTask task, AgentTaskSyncDebt debt)
+        {
+            var result = await world.Service().SyncSettledAsync(task, debt, CancellationToken.None);
+            result.State.ShouldBe(RemoteSettlementSyncState.Refused, name + " reason=" + result.Reason);
+            result.Reason.ShouldBe("settlement_sync_source_changed", name);
+            result.Confirmed.ShouldBeFalse(name);
+            result.DesktopAfterSha.ShouldBeNull(name);
+            (await world.HeadAsync()).ShouldBe(head, name);
+        }
+
+        await Refuse("task", world.Task, DebtFor(world, s, d => d.TaskId = Guid.NewGuid()));
+        await Refuse("attempt", world.Task, DebtFor(world, s, d => d.Attempt++));
+        await Refuse("worktree", world.Task, DebtFor(world, s, d => d.WorktreePath += "-other"));
+        await Refuse("remote-worktree", world.Task, DebtFor(world, s, d => d.RemoteWorktreePath += "-other"));
+        await Refuse("runner", world.Task, DebtFor(world, s, d => d.RunnerId = "other-runner"));
+        await Refuse("baseline", world.Task, DebtFor(world, s, d => d.BaselineSha = new string('a', 40)));
+        await Refuse("full-ref", world.Task, DebtFor(world, s, d => d.FullRef = "refs/heads/other"));
+        await Refuse("short-source", world.Task, DebtFor(world, s, d => d.SourceSha = s[..12]));
+        await Refuse("uppercase-source", world.Task, DebtFor(world, s, d => d.SourceSha = s.ToUpperInvariant()));
+        await Refuse("landing", world.TaskWith(t => t.SourceLandingOperationId = Guid.NewGuid()), DebtFor(world, s));
+        await Refuse("mutation-role", world.TaskWith(t => t.Role = AgentTaskRole.Mutation), DebtFor(world, s));
+        await Refuse("shared-workspace", world.TaskWith(t => t.Workspace = WorkspaceMode.Shared), DebtFor(world, s));
+        await Refuse("missing-baseline", world.TaskWith(t => t.ProgressBaselineJson = null), DebtFor(world, s));
+    }
+
+    private static AgentTaskSyncDebt DebtFor(SyncWorld world, string source, Action<AgentTaskSyncDebt>? shape = null)
+    {
+        var baseline = TaskProgressJson.TryReadBaseline(world.Task.ProgressBaselineJson)!.Primary;
+        var now = new DateTime(2026, 10, 6, 12, 0, 0, DateTimeKind.Utc);
+        var debt = new AgentTaskSyncDebt
+        {
+            Id = Guid.NewGuid(),
+            TaskId = world.Task.Id,
+            Attempt = world.Task.Attempt,
+            SettlementEventId = Guid.NewGuid(),
+            RunnerId = world.Task.RunnerId,
+            WorktreePath = world.Task.WorktreePath,
+            RemoteWorktreePath = world.Task.RemoteWorktreePath,
+            RepositoryPath = baseline.CanonicalRepository,
+            FullRef = baseline.FullRef,
+            BaselineSha = baseline.LocalSha,
+            SourceSha = source,
+            DesktopBeforeSha = world.Baseline,
+            EndpointFingerprint = baseline.Remote.EndpointFingerprint,
+            State = AgentTaskSyncDebtState.Pending,
+            ReasonCode = RemoteSettlementSyncReasons.LeaseBusy,
+            NextAttemptAt = now,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        shape?.Invoke(debt);
+        return debt;
+    }
+
     [Test]
     public async Task Lease_contention_never_mutates()
     {

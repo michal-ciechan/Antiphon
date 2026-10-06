@@ -126,6 +126,7 @@ public class AppDbContext : DbContext
     public DbSet<AgentTaskPark> AgentTaskParks => Set<AgentTaskPark>();
     public DbSet<BlockedTaskParkReclaimCursor> BlockedTaskParkReclaimCursors => Set<BlockedTaskParkReclaimCursor>();
     public DbSet<HostOccupancySample> HostOccupancySamples => Set<HostOccupancySample>();
+    public DbSet<AgentTaskSyncDebt> AgentTaskSyncDebts => Set<AgentTaskSyncDebt>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -154,6 +155,24 @@ public class AppDbContext : DbContext
             entity.HasIndex(p => p.RunnerSeatReleaseId);
             entity.HasIndex(p => p.PublicationReceiptId).IsUnique();
             entity.Property(p => p.LegacyDiscovery).HasDefaultValue(false);
+        });
+
+        modelBuilder.Entity<AgentTaskSyncDebt>(entity =>
+        {
+            entity.ToTable("AgentTaskSyncDebts");
+            entity.HasKey(d => d.Id);
+            entity.Property(d => d.Revision).IsConcurrencyToken();
+            entity.Property(d => d.RunnerId).HasMaxLength(200);
+            entity.Property(d => d.RepositoryPath).HasMaxLength(1000);
+            entity.Property(d => d.FullRef).HasMaxLength(1024);
+            entity.Property(d => d.BaselineSha).HasMaxLength(64);
+            entity.Property(d => d.SourceSha).HasMaxLength(64);
+            entity.Property(d => d.DesktopBeforeSha).HasMaxLength(64);
+            entity.Property(d => d.ConfirmedSha).HasMaxLength(64);
+            entity.Property(d => d.EndpointFingerprint).HasMaxLength(200);
+            entity.Property(d => d.ReasonCode).IsRequired().HasMaxLength(64);
+            entity.HasIndex(d => new { d.TaskId, d.Attempt }).IsUnique();
+            entity.HasIndex(d => new { d.State, d.NextAttemptAt });
         });
 
         modelBuilder.Entity<BlockedTaskParkReclaimCursor>(entity =>
