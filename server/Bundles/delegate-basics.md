@@ -21,7 +21,7 @@ work itself: each one is here because ignoring it has already cost a real task.
   This instruction IS the explicit request: commit/push is part of the task,
   never a "next step" to offer; uncommitted deliverables are flagged at settlement.
 
-- Commit and push all assigned work before reporting blocked. Push unless this task is SourceLanding, ReadOnly, or CommitOnSettle Never. A parked session may be released and resumed from that pushed branch. Parking will not autosave.
+- Commit and push all assigned work before reporting blocked. Push unless this task is SourceLanding, ReadOnly, or CommitOnSettle Never. A parked session may be released and resumed from that pushed branch. Parking will not autosave (CARD-1083).
 
 - Generated evidence stays gitignored: TRX, JSON receipts, logs, archives and checkpoint outputs
   are excluded from the generic commit requirement. Optional Markdown up to 1048576 bytes,
@@ -68,8 +68,8 @@ work itself: each one is here because ignoring it has already cost a real task.
   tests/...`) as `pwsh -NoProfile -File scripts/build-slot.ps1 -Label <what> -- <command>`. The gate
   waits its turn, prints `BUILD SLOT` lines and applies the host's `-maxcpucount`; a driver outside
   it is an unlisted run Review flags. Exit 4 is a slot timeout: report the row as not run or end
-  `blocked`, never to retry unleased or with `-NoSlot`. CARD-0589: unbounded concurrent builds left
-  203 build processes and 1.1 GB free on one host.
+  `blocked`, never to retry unleased or with `-NoSlot`. CARD-0589: unbounded builds left
+  203 processes and 1.1 GB free.
 
 - VERIFY PRE-EXISTING RED BEFORE BLAMING YOURSELF. Stash your changes, or check out the base commit,
   and re-run the failure there. A failure you inherited is a fact for your report; a failure you
