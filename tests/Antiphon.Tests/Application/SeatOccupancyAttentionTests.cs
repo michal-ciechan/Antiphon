@@ -66,7 +66,8 @@ public sealed class SeatOccupancyAttentionTests
         row.Evidence.ShouldContain($"task={taskId:D}");
         row.Evidence.ShouldContain("attempt=4");
         row.Evidence.ShouldContain("status=Blocked");
-        row.Evidence.ShouldContain("age=");
+        // S3 review: the evidence age was a bare number while the headline already says min.
+        row.Evidence.ShouldContain("age=30min");
         row.Evidence.ShouldContain("pushed=unknown");
         row.Evidence.ShouldContain($"observedAt={Now.UtcDateTime:O}");
         row.Actions.ShouldBe([AttentionAction.Reply, AttentionAction.Cancel, AttentionAction.OpenDrawer]);
@@ -182,9 +183,11 @@ public sealed class SeatOccupancyAttentionTests
         idle.Severity.ShouldBe(AlertSeverity.Warning);
         idle.ConditionKey.ShouldBe($"slot-orphan:server2:{idleId:N}");
         idle.SinceUtc.ShouldBe(idleSince);
+        idle.Evidence.ShouldContain("age=1min");
         idle.Actions.ShouldBe([AttentionAction.Reply, AttentionAction.Cancel, AttentionAction.OpenDrawer]);
         var active = rows.Single(i => i.SessionId == activeId);
         active.SinceUtc.ShouldBe(started);
+        active.Evidence.ShouldContain("age=50min");
         active.Actions.ShouldBe([AttentionAction.OpenDrawer, AttentionAction.OpenAgent]);
         rows.ShouldNotContain(i => i.SessionId == warmId || i.SessionId == exitedId);
     }
@@ -229,6 +232,23 @@ public sealed class SeatOccupancyAttentionTests
             AttentionKind.SlotOrphan,
         ]);
         AttentionSummaryDto.From(withRows).Open.ShouldBe(AttentionSummaryDto.From(baseline).Open + added.Count);
+    }
+
+    [Test]
+    public async Task C1079_Disabled_watch_hides_seat_idle_divergence_and_orphan_rows()
+    {
+        // S3 review: V-11 proves the sampler stops when SeatWatchEnabled is false.
+        // This is the projection gate: the same snapshot yields none of the three kinds.
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var state = State(Host("server2", inFlight: 2, dispatchedWorking: 0, idleSeats: 1, oldest: Ago(40), seats:
+        [
+            Seat(Guid.NewGuid(), SeatClass.IdleBlocked, Ago(40), occupies: true, orphan: true,
+                status: AgentTaskStatus.Blocked),
+        ]));
+
+        (await ReadAsync(schema, state)).Items.Where(IsSeatKind).Count().ShouldBe(3);
+        (await ReadAsync(schema, state, new AttentionSettings { SeatWatchEnabled = false }))
+            .Items.Where(IsSeatKind).ShouldBeEmpty();
     }
 
     private static bool IsSeatKind(AttentionItemDto item) =>
@@ -284,13 +304,16 @@ public sealed class SeatOccupancyAttentionTests
             pooledWarm, "Running", taskId, status, attempt, AgentTaskRole.Code, cardId, boardId, agentId,
             seatClass, idleSince, pushed);
 
-    private static async Task<AttentionDto> ReadAsync(IsolatedTestSchema schema, SeatOccupancyState? seats = null)
+    private static async Task<AttentionDto> ReadAsync(
+        IsolatedTestSchema schema, SeatOccupancyState? seats = null, AttentionSettings? attention = null)
     {
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         return await new AttentionService(
             db, new AttentionServiceTests.FakeRunnerClient(),
             Options.Create(new SupervisionSettings()), Options.Create(new DelegationSettings()),
             new FakeTimeProvider(Now), NullLogger<AttentionService>.Instance,
-            seats: seats).GetAsync(CancellationToken.None, includeProgressProbe: false);
+            seats: seats,
+            attention: attention is null ? null : Options.Create(attention))
+            .GetAsync(CancellationToken.None, includeProgressProbe: false);
     }
 }

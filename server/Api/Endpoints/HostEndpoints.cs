@@ -31,7 +31,50 @@ public static class HostEndpoints
             var prep = http.RequestServices.GetService<RemoteWorkspacePreparer>();
             return Results.Ok(await ProjectAsync(limit, directory, db, prep, ct));
         });
+
+        // CARD-1079 D-12: read-only audit. No write route. Unknown hosts 404 through the budget lookup.
+        hosts.MapGet("/{hostId}/occupancy-samples", GetOccupancySamplesAsync);
     }
+
+    private const int DefaultOccupancySampleLimit = 500;
+    private const int MaxOccupancySampleLimit = 2000;
+
+    private static async Task<IResult> GetOccupancySamplesAsync(
+        string hostId, DateTime? from, DateTime? to, int? limit,
+        HostBudgetService budgets, AppDbContext db, TimeProvider clock, CancellationToken ct)
+    {
+        await budgets.EffectiveAsync(hostId, ct);
+        if (limit is < 1)
+            return Results.BadRequest(new { error = "limit_invalid" });
+
+        var applied = Math.Min(limit ?? DefaultOccupancySampleLimit, MaxOccupancySampleLimit);
+        var windowTo = to is { } rawTo ? AsUtc(rawTo) : clock.GetUtcNow().UtcDateTime;
+        var windowFrom = from is { } rawFrom ? AsUtc(rawFrom) : windowTo.AddHours(-24);
+        if (windowFrom > windowTo)
+            return Results.Ok(new HostOccupancySamplesResponse(applied, windowFrom, windowTo, []));
+
+        var rows = await db.HostOccupancySamples.AsNoTracking()
+            .Where(row => row.HostId == hostId && row.SampledAt >= windowFrom && row.SampledAt <= windowTo)
+            .OrderByDescending(row => row.SampledAt)
+            .ThenByDescending(row => row.Id)
+            .Take(applied)
+            .ToListAsync(ct);
+        return Results.Ok(new HostOccupancySamplesResponse(
+            applied, windowFrom, windowTo, rows.Select(ToDto).ToArray()));
+    }
+
+    private static HostOccupancySampleDto ToDto(Domain.Entities.HostOccupancySample row) =>
+        new(row.Id, row.HostId, row.SampledAt, row.InventoryState, row.InventoryReason,
+            row.InFlight, row.DispatchedWorking, row.Sessions, row.PendingLaunch, row.InFlightMirrors,
+            row.IdleSeats, row.PooledWarmSeats, row.OrphanSlots, row.EffectiveLimit, row.DeclaredCapacity,
+            row.OldestIdleSince);
+
+    private static DateTime AsUtc(DateTime value) => value.Kind switch
+    {
+        DateTimeKind.Utc => value,
+        DateTimeKind.Local => value.ToUniversalTime(),
+        _ => DateTime.SpecifyKind(value, DateTimeKind.Utc),
+    };
 
     private static async Task<HostBudgetDto> ProjectAsync(
         HostLimit limit, PhoneHomeRunnerDirectory directory, AppDbContext db,

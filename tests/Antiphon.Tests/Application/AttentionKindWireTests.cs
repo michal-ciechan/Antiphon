@@ -59,4 +59,23 @@ public class AttentionKindWireTests
         }
     }
 
+    [Test]
+    public void Seat_occupancy_kinds_keep_appended_values_57_through_59()
+    {
+        // S3 review: the cleanup pin stops at 56, so a renumber of the seat kinds would be silent.
+        var kinds = new[]
+        {
+            AttentionKind.SeatIdle,
+            AttentionKind.OccupancyDivergence,
+            AttentionKind.SlotOrphan,
+        };
+        kinds.Select(kind => (int)kind).ShouldBe(new[] { 57, 58, 59 }, "seat-appended-wire-values");
+        foreach (var kind in kinds)
+        {
+            var json = JsonSerializer.Serialize(kind, ServerJson);
+            json.ShouldBe($"\"{kind}\"", "seat-json-name");
+            JsonSerializer.Deserialize<AttentionKind>(json, ServerJson).ShouldBe(kind, "seat-json-round-trip");
+        }
+    }
+
 }
