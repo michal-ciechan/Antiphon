@@ -186,14 +186,17 @@ public partial class AgentTaskPipelineStatusTests
         try
         {
             preparer.TryBegin(pushing.Id, "server2").ShouldBeTrue();
-            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
-            while (DateTime.UtcNow < deadline
+            var pushingSeen = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+            while (DateTime.UtcNow < pushingSeen
                 && preparer.Progress(pushing.Id)?.Phase != RemotePrepPhase.Pushing)
                 await Task.Delay(20);
             preparer.Progress(pushing.Id)?.Phase.ShouldBe(RemotePrepPhase.Pushing);
 
+            // The waiter records BehindTaskId only after its own database read, so that
+            // observation has its own 15s bound. One shared clock let the phase wait consume it.
             preparer.TryBegin(waiting.Id, "server2").ShouldBeTrue();
-            while (DateTime.UtcNow < deadline
+            var waiterSeen = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+            while (DateTime.UtcNow < waiterSeen
                 && preparer.Progress(waiting.Id)?.BehindTaskId != pushing.Id)
                 await Task.Delay(20);
             // Two tasks: the snapshot recorded when the waiter entered the gate is the pusher.
