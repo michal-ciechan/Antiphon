@@ -24,6 +24,16 @@ public abstract record RunnerInventory
     public sealed record Unavailable(string Reason) : RunnerInventory;
 }
 
+/// <summary>
+/// Exact inventory text the phone-home directory emits when the peer is not connected.
+/// <see cref="Antiphon.Server.Application.Services.SeatOccupancySampler"/> maps this value to
+/// the audit category <c>unavailable: phone-home</c>. Any other wording falls through to <c>error</c>.
+/// </summary>
+public static class RunnerInventoryReasons
+{
+    public const string PhoneHomeUnavailable = "phone-home runner unavailable";
+}
+
 public abstract record SessionRunnerBinding
 {
     public sealed record Missing : SessionRunnerBinding

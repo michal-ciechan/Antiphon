@@ -201,7 +201,7 @@ public sealed class SeatOccupancySampler(
         {
             "timeout" or "inventory timed out" => "timeout",
             "unavailable" => "unavailable",
-            "phone-home runner unavailable" => "unavailable: phone-home",
+            RunnerInventoryReasons.PhoneHomeUnavailable => "unavailable: phone-home",
             "error" => "error",
             _ => null,
         };

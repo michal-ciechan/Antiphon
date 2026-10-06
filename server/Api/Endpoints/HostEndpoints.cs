@@ -70,10 +70,22 @@ public static class HostEndpoints
     }
 
     private static HostOccupancySampleDto ToDto(Domain.Entities.HostOccupancySample row) =>
-        new(row.Id, row.HostId, row.SampledAt, row.InventoryState, row.InventoryReason,
+        new(row.Id, row.HostId, row.SampledAt, row.InventoryState, PublishedInventoryReason(row.InventoryReason),
             row.InFlight, row.DispatchedWorking, row.Sessions, row.PendingLaunch, row.InFlightMirrors,
             row.IdleSeats, row.PooledWarmSeats, row.OrphanSlots, row.EffectiveLimit, row.DeclaredCapacity,
             row.OldestIdleSince);
+
+    /// <summary>
+    /// CARD-1111. Rows written before the closed set can still hold raw exception text until the
+    /// retention prune. Publish a stored reason only when it is exactly one of the sampler
+    /// categories; anything else becomes <c>error</c> and the stored text is not echoed.
+    /// </summary>
+    private static string? PublishedInventoryReason(string? stored) => stored switch
+    {
+        null => null,
+        "unavailable" or "timeout" or "error" or "unavailable: phone-home" => stored,
+        _ => "error",
+    };
 
     private static DateTime AsUtc(DateTime value) => value.Kind switch
     {

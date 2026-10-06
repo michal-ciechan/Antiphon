@@ -158,6 +158,32 @@ public sealed class SeatOccupancySamplerTests
     }
 
     [Test]
+    public async Task C1111_Disconnected_phone_home_reason_is_unavailable_phone_home()
+    {
+        await using var rig = await Rig.SeedRemoteAsync(listThrows: false);
+        var directory = new PhoneHomeRunnerDirectory(
+            rig.Client,
+            Options.Create(new PhoneHomeRunnerSettings { Enabled = false }),
+            new UnusedScopes(),
+            rig.Clock);
+        var inventory = await directory.GetInventoryAsync("server2", CancellationToken.None);
+        var unavailable = inventory.ShouldBeOfType<RunnerInventory.Unavailable>();
+        unavailable.Reason.ShouldBe(RunnerInventoryReasons.PhoneHomeUnavailable);
+
+        await rig.SampleAsync(new FixedInventoryDirectory(rig.Client, inventory));
+
+        await using var db = new AppDbContext(rig.DbOptions);
+        var server2 = await db.HostOccupancySamples.AsNoTracking().SingleAsync(r => r.HostId == "server2");
+        server2.InventoryState.ShouldBe("unavailable");
+        server2.InventoryReason.ShouldBe("unavailable: phone-home");
+        server2.InventoryReason.ShouldNotBe(RunnerInventoryReasons.PhoneHomeUnavailable);
+
+        var observed = rig.State.Current.Hosts.Single(h => h.HostId == "server2");
+        observed.InventoryReason.ShouldBe("unavailable: phone-home");
+        observed.Seats.Count.ShouldBe(0);
+    }
+
+    [Test]
     public async Task C1079_Prune_removes_samples_older_than_retention()
     {
         await using var rig = await Rig.EmptyAsync();
@@ -286,13 +312,13 @@ public sealed class SeatOccupancySamplerTests
         public static async Task<Rig> SeedRemoteAsync(bool listThrows) =>
             await CreateAsync(seedRemote: true, listThrows);
 
-        public async Task SampleAsync()
+        public async Task SampleAsync(ISessionRunnerDirectory? inventory = null)
         {
             await using var db = new AppDbContext(DbOptions);
             var budgets = new HostBudgetService(
                 db, Directory, Options.Create(new DelegationSettings { MaxConcurrentTasks = 4 }), Clock);
             var sampler = new SeatOccupancySampler(
-                db, Directory, budgets, State, Options.Create(new AttentionSettings()), Clock,
+                db, inventory ?? Directory, budgets, State, Options.Create(new AttentionSettings()), Clock,
                 NullLogger<SeatOccupancySampler>.Instance);
             await sampler.SampleOnceAsync(CancellationToken.None);
         }
@@ -467,5 +493,32 @@ public sealed class SeatOccupancySamplerTests
 
         public IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(CancellationToken ct) =>
             throw new NotSupportedException();
+    }
+
+    /// <summary>Returns one inventory for every host. Budgets stay on the rig directory.</summary>
+    private sealed class FixedInventoryDirectory(ISessionRunnerClient local, RunnerInventory inventory)
+        : ISessionRunnerDirectory
+    {
+        public ISessionRunnerClient Local => local;
+
+        public ISessionRunnerClient Resolve(string? runnerId) => local;
+
+        public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) =>
+            Task.FromResult<SessionRunnerOwner?>(null);
+
+        public Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct) =>
+            Task.FromResult<SessionRunnerBinding>(SessionRunnerBinding.Local.Instance);
+
+        public Task<RunnerInventory> GetInventoryAsync(string? runnerId, CancellationToken ct) =>
+            Task.FromResult(inventory);
+
+        public IReadOnlyList<string> KnownRunnerIds => ["server2"];
+
+        public Guid? GetLiveStoreId(string? runnerId) => null;
+    }
+
+    private sealed class UnusedScopes : IServiceScopeFactory
+    {
+        public IServiceScope CreateScope() => throw new NotSupportedException();
     }
 }

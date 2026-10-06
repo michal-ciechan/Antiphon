@@ -229,7 +229,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
 
         var live = SnapshotLive(runnerId);
         if (live is null || !live.DispatchEligible || live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
-            return new RunnerInventory.Unavailable("phone-home runner unavailable");
+            return new RunnerInventory.Unavailable(RunnerInventoryReasons.PhoneHomeUnavailable);
         try
         {
             return new RunnerInventory.Available(await new PhoneHomeRunnerClient(live, _spills).ListAsync(ct));

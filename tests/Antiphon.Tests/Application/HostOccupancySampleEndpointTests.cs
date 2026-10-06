@@ -33,9 +33,12 @@ public sealed class HostOccupancySampleEndpointTests
         var middle = Utc(11, 40);
         var outside = Utc(10, 0);
         var idleSince = Utc(9, 0);
+        // CARD-1111: a stored reason is echoed only when it is an exact closed-set category.
+        // Free text such as "listed ok" is no longer the pass-through contract; ordering and
+        // the other fields are. "error" is one of the four categories the route must return unchanged.
         await SeedAsync(host,
-            Sample("local", newest, idleSince, reason: "listed ok"),
-            Sample("local", middle, idleSince, reason: "listed ok"),
+            Sample("local", newest, idleSince, reason: "error"),
+            Sample("local", middle, idleSince, reason: "error"),
             Sample("local", outside, idleSince, reason: "too old for the query"),
             Sample("grok-linux", newest, idleSince, reason: "other host"));
 
@@ -49,8 +52,8 @@ public sealed class HostOccupancySampleEndpointTests
         samples.Count.ShouldBe(2);
         Instant(samples[0], "sampledAt").ShouldBe(newest);
         Instant(samples[1], "sampledAt").ShouldBe(middle);
-        AssertPopulated(samples[0], "local", newest, idleSince, "listed ok");
-        AssertPopulated(samples[1], "local", middle, idleSince, "listed ok");
+        AssertPopulated(samples[0], "local", newest, idleSince, "error");
+        AssertPopulated(samples[1], "local", middle, idleSince, "error");
 
         using var posted = await host.Http.PostAsJsonAsync("/api/hosts/local/occupancy-samples", new { });
         posted.StatusCode.ShouldBe(HttpStatusCode.MethodNotAllowed);
@@ -157,6 +160,116 @@ public sealed class HostOccupancySampleEndpointTests
             DateTime.Parse(edge, null, System.Globalization.DateTimeStyles.AdjustToUniversal));
     }
 
+    [Test]
+    public async Task C1111_Legacy_inventory_reason_is_error_without_the_stored_text()
+    {
+        const string leaked = "runner down: token=super-secret-value";
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = new FakeTimeProvider(Now);
+        await using var host = await StartAsync(schema, clock);
+        var idleSince = Utc(9, 0);
+        await SeedAsync(host,
+            Sample("local", Utc(11, 50), idleSince, leaked, "unavailable"),
+            Sample("local", Utc(11, 40), idleSince, "unavailable ", "unavailable"),
+            Sample("local", Utc(11, 30), idleSince, "unavailable", "unavailable"),
+            Sample("local", Utc(11, 20), idleSince, "timeout", "unavailable"),
+            Sample("local", Utc(11, 10), idleSince, "error", "unavailable"),
+            Sample("local", Utc(11, 0), idleSince, "unavailable: phone-home", "unavailable"),
+            Sample("local", Utc(10, 50), idleSince, null, "listed"));
+
+        using var response = await host.Http.GetAsync("/api/hosts/local/occupancy-samples");
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var body = await response.Content.ReadAsStringAsync();
+        body.ShouldNotContain("super-secret-value");
+        body.ShouldNotContain("token=");
+        body.ShouldNotContain("runner down");
+        using var json = JsonDocument.Parse(body);
+        var samples = json.RootElement.GetProperty("samples").EnumerateArray().ToList();
+        samples.Count.ShouldBe(7);
+        Reason(samples[0]).ShouldBe("error");
+        Reason(samples[1]).ShouldBe("error");
+        Reason(samples[2]).ShouldBe("unavailable");
+        Reason(samples[3]).ShouldBe("timeout");
+        Reason(samples[4]).ShouldBe("error");
+        Reason(samples[5]).ShouldBe("unavailable: phone-home");
+        Reason(samples[6]).ShouldBeNull();
+    }
+
+    [Test]
+    public async Task C1111_Limit_one_and_exact_cap_apply()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = new FakeTimeProvider(Now);
+        await using var host = await StartAsync(schema, clock);
+        var idleSince = Utc(8, 0);
+        await SeedAsync(host,
+            Sample("local", Utc(11, 20), idleSince, "error"),
+            Sample("local", Utc(11, 40), idleSince, "timeout"));
+
+        using var one = await host.Http.GetAsync("/api/hosts/local/occupancy-samples?limit=1");
+        one.StatusCode.ShouldBe(HttpStatusCode.OK);
+        using var oneJson = JsonDocument.Parse(await one.Content.ReadAsStringAsync());
+        oneJson.RootElement.GetProperty("limit").GetInt32().ShouldBe(1);
+        var oneRows = oneJson.RootElement.GetProperty("samples").EnumerateArray().ToList();
+        oneRows.Count.ShouldBe(1);
+        Instant(oneRows[0], "sampledAt").ShouldBe(Utc(11, 40));
+
+        using var cap = await host.Http.GetAsync("/api/hosts/local/occupancy-samples?limit=2000");
+        cap.StatusCode.ShouldBe(HttpStatusCode.OK);
+        using var capJson = JsonDocument.Parse(await cap.Content.ReadAsStringAsync());
+        capJson.RootElement.GetProperty("limit").GetInt32().ShouldBe(2000);
+        var capRows = capJson.RootElement.GetProperty("samples").EnumerateArray().ToList();
+        capRows.Count.ShouldBe(2);
+        Instant(capRows[0], "sampledAt").ShouldBe(Utc(11, 40));
+        Instant(capRows[1], "sampledAt").ShouldBe(Utc(11, 20));
+    }
+
+    [Test]
+    public async Task C1111_Non_numeric_or_overflowing_limit_is_400_not_500()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = new FakeTimeProvider(Now);
+        await using var host = await StartAsync(schema, clock);
+
+        foreach (var limit in new[] { "nope", "2147483648", "999999999999" })
+        {
+            using var response = await host.Http.GetAsync(
+                "/api/hosts/local/occupancy-samples?limit=" + Uri.EscapeDataString(limit));
+            response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+            response.Content.Headers.ContentType?.MediaType.ShouldBe("application/problem+json");
+            var body = await response.Content.ReadAsStringAsync();
+            body.ShouldNotContain("An unexpected error occurred.");
+            body.ShouldNotContain("limit_invalid");
+            using var json = JsonDocument.Parse(body);
+            json.RootElement.GetProperty("status").GetInt32().ShouldBe(400);
+        }
+    }
+
+    [Test]
+    public async Task C1111_Reversed_window_is_200_with_no_rows()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = new FakeTimeProvider(Now);
+        await using var host = await StartAsync(schema, clock);
+        var rowAt = Utc(11, 0);
+        await SeedAsync(host, Sample("local", rowAt, Utc(8, 0), "error"));
+
+        var from = Utc(11, 30);
+        var to = rowAt;
+        using var response = await host.Http.GetAsync(
+            "/api/hosts/local/occupancy-samples?from=" + Uri.EscapeDataString(from.ToString("o"))
+            + "&to=" + Uri.EscapeDataString(to.ToString("o")));
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var body = await response.Content.ReadAsStringAsync();
+        body.ShouldNotContain("An unexpected error occurred.");
+        body.ShouldNotContain("window_invalid");
+        using var json = JsonDocument.Parse(body);
+        json.RootElement.GetProperty("samples").GetArrayLength().ShouldBe(0);
+        Instant(json.RootElement, "from").ShouldBe(from);
+        Instant(json.RootElement, "to").ShouldBe(to);
+        json.RootElement.GetProperty("limit").GetInt32().ShouldBe(500);
+    }
+
     private static Task<PhoneHomeTestHost> StartAsync(IsolatedTestSchema schema, FakeTimeProvider clock) =>
         PhoneHomeTestHost.StartAsync(clock: clock, connectionString: schema.ConnectionString,
             configureServices: services =>
@@ -178,13 +291,14 @@ public sealed class HostOccupancySampleEndpointTests
         await db.SaveChangesAsync();
     }
 
-    private static HostOccupancySample Sample(string hostId, DateTime sampledAt, DateTime idleSince, string reason) =>
+    private static HostOccupancySample Sample(
+        string hostId, DateTime sampledAt, DateTime idleSince, string? reason, string state = "listed") =>
         new()
         {
             Id = Guid.NewGuid(),
             HostId = hostId,
             SampledAt = sampledAt,
-            InventoryState = "listed",
+            InventoryState = state,
             InventoryReason = reason,
             InFlight = 4,
             DispatchedWorking = 1,
@@ -217,6 +331,13 @@ public sealed class HostOccupancySampleEndpointTests
         row.GetProperty("effectiveLimit").GetInt32().ShouldBe(10);
         row.GetProperty("declaredCapacity").GetInt32().ShouldBe(6);
         Instant(row, "oldestIdleSince").ShouldBe(idleSince);
+    }
+
+    private static string? Reason(JsonElement row)
+    {
+        if (!row.TryGetProperty("inventoryReason", out var reason) || reason.ValueKind == JsonValueKind.Null)
+            return null;
+        return reason.GetString();
     }
 
     private static DateTime Instant(JsonElement row, string name) =>
