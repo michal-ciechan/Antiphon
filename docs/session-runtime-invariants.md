@@ -15,6 +15,22 @@ Cancellation retains its explicit requested stop; its post-commit hook only reco
 Unsupported peers, Working, unknown evidence and pending delivery never fall back to force.
 The existing job still reconciles legacy intents and attention while automatic release is off.
 
+CARD-1065 S4b adds runner operation 37 (`workspaceRepositoryIdentityV1`) and
+`POST /sessions/{id}/workspace-repository-identity`. The identity read requires
+`terminalSeatReleaseV1`, runs under the session launch gate, and fences the retained
+checkout and accepted generation before/after read-only Git. Only a Read answer has
+identity evidence; its endpoint repository is normalized and credential-free.
+
+Typed source receipts use `ParkVersion = 2` and `workspaceParkSourceModesV1`; peers
+never downgrade or drop the receipt. Published requires a real remote SHA;
+NoSourceChanges requires a null remote SHA and clean HEAD equal to the baseline.
+The desktop verifier uses the session's retained checkout and never pushes. The
+phone-home verifier keeps its strict owned-mirror policy. Live, exited and absent
+release paths all recheck source. Confirmed slot removal retains the checkout with
+the runner store and accepted generation in `SessionLogPath/released-checkouts/`;
+an absent version-2 release after restart requires that record. Missing legacy
+records fail closed. These contracts add no automatic parking caller or enablement.
+
 CARD-0519 S10: a terminal session status alone does not close outbound recovery
 windows. The optional transcript snapshot `TerminalComplete` is reader-owned EOF
 evidence after the existing child-exit grace, with no pending partial line,
