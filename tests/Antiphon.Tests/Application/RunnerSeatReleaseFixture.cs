@@ -192,6 +192,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                             new TaskParkPublicationTests.ParkGit(sp.GetRequiredService<IRepositoryMutationLease>()),
                             sp.GetRequiredService<IRepositoryMutationLease>(), sp.GetRequiredService<IWorkspaceReservationJournal>())
                         { Clock = clock, LeaseBusyObserved = () => wire.LeaseBusyObserved?.Invoke() });
+                        services.AddScoped<IRemoteSettlementSync>(sp => sp.GetRequiredService<RemoteWorkspaceService>());
                         services.AddScoped(sp => new TaskCompletionProgressService(sp.GetRequiredService<ITaskProgressGit>(),
                             clock: clock, remoteSync: sp.GetRequiredService<RemoteWorkspaceService>()));
                     }

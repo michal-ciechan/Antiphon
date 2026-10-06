@@ -369,6 +369,11 @@ public sealed class TaskParkPublicationTests
         internal TaskParkPublicationService Service(AppDbContext db) => new(db, new(Git, Leases), Directory,
             Reservations, TimeProvider.System, Options.Create(Fixture.Options))
             { BeforeReceiptSaveAsync = BeforeReceiptSave is null ? null : (proof, _) => BeforeReceiptSave(proof) };
+        public async Task RestartAsync()
+        {
+            await Fixture.RestartAsync();
+            Reservations = new WorkspaceReservationJournal(Fixture.Services.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System);
+        }
         public async Task<TaskParkPublicationResult> PrepareAsync()
         { await using var db = Fixture.Db(); return await Service(db).PrepareAsync(ParkId, default); }
         public async Task<TaskParkPublicationResult> VerifyAsync()
