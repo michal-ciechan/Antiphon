@@ -186,14 +186,11 @@ public partial class AgentTaskPipelineStatusTests
         try
         {
             preparer.TryBegin(pushing.Id, "server2").ShouldBeTrue();
-            var pushingSeen = DateTime.UtcNow + TimeSpan.FromSeconds(15);
-            while (DateTime.UtcNow < pushingSeen
-                && preparer.Progress(pushing.Id)?.Phase != RemotePrepPhase.Pushing)
-                await Task.Delay(20);
+            // InFlight.Phase defaults to Pushing before the gate is acquired. The blocked push
+            // call is the signal that this task holds the turn.
+            await git.PushEntered.Task.WaitAsync(TimeSpan.FromSeconds(15));
             preparer.Progress(pushing.Id)?.Phase.ShouldBe(RemotePrepPhase.Pushing);
 
-            // The waiter records BehindTaskId only after its own database read, so that
-            // observation has its own 15s bound. One shared clock let the phase wait consume it.
             preparer.TryBegin(waiting.Id, "server2").ShouldBeTrue();
             var waiterSeen = DateTime.UtcNow + TimeSpan.FromSeconds(15);
             while (DateTime.UtcNow < waiterSeen
@@ -237,6 +234,9 @@ public partial class AgentTaskPipelineStatusTests
     /// <summary>Push blocks until <see cref="PushHold"/> completes. The reads before it succeed.</summary>
     private sealed class BlockingPushGit : ILandingGit
     {
+        public TaskCompletionSource PushEntered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public TaskCompletionSource PushHold { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -245,6 +245,7 @@ public partial class AgentTaskPipelineStatusTests
         {
             if (arguments.Count > 0 && arguments[0] == "push")
             {
+                PushEntered.TrySetResult();
                 await PushHold.Task.WaitAsync(ct);
                 return new LandingGitResult(1, "", "held");
             }
