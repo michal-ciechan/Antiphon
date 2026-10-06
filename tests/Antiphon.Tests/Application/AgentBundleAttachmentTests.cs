@@ -400,6 +400,24 @@ public class AgentBundleAttachmentTests
         }
     }
 
+    [Test]
+    public void C1065_BlockedSeatBundleAgreesWithTheBrief()
+    {
+        var basics = InstructionBundles.TextOf(InstructionBundles.DelegateBasics);
+        basics.ShouldContain("Commit and push all assigned work before reporting blocked.", customMessage: "c1065-push-before-blocked");
+        basics.ShouldContain("unless this task is SourceLanding, ReadOnly, or CommitOnSettle Never", customMessage: "c1065-push-exclusion");
+        basics.ShouldContain("A parked session may be released and resumed from that pushed branch.", customMessage: "c1065-resume-branch");
+        basics.ShouldContain("Parking will not autosave", customMessage: "c1065-no-autosave");
+
+        var orchestrator = InstructionBundles.TextOf(InstructionBundles.Orchestrator);
+        orchestrator.ShouldContain("A Blocked child holds its seat until it is answered or cancelled.", customMessage: "c1065-blocked-child");
+        orchestrator.ShouldContain("count orphan=true", customMessage: "c1065-orphan-count");
+
+        InstructionBundles.TextOf(InstructionBundles.StagePlan).ShouldContain(
+            "what releases a session that waits for input, and after how long",
+            customMessage: "c1065-release-question");
+    }
+
     private static Task<AgentLaunchComposition> ComposeAsync(AppDbContext db, Agent agent)
     {
         var registry = new AgentRegistry(new OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
