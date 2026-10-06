@@ -120,9 +120,9 @@ public sealed partial class AgentTaskLandReceiptTests
         var select = sql.Split("FROM", 2, StringSplitOptions.None)[0];
         select.ShouldContain("\"Sequence\"");
         select.ShouldContain("\"Text\"");
-        select.ShouldNotContain("\"ToolInput\"", sql);
-        select.ShouldNotContain("\"ApiErrorTimeZoneId\"", sql);
-        select.ShouldNotContain("\"ModelCalls\"", sql);
+        select.Contains("\"ToolInput\"", StringComparison.Ordinal).ShouldBeFalse(sql);
+        select.Contains("\"ApiErrorTimeZoneId\"", StringComparison.Ordinal).ShouldBeFalse(sql);
+        select.Contains("\"ModelCalls\"", StringComparison.Ordinal).ShouldBeFalse(sql);
         var reader = probe.Readers.ShouldHaveSingleItem();
         reader.Rows.ShouldBe(1, $"the first candidate is the receipt; the scan read past it toward {candidates} rows");
     }
