@@ -396,6 +396,14 @@ or one task at about 255 minutes. Mutation: 16 method-scoped PCs at about 8 minu
 
 ## Publication and handoff
 
-Plan artifact: this file. Importer validation (tool-only, no tests) is recorded in the commit
-message and in the report. Next stage: **land** per the brief; the Code brief points at
+Plan artifact: this file. Next stage: **land** per the brief; the Code brief points at
 `### Checkpoints` of this file at its landed SHA and runs the four slices in order.
+
+Importer validation (tool-only, no tests): `tools/Antiphon.Checkpoints` was built through
+`scripts/build-slot.ps1 -Label c1079-plan-import` (lease granted, waited 0 s, 4.17 s, 0 errors,
+the one pre-existing CS8602 warning in `TaskOwnerGuard.cs`) to the isolated output
+`bin-c1079-plan/`, which was removed afterwards. `import --plan <this file>` exited 0 with
+`imported 8 rows` and no warnings: four builds `bin-c1079-s1` to `bin-c1079-s4`; CP-1 expects
+`SeatOccupancyProjectionTests`, `AttentionSettingsValidatorTests`, `SeatDesktopJoinTests` with
+`minExecuted: 19`; CP-2/CP-4/CP-6 reuse their slice build; CP-8 imports as a serial command
+row. No test or build driver other than that tool build ran during planning.
