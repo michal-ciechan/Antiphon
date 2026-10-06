@@ -396,9 +396,18 @@ public sealed class BlockedTaskParkDeliveryTests
             await SettleReviewAsync(f, (await f.TaskAsync()).AgentSessionId!.Value,
                 world.Report(evidence: shape != "missing", sha: sha));
             var rows = await OutcomesAsync(f);
-            rows.ShouldAllBe(o => o.ReviewedSourceSha != world.Sha, shape);
+            rows.ShouldAllBe(o => o.ReviewedSourceSha == null, shape);
             rows.ShouldNotContain(o => o.SupersedesId == old.Id && o.ReviewedSourceSha == world.Sha, shape);
-            (await f.TaskAsync()).Status.ShouldNotBe(AgentTaskStatus.Succeeded, shape);
+            var settled = await f.TaskAsync();
+            settled.NextStage.ShouldBe(PipelineHandoffKind.Decide, shape);
+            await using var notesDb = f.Db();
+            var snapshot = (await notesDb.AgentTaskLandNotifications.AsNoTracking()
+                .Where(n => n.TaskId == f.TaskId).ToListAsync())
+                .Select(n => TaskCompletionNotification.TryReadSnapshot(n.CompletionSnapshotJson))
+                .Single(s => s is { Status: AgentTaskStatus.Succeeded });
+            snapshot!.NextStage.ShouldBe("decide", shape);
+            snapshot.NoteHeader.ShouldNotContain("reviewed-sha=" + world.Sha, Case.Sensitive, shape);
+            snapshot.NoteHeader.ShouldNotContain("next=land", Case.Sensitive, shape);
         }
     }
 
@@ -582,7 +591,8 @@ public sealed class BlockedTaskParkDeliveryTests
 
         public static async Task<ReviewWorld> StartAsync(bool busyCaller)
         {
-            var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true, syncRecovery: true);
+            var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true, syncRecovery: true,
+                completionSingleWriteBytes: 86_400);
             try
             {
                 await f.CreateSourceAsync(remote: true);
