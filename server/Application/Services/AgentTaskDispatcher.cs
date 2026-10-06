@@ -4511,11 +4511,29 @@ public sealed class AgentTaskDispatcher
         return recovered;
     }
 
-    private Task EnqueueReleasedSeatAnswerBriefAsync(AgentTask task, AgentSession session, CancellationToken ct) =>
-        _queue.EnqueueAsync(session.Id, FitBriefForSession(task, session), MessageSendMode.WhenIdle, ct,
+    private async Task EnqueueReleasedSeatAnswerBriefAsync(AgentTask task, AgentSession session, CancellationToken ct)
+    {
+        string? parkedSha = null;
+        string? parkedRef = null;
+        if (task.ReleasedSeatAnswerReleaseId is Guid releaseId)
+        {
+            var parked = await _db.AgentTaskParks.AsNoTracking()
+                .Where(p => p.TaskId == task.Id && p.Attempt == task.Attempt - 1
+                    && p.RunnerSeatReleaseId == releaseId && p.PublicationReceiptId != null
+                    && p.SourceSha != null && p.FullRef != null)
+                .Select(p => new { p.SourceSha, p.FullRef })
+                .FirstOrDefaultAsync(ct);
+            parkedSha = parked?.SourceSha;
+            parkedRef = parked?.FullRef;
+        }
+
+        await _queue.EnqueueAsync(session.Id,
+            FitBriefForSession(task, session, parkedSourceSha: parkedSha, parkedFullRef: parkedRef),
+            MessageSendMode.WhenIdle, ct,
             QueuedMessageOrigin.Delegation, conversationKey: $"released-seat-answer:{task.ReleasedSeatAnswerId:D}",
             sourceTaskId: task.Id, contentDigest: ReleasedAnswerDeliveryKey(task, session),
             executionDeadlineAt: task.ExecutionDeadlineAt, executionTaskId: task.Id);
+    }
 
     private async Task<IDisposable?> AcquireReleasedAnswerClaimAsync(AgentTask task, CancellationToken ct)
     {
@@ -4555,6 +4573,14 @@ public sealed class AgentTaskDispatcher
             : null;
         if (needsLease && repositoryLease is null)
             return DispatchOneResult.HeldOnLease;
+
+        if (await RefuseParkedResumeAsync(task, needsLease, ct) is { } parkResume)
+        {
+            if (parkResume == ParkResumeHeld)
+                return DispatchOneResult.HeldOnLease;
+            await RemoteWarnAsync(task, UtcNow(), parkResume, ct);
+            return DispatchOneResult.NotClaimed;
+        }
 
         // Released-seat continuations claim under the source recipient's gate, in the same
         // order as answer/release (gate, then task row). New-session input uses a different gate.
@@ -5092,6 +5118,18 @@ public sealed class AgentTaskDispatcher
 
             if (_landBoundary is not null)
                 await _landBoundary.ReachedAsync("dispatch-warning-claim-before-commit", claimed.Id, finalDispatch.Id, ct);
+
+            if (claimed.ReleasedSeatAnswerId is not null)
+            {
+                var resumeSessionId = session.Id;
+                await _db.AgentTaskParks.Where(p => p.TaskId == claimed.Id
+                        && p.Attempt == claimed.Attempt - 1
+                        && p.RunnerSeatReleaseId == claimed.ReleasedSeatAnswerReleaseId
+                        && p.PublicationReceiptId != null
+                        && p.State == AgentTaskParkState.Resumed
+                        && p.ResumeSessionId == null)
+                    .ExecuteUpdateAsync(s => s.SetProperty(p => p.ResumeSessionId, resumeSessionId), ct);
+            }
 
             await _db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
@@ -5703,11 +5741,14 @@ public sealed class AgentTaskDispatcher
         AgentKind agentKind = AgentKind.ClaudeCode,
         bool refocus = false,
         string? runnerCwd = null,
-        Action<PhoneHomeInputSpill>? stageRemoteSpill = null)
+        Action<PhoneHomeInputSpill>? stageRemoteSpill = null,
+        string? parkedSourceSha = null,
+        string? parkedFullRef = null)
     {
         var limits = (ceilings ?? settings.CeilingsFor(PtyBackend.InboxConhost, "no pty profile — assuming the default backend"))
             .ForAgentKind(agentKind);
-        var brief = DelegationReportFormatter.BuildBrief(task, settings, limits.ReplyInlineMaxChars, refocus);
+        var brief = DelegationReportFormatter.BuildBrief(
+            task, settings, limits.ReplyInlineMaxChars, refocus, parkedSourceSha, parkedFullRef);
         if (SpecialistInputPolicy.Read(task.SpecialistInputPolicyJson) is { } inputPolicy)
         {
             if (!AgentTaskRoles.CarriesFullInlineInput(task.Role) || inputPolicy.TaskId != task.Id || refocus)
@@ -5789,14 +5830,17 @@ public sealed class AgentTaskDispatcher
                 PtyBackend.InboxConhost,
                 "runner-bound session is delivered under the inbox single-write ceiling; the desktop pty is not this session");
 
-    private string FitBriefForSession(AgentTask task, AgentSession session, bool refocus = false) =>
+    private string FitBriefForSession(AgentTask task, AgentSession session, bool refocus = false,
+        string? parkedSourceSha = null, string? parkedFullRef = null) =>
         FitBriefForTyping(
             task, _settings, CeilingsForBrief(_ptyProfile?.Ceilings, session.RunnerCwd, _settings),
             _logger, session.AgentKind, refocus,
             runnerCwd: session.RunnerCwd,
             stageRemoteSpill: string.IsNullOrWhiteSpace(session.RunnerCwd)
                 ? null
-                : spill => _queue.StageRemoteSpill(session.Id, session.RunnerCwd, spill));
+                : spill => _queue.StageRemoteSpill(session.Id, session.RunnerCwd, spill),
+            parkedSourceSha: parkedSourceSha,
+            parkedFullRef: parkedFullRef);
 
     /// <summary>
     /// Which program a cold launch will start (CARD-0140 S2). For a pinned standing agent with a
@@ -6216,6 +6260,34 @@ public sealed class AgentTaskDispatcher
         // event while the claim still holds the task row, and that insert waits out the command
         // timeout (the serial tick then misses every later task).
         return null;
+    }
+
+    private const string ParkResumeHeld = "park_resume_held";
+
+    /// <summary>
+    /// Git for a parked continuation runs before the answer gate and the claim transaction.
+    /// A prepared mirror skips the ordinary dispatch lease, so this acquires a short one
+    /// around the inspection only. No park row is the historical release path.
+    /// </summary>
+    private async Task<string?> RefuseParkedResumeAsync(AgentTask task, bool needsLease, CancellationToken ct)
+    {
+        if (task.ReleasedSeatAnswerId is null || _remoteWorkspace is null) return null;
+        var park = await _db.AgentTaskParks.AsNoTracking().FirstOrDefaultAsync(p =>
+            p.TaskId == task.Id && p.Attempt == task.Attempt - 1
+            && p.RunnerSeatReleaseId == task.ReleasedSeatAnswerReleaseId
+            && (p.State == AgentTaskParkState.Parked || p.State == AgentTaskParkState.ResumePending
+                || p.State == AgentTaskParkState.Resumed), ct);
+        if (park is null) return null;
+
+        var holdParkLease = !needsLease && _repositoryLeases is not null && task.RepoPath is not null;
+        await using var parkLease = holdParkLease
+            ? await _repositoryLeases!.TryAcquireAsync(
+                task.RepoPath!, new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.Dispatch), ct)
+            : null;
+        if (holdParkLease && parkLease is null) return ParkResumeHeld;
+        if (park.PublicationReceiptId is null) return "park_resume_refused:park_receipt_missing";
+        var reason = await _remoteWorkspace.RefuseParkResumeAsync(task, park, ct);
+        return reason is null ? null : "park_resume_refused:" + reason;
     }
 
     /// <summary>

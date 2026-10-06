@@ -158,7 +158,8 @@ public static class DelegationReportFormatter
     /// built from this method, so the line rides along for free).
     /// </param>
     public static string BuildBrief(
-        AgentTask task, DelegationSettings settings, int? replyInlineMaxChars = null, bool refocus = false)
+        AgentTask task, DelegationSettings settings, int? replyInlineMaxChars = null, bool refocus = false,
+        string? parkedSourceSha = null, string? parkedFullRef = null)
     {
         var sb = new StringBuilder();
         sb.Append(TaskMarker(task.Id))
@@ -235,6 +236,10 @@ public static class DelegationReportFormatter
 
         if (BuildHandoff(task) is { } handoff)
             sb.AppendLine(handoff).AppendLine();
+
+        if (!string.IsNullOrWhiteSpace(parkedSourceSha) && !string.IsNullOrWhiteSpace(parkedFullRef))
+            sb.Append("Parked source SHA: ").Append(parkedSourceSha)
+                .Append("; full ref: ").Append(parkedFullRef).AppendLine(".");
 
         if (task.ReleasedSeatAnswerId is not null && task.ReleasedSeatAnswerTargetAttempt == task.Attempt
             && task.ReleasedSeatAnswer is { } answer)
