@@ -54,6 +54,7 @@ public static class AgentTaskEndpoints
             DateTime? since,
             string? status,
             bool? includeChecks,
+            bool? landPending,
             Guid? projectId,
             Guid? boardId,
             string? unscoped,
@@ -67,6 +68,7 @@ public static class AgentTaskEndpoints
                 includeChecks ?? false,
                 since,
                 AgentTaskScope.Parse(projectId, boardId, unscoped),
+                landPending ?? false,
                 ct));
         });
 

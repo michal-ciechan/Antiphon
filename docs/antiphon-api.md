@@ -295,7 +295,10 @@ GET    /api/agent-tasks                      list envelope `{ scope, items, excl
                                              rootId, status (comma list of AgentTaskStatus),
                                              includeChecks (bool, default false; hides Check,
                                              Distill, and Diagnose specialist rows), since (ISO
-                                             instant), projectId, boardId, unscoped
+                                             instant), landPending (bool, default false; true
+                                             requires LandRequestedAt or LandStartedAt non-null,
+                                             composed with status/since/includeChecks and scope;
+                                             exclusions count only filtered rows), projectId, boardId, unscoped
                                              (`exclude` default when a scope id is present,
                                              `include`, `only`). `since` keeps every non-settled
                                              row regardless of age and trims only settled rows by

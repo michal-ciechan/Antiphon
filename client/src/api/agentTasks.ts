@@ -706,6 +706,7 @@ export const agentTaskKeys = {
       includeChecks,
       options.since ?? null,
       options.status?.join(',') ?? null,
+      options.landPending ?? false,
       ...scopeCacheKey(options),
     ] as const,
   summary: (options: AgentTaskScopeOptions = {}) =>
@@ -729,6 +730,8 @@ export interface AgentTaskListOptions extends AgentTaskScopeOptions {
   /** `default` / `active` resolve when each request runs, keeping the window rolling without cache-key churn. */
   since?: string | 'default' | 'active'
   status?: AgentTaskStatus[]
+  /** Select pending landing requests, composed with the other list filters. */
+  landPending?: boolean
 }
 
 function appendScope(query: URLSearchParams, options: AgentTaskScopeOptions) {
@@ -740,6 +743,7 @@ function appendScope(query: URLSearchParams, options: AgentTaskScopeOptions) {
 function queryForAgentTasks(includeChecks: boolean, options: AgentTaskListOptions): string {
   const query = new URLSearchParams()
   if (includeChecks) query.set('includeChecks', 'true')
+  if (options.landPending) query.set('landPending', 'true')
   if (options.since) {
     const since =
       options.since === 'default'

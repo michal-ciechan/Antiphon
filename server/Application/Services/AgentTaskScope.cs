@@ -64,6 +64,7 @@ public static class AgentTaskScope
         "since",
         "status",
         "includeChecks",
+        "landPending",
         "projectId",
         "boardId",
         "unscoped",
