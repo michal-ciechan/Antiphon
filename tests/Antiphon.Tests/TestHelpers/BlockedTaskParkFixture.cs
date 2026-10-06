@@ -26,6 +26,7 @@ internal sealed class BlockedTaskParkFixture : IAsyncDisposable
     public BlockedTaskParkingOptions Options { get; } = new();
     public DateTime Now { get; } = new(2026, 10, 5, 0, 0, 0, DateTimeKind.Utc);
     public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(_schema.ConnectionString));
+    internal IServiceProvider Services => _harness.Provider;
 
     private BlockedTaskParkFixture(IsolatedTestSchema schema) => _schema = schema;
 
