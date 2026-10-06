@@ -102,6 +102,7 @@ public enum PhoneHomeOperation
     ObserveTerminalSeat = 34,
     ReleaseTerminalSeat = 35,
     WorkspacePark = 36,
+    WorkspaceRepositoryIdentity = 37,
 }
 
 /// <summary>Exactly one prepare or verify payload; unknown versions fail closed.</summary>

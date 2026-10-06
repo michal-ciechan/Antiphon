@@ -6,6 +6,8 @@ namespace Antiphon.SessionRunner;
 
 public interface IPhoneHomeRuntimeSurface
 {
+    Task<WorkspaceRepositoryIdentityResult> ReadWorkspaceRepositoryIdentityAsync(WorkspaceRepositoryIdentityRequest request, CancellationToken ct) =>
+        Task.FromResult(new WorkspaceRepositoryIdentityResult(WorkspaceRepositoryIdentityOutcome.Held, "identity_unsupported"));
     Task<WorkspaceParkResult> ParkWorkspaceAsync(WorkspaceParkCommand request, CancellationToken ct) =>
         Task.FromResult(new WorkspaceParkResult(WorkspaceParkOutcome.Held, "park_unsupported"));
     RunnerCapabilitiesDto Capabilities();
@@ -318,6 +320,7 @@ public sealed class PhoneHomeCommandDispatcher
                     return Result(request, await _runtime.KillGenerationAsync(ReadSessionId(request), body.ExpectedAcceptedStartedAt, ct));
                 }),
                 PhoneHomeOperation.ObserveTerminalSeat => Result(request, await ObserveTerminalSeatAsync(request, ct)),
+                PhoneHomeOperation.WorkspaceRepositoryIdentity => await ReadWorkspaceRepositoryIdentityAsync(request, ct),
                 PhoneHomeOperation.WorkspacePark => await MutateAsync(request, async () =>
                 {
                     var body = request.Payload?.Deserialize<WorkspaceParkCommand>(PhoneHomeFraming.Json)
@@ -332,8 +335,7 @@ public sealed class PhoneHomeCommandDispatcher
                         ?? throw new ArgumentException("Terminal seat release body is required.");
                     ArgumentNullException.ThrowIfNull(body.Release);
                     ArgumentNullException.ThrowIfNull(body.Release.Observation);
-                    if (body.Release.ParkVersion != 1 || body.Release.Publication is not null
-                        && !WorkspaceParkCommand.Supported(_runtime.Capabilities()))
+                    if (!body.Release.Supported(_runtime.Capabilities()))
                         return Result(request, new TerminalSeatReleaseResult(body.SessionId, body.Release.ActionId,
                             TerminalSeatReleaseOutcome.Unsupported, null));
                     return Result(request, await _runtime.ReleaseTerminalSeatAsync(body.SessionId, body.Release, ct));
@@ -710,6 +712,15 @@ public sealed class PhoneHomeCommandDispatcher
     /// CARD-0604 D-15/G-22. The allowed cwd, or a single-segment mirror directly under its
     /// <c>worktrees/</c> directory. Traversal, absolute escapes and sibling prefixes are refused.
     /// </summary>
+    private async Task<PhoneHomeFrame> ReadWorkspaceRepositoryIdentityAsync(PhoneHomeFrame request, CancellationToken ct)
+    {
+        var body = request.Payload?.Deserialize<WorkspaceRepositoryIdentityRequest>(PhoneHomeFraming.Json)
+            ?? throw new ArgumentException("Workspace repository identity body is required.");
+        if (body.Version != 1 || !WorkspaceRepositoryIdentityRequest.Supported(_runtime.Capabilities()))
+            return Result(request, new WorkspaceRepositoryIdentityResult(WorkspaceRepositoryIdentityOutcome.Held, "identity_unsupported"));
+        return Result(request, await _runtime.ReadWorkspaceRepositoryIdentityAsync(body, ct));
+    }
+
     internal bool IsAdmittedCwd(string? cwd)
     {
         if (string.IsNullOrWhiteSpace(cwd))

@@ -16,6 +16,18 @@ namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
 public sealed class SessionRunnerHttpClient : ISessionRunnerClient
 {
+    public async Task<WorkspaceRepositoryIdentityResult> ReadWorkspaceRepositoryIdentityAsync(WorkspaceRepositoryIdentityRequest request, CancellationToken ct)
+    {
+        if (request.Version != 1 || !WorkspaceRepositoryIdentityRequest.Supported(await GetCapabilitiesAsync(ct)))
+            return new(WorkspaceRepositoryIdentityOutcome.Held, "identity_unsupported");
+        using var response = await _httpClient.PostAsJsonAsync(
+            $"sessions/{request.SessionId}/workspace-repository-identity", request, JsonOptions, ct);
+        if (response.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.NotImplemented)
+            return new(WorkspaceRepositoryIdentityOutcome.Held, "identity_unsupported");
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<WorkspaceRepositoryIdentityResult>(JsonOptions, ct)
+            ?? new(WorkspaceRepositoryIdentityOutcome.Unknown, "identity_inspection_unavailable");
+    }
     public async Task<WorkspaceParkResult> ParkWorkspaceAsync(WorkspaceParkCommand request, CancellationToken ct)
     {
         if (request.Version != 1 || !WorkspaceParkCommand.Supported(await GetCapabilitiesAsync(ct)))
@@ -43,8 +55,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     public async Task<TerminalSeatReleaseResult> ReleaseTerminalSeatAsync(
         Guid sessionId, TerminalSeatReleaseRequest request, CancellationToken ct)
     {
-        if (request.ParkVersion != 1 || request.Publication is not null
-            && !WorkspaceParkCommand.Supported(await GetCapabilitiesAsync(ct)))
+        if ((request.ParkVersion != 1 || request.Publication is not null)
+            && !request.Supported(await GetCapabilitiesAsync(ct)))
             return new(sessionId, request.ActionId, TerminalSeatReleaseOutcome.Unsupported, null);
         using var response = await _httpClient.PostAsJsonAsync(
             $"sessions/{sessionId}/release-terminal-seat", request, JsonOptions, ct);

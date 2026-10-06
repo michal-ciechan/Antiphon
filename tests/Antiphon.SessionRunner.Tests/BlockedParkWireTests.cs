@@ -50,7 +50,7 @@ public sealed class BlockedParkWireTests
             await using var wire = await SeatWire.StartAsync(world, surface, phoneHome);
             world.Child.Kill = _ => { world.Child.Exit(); return Task.FromResult(true); };
             var command = new WorkspaceParkCommand(world.Tail.SessionId, Prepare: release.Publication!.Request,
-                Version: missing == "version" ? 2 : 1);
+                Version: missing == "version" ? 3 : 1);
             var published = await wire.ParkAsync(command);
             if (missing != "none")
             {
@@ -862,7 +862,7 @@ public sealed class BlockedParkWireTests
         world.AssertRetained();
     }
 
-    private class LegacySurface(SessionRunnerRuntime runtime) : IPhoneHomeRuntimeSurface
+    internal class LegacySurface(SessionRunnerRuntime runtime) : IPhoneHomeRuntimeSurface
     {
         protected IPhoneHomeRuntimeSurface Adapter { get; } = new PhoneHomeRuntimeAdapter(runtime, RunnerBuildIdentity.Resolve());
         public int ForceCalls { get; private set; }
@@ -886,7 +886,7 @@ public sealed class BlockedParkWireTests
         public int OwnedSessionCount => Adapter.OwnedSessionCount;
     }
 
-    private sealed class CurrentSurface(SessionRunnerRuntime runtime) : LegacySurface(runtime), IPhoneHomeRuntimeSurface
+    internal sealed class CurrentSurface(SessionRunnerRuntime runtime) : LegacySurface(runtime), IPhoneHomeRuntimeSurface
     {
         public override RunnerCapabilitiesDto Capabilities() => Adapter.Capabilities() with
         { Features = Adapter.Capabilities().Features!.Where(x => x != MissingCapability).ToArray() };
@@ -896,7 +896,10 @@ public sealed class BlockedParkWireTests
         public TerminalSeatReleaseRequest? ReleaseReceived { get; private set; }
         public int ParkCalls { get; private set; }
         public int ReleaseCalls { get; private set; }
+        public int IdentityCalls { get; private set; }
         public string? MissingCapability { get; set; }
+        public Task<WorkspaceRepositoryIdentityResult> ReadWorkspaceRepositoryIdentityAsync(WorkspaceRepositoryIdentityRequest request, CancellationToken ct)
+        { IdentityCalls++; return Adapter.ReadWorkspaceRepositoryIdentityAsync(request, ct); }
         public Task<WorkspaceParkResult> ParkWorkspaceAsync(WorkspaceParkCommand request, CancellationToken ct)
         { ParkCalls++; Received = request; return Adapter.ParkWorkspaceAsync(request, ct); }
         public Task<TerminalSeatReleaseResult> ReleaseTerminalSeatAsync(Guid id, TerminalSeatReleaseRequest request, CancellationToken ct)
@@ -952,6 +955,10 @@ public sealed class BlockedParkWireTests
         public async Task<WorkspaceParkResult> ParkAsync(WorkspaceParkCommand request) => phoneHome
             ? ReadResult<WorkspaceParkResult>(await DispatchAsync(PhoneHomeOperation.WorkspacePark, request))
             : await PostAsync<WorkspaceParkResult>("workspace-park", request);
+
+        public async Task<WorkspaceRepositoryIdentityResult> IdentityAsync(WorkspaceRepositoryIdentityRequest request) => phoneHome
+            ? ReadResult<WorkspaceRepositoryIdentityResult>(await DispatchAsync(PhoneHomeOperation.WorkspaceRepositoryIdentity, request))
+            : await PostAsync<WorkspaceRepositoryIdentityResult>("workspace-repository-identity", request);
 
         public async Task<TerminalSeatObservation> ObserveAsync() => phoneHome
             ? ReadResult<TerminalSeatObservation>(await DispatchAsync(PhoneHomeOperation.ObserveTerminalSeat,
@@ -1060,6 +1067,17 @@ public sealed class BlockedParkWireTests
                 return Process.Start(psi);
             }, TimeSpan.FromSeconds(15))) { BoundaryAsync = barrier };
 
+        public RunnerWorkspaceParkService LocalVerifier() => new()
+        {
+            StartProcess = psi =>
+            {
+                Isolate(psi);
+                Commands.Add(psi.ArgumentList.ToArray());
+                BeforeStart?.Invoke(psi);
+                return Process.Start(psi);
+            }
+        };
+
         public async Task<string> CommitAsync(string file, string content)
         {
             await File.WriteAllTextAsync(Path.Combine(Mirror, file), content);
@@ -1142,9 +1160,12 @@ public sealed class BlockedParkWireTests
         public SessionRunnerRuntime Runtime { get; private set; }
         public SessionRunnerRuntime.RunnerSession Session { get; private set; } = null!;
         public TerminalSeatObservationRequest Request { get; private set; } = null!;
+        public bool LocalLane { get; }
+        public Func<WorkspaceParkBoundary, CancellationToken, Task>? ParkBarrier { get; set; }
 
-        public SeatWorld(string provider)
+        public SeatWorld(string provider, bool localLane = false)
         {
+            LocalLane = localLane;
             Tail = new TailWorld(provider,
                 (path, how) => Session?.RecordTranscriptBinding(path, how),
                 () => Session?.RecordTranscriptUnbinding());
@@ -1169,14 +1190,21 @@ public sealed class BlockedParkWireTests
             Runtime = CreateRuntime();
         }
 
-        private SessionRunnerRuntime CreateRuntime() => new(Options.Create(_settings),
-            NullLogger<SessionRunnerRuntime>.Instance, timeProvider: Clock, workspaceParkService: Source?.Publisher());
+        private SessionRunnerRuntime CreateRuntime()
+        {
+            var runtime = new SessionRunnerRuntime(Options.Create(_settings),
+                NullLogger<SessionRunnerRuntime>.Instance, timeProvider: Clock,
+                workspaceParkService: LocalLane ? null : Source?.Publisher((b, ct) => ParkBarrier?.Invoke(b, ct) ?? Task.CompletedTask));
+            if (LocalLane && Source is not null) runtime.LocalWorkspaceVerifier = Source.LocalVerifier();
+            return runtime;
+        }
 
         private void Bind()
         {
             Session = new SessionRunnerRuntime.RunnerSession(Tail.SessionId, _settings,
                 new SessionRunnerEventHub(), NullLogger.Instance);
             Session.BindChildForTest(Child, Tail.Tailer, _generation);
+            Session.RetainCheckout(Source.Mirror);
             Runtime.Track(Session);
         }
 
@@ -1198,7 +1226,9 @@ public sealed class BlockedParkWireTests
                 ActionId = release.ActionId, SessionId = Tail.SessionId,
                 RunnerStoreId = Runtime.RunnerStoreId, AcceptedStartedAt = release.Observation.ExpectedAcceptedStartedAt
             }};
-            var result = await Runtime.ParkWorkspaceAsync(new(Tail.SessionId, Prepare: source), CancellationToken.None);
+            var result = LocalLane
+                ? await Source.Publisher().PrepareAsync(source, CancellationToken.None)
+                : await Runtime.ParkWorkspaceAsync(new(Tail.SessionId, Prepare: source), CancellationToken.None);
             result.Outcome.ShouldBe(WorkspaceParkOutcome.Published);
             return release with { Publication = result.Receipt.ShouldNotBeNull() };
         }
@@ -1343,10 +1373,10 @@ public sealed class BlockedParkWireTests
             Bind();
         }
 
-        public void AssertRetained(int expectedKills = 0)
+        public void AssertRetained(int expectedKills = 0, int expectedLive = 1)
         {
             Child.Kills.ShouldBe(expectedKills);
-            Runtime.LiveSessionCount.ShouldBe(1);
+            Runtime.LiveSessionCount.ShouldBe(expectedLive);
             Runtime.List().ShouldContain(s => s.SessionId == Tail.SessionId);
             File.Exists(_manifest).ShouldBeTrue("read-only qualification retains manifest custody");
             File.Exists(HerdrPaneSidecar.PathFor(_root, Tail.SessionId)).ShouldBeTrue();

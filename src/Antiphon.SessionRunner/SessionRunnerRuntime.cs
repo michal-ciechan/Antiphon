@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Channels;
 using Antiphon.Agents.Pty;
 using Antiphon.PtyHost.Client;
@@ -40,6 +41,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     private readonly SessionRunnerSettings _settings;
     private readonly RunnerWorkspaceParkService? _workspacePark;
     public bool SupportsWorkspacePark => _workspacePark is not null;
+    internal RunnerWorkspaceParkService? LocalWorkspaceVerifier { get; set; }
+    public bool SupportsWorkspaceSourceModes => _workspacePark is not null || LocalWorkspaceVerifier is not null;
     private readonly ShadowCopyStore _shadowStore;
     private readonly PtyHostLauncher _launcher;
     private readonly HerdrClient? _herdrClient;
@@ -183,6 +186,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         _workspacePark = workspaceParkService;
         if (_workspacePark is null && phoneHomeSettings?.Value is { Enabled: true } phoneHome)
             _workspacePark = new(new RunnerWorkspaceService(phoneHome.RepositoryPolicy(), phoneHome.AllowedCwd));
+        if (_workspacePark is null) LocalWorkspaceVerifier = new();
         _backendDecision = new(() => BackendResolver(_settings.PtyBackend));
         CodexCliProbe = codexCliProbe;
         _custody = new(() => new RunnerCustodyLedger(Path.Combine(_settings.SessionLogPath, "verification-custody")));
@@ -439,6 +443,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         var session = new RunnerSession(request.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness);
         session.BindAcceptedGeneration(request.AcceptedStartedAt);
+        session.RetainCheckout(request.Cwd);
         if (request.VerificationBinding is { } binding)
             session.SetCustody(_custody.Value, binding);
         session.GrokRulesReceipt = request.InstalledGrokRulesReceipt;
@@ -1028,6 +1033,28 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     internal Func<Guid, Task>? TerminalReleaseBeforeSignal { get; set; }
     internal Func<Guid, Task>? TerminalParkBeforeVerification { get; set; }
 
+    internal async Task<WorkspaceRepositoryIdentityResult> ReadWorkspaceRepositoryIdentityAsync(
+        WorkspaceRepositoryIdentityRequest request, CancellationToken ct)
+    {
+        if (_workspacePark is null || request.Version != 1)
+            return new(WorkspaceRepositoryIdentityOutcome.Held, "identity_unsupported");
+        var gate = _launchLocks.GetOrAdd(request.SessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            if (!_sessions.TryGetValue(request.SessionId, out var session))
+                return new(WorkspaceRepositoryIdentityOutcome.Held, "identity_session_unknown");
+            bool Matches() => request.ExpectedRunnerStoreId == RunnerStoreId
+                && SessionGeneration.Equal(session.AcceptedStartedAt, request.ExpectedAcceptedStartedAt);
+            if (!Matches()) return new(WorkspaceRepositoryIdentityOutcome.Held, "identity_generation_changed");
+            var result = await _workspacePark.ReadIdentityAsync(request, session.CheckoutPath, ct);
+            if (!_sessions.TryGetValue(request.SessionId, out var current) || !ReferenceEquals(current, session) || !Matches())
+                return new(WorkspaceRepositoryIdentityOutcome.Held, "identity_generation_changed");
+            return result;
+        }
+        finally { gate.Release(); }
+    }
+
     // Publication and input share the generation gate. Preparing evidence never signals a
     // child; a later release must revalidate both this source and its fresh idle proof.
     internal async Task<WorkspaceParkResult> ParkWorkspaceAsync(WorkspaceParkCommand request, CancellationToken ct)
@@ -1082,12 +1109,45 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     }
 
     private async Task<bool> VerifyTerminalParkPublicationAsync(
-        Guid sessionId, TerminalSeatReleaseRequest request, CancellationToken ct)
+        Guid sessionId, TerminalSeatReleaseRequest request, RunnerSession? session, CancellationToken ct)
     {
         if (request.Publication is not { } source) return true;
         if (TerminalParkBeforeVerification is { } beforeVerification) await beforeVerification(sessionId);
-        var verified = await _workspacePark!.VerifyAsync(source, ct);
+        if (!source.HasConsistentSourceMode || request.ParkVersion == 1
+            && source.SourceMode != WorkspaceParkSourceMode.Published) return false;
+        var checkout = session?.CheckoutPath;
+        if (request.ParkVersion == 2 && session is null)
+            checkout = ReadReleasedCheckout(sessionId, request.Observation);
+        if (request.ParkVersion == 2 && !RunnerWorkspaceParkService.IsSessionCheckout(source.Request.Path, checkout))
+            return false;
+        var verified = _workspacePark is not null
+            ? await _workspacePark.VerifyAsync(source, ct)
+            : await LocalWorkspaceVerifier!.VerifySessionCheckoutAsync(source, checkout, ct);
         return verified.Outcome == WorkspaceParkOutcome.Published;
+    }
+
+    // Kept alongside release history, never inside the checkout. An absent-session recheck
+    // can only use a checkout previously retained by this runner for this exact generation.
+    private sealed record ReleasedCheckout(Guid RunnerStoreId, Guid SessionId, DateTime AcceptedStartedAt, string Path);
+    private string ReleasedCheckoutPath(Guid sessionId) =>
+        Path.Combine(_settings.SessionLogPath, "released-checkouts", sessionId.ToString("N") + ".json");
+    private void RetainReleasedCheckout(RunnerSession session)
+    {
+        if (session.CheckoutPath is not { } path || session.AcceptedStartedAt is not { } generation) return;
+        var file = ReleasedCheckoutPath(session.SessionId);
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        File.WriteAllText(file + ".tmp", JsonSerializer.Serialize(new ReleasedCheckout(RunnerStoreId, session.SessionId, generation, path)));
+        File.Move(file + ".tmp", file, overwrite: true);
+    }
+    private string? ReadReleasedCheckout(Guid sessionId, TerminalSeatObservationRequest expected)
+    {
+        try
+        {
+            var retained = JsonSerializer.Deserialize<ReleasedCheckout>(File.ReadAllText(ReleasedCheckoutPath(sessionId)));
+            return retained is not null && retained.SessionId == sessionId && retained.RunnerStoreId == RunnerStoreId
+                && SessionGeneration.Equal(retained.AcceptedStartedAt, expected.ExpectedAcceptedStartedAt) ? retained.Path : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { return null; }
     }
 
     // Dormant until S2c exposes the wire protocol. Both input entry points share this gate.
@@ -1109,7 +1169,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         {
             _sessions.TryGetValue(sessionId, out session);
             var expected = request.Observation;
-            if (request.ParkVersion != 1 || request.Publication is not null && _workspacePark is null)
+            if (request.ParkVersion is not (1 or 2)
+                || request.ParkVersion == 1 && request.Publication is not null && _workspacePark is null
+                || request.ParkVersion == 2 && (request.Publication is null || !SupportsWorkspaceSourceModes))
                 return Refuse(TerminalSeatReleaseOutcome.Unsupported);
             if (!TerminalGenerationMatches(session, expected))
                 return Refuse(TerminalSeatReleaseOutcome.GenerationMismatch);
@@ -1134,7 +1196,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 bool HasDurableSeat() => File.Exists(PtyHostManifest.PathFor(_settings.PtyHostManifestDir, sessionId))
                     || File.Exists(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, sessionId));
                 if (HasDurableSeat()) return Refuse(TerminalSeatReleaseOutcome.Unknown);
-                if (!await VerifyTerminalParkPublicationAsync(sessionId, request, ct))
+                if (!await VerifyTerminalParkPublicationAsync(sessionId, request, session, ct))
                     return Refuse(TerminalSeatReleaseOutcome.StaleObservation);
                 // Source inspection awaits Git/network while the input/generation gate is
                 // reserved. Recheck both custody sources before a fresh confirmation.
@@ -1167,7 +1229,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
                 if (request.Publication is not null)
                 {
-                    if (!await VerifyTerminalParkPublicationAsync(sessionId, request, ct))
+                    if (!await VerifyTerminalParkPublicationAsync(sessionId, request, session, ct))
                         return Refuse(TerminalSeatReleaseOutcome.StaleObservation);
                     // Git/network awaited above. Repeat the native read before the last
                     // synchronous input/output/generation fences and signal.
@@ -1195,7 +1257,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             {
                 // Physical exit alone does not prove that the retained checkout still
                 // matches the publication receipt. Refuse before forgetting its metadata.
-                if (!await VerifyTerminalParkPublicationAsync(sessionId, request, ct))
+                if (!await VerifyTerminalParkPublicationAsync(sessionId, request, session, ct))
                     return Refuse(TerminalSeatReleaseOutcome.StaleObservation);
                 if (!_sessions.TryGetValue(sessionId, out var current) || !ReferenceEquals(current, session)
                     || !SessionGeneration.Equal(session.AcceptedStartedAt, expected.ExpectedAcceptedStartedAt))
@@ -1453,6 +1515,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
 
         ct.ThrowIfCancellationRequested();
+        if (session is not null) RetainReleasedCheckout(session);
         if (session is not null && !_sessions.TryRemove(new KeyValuePair<Guid, RunnerSession>(sessionId, session)))
             throw new InvalidOperationException("The slot generation changed; custody was retained.");
         ForgetDurableSession(sessionId);
@@ -2072,6 +2135,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// <summary>Per-session state. Internal so <see cref="HerdrEventPumpService"/> can verify/apply status.</summary>
     internal sealed class RunnerSession : IAsyncDisposable
     {
+        internal string? CheckoutPath { get; private set; }
+        internal void RetainCheckout(string? cwd) => CheckoutPath = string.IsNullOrWhiteSpace(cwd)
+            ? null : RunnerWorkspaceService.TryResolveFinal(cwd);
         internal GrokRulesReceipt? GrokRulesReceipt { get; set; }
         internal VerificationExecutionBinding? VerificationBinding { get; private set; }
         private RunnerCustodyLedger? _custodyLedger;
@@ -2577,6 +2643,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private void StartAttachedTailer(HerdrAttachRequest request, HerdrAttachResult attached)
         {
             var cwd = attached.Sidecar.Cwd ?? "";
+            RetainCheckout(cwd);
             var childStartUtc = attached.Started.ChildStartUtc;
             var format = string.IsNullOrWhiteSpace(request.TranscriptFormat)
                 ? TranscriptFormats.Claude
@@ -2897,6 +2964,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         private async Task<bool> AdoptCoreAsync(PtyHostManifest manifest, CancellationToken ct)
         {
+            RetainCheckout(manifest.Cwd ?? TranscriptSidecar.TryLoad(TranscriptSidecar.PathFor(_settings.SessionLogPath, _sessionId))?.Cwd);
             if (manifest.GrokRulesReceipt is { } receipt
                 && await new GrokRulesFileStore(_settings.SessionLogPath, _settings.GrokRules)
                     .VerifyAsync(_sessionId, receipt, ct))
@@ -3062,6 +3130,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         {
             var session = new RunnerSession(manifest.SessionId, settings, events, logger)
             {
+                CheckoutPath = RunnerWorkspaceService.TryResolveFinal(manifest.Cwd ?? TranscriptSidecar.TryLoad(TranscriptSidecar.PathFor(settings.SessionLogPath, manifest.SessionId))?.Cwd ?? ""),
                 _hostPid = manifest.HostPid,
                 _childPid = manifest.ChildPid,
                 _startedAt = manifest.ChildStartTimeUtc ?? manifest.CreatedAtUtc,
@@ -3092,6 +3161,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         {
             var session = new RunnerSession(sidecar.SessionId, settings, events, logger)
             {
+                CheckoutPath = RunnerWorkspaceService.TryResolveFinal(sidecar.Cwd ?? ""),
                 _childPid = sidecar.ChildPid,
                 _startedAt = sidecar.LaunchedAtUtc,
                 _adopted = true,
@@ -3126,6 +3196,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         {
             return new RunnerSession(sidecar.SessionId, settings, events, logger, processLiveness: processLiveness)
             {
+                CheckoutPath = RunnerWorkspaceService.TryResolveFinal(sidecar.Cwd ?? ""),
                 _childPid = sidecar.ChildPid,
                 _startedAt = sidecar.LaunchedAtUtc,
                 _adopted = true,
@@ -3227,6 +3298,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 GrokRulesReceipt = receipt;
             _adopted = true;
             _backend = SessionBackends.Herdr;
+            RetainCheckout(sidecar.Cwd);
             if (_acceptedStartedAt is null)
                 BindAcceptedGeneration(sidecar.AcceptedStartedAt);
             var herdrChild = new HerdrPaneChild(
