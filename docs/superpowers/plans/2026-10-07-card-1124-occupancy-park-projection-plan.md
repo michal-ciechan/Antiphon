@@ -369,7 +369,7 @@ adds one method each to `SeatOccupancySamplerTests` and `SeatOccupancyAttentionT
 methods add no parameter expansion. Confirm the TRX roster equals the expected set, not merely
 at least `Min`. The table was validated at planning time with the checkpoint importer
 (`import --plan`, tool built through `scripts/build-slot.ps1` to `bin-c1124-driver/`, output
-deleted afterwards); the result is recorded in the Plan report.
+deleted afterwards): 11 rows imported, exit 0, no advisory warnings, no tests run.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
