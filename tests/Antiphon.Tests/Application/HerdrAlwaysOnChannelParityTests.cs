@@ -10,6 +10,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.Pty;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Files;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Server.Infrastructure.WorkspaceHooks;
 using Antiphon.SessionRunner;
