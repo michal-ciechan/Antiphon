@@ -3,6 +3,8 @@
 Antiphon.Tests.Application.BlockedTaskParkReleaseTests
 # CARD-1065 S7: real Git resume, isolated PostgreSQL, admission holds and exact-SHA mirror recreate.
 Antiphon.Tests.Application.BlockedTaskParkResumeTests
+# CARD-1065 S8: parked continuation UserPrompt receipts, follow-up guidance, and review successor binding.
+Antiphon.Tests.Application.BlockedTaskParkDeliveryTests
 # CARD-1065 S1: migrated PostgreSQL clones, transaction cuts and repeated DI recreation; measured 8-9s per method.
 Antiphon.Tests.Application.BlockedTaskParkStateTests
 # CARD-0804: lifecycle host launches verify real TUnit teardown across failure paths.
