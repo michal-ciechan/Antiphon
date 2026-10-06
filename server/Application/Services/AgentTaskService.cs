@@ -2552,7 +2552,14 @@ public sealed class AgentTaskService
             RequestedWorktreeBaseTaskId: task.RequestedWorktreeBaseTaskId,
             WorktreeBaseBranch: task.WorktreeBaseBranch,
             WorktreeBasePreviewJson: task.WorktreeBasePreviewJson,
-            InternalDecisionQuestions: internalQuestions);
+            InternalDecisionQuestions: internalQuestions,
+            ParkSync: await _db.AgentTaskParks.AsNoTracking()
+                .Where(p => p.TaskId == task.Id && p.Attempt == task.Attempt
+                    && p.SyncState != AgentTaskParkSyncState.NotRequired)
+                .OrderByDescending(p => p.CreatedAt).ThenByDescending(p => p.Id)
+                .Select(p => new TaskParkSyncDto(p.Id, p.SyncState.ToString(), p.SyncSourceSha,
+                    p.SyncReasonCode, p.SyncAttempts, p.SyncNextAttemptAt, p.SourceReadyAt))
+                .FirstOrDefaultAsync(ct));
     }
 
     /// <summary>CARD-0544. Null unless the task carries a versioned profile; legacy is never shown as Full.</summary>

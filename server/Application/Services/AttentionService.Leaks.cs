@@ -13,9 +13,14 @@ public sealed partial class AttentionService
         // PostgreSQL timestamps have microsecond precision. Select a slightly wider candidate
         // window, then enforce the exact clock boundary in memory (including a single .NET tick).
         var candidatesSince = since.AddSeconds(-1);
+        var parks = await _db.AgentTaskParks.AsNoTracking()
+            .Where(p => p.RunnerSeatReleaseId != null && p.SyncState != AgentTaskParkSyncState.NotRequired)
+            .ToDictionaryAsync(p => p.RunnerSeatReleaseId!.Value, ct);
+        var syncDebt = parks.Values.Where(p => p.SyncState is AgentTaskParkSyncState.Pending or AgentTaskParkSyncState.Held)
+            .Select(p => p.RunnerSeatReleaseId!.Value).ToArray();
         var releases = await _db.RunnerSeatReleases.AsNoTracking()
             .Where(r => r.State != RunnerSeatReleaseState.Confirmed || r.ConfirmedAt == null
-                || r.ConfirmedAt >= candidatesSince).ToListAsync(ct);
+                || r.ConfirmedAt >= candidatesSince || syncDebt.Contains(r.Id)).ToListAsync(ct);
         var taskIds = releases.Where(r => r.TaskId != null).Select(r => r.TaskId!.Value).Distinct().ToArray();
         var tasks = await _db.AgentTasks.AsNoTracking().Where(t => taskIds.Contains(t.Id))
             .Select(t => new { t.Id, t.CardId, t.Attempt, t.Status }).ToDictionaryAsync(t => t.Id, ct);
@@ -26,7 +31,9 @@ public sealed partial class AttentionService
         foreach (var release in releases)
         {
             var confirmed = TerminalRunnerSeatReleaseService.IsConfirmed(release);
-            if (confirmed && release.ConfirmedAt < since) continue;
+            var park = parks.GetValueOrDefault(release.Id);
+            var pendingSync = park?.SyncState is AgentTaskParkSyncState.Pending or AgentTaskParkSyncState.Held;
+            if (confirmed && release.ConfirmedAt < since && !pendingSync) continue;
             var task = release.TaskId is Guid taskId ? tasks.GetValueOrDefault(taskId) : null;
             var card = task?.CardId is Guid cardId ? cards.GetValueOrDefault(cardId) : null;
             var reason = release.OutcomeCode ?? release.ReasonCode;
@@ -36,11 +43,14 @@ public sealed partial class AttentionService
             items.Add(new(AttentionKind.SessionDisagreement, AlertSeverity.Warning,
                 release.TaskId, release.SessionId, release.AgentId, null,
                 $"Runner {release.RunnerId}: {release.SessionId:D}",
-                confirmed ? "Runner seat released" : $"Runner seat release held: {reason}",
+                confirmed ? pendingSync ? $"Runner seat released; source sync {park!.SyncState}: {park.SyncReasonCode}"
+                    : "Runner seat released" : $"Runner seat release held: {reason}",
                 $"runner={release.RunnerId}; store={release.RunnerStoreId:D}; session={release.SessionId:D}; " +
                 $"generation={release.AcceptedStartedAt:O}; task={release.TaskId?.ToString("D") ?? "unknown"}; " +
                 $"attempt={release.Attempt?.ToString() ?? "unknown"}; status={status}; " +
-                $"reason={release.ReasonCode}; outcome={release.OutcomeCode ?? "Unresolved"}; confirmed={confirmed}",
+                $"reason={release.ReasonCode}; outcome={release.OutcomeCode ?? "Unresolved"}; confirmed={confirmed}" +
+                (park is null ? "" : $"; park={park.Id:D}; sync={park.SyncState}; source={park.SyncSourceSha}; " +
+                    $"syncReason={park.SyncReasonCode}; sourceReadyAt={park.SourceReadyAt:O}"),
                 confirmed ? release.ConfirmedAt : release.CreatedAt, null,
                 task is null ? [] : [AttentionAction.OpenDrawer],
                 CardId: card?.Id, BoardId: card?.BoardId,

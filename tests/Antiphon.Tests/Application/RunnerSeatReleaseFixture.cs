@@ -129,7 +129,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         AgentTaskStatus status = AgentTaskStatus.Succeeded, bool sourced = false,
         Action<DbContextOptionsBuilder>? configureDb = null,
         string? provider = null, bool phoneHome = false, bool rowless = false,
-        bool productionDefaults = false, bool parking = false)
+        bool productionDefaults = false, bool parking = false, bool syncRecovery = false)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero));
@@ -168,6 +168,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                     services.AddSingleton<IWorkspaceReservationJournal, WorkspaceReservationJournal>();
                     services.AddScoped<LocalTaskParkPublisher>();
                     services.AddScoped<TaskParkPublicationService>();
+                    services.AddScoped<BlockedTaskSyncRecoveryService>();
                     services.AddSingleton<DelegationWorkspaceResolver>();
                     services.AddDelegationWorktreeGraph(new GitSettings());
                     services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
@@ -183,6 +184,17 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                         new AgentRegistrySettings { DefaultDefinition = "fake", Definitions =
                             { ["fake"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "fixture-provider" } } }));
                     services.AddScoped<RemoteWorkspaceService>();
+                    if (syncRecovery)
+                    {
+                        services.AddScoped(sp => new RemoteWorkspaceService(directory,
+                            sp.GetRequiredService<ITaskProgressGit>() as ILandingGit ?? throw new InvalidOperationException(),
+                            sp.GetRequiredService<ILogger<RemoteWorkspaceService>>(),
+                            new TaskParkPublicationTests.ParkGit(sp.GetRequiredService<IRepositoryMutationLease>()),
+                            sp.GetRequiredService<IRepositoryMutationLease>(), sp.GetRequiredService<IWorkspaceReservationJournal>())
+                        { Clock = clock, LeaseBusyObserved = () => wire.LeaseBusyObserved?.Invoke() });
+                        services.AddScoped(sp => new TaskCompletionProgressService(sp.GetRequiredService<ITaskProgressGit>(),
+                            clock: clock, remoteSync: sp.GetRequiredService<RemoteWorkspaceService>()));
+                    }
                     services.AddScoped(sp => new AgentTaskDispatcher(
                         sp.GetRequiredService<AppDbContext>(), sp.GetRequiredService<AgentRegistry>(),
                         sp.GetRequiredService<AgentSessionLaunchQueue>(), sp.GetRequiredService<SessionMessageQueueService>(),
@@ -194,7 +206,8 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                         workspaceUse: sp.GetRequiredService<WorkspaceUseAdmission>(),
                         remoteWorkspace: sp.GetRequiredService<RemoteWorkspaceService>(), runners: directory,
                         taskLaunchSink: sp.GetRequiredService<LaunchRecorder>(),
-                        terminalSeatRelease: sp.GetRequiredService<TerminalRunnerSeatReleaseService>()));
+                        terminalSeatRelease: sp.GetRequiredService<TerminalRunnerSeatReleaseService>(),
+                        blockedTaskSync: sp.GetRequiredService<BlockedTaskSyncRecoveryService>()));
                 }
             };
             harness = await BridgeQueueHarness.CreateAsync(harnessOptions);
@@ -840,6 +853,8 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         public Exception? CallbackFailure { get; private set; }
         public Func<TerminalSeatReleaseResult, TerminalSeatReleaseResult>? RewriteReply { get; set; }
         public Func<TerminalSeatReleaseRequest, Task<bool>>? VerifySource { get; set; }
+        public RunnerWorkspaceParkService? ParkRuntime { get; set; }
+        public Action? LeaseBusyObserved { get; set; }
         public List<TerminalSeatReleaseRequest> Requests { get; } = [];
         public List<string> Calls { get; } = [];
         public int ConditionalCommands => Calls.Count(p => p.EndsWith("/release-terminal-seat"));
@@ -855,9 +870,24 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
             // An old transport rejects both observation and release. Do not synthesize a
             // successful release receipt before applying the configured unsupported response.
             if (Unsupported) return new HttpResponseMessage(UnsupportedStatusCode);
+            if (request.RequestUri.AbsolutePath.EndsWith("/workspace-repository-identity"))
+            {
+                var command = (await request.Content!.ReadFromJsonAsync<WorkspaceRepositoryIdentityRequest>(ct))!;
+                return new(HttpStatusCode.OK) { Content = JsonContent.Create(
+                    await ParkRuntime!.ReadIdentityAsync(command, command.Path, ct)) };
+            }
+            if (request.RequestUri.AbsolutePath.EndsWith("/workspace-park"))
+            {
+                var command = (await request.Content!.ReadFromJsonAsync<WorkspaceParkCommand>(ct))!;
+                return new(HttpStatusCode.OK) { Content = JsonContent.Create(command.Prepare is { } prepare
+                    ? await ParkRuntime!.PrepareAsync(prepare, ct) : await ParkRuntime!.VerifyAsync(command.Verify!, ct)) };
+            }
             if (request.RequestUri.AbsolutePath == "/capabilities")
                 return new(HttpStatusCode.OK) { Content = JsonContent.Create(new RunnerCapabilitiesDto("fixture", "fixture", "fixture", false,
-                    Features: [RunnerCapabilityFeatures.TerminalSeatReleaseV1, RunnerCapabilityFeatures.WorkspaceParkSourceModesV1])) };
+                    Features: ParkRuntime is null
+                        ? [RunnerCapabilityFeatures.TerminalSeatReleaseV1, RunnerCapabilityFeatures.WorkspaceParkSourceModesV1]
+                        : [RunnerCapabilityFeatures.TerminalSeatReleaseV1, RunnerCapabilityFeatures.WorkspaceParkSourceModesV1,
+                            RunnerCapabilityFeatures.WorkspaceParkV1, RunnerCapabilityFeatures.WorkspaceRepositoryIdentityV1])) };
             if (request.RequestUri.AbsolutePath.EndsWith("/release-terminal-seat"))
             {
                 var command = (await request.Content!.ReadFromJsonAsync<TerminalSeatReleaseRequest>(ct))!;
@@ -883,6 +913,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         public string RunnerId { get; set; } = "fixture";
         public bool IsLocal { get; set; }
         public bool LocalBinding { get; set; }
+        public string RemotePath { get; set; } = "/fixture";
         public IReadOnlyList<string>? RunnerIds { get; set; }
         public Func<string?, Task<RunnerInventory>>? InventoryByRunner { get; set; }
         public Func<string?, Task<RunnerDescriptor?>>? DescriptorByRunner { get; set; }
@@ -917,9 +948,9 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
             return new(RunnerId, RunnerId, "linux", null, Available, Recovered, Stale, 1, caps);
         }
         public IReadOnlyList<string> KnownRunnerIds => RunnerIds ?? [IsLocal ? PhoneHomeProtocol.LocalRunnerId : RunnerId];
-        public Task<SessionRunnerOwner?> GetOwnerAsync(Guid id, CancellationToken ct) => Task.FromResult<SessionRunnerOwner?>(new("fixture", StoreId, "/fixture"));
+        public Task<SessionRunnerOwner?> GetOwnerAsync(Guid id, CancellationToken ct) => Task.FromResult<SessionRunnerOwner?>(new("fixture", StoreId, RemotePath));
         public Task<SessionRunnerBinding> GetBindingAsync(Guid id, CancellationToken ct) => Task.FromResult<SessionRunnerBinding>(
-            LocalBinding ? SessionRunnerBinding.Local.Instance : new SessionRunnerBinding.Remote(new("fixture", StoreId, "/fixture")));
+            LocalBinding ? SessionRunnerBinding.Local.Instance : new SessionRunnerBinding.Remote(new("fixture", StoreId, RemotePath)));
         public async Task<RunnerInventory> GetInventoryAsync(string? id, CancellationToken ct)
         {
             InventoryCalls++;
