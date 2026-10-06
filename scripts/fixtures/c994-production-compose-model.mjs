@@ -6,6 +6,31 @@ import { fileURLToPath } from 'node:url';
 // Read-only Compose materialization. No Docker daemon access, provider homes or secrets.
 export function materialize(root, project = 'antiphon-runner', temp = false) {
   if (!path.isAbsolute(root) || fs.realpathSync(root) !== root) throw Error('FixtureRootInvalid');
+  const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+  const files = [path.join(repo, 'docker-compose.server2-runner.yml')];
+  if (temp) files.push(path.join(repo, 'docker-compose.server2-runner.temp.yml'));
+  return renderCompose(root, project, files, repo);
+}
+// A synthetic previous generation: the shipped Compose file with the github-token
+// bind removed, rendered by real `docker compose config`. No daemon and no secret contents.
+export function materializePrevious(root, project = 'antiphon-runner', temp = false) {
+  if (!path.isAbsolute(root) || fs.realpathSync(root) !== root) throw Error('FixtureRootInvalid');
+  const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+  const dir = path.join(root, 'previous-compose');
+  fs.mkdirSync(dir, {recursive:true});
+  const base = fs.readFileSync(path.join(repo, 'docker-compose.server2-runner.yml'), 'utf8');
+  const stripped = base.split('\n').filter(line => !line.includes('/run/antiphon/github-token')).join('\n');
+  if (stripped === base || stripped.includes('/run/antiphon/github-token')) throw Error('PreviousBindNotRemoved');
+  fs.writeFileSync(path.join(dir, 'docker-compose.server2-runner.yml'), stripped);
+  const files = [path.join(dir, 'docker-compose.server2-runner.yml')];
+  if (temp) {
+    const overlay = path.join(repo, 'docker-compose.server2-runner.temp.yml');
+    fs.copyFileSync(overlay, path.join(dir, 'docker-compose.server2-runner.temp.yml'));
+    files.push(path.join(dir, 'docker-compose.server2-runner.temp.yml'));
+  }
+  return renderCompose(root, project, files, repo);
+}
+function renderCompose(root, project, files, projectDirectory) {
   const paths = {deployKey:root+'/deploy-key', phoneHome:root+'/phone-home',
     claude:root+'/claude-token', git:root+'/gitconfig', codex:root+'/codex', grok:root+'/grok', githubToken:root+'/github-token'};
   for (const key of ['deployKey','phoneHome','claude','git']) {
@@ -19,8 +44,8 @@ export function materialize(root, project = 'antiphon-runner', temp = false) {
     RUNNER_GITHUB_TOKEN_DIR:paths.githubToken};
   const envFile=root+'/compose.env';
   fs.writeFileSync(envFile,Object.entries(env).map(([k,v])=>k+'='+v).join('\n')+'\n');
-  const args=['compose','--env-file',envFile,'-p',project,'-f','docker-compose.server2-runner.yml'];
-  if(temp)args.push('-f','docker-compose.server2-runner.temp.yml');
+  const args=['compose','--env-file',envFile,'-p',project,'--project-directory',projectDirectory];
+  for (const file of files) args.push('-f', file);
   args.push('config','--format','json');
   const model=JSON.parse(cp.execFileSync('docker',args,{encoding:'utf8',timeout:30000,
     env:{...process.env,...env}}));
@@ -43,6 +68,9 @@ export function inspectProjection(model, volumes, service) {
   return {Mounts:mounts,HostConfig:{Tmpfs:Object.fromEntries((model.services[service].tmpfs||[]).map(t=>[t,''])),Mounts:[]}};
 }
 if(process.argv[1]===fileURLToPath(import.meta.url)) {
-  const [root,project,temp]=process.argv.slice(2);
-  process.stdout.write(JSON.stringify(materialize(root,project,temp==='true')));
+  const [root,project,temp,mode]=process.argv.slice(2);
+  const rendered = mode === 'previous'
+    ? materializePrevious(root,project,temp==='true')
+    : materialize(root,project,temp==='true');
+  process.stdout.write(JSON.stringify(rendered));
 }

@@ -944,6 +944,8 @@ internal sealed class C1008HostFixture : IDisposable
             C994_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1; C994_RETIRED_AT=2026-10-03T09:30:00Z; C994_DRY_RUN={{(dryRun ? "1" : "0")}}
             C1008_DRY_RUN={{(dryRun && hostCase != "retire-temp-containers" ? "1" : "0")}}; C590_TEMP_RETIRED_AT=2026-10-03T09:30:00Z
             docker() { bash '{{DelegateScriptRunner.RepoRoot}}/scripts/fixtures/c1008-fake-docker.sh' "$@"; }
+            C1008_COMPOSE_SOURCE_BODY="$(declare -f c1008_compose_source 2>/dev/null || true)"
+            c1008_compose_source() { :; }
             compose_host() { docker compose -p "$HOST_PROJECT" "$@"; }
             compose_temp() { docker compose -p "$TEMP_PROJECT" "$@"; }
             detect_lane() { LANE=host; }
